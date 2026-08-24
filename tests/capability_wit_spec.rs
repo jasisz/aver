@@ -281,12 +281,23 @@ fn configured_pure_binding_round_trips_bool_float_and_unit() {
 
 #[test]
 fn embedded_runner_reports_provider_missing_before_linking() {
-    let root = fixture_root();
+    // The shared fixture root intentionally has an `aver.toml` provider
+    // package, so the stock CLI now delegates to its cached provider host.
+    // Copy only the Aver modules here to exercise the embedded runner with no
+    // configured binding; otherwise this test becomes cache/order dependent
+    // and may successfully run the very provider it claims is absent.
+    let fixture = fixture_root();
+    let isolated = tempfile::tempdir().expect("isolated unbound Echo project");
+    std::fs::copy(fixture.join("main.av"), isolated.path().join("main.av"))
+        .expect("copy Echo client");
+    std::fs::copy(fixture.join("Echo.av"), isolated.path().join("Echo.av"))
+        .expect("copy Echo capability");
+    let root = isolated.path();
     let run = Command::new(env!("CARGO_BIN_EXE_aver"))
         .arg("run")
         .arg(root.join("main.av"))
         .arg("--module-root")
-        .arg(&root)
+        .arg(root)
         .arg("--wasip2")
         .output()
         .expect("run Echo through embedded wasip2 runner");

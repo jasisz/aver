@@ -626,7 +626,7 @@ fn embedded_bytes_and_crypto_digest_preserve_refinements_in_both_proof_backends(
     assert!(
         bytes_lean.contains("abbrev Bytes := { xs : List Int // Bytes.allInRange xs }")
             && digest_lean.contains(
-                "abbrev Digest32 := { bytes : Bytes.Bytes // Crypto.Digest32.hasLength32 bytes }"
+                "abbrev Digest32 := { payload : Bytes.Bytes // Crypto.Digest32.hasLength32 payload }"
             ),
         "embedded standard refinements degraded in Lean:\n{bytes_lean}\n{digest_lean}"
     );
@@ -675,7 +675,8 @@ fn embedded_bytes_and_crypto_digest_preserve_refinements_in_both_proof_backends(
         .expect("read generated Crypto/Sha256Core.dfy");
     assert!(
         bytes_dafny.contains("type Bytes = xs: seq<int> | allInRange(xs) witness *")
-            && digest_dafny.contains("type Digest32 = bytes: Bytes | hasLength32(bytes) witness *"),
+            && digest_dafny
+                .contains("type Digest32 = payload: Bytes | hasLength32(payload) witness *"),
         "embedded standard refinements degraded in Dafny:\n{bytes_dafny}\n{digest_dafny}"
     );
     assert!(
@@ -847,7 +848,7 @@ fn proof_export_lake_builds_red_black_tree_after_singleton_and_fuel_gates() {
     //      outright false. The `induction L with …` fallback chose
     //      by the auto-proof matcher then failed to close.
     //   2. Laws calling fuel-bounded fns that the proof-mode
-    //      classifier rejected (`size`, `toSorted`) emit
+    //      classifier rejected (`size`, `valuesInOrder`) emit
     //      `induction t with …` against `__fuel`-wrapped helpers
     //      whose recursive shape `simp` can't drive.
     //
@@ -857,13 +858,13 @@ fn proof_export_lake_builds_red_black_tree_after_singleton_and_fuel_gates() {
     //
     // Sorry budget 1 (was 2): the `detect.rs` resolved-subject fix (which lets
     // Dafny/Z3 prove the Peano-fold homomorphism family) also admits
-    // `size` / `toSorted`'s structural recursion into the proof subset, so
+    // `size` / `valuesInOrder`'s structural recursion into the proof subset, so
     // their two universals EMIT a `∀ … induction t with …` proof rather than
     // gating to sample-only. On Lean those can't close on the ladder — the
     // `__fuel`-wrapped recursion needs a fuel-saturation lemma the auto
     // template lacks.
     //
-    // The drop 2→1 is the discovery feedback loop, część A: `toSorted_law_
+    // The drop 2→1 is the discovery feedback loop, część A: `valuesInOrder_law_
     // sizePreserved` now closes its TACTIC BLOCK via the fast path `simp only
     // [size_law_equalsSortedLen] <;> omega`, referencing the earlier sibling
     // theorem — so it no longer emits its OWN `sorry`. This is a textual-count

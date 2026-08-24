@@ -64,7 +64,7 @@ verify trimPartsInto
 
 fn firstPart(parts: List<String>) -> Result<String, String>
     ? "Reads the first command field."
-    Option.toResult(Vector.get(Vector.fromList(parts), 0), "Command line was empty")
+    Result.fromOption(Vector.get(Vector.fromList(parts), 0), "Command line was empty")
 
 verify firstPart
     firstPart(["help"]) => Result.Ok("help")
@@ -72,7 +72,7 @@ verify firstPart
 
 fn field(parts: List<String>, index: Int, label: String) -> Result<String, String>
     ? "Reads one required field."
-    Option.toResult(Vector.get(Vector.fromList(parts), index), "Missing field: " + label)
+    Result.fromOption(Vector.get(Vector.fromList(parts), index), "Missing field: " + label)
 
 verify field
     field(["a", "b"], 1, "x") => Result.Ok("b")

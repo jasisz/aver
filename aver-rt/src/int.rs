@@ -30,29 +30,35 @@ use num_traits::{FromPrimitive, ToPrimitive, Zero};
 /// Why a shift count or bit width was refused by [`AverInt::shift_left`],
 /// [`AverInt::shift_right`] or [`AverInt::low_bits`].
 ///
-/// The two cases are deliberately distinct because they belong to different
-/// layers. `Negative` is a value the language defines an answer for — a
-/// catchable `Result.Err` — while `Unrepresentable` is the machine running
-/// out of address space to name a bit position, which no amount of source
-/// handling can recover and which the mathematical model does not even see.
+/// Both cases are language-level, catchable refusals. The upper bound is
+/// fixed across targets so a program cannot turn an ordinary `Int` into a
+/// host-dependent allocation bomb.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShiftCountError {
     /// The count was below zero. A negative count has no meaning under
     /// infinite two's complement, and must not silently reverse direction,
     /// clamp, or wrap: the caller reports it as `Result.Err`.
     Negative,
-    /// The count was non-negative but too large to name a bit position on
-    /// this machine (roughly 2^64). Nothing could hold the answer.
-    Unrepresentable,
+    /// The count exceeds [`MAX_MATERIALIZED_BITS`], or cannot be represented
+    /// even well enough to compare after the sign check.
+    TooLarge,
 }
+
+/// Maximum shift count / requested low-bit width. The largest materialized
+/// result attributable to the count is about 2 MiB of raw bits. This is a
+/// language constant, not a host `usize` limit, so VM, generated Rust, wasm,
+/// and proof models share one refusal boundary.
+pub const MAX_MATERIALIZED_BITS: usize = 16 * 1024 * 1024;
 
 /// Validate a shift count / bit width once, for all three width-taking
 /// operations, so the negative rule is stated in exactly one place.
 fn shift_count(n: &AverInt) -> Result<usize, ShiftCountError> {
+    if n < &AverInt::zero() {
+        return Err(ShiftCountError::Negative);
+    }
     match n.to_usize() {
-        Some(count) => Ok(count),
-        None if n < &AverInt::zero() => Err(ShiftCountError::Negative),
-        None => Err(ShiftCountError::Unrepresentable),
+        Some(count) if count <= MAX_MATERIALIZED_BITS => Ok(count),
+        Some(_) | None => Err(ShiftCountError::TooLarge),
     }
 }
 
@@ -931,7 +937,7 @@ mod tests {
     }
 
     #[test]
-    fn negative_counts_are_refused_and_distinguished_from_unrepresentable() {
+    fn counts_outside_the_language_bound_are_refused_before_work() {
         let i = AverInt::from_i64;
         for op in [AverInt::shift_left, AverInt::shift_right, AverInt::low_bits] {
             assert_eq!(op(&i(42), &i(-1)), Err(ShiftCountError::Negative));
@@ -940,7 +946,11 @@ mod tests {
             let huge_negative = two_pow(200).neg();
             assert_eq!(op(&i(42), &huge_negative), Err(ShiftCountError::Negative));
             let huge = two_pow(200);
-            assert_eq!(op(&i(42), &huge), Err(ShiftCountError::Unrepresentable));
+            assert_eq!(op(&i(42), &huge), Err(ShiftCountError::TooLarge));
+            assert_eq!(
+                op(&i(42), &i(MAX_MATERIALIZED_BITS as i64 + 1)),
+                Err(ShiftCountError::TooLarge)
+            );
         }
     }
 }

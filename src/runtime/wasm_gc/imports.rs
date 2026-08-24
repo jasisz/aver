@@ -55,8 +55,8 @@ pub(super) use factories::{
     host_result_err_list_string, host_result_err_string, host_result_err_unit_string,
     host_result_http_response_err, host_result_http_response_ok, host_result_ok_bytes,
     host_result_ok_int, host_result_ok_list_string, host_result_ok_string, host_result_ok_unit,
-    host_result_tcp_connection_err, host_result_tcp_connection_ok, host_tcp_connection_make,
-    host_terminal_size_make,
+    host_result_tcp_connection_err, host_result_tcp_connection_ok, host_result_terminal_size_err,
+    host_result_terminal_size_ok, host_tcp_connection_make, host_terminal_size_make,
 };
 pub(super) use lm::lm_string_from_host;
 

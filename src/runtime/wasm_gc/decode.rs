@@ -20,8 +20,9 @@ use super::imports::{
     host_result_err_list_string, host_result_err_string, host_result_err_unit_string,
     host_result_http_response_err, host_result_http_response_ok, host_result_ok_bytes,
     host_result_ok_int, host_result_ok_list_string, host_result_ok_string, host_result_ok_unit,
-    host_result_tcp_connection_err, host_result_tcp_connection_ok, host_tcp_connection_make,
-    host_terminal_size_make, lm_string_from_host,
+    host_result_tcp_connection_err, host_result_tcp_connection_ok, host_result_terminal_size_err,
+    host_result_terminal_size_ok, host_tcp_connection_make, host_terminal_size_make,
+    lm_string_from_host,
 };
 
 pub(crate) fn decode_main_return_typed(
@@ -525,6 +526,42 @@ pub(crate) fn decode_result_int(
     }
 }
 
+pub(crate) fn decode_result_terminal_size(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    json: &aver::replay::JsonValue,
+) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
+    let (marker, inner) = expect_marker(json, &["$ok", "$err"])?;
+    match (marker, inner) {
+        ("$ok", value) => {
+            let fields = expect_record(value, "Terminal.Size")?;
+            let width = match fields.get("width") {
+                Some(aver::replay::JsonValue::Int(value)) => *value,
+                _ => {
+                    return Err(wasmtime::Error::msg(
+                        "replay decode Terminal.Size: missing Int width",
+                    ));
+                }
+            };
+            let height = match fields.get("height") {
+                Some(aver::replay::JsonValue::Int(value)) => *value,
+                _ => {
+                    return Err(wasmtime::Error::msg(
+                        "replay decode Terminal.Size: missing Int height",
+                    ));
+                }
+            };
+            let record = host_terminal_size_make(caller, width, height)?;
+            host_result_terminal_size_ok(caller, record)
+        }
+        ("$err", aver::replay::JsonValue::String(message)) => {
+            host_result_terminal_size_err(caller, message)
+        }
+        _ => Err(wasmtime::Error::msg(
+            "replay decode Result<Terminal.Size, String>: unexpected payload",
+        )),
+    }
+}
+
 /// Decode an `Option<String>` value. Markers: `{"$some": <string>}` /
 /// `{"$none": true}`.
 pub(crate) fn decode_option_string(
@@ -610,23 +647,6 @@ pub(crate) fn decode_result_tcp_connection(
         }
         _ => unreachable!(),
     }
-}
-
-/// Decode a `Terminal.Size` record.
-pub(crate) fn decode_terminal_size(
-    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
-    json: &aver::replay::JsonValue,
-) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
-    let fields = expect_record(json, "Terminal.Size")?;
-    let w = match fields.get("width") {
-        Some(aver::replay::JsonValue::Int(n)) => *n,
-        _ => 80,
-    };
-    let h = match fields.get("height") {
-        Some(aver::replay::JsonValue::Int(n)) => *n,
-        _ => 24,
-    };
-    host_terminal_size_make(caller, w, h)
 }
 
 /// Match the single-key marker wrapper `replay::value_to_json` emits

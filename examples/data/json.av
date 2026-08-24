@@ -418,7 +418,7 @@ verify escapeJsonChar
 
 fn escapeControlChar(c: String) -> String
     ? "JSON helper: escapeControlChar."
-    code = Char.toCode(c)
+    code = Option.withDefault(String.firstCodePoint(c), 0)
     match code == 8
         true -> "\\b"
         false -> match code == 12
@@ -428,9 +428,9 @@ fn escapeControlChar(c: String) -> String
                 false -> c
 
 verify escapeControlChar
-    escapeControlChar(Option.withDefault(Char.fromCode(8), "")) => "\\b"
-    escapeControlChar(Option.withDefault(Char.fromCode(12), "")) => "\\f"
-    escapeControlChar(Option.withDefault(Char.fromCode(1), "")) => "\\u0001"
+    escapeControlChar(Option.withDefault(String.fromCodePoint(8), "")) => "\\b"
+    escapeControlChar(Option.withDefault(String.fromCodePoint(12), "")) => "\\f"
+    escapeControlChar(Option.withDefault(String.fromCodePoint(1), "")) => "\\u0001"
     escapeControlChar("A") => "A"
 
 fn controlCodeEscape(c: String, code: Int) -> String
@@ -445,7 +445,7 @@ verify controlCodeEscape
 
 fn isDigit(c: String) -> Bool
     ? "JSON helper: isDigit."
-    code = Char.toCode(c)
+    code = Option.withDefault(String.firstCodePoint(c), 0)
     match code >= 48
         true -> code <= 57
         false -> false
@@ -457,7 +457,7 @@ verify isDigit
 
 fn digitVal(c: String) -> Int
     ? "JSON helper: digitVal."
-    Char.toCode(c) - 48
+    Option.withDefault(String.firstCodePoint(c), 0) - 48
 
 verify digitVal
     digitVal("7") => 7
@@ -466,7 +466,7 @@ fn hexVal(c: String) -> Option<Int>
     ? "Hex digit value: 0-9, a-f, A-F. None for non-hex."
     match isDigit(c)
         true -> Option.Some(digitVal(c))
-        false -> hexAlpha(Char.toCode(c))
+        false -> hexAlpha(Option.withDefault(String.firstCodePoint(c), 0))
 
 verify hexVal
     hexVal("9") => Option.Some(9)
@@ -616,7 +616,7 @@ verify finishString law plainSegmentRoundtrip
 fn isPrintableChar(c: String) -> Bool
     ? "Domain of validateChar's round-trip: a single non-control character. A control char (code < 32) errors; a multi-character string can hide an embedded quote or backslash that re-splits the scan, so restrict to one scalar."
     match String.len(c) == 1
-        true  -> Char.toCode(c) >= 32
+        true  -> Option.withDefault(String.firstCodePoint(c), 0) >= 32
         false -> false
 
 verify isPrintableChar
@@ -627,7 +627,7 @@ verify isPrintableChar
 
 fn validateChar(s: String, pos: Int, segmentStart: Int, chunks: List<String>, c: String) -> ParseResult
     ? "JSON helper: validateChar."
-    match Char.toCode(c) < 32
+    match Option.withDefault(String.firstCodePoint(c), 0) < 32
         true -> ParseResult.Err("Unescaped control character", pos)
         false -> parseStringChunk(s, pos + 1, segmentStart, chunks)
 
@@ -825,7 +825,7 @@ verify readHex4
 
 fn applyCodePoint(s: String, pos: Int, escapePos: Int, chunks: List<String>, cp: Int) -> ParseResult
     ? "JSON helper: applyCodePoint."
-    match Char.fromCode(cp)
+    match String.fromCodePoint(cp)
         Option.None -> ParseResult.Err("Invalid Unicode code point", escapePos)
         Option.Some(ch) -> parseStringChunk(s, pos, pos, List.concat(chunks, [ch]))
 

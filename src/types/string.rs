@@ -16,6 +16,8 @@
 ///   String.fromInt(n)           → String
 ///   String.fromFloat(f)         → String
 ///   String.fromBool(b)          → String
+///   String.toUtf8(s)            → Bytes           — UTF-8 encoding; total
+///   String.fromUtf8(bytes)      → Result<String, String>
 ///   String.toLower(s)           → String         — lowercase (Unicode-aware)
 ///   String.toUpper(s)           → String         — uppercase (Unicode-aware)
 ///
@@ -55,6 +57,8 @@ pub fn call_nv(
         "String.fromInt" => Some(from_int_nv(args, arena)),
         "String.fromFloat" => Some(from_float_nv(args, arena)),
         "String.fromBool" => Some(from_bool_nv(args, arena)),
+        "String.toUtf8" => Some(to_utf8_nv(args, arena)),
+        "String.fromUtf8" => Some(from_utf8_nv(args, arena)),
         "String.toLower" => Some(to_lower_nv(args, arena)),
         "String.toUpper" => Some(to_upper_nv(args, arena)),
         _ => None,
@@ -92,6 +96,95 @@ fn byte_length_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Runt
         RuntimeError::Error("String.byteLength: argument must be a String".to_string())
     })?;
     Ok(NanValue::new_int(s.len() as i64, arena))
+}
+
+/// Encode the already-valid UTF-8 storage of an Aver `String` directly into
+/// the nominal standard-library `Bytes` carrier. This is one byte walk and
+/// one list allocation; it never materialises `String.chars` or code points.
+fn to_utf8_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
+    if args.len() != 1 {
+        return Err(RuntimeError::Error(format!(
+            "String.toUtf8() takes 1 argument, got {}",
+            args.len()
+        )));
+    }
+    let Some(text) = nv_str(args[0], arena) else {
+        return Err(RuntimeError::Error(
+            "String.toUtf8: argument must be a String".to_string(),
+        ));
+    };
+    let octets = text.as_bytes().to_vec();
+    let values = octets
+        .into_iter()
+        .map(|octet| NanValue::new_int(i64::from(octet), arena))
+        .collect();
+    let list = NanValue::new_list(arena.push_list(values));
+    let type_id = arena.find_type_id("Bytes").ok_or_else(|| {
+        RuntimeError::Error("String.toUtf8: standard Bytes type is not loaded".to_string())
+    })?;
+    Ok(NanValue::new_record(arena.push_record(type_id, vec![list])))
+}
+
+/// Decode a nominal `Bytes` carrier as UTF-8. Invalid byte sequences are a
+/// language value, not a runtime fault; malformed internal carriers remain a
+/// fail-closed runtime error because user code cannot forge the opaque type.
+fn from_utf8_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
+    if args.len() != 1 {
+        return Err(RuntimeError::Error(format!(
+            "String.fromUtf8() takes 1 argument, got {}",
+            args.len()
+        )));
+    }
+    if !args[0].is_record() {
+        return Err(RuntimeError::Error(
+            "String.fromUtf8: argument must be Bytes".to_string(),
+        ));
+    }
+    let expected = arena.find_type_id("Bytes").ok_or_else(|| {
+        RuntimeError::Error("String.fromUtf8: standard Bytes type is not loaded".to_string())
+    })?;
+    let (actual, fields) = arena.get_record(args[0].arena_index());
+    if actual != expected {
+        return Err(RuntimeError::Error(
+            "String.fromUtf8: argument must be Bytes".to_string(),
+        ));
+    }
+    let Some(&values) = fields.first() else {
+        return Err(RuntimeError::Error(
+            "String.fromUtf8: malformed Bytes carrier".to_string(),
+        ));
+    };
+    if !values.is_list() {
+        return Err(RuntimeError::Error(
+            "String.fromUtf8: malformed Bytes carrier".to_string(),
+        ));
+    }
+    let items = arena.list_to_vec_value(values);
+    let mut octets = Vec::with_capacity(items.len());
+    for (index, item) in items.into_iter().enumerate() {
+        if !item.is_int() {
+            return Err(RuntimeError::Error(format!(
+                "String.fromUtf8: malformed byte at index {index}"
+            )));
+        }
+        let value = item.as_aver_int(arena);
+        let Some(value) = value.to_i64().and_then(|value| u8::try_from(value).ok()) else {
+            return Err(RuntimeError::Error(format!(
+                "String.fromUtf8: malformed byte {value} at index {index}"
+            )));
+        };
+        octets.push(value);
+    }
+    match String::from_utf8(octets) {
+        Ok(text) => {
+            let inner = NanValue::new_string_value(&text, arena);
+            Ok(NanValue::new_ok_value(inner, arena))
+        }
+        Err(_) => {
+            let error = NanValue::new_string_value("invalid UTF-8", arena);
+            Ok(NanValue::new_err_value(error, arena))
+        }
+    }
 }
 
 fn starts_with_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {

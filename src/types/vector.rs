@@ -1,7 +1,7 @@
 /// Vector namespace — fixed-size indexed sequence helpers.
 ///
 /// Methods:
-///   Vector.new(size, default)     → Vector<T>
+///   Vector.new(size, default)     → Result<Vector<T>, String>
 ///   Vector.get(vec, idx)          → Option<T>
 ///   Vector.set(vec, idx, val)     → Option<Vector<T>>
 ///   Vector.len(vec)               → Int
@@ -42,18 +42,20 @@ fn vec_new_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeE
             "Vector.new: size must be an Int".to_string(),
         ));
     }
-    let Some(size) = args[0].as_aver_int(arena).to_usize() else {
-        // Negative, or larger than `usize` can address: cannot allocate.
-        return Err(RuntimeError::Error(
-            "Vector.new: size must be a non-negative, machine-sized Int".to_string(),
+    let Some(size) = args[0].as_aver_int(arena).to_u32() else {
+        return Ok(NanValue::new_err_value(
+            NanValue::new_string_value("Vector.new: size must be between 0 and 4294967295", arena),
+            arena,
         ));
     };
+    let size = size as usize;
     let items = vec![args[1]; size];
-    if items.is_empty() {
-        Ok(NanValue::EMPTY_VECTOR)
+    let vector = if items.is_empty() {
+        NanValue::EMPTY_VECTOR
     } else {
-        Ok(NanValue::new_vector(arena.push_vector(items)))
-    }
+        NanValue::new_vector(arena.push_vector(items))
+    };
+    Ok(NanValue::new_ok_value(vector, arena))
 }
 
 fn vec_get_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {

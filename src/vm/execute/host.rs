@@ -504,7 +504,15 @@ impl VM {
                 capability.oracle,
                 Some(crate::capability::OracleDimension::Output)
             ) {
-                return Ok(NanValue::UNIT);
+                // Output effects are suppressed while tracing, but their
+                // language-level return contract still has to be honoured.
+                // Time.sleep is the only output-only standard operation and
+                // now exposes host/domain refusal as Result.
+                return if name == "Time.sleep" {
+                    Ok(NanValue::new_ok_value(NanValue::UNIT, &mut self.arena))
+                } else {
+                    Ok(NanValue::UNIT)
+                };
             }
         }
 

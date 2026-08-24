@@ -15,10 +15,20 @@ operation unixMs() -> Int
     replay = recorded
     hostile = [unixMsNormal, unixMsFrozenZero, unixMsSaturated, unixMsBackward, unixMsFastForward]
 
-operation sleep(ms: Int) -> Unit
-    ? "Blocks the current execution branch for non-negative milliseconds."
-    oracle = output
-    replay = suppressed
+operation sleep(ms: Int) -> Result<Unit, String>
+    ? "Blocks the current execution branch, or returns an error when the duration is outside the portable host range."
+    oracle = generativeOutput
+    replay = recorded
+    hostile = [sleepContract]
+
+fn sleepContract(path: BranchPath, call: Int, ms: Int) -> Result<Unit, String>
+    ? "Models the portable validation contract without delaying verification."
+    inHostRange = Bool.and(ms >= -9223372036854775808, ms <= 9223372036854775807)
+    match inHostRange
+        false -> Result.Err("Time.sleep: ms must fit a 64-bit integer")
+        true -> match ms < 0
+            true -> Result.Err("Time.sleep: ms must be non-negative")
+            false -> Result.Ok(Unit)
 
 fn nowNormal(path: BranchPath, call: Int) -> String
     ? "Honest profile: the wall clock advances one second per call."

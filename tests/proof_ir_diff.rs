@@ -1991,11 +1991,15 @@ fn effectful_spec_equivalence_pinned_post_oracle_lift() {
     let src = "module M\n\
          \x20   intent = \"t\"\n\
          \n\
-         fn counterStub(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n\
-         \x20   n\n\
+         fn counterStub(path: BranchPath, n: Int, min: Int, max: Int) -> Result<Int, String>\n\
+         \x20   Result.Ok(n)\n\
          \n\
-         fn pairSpec(path: BranchPath, rnd: Fn(BranchPath, Int, Int, Int) -> Int) -> Tuple<Int, Int>\n\
-         \x20   (rnd(BranchPath.child(path, 0), 0, 1, 6), rnd(BranchPath.child(path, 1), 0, 7, 12))\n\
+         fn pairSpec(path: BranchPath, rnd: Fn(BranchPath, Int, Int, Int) -> Result<Int, String>) -> Tuple<Int, Int>\n\
+         \x20   leftPath = BranchPath.child(path, 0)\n\
+         \x20   rightPath = BranchPath.child(path, 1)\n\
+         \x20   left = Result.withDefault(rnd(leftPath, 0, 1, 6), 1)\n\
+         \x20   right = Result.withDefault(rnd(rightPath, 0, 7, 12), 7)\n\
+         \x20   (left, right)\n\
          \n\
          fn pickPair() -> Tuple<Int, Int>\n\
          \x20   ! [Random.int]\n\
@@ -2583,7 +2587,7 @@ fn render(v: Num) -> String
         Num.NumInt(n) -> String.fromInt(n)
 
 fn isDigit(c: String) -> Bool
-    code = Char.toCode(c)
+    code = Option.withDefault(String.firstCodePoint(c), 0)
     match code >= 48
         true -> code <= 57
         false -> false

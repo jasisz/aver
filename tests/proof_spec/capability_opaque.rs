@@ -84,7 +84,7 @@ fn hashed(values: List<Int>) -> List<Int>
     ? "Validate, hash, and unwrap bytes."
     match Bytes.fromList(values)
         Result.Err(_) -> []
-        Result.Ok(raw) -> Bytes.toList(Cap.hash(raw))
+        Result.Ok(raw) -> Bytes.octets(Cap.hash(raw))
 
 fn twice(n: Int) -> Int
     n + n
@@ -443,7 +443,7 @@ fn g(x: Int) -> Int
 fn hb(values: List<Int>) -> List<Int>
     match Bytes.fromList(values)
         Result.Err(_) -> []
-        Result.Ok(raw) -> Bytes.toList(Cap.hash(raw))
+        Result.Ok(raw) -> Bytes.octets(Cap.hash(raw))
 
 fn twice(n: Int) -> Int
     n + n

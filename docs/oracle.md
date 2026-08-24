@@ -20,9 +20,9 @@ Runnable example: `examples/formal/oracle_trace.av`.
 ## Oracle laws
 
 ```aver
-fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Int
+fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Result<Int, String>
     ? "Deterministic Random.int stub."
-    4
+    Result.Ok(4)
 
 fn pickOne() -> Int
     ? "Rolls once."
@@ -31,7 +31,7 @@ fn pickOne() -> Int
 
 verify pickOne law usesOracle
     given rnd: Random.int = [fairDie]
-    pickOne() => rnd(BranchPath.Root, 0, 1, 6)
+    pickOne() => Result.withDefault(rnd(BranchPath.Root, 0, 1, 6), 1)
 ```
 
 Breakdown:
@@ -104,7 +104,7 @@ effects or when you want runtime assertions over the collected trace:
 verify pickOne trace
     given rnd: Random.int = [fairDie]
     picked = pickOne()
-    picked.result => rnd(BranchPath.Root, 0, 1, 6)
+    picked.result => Result.withDefault(rnd(BranchPath.Root, 0, 1, 6), 1)
     picked.trace.length() => 1
     picked.trace.contains(Random.int(1, 6)) => true
 ```
@@ -189,7 +189,7 @@ fn stubEnv(key: String) -> Option<String>
 Generative stubs receive a leading `BranchPath` and per-branch call counter.
 
 ```aver
-fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Int
+fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Result<Int, String>
 
 fn fakeFetch(path: BranchPath, n: Int, url: String)
     -> Result<HttpResponse, String>
@@ -215,7 +215,7 @@ A `given` list is a concrete domain:
 ```aver
 verify pickOne trace
     given rnd: Random.int = [lowDie, highDie]
-    pickOne().result => rnd(BranchPath.Root, 0, 1, 6)
+    pickOne().result => Result.withDefault(rnd(BranchPath.Root, 0, 1, 6), 1)
 ```
 
 This expands to two cases. Multiple `given` lists expand as a cartesian product, capped at `10_000` cases (`[verify] max-cases` in `aver.toml` moves the cap for the project, and `max-cases` in a `[[verify.costly]]` entry moves it for one function). Stub names may be local (`lowDie`) or qualified imports (`Helpers.lowDie`).
@@ -257,7 +257,7 @@ EffectEvent(method: String, args: List<EffectArg>, path: String)
 - `"0"` means branch 0 of a group
 - `"0.1"` means branch 1 of a group nested inside branch 0
 
-`BranchPath.parse(ev.path)` converts the string back to the opaque `BranchPath` type used by generative stubs and specs.
+`BranchPath.parse(ev.path)` validates the string and returns `Result<BranchPath, String>`; use `?` in a Result-returning function or match the error. A valid string literal such as `BranchPath.parse("0.1")` is checked at compile time and types directly as the opaque `BranchPath` used by generative stubs and specs. Likewise, `BranchPath.child(parent, index)` is catchable for a dynamic index, while a syntactic non-negative integer literal discharges directly to `BranchPath`.
 
 There are two comparison styles:
 

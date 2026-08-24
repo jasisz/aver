@@ -553,7 +553,7 @@
   "examples/data/red_black_tree.av::showListInt": "parameter shape outside the fragment",
   "examples/data/red_black_tree.av::showListIntInner": "parameter shape outside the fragment",
   "examples/data/red_black_tree.av::size": "parameter shape outside the fragment",
-  "examples/data/red_black_tree.av::toSorted": "parameter shape outside the fragment",
+  "examples/data/red_black_tree.av::valuesInOrder": "parameter shape outside the fragment",
   "examples/data/rle.av::decode": "parameter shape outside the fragment",
   "examples/data/rle.av::decodeString": "parameter shape outside the fragment",
   "examples/data/rle.av::encode": "parameter shape outside the fragment",

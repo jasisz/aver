@@ -14,6 +14,13 @@ fn screenW() -> Int
 verify screenW
     screenW() => 60
 
+fn moveToOrReport(x: Int, y: Int) -> Unit
+    ? "Move the cursor, or print the terminal error at the current position so rendering can continue visibly."
+    ! [Terminal.moveTo, Terminal.print]
+    match Terminal.moveTo(x, y)
+        Result.Ok(_) -> Unit
+        Result.Err(message) -> Terminal.print("[cursor error: {message}]")
+
 fn screenH() -> Int
     ? "Terminal rows for the 3D viewport"
     20
@@ -46,7 +53,7 @@ verify brailleBase
 
 fn brailleChar(bits: Int) -> String
     ? "Convert 8-bit pattern to Braille Unicode character"
-    match Char.fromCode(brailleBase() + bits)
+    match String.fromCodePoint(brailleBase() + bits)
         Option.Some(ch) -> ch
         Option.None -> " "
 
@@ -346,7 +353,7 @@ fn renderOneWallRow(col: Int, wallTop: Int, wallBot: Int, wt: WallType, side: In
         2 -> "green"
         _ -> wallColor
     Terminal.setColor(color)
-    Terminal.moveTo(col, row)
+    moveToOrReport(col, row)
     Terminal.print(ch)
     Terminal.resetColor()
     renderWallRows(col, wallTop, wallBot, wt, side, row + 1, wallColor)
@@ -446,7 +453,7 @@ fn drawBlockPrint(e: Enemy, sx: Int, sy: Int, leftCol: Int, topRow: Int, spriteH
     ? "Print a full block at sprite position"
     ! [Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     Terminal.setColor(Types.enemyColor(e.kind))
-    Terminal.moveTo(sx, sy)
+    moveToOrReport(sx, sy)
     Terminal.print(fullBlock())
     drawBlockGrid(e, leftCol, topRow, spriteH, spriteW, row, col + 1)
 
@@ -454,7 +461,7 @@ fn drawBlockPrint(e: Enemy, sx: Int, sy: Int, leftCol: Int, topRow: Int, spriteH
 
 fn fullBlock() -> String
     ? "Full block character U+2588"
-    match Char.fromCode(9608)
+    match String.fromCodePoint(9608)
         Option.Some(c) -> c
         Option.None -> "#"
 
@@ -542,7 +549,7 @@ fn renderCrosshair() -> Unit
     ? "Draw a crosshair at screen center"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     Terminal.setColor("white")
-    Terminal.moveTo(Int.div(screenW(), 2), Int.div(screenH(), 2))
+    moveToOrReport(Int.div(screenW(), 2), Int.div(screenH(), 2))
     Terminal.print("+")
     Terminal.resetColor()
 
@@ -553,29 +560,29 @@ fn renderHud(state: GameState) -> Unit
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     hudX = screenW() + 2
     Terminal.setColor("yellow")
-    Terminal.moveTo(hudX, 1)
+    moveToOrReport(hudX, 1)
     Terminal.print("BRAILLE DOOM")
     Terminal.setColor("red")
-    Terminal.moveTo(hudX, 3)
+    moveToOrReport(hudX, 3)
     Terminal.print("HP: {String.fromInt(state.player.hp)}/100")
     Terminal.setColor("white")
-    Terminal.moveTo(hudX, 4)
+    moveToOrReport(hudX, 4)
     deg = Float.floor(Math.radToDeg(state.player.angle))
     Terminal.print("angle: {String.fromInt(deg)}")
-    Terminal.moveTo(hudX, 5)
+    moveToOrReport(hudX, 5)
     Terminal.print("enemies: {String.fromInt(List.len(state.enemies))}")
     Terminal.setColor("cyan")
-    Terminal.moveTo(hudX, 7)
+    moveToOrReport(hudX, 7)
     Terminal.print("W/S  forward/back")
-    Terminal.moveTo(hudX, 8)
+    moveToOrReport(hudX, 8)
     Terminal.print("A/D  strafe")
-    Terminal.moveTo(hudX, 9)
+    moveToOrReport(hudX, 9)
     Terminal.print(",/.  rotate")
-    Terminal.moveTo(hudX, 10)
+    moveToOrReport(hudX, 10)
     Terminal.print("Q/E  turn+walk")
-    Terminal.moveTo(hudX, 11)
+    moveToOrReport(hudX, 11)
     Terminal.print("SPACE shoot")
-    Terminal.moveTo(hudX, 12)
+    moveToOrReport(hudX, 12)
     Terminal.print("X/ESC quit")
     Terminal.resetColor()
 
@@ -597,7 +604,7 @@ fn renderOneMessage(msgs: Vector<String>, hudX: Int, i: Int, msg: String) -> Uni
     ? "Render one message line"
     ! [Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     Terminal.setColor("yellow")
-    Terminal.moveTo(hudX, 14 + i)
+    moveToOrReport(hudX, 14 + i)
     Terminal.print(msg)
     Terminal.resetColor()
     renderMessagesVec(msgs, hudX, i + 1)
@@ -626,7 +633,7 @@ fn renderMinimapRows(state: GameState, enemies: Vector<Enemy>, ox: Int, oy: Int,
 fn renderMinimapRow(state: GameState, enemies: Vector<Enemy>, ox: Int, oy: Int, row: Int) -> Unit
     ? "Render one minimap row"
     ! [Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    Terminal.moveTo(screenW() + 2, 15 + row)
+    moveToOrReport(screenW() + 2, 15 + row)
     renderMinimapCols(state, enemies, ox, oy, row, 0)
     renderMinimapRows(state, enemies, ox, oy, row + 1)
 

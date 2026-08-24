@@ -172,9 +172,9 @@ fn wasm_gc_boxed_int_div_mod_err_messages_match_vm() {
 ///     sign+magnitude, including a Big-operand result that lands back INSIDE
 ///     i64 (`and(not(huge), huge) == 0`).
 ///   * `Bits.shiftRight(-3, 1) == -2` — arithmetic, not logical.
-///   * A negative dynamic count — the `Result.Err` payload must be the same
-///     bytes the VM produces, which means the synthetic string literal has to
-///     be interned in the data segment table.
+///   * Negative and oversized dynamic counts — the `Result.Err` payload must
+///     be the same bytes the VM produces, which means both synthetic string
+///     literals have to be interned in the data segment table.
 const BITS_SRC: &str = r#"module M
     intent =
         "Bits across the Small/Big seam"
@@ -190,7 +190,7 @@ fn main() -> Unit
     huge = Bits.shiftLeft(1, 100)
     Console.print("{Bits.and(6, 3)}|{Bits.or(6, 3)}|{Bits.xor(6, 3)}|{Bits.and(-1, 42)}|{Bits.not(-1)}")
     Console.print("{huge}|{Bits.not(huge)}|{Bits.or(huge, 1)}|{Bits.xor(huge, huge)}|{Bits.and(Bits.not(huge), huge)}")
-    Console.print("{Bits.shiftRight(-3, 1)}|{Bits.low(-1, 8)}|{Bits.low(123, 0)}|{dynamic(4)}|{dynamic(-1)}")
+    Console.print("{Bits.shiftRight(-3, 1)}|{Bits.low(-1, 8)}|{Bits.low(123, 0)}|{dynamic(4)}|{dynamic(-1)}|{dynamic(16777217)}|{dynamic(4294967296)}")
 "#;
 
 #[test]
@@ -229,7 +229,7 @@ fn wasm_gc_bits_namespace_matches_vm() {
         "2|7|5|42|0\n\
          1267650600228229401496703205376|-1267650600228229401496703205377|\
          1267650600228229401496703205377|0|0\n\
-         -2|255|0|ok 16|negative shift count\n",
+         -2|255|0|ok 16|negative shift count|shift count exceeds the 16777216 bit limit|shift count exceeds the 16777216 bit limit\n",
         "wasm-gc Bits results must match the VM verbatim"
     );
     assert!(

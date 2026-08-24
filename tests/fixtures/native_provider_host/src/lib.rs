@@ -20,7 +20,7 @@ pub const MODES_CONTRACT_HASH: &str =
 pub const PURE_PROBE_CONTRACT_HASH: &str =
     "sha256:842c8dcaef4ca39100285d8866c78b2848fdc10d0819c4def11a5fb018320120";
 pub const TIME_CONTRACT_HASH: &str =
-    "sha256:c7bd82159c4e5922771531cbf583bf6ff74a85dbb5c2c362d1e3b156c5720a49";
+    "sha256:e80d264b61f2808b4db4d765ded0d3db1a9a019c814d27686ef7e71bc4c208af";
 
 pub struct ClockProvider {
     calls: Arc<AtomicUsize>,
@@ -219,7 +219,7 @@ impl CapabilityProvider for FixedTimeProvider {
         match context.operation.as_str() {
             "Time.now" => Ok(ProviderValue::String("fixed-time".to_string())),
             "Time.unixMs" => Ok(ProviderValue::Int(0.into())),
-            "Time.sleep" => Ok(ProviderValue::Unit),
+            "Time.sleep" => Ok(ProviderValue::ResultOk(Box::new(ProviderValue::Unit))),
             other => Err(ProviderFault::new("bad_call", other)),
         }
     }

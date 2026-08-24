@@ -25,12 +25,13 @@
 /// `Bits.low(shifted, 25)` instead of an opaque `Bits.and(shifted, 33554431)`.
 /// `Int` arithmetic itself still never overflows or wraps.
 ///
-/// A negative shift count or width is refused with `Result.Err`. It never
-/// panics, never reverses direction, never clamps, and never inherits the
-/// host language's behaviour for oversized counts. When the count is a
-/// syntactic non-negative integer literal the typechecker discharges the
-/// error and the call types as plain `Int` — exactly the rule `Int.div` /
-/// `Int.mod` already use for a literal divisor (see
+/// A negative shift count or width, or one above the shared 16,777,216-bit
+/// materialization bound, is refused with `Result.Err`. It never panics,
+/// reverses direction, clamps, or inherits a host-sized allocation limit.
+/// When the count is a syntactic non-negative integer literal within that
+/// bound, the typechecker discharges the error and the call types as plain
+/// `Int` — exactly the rule `Int.div` / `Int.mod` already use for a literal
+/// divisor (see
 /// `is_literal_nonneg_int_count` in `src/ast`).
 ///
 /// No effects required.
@@ -47,6 +48,11 @@ pub const NEGATIVE_SHIFT: &str = "negative shift count";
 
 /// The `Result.Err` payload for a negative bit width.
 pub const NEGATIVE_WIDTH: &str = "negative bit width";
+
+/// Oversized count/width messages. The numeric limit is part of the public
+/// error contract and is shared with every backend.
+pub const SHIFT_TOO_LARGE: &str = "shift count exceeds the 16777216 bit limit";
+pub const WIDTH_TOO_LARGE: &str = "bit width exceeds the 16777216 bit limit";
 
 /// Returns `Some(result)` when `name` is owned by this namespace, `None` otherwise.
 pub fn call_nv(
@@ -148,9 +154,14 @@ fn counted_nv(
             let inner = NanValue::new_string_value(negative_message, arena);
             Ok(NanValue::new_err_value(inner, arena))
         }
-        Err(ShiftCountError::Unrepresentable) => Err(RuntimeError::Error(format!(
-            "{}: count {} is too large to name a bit position",
-            name, n
-        ))),
+        Err(ShiftCountError::TooLarge) => {
+            let message = if name == "Bits.low" {
+                WIDTH_TOO_LARGE
+            } else {
+                SHIFT_TOO_LARGE
+            };
+            let inner = NanValue::new_string_value(message, arena);
+            Ok(NanValue::new_err_value(inner, arena))
+        }
     }
 }

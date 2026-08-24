@@ -545,8 +545,10 @@ impl ProgramCompiler {
         Ok(())
     }
 
-    /// Load all modules from `depends [...]` declarations using the shared loader,
-    /// then compile each module's functions and register symbols.
+    /// Load every module already present in the program-wide symbol table,
+    /// then compile its functions and register symbols. This includes both
+    /// written `depends [...]` edges and implicit standard-library edges owned
+    /// by source-typed builtins such as `String.toUtf8`.
     fn load_modules(
         &mut self,
         items: &[ResolvedTopLevel],
@@ -563,7 +565,18 @@ impl ProgramCompiler {
             None => return Ok(()),
         };
 
-        let modules = crate::source::load_module_tree(&module.depends, module_root)
+        let mut root_deps = module.depends.clone();
+        for dependency in entry_symbols
+            .modules
+            .iter()
+            .filter_map(|entry| entry.prefix.as_ref())
+        {
+            if !root_deps.contains(dependency) {
+                root_deps.push(dependency.clone());
+            }
+        }
+
+        let modules = crate::source::load_module_tree(&root_deps, module_root)
             .map_err(|e| CompileError { msg: e })?;
 
         for loaded in modules {

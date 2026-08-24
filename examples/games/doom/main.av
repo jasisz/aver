@@ -30,6 +30,18 @@ fn turnSpeed() -> Float
 verify turnSpeed
     turnSpeed() => 0.14
 
+fn sleepOrReport(ms: Int) -> Unit
+    ? "Delay one frame, reporting an invalid host duration while allowing the terminal teardown path to continue."
+    ! [Console.print, Time.sleep]
+    match Time.sleep(ms)
+        Result.Ok(_) -> Unit
+        Result.Err(message) -> Console.print("Time.sleep failed: {message}")
+
+fn randomOrMin(min: Int, max: Int) -> Int
+    ? "Draw a random value, using the lower bound if the host rejects the requested range."
+    ! [Random.int]
+    Result.withDefault(Random.int(min, max), min)
+
 fn spawnInRoom(room: Level.Room, seed: Int) -> Enemy
     ? "Spawn an enemy at the center of a room"
     kind = pickKind(seed)
@@ -255,10 +267,10 @@ fn gameOverScreen(state: GameState) -> Unit
         Time.sleep,
     ]
     Terminal.setColor("red")
-    Terminal.moveTo(25, 10)
+    Render.moveToOrReport(25, 10)
     Terminal.print("YOU DIED")
     Terminal.setColor("white")
-    Terminal.moveTo(20, 12)
+    Render.moveToOrReport(20, 12)
     Terminal.print("Press X to quit")
     Terminal.resetColor()
     Terminal.flush()
@@ -287,7 +299,7 @@ fn waitForQuitSleep() -> Unit
         Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor,
         Time.sleep,
     ]
-    Time.sleep(16)
+    sleepOrReport(16)
     waitForQuit()
 
 fn waitAndProcess(state: GameState) -> Unit
@@ -310,7 +322,7 @@ fn waitAfterNone(state: GameState) -> Unit
         Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor,
         Time.sleep,
     ]
-    Time.sleep(16)
+    sleepOrReport(16)
     waitAndProcess(state)
 
 fn dispatch(state: GameState, key: String) -> Unit
@@ -334,7 +346,7 @@ fn cleanup() -> Unit
     Terminal.disableRawMode()
     Terminal.showCursor()
     Terminal.clear()
-    Terminal.moveTo(0, 0)
+    Render.moveToOrReport(0, 0)
     Terminal.resetColor()
     Terminal.print("Thanks for playing Braille Doom!\n")
     Terminal.flush()
@@ -349,5 +361,5 @@ fn main() -> Unit
     Terminal.enableRawMode()
     Terminal.hideCursor()
     Terminal.clear()
-    seed = Random.int(1, 999999)
+    seed = randomOrMin(1, 999999)
     gameLoop(initGame(seed))

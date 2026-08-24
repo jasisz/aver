@@ -152,7 +152,7 @@ fn readBytesNormalOk(branch: BranchPath, call: Int, connection: Tcp.Connection, 
                 true -> Result.Err("Tcp.readBytes: count {count} is negative")
                 false -> match count > 10485760
                     true -> Result.Err("Tcp.readBytes: count {count} exceeds the 10485760 byte limit")
-                    false -> Bytes.fromList(List.fromVector(Vector.new(count, 0)))
+                    false -> Bytes.fromList(List.fromVector(Vector.new(count, 0)?))
 
 fn readBytesShortRead(branch: BranchPath, call: Int, connection: Tcp.Connection, count: Int) -> Result<Bytes, String>
     ? "hostile: peer goes away in the middle of a frame"

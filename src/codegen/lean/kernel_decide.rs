@@ -620,16 +620,10 @@ enum PanicCapability {
     /// but only at indices the definition itself fixes — no argument a
     /// program can supply moves them out of bounds.
     UnreachableByConstruction,
-    /// Reaches `panic!` on an input a program can supply. NOT kernel-eligible:
-    /// Lean's `panic!` returns `default` and, under kernel reduction, does so
-    /// with no diagnostic at all, so the case can prove `default = <literal>`
-    /// whenever the two coincide.
-    Reachable,
     /// Narrows an argument the VM REJECTED into one it accepts, so the model
     /// evaluates a branch the VM never took. NOT kernel-eligible: the values
     /// then have no VM ground truth behind them, and the branch can reach
-    /// another builtin's `panic!` — which is how `Vector.get(v, -1)` ends up
-    /// defaulting `Char.toCode ""` to `0`.
+    /// another builtin's `panic!`.
     NarrowsPastVm,
 }
 
@@ -637,7 +631,7 @@ impl PanicCapability {
     fn is_kernel_safe(self) -> bool {
         match self {
             PanicCapability::Total | PanicCapability::UnreachableByConstruction => true,
-            PanicCapability::Reachable | PanicCapability::NarrowsPastVm => false,
+            PanicCapability::NarrowsPastVm => false,
         }
     }
 }
@@ -651,13 +645,6 @@ fn builtin_panic_capability(builtin: Builtin) -> PanicCapability {
     use Builtin::*;
     use PanicCapability::*;
     match builtin {
-        // `Char.toCode` (prelude `LEAN_PRELUDE_CHAR_CODE`) is
-        //   `match s.toList.head? with … | none => panic! "…: string is empty"`.
-        // The empty string reaches it, and the panic defaults to `0` — equal
-        // to the VM's answer for plenty of neighbouring inputs, and equal to
-        // nothing the VM ever returns here (the VM raises a RuntimeError).
-        CharToCode => Reachable,
-
         // `Vector.get` lowers to `arr[Int.toNat i]?`. `Int.toNat` maps EVERY
         // negative index to `0`, so a negative index reads element 0 in the
         // model while the VM (`types/vector.rs`, `idx.to_usize()` → `None`)
@@ -672,8 +659,8 @@ fn builtin_panic_capability(builtin: Builtin) -> PanicCapability {
         VectorSet => NarrowsPastVm,
         // `Vector.new` lowers its `Int` size through `Int.toNat`. Negative
         // sizes therefore become an empty model array, while the VM rejects
-        // them; values beyond the host's machine-sized range are rejected by
-        // the VM too. The lowering builds and is useful under explicit source
+        // them; values outside the portable `u32` range are rejected by the
+        // VM too. The lowering builds and is useful under explicit source
         // guards, but an unrestricted claim cannot use kernel evaluation.
         VectorNew => NarrowsPastVm,
 
@@ -699,11 +686,12 @@ fn builtin_panic_capability(builtin: Builtin) -> PanicCapability {
         // `String.sliceAv` clamps both bounds with `if x < 0 then 0 else …`,
         // and `runtime::string_slice` clamps to `[0, len]` the same way.
         StringSlice => Total,
-        // `String.charAtAv` and `Char.fromCode` GUARD their conversions
+        // The String code-point helpers guard absence/invalid scalar values
+        // with Option, and their numeric conversions are exact in-domain.
         // (`if i < 0 then none`, `if n < 0 || n > 1114111 then none`), so the
         // `.toNat` is only reached where it is exact — matching the VM's
         // `to_usize()` / `to_u32()` `None`s.
-        StringCharAt | CharFromCode => Total,
+        StringCharAt | StringFirstCodePoint | StringFromCodePoint => Total,
 
         // `AverCrypto.compress` uses `Array.get!` / `Array.set!`, but every
         // index is fixed by the definition: `words` is `Array.replicate 64`
@@ -717,7 +705,7 @@ fn builtin_panic_capability(builtin: Builtin) -> PanicCapability {
         // Plain inductives and their total combinators — `Except.ok/error`,
         // `some`, `Except.withDefault`, `Option.getD`, `Option.toExcept`.
         ResultOk | ResultErr | OptionSome | ResultWithDefault | OptionWithDefault
-        | OptionToResult => Total,
+        | ResultFromOption => Total,
 
         // `Int.natAbs`, `min`/`max`, the zero-guarded `Except`-returning
         // `%`/`/`, and `Int.fromString` (total, `Except`-returning, over the
@@ -743,7 +731,9 @@ fn builtin_panic_capability(builtin: Builtin) -> PanicCapability {
         // unguarded narrowing.
         StringLen | StringChars | StringContains | StringStartsWith | StringEndsWith
         | StringTrim | StringSplit | StringJoin | StringReplace | StringToUpper | StringToLower
-        | StringFromInt | StringFromFloat | StringByteLength => Total,
+        | StringFromInt | StringFromFloat | StringByteLength | StringToUtf8 | StringFromUtf8 => {
+            Total
+        }
         // No prelude definition exists for this one, so nothing can panic;
         // the kernel table below declines it for that same reason.
         StringFromBool => Total,
@@ -780,7 +770,7 @@ fn builtin_reduces_in_kernel(builtin: Builtin) -> bool {
     match builtin {
         // Result / Option — plain inductives.
         ResultOk | ResultErr | OptionSome | ResultWithDefault | OptionWithDefault
-        | OptionToResult => true,
+        | ResultFromOption => true,
 
         // Int — literals and arithmetic have kernel GMP acceleration.
         IntAbs | IntFromString | IntMin | IntMax | IntMod | IntDiv => true,
@@ -799,7 +789,7 @@ fn builtin_reduces_in_kernel(builtin: Builtin) -> bool {
         // concrete strings.
         StringLen | StringCharAt | StringChars | StringSlice | StringStartsWith
         | StringEndsWith | StringSplit | StringJoin | StringToUpper | StringToLower
-        | StringFromInt | StringByteLength => true,
+        | StringFromInt | StringByteLength | StringToUtf8 | StringFromUtf8 => true,
         // Probed stuck on Lean 4.32: `containsSubstr` goes through
         // `String.Slice` iteration, `trim`/`replace` through `String.Pos`
         // arithmetic — the kernel does not get these to `isTrue`/`isFalse`.
@@ -816,9 +806,7 @@ fn builtin_reduces_in_kernel(builtin: Builtin) -> bool {
         // Probed on Lean 4.32 against every case in the specification.
         BitsAnd | BitsOr | BitsXor | BitsNot | BitsShiftLeft | BitsShiftRight | BitsLow => true,
 
-        // Both reduce; `Char.toCode` is nevertheless declined, by the
-        // faithfulness table (its `panic!` arm).
-        CharToCode | CharFromCode => true,
+        StringFirstCodePoint | StringFromCodePoint => true,
 
         // The exported SHA-256 model is total and axiom-free (it folds over a
         // computed block count instead of a kernel-opaque `while`), so a

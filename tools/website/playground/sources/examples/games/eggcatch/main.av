@@ -12,7 +12,7 @@ module Main
     depends [Core]
     effects [Args, Console, Terminal, Time]
 
-fn main() -> Unit
+fn main() -> Result<Unit, String>
     ? "Entry point: dispatch on CLI arguments (interactive play or file replay)."
     ! [
         Args.get,
@@ -22,7 +22,7 @@ fn main() -> Unit
     ]
     dispatch(Args.get())
 
-fn dispatch(args: List<String>) -> Unit
+fn dispatch(args: List<String>) -> Result<Unit, String>
     ? "Route CLI args. No args or `<seed> [mode]` starts interactive play;"
       "`replay <seed> <mode> <path>` folds recorded keys through the pure engine."
     ! [
@@ -34,7 +34,7 @@ fn dispatch(args: List<String>) -> Unit
         [] -> runInteractive(1, Core.Mode.ModeA)
         [head, ..rest] -> dispatchHead(head, rest)
 
-fn dispatchHead(head: String, rest: List<String>) -> Unit
+fn dispatchHead(head: String, rest: List<String>) -> Result<Unit, String>
     ? "First argument selects the command: `replay` reads a file, anything else"
       "is treated as the seed for interactive play."
     ! [
@@ -43,10 +43,10 @@ fn dispatchHead(head: String, rest: List<String>) -> Unit
         Time.sleep,
     ]
     match head
-        "replay" -> Console.print("Use the toolchain instead: `aver run --record` captures a run and `aver replay` re-plays it deterministically; the engine-level property (replay = a left fold of the pure `step`) is Core.replay with its proven leftFold law.")
+        "replay" -> Result.Ok(Console.print("Use the toolchain instead: `aver run --record` captures a run and `aver replay` re-plays it deterministically; the engine-level property (replay = a left fold of the pure `step`) is Core.replay with its proven leftFold law."))
         _ -> dispatchPlay(head, rest)
 
-fn dispatchPlay(seedStr: String, rest: List<String>) -> Unit
+fn dispatchPlay(seedStr: String, rest: List<String>) -> Result<Unit, String>
     ? "Interactive play: seed from the first arg, mode from the second if present."
     ! [
         Console.print,
@@ -57,7 +57,7 @@ fn dispatchPlay(seedStr: String, rest: List<String>) -> Unit
         [] -> runInteractive(Core.parseSeed(seedStr), Core.Mode.ModeA)
         [modeStr, ..more] -> runInteractive(Core.parseSeed(seedStr), Core.parseMode(modeStr))
 
-fn runInteractive(seed: Int, mode: Core.Mode) -> Unit
+fn runInteractive(seed: Int, mode: Core.Mode) -> Result<Unit, String>
     ? "Set the terminal to raw mode, run the tick loop to game over, restore."
     ! [
         Console.print,
@@ -66,24 +66,25 @@ fn runInteractive(seed: Int, mode: Core.Mode) -> Unit
     ]
     Terminal.enableRawMode()
     Terminal.hideCursor()
-    result = loop(Core.initialState(seed, mode))
+    result = loop(Core.initialState(seed, mode))?
     Terminal.showCursor()
     Terminal.disableRawMode()
     Terminal.clear()
     Console.print("Game over — final score: {String.fromInt(Core.finalScore(result))}")
+    Result.Ok(Unit)
 
-fn loop(gs: Core.GameState) -> Core.GameState
+fn loop(gs: Core.GameState) -> Result<Core.GameState, String>
     ? "Draw the frame; stop at game over, otherwise wait one tick and advance."
     ! [
         Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.readKey,
         Time.sleep,
     ]
-    draw(gs)
+    draw(gs)?
     match Core.isOver(gs)
-        true -> gs
+        true -> Result.Ok(gs)
         false -> advance(gs)
 
-fn advance(gs: Core.GameState) -> Core.GameState
+fn advance(gs: Core.GameState) -> Result<Core.GameState, String>
     ? "One world tick, sliced: keys are polled every ~33ms and move the fox"
       "instantly (with a redraw), while the egg world advances only when the"
       "state's full tempo has elapsed. Splitting the two clocks is what makes"
@@ -94,7 +95,7 @@ fn advance(gs: Core.GameState) -> Core.GameState
     ]
     pollSlices(gs, Int.div(Core.tickDelay(gs), 33))
 
-fn pollSlices(gs: Core.GameState, left: Int) -> Core.GameState
+fn pollSlices(gs: Core.GameState, left: Int) -> Result<Core.GameState, String>
     ? "Poll-and-apply loop between world ticks: sleep one slice, apply any"
       "pressed key without ticking, redraw; when the slices run out, advance"
       "the world one tick and continue. Esc quits."
@@ -106,7 +107,7 @@ fn pollSlices(gs: Core.GameState, left: Int) -> Core.GameState
         true -> loop(Core.step(gs, Core.Input.Tick))
         false -> pollOne(gs, left, keyString(Terminal.readKey()))
 
-fn pollOne(gs: Core.GameState, left: Int, key: String) -> Core.GameState
+fn pollOne(gs: Core.GameState, left: Int, key: String) -> Result<Core.GameState, String>
     ? "Handle one polled key: esc quits, no key just sleeps the slice, a game"
       "key moves the fox instantly and redraws before the world catches up."
     ! [
@@ -114,11 +115,11 @@ fn pollOne(gs: Core.GameState, left: Int, key: String) -> Core.GameState
         Time.sleep,
     ]
     match key
-        "esc" -> gs
+        "esc" -> Result.Ok(gs)
         "" -> sleepSlice(gs, left)
         _ -> applyAndRedraw(Core.applyToState(gs, Core.keyToInput(key)), left)
 
-fn sleepSlice(gs: Core.GameState, left: Int) -> Core.GameState
+fn sleepSlice(gs: Core.GameState, left: Int) -> Result<Core.GameState, String>
     ? "Sleep one 33ms slice and keep polling."
     ! [
         Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.readKey,
@@ -127,14 +128,14 @@ fn sleepSlice(gs: Core.GameState, left: Int) -> Core.GameState
     Time.sleep(33)
     pollSlices(gs, left - 1)
 
-fn applyAndRedraw(gs: Core.GameState, left: Int) -> Core.GameState
+fn applyAndRedraw(gs: Core.GameState, left: Int) -> Result<Core.GameState, String>
     ? "The fox moved between ticks: show it immediately, then keep polling"
       "the remaining slices of this world tick."
     ! [
         Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.readKey,
         Time.sleep,
     ]
-    draw(gs)
+    draw(gs)?
     pollSlices(gs, left - 1)
 
 fn keyString(k: Option<String>) -> String
@@ -147,23 +148,24 @@ verify keyString
     keyString(Option.Some("q")) => "q"
     keyString(Option.None) => ""
 
-fn draw(gs: Core.GameState) -> Unit
+fn draw(gs: Core.GameState) -> Result<Unit, String>
     ? "Clear and paint the fixed-size frame, one Core.render row per terminal row."
     ! [Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print]
     Terminal.clear()
-    drawRows(String.split(Core.render(gs), "\n"), 0)
+    drawRows(String.split(Core.render(gs), "\n"), 0)?
     Terminal.flush()
+    Result.Ok(Unit)
 
-fn drawRows(rows: List<String>, y: Int) -> Unit
+fn drawRows(rows: List<String>, y: Int) -> Result<Unit, String>
     ? "Paint each rendered row at its own terminal line."
     ! [Terminal.moveTo, Terminal.print]
     match rows
-        [] -> Unit
+        [] -> Result.Ok(Unit)
         [row, ..rest] -> drawRow(row, rest, y)
 
-fn drawRow(row: String, rest: List<String>, y: Int) -> Unit
+fn drawRow(row: String, rest: List<String>, y: Int) -> Result<Unit, String>
     ? "Paint one row at column 0, line y, then continue with the rest."
     ! [Terminal.moveTo, Terminal.print]
-    Terminal.moveTo(0, y)
+    Terminal.moveTo(0, y)?
     Terminal.print(row)
     drawRows(rest, y + 1)

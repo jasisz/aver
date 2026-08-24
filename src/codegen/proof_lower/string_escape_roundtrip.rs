@@ -35,7 +35,7 @@ use crate::ir::{EscapePairSpec, StringEscapeRoundtripPin};
 ///                           Some(cp) -> codepoint(s, p+4, e, ch, cp) }
 /// codepoint(…, cp)   = match hi(cp) { true -> _, false ->
 ///                        match lo(cp) { true -> _, false -> apply(s, p, e, ch, cp) } }
-/// apply(s, p, e, ch, cp) = match Char.fromCode(cp) { None -> _,
+/// apply(s, p, e, ch, cp) = match String.fromCodePoint(cp) { None -> _,
 ///                           Some(c2) -> scan(s, p, p, concat(ch, [c2])) }
 /// readHex(s, p, a, n)   = match n == 4 { true -> Some(a), false ->
 ///                        match charAt(s, p) { None -> _, Some(c) ->
@@ -128,6 +128,20 @@ pub(super) fn detect_string_escape_roundtrip(
     }
     fn is_int_lit(e: &Spanned<Expr>, v: i64) -> bool {
         matches!(&e.node, Expr::Literal(Literal::Int(n)) if *n == v)
+    }
+    fn is_first_code_point_or_zero(e: &Spanned<Expr>, text_name: &str) -> bool {
+        let Some((callee, args)) = call_of(e) else {
+            return false;
+        };
+        if callee != "Option.withDefault" || args.len() != 2 || !is_int_lit(&args[1], 0) {
+            return false;
+        }
+        let Some((inner, inner_args)) = call_of(&args[0]) else {
+            return false;
+        };
+        inner == "String.firstCodePoint"
+            && inner_args.len() == 1
+            && is_ident(&inner_args[0], text_name)
     }
     fn is_plus_lit(e: &Spanned<Expr>, name: &str, v: i64) -> bool {
         matches!(&e.node, Expr::BinOp(crate::ast::BinOp::Add, l, r)
@@ -445,10 +459,7 @@ pub(super) fn detect_string_escape_roundtrip(
         let Expr::Literal(Literal::Int(threshold)) = &t_lit.node else {
             return None;
         };
-        {
-            let (callee, args) = call_of(code_call)?;
-            (callee == "Char.toCode" && args.len() == 1 && is_ident(&args[0], v_c)).then_some(())?;
-        }
+        is_first_code_point_or_zero(code_call, v_c).then_some(())?;
         let (_, false_body) = bool_match(arms)?;
         let (callee, args) = call_of(false_body)?;
         (callee == scan_name
@@ -636,7 +647,8 @@ pub(super) fn detect_string_escape_roundtrip(
         );
         let (subject, arms) = single_match(apply_fd)?;
         let (callee, args) = call_of(subject)?;
-        (callee == "Char.fromCode" && args.len() == 1 && is_ident(&args[0], a_cp)).then_some(())?;
+        (callee == "String.fromCodePoint" && args.len() == 1 && is_ident(&args[0], a_cp))
+            .then_some(())?;
         if arms.len() != 2 {
             return None;
         }
@@ -859,11 +871,7 @@ pub(super) fn detect_string_escape_roundtrip(
         else {
             return None;
         };
-        {
-            let (callee, args) = call_of(code_expr)?;
-            (callee == "Char.toCode" && args.len() == 1 && is_ident(&args[0], c_param))
-                .then_some(())?;
-        }
+        is_first_code_point_or_zero(code_expr, c_param).then_some(())?;
         // Walk the equality ladder.
         let mut cursor = ladder;
         loop {

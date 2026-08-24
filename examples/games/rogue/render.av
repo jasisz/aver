@@ -18,15 +18,16 @@ verify tileColor
     tileColor(Tile.StairsDown) => "cyan"
     tileColor(Tile.Door) => "yellow"
 
-fn drawChar(x: Int, y: Int, ch: String, color: String) -> Unit
+fn drawChar(x: Int, y: Int, ch: String, color: String) -> Result<Unit, String>
     ? "Print a colored character at terminal position (x, y)"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    Terminal.moveTo(x, y)
+    Terminal.moveTo(x, y)?
     Terminal.setColor(color)
     Terminal.print(ch)
     Terminal.resetColor()
+    Result.Ok(Unit)
 
-fn renderTile(x: Int, y: Int, tile: Tile, visible: Bool, isRemembered: Bool) -> Unit
+fn renderTile(x: Int, y: Int, tile: Tile, visible: Bool, isRemembered: Bool) -> Result<Unit, String>
     ? "Render one tile based on visibility: visible in color, remembered dim, unseen blank"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     match visible
@@ -39,7 +40,7 @@ fn renderTile(x: Int, y: Int, tile: Tile, visible: Bool, isRemembered: Bool) -> 
                 _ -> drawChar(x, y, " ", "black")
             false -> drawChar(x, y, " ", "black")
 
-fn renderPlayer(player: Player) -> Unit
+fn renderPlayer(player: Player) -> Result<Unit, String>
     ? "Draw the player as @ in white at their position"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     drawChar(player.pos.x, player.pos.y, "@", "yellow")
@@ -57,51 +58,51 @@ verify isVisible
     isVisible([[true, false], [false, true]], 1, 0) => false
     isVisible([], 0, 0) => false
 
-fn renderEntity(entity: Entity, visGrid: List<List<Bool>>) -> Unit
+fn renderEntity(entity: Entity, visGrid: List<List<Bool>>) -> Result<Unit, String>
     ? "Draw an entity with its glyph and color if it is visible"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     match isVisible(visGrid, entity.pos.x, entity.pos.y)
         true -> drawChar(entity.pos.x, entity.pos.y, Types.entityGlyph(entity.kind), Types.entityColor(entity.kind))
         false -> drawChar(0, 0, "", "black")
 
-fn renderEntities(entities: List<Entity>, visGrid: List<List<Bool>>, i: Int) -> Unit
+fn renderEntities(entities: List<Entity>, visGrid: List<List<Bool>>, i: Int) -> Result<Unit, String>
     ? "Draw all entities that are visible"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     match Vector.get(Vector.fromList(entities), i)
         Option.None -> drawChar(0, 0, "", "black")
         Option.Some(e) -> renderEntity(e, visGrid)
 
-fn renderEntitiesNext(entities: List<Entity>, visGrid: List<List<Bool>>, i: Int) -> Unit
+fn renderEntitiesNext(entities: List<Entity>, visGrid: List<List<Bool>>, i: Int) -> Result<Unit, String>
     ? "Render entity at index i then continue to the rest"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     match Vector.get(Vector.fromList(entities), i)
         Option.None -> drawChar(0, 0, "", "black")
         Option.Some(e) -> renderEntityAndContinue(e, entities, visGrid, i)
 
-fn renderEntityAndContinue(entity: Entity, entities: List<Entity>, visGrid: List<List<Bool>>, i: Int) -> Unit
+fn renderEntityAndContinue(entity: Entity, entities: List<Entity>, visGrid: List<List<Bool>>, i: Int) -> Result<Unit, String>
     ? "Render one entity and recurse to next"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    renderEntity(entity, visGrid)
+    renderEntity(entity, visGrid)?
     renderEntitiesNext(entities, visGrid, i + 1)
 
-fn renderItem(item: Item, visGrid: List<List<Bool>>) -> Unit
+fn renderItem(item: Item, visGrid: List<List<Bool>>) -> Result<Unit, String>
     ? "Draw an item with its glyph and color if it is visible"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     match isVisible(visGrid, item.pos.x, item.pos.y)
         true -> drawChar(item.pos.x, item.pos.y, Types.itemGlyph(item.kind), Types.itemColor(item.kind))
         false -> drawChar(0, 0, "", "black")
 
-fn renderItemsNext(items: List<Item>, visGrid: List<List<Bool>>, i: Int) -> Unit
+fn renderItemsNext(items: List<Item>, visGrid: List<List<Bool>>, i: Int) -> Result<Unit, String>
     ? "Render item at index i then continue to the rest"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     match Vector.get(Vector.fromList(items), i)
         Option.None -> drawChar(0, 0, "", "black")
         Option.Some(item) -> renderItemAndContinue(item, items, visGrid, i)
 
-fn renderItemAndContinue(item: Item, items: List<Item>, visGrid: List<List<Bool>>, i: Int) -> Unit
+fn renderItemAndContinue(item: Item, items: List<Item>, visGrid: List<List<Bool>>, i: Int) -> Result<Unit, String>
     ? "Render one item and recurse to next"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    renderItem(item, visGrid)
+    renderItem(item, visGrid)?
     renderItemsNext(items, visGrid, i + 1)
 
 fn getRemembered(remembered: List<List<Bool>>, x: Int, y: Int) -> Bool
@@ -118,7 +119,7 @@ verify getRemembered
     getRemembered([[true, false], [false, true]], 1, 1) => true
     getRemembered([], 0, 0) => false
 
-fn renderTileCol(map: List<List<Tile>>, visGrid: List<List<Bool>>, remembered: List<List<Bool>>, x: Int, y: Int) -> Unit
+fn renderTileCol(map: List<List<Tile>>, visGrid: List<List<Bool>>, remembered: List<List<Bool>>, x: Int, y: Int) -> Result<Unit, String>
     ? "Render one tile at column x, row y"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     tile = Map.getT(map, x, y)
@@ -126,30 +127,30 @@ fn renderTileCol(map: List<List<Tile>>, visGrid: List<List<Bool>>, remembered: L
     isRem = getRemembered(remembered, x, y)
     renderTile(x, y, tile, isVis, isRem)
 
-fn renderMapRow(map: List<List<Tile>>, visGrid: List<List<Bool>>, remembered: List<List<Bool>>, x: Int, y: Int) -> Unit
+fn renderMapRow(map: List<List<Tile>>, visGrid: List<List<Bool>>, remembered: List<List<Bool>>, x: Int, y: Int) -> Result<Unit, String>
     ? "Render all tiles in row y from column x to mapW"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     match x == Map.mapW()
         true -> drawChar(0, 0, "", "black")
         false -> renderTileAndNextCol(map, visGrid, remembered, x, y)
 
-fn renderTileAndNextCol(map: List<List<Tile>>, visGrid: List<List<Bool>>, remembered: List<List<Bool>>, x: Int, y: Int) -> Unit
+fn renderTileAndNextCol(map: List<List<Tile>>, visGrid: List<List<Bool>>, remembered: List<List<Bool>>, x: Int, y: Int) -> Result<Unit, String>
     ? "Render tile at (x,y) then continue to next column"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    renderTileCol(map, visGrid, remembered, x, y)
+    renderTileCol(map, visGrid, remembered, x, y)?
     renderMapRow(map, visGrid, remembered, x + 1, y)
 
-fn renderMapRows(map: List<List<Tile>>, visGrid: List<List<Bool>>, remembered: List<List<Bool>>, y: Int) -> Unit
+fn renderMapRows(map: List<List<Tile>>, visGrid: List<List<Bool>>, remembered: List<List<Bool>>, y: Int) -> Result<Unit, String>
     ? "Render all map rows from y to mapH"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     match y == Map.mapH()
         true -> drawChar(0, 0, "", "black")
         false -> renderRowAndNext(map, visGrid, remembered, y)
 
-fn renderRowAndNext(map: List<List<Tile>>, visGrid: List<List<Bool>>, remembered: List<List<Bool>>, y: Int) -> Unit
+fn renderRowAndNext(map: List<List<Tile>>, visGrid: List<List<Bool>>, remembered: List<List<Bool>>, y: Int) -> Result<Unit, String>
     ? "Render row y then continue to next row"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    renderMapRow(map, visGrid, remembered, 0, y)
+    renderMapRow(map, visGrid, remembered, 0, y)?
     renderMapRows(map, visGrid, remembered, y + 1)
 
 fn intToStr(n: Int) -> String
@@ -160,59 +161,60 @@ verify intToStr
     intToStr(42) => "42"
     intToStr(0) => "0"
 
-fn renderHudLine(col: Int, row: Int, label: String, color: String) -> Unit
+fn renderHudLine(col: Int, row: Int, label: String, color: String) -> Result<Unit, String>
     ? "Print a HUD label at the given column and row"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    Terminal.moveTo(col, row)
+    Terminal.moveTo(col, row)?
     Terminal.setColor(color)
     Terminal.print(label)
     Terminal.resetColor()
+    Result.Ok(Unit)
 
-fn renderHud(player: Player, messages: List<String>) -> Unit
+fn renderHud(player: Player, messages: List<String>) -> Result<Unit, String>
     ? "Draw the status HUD on the right side (column 55+) and message log at bottom"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    renderHudLine(55, 1, "@ You (the Averist)", "white")
-    renderHudLine(55, 3, "HP: {player.hp}/{player.maxHp}", "red")
-    renderHudLine(55, 5, "ATK: {player.attack}", "yellow")
-    renderHudLine(55, 7, "DEF: {player.defense}", "cyan")
-    renderHudLine(55, 9, "Floor: {player.floor}", "green")
-    renderHudLine(55, 11, "EXP: {player.exp}", "magenta")
-    renderHudLine(55, 14, "? Wild if/else", "yellow")
-    renderHudLine(55, 15, "∞ Feral for-loop", "red")
-    renderHudLine(55, 16, "∅ The Null", "magenta")
-    renderHudLine(55, 18, "♥ Potion of Purity", "red")
-    renderHudLine(55, 19, "⚡ Scroll of Match", "cyan")
-    renderHudLine(55, 20, "◆ Shield of Immut.", "blue")
-    renderHudLine(55, 22, "> Stairs down", "cyan")
-    renderHudLine(55, 24, "←→↑↓ Move/Attack", "white")
-    renderHudLine(55, 25, ">    Descend stairs", "white")
-    renderHudLine(55, 26, "Q    Quit", "white")
+    renderHudLine(55, 1, "@ You (the Averist)", "white")?
+    renderHudLine(55, 3, "HP: {player.hp}/{player.maxHp}", "red")?
+    renderHudLine(55, 5, "ATK: {player.attack}", "yellow")?
+    renderHudLine(55, 7, "DEF: {player.defense}", "cyan")?
+    renderHudLine(55, 9, "Floor: {player.floor}", "green")?
+    renderHudLine(55, 11, "EXP: {player.exp}", "magenta")?
+    renderHudLine(55, 14, "? Wild if/else", "yellow")?
+    renderHudLine(55, 15, "∞ Feral for-loop", "red")?
+    renderHudLine(55, 16, "∅ The Null", "magenta")?
+    renderHudLine(55, 18, "♥ Potion of Purity", "red")?
+    renderHudLine(55, 19, "⚡ Scroll of Match", "cyan")?
+    renderHudLine(55, 20, "◆ Shield of Immut.", "blue")?
+    renderHudLine(55, 22, "> Stairs down", "cyan")?
+    renderHudLine(55, 24, "←→↑↓ Move/Attack", "white")?
+    renderHudLine(55, 25, ">    Descend stairs", "white")?
+    renderHudLine(55, 26, "Q    Quit", "white")?
     renderMessages(messages, 0)
 
-fn renderMessages(messages: List<String>, i: Int) -> Unit
+fn renderMessages(messages: List<String>, i: Int) -> Result<Unit, String>
     ? "Render up to 3 messages at the bottom of the screen (rows 31-33)"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     match Vector.get(Vector.fromList(messages), i)
         Option.None -> drawChar(0, 0, "", "black")
         Option.Some(msg) -> renderMessageAndNext(msg, messages, i)
 
-fn renderMessageAndNext(msg: String, messages: List<String>, i: Int) -> Unit
+fn renderMessageAndNext(msg: String, messages: List<String>, i: Int) -> Result<Unit, String>
     ? "Render one message line and continue"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     match i < 3
         true -> renderMsgLine(msg, messages, i)
         false -> drawChar(0, 0, "", "black")
 
-fn renderMsgLine(msg: String, messages: List<String>, i: Int) -> Unit
+fn renderMsgLine(msg: String, messages: List<String>, i: Int) -> Result<Unit, String>
     ? "Print a message at the appropriate bottom row"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    renderHudLine(0, 31 + i, msg, "white")
+    renderHudLine(0, 31 + i, msg, "white")?
     renderMessages(messages, i + 1)
 
-fn renderMap(map: List<List<Tile>>, visGrid: List<List<Bool>>, remembered: List<List<Bool>>, entities: List<Entity>, items: List<Item>, player: Player) -> Unit
+fn renderMap(map: List<List<Tile>>, visGrid: List<List<Bool>>, remembered: List<List<Bool>>, entities: List<Entity>, items: List<Item>, player: Player) -> Result<Unit, String>
     ? "Draw map tiles with FOV, items, entities, player (caller is responsible for clear/flush)"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    renderMapRows(map, visGrid, remembered, 0)
-    renderItemsNext(items, visGrid, 0)
-    renderEntitiesNext(entities, visGrid, 0)
+    renderMapRows(map, visGrid, remembered, 0)?
+    renderItemsNext(items, visGrid, 0)?
+    renderEntitiesNext(entities, visGrid, 0)?
     renderPlayer(player)

@@ -135,7 +135,9 @@ fn classify(effect: &str) -> Option<UnsupportedReason> {
     // Time.sleep graduated in Phase 1.4c — the wasip2 codegen now
     // wraps `subscribe-duration` + `poll` + `[resource-drop]pollable`
     // inside `__rt_time_sleep`. The pollable model is hidden in the
-    // helper; source-level Aver still sees `Time.sleep(ms) -> Unit`.
+    // helper; source-level Aver sees `Time.sleep(ms) -> Result<Unit, String>`.
+    // A statically valid literal discharges only that wrapper; the helper and
+    // therefore the real sleep still run.
     // ---------- Out of 0.18 release scope ----------
     // All wasi:http verbs graduated in 0.19: GET in Phase 2.0,
     // HEAD/DELETE in Phase 2.J (share pipeline via set-method),

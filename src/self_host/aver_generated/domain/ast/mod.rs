@@ -2138,7 +2138,7 @@ pub enum FnFastPath {
     FastNone,
     FastSingleExpr,
     FastLeaf(FastLeaf),
-    FastForwardCall(aver_rt::AverInt, aver_rt::AverList<aver_rt::AverInt>),
+    FastForwardCall(aver_rt::AverInt, aver_rt::AverIntList),
     FastBoolSlotBranch(aver_rt::AverInt, FastLeaf, FastLeaf),
     FastEqIntBranch(aver_rt::AverInt, aver_rt::AverInt, FastLeaf, FastLeaf),
     FastEqStringBranch(aver_rt::AverInt, AverStr, FastLeaf, FastLeaf),
@@ -2391,7 +2391,7 @@ impl aver_replay::ReplayValue for FnFastPath {
                         .get(0)
                         .ok_or_else(|| format!("$variant FastForwardCall missing field #{}", 0))?,
                 )?,
-                <aver_rt::AverList<aver_rt::AverInt> as ReplayValue>::from_replay_json(
+                <aver_rt::AverIntList as ReplayValue>::from_replay_json(
                     fields
                         .get(1)
                         .ok_or_else(|| format!("$variant FastForwardCall missing field #{}", 1))?,
@@ -2709,6 +2709,35 @@ pub enum BinOp {
     OpDiv,
 }
 
+impl BinOp {
+    fn aver_key_rank(&self) -> usize {
+        match self {
+            BinOp::OpAdd => 0,
+            BinOp::OpDiv => 1,
+            BinOp::OpMul => 2,
+            BinOp::OpSub => 3,
+        }
+    }
+}
+
+impl PartialOrd for BinOp {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for BinOp {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        let rank = self.aver_key_rank().cmp(&other.aver_key_rank());
+        if rank != std::cmp::Ordering::Equal {
+            return rank;
+        }
+        match (self, other) {
+            _ => std::cmp::Ordering::Equal,
+        }
+    }
+}
+
 impl aver_rt::AverDisplay for BinOp {
     fn aver_display(&self) -> String {
         match self {
@@ -2808,6 +2837,37 @@ pub enum CmpOp {
     CmpGt,
     CmpLte,
     CmpGte,
+}
+
+impl CmpOp {
+    fn aver_key_rank(&self) -> usize {
+        match self {
+            CmpOp::CmpEq => 0,
+            CmpOp::CmpGt => 1,
+            CmpOp::CmpGte => 2,
+            CmpOp::CmpLt => 3,
+            CmpOp::CmpLte => 4,
+            CmpOp::CmpNeq => 5,
+        }
+    }
+}
+
+impl PartialOrd for CmpOp {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for CmpOp {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        let rank = self.aver_key_rank().cmp(&other.aver_key_rank());
+        if rank != std::cmp::Ordering::Equal {
+            return rank;
+        }
+        match (self, other) {
+            _ => std::cmp::Ordering::Equal,
+        }
+    }
 }
 
 impl aver_rt::AverDisplay for CmpOp {
@@ -2961,76 +3021,36 @@ pub fn userTagSpan() -> aver_rt::AverInt {
 #[inline(always)]
 pub fn ctorNameToTag(name: AverStr) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
-    {
-        let __dispatch_subject = name.clone();
-        if &*__dispatch_subject == "Result.Ok" {
-            aver_rt::AverInt::from_i64(1)
-        } else {
-            if &*__dispatch_subject == "Result.Err" {
-                aver_rt::AverInt::from_i64(2)
-            } else {
-                if &*__dispatch_subject == "Option.Some" {
-                    aver_rt::AverInt::from_i64(3)
-                } else {
-                    if &*__dispatch_subject == "Option.None" {
-                        aver_rt::AverInt::from_i64(4)
-                    } else {
-                        aver_rt::AverInt::from_i64(100)
-                            .add(&crate::aver_generated::domain::ast::userCtorTagOffset(name))
-                    }
-                }
-            }
-        }
-    }
+    crate::aver_generated::domain::ast::ctorNameToTag__indexed(
+        name.clone(),
+        &aver_rt::string_index_build(&name),
+    )
 }
 
 /// Compute a stable non-zero offset for a user-defined constructor tag from its full dotted name.
 #[inline(always)]
 pub fn userCtorTagOffset(name: AverStr) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::ast::userCtorTagOffsetLoop(
-        name,
-        aver_rt::AverInt::from_i64(0),
-        aver_rt::AverInt::from_i64(0),
+    crate::aver_generated::domain::ast::userCtorTagOffset__indexed(
+        name.clone(),
+        &aver_rt::string_index_build(&name),
     )
 }
 
 /// Walk the constructor name and accumulate a bounded rolling hash.
 #[inline(always)]
 pub fn userCtorTagOffsetLoop(
-    mut name: AverStr,
-    mut pos: aver_rt::AverInt,
-    mut acc: aver_rt::AverInt,
+    name: AverStr,
+    pos: aver_rt::AverInt,
+    acc: aver_rt::AverInt,
 ) -> aver_rt::AverInt {
-    loop {
-        crate::cancel_checkpoint();
-        let accPlusOne = acc.add(&aver_rt::AverInt::from_i64(1));
-        if (pos < aver_rt::AverInt::from_i64(name.chars().count() as i64)) {
-            match ((pos)
-                .to_usize()
-                .and_then(|__i| name.chars().nth(__i).map(|c| c.to_string())))
-            .into_aver()
-            {
-                Some(ch) => {
-                    let __tco1 = pos.add(&aver_rt::AverInt::from_i64(1));
-                    let __tco2 = crate::aver_generated::domain::ast::userCtorTagStep(
-                        acc,
-                        aver_rt::AverInt::from_i64(
-                            ch.chars().next().map(|c| c as i64).unwrap_or(0),
-                        ),
-                    );
-                    pos = __tco1;
-                    acc = __tco2;
-                    continue;
-                }
-                None => {
-                    return accPlusOne;
-                }
-            }
-        } else {
-            return accPlusOne;
-        }
-    }
+    crate::cancel_checkpoint();
+    crate::aver_generated::domain::ast::userCtorTagOffsetLoop__indexed(
+        name.clone(),
+        pos,
+        acc,
+        aver_rt::string_index_build(&name),
+    )
 }
 
 /// Update the user constructor rolling hash and keep it in a bounded range.
@@ -3046,14 +3066,9 @@ pub fn userCtorTagStep(acc: aver_rt::AverInt, code: aver_rt::AverInt) -> aver_rt
 #[inline(always)]
 pub fn canonicalCtorName(name: AverStr) -> AverStr {
     crate::cancel_checkpoint();
-    let total = aver_rt::AverInt::from_i64(name.chars().count() as i64);
-    crate::aver_generated::domain::ast::canonicalCtorNameAtLastDot(
+    crate::aver_generated::domain::ast::canonicalCtorName__indexed(
         name.clone(),
-        total.clone(),
-        crate::aver_generated::domain::ast::lastDotAtOrBefore(
-            name,
-            total.sub(&aver_rt::AverInt::from_i64(1)),
-        ),
+        &aver_rt::string_index_build(&name),
     )
 }
 
@@ -3065,19 +3080,12 @@ pub fn canonicalCtorNameAtLastDot(
     lastDot: aver_rt::AverInt,
 ) -> AverStr {
     crate::cancel_checkpoint();
-    if (lastDot > aver_rt::AverInt::from_i64(0)) {
-        crate::aver_generated::domain::ast::canonicalCtorNameAtBothDots(
-            name.clone(),
-            total,
-            lastDot.clone(),
-            crate::aver_generated::domain::ast::lastDotAtOrBefore(
-                name,
-                lastDot.sub(&aver_rt::AverInt::from_i64(1)),
-            ),
-        )
-    } else {
-        name
-    }
+    crate::aver_generated::domain::ast::canonicalCtorNameAtLastDot__indexed(
+        name.clone(),
+        total,
+        lastDot,
+        &aver_rt::string_index_build(&name),
+    )
 }
 
 /// Keep only the trailing pair when a module qualifier precedes a Type.Variant reference; leave every other dotted name whole.
@@ -3089,33 +3097,13 @@ pub fn canonicalCtorNameAtBothDots(
     prevDot: aver_rt::AverInt,
 ) -> AverStr {
     crate::cancel_checkpoint();
-    if (prevDot < aver_rt::AverInt::from_i64(0)) {
-        name
-    } else {
-        if crate::aver_generated::domain::ast::isTypeVariantTail(
-            (aver_rt::string_slice(
-                &name,
-                crate::aver_int_clamp_i64(&prevDot.add(&aver_rt::AverInt::from_i64(1))),
-                crate::aver_int_clamp_i64(&lastDot),
-            ))
-            .into_aver(),
-            (aver_rt::string_slice(
-                &name,
-                crate::aver_int_clamp_i64(&lastDot.add(&aver_rt::AverInt::from_i64(1))),
-                crate::aver_int_clamp_i64(&total),
-            ))
-            .into_aver(),
-        ) {
-            (aver_rt::string_slice(
-                &name,
-                crate::aver_int_clamp_i64(&prevDot.add(&aver_rt::AverInt::from_i64(1))),
-                crate::aver_int_clamp_i64(&total),
-            ))
-            .into_aver()
-        } else {
-            name
-        }
-    }
+    crate::aver_generated::domain::ast::canonicalCtorNameAtBothDots__indexed(
+        name.clone(),
+        total,
+        lastDot,
+        prevDot,
+        &aver_rt::string_index_build(&name),
+    )
 }
 
 /// Whether the trailing two segments spell Type.Variant. Both begin with an uppercase letter, the same rule the surface parser applies to constructor patterns.
@@ -3135,41 +3123,20 @@ pub fn beginsUppercase(segment: AverStr) -> bool {
         .and_then(|__i| segment.chars().nth(__i).map(|c| c.to_string())))
     .into_aver()
     {
-        Some(c) => (c != (c.to_lowercase()).into_aver()),
+        Some(c @ _) => (c != (c.to_lowercase()).into_aver()),
         None => false,
     }
 }
 
 /// Index of the last '.' at or before pos, or -1 when that prefix holds none.
 #[inline(always)]
-pub fn lastDotAtOrBefore(mut name: AverStr, mut pos: aver_rt::AverInt) -> aver_rt::AverInt {
-    loop {
-        crate::cancel_checkpoint();
-        if (pos < aver_rt::AverInt::from_i64(0)) {
-            return aver_rt::AverInt::from_i64(-1);
-        } else {
-            match ((pos)
-                .to_usize()
-                .and_then(|__i| name.chars().nth(__i).map(|c| c.to_string())))
-            .into_aver()
-            {
-                Some(c) => {
-                    if (c == AverStr::from(".")) {
-                        return pos;
-                    } else {
-                        {
-                            let __tco1 = pos.sub(&aver_rt::AverInt::from_i64(1));
-                            pos = __tco1;
-                            continue;
-                        }
-                    }
-                }
-                None => {
-                    return aver_rt::AverInt::from_i64(-1);
-                }
-            }
-        }
-    }
+pub fn lastDotAtOrBefore(name: AverStr, pos: aver_rt::AverInt) -> aver_rt::AverInt {
+    crate::cancel_checkpoint();
+    crate::aver_generated::domain::ast::lastDotAtOrBefore__indexed(
+        name.clone(),
+        pos,
+        aver_rt::string_index_build(&name),
+    )
 }
 
 /// Map builtin function names to integer IDs for fast dispatch.
@@ -3261,6 +3228,207 @@ pub fn builtinNameToId(name: AverStr) -> Option<aver_rt::AverInt> {
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+/// Synthesized indexed worker of `ctorNameToTag`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
+#[inline(always)]
+pub fn ctorNameToTag__indexed(
+    name: AverStr,
+    __str_index: &aver_rt::StringIndex,
+) -> aver_rt::AverInt {
+    crate::cancel_checkpoint();
+    {
+        let __dispatch_subject = name.clone();
+        if &*__dispatch_subject == "Result.Ok" {
+            aver_rt::AverInt::from_i64(1)
+        } else {
+            if &*__dispatch_subject == "Result.Err" {
+                aver_rt::AverInt::from_i64(2)
+            } else {
+                if &*__dispatch_subject == "Option.Some" {
+                    aver_rt::AverInt::from_i64(3)
+                } else {
+                    if &*__dispatch_subject == "Option.None" {
+                        aver_rt::AverInt::from_i64(4)
+                    } else {
+                        aver_rt::AverInt::from_i64(100).add(
+                            &crate::aver_generated::domain::ast::userCtorTagOffset__indexed(
+                                name,
+                                __str_index,
+                            ),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Synthesized indexed worker of `userCtorTagOffset`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
+#[inline(always)]
+pub fn userCtorTagOffset__indexed(
+    name: AverStr,
+    __str_index: &aver_rt::StringIndex,
+) -> aver_rt::AverInt {
+    crate::cancel_checkpoint();
+    crate::aver_generated::domain::ast::userCtorTagOffsetLoop__indexed(
+        name,
+        aver_rt::AverInt::from_i64(0),
+        aver_rt::AverInt::from_i64(0),
+        __str_index.clone(),
+    )
+}
+
+/// Synthesized indexed worker of `userCtorTagOffsetLoop`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
+#[inline(always)]
+pub fn userCtorTagOffsetLoop__indexed(
+    mut name: AverStr,
+    mut pos: aver_rt::AverInt,
+    mut acc: aver_rt::AverInt,
+    __str_index: aver_rt::StringIndex,
+) -> aver_rt::AverInt {
+    let __str_index = std::sync::Arc::new(__str_index);
+    loop {
+        crate::cancel_checkpoint();
+        let accPlusOne = acc.add(&aver_rt::AverInt::from_i64(1));
+        if (pos < aver_rt::AverInt::from_i64(name.chars().count() as i64)) {
+            match aver_rt::string_index_char_at(&name, &__str_index, &pos) {
+                Some(ch @ _) => {
+                    let __tco1 = pos.add(&aver_rt::AverInt::from_i64(1));
+                    let __tco2 = crate::aver_generated::domain::ast::userCtorTagStep(
+                        acc,
+                        (ch).chars()
+                            .next()
+                            .map(|c| aver_rt::AverInt::from_i64(c as i64))
+                            .unwrap_or(aver_rt::AverInt::from_i64(0)),
+                    );
+                    pos = __tco1;
+                    acc = __tco2;
+                    continue;
+                }
+                None => {
+                    return accPlusOne;
+                }
+            }
+        } else {
+            return accPlusOne;
+        }
+    }
+}
+
+/// Synthesized indexed worker of `canonicalCtorName`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
+#[inline(always)]
+pub fn canonicalCtorName__indexed(name: AverStr, __str_index: &aver_rt::StringIndex) -> AverStr {
+    crate::cancel_checkpoint();
+    let total = aver_rt::AverInt::from_i64(name.chars().count() as i64);
+    crate::aver_generated::domain::ast::canonicalCtorNameAtLastDot__indexed(
+        name.clone(),
+        total.clone(),
+        crate::aver_generated::domain::ast::lastDotAtOrBefore__indexed(
+            name,
+            total.sub(&aver_rt::AverInt::from_i64(1)),
+            __str_index.clone(),
+        ),
+        __str_index,
+    )
+}
+
+/// Synthesized indexed worker of `canonicalCtorNameAtLastDot`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
+#[inline(always)]
+pub fn canonicalCtorNameAtLastDot__indexed(
+    name: AverStr,
+    total: aver_rt::AverInt,
+    lastDot: aver_rt::AverInt,
+    __str_index: &aver_rt::StringIndex,
+) -> AverStr {
+    crate::cancel_checkpoint();
+    if (lastDot > aver_rt::AverInt::from_i64(0)) {
+        crate::aver_generated::domain::ast::canonicalCtorNameAtBothDots__indexed(
+            name.clone(),
+            total,
+            lastDot.clone(),
+            crate::aver_generated::domain::ast::lastDotAtOrBefore__indexed(
+                name,
+                lastDot.sub(&aver_rt::AverInt::from_i64(1)),
+                __str_index.clone(),
+            ),
+            __str_index,
+        )
+    } else {
+        name
+    }
+}
+
+/// Synthesized indexed worker of `canonicalCtorNameAtBothDots`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
+#[inline(always)]
+pub fn canonicalCtorNameAtBothDots__indexed(
+    name: AverStr,
+    total: aver_rt::AverInt,
+    lastDot: aver_rt::AverInt,
+    prevDot: aver_rt::AverInt,
+    __str_index: &aver_rt::StringIndex,
+) -> AverStr {
+    crate::cancel_checkpoint();
+    if (prevDot < aver_rt::AverInt::from_i64(0)) {
+        name
+    } else {
+        if crate::aver_generated::domain::ast::isTypeVariantTail(
+            aver_rt::string_index_slice(
+                &name,
+                &__str_index,
+                &prevDot.add(&aver_rt::AverInt::from_i64(1)),
+                &lastDot,
+            ),
+            aver_rt::string_index_slice(
+                &name,
+                &__str_index,
+                &lastDot.add(&aver_rt::AverInt::from_i64(1)),
+                &total,
+            ),
+        ) {
+            aver_rt::string_index_slice(
+                &name,
+                &__str_index,
+                &prevDot.add(&aver_rt::AverInt::from_i64(1)),
+                &total,
+            )
+        } else {
+            name
+        }
+    }
+}
+
+/// Synthesized indexed worker of `lastDotAtOrBefore`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
+#[inline(always)]
+pub fn lastDotAtOrBefore__indexed(
+    mut name: AverStr,
+    mut pos: aver_rt::AverInt,
+    __str_index: aver_rt::StringIndex,
+) -> aver_rt::AverInt {
+    let __str_index = std::sync::Arc::new(__str_index);
+    loop {
+        crate::cancel_checkpoint();
+        if (pos < aver_rt::AverInt::from_i64(0)) {
+            return aver_rt::AverInt::from_i64(-1);
+        } else {
+            match aver_rt::string_index_char_at(&name, &__str_index, &pos) {
+                Some(c @ _) => {
+                    if (&*c == ".") {
+                        return pos;
+                    } else {
+                        {
+                            let __tco1 = pos.sub(&aver_rt::AverInt::from_i64(1));
+                            pos = __tco1;
+                            continue;
+                        }
+                    }
+                }
+                None => {
+                    return aver_rt::AverInt::from_i64(-1);
                 }
             }
         }

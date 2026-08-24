@@ -172,7 +172,7 @@ fn userCtorTagOffsetLoop(name: String, pos: Int, acc: Int) -> Int
     match pos >= String.len(name)
         true -> accPlusOne
         false -> match String.charAt(name, pos)
-            Option.Some(ch) -> userCtorTagOffsetLoop(name, pos + 1, userCtorTagStep(acc, Char.toCode(ch)))
+            Option.Some(ch) -> userCtorTagOffsetLoop(name, pos + 1, userCtorTagStep(acc, Option.withDefault(String.firstCodePoint(ch), 0)))
             Option.None -> accPlusOne
 
 verify userCtorTagOffsetLoop

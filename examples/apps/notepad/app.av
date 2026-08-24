@@ -34,4 +34,4 @@ fn main() -> Result<Unit, String>
     Console.print("  curl -X POST -d 'Buy milk' http://localhost:3000/notes")
     Console.print("  curl http://localhost:3000/notes/1")
     Console.print("  curl -X DELETE http://localhost:3000/notes/1")
-    Result.Ok(HttpServer.listen(3000, Apps.Notepad.Routes.handleRequest))
+    HttpServer.listen(3000, Apps.Notepad.Routes.handleRequest)

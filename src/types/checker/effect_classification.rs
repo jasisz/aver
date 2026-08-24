@@ -7,15 +7,15 @@
 //! - For snapshot and generative, the corresponding capability/oracle
 //!   signature that lifted specs bind via `given name: E.m = [...]`.
 //!
-//! Output-only effects (for example `Console.print`, `Time.sleep`, and
-//! terminal drawing calls) are classified but do not have an oracle signature:
+//! Output-only effects (for example `Console.print` and terminal drawing
+//! calls) are classified but do not have an oracle signature:
 //! they append to the per-branch trace segment and are asserted about via the
 //! trace API, not by binding an oracle in `given`.
 //!
 //! The table is the single source of truth consumed by:
 //!
 //! - `given`-clause type inference (`given rnd: Random.int` → oracle type
-//!   `(BranchPath, Int, Int, Int) -> Int`).
+//!   `(BranchPath, Int, Int, Int) -> Result<Int, String>`).
 //! - Lifting of effectful function bodies at proof-export time.
 //! - Rejection diagnostics for unclassified effects.
 //!
@@ -115,12 +115,13 @@ fn classifications() -> &'static [EffectClassification] {
                 ret: Type::Option(Box::new(Type::Str)),
             },
             // Terminal.size: stable within a verify scope (a resize while
-            // proving is not modelled). Snapshot-shape oracle: () -> Terminal.Size.
+            // proving is not modelled). Host failure remains explicit in the
+            // snapshot value: () -> Result<Terminal.Size, String>.
             EffectClassification {
                 method: "Terminal.size",
                 dimension: EffectDimension::Snapshot,
                 params: vec![],
-                ret: Type::named("Terminal.Size"),
+                ret: err_str(Type::named("Terminal.Size")),
             },
             // Generative
             EffectClassification {
@@ -198,9 +199,9 @@ fn classifications() -> &'static [EffectClassification] {
             // user code, not in the effect oracle.
             EffectClassification {
                 method: "Env.set",
-                dimension: EffectDimension::Output,
+                dimension: EffectDimension::GenerativeOutput,
                 params: vec![Type::Str, Type::Str],
-                ret: Type::Unit,
+                ret: err_str(Type::Unit),
             },
             EffectClassification {
                 method: "Console.print",
@@ -228,9 +229,9 @@ fn classifications() -> &'static [EffectClassification] {
             },
             EffectClassification {
                 method: "Terminal.moveTo",
-                dimension: EffectDimension::Output,
+                dimension: EffectDimension::GenerativeOutput,
                 params: vec![Type::Int, Type::Int],
-                ret: Type::Unit,
+                ret: err_str(Type::Unit),
             },
             EffectClassification {
                 method: "Terminal.print",
@@ -582,7 +583,6 @@ mod tests {
         );
         for method in [
             "clear",
-            "moveTo",
             "print",
             "readKey",
             "hideCursor",
@@ -599,6 +599,15 @@ mod tests {
                 &registry,
             );
         }
+        let fallible_terminal = capability_registry(
+            "FallibleTerminalCompat",
+            "module FallibleTerminalCompat\n    kind = capability\n    semantics = effectful\n\noperation moveTo(row: Int, col: Int) -> Result<Unit, String>\n    oracle = generativeOutput\n    replay = recorded\n",
+        );
+        assert_same_shape(
+            "Terminal.moveTo",
+            "FallibleTerminalCompat.moveTo",
+            &fallible_terminal,
+        );
 
         // Terminal.size is the deliberate standard-only exception: its
         // snapshot promise was audited by Aver. A program cannot grant itself
@@ -689,9 +698,9 @@ mod tests {
     }
 
     #[test]
-    fn time_sleep_is_output() {
+    fn time_sleep_is_generative_output() {
         let c = classify("Time.sleep").unwrap();
-        assert_eq!(c.dimension, EffectDimension::Output);
+        assert_eq!(c.dimension, EffectDimension::GenerativeOutput);
     }
 
     #[test]
@@ -703,7 +712,7 @@ mod tests {
     #[test]
     fn oracle_signature_for_random_int_is_branch_indexed() {
         let sig = oracle_signature("Random.int").unwrap();
-        // (BranchPath, Int, Int, Int) -> Int
+        // (BranchPath, Int, Int, Int) -> Result<Int, String>
         match sig {
             Type::Fn(params, ret, _) => {
                 assert_eq!(params.len(), 4);
@@ -711,7 +720,7 @@ mod tests {
                 assert_eq!(params[1], Type::Int);
                 assert_eq!(params[2], Type::Int);
                 assert_eq!(params[3], Type::Int);
-                assert_eq!(*ret, Type::Int);
+                assert_eq!(*ret, err_str(Type::Int));
             }
             other => panic!("expected Fn, got {:?}", other),
         }
@@ -864,7 +873,7 @@ mod tests {
         assert!(oracle_signature("Console.print").is_none());
         assert!(oracle_signature("Console.error").is_none());
         assert!(oracle_signature("Console.warn").is_none());
-        assert!(oracle_signature("Time.sleep").is_none());
+        assert!(oracle_signature("Time.sleep").is_some());
         assert!(oracle_signature("Terminal.print").is_none());
     }
 
@@ -963,10 +972,9 @@ mod tests {
 
     #[test]
     fn extended_oracle_v1_methods_classified() {
-        // Output: env writes and terminal modal/visual changes — emitted to
-        // trace, no oracle signature.
+        // Output: infallible terminal modal/visual changes — emitted to trace,
+        // no oracle signature.
         for name in &[
-            "Env.set",
             "Terminal.enableRawMode",
             "Terminal.disableRawMode",
             "Terminal.setColor",
@@ -974,6 +982,11 @@ mod tests {
         ] {
             let c = classify(name).unwrap_or_else(|| panic!("{} should be classified", name));
             assert_eq!(c.dimension, EffectDimension::Output);
+        }
+        // Fallible writes/moves have both a trace request and an oracle result.
+        for name in &["Env.set", "Terminal.moveTo"] {
+            let c = classify(name).unwrap_or_else(|| panic!("{} should be classified", name));
+            assert_eq!(c.dimension, EffectDimension::GenerativeOutput);
         }
         // GenerativeOutput: session TCP — request emitted, response from oracle.
         // Stateless: writeLine does not affect a later readLine.
@@ -995,14 +1008,14 @@ mod tests {
         let c = classify("Terminal.size").expect("Terminal.size should be classified");
         assert_eq!(c.dimension, EffectDimension::Snapshot);
         assert!(c.params.is_empty());
-        assert_eq!(c.ret, Type::named("Terminal.Size"));
+        assert_eq!(c.ret, err_str(Type::named("Terminal.Size")));
 
-        // Oracle signature: () -> Terminal.Size
+        // Oracle signature: () -> Result<Terminal.Size, String>
         let sig = oracle_signature("Terminal.size").unwrap();
         match sig {
             Type::Fn(params, ret, effects) => {
                 assert!(params.is_empty());
-                assert_eq!(*ret, Type::named("Terminal.Size"));
+                assert_eq!(*ret, err_str(Type::named("Terminal.Size")));
                 assert!(effects.is_empty());
             }
             other => panic!("expected Fn, got {:?}", other),

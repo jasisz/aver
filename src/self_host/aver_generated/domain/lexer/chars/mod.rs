@@ -167,41 +167,17 @@ pub fn digitVal(c: AverStr) -> aver_rt::AverInt {
 /// Read consecutive digits from pos, return (number, newPos).
 #[inline(always)]
 pub fn readNumberLoop(
-    mut src: AverStr,
-    mut pos: aver_rt::AverInt,
-    mut acc: aver_rt::AverInt,
+    src: AverStr,
+    pos: aver_rt::AverInt,
+    acc: aver_rt::AverInt,
 ) -> (aver_rt::AverInt, aver_rt::AverInt) {
-    loop {
-        crate::cancel_checkpoint();
-        if (pos < aver_rt::AverInt::from_i64(src.chars().count() as i64)) {
-            match ((pos)
-                .to_usize()
-                .and_then(|__i| src.chars().nth(__i).map(|c| c.to_string())))
-            .into_aver()
-            {
-                Some(c) => {
-                    if crate::aver_generated::domain::lexer::chars::isDigit(c.clone()) {
-                        {
-                            let __tco1 = pos.add(&aver_rt::AverInt::from_i64(1));
-                            let __tco2 = acc
-                                .mul(&aver_rt::AverInt::from_i64(10))
-                                .add(&crate::aver_generated::domain::lexer::chars::digitVal(c));
-                            pos = __tco1;
-                            acc = __tco2;
-                            continue;
-                        }
-                    } else {
-                        return (acc, pos);
-                    }
-                }
-                None => {
-                    return (acc, pos);
-                }
-            }
-        } else {
-            return (acc, pos);
-        }
-    }
+    crate::cancel_checkpoint();
+    crate::aver_generated::domain::lexer::chars::readNumberLoop__indexed(
+        src.clone(),
+        pos,
+        acc,
+        aver_rt::string_index_build(&src),
+    )
 }
 
 /// Read consecutive digits from pos, return (number, newPos).
@@ -212,7 +188,12 @@ pub fn readNumber(
     acc: aver_rt::AverInt,
 ) -> (aver_rt::AverInt, aver_rt::AverInt) {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::lexer::chars::readNumberLoop(src, pos, acc)
+    crate::aver_generated::domain::lexer::chars::readNumber__indexed(
+        src.clone(),
+        pos,
+        acc,
+        &aver_rt::string_index_build(&src),
+    )
 }
 
 /// Check if character can continue a dotted identifier (alphanumeric, underscore, or dot).
@@ -236,77 +217,33 @@ pub fn isIdentCharPlain(c: AverStr) -> bool {
 /// Read identifier including dots (for qualified names like List.prepend).
 #[inline(always)]
 pub fn readIdentLoopDotted(
-    mut src: AverStr,
-    mut pos: aver_rt::AverInt,
-    mut acc: AverStr,
+    src: AverStr,
+    pos: aver_rt::AverInt,
+    acc: AverStr,
 ) -> (AverStr, aver_rt::AverInt) {
-    loop {
-        crate::cancel_checkpoint();
-        if (pos < aver_rt::AverInt::from_i64(src.chars().count() as i64)) {
-            match ((pos)
-                .to_usize()
-                .and_then(|__i| src.chars().nth(__i).map(|c| c.to_string())))
-            .into_aver()
-            {
-                Some(c) => {
-                    if crate::aver_generated::domain::lexer::chars::isIdentCharDotted(c.clone()) {
-                        {
-                            let __tco1 = pos.add(&aver_rt::AverInt::from_i64(1));
-                            let __tco2 = (acc + &c);
-                            pos = __tco1;
-                            acc = __tco2;
-                            continue;
-                        }
-                    } else {
-                        return (acc, pos);
-                    }
-                }
-                None => {
-                    return (acc, pos);
-                }
-            }
-        } else {
-            return (acc, pos);
-        }
-    }
+    crate::cancel_checkpoint();
+    crate::aver_generated::domain::lexer::chars::readIdentLoopDotted__indexed(
+        src.clone(),
+        pos,
+        acc,
+        aver_rt::string_index_build(&src),
+    )
 }
 
 /// Read identifier without dots (for local variables).
 #[inline(always)]
 pub fn readIdentLoopPlain(
-    mut src: AverStr,
-    mut pos: aver_rt::AverInt,
-    mut acc: AverStr,
+    src: AverStr,
+    pos: aver_rt::AverInt,
+    acc: AverStr,
 ) -> (AverStr, aver_rt::AverInt) {
-    loop {
-        crate::cancel_checkpoint();
-        if (pos < aver_rt::AverInt::from_i64(src.chars().count() as i64)) {
-            match ((pos)
-                .to_usize()
-                .and_then(|__i| src.chars().nth(__i).map(|c| c.to_string())))
-            .into_aver()
-            {
-                Some(c) => {
-                    if crate::aver_generated::domain::lexer::chars::isIdentCharPlain(c.clone()) {
-                        {
-                            let __tco1 = pos.add(&aver_rt::AverInt::from_i64(1));
-                            let __tco2 = (acc + &c);
-                            pos = __tco1;
-                            acc = __tco2;
-                            continue;
-                        }
-                    } else {
-                        return (acc, pos);
-                    }
-                }
-                None => {
-                    return (acc, pos);
-                }
-            }
-        } else {
-            return (acc, pos);
-        }
-    }
+    crate::cancel_checkpoint();
+    crate::aver_generated::domain::lexer::chars::readIdentLoopPlain__indexed(
+        src.clone(),
+        pos,
+        acc,
+        aver_rt::string_index_build(&src),
+    )
 }
 
 /// Read identifier, dotted if starts with uppercase.
@@ -318,16 +255,18 @@ pub fn readIdent(
     dotted: bool,
 ) -> (AverStr, aver_rt::AverInt) {
     crate::cancel_checkpoint();
-    if dotted {
-        crate::aver_generated::domain::lexer::chars::readIdentLoopDotted(src, pos, acc)
-    } else {
-        crate::aver_generated::domain::lexer::chars::readIdentLoopPlain(src, pos, acc)
-    }
+    crate::aver_generated::domain::lexer::chars::readIdent__indexed(
+        src.clone(),
+        pos,
+        acc,
+        dotted,
+        &aver_rt::string_index_build(&src),
+    )
 }
 
 /// Classify an identifier as keyword or plain ident.
 #[inline(always)]
-pub fn keywordOrIdent(s: AverStr) -> Token {
+pub fn keywordOrIdent(s: AverStr) -> crate::aver_generated::domain::token::Token {
     crate::cancel_checkpoint();
     {
         let __dispatch_subject = s.clone();
@@ -392,5 +331,159 @@ pub fn keywordOrIdent(s: AverStr) -> Token {
                 }
             }
         }
+    }
+}
+
+/// Synthesized indexed worker of `readNumberLoop`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
+#[inline(always)]
+pub fn readNumberLoop__indexed(
+    mut src: AverStr,
+    mut pos: aver_rt::AverInt,
+    mut acc: aver_rt::AverInt,
+    __str_index: aver_rt::StringIndex,
+) -> (aver_rt::AverInt, aver_rt::AverInt) {
+    let __str_index = std::sync::Arc::new(__str_index);
+    loop {
+        crate::cancel_checkpoint();
+        if (pos < aver_rt::AverInt::from_i64(src.chars().count() as i64)) {
+            match aver_rt::string_index_char_at(&src, &__str_index, &pos) {
+                Some(c @ _) => {
+                    if crate::aver_generated::domain::lexer::chars::isDigit(c.clone()) {
+                        {
+                            let __tco1 = pos.add(&aver_rt::AverInt::from_i64(1));
+                            let __tco2 = acc
+                                .mul(&aver_rt::AverInt::from_i64(10))
+                                .add(&crate::aver_generated::domain::lexer::chars::digitVal(c));
+                            pos = __tco1;
+                            acc = __tco2;
+                            continue;
+                        }
+                    } else {
+                        return (acc, pos);
+                    }
+                }
+                None => {
+                    return (acc, pos);
+                }
+            }
+        } else {
+            return (acc, pos);
+        }
+    }
+}
+
+/// Synthesized indexed worker of `readNumber`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
+#[inline(always)]
+pub fn readNumber__indexed(
+    src: AverStr,
+    pos: aver_rt::AverInt,
+    acc: aver_rt::AverInt,
+    __str_index: &aver_rt::StringIndex,
+) -> (aver_rt::AverInt, aver_rt::AverInt) {
+    crate::cancel_checkpoint();
+    crate::aver_generated::domain::lexer::chars::readNumberLoop__indexed(
+        src,
+        pos,
+        acc,
+        __str_index.clone(),
+    )
+}
+
+/// Synthesized indexed worker of `readIdentLoopDotted`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
+#[inline(always)]
+pub fn readIdentLoopDotted__indexed(
+    mut src: AverStr,
+    mut pos: aver_rt::AverInt,
+    mut acc: AverStr,
+    __str_index: aver_rt::StringIndex,
+) -> (AverStr, aver_rt::AverInt) {
+    let __str_index = std::sync::Arc::new(__str_index);
+    loop {
+        crate::cancel_checkpoint();
+        if (pos < aver_rt::AverInt::from_i64(src.chars().count() as i64)) {
+            match aver_rt::string_index_char_at(&src, &__str_index, &pos) {
+                Some(c @ _) => {
+                    if crate::aver_generated::domain::lexer::chars::isIdentCharDotted(c.clone()) {
+                        {
+                            let __tco1 = pos.add(&aver_rt::AverInt::from_i64(1));
+                            let __tco2 = (acc + &c);
+                            pos = __tco1;
+                            acc = __tco2;
+                            continue;
+                        }
+                    } else {
+                        return (acc, pos);
+                    }
+                }
+                None => {
+                    return (acc, pos);
+                }
+            }
+        } else {
+            return (acc, pos);
+        }
+    }
+}
+
+/// Synthesized indexed worker of `readIdentLoopPlain`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
+#[inline(always)]
+pub fn readIdentLoopPlain__indexed(
+    mut src: AverStr,
+    mut pos: aver_rt::AverInt,
+    mut acc: AverStr,
+    __str_index: aver_rt::StringIndex,
+) -> (AverStr, aver_rt::AverInt) {
+    let __str_index = std::sync::Arc::new(__str_index);
+    loop {
+        crate::cancel_checkpoint();
+        if (pos < aver_rt::AverInt::from_i64(src.chars().count() as i64)) {
+            match aver_rt::string_index_char_at(&src, &__str_index, &pos) {
+                Some(c @ _) => {
+                    if crate::aver_generated::domain::lexer::chars::isIdentCharPlain(c.clone()) {
+                        {
+                            let __tco1 = pos.add(&aver_rt::AverInt::from_i64(1));
+                            let __tco2 = (acc + &c);
+                            pos = __tco1;
+                            acc = __tco2;
+                            continue;
+                        }
+                    } else {
+                        return (acc, pos);
+                    }
+                }
+                None => {
+                    return (acc, pos);
+                }
+            }
+        } else {
+            return (acc, pos);
+        }
+    }
+}
+
+/// Synthesized indexed worker of `readIdent`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
+#[inline(always)]
+pub fn readIdent__indexed(
+    src: AverStr,
+    pos: aver_rt::AverInt,
+    acc: AverStr,
+    dotted: bool,
+    __str_index: &aver_rt::StringIndex,
+) -> (AverStr, aver_rt::AverInt) {
+    crate::cancel_checkpoint();
+    if dotted {
+        crate::aver_generated::domain::lexer::chars::readIdentLoopDotted__indexed(
+            src,
+            pos,
+            acc,
+            __str_index.clone(),
+        )
+    } else {
+        crate::aver_generated::domain::lexer::chars::readIdentLoopPlain__indexed(
+            src,
+            pos,
+            acc,
+            __str_index.clone(),
+        )
     }
 }

@@ -522,10 +522,21 @@ fn vector_get_with_big_index_is_none() {
 
 #[test]
 fn vector_new_oversized_errors_cleanly() {
-    // A size past `usize` cannot be allocated — a clean error, never a panic.
+    // A size outside the portable u32 range is a catchable value, never a
+    // runtime abort.
     let src = r#"Vector.new(Result.withDefault(Int.fromString("100000000000000000000"), 0), 0)"#;
-    let err = try_eval(src);
-    assert!(err.is_err(), "expected a clean error, got {:?}", err);
+    assert_eq!(
+        eval(src),
+        Value::Err(Box::new(Value::Str(
+            "Vector.new: size must be between 0 and 4294967295".to_string()
+        )))
+    );
+    assert_eq!(
+        eval("Vector.new(0 - 1, 0)"),
+        Value::Err(Box::new(Value::Str(
+            "Vector.new: size must be between 0 and 4294967295".to_string()
+        )))
+    );
 }
 
 #[test]
@@ -867,7 +878,7 @@ fn list_contains_returns_false() {
 }
 
 // ---------------------------------------------------------------------------
-// Result.withDefault / Option.withDefault / Option.toResult
+// Result.withDefault / Option.withDefault / Result.fromOption
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -897,17 +908,17 @@ fn option_with_default_none() {
 }
 
 #[test]
-fn option_to_result_some() {
+fn result_from_option_some() {
     assert_eq!(
-        eval("Option.toResult(Option.Some(42), \"missing\")"),
+        eval("Result.fromOption(Option.Some(42), \"missing\")"),
         Value::Ok(Box::new(Value::int(42)))
     );
 }
 
 #[test]
-fn option_to_result_none() {
+fn result_from_option_none() {
     assert_eq!(
-        eval("Option.toResult(Option.None, \"missing\")"),
+        eval("Result.fromOption(Option.None, \"missing\")"),
         Value::Err(Box::new(Value::Str("missing".to_string())))
     );
 }
@@ -2055,18 +2066,30 @@ mod time_tests {
     }
 
     #[test]
-    fn time_sleep_negative_returns_runtime_error() {
+    fn time_sleep_negative_returns_catchable_error() {
         let src = concat!(
-            "fn wait() -> Unit\n",
+            "fn wait() -> Result<Unit, String>\n",
             "    ! [Time.sleep]\n",
             "    Time.sleep(0 - 1)\n",
         );
-        let err = call_fn_with_effects(src, "wait", vec![]).expect_err("expected runtime error");
-        assert!(
-            err.contains("Time.sleep: ms must be non-negative"),
-            "got: {}",
-            err
+        let value = call_fn_with_effects(src, "wait", vec![]).expect("call should return Result");
+        assert_eq!(
+            value,
+            Value::Err(Box::new(Value::Str(
+                "Time.sleep: ms must be non-negative".to_string()
+            )))
         );
+    }
+
+    #[test]
+    fn time_sleep_valid_literal_runs_without_result_ceremony() {
+        let src = concat!(
+            "fn wait() -> Unit\n",
+            "    ! [Time.sleep]\n",
+            "    Time.sleep(0)\n",
+        );
+        let value = call_fn_with_effects(src, "wait", vec![]).expect("literal sleep should run");
+        assert_eq!(value, Value::Unit);
     }
 
     #[test]
@@ -2114,15 +2137,20 @@ mod env_tests {
         let key = unique_key("SET");
         let src = format!(
             concat!(
-                "fn run() -> Option<String>\n",
+                "fn run() -> Result<Option<String>, String>\n",
                 "    ! [Env.set, Env.get]\n",
-                "    Env.set(\"{k}\", \"ok\")\n",
-                "    Env.get(\"{k}\")\n"
+                "    Env.set(\"{k}\", \"ok\")?\n",
+                "    Result.Ok(Env.get(\"{k}\"))\n"
             ),
             k = key
         );
         let val = run_env_fn(&src, "run");
-        assert_eq!(val, Value::Some(Box::new(Value::Str("ok".to_string()))));
+        assert_eq!(
+            val,
+            Value::Ok(Box::new(Value::Some(Box::new(Value::Str(
+                "ok".to_string()
+            )))))
+        );
     }
 
     #[test]
@@ -2138,7 +2166,7 @@ mod env_tests {
         let key = unique_key("DENY");
         let src = format!(
             concat!(
-                "fn run() -> Unit\n",
+                "fn run() -> Result<Unit, String>\n",
                 "    ! [Env.set]\n",
                 "    Env.set(\"{k}\", \"ok\")\n"
             ),
@@ -3621,19 +3649,19 @@ fn statusPlusOne() -> Int
     #[test]
     fn replay_mode_preserves_same_typed_record_fields() {
         let src = r#"
-fn width() -> Int
+fn width() -> Result<Int, String>
     ! [Terminal.size]
-    size = Terminal.size()
-    size.width
+    size = Terminal.size()?
+    Result.Ok(size.width)
 "#;
-        let outcome = value_to_json(&Value::Record {
+        let outcome = value_to_json(&Value::Ok(Box::new(Value::Record {
             type_name: "Terminal.Size".to_string(),
             fields: vec![
                 ("width".to_string(), Value::int(80)),
                 ("height".to_string(), Value::int(24)),
             ]
             .into(),
-        })
+        })))
         .expect("a Terminal.Size must be representable as a recorded outcome");
         let record = EffectRecord {
             seq: 1,
@@ -3655,7 +3683,7 @@ fn width() -> Int
             .to_value(&machine.arena);
         assert_eq!(
             out,
-            Value::int(80),
+            Value::Ok(Box::new(Value::int(80))),
             "`.width` must be the recorded width, not the height it sorts behind"
         );
     }
@@ -3837,58 +3865,72 @@ fn typed_binding_runtime_works() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn char_to_code_ascii() {
-    assert_eq!(eval("Char.toCode(\"A\")"), Value::int(65));
-}
-
-#[test]
-fn char_to_code_unicode() {
-    assert_eq!(eval("Char.toCode(\"π\")"), Value::int(960));
-}
-
-#[test]
-fn char_to_code_emoji() {
-    // 🎉 = U+1F389
-    assert_eq!(eval("Char.toCode(\"🎉\")"), Value::int(0x1F389));
-}
-
-#[test]
-fn char_from_code_valid() {
+fn string_first_code_point_ascii() {
     assert_eq!(
-        eval("Char.fromCode(65)"),
+        eval("String.firstCodePoint(\"A\")"),
+        Value::Some(Box::new(Value::int(65)))
+    );
+}
+
+#[test]
+fn string_first_code_point_unicode() {
+    assert_eq!(
+        eval("String.firstCodePoint(\"π\")"),
+        Value::Some(Box::new(Value::int(960)))
+    );
+}
+
+#[test]
+fn string_first_code_point_emoji() {
+    // 🎉 = U+1F389
+    assert_eq!(
+        eval("String.firstCodePoint(\"🎉\")"),
+        Value::Some(Box::new(Value::int(0x1F389)))
+    );
+}
+
+#[test]
+fn string_first_code_point_empty_returns_none() {
+    assert_eq!(eval("String.firstCodePoint(\"\")"), Value::None);
+}
+
+#[test]
+fn string_from_code_point_valid() {
+    assert_eq!(
+        eval("String.fromCodePoint(65)"),
         Value::Some(Box::new(Value::Str("A".to_string())))
     );
 }
 
 #[test]
-fn char_from_code_unicode() {
+fn string_from_code_point_unicode() {
     assert_eq!(
-        eval("Char.fromCode(960)"),
+        eval("String.fromCodePoint(960)"),
         Value::Some(Box::new(Value::Str("π".to_string())))
     );
 }
 
 #[test]
-fn char_from_code_surrogate_returns_none() {
+fn string_from_code_point_surrogate_returns_none() {
     // U+D800 is a surrogate — not a valid scalar value
-    assert_eq!(eval("Char.fromCode(55296)"), Value::None);
+    assert_eq!(eval("String.fromCodePoint(55296)"), Value::None);
 }
 
 #[test]
-fn char_from_code_negative_returns_none() {
-    assert_eq!(eval("Char.fromCode(0 - 1)"), Value::None);
+fn string_from_code_point_negative_returns_none() {
+    assert_eq!(eval("String.fromCodePoint(0 - 1)"), Value::None);
 }
 
 #[test]
-fn char_from_code_too_large_returns_none() {
+fn string_from_code_point_too_large_returns_none() {
     // > U+10FFFF
-    assert_eq!(eval("Char.fromCode(1114112)"), Value::None);
+    assert_eq!(eval("String.fromCodePoint(1114112)"), Value::None);
 }
 
 #[test]
-fn char_from_code_u32_overflow_returns_none() {
+fn string_from_code_point_u32_overflow_returns_none() {
     // > u32::MAX should not wrap around to NUL
-    assert_eq!(eval("Char.fromCode(4294967296)"), Value::None);
+    assert_eq!(eval("String.fromCodePoint(4294967296)"), Value::None);
 }
 
 // ---------------------------------------------------------------------------
@@ -3983,9 +4025,9 @@ fn vm_records_classified_effect_emissions_when_trace_collecting() {
     // that both stubbed (Random.int) and unstubbed (Console.print) calls
     // land in the buffer when collection is active.
     let src = concat!(
-        "fn stubConst(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n",
+        "fn stubConst(path: BranchPath, n: Int, min: Int, max: Int) -> Result<Int, String>\n",
         "    ? \"always min\"\n",
-        "    min\n",
+        "    Result.Ok(min)\n",
         "fn hello() -> Int\n",
         "    ? \"one draw + print\"\n",
         "    ! [Random.int, Console.print]\n",
@@ -4103,14 +4145,45 @@ fn branch_path_parse_roundtrips_dewey() {
 
 #[test]
 fn branch_path_parse_rejects_garbage() {
-    let err = try_eval("BranchPath.parse(\"not.a.path\")").expect_err("should error");
-    assert!(err.contains("BranchPath.parse"), "error was: {}", err);
+    assert_eq!(
+        eval("BranchPath.parse(\"not.a.path\")"),
+        Value::Err(Box::new(Value::Str(
+            "BranchPath.parse: invalid dewey-decimal path: `not.a.path`".to_string()
+        )))
+    );
 }
 
 #[test]
 fn branch_path_child_rejects_negative_index() {
-    let err = try_eval("BranchPath.child(BranchPath.Root, 0 - 1)").expect_err("should error");
-    assert!(err.contains("non-negative"), "error was: {}", err);
+    assert_eq!(
+        eval("BranchPath.child(BranchPath.Root, 0 - 1)"),
+        Value::Err(Box::new(Value::Str(
+            "BranchPath.child: `idx` must be non-negative".to_string()
+        )))
+    );
+}
+
+#[test]
+fn branch_path_dynamic_valid_inputs_return_ok() {
+    let parsed = call_fn(
+        "fn parsed(raw: String) -> Result<BranchPath, String>\n    BranchPath.parse(raw)\n",
+        "parsed",
+        vec![Value::Str("2.0".to_string())],
+    );
+    let Value::Ok(parsed) = parsed else {
+        panic!("dynamic valid parse should be Ok")
+    };
+    assert_branch_path(&parsed, "2.0");
+
+    let child = call_fn(
+        "fn child(idx: Int) -> Result<BranchPath, String>\n    BranchPath.child(BranchPath.Root, idx)\n",
+        "child",
+        vec![Value::Int(aver_rt::AverInt::from_i64(4_294_967_296))],
+    );
+    let Value::Ok(child) = child else {
+        panic!("arbitrary-precision non-negative child index should be Ok")
+    };
+    assert_branch_path(&child, "4294967296");
 }
 
 // ---------------------------------------------------------------------------
@@ -4121,9 +4194,12 @@ fn branch_path_child_rejects_negative_index() {
 #[cfg(feature = "terminal")]
 #[ignore] // requires TTY — fails on CI (EAGAIN)
 fn terminal_size_returns_record_with_width_and_height() {
-    let src = "fn getSize() -> Terminal.Size\n    ? \"get size\"\n    ! [Terminal.size]\n    Terminal.size()\n";
+    let src = "fn getSize() -> Result<Terminal.Size, String>\n    ? \"get size\"\n    ! [Terminal.size]\n    Terminal.size()\n";
     let size = call_fn_with_effects(src, "getSize", vec![]).expect("call failed");
-    match &size {
+    let Value::Ok(size) = &size else {
+        panic!("expected Result.Ok, got {:?}", size)
+    };
+    match size.as_ref() {
         Value::Record {
             type_name, fields, ..
         } => {

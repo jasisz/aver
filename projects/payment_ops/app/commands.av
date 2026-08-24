@@ -91,7 +91,7 @@ fn runResolveCase(caseId: String, resolution: String) -> Result<CommandReport, S
     existingCases = Infra.Store.loadCases()?
     now = Time.now()
     updatedCases = Domain.Cases.resolveCase(existingCases, caseId, resolution, now)?
-    resolvedCase = Option.toResult(Domain.Cases.findCaseById(updatedCases, caseId), "Unknown case: " + caseId)?
+    resolvedCase = Result.fromOption(Domain.Cases.findCaseById(updatedCases, caseId), "Unknown case: " + caseId)?
     audit = Domain.Cases.auditForResolvedCase(resolvedCase)
     _save = Infra.Store.saveCases(updatedCases)?
     _audit = Infra.Audit.recordEntries([audit])?

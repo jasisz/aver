@@ -33,7 +33,7 @@ pub(super) fn builtin_needs_str_conversion(name: &str) -> bool {
             | "String.fromFloat"
             | "String.fromBool"
             | "String.chars"
-            | "Char.fromCode"
+            | "String.fromCodePoint"
             | "Env.get"
             | "Terminal.readKey"
             | "Http.get"
@@ -99,35 +99,35 @@ fn emit_effectful_builtin_call_with_temps(name: &str, args: &[String]) -> Option
             args[0], args[1], args[2], args[3]
         )),
         "HttpServer.listen" => Some(format!(
-            "{{ if let Err(e) = crate::http_server_listen(crate::to_host_i64(&{}, \"HttpServer.listen: port must fit a 64-bit integer\"), {}) {{ panic!(\"{{}}\", e); }} }}",
+            "{{ let __port_value = {}; let __handler = {}; match __port_value.to_i64() {{ Some(__port) if (0..=65535).contains(&__port) => crate::http_server_listen(__port, __handler).map_err(aver_rt::AverStr::from), _ => Err(aver_rt::AverStr::from(format!(\"HttpServer.listen: port {{}} is out of range (0-65535)\", __port_value))) }} }}",
             args[0], args[1]
         )),
         "HttpServer.listenWith" => Some(format!(
-            "{{ if let Err(e) = crate::http_server_listen_with(crate::to_host_i64(&{}, \"HttpServer.listen: port must fit a 64-bit integer\"), {}.clone(), {}) {{ panic!(\"{{}}\", e); }} }}",
+            "{{ let __port_value = {}; let __context = {}.clone(); let __handler = {}; match __port_value.to_i64() {{ Some(__port) if (0..=65535).contains(&__port) => crate::http_server_listen_with(__port, __context, __handler).map_err(aver_rt::AverStr::from), _ => Err(aver_rt::AverStr::from(format!(\"HttpServer.listen: port {{}} is out of range (0-65535)\", __port_value))) }} }}",
             args[0], args[1], args[2]
         )),
         "SelfHostRuntime.httpServerListen" => Some(format!(
-            "crate::self_host_support::http_server_listen(crate::to_host_i64(&{}, \"HttpServer.listen: port must fit a 64-bit integer\"), {})",
+            "{{ let __port_value = {}; let __handler = {}; match __port_value.to_i64() {{ Some(__port) if (0..=65535).contains(&__port) => crate::self_host_support::http_server_listen(__port, __handler), _ => Err(aver_rt::AverStr::from(format!(\"HttpServer.listen: port {{}} is out of range (0-65535)\", __port_value))) }} }}",
             args[0], args[1]
         )),
         "SelfHostRuntime.httpServerListenWith" => Some(format!(
-            "crate::self_host_support::http_server_listen_with(crate::to_host_i64(&{}, \"HttpServer.listen: port must fit a 64-bit integer\"), {}.clone(), {})",
+            "{{ let __port_value = {}; let __context = {}.clone(); let __handler = {}; match __port_value.to_i64() {{ Some(__port) if (0..=65535).contains(&__port) => crate::self_host_support::http_server_listen_with(__port, __context, __handler), _ => Err(aver_rt::AverStr::from(format!(\"HttpServer.listen: port {{}} is out of range (0-65535)\", __port_value))) }} }}",
             args[0], args[1], args[2]
         )),
         "Env.get" => Some(format!("aver_rt::env_get(&{})", args[0])),
         "Env.set" => Some(format!(
-            "aver_rt::env_set(&{}, &{}).expect(\"Env.set failed\")",
+            "aver_rt::env_set(&{}, &{}).map_err(aver_rt::AverStr::from)",
             args[0], args[1]
         )),
         "Args.get" => Some("aver_replay::current_cli_args()".to_string()),
         "Time.now" => Some("aver_rt::provider::standard_time_now()".to_string()),
         "Time.unixMs" => Some("aver_rt::provider::standard_time_unix_ms()".to_string()),
         "Time.sleep" => Some(format!(
-            "aver_rt::provider::standard_time_sleep(&{}).unwrap_or_else(|e| panic!(\"{{}}\", e))",
+            "aver_rt::provider::standard_time_sleep(&{}).map_err(|e| aver_rt::AverStr::from(e.message))",
             args[0]
         )),
         "Random.int" => Some(format!(
-            "aver_rt::provider::standard_random_int(&{}, &{}).unwrap_or_else(|e| panic!(\"{{}}\", e))",
+            "aver_rt::provider::standard_random_int(&{}, &{}).map_err(|e| aver_rt::AverStr::from(e.message))",
             args[0], args[1]
         )),
         "Random.float" => Some("aver_rt::provider::standard_random_float()".to_string()),
@@ -137,7 +137,7 @@ fn emit_effectful_builtin_call_with_temps(name: &str, args: &[String]) -> Option
         }
         "Terminal.clear" => Some("aver_rt::terminal_clear().unwrap()".to_string()),
         "Terminal.moveTo" => Some(format!(
-            "aver_rt::terminal_move_to(crate::to_host_i64(&{}, \"Terminal.moveTo: coordinates must fit a 64-bit integer\"), crate::to_host_i64(&{}, \"Terminal.moveTo: coordinates must fit a 64-bit integer\")).unwrap()",
+            "{{ let __x = {}; let __y = {}; match (__x.to_i64(), __y.to_i64()) {{ (Some(x), Some(y)) => aver_rt::terminal_move_to(x, y).map_err(aver_rt::AverStr::from), _ => Err(aver_rt::AverStr::from(\"Terminal.moveTo: coordinates must fit a 64-bit integer\")) }} }}",
             args[0], args[1]
         )),
         "Terminal.print" => Some(format!(
@@ -150,7 +150,7 @@ fn emit_effectful_builtin_call_with_temps(name: &str, args: &[String]) -> Option
         "Terminal.resetColor" => Some("aver_rt::terminal_reset_color().unwrap()".to_string()),
         "Terminal.readKey" => Some("aver_rt::terminal_read_key()".to_string()),
         "Terminal.size" => Some(
-            "{ let (w, h) = aver_rt::terminal_size().unwrap(); crate::Terminal_Size { width: aver_rt::AverInt::from_i64(w), height: aver_rt::AverInt::from_i64(h) } }".to_string(),
+            "aver_rt::terminal_size().map(|(w, h)| crate::Terminal_Size { width: aver_rt::AverInt::from_i64(w), height: aver_rt::AverInt::from_i64(h) }).map_err(aver_rt::AverStr::from)".to_string(),
         ),
         "Terminal.hideCursor" => Some("aver_rt::terminal_hide_cursor().unwrap()".to_string()),
         "Terminal.showCursor" => Some("aver_rt::terminal_show_cursor().unwrap()".to_string()),
@@ -388,23 +388,23 @@ fn compose_effectful_builtin_raw(name: &str, args: &[String]) -> Option<String> 
 
         // ---- HttpServer ----
         "HttpServer.listen" => Some(format!(
-            "{{ if let Err(e) = crate::http_server_listen(crate::to_host_i64(&{}, \"HttpServer.listen: port must fit a 64-bit integer\"), {}) {{ panic!(\"{{}}\", e); }} }}",
+            "{{ let __port_value = {}; let __handler = {}; match __port_value.to_i64() {{ Some(__port) if (0..=65535).contains(&__port) => crate::http_server_listen(__port, __handler).map_err(aver_rt::AverStr::from), _ => Err(aver_rt::AverStr::from(format!(\"HttpServer.listen: port {{}} is out of range (0-65535)\", __port_value))) }} }}",
             a(0),
             a(1)
         )),
         "HttpServer.listenWith" => Some(format!(
-            "{{ if let Err(e) = crate::http_server_listen_with(crate::to_host_i64(&{}, \"HttpServer.listen: port must fit a 64-bit integer\"), {}.clone(), {}) {{ panic!(\"{{}}\", e); }} }}",
+            "{{ let __port_value = {}; let __context = {}.clone(); let __handler = {}; match __port_value.to_i64() {{ Some(__port) if (0..=65535).contains(&__port) => crate::http_server_listen_with(__port, __context, __handler).map_err(aver_rt::AverStr::from), _ => Err(aver_rt::AverStr::from(format!(\"HttpServer.listen: port {{}} is out of range (0-65535)\", __port_value))) }} }}",
             a(0),
             a(1),
             a(2)
         )),
         "SelfHostRuntime.httpServerListen" => Some(format!(
-            "crate::self_host_support::http_server_listen(crate::to_host_i64(&{}, \"HttpServer.listen: port must fit a 64-bit integer\"), {})",
+            "{{ let __port_value = {}; let __handler = {}; match __port_value.to_i64() {{ Some(__port) if (0..=65535).contains(&__port) => crate::self_host_support::http_server_listen(__port, __handler), _ => Err(aver_rt::AverStr::from(format!(\"HttpServer.listen: port {{}} is out of range (0-65535)\", __port_value))) }} }}",
             a(0),
             a(1)
         )),
         "SelfHostRuntime.httpServerListenWith" => Some(format!(
-            "crate::self_host_support::http_server_listen_with(crate::to_host_i64(&{}, \"HttpServer.listen: port must fit a 64-bit integer\"), {}.clone(), {})",
+            "{{ let __port_value = {}; let __context = {}.clone(); let __handler = {}; match __port_value.to_i64() {{ Some(__port) if (0..=65535).contains(&__port) => crate::self_host_support::http_server_listen_with(__port, __context, __handler), _ => Err(aver_rt::AverStr::from(format!(\"HttpServer.listen: port {{}} is out of range (0-65535)\", __port_value))) }} }}",
             a(0),
             a(1),
             a(2)
@@ -415,7 +415,7 @@ fn compose_effectful_builtin_raw(name: &str, args: &[String]) -> Option<String> 
         // ---- Env ----
         "Env.get" => Some(format!("aver_rt::env_get(&{})", a(0))),
         "Env.set" => Some(format!(
-            "aver_rt::env_set(&{}, &{}).expect(\"Env.set failed\")",
+            "aver_rt::env_set(&{}, &{}).map_err(aver_rt::AverStr::from)",
             a(0),
             a(1)
         )),
@@ -425,13 +425,13 @@ fn compose_effectful_builtin_raw(name: &str, args: &[String]) -> Option<String> 
         "Time.now" => Some("aver_rt::provider::standard_time_now()".to_string()),
         "Time.unixMs" => Some("aver_rt::provider::standard_time_unix_ms()".to_string()),
         "Time.sleep" => Some(format!(
-            "aver_rt::provider::standard_time_sleep(&{}).unwrap_or_else(|e| panic!(\"{{}}\", e))",
+            "aver_rt::provider::standard_time_sleep(&{}).map_err(|e| aver_rt::AverStr::from(e.message))",
             a(0)
         )),
 
         // ---- Random ----
         "Random.int" => Some(format!(
-            "aver_rt::provider::standard_random_int(&{}, &{}).unwrap_or_else(|e| panic!(\"{{}}\", e))",
+            "aver_rt::provider::standard_random_int(&{}, &{}).map_err(|e| aver_rt::AverStr::from(e.message))",
             a(0),
             a(1)
         )),
@@ -446,7 +446,7 @@ fn compose_effectful_builtin_raw(name: &str, args: &[String]) -> Option<String> 
         }
         "Terminal.clear" => Some("aver_rt::terminal_clear().unwrap()".to_string()),
         "Terminal.moveTo" => Some(format!(
-            "aver_rt::terminal_move_to(crate::to_host_i64(&{}, \"Terminal.moveTo: coordinates must fit a 64-bit integer\"), crate::to_host_i64(&{}, \"Terminal.moveTo: coordinates must fit a 64-bit integer\")).unwrap()",
+            "{{ let __x = {}; let __y = {}; match (__x.to_i64(), __y.to_i64()) {{ (Some(x), Some(y)) => aver_rt::terminal_move_to(x, y).map_err(aver_rt::AverStr::from), _ => Err(aver_rt::AverStr::from(\"Terminal.moveTo: coordinates must fit a 64-bit integer\")) }} }}",
             a(0),
             a(1)
         )),
@@ -458,7 +458,7 @@ fn compose_effectful_builtin_raw(name: &str, args: &[String]) -> Option<String> 
         "Terminal.resetColor" => Some("aver_rt::terminal_reset_color().unwrap()".to_string()),
         "Terminal.readKey" => Some("aver_rt::terminal_read_key()".to_string()),
         "Terminal.size" => Some(
-            "{ let (w, h) = aver_rt::terminal_size().unwrap(); crate::Terminal_Size { width: aver_rt::AverInt::from_i64(w), height: aver_rt::AverInt::from_i64(h) } }".to_string(),
+            "aver_rt::terminal_size().map(|(w, h)| crate::Terminal_Size { width: aver_rt::AverInt::from_i64(w), height: aver_rt::AverInt::from_i64(h) }).map_err(aver_rt::AverStr::from)".to_string(),
         ),
         "Terminal.hideCursor" => Some("aver_rt::terminal_hide_cursor().unwrap()".to_string()),
         "Terminal.showCursor" => Some("aver_rt::terminal_show_cursor().unwrap()".to_string()),

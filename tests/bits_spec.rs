@@ -12,10 +12,10 @@
 //!    some other convention (`not x == -x - 1`, `and(-1, x) == x`,
 //!    `shiftLeft(x, n) == x * 2^n`, `0 <= low(x, w) < 2^w`). A value test
 //!    passes for the wrong reason; these do not.
-//! 3. **Typing** — a syntactic non-negative literal count discharges the
-//!    error and the call types as plain `Int`; anything else keeps
-//!    `Result<Int, String>`. That boundary is the whole literal-discharge
-//!    rule, and it is easy to widen by accident.
+//! 3. **Typing** — a syntactic non-negative literal count within the fixed
+//!    materialization bound discharges the error and the call types as plain
+//!    `Int`; anything else keeps `Result<Int, String>`. That boundary is the
+//!    whole literal-discharge rule, and it is easy to widen by accident.
 //!
 //! Cross-backend agreement lives with each backend's own differential suite
 //! (`rust_codegen_differential.rs`, `wasm_gc_spec.rs`, `proof_spec`), so a
@@ -286,10 +286,11 @@ verify lowOfZeroWidthIsZero
 // ─── Layer 3: the partiality boundary ───────────────────────────────────────
 
 #[test]
-fn a_dynamic_negative_count_is_a_catchable_error() {
-    // A negative count must be `Result.Err` — never a panic, never a silent
-    // direction flip, never a clamp to zero, and never the host language's
-    // behaviour for an oversized or negative shift.
+fn invalid_dynamic_counts_are_catchable_errors() {
+    // A negative or oversized count must be `Result.Err` — never a panic,
+    // never a silent direction flip, never a clamp to zero, and never an
+    // allocation sized by untrusted input. The reported 2^32 case is kept as
+    // a regression guard: it used to be accepted on 64-bit hosts.
     let src = r#"fn shift(x: Int, n: Int) -> String
     ? "Reports how a caller-supplied shift amount was treated."
     match Bits.shiftLeft(x, n)
@@ -312,20 +313,28 @@ fn main() -> Unit
     ! [Console.print]
     Console.print(shift(1, 4))
     Console.print(shift(1, -1))
+    Console.print(shift(1, 16777217))
+    Console.print(shift(1, 4294967296))
     Console.print(down(-3, 1))
     Console.print(down(-3, -1))
+    Console.print(down(-3, 16777217))
     Console.print(width(-1, 8))
     Console.print(width(-1, -1))
+    Console.print(width(-1, 4294967296))
 "#;
     let got = run_source("dynamic counts", src);
     assert_eq!(
         got,
         "ok 16\n\
          err negative shift count\n\
+         err shift count exceeds the 16777216 bit limit\n\
+         err shift count exceeds the 16777216 bit limit\n\
          ok -2\n\
          err negative shift count\n\
+         err shift count exceeds the 16777216 bit limit\n\
          ok 255\n\
-         err negative bit width"
+         err negative bit width\n\
+         err bit width exceeds the 16777216 bit limit"
     );
 }
 
@@ -344,6 +353,10 @@ fn a_literal_non_negative_count_discharges_to_a_plain_int() {
 fn zeroWidthDischarges(x: Int) -> Int
     ? "A zero-bit window is well defined, so a 0 literal discharges too."
     Bits.low(x, 0)
+
+fn materializationLimitDischarges(x: Int) -> Int
+    ? "The exact shared limit is still on the total literal path."
+    Bits.low(x, 16777216)
 
 fn main() -> Unit
     ! [Console.print]
@@ -364,6 +377,8 @@ fn a_non_literal_count_keeps_the_result_type() {
         ("identifier", "amount"),
         ("constant expression", "4 + 1"),
         ("negated literal", "-1"),
+        ("literal above the materialization limit", "16777217"),
+        ("reported 2^32 literal", "4294967296"),
     ] {
         let src = format!(
             r#"fn shifted(value: Int, amount: Int) -> Int

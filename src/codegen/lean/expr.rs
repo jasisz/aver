@@ -467,12 +467,12 @@ fn emit_fn_call(
             match name.as_str() {
                 "BranchPath.child" if arg_strs_owned.len() == 2 => {
                     return format!(
-                        "BranchPath.child {} {}",
+                        "BranchPath.childResult {} {}",
                         arg_strs_owned[0], arg_strs_owned[1]
                     );
                 }
                 "BranchPath.parse" if arg_strs_owned.len() == 1 => {
-                    return format!("BranchPath.parse {}", arg_strs_owned[0]);
+                    return format!("BranchPath.parseResult {}", arg_strs_owned[0]);
                 }
                 _ => {}
             }
@@ -500,10 +500,11 @@ fn emit_fn_call(
                 BuiltinIntrinsic::IntModEuclid if arg_strs.len() == 2 => {
                     format!("({} % {})", arg_strs[0], arg_strs[1])
                 }
-                // Literal-count discharge: for a non-negative literal count
-                // the three `Bits` operations are total, so render the bare
-                // prelude definition with no `Except` wrap. The HIR resolver
-                // produces these intrinsics for every discharged source call.
+                // Literal-count discharge: for a bounded non-negative
+                // literal count the three `Bits` operations are total, so
+                // render the bare prelude definition with no `Except` wrap.
+                // The HIR resolver produces these intrinsics for every
+                // discharged source call.
                 BuiltinIntrinsic::BitsShiftLeft if arg_strs.len() == 2 => {
                     format!("(AverBits.shiftLeft {} {})", arg_strs[0], arg_strs[1])
                 }
@@ -512,6 +513,16 @@ fn emit_fn_call(
                 }
                 BuiltinIntrinsic::BitsLow if arg_strs.len() == 2 => {
                     format!("(AverBits.low {} {})", arg_strs[0], arg_strs[1])
+                }
+                BuiltinIntrinsic::VectorNew if arg_strs.len() == 2 => format!(
+                    "(Array.replicate (Int.toNat {}) {})",
+                    arg_strs[0], arg_strs[1]
+                ),
+                BuiltinIntrinsic::BranchPathChild if arg_strs.len() == 2 => {
+                    format!("(BranchPath.child {} {})", arg_strs[0], arg_strs[1])
+                }
+                BuiltinIntrinsic::BranchPathParse if arg_strs.len() == 1 => {
+                    format!("(BranchPath.parse {})", arg_strs[0])
                 }
                 // Compiler-synthesised `__buf_*` / `__to_str` intrinsics
                 // don't reach the Lean backend in practice (Lean emit

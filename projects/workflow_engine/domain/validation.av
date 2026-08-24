@@ -63,7 +63,7 @@ fn validIdChar(ch: String) -> Bool
         true -> true
         false -> match ch == "_"
             true -> true
-            false -> isAlphaNumeric(Char.toCode(ch))
+            false -> isAlphaNumeric(Option.withDefault(String.firstCodePoint(ch), 0))
 
 verify validIdChar
     validIdChar("a") => true

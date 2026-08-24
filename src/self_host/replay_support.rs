@@ -1,6 +1,6 @@
 pub mod aver_replay {
     use std::cell::RefCell;
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::hash::Hash;
     use std::path::{Path, PathBuf};
 
@@ -32,6 +32,15 @@ pub mod aver_replay {
         pub effect_occurrence: Option<u32>,
     }
 
+    #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+    pub struct CapabilityProvenance {
+        pub capability: String,
+        pub contract_hash: String,
+        pub model_hash: String,
+        pub provider: String,
+        pub fingerprint: String,
+    }
+
     #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
     pub struct SessionRecording {
         pub schema_version: u32,
@@ -41,6 +50,8 @@ pub mod aver_replay {
         pub module_root: String,
         pub entry_fn: String,
         pub input: ReplayJson,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pub capabilities: Vec<CapabilityProvenance>,
         pub effects: Vec<EffectRecord>,
         pub output: RecordedOutcome,
     }
@@ -201,6 +212,25 @@ pub mod aver_replay {
         }
     }
 
+    impl ReplayValue for aver_rt::AverIntList {
+        fn to_replay_json(&self) -> ReplayJson {
+            ReplayJson::Array(
+                self.iter_cloned()
+                    .map(|value| ReplayValue::to_replay_json(&value))
+                    .collect(),
+            )
+        }
+
+        fn from_replay_json(value: &ReplayJson) -> Result<Self, String> {
+            let arr = expect_array(value, "list")?;
+            let mut items = Vec::with_capacity(arr.len());
+            for item in arr {
+                items.push(aver_rt::AverInt::from_replay_json(item)?);
+            }
+            Ok(aver_rt::AverIntList::from_vec(items))
+        }
+    }
+
     impl<T: ReplayValue + Clone> ReplayValue for aver_rt::AverVector<T> {
         fn to_replay_json(&self) -> ReplayJson {
             wrap_marker(
@@ -334,6 +364,13 @@ pub mod aver_replay {
         branch_stack: Vec<u32>,
         effect_count_stack: Vec<u32>,
         next_group_id: u32,
+        resource_tokens: std::sync::Arc<std::sync::Mutex<ResourceTokenState>>,
+    }
+
+    #[derive(Default)]
+    struct ResourceTokenState {
+        next_trace: u64,
+        live: BTreeMap<(u64, String, u64, u64), u64>,
     }
 
     #[derive(Clone)]
@@ -641,6 +678,104 @@ pub mod aver_replay {
             }
             Some(ScopeMode::Replay { .. }) => replay_effect(effect_type, args),
         }
+    }
+
+    pub fn invoke_capability_effect<T, F>(
+        effect_type: &str,
+        replay: &str,
+        args: Vec<ReplayJson>,
+        call: F,
+    ) -> T
+    where
+        T: ReplayValue,
+        F: FnOnce() -> T,
+    {
+        match replay {
+            "recorded" | "suppressed" => invoke_effect(effect_type, args, call),
+            "reissued" if matches!(current_scope_mode(), Some(ScopeMode::Replay { .. })) => {
+                let _: T = replay_effect(effect_type, args);
+                call()
+            }
+            "reissued" => invoke_effect(effect_type, args, call),
+            other => panic!("unknown capability replay semantics '{}'", other),
+        }
+    }
+
+    fn capability_resource_json(type_name: &str, trace: u64) -> ReplayJson {
+        let mut payload = serde_json::Map::new();
+        payload.insert(
+            "type".to_string(),
+            ReplayJson::String(type_name.to_string()),
+        );
+        payload.insert("trace".to_string(), ReplayJson::String(trace.to_string()));
+        wrap_marker("$capabilityResource", ReplayJson::Object(payload))
+    }
+
+    pub fn encode_live_capability_resource(
+        type_name: &str,
+        handle: &aver_rt::provider::ProviderResourceHandle,
+    ) -> ReplayJson {
+        let trace = SCOPE_STATE.with(|cell| match &*cell.borrow() {
+            ScopeState::Active(scope) => {
+                let mut tokens = scope
+                    .resource_tokens
+                    .lock()
+                    .unwrap_or_else(|_| panic!("capability replay resource-token store poisoned"));
+                let key = (
+                    handle.binding_id(),
+                    handle.type_name().to_string(),
+                    handle.slot(),
+                    handle.generation(),
+                );
+                if let Some(trace) = tokens.live.get(&key) {
+                    *trace
+                } else {
+                    let trace = tokens.next_trace;
+                    tokens.next_trace = tokens
+                        .next_trace
+                        .checked_add(1)
+                        .expect("capability replay resource-token space exhausted");
+                    tokens.live.insert(key, trace);
+                    trace
+                }
+            }
+            ScopeState::Inactive => handle.slot().saturating_add(1),
+        });
+        capability_resource_json(type_name, trace)
+    }
+
+    pub fn encode_replay_capability_resource(type_name: &str, trace: u64) -> ReplayJson {
+        capability_resource_json(type_name, trace)
+    }
+
+    pub fn decode_capability_resource(
+        value: &ReplayJson,
+        expected_type: &str,
+    ) -> Result<u64, String> {
+        let payload = expect_marker(value, "$capabilityResource")?;
+        let obj = expect_object(payload, "$capabilityResource")?;
+        let type_name = expect_string(
+            obj.get("type")
+                .ok_or_else(|| "$capabilityResource missing field 'type'".to_string())?,
+            "$capabilityResource.type",
+        )?;
+        if type_name != expected_type {
+            return Err(format!(
+                "$capabilityResource type mismatch: expected {}, got {}",
+                expected_type, type_name
+            ));
+        }
+        let trace = expect_string(
+            obj.get("trace")
+                .ok_or_else(|| "$capabilityResource missing field 'trace'".to_string())?,
+            "$capabilityResource.trace",
+        )?
+        .parse::<u64>()
+        .map_err(|_| "$capabilityResource.trace must be a u64 string".to_string())?;
+        if trace == 0 {
+            return Err("$capabilityResource.trace must be non-zero".to_string());
+        }
+        Ok(trace)
     }
 
     #[derive(Clone, Debug, Default)]
@@ -1165,6 +1300,10 @@ pub mod aver_replay {
                 branch_stack: Vec::new(),
                 effect_count_stack: Vec::new(),
                 next_group_id: 0,
+                resource_tokens: std::sync::Arc::new(std::sync::Mutex::new(ResourceTokenState {
+                    next_trace: 1,
+                    live: BTreeMap::new(),
+                })),
             });
         });
     }
@@ -1198,6 +1337,7 @@ pub mod aver_replay {
                     session.entry_fn, logical_entry_fn
                 );
             }
+            validate_capability_provenance(&session);
             return ScopeMode::Replay {
                 session,
                 position: 0,
@@ -1220,6 +1360,7 @@ pub mod aver_replay {
                     module_root,
                     entry_fn: logical_entry_fn,
                     input,
+                    capabilities: standard_capability_provenance(),
                     effects: Vec::new(),
                     output: RecordedOutcome::Value {
                         value: ReplayJson::Null,
@@ -1229,6 +1370,101 @@ pub mod aver_replay {
         }
 
         ScopeMode::Normal
+    }
+
+    fn standard_capability_provenance() -> Vec<CapabilityProvenance> {
+        crate::provider_support::registry()
+            .provenance()
+            .into_iter()
+            .map(|entry| CapabilityProvenance {
+                capability: entry.capability,
+                contract_hash: entry.contract_hash,
+                model_hash: entry.model_hash,
+                provider: entry.provider,
+                fingerprint: entry.fingerprint,
+            })
+            .collect()
+    }
+
+    fn validate_capability_provenance(session: &SessionRecording) {
+        let current = crate::provider_support::registry().contract_provenance();
+        let mut seen = BTreeSet::new();
+        for recorded in &session.capabilities {
+            if !seen.insert(recorded.capability.as_str()) {
+                panic!(
+                    "Replay contains duplicate capability provenance for '{}'",
+                    recorded.capability
+                );
+            }
+            let Some(expected) = current
+                .iter()
+                .find(|entry| entry.capability == recorded.capability)
+            else {
+                panic!(
+                    "Replay names capability '{}' which this Rust artifact does not declare",
+                    recorded.capability
+                );
+            };
+            if recorded.contract_hash != expected.contract_hash {
+                panic!(
+                    "Replay contract mismatch for '{}': recorded {}, current {}",
+                    recorded.capability, recorded.contract_hash, expected.contract_hash
+                );
+            }
+            if recorded.model_hash != expected.model_hash {
+                panic!(
+                    "Replay model mismatch for '{}': recorded {}, current {}",
+                    recorded.capability, recorded.model_hash, expected.model_hash
+                );
+            }
+        }
+        for effect in &session.effects {
+            let capability = match effect.effect_type.as_str() {
+                "Disk.appendBytes" => Some("Disk"),
+                "Disk.appendText" => Some("Disk"),
+                "Disk.delete" => Some("Disk"),
+                "Disk.deleteDir" => Some("Disk"),
+                "Disk.exists" => Some("Disk"),
+                "Disk.listDir" => Some("Disk"),
+                "Disk.makeDir" => Some("Disk"),
+                "Disk.readBytes" => Some("Disk"),
+                "Disk.readBytesAt" => Some("Disk"),
+                "Disk.readText" => Some("Disk"),
+                "Disk.size" => Some("Disk"),
+                "Disk.writeBytes" => Some("Disk"),
+                "Disk.writeText" => Some("Disk"),
+                "Random.float" => Some("Random"),
+                "Random.int" => Some("Random"),
+                "Tcp.close" => Some("Tcp"),
+                "Tcp.connect" => Some("Tcp"),
+                "Tcp.ping" => Some("Tcp"),
+                "Tcp.poll" => Some("Tcp"),
+                "Tcp.readBytes" => Some("Tcp"),
+                "Tcp.readLine" => Some("Tcp"),
+                "Tcp.readSome" => Some("Tcp"),
+                "Tcp.send" => Some("Tcp"),
+                "Tcp.sendBytes" => Some("Tcp"),
+                "Tcp.writeBytes" => Some("Tcp"),
+                "Tcp.writeLine" => Some("Tcp"),
+                "Time.now" => Some("Time"),
+                "Time.sleep" => Some("Time"),
+                "Time.unixMs" => Some("Time"),
+                _ => None,
+            };
+            if let Some(capability) = capability {
+                if !(capability == "Disk"
+                    || capability == "Random"
+                    || capability == "Tcp"
+                    || capability == "Time")
+                    && !seen.contains(capability)
+                {
+                    panic!(
+                        "Legacy replay event '{}' has no capability contract/model provenance; refusing to guess",
+                        effect.effect_type
+                    );
+                }
+            }
+        }
     }
 
     fn canonical_unit(value: ReplayJson) -> ReplayJson {
@@ -1693,49 +1929,6 @@ impl aver_replay::ReplayValue for crate::Terminal_Size {
                 fields
                     .get("height")
                     .ok_or_else(|| "$record Terminal.Size missing field 'height'".to_string())?,
-            )?,
-        })
-    }
-}
-
-impl aver_replay::ReplayValue for crate::Tcp_Connection {
-    fn to_replay_json(&self) -> serde_json::Value {
-        let mut fields = serde_json::Map::new();
-        fields.insert("id".to_string(), ReplayValue::to_replay_json(&self.id));
-        fields.insert("host".to_string(), ReplayValue::to_replay_json(&self.host));
-        fields.insert("port".to_string(), ReplayValue::to_replay_json(&self.port));
-        let mut payload = serde_json::Map::new();
-        payload.insert(
-            "type".to_string(),
-            serde_json::Value::String("Tcp.Connection".to_string()),
-        );
-        payload.insert("fields".to_string(), serde_json::Value::Object(fields));
-        aver_replay::wrap_marker("$record", serde_json::Value::Object(payload))
-    }
-
-    fn from_replay_json(value: &serde_json::Value) -> Result<Self, String> {
-        let payload = aver_replay::expect_marker(value, "$record")?;
-        let obj = aver_replay::expect_object(payload, "$record")?;
-        let fields = aver_replay::expect_object(
-            obj.get("fields")
-                .ok_or_else(|| "$record missing field 'fields'".to_string())?,
-            "$record.fields",
-        )?;
-        Ok(Self {
-            id: <aver_rt::AverStr as ReplayValue>::from_replay_json(
-                fields
-                    .get("id")
-                    .ok_or_else(|| "$record Tcp.Connection missing field 'id'".to_string())?,
-            )?,
-            host: <aver_rt::AverStr as ReplayValue>::from_replay_json(
-                fields
-                    .get("host")
-                    .ok_or_else(|| "$record Tcp.Connection missing field 'host'".to_string())?,
-            )?,
-            port: <aver_rt::AverInt as ReplayValue>::from_replay_json(
-                fields
-                    .get("port")
-                    .ok_or_else(|| "$record Tcp.Connection missing field 'port'".to_string())?,
             )?,
         })
     }

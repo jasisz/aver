@@ -58,8 +58,11 @@ pub(crate) const STANDARD_CAPABILITY_MODULES: &[&str] = &["Disk", "Random", "Tcp
 /// - `implicit_stdlib_deps` lets compilation load the owning modules even
 ///   when a module never names them in `depends`, so every backend can emit
 ///   the nominal records the builtin's boundary references.
-pub(crate) const SOURCE_TYPED_BUILTINS: &[(&str, &[&str])] =
-    &[("Crypto.sha256", &["Bytes", "Crypto.Digest32"])];
+pub(crate) const SOURCE_TYPED_BUILTINS: &[(&str, &[&str])] = &[
+    ("Crypto.sha256", &["Bytes", "Crypto.Digest32"]),
+    ("String.toUtf8", &["Bytes"]),
+    ("String.fromUtf8", &["Bytes"]),
+];
 
 /// Standard modules `items` implicitly depends on because a type annotation,
 /// record expression, or call crosses a stdlib-owned nominal type (e.g.
@@ -549,11 +552,11 @@ mod tests {
         let contract = registry.contract("Time").expect("Time contract");
         assert_eq!(
             contract.contract_hash,
-            "sha256:c7bd82159c4e5922771531cbf583bf6ff74a85dbb5c2c362d1e3b156c5720a49"
+            "sha256:e80d264b61f2808b4db4d765ded0d3db1a9a019c814d27686ef7e71bc4c208af"
         );
         assert_eq!(
             contract.model_hash,
-            "sha256:3b9239af56c4e89e527a53ce6fe4a470a42f84b203b10078c8633f39a6cec5f6"
+            "sha256:07ad032ad093e63f61e39f59f9452b4787936c18f97953a955c998e6593ac294"
         );
         assert_eq!(
             standard_hostile_profiles("Time.unixMs")
@@ -580,11 +583,11 @@ mod tests {
         let contract = registry.contract("Random").expect("Random contract");
         assert_eq!(
             contract.contract_hash,
-            "sha256:d5d224fdf600e70776a570c5fb11781b4ca0e5260196860f477b355676c80197"
+            "sha256:5c23bcf6fe8a6515ea430de874828421cff538f89b3bc142d03f2e6cc014dec7"
         );
         assert_eq!(
             contract.model_hash,
-            "sha256:100e21ef3da57eeed31149c82704a77f125811f3da90a376ab9484bd41fba9c4"
+            "sha256:88b58ba022e2decf378a0c16597808b09ec6923c2d07977ae9ed28502ea5878b"
         );
         assert_eq!(
             standard_hostile_profiles("Random.int")
@@ -653,7 +656,7 @@ mod tests {
         );
         assert_eq!(
             contract.model_hash,
-            "sha256:fdb01a151fa1c924c15441185007066ff466abf1fd481edcbd2c06a0a34243f2"
+            "sha256:3ea8be66d5660ffd5005ce718841c23c8903be734297b2fbd2f5a6b140615d87"
         );
         for (method, labels) in [
             ("Tcp.send", vec!["normal_ok", "always_err"]),

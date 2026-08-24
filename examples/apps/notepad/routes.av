@@ -118,7 +118,7 @@ verify methodNotAllowed
 fn extractNoteId(path: String) -> Result<Int, String>
     ? "Extracts a numeric ID from a /notes/<id> path."
     parts = String.split(path, "/")
-    rawId = Option.toResult(Vector.get(Vector.fromList(parts), 2), "missing note ID")?
+    rawId = Result.fromOption(Vector.get(Vector.fromList(parts), 2), "missing note ID")?
     Int.fromString(rawId)
 
 verify extractNoteId
@@ -130,7 +130,7 @@ verify extractNoteId
 fn parseTitle(body: String) -> Result<String, String>
     ? "Extracts and validates the title from a request body (first line)."
     lines = String.split(body, "\n")
-    title = Option.toResult(Vector.get(Vector.fromList(lines), 0), "request body is empty")?
+    title = Result.fromOption(Vector.get(Vector.fromList(lines), 0), "request body is empty")?
     match String.len(String.trim(title)) > 0
         false -> Result.Err("title cannot be empty")
         true -> Result.Ok(title)

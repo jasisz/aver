@@ -2,35 +2,35 @@ module Digest32
     intent =
         "Defines an exactly 32-byte cryptographic digest refinement."
     depends [Bytes]
-    exposes [fromBytes, toBytes, fromHex, toHex]
+    exposes [fromBytes, bytes, fromHex, toHex]
     exposes opaque [Digest32]
     effects []
 
 record Digest32
     bytes: Bytes
 
-fn hasLength32(bytes: Bytes) -> Bool
+fn hasLength32(payload: Bytes) -> Bool
     ? "Return true when the byte sequence has SHA-256 digest length."
-    List.len(Bytes.toList(bytes)) == 32
+    List.len(Bytes.octets(payload)) == 32
 
-fn fromBytes(bytes: Bytes) -> Result<Digest32, String>
+fn fromBytes(payload: Bytes) -> Result<Digest32, String>
     ? "Validate and construct an exactly 32-byte cryptographic digest."
-    match hasLength32(bytes)
-        true -> Result.Ok(Digest32(bytes = bytes))
+    match hasLength32(payload)
+        true -> Result.Ok(Digest32(bytes = payload))
         false -> Result.Err("digest must contain exactly 32 bytes")
 
-fn toBytes(digest: Digest32) -> Bytes
+fn bytes(digest: Digest32) -> Bytes
     ? "Forget only the fixed-length digest refinement."
     digest.bytes
 
 fn fromHex(text: String) -> Result<Digest32, String>
     ? "Decode hexadecimal bytes and require exactly one 32-byte digest."
-    bytes = Bytes.fromHex(text)?
-    fromBytes(bytes)
+    payload = Bytes.fromHex(text)?
+    fromBytes(payload)
 
 fn toHex(digest: Digest32) -> String
     ? "Encode a 32-byte digest as 64 lowercase hexadecimal characters."
-    Bytes.toHex(toBytes(digest))
+    Bytes.toHex(bytes(digest))
 
 verify hasLength32
     hasLength32(Bytes.fromList([])) => false

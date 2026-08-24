@@ -4,13 +4,13 @@ module OracleTrace
         "Shows Oracle laws, explicit stubs, result projection, trace assertions, and multi-stub expansion."
     effects [Console, Disk, Random, Tcp, Terminal, Time]
 
-fn lowDie(path: BranchPath, n: Int, min: Int, max: Int) -> Int
+fn lowDie(path: BranchPath, n: Int, min: Int, max: Int) -> Result<Int, String>
     ? "Deterministic Random.int stub returning the lower bound."
-    min
+    Result.Ok(min)
 
-fn highDie(path: BranchPath, n: Int, min: Int, max: Int) -> Int
+fn highDie(path: BranchPath, n: Int, min: Int, max: Int) -> Result<Int, String>
     ? "Deterministic Random.int stub returning the upper bound."
-    max
+    Result.Ok(max)
 
 fn rollOnce() -> Int
     ? "Rolls a die once; small enough to export as a universal Oracle law."
@@ -19,7 +19,7 @@ fn rollOnce() -> Int
 
 verify rollOnce law usesOracle
     given rnd: Random.int = [highDie]
-    rollOnce() => rnd(BranchPath.Root, 0, 1, 6)
+    rollOnce() => Result.withDefault(rnd(BranchPath.Root, 0, 1, 6), 1)
 
 fn fakeLine(path: BranchPath, n: Int) -> Result<String, String>
     ? "Deterministic Console.readLine stub."
@@ -45,6 +45,10 @@ fn fakeKey(path: BranchPath, n: Int) -> Option<String>
     ? "Deterministic Terminal.readKey stub."
     Option.Some("q")
 
+fn fakeSleep(path: BranchPath, n: Int, ms: Int) -> Result<Unit, String>
+    ? "Deterministic Time.sleep stub that validates without delaying verification."
+    Result.Ok(Unit)
+
 fn fakeTcpSend(path: BranchPath, n: Int, host: String, port: Int, message: String) -> Result<String, String>
     ? "Deterministic Tcp.send stub."
     Result.Ok("ACK:{message}")
@@ -62,7 +66,7 @@ fn rollAndReport() -> Int
 
 verify rollAndReport trace
     given rnd: Random.int = [lowDie, highDie]
-    expected = rnd(BranchPath.Root, 0, 1, 6)
+    expected = Result.withDefault(rnd(BranchPath.Root, 0, 1, 6), 1)
     report = rollAndReport()
     report.result => expected
     report.trace.contains(Random.int(1, 6)) => true
@@ -110,12 +114,13 @@ verify writeConfig trace
     written.trace.contains(Disk.writeText("aver.toml", "mode=oracle")) => true
 
 fn pauseThenAnswer() -> Int
-    ? "Sleeps and returns a value; sleep is output-only in Oracle."
+    ? "Sleeps and returns a value; literal validation needs no Result ceremony."
     ! [Time.sleep]
     Time.sleep(5)
     42
 
 verify pauseThenAnswer trace
+    given sleep: Time.sleep = [fakeSleep]
     paused = pauseThenAnswer()
     paused.result => 42
     paused.trace.contains(Time.sleep(5)) => true
@@ -149,11 +154,14 @@ fn main() -> Unit
     Console.print("OracleTrace: run `aver verify examples/formal/oracle_trace.av`")
 
 verify lowDie
-    lowDie(BranchPath.Root, 0, 1, 6) => 1
+    lowDie(BranchPath.Root, 0, 1, 6) => Result.Ok(1)
 
 verify highDie
-    highDie(BranchPath.Root, 0, 1, 6) => 6
+    highDie(BranchPath.Root, 0, 1, 6) => Result.Ok(6)
 
 verify fakeConfigExists
     fakeConfigExists(BranchPath.Root, 0, "aver.toml") => true
     fakeConfigExists(BranchPath.Root, 0, "missing.toml") => false
+
+verify fakeSleep
+    fakeSleep(BranchPath.Root, 0, 5) => Result.Ok(Unit)

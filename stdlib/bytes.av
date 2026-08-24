@@ -1,7 +1,7 @@
 module Bytes
     intent =
         "Defines validated byte sequences as an ordinary Aver refinement."
-    exposes [fromList, toList, fromHex, toHex]
+    exposes [fromList, octets, fromHex, toHex]
     exposes opaque [Bytes]
     effects []
 
@@ -38,7 +38,7 @@ fn fromList(xs: List<Int>) -> Result<Bytes, String>
         true -> Result.Ok(Bytes(values = xs))
         false -> Result.Err("byte {firstOutOfRange(xs)} at index {firstOutOfRangeIndex(xs)} is outside 0..=255")
 
-fn toList(bytes: Bytes) -> List<Int>
+fn octets(bytes: Bytes) -> List<Int>
     ? "Expose the validated octets for ordinary List operations."
     bytes.values
 
@@ -121,7 +121,7 @@ fn hexParts(values: List<Int>, acc: List<String>) -> List<String>
 
 fn toHex(bytes: Bytes) -> String
     ? "Encode bytes as lowercase hexadecimal; total because Bytes contains only octets."
-    String.join(hexParts(toList(bytes), []), "")
+    String.join(hexParts(octets(bytes), []), "")
 
 verify allInRange
     allInRange([]) => true

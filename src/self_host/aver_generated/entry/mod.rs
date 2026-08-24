@@ -1,4 +1,6 @@
 #[allow(unused_imports)]
+use crate::aver_generated::disk::*;
+#[allow(unused_imports)]
 use crate::aver_generated::domain::ast::*;
 #[allow(unused_imports)]
 use crate::aver_generated::domain::eval::*;
@@ -17,125 +19,30 @@ use crate::*;
 
 #[allow(non_camel_case_types)]
 enum __MutualTco1 {
-    LoadModules(
-        aver_rt::AverList<AverStr>,
+    QualifyFns__indexed(
+        aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
         AverStr,
-        aver_rt::AverList<FnDef>,
-        aver_rt::AverMap<AverStr, bool>,
+        aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
     ),
-    LoadOneModule(
+    QualifyFnsOne__indexed(
+        crate::aver_generated::domain::ast::FnDef,
+        aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
         AverStr,
-        aver_rt::AverList<AverStr>,
-        AverStr,
-        aver_rt::AverList<FnDef>,
-        aver_rt::AverMap<AverStr, bool>,
+        aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
     ),
 }
 
 fn __mutual_tco_trampoline_1(
     mut __state: __MutualTco1,
-) -> Result<(aver_rt::AverList<FnDef>, aver_rt::AverMap<AverStr, bool>), AverStr> {
+    __str_index: &aver_rt::StringIndex,
+) -> aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> {
     loop {
         __state = match __state {
-            __MutualTco1::LoadModules(mut deps, mut moduleRoot, mut acc, mut loaded) => {
+            __MutualTco1::QualifyFns__indexed(mut fns, mut prefix, mut acc) => {
                 crate::cancel_checkpoint();
-                aver_list_match!(deps, [] => { return Ok((acc, loaded)) }, [dep, rest] => if loaded.contains_key(&dep) { __MutualTco1::LoadModules(rest, moduleRoot, acc, loaded) } else { __MutualTco1::LoadOneModule(dep, rest, moduleRoot, acc, loaded) })
+                aver_list_match!(fns, [] => { return acc.reverse() }, [f, rest] => __MutualTco1::QualifyFnsOne__indexed(f, rest, prefix, acc))
             }
-            __MutualTco1::LoadOneModule(mut dep, mut rest, mut moduleRoot, mut acc, mut loaded) => {
-                crate::cancel_checkpoint();
-                let path = findModulePath(
-                    dep.clone(),
-                    moduleRoot.clone(),
-                    aver_rt::AverInt::from_i64(0),
-                );
-                let source = {
-                    let __effect_arg0 = path;
-                    crate::cancel_checkpoint();
-                    aver_replay::invoke_effect(
-                        "Disk.readText",
-                        vec![aver_replay::ReplayValue::to_replay_json(&__effect_arg0)],
-                        || (aver_rt::read_text(&__effect_arg0)).into_aver(),
-                    )
-                }?;
-                let tokens = crate::aver_generated::domain::lexer::lex(source);
-                let prog = crate::aver_generated::domain::parser::parse(&tokens)?;
-                let moduleFns = resolveQualifiedModuleFns(&prog, dep.clone());
-                let loaded2 = loaded.insert_owned(dep, true);
-                let innerResult = loadModules(&prog.deps, moduleRoot.clone(), &acc, &loaded2)?;
-                {
-                    let (accWithInner, loaded3) = innerResult;
-                    __MutualTco1::LoadModules(
-                        rest,
-                        moduleRoot,
-                        aver_rt::AverList::concat(
-                            &accWithInner.clone(),
-                            &shiftFnIdsInFns__collected(
-                                moduleFns,
-                                aver_rt::AverInt::from_i64(accWithInner.len() as i64),
-                                aver_rt::list_builder_new(
-                                    (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
-                                ),
-                            ),
-                        ),
-                        loaded3,
-                    )
-                }
-            }
-        };
-    }
-}
-
-/// Load all module dependencies, skipping already-loaded modules.
-pub fn loadModules(
-    deps: &aver_rt::AverList<AverStr>,
-    moduleRoot: AverStr,
-    acc: &aver_rt::AverList<FnDef>,
-    loaded: &aver_rt::AverMap<AverStr, bool>,
-) -> Result<(aver_rt::AverList<FnDef>, aver_rt::AverMap<AverStr, bool>), AverStr> {
-    __mutual_tco_trampoline_1(__MutualTco1::LoadModules(
-        deps.clone(),
-        moduleRoot,
-        acc.clone(),
-        loaded.clone(),
-    ))
-}
-
-/// Load one module. Tries moduleRoot, then parent dirs up to 3 levels.
-pub fn loadOneModule(
-    dep: AverStr,
-    rest: &aver_rt::AverList<AverStr>,
-    moduleRoot: AverStr,
-    acc: &aver_rt::AverList<FnDef>,
-    loaded: &aver_rt::AverMap<AverStr, bool>,
-) -> Result<(aver_rt::AverList<FnDef>, aver_rt::AverMap<AverStr, bool>), AverStr> {
-    __mutual_tco_trampoline_1(__MutualTco1::LoadOneModule(
-        dep,
-        rest.clone(),
-        moduleRoot,
-        acc.clone(),
-        loaded.clone(),
-    ))
-}
-
-#[allow(non_camel_case_types)]
-enum __MutualTco2 {
-    QualifyFns(aver_rt::AverList<FnDef>, AverStr, aver_rt::AverList<FnDef>),
-    QualifyFnsOne(
-        FnDef,
-        aver_rt::AverList<FnDef>,
-        AverStr,
-        aver_rt::AverList<FnDef>,
-    ),
-}
-
-fn __mutual_tco_trampoline_2(mut __state: __MutualTco2) -> aver_rt::AverList<FnDef> {
-    loop {
-        __state = match __state {
-            __MutualTco2::QualifyFns(mut fns, mut prefix, mut acc) => {
-                crate::cancel_checkpoint();
-                aver_list_match!(fns, [] => { return acc.reverse() }, [f, rest] => __MutualTco2::QualifyFnsOne(f, rest, prefix, acc))
-            }
-            __MutualTco2::QualifyFnsOne(mut f, mut rest, mut prefix, mut acc) => {
+            __MutualTco1::QualifyFnsOne__indexed(mut f, mut rest, mut prefix, mut acc) => {
                 crate::cancel_checkpoint();
                 let qualified = crate::aver_generated::domain::ast::FnDef {
                     name: ((prefix.clone() + &AverStr::from(".")) + &f.name),
@@ -146,7 +53,7 @@ fn __mutual_tco_trampoline_2(mut __state: __MutualTco2) -> aver_rt::AverList<FnD
                     fastPath: f.fastPath.clone(),
                     tailLoop: f.tailLoop,
                 };
-                __MutualTco2::QualifyFns(
+                __MutualTco1::QualifyFns__indexed(
                     rest,
                     prefix,
                     aver_rt::AverList::prepend(f, &aver_rt::AverList::prepend(qualified, &acc)),
@@ -156,32 +63,35 @@ fn __mutual_tco_trampoline_2(mut __state: __MutualTco2) -> aver_rt::AverList<FnD
     }
 }
 
-/// Register functions with both qualified (Domain.Foo.bar) and unqualified (bar) names.
-pub fn qualifyFns(
-    fns: &aver_rt::AverList<FnDef>,
+/// Synthesized indexed worker of `qualifyFns`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
+pub fn qualifyFns__indexed(
+    fns: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
     prefix: AverStr,
-    acc: &aver_rt::AverList<FnDef>,
-) -> aver_rt::AverList<FnDef> {
-    __mutual_tco_trampoline_2(__MutualTco2::QualifyFns(fns.clone(), prefix, acc.clone()))
+    acc: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+    __str_index: &aver_rt::StringIndex,
+) -> aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> {
+    __mutual_tco_trampoline_1(
+        __MutualTco1::QualifyFns__indexed(fns.clone(), prefix, acc.clone()),
+        &__str_index,
+    )
 }
 
-/// Add both qualified and unqualified versions.
-pub fn qualifyFnsOne(
-    f: &FnDef,
-    rest: &aver_rt::AverList<FnDef>,
+/// Synthesized indexed worker of `qualifyFnsOne`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
+pub fn qualifyFnsOne__indexed(
+    f: &crate::aver_generated::domain::ast::FnDef,
+    rest: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
     prefix: AverStr,
-    acc: &aver_rt::AverList<FnDef>,
-) -> aver_rt::AverList<FnDef> {
-    __mutual_tco_trampoline_2(__MutualTco2::QualifyFnsOne(
-        f.clone(),
-        rest.clone(),
-        prefix,
-        acc.clone(),
-    ))
+    acc: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+    __str_index: &aver_rt::StringIndex,
+) -> aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> {
+    __mutual_tco_trampoline_1(
+        __MutualTco1::QualifyFnsOne__indexed(f.clone(), rest.clone(), prefix, acc.clone()),
+        &__str_index,
+    )
 }
 
 /// Lex, parse, resolve, and evaluate an Aver source string (no module loading).
-pub fn run(source: AverStr) -> Result<Val, AverStr> {
+pub fn run(source: AverStr) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let tokens = crate::aver_generated::domain::lexer::lex(source);
     let prog = crate::aver_generated::domain::parser::parse(&tokens)?;
@@ -194,7 +104,10 @@ pub fn run(source: AverStr) -> Result<Val, AverStr> {
 }
 
 /// Lex, parse, resolve, load modules, and evaluate.
-pub fn runWithModules(source: AverStr, moduleRoot: AverStr) -> Result<Val, AverStr> {
+pub fn runWithModules(
+    source: AverStr,
+    moduleRoot: AverStr,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let prepared = prepareProgramWithModules(source, moduleRoot)?;
     {
@@ -207,16 +120,22 @@ pub fn runWithModules(source: AverStr, moduleRoot: AverStr) -> Result<Val, AverS
 pub fn prepareProgramWithModules(
     source: AverStr,
     moduleRoot: AverStr,
-) -> Result<(Program, aver_rt::AverList<FnDef>), AverStr> {
+) -> Result<
+    (
+        crate::aver_generated::domain::ast::Program,
+        aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+    ),
+    AverStr,
+> {
     crate::cancel_checkpoint();
     let tokens = crate::aver_generated::domain::lexer::lex(source);
     let prog = crate::aver_generated::domain::parser::parse(&tokens)?;
     let resolved = crate::aver_generated::domain::resolver::resolveProgram(&prog);
     let r = loadModules(
-        &resolved.deps,
+        resolved.deps.clone(),
         moduleRoot,
-        &aver_rt::AverList::empty(),
-        &HashMap::new(),
+        aver_rt::AverList::empty(),
+        HashMap::new(),
     )?;
     {
         let (moduleFns, _) = r;
@@ -226,10 +145,10 @@ pub fn prepareProgramWithModules(
 
 /// Execute an already-loaded guest program. guestArgs marks the guest input boundary for scoped replay and policy in generated Rust.
 pub fn runGuestProgram(
-    prog: &Program,
-    moduleFns: &aver_rt::AverList<FnDef>,
+    prog: &crate::aver_generated::domain::ast::Program,
+    moduleFns: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
     guestArgs: &aver_rt::AverList<AverStr>,
-) -> Result<Val, AverStr> {
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::eval::evalProgramWithFns(
         &shiftFnIdsInProgram(prog, aver_rt::AverInt::from_i64(moduleFns.len() as i64)),
@@ -239,11 +158,11 @@ pub fn runGuestProgram(
 
 /// Execute a loaded guest program with CLI-compatible main semantics inside the guest boundary. Returns the user main()'s return Val so the replay scope can serialise it as recording.output (and replay-mode output comparison sees the live value), instead of dropping it to Unit before the wrapping aver_replay scope captures the result.
 pub fn runGuestCliProgram(
-    prog: &Program,
-    moduleFns: &aver_rt::AverList<FnDef>,
-    localFns: &aver_rt::AverList<FnDef>,
+    prog: &crate::aver_generated::domain::ast::Program,
+    moduleFns: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+    localFns: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
     guestArgs: &aver_rt::AverList<AverStr>,
-) -> Result<Val, AverStr> {
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     let __replay_input = aver_replay::ReplayValue::to_replay_json(guestArgs);
     aver_replay::with_guest_scope_args_result(
         "runGuestCliProgram",
@@ -256,8 +175,8 @@ pub fn runGuestCliProgram(
                 || {
                     crate::cancel_checkpoint();
                     match runGuestProgram(prog, moduleFns, guestArgs) {
-                        Ok(result) => finishCliRun(localFns, &result),
-                        Err(e) => Err((AverStr::from("Runtime error: ") + &e)),
+                        Ok(result @ _) => finishCliRun(localFns, &result),
+                        Err(e @ _) => Err((AverStr::from("Runtime error: ") + &e)),
                     }
                 },
             )
@@ -265,122 +184,148 @@ pub fn runGuestCliProgram(
     )
 }
 
-/// Find module file, trying root then parent dirs.
-pub fn findModulePath(mut dep: AverStr, mut root: AverStr, mut depth: aver_rt::AverInt) -> AverStr {
+/// Load all module dependencies, skipping already-loaded modules.
+pub fn loadModules(
+    mut deps: aver_rt::AverList<AverStr>,
+    mut moduleRoot: AverStr,
+    acc: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+    loaded: aver_rt::AverMap<AverStr, bool>,
+) -> Result<
+    (
+        aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+        aver_rt::AverMap<AverStr, bool>,
+    ),
+    AverStr,
+> {
+    let loaded = std::sync::Arc::new(loaded);
+    let acc = std::sync::Arc::new(acc);
     loop {
         crate::cancel_checkpoint();
-        let path = modulePathFromName(dep.clone(), root.clone());
-        if {
-            let __effect_arg0 = path.clone();
-            crate::cancel_checkpoint();
-            aver_replay::invoke_effect(
-                "Disk.exists",
-                vec![aver_replay::ReplayValue::to_replay_json(&__effect_arg0)],
-                || aver_rt::path_exists(&__effect_arg0),
-            )
-        } {
-            return path;
-        } else {
-            if (depth < aver_rt::AverInt::from_i64(3)) {
-                {
-                    let __tco1 = (root + &AverStr::from("/.."));
-                    let __tco2 = depth.add(&aver_rt::AverInt::from_i64(1));
-                    root = __tco1;
-                    depth = __tco2;
-                    continue;
-                }
-            } else {
-                return path;
-            }
-        }
+        aver_list_match!(deps, [] => { return Ok(((*acc).clone(), (*loaded).clone())); }, [dep, rest] => { if loaded.contains_key(&dep) { {
+            let __tco0 = rest;
+            deps = __tco0;
+            continue;
+        } } else { return loadOneModule(dep, &rest, moduleRoot, &*acc, &*loaded); } })
     }
 }
 
+/// Load one module. Tries moduleRoot, then parent dirs up to 3 levels.
+pub fn loadOneModule(
+    dep: AverStr,
+    rest: &aver_rt::AverList<AverStr>,
+    moduleRoot: AverStr,
+    acc: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+    loaded: &aver_rt::AverMap<AverStr, bool>,
+) -> Result<
+    (
+        aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+        aver_rt::AverMap<AverStr, bool>,
+    ),
+    AverStr,
+> {
+    crate::cancel_checkpoint();
+    loadOneModule__indexed(
+        dep.clone(),
+        rest,
+        moduleRoot,
+        acc,
+        loaded,
+        &aver_rt::string_index_build(&dep),
+    )
+}
+
+/// Find module file, trying root then parent dirs.
+pub fn findModulePath(dep: AverStr, root: AverStr, depth: aver_rt::AverInt) -> AverStr {
+    crate::cancel_checkpoint();
+    findModulePath__indexed(dep.clone(), root, depth, aver_rt::string_index_build(&dep))
+}
+
 /// Convert Module.Name to file path: Domain.Foo -> domain/foo.av
+#[inline(always)]
 pub fn modulePathFromName(name: AverStr, moduleRoot: AverStr) -> AverStr {
     crate::cancel_checkpoint();
-    (((moduleRoot + &AverStr::from("/"))
-        + &dotToSlash(
-            name.clone(),
-            aver_rt::AverInt::from_i64(0),
-            aver_rt::AverInt::from_i64(name.chars().count() as i64),
-            AverStr::from(""),
-        ))
-        + &AverStr::from(".av"))
+    modulePathFromName__indexed(
+        name.clone(),
+        moduleRoot,
+        &aver_rt::string_index_build(&name),
+    )
 }
 
 /// Replace dots with slashes and lowercase first char of each segment.
 #[inline(always)]
 pub fn dotToSlash(
-    mut name: AverStr,
-    mut pos: aver_rt::AverInt,
-    mut total: aver_rt::AverInt,
-    mut acc: AverStr,
+    name: AverStr,
+    pos: aver_rt::AverInt,
+    total: aver_rt::AverInt,
+    acc: AverStr,
 ) -> AverStr {
-    loop {
-        crate::cancel_checkpoint();
-        let nextPos = pos.add(&aver_rt::AverInt::from_i64(1));
-        if (pos < total) {
-            match ((pos)
-                .to_usize()
-                .and_then(|__i| name.chars().nth(__i).map(|c| c.to_string())))
-            .into_aver()
-            {
-                Some(c) => {
-                    if (c == AverStr::from(".")) {
-                        {
-                            let __tco1 = nextPos;
-                            let __tco3 = (acc + &AverStr::from("/"));
-                            pos = __tco1;
-                            acc = __tco3;
-                            continue;
-                        }
-                    } else {
-                        {
-                            let __tco1 = nextPos;
-                            let __tco3 = (acc + &(c.to_lowercase()).into_aver());
-                            pos = __tco1;
-                            acc = __tco3;
-                            continue;
-                        }
-                    }
-                }
-                None => {
-                    return acc;
-                }
-            }
-        } else {
-            return acc;
-        }
-    }
+    crate::cancel_checkpoint();
+    dotToSlash__indexed(
+        name.clone(),
+        pos,
+        total,
+        acc,
+        aver_rt::string_index_build(&name),
+    )
+}
+
+/// Register functions with both qualified (Domain.Foo.bar) and unqualified (bar) names.
+#[inline(always)]
+pub fn qualifyFns(
+    fns: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+    prefix: AverStr,
+    acc: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+) -> aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> {
+    crate::cancel_checkpoint();
+    qualifyFns__indexed(
+        fns,
+        prefix.clone(),
+        acc,
+        &aver_rt::string_index_build(&prefix),
+    )
+}
+
+/// Add both qualified and unqualified versions.
+#[inline(always)]
+pub fn qualifyFnsOne(
+    f: &crate::aver_generated::domain::ast::FnDef,
+    rest: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+    prefix: AverStr,
+    acc: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+) -> aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> {
+    crate::cancel_checkpoint();
+    qualifyFnsOne__indexed(
+        f,
+        rest,
+        prefix.clone(),
+        acc,
+        &aver_rt::string_index_build(&prefix),
+    )
 }
 
 /// Duplicate module function names first, then resolve locally so direct-call ids are consistent within that module.
-pub fn resolveQualifiedModuleFns(prog: &Program, dep: AverStr) -> aver_rt::AverList<FnDef> {
+#[inline(always)]
+pub fn resolveQualifiedModuleFns(
+    prog: &crate::aver_generated::domain::ast::Program,
+    dep: AverStr,
+) -> aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> {
     crate::cancel_checkpoint();
-    let qualifiedProg = crate::aver_generated::domain::ast::Program {
-        deps: prog.deps.clone(),
-        fns: qualifyFns(&prog.fns, dep, &aver_rt::AverList::empty()),
-        stmts: prog.stmts.clone(),
-    };
-    crate::aver_generated::domain::resolver::resolveProgram(&qualifiedProg).fns
+    resolveQualifiedModuleFns__indexed(prog, dep.clone(), &aver_rt::string_index_build(&dep))
 }
 
 /// Shift module-local direct-call ids so they point into the final combined function store.
 #[inline(always)]
 pub fn shiftFnIdsInFns(
-    mut fns: aver_rt::AverList<FnDef>,
+    mut fns: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
     mut offset: aver_rt::AverInt,
-    mut acc: aver_rt::AverList<FnDef>,
-) -> aver_rt::AverList<FnDef> {
+    mut acc: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+) -> aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> {
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(fns, [] => { return acc.reverse(); }, [fd, rest] => { {
             let __tco0 = rest;
-            let __tco1 = offset.clone();
-            let __tco2 = aver_rt::AverList::prepend(shiftFnIdsInFn(&fd, offset), &acc);
+            let __tco2 = aver_rt::AverList::prepend(shiftFnIdsInFn(&fd, offset.clone()), &acc);
             fns = __tco0;
-            offset = __tco1;
             acc = __tco2;
             continue;
         } })
@@ -388,7 +333,10 @@ pub fn shiftFnIdsInFns(
 }
 
 /// Shift entry-program direct-call ids before prepending loaded module functions.
-pub fn shiftFnIdsInProgram(prog: &Program, offset: aver_rt::AverInt) -> Program {
+pub fn shiftFnIdsInProgram(
+    prog: &crate::aver_generated::domain::ast::Program,
+    offset: aver_rt::AverInt,
+) -> crate::aver_generated::domain::ast::Program {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::ast::Program {
         deps: prog.deps.clone(),
@@ -406,7 +354,10 @@ pub fn shiftFnIdsInProgram(prog: &Program, offset: aver_rt::AverInt) -> Program 
 }
 
 /// Shift all embedded direct-call ids in one function definition.
-pub fn shiftFnIdsInFn(fd: &FnDef, offset: aver_rt::AverInt) -> FnDef {
+pub fn shiftFnIdsInFn(
+    fd: &crate::aver_generated::domain::ast::FnDef,
+    offset: aver_rt::AverInt,
+) -> crate::aver_generated::domain::ast::FnDef {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::ast::FnDef {
         name: fd.name.clone(),
@@ -424,7 +375,10 @@ pub fn shiftFnIdsInFn(fd: &FnDef, offset: aver_rt::AverInt) -> FnDef {
 }
 
 /// Shift fast-path target ids that were resolved against a module-local function list.
-pub fn shiftFnIdsInFastPath(path: &FnFastPath, offset: aver_rt::AverInt) -> FnFastPath {
+pub fn shiftFnIdsInFastPath(
+    path: &crate::aver_generated::domain::ast::FnFastPath,
+    offset: aver_rt::AverInt,
+) -> crate::aver_generated::domain::ast::FnFastPath {
     crate::cancel_checkpoint();
     match path.clone() {
         crate::aver_generated::domain::ast::FnFastPath::FastForwardCall(targetId, slotArgs) => {
@@ -440,18 +394,16 @@ pub fn shiftFnIdsInFastPath(path: &FnFastPath, offset: aver_rt::AverInt) -> FnFa
 /// Shift direct-call ids through a statement list.
 #[inline(always)]
 pub fn shiftFnIdsInStmts(
-    mut stmts: aver_rt::AverList<Stmt>,
+    mut stmts: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
     mut offset: aver_rt::AverInt,
-    mut acc: aver_rt::AverList<Stmt>,
-) -> aver_rt::AverList<Stmt> {
+    mut acc: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
+) -> aver_rt::AverList<crate::aver_generated::domain::ast::Stmt> {
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(stmts, [] => { return acc.reverse(); }, [stmt, rest] => { {
             let __tco0 = rest;
-            let __tco1 = offset.clone();
-            let __tco2 = aver_rt::AverList::prepend(shiftFnIdsInStmt(&stmt, offset), &acc);
+            let __tco2 = aver_rt::AverList::prepend(shiftFnIdsInStmt(&stmt, offset.clone()), &acc);
             stmts = __tco0;
-            offset = __tco1;
             acc = __tco2;
             continue;
         } })
@@ -459,7 +411,10 @@ pub fn shiftFnIdsInStmts(
 }
 
 /// Shift direct-call ids in one statement.
-pub fn shiftFnIdsInStmt(stmt: &Stmt, offset: aver_rt::AverInt) -> Stmt {
+pub fn shiftFnIdsInStmt(
+    stmt: &crate::aver_generated::domain::ast::Stmt,
+    offset: aver_rt::AverInt,
+) -> crate::aver_generated::domain::ast::Stmt {
     crate::cancel_checkpoint();
     match stmt.clone() {
         crate::aver_generated::domain::ast::Stmt::StmtBind(name, expr) => {
@@ -481,7 +436,10 @@ pub fn shiftFnIdsInStmt(stmt: &Stmt, offset: aver_rt::AverInt) -> Stmt {
 }
 
 /// Shift direct-call ids in one expression tree.
-pub fn shiftFnIdsInExpr(expr: &Expr, offset: aver_rt::AverInt) -> Expr {
+pub fn shiftFnIdsInExpr(
+    expr: &crate::aver_generated::domain::ast::Expr,
+    offset: aver_rt::AverInt,
+) -> crate::aver_generated::domain::ast::Expr {
     crate::cancel_checkpoint();
     match expr.clone() {
         crate::aver_generated::domain::ast::Expr::ExprBoolBranch(cond, thenExpr, elseExpr) => {
@@ -569,7 +527,10 @@ pub fn shiftFnIdsInExpr(expr: &Expr, offset: aver_rt::AverInt) -> Expr {
 }
 
 /// Finish shifting direct-call ids through the remaining aggregate forms.
-pub fn shiftFnIdsInExprTail(expr: &Expr, offset: aver_rt::AverInt) -> Expr {
+pub fn shiftFnIdsInExprTail(
+    expr: &crate::aver_generated::domain::ast::Expr,
+    offset: aver_rt::AverInt,
+) -> crate::aver_generated::domain::ast::Expr {
     crate::cancel_checkpoint();
     match expr.clone() {
         crate::aver_generated::domain::ast::Expr::ExprLt(a, b) => {
@@ -642,7 +603,10 @@ pub fn shiftFnIdsInExprTail(expr: &Expr, offset: aver_rt::AverInt) -> Expr {
 }
 
 /// Finish shifting direct-call ids through access, call, and match forms.
-pub fn shiftFnIdsInExprCalls(expr: &Expr, offset: aver_rt::AverInt) -> Expr {
+pub fn shiftFnIdsInExprCalls(
+    expr: &crate::aver_generated::domain::ast::Expr,
+    offset: aver_rt::AverInt,
+) -> crate::aver_generated::domain::ast::Expr {
     crate::cancel_checkpoint();
     match expr.clone() {
         crate::aver_generated::domain::ast::Expr::ExprFieldAccess(obj, field) => {
@@ -738,18 +702,16 @@ pub fn shiftFnIdsInExprCalls(expr: &Expr, offset: aver_rt::AverInt) -> Expr {
 /// Shift direct-call ids in a list of expressions.
 #[inline(always)]
 pub fn shiftFnIdsInExprs(
-    mut exprs: aver_rt::AverList<Expr>,
+    mut exprs: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
     mut offset: aver_rt::AverInt,
-    mut acc: aver_rt::AverList<Expr>,
-) -> aver_rt::AverList<Expr> {
+    mut acc: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+) -> aver_rt::AverList<crate::aver_generated::domain::ast::Expr> {
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(exprs, [] => { return acc.reverse(); }, [expr, rest] => { {
             let __tco0 = rest;
-            let __tco1 = offset.clone();
-            let __tco2 = aver_rt::AverList::prepend(shiftFnIdsInExpr(&expr, offset), &acc);
+            let __tco2 = aver_rt::AverList::prepend(shiftFnIdsInExpr(&expr, offset.clone()), &acc);
             exprs = __tco0;
-            offset = __tco1;
             acc = __tco2;
             continue;
         } })
@@ -759,18 +721,16 @@ pub fn shiftFnIdsInExprs(
 /// Shift direct-call ids in record field expressions.
 #[inline(always)]
 pub fn shiftFnIdsInFields(
-    mut fields: aver_rt::AverList<(AverStr, Expr)>,
+    mut fields: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
     mut offset: aver_rt::AverInt,
-    mut acc: aver_rt::AverList<(AverStr, Expr)>,
-) -> aver_rt::AverList<(AverStr, Expr)> {
+    mut acc: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
+) -> aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)> {
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(fields, [] => { return acc.reverse(); }, [pair, rest] => { { let (name, expr) = pair; {
             let __tco0 = rest;
-            let __tco1 = offset.clone();
-            let __tco2 = aver_rt::AverList::prepend((name, shiftFnIdsInExpr(&expr, offset)), &acc);
+            let __tco2 = aver_rt::AverList::prepend((name, shiftFnIdsInExpr(&expr, offset.clone())), &acc);
             fields = __tco0;
-            offset = __tco1;
             acc = __tco2;
             continue;
         } } })
@@ -780,18 +740,16 @@ pub fn shiftFnIdsInFields(
 /// Shift direct-call ids in match arm bodies.
 #[inline(always)]
 pub fn shiftFnIdsInArms(
-    mut arms: aver_rt::AverList<MatchArm>,
+    mut arms: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
     mut offset: aver_rt::AverInt,
-    mut acc: aver_rt::AverList<MatchArm>,
-) -> aver_rt::AverList<MatchArm> {
+    mut acc: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
+) -> aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm> {
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(arms, [] => { return acc.reverse(); }, [arm, rest] => { {
             let __tco0 = rest;
-            let __tco1 = offset.clone();
-            let __tco2 = aver_rt::AverList::prepend(crate::aver_generated::domain::ast::MatchArm { pattern: arm.pattern.clone(), body: shiftFnIdsInExpr(&arm.body, offset), bindingSlots: arm.bindingSlots.clone() }, &acc);
+            let __tco2 = aver_rt::AverList::prepend(crate::aver_generated::domain::ast::MatchArm { pattern: arm.pattern.clone(), body: shiftFnIdsInExpr(&arm.body, offset.clone()), bindingSlots: arm.bindingSlots.clone() }, &acc);
             arms = __tco0;
-            offset = __tco1;
             acc = __tco2;
             continue;
         } })
@@ -802,8 +760,8 @@ pub fn shiftFnIdsInArms(
 pub fn runRepr(source: AverStr) -> AverStr {
     crate::cancel_checkpoint();
     match run(source) {
-        Ok(val) => crate::aver_generated::domain::value::valRepr(&val),
-        Err(e) => aver_rt::AverStr::from({
+        Ok(val @ _) => crate::aver_generated::domain::value::valRepr(&val),
+        Err(e @ _) => aver_rt::AverStr::from({
             let mut __b = {
                 let mut __b = aver_rt::Buffer::with_capacity(
                     (aver_rt::AverInt::from_i64(23)).to_usize().unwrap_or(0),
@@ -821,23 +779,23 @@ pub fn runRepr(source: AverStr) -> AverStr {
 pub fn runFile(path: AverStr, moduleRoot: AverStr) -> Result<AverStr, AverStr> {
     crate::cancel_checkpoint();
     match loadProgramFromFile(path, moduleRoot) {
-        Ok(pair) => {
+        Ok(pair @ _) => {
             let (prog, moduleFns) = pair;
             runFileLoaded(&prog, &moduleFns)
         }
-        Err(e) => Err(e),
+        Err(e @ _) => Err(e),
     }
 }
 
 /// Turn a loaded guest program into a representation string.
 pub fn runFileLoaded(
-    prog: &Program,
-    moduleFns: &aver_rt::AverList<FnDef>,
+    prog: &crate::aver_generated::domain::ast::Program,
+    moduleFns: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
 ) -> Result<AverStr, AverStr> {
     crate::cancel_checkpoint();
     match runGuestProgram(prog, moduleFns, &aver_rt::AverList::empty()) {
-        Ok(val) => Ok(crate::aver_generated::domain::value::valRepr(&val)),
-        Err(e) => Err(e),
+        Ok(val @ _) => Ok(crate::aver_generated::domain::value::valRepr(&val)),
+        Err(e @ _) => Err(e),
     }
 }
 
@@ -845,15 +803,32 @@ pub fn runFileLoaded(
 pub fn loadProgramFromFile(
     path: AverStr,
     moduleRoot: AverStr,
-) -> Result<(Program, aver_rt::AverList<FnDef>), AverStr> {
+) -> Result<
+    (
+        crate::aver_generated::domain::ast::Program,
+        aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+    ),
+    AverStr,
+> {
     crate::cancel_checkpoint();
     let source = {
-        let __effect_arg0 = path;
+        let __provider_arg0 = path;
         crate::cancel_checkpoint();
-        aver_replay::invoke_effect(
+        crate::aver_replay::invoke_capability_effect(
             "Disk.readText",
-            vec![aver_replay::ReplayValue::to_replay_json(&__effect_arg0)],
-            || (aver_rt::read_text(&__effect_arg0)).into_aver(),
+            "recorded",
+            vec![crate::aver_replay::ReplayValue::to_replay_json(
+                &__provider_arg0,
+            )],
+            || {
+                crate::provider_support::invoke::<Result<AverStr, AverStr>>(
+                    "Disk",
+                    "Disk.readText",
+                    vec![crate::provider_support::encode(__provider_arg0, "Disk")],
+                    None,
+                    "Result<String, String>",
+                )
+            },
         )
     }?;
     prepareProgramWithModules(source, moduleRoot)
@@ -863,7 +838,7 @@ pub fn loadProgramFromFile(
 pub fn runFromFileWithRest(
     path: AverStr,
     rest: &aver_rt::AverList<AverStr>,
-) -> Result<Val, AverStr> {
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     aver_list_match!(rest.clone(), [] => runCliFile(path, AverStr::from("."), &aver_rt::AverList::empty()), [moduleRoot, guestArgs] => runCliFile(path, moduleRoot, &guestArgs))
 }
@@ -873,7 +848,7 @@ pub fn runCliFile(
     path: AverStr,
     moduleRoot: AverStr,
     guestArgs: &aver_rt::AverList<AverStr>,
-) -> Result<Val, AverStr> {
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let prepared = loadProgramFromFile(path, moduleRoot)?;
     {
@@ -884,7 +859,10 @@ pub fn runCliFile(
 
 /// Mirror host CLI semantics: surface user main() Result.Err as process failure, but otherwise propagate the live return Val so replay-mode output comparison sees the actual value (recording.output stores the serialised Val, replay re-serialises and compares — dropping to Unit here would force every recording to claim Unit-output, masking real divergence).
 #[inline(always)]
-pub fn finishCliRun(localFns: &aver_rt::AverList<FnDef>, result: &Val) -> Result<Val, AverStr> {
+pub fn finishCliRun(
+    localFns: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+    result: &crate::aver_generated::domain::value::Val,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     if hasLocalMain(localFns.clone()) {
         finishCliMainResult(result)
@@ -894,7 +872,9 @@ pub fn finishCliRun(localFns: &aver_rt::AverList<FnDef>, result: &Val) -> Result
 }
 
 /// Convert a guest main() return value into CLI success or failure. Successful returns propagate the live Val so the replay scope can serialise it as recording.output.
-pub fn finishCliMainResult(result: &Val) -> Result<Val, AverStr> {
+pub fn finishCliMainResult(
+    result: &crate::aver_generated::domain::value::Val,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     match result.clone() {
         crate::aver_generated::domain::value::Val::ValErr(err) => {
@@ -908,10 +888,10 @@ pub fn finishCliMainResult(result: &Val) -> Result<Val, AverStr> {
 
 /// Check whether the entry program defines its own main().
 #[inline(always)]
-pub fn hasLocalMain(mut fns: aver_rt::AverList<FnDef>) -> bool {
+pub fn hasLocalMain(mut fns: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>) -> bool {
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(fns, [] => { return false; }, [f, rest] => { if (f.name == AverStr::from("main")) { return true; } else { {
+        aver_list_match!(fns, [] => { return false; }, [f, rest] => { if (&*f.name == "main") { return true; } else { {
             let __tco0 = rest;
             fns = __tco0;
             continue;
@@ -922,7 +902,7 @@ pub fn hasLocalMain(mut fns: aver_rt::AverList<FnDef>) -> bool {
 /// Print unless the result is Unit.
 pub fn printIfNotUnit(s: AverStr) -> () {
     crate::cancel_checkpoint();
-    if (s == AverStr::from("()")) {
+    if (&*s == "()") {
         {
             let __effect_arg0 = AverStr::from("");
             crate::cancel_checkpoint();
@@ -1064,21 +1044,211 @@ pub fn runDemo() -> Result<(), AverStr> {
     Ok(())
 }
 
+/// Synthesized indexed worker of `loadOneModule`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
+pub fn loadOneModule__indexed(
+    dep: AverStr,
+    rest: &aver_rt::AverList<AverStr>,
+    moduleRoot: AverStr,
+    acc: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+    loaded: &aver_rt::AverMap<AverStr, bool>,
+    __str_index: &aver_rt::StringIndex,
+) -> Result<
+    (
+        aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+        aver_rt::AverMap<AverStr, bool>,
+    ),
+    AverStr,
+> {
+    crate::cancel_checkpoint();
+    let path = findModulePath__indexed(
+        dep.clone(),
+        moduleRoot.clone(),
+        aver_rt::AverInt::from_i64(0),
+        __str_index.clone(),
+    );
+    let source = {
+        let __provider_arg0 = path;
+        crate::cancel_checkpoint();
+        crate::aver_replay::invoke_capability_effect(
+            "Disk.readText",
+            "recorded",
+            vec![crate::aver_replay::ReplayValue::to_replay_json(
+                &__provider_arg0,
+            )],
+            || {
+                crate::provider_support::invoke::<Result<AverStr, AverStr>>(
+                    "Disk",
+                    "Disk.readText",
+                    vec![crate::provider_support::encode(__provider_arg0, "Disk")],
+                    None,
+                    "Result<String, String>",
+                )
+            },
+        )
+    }?;
+    let tokens = crate::aver_generated::domain::lexer::lex(source);
+    let prog = crate::aver_generated::domain::parser::parse(&tokens)?;
+    let moduleFns = resolveQualifiedModuleFns__indexed(&prog, dep.clone(), __str_index);
+    let loaded2 = loaded.clone().insert_owned(dep, true);
+    let innerResult = loadModules(prog.deps.clone(), moduleRoot.clone(), acc.clone(), loaded2)?;
+    {
+        let (accWithInner, loaded3) = innerResult;
+        loadModules(
+            rest.clone(),
+            moduleRoot,
+            aver_rt::AverList::concat(
+                &accWithInner.clone(),
+                &shiftFnIdsInFns__collected(
+                    moduleFns,
+                    aver_rt::AverInt::from_i64(accWithInner.len() as i64),
+                    aver_rt::list_builder_new(
+                        (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
+                    ),
+                ),
+            ),
+            loaded3,
+        )
+    }
+}
+
+/// Synthesized indexed worker of `findModulePath`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
+pub fn findModulePath__indexed(
+    mut dep: AverStr,
+    mut root: AverStr,
+    mut depth: aver_rt::AverInt,
+    __str_index: aver_rt::StringIndex,
+) -> AverStr {
+    let __str_index = std::sync::Arc::new(__str_index);
+    loop {
+        crate::cancel_checkpoint();
+        let path = modulePathFromName__indexed(dep.clone(), root.clone(), &*__str_index);
+        if {
+            let __provider_arg0 = path.clone();
+            crate::cancel_checkpoint();
+            crate::aver_replay::invoke_capability_effect(
+                "Disk.exists",
+                "recorded",
+                vec![crate::aver_replay::ReplayValue::to_replay_json(
+                    &__provider_arg0,
+                )],
+                || {
+                    crate::provider_support::invoke::<bool>(
+                        "Disk",
+                        "Disk.exists",
+                        vec![crate::provider_support::encode(__provider_arg0, "Disk")],
+                        None,
+                        "Bool",
+                    )
+                },
+            )
+        } {
+            return path;
+        } else {
+            if (depth < aver_rt::AverInt::from_i64(3)) {
+                {
+                    let __tco1 = (root + &AverStr::from("/.."));
+                    let __tco2 = depth.add(&aver_rt::AverInt::from_i64(1));
+                    root = __tco1;
+                    depth = __tco2;
+                    continue;
+                }
+            } else {
+                return path;
+            }
+        }
+    }
+}
+
+/// Synthesized indexed worker of `modulePathFromName`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
+pub fn modulePathFromName__indexed(
+    name: AverStr,
+    moduleRoot: AverStr,
+    __str_index: &aver_rt::StringIndex,
+) -> AverStr {
+    crate::cancel_checkpoint();
+    (((moduleRoot + &AverStr::from("/"))
+        + &dotToSlash__indexed(
+            name.clone(),
+            aver_rt::AverInt::from_i64(0),
+            aver_rt::AverInt::from_i64(name.chars().count() as i64),
+            AverStr::from(""),
+            __str_index.clone(),
+        ))
+        + &AverStr::from(".av"))
+}
+
+/// Synthesized indexed worker of `dotToSlash`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
+#[inline(always)]
+pub fn dotToSlash__indexed(
+    mut name: AverStr,
+    mut pos: aver_rt::AverInt,
+    mut total: aver_rt::AverInt,
+    mut acc: AverStr,
+    __str_index: aver_rt::StringIndex,
+) -> AverStr {
+    let __str_index = std::sync::Arc::new(__str_index);
+    loop {
+        crate::cancel_checkpoint();
+        let nextPos = pos.add(&aver_rt::AverInt::from_i64(1));
+        if (pos < total) {
+            match aver_rt::string_index_char_at(&name, &__str_index, &pos) {
+                Some(c @ _) => {
+                    if (&*c == ".") {
+                        {
+                            let __tco1 = nextPos;
+                            let __tco3 = (acc + &AverStr::from("/"));
+                            pos = __tco1;
+                            acc = __tco3;
+                            continue;
+                        }
+                    } else {
+                        {
+                            let __tco1 = nextPos;
+                            let __tco3 = (acc + &(c.to_lowercase()).into_aver());
+                            pos = __tco1;
+                            acc = __tco3;
+                            continue;
+                        }
+                    }
+                }
+                None => {
+                    return acc;
+                }
+            }
+        } else {
+            return acc;
+        }
+    }
+}
+
+/// Synthesized indexed worker of `resolveQualifiedModuleFns`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
+pub fn resolveQualifiedModuleFns__indexed(
+    prog: &crate::aver_generated::domain::ast::Program,
+    dep: AverStr,
+    __str_index: &aver_rt::StringIndex,
+) -> aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> {
+    crate::cancel_checkpoint();
+    let qualifiedProg = crate::aver_generated::domain::ast::Program {
+        deps: prog.deps.clone(),
+        fns: qualifyFns__indexed(&prog.fns, dep, &aver_rt::AverList::empty(), __str_index),
+        stmts: prog.stmts.clone(),
+    };
+    crate::aver_generated::domain::resolver::resolveProgram(&qualifiedProg).fns
+}
+
 /// Synthesized collecting variant of `shiftFnIdsInFns`. Appends to a builder where `shiftFnIdsInFns` prepends to `acc` and reverses on the way out, which reaches the same list without the cons chain or the reversal. Call sites that start the accumulator at `[]` are moved here.
 #[inline(always)]
 pub fn shiftFnIdsInFns__collected(
-    mut fns: aver_rt::AverList<FnDef>,
+    mut fns: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
     mut offset: aver_rt::AverInt,
-    mut acc: aver_rt::AverList<FnDef>,
-) -> aver_rt::AverList<FnDef> {
+    mut acc: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+) -> aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> {
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(fns, [] => { return aver_rt::list_builder_finalize(acc); }, [fd, rest] => { {
             let __tco0 = rest;
-            let __tco1 = offset.clone();
-            let __tco2 = aver_rt::list_builder_push(acc, shiftFnIdsInFn(&fd, offset));
+            let __tco2 = aver_rt::list_builder_push(acc, shiftFnIdsInFn(&fd, offset.clone()));
             fns = __tco0;
-            offset = __tco1;
             acc = __tco2;
             continue;
         } })
@@ -1088,18 +1258,16 @@ pub fn shiftFnIdsInFns__collected(
 /// Synthesized collecting variant of `shiftFnIdsInStmts`. Appends to a builder where `shiftFnIdsInStmts` prepends to `acc` and reverses on the way out, which reaches the same list without the cons chain or the reversal. Call sites that start the accumulator at `[]` are moved here.
 #[inline(always)]
 pub fn shiftFnIdsInStmts__collected(
-    mut stmts: aver_rt::AverList<Stmt>,
+    mut stmts: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
     mut offset: aver_rt::AverInt,
-    mut acc: aver_rt::AverList<Stmt>,
-) -> aver_rt::AverList<Stmt> {
+    mut acc: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
+) -> aver_rt::AverList<crate::aver_generated::domain::ast::Stmt> {
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(stmts, [] => { return aver_rt::list_builder_finalize(acc); }, [stmt, rest] => { {
             let __tco0 = rest;
-            let __tco1 = offset.clone();
-            let __tco2 = aver_rt::list_builder_push(acc, shiftFnIdsInStmt(&stmt, offset));
+            let __tco2 = aver_rt::list_builder_push(acc, shiftFnIdsInStmt(&stmt, offset.clone()));
             stmts = __tco0;
-            offset = __tco1;
             acc = __tco2;
             continue;
         } })
@@ -1109,18 +1277,16 @@ pub fn shiftFnIdsInStmts__collected(
 /// Synthesized collecting variant of `shiftFnIdsInExprs`. Appends to a builder where `shiftFnIdsInExprs` prepends to `acc` and reverses on the way out, which reaches the same list without the cons chain or the reversal. Call sites that start the accumulator at `[]` are moved here.
 #[inline(always)]
 pub fn shiftFnIdsInExprs__collected(
-    mut exprs: aver_rt::AverList<Expr>,
+    mut exprs: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
     mut offset: aver_rt::AverInt,
-    mut acc: aver_rt::AverList<Expr>,
-) -> aver_rt::AverList<Expr> {
+    mut acc: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+) -> aver_rt::AverList<crate::aver_generated::domain::ast::Expr> {
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(exprs, [] => { return aver_rt::list_builder_finalize(acc); }, [expr, rest] => { {
             let __tco0 = rest;
-            let __tco1 = offset.clone();
-            let __tco2 = aver_rt::list_builder_push(acc, shiftFnIdsInExpr(&expr, offset));
+            let __tco2 = aver_rt::list_builder_push(acc, shiftFnIdsInExpr(&expr, offset.clone()));
             exprs = __tco0;
-            offset = __tco1;
             acc = __tco2;
             continue;
         } })
@@ -1130,18 +1296,16 @@ pub fn shiftFnIdsInExprs__collected(
 /// Synthesized collecting variant of `shiftFnIdsInFields`. Appends to a builder where `shiftFnIdsInFields` prepends to `acc` and reverses on the way out, which reaches the same list without the cons chain or the reversal. Call sites that start the accumulator at `[]` are moved here.
 #[inline(always)]
 pub fn shiftFnIdsInFields__collected(
-    mut fields: aver_rt::AverList<(AverStr, Expr)>,
+    mut fields: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
     mut offset: aver_rt::AverInt,
-    mut acc: aver_rt::AverList<(AverStr, Expr)>,
-) -> aver_rt::AverList<(AverStr, Expr)> {
+    mut acc: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
+) -> aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)> {
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(fields, [] => { return aver_rt::list_builder_finalize(acc); }, [pair, rest] => { { let (name, expr) = pair; {
             let __tco0 = rest;
-            let __tco1 = offset.clone();
-            let __tco2 = aver_rt::list_builder_push(acc, (name, shiftFnIdsInExpr(&expr, offset)));
+            let __tco2 = aver_rt::list_builder_push(acc, (name, shiftFnIdsInExpr(&expr, offset.clone())));
             fields = __tco0;
-            offset = __tco1;
             acc = __tco2;
             continue;
         } } })
@@ -1151,18 +1315,16 @@ pub fn shiftFnIdsInFields__collected(
 /// Synthesized collecting variant of `shiftFnIdsInArms`. Appends to a builder where `shiftFnIdsInArms` prepends to `acc` and reverses on the way out, which reaches the same list without the cons chain or the reversal. Call sites that start the accumulator at `[]` are moved here.
 #[inline(always)]
 pub fn shiftFnIdsInArms__collected(
-    mut arms: aver_rt::AverList<MatchArm>,
+    mut arms: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
     mut offset: aver_rt::AverInt,
-    mut acc: aver_rt::AverList<MatchArm>,
-) -> aver_rt::AverList<MatchArm> {
+    mut acc: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
+) -> aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm> {
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(arms, [] => { return aver_rt::list_builder_finalize(acc); }, [arm, rest] => { {
             let __tco0 = rest;
-            let __tco1 = offset.clone();
-            let __tco2 = aver_rt::list_builder_push(acc, crate::aver_generated::domain::ast::MatchArm { pattern: arm.pattern.clone(), body: shiftFnIdsInExpr(&arm.body, offset), bindingSlots: arm.bindingSlots.clone() });
+            let __tco2 = aver_rt::list_builder_push(acc, crate::aver_generated::domain::ast::MatchArm { pattern: arm.pattern.clone(), body: shiftFnIdsInExpr(&arm.body, offset.clone()), bindingSlots: arm.bindingSlots.clone() });
             arms = __tco0;
-            offset = __tco1;
             acc = __tco2;
             continue;
         } })
@@ -1175,5 +1337,5 @@ pub fn main() -> Result<(), AverStr> {
         crate::cancel_checkpoint();
         aver_replay::invoke_effect("Args.get", vec![], || aver_replay::current_cli_args())
     };
-    aver_list_match!(args, [] => runDemo(), [path, rest] => match runFromFileWithRest(path, &rest) { Ok(_) => { Ok(()) }, Err(e) => { Err(e) } })
+    aver_list_match!(args, [] => runDemo(), [path, rest] => match runFromFileWithRest(path, &rest) { Ok(_) => { Ok(()) }, Err(e @ _) => { Err(e) } })
 }

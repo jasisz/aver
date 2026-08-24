@@ -24,9 +24,9 @@ const SRC: &str = r#"module ArgsTrace
     intent = "An unstubbed classified effect must be recorded in the verify trace."
     effects [Args, Env, Random]
 
-fn lowDie(path: BranchPath, n: Int, min: Int, max: Int) -> Int
+fn lowDie(path: BranchPath, n: Int, min: Int, max: Int) -> Result<Int, String>
     ? "Deterministic Random.int stub returning the lower bound."
-    min
+    Result.Ok(min)
 
 fn pickArgs() -> Int
     ? "Reads Args.get unstubbed, then draws one stubbed die."

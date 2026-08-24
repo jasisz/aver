@@ -1,4 +1,6 @@
 #[allow(unused_imports)]
+use crate::aver_generated::tcp::*;
+#[allow(unused_imports)]
 use crate::*;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -16,6 +18,7 @@ pub enum Val {
     ValNone,
     ValTuple(aver_rt::AverList<Val>),
     ValRecord(AverStr, aver_rt::AverList<(AverStr, Val)>),
+    ValTcpConnection(crate::aver_generated::tcp::Connection),
     ValVariant(aver_rt::AverInt, AverStr, aver_rt::AverList<Val>),
     ValMap(aver_rt::AverMap<AverStr, Val>),
     ValUnit,
@@ -40,6 +43,7 @@ impl aver_rt::AverDisplay for Val {
                 "ValRecord({})",
                 vec![f0.aver_display_inner(), f1.aver_display_inner()].join(", ")
             ),
+            Val::ValTcpConnection(f0) => format!("ValTcpConnection({})", f0.aver_display_inner()),
             Val::ValVariant(f0, f1, f2) => format!(
                 "ValVariant({})",
                 vec![
@@ -209,6 +213,17 @@ impl aver_replay::ReplayValue for Val {
                 );
                 aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
             }
+            Val::ValTcpConnection(f0) => {
+                payload.insert(
+                    "name".to_string(),
+                    serde_json::Value::String("ValTcpConnection".to_string()),
+                );
+                payload.insert(
+                    "fields".to_string(),
+                    serde_json::Value::Array(vec![ReplayValue::to_replay_json(f0)]),
+                );
+                aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
+            }
             Val::ValVariant(f0, f1, f2) => {
                 payload.insert(
                     "name".to_string(),
@@ -353,6 +368,13 @@ impl aver_replay::ReplayValue for Val {
                         .ok_or_else(|| format!("$variant ValRecord missing field #{}", 1))?,
                 )?,
             )),
+            "ValTcpConnection" => {
+                Ok(Val::ValTcpConnection(
+                    <Tcp_Connection as ReplayValue>::from_replay_json(fields.get(0).ok_or_else(
+                        || format!("$variant ValTcpConnection missing field #{}", 0),
+                    )?)?,
+                ))
+            }
             "ValVariant" => Ok(Val::ValVariant(
                 <aver_rt::AverInt as ReplayValue>::from_replay_json(
                     fields
@@ -545,6 +567,9 @@ pub fn valRepr(v: &Val) -> AverStr {
             __b.push_str(&AverStr::from("(...)"));
             __b
         }),
+        crate::aver_generated::domain::value::Val::ValTcpConnection(_) => {
+            AverStr::from("Tcp.Connection(<resource>)")
+        }
         crate::aver_generated::domain::value::Val::ValMap(m) => {
             crate::aver_generated::domain::value::valMapRepr(
                 {

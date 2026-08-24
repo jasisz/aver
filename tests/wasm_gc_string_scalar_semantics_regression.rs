@@ -162,19 +162,19 @@ verify charsOf
     );
 }
 
-/// `Char.toCode` decodes the first Unicode scalar value of the Char string,
-/// not the first UTF-8 byte. Pair it with `Char.fromCode` to pin the roundtrip.
+/// String's code-point API decodes the first Unicode scalar value, not the
+/// first UTF-8 byte, and represents empty text explicitly as `Option.None`.
 #[test]
-fn char_to_code_decodes_scalar_values() {
+fn string_code_point_helpers_decode_scalar_values() {
     assert_all_pass_on_both(
         r#"
 fn codeOf(c: String) -> Int
     ? "Unicode scalar code of c."
-    Char.toCode(c)
+    Option.withDefault(String.firstCodePoint(c), 0)
 
 fn roundTrip(c: String) -> String
     ? "Encode the decoded code point again."
-    match Char.fromCode(Char.toCode(c))
+    match String.fromCodePoint(Option.withDefault(String.firstCodePoint(c), 0))
         Option.Some(out) -> out
         Option.None -> ""
 

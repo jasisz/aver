@@ -1453,7 +1453,8 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             // this as a single `StaticRef(full_name)`; on MIR the chain is
             // re-flattened here.
             if let Some(dotted) = collapse_fnvalue_projection(&expr.node)
-                && resolve_module_call(&dotted, emit_ctx.module_prefixes).is_some()
+                && (dotted == "BranchPath.Root"
+                    || resolve_module_call(&dotted, emit_ctx.module_prefixes).is_some())
             {
                 return Some(emit_mir_static_ref(&dotted, emit_ctx));
             }
@@ -4488,7 +4489,7 @@ fn mir_borrow_arg(code: String, expr: &MirExpr, ctx: &MirEmitCtx<'_>) -> String 
 //   `emit_str_arg_or_deref(…)`     → `mir_str_arg_or_deref(&args[i], ctx)?`
 // then runs the `builtin_needs_str_conversion` `.into_aver()` post-step
 // that `emit_builtin_call` applies (Int.mod, Int/Float.fromString,
-// String.* returning String and Char.fromCode). The byte-parity
+// String.* returning String). The byte-parity
 // gate is the safety net: any arm whose output diverges from HIR blocks
 // graduation and the fn falls back to HIR.
 
@@ -4747,7 +4748,7 @@ fn emit_mir_builtin_call(
         // ---- Option ----
         "Option.Some" => format!("Some({})", clone!(0)),
         "Option.withDefault" => format!("{}.unwrap_or({})", clone!(0), clone!(1)),
-        "Option.toResult" => format!("{}.ok_or({})", clone!(0), clone!(1)),
+        "Result.fromOption" => format!("{}.ok_or({})", clone!(0), clone!(1)),
 
         // ---- Int ----
         // `AverInt::abs` promotes `|i64::MIN|` to `Big` (no wrap/panic).
@@ -4910,6 +4911,43 @@ fn emit_mir_builtin_call(
         ),
         "String.byteLength" => {
             format!("aver_rt::AverInt::from_i64({}.len() as i64)", arg!(0))
+        }
+        // `String` already stores valid UTF-8. Encoding therefore copies its
+        // bytes exactly once into the proof-selected Bytes carrier; it never
+        // walks Unicode scalar values or inflates octets into `AverInt`s.
+        "String.toUtf8" => {
+            let text = arg!(0);
+            if ctx
+                .codegen
+                .is_some_and(|codegen| super::uses_packed_u8(codegen, "Bytes"))
+            {
+                format!(
+                    "crate::aver_generated::bytes::Bytes {{ values: aver_rt::AverPackedU8::from_vec(({text}).as_bytes().to_vec()) }}"
+                )
+            } else {
+                format!(
+                    "crate::aver_generated::bytes::Bytes {{ values: aver_rt::AverIntList::from_packed(aver_rt::AverPackedU8::from_vec(({text}).as_bytes().to_vec())) }}"
+                )
+            }
+        }
+        // Validate directly over packed storage. The normal proof-selected
+        // path borrows the byte slice (no intermediate Vec); the fallback
+        // clones its hybrid carrier cheaply when it is packed and validates a
+        // wide carrier once before decoding.
+        "String.fromUtf8" => {
+            let bytes = arg!(0);
+            if ctx
+                .codegen
+                .is_some_and(|codegen| super::uses_packed_u8(codegen, "Bytes"))
+            {
+                format!(
+                    "std::str::from_utf8(({bytes}).values.as_slice()).map(aver_rt::AverStr::from).map_err(|_| aver_rt::AverStr::from(\"invalid UTF-8\"))"
+                )
+            } else {
+                format!(
+                    "{{ let __bytes = ({bytes}).values.clone().into_packed().expect(\"Bytes invariant violated\"); std::str::from_utf8(__bytes.as_slice()).map(aver_rt::AverStr::from).map_err(|_| aver_rt::AverStr::from(\"invalid UTF-8\")) }}"
+                )
+            }
         }
 
         // ---- List ----
@@ -5079,34 +5117,47 @@ fn emit_mir_builtin_call(
         // same `AverInt` routines the VM calls (`src/types/bits.rs`), so
         // there is one implementation of the semantics and two callers.
         // `and` / `or` / `xor` / `not` are total; the three count-taking
-        // operations are partial only below zero, and their error strings
-        // are verbatim from the VM so a `Result.Err` is byte-identical
-        // across backends.
+        // operations refuse negative counts and counts above the fixed
+        // materialization bound; their error strings are verbatim from the
+        // VM so a `Result.Err` is byte-identical across backends.
         "Bits.and" => format!("({}).bit_and(&({}))", arg!(0), arg!(1)),
         "Bits.or" => format!("({}).bit_or(&({}))", arg!(0), arg!(1)),
         "Bits.xor" => format!("({}).bit_xor(&({}))", arg!(0), arg!(1)),
         "Bits.not" => format!("({}).bit_not()", arg!(0)),
-        "Bits.shiftLeft" => {
-            emit_bits_counted("shift_left", arg!(0), arg!(1), "negative shift count")
-        }
-        "Bits.shiftRight" => {
-            emit_bits_counted("shift_right", arg!(0), arg!(1), "negative shift count")
-        }
-        "Bits.low" => emit_bits_counted("low_bits", arg!(0), arg!(1), "negative bit width"),
+        "Bits.shiftLeft" => emit_bits_counted(
+            "shift_left",
+            arg!(0),
+            arg!(1),
+            "negative shift count",
+            "shift count exceeds the 16777216 bit limit",
+        ),
+        "Bits.shiftRight" => emit_bits_counted(
+            "shift_right",
+            arg!(0),
+            arg!(1),
+            "negative shift count",
+            "shift count exceeds the 16777216 bit limit",
+        ),
+        "Bits.low" => emit_bits_counted(
+            "low_bits",
+            arg!(0),
+            arg!(1),
+            "negative bit width",
+            "bit width exceeds the 16777216 bit limit",
+        ),
 
         // ---- Bool ----
         "Bool.or" => format!("({} || {})", arg!(0), arg!(1)),
         "Bool.and" => format!("({} && {})", arg!(0), arg!(1)),
         "Bool.not" => format!("(!{})", arg!(0)),
 
-        // ---- Char ----
-        // Producer: the code point wraps in `AverInt`.
-        "Char.toCode" => format!(
-            "aver_rt::AverInt::from_i64({}.chars().next().map(|c| c as i64).unwrap_or(0))",
+        // ---- Unicode code points ----
+        "String.firstCodePoint" => format!(
+            "({}).chars().next().map(|c| aver_rt::AverInt::from_i64(c as i64))",
             arg!(0)
         ),
         // Index-like lookup: an out-of-`u32` (or invalid) code → `None`.
-        "Char.fromCode" => format!(
+        "String.fromCodePoint" => format!(
             "({}).to_u32().and_then(char::from_u32).map(|c| c.to_string())",
             arg!(0)
         ),
@@ -5115,12 +5166,8 @@ fn emit_mir_builtin_call(
         "Vector.new" => {
             let size = arg!(0);
             let default = clone!(1);
-            // Capacity site: the VM ERRORS on a negative / non-machine-sized
-            // size. Generated Rust has no Result channel here (Vector.new
-            // returns a Vector), so a bad size ABORTS via `.expect` with the
-            // VM's exact message — NEVER a silent `unwrap_or(0)` empty vector.
             format!(
-                "aver_rt::AverVector::new(({}).to_usize().expect(\"Vector.new: size must be a non-negative, machine-sized Int\"), {})",
+                "match ({}).to_u32() {{ Some(__n) => Ok(aver_rt::AverVector::new(__n as usize, {})), None => Err(aver_rt::AverStr::from(\"Vector.new: size must be between 0 and 4294967295\")) }}",
                 size, default
             )
         }
@@ -5157,20 +5204,14 @@ fn emit_mir_builtin_call(
         // handled in `emit_mir_static_ref`. `.child` / `.parse` are
         // builtin method calls and land here.
         //
-        // `child(path: &BranchPath, idx: i64)`: the path arg goes
+        // `child(path: &BranchPath, idx: &AverInt)`: the path arg goes
         // through `mir_borrow_arg` so a borrowed-param `&BranchPath` is
         // passed directly while a fresh owned value (e.g. a nested
         // `BranchPath.child(...)` or `BranchPath.Root`) gets a `&`.
         "BranchPath.child" => {
             let path = mir_borrow_arg(emit_mir_expr(&args[0], ctx)?, &args[0].node, ctx);
             let idx = arg!(1);
-            // `child` takes a host `i64` index; convert the `AverInt` at the
-            // boundary, ERRORING on an out-of-range index like the VM (never
-            // a silent truncation).
-            format!(
-                "aver_rt::BranchPath::child({}, crate::to_host_i64(&({}), \"BranchPath.child: `idx` must be a non-negative, machine-sized Int\"))",
-                path, idx
-            )
+            format!("aver_rt::BranchPath::child({}, &({}))", path, idx)
         }
         // `parse(raw: &str)`: `mir_str_arg_or_deref` yields a bare
         // string literal or the `&*` deref form, both `&str`.
@@ -5186,7 +5227,7 @@ fn emit_mir_builtin_call(
 
     // Mirror of `emit_builtin_call`'s `.into_aver()` post-step for
     // String-returning pure builtins (and Int.mod / Int.fromString /
-    // Float.fromString / Char.fromCode).
+    // Float.fromString / String.fromCodePoint).
     if super::builtins::builtin_needs_str_conversion(name) {
         Some(format!("({}).into_aver()", result))
     } else {
@@ -5348,10 +5389,9 @@ fn emit_mir_intrinsic_call(
             let b = emit_mir_expr(&args[1], ctx)?;
             Some(format!("({}).rem_euclid(&({})).unwrap()", a, b))
         }
-        // Const-count bit-level view. The literal-count discharge only
-        // emits these for a syntactic NON-NEGATIVE integer literal count,
-        // and that predicate declines a `BigInt` literal — so neither
-        // `ShiftCountError` arm is reachable and the `.unwrap()` is total.
+        // Const-count bit-level view. The literal-count discharge only emits
+        // these for a syntactic bounded non-negative integer literal, so
+        // neither `ShiftCountError` arm is reachable and `.unwrap()` is total.
         BuiltinIntrinsic::BitsShiftLeft
         | BuiltinIntrinsic::BitsShiftRight
         | BuiltinIntrinsic::BitsLow => {
@@ -5363,6 +5403,26 @@ fn emit_mir_intrinsic_call(
             let x = emit_mir_expr(&args[0], ctx)?;
             let n = emit_mir_expr(&args[1], ctx)?;
             Some(format!("({}).{}(&({})).unwrap()", x, method, n))
+        }
+        BuiltinIntrinsic::VectorNew => {
+            let size = emit_mir_expr(&args[0], ctx)?;
+            let fill = emit_mir_expr(&args[1], ctx)?;
+            Some(format!(
+                "aver_rt::AverVector::new(({}).to_u32().unwrap() as usize, {})",
+                size, fill
+            ))
+        }
+        BuiltinIntrinsic::BranchPathChild => {
+            let path = mir_borrow_arg(emit_mir_expr(&args[0], ctx)?, &args[0].node, ctx);
+            let index = emit_mir_expr(&args[1], ctx)?;
+            Some(format!(
+                "aver_rt::BranchPath::child_literal({}, &({}))",
+                path, index
+            ))
+        }
+        BuiltinIntrinsic::BranchPathParse => {
+            let raw = mir_str_arg_or_deref(&args[0], ctx)?;
+            Some(format!("aver_rt::BranchPath::parse_literal({})", raw))
         }
         // Codepoint cursor (chars fusion). Each one is a call into
         // `aver_rt::strcursor` — the VM executes the same routines, so
@@ -5506,9 +5566,15 @@ fn emit_mir_intrinsic_call(
 /// NEGATIVE case is a `Result.Err`; an unrepresentable count is a runtime
 /// abort, matching the VM (`src/types/bits.rs`) rather than inventing a
 /// second catchable error the proof models would not have.
-fn emit_bits_counted(method: &str, x: String, n: String, negative_message: &str) -> String {
+fn emit_bits_counted(
+    method: &str,
+    x: String,
+    n: String,
+    negative_message: &str,
+    too_large_message: &str,
+) -> String {
     format!(
-        "match ({x}).{method}(&({n})) {{ Ok(__v) => Ok(__v), Err(aver_rt::ShiftCountError::Negative) => Err(\"{negative_message}\".to_string()), Err(aver_rt::ShiftCountError::Unrepresentable) => panic!(\"Bits.{method}: count is too large to name a bit position\") }}"
+        "match ({x}).{method}(&({n})) {{ Ok(__v) => Ok(__v), Err(aver_rt::ShiftCountError::Negative) => Err(\"{negative_message}\".into()), Err(aver_rt::ShiftCountError::TooLarge) => Err(\"{too_large_message}\".into()) }}"
     )
 }
 

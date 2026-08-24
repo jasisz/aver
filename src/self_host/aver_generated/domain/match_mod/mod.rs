@@ -8,22 +8,22 @@ use crate::*;
 #[allow(non_camel_case_types)]
 enum __MutualTco1 {
     MatchPatTupleItemsAcc(
-        aver_rt::AverList<Pattern>,
-        aver_rt::AverList<Val>,
-        aver_rt::AverList<(AverStr, Val)>,
+        aver_rt::AverList<crate::aver_generated::domain::ast::Pattern>,
+        aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+        aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
     ),
     MatchPatTupleOne(
-        Pattern,
-        Val,
-        aver_rt::AverList<Pattern>,
-        aver_rt::AverList<Val>,
-        aver_rt::AverList<(AverStr, Val)>,
+        crate::aver_generated::domain::ast::Pattern,
+        crate::aver_generated::domain::value::Val,
+        aver_rt::AverList<crate::aver_generated::domain::ast::Pattern>,
+        aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+        aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
     ),
 }
 
 fn __mutual_tco_trampoline_1(
     mut __state: __MutualTco1,
-) -> Result<aver_rt::AverList<(AverStr, Val)>, AverStr> {
+) -> Result<aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>, AverStr> {
     loop {
         __state = match __state {
             __MutualTco1::MatchPatTupleItemsAcc(mut pats, mut items, mut acc) => {
@@ -51,10 +51,10 @@ fn __mutual_tco_trampoline_1(
 
 /// Accumulate bindings from tuple pattern matching.
 pub fn matchPatTupleItemsAcc(
-    pats: &aver_rt::AverList<Pattern>,
-    items: &aver_rt::AverList<Val>,
-    acc: &aver_rt::AverList<(AverStr, Val)>,
-) -> Result<aver_rt::AverList<(AverStr, Val)>, AverStr> {
+    pats: &aver_rt::AverList<crate::aver_generated::domain::ast::Pattern>,
+    items: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    acc: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
+) -> Result<aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>, AverStr> {
     __mutual_tco_trampoline_1(__MutualTco1::MatchPatTupleItemsAcc(
         pats.clone(),
         items.clone(),
@@ -64,12 +64,12 @@ pub fn matchPatTupleItemsAcc(
 
 /// Match one tuple element and continue with accumulated bindings.
 pub fn matchPatTupleOne(
-    pat: &Pattern,
-    item: &Val,
-    restPats: &aver_rt::AverList<Pattern>,
-    restItems: &aver_rt::AverList<Val>,
-    acc: &aver_rt::AverList<(AverStr, Val)>,
-) -> Result<aver_rt::AverList<(AverStr, Val)>, AverStr> {
+    pat: &crate::aver_generated::domain::ast::Pattern,
+    item: &crate::aver_generated::domain::value::Val,
+    restPats: &aver_rt::AverList<crate::aver_generated::domain::ast::Pattern>,
+    restItems: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    acc: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
+) -> Result<aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>, AverStr> {
     __mutual_tco_trampoline_1(__MutualTco1::MatchPatTupleOne(
         pat.clone(),
         item.clone(),
@@ -80,7 +80,10 @@ pub fn matchPatTupleOne(
 }
 
 /// Try to match a value against a pattern. Returns bindings on success.
-pub fn matchPattern(pat: &Pattern, v: &Val) -> Result<aver_rt::AverList<(AverStr, Val)>, AverStr> {
+pub fn matchPattern(
+    pat: &crate::aver_generated::domain::ast::Pattern,
+    v: &crate::aver_generated::domain::value::Val,
+) -> Result<aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>, AverStr> {
     crate::cancel_checkpoint();
     match pat.clone() {
         crate::aver_generated::domain::ast::Pattern::PatWild => Ok(aver_rt::AverList::empty()),
@@ -122,8 +125,8 @@ pub fn matchPattern(pat: &Pattern, v: &Val) -> Result<aver_rt::AverList<(AverStr
 /// Match a PatInt pattern against a value.
 pub fn matchPatInt(
     n: aver_rt::AverInt,
-    v: &Val,
-) -> Result<aver_rt::AverList<(AverStr, Val)>, AverStr> {
+    v: &crate::aver_generated::domain::value::Val,
+) -> Result<aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>, AverStr> {
     crate::cancel_checkpoint();
     match v.clone() {
         crate::aver_generated::domain::value::Val::ValInt(m) => {
@@ -138,7 +141,10 @@ pub fn matchPatInt(
 }
 
 /// Match a PatFloat pattern against a value.
-pub fn matchPatFloat(f: f64, v: &Val) -> Result<aver_rt::AverList<(AverStr, Val)>, AverStr> {
+pub fn matchPatFloat(
+    f: f64,
+    v: &crate::aver_generated::domain::value::Val,
+) -> Result<aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>, AverStr> {
     crate::cancel_checkpoint();
     match v.clone() {
         crate::aver_generated::domain::value::Val::ValFloat(vf) => {
@@ -153,7 +159,10 @@ pub fn matchPatFloat(f: f64, v: &Val) -> Result<aver_rt::AverList<(AverStr, Val)
 }
 
 /// Match a PatBool pattern against a value.
-pub fn matchPatBool(b: bool, v: &Val) -> Result<aver_rt::AverList<(AverStr, Val)>, AverStr> {
+pub fn matchPatBool(
+    b: bool,
+    v: &crate::aver_generated::domain::value::Val,
+) -> Result<aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>, AverStr> {
     crate::cancel_checkpoint();
     match v.clone() {
         crate::aver_generated::domain::value::Val::ValBool(vb) => {
@@ -168,7 +177,10 @@ pub fn matchPatBool(b: bool, v: &Val) -> Result<aver_rt::AverList<(AverStr, Val)
 }
 
 /// Match a string literal pattern.
-pub fn matchPatStr(s: AverStr, v: &Val) -> Result<aver_rt::AverList<(AverStr, Val)>, AverStr> {
+pub fn matchPatStr(
+    s: AverStr,
+    v: &crate::aver_generated::domain::value::Val,
+) -> Result<aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>, AverStr> {
     crate::cancel_checkpoint();
     match v.clone() {
         crate::aver_generated::domain::value::Val::ValStr(vs) => {
@@ -183,7 +195,9 @@ pub fn matchPatStr(s: AverStr, v: &Val) -> Result<aver_rt::AverList<(AverStr, Va
 }
 
 /// Match empty list pattern [].
-pub fn matchPatEmpty(v: &Val) -> Result<aver_rt::AverList<(AverStr, Val)>, AverStr> {
+pub fn matchPatEmpty(
+    v: &crate::aver_generated::domain::value::Val,
+) -> Result<aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>, AverStr> {
     crate::cancel_checkpoint();
     match v.clone() {
         crate::aver_generated::domain::value::Val::ValList(items) => {
@@ -202,8 +216,8 @@ pub fn matchPatEmpty(v: &Val) -> Result<aver_rt::AverList<(AverStr, Val)>, AverS
 pub fn matchPatCons(
     h: AverStr,
     t: AverStr,
-    v: &Val,
-) -> Result<aver_rt::AverList<(AverStr, Val)>, AverStr> {
+    v: &crate::aver_generated::domain::value::Val,
+) -> Result<aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>, AverStr> {
     crate::cancel_checkpoint();
     match v.clone() {
         crate::aver_generated::domain::value::Val::ValList(items) => {
@@ -218,8 +232,8 @@ pub fn matchPatCons(
 pub fn matchPatConstructor(
     ctorName: AverStr,
     bindings: &aver_rt::AverList<AverStr>,
-    v: &Val,
-) -> Result<aver_rt::AverList<(AverStr, Val)>, AverStr> {
+    v: &crate::aver_generated::domain::value::Val,
+) -> Result<aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>, AverStr> {
     crate::cancel_checkpoint();
     {
         let __dispatch_subject = ctorName.clone();
@@ -259,9 +273,9 @@ pub fn matchPatConstructor(
 
 /// Match tuple pattern with nested patterns.
 pub fn matchPatTuple(
-    pats: &aver_rt::AverList<Pattern>,
-    v: &Val,
-) -> Result<aver_rt::AverList<(AverStr, Val)>, AverStr> {
+    pats: &aver_rt::AverList<crate::aver_generated::domain::ast::Pattern>,
+    v: &crate::aver_generated::domain::value::Val,
+) -> Result<aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>, AverStr> {
     crate::cancel_checkpoint();
     match v.clone() {
         crate::aver_generated::domain::value::Val::ValTuple(items) => {
@@ -273,9 +287,9 @@ pub fn matchPatTuple(
 
 /// Match each pattern against corresponding tuple item.
 pub fn matchPatTupleItems(
-    pats: &aver_rt::AverList<Pattern>,
-    items: &aver_rt::AverList<Val>,
-) -> Result<aver_rt::AverList<(AverStr, Val)>, AverStr> {
+    pats: &aver_rt::AverList<crate::aver_generated::domain::ast::Pattern>,
+    items: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>, AverStr> {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::match_mod::matchPatTupleItemsAcc(
         pats,
@@ -288,8 +302,8 @@ pub fn matchPatTupleItems(
 pub fn matchGenericConstructor(
     ctorName: AverStr,
     bindings: &aver_rt::AverList<AverStr>,
-    v: &Val,
-) -> Result<aver_rt::AverList<(AverStr, Val)>, AverStr> {
+    v: &crate::aver_generated::domain::value::Val,
+) -> Result<aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>, AverStr> {
     crate::cancel_checkpoint();
     match v.clone() {
         crate::aver_generated::domain::value::Val::ValVariant(_, fullName, fields) => {
@@ -307,8 +321,8 @@ pub fn matchGenericCtorCheck(
     ctorName: AverStr,
     fullName: AverStr,
     bindings: &aver_rt::AverList<AverStr>,
-    fields: &aver_rt::AverList<Val>,
-) -> Result<aver_rt::AverList<(AverStr, Val)>, AverStr> {
+    fields: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>, AverStr> {
     crate::cancel_checkpoint();
     if (fullName == ctorName) {
         Ok(crate::aver_generated::domain::match_mod::zipBindings(
@@ -325,8 +339,8 @@ pub fn matchPatConstructorById(
     tag: aver_rt::AverInt,
     ctorName: AverStr,
     bindings: &aver_rt::AverList<AverStr>,
-    v: &Val,
-) -> Result<aver_rt::AverList<(AverStr, Val)>, AverStr> {
+    v: &crate::aver_generated::domain::value::Val,
+) -> Result<aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>, AverStr> {
     crate::cancel_checkpoint();
     {
         let __dispatch_subject = tag.clone();
@@ -367,10 +381,10 @@ pub fn matchPatConstructorById(
 /// Match Ok/Err/Some wrapper by integer tag. 1=Ok, 2=Err, 3=Some.
 #[inline(always)]
 pub fn matchWrapperPatDirect(
-    v: &Val,
+    v: &crate::aver_generated::domain::value::Val,
     tag: aver_rt::AverInt,
     bindings: &aver_rt::AverList<AverStr>,
-) -> Result<aver_rt::AverList<(AverStr, Val)>, AverStr> {
+) -> Result<aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>, AverStr> {
     crate::cancel_checkpoint();
     {
         let __dispatch_subject = tag;
@@ -422,8 +436,8 @@ pub fn matchGenericCtorById(
     tag: aver_rt::AverInt,
     ctorName: AverStr,
     bindings: &aver_rt::AverList<AverStr>,
-    v: &Val,
-) -> Result<aver_rt::AverList<(AverStr, Val)>, AverStr> {
+    v: &crate::aver_generated::domain::value::Val,
+) -> Result<aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>, AverStr> {
     crate::cancel_checkpoint();
     match v.clone() {
         crate::aver_generated::domain::value::Val::ValVariant(vTag, fullName, fields) => {
@@ -444,7 +458,9 @@ pub fn matchGenericCtorById(
 }
 
 /// Match Option.None pattern.
-pub fn matchNonePat(v: &Val) -> Result<aver_rt::AverList<(AverStr, Val)>, AverStr> {
+pub fn matchNonePat(
+    v: &crate::aver_generated::domain::value::Val,
+) -> Result<aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>, AverStr> {
     crate::cancel_checkpoint();
     match v {
         crate::aver_generated::domain::value::Val::ValNone => Ok(aver_rt::AverList::empty()),
@@ -455,10 +471,10 @@ pub fn matchNonePat(v: &Val) -> Result<aver_rt::AverList<(AverStr, Val)>, AverSt
 /// Match Ok/Err/Some wrapper and bind inner value.
 #[inline(always)]
 pub fn matchWrapperPat(
-    v: &Val,
+    v: &crate::aver_generated::domain::value::Val,
     tag: AverStr,
     bindings: &aver_rt::AverList<AverStr>,
-) -> Result<aver_rt::AverList<(AverStr, Val)>, AverStr> {
+) -> Result<aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>, AverStr> {
     crate::cancel_checkpoint();
     {
         let __dispatch_subject = tag;
@@ -509,8 +525,8 @@ pub fn matchWrapperPat(
 #[inline(always)]
 pub fn zipBindings(
     names: &aver_rt::AverList<AverStr>,
-    vals: &aver_rt::AverList<Val>,
-) -> aver_rt::AverList<(AverStr, Val)> {
+    vals: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)> {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::match_mod::zipBindingsAcc(
         names.clone(),
@@ -523,9 +539,9 @@ pub fn zipBindings(
 #[inline(always)]
 pub fn zipBindingsAcc(
     mut names: aver_rt::AverList<AverStr>,
-    mut vals: aver_rt::AverList<Val>,
-    mut acc: aver_rt::AverList<(AverStr, Val)>,
-) -> aver_rt::AverList<(AverStr, Val)> {
+    mut vals: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    mut acc: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
+) -> aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)> {
     loop {
         crate::cancel_checkpoint();
         let reversed = acc.reverse();

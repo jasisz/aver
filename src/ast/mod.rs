@@ -161,16 +161,15 @@ pub fn is_literal_nonzero_int_divisor(expr: &Spanned<Expr>) -> bool {
 /// [`is_literal_nonzero_int_divisor`]: `Bits.shiftLeft(x, N)`,
 /// `Bits.shiftRight(x, N)` and `Bits.low(x, N)` type and lower as TOTAL
 /// (plain `Int`, no `Result` to unwrap) exactly when the count `N` is a
-/// syntactic NON-NEGATIVE integer literal.
+/// syntactic NON-NEGATIVE integer literal no greater than the language's
+/// fixed [`aver_rt::MAX_MATERIALIZED_BITS`] bound.
 ///
 /// The two predicates differ in which literal they refuse, because the two
 /// families are partial for different reasons. Division is undefined only at
-/// `0`, so `-3` discharges it; a bit count is undefined only below zero, so
-/// `0` discharges (`Bits.low(x, 0)` is a well-defined `0`) and `-3` does not.
-/// A `BigInt` literal is a non-negative count only when it is not negated —
-/// its magnitude exceeds `i64`, which no machine can honour as a bit
-/// position, so it stays on the `Result` path and fails at runtime rather
-/// than typing as total.
+/// `0`, so `-3` discharges it; a bit count is refused below zero and above the
+/// fixed materialization bound, so `0` discharges (`Bits.low(x, 0)` is a
+/// well-defined `0`) while `-3`, `16_777_217`, and every `BigInt` literal stay
+/// on the catchable `Result` path.
 ///
 /// Everything else — an identifier, a named constant, a constant expression
 /// like `4 + 1`, a double negation — keeps `Result<Int, String>`. The
@@ -183,12 +182,95 @@ pub fn is_literal_nonzero_int_divisor(expr: &Spanned<Expr>) -> bool {
 /// HIR rewrite cannot key on type stamps.
 pub fn is_literal_nonneg_int_count(expr: &Spanned<Expr>) -> bool {
     match &expr.node {
-        Expr::Literal(Literal::Int(k)) => *k >= 0,
-        // A magnitude past `i64` can never be a usable bit position; decline
-        // so it keeps the catchable path instead of promising totality.
+        Expr::Literal(Literal::Int(k)) => {
+            *k >= 0 && (*k as u64) <= aver_rt::MAX_MATERIALIZED_BITS as u64
+        }
+        // A magnitude past `i64` necessarily exceeds the language's fixed
+        // materialization bound; keep the catchable path.
         Expr::Literal(Literal::BigInt(_)) => false,
         _ => false,
     }
+}
+
+/// Literal discharge for `BranchPath.child(path, index)`. A branch index is
+/// represented textually, so unlike allocation counts it has no host-sized
+/// upper bound: every syntactic non-negative integer literal is total.
+pub fn is_literal_branch_index(expr: &Spanned<Expr>) -> bool {
+    matches!(
+        &expr.node,
+        Expr::Literal(Literal::Int(0..)) | Expr::Literal(Literal::BigInt(_))
+    )
+}
+
+/// Literal discharge for `BranchPath.parse(text)`. The validator is repeated
+/// here deliberately so the typechecker and resolver share one syntactic
+/// decision even in pipelines that resolve without typechecking.
+pub fn is_literal_branch_path(expr: &Spanned<Expr>) -> bool {
+    let Expr::Literal(Literal::Str(raw)) = &expr.node else {
+        return false;
+    };
+    raw.is_empty()
+        || raw
+            .split('.')
+            .all(|segment| !segment.is_empty() && segment.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// Literal-size discharge for `Vector.new(N, fill)`. A syntactic integer
+/// literal in the portable WebAssembly/native array-length range cannot hit
+/// the builtin's value-level refusal, so it types and lowers as a plain
+/// `Vector<T>`. Dynamic, negative, big-integer, and wider literals keep the
+/// catchable `Result<Vector<T>, String>` path.
+///
+/// `u32::MAX` is the shared representation ceiling: wasm GC array lengths
+/// are `i32` stack values interpreted as unsigned lengths, while every
+/// supported native target can losslessly widen `u32` to `usize`.
+pub fn is_literal_vector_size(expr: &Spanned<Expr>) -> bool {
+    matches!(&expr.node, Expr::Literal(Literal::Int(n)) if *n >= 0 && (*n as u64) <= u32::MAX as u64)
+}
+
+/// Syntactic `Int` literal that fits the host capability transport, allowing
+/// at most one unary minus. This is deliberately narrower than constant
+/// folding: identifiers and arithmetic expressions stay on the catchable
+/// `Result` path even when a human can see their value.
+///
+/// The one `BigInt` spelling admitted is `-9223372036854775808`: its unsigned
+/// magnitude is one past `i64::MAX`, but applying the source-level negation
+/// makes it exactly `i64::MIN`. Every other `BigInt` literal is outside the
+/// portable capability boundary.
+pub fn single_negation_i64_literal(expr: &Spanned<Expr>) -> Option<i64> {
+    match &expr.node {
+        Expr::Literal(Literal::Int(value)) => Some(*value),
+        Expr::Neg(inner) => match &inner.node {
+            Expr::Literal(Literal::Int(value)) => value.checked_neg(),
+            Expr::Literal(Literal::BigInt(magnitude)) if magnitude == "9223372036854775808" => {
+                Some(i64::MIN)
+            }
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Literal discharge for `Random.int(min, max)`. Both bounds must be
+/// syntactic host-range integer literals and the inclusive interval must be
+/// non-empty. The random effect still executes; only its unreachable `Err`
+/// wrapper is discharged.
+pub fn is_literal_random_int_range(min: &Spanned<Expr>, max: &Spanned<Expr>) -> bool {
+    match (
+        single_negation_i64_literal(min),
+        single_negation_i64_literal(max),
+    ) {
+        (Some(min), Some(max)) => min <= max,
+        _ => false,
+    }
+}
+
+/// Literal discharge for `Time.sleep(ms)`. A syntactic non-negative duration
+/// inside `i64` is accepted by every supported runtime lowering. The sleep
+/// effect still executes (or is suppressed by replay); only argument
+/// validation is removed from the source-level result.
+pub fn is_literal_sleep_duration(ms: &Spanned<Expr>) -> bool {
+    single_negation_i64_literal(ms).is_some_and(|ms| ms >= 0)
 }
 
 /// Syntactic value of an integer literal, allowing at most ONE unary minus:

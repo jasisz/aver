@@ -243,7 +243,7 @@ Rules:
 - Stub signature for generative effects (`Random.*`, `Http.*`, `Disk.*`, `Tcp.send/.ping`, `Console.readLine`, `Terminal.readKey`, `Time.now/.unixMs`): `(path: BranchPath, k: Int, args...) -> ReturnType`
 - Stub signature for snapshot effects (`Args.get`, `Env.get`): `(args...) -> ReturnType` — no path/counter prefix
 - Output-only effects (`Console.print/.error/.warn`, `Time.sleep`, `Terminal.clear/.moveTo/.print/.hideCursor/.showCursor/.flush`) don't need stubs; they append to the trace directly
-- `BranchPath.Root` is a nullary value constructor — no parens, PascalCase. `BranchPath.child(parent, idx)` and `BranchPath.parse(str)` are the constructors for nested paths
+- `BranchPath.Root` is a nullary value constructor — no parens, PascalCase. Dynamic `BranchPath.child(parent, idx)` and `BranchPath.parse(str)` return `Result<BranchPath, String>`; syntactically valid literals discharge directly to `BranchPath`
 - Case LHS projections:
   - `fn(args).result` — return value
   - `fn(args).trace` — full trace as a `Trace` record
@@ -308,16 +308,16 @@ fn sum(xs: List<Int>) -> Int
 Use namespaced builtins only.
 
 Common pure namespaces:
-- `Int`, `Float`, `String`, `List`, `Vector`, `Map`, `Bool`, `Bits`, `Char`, `Crypto`, `Result`, `Option`
+- `Int`, `Float`, `String`, `List`, `Vector`, `Map`, `Bool`, `Bits`, `Crypto`, `Result`, `Option`
 
 `Bytes` and `Crypto.Digest32` are embedded Aver modules. With
 `depends [Bytes, Crypto.Digest32]`, `Crypto.sha256 : Bytes -> Digest32` is total
 and pure: the input already guarantees octets and the result guarantees exactly
 32 bytes.
 
-- `Bytes.fromList : List<Int> -> Result<Bytes, String>` (a list literal whose every element is an integer literal in `0..=255` discharges to plain `Bytes`), `Bytes.toList : Bytes -> List<Int>`
+- `Bytes.fromList : List<Int> -> Result<Bytes, String>` (a list literal whose every element is an integer literal in `0..=255` discharges to plain `Bytes`), `Bytes.octets : Bytes -> List<Int>`
 - `Bytes.fromHex : String -> Result<Bytes, String>` (even length, case-insensitive, no `0x` prefix), `Bytes.toHex : Bytes -> String`
-- `Crypto.Digest32.fromBytes : Bytes -> Result<Digest32, String>`, `Crypto.Digest32.toBytes : Digest32 -> Bytes`
+- `Crypto.Digest32.fromBytes : Bytes -> Result<Digest32, String>`, `Crypto.Digest32.bytes : Digest32 -> Bytes`
 - `Crypto.Digest32.fromHex : String -> Result<Digest32, String>`, `Crypto.Digest32.toHex : Digest32 -> String`
 
 Key `String` API:
@@ -331,8 +331,8 @@ Key `String` API:
 - string interpolation: `"Hello, {name}!"` is the idiomatic way to render PRIMITIVES into text; reserve `String.fromInt` etc. for explicit data conversion (e.g. building keys: `"user:" + String.fromInt(id)`). Compound values have no built-in rendering — write your own `fn show(x: T) -> String`.
 
 Key `Char` API — a namespace, not a type; it works on `String` and `Int`:
-- `Char.toCode : String -> Int` — Unicode scalar value of the first character
-- `Char.fromCode : Int -> Option<String>` — code point to a 1-character string, `Option.None` for surrogates and out-of-range values
+- `String.firstCodePoint : String -> Option<Int>` — first Unicode scalar value, `Option.None` for empty text
+- `String.fromCodePoint : Int -> Option<String>` — code point to a 1-character string, `Option.None` for surrogates and out-of-range values
 
 Key `Int` API:
 - `Int.abs : Int -> Int`, `Int.min`, `Int.max` — `(Int, Int) -> Int`
@@ -348,7 +348,7 @@ Key `Float` API:
 
 Key `Result` / `Option` API:
 - `Result.withDefault : (Result<T, E>, T) -> T`, `Option.withDefault : (Option<T>, T) -> T`
-- `Option.toResult : (Option<T>, E) -> Result<T, E>` — the bridge that lets an `Option` join a `?` chain
+- `Result.fromOption : (Option<T>, E) -> Result<T, E>` — the bridge that lets an `Option` join a `?` chain
 
 Key `List` API (small, recursion-first):
 - `List.len`, `List.prepend`, `List.concat`, `List.reverse`, `List.contains`, `List.zip`, `List.take`, `List.drop`, `List.fromVector`

@@ -10,18 +10,18 @@ fn roll() -> Int
     ! [Random.int]
     Random.int(1, 6)
 
-fn highDie(path: BranchPath, k: Int, lo: Int, hi: Int) -> Int
+fn highDie(path: BranchPath, k: Int, lo: Int, hi: Int) -> Result<Int, String>
     ? "Stub oracle: always max of the range."
-    hi
+    Result.Ok(hi)
 
 verify roll law usesOracle
     given rnd: Random.int = [highDie]
-    roll() => rnd(BranchPath.Root, 0, 1, 6)
+    roll() => Result.withDefault(rnd(BranchPath.Root, 0, 1, 6), 1)
 
 verify roll trace
     given rnd: Random.int = [highDie]
     rolled = roll()
-    rolled.result => rnd(BranchPath.Root, 0, 1, 6)
+    rolled.result => Result.withDefault(rnd(BranchPath.Root, 0, 1, 6), 1)
     rolled.trace.length() => 1
     rolled.trace.contains(Random.int(1, 6)) => true
 

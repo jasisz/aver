@@ -110,11 +110,22 @@ pub(super) fn collect_results_from_builtin_uses(
                 if let crate::ir::hir::ResolvedCallee::Builtin(dotted) = callee {
                     match dotted.as_str() {
                         "Float.fromString" => intern("Result<Float,String>"),
-                        "Int.fromString" | "Int.mod" | "Int.div" => intern("Result<Int,String>"),
+                        "Int.fromString" | "Int.mod" | "Int.div" | "Random.int" => {
+                            intern("Result<Int,String>")
+                        }
                         "Bits.shiftLeft" | "Bits.shiftRight" | "Bits.low" => {
                             intern("Result<Int,String>")
                         }
+                        "String.fromUtf8" => intern("Result<String,String>"),
                         "Console.readLine" | "Disk.readText" => intern("Result<String,String>"),
+                        "Time.sleep"
+                        | "Env.set"
+                        | "Terminal.moveTo"
+                        | "HttpServer.listen"
+                        | "HttpServer.listenWith"
+                        | "SelfHostRuntime.httpServerListen"
+                        | "SelfHostRuntime.httpServerListenWith" => intern("Result<Unit,String>"),
+                        "Terminal.size" => intern("Result<Terminal.Size,String>"),
                         "Disk.readBytes" => {
                             // wasip2 reuses the raw-octet Disk.readText helper
                             // internally, then adapts its carrier to Bytes.
@@ -640,17 +651,27 @@ pub(super) fn collect_options_from_expr(
     use crate::ir::hir::{ResolvedCallee, ResolvedExpr, ResolvedStrPart};
     match expr {
         ResolvedExpr::Call(callee, args) => {
-            // `String.charAt(s, i)` and `Char.fromCode(code)` both
+            // String-producing optional helpers need Option<String> even
             // declare `Option<String>` as their return type, but the
             // canonical never appears anywhere else — eager-register
             // it here so the builtin's emit can resolve the slot.
             if let ResolvedCallee::Builtin(dotted) = callee
                 && matches!(
                     dotted.as_str(),
-                    "String.charAt" | "Char.fromCode" | "Terminal.readKey" | "Env.get"
+                    "String.charAt" | "String.fromCodePoint" | "Terminal.readKey" | "Env.get"
                 )
             {
                 let canonical = "Option<String>".to_string();
+                if !out.contains_key(&canonical) {
+                    out.insert(canonical.clone(), *next_idx);
+                    order.push(canonical);
+                    *next_idx += 1;
+                }
+            }
+            if let ResolvedCallee::Builtin(dotted) = callee
+                && dotted == "String.firstCodePoint"
+            {
+                let canonical = "Option<Int>".to_string();
                 if !out.contains_key(&canonical) {
                     out.insert(canonical.clone(), *next_idx);
                     order.push(canonical);
@@ -771,9 +792,15 @@ pub(super) fn collect_vectors_from_expr(
             // no slot, codegen errors with "instantiation `Vector<…>`
             // was not registered". Mirrors the InterpolatedStr / `+`
             // branches that pre-register `Vector<String>` from a stamp.
-            if let crate::ir::hir::ResolvedCallee::Builtin(name) = callee
-                && name == "Vector.new"
-                && args.len() == 2
+            if (matches!(
+                callee,
+                crate::ir::hir::ResolvedCallee::Builtin(name) if name == "Vector.new"
+            ) || matches!(
+                callee,
+                crate::ir::hir::ResolvedCallee::Intrinsic(
+                    crate::ir::hir::BuiltinIntrinsic::VectorNew
+                )
+            )) && args.len() == 2
                 && let Some(fill_ty) = args[1].ty()
             {
                 let canonical = format!("Vector<{}>", fill_ty.display());
@@ -993,7 +1020,7 @@ mod tuple_discovery_tests {
         // `Tuple<BranchPath,Int,Int,Int>` produced a phantom carrier
         // whose eq helper dispatched on the opaque `BranchPath`
         // param and failed wasm-gc validation.
-        let order = collect("Fn(BranchPath, Int, Int, Int) -> Int");
+        let order = collect("Fn(BranchPath, Int, Int, Int) -> Result<Int, String>");
         assert!(
             order.is_empty(),
             "a Fn(..) param list must not register any tuple, got {order:?}"

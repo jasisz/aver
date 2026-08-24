@@ -7,7 +7,7 @@ use crate::services::http;
 use crate::services::terminal;
 use crate::services::{args, console, env};
 use crate::types::{
-    bits, bool, branch_path, char, crypto, float, int, list, map, option, result, string,
+    bits, bool, branch_path, crypto, float, int, list, map, option, result, string,
 };
 use crate::value::RuntimeError;
 
@@ -119,6 +119,8 @@ vm_builtins! {
     StringFromInt => "String.fromInt",
     StringFromFloat => "String.fromFloat",
     StringFromBool => "String.fromBool",
+    StringToUtf8 => "String.toUtf8",
+    StringFromUtf8 => "String.fromUtf8",
     StringToLower => "String.toLower",
     StringToUpper => "String.toUpper",
 
@@ -149,11 +151,11 @@ vm_builtins! {
     ListFromVector => "List.fromVector",
 
     OptionWithDefault => "Option.withDefault",
-    OptionToResult => "Option.toResult",
+    ResultFromOption => "Result.fromOption",
     ResultWithDefault => "Result.withDefault",
 
-    CharToCode => "Char.toCode",
-    CharFromCode => "Char.fromCode",
+    StringFirstCodePoint => "String.firstCodePoint",
+    StringFromCodePoint => "String.fromCodePoint",
     CryptoSha256 => "Crypto.sha256",
     BranchPathChild => "BranchPath.child",
     BranchPathParse => "BranchPath.parse",
@@ -213,8 +215,7 @@ impl VmBuiltin {
             | Self::MapHas
             | Self::VectorLen
             | Self::OptionWithDefault
-            | Self::ResultWithDefault
-            | Self::CharToCode => VmBuiltinParentThinClass::Heapless,
+            | Self::ResultWithDefault => VmBuiltinParentThinClass::Heapless,
 
             Self::MapGet | Self::VectorGet => VmBuiltinParentThinClass::Cheap,
 
@@ -400,8 +401,14 @@ impl VmBuiltin {
             | Self::StringFromInt
             | Self::StringFromFloat
             | Self::StringFromBool
+            | Self::StringToUtf8
+            | Self::StringFromUtf8
             | Self::StringToLower
             | Self::StringToUpper => string::call_nv(self.name(), args, arena),
+
+            Self::StringFirstCodePoint | Self::StringFromCodePoint => {
+                crate::types::code_point::call_nv(self.name(), args, arena)
+            }
 
             Self::ListLen
             | Self::ListPrepend
@@ -429,11 +436,10 @@ impl VmBuiltin {
             | Self::VectorFromList
             | Self::ListFromVector => crate::types::vector::call_nv(self.name(), args, arena),
 
-            Self::OptionWithDefault | Self::OptionToResult => {
-                option::call_nv(self.name(), args, arena)
+            Self::OptionWithDefault => option::call_nv(self.name(), args, arena),
+            Self::ResultWithDefault | Self::ResultFromOption => {
+                result::call_nv(self.name(), args, arena)
             }
-            Self::ResultWithDefault => result::call_nv(self.name(), args, arena),
-            Self::CharToCode | Self::CharFromCode => char::call_nv(self.name(), args, arena),
             Self::CryptoSha256 => crypto::call_nv(self.name(), args, arena),
             Self::BitsAnd
             | Self::BitsOr
@@ -555,7 +561,7 @@ mod tests {
             VmBuiltin::ConsolePrint,
             VmBuiltin::HttpServerListenWith,
             VmBuiltin::StringReplace,
-            VmBuiltin::OptionToResult,
+            VmBuiltin::ResultFromOption,
             VmBuiltin::MapFromList,
         ] {
             assert!(

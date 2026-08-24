@@ -9,12 +9,13 @@ use crate::ir::hir::BuiltinIntrinsic;
 use crate::ir::identity::{FnId, FnKey};
 use crate::nan_value::{NanIntExt, NanValue};
 use crate::vm::opcode::{
-    BITS_LOW, BITS_SHIFT_LEFT, BITS_SHIFT_RIGHT, BUFFER_APPEND_SEP_UNLESS_FIRST, BUFFER_APPEND_STR,
-    BUFFER_FINALIZE, BUFFER_NEW, BYTE_BUILDER_FINALIZE, BYTE_BUILDER_NEW, BYTE_BUILDER_PUSH,
-    INT_DIV_EUCLID, INT_MOD_EUCLID, LIST_BUILDER_FINALIZE, LIST_BUILDER_NEW, LIST_BUILDER_PUSH,
-    STR_CODE1, STR_CODE1_LOWER, STR_CODE1_UPPER, STR_CURSOR_CODE, STR_CURSOR_END, STR_CURSOR_HEAD,
+    BITS_LOW, BITS_SHIFT_LEFT, BITS_SHIFT_RIGHT, BRANCH_PATH_CHILD_LITERAL,
+    BRANCH_PATH_PARSE_LITERAL, BUFFER_APPEND_SEP_UNLESS_FIRST, BUFFER_APPEND_STR, BUFFER_FINALIZE,
+    BUFFER_NEW, BYTE_BUILDER_FINALIZE, BYTE_BUILDER_NEW, BYTE_BUILDER_PUSH, INT_DIV_EUCLID,
+    INT_MOD_EUCLID, LIST_BUILDER_FINALIZE, LIST_BUILDER_NEW, LIST_BUILDER_PUSH, STR_CODE1,
+    STR_CODE1_LOWER, STR_CODE1_UPPER, STR_CURSOR_CODE, STR_CURSOR_END, STR_CURSOR_HEAD,
     STR_CURSOR_NEXT, STR_FOLD_LOWER, STR_FOLD_UPPER, STR_INDEX_BUILD, STR_INDEX_CHAR_AT,
-    STR_INDEX_SLICE,
+    STR_INDEX_SLICE, VECTOR_NEW_LITERAL,
 };
 use std::str::FromStr;
 
@@ -40,6 +41,9 @@ pub(super) fn buffer_intrinsic_opcode(intrinsic: BuiltinIntrinsic) -> Option<(u8
         BuiltinIntrinsic::BitsShiftLeft => Some((BITS_SHIFT_LEFT, 2)),
         BuiltinIntrinsic::BitsShiftRight => Some((BITS_SHIFT_RIGHT, 2)),
         BuiltinIntrinsic::BitsLow => Some((BITS_LOW, 2)),
+        BuiltinIntrinsic::VectorNew => Some((VECTOR_NEW_LITERAL, 2)),
+        BuiltinIntrinsic::BranchPathChild => Some((BRANCH_PATH_CHILD_LITERAL, 2)),
+        BuiltinIntrinsic::BranchPathParse => Some((BRANCH_PATH_PARSE_LITERAL, 1)),
         BuiltinIntrinsic::StrCursorEnd => Some((STR_CURSOR_END, 2)),
         BuiltinIntrinsic::StrCursorHead => Some((STR_CURSOR_HEAD, 2)),
         BuiltinIntrinsic::StrCursorNext => Some((STR_CURSOR_NEXT, 2)),

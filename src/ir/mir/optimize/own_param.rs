@@ -88,6 +88,7 @@ use std::sync::Arc;
 
 use crate::ast::Spanned;
 use crate::ir::FnId;
+use crate::ir::hir::BuiltinIntrinsic;
 
 use super::super::expr::{MirCallee, MirExpr, walk_children};
 use super::super::program::MirProgram;
@@ -587,10 +588,17 @@ fn uniquely_owned(
                     })
                 })
             }),
-            // A first-class fn value has no statically-known body. Its
-            // result may alias any argument, so it never grants ownership.
-            // Intrinsics do not return Map/Vector today; keep the same safe
-            // answer if one gains such a result later.
+            // Literal-discharge Vector.new still allocates fresh backing. As
+            // with the surface builtin, a compound fill is shared by every
+            // cell and therefore cannot grant deep collection ownership.
+            MirCallee::Intrinsic(BuiltinIntrinsic::VectorNew) => c
+                .node
+                .args
+                .get(1)
+                .is_some_and(|fill| matches!(&fill.node, MirExpr::Literal(_))),
+            // A first-class fn value has no statically-known body. Its result
+            // may alias any argument, so it never grants ownership. Other
+            // intrinsics do not return a fresh Map/Vector.
             MirCallee::LocalSlot { .. } | MirCallee::Intrinsic(_) => false,
         },
         // A live (last-use), owned slot read.
@@ -754,7 +762,9 @@ fn alias_roots(
             alias_roots(&ite.node.else_branch.node, prov, builtins, depth + 1, out);
         }
         MirExpr::Call(c) => match &c.node.callee {
-            // A user fn / fn-value / intrinsic result may alias any of
+            // Literal-discharge Vector.new owns fresh outer backing.
+            MirCallee::Intrinsic(BuiltinIntrinsic::VectorNew) => {}
+            // A user fn / fn-value / other intrinsic result may alias any of
             // its args (the RULE-2 passthrough gap).
             MirCallee::Fn(_) | MirCallee::LocalSlot { .. } | MirCallee::Intrinsic(_) => {
                 for a in &c.node.args {
@@ -1271,7 +1281,10 @@ fn rename_roots(
             rename_roots(&ite.node.else_branch.node, prov, builtins, depth + 1, out);
         }
         MirExpr::Call(c) => match &c.node.callee {
-            // A user-fn / fn-value / intrinsic result may alias an arg
+            // Literal-discharge Vector.new is a fresh successor, not a
+            // co-live alias of any input collection.
+            MirCallee::Intrinsic(BuiltinIntrinsic::VectorNew) => {}
+            // A user-fn / fn-value / other intrinsic result may alias an arg
             // while leaving it live (the RULE-2 passthrough gap).
             MirCallee::Fn(_) | MirCallee::LocalSlot { .. } | MirCallee::Intrinsic(_) => {
                 for a in &c.node.args {

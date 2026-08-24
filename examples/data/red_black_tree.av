@@ -1,7 +1,7 @@
 module RedBlackTree
     intent =
         "Purely functional red-black tree with insert/delete, invariants, and pretty-print demo."
-    exposes [Tree, insert, delete, member, toSorted, blackDepth]
+    exposes [Tree, insert, delete, member, valuesInOrder, blackDepth]
     effects [Console]
 
 decision BlackDepthConvention
@@ -227,10 +227,10 @@ fn delete(x: Int, t: Tree) -> Tree
   makeBlack(del(x, t))
 
 verify delete
-  toSorted(delete(3, fromList([3, 1, 5, 2, 4]))) => [1, 2, 4, 5]
-  toSorted(delete(1, fromList([3, 1, 5, 2, 4]))) => [2, 3, 4, 5]
-  toSorted(delete(5, fromList([3, 1, 5, 2, 4]))) => [1, 2, 3, 4]
-  toSorted(delete(6, fromList([3, 1, 5, 2, 4]))) => [1, 2, 3, 4, 5]
+  valuesInOrder(delete(3, fromList([3, 1, 5, 2, 4]))) => [1, 2, 4, 5]
+  valuesInOrder(delete(1, fromList([3, 1, 5, 2, 4]))) => [2, 3, 4, 5]
+  valuesInOrder(delete(5, fromList([3, 1, 5, 2, 4]))) => [1, 2, 3, 4]
+  valuesInOrder(delete(6, fromList([3, 1, 5, 2, 4]))) => [1, 2, 3, 4, 5]
   size(delete(3, fromList([3, 1, 5, 2, 4]))) => 4
   delete(1, fromList([1])) => Tree.Empty
 
@@ -249,7 +249,7 @@ verify size law equalsSortedLen
     fromList([3, 1, 5, 2, 4]),
     fromList([1, 1, 1])
   ]
-  size(t) => List.len(toSorted(t))
+  size(t) => List.len(valuesInOrder(t))
 
 fn blackDepth(t: Tree) -> Int
   ? "Black depth — uniform on all paths in a valid RBT"
@@ -289,19 +289,19 @@ verify concatLists
 
 fn collectInOrder(left: Tree, value: Int, right: Tree) -> List<Int>
   ? "Collect elements from a node in sorted order"
-  concatLists(List.concat(toSorted(left), [value]), toSorted(right))
+  concatLists(List.concat(valuesInOrder(left), [value]), valuesInOrder(right))
 
 verify collectInOrder
   collectInOrder(Tree.Empty, 2, Tree.Empty) => [2]
 
-fn toSorted(t: Tree) -> List<Int>
+fn valuesInOrder(t: Tree) -> List<Int>
   ? "In-order traversal — returns elements in ascending order"
   match t
     Tree.Empty -> []
     Tree.Red(left, value, right) -> collectInOrder(left, value, right)
     Tree.Black(left, value, right) -> collectInOrder(left, value, right)
 
-verify toSorted law sizePreserved
+verify valuesInOrder law sizePreserved
   given t: Tree = [
     Tree.Empty,
     Tree.Red(Tree.Empty, 2, Tree.Empty),
@@ -309,7 +309,7 @@ verify toSorted law sizePreserved
     fromList([5, 3, 7, 1]),
     fromList([3, 1, 5, 2, 4])
   ]
-  List.len(toSorted(t)) => size(t)
+  List.len(valuesInOrder(t)) => size(t)
 
 fn checkBothSubtrees(left: Tree, right: Tree) -> Bool
   ? "Short-circuit AND: check left subtree first, then right"
@@ -416,7 +416,7 @@ fn main()
   Console.print("Red-Black Tree")
   Console.print("Size: {size(t)}")
   Console.print("Black depth: {blackDepth(t)}")
-  Console.print("Sorted: {showListInt(toSorted(t))}")
+  Console.print("Sorted: {showListInt(valuesInOrder(t))}")
   Console.print("Contains 4: {member(4, t)}")
   Console.print("Contains 9: {member(9, t)}")
   Console.print("")
@@ -425,7 +425,7 @@ fn main()
   t2 = delete(3, t)
   Console.print("After deleting 3:")
   Console.print("Size: {size(t2)}")
-  Console.print("Sorted: {showListInt(toSorted(t2))}")
+  Console.print("Sorted: {showListInt(valuesInOrder(t2))}")
   Console.print("Contains 3: {member(3, t2)}")
   Console.print("")
   prettyPrint(t2)

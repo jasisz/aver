@@ -2,12 +2,17 @@
 //! moves, colour control, clear, flush, key reads, size queries.
 
 use super::super::RunWasmGcHost;
-use super::super::decode::{decode_option_string, decode_terminal_size};
-use super::factories::{host_option_string_none, host_option_string_some, host_terminal_size_make};
-use super::lm::{lm_string_to_host, val_i64};
-use super::replay_glue::{
-    json_none, json_record, json_some, record_effect_if_recording, try_replay,
+use super::super::decode::{decode_option_string, decode_result_terminal_size, decode_result_unit};
+use super::factories::{
+    host_option_string_none, host_option_string_some, host_result_err_unit_string,
+    host_result_ok_unit, host_result_terminal_size_err, host_result_terminal_size_ok,
+    host_terminal_size_make,
 };
+use super::lm::lm_string_to_host;
+use super::replay_glue::{
+    json_err, json_none, json_ok, json_record, json_some, record_effect_if_recording, try_replay,
+};
+use super::tcp::{decode_guest_int, guest_int_json};
 
 pub(super) fn dispatch(
     name: &str,
@@ -61,23 +66,35 @@ pub(super) fn dispatch(
             Ok(true)
         }
         "terminal_move_to" => {
-            let x = params.first().and_then(val_i64).unwrap_or(0);
-            let y = params.get(1).and_then(val_i64).unwrap_or(0);
-            let args = vec![
-                aver::replay::JsonValue::Int(x),
-                aver::replay::JsonValue::Int(y),
-            ];
-            if try_replay(caller, "Terminal.moveTo", args.clone())?.is_some() {
+            let x = params
+                .first()
+                .ok_or_else(|| wasmtime::Error::msg("Terminal.moveTo: missing x"))?;
+            let y = params
+                .get(1)
+                .ok_or_else(|| wasmtime::Error::msg("Terminal.moveTo: missing y"))?;
+            let x = decode_guest_int(caller, x, "Terminal.moveTo: malformed x Int")?;
+            let y = decode_guest_int(caller, y, "Terminal.moveTo: malformed y Int")?;
+            let args = vec![guest_int_json(&x), guest_int_json(&y)];
+            if let Some(cached) = try_replay(caller, "Terminal.moveTo", args.clone())? {
+                results[0] = Val::AnyRef(decode_result_unit(caller, &cached)?);
                 return Ok(true);
             }
-            let _ = aver_rt::terminal_move_to(x, y);
-            record_effect_if_recording(
-                caller,
-                "Terminal.moveTo",
-                args,
-                aver::replay::JsonValue::Null,
-                caller_fn,
-            );
+            let moved = match (x.value, y.value) {
+                (Some(x), Some(y)) => aver_rt::terminal_move_to(x, y),
+                _ => Err("Terminal.moveTo: coordinates must fit a 64-bit integer".to_string()),
+            };
+            let (result, outcome) = match moved {
+                Ok(()) => (
+                    host_result_ok_unit(caller)?,
+                    json_ok(aver::replay::JsonValue::Null),
+                ),
+                Err(error) => (
+                    host_result_err_unit_string(caller, &error)?,
+                    json_err(&error),
+                ),
+            };
+            results[0] = Val::AnyRef(result);
+            record_effect_if_recording(caller, "Terminal.moveTo", args, outcome, caller_fn);
             Ok(true)
         }
         "terminal_print" => {
@@ -191,26 +208,31 @@ pub(super) fn dispatch(
         }
         "terminal_size" => {
             if let Some(cached) = try_replay(caller, "Terminal.size", vec![])? {
-                let rec_ref = decode_terminal_size(caller, &cached)?;
-                results[0] = Val::AnyRef(rec_ref);
+                results[0] = Val::AnyRef(decode_result_terminal_size(caller, &cached)?);
                 return Ok(true);
             }
-            let (w, h) = aver_rt::terminal_size().unwrap_or((80, 24));
-            let rec_ref = host_terminal_size_make(caller, w, h)?;
-            results[0] = Val::AnyRef(rec_ref);
-            record_effect_if_recording(
-                caller,
-                "Terminal.size",
-                vec![],
-                json_record(
-                    "Terminal.Size",
-                    vec![
-                        ("width", aver::replay::JsonValue::Int(w)),
-                        ("height", aver::replay::JsonValue::Int(h)),
-                    ],
+            let (result, outcome) = match aver_rt::terminal_size() {
+                Ok((width, height)) => {
+                    let record = host_terminal_size_make(caller, width, height)?;
+                    let value = json_record(
+                        "Terminal.Size",
+                        vec![
+                            ("width", aver::replay::JsonValue::Int(width)),
+                            ("height", aver::replay::JsonValue::Int(height)),
+                        ],
+                    );
+                    (
+                        host_result_terminal_size_ok(caller, record)?,
+                        json_ok(value),
+                    )
+                }
+                Err(error) => (
+                    host_result_terminal_size_err(caller, &error)?,
+                    json_err(&error),
                 ),
-                caller_fn,
-            );
+            };
+            results[0] = Val::AnyRef(result);
+            record_effect_if_recording(caller, "Terminal.size", vec![], outcome, caller_fn);
             Ok(true)
         }
         _ => Ok(false),

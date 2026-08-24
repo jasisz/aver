@@ -1,5 +1,5 @@
 module NonNegFloat
-    exposes [fromFloat, toFloat, add]
+    exposes [fromFloat, value, add]
     exposes opaque [NonNegFloat]
     intent =
         "Refinement-via-opaque on Float. Same shape as Natural"
@@ -25,13 +25,13 @@ verify fromFloat
     fromFloat(1.5)   => Result.Ok(NonNegFloat(value = 1.5))
     fromFloat(-1.5)  => Result.Err("NonNegFloat must be >= 0.0")
 
-fn toFloat(n: NonNegFloat) -> Float
+fn value(n: NonNegFloat) -> Float
     ? "Unwrap a NonNegFloat into its underlying Float."
     n.value
 
-verify toFloat
-    toFloat(NonNegFloat(value = 0.0)) => 0.0
-    toFloat(NonNegFloat(value = 2.5)) => 2.5
+verify value
+    value(NonNegFloat(value = 0.0)) => 0.0
+    value(NonNegFloat(value = 2.5)) => 2.5
 
 fn add(a: NonNegFloat, b: NonNegFloat) -> Result<NonNegFloat, String>
     ? "Sum of two non-negative floats. fromFloat re-validates because Float `+` can produce NaN (Inf + (-Inf)) or Inf — the predicate `x >= 0.0` filters both consistently."

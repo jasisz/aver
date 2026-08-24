@@ -65,11 +65,12 @@ use std::collections::HashMap;
 use wasm_encoder::{CodeSection, Function, Instruction, ValType};
 
 use super::WasmGcError;
-use super::types::TypeRegistry;
+use super::types::{OPTION_NONE_TAG, OPTION_SOME_TAG, TypeRegistry};
 use super::wat_helper;
 
 mod bignum;
 mod crypto;
+mod utf8;
 
 /// Curated set of pure-side builtins phase 3c+ implements. Adding a
 /// new builtin: extend this enum + `from_dotted` + `signature` +
@@ -100,6 +101,12 @@ pub(super) enum BuiltinName {
     /// The VM's `s.len()` counterpart; distinct from `String.len`
     /// whenever the string holds multi-byte characters.
     StringByteLength,
+    /// `String.toUtf8(s) -> Bytes` — one byte copy from the engine-managed
+    /// UTF-8 String array into the proof-selected Bytes carrier.
+    StringToUtf8,
+    /// `String.fromUtf8(bytes) -> Result<String,String>` — streaming UTF-8
+    /// validation while copying into the String carrier.
+    StringFromUtf8,
     /// Variadic-by-array string concatenation: `(array (ref null $string))
     /// -> (ref null $string)`. Sums the per-part lengths once,
     /// allocates the result, copies each part. O(total_len) regardless
@@ -139,8 +146,8 @@ pub(super) enum BuiltinName {
     StringIndexBuild,
     StringIndexCharAt,
     StringIndexSlice,
-    CharToCode,
-    CharFromCode,
+    StringFirstCodePoint,
+    StringFromCodePoint,
     StringChars,
     /// `String.replace(s, needle, repl) -> String`. Two-pass naive
     /// scan: count occurrences, allocate output of exact size, fill.
@@ -209,14 +216,14 @@ pub(super) enum BuiltinName {
     AintToIndex,
     /// `__aint_to_i64_sat(a) -> i64` — saturating Int→i64 lowering for an
     /// Int ARGUMENT into an i64-typed builtin slot (`List.take`/`drop`
-    /// counts, `String.charAt`/`slice` indices, `Char.fromCode`). A Small
+    /// counts, `String.charAt`/`slice` indices, `String.fromCodePoint`). A Small
     /// passes through; a Big saturates by sign to i64::MAX / i64::MIN,
     /// which the receiving helper already treats as clamp-to-all/none or
     /// an out-of-range char index. slice 4 (flip).
     AintToI64Sat,
     /// `__aint_to_i64_checked(a) -> i64` — CHECKED Int→i64 lowering for an
-    /// Int argument crossing the HOST EFFECT boundary (`Random` bounds,
-    /// `Time.sleep` ms, a network port, a `Terminal` coordinate). A Small
+    /// Int argument crossing a machine-shaped boundary (a network port, HTTP
+    /// status, or proven carrier field). A Small
     /// passes through; a Big TRAPS (`unreachable`), since a canonical Big
     /// is outside i64 range — mirroring the VM host services' checked
     /// `AverInt::to_i64()`, which ERRORS rather than saturating an out-of-
@@ -251,6 +258,8 @@ impl BuiltinName {
             "String.fromFloat" => Some(Self::StringFromFloat),
             "String.len" | "String.length" => Some(Self::StringLength),
             "String.byteLength" => Some(Self::StringByteLength),
+            "String.toUtf8" => Some(Self::StringToUtf8),
+            "String.fromUtf8" => Some(Self::StringFromUtf8),
             "String.startsWith" => Some(Self::StringStartsWith),
             "String.contains" => Some(Self::StringContains),
             "String.slice" => Some(Self::StringSlice),
@@ -265,8 +274,8 @@ impl BuiltinName {
             "__str_index_build" => Some(Self::StringIndexBuild),
             "__str_index_char_at" => Some(Self::StringIndexCharAt),
             "__str_index_slice" => Some(Self::StringIndexSlice),
-            "Char.toCode" => Some(Self::CharToCode),
-            "Char.fromCode" => Some(Self::CharFromCode),
+            "String.firstCodePoint" => Some(Self::StringFirstCodePoint),
+            "String.fromCodePoint" => Some(Self::StringFromCodePoint),
             "String.chars" => Some(Self::StringChars),
             "String.replace" => Some(Self::StringReplace),
             "Crypto.sha256" => Some(Self::CryptoSha256),
@@ -280,6 +289,8 @@ impl BuiltinName {
             Self::StringFromIntI64 => "__wasmgc_string_from_int_i64",
             Self::StringLength => "String.len",
             Self::StringByteLength => "String.byteLength",
+            Self::StringToUtf8 => "String.toUtf8",
+            Self::StringFromUtf8 => "String.fromUtf8",
             Self::StringConcatN => "__wasmgc_concat_n",
             Self::StringStartsWith => "String.startsWith",
             Self::StringContains => "String.contains",
@@ -298,8 +309,8 @@ impl BuiltinName {
             Self::StringIndexBuild => "__str_index_build",
             Self::StringIndexCharAt => "__str_index_char_at",
             Self::StringIndexSlice => "__str_index_slice",
-            Self::CharToCode => "Char.toCode",
-            Self::CharFromCode => "Char.fromCode",
+            Self::StringFirstCodePoint => "String.firstCodePoint",
+            Self::StringFromCodePoint => "String.fromCodePoint",
             Self::StringChars => "String.chars",
             Self::StringReplace => "String.replace",
             Self::CryptoSha256 => "Crypto.sha256",
@@ -339,7 +350,14 @@ impl BuiltinName {
             // The LEAN i64 formatter always takes a raw machine `i64` (it is
             // only registered under bignum, where `StringFromInt` takes `$aint`).
             Self::StringFromIntI64 => Ok(vec![ValType::I64]),
-            Self::StringLength | Self::StringByteLength => Ok(vec![string_ref_ty(registry)?]),
+            Self::StringLength | Self::StringByteLength | Self::StringToUtf8 => {
+                Ok(vec![string_ref_ty(registry)?])
+            }
+            Self::StringFromUtf8 => Ok(vec![
+                super::types::aver_to_wasm("Bytes", Some(registry))?.ok_or_else(|| {
+                    WasmGcError::Validation("String.fromUtf8 requires Bytes".into())
+                })?,
+            ]),
             Self::StringConcatN => Ok(vec![string_array_ref_ty(registry)?]),
             Self::StringStartsWith | Self::StringContains => {
                 Ok(vec![string_ref_ty(registry)?, string_ref_ty(registry)?])
@@ -368,8 +386,8 @@ impl BuiltinName {
                 ValType::I64,
                 ValType::I64,
             ]),
-            Self::CharToCode => Ok(vec![string_ref_ty(registry)?]),
-            Self::CharFromCode => Ok(vec![ValType::I64]),
+            Self::StringFirstCodePoint => Ok(vec![string_ref_ty(registry)?]),
+            Self::StringFromCodePoint => Ok(vec![ValType::I64]),
             Self::StringChars => Ok(vec![string_ref_ty(registry)?]),
             Self::StringReplace => Ok(vec![
                 string_ref_ty(registry)?,
@@ -422,6 +440,12 @@ impl BuiltinName {
         match self {
             Self::StringFromInt | Self::StringFromIntI64 => Ok(vec![string_ref_ty(registry)?]),
             Self::StringLength | Self::StringByteLength => Ok(vec![ValType::I64]),
+            Self::StringToUtf8 => Ok(vec![
+                super::types::aver_to_wasm("Bytes", Some(registry))?.ok_or_else(|| {
+                    WasmGcError::Validation("String.toUtf8 requires Bytes".into())
+                })?,
+            ]),
+            Self::StringFromUtf8 => Ok(vec![result_ref_ty(registry, "Result<String,String>")?]),
             Self::StringConcatN => Ok(vec![string_ref_ty(registry)?]),
             Self::StringStartsWith | Self::StringContains => Ok(vec![ValType::I32]),
             Self::StringSlice
@@ -435,8 +459,8 @@ impl BuiltinName {
             Self::StringCompare => Ok(vec![ValType::I32]),
             Self::StringFromBool => Ok(vec![string_ref_ty(registry)?]),
             Self::StringEndsWith => Ok(vec![ValType::I32]),
-            Self::CharToCode => Ok(vec![ValType::I64]),
-            Self::StringCharAt | Self::CharFromCode => {
+            Self::StringFirstCodePoint => Ok(vec![option_ref_ty(registry, "Option<Int>")?]),
+            Self::StringCharAt | Self::StringFromCodePoint => {
                 Ok(vec![option_ref_ty(registry, "Option<String>")?])
             }
             Self::StringIndexBuild => Ok(vec![string_index_ref_ty(registry)?]),
@@ -482,6 +506,8 @@ impl BuiltinName {
             Self::StringFromIntI64 => emit_string_from_int(registry),
             Self::StringLength => emit_string_length(registry),
             Self::StringByteLength => emit_string_byte_length(registry),
+            Self::StringToUtf8 => utf8::emit_to_utf8(registry),
+            Self::StringFromUtf8 => utf8::emit_from_utf8(registry),
             Self::StringConcatN => emit_string_concat_n(registry),
             Self::StringStartsWith => emit_string_starts_with(registry),
             Self::StringContains => emit_string_contains(registry),
@@ -501,8 +527,8 @@ impl BuiltinName {
             Self::StringIndexBuild => emit_string_index_build(registry),
             Self::StringIndexCharAt => emit_string_index_char_at(registry),
             Self::StringIndexSlice => emit_string_index_slice(registry),
-            Self::CharToCode => emit_char_to_code(registry),
-            Self::CharFromCode => emit_char_from_code(registry),
+            Self::StringFirstCodePoint => emit_string_first_code_point(registry),
+            Self::StringFromCodePoint => emit_string_from_code_point(registry),
             Self::StringChars => emit_string_chars(registry),
             Self::StringReplace => emit_string_replace(registry),
             Self::CryptoSha256 => crypto::emit_sha256(registry),
@@ -625,7 +651,7 @@ fn string_index_ref_ty(registry: &TypeRegistry) -> Result<ValType, WasmGcError> 
 
 /// `(ref null $option_T)` — Option instantiation reference. Canonical
 /// is spaceless (e.g. `Option<String>`). Used by `String.charAt` and
-/// `Char.fromCode` which both return `Option<String>`.
+/// `String.fromCodePoint` which both return `Option<String>`.
 fn option_ref_ty(registry: &TypeRegistry, canonical: &str) -> Result<ValType, WasmGcError> {
     let idx = registry
         .option_type_idx(canonical)
@@ -2861,169 +2887,198 @@ fn emit_string_index_slice(registry: &TypeRegistry) -> Result<Function, WasmGcEr
     wat_helper::compile_wat_helper(&wat)
 }
 
-/// `Char.toCode(s: String) -> Int`. Aver represents a Char as a one-scalar
-/// String, so decode the first UTF-8 scalar instead of returning byte zero.
-/// Empty strings trap, matching the old wasm-gc hard-failure behavior for
-/// invalid Char values.
-fn emit_char_to_code(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+/// `String.firstCodePoint(s) -> Option<Int>`.
+fn emit_string_first_code_point(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     let string_idx = registry
         .string_array_type_idx
         .ok_or(WasmGcError::Validation(
-            "Char.toCode: String slot not registered".into(),
+            "String.firstCodePoint: String slot not registered".into(),
         ))?;
-    let pre_string = wat_helper::padding_types(string_idx);
-    let wat = format!(
-        r#"
-        (module
-          {pre_string}
-          (type $string (array (mut i8)))
-          (func (export "helper") (param $s (ref null $string)) (result i64)
-            (local $n i32)
-            (local $b0 i32)
-            (local $b1 i32)
-            (local $b2 i32)
-            (local $b3 i32)
-            (local $clen i32)
-            (local $code i32)
+    let option_idx = registry
+        .option_type_idx("Option<Int>")
+        .ok_or(WasmGcError::Validation(
+            "String.firstCodePoint: Option<Int> slot not registered".into(),
+        ))?;
+    let option_ref = wasm_encoder::ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(option_idx),
+    });
+    let aint = if registry.bignum {
+        Some((
+            registry.aint_struct_idx.ok_or(WasmGcError::Validation(
+                "String.firstCodePoint: AverInt slot not registered".into(),
+            ))?,
+            registry
+                .aint_from_i64_fn_idx
+                .ok_or(WasmGcError::Validation(
+                    "String.firstCodePoint: __aint_from_i64 helper not registered".into(),
+                ))?,
+        ))
+    } else {
+        None
+    };
 
-            local.get $s
-            array.len
-            local.set $n
+    // Locals after parameter 0: n, b0, b1, b2, b3, scalar_len, code.
+    let mut f = Function::new(vec![(7, ValType::I32)]);
+    macro_rules! i {
+        ($instruction:expr) => {
+            f.instruction(&$instruction);
+        };
+    }
+    i!(Instruction::LocalGet(0));
+    i!(Instruction::ArrayLen);
+    i!(Instruction::LocalSet(1));
+    i!(Instruction::LocalGet(1));
+    i!(Instruction::I32Eqz);
+    i!(Instruction::If(
+        wasm_encoder::BlockType::Result(option_ref,)
+    ));
 
-            local.get $n
-            i32.eqz
-            (if (then unreachable))
+    // Empty text is an ordinary absence, never a wasm trap.
+    i!(Instruction::I32Const(OPTION_NONE_TAG));
+    if let Some((aint_idx, _)) = aint {
+        i!(Instruction::RefNull(wasm_encoder::HeapType::Concrete(
+            aint_idx,
+        )));
+    } else {
+        i!(Instruction::I64Const(0));
+    }
+    i!(Instruction::StructNew(option_idx));
+    i!(Instruction::Else);
 
-            local.get $s
-            i32.const 0
-            array.get_u $string
-            local.set $b0
+    i!(Instruction::LocalGet(0));
+    i!(Instruction::I32Const(0));
+    i!(Instruction::ArrayGetU(string_idx));
+    i!(Instruction::LocalSet(2));
+    i!(Instruction::I32Const(1));
+    i!(Instruction::LocalSet(6));
+    i!(Instruction::LocalGet(2));
+    i!(Instruction::I32Const(0xC0));
+    i!(Instruction::I32GeU);
+    i!(Instruction::If(wasm_encoder::BlockType::Empty));
+    i!(Instruction::I32Const(2));
+    i!(Instruction::LocalSet(6));
+    i!(Instruction::End);
+    i!(Instruction::LocalGet(2));
+    i!(Instruction::I32Const(0xE0));
+    i!(Instruction::I32GeU);
+    i!(Instruction::If(wasm_encoder::BlockType::Empty));
+    i!(Instruction::I32Const(3));
+    i!(Instruction::LocalSet(6));
+    i!(Instruction::End);
+    i!(Instruction::LocalGet(2));
+    i!(Instruction::I32Const(0xF0));
+    i!(Instruction::I32GeU);
+    i!(Instruction::If(wasm_encoder::BlockType::Empty));
+    i!(Instruction::I32Const(4));
+    i!(Instruction::LocalSet(6));
+    i!(Instruction::End);
+    i!(Instruction::LocalGet(6));
+    i!(Instruction::LocalGet(1));
+    i!(Instruction::I32GtU);
+    i!(Instruction::If(wasm_encoder::BlockType::Empty));
+    i!(Instruction::LocalGet(1));
+    i!(Instruction::LocalSet(6));
+    i!(Instruction::End);
 
-            ;; UTF-8 length from the lead byte. Treat stray continuation bytes
-            ;; as length 1, like String.charAt's defensive scanner.
-            i32.const 1
-            local.set $clen
-            local.get $b0
-            i32.const 0xC0
-            i32.ge_u
-            (if (then i32.const 2 local.set $clen))
-            local.get $b0
-            i32.const 0xE0
-            i32.ge_u
-            (if (then i32.const 3 local.set $clen))
-            local.get $b0
-            i32.const 0xF0
-            i32.ge_u
-            (if (then i32.const 4 local.set $clen))
+    i!(Instruction::LocalGet(6));
+    i!(Instruction::I32Const(1));
+    i!(Instruction::I32Eq);
+    i!(Instruction::If(wasm_encoder::BlockType::Empty));
+    i!(Instruction::LocalGet(2));
+    i!(Instruction::LocalSet(7));
+    i!(Instruction::Else);
+    i!(Instruction::LocalGet(6));
+    i!(Instruction::I32Const(2));
+    i!(Instruction::I32Eq);
+    i!(Instruction::If(wasm_encoder::BlockType::Empty));
+    i!(Instruction::LocalGet(0));
+    i!(Instruction::I32Const(1));
+    i!(Instruction::ArrayGetU(string_idx));
+    i!(Instruction::LocalSet(3));
+    i!(Instruction::LocalGet(2));
+    i!(Instruction::I32Const(0x1F));
+    i!(Instruction::I32And);
+    i!(Instruction::I32Const(6));
+    i!(Instruction::I32Shl);
+    i!(Instruction::LocalGet(3));
+    i!(Instruction::I32Const(0x3F));
+    i!(Instruction::I32And);
+    i!(Instruction::I32Or);
+    i!(Instruction::LocalSet(7));
+    i!(Instruction::Else);
+    i!(Instruction::LocalGet(0));
+    i!(Instruction::I32Const(1));
+    i!(Instruction::ArrayGetU(string_idx));
+    i!(Instruction::LocalSet(3));
+    i!(Instruction::LocalGet(0));
+    i!(Instruction::I32Const(2));
+    i!(Instruction::ArrayGetU(string_idx));
+    i!(Instruction::LocalSet(4));
+    i!(Instruction::LocalGet(6));
+    i!(Instruction::I32Const(3));
+    i!(Instruction::I32Eq);
+    i!(Instruction::If(wasm_encoder::BlockType::Empty));
+    i!(Instruction::LocalGet(2));
+    i!(Instruction::I32Const(0x0F));
+    i!(Instruction::I32And);
+    i!(Instruction::I32Const(12));
+    i!(Instruction::I32Shl);
+    i!(Instruction::LocalGet(3));
+    i!(Instruction::I32Const(0x3F));
+    i!(Instruction::I32And);
+    i!(Instruction::I32Const(6));
+    i!(Instruction::I32Shl);
+    i!(Instruction::I32Or);
+    i!(Instruction::LocalGet(4));
+    i!(Instruction::I32Const(0x3F));
+    i!(Instruction::I32And);
+    i!(Instruction::I32Or);
+    i!(Instruction::LocalSet(7));
+    i!(Instruction::Else);
+    i!(Instruction::LocalGet(0));
+    i!(Instruction::I32Const(3));
+    i!(Instruction::ArrayGetU(string_idx));
+    i!(Instruction::LocalSet(5));
+    i!(Instruction::LocalGet(2));
+    i!(Instruction::I32Const(0x07));
+    i!(Instruction::I32And);
+    i!(Instruction::I32Const(18));
+    i!(Instruction::I32Shl);
+    i!(Instruction::LocalGet(3));
+    i!(Instruction::I32Const(0x3F));
+    i!(Instruction::I32And);
+    i!(Instruction::I32Const(12));
+    i!(Instruction::I32Shl);
+    i!(Instruction::I32Or);
+    i!(Instruction::LocalGet(4));
+    i!(Instruction::I32Const(0x3F));
+    i!(Instruction::I32And);
+    i!(Instruction::I32Const(6));
+    i!(Instruction::I32Shl);
+    i!(Instruction::I32Or);
+    i!(Instruction::LocalGet(5));
+    i!(Instruction::I32Const(0x3F));
+    i!(Instruction::I32And);
+    i!(Instruction::I32Or);
+    i!(Instruction::LocalSet(7));
+    i!(Instruction::End);
+    i!(Instruction::End);
+    i!(Instruction::End);
 
-            ;; Clamp malformed truncated tails to the bytes that exist.
-            local.get $clen
-            local.get $n
-            i32.gt_u
-            (if (then local.get $n local.set $clen))
-
-            local.get $clen
-            i32.const 1
-            i32.eq
-            (if
-              (then
-                local.get $b0
-                local.set $code)
-              (else
-                local.get $clen
-                i32.const 2
-                i32.eq
-                (if
-                  (then
-                    local.get $s
-                    i32.const 1
-                    array.get_u $string
-                    local.set $b1
-                    local.get $b0
-                    i32.const 0x1F
-                    i32.and
-                    i32.const 6
-                    i32.shl
-                    local.get $b1
-                    i32.const 0x3F
-                    i32.and
-                    i32.or
-                    local.set $code)
-                  (else
-                    local.get $clen
-                    i32.const 3
-                    i32.eq
-                    (if
-                      (then
-                        local.get $s
-                        i32.const 1
-                        array.get_u $string
-                        local.set $b1
-                        local.get $s
-                        i32.const 2
-                        array.get_u $string
-                        local.set $b2
-                        local.get $b0
-                        i32.const 0x0F
-                        i32.and
-                        i32.const 12
-                        i32.shl
-                        local.get $b1
-                        i32.const 0x3F
-                        i32.and
-                        i32.const 6
-                        i32.shl
-                        i32.or
-                        local.get $b2
-                        i32.const 0x3F
-                        i32.and
-                        i32.or
-                        local.set $code)
-                      (else
-                        local.get $s
-                        i32.const 1
-                        array.get_u $string
-                        local.set $b1
-                        local.get $s
-                        i32.const 2
-                        array.get_u $string
-                        local.set $b2
-                        local.get $s
-                        i32.const 3
-                        array.get_u $string
-                        local.set $b3
-                        local.get $b0
-                        i32.const 0x07
-                        i32.and
-                        i32.const 18
-                        i32.shl
-                        local.get $b1
-                        i32.const 0x3F
-                        i32.and
-                        i32.const 12
-                        i32.shl
-                        i32.or
-                        local.get $b2
-                        i32.const 0x3F
-                        i32.and
-                        i32.const 6
-                        i32.shl
-                        i32.or
-                        local.get $b3
-                        i32.const 0x3F
-                        i32.and
-                        i32.or
-                        local.set $code))))))
-
-            local.get $code
-            i64.extend_i32_u)
-        )
-    "#
-    );
-    wat_helper::compile_wat_helper(&wat)
+    i!(Instruction::I32Const(OPTION_SOME_TAG));
+    i!(Instruction::LocalGet(7));
+    i!(Instruction::I64ExtendI32U);
+    if let Some((_, from_i64)) = aint {
+        i!(Instruction::Call(from_i64));
+    }
+    i!(Instruction::StructNew(option_idx));
+    i!(Instruction::End);
+    i!(Instruction::End);
+    Ok(f)
 }
 
-/// `Char.fromCode(code: Int) -> Option<String>`. Encodes a Unicode
+/// `String.fromCodePoint(code: Int) -> Option<String>`. Encodes a Unicode
 /// code point as UTF-8 (1–4 bytes) into a fresh `(array i8)`. Returns
 /// Option.None for negative values, codepoints above U+10FFFF, and the
 /// surrogate range U+D800..U+DFFF. Ported from
@@ -3033,20 +3088,20 @@ fn emit_char_to_code(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
 /// the same UTF-8 encoder. Critical for games like
 /// `examples/games/doom` that emit Braille block characters
 /// (U+2800..U+28FF, 3-byte UTF-8).
-fn emit_char_from_code(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+fn emit_string_from_code_point(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     let string_idx = registry
         .string_array_type_idx
         .ok_or(WasmGcError::Validation(
-            "Char.fromCode: String slot not registered".into(),
+            "String.fromCodePoint: String slot not registered".into(),
         ))?;
     let opt_idx = registry
         .option_type_idx("Option<String>")
         .ok_or(WasmGcError::Validation(
-            "Char.fromCode: Option<String> slot not registered".into(),
+            "String.fromCodePoint: Option<String> slot not registered".into(),
         ))?;
     if opt_idx <= string_idx {
         return Err(WasmGcError::Validation(format!(
-            "Char.fromCode helper expects opt_idx > string_idx (got {opt_idx} vs {string_idx})"
+            "String.fromCodePoint helper expects opt_idx > string_idx (got {opt_idx} vs {string_idx})"
         )));
     }
     let pre_string = wat_helper::padding_types(string_idx);

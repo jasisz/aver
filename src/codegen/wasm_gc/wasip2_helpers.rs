@@ -207,8 +207,10 @@ pub(super) struct ConsoleReadLineIndices {
 /// Phase 1.4c — `__rt_time_sleep(ms i64) -> ()` helper indices.
 /// Wraps `subscribe-duration` + `poll` + `[resource-drop]pollable`
 /// in one body so the pollable resource never escapes the helper.
-/// Source-level Aver still sees `Time.sleep(ms) -> Unit` — the
-/// pollable model is an implementation detail of the wasip2 path.
+/// Source-level Aver sees `Time.sleep(ms) -> Result<Unit, String>`; the
+/// call-site lowering validates the argument and wraps this helper's Unit in
+/// Ok. A safe literal may discharge that wrapper, but this helper still runs.
+/// The pollable model is an implementation detail of the wasip2 path.
 pub(super) struct TimeSleepIndices {
     pub(super) fn_type: u32,
     pub(super) fn_idx: u32,

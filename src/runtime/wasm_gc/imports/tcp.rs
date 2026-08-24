@@ -615,7 +615,7 @@ fn replay_poll_result(
     host_result_ok_list_int_refs(caller, &refs)
 }
 
-fn guest_int_json(value: &GuestInt) -> aver::replay::JsonValue {
+pub(super) fn guest_int_json(value: &GuestInt) -> aver::replay::JsonValue {
     match value.value {
         Some(value) => aver::replay::JsonValue::Int(value),
         None => {

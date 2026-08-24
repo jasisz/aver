@@ -28,7 +28,7 @@ const THIN_ENTRY_AV: &str = "module Thin\n    intent = \"Entry with no cases of 
 
 /// An entry that depends on the embedded `Bytes` module, which carries
 /// verify blocks of its own.
-const BYTES_APP_AV: &str = "module BytesApp\n    intent = \"Count validated bytes.\"\n    depends [Bytes]\n    exposes [byteCount]\n    effects []\n\nfn byteCount(values: List<Int>) -> Result<Int, String>\n    ? \"Validate bytes and count them.\"\n    bytes = Bytes.fromList(values)?\n    Result.Ok(List.len(Bytes.toList(bytes)))\n\nverify byteCount\n    byteCount([1, 2]) => Result.Ok(2)\n";
+const BYTES_APP_AV: &str = "module BytesApp\n    intent = \"Count validated bytes.\"\n    depends [Bytes]\n    exposes [byteCount]\n    effects []\n\nfn byteCount(values: List<Int>) -> Result<Int, String>\n    ? \"Validate bytes and count them.\"\n    bytes = Bytes.fromList(values)?\n    Result.Ok(List.len(Bytes.octets(bytes)))\n\nverify byteCount\n    byteCount([1, 2]) => Result.Ok(2)\n";
 
 struct Project {
     dir: PathBuf,

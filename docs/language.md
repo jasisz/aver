@@ -56,7 +56,7 @@ Every name means one thing in its scope. Duplicate binding of the same name in t
 ## Operators
 
 Arithmetic: `+`, `-`, `*` — operands must match (`Int+Int`, `Float+Float`, `String+String`). No implicit promotion; use `Float.fromInt` / `Int.fromFloat` to convert. The `/` operator is **Float-only**; integer `/` is a type error. For integers use `Int.div(a, b) : Result<Int, String>` (Euclidean; `b == 0` → `Result.Err`) and `Int.mod(a, b) : Result<Int, String>` — there is no integer `%`. `Int` is arbitrary-precision (ℤ): no overflow, no wraparound.
-Bit-level operations live in the `Bits` namespace, not in the operator set: `Bits.and`, `Bits.or`, `Bits.xor`, `Bits.not` are `Int -> Int` under infinite two's complement (`Bits.not(x) == -x - 1`, `Bits.and(-1, x) == x`), and `Bits.shiftLeft(x, n)` / `Bits.shiftRight(x, n)` / `Bits.low(x, width)` are `x * 2^n` / `floor(x / 2^n)` / `x mod 2^width`, returning `Result<Int, String>` because a negative count is refused. `Bits` is a namespace, not a type: nothing here is a machine word, and `Int` still never overflows or wraps — width is requested explicitly through `Bits.low`, never implied. See [docs/services.md](services.md#bits-namespace).
+Bit-level operations live in the `Bits` namespace, not in the operator set: `Bits.and`, `Bits.or`, `Bits.xor`, `Bits.not` are `Int -> Int` under infinite two's complement (`Bits.not(x) == -x - 1`, `Bits.and(-1, x) == x`), and `Bits.shiftLeft(x, n)` / `Bits.shiftRight(x, n)` / `Bits.low(x, width)` are `x * 2^n` / `floor(x / 2^n)` / `x mod 2^width`, returning `Result<Int, String>` because a negative or over-limit count is refused. A syntactic in-range non-negative literal discharges to plain `Int`. `Bits` is a namespace, not a type: nothing here is a machine word, and `Int` still never overflows or wraps — width is requested explicitly through `Bits.low`, never implied. See [docs/services.md](services.md#bits-namespace).
 
 Literal-divisor discharge: when the divisor of `Int.div` / `Int.mod` is a syntactic nonzero integer literal — `Int.div(x, 2)`, `Int.mod(x, -3)` — the call cannot fail, so it types as plain `Int` and every backend emits the division directly (no `Result`, no unwrapping). The boundary is exactly "a syntactic integer literal other than `0`, optionally under one unary minus": a `0` literal, an identifier, a named constant, or a constant expression like `8 + 8` all keep the `Result<Int, String>` type unchanged. Parentheses are transparent here, because the parser erases them around a single expression: `(16)`, `(-16)` and `-(16)` are the same syntax tree as `16` and `-16`, so all three discharge — while `(0)` is still zero and `(k)` is still an identifier, and both keep the `Result` type. This is a typing rule for these two functions only, not a general constant-propagation or refinement mechanism.
 Literal smart-constructor discharge: the same idea extends to a validating smart constructor over a `List<Int>` carrier — the shape `stdlib/bytes.av` uses. When the argument is a syntactic list of integer literals and every element is inside the interval the refinement itself proves, the call cannot reach its `Result.Err` branch, so it types as the refined type and constructs the value directly: `Bytes.fromList([0, 10, 255]) : Bytes`, no `?` and no `match`. The empty list `Bytes.fromList([])` discharges too. The boundary is narrow and entirely syntactic on the argument side: there must be exactly one argument, it must be a list literal written out at the call site, and every element must be a plain integer literal with at most one unary minus. What decides is the function the call resolves to, never how it is spelled: `Bytes.fromList(...)` from outside and a bare `fromList(...)` inside the defining module both reach the constructor and both discharge, while a module that declares its own `fromList` shadows the imported one as usual — that call means the local function and is not discharged at all. Everything else keeps `Result<Bytes, String>` unchanged — an identifier (`Bytes.fromList(values)`), a computed list (`Bytes.fromList(List.concat(a, b))`), a computed element (`Bytes.fromList([n * 2])`), an out-of-range literal (`Bytes.fromList([65, 256])`), a negative one (`Bytes.fromList([-1])`), or a literal beyond `i64`. The bound is never hardcoded: it is read off the refinement's own validating predicate, so a user-defined refinement with a different range discharges against that range, and a record with no smart constructor never discharges at all. Programs run under `--self-host` are refused with an explicit error when they contain a discharged call, because the self-hosted resolver does not yet carry the rule.
@@ -253,9 +253,9 @@ This is an intentional style choice. In Aver, the author should usually write a 
 Oracle laws cover classified effectful functions:
 
 ```aver
-fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Int
+fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Result<Int, String>
     ? "Deterministic Random.int stub."
-    4
+    Result.Ok(4)
 
 fn pickOne() -> Int
     ? "Rolls once."
@@ -264,7 +264,7 @@ fn pickOne() -> Int
 
 verify pickOne law usesOracle
     given rnd: Random.int = [fairDie]
-    pickOne() => rnd(BranchPath.Root, 0, 1, 6)
+    pickOne() => Result.withDefault(rnd(BranchPath.Root, 0, 1, 6), 1)
 ```
 
 Inside any cases-form `verify <fn>` block, `given` can bind a capability operation or classified effect to one or more Aver stub functions for those explicit runtime cases. A pure capability stub has the operation's contract signature unchanged; an effectful/generative stub uses the Oracle shape with leading `BranchPath` and call index. In `verify <fn> law <name>`, proof export can additionally quantify over the oracle itself. Add `trace` when you want `.result` and `.trace.*` assertions over collected classified effect emissions.
@@ -361,6 +361,11 @@ grid = Vector.new(100, 0)          // 100 zeros
 updated = Vector.set(grid, 42, 1)  // Option<Vector<Int>>
 value = Vector.get(grid, 42)       // Option<Int>
 ```
+
+`Vector.new(size, fill)` is fallible for a dynamic size. A syntactic literal
+in the portable `0..=u32::MAX` range, as above, discharges directly to
+`Vector<T>`; negative, oversized, or computed sizes keep
+`Result<Vector<T>, String>`.
 
 ## Tail-call optimization
 

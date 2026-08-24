@@ -872,7 +872,7 @@ fn emit_verify_law_block(
         && crate::codegen::common::all_givens_are_singletons(law)
         && crate::codegen::common::law_rhs_is_independent_of_givens(law);
     // Issue #128: a law that calls a fuel-bounded helper (a recursive
-    // fn the proof-mode classifier rejected — `size`, `toSorted`,
+    // fn the proof-mode classifier rejected — `size`, `valuesInOrder`,
     // `blackDepth`, …) can't be closed by the auto-proof matcher's
     // `induction t with …` chain: the goal stays under
     // `<fn>__fuel ((averMeasure _) * 3) …` which `simp` can't drive.

@@ -737,11 +737,11 @@ fn prelude_validates_char_from_code_unicode_bounds() {
     let prelude = generate_prelude();
     assert!(
         prelude.contains("if n < 0 || n > 1114111 then none"),
-        "Char.fromCode should reject code points above Unicode max"
+        "String.fromCodePoint should reject code points above Unicode max"
     );
     assert!(
         prelude.contains("else if n >= 55296 && n <= 57343 then none"),
-        "Char.fromCode should reject surrogate code points"
+        "String.fromCodePoint should reject surrogate code points"
     );
 }
 
@@ -2627,7 +2627,7 @@ const SCAN_GATE_PRELUDE: &str = r#"module ScanGate
     effects []
 
 fn isDigit(c: String) -> Bool
-    code = Char.toCode(c)
+    code = Option.withDefault(String.firstCodePoint(c), 0)
     match code >= 48
         true -> code <= 57
         false -> false
@@ -3980,7 +3980,7 @@ fn transpile_injects_builtin_network_types_and_vector_get_support() {
     let mut ctx = ctx_from_source(
         r#"
 fn firstOrMissing(xs: Vector<String>) -> Result<String, String>
-    Option.toResult(Vector.get(xs, 0), "missing")
+    Result.fromOption(Vector.get(xs, 0), "missing")
 
 fn defaultHeaders() -> Map<String, List<String>>
     {"content-type" => ["application/json"]}
@@ -4649,9 +4649,8 @@ fn generative_call_nested_in_args_gets_the_higher_oracle_index() {
     // args and calls `take_oracle_coordinates()` afterwards), so a generative
     // call nested inside the arguments consumes the LOWER index. Pre-fix the
     // lifter did the opposite: it claimed its own counter before lifting its
-    // arguments, so `Random.int(1, Random.int(2, 6))` exported as
-    // `rnd path 0 1 (rnd path 1 2 6)` while the run answered as
-    // `rnd path 1 1 (rnd path 0 2 6)`.
+    // arguments, so `Random.int(0, Random.int(0, 6) + 2)` assigned the
+    // outer and inner oracle indices in the opposite order from the VM.
     //
     // The inversion was invisible at both ends and fail-closed in both
     // directions: the law that held at runtime exported a theorem
@@ -4663,18 +4662,18 @@ fn generative_call_nested_in_args_gets_the_higher_oracle_index() {
     intent = "Oracle indices must be charged in evaluation order."
     effects [Random]
 
-fn indexStub(path: BranchPath, n: Int, min: Int, max: Int) -> Int
+fn indexStub(path: BranchPath, n: Int, min: Int, max: Int) -> Result<Int, String>
     ? "Returns the call index so the oracle coordinate is observable."
-    n
+    Result.Ok(n)
 
-fn nested() -> Int
+fn nested() -> Result<Int, String>
     ? "Outer Random.int whose upper bound is itself a Random.int."
     ! [Random.int]
-    Random.int(1, Random.int(2, 6))
+    Random.int(0, Random.int(0, 6) + 2)
 
 verify nested law indexOrder
     given rnd: Random.int = [indexStub]
-    nested() => 1
+    nested() => Result.Ok(1)
 "#,
         "counter_order",
     );
@@ -4682,14 +4681,10 @@ verify nested law indexOrder
     let lean = generated_lean_file(&out);
 
     assert!(
-        lean.contains("rnd_Random_int path 1 1 (rnd_Random_int path 0 2 6)"),
+        lean.contains("rnd_Random_int path 0 0 6") && lean.contains("rnd_Random_int path 1 0"),
         "the nested generative call must take index 0 and the surrounding one index 1, \
-         matching the VM's eager argument evaluation; emitted body was:\n{lean}"
-    );
-    assert!(
-        !lean.contains("rnd_Random_int path 0 1 (rnd_Random_int path 1 2 6)"),
-        "inverted oracle indices are back — the lifter is claiming its counter before \
-         lifting its own arguments again"
+         matching the VM's eager argument evaluation even through Result propagation; \
+         emitted body was:\n{lean}"
     );
 }
 

@@ -1,4 +1,4 @@
-use crate::{AverDisplay, AverList, AverMap, AverStr};
+use crate::{AverDisplay, AverInt, AverList, AverMap, AverStr};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub struct TerminalSize {
@@ -109,11 +109,9 @@ impl AverDisplay for TcpConnection {
 /// built-in record `{ dewey: String }`; it surfaces in source only as
 /// the first parameter of Oracle-proof stub functions
 /// (`oracle : (BranchPath, Int, args...) -> T`). Those stub fns are
-/// emitted by the Rust backend as ordinary (dead-at-runtime) functions
-/// because module-level fns are emitted regardless of reachability, so
-/// the type must be in scope for them to compile. It is never produced
-/// or consumed by runtime code — only `aver verify` exercises the
-/// Oracle laws — so the constructors here only need to compile.
+/// emitted by the Rust backend as ordinary functions because module-level
+/// fns are emitted regardless of reachability, so the type and its exact
+/// constructor contracts must be in scope for them to compile.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub struct BranchPath {
     pub dewey: AverStr,
@@ -130,7 +128,18 @@ impl BranchPath {
 
     /// Extend a path by entering branch `idx` of a group. Mirrors
     /// `BranchPath.child` (dewey segments joined with `.`).
-    pub fn child(path: &BranchPath, idx: i64) -> Self {
+    pub fn child(path: &BranchPath, idx: &AverInt) -> Result<Self, AverStr> {
+        if idx < &AverInt::zero() {
+            return Err(AverStr::from(
+                "BranchPath.child: `idx` must be non-negative",
+            ));
+        }
+        Ok(Self::child_literal(path, idx))
+    }
+
+    /// Raw form selected only by the compiler's syntactic literal discharge.
+    pub fn child_literal(path: &BranchPath, idx: &AverInt) -> Self {
+        debug_assert!(idx >= &AverInt::zero());
         let dewey = if path.dewey.is_empty() {
             idx.to_string()
         } else {
@@ -142,11 +151,29 @@ impl BranchPath {
     }
 
     /// Parse a dewey-decimal path string. Mirrors `BranchPath.parse`.
-    pub fn parse(raw: &str) -> Self {
+    pub fn parse(raw: &str) -> Result<Self, AverStr> {
+        if !is_valid_dewey(raw) {
+            return Err(AverStr::from(format!(
+                "BranchPath.parse: invalid dewey-decimal path: `{raw}`"
+            )));
+        }
+        Ok(Self::parse_literal(raw))
+    }
+
+    /// Raw form selected only by the compiler's syntactic literal discharge.
+    pub fn parse_literal(raw: &str) -> Self {
+        debug_assert!(is_valid_dewey(raw));
         Self {
             dewey: AverStr::from(raw),
         }
     }
+}
+
+fn is_valid_dewey(raw: &str) -> bool {
+    raw.is_empty()
+        || raw
+            .split('.')
+            .all(|segment| !segment.is_empty() && segment.bytes().all(|b| b.is_ascii_digit()))
 }
 
 impl AverDisplay for BranchPath {

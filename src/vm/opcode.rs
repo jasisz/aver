@@ -226,9 +226,13 @@ pub const TUPLE_NEW: u8 = 0x68; // count:u32
 /// the same callable resolution rules as CALL_VALUE, then builds the result tuple.
 /// Enters/exits replay group around parallel dispatch.
 ///
-/// Encoding: CALL_PAR count:u8 unwrap:u8 [argc:u8 × count]
+/// Encoding: CALL_PAR count:u8 unwrap:u8
+/// `[argc:u8 discharged_default:u8 × count]`
 /// unwrap=1 (?!): unwrap each Result, propagate first Err.
 /// unwrap=0 (!): return raw tuple.
+/// discharged_default=1: the branch bundle carries one extra default value;
+/// invoke the nested effect callable inside the group, then apply the proven
+/// `Result.withDefault` destructor before constructing the raw tuple.
 pub const CALL_PAR: u8 = 0x86;
 
 /// Update selected fields on a record, preserving the rest from the base value.
@@ -558,6 +562,18 @@ pub const STR_INDEX_CHAR_AT: u8 = 0xA9;
 /// Pop to, pop from, pop index, pop s → push `String.slice(s, from, to)`.
 pub const STR_INDEX_SLICE: u8 = 0xAA;
 
+/// Pop fill, pop size, push a fresh Vector. Emitted only for a syntactic
+/// non-negative size literal in the portable `u32` range.
+pub const VECTOR_NEW_LITERAL: u8 = 0xAB;
+
+/// Pop index, pop BranchPath → push the extended BranchPath directly.
+/// Emitted only after the literal non-negative-index discharge.
+pub const BRANCH_PATH_CHILD_LITERAL: u8 = 0xAC;
+
+/// Pop String → push BranchPath directly. Emitted only after the literal
+/// dewey-decimal validator has discharged `BranchPath.parse`.
+pub const BRANCH_PATH_PARSE_LITERAL: u8 = 0xAD;
+
 /// Opcode name for debug/disassembly.
 pub fn opcode_name(op: u8) -> &'static str {
     match op {
@@ -670,6 +686,9 @@ pub fn opcode_name(op: u8) -> &'static str {
         STR_INDEX_BUILD => "STR_INDEX_BUILD",
         STR_INDEX_CHAR_AT => "STR_INDEX_CHAR_AT",
         STR_INDEX_SLICE => "STR_INDEX_SLICE",
+        VECTOR_NEW_LITERAL => "VECTOR_NEW_LITERAL",
+        BRANCH_PATH_CHILD_LITERAL => "BRANCH_PATH_CHILD_LITERAL",
+        BRANCH_PATH_PARSE_LITERAL => "BRANCH_PATH_PARSE_LITERAL",
         CALL_PAR => "CALL_PAR",
         NOP => "NOP",
         _ => "UNKNOWN",
@@ -749,6 +768,9 @@ pub fn opcode_operand_width(op: u8, code: &[u8], ip: usize) -> usize {
         | STR_INDEX_BUILD
         | STR_INDEX_CHAR_AT
         | STR_INDEX_SLICE
+        | VECTOR_NEW_LITERAL
+        | BRANCH_PATH_CHILD_LITERAL
+        | BRANCH_PATH_PARSE_LITERAL
         | NOP => 0,
 
         // 1-byte

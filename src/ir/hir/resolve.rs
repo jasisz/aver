@@ -361,9 +361,9 @@ fn resolve_expr(ctx: &ResolveCtx<'_>, expr: &Spanned<Expr>) -> ResolvedExpr {
                 // Two sibling discharges, each with its OWN syntactic
                 // predicate because the two families are partial for
                 // different reasons: division fails only at a zero divisor,
-                // a bit count only below zero. Both key on syntax, not type
-                // stamps, because this resolver also runs in pipelines that
-                // never typecheck.
+                // a bit count outside the fixed materialization range. Both
+                // key on syntax, not type stamps, because this resolver also
+                // runs in pipelines that never typecheck.
                 let intrinsic = match name.as_str() {
                     "Int.div" if crate::ast::is_literal_nonzero_int_divisor(&args[1]) => {
                         Some(BuiltinIntrinsic::IntDivEuclid)
@@ -371,9 +371,9 @@ fn resolve_expr(ctx: &ResolveCtx<'_>, expr: &Spanned<Expr>) -> ResolvedExpr {
                     "Int.mod" if crate::ast::is_literal_nonzero_int_divisor(&args[1]) => {
                         Some(BuiltinIntrinsic::IntModEuclid)
                     }
-                    // `Bits.shiftLeft(x, N)` with a syntactic non-negative
-                    // literal `N` lowers straight to `x * 2^N` — no
-                    // `Result` wrap, on every backend.
+                    // `Bits.shiftLeft(x, N)` with a syntactic bounded
+                    // non-negative literal `N` lowers straight to `x * 2^N`
+                    // — no `Result` wrap, on every backend.
                     "Bits.shiftLeft" if crate::ast::is_literal_nonneg_int_count(&args[1]) => {
                         Some(BuiltinIntrinsic::BitsShiftLeft)
                     }
@@ -383,10 +383,78 @@ fn resolve_expr(ctx: &ResolveCtx<'_>, expr: &Spanned<Expr>) -> ResolvedExpr {
                     "Bits.low" if crate::ast::is_literal_nonneg_int_count(&args[1]) => {
                         Some(BuiltinIntrinsic::BitsLow)
                     }
+                    "Vector.new" if crate::ast::is_literal_vector_size(&args[0]) => {
+                        Some(BuiltinIntrinsic::VectorNew)
+                    }
+                    "BranchPath.child" if crate::ast::is_literal_branch_index(&args[1]) => {
+                        Some(BuiltinIntrinsic::BranchPathChild)
+                    }
                     _ => None,
                 };
                 if let Some(intrinsic) = intrinsic {
                     return ResolvedExpr::Call(ResolvedCallee::Intrinsic(intrinsic), resolved_args);
+                }
+            }
+            if let ResolvedCallee::Builtin(name) = &resolved_callee
+                && name == "BranchPath.parse"
+                && resolved_args.len() == 1
+                && args.len() == 1
+                && crate::ast::is_literal_branch_path(&args[0])
+            {
+                return ResolvedExpr::Call(
+                    ResolvedCallee::Intrinsic(BuiltinIntrinsic::BranchPathParse),
+                    resolved_args,
+                );
+            }
+            // Effect-aware literal discharge. Unlike `Int.div`, these calls
+            // MUST remain visible as their original capability operations so
+            // recording, replay, policy, and proof-oracle routing still see
+            // `Random.int` / `Time.sleep`. Wrap the real effect call in the
+            // ordinary Result destructor instead of replacing it with a pure
+            // intrinsic. A conforming provider cannot produce `Err` for these
+            // statically valid arguments; the default is the total semantic
+            // fallback used if a provider violates that stronger contract.
+            if let ResolvedCallee::Builtin(name) = &resolved_callee {
+                let default = match name.as_str() {
+                    "Random.int"
+                        if args.len() == 2
+                            && resolved_args.len() == 2
+                            && crate::ast::is_literal_random_int_range(&args[0], &args[1]) =>
+                    {
+                        Some(resolved_args[0].clone())
+                    }
+                    "Time.sleep"
+                        if args.len() == 1
+                            && resolved_args.len() == 1
+                            && crate::ast::is_literal_sleep_duration(&args[0]) =>
+                    {
+                        let unit = Spanned::new(
+                            ResolvedExpr::Literal(crate::ast::Literal::Unit),
+                            expr.line,
+                        );
+                        unit.set_ty(crate::types::Type::Unit);
+                        Some(unit)
+                    }
+                    _ => None,
+                };
+                if let Some(default) = default {
+                    let effect_call = Spanned::new(
+                        ResolvedExpr::Call(resolved_callee.clone(), resolved_args),
+                        expr.line,
+                    );
+                    let payload = if name == "Random.int" {
+                        crate::types::Type::Int
+                    } else {
+                        crate::types::Type::Unit
+                    };
+                    effect_call.set_ty(crate::types::Type::Result(
+                        Box::new(payload),
+                        Box::new(crate::types::Type::Str),
+                    ));
+                    return ResolvedExpr::Call(
+                        ResolvedCallee::Builtin("Result.withDefault".to_string()),
+                        vec![effect_call, default],
+                    );
                 }
             }
             // Literal smart-constructor discharge: a call to a recognized

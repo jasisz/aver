@@ -39,12 +39,13 @@ verify clamp
 // Interior cells at row 1..h, col 1..w.  Border always 0.
 
 fn makeGrid(total: Int) -> Vector<Int>
-    ? "Create a zero-filled grid of the given total size."
-    Vector.new(total, 0)
+    ? "Create a zero-filled grid; an invalid total size becomes an empty grid."
+    Result.withDefault(Vector.new(total, 0), Vector.fromList([]))
 
 verify makeGrid
     Vector.len(makeGrid(5)) => 5
     Vector.len(makeGrid(0)) => 0
+    Vector.len(makeGrid(0 - 1)) => 0
 
 fn place(grid: Vector<Int>, stride: Int, x: Int, y: Int) -> Vector<Int>
     ? "Set interior cell (x,y) to alive. Maps to padded index."
@@ -283,27 +284,27 @@ fn buildRow(grid: Vector<Int>, s: Int, row: Int, col: Int, w: Int, acc: String) 
 verify buildRow
     buildRow(makeGrid(16), 4, 1, 1, 2, "") => "  "
 
-fn drawRows(grid: Vector<Int>, s: Int, w: Int, h: Int, row: Int) -> Unit
+fn drawRows(grid: Vector<Int>, s: Int, w: Int, h: Int, row: Int) -> Result<Unit, String>
     ? "Draw all visible grid rows in the terminal."
     ! [Terminal.moveTo, Terminal.print]
     match row > h
-        true -> Terminal.print("")
+        true -> Result.Ok(Unit)
         false -> drawOneRow(grid, s, w, h, row)
 
-fn drawOneRow(grid: Vector<Int>, s: Int, w: Int, h: Int, row: Int) -> Unit
+fn drawOneRow(grid: Vector<Int>, s: Int, w: Int, h: Int, row: Int) -> Result<Unit, String>
     ? "Draw one rendered row and continue with the next."
     ! [Terminal.moveTo, Terminal.print]
     nextRow = row + 1
-    Terminal.moveTo(0, nextRow)
+    Terminal.moveTo(0, nextRow)?
     Terminal.print(buildRow(grid, s, row, 1, w, ""))
     drawRows(grid, s, w, h, nextRow)
 
-fn drawHud(st: SimState, mode: String) -> Unit
+fn drawHud(st: SimState, mode: String) -> Result<Unit, String>
     ? "Draw two-line HUD: status on line 0, controls on line 1."
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     genStr = String.fromInt(st.gen)
     Terminal.setColor("green")
-    Terminal.moveTo(0, 0)
+    Terminal.moveTo(0, 0)?
     line1 = match mode == "edit"
         true -> " EDITOR                                                                        "
         false -> match st.paused == 1
@@ -312,13 +313,14 @@ fn drawHud(st: SimState, mode: String) -> Unit
                 true -> " {st.fps.display}fps  Gen:{genStr}  BENCHMARK                       "
                 false -> " {st.fps.display}fps  Gen:{genStr}  {String.fromInt(st.delay)}ms                            "
     Terminal.print(line1)
-    Terminal.moveTo(0, 1)
+    Terminal.moveTo(0, 1)?
     Terminal.setColor("cyan")
     line2 = match mode == "edit"
         true -> " Move:arrows  Spc:toggle  1:glider 2:pento 3:gun  c:clear  Enter:start  q:quit"
         false -> " Spc:pause  e:edit  +/-:speed  0:bench  r:restart  q:quit                     "
     Terminal.print(line2)
     Terminal.resetColor()
+    Result.Ok(Unit)
 
 // ─── FPS tracking ───────────────────────────────────────────
 
@@ -347,25 +349,26 @@ verify tickFps
 
 // ─── Editor mode ────────────────────────────────────────────
 
-fn drawEditorCursor(cx: Int, cy: Int, grid: Vector<Int>, s: Int) -> Unit
+fn drawEditorCursor(cx: Int, cy: Int, grid: Vector<Int>, s: Int) -> Result<Unit, String>
     ? "Draw a bright cursor showing alive/dead state at the position."
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    Terminal.moveTo(cx, cy + 2)
+    Terminal.moveTo(cx, cy + 2)?
     Terminal.setColor("cyan")
     match cellAt(grid, (cy + 1) * s + (cx + 1)) == 1
         true -> Terminal.print("▣")
         false -> Terminal.print("▢")
     Terminal.resetColor()
+    Result.Ok(Unit)
 
 fn editorLoop(grid: Vector<Int>, s: Int, w: Int, h: Int, cx: Int, cy: Int) -> Result<Vector<Int>, String>
     ? "Editor loop: cursor-based cell placement before simulation starts."
     ! [
         Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor,
     ]
-    drawRows(grid, s, w, h, 1)
+    drawRows(grid, s, w, h, 1)?
     st = SimState(grid = grid, stride = s, width = w, height = h, fps = FpsState(frames = 0, lastMs = 0, display = "0.0"), gen = 0, delay = 50, paused = 0)
-    drawHud(st, "edit")
-    drawEditorCursor(cx, cy, grid, s)
+    drawHud(st, "edit")?
+    drawEditorCursor(cx, cy, grid, s)?
     Terminal.flush()
     key = Terminal.readKey()
     editorOnKey(key, grid, s, w, h, cx, cy)
@@ -416,10 +419,10 @@ fn gameLoop(st: SimState) -> Result<String, String>
         Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor,
         Time.sleep, Time.unixMs,
     ]
-    drawRows(st.grid, st.stride, st.width, st.height, 1)
-    drawHud(st, "sim")
+    drawRows(st.grid, st.stride, st.width, st.height, 1)?
+    drawHud(st, "sim")?
     Terminal.flush()
-    Time.sleep(st.delay)
+    Time.sleep(st.delay)?
     now = Time.unixMs()
     newFps = tickFps(st.fps, now)
     nextGrid = match st.paused == 1
@@ -483,7 +486,7 @@ fn run() -> Result<String, String>
     Terminal.enableRawMode()
     Terminal.hideCursor()
     Terminal.clear()
-    size = Terminal.size()
+    size = Terminal.size()?
     w = Int.min(size.width, 80)
     h = Int.min(size.height - 3, 40)
     s = w + 2

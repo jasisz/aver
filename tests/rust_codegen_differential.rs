@@ -1121,7 +1121,8 @@ fn rust_bits_namespace_matches_vm() {
     // the SAME `AverInt` carrier the VM uses — never a raw i64. The cases that
     // would catch a drift are the ones past the 64-bit boundary (a truncating
     // backend gives a different number, not an error) and the negative-count
-    // arm (whose `Result.Err` bytes must match the VM verbatim).
+    // arms (whose `Result.Err` bytes must match the VM verbatim). The two
+    // oversized dynamic cases also pin the shared allocation-bomb boundary.
     let src = r#"module BitsDifferential
     intent = "Every Bits shape in one program, for cross-backend agreement"
     effects [Console.print]
@@ -1153,14 +1154,53 @@ fn main() -> Unit
     Console.print(large())
     Console.print(dynamic(4))
     Console.print(dynamic(-1))
+    Console.print(dynamic(16777217))
+    Console.print(dynamic(4294967296))
 "#;
-    let expected = "2 7 5 42 -1 -7 -1 0\n1267650600228229401496703205376 -2 1 255 0\n-1267650600228229401496703205377 1267650600228229401496703205377 0 0 -2\nok 16\nerr negative shift count";
+    let expected = "2 7 5 42 -1 -7 -1 0\n1267650600228229401496703205376 -2 1 255 0\n-1267650600228229401496703205377 1267650600228229401496703205377 0 0 -2\nok 16\nerr negative shift count\nerr shift count exceeds the 16777216 bit limit\nerr shift count exceeds the 16777216 bit limit";
 
     let vm = run_vm_inline("bits_namespace", src).expect("vm run");
     let rust =
         build_run_rust_inline("bits_namespace", src).expect("rust compile + cargo build + run");
     assert_eq!(vm, expected, "VM Bits contract changed");
     assert_eq!(rust, expected, "Rust Bits semantics diverged from the VM");
+}
+
+#[test]
+fn rust_branch_path_partial_constructors_match_vm() {
+    let src = r#"module BranchPathDifferential
+    intent = "Literal discharge and catchable dynamic BranchPath construction"
+    effects [Console.print]
+
+fn child(index: Int) -> String
+    ? "Shows either the dynamic child path or its validation error."
+    match BranchPath.child(BranchPath.Root, index)
+        Result.Ok(_) -> "ok"
+        Result.Err(error) -> "err {error}"
+
+fn parsed(raw: String) -> String
+    ? "Shows either the parsed path or its validation error."
+    match BranchPath.parse(raw)
+        Result.Ok(_) -> "ok"
+        Result.Err(error) -> "err {error}"
+
+fn main() -> Unit
+    ! [Console.print]
+    literalChild = BranchPath.child(BranchPath.Root, 18446744073709551616)
+    literalParsed = BranchPath.parse("2.0")
+    Console.print("literal child ok")
+    Console.print("literal parse ok")
+    Console.print(child(-1))
+    Console.print(child(4294967296))
+    Console.print(parsed("2..0"))
+"#;
+    let expected = "literal child ok\nliteral parse ok\nerr BranchPath.child: `idx` must be non-negative\nok\nerr BranchPath.parse: invalid dewey-decimal path: `2..0`";
+
+    let vm = run_vm_inline("branch_path_partial", src).expect("vm run");
+    let rust = build_run_rust_inline("branch_path_partial", src)
+        .expect("rust compile + cargo build + run");
+    assert_eq!(vm, expected, "VM BranchPath contract changed");
+    assert_eq!(rust, expected, "Rust BranchPath semantics diverged from VM");
 }
 
 #[test]
@@ -1323,7 +1363,7 @@ fn rust_literal_refinement_discharge_matches_vm() {
 
 fn describe(bytes: Bytes) -> String
     ? "Render a validated frame as hex plus its length."
-    "{Bytes.toHex(bytes)}/{List.len(Bytes.toList(bytes))}"
+    "{Bytes.toHex(bytes)}/{List.len(Bytes.octets(bytes))}"
 
 fn dynamic(values: List<Int>) -> String
     ? "Validate a computed list through the fallible constructor."
@@ -2147,6 +2187,34 @@ fn main() -> Unit
         .expect("rust compile + cargo build + run");
     assert_eq!(vm, "digests-agree\ndigests-differ");
     assert_eq!(rust, vm, "Rust Crypto.sha256 codegen diverged from VM");
+}
+
+/// The UTF-8 builtins own a source-defined `Bytes` type even when the caller
+/// never imports its namespace. Both the VM's module integration and generated
+/// Rust project must therefore follow the implicit source-typed builtin edge.
+/// The non-ASCII text makes a code-point-list implementation observably wrong.
+#[test]
+fn rust_utf8_round_trip_builds_without_bytes_in_depends() {
+    let src = r#"module Utf8ImplicitBytes
+    intent = "UTF-8 conversion owns its Bytes dependency implicitly."
+    effects [Console.print]
+
+fn decode(bytes: Bytes) -> String
+    ? "Render a decode result without propagating it."
+    match String.fromUtf8(bytes)
+        Result.Ok(text) -> text
+        Result.Err(error) -> error
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(decode(String.toUtf8("Zażółć 🦀")))
+"#;
+
+    let vm = run_vm_inline("utf8_implicit_bytes", src).expect("vm run");
+    let rust = build_run_rust_inline("utf8_implicit_bytes", src)
+        .expect("rust compile + cargo build + run");
+    assert_eq!(vm, "Zażółć 🦀");
+    assert_eq!(rust, vm, "Rust UTF-8 conversion diverged from VM");
 }
 
 /// `List.drop` on the compiled backend: stepping through a list must see
@@ -4817,7 +4885,7 @@ fn packed_list_match_subject_equality_with_borrowed_param_builds_and_matches_vm(
 
 fn sha256Of(script: List<Int>) -> List<Int>
     ? "A single SHA-256 of the script bytes, as a list."
-    Bytes.toList(Crypto.Digest32.toBytes(Crypto.sha256(Result.withDefault(Bytes.fromList(script), Bytes.fromList([])))))
+    Bytes.octets(Crypto.Digest32.bytes(Crypto.sha256(Result.withDefault(Bytes.fromList(script), Bytes.fromList([])))))
 
 fn matched(program: List<Int>, script: List<Int>) -> String
     ? "Does the program commit to this script?"
@@ -5262,7 +5330,8 @@ fn assert_forced_mir_parity(relative: &str, module_root: Option<&str>) -> Result
 // — the MIR walker bailed because the `BranchPath.child` / `.parse` builtin
 // calls and the `BranchPath.Root` nullary value had no emit arm (they fell
 // through to `_ => None`, yielding a `compile_error!`). Adding those arms
-// (the `aver_rt::BranchPath::{child,parse,root}` constructors) closes the
+// (the literal-discharge `aver_rt::BranchPath::{child_literal,parse_literal}`
+// constructors plus `root`) closes the
 // gap — the higher-order tuple-of-LocalSlot-calls shape already emitted.
 // There is now NO residual Rust-build exclusion in the example corpus.
 
@@ -5725,7 +5794,7 @@ fn exchange() -> Result<Bytes, String>
 fn main() -> Unit
     ! [Console.print, Tcp.sendBytes]
     match exchange()
-        Result.Ok(response) -> Console.print("{{Bytes.toList(response)}}")
+        Result.Ok(response) -> Console.print("{{Bytes.octets(response)}}")
         Result.Err(e) -> Console.print("err:{{e}}")
 "#
         ),
@@ -5852,7 +5921,7 @@ fn rust_tcp_read_bytes_round_trips_non_utf8() {
 fn readFrame(conn: Tcp.Connection) -> Unit
     ! [Tcp.readBytes, Console.print]
     match Tcp.readBytes(conn, 4)
-        Result.Ok(frame) -> Console.print("{{Bytes.toList(frame)}}")
+        Result.Ok(frame) -> Console.print("{{Bytes.octets(frame)}}")
         Result.Err(e) -> Console.print("err:{{e}}")
 
 fn main() -> Unit

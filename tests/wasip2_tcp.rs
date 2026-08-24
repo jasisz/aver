@@ -511,7 +511,7 @@ fn renderBytes(bytes: List<Int>) -> String
 fn doRead(c: Tcp.Connection) -> Unit
     ! [Tcp.readBytes, Console.print]
     match Tcp.readBytes(c, 4)
-        Result.Ok(frame) -> Console.print("got: {{renderBytes(Bytes.toList(frame))}}")
+        Result.Ok(frame) -> Console.print("got: {{renderBytes(Bytes.octets(frame))}}")
         Result.Err(e) -> Console.print("read err: {{e}}")
 
 fn main() -> Unit
@@ -558,7 +558,7 @@ module PollReadSome
 fn report(c: Tcp.Connection, ready: List<Int>, chunk: Bytes) -> Unit
     ! [Tcp.close, Console.print]
     Tcp.close(c)
-    Console.print("{{ready == [1208925819614629174706176]}}:{{Bytes.toList(chunk) == [249, 190, 180, 217]}}")
+    Console.print("{{ready == [1208925819614629174706176]}}:{{Bytes.octets(chunk) == [249, 190, 180, 217]}}")
 
 fn pollAndRead(c: Tcp.Connection, peers: Map<Int, Tcp.Connection>) -> Unit
     ! [Tcp.poll, Tcp.readSome, Tcp.close, Console.print]
@@ -699,7 +699,7 @@ fn renderBytes(bytes: List<Int>) -> String
 fn main() -> Unit
     ! [Tcp.sendBytes, Console.print]
     match Tcp.sendBytes("127.0.0.1", {port}, Bytes.fromList([249, 190, 180, 217]))
-        Result.Ok(r) -> Console.print("got: {{renderBytes(Bytes.toList(r))}}")
+        Result.Ok(r) -> Console.print("got: {{renderBytes(Bytes.octets(r))}}")
         Result.Err(e) -> Console.print("err: {{e}}")
 "#
     );

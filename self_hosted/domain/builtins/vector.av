@@ -20,10 +20,10 @@ verify call
     call("Vector.bogus", [Val.ValInt(1)]) => Result.Err("unknown vector builtin: Vector.bogus")
 
 fn builtinVectorNew(args: List<Val>) -> Result<Val, String>
-    ? "Vector.new(size, default) -> Vector<T>."
+    ? "Vector.new(size, default) -> Result<Vector<T>, String>."
     pair = Domain.Builtins.Helpers.twoArgs(args)?
     match pair
-        (Val.ValInt(size), defaultVal) -> Result.Ok(Val.ValVector(Vector.new(size, defaultVal)))
+        (Val.ValInt(size), defaultVal) -> Result.Ok(Val.ValVector(Vector.new(size, defaultVal)?))
         _ -> Result.Err("Vector.new: first arg must be Int")
 
 verify builtinVectorNew

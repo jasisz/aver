@@ -4,12 +4,12 @@
 ///   Terminal.enableRawMode()   — enter raw mode
 ///   Terminal.disableRawMode()  — leave raw mode
 ///   Terminal.clear()           — clear screen
-///   Terminal.moveTo(x, y)      — move cursor to column x, row y
+///   Terminal.moveTo(x, y)      — move cursor → Result<Unit,String>
 ///   Terminal.print(s)          — print string at cursor (no newline)
 ///   Terminal.setColor(color)   — set foreground color
 ///   Terminal.resetColor()      — reset colors to default
 ///   Terminal.readKey()         — non-blocking key poll → Option<String>
-///   Terminal.size()            — terminal size → Terminal.Size { width, height }
+///   Terminal.size()            — terminal size → Result<Terminal.Size,String>
 ///   Terminal.hideCursor()      — hide cursor
 ///   Terminal.showCursor()      — show cursor
 ///   Terminal.flush()           — flush stdout
@@ -56,16 +56,7 @@ pub fn call(name: &str, args: &[Value]) -> Option<Result<Value, RuntimeError>> {
                 None => Value::None,
             })
         })),
-        "Terminal.size" => Some(no_args(name, args, || {
-            aver_rt::terminal_size().map(|(w, h)| Value::Record {
-                type_name: "Terminal.Size".to_string(),
-                fields: vec![
-                    ("width".to_string(), Value::int(w)),
-                    ("height".to_string(), Value::int(h)),
-                ]
-                .into(),
-            })
-        })),
+        "Terminal.size" => Some(size(args)),
         "Terminal.hideCursor" => Some(no_args(name, args, || {
             aver_rt::terminal_hide_cursor().map(|()| Value::Unit)
         })),
@@ -111,12 +102,34 @@ fn move_to(args: &[Value]) -> Result<Value, RuntimeError> {
         ));
     };
     let (Some(x), Some(y)) = (x.to_i64(), y.to_i64()) else {
-        return Err(RuntimeError::Error(
+        return Ok(Value::Err(Box::new(Value::Str(
             "Terminal.moveTo: coordinates must fit a 64-bit integer".to_string(),
-        ));
+        ))));
     };
-    aver_rt::terminal_move_to(x, y).map_err(RuntimeError::Error)?;
-    Ok(Value::Unit)
+    Ok(match aver_rt::terminal_move_to(x, y) {
+        Ok(()) => Value::Ok(Box::new(Value::Unit)),
+        Err(message) => Value::Err(Box::new(Value::Str(message))),
+    })
+}
+
+fn size(args: &[Value]) -> Result<Value, RuntimeError> {
+    if !args.is_empty() {
+        return Err(RuntimeError::Error(format!(
+            "Terminal.size() takes 0 arguments, got {}",
+            args.len()
+        )));
+    }
+    Ok(match aver_rt::terminal_size() {
+        Ok((w, h)) => Value::Ok(Box::new(Value::Record {
+            type_name: "Terminal.Size".to_string(),
+            fields: vec![
+                ("width".to_string(), Value::int(w)),
+                ("height".to_string(), Value::int(h)),
+            ]
+            .into(),
+        })),
+        Err(message) => Value::Err(Box::new(Value::Str(message))),
+    })
 }
 
 fn print(args: &[Value]) -> Result<Value, RuntimeError> {

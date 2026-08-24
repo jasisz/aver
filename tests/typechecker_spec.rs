@@ -156,9 +156,8 @@ fn valid_result_with_default_infers_type() {
 }
 
 #[test]
-fn valid_option_to_result_infers_type() {
-    let src =
-        "fn convert(x: Option<Int>) -> Result<Int, String>\n    Option.toResult(x, \"missing\")\n";
+fn valid_result_from_option_infers_type() {
+    let src = "fn convert(x: Option<Int>) -> Result<Int, String>\n    Result.fromOption(x, \"missing\")\n";
     assert_no_errors(src);
 }
 
@@ -176,8 +175,8 @@ fn valid_empty_map_default_through_with_default() {
 }
 
 #[test]
-fn valid_empty_error_value_through_option_to_result() {
-    let src = "fn f(o: Option<Int>) -> Result<Int, List<String>>\n    Option.toResult(o, [])\n";
+fn valid_empty_error_value_through_result_from_option() {
+    let src = "fn f(o: Option<Int>) -> Result<Int, List<String>>\n    Result.fromOption(o, [])\n";
     assert_no_errors(src);
 }
 
@@ -259,16 +258,19 @@ fn valid_map_from_list_tuples() {
 fn valid_char_namespace_signatures() {
     let src = concat!(
         "fn f() -> Option<String>\n",
-        "    code = Char.toCode(\"A\")\n",
-        "    Char.fromCode(code)\n",
+        "    code = Option.withDefault(String.firstCodePoint(\"A\"), 0)\n",
+        "    String.fromCodePoint(code)\n",
     );
     assert_no_errors(src);
 }
 
 #[test]
-fn error_char_to_code_argument_type() {
-    let src = "fn f() -> Int\n    Char.toCode(1)\n";
-    assert_error_containing(src, "Argument 1 of 'Char.toCode': expected String, got Int");
+fn error_string_first_code_point_argument_type() {
+    let src = "fn f() -> Option<Int>\n    String.firstCodePoint(1)\n";
+    assert_error_containing(
+        src,
+        "Argument 1 of 'String.firstCodePoint': expected String, got Int",
+    );
 }
 
 #[test]
@@ -1180,16 +1182,13 @@ fn valid_time_calls_with_effect() {
 }
 
 #[test]
-fn error_time_sleep_negative_constant() {
+fn valid_time_sleep_negative_constant_is_catchable() {
     let src = concat!(
-        "fn wait() -> Unit\n",
+        "fn wait() -> Result<Unit, String>\n",
         "    ! [Time.sleep]\n",
         "    Time.sleep(0 - 1)\n",
     );
-    assert_error_containing(
-        src,
-        "Argument 1 of 'Time.sleep' must be a non-negative Int constant",
-    );
+    assert_no_errors(src);
 }
 
 // ---------------------------------------------------------------------------
@@ -1204,7 +1203,10 @@ fn error_env_get_without_effect() {
 
 #[test]
 fn error_env_set_without_effect() {
-    let src = concat!("fn write() -> Unit\n", "    Env.set(\"A\", \"1\")\n",);
+    let src = concat!(
+        "fn write() -> Result<Unit, String>\n",
+        "    Env.set(\"A\", \"1\")\n",
+    );
     assert_error_containing(src, "has effect 'Env.set'");
 }
 
@@ -1337,7 +1339,7 @@ fn valid_http_server_listen_with_context() {
     let src = concat!(
         "fn handle(ctx: String, req: HttpRequest) -> HttpResponse\n",
         "    HttpResponse(status = 200, body = ctx, headers = {})\n",
-        "fn main() -> Unit\n",
+        "fn main() -> Result<Unit, String>\n",
         "    ! [HttpServer.listenWith]\n",
         "    HttpServer.listenWith(8080, \"ok\", handle)\n",
     );
@@ -1349,7 +1351,7 @@ fn error_http_server_listen_with_bad_handler_signature_uses_context_var_in_messa
     let src = concat!(
         "fn bad(ctx: Int, req: Int) -> HttpResponse\n",
         "    HttpResponse(status = 200, body = \"ok\", headers = {})\n",
-        "fn main() -> Unit\n",
+        "fn main() -> Result<Unit, String>\n",
         "    ! [HttpServer.listenWith]\n",
         "    HttpServer.listenWith(8080, \"ok\", bad)\n",
     );
@@ -1784,6 +1786,92 @@ fn literal_divisor_discharge_parentheses_are_transparent() {
     // Parentheses do not make a zero literal nonzero.
     assert_no_errors("fn f(a: Int) -> Result<Int, String>\n    Int.div(a, (0))\n");
     assert_no_errors("fn f(a: Int) -> Result<Int, String>\n    Int.mod(a, (0))\n");
+}
+
+#[test]
+fn literal_vector_size_discharge_is_portable_and_syntactic() {
+    assert_no_errors("fn f() -> Vector<Int>\n    Vector.new(3, 0)\n");
+    assert_no_errors("fn f() -> Vector<Int>\n    Vector.new(4294967295, 0)\n");
+}
+
+#[test]
+fn dynamic_vector_size_stays_result() {
+    assert_no_errors("fn f(n: Int) -> Result<Vector<Int>, String>\n    Vector.new(n, 0)\n");
+    assert_no_errors("fn f() -> Result<Vector<Int>, String>\n    Vector.new(0 - 1, 0)\n");
+    assert_error_containing(
+        "fn f(n: Int) -> Vector<Int>\n    Vector.new(n, 0)\n",
+        "body returns Result<Vector<Int>, String> but declared return type is Vector<Int>",
+    );
+}
+
+#[test]
+fn valid_literal_random_range_discharges_but_dynamic_range_stays_result() {
+    assert_no_errors("fn roll() -> Int\n    ! [Random.int]\n    Random.int(1, 6)\n");
+    assert_no_errors(
+        "fn roll(min: Int, max: Int) -> Result<Int, String>\n    ! [Random.int]\n    Random.int(min, max)\n",
+    );
+    assert_no_errors(
+        "fn reversed() -> Result<Int, String>\n    ! [Random.int]\n    Random.int(6, 1)\n",
+    );
+    assert_no_errors(
+        "fn tooWide() -> Result<Int, String>\n    ! [Random.int]\n    Random.int(1, 9223372036854775808)\n",
+    );
+    assert_error_containing(
+        "fn roll() -> Result<Int, String>\n    ! [Random.int]\n    Random.int(1, 6)\n",
+        "body returns Int but declared return type is Result<Int, String>",
+    );
+}
+
+#[test]
+fn valid_literal_sleep_discharges_but_dynamic_or_invalid_sleep_stays_result() {
+    assert_no_errors("fn pause() -> Unit\n    ! [Time.sleep]\n    Time.sleep(1)\n");
+    assert_no_errors("fn pause() -> Unit\n    ! [Time.sleep]\n    Time.sleep(0)\n");
+    assert_no_errors(
+        "fn pause(ms: Int) -> Result<Unit, String>\n    ! [Time.sleep]\n    Time.sleep(ms)\n",
+    );
+    assert_no_errors(
+        "fn backwards() -> Result<Unit, String>\n    ! [Time.sleep]\n    Time.sleep(-1)\n",
+    );
+    assert_no_errors(
+        "fn tooLong() -> Result<Unit, String>\n    ! [Time.sleep]\n    Time.sleep(9223372036854775808)\n",
+    );
+    assert_error_containing(
+        "fn pause() -> Result<Unit, String>\n    ! [Time.sleep]\n    Time.sleep(1)\n",
+        "body returns Unit but declared return type is Result<Unit, String>",
+    );
+}
+
+#[test]
+fn out_of_portable_range_vector_literal_stays_result() {
+    assert_no_errors("fn f() -> Result<Vector<Int>, String>\n    Vector.new(4294967296, 0)\n");
+}
+
+#[test]
+fn valid_branch_path_literals_discharge_to_the_opaque_value() {
+    assert_no_errors(
+        "fn child() -> BranchPath\n    BranchPath.child(BranchPath.Root, 18446744073709551616)\n",
+    );
+    assert_no_errors("fn parsed() -> BranchPath\n    BranchPath.parse(\"2.0\")\n");
+}
+
+#[test]
+fn dynamic_or_invalid_branch_path_inputs_stay_result() {
+    assert_no_errors(
+        "fn child(n: Int) -> Result<BranchPath, String>\n    BranchPath.child(BranchPath.Root, n)\n",
+    );
+    assert_no_errors(
+        "fn parsed(s: String) -> Result<BranchPath, String>\n    BranchPath.parse(s)\n",
+    );
+    assert_no_errors(
+        "fn negative() -> Result<BranchPath, String>\n    BranchPath.child(BranchPath.Root, -1)\n",
+    );
+    assert_no_errors(
+        "fn invalid() -> Result<BranchPath, String>\n    BranchPath.parse(\"2..0\")\n",
+    );
+    assert_error_containing(
+        "fn invalid() -> BranchPath\n    BranchPath.parse(\"2..0\")\n",
+        "body returns Result<BranchPath, String> but declared return type is BranchPath",
+    );
 }
 
 // ─── Literal smart-constructor discharge ────────────────────────────────
@@ -2976,18 +3064,18 @@ fn apply(d: Discount) -> Float
 #[test]
 fn given_oracle_ref_random_int_binds_branch_indexed_sig() {
     // `given rnd: Random.int = [stub]` should bind `rnd` to the oracle
-    // signature `(BranchPath, Int, Int, Int) -> Int`. The stub function
+    // signature `(BranchPath, Int, Int, Int) -> Result<Int, String>`. The stub function
     // matches that signature, and the law body uses `rnd` with args of
     // that shape on the RHS, so the law must type-check cleanly.
     let src = concat!(
-        "fn stub(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n",
-        "    min\n",
+        "fn stub(path: BranchPath, n: Int, min: Int, max: Int) -> Result<Int, String>\n",
+        "    Result.Ok(min)\n",
         "fn caller() -> Int\n",
         "    ! [Random.int]\n",
         "    Random.int(0, 10)\n",
         "verify caller law consistent\n",
         "    given rnd: Random.int = [stub]\n",
-        "    caller() => rnd(BranchPath.Root, 0, 0, 10)\n",
+        "    caller() => Result.withDefault(rnd(BranchPath.Root, 0, 0, 10), 0)\n",
     );
     assert_no_errors(src);
 }
@@ -3032,7 +3120,7 @@ fn given_oracle_ref_random_int_wrong_stub_sig_is_rejected() {
     let src = concat!(
         "fn stub(min: Int, max: Int) -> Int\n",
         "    min\n",
-        "fn caller() -> Int\n",
+        "fn caller() -> Result<Int, String>\n",
         "    ! [Random.int]\n",
         "    Random.int(0, 10)\n",
         "verify caller law consistent\n",
@@ -3052,16 +3140,18 @@ fn trace_law_on_recursive_effectful_function_is_rejected() {
     // Recursive self-call through `rollN` + uses Random.int — should be rejected
     // when a trace-aware law targets it.
     let src = concat!(
-        "fn rollN(n: Int) -> Int\n",
+        "fn rollN(n: Int) -> Result<Int, String>\n",
         "    ! [Random.int]\n",
         "    match n\n",
-        "        0 -> 0\n",
-        "        _ -> Random.int(1, 6) + rollN(n - 1)\n",
+        "        0 -> Result.Ok(0)\n",
+        "        _ -> match Random.int(1, 6)\n",
+        "            Result.Err(msg) -> Result.Err(msg)\n",
+        "            Result.Ok(_) -> rollN(n - 1)\n",
         "verify rollN trace law rollNSpec\n",
         "    given rnd: Random.int = [stub]\n",
-        "    rollN(0) => 0\n",
-        "fn stub(path: BranchPath, k: Int, min: Int, max: Int) -> Int\n",
-        "    min\n",
+        "    rollN(0) => Result.Ok(0)\n",
+        "fn stub(path: BranchPath, k: Int, min: Int, max: Int) -> Result<Int, String>\n",
+        "    Result.Ok(min)\n",
     );
     assert_error_containing(src, "recursive effectful function");
 }
@@ -3072,16 +3162,18 @@ fn result_only_law_on_recursive_effectful_function_is_accepted() {
     // must still type-check. Result-only laws for effectful recursion stay
     // fully supported.
     let src = concat!(
-        "fn rollN(n: Int) -> Int\n",
+        "fn rollN(n: Int) -> Result<Int, String>\n",
         "    ! [Random.int]\n",
         "    match n\n",
-        "        0 -> 0\n",
-        "        _ -> Random.int(1, 6) + rollN(n - 1)\n",
+        "        0 -> Result.Ok(0)\n",
+        "        _ -> match Random.int(1, 6)\n",
+        "            Result.Err(msg) -> Result.Err(msg)\n",
+        "            Result.Ok(_) -> rollN(n - 1)\n",
         "verify rollN law rollNSpec\n",
         "    given rnd: Random.int = [stub]\n",
-        "    rollN(0) => 0\n",
-        "fn stub(path: BranchPath, k: Int, min: Int, max: Int) -> Int\n",
-        "    min\n",
+        "    rollN(0) => Result.Ok(0)\n",
+        "fn stub(path: BranchPath, k: Int, min: Int, max: Int) -> Result<Int, String>\n",
+        "    Result.Ok(min)\n",
     );
     let errs = errors(src);
     assert!(
@@ -3097,14 +3189,14 @@ fn result_only_law_on_recursive_effectful_function_is_accepted() {
 fn trace_law_on_non_recursive_effectful_function_is_accepted() {
     // Trace-aware law on a non-recursive effectful function is fine.
     let src = concat!(
-        "fn pick() -> Int\n",
+        "fn pick() -> Result<Int, String>\n",
         "    ! [Random.int]\n",
         "    Random.int(1, 6)\n",
         "verify pick trace law pickSpec\n",
         "    given rnd: Random.int = [stub]\n",
         "    pick() => stub(BranchPath.Root, 0, 1, 6)\n",
-        "fn stub(path: BranchPath, k: Int, min: Int, max: Int) -> Int\n",
-        "    min\n",
+        "fn stub(path: BranchPath, k: Int, min: Int, max: Int) -> Result<Int, String>\n",
+        "    Result.Ok(min)\n",
     );
     let errs = errors(src);
     assert!(
@@ -3143,20 +3235,23 @@ fn trace_law_on_recursive_pure_function_is_accepted() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn verify_law_on_newly_classified_output_effects_is_accepted() {
-    // 0.13: Env.set and Terminal.setColor were classified as stateless
+fn verify_law_on_newly_classified_effects_is_accepted() {
+    // Env.set is a fallible GenerativeOutput effect; Terminal.setColor stays
     // Output. Effect stubs do not imply state — `Env.set` does NOT affect
     // a later `Env.get`, `Terminal.setColor` does NOT model modal state
     // across calls. The trace records the call; that's all. Laws over
     // these now type-check; cross-call consistency, if needed, belongs
     // in pure user data, not the effect oracle.
     let src = concat!(
-        "fn configure(k: String, v: String) -> Unit\n",
+        "fn configure(k: String, v: String) -> Result<Unit, String>\n",
         "    ! [Env.set]\n",
         "    Env.set(k, v)\n",
+        "fn setOk(path: BranchPath, n: Int, k: String, v: String) -> Result<Unit, String>\n",
+        "    Result.Ok(Unit)\n",
         "verify configure law configureSpec\n",
         "    given k: String = [\"K\"]\n",
         "    given v: String = [\"V\"]\n",
+        "    given env: Env.set = [setOk]\n",
         "    configure(k, v) => configure(k, v)\n",
     );
     let errs = errors(src);
@@ -3198,9 +3293,9 @@ fn verify_law_on_classified_effects_is_accepted() {
         "    n\n",
         "verify roll law rollSpec\n",
         "    given rnd: Random.int = [stubRnd]\n",
-        "    roll() => stubRnd(BranchPath.Root, 0, 1, 6)\n",
-        "fn stubRnd(path: BranchPath, k: Int, min: Int, max: Int) -> Int\n",
-        "    min\n",
+        "    roll() => Result.withDefault(stubRnd(BranchPath.Root, 0, 1, 6), 1)\n",
+        "fn stubRnd(path: BranchPath, k: Int, min: Int, max: Int) -> Result<Int, String>\n",
+        "    Result.Ok(min)\n",
     );
     let errs = errors(src);
     assert!(
@@ -3219,17 +3314,17 @@ fn verify_law_with_duplicate_given_for_same_effect_is_rejected() {
     // second stub has no slot to bind to. The emitted theorem quantifies
     // both stubs and asserts stubA = stubB, which is false.
     let src = concat!(
-        "fn roll() -> Int\n",
+        "fn roll() -> Result<Int, String>\n",
         "    ! [Random.int]\n",
         "    Random.int(1, 6)\n",
         "verify roll law rollSpec\n",
         "    given rnd: Random.int = [stubA]\n",
         "    given rnd2: Random.int = [stubB]\n",
         "    roll() => rnd(BranchPath.Root, 0, 1, 6)\n",
-        "fn stubA(path: BranchPath, k: Int, lo: Int, hi: Int) -> Int\n",
-        "    lo\n",
-        "fn stubB(path: BranchPath, k: Int, lo: Int, hi: Int) -> Int\n",
-        "    hi\n",
+        "fn stubA(path: BranchPath, k: Int, lo: Int, hi: Int) -> Result<Int, String>\n",
+        "    Result.Ok(lo)\n",
+        "fn stubB(path: BranchPath, k: Int, lo: Int, hi: Int) -> Result<Int, String>\n",
+        "    Result.Ok(hi)\n",
     );
     assert_error_containing(src, "2 `given` bindings for the same effect 'Random.int'");
     assert_error_containing(src, "rnd, rnd2");
@@ -3241,14 +3336,14 @@ fn verify_law_with_single_given_for_effect_is_accepted() {
     // Control — same shape as the duplicate-given test, minus the second
     // given. Confirms the rejection targets duplicates specifically.
     let src = concat!(
-        "fn roll() -> Int\n",
+        "fn roll() -> Result<Int, String>\n",
         "    ! [Random.int]\n",
         "    Random.int(1, 6)\n",
         "verify roll law rollSpec\n",
         "    given rnd: Random.int = [stubA]\n",
         "    roll() => rnd(BranchPath.Root, 0, 1, 6)\n",
-        "fn stubA(path: BranchPath, k: Int, lo: Int, hi: Int) -> Int\n",
-        "    lo\n",
+        "fn stubA(path: BranchPath, k: Int, lo: Int, hi: Int) -> Result<Int, String>\n",
+        "    Result.Ok(lo)\n",
     );
     let errs = errors(src);
     assert!(
@@ -3265,16 +3360,16 @@ fn verify_law_multi_value_given_is_not_duplicate_given() {
     // A single `given` with a multi-value domain is the correct way to
     // test multiple stubs — must not be conflated with duplicate givens.
     let src = concat!(
-        "fn roll() -> Int\n",
+        "fn roll() -> Result<Int, String>\n",
         "    ! [Random.int]\n",
         "    Random.int(1, 6)\n",
         "verify roll law rollSpec\n",
         "    given rnd: Random.int = [stubA, stubB]\n",
         "    roll() => rnd(BranchPath.Root, 0, 1, 6)\n",
-        "fn stubA(path: BranchPath, k: Int, lo: Int, hi: Int) -> Int\n",
-        "    lo\n",
-        "fn stubB(path: BranchPath, k: Int, lo: Int, hi: Int) -> Int\n",
-        "    hi\n",
+        "fn stubA(path: BranchPath, k: Int, lo: Int, hi: Int) -> Result<Int, String>\n",
+        "    Result.Ok(lo)\n",
+        "fn stubB(path: BranchPath, k: Int, lo: Int, hi: Int) -> Result<Int, String>\n",
+        "    Result.Ok(hi)\n",
     );
     let errs = errors(src);
     assert!(

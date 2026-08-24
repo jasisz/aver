@@ -394,8 +394,9 @@ fn emit_fn_call(
                 BuiltinIntrinsic::IntModEuclid if a.len() == 2 => {
                     format!("({} % {})", a[0], a[1])
                 }
-                // Literal-count discharge: total for a non-negative literal
-                // count, so render the bare prelude function unwrapped.
+                // Literal-count discharge: total for a bounded non-negative
+                // literal count, so render the bare prelude function
+                // unwrapped.
                 BuiltinIntrinsic::BitsShiftLeft if a.len() == 2 => {
                     format!("BitsShiftLeft({}, {})", a[0], a[1])
                 }
@@ -404,6 +405,15 @@ fn emit_fn_call(
                 }
                 BuiltinIntrinsic::BitsLow if a.len() == 2 => {
                     format!("BitsLow({}, {})", a[0], a[1])
+                }
+                BuiltinIntrinsic::VectorNew if a.len() == 2 => {
+                    format!("seq({}, _ => {})", a[0], a[1])
+                }
+                BuiltinIntrinsic::BranchPathChild if a.len() == 2 => {
+                    format!("BranchPath_childLiteral({}, {})", a[0], a[1])
+                }
+                BuiltinIntrinsic::BranchPathParse if a.len() == 1 => {
+                    format!("BranchPath_parseLiteral({})", a[0])
                 }
                 // Compiler-synthesised `__buf_*` / `__to_str` intrinsics
                 // don't reach the Dafny backend in practice (Dafny emit
@@ -454,9 +464,9 @@ fn emit_fn_call(
 }
 
 /// A count-taking `Bits` operation with its negative-count guard.
-fn dafny_bits_counted(op: &str, a: &[String], message: &str) -> String {
+fn dafny_bits_counted(op: &str, a: &[String], negative: &str, too_large: &str) -> String {
     format!(
-        "(if {n} < 0 then Result<int, string>.Err(\"{message}\") else Result<int, string>.Ok({op}({x}, {n})))",
+        "(if {n} < 0 then Result<int, string>.Err(\"{negative}\") else if {n} > 16777216 then Result<int, string>.Err(\"{too_large}\") else Result<int, string>.Ok({op}({x}, {n})))",
         x = a[0],
         n = a[1]
     )
@@ -479,7 +489,7 @@ pub(super) fn emit_dafny_builtin(b: crate::codegen::builtins::Builtin, a: &[Stri
         // Combinators
         ResultWithDefault => format!("ResultWithDefault({}, {})", a[0], a[1]),
         OptionWithDefault => format!("OptionWithDefault({}, {})", a[0], a[1]),
-        OptionToResult => format!("OptionToResult({}, {})", a[0], a[1]),
+        ResultFromOption => format!("ResultFromOption({}, {})", a[0], a[1]),
 
         // Int
         IntAbs => format!("(if {} >= 0 then {} else -{})", a[0], a[0], a[0]),
@@ -536,6 +546,8 @@ pub(super) fn emit_dafny_builtin(b: crate::codegen::builtins::Builtin, a: &[Stri
         StringToLower => format!("StringToLower({})", a[0]),
         StringFromBool => format!("StringFromBool({})", a[0]),
         StringByteLength => format!("StringByteLength({})", a[0]),
+        StringToUtf8 => format!("StringToUtf8({})", a[0]),
+        StringFromUtf8 => format!("StringFromUtf8({})", a[0]),
 
         // Bits — a bit-level VIEW of `int`. Dafny has no bitwise operators
         // on `int` at all (only on fixed-width `bv` types), and translating
@@ -549,9 +561,24 @@ pub(super) fn emit_dafny_builtin(b: crate::codegen::builtins::Builtin, a: &[Stri
         // Guard the count so the `Err` arm is reachable, mirroring
         // `Int.div` / `Int.mod`; error strings match the runtime
         // (`types/bits.rs`).
-        BitsShiftLeft => dafny_bits_counted("BitsShiftLeft", a, "negative shift count"),
-        BitsShiftRight => dafny_bits_counted("BitsShiftRight", a, "negative shift count"),
-        BitsLow => dafny_bits_counted("BitsLow", a, "negative bit width"),
+        BitsShiftLeft => dafny_bits_counted(
+            "BitsShiftLeft",
+            a,
+            "negative shift count",
+            "shift count exceeds the 16777216 bit limit",
+        ),
+        BitsShiftRight => dafny_bits_counted(
+            "BitsShiftRight",
+            a,
+            "negative shift count",
+            "shift count exceeds the 16777216 bit limit",
+        ),
+        BitsLow => dafny_bits_counted(
+            "BitsLow",
+            a,
+            "negative bit width",
+            "bit width exceeds the 16777216 bit limit",
+        ),
 
         // Bool
         BoolOr => format!("({} || {})", a[0], a[1]),
@@ -559,8 +586,8 @@ pub(super) fn emit_dafny_builtin(b: crate::codegen::builtins::Builtin, a: &[Stri
         BoolNot => format!("(!{})", a[0]),
 
         // Char
-        CharToCode => format!("CharToCode({})", a[0]),
-        CharFromCode => format!("CharFromCode({})", a[0]),
+        StringFirstCodePoint => format!("StringFirstCodePoint({})", a[0]),
+        StringFromCodePoint => format!("StringFromCodePoint({})", a[0]),
 
         // Crypto
         CryptoSha256 => format!("Aver_Crypto.sha256({})", a[0]),
@@ -590,7 +617,11 @@ pub(super) fn emit_dafny_builtin(b: crate::codegen::builtins::Builtin, a: &[Stri
         ListZip => format!("ListZip({}, {})", a[0], a[1]),
 
         // Vector (maps to seq in Dafny — same as List but with indexed access)
-        VectorNew => format!("seq({}, _ => {})", a[0], a[1]),
+        VectorNew => format!(
+            "(if 0 <= {n} <= 4294967295 then Result.Ok(seq({n}, _ => {fill})) else Result.Err(\"Vector.new: size must be between 0 and 4294967295\"))",
+            n = a[0],
+            fill = a[1]
+        ),
         VectorGet => format!(
             "if 0 <= {} < |{}| then Some({}[{}]) else None",
             a[1], a[0], a[0], a[1]

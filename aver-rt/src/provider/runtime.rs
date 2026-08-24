@@ -348,8 +348,12 @@ impl CapabilityProvider for StandardTimeProvider {
                         format!("Time.sleep expects one Int argument, got {}", args.len()),
                     ));
                 };
-                standard_time_sleep(ms)?;
-                Ok(ProviderValue::Unit)
+                Ok(match standard_time_sleep(ms) {
+                    Ok(()) => ProviderValue::ResultOk(Box::new(ProviderValue::Unit)),
+                    Err(fault) => {
+                        ProviderValue::ResultErr(Box::new(ProviderValue::String(fault.message)))
+                    }
+                })
             }
             operation => Err(ProviderFault::new(
                 "unknown_operation",
@@ -417,7 +421,12 @@ impl CapabilityProvider for StandardRandomProvider {
                         format!("Random.int expects two Int arguments, got {}", args.len()),
                     ));
                 };
-                standard_random_int(min, max).map(ProviderValue::Int)
+                Ok(match standard_random_int(min, max) {
+                    Ok(value) => ProviderValue::ResultOk(Box::new(ProviderValue::Int(value))),
+                    Err(fault) => {
+                        ProviderValue::ResultErr(Box::new(ProviderValue::String(fault.message)))
+                    }
+                })
             }
             "Random.float" if args.is_empty() => Ok(ProviderValue::Float(standard_random_float())),
             operation => Err(ProviderFault::new(

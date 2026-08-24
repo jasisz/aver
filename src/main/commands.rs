@@ -8058,7 +8058,7 @@ fn run_proof_check(
     let declined_within_budget = declined_count <= declined_budget_v;
     // Lean only: model panic lines in the captured build output. The emitted
     // exports panic only at compiler-generated sites (fuel-wrapper
-    // exhaustion, partial prelude builtins like `Char.toCode` on an empty
+    // exhaustion or partial prelude builtins
     // string), and Lean's `panic!` RETURNS the type's `default` instead of
     // aborting — under `native_decide` both sides of a model-vs-model sample
     // equation then reduce to `default` and the kernel certifies a vacuous

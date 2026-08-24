@@ -317,9 +317,9 @@ pub(super) fn emit_string_escape_roundtrip_law(
     ));
     push(floored(
         &format!(
-            "private theorem {p}_toCode_toString (c : Char) : Char.toCode (Char.toString c) = (c.toNat : Int)"
+            "private theorem {p}_toCode_toString (c : Char) : Option.getD (String.firstCodePointAv (Char.toString c)) 0 = (c.toNat : Int)"
         ),
-        "simp [Char.toCode, Char.toString]",
+        "simp [String.firstCodePointAv, Char.toString]",
     ));
     push(floored(
         &format!(
@@ -485,15 +485,15 @@ pub(super) fn emit_string_escape_roundtrip_law(
     ));
     push(floored(
         &format!(
-            "private theorem {p}_step_apply {{s : String}} {{pos escapePos : Int}} {{chunks : List String}} {{f : Nat}} {{cp : Int}} {{str : String}}\n    (hfc : Char.fromCode cp = some str) :\n    {app_f} (f + 1) s pos escapePos chunks cp =\n      {scan_f} f s pos pos (chunks ++ [str])"
+            "private theorem {p}_step_apply {{s : String}} {{pos escapePos : Int}} {{chunks : List String}} {{f : Nat}} {{cp : Int}} {{str : String}}\n    (hfc : String.fromCodePointAv cp = some str) :\n    {app_f} (f + 1) s pos escapePos chunks cp =\n      {scan_f} f s pos pos (chunks ++ [str])"
         ),
         &format!("simp [{app_f}, hfc]"),
     ));
     push(floored(
         &format!(
-            "private theorem {p}_fromCode_small {{m : Nat}} (h : m < 55296) :\n    Char.fromCode (m : Int) = some (Char.toString (Char.ofNat m))"
+            "private theorem {p}_fromCodePoint_small {{m : Nat}} (h : m < 55296) :\n    String.fromCodePointAv (m : Int) = some (Char.toString (Char.ofNat m))"
         ),
-        "have h1 : ¬ ((m : Int) < 0) := by omega\nhave h2 : ¬ ((m : Int) > 1114111) := by omega\nhave h3 : ¬ ((m : Int) ≥ 55296) := by omega\nsimp [Char.fromCode, h1, h2, h3]",
+        "have h1 : ¬ ((m : Int) < 0) := by omega\nhave h2 : ¬ ((m : Int) > 1114111) := by omega\nhave h3 : ¬ ((m : Int) ≥ 55296) := by omega\nsimp [String.fromCodePointAv, h1, h2, h3]",
     ));
     push(floored(
         &format!(
@@ -577,7 +577,7 @@ pub(super) fn emit_string_escape_roundtrip_law(
                 "private theorem {p}_control_u {{c : Char}} (h32 : c.toNat < {t}){ladder_hyps} :\n    {ctl} (Char.toString c) =\n      {prefix_s} + (Bytes.hexDigit ((c.toNat : Int) / 16) + Bytes.hexDigit ((c.toNat : Int) % 16))"
             ),
             &format!(
-                "simp only [{ctl}]\nrw [{p}_toCode_toString]\nsimp [{ladder_ne_shows}\n  show ((c.toNat : Int) < {t}) from by omega,\n  {cce}, Bytes.fromList, Bytes.allInRange, Bytes.toHex, Bytes.toList, Bytes.hexParts, Bytes.byteToHex, Bytes.highNibble, Bytes.lowNibble,\n  show ((c.toNat : Int) ≥ 0) from by omega,\n  show ((c.toNat : Int) ≤ 255) from by omega]"
+                "simp only [{ctl}]\nrw [{p}_toCode_toString]\nsimp [{ladder_ne_shows}\n  show ((c.toNat : Int) < {t}) from by omega,\n  {cce}, Bytes.fromList, Bytes.allInRange, Bytes.toHex, Bytes.octets, Bytes.hexParts, Bytes.byteToHex, Bytes.highNibble, Bytes.lowNibble,\n  show ((c.toNat : Int) ≥ 0) from by omega,\n  show ((c.toNat : Int) ≤ 255) from by omega]"
             ),
         ));
     }
@@ -797,7 +797,7 @@ pub(super) fn emit_string_escape_roundtrip_law(
             "rw [{p}_step_codepoint ({p}_high_false (by omega)) ({p}_low_false (by omega))]\n"
         ));
         body.push_str(&format!(
-            "rw [{p}_step_apply ({p}_fromCode_small (by omega : c.toNat < 55296))]\n"
+            "rw [{p}_step_apply ({p}_fromCodePoint_small (by omega : c.toNat < 55296))]\n"
         ));
         body.push_str("rw [Char.ofNat_toNat]\n");
         body.push_str(

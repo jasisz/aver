@@ -3058,7 +3058,7 @@ pub fn emit_verify_law(
         && crate::codegen::common::all_givens_are_singletons(law)
         && crate::codegen::common::law_rhs_is_independent_of_givens(law);
     // Issue #128: same fuel-bounded gate as Lean — laws calling fns
-    // the classifier rejected (`size`, `toSorted`, …) can't be
+    // the classifier rejected (`size`, `valuesInOrder`, …) can't be
     // closed by Dafny's `decreases`-driven induction either; the
     // `__fuel`-style wrapper hides the structural decrease. Sample
     // assertions still cover the declared domain.

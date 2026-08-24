@@ -1034,7 +1034,7 @@ fn render(v: Num) -> String
         Num.NumInt(n) -> String.fromInt(n)
 
 fn isDigit(c: String) -> Bool
-    code = Char.toCode(c)
+    code = Option.withDefault(String.firstCodePoint(c), 0)
     match code >= 48
         true -> code <= 57
         false -> false
@@ -1421,7 +1421,7 @@ fn packChar(c: String) -> String
 
 fn packLow(c: String) -> String
     ? "Tab gets a two-char escape; other control chars go hex."
-    code = Char.toCode(c)
+    code = Option.withDefault(String.firstCodePoint(c), 0)
     match code == 9
         true -> "%t"
         false -> match code < 32
@@ -1436,7 +1436,7 @@ fn packHex(c: String, code: Int) -> String
 
 fn fieldHexVal(c: String) -> Option<Int>
     ? "Hex digit value: 0-9, a-f. None for non-hex."
-    code = Char.toCode(c)
+    code = Option.withDefault(String.firstCodePoint(c), 0)
     match code >= 48
         true -> match code <= 57
             true -> Option.Some(code - 48)
@@ -1476,7 +1476,7 @@ fn sealField(s: String, nextPos: Int, segStart: Int, parts: List<String>) -> Fie
 
 fn guardChar(s: String, pos: Int, segStart: Int, parts: List<String>, c: String) -> FieldOut
     ? "Reject unescaped control chars; pass printable chars."
-    match Char.toCode(c) < 32
+    match Option.withDefault(String.firstCodePoint(c), 0) < 32
         true -> FieldOut.Fail("unescaped control char", pos)
         false -> unpackChunk(s, pos + 1, segStart, parts)
 
@@ -1523,7 +1523,7 @@ fn lowHalf(cp: Int) -> Bool
 
 fn placeCodePoint(s: String, pos: Int, escapePos: Int, parts: List<String>, cp: Int) -> FieldOut
     ? "Flush the decoded char as its own chunk."
-    match Char.fromCode(cp)
+    match String.fromCodePoint(cp)
         Option.None -> FieldOut.Fail("bad code point", escapePos)
         Option.Some(ch) -> unpackChunk(s, pos, pos, List.concat(parts, [ch]))
 
@@ -1762,7 +1762,7 @@ fn packWideChar(c: String) -> String
 
 fn packWideLow(c: String) -> String
     ? "Tab gets a two-char escape; every other sub-256 char goes hex."
-    code = Char.toCode(c)
+    code = Option.withDefault(String.firstCodePoint(c), 0)
     match code == 9
         true -> "āt"
         false -> match code < 256
@@ -1777,7 +1777,7 @@ fn packWideHex(c: String, code: Int) -> String
 
 fn wideHexVal(c: String) -> Option<Int>
     ? "Hex digit value: 0-9, a-f. None for non-hex."
-    code = Char.toCode(c)
+    code = Option.withDefault(String.firstCodePoint(c), 0)
     match code >= 48
         true -> match code <= 57
             true -> Option.Some(code - 48)
@@ -1813,7 +1813,7 @@ fn sealWide(s: String, nextPos: Int, segStart: Int, parts: List<String>) -> Wide
 
 fn guardWideChar(s: String, pos: Int, segStart: Int, parts: List<String>, c: String) -> WideOut
     ? "Reject unescaped sub-256 chars; pass everything above the threshold."
-    match Char.toCode(c) < 256
+    match Option.withDefault(String.firstCodePoint(c), 0) < 256
         true -> WideOut.Broken("unescaped low char", pos)
         false -> unpackWideChunk(s, pos + 1, segStart, parts)
 
@@ -1860,7 +1860,7 @@ fn wideLowHalf(cp: Int) -> Bool
 
 fn placeWideCodePoint(s: String, pos: Int, escapePos: Int, parts: List<String>, cp: Int) -> WideOut
     ? "Flush the decoded char as its own chunk."
-    match Char.fromCode(cp)
+    match String.fromCodePoint(cp)
         Option.None -> WideOut.Broken("bad code point", escapePos)
         Option.Some(ch) -> unpackWideChunk(s, pos, pos, List.concat(parts, [ch]))
 

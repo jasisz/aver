@@ -10,9 +10,9 @@ use crate::ir::hir::ResolvedExpr;
 /// A count-taking `Bits` operation with its negative-count guard, so the
 /// `Except.error` arm stays reachable in the model exactly where the VM can
 /// return `Result.Err`.
-fn bits_counted(op: &str, a: &[String], message: &str) -> String {
+fn bits_counted(op: &str, a: &[String], negative: &str, too_large: &str) -> String {
     format!(
-        "(if {n} < 0 then Except.error \"{message}\" else Except.ok (AverBits.{op} {x} {n}) : Except String Int)",
+        "(if {n} < 0 then Except.error \"{negative}\" else if {n} > 16777216 then Except.error \"{too_large}\" else Except.ok (AverBits.{op} {x} {n}) : Except String Int)",
         x = p(&a[0]),
         n = p(&a[1])
     )
@@ -49,7 +49,7 @@ pub fn emit_builtin_call(
         // ---- Option ----
         OptionSome => format!("Option.some {}", p(&a[0])),
         OptionWithDefault => format!("({}.getD {})", p(&a[0]), p(&a[1])),
-        OptionToResult => format!("Option.toExcept {} {}", p(&a[0]), p(&a[1])),
+        ResultFromOption => format!("Option.toExcept {} {}", p(&a[0]), p(&a[1])),
 
         // ---- Int ----
         // `Int.abs : Int -> Int` at the Aver surface, so it must lower to an
@@ -115,9 +115,24 @@ pub fn emit_builtin_call(
         // reason: an unconditional `Except.ok` makes a `match` on the error
         // arm unreachable in the model while the VM can still take it. The
         // error strings are verbatim from the runtime (`types/bits.rs`).
-        BitsShiftLeft => bits_counted("shiftLeft", &a, "negative shift count"),
-        BitsShiftRight => bits_counted("shiftRight", &a, "negative shift count"),
-        BitsLow => bits_counted("low", &a, "negative bit width"),
+        BitsShiftLeft => bits_counted(
+            "shiftLeft",
+            &a,
+            "negative shift count",
+            "shift count exceeds the 16777216 bit limit",
+        ),
+        BitsShiftRight => bits_counted(
+            "shiftRight",
+            &a,
+            "negative shift count",
+            "shift count exceeds the 16777216 bit limit",
+        ),
+        BitsLow => bits_counted(
+            "low",
+            &a,
+            "negative bit width",
+            "bit width exceeds the 16777216 bit limit",
+        ),
 
         // ---- Bool ----
         BoolOr => format!("({} || {})", a[0], a[1]),
@@ -125,8 +140,8 @@ pub fn emit_builtin_call(
         BoolNot => format!("(!{})", a[0]),
 
         // ---- Char ----
-        CharToCode => format!("Char.toCode {}", p(&a[0])),
-        CharFromCode => format!("Char.fromCode {}", p(&a[0])),
+        StringFirstCodePoint => format!("String.firstCodePointAv {}", p(&a[0])),
+        StringFromCodePoint => format!("String.fromCodePointAv {}", p(&a[0])),
 
         // ---- Crypto ----
         CryptoSha256 => format!("Crypto.sha256 {}", p(&a[0])),
@@ -160,6 +175,8 @@ pub fn emit_builtin_call(
         StringFromFloat => format!("String.fromFloat {}", p(&a[0])),
         StringFromBool => format!("String.fromBool {}", p(&a[0])),
         StringByteLength => format!("{}.utf8ByteSize", p(&a[0])),
+        StringToUtf8 => format!("Bytes.fromUtf8String {}", p(&a[0])),
+        StringFromUtf8 => format!("Bytes.toUtf8String {}", p(&a[0])),
 
         // ---- List ----
         ListLen => {
@@ -171,9 +188,9 @@ pub fn emit_builtin_call(
         // Parens around `::` and `++` keep the result atomic when it
         // lands as an argument to another fn call. `emit_expr_atom`'s
         // heuristic "starts with `(` ⇒ atomic" is unsafe for `List.
-        // concat(toSorted(left), [value])`: the inner `toSorted(left)`
-        // emits as `(toSorted__fuel fuel' left)` (parens), so the whole
-        // `(toSorted__fuel fuel' left) ++ [value]` LOOKS atomic to
+        // concat(valuesInOrder(left), [value])`: the inner `valuesInOrder(left)`
+        // emits as `(valuesInOrder__fuel fuel' left)` (parens), so the whole
+        // `(valuesInOrder__fuel fuel' left) ++ [value]` LOOKS atomic to
         // emit_expr_atom and goes unparenthesised — then the outer
         // `concatLists` call ends up as `concatLists xs ++ [v] ys`
         // which Lean parses as `concatLists xs ++ ([v] ys)` and fails
@@ -189,7 +206,11 @@ pub fn emit_builtin_call(
         ListZip => format!("{}.zip {}", p(&a[0]), p(&a[1])),
 
         // ---- Vector (Lean Array) ----
-        VectorNew => format!("Array.replicate (Int.toNat {}) {}", p(&a[0]), p(&a[1])),
+        VectorNew => format!(
+            "(if 0 <= {n} && {n} <= 4294967295 then Except.ok (Array.replicate (Int.toNat {n}) {fill}) else Except.error \"Vector.new: size must be between 0 and 4294967295\")",
+            n = p(&a[0]),
+            fill = p(&a[1])
+        ),
         // `Array.get?` was removed in Lean 4.31 in favour of the `GetElem?`
         // bracket notation `arr[i]?`, which reduces under kernel `decide`
         // (so a finite-domain table law over a `Vector` enumerates cleanly).
@@ -321,7 +342,7 @@ mod tests {
     fn option_with_default_wraps_getd_expression_in_parentheses() {
         let ctx = empty_ctx();
         let option_expr = Spanned::bare(ResolvedExpr::Call(
-            ResolvedCallee::Builtin("Char.fromCode".to_string()),
+            ResolvedCallee::Builtin("String.fromCodePoint".to_string()),
             vec![Spanned::bare(ResolvedExpr::Literal(Literal::Int(8)))],
         ));
         let default_expr = Spanned::bare(ResolvedExpr::Literal(Literal::Str("".to_string())));
@@ -329,7 +350,7 @@ mod tests {
         let emitted = emit_builtin_call("Option.withDefault", &[option_expr, default_expr], &ctx)
             .expect("Option.withDefault should be emitted");
 
-        assert_eq!(emitted, "((Char.fromCode 8).getD \"\")");
+        assert_eq!(emitted, "((String.fromCodePointAv 8).getD \"\")");
     }
 
     #[test]
@@ -349,7 +370,7 @@ mod tests {
     }
 
     #[test]
-    fn vector_new_uses_the_lean_432_array_constructor() {
+    fn vector_new_checks_the_portable_size_before_using_the_lean_array_constructor() {
         let ctx = empty_ctx();
         let emitted = emit_builtin_call(
             "Vector.new",
@@ -361,6 +382,9 @@ mod tests {
         )
         .expect("Vector.new should be emitted");
 
-        assert_eq!(emitted, "Array.replicate (Int.toNat 3) 0");
+        assert_eq!(
+            emitted,
+            "(if 0 <= 3 && 3 <= 4294967295 then Except.ok (Array.replicate (Int.toNat 3) 0) else Except.error \"Vector.new: size must be between 0 and 4294967295\")"
+        );
     }
 }

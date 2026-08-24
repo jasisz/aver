@@ -36,15 +36,14 @@ fn count_model_panic_lines_matches_lake_panic_lines() {
     // the lake-gated tests below, which pin these against live builds):
     // lake prefixes the first panic of a build step with its info
     // diagnostic, later panics print raw. All carry `PANIC at `; success
-    // lines don't. The third line is a REAL captured non-fuel prelude panic
-    // (`Char.toCode` on an empty string) — same panic-returns-`default`
-    // vacuity vector, different message — which the original
-    // fuel-marker-only scan was blind to.
+    // lines don't. The third line is a representative non-fuel prelude
+    // panic — same panic-returns-`default` vacuity vector, different message
+    // — which the original fuel-marker-only scan was blind to.
     let captured = "\u{2714} [2/4] Built AverCommon\n\
         \u{2139} [3/4] Built FuelProbe\n\
         info: ././././FuelProbe.lean:27:0: PANIC at stepSum__fuel FuelProbe:8:9: Aver proof fuel exhausted\n\
         PANIC at stepSumAcc__fuel FuelProbe:19:9: Aver proof fuel exhausted\n\
-        info: ././././PanicProbe.lean:11:0: PANIC at Char.toCode AverCommon:11:12: Char.toCode: string is empty\n\
+        info: ././././PanicProbe.lean:11:0: PANIC at PartialBuiltin AverCommon:11:12: synthetic partial builtin\n\
         Build completed successfully.\n";
     assert_eq!(aver::codegen::lean::count_model_panic_lines(captured), 3);
     assert_eq!(
@@ -53,8 +52,8 @@ fn count_model_panic_lines_matches_lake_panic_lines() {
     );
     // The widening is load-bearing: the old scan keyed on the fuel-wrapper
     // message and counts only 2 of the 3 panic lines here — the
-    // `Char.toCode` panic slips through a marker-only gate (the #473 review
-    // gap this test family closes).
+    // non-fuel panic slips through a marker-only gate (the #473 review gap
+    // this test family closes).
     let old_marker_scan = captured
         .lines()
         .filter(|l| l.contains(aver::codegen::lean::PROOF_FUEL_EXHAUSTED_MSG))
@@ -172,29 +171,23 @@ fn proof_check_refuses_a_fuel_lowered_sample_before_native_decide() {
     let _ = std::fs::remove_dir_all(&out);
 }
 
-/// Shared probe source for the NON-fuel prelude-panic soundness tests: the
-/// model routes through the partial prelude builtin `Char.toCode`, and the
-/// second verify case drives it with an empty string. The VM REJECTS that
-/// case ("Char.toCode: string is empty" is a runtime error, the case fails,
-/// so no ground-truth literal is collected and the source RHS `0` is
-/// emitted), but the Lean model's `Char.toCode ""` PANICS and returns
-/// `default` (= 0 for Int) — `native_decide` kernel-certifies the vacuous
-/// `firstCode "" = 0` and lake exits 0. Exactly the fuel-exhaustion vector
-/// through a different `panic!` site; the fuel-marker-only scan from #473
-/// was blind to it.
-const CHAR_PANIC_PROBE_AV: &str = "module PanicProbe\n\
-    \x20   intent = \"non-fuel prelude panic probe\"\n\
+/// Shared, valid source for model-panic gate tests and for the total
+/// first-code-point regression. The empty-string case is deliberately
+/// ordinary now: `String.firstCodePoint` returns `Option.None`, and
+/// `Option.withDefault` supplies zero without a hidden model panic.
+const CODE_POINT_TOTAL_PROBE_AV: &str = "module PanicProbe\n\
+    \x20   intent = \"total first-code-point probe\"\n\
     \n\
     fn firstCode(s: String) -> Int\n\
-    \x20   ? \"Unicode code of the first char.\"\n\
-    \x20   Char.toCode(s)\n\
+    \x20   ? \"Unicode code point of the first scalar, or zero when empty.\"\n\
+    \x20   Option.withDefault(String.firstCodePoint(s), 0)\n\
     \n\
     verify firstCode\n\
     \x20   firstCode(\"a\") => 97\n\
     \x20   firstCode(\"\") => 0\n";
 
-/// Widening revert probe (no real `lake` needed — a PATH shim plays the
-/// false-green build with the REAL captured `Char.toCode` panic line): a
+/// Widening revert probe (no real `lake` needed — a PATH shim plays a
+/// false-green build with a representative non-fuel panic line): a
 /// non-fuel prelude panic shares the panic-returns-`default` vacuity vector,
 /// so `aver proof --check` must fail hard on it too. With the widening
 /// reverted (scan keyed on the fuel-exhaustion marker only) this scenario
@@ -208,18 +201,17 @@ fn proof_check_charges_non_fuel_prelude_panic_as_hard_failure() {
     let src = temp_output_dir("aver-panic-gate-src");
     std::fs::create_dir_all(&src).expect("create src dir");
     let av = src.join("probe.av");
-    std::fs::write(&av, CHAR_PANIC_PROBE_AV).expect("write probe.av");
+    std::fs::write(&av, CODE_POINT_TOTAL_PROBE_AV).expect("write probe.av");
 
     // PATH shim: a fake `lake` reproducing the captured false-green output —
-    // the real Char.toCode panic line shape + exit 0 (see the lake-gated
-    // test below for the live-toolchain capture of the same scenario).
+    // a representative non-fuel panic line shape + exit 0.
     let shim_dir = temp_output_dir("aver-panic-gate-shim");
     std::fs::create_dir_all(&shim_dir).expect("create shim dir");
     let shim = shim_dir.join("lake");
     std::fs::write(
         &shim,
         "#!/bin/sh\n\
-         echo \"info: ././././PanicProbe.lean:11:0: PANIC at Char.toCode AverCommon:11:12: Char.toCode: string is empty\"\n\
+         echo \"info: ././././PanicProbe.lean:11:0: PANIC at PartialBuiltin AverCommon:11:12: synthetic partial builtin\"\n\
          echo \"Build completed successfully.\"\n\
          exit 0\n",
     )
@@ -291,16 +283,11 @@ fn proof_check_charges_non_fuel_prelude_panic_as_hard_failure() {
     let _ = std::fs::remove_dir_all(&out);
 }
 
-/// Pins the non-fuel panic gate against the REAL toolchain (lake-gated), no
-/// shim and no post-edit: `aver proof --check` end-to-end on a crafted
-/// module whose emitted sample drives the model into `Char.toCode ""`. The
-/// VM rejects that case, but proof emission doesn't gate on verify outcomes
-/// — the source RHS goes out, lake kernel-certifies the vacuous equation
-/// and exits 0 (verified live: on pre-widening main this exact scenario
-/// reported `passed: true` with the old field `fuel_exhausted: false`).
-/// The widened gate must hard-fail it.
+/// Pins the replacement API against the real toolchain: the empty-string
+/// path is total in both Aver and Lean, so its sample is kernel-checkable
+/// without a model panic.
 #[test]
-fn proof_check_fails_on_real_char_tocode_panic_in_lake_build() {
+fn proof_check_accepts_total_first_code_point_in_lake_build() {
     if Command::new("lake").arg("--version").output().is_err() {
         eprintln!("skipping non-fuel panic toolchain test: `lake` not available");
         return;
@@ -309,7 +296,7 @@ fn proof_check_fails_on_real_char_tocode_panic_in_lake_build() {
     let src = temp_output_dir("aver-panic-toolchain-src");
     std::fs::create_dir_all(&src).expect("create src dir");
     let av = src.join("probe.av");
-    std::fs::write(&av, CHAR_PANIC_PROBE_AV).expect("write probe.av");
+    std::fs::write(&av, CODE_POINT_TOTAL_PROBE_AV).expect("write probe.av");
 
     let out = temp_output_dir("aver-panic-toolchain-out");
     let run = Command::new(aver_bin)
@@ -333,8 +320,8 @@ fn proof_check_fails_on_real_char_tocode_panic_in_lake_build() {
     let summary: serde_json::Value =
         serde_json::from_str(json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
 
-    // The export must contain the vacuous sample (this is what makes the
-    // scenario real, not contrived post-editing).
+    // The export must contain the empty-string sample that used to expose
+    // the partial Char model.
     let entry = std::fs::read_to_string(out.join("PanicProbe.lean")).expect("read emitted entry");
     assert!(
         entry.contains("example : firstCode \"\" = 0"),
@@ -344,24 +331,24 @@ fn proof_check_fails_on_real_char_tocode_panic_in_lake_build() {
     assert_eq!(
         summary["sorries"].as_u64(),
         Some(0),
-        "the false green is sorry-free\n{}",
+        "the total model must be sorry-free\n{}",
         format_output(&run)
     );
     assert_eq!(
         summary["model_panicked"].as_bool(),
-        Some(true),
-        "--check-json must surface the real Char.toCode panic\n{}",
+        Some(false),
+        "the total code-point model must not panic\n{}",
         format_output(&run)
     );
     assert_eq!(
         summary["passed"].as_bool(),
-        Some(false),
-        "a real non-fuel prelude panic must fail the check\n{}",
+        Some(true),
+        "the total empty-string sample must pass\n{}",
         format_output(&run)
     );
     assert!(
-        !run.status.success(),
-        "`aver proof --check` must exit non-zero on a model panic\n{}",
+        run.status.success(),
+        "`aver proof --check` must accept the total code-point model\n{}",
         format_output(&run)
     );
 

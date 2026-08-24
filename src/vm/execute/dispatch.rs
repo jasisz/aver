@@ -1281,11 +1281,16 @@ impl VM {
                     let count = read_u8!(code, ip) as usize;
                     let unwrap = read_u8!(code, ip) != 0;
 
-                    // Read call descriptors: argc:u8 × count
+                    // Read call descriptors: `(argc:u8,
+                    // discharged-default-present:u8)` × count. The second
+                    // byte keeps a compiler-discharged effect call inside
+                    // its independent branch while applying the outer
+                    // `Result.withDefault` only after that branch returns.
                     let mut descs = Vec::with_capacity(count);
                     for _ in 0..count {
                         let argc = read_u8!(code, ip) as usize;
-                        descs.push(argc);
+                        let discharged = read_u8!(code, ip) != 0;
+                        descs.push((argc, discharged));
                     }
 
                     // Copy the callable values plus args out of the stack, and
@@ -1303,7 +1308,10 @@ impl VM {
                     // `total_items` cells for the length of the product and
                     // nothing else: every branch frame is pushed above this
                     // point and truncates back to its own base on the way out.
-                    let total_items: usize = descs.iter().map(|argc| argc + 1).sum();
+                    let total_items: usize = descs
+                        .iter()
+                        .map(|(argc, discharged)| argc + 1 + usize::from(*discharged))
+                        .sum();
                     let items_start = self.stack.len() - total_items;
                     let flat_items: Vec<NanValue> = self.stack[items_start..].to_vec();
 
@@ -1333,15 +1341,24 @@ impl VM {
                     // above.
                     let mut element_calls: Vec<(NanValue, Vec<NanValue>)> =
                         Vec::with_capacity(count);
+                    let mut discharged_defaults: Vec<Option<NanValue>> = Vec::with_capacity(count);
                     let mut bundle_spans: Vec<(usize, usize)> = Vec::with_capacity(count);
                     let mut item_offset = 0;
-                    for argc in &descs {
+                    for (argc, discharged) in &descs {
                         let bundle_start = items_start + item_offset;
                         let callable = flat_items[item_offset];
                         item_offset += 1;
                         let args = flat_items[item_offset..item_offset + *argc].to_vec();
                         item_offset += *argc;
+                        let default = if *discharged {
+                            let value = flat_items[item_offset];
+                            item_offset += 1;
+                            Some(value)
+                        } else {
+                            None
+                        };
                         element_calls.push((callable, args));
+                        discharged_defaults.push(default);
                         bundle_spans.push((bundle_start, items_start + item_offset));
                     }
 
@@ -1357,7 +1374,7 @@ impl VM {
                     let run_sequential =
                         is_tracking || has_oracle_stubs || plain_verify_active || count <= 1;
                     let mut had_vm_error: Option<VmError> = None;
-                    let results = if run_sequential {
+                    let mut results = if run_sequential {
                         // Hostile order-axis: when the verify runner has
                         // flipped `reverse_independent_eval` on for this
                         // case, execute branches right-to-left but place
@@ -1587,6 +1604,24 @@ impl VM {
 
                     // Exit replay group
                     self.runtime.replay_exit_group();
+
+                    // A source-level literal discharge is represented in HIR
+                    // as `Result.withDefault(effect(...), default)`. CALL_PAR
+                    // invokes the nested effect as the actual branch callable
+                    // so its trace coordinates stay inside the group; apply
+                    // the destructor now, after every branch has completed.
+                    if !unwrap {
+                        for (result, default) in results.iter_mut().zip(discharged_defaults.iter())
+                        {
+                            if let Some(default) = default {
+                                *result = if result.is_ok() {
+                                    result.wrapper_inner(&self.arena)
+                                } else {
+                                    *default
+                                };
+                            }
+                        }
+                    }
 
                     if unwrap {
                         // ?! — unwrap each Result.
@@ -2185,10 +2220,8 @@ impl VM {
 
                 // Const-count bit-level view. The literal-count discharge
                 // only emits these for a syntactic non-negative literal
-                // count, so the `Negative` arm is unreachable; the
-                // `Unrepresentable` arm is not reachable either, because a
-                // literal that large is a `BigInt` literal, which the
-                // discharge predicate declines.
+                // within the fixed materialization bound, so both refusal
+                // arms are unreachable.
                 BITS_SHIFT_LEFT | BITS_SHIFT_RIGHT | BITS_LOW => {
                     let n = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let x = self.stack.pop().ok_or(VmError::StackUnderflow)?;
@@ -2206,6 +2239,42 @@ impl VM {
                         ))
                     })?;
                     self.stack.push(NanValue::from_aver_int(r, &mut self.arena));
+                }
+
+                VECTOR_NEW_LITERAL => {
+                    let fill = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let size = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let size = size
+                        .as_aver_int(&self.arena)
+                        .to_u32()
+                        .ok_or_else(|| VmError::runtime("invalid discharged Vector.new size"))?
+                        as usize;
+                    let items = vec![fill; size];
+                    let vector = if items.is_empty() {
+                        NanValue::EMPTY_VECTOR
+                    } else {
+                        NanValue::new_vector(self.arena.push_vector(items))
+                    };
+                    self.stack.push(vector);
+                }
+
+                BRANCH_PATH_CHILD_LITERAL => {
+                    let index = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let path = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let value = crate::types::branch_path::child_literal_nv(
+                        &[path, index],
+                        &mut self.arena,
+                    )
+                    .map_err(|error| VmError::runtime(error.to_string()))?;
+                    self.stack.push(value);
+                }
+
+                BRANCH_PATH_PARSE_LITERAL => {
+                    let raw = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let value =
+                        crate::types::branch_path::parse_literal_nv(&[raw], &mut self.arena)
+                            .map_err(|error| VmError::runtime(error.to_string()))?;
+                    self.stack.push(value);
                 }
 
                 // Codepoint cursor (chars fusion). Every arm delegates

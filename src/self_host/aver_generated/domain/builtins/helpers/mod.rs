@@ -4,7 +4,9 @@ use crate::aver_generated::domain::value::*;
 use crate::*;
 
 /// Extract single argument from args list.
-pub fn oneArg(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn oneArg(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     {
         let __list_subject = args.clone();
@@ -24,7 +26,15 @@ pub fn oneArg(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
 }
 
 /// Extract two arguments from args list.
-pub fn twoArgs(args: &aver_rt::AverList<Val>) -> Result<(Val, Val), AverStr> {
+pub fn twoArgs(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<
+    (
+        crate::aver_generated::domain::value::Val,
+        crate::aver_generated::domain::value::Val,
+    ),
+    AverStr,
+> {
     crate::cancel_checkpoint();
     {
         let __list_subject = args.clone();
@@ -51,7 +61,9 @@ pub fn twoArgs(args: &aver_rt::AverList<Val>) -> Result<(Val, Val), AverStr> {
 }
 
 /// Extract list from Val or error.
-pub fn expectList(v: &Val) -> Result<aver_rt::AverList<Val>, AverStr> {
+pub fn expectList(
+    v: &crate::aver_generated::domain::value::Val,
+) -> Result<aver_rt::AverList<crate::aver_generated::domain::value::Val>, AverStr> {
     crate::cancel_checkpoint();
     match v.clone() {
         crate::aver_generated::domain::value::Val::ValList(items) => Ok(items),
@@ -60,7 +72,9 @@ pub fn expectList(v: &Val) -> Result<aver_rt::AverList<Val>, AverStr> {
 }
 
 /// Extract int from Val or error.
-pub fn expectInt(v: &Val) -> Result<aver_rt::AverInt, AverStr> {
+pub fn expectInt(
+    v: &crate::aver_generated::domain::value::Val,
+) -> Result<aver_rt::AverInt, AverStr> {
     crate::cancel_checkpoint();
     match v.clone() {
         crate::aver_generated::domain::value::Val::ValInt(n) => Ok(n),
@@ -69,7 +83,7 @@ pub fn expectInt(v: &Val) -> Result<aver_rt::AverInt, AverStr> {
 }
 
 /// Extract string from Val or error.
-pub fn expectStr(v: &Val) -> Result<AverStr, AverStr> {
+pub fn expectStr(v: &crate::aver_generated::domain::value::Val) -> Result<AverStr, AverStr> {
     crate::cancel_checkpoint();
     match v.clone() {
         crate::aver_generated::domain::value::Val::ValStr(s) => Ok(s),

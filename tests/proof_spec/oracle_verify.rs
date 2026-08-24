@@ -85,18 +85,18 @@ fn aver_verify_runs_effectful_law_with_oracle_stub() {
         "module Prog\n\
          \x20   intent = \"t\"\n\
          \n\
-         fn stubConst(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n\
+         fn stubConst(path: BranchPath, n: Int, min: Int, max: Int) -> Result<Int, String>\n\
          \x20   ? \"always returns min\"\n\
-         \x20   min\n\
+         \x20   Result.Ok(min)\n\
          \n\
          fn pickOne() -> Int\n\
          \x20   ? \"sample one Random.int\"\n\
          \x20   ! [Random.int]\n\
          \x20   Random.int(7, 99)\n\
          \n\
-         fn pickOneSpec(path: BranchPath, rnd: Fn(BranchPath, Int, Int, Int) -> Int) -> Int\n\
+         fn pickOneSpec(path: BranchPath, rnd: Fn(BranchPath, Int, Int, Int) -> Result<Int, String>) -> Int\n\
          \x20   ? \"one draw at the caller's path\"\n\
-         \x20   rnd(path, 0, 7, 99)\n\
+         \x20   Result.withDefault(rnd(path, 0, 7, 99), 7)\n\
          \n\
          verify pickOne law consistent\n\
          \x20   given rnd: Random.int = [stubConst]\n\
@@ -143,16 +143,16 @@ fn aver_verify_result_only_law_allows_output_effect_without_stub() {
         "module Prog\n\
          \x20   intent = \"t\"\n\
          \n\
-         fn stubConst(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n\
+         fn stubConst(path: BranchPath, n: Int, min: Int, max: Int) -> Result<Int, String>\n\
          \x20   ? \"always min\"\n\
-         \x20   min\n\
+         \x20   Result.Ok(min)\n\
          \n\
-         fn noisyRoll() -> Int\n\
+         fn noisyRoll() -> Result<Int, String>\n\
          \x20   ? \"rolls and logs.\"\n\
          \x20   ! [Random.int, Console.print]\n\
          \x20   n = Random.int(1, 6)\n\
          \x20   Console.print(\"rolled\")\n\
-         \x20   n\n\
+         \x20   Result.Ok(n)\n\
          \n\
          verify noisyRoll law noisyRollSpec\n\
          \x20   given rnd: Random.int = [stubConst]\n\
@@ -200,18 +200,21 @@ fn aver_verify_runs_effectful_bang_group_law() {
         "module Prog\n\
          \x20   intent = \"t\"\n\
          \n\
-         fn stubByBranch(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n\
+         fn stubByBranch(path: BranchPath, n: Int, min: Int, max: Int) -> Result<Int, String>\n\
          \x20   ? \"return counter so each branch's call is distinguishable\"\n\
-         \x20   n\n\
+         \x20   Result.Ok(n)\n\
          \n\
-         fn pickPair() -> Tuple<Int, Int>\n\
+         fn pickPair() -> Result<Tuple<Int, Int>, String>\n\
          \x20   ? \"two parallel draws\"\n\
          \x20   ! [Random.int]\n\
-         \x20   (Random.int(1, 6), Random.int(1, 6))!\n\
+         \x20   pair = (Random.int(1, 6), Random.int(1, 6))!\n\
+         \x20   Result.Ok(pair)\n\
          \n\
-         fn pickPairSpec(path: BranchPath, rnd: Fn(BranchPath, Int, Int, Int) -> Int) -> Tuple<Int, Int>\n\
+         fn pickPairSpec(path: BranchPath, rnd: Fn(BranchPath, Int, Int, Int) -> Result<Int, String>) -> Result<Tuple<Int, Int>, String>\n\
          \x20   ? \"two draws, each at its own branch\"\n\
-         \x20   (rnd(BranchPath.child(path, 0), 0, 1, 6), rnd(BranchPath.child(path, 1), 0, 1, 6))\n\
+         \x20   a = rnd(BranchPath.child(path, 0), 0, 1, 6)?\n\
+         \x20   b = rnd(BranchPath.child(path, 1), 0, 1, 6)?\n\
+         \x20   Result.Ok((a, b))\n\
          \n\
          verify pickPair law consistent\n\
          \x20   given rnd: Random.int = [stubByBranch]\n\
@@ -252,18 +255,18 @@ fn aver_verify_cases_form_trace_with_result_projection() {
         "module Prog\n\
          \x20   intent = \"t\"\n\
          \n\
-         fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n\
+         fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Result<Int, String>\n\
          \x20   ? \"always 4, nicely deterministic\"\n\
-         \x20   4\n\
+         \x20   Result.Ok(4)\n\
          \n\
-         fn pickOne() -> Int\n\
+         fn pickOne() -> Result<Int, String>\n\
          \x20   ? \"one roll\"\n\
          \x20   ! [Random.int]\n\
-         \x20   Random.int(1, 6)\n\
+         \x20   Result.Ok(Random.int(1, 6))\n\
          \n\
          verify pickOne trace\n\
          \x20   given rnd: Random.int = [fairDie]\n\
-         \x20   pickOne().result => 4\n",
+         \x20   pickOne().result => Result.Ok(4)\n",
     )
     .expect("write program.av");
 
@@ -301,20 +304,20 @@ fn aver_verify_trace_contains_and_event_and_length_projections() {
         "module Prog\n\
          \x20   intent = \"t\"\n\
          \n\
-         fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n\
+         fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Result<Int, String>\n\
          \x20   ? \"always 4\"\n\
-         \x20   4\n\
+         \x20   Result.Ok(4)\n\
          \n\
-         fn hello() -> Int\n\
+         fn hello() -> Result<Int, String>\n\
          \x20   ? \"roll + print\"\n\
          \x20   ! [Random.int, Console.print]\n\
          \x20   x = Random.int(1, 6)\n\
          \x20   Console.print(\"rolled 4\")\n\
-         \x20   x\n\
+         \x20   Result.Ok(x)\n\
          \n\
          verify hello trace\n\
          \x20   given rnd: Random.int = [fairDie]\n\
-         \x20   hello().result => 4\n\
+         \x20   hello().result => Result.Ok(4)\n\
          \x20   hello().trace.length() => 2\n\
          \x20   hello().trace.contains(Console.print(\"rolled 4\")) => true\n",
     )
@@ -355,17 +358,17 @@ fn aver_verify_trace_count_projection_matches_event_method() {
         "module Prog\n\
          \x20   intent = \"t\"\n\
          \n\
-         fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n\
+         fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Result<Int, String>\n\
          \x20   ? \"always 4\"\n\
-         \x20   4\n\
+         \x20   Result.Ok(4)\n\
          \n\
-         fn rollPair() -> Int\n\
+         fn rollPair() -> Result<Int, String>\n\
          \x20   ? \"two rolls + a print\"\n\
          \x20   ! [Random.int, Console.print]\n\
          \x20   a = Random.int(1, 6)\n\
          \x20   b = Random.int(1, 6)\n\
          \x20   Console.print(\"rolled\")\n\
-         \x20   a + b\n\
+         \x20   Result.Ok(a + b)\n\
          \n\
          verify rollPair trace\n\
          \x20   given rnd: Random.int = [fairDie]\n\
@@ -410,20 +413,20 @@ fn aver_verify_trace_local_bindings_substitute_into_cases() {
         "module Prog\n\
          \x20   intent = \"t\"\n\
          \n\
-         fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n\
+         fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Result<Int, String>\n\
          \x20   ? \"always 4\"\n\
-         \x20   4\n\
+         \x20   Result.Ok(4)\n\
          \n\
-         fn hello() -> Int\n\
+         fn hello() -> Result<Int, String>\n\
          \x20   ? \"roll + print\"\n\
          \x20   ! [Random.int, Console.print]\n\
          \x20   x = Random.int(1, 6)\n\
          \x20   Console.print(\"rolled 4\")\n\
-         \x20   x\n\
+         \x20   Result.Ok(x)\n\
          \n\
          verify hello trace\n\
          \x20   given rnd: Random.int = [fairDie]\n\
-         \x20   expected = 4\n\
+         \x20   expected = Result.Ok(4)\n\
          \x20   printed = Console.print(\"rolled 4\")\n\
          \x20   hello().result => expected\n\
          \x20   hello().trace.contains(printed) => true\n",
@@ -465,14 +468,14 @@ fn aver_verify_trace_given_alias_callable_in_case_expressions() {
         "module Prog\n\
          \x20   intent = \"t\"\n\
          \n\
-         fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n\
+         fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Result<Int, String>\n\
          \x20   ? \"always 4\"\n\
-         \x20   4\n\
+         \x20   Result.Ok(4)\n\
          \n\
-         fn pickOne() -> Int\n\
+         fn pickOne() -> Result<Int, String>\n\
          \x20   ? \"one roll\"\n\
          \x20   ! [Random.int]\n\
-         \x20   Random.int(1, 6)\n\
+         \x20   Result.Ok(Random.int(1, 6))\n\
          \n\
          verify pickOne trace\n\
          \x20   given rnd: Random.int = [fairDie]\n\
@@ -570,13 +573,13 @@ fn aver_verify_trace_rejects_generative_effect_without_given_stub() {
         "module Prog\n\
          \x20   intent = \"t\"\n\
          \n\
-         fn roll() -> Int\n\
+         fn roll() -> Result<Int, String>\n\
          \x20   ? \"rolls\"\n\
          \x20   ! [Random.int]\n\
          \x20   Random.int(1, 6)\n\
          \n\
          verify roll trace\n\
-         \x20   roll().result => 4\n",
+         \x20   roll().result => Result.Ok(4)\n",
     )
     .expect("write program.av");
 
@@ -623,16 +626,16 @@ fn aver_verify_trace_failure_shows_recorded_events() {
         "module Prog\n\
          \x20   intent = \"t\"\n\
          \n\
-         fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n\
+         fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Result<Int, String>\n\
          \x20   ? \"always 4\"\n\
-         \x20   4\n\
+         \x20   Result.Ok(4)\n\
          \n\
-         fn hello() -> Int\n\
+         fn hello() -> Result<Int, String>\n\
          \x20   ? \"roll + print\"\n\
          \x20   ! [Random.int, Console.print]\n\
          \x20   x = Random.int(1, 6)\n\
          \x20   Console.print(\"different message\")\n\
-         \x20   x\n\
+         \x20   Result.Ok(x)\n\
          \n\
          verify hello trace\n\
          \x20   given rnd: Random.int = [fairDie]\n\
@@ -691,16 +694,16 @@ fn aver_verify_trace_end_to_end_target_shape() {
         "module Prog\n\
          \x20   intent = \"t\"\n\
          \n\
-         fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n\
+         fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Result<Int, String>\n\
          \x20   ? \"always 4\"\n\
-         \x20   4\n\
+         \x20   Result.Ok(4)\n\
          \n\
-         fn hello() -> Int\n\
+         fn hello() -> Result<Int, String>\n\
          \x20   ? \"roll + print\"\n\
          \x20   ! [Random.int, Console.print]\n\
          \x20   x = Random.int(1, 6)\n\
          \x20   Console.print(\"rolled 4\")\n\
-         \x20   x\n\
+         \x20   Result.Ok(x)\n\
          \n\
          verify hello trace\n\
          \x20   given rnd: Random.int = [fairDie]\n\
@@ -810,6 +813,10 @@ fn aver_verify_trace_broader_oracle_effects_end_to_end() {
          \x20   ? \"deterministic one-shot tcp\"\n\
          \x20   Result.Ok(\"ACK\")\n\
          \n\
+         fn fakeSleep(path: BranchPath, n: Int, ms: Int) -> Result<Unit, String>\n\
+         \x20   ? \"deterministic sleep without delaying verification\"\n\
+         \x20   Result.Ok(Unit)\n\
+         \n\
          fn runAll() -> Result<String, String>\n\
          \x20   ? \"uses broader classified effects\"\n\
          \x20   ! [Console.readLine, Disk.writeText, Time.sleep, Tcp.send]\n\
@@ -822,6 +829,7 @@ fn aver_verify_trace_broader_oracle_effects_end_to_end() {
          verify runAll trace\n\
          \x20   given line: Console.readLine = [fakeLine]\n\
          \x20   given write: Disk.writeText = [fakeWrite]\n\
+         \x20   given sleep: Time.sleep = [fakeSleep]\n\
          \x20   given send: Tcp.send = [fakeSend]\n\
          \x20   runAll().result => Result.Ok(\"ACK\")\n\
          \x20   runAll().trace.contains(Console.readLine()) => true\n\
@@ -867,21 +875,21 @@ fn aver_verify_trace_contains_event_literal_with_interpolated_local() {
         "module Prog\n\
          \x20   intent = \"t\"\n\
          \n\
-         fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n\
+         fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Result<Int, String>\n\
          \x20   ? \"always 4\"\n\
-         \x20   4\n\
+         \x20   Result.Ok(4)\n\
          \n\
-         fn hello() -> Int\n\
+         fn hello() -> Result<Int, String>\n\
          \x20   ? \"roll + print\"\n\
          \x20   ! [Random.int, Console.print]\n\
          \x20   x = Random.int(1, 6)\n\
          \x20   Console.print(\"rolled {x}\")\n\
-         \x20   x\n\
+         \x20   Result.Ok(x)\n\
          \n\
          verify hello trace\n\
          \x20   given rnd: Random.int = [fairDie]\n\
          \x20   expect = 4\n\
-         \x20   hello().result => expect\n\
+         \x20   hello().result => Result.Ok(expect)\n\
          \x20   hello().trace.contains(Console.print(\"rolled {expect}\")) => true\n",
     )
     .expect("write program.av");
@@ -1088,16 +1096,16 @@ fn aver_verify_trace_event_compares_to_full_effectevent_record() {
         "module Prog\n\
          \x20   intent = \"t\"\n\
          \n\
-         fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n\
+         fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Result<Int, String>\n\
          \x20   ? \"always 4\"\n\
-         \x20   4\n\
+         \x20   Result.Ok(4)\n\
          \n\
-         fn hello() -> Int\n\
+         fn hello() -> Result<Int, String>\n\
          \x20   ? \"roll + print\"\n\
          \x20   ! [Random.int, Console.print]\n\
          \x20   x = Random.int(1, 6)\n\
          \x20   Console.print(\"rolled 4\")\n\
-         \x20   x\n\
+         \x20   Result.Ok(x)\n\
          \n\
          verify hello trace\n\
          \x20   given rnd: Random.int = [fairDie]\n\
@@ -1199,17 +1207,17 @@ fn aver_verify_trace_group_navigation_filters_by_source_order() {
         "module Prog\n\
          \x20   intent = \"t\"\n\
          \n\
-         fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n\
+         fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Result<Int, String>\n\
          \x20   ? \"always 4\"\n\
-         \x20   4\n\
+         \x20   Result.Ok(4)\n\
          \n\
-         fn parallelRolls() -> Int\n\
+         fn parallelRolls() -> Result<Int, String>\n\
          \x20   ? \"two rolls in parallel, sum\"\n\
          \x20   ! [Random.int, Console.print]\n\
          \x20   Console.print(\"pre\")\n\
          \x20   pair = (Random.int(1, 6), Random.int(1, 6))!\n\
          \x20   match pair\n\
-         \x20       (a, b) -> a + b\n\
+         \x20       (a, b) -> Result.Ok(a + b)\n\
          \n\
          verify parallelRolls trace\n\
          \x20   given rnd: Random.int = [fairDie]\n\
@@ -1253,16 +1261,16 @@ fn aver_verify_trace_group_branch_navigation_narrows_to_single_branch() {
         "module Prog\n\
          \x20   intent = \"t\"\n\
          \n\
-         fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n\
+         fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Result<Int, String>\n\
          \x20   ? \"always 4\"\n\
-         \x20   4\n\
+         \x20   Result.Ok(4)\n\
          \n\
-         fn twoBranches() -> Int\n\
+         fn twoBranches() -> Result<Int, String>\n\
          \x20   ? \"two rolls in parallel\"\n\
          \x20   ! [Random.int]\n\
          \x20   pair = (Random.int(1, 6), Random.int(7, 12))!\n\
          \x20   match pair\n\
-         \x20       (a, b) -> a + b\n\
+         \x20       (a, b) -> Result.Ok(a + b)\n\
          \n\
          verify twoBranches trace\n\
          \x20   given rnd: Random.int = [fairDie]\n\
@@ -1308,17 +1316,17 @@ fn aver_verify_trace_event_path_field_points_at_structural_position() {
         "module Prog\n\
          \x20   intent = \"t\"\n\
          \n\
-         fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n\
+         fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Result<Int, String>\n\
          \x20   ? \"always 4\"\n\
-         \x20   4\n\
+         \x20   Result.Ok(4)\n\
          \n\
-         fn withSeqAndGroup() -> Int\n\
+         fn withSeqAndGroup() -> Result<Int, String>\n\
          \x20   ? \"seq roll plus a parallel pair\"\n\
          \x20   ! [Random.int, Console.print]\n\
          \x20   Console.print(\"seq\")\n\
          \x20   pair = (Random.int(1, 6), Random.int(7, 12))!\n\
          \x20   match pair\n\
-         \x20       (a, b) -> a + b\n\
+         \x20       (a, b) -> Result.Ok(a + b)\n\
          \n\
          verify withSeqAndGroup trace\n\
          \x20   given rnd: Random.int = [fairDie]\n\
@@ -1415,16 +1423,16 @@ fn aver_verify_trace_projection_edge_cases_degrade_gracefully() {
         "module Prog\n\
          \x20   intent = \"t\"\n\
          \n\
-         fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n\
+         fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Result<Int, String>\n\
          \x20   ? \"always 4\"\n\
-         \x20   4\n\
+         \x20   Result.Ok(4)\n\
          \n\
-         fn hello() -> Int\n\
+         fn hello() -> Result<Int, String>\n\
          \x20   ? \"roll + print\"\n\
          \x20   ! [Random.int, Console.print]\n\
          \x20   x = Random.int(1, 6)\n\
          \x20   Console.print(\"rolled 4\")\n\
-         \x20   x\n\
+         \x20   Result.Ok(x)\n\
          \n\
          verify hello trace\n\
          \x20   given rnd: Random.int = [fairDie]\n\

@@ -6,10 +6,13 @@
 //! Three constructors — the only way to obtain a `BranchPath`:
 //!
 //! - `BranchPath.root : () -> BranchPath`                  — canonical root.
-//! - `BranchPath.child : (BranchPath, Int) -> BranchPath`  — extend a path by
-//!   entering a branch of a group.
-//! - `BranchPath.parse : String -> BranchPath`             — parse dewey-decimal
-//!   (`"2.0"`), used to bridge recordings to specs.
+//! - `BranchPath.child : (BranchPath, Int) -> Result<BranchPath, String>` —
+//!   extend a path by entering a non-negative branch of a group.
+//! - `BranchPath.parse : String -> Result<BranchPath, String>` — parse
+//!   dewey-decimal (`"2.0"`), used to bridge recordings to specs.
+//!
+//! Syntactically valid literals discharge those `Result`s in the checker and
+//! lower through the raw helpers below. Dynamic input remains catchable.
 //!
 //! Internal representation is a record `{ dewey: String }` — user code
 //! cannot construct arbitrary paths because the field is not exposed as a
@@ -21,6 +24,8 @@ use crate::value::RuntimeError;
 
 pub const TYPE_NAME: &str = "BranchPath";
 const FIELD: &str = "dewey";
+pub const NEGATIVE_INDEX: &str = "BranchPath.child: `idx` must be non-negative";
+pub const INVALID_PATH_PREFIX: &str = "BranchPath.parse: invalid dewey-decimal path";
 
 pub fn call_nv(
     name: &str,
@@ -76,6 +81,19 @@ fn read_dewey(value: NanValue, arena: &Arena, method: &str) -> Result<String, Ru
 }
 
 fn child_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
+    match child_value_nv(args, arena)? {
+        Ok(path) => Ok(NanValue::new_ok_value(path, arena)),
+        Err(message) => {
+            let error = NanValue::new_string_value(&message, arena);
+            Ok(NanValue::new_err_value(error, arena))
+        }
+    }
+}
+
+fn child_value_nv(
+    args: &[NanValue],
+    arena: &mut Arena,
+) -> Result<Result<NanValue, String>, RuntimeError> {
     if args.len() != 2 {
         return Err(RuntimeError::Error(format!(
             "BranchPath.child() takes 2 arguments (path, idx), got {}",
@@ -89,21 +107,31 @@ fn child_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeErr
         ));
     }
     let idx = args[1].as_aver_int(arena);
-    let Some(idx) = idx.to_usize() else {
-        return Err(RuntimeError::Error(format!(
-            "BranchPath.child: `idx` must be a non-negative, machine-sized Int, got {}",
-            idx
-        )));
-    };
+    if idx < aver_rt::AverInt::zero() {
+        return Ok(Err(NEGATIVE_INDEX.to_string()));
+    }
     let dewey = if parent.is_empty() {
         idx.to_string()
     } else {
         format!("{}.{}", parent, idx)
     };
-    Ok(make_path(&dewey, arena))
+    Ok(Ok(make_path(&dewey, arena)))
 }
 
 fn parse_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
+    match parse_value_nv(args, arena)? {
+        Ok(path) => Ok(NanValue::new_ok_value(path, arena)),
+        Err(message) => {
+            let error = NanValue::new_string_value(&message, arena);
+            Ok(NanValue::new_err_value(error, arena))
+        }
+    }
+}
+
+fn parse_value_nv(
+    args: &[NanValue],
+    arena: &mut Arena,
+) -> Result<Result<NanValue, String>, RuntimeError> {
     if args.len() != 1 {
         return Err(RuntimeError::Error(format!(
             "BranchPath.parse() takes 1 argument, got {}",
@@ -117,15 +145,12 @@ fn parse_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeErr
     }
     let raw = arena.get_string_value(args[0]).to_string();
     if !is_valid_dewey(&raw) {
-        return Err(RuntimeError::Error(format!(
-            "BranchPath.parse: `{}` is not a valid dewey-decimal path (expected empty string for root or dot-separated non-negative integers like \"0\", \"2.0\")",
-            raw
-        )));
+        return Ok(Err(format!("{INVALID_PATH_PREFIX}: `{raw}`")));
     }
-    Ok(make_path(&raw, arena))
+    Ok(Ok(make_path(&raw, arena)))
 }
 
-fn is_valid_dewey(s: &str) -> bool {
+pub fn is_valid_dewey(s: &str) -> bool {
     if s.is_empty() {
         return true;
     }
@@ -133,9 +158,21 @@ fn is_valid_dewey(s: &str) -> bool {
         .all(|seg| !seg.is_empty() && seg.bytes().all(|b| b.is_ascii_digit()))
 }
 
+/// Raw literal-discharge path. The resolver only emits it after the shared
+/// syntactic predicate has proved the index non-negative.
+pub fn child_literal_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
+    child_value_nv(args, arena)?.map_err(RuntimeError::Error)
+}
+
+/// Raw literal-discharge path for a syntactically valid dewey string.
+pub fn parse_literal_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
+    parse_value_nv(args, arena)?.map_err(RuntimeError::Error)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::nan_value::NanValueConvert;
 
     fn fresh_arena() -> Arena {
         let mut arena = Arena::new();
@@ -156,7 +193,7 @@ mod tests {
         let mut arena = fresh_arena();
         let root = make_path("", &mut arena);
         let idx = NanValue::new_int(3, &mut arena);
-        let child = child_nv(&[root, idx], &mut arena).unwrap();
+        let child = child_literal_nv(&[root, idx], &mut arena).unwrap();
         let dewey = read_dewey(child, &arena, "test").unwrap();
         assert_eq!(dewey, "3");
     }
@@ -166,9 +203,9 @@ mod tests {
         let mut arena = fresh_arena();
         let root = make_path("", &mut arena);
         let two = NanValue::new_int(2, &mut arena);
-        let branch2 = child_nv(&[root, two], &mut arena).unwrap();
+        let branch2 = child_literal_nv(&[root, two], &mut arena).unwrap();
         let zero = NanValue::new_int(0, &mut arena);
-        let nested = child_nv(&[branch2, zero], &mut arena).unwrap();
+        let nested = child_literal_nv(&[branch2, zero], &mut arena).unwrap();
         let dewey = read_dewey(nested, &arena, "test").unwrap();
         assert_eq!(dewey, "2.0");
     }
@@ -178,7 +215,7 @@ mod tests {
         let mut arena = fresh_arena();
         for &raw in &["", "0", "1", "2.0", "10.3.4"] {
             let s = NanValue::new_string_value(raw, &mut arena);
-            let path = parse_nv(&[s], &mut arena).expect(raw);
+            let path = parse_literal_nv(&[s], &mut arena).expect(raw);
             let dewey = read_dewey(path, &arena, "test").unwrap();
             assert_eq!(dewey, raw);
         }
@@ -189,8 +226,13 @@ mod tests {
         let mut arena = fresh_arena();
         for &raw in &[".", "1.", ".1", "1..2", "abc", "1.a", "-1", " ", "1.2.3."] {
             let s = NanValue::new_string_value(raw, &mut arena);
-            let result = parse_nv(&[s], &mut arena);
-            assert!(result.is_err(), "{} should be rejected", raw);
+            let result = parse_nv(&[s], &mut arena).unwrap().to_value(&arena);
+            assert!(
+                matches!(result, crate::value::Value::Err(_)),
+                "{} should be a catchable error, got {:?}",
+                raw,
+                result
+            );
         }
     }
 
@@ -199,8 +241,8 @@ mod tests {
         let mut arena = fresh_arena();
         let root = make_path("", &mut arena);
         let neg = NanValue::new_int(-1, &mut arena);
-        let result = child_nv(&[root, neg], &mut arena);
-        assert!(result.is_err());
+        let result = child_nv(&[root, neg], &mut arena).unwrap().to_value(&arena);
+        assert!(matches!(result, crate::value::Value::Err(_)));
     }
 
     #[test]

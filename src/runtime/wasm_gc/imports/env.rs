@@ -2,9 +2,10 @@
 //! process environment.
 
 use super::super::RunWasmGcHost;
-use super::super::decode::decode_string;
+use super::super::decode::{decode_result_unit, decode_string};
+use super::factories::{host_result_err_unit_string, host_result_ok_unit};
 use super::lm::{lm_string_from_host, lm_string_to_host};
-use super::replay_glue::{record_effect_if_recording, try_replay};
+use super::replay_glue::{json_err, json_ok, record_effect_if_recording, try_replay};
 
 pub(super) fn dispatch(
     name: &str,
@@ -42,17 +43,22 @@ pub(super) fn dispatch(
                 aver::replay::JsonValue::String(name.clone()),
                 aver::replay::JsonValue::String(value.clone()),
             ];
-            if try_replay(caller, "Env.set", args.clone())?.is_some() {
+            if let Some(cached) = try_replay(caller, "Env.set", args.clone())? {
+                results[0] = Val::AnyRef(decode_result_unit(caller, &cached)?);
                 return Ok(true);
             }
-            let _ = aver_rt::env_set(&name, &value);
-            record_effect_if_recording(
-                caller,
-                "Env.set",
-                args,
-                aver::replay::JsonValue::Null,
-                caller_fn,
-            );
+            let (result, outcome) = match aver_rt::env_set(&name, &value) {
+                Ok(()) => (
+                    host_result_ok_unit(caller)?,
+                    json_ok(aver::replay::JsonValue::Null),
+                ),
+                Err(error) => (
+                    host_result_err_unit_string(caller, &error)?,
+                    json_err(&error),
+                ),
+            };
+            results[0] = Val::AnyRef(result);
+            record_effect_if_recording(caller, "Env.set", args, outcome, caller_fn);
             Ok(true)
         }
         _ => Ok(false),

@@ -1274,7 +1274,7 @@ pub struct StringEscapeRoundtripPin {
     /// Codepoint surrogate filter (`parseUnicodeCodePoint`).
     pub codepoint_fn: String,
     /// Decoded-codepoint continuation (`applyCodePoint`):
-    /// `Char.fromCode` + chunk flush back into the scanner.
+    /// `String.fromCodePoint` + chunk flush back into the scanner.
     pub apply_fn: String,
     /// Four-hex-digit reader (`readHex4`), separately fueled on
     /// `count` climbing to the literal bound 4.

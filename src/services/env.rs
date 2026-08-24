@@ -2,7 +2,7 @@
 ///
 /// Methods:
 ///   Env.get(key)        — returns Option<String>
-///   Env.set(key, value) — sets process env var, returns Unit
+///   Env.set(key, value) — sets process env var, returns Result<Unit,String>
 ///
 /// Effects are granular:
 /// - Env.get
@@ -75,8 +75,11 @@ fn set_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError
     }
     let key = arena.get_string_value(args[0]).to_string();
     let value = arena.get_string_value(args[1]).to_string();
-    if let Err(e) = aver_rt::env_set(&key, &value) {
-        return Err(RuntimeError::Error(e));
-    }
-    Ok(NanValue::UNIT)
+    Ok(match aver_rt::env_set(&key, &value) {
+        Ok(()) => NanValue::new_ok_value(NanValue::UNIT, arena),
+        Err(message) => {
+            let error = NanValue::new_string_value(&message, arena);
+            NanValue::new_err_value(error, arena)
+        }
+    })
 }

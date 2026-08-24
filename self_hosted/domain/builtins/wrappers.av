@@ -1,7 +1,7 @@
 module Wrappers
     depends [Domain.Value, Domain.Builtins.Helpers]
     intent = "Result and Option constructor and combinator builtins."
-    exposes [call, callOptionToResult]
+    exposes [call, callResultFromOption]
     effects []
 
 fn call(name: String, args: List<Val>) -> Result<Val, String>
@@ -74,16 +74,16 @@ verify builtinOptionWithDefault
     builtinOptionWithDefault([Val.ValNone, Val.ValInt(0)]) => Result.Ok(Val.ValInt(0))
     builtinOptionWithDefault([Val.ValInt(1), Val.ValInt(0)]) => Result.Err("Option.withDefault requires Option value")
 
-fn callOptionToResult(args: List<Val>) -> Result<Val, String>
-    ? "Option.toResult(option, errMsg) -> Result."
+fn callResultFromOption(args: List<Val>) -> Result<Val, String>
+    ? "Result.fromOption(option, errMsg) -> Result."
     pair = Domain.Builtins.Helpers.twoArgs(args)?
     match pair
         (optV, errV) -> match optV
             Val.ValSome(inner) -> Result.Ok(Val.ValOk(inner))
             Val.ValNone -> Result.Ok(Val.ValErr(errV))
-            _ -> Result.Err("Option.toResult requires Option value")
+            _ -> Result.Err("Result.fromOption requires Option value")
 
-verify callOptionToResult
-    callOptionToResult([Val.ValSome(Val.ValInt(3)), Val.ValStr("err")]) => Result.Ok(Val.ValOk(Val.ValInt(3)))
-    callOptionToResult([Val.ValNone, Val.ValStr("err")]) => Result.Ok(Val.ValErr(Val.ValStr("err")))
-    callOptionToResult([Val.ValInt(1), Val.ValStr("err")]) => Result.Err("Option.toResult requires Option value")
+verify callResultFromOption
+    callResultFromOption([Val.ValSome(Val.ValInt(3)), Val.ValStr("err")]) => Result.Ok(Val.ValOk(Val.ValInt(3)))
+    callResultFromOption([Val.ValNone, Val.ValStr("err")]) => Result.Ok(Val.ValErr(Val.ValStr("err")))
+    callResultFromOption([Val.ValInt(1), Val.ValStr("err")]) => Result.Err("Result.fromOption requires Option value")

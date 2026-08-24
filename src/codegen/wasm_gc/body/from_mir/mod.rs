@@ -258,19 +258,19 @@ fn emit_mir_int_stringify(
 /// / `Float.*` bridges) lift at their own site and are NOT listed here, so
 /// nothing double-wraps.
 fn registered_builtin_returns_raw_int(dotted: &str) -> bool {
-    matches!(dotted, "String.len" | "String.byteLength" | "Char.toCode")
+    matches!(dotted, "String.len" | "String.byteLength")
 }
 
 /// `Int = ℤ`: zero-based argument positions a registered `fn_map.builtins`
 /// helper takes as a raw i64 but which the surface signature types as
 /// `Int` (a char code or a string index/length). Under ℤ those args arrive
 /// as `$AverInt` refs and must be saturate-lowered to i64 before the call.
-/// `Char.fromCode`'s out-of-u32 / negative → `Option.None`, and a string
+/// `String.fromCodePoint`'s out-of-u32 / negative → `Option.None`, and a string
 /// index past the length → empty/None, so a saturated i64::MAX/MIN
 /// reproduces the VM's clamping. Empty for every other registered builtin.
 fn registered_builtin_int_arg_positions(dotted: &str) -> &'static [usize] {
     match dotted {
-        "Char.fromCode" => &[0],
+        "String.fromCodePoint" => &[0],
         "String.charAt" => &[1],
         "String.slice" => &[1, 2],
         "__str_index_char_at" => &[2],
@@ -281,21 +281,18 @@ fn registered_builtin_int_arg_positions(dotted: &str) -> &'static [usize] {
 
 /// `Int = ℤ`: the HOST-ABI effect-boundary stays i64 (no bignum crosses
 /// the wire). Zero-based positions an AverBridge effect IMPORT takes as an
-/// `Int` (a machine-range bound / ms / port / coordinate). Under ℤ those
+/// `Int` (a machine-range status or network port). Under ℤ those
 /// args arrive as `$AverInt` refs and must be CHECKED-lowered to i64
 /// (`__aint_to_i64_checked`, which TRAPS on an out-of-i64 Big) before the
-/// host call — mirroring the VM host services' checked `to_i64()`, which
-/// ERRORS rather than saturating an out-of-range effect arg. Empty for
-/// effects with no Int arg.
+/// host call. Effects whose range failure is part of their Aver contract
+/// (`Random.int`, `Time.sleep`, and `Terminal.moveTo`) instead keep boxed Int
+/// arguments and return catchable Results. Empty for effects with no Int arg.
 fn effect_int_arg_positions(dotted: &str) -> &'static [usize] {
     match dotted {
-        "Random.int" => &[0, 1],
-        "Time.sleep" => &[0],
         "Response.text" => &[0],
         // Network port / server bind port / terminal coordinates.
         "Tcp.send" | "Tcp.sendBytes" | "Tcp.ping" | "Tcp.connect" => &[1],
         "HttpServer.listen" | "HttpServer.listenWith" => &[0],
-        "Terminal.moveTo" => &[0, 1],
         _ => &[],
     }
 }
@@ -305,7 +302,7 @@ fn effect_int_arg_positions(dotted: &str) -> &'static [usize] {
 /// lifted to a Small `$AverInt` so the value matches the ref shape Aver
 /// uses for Int everywhere off the wire.
 fn effect_returns_int(dotted: &str) -> bool {
-    matches!(dotted, "Random.int" | "Time.unixMs")
+    matches!(dotted, "Time.unixMs")
 }
 
 /// Lower `mir_fn.body` into `func`, mirroring [`super::emit_fn_body`]
@@ -933,6 +930,14 @@ pub(crate) fn emit_mir_expr(
                         MirBuiltinEmit::Fallback => return Ok(None),
                         MirBuiltinEmit::NotHandled => {}
                     }
+                    // `Result.fromOption` changes the wrapper while preserving
+                    // the payload. It needs the concrete Option/Result GC types,
+                    // so lower it inline rather than through a monomorphic helper.
+                    match emit_mir_result_from_option(func, dotted, &call.args, slots, ctx)? {
+                        MirBuiltinEmit::Produced(produces) => return Ok(Some(produces)),
+                        MirBuiltinEmit::Fallback => return Ok(None),
+                        MirBuiltinEmit::NotHandled => {}
+                    }
                     // Boxed `Int.div(a, b)` / `Int.mod(a, b)` — the
                     // `Result<Int, String>` is consumed directly (e.g.
                     // `match Int.div(a, b) { Ok / Err }`), not the fused
@@ -984,7 +989,7 @@ pub(crate) fn emit_mir_expr(
                             }
                             // `Int = ℤ`: a registered helper that returns
                             // `Int` (`String.len`, `String.byteLength`,
-                            // `Char.toCode`) computes a raw i64; lift it
+                            // byte counts) computes a raw i64; lift it
                             // into the `$AverInt` carrier so the value
                             // matches the ref shape every Int site expects.
                             if registered_builtin_returns_raw_int(dotted) {
@@ -1008,6 +1013,27 @@ pub(crate) fn emit_mir_expr(
                     // mix an i64 helper with ref operands (invalid wasm)
                     // and silently truncate a Big.
                     use crate::ir::hir::BuiltinIntrinsic;
+                    if matches!(intr, BuiltinIntrinsic::VectorNew) {
+                        return match emit_mir_vector_new_literal(func, &call.args, slots, ctx)? {
+                            MirBuiltinEmit::Produced(produces) => Ok(Some(produces)),
+                            MirBuiltinEmit::Fallback | MirBuiltinEmit::NotHandled => Ok(None),
+                        };
+                    }
+                    // BranchPath is a proof-only opaque `(ref null eq)` on
+                    // wasm-gc. Oracle helper signatures remain representable,
+                    // but the backend intentionally has no runtime path
+                    // construction semantics. Return the established
+                    // whole-function fallback here; the caller discards this
+                    // partial probe and emits an unreachable trap stub for the
+                    // dead proof helper. The module-wide intrinsic scan allows
+                    // exactly these two resolver-created proof intrinsics while
+                    // still refusing optimizer fabrications.
+                    if matches!(
+                        intr,
+                        BuiltinIntrinsic::BranchPathChild | BuiltinIntrinsic::BranchPathParse
+                    ) {
+                        return Ok(None);
+                    }
                     if ctx.registry.bignum
                         && matches!(
                             intr,
@@ -1032,7 +1058,7 @@ pub(crate) fn emit_mir_expr(
                     }
                     // Literal-count discharge of `Bits.shiftLeft` /
                     // `.shiftRight` / `.low`: the count is a syntactic
-                    // non-negative literal, so no `Result` is built. Shares
+                    // bounded non-negative literal, so no `Result` is built. Shares
                     // `emit_bits_counted_value` with the guarded surface
                     // call, so the two forms compute the same thing by
                     // construction.
@@ -1881,7 +1907,7 @@ fn emit_mir_fn_args_then_call(
 
 /// As [`emit_mir_args_then_call`], but `int_arg_positions` lists the
 /// zero-based args the helper takes as a raw i64 in an `Int`-typed slot
-/// (`Char.fromCode` code, `String.charAt`/`slice` indices). Under `Int =
+/// (`String.fromCodePoint` code, `String.charAt`/`slice` indices). Under `Int =
 /// ℤ` those args arrive as `$AverInt` refs, so they are saturate-lowered
 /// to i64 (`__aint_to_i64_sat`) right after emission. A no-op for the
 /// common empty-positions case (every other builtin).

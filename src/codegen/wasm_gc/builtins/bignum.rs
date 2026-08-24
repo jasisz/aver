@@ -570,7 +570,7 @@ pub(super) fn emit_aint_to_index(registry: &TypeRegistry) -> Result<Function, Wa
 /// through; a positive Big saturates to i64::MAX, a negative Big to
 /// i64::MIN. Used where an out-of-i64 magnitude only needs to clamp to
 /// "all"/"none" (`List.take`/`drop` counts) or past-end (`String.charAt`/
-/// `slice` indices, `Char.fromCode`), which the receiving helper already
+/// `slice` indices, `String.fromCodePoint`), which the receiving helper already
 /// handles as a saturated boundary.
 pub(super) fn emit_aint_to_i64_sat(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     let decls = aint_type_decls(registry)?;
@@ -579,8 +579,8 @@ pub(super) fn emit_aint_to_i64_sat(registry: &TypeRegistry) -> Result<Function, 
 }
 
 /// `__aint_to_i64_checked(a) -> i64` — CHECKED Int→i64 lowering for an Int
-/// argument crossing the HOST EFFECT boundary (a `Random` bound,
-/// `Time.sleep` ms, a network port, a `Terminal` coordinate). A Small
+/// argument crossing a machine-shaped boundary (for example a network port,
+/// HTTP status, or proven carrier field). A Small
 /// passes its `$small` through; a Big TRAPS (`unreachable`), since a
 /// canonical Big is by definition outside i64 range. This mirrors the VM
 /// host services' checked `AverInt::to_i64()` — which ERRORS on an out-of-
