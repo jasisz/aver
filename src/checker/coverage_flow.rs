@@ -16,14 +16,17 @@ use crate::ast::{FnDef, TopLevel};
 use crate::call_graph::{call_components, callers_of};
 use crate::visibility::{effective_exposes, is_exposed};
 
-use super::coverage::return_shape_gaps;
+use super::coverage::{ShapeAnalysis, return_shape_gaps};
 use super::{merge_verify_blocks, verify_cases_block_is_well_formed};
 
 /// Functions whose return-shape coverage is inherited from a caller.
 ///
 /// Empty for a file with no `exposes` list: there every function without a
 /// leading underscore counts as exposed, so nothing qualifies as private.
-pub(super) fn flow_covered_fns(items: &[TopLevel]) -> HashSet<String> {
+pub(super) fn flow_covered_fns(
+    items: &[TopLevel],
+    shape_analysis: &ShapeAnalysis,
+) -> HashSet<String> {
     let exposes = effective_exposes(items);
     let fn_defs: HashMap<&str, &FnDef> = items
         .iter()
@@ -43,7 +46,7 @@ pub(super) fn flow_covered_fns(items: &[TopLevel]) -> HashSet<String> {
         let Some(f) = fn_defs.get(block.fn_name.as_str()).copied() else {
             continue;
         };
-        if return_shape_gaps(f, &block, items).is_some_and(|gaps| gaps.is_empty()) {
+        if return_shape_gaps(f, &block, items, shape_analysis).is_some_and(|gaps| gaps.is_empty()) {
             covered.insert(block.fn_name.clone());
         }
     }

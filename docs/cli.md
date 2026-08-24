@@ -449,9 +449,10 @@ connect_timeout_secs = 5
 request_idle_timeout_secs = 30
 
 [[check.suppress]]
-slug = "non-tail-recursion"
-files = ["**/eval/**"]
-reason = "Tree-walking interpreter — CPS would destroy correspondence."
+slug = "verify-coverage"
+files = ["domain/checks.av"]
+fn = "eachInBranch"            # optional exact function scope
+reason = "Its Result error arm is uninhabited by constructible inputs."
 
 [verify]
 step-limit = 1_000_000          # per-case opcode budget (default)
@@ -465,7 +466,7 @@ max-cases  = 40_000              # raise the case ceiling for this fn
 reason     = "Bitcoin Core corpus includes consensus-max 10,000-byte scripts"
 ```
 
-Effect-host / path / key allowlists narrow which hosts, files, and env keys the runtime will admit. Tcp's positive-integer settings configure connection establishment and one-shot request idle timeouts; they never impose a deadline on persistent session I/O. Unknown or misplaced keys inside an effect section are errors. `[[check.suppress]]` lets a project waive specific lint slugs in specific paths with a reason.
+Effect-host / path / key allowlists narrow which hosts, files, and env keys the runtime will admit. Tcp's positive-integer settings configure connection establishment and one-shot request idle timeouts; they never impose a deadline on persistent session I/O. Unknown or misplaced keys inside an effect section are errors. `[[check.suppress]]` lets a project waive specific lint slugs in specific paths, optionally for one exact function, with a reason.
 
 Disk path patterns have deliberately small, explicit semantics:
 
@@ -492,6 +493,7 @@ An empty pattern, unsupported `*` placement, or a `..`-rooted pattern is also a 
 `[[check.suppress]]` rules in detail:
 
 - `files` globs match the file's path **relative to the module root**, so a leading `./` is insignificant on either side and every spelling of the same file (`aver check domain/version.av`, `aver check ./domain/version.av`, `aver check .`, an absolute path, or a dependency module of the program) honours the same rule. A rule with no `files` key applies everywhere.
+- `fn` is optional. When present, the rule matches only diagnostics carrying that exact function name; a file-level diagnostic cannot accidentally match it. This is the narrow form for an unavoidable residue such as one `verify-coverage` Result arm. Without `fn`, the rule keeps its existing file-wide meaning.
 - `aver check` and `aver audit` apply the same rules. Both print how many warnings a file's waivers removed.
 - Suppression applies to warnings only. It can never hide an `error[...]`, a verify failure, or the `needs-format` result, so a waiver can never change a command's exit code.
 - A rule that removes nothing during a whole-directory run (`aver check .`, `aver audit .`) is reported on stderr, telling you whether its globs matched no checked file at all or matched files whose warning no longer fires. Single-file runs stay quiet, since they legitimately never exercise rules scoped to other paths.
