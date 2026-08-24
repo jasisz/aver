@@ -2403,7 +2403,9 @@ pub(crate) fn emit_mir_vector_builtin(
             func.instruction(&Instruction::I64Const(0));
             func.instruction(&Instruction::I64GeS);
             emit_size_i64(func)?;
-            func.instruction(&Instruction::I64Const(u32::MAX as i64));
+            func.instruction(&Instruction::I64Const(
+                aver_rt::MAX_MATERIALIZED_VECTOR_ELEMENTS as i64,
+            ));
             func.instruction(&Instruction::I64LeS);
             func.instruction(&Instruction::I32And);
             func.instruction(&Instruction::If(res_block));
@@ -2417,11 +2419,8 @@ pub(crate) fn emit_mir_vector_builtin(
             func.instruction(&Instruction::Else);
             func.instruction(&Instruction::I32Const(0));
             emit_default_value(func, &canonical, ctx.registry)?;
-            emit_string_literal_bytes(
-                func,
-                b"Vector.new: size must be between 0 and 4294967295",
-                ctx,
-            )?;
+            let error = aver_rt::vector_size_error_message();
+            emit_string_literal_bytes(func, error.as_bytes(), ctx)?;
             func.instruction(&Instruction::StructNew(res_idx));
             func.instruction(&Instruction::End);
         }

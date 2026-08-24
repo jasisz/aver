@@ -1081,7 +1081,7 @@ impl TypeRegistry {
             .iter()
             .any(|fd| fn_body_calls_builtin(fd, "Vector.new"))
         {
-            intern_synthetic(b"Vector.new: size must be between 0 and 4294967295".to_vec());
+            intern_synthetic(aver_rt::vector_size_error_message().into_bytes());
         }
         if resolved_fn_defs
             .iter()

@@ -37,6 +37,16 @@ fn bits_low(a: &[String]) -> String {
     )
 }
 
+fn vector_new(a: &[String]) -> String {
+    let limit = aver_rt::MAX_MATERIALIZED_VECTOR_ELEMENTS;
+    let error = aver_rt::vector_size_error_message();
+    format!(
+        "(if 0 <= {n} && {n} <= {limit} then Except.ok (Array.replicate (Int.toNat {n}) {fill}) else Except.error \"{error}\")",
+        n = p(&a[0]),
+        fill = p(&a[1])
+    )
+}
+
 /// Try to emit a builtin call as Lean 4 code.
 /// Returns `None` if the name is not a pure builtin.
 ///
@@ -215,11 +225,7 @@ pub fn emit_builtin_call(
         ListZip => format!("{}.zip {}", p(&a[0]), p(&a[1])),
 
         // ---- Vector (Lean Array) ----
-        VectorNew => format!(
-            "(if 0 <= {n} && {n} <= 4294967295 then Except.ok (Array.replicate (Int.toNat {n}) {fill}) else Except.error \"Vector.new: size must be between 0 and 4294967295\")",
-            n = p(&a[0]),
-            fill = p(&a[1])
-        ),
+        VectorNew => vector_new(&a),
         // `Array.get?` was removed in Lean 4.31 in favour of the `GetElem?`
         // bracket notation `arr[i]?`, which reduces under kernel `decide`
         // (so a finite-domain table law over a `Vector` enumerates cleanly).
@@ -393,7 +399,11 @@ mod tests {
 
         assert_eq!(
             emitted,
-            "(if 0 <= 3 && 3 <= 4294967295 then Except.ok (Array.replicate (Int.toNat 3) 0) else Except.error \"Vector.new: size must be between 0 and 4294967295\")"
+            format!(
+                "(if 0 <= 3 && 3 <= {} then Except.ok (Array.replicate (Int.toNat 3) 0) else Except.error \"{}\")",
+                aver_rt::MAX_MATERIALIZED_VECTOR_ELEMENTS,
+                aver_rt::vector_size_error_message()
+            )
         );
     }
 }

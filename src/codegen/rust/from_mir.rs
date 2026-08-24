@@ -5167,7 +5167,7 @@ fn emit_mir_builtin_call(
             let size = arg!(0);
             let default = clone!(1);
             format!(
-                "match ({}).to_u32() {{ Some(__n) => Ok(aver_rt::AverVector::new(__n as usize, {})), None => Err(aver_rt::AverStr::from(\"Vector.new: size must be between 0 and 4294967295\")) }}",
+                "match aver_rt::checked_vector_size(&({})) {{ Some(__n) => Ok(aver_rt::AverVector::new(__n, {})), None => Err(aver_rt::AverStr::from(aver_rt::vector_size_error_message())) }}",
                 size, default
             )
         }
@@ -5408,7 +5408,7 @@ fn emit_mir_intrinsic_call(
             let size = emit_mir_expr(&args[0], ctx)?;
             let fill = emit_mir_expr(&args[1], ctx)?;
             Some(format!(
-                "aver_rt::AverVector::new(({}).to_u32().unwrap() as usize, {})",
+                "aver_rt::AverVector::new(aver_rt::checked_vector_size(&({})).expect(\"invalid discharged Vector.new size\"), {})",
                 size, fill
             ))
         }

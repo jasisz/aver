@@ -494,6 +494,16 @@ fn dafny_bits_low(a: &[String]) -> String {
     )
 }
 
+fn dafny_vector_new(a: &[String]) -> String {
+    let limit = aver_rt::MAX_MATERIALIZED_VECTOR_ELEMENTS;
+    let error = aver_rt::vector_size_error_message();
+    format!(
+        "(if 0 <= {n} <= {limit} then Result.Ok(seq({n}, _ => {fill})) else Result.Err(\"{error}\"))",
+        n = a[0],
+        fill = a[1]
+    )
+}
+
 pub(super) fn emit_dafny_builtin(b: crate::codegen::builtins::Builtin, a: &[String]) -> String {
     use crate::codegen::builtins::Builtin::*;
     match b {
@@ -629,11 +639,7 @@ pub(super) fn emit_dafny_builtin(b: crate::codegen::builtins::Builtin, a: &[Stri
         ListZip => format!("ListZip({}, {})", a[0], a[1]),
 
         // Vector (maps to seq in Dafny — same as List but with indexed access)
-        VectorNew => format!(
-            "(if 0 <= {n} <= 4294967295 then Result.Ok(seq({n}, _ => {fill})) else Result.Err(\"Vector.new: size must be between 0 and 4294967295\"))",
-            n = a[0],
-            fill = a[1]
-        ),
+        VectorNew => dafny_vector_new(a),
         VectorGet => format!(
             "if 0 <= {} < |{}| then Some({}[{}]) else None",
             a[1], a[0], a[0], a[1]

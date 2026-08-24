@@ -67,14 +67,14 @@ pub fn builtinVectorNew(
     crate::cancel_checkpoint();
     let pair = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
     match pair {
-        (crate::aver_generated::domain::value::Val::ValInt(size), defaultVal) => Ok(
-            crate::aver_generated::domain::value::Val::ValVector(match (size).to_u32() {
-                Some(__n) => Ok(aver_rt::AverVector::new(__n as usize, defaultVal)),
-                None => Err(aver_rt::AverStr::from(
-                    "Vector.new: size must be between 0 and 4294967295",
-                )),
-            }?),
-        ),
+        (crate::aver_generated::domain::value::Val::ValInt(size), defaultVal) => {
+            Ok(crate::aver_generated::domain::value::Val::ValVector(
+                match aver_rt::checked_vector_size(&(size)) {
+                    Some(__n) => Ok(aver_rt::AverVector::new(__n, defaultVal)),
+                    None => Err(aver_rt::AverStr::from(aver_rt::vector_size_error_message())),
+                }?,
+            ))
+        }
         _ => Err(AverStr::from("Vector.new: first arg must be Int")),
     }
 }

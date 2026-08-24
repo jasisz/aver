@@ -522,20 +522,27 @@ fn vector_get_with_big_index_is_none() {
 
 #[test]
 fn vector_new_oversized_errors_cleanly() {
-    // A size outside the portable u32 range is a catchable value, never a
-    // runtime abort.
+    // A size outside the portable materialization budget is a catchable
+    // value, never a runtime abort.
+    let message = aver_rt::vector_size_error_message();
     let src = r#"Vector.new(Result.withDefault(Int.fromString("100000000000000000000"), 0), 0)"#;
-    assert_eq!(
-        eval(src),
-        Value::Err(Box::new(Value::Str(
-            "Vector.new: size must be between 0 and 4294967295".to_string()
-        )))
-    );
+    assert_eq!(eval(src), Value::Err(Box::new(Value::Str(message.clone()))));
     assert_eq!(
         eval("Vector.new(0 - 1, 0)"),
-        Value::Err(Box::new(Value::Str(
-            "Vector.new: size must be between 0 and 4294967295".to_string()
-        )))
+        Value::Err(Box::new(Value::Str(message)))
+    );
+}
+
+#[test]
+fn vector_new_materialization_boundary_is_inclusive() {
+    let limit = aver_rt::MAX_MATERIALIZED_VECTOR_ELEMENTS;
+    assert_eq!(
+        eval(&format!("Vector.len(Vector.new({limit}, 0))")),
+        Value::int(limit as i64)
+    );
+    assert_eq!(
+        eval(&format!("Vector.new({}, 0)", limit + 1)),
+        Value::Err(Box::new(Value::Str(aver_rt::vector_size_error_message())))
     );
 }
 

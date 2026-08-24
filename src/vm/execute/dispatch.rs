@@ -2243,11 +2243,8 @@ impl VM {
                 VECTOR_NEW_LITERAL => {
                     let fill = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let size = self.stack.pop().ok_or(VmError::StackUnderflow)?;
-                    let size = size
-                        .as_aver_int(&self.arena)
-                        .to_u32()
-                        .ok_or_else(|| VmError::runtime("invalid discharged Vector.new size"))?
-                        as usize;
+                    let size = aver_rt::checked_vector_size(&size.as_aver_int(&self.arena))
+                        .ok_or_else(|| VmError::runtime("invalid discharged Vector.new size"))?;
                     let items = vec![fill; size];
                     let vector = if items.is_empty() {
                         NanValue::EMPTY_VECTOR

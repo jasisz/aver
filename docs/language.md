@@ -364,9 +364,10 @@ value = Vector.get(grid, 42)       // Option<Int>
 ```
 
 `Vector.new(size, fill)` is fallible for a dynamic size. A syntactic literal
-in the portable `0..=u32::MAX` range, as above, discharges directly to
-`Vector<T>`; negative, oversized, or computed sizes keep
-`Result<Vector<T>, String>`.
+in the portable `0..=1_048_576` element budget, as above, discharges directly
+to `Vector<T>`; negative, oversized, or computed sizes keep
+`Result<Vector<T>, String>`. The budget counts elements because Aver has no
+backend-independent byte size for an arbitrary `T`.
 
 ## Tail-call optimization
 

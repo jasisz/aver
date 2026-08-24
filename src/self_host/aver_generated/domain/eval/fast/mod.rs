@@ -320,17 +320,17 @@ pub fn fastVectorNewSlotInner(
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     match sizeV.clone() {
-        crate::aver_generated::domain::value::Val::ValInt(size) => Ok(
-            crate::aver_generated::domain::value::Val::ValVector(match (size).to_u32() {
-                Some(__n) => Ok(aver_rt::AverVector::new(
-                    __n as usize,
-                    crate::aver_generated::domain::value::Val::ValInt(fill),
-                )),
-                None => Err(aver_rt::AverStr::from(
-                    "Vector.new: size must be between 0 and 4294967295",
-                )),
-            }?),
-        ),
+        crate::aver_generated::domain::value::Val::ValInt(size) => {
+            Ok(crate::aver_generated::domain::value::Val::ValVector(
+                match aver_rt::checked_vector_size(&(size)) {
+                    Some(__n) => Ok(aver_rt::AverVector::new(
+                        __n,
+                        crate::aver_generated::domain::value::Val::ValInt(fill),
+                    )),
+                    None => Err(aver_rt::AverStr::from(aver_rt::vector_size_error_message())),
+                }?,
+            ))
+        }
         _ => Err(AverStr::from("Vector.new size must be Int")),
     }
 }

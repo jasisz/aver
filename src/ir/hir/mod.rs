@@ -549,9 +549,10 @@ pub enum BuiltinIntrinsic {
     /// bits.
     BitsLow,
     /// `__vector_new(<size>, <fill>)` — unchecked vector construction for a
-    /// syntactic non-negative size literal inside the portable `u32` range.
-    /// Produced only by the resolver's `Vector.new` literal discharge; the
-    /// ordinary builtin remains the catchable `Result` path.
+    /// syntactic non-negative size literal inside the portable element
+    /// materialization budget. Produced only by the resolver's `Vector.new`
+    /// literal discharge; the ordinary builtin remains the catchable
+    /// `Result` path.
     VectorNew,
     /// `__branch_path_child(<path>, <index>)` — unchecked extension for a
     /// syntactic non-negative integer literal. Dynamic indices use the

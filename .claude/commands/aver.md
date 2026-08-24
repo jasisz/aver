@@ -300,7 +300,7 @@ Key `List` API (small, recursion-first):
 - empty list literal: `[]`
 
 Key `Vector` API (O(1) indexed access):
-- `Vector.new(n, default) -> Result<Vector<T>, String>` for a dynamic size; a syntactic literal in the portable range discharges directly to `Vector<T>`
+- `Vector.new(n, default) -> Result<Vector<T>, String>` for a dynamic size; a syntactic literal in the portable `0..=1_048_576` element budget discharges directly to `Vector<T>`
 - `Vector.get(v, i) -> Option<T>`, `Vector.set(v, i, val) -> Option<Vector<T>>`
 - `Vector.len(v) -> Int`
 - `Vector.fromList(l)` — conversion in the other direction lives on `List`
