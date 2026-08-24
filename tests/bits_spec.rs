@@ -342,6 +342,52 @@ fn main() -> Unit
 }
 
 #[test]
+fn materialization_boundary_and_message_share_the_runtime_constant() {
+    let limit = aver_rt::MAX_MATERIALIZED_BITS;
+    let above = limit + 1;
+    let src = r#"fn shifted(n: Int) -> String
+    ? "Reports the exact materialization boundary."
+    match Bits.shiftLeft(0, n)
+        Result.Ok(v) -> "ok {v}"
+        Result.Err(e) -> "err {e}"
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(shifted(__LIMIT__))
+    Console.print(shifted(__ABOVE__))
+"#
+    .replace("__LIMIT__", &limit.to_string())
+    .replace("__ABOVE__", &above.to_string());
+
+    assert_eq!(
+        run_source("shared materialization boundary", &src),
+        format!("ok 0\nerr {}", aver_rt::shift_count_too_large_message())
+    );
+}
+
+#[test]
+fn emitter_sources_do_not_duplicate_the_materialization_number() {
+    let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let decimal = aver_rt::MAX_MATERIALIZED_BITS.to_string();
+    for relative in [
+        "src/parser/expr.rs",
+        "src/types/bits.rs",
+        "src/codegen/lean/builtins.rs",
+        "src/codegen/dafny/expr.rs",
+        "src/codegen/rust/from_mir.rs",
+        "src/codegen/wasm_gc/types.rs",
+        "src/codegen/wasm_gc/body/from_mir/builtins.rs",
+    ] {
+        let source = std::fs::read_to_string(repo.join(relative))
+            .unwrap_or_else(|error| panic!("read {relative}: {error}"));
+        assert!(
+            !source.contains(&decimal),
+            "{relative} duplicates the decimal materialization bound {decimal}; derive it from aver_rt::MAX_MATERIALIZED_BITS instead"
+        );
+    }
+}
+
+#[test]
 fn a_literal_non_negative_count_discharges_to_a_plain_int() {
     // The discharged call has NO Result to unwrap: binding it to an `Int`
     // annotation must type-check. If the discharge stopped firing this is a
@@ -359,7 +405,7 @@ fn zeroWidthDischarges(x: Int) -> Int
 
 fn materializationLimitDischarges(x: Int) -> Int
     ? "The exact shared limit is still on the total literal path."
-    Bits.low(x, 16777216)
+    Bits.low(x, __LIMIT__)
 
 fn hugeRightShiftDischarges(x: Int) -> Int
     ? "Right shift has no materialization ceiling; even a BigInt literal is total."
@@ -368,10 +414,11 @@ fn hugeRightShiftDischarges(x: Int) -> Int
 fn main() -> Unit
     ! [Console.print]
     Console.print("{packed(1, 0)} {zeroWidthDischarges(7)} {hugeRightShiftDischarges(-7)}")
-"#;
-    let (ok, out) = typecheck_source(src);
+"#
+    .replace("__LIMIT__", &aver_rt::MAX_MATERIALIZED_BITS.to_string());
+    let (ok, out) = typecheck_source(&src);
     assert!(ok, "literal counts should discharge:\n{out}");
-    assert_eq!(run_source("discharged", src), "32 0 -1");
+    assert_eq!(run_source("discharged", &src), "32 0 -1");
 }
 
 #[test]
@@ -564,6 +611,19 @@ fn every_rejected_operator_names_its_replacement() {
             out.contains(expected),
             "`{op}` must name `{expected}` as its replacement:\n{out}"
         );
+        if op.contains("<<") {
+            assert!(
+                out.contains(&aver_rt::MAX_MATERIALIZED_BITS.to_string()),
+                "left-shift guidance must derive the shared materialization limit:\n{out}"
+            );
+        }
+        if op.contains(">>") {
+            assert!(
+                out.contains("any non-negative integer literal")
+                    && !out.contains(&aver_rt::MAX_MATERIALIZED_BITS.to_string()),
+                "right-shift guidance must not claim an allocation ceiling:\n{out}"
+            );
+        }
     }
 }
 

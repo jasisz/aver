@@ -5129,21 +5129,21 @@ fn emit_mir_builtin_call(
             arg!(0),
             arg!(1),
             "negative shift count",
-            "shift count exceeds the 16777216 bit limit",
+            "shift_count_too_large_message",
         ),
         "Bits.shiftRight" => emit_bits_counted(
             "shift_right",
             arg!(0),
             arg!(1),
             "negative shift count",
-            "shift count exceeds the 16777216 bit limit",
+            "shift_count_too_large_message",
         ),
         "Bits.low" => emit_bits_counted(
             "low_bits",
             arg!(0),
             arg!(1),
             "negative bit width",
-            "bit width exceeds the 16777216 bit limit",
+            "bit_width_too_large_message",
         ),
 
         // ---- Bool ----
@@ -5569,19 +5569,18 @@ fn emit_mir_intrinsic_call(
     }
 }
 
-/// One shape for the three `Bits` operations that take a count. Only the
-/// NEGATIVE case is a `Result.Err`; an unrepresentable count is a runtime
-/// abort, matching the VM (`src/types/bits.rs`) rather than inventing a
-/// second catchable error the proof models would not have.
+/// One shape for the three `Bits` operations that take a count. Both refusal
+/// messages stay catchable and come from `aver-rt`, so generated Rust cannot
+/// drift from the VM when the shared materialization boundary changes.
 fn emit_bits_counted(
     method: &str,
     x: String,
     n: String,
     negative_message: &str,
-    too_large_message: &str,
+    too_large_message_fn: &str,
 ) -> String {
     format!(
-        "match ({x}).{method}(&({n})) {{ Ok(__v) => Ok(__v), Err(aver_rt::ShiftCountError::Negative) => Err(\"{negative_message}\".into()), Err(aver_rt::ShiftCountError::TooLarge) => Err(\"{too_large_message}\".into()) }}"
+        "match ({x}).{method}(&({n})) {{ Ok(__v) => Ok(__v), Err(aver_rt::ShiftCountError::Negative) => Err(\"{negative_message}\".into()), Err(aver_rt::ShiftCountError::TooLarge) => Err(aver_rt::{too_large_message_fn}()) }}"
     )
 }
 

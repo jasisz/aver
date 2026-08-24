@@ -51,6 +51,20 @@ pub enum ShiftCountError {
 /// and proof models share one refusal boundary.
 pub const MAX_MATERIALIZED_BITS: usize = 16 * 1024 * 1024;
 
+/// Public `Bits.shiftLeft` refusal text, derived from the same language
+/// constant that guards the allocation. Compiler backends call this while
+/// emitting their own models so changing the boundary cannot leave stale
+/// decimal text behind.
+pub fn shift_count_too_large_message() -> String {
+    format!("shift count exceeds the {MAX_MATERIALIZED_BITS} bit limit")
+}
+
+/// Public `Bits.low` refusal text for a negative input whose finite result
+/// would exceed the shared materialization boundary.
+pub fn bit_width_too_large_message() -> String {
+    format!("bit width exceeds the {MAX_MATERIALIZED_BITS} bit limit")
+}
+
 /// Validate a count for an operation that may allocate proportionally to it.
 fn materializing_count(n: &AverInt) -> Result<usize, ShiftCountError> {
     if n < &AverInt::zero() {
@@ -1003,5 +1017,17 @@ mod tests {
             Err(ShiftCountError::TooLarge)
         );
         assert_eq!(i(-42).low_bits(&huge), Err(ShiftCountError::TooLarge));
+    }
+
+    #[test]
+    fn materialization_messages_are_derived_from_the_runtime_boundary() {
+        assert_eq!(
+            shift_count_too_large_message(),
+            format!("shift count exceeds the {MAX_MATERIALIZED_BITS} bit limit")
+        );
+        assert_eq!(
+            bit_width_too_large_message(),
+            format!("bit width exceeds the {MAX_MATERIALIZED_BITS} bit limit")
+        );
     }
 }

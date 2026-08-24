@@ -1122,7 +1122,8 @@ pub(crate) fn emit_mir_bits(
         func.instruction(&Instruction::If(res_block));
         func.instruction(&Instruction::I32Const(0));
         emit_default_value(func, "Int", ctx.registry)?;
-        emit_string_literal_bytes(func, op.too_large_message(), ctx)?;
+        let too_large_message = op.too_large_message();
+        emit_string_literal_bytes(func, too_large_message.as_bytes(), ctx)?;
         func.instruction(&Instruction::StructNew(res_idx));
         func.instruction(&Instruction::Else);
     }
@@ -1412,10 +1413,10 @@ impl BitsOp {
         }
     }
 
-    fn too_large_message(self) -> &'static [u8] {
+    fn too_large_message(self) -> String {
         match self {
-            Self::Low => b"bit width exceeds the 16777216 bit limit",
-            _ => b"shift count exceeds the 16777216 bit limit",
+            Self::Low => aver_rt::bit_width_too_large_message(),
+            _ => aver_rt::shift_count_too_large_message(),
         }
     }
 }

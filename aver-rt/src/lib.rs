@@ -24,7 +24,10 @@ pub mod terminal;
 
 pub use bytebuilder::{ByteBuilder, byte_builder_finalize, byte_builder_new, byte_builder_push};
 pub use display::{AverDisplay, aver_display};
-pub use int::{AverInt, MAX_MATERIALIZED_BITS, ShiftCountError};
+pub use int::{
+    AverInt, MAX_MATERIALIZED_BITS, ShiftCountError, bit_width_too_large_message,
+    shift_count_too_large_message,
+};
 pub use int_list::{
     AverIntList, AverIntListIter, int_list_builder_finalize, int_list_builder_new,
     int_list_builder_push, into_packed_u8,

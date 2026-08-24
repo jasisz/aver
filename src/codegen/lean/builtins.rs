@@ -11,8 +11,9 @@ use crate::ir::hir::ResolvedExpr;
 /// `Except.error` arm stays reachable in the model exactly where the VM can
 /// return `Result.Err`.
 fn bits_counted(op: &str, a: &[String], negative: &str, too_large: &str) -> String {
+    let limit = aver_rt::MAX_MATERIALIZED_BITS;
     format!(
-        "(if {n} < 0 then Except.error \"{negative}\" else if {n} > 16777216 then Except.error \"{too_large}\" else Except.ok (AverBits.{op} {x} {n}) : Except String Int)",
+        "(if {n} < 0 then Except.error \"{negative}\" else if {n} > {limit} then Except.error \"{too_large}\" else Except.ok (AverBits.{op} {x} {n}) : Except String Int)",
         x = p(&a[0]),
         n = p(&a[1])
     )
@@ -27,8 +28,10 @@ fn bits_shift_right(a: &[String]) -> String {
 }
 
 fn bits_low(a: &[String]) -> String {
+    let limit = aver_rt::MAX_MATERIALIZED_BITS;
+    let too_large = aver_rt::bit_width_too_large_message();
     format!(
-        "(if {n} < 0 then Except.error \"negative bit width\" else if {x} < 0 ∧ {n} > 16777216 then Except.error \"bit width exceeds the 16777216 bit limit\" else Except.ok (AverBits.low {x} {n}) : Except String Int)",
+        "(if {n} < 0 then Except.error \"negative bit width\" else if {x} < 0 ∧ {n} > {limit} then Except.error \"{too_large}\" else Except.ok (AverBits.low {x} {n}) : Except String Int)",
         x = p(&a[0]),
         n = p(&a[1])
     )
@@ -135,7 +138,7 @@ pub fn emit_builtin_call(
             "shiftLeft",
             &a,
             "negative shift count",
-            "shift count exceeds the 16777216 bit limit",
+            &aver_rt::shift_count_too_large_message(),
         ),
         BitsShiftRight => bits_shift_right(&a),
         BitsLow => bits_low(&a),
