@@ -983,76 +983,10 @@ def regenerate_self_host(dry_run: bool) -> None:
     print("Regenerating self-host...")
     if dry_run:
         print(
-            "  [dry-run] would run: aver compile self_hosted/main.av --target rust ..."
+            "  [dry-run] would run: python3 tools/regenerate_self_host.py"
         )
         return
-
-    aver_bin = REPO_ROOT / "target" / "debug" / "aver"
-    if not aver_bin.exists():
-        print("  Building aver first...")
-        run(["cargo", "build"])
-
-    run(
-        [
-            str(aver_bin),
-            "compile",
-            "self_hosted/main.av",
-            "--target",
-            "rust",
-            "--output",
-            "self_hosted/out",
-            "--module-root",
-            "self_hosted",
-            "--with-self-host-support",
-            "--guest-entry",
-            "runGuestCliProgram",
-            "--with-replay",
-            "--policy",
-            "runtime",
-        ]
-    )
-
-    # Copy generated src to src/self_host/
-    src_dest = REPO_ROOT / "src" / "self_host"
-    src_source = REPO_ROOT / "self_hosted" / "out" / "src"
-    if src_dest.exists():
-        shutil.rmtree(src_dest)
-    shutil.copytree(src_source, src_dest)
-
-    # Remove verify.rs (test-only, causes compile errors as [[bin]] in aver-lang)
-    verify_rs = src_dest / "verify.rs"
-    if verify_rs.exists():
-        verify_rs.unlink()
-
-    # Patch main.rs: add clippy::all allow, remove verify module
-    main_rs = src_dest / "main.rs"
-    text = main_rs.read_text()
-    text = text.replace(
-        "#![allow(",
-        "#![allow(clippy::all, ",
-    )
-    text = text.replace("\n#[cfg(test)]\nmod verify;\n", "\n")
-    main_rs.write_text(text)
-
-    # Format generated code, to a fixed point.
-    #
-    # One `cargo fmt` is not enough on this input: rustfmt needs a second pass
-    # on `domain/eval/core/mod.rs`, where a `return` of a long path call sits
-    # right at the width limit and the first pass leaves it unwrapped. Stopping
-    # after one pass left a tree that `cargo fmt --all -- --check` rejects, so
-    # the regen step handed CI a format failure. Loop until a pass changes
-    # nothing, which is the state `--check` is asking about.
-    for attempt in range(1, 6):
-        run(["cargo", "fmt"])
-        if run(["cargo", "fmt", "--all", "--", "--check"], check=False).returncode == 0:
-            break
-        if attempt == 5:
-            raise SystemExit(
-                "cargo fmt did not reach a fixed point on the regenerated "
-                "self-host after 5 passes"
-            )
-
-    print(f"  Copied {sum(1 for _ in src_dest.rglob('*.rs'))} files to src/self_host/")
+    run([sys.executable, str(REPO_ROOT / "tools" / "regenerate_self_host.py")])
 
 
 def regenerate_playground(dry_run: bool) -> None:

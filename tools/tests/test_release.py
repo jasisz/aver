@@ -652,6 +652,23 @@ class WebsiteVersionTests(unittest.TestCase):
         self.assertIn("[dry-run] website project record -> 0.28.0", output)
 
 
+class SelfHostRegenerationTests(unittest.TestCase):
+    def test_release_uses_the_shared_regeneration_helper(self) -> None:
+        with mock.patch.object(release, "run") as runner:
+            release.regenerate_self_host(False)
+        runner.assert_called_once_with(
+            [
+                sys.executable,
+                str(release.REPO_ROOT / "tools" / "regenerate_self_host.py"),
+            ]
+        )
+
+    def test_dry_run_does_not_regenerate(self) -> None:
+        with mock.patch.object(release, "run") as runner:
+            release.regenerate_self_host(True)
+        runner.assert_not_called()
+
+
 class RetryTests(unittest.TestCase):
     def test_retry_succeeds_without_real_sleep(self) -> None:
         answers = iter([(False, "missing"), (False, "lagging"), (True, "ready")])

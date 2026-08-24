@@ -3566,19 +3566,34 @@ pub(super) fn emit_mir_tco_fn(
         visibility, fn_name, params, ret_type
     ));
     // Wrap pass-through params in Arc before the loop (shadowing the
-    // original binding). Mirror of `emit_tco_fn`.
-    for &i in &rc_indices {
-        let rust_name = aver_name_to_rust(&fd.params[i].0);
-        lines.push(format!(
-            "    let {} = std::sync::Arc::new({});",
-            rust_name, rust_name
-        ));
-    }
+    // original binding). Mirror of `emit_tco_fn`. Emit in source-param
+    // order: `rc_indices` is a HashSet, and iterating it directly made
+    // checked-in self-host regeneration differ across processes.
+    lines.extend(emit_self_tco_rc_wraps(&fd.params, &rc_indices));
     lines.push("    loop {".to_string());
     lines.push(body_code);
     lines.push("    }".to_string());
     lines.push("}".to_string());
     Some(lines.join("\n"))
+}
+
+fn emit_self_tco_rc_wraps(params: &[(String, String)], rc_indices: &HashSet<usize>) -> Vec<String> {
+    assert!(
+        rc_indices.iter().all(|index| *index < params.len()),
+        "self-TCO rc parameter index must refer to a declared parameter"
+    );
+    params
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| rc_indices.contains(i))
+        .map(|(_, (name, _))| {
+            let rust_name = aver_name_to_rust(name);
+            format!(
+                "    let {} = std::sync::Arc::new({});",
+                rust_name, rust_name
+            )
+        })
+        .collect()
 }
 
 /// Self-TCO param signature: non-rc params are `mut T` (rebound in the
@@ -5621,6 +5636,24 @@ mod tests {
             SYMBOLS.get_or_init(SymbolTable::default),
             PREFIXES.get_or_init(HashSet::new),
         )
+    }
+
+    #[test]
+    fn self_tco_rc_wraps_follow_source_parameter_order() {
+        let params = vec![
+            ("first".to_string(), "List<Int>".to_string()),
+            ("second".to_string(), "Map<String,Int>".to_string()),
+            ("third".to_string(), "Vector<Int>".to_string()),
+        ];
+        let rc_indices = HashSet::from([2, 0, 1]);
+        assert_eq!(
+            emit_self_tco_rc_wraps(&params, &rc_indices),
+            [
+                "    let first = std::sync::Arc::new(first);",
+                "    let second = std::sync::Arc::new(second);",
+                "    let third = std::sync::Arc::new(third);",
+            ]
+        );
     }
 
     #[test]

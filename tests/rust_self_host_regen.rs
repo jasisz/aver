@@ -1,26 +1,20 @@
-//! Self-host regeneration gate (Wave 0 of the rust-on-MIR port).
+//! Self-host regeneration gates.
 //!
 //! The Rust backend is the SOLE self-host regeneration path:
-//! `tools/release.py` runs `aver compile self_hosted/main.av --target
-//! rust ...` to regenerate the ~26k-line Aver-in-Rust compiler under
-//! `src/self_host/aver_generated`. Nothing in CI exercises that path
-//! today — a Rust-codegen regression would slip through every test and
-//! only surface at the next release, when the self-host fails to
-//! regenerate or the regenerated compiler miscompiles.
+//! `tools/release.py` delegates to `tools/regenerate_self_host.py`, which runs
+//! `aver compile self_hosted/main.av --target rust ...` to regenerate the
+//! Aver-in-Rust compiler under `src/self_host/aver_generated`.
 //!
-//! This gate is the canary. It regenerates the self-host compiler to a
-//! temp dir via the exact `release.py` invocation, then does a REAL
-//! `cargo build` of the freshly-generated `aver_self_host_cli`,
-//! asserting it COMPILES. On top of that it RUNS the regenerated CLI
-//! over a few corpus programs and asserts stdout parity with the host
-//! VM — so a codegen regression that compiles-but-miscompiles also
-//! fails here.
+//! The ordinary CI test is a cheap freshness gate: regenerate and normalize in
+//! a temporary directory, then compare with the checked-in tree without
+//! touching the worktree. The ignored canary separately does a REAL `cargo
+//! build` and runs corpus parity, catching codegen that is fresh but invalid.
 //!
 //! ## Cost / gating
 //!
 //! The regen emits ~36 files and the build pulls the full runtime dep
-//! tree — minutes of wall time on a cold target dir. Too heavy for PR
-//! smoke, so it is `#[ignore]` + env-gated. Run it explicitly:
+//! tree — minutes of wall time on a cold target dir. That expensive half is
+//! too heavy for PR smoke, so it is `#[ignore]` + env-gated. Run it explicitly:
 //!
 //! ```text
 //! AVER_SELF_HOST_REGEN=1 cargo test --test rust_self_host_regen -- --ignored --nocapture
@@ -76,6 +70,23 @@ const PARITY_CORPUS: &[&str] = &[
 ];
 
 #[test]
+fn checked_in_self_host_matches_release_regeneration() {
+    let check = Command::new("python3")
+        .current_dir(repo_root())
+        .arg("tools/regenerate_self_host.py")
+        .arg("--check")
+        .arg("--aver-bin")
+        .arg(aver_bin())
+        .output()
+        .expect("run read-only self-host freshness gate");
+    assert!(
+        check.status.success(),
+        "self-host freshness gate failed:\n{}",
+        format_output(&check)
+    );
+}
+
+#[test]
 #[ignore = "self-host regen + build is minutes of wall-time; set AVER_SELF_HOST_REGEN=1 and run with --ignored"]
 fn self_host_regenerates_and_compiles_and_runs() {
     if std::env::var("AVER_SELF_HOST_REGEN").is_err() {
@@ -106,27 +117,16 @@ fn run_self_host_regen(mir_env: &[(&str, &str)], label: &str) {
     let target = ws.join("target");
 
     // ── (1) Regenerate the self-host compiler to a temp dir ──────────
-    // Exactly the `release.py::regenerate_self_host` invocation. We
-    // emit OUTSIDE the repo (temp dir) so the gate never mutates the
-    // checked-in `src/self_host` — it's a read-only canary. Codegen goes
-    // through the sole MIR walker path.
-    let mut regen_cmd = Command::new(aver_bin());
+    // Use the same helper `release.py` invokes, but emit OUTSIDE the repo so
+    // this expensive canary never mutates the checked-in source.
+    let mut regen_cmd = Command::new("python3");
     regen_cmd
         .current_dir(&repo)
-        .arg("compile")
-        .arg("self_hosted/main.av")
-        .arg("--target")
-        .arg("rust")
+        .arg("tools/regenerate_self_host.py")
         .arg("--output")
         .arg(&out)
-        .arg("--module-root")
-        .arg("self_hosted")
-        .arg("--with-self-host-support")
-        .arg("--guest-entry")
-        .arg("runGuestCliProgram")
-        .arg("--with-replay")
-        .arg("--policy")
-        .arg("runtime");
+        .arg("--aver-bin")
+        .arg(aver_bin());
     for (k, v) in mir_env {
         regen_cmd.env(k, v);
     }
@@ -138,17 +138,6 @@ fn run_self_host_regen(mir_env: &[(&str, &str)], label: &str) {
         "self-host regeneration ({label}) failed:\n{}",
         format_output(&regen)
     );
-
-    // The release flow deletes the test-only verify.rs (it can't build
-    // as a sibling module). Mirror that so the temp project builds the
-    // same shape release.py copies into src/self_host.
-    let verify_rs = out.join("src").join("verify.rs");
-    if verify_rs.exists() {
-        // verify.rs is only referenced under #[cfg(test)] in main.rs, so
-        // a plain `cargo build` ignores it; removing it keeps parity
-        // with the release artifact regardless.
-        let _ = fs::remove_file(&verify_rs);
-    }
 
     let generated_files: usize = fs::read_dir(out.join("src"))
         .map(|rd| rd.flatten().count())
