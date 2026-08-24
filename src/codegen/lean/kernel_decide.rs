@@ -254,7 +254,7 @@ impl CaseDecidability {
     }
 
     /// Canonical names of kernel-opaque user functions called directly by
-    /// `root`.
+    /// `root`, or reached through an unconditional forwarding wrapper.
     ///
     /// A ground case may still be evaluated through a `partial def` by
     /// `native_decide`. A case with a theorem-local symbolic capability
@@ -263,7 +263,7 @@ impl CaseDecidability {
     /// no `Decidable` instance. The caller uses this narrower query only for
     /// that symbolic-oracle shape, so ordinary executable samples keep their
     /// existing native-evaluation path.
-    pub(super) fn direct_opaque_dependencies(
+    pub(super) fn opaque_dependencies_through_forwarders(
         &self,
         root: &Spanned<crate::ast::Expr>,
         ctx: &CodegenContext,
@@ -274,12 +274,37 @@ impl CaseDecidability {
 
         let scope = ctx.active_module_scope();
         let resolved = ctx.resolve_expr(root, scope.as_deref());
-        let mut direct = HashSet::new();
-        super::decl_order::collect_resolved_fn_refs(&resolved, &mut direct);
+        let mut pending = HashSet::new();
+        super::decl_order::collect_resolved_fn_refs(&resolved, &mut pending);
+        let mut pending: Vec<FnId> = pending.into_iter().collect();
+        let mut seen = HashSet::new();
         let mut hits = std::collections::BTreeSet::new();
-        for fn_id in direct {
+        while let Some(fn_id) = pending.pop() {
+            if !seen.insert(fn_id) {
+                continue;
+            }
             if self.opaque_fns.contains(&fn_id) {
                 hits.insert(ctx.symbol_table.fn_entry(fn_id).key.canonical());
+                continue;
+            }
+
+            // A transparent `def wrapper ... := opaqueCallee ...` does not
+            // make the symbolic oracle disappear. `simp [wrapper]` leaves an
+            // application of the kernel-opaque callee, after which
+            // `native_decide` still sees the free oracle. Follow only this
+            // unconditional forwarding shape: walking arbitrary branches
+            // would decline valid concrete cases whose `simp` branch removes
+            // the opaque call before native evaluation.
+            let Some(rfd) = ctx.resolved_program.fn_by_id(fn_id) else {
+                continue;
+            };
+            let [ResolvedStmt::Expr(expr)] = rfd.body.stmts() else {
+                continue;
+            };
+            match &expr.node {
+                ResolvedExpr::Call(ResolvedCallee::Fn(target), _) => pending.push(*target),
+                ResolvedExpr::TailCall { target, .. } => pending.push(*target),
+                _ => {}
             }
         }
         hits.into_iter().collect()

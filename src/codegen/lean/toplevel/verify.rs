@@ -273,7 +273,7 @@ pub fn emit_verify_block(
         match verify_mode {
             VerifyEmitMode::NativeDecide => {
                 if !theorem_params.is_empty() {
-                    let opaque = decidability.direct_opaque_dependencies(&left, ctx);
+                    let opaque = decidability.opaque_dependencies_through_forwarders(&left, ctx);
                     if !opaque.is_empty() {
                         lines.push(record_declined_case(
                             vb,
