@@ -40,11 +40,11 @@ computed element, or a literal outside `0..=255`. See
 | Function | Signature | Notes |
 |---|---|---|
 | `Bytes.fromList` | `List<Int> -> Result<Bytes, String>` | Validates every octet; `Result.Err` names the offending value and its index. An all-literal in-range list argument discharges to plain `Bytes` — see below |
-| `Bytes.toList` | `Bytes -> List<Int>` | Exposes validated values |
+| `Bytes.octets` | `Bytes -> List<Int>` | Exposes validated values |
 | `Bytes.fromHex` | `String -> Result<Bytes, String>` | Even length, case-insensitive, no `0x` prefix |
 | `Bytes.toHex` | `Bytes -> String` | Total, lowercase output |
 | `Crypto.Digest32.fromBytes` | `Bytes -> Result<Digest32, String>` | Requires exactly 32 bytes |
-| `Crypto.Digest32.toBytes` | `Digest32 -> Bytes` | Forgets only the length refinement |
+| `Crypto.Digest32.bytes` | `Digest32 -> Bytes` | Forgets only the length refinement |
 | `Crypto.Digest32.fromHex` | `String -> Result<Digest32, String>` | Hex decode plus exact-length validation |
 | `Crypto.Digest32.toHex` | `Digest32 -> String` | Always 64 lowercase characters |
 
@@ -85,7 +85,7 @@ Vector is a persistent indexed sequence — use it for grids, buffers, lookup ta
 
 | Function | Signature | Notes |
 |---|---|---|
-| `Vector.new` | `(Int, T) -> Vector<T>` | Create vector of N elements, all set to default |
+| `Vector.new` | `(Int, T) -> Result<Vector<T>, String>` | Rejects negative, oversized, or unrepresentable lengths; a syntactic literal in `0..=u32::MAX` discharges to plain `Vector<T>` |
 | `Vector.get` | `(Vector<T>, Int) -> Option<T>` | O(1) indexed access |
 | `Vector.set` | `(Vector<T>, Int, T) -> Option<Vector<T>>` | O(1) COW update; `None` if out of bounds |
 | `Vector.len` | `Vector<T> -> Int` | |
@@ -111,7 +111,7 @@ Source: `src/types/option.rs` + constructors in `src/vm/runtime.rs`.
 | `Option.Some` | `T -> Option<T>` | Constructor |
 | `Option.None` | `Option<T>` | Value (not a function) |
 | `Option.withDefault` | `(Option<T>, T) -> T` | Unwrap Some or return default |
-| `Option.toResult` | `(Option<T>, E) -> Result<T, E>` | Convert Option to Result |
+| `Result.fromOption` | `(Option<T>, E) -> Result<T, E>` | Convert Option to Result |
 
 ### `Int` namespace
 
@@ -126,8 +126,8 @@ Source: `src/types/int.rs`
 | `Int.abs` | `Int -> Int` |
 | `Int.min` | `(Int, Int) -> Int` |
 | `Int.max` | `(Int, Int) -> Int` |
-| `Int.mod` | `(Int, Int) -> Result<Int, String>` |
-| `Int.div` | `(Int, Int) -> Result<Int, String>` |
+| `Int.mod` | `(Int, Int) -> Result<Int, String>` | A syntactic nonzero literal divisor discharges to plain `Int` |
+| `Int.div` | `(Int, Int) -> Result<Int, String>` | A syntactic nonzero literal divisor discharges to plain `Int` |
 
 ### `Bits` namespace
 
@@ -155,7 +155,9 @@ For a non-negative `n` and `width`:
 - `Bits.shiftRight(x, n)` is `floor(x / 2^n)` — an **arithmetic** right shift, so `Bits.shiftRight(-3, 1) == -2`
 - `Bits.low(x, width)` is `x mod 2^width` — the non-negative value of the lowest `width` bits, so `Bits.low(257, 8) == 1`, `Bits.low(-1, 8) == 255`, and `Bits.low(x, 0) == 0`
 
-A negative shift count or width is `Result.Err` — never a panic, never a silent direction flip, never a clamp. Like `Int.div` / `Int.mod`, a **syntactic non-negative integer literal** count discharges that error at compile time, so `Bits.low(x, 32)` types as plain `Int` while `Bits.low(x, width)` keeps `Result<Int, String>`.
+A negative shift count or width is `Result.Err` — never a panic, never a silent direction flip, never a clamp. The **16,777,216-bit materialization bound applies only where a result can grow**: always to `shiftLeft`, and to `low` when `x` is negative (extracting a finite low-bit value from infinite leading ones). Positive `low` returns `x` directly once `width` reaches its existing bit length. `shiftRight` never grows or materializes a count-sized value; an arbitrarily large non-negative count reaches `0` for non-negative `x` or `-1` for negative `x` in constant space.
+
+Like `Int.div` / `Int.mod`, syntax can discharge the error. A bounded non-negative literal discharges `shiftLeft` and `low`; **any** non-negative literal discharges `shiftRight`. Thus `Bits.low(x, 32)` and `Bits.shiftRight(x, 100000000000000000000)` type as plain `Int`, while dynamic counts keep `Result<Int, String>` because they may still be negative.
 
 Prefer `Bits.low` over a magic mask — it states the protocol invariant instead of implying it:
 
@@ -195,6 +197,8 @@ Source: `src/types/string.rs`
 |---|---|---|
 | `String.len` | `String -> Int` | Number of characters (Unicode scalar values), on every backend |
 | `String.byteLength` | `String -> Int` | UTF-8 byte count |
+| `String.toUtf8` | `String -> Bytes` | Total UTF-8 encoding; one linear byte copy |
+| `String.fromUtf8` | `Bytes -> Result<String, String>` | One linear validation/decode; `Result.Err("invalid UTF-8")` for malformed input |
 | `String.charAt` | `(String, Int) -> Option<String>` | Character at character index, or `Option.None` on out-of-bounds |
 | `String.startsWith` | `(String, String) -> Bool` | |
 | `String.endsWith` | `(String, String) -> Bool` | |
@@ -230,14 +234,16 @@ Source: `src/types/map.rs`
 
 **Sets**: `Map<T, Unit>` is the Aver way to have a set — see [language.md](language.md#sets) for usage and codegen lowering.
 
-### `Char` namespace
+### Unicode code points
 
-Source: `src/types/char.rs` — not a type, operates on `String`/`Int`.
+Source: `src/types/code_point.rs`. Aver has no surface `Char` type or
+namespace; code-point operations belong to `String` and use `Int` scalar
+values explicitly.
 
 | Function | Signature | Notes |
 |---|---|---|
-| `Char.toCode` | `String -> Int` | Unicode scalar value of first char |
-| `Char.fromCode` | `Int -> Option<String>` | Code point to 1-char string, `Option.None` for surrogates/invalid |
+| `String.firstCodePoint` | `String -> Option<Int>` | First Unicode scalar value, or `Option.None` for empty text |
+| `String.fromCodePoint` | `Int -> Option<String>` | Code point to 1-char string, `Option.None` for surrogates/invalid |
 
 ### `Crypto` namespace
 
@@ -255,7 +261,7 @@ nor a `Result`:
 ```aver
 fn doubleSha(bytes: Bytes) -> Digest32
     first = Crypto.sha256(bytes)
-    Crypto.sha256(Crypto.Digest32.toBytes(first))
+    Crypto.sha256(Crypto.Digest32.bytes(first))
 ```
 ## Effectful namespaces
 
@@ -314,8 +320,8 @@ Source: `src/services/http_server.rs`
 
 | Function | Signature |
 |---|---|
-| `HttpServer.listen` | `(Int, Fn(HttpRequest) -> HttpResponse ! [...method-level effects...]) -> Unit` |
-| `HttpServer.listenWith` | `(Int, T, Fn(T, HttpRequest) -> HttpResponse ! [...method-level effects...]) -> Unit` |
+| `HttpServer.listen` | `(Int, Fn(HttpRequest) -> HttpResponse ! [...method-level effects...]) -> Result<Unit, String>` |
+| `HttpServer.listenWith` | `(Int, T, Fn(T, HttpRequest) -> HttpResponse ! [...method-level effects...]) -> Result<Unit, String>` |
 
 `HttpServer.listen` and `HttpServer.listenWith` accept top-level function values. `listenWith` is the preferred form when a handler needs configuration, connections, or other app state, because the context stays explicit instead of being hidden in closure capture.
 
@@ -447,7 +453,7 @@ wait indefinitely for the first byte. After `poll` reports the caller's peer
 ID, a single-reader loop can call `readSome` to make progress without falling
 back to exact-count blocking. Empty `Bytes` is reserved for clean EOF.
 
-The returned payload is nominal `Bytes`; use `Bytes.toList` only when ordinary
+The returned payload is nominal `Bytes`; use `Bytes.octets` only when ordinary
 list operations are needed.
 
 A short read is an error rather than a truncated success, because fewer bytes
@@ -472,8 +478,10 @@ Contract source: `stdlib/capabilities/random.av`. Native VM and generated Rust s
 
 | Function | Signature | Notes |
 |---|---|---|
-| `Random.int` | `(Int, Int) -> Int` | Random integer in [min, max] inclusive |
+| `Random.int` | `(Int, Int) -> Result<Int, String>` | Random integer in [min, max] inclusive; valid host-range literal bounds discharge the wrapper while the effect still runs |
 | `Random.float` | `() -> Float` | Random float in [0.0, 1.0) |
+
+Literal discharge is fail-closed: it removes user-side `Result` ceremony, not the provider contract. If a provider or Oracle stub returns `Err` for proven-valid literal bounds, execution faults as a contract violation. The compiler never substitutes `min`, `0`, or another apparently valid random sample.
 
 ### `Time` namespace — use granular effects (`! [Time.now]`, `! [Time.unixMs]`, `! [Time.sleep]`)
 
@@ -483,7 +491,9 @@ Contract source: `stdlib/capabilities/time.av`. Native VM and generated Rust sha
 |---|---|---|
 | `Time.now` | `() -> String` | Current UTC timestamp string (`...Z`) |
 | `Time.unixMs` | `() -> Int` | Unix epoch milliseconds |
-| `Time.sleep` | `Int -> Unit` | Sleeps current thread for ms, runtime error on negative |
+| `Time.sleep` | `Int -> Result<Unit, String>` | Rejects negative/out-of-host-range dynamic durations; a valid literal discharges the wrapper while the sleep still runs |
+
+As with `Random.int`, a provider `Err` after literal discharge is a contract violation and faults; discharge does not turn a failed sleep into `Unit`.
 
 ### `Terminal` namespace — use granular effects (`! [Terminal.clear]`, `! [Terminal.readKey]`, etc.)
 
@@ -491,18 +501,20 @@ Source: `src/services/terminal.rs` (requires `terminal` feature, enabled by defa
 
 | Function | Signature | Notes |
 |---|---|---|
-| `Terminal.enableRawMode` | `() -> Unit` | Enter raw mode (no line buffering, no echo) |
-| `Terminal.disableRawMode` | `() -> Unit` | Leave raw mode |
-| `Terminal.clear` | `() -> Unit` | Clear entire screen |
-| `Terminal.moveTo` | `(Int, Int) -> Unit` | Move cursor to column x, row y |
-| `Terminal.print` | `a -> Unit` | Print at cursor position (no newline) |
-| `Terminal.setColor` | `String -> Unit` | Set foreground: "red"/"green"/"yellow"/"blue"/"white"/"cyan"/"magenta"/"black" |
-| `Terminal.resetColor` | `() -> Unit` | Reset colors to default |
-| `Terminal.readKey` | `() -> Option<String>` | Non-blocking poll: "up"/"down"/"left"/"right"/"esc"/"q"/char or None |
-| `Terminal.size` | `() -> Terminal.Size` | Returns `Terminal.Size { width: Int, height: Int }` |
-| `Terminal.hideCursor` | `() -> Unit` | Hide cursor |
-| `Terminal.showCursor` | `() -> Unit` | Show cursor |
-| `Terminal.flush` | `() -> Unit` | Flush stdout |
+| `Terminal.enableRawMode` | `() -> Result<Unit, String>` | Enter raw mode (no line buffering, no echo) |
+| `Terminal.disableRawMode` | `() -> Result<Unit, String>` | Leave raw mode |
+| `Terminal.clear` | `() -> Result<Unit, String>` | Clear entire screen |
+| `Terminal.moveTo` | `(Int, Int) -> Result<Unit, String>` | Move cursor to column x, row y; terminal I/O can still fail even for literal coordinates |
+| `Terminal.print` | `String -> Result<Unit, String>` | Print at cursor position (no newline) |
+| `Terminal.setColor` | `String -> Result<Unit, String>` | Set foreground: "red"/"green"/"yellow"/"blue"/"white"/"cyan"/"magenta"/"black" |
+| `Terminal.resetColor` | `() -> Result<Unit, String>` | Reset colors to default |
+| `Terminal.readKey` | `() -> Result<Option<String>, String>` | Non-blocking poll: `Ok(Some(key))`, `Ok(None)` when idle, or `Err` when the host input fails |
+| `Terminal.size` | `() -> Result<Terminal.Size, String>` | Returns `Terminal.Size { width: Int, height: Int }`; querying the host terminal can fail |
+| `Terminal.hideCursor` | `() -> Result<Unit, String>` | Hide cursor |
+| `Terminal.showCursor` | `() -> Result<Unit, String>` | Show cursor |
+| `Terminal.flush` | `() -> Result<Unit, String>` | Flush stdout |
+
+All terminal operations expose the same adapter boundary: a broken output stream, failed mode change, or input error is a `Result.Err` that the program may propagate or handle. Their outcomes are recorded for deterministic replay; there is no split where `moveTo` is fallible but an adjacent `print` silently faults outside the language value.
 
 Terminal guard: `aver run` installs a drop guard that restores the terminal (show cursor, reset colors, disable raw mode) even on panic or runtime error.
 
@@ -513,7 +525,7 @@ Source: `src/services/env.rs`
 | Function | Signature | Notes |
 |---|---|---|
 | `Env.get` | `String -> Option<String>` | Returns `Option.None` for missing/unreadable variable |
-| `Env.set` | `(String, String) -> Unit` | Runtime error on invalid key/value format |
+| `Env.set` | `(String, String) -> Result<Unit, String>` | Invalid key/value format and host write failures stay catchable |
 
 Runtime policy (`aver.toml`) can restrict allowed keys:
 

@@ -8,6 +8,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::ast::Spanned;
 use crate::ir::FnId;
+use crate::ir::hir::BuiltinIntrinsic;
 use crate::ir::mir::expr::{MirCallee, MirExpr, walk_children};
 use crate::ir::mir::program::MirProgram;
 
@@ -181,6 +182,7 @@ fn return_aliases_of_expr(
                     _ => None,
                 }
             }
+            MirCallee::Intrinsic(BuiltinIntrinsic::VectorNew) => Some(HashSet::new()),
             MirCallee::LocalSlot { .. } | MirCallee::Intrinsic(_) => None,
         },
         MirExpr::TailCall(call) => {

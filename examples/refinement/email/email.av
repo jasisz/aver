@@ -1,5 +1,5 @@
 module Email
-    exposes [fromString, toString, isValid]
+    exposes [fromString, address, isValid]
     exposes opaque [Email]
     intent =
         "Refinement-via-opaque on String. The smart constructor"
@@ -49,10 +49,10 @@ verify fromString
     fromString("noatsign")   => Result.Err("Invalid email format")
     fromString("")           => Result.Err("Invalid email format")
 
-fn toString(e: Email) -> String
+fn address(e: Email) -> String
     ? "Unwrap the validated address. Always passes isValid by construction."
     e.address
 
-verify toString
-    toString(Email(address = "user@host"))  => "user@host"
-    toString(Email(address = "a@b"))        => "a@b"
+verify address
+    address(Email(address = "user@host"))  => "user@host"
+    address(Email(address = "a@b"))        => "a@b"

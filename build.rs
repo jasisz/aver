@@ -2,6 +2,11 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn main() {
+    // The generated-project runtime pin is read from the workspace manifest.
+    // Once a build script declares explicit rerun inputs below, Cargo no
+    // longer watches every package file implicitly, so keep this dependency
+    // visible across the post-release `*-dev` version bump on main.
+    println!("cargo::rerun-if-changed=Cargo.toml");
     let manifest = std::fs::read_to_string("Cargo.toml").expect("failed to read Cargo.toml");
     let runtime_version = find_runtime_version(&manifest)
         .unwrap_or_else(|| panic!("could not find aver-rt version in Cargo.toml"));

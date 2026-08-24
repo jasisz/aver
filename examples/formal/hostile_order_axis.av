@@ -10,9 +10,9 @@ module HostileOrderAxis
         "to see the failure shape and the right repair pattern."
     effects [Random.int]
 
-fn lowStub(path: BranchPath, n: Int, min: Int, max: Int) -> Int
+fn lowStub(path: BranchPath, n: Int, min: Int, max: Int) -> Result<Int, String>
     ? "Deterministic stub: every Random.int returns the lower bound."
-    min
+    Result.Ok(min)
 
 fn rollPair() -> Tuple<Int, Int>
     ? "Two independent dice rolls in one bang group."
@@ -28,5 +28,5 @@ verify rollPair trace law firstEventOfSecondBranch
     rollPair().trace.group(0).branch(1).event(0) => Option.Some(EffectEvent(method = "Random.int", args = [7, 12], path = "1"))
 
 verify lowStub
-    lowStub(BranchPath.Root, 0, 1, 6) => 1
-    lowStub(BranchPath.Root, 5, 7, 12) => 7
+    lowStub(BranchPath.Root, 0, 1, 6) => Result.Ok(1)
+    lowStub(BranchPath.Root, 5, 7, 12) => Result.Ok(7)

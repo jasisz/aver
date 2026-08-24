@@ -63,17 +63,17 @@ where
     }
 
     if skip_server {
-        return Ok(Value::Unit);
+        return Ok(Value::Ok(Box::new(Value::Unit)));
     }
 
     let port = match &args[0] {
         Value::Int(n) => match n.to_i64() {
             Some(p) if (0..=65535).contains(&p) => p,
             _ => {
-                return Err(RuntimeError::Error(format!(
+                return Ok(Value::Err(Box::new(Value::Str(format!(
                     "HttpServer.listen: port {} is out of range (0-65535)",
                     n
-                )));
+                )))));
             }
         },
         _ => {
@@ -99,8 +99,10 @@ where
         })
     };
 
-    result.map_err(RuntimeError::Error)?;
-    Ok(Value::Unit)
+    Ok(match result {
+        Ok(()) => Value::Ok(Box::new(Value::Unit)),
+        Err(message) => Value::Err(Box::new(Value::Str(message))),
+    })
 }
 
 fn dispatch_handler<F>(

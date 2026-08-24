@@ -60,7 +60,7 @@ impl Parser {
                 return Err(self.error(format!(
                     "the '{shift}' operator does not exist in Aver — a bit-level shift is the \
                      function {named} : Result<Int, String>, which returns plain Int when the \
-                     count is a non-negative literal"
+                     count is a non-negative literal within the 16777216-bit limit"
                 )));
             }
             let line = self.current().line;

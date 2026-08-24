@@ -615,7 +615,7 @@ fn replay_poll_result(
     host_result_ok_list_int_refs(caller, &refs)
 }
 
-fn guest_int_json(value: &GuestInt) -> aver::replay::JsonValue {
+pub(super) fn guest_int_json(value: &GuestInt) -> aver::replay::JsonValue {
     match value.value {
         Some(value) => aver::replay::JsonValue::Int(value),
         None => {
@@ -680,8 +680,8 @@ pub(super) fn decode_byte_payload(
         }
     };
     // Proof-packed Bytes crosses the host ABI as `(array i8)`. Keep the old
-    // record/List<Int> decoder below as the differential fallback when
-    // `AVER_NO_PACKED_SEQUENCES` is set.
+    // record/List<Int> decoder below as the representation-differential
+    // fallback selected by the internal emitter configuration.
     if let Some(array) = bytes_ref.as_array(&*caller)? {
         let len = array.len(&*caller)?;
         let mut bytes = Vec::with_capacity(len as usize);

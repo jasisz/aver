@@ -493,9 +493,9 @@ For the proof-oriented style where a law relates an implementation to a pure spe
 Oracle laws for classified effects:
 
 ```aver
-fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Int
+fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Result<Int, String>
     ? "Deterministic Random.int stub."
-    4
+    Result.Ok(4)
 
 fn pickOne() -> Int
     ? "Rolls once."
@@ -504,7 +504,7 @@ fn pickOne() -> Int
 
 verify pickOne law usesOracle
     given rnd: Random.int = [fairDie]
-    pickOne() => rnd(BranchPath.Root, 0, 1, 6)
+    Result.Ok(pickOne()) => rnd(BranchPath.Root, 0, 1, 6)
 ```
 
 `verify <fn> law <name>` is the proof-oriented Oracle form: `aver proof` lifts the effectful function to a pure function with explicit oracle parameters and can emit a universal theorem over that oracle. Use cases-form `verify <fn> trace` when you want runtime assertions over `.result` and `.trace.*`, such as `trace.contains(Random.int(1, 6))`. See [docs/oracle.md](docs/oracle.md) for the full model.

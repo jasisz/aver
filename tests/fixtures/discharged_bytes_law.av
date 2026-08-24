@@ -15,7 +15,7 @@ fn emptyFrame() -> Bytes
 
 fn octetCount(bytes: Bytes) -> Int
     ? "How many octets a validated frame carries."
-    List.len(Bytes.toList(bytes))
+    List.len(Bytes.octets(bytes))
 
 fn dynamicOctetCount(values: List<Int>) -> Result<Int, String>
     ? "Count octets through the fallible constructor; the argument is not a literal list."
@@ -24,14 +24,14 @@ fn dynamicOctetCount(values: List<Int>) -> Result<Int, String>
 
 fn framesAgree(bytes: Bytes) -> Bool
     ? "Whether a frame carries the same octets as the literal three-octet frame."
-    Bytes.toList(bytes) == Bytes.toList(literalFrame())
+    Bytes.octets(bytes) == Bytes.octets(literalFrame())
 
 fn frameOctets(mode: Int, value: Int) -> Result<List<Int>, String>
     ? "The literal frame's octets, or a one-octet frame built from a computed value."
     match mode == 0
-        true -> Result.Ok(Bytes.toList(Bytes.fromList([0, 10, 255])))
+        true -> Result.Ok(Bytes.octets(Bytes.fromList([0, 10, 255])))
         false -> match Bytes.fromList([value])
-            Result.Ok(other) -> Result.Ok(Bytes.toList(other))
+            Result.Ok(other) -> Result.Ok(Bytes.octets(other))
             Result.Err(message) -> Result.Err(message)
 
 verify literalFrame

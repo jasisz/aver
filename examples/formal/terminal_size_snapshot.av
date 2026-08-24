@@ -1,21 +1,31 @@
 module TerminalSizeSnapshot
     intent =
         "Snapshot proof over Terminal.size — newly classified in 0.11.1."
-        "Shows the snapshot oracle shape () -> Terminal.Size and a universal law that holds in Lean and Dafny."
+        "Shows the snapshot oracle shape () -> Result<Terminal.Size, String> and a universal law that holds in Lean and Dafny."
     effects [Console, Terminal]
 
-fn fixedSizeStub() -> Terminal.Size
+fn fixedSizeStub() -> Result<Terminal.Size, String>
     ? "Stub returning a fixed terminal size for sample evaluation."
-    Terminal.Size(width = 80, height = 24)
+    Result.Ok(Terminal.Size(width = 80, height = 24))
 
-fn terminalWidth() -> Int
+fn terminalWidth() -> Result<Int, String>
     ? "Returns the current terminal width by snapshotting Terminal.size."
     ! [Terminal.size]
-    Terminal.size().width
+    size = Terminal.size()?
+    Result.Ok(size.width)
+
+fn widthFromSize(size: Result<Terminal.Size, String>) -> Result<Int, String>
+    ? "Projects the width while preserving a terminal snapshot failure."
+    value = size?
+    Result.Ok(value.width)
 
 verify terminalWidth law mirrorsOracle
     given size: Terminal.size = [fixedSizeStub]
-    terminalWidth() => size().width
+    terminalWidth() => widthFromSize(size())
+
+verify widthFromSize
+    widthFromSize(Result.Ok(Terminal.Size(width = 80, height = 24))) => Result.Ok(80)
+    widthFromSize(Result.Err("not a terminal")) => Result.Err("not a terminal")
 
 fn main() -> Unit
     ! [Console.print]

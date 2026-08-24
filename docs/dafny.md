@@ -192,7 +192,7 @@ lemma fib_fibSpec(n: int)
 
 - **No verify cases**: Z3 times out on deep computations like `fib(12) == 144`. Dafny's own `errors` total is blind to per-lemma timeouts, so `--check-json` carries a separate additive `timeouts` field (count of `… timed out after N seconds` lines) alongside `errors`; a consumer accounting for failing laws must read both. `timeouts` is informational — it does not change `passed` or the exit code (the timed-out run still fails via Dafny's exit status)
 - **Constructor collisions**: if a user type defines variants named `Ok`/`Err`, Dafny may report ambiguity errors
-- **Opaque builtins**: `IntToString`, `FloatFromString`, `CharToCode` etc. are declared without bodies — Z3 knows their signatures but can't reason about their implementation
+- **Opaque builtins**: `IntToString`, `FloatFromString`, `StringFirstCodePoint` etc. are declared without bodies — Z3 knows their signatures but can't reason about their implementation
 - **Complex laws**: laws involving indirect recursion, accumulator patterns, or multi-function chains may not be provable by Z3 alone
 
 When a law's lemma comes out with an empty body, see [transpilation.md → Debugging a law that didn't auto-prove](transpilation.md#debugging-a-law-that-didnt-auto-prove) for the `--emit-ir-after=law_lower` workflow that tells you whether the classifier matched a strategy or fell through to backend dispatch.

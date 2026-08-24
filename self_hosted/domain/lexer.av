@@ -183,10 +183,10 @@ verify tokenizeStringEscape
 
 fn openBrace() -> String
     ? "Return the opening brace character."
-    Option.withDefault(Char.fromCode(123), "x")
+    Option.withDefault(String.fromCodePoint(123), "x")
 
 verify openBrace
-    openBrace() => Option.withDefault(Char.fromCode(123), "x")
+    openBrace() => Option.withDefault(String.fromCodePoint(123), "x")
 
 fn tokenizeStringChar(src: String, pos: Int, acc: String, c: String) -> List<Token>
     ? "Handle one character inside a string literal."
@@ -261,10 +261,10 @@ verify tokenizeInterpExprAt
 
 fn closeBrace() -> String
     ? "Return the closing brace character."
-    Option.withDefault(Char.fromCode(125), "x")
+    Option.withDefault(String.fromCodePoint(125), "x")
 
 verify closeBrace
-    closeBrace() => Option.withDefault(Char.fromCode(125), "x")
+    closeBrace() => Option.withDefault(String.fromCodePoint(125), "x")
 
 fn tokenizeInterpExprC(src: String, pos: Int, c: String) -> List<Token>
     ? "Dispatch interpolation char."
@@ -273,7 +273,7 @@ fn tokenizeInterpExprC(src: String, pos: Int, c: String) -> List<Token>
         false -> tokenizeInterpExprChar(src, pos, c)
 
 verify tokenizeInterpExprC
-    tokenizeInterpExprC("}", 0, Option.withDefault(Char.fromCode(125), "x")) => [Token.TkInterpEnd, Token.TkStr(""), Token.TkEof]
+    tokenizeInterpExprC("}", 0, Option.withDefault(String.fromCodePoint(125), "x")) => [Token.TkInterpEnd, Token.TkStr(""), Token.TkEof]
 
 fn tokenizeInterpExprChar(src: String, pos: Int, c: String) -> List<Token>
     ? "Tokenize one char of interpolation expression."

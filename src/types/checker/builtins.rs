@@ -76,7 +76,7 @@ impl TypeChecker {
             );
         }
         let net_ret = || Type::Result(Box::new(Type::named("HttpResponse")), Box::new(Type::Str));
-        let disk_unit = || Type::Result(Box::new(Type::Unit), Box::new(Type::Str));
+        let result_unit = || Type::Result(Box::new(Type::Unit), Box::new(Type::Str));
         // Http.post/put/patch headers param: same shape as the
         // record fields above (`Map<String, List<String>>`).
         let header_list = header_map;
@@ -178,13 +178,13 @@ impl TypeChecker {
             (
                 "HttpServer.listen",
                 &[Type::Int, http_handler()],
-                Type::Unit,
+                result_unit(),
                 &["HttpServer.listen"],
             ),
             (
                 "HttpServer.listenWith",
                 &[Type::Int, context_var(), http_handler_with_context()],
-                Type::Unit,
+                result_unit(),
                 &["HttpServer.listenWith"],
             ),
             // SelfHostRuntime.* are the self-host bridge calls — the
@@ -198,7 +198,7 @@ impl TypeChecker {
             (
                 "SelfHostRuntime.httpServerListen",
                 &[Type::Int, Type::Var("Handler".to_string())],
-                disk_unit(),
+                result_unit(),
                 &["HttpServer.listen"],
             ),
             (
@@ -208,7 +208,7 @@ impl TypeChecker {
                     Type::Var("Ctx".to_string()),
                     Type::Var("Handler".to_string()),
                 ],
-                disk_unit(),
+                result_unit(),
                 &["HttpServer.listenWith"],
             ),
             (
@@ -217,7 +217,12 @@ impl TypeChecker {
                 Type::Option(Box::new(Type::Str)),
                 &["Env.get"],
             ),
-            ("Env.set", &[Type::Str, Type::Str], Type::Unit, &["Env.set"]),
+            (
+                "Env.set",
+                &[Type::Str, Type::Str],
+                result_unit(),
+                &["Env.set"],
+            ),
         ];
         for (name, params, ret, effects) in service_sigs {
             self.insert_sig(name, params, ret.clone(), effects);
@@ -233,65 +238,68 @@ impl TypeChecker {
                 (
                     "Terminal.enableRawMode",
                     &[],
-                    Type::Unit,
+                    result_unit(),
                     &["Terminal.enableRawMode"],
                 ),
                 (
                     "Terminal.disableRawMode",
                     &[],
-                    Type::Unit,
+                    result_unit(),
                     &["Terminal.disableRawMode"],
                 ),
-                ("Terminal.clear", &[], Type::Unit, &["Terminal.clear"]),
+                ("Terminal.clear", &[], result_unit(), &["Terminal.clear"]),
                 (
                     "Terminal.moveTo",
                     &[Type::Int, Type::Int],
-                    Type::Unit,
+                    result_unit(),
                     &["Terminal.moveTo"],
                 ),
                 (
                     "Terminal.print",
                     &[Type::Str],
-                    Type::Unit,
+                    result_unit(),
                     &["Terminal.print"],
                 ),
                 (
                     "Terminal.setColor",
                     &[Type::Str],
-                    Type::Unit,
+                    result_unit(),
                     &["Terminal.setColor"],
                 ),
                 (
                     "Terminal.resetColor",
                     &[],
-                    Type::Unit,
+                    result_unit(),
                     &["Terminal.resetColor"],
                 ),
                 (
                     "Terminal.readKey",
                     &[],
-                    Type::Option(Box::new(Type::Str)),
+                    Type::Result(
+                        Box::new(Type::Option(Box::new(Type::Str))),
+                        Box::new(Type::Str),
+                    ),
                     &["Terminal.readKey"],
                 ),
                 (
                     "Terminal.size",
                     &[],
-                    Type::named("Terminal.Size"),
+                    Type::Result(Box::new(Type::named("Terminal.Size")), Box::new(Type::Str)),
                     &["Terminal.size"],
                 ),
                 (
                     "Terminal.hideCursor",
                     &[],
-                    Type::Unit,
+                    result_unit(),
                     &["Terminal.hideCursor"],
                 ),
                 (
                     "Terminal.showCursor",
                     &[],
-                    Type::Unit,
+                    result_unit(),
                     &["Terminal.showCursor"],
                 ),
-                ("Terminal.flush", &[], Type::Unit, &["Terminal.flush"]),
+                ("Terminal.flush", &[], result_unit(), &["Terminal.flush"]),
             ];
             for (name, params, ret, effects) in terminal_sigs {
                 self.insert_sig(name, params, ret.clone(), effects);
@@ -342,10 +350,10 @@ impl TypeChecker {
         //
         // `and` / `or` / `xor` / `not` are total: that reading is defined
         // for every integer, so there is nothing to fail on. The three
-        // count-taking operations register the DYNAMIC type; when the count
-        // is a syntactic non-negative integer literal they type as plain
-        // `Int` instead — the literal-count discharge rule in `infer/expr.rs`
-        // (`is_literal_nonneg_int_count`), the same shape as `Int.div`.
+        // count-taking operations register the DYNAMIC type. Literal
+        // discharge is operation-specific: shiftLeft/low retain the fixed
+        // materialization bound, while shiftRight accepts every non-negative
+        // literal because its result cannot grow.
         let bits_sigs: &[(&str, &[Type], Type, &[&str])] = &[
             ("Bits.and", &[Type::Int, Type::Int], Type::Int, &[]),
             ("Bits.or", &[Type::Int, Type::Int], Type::Int, &[]),
@@ -424,6 +432,13 @@ impl TypeChecker {
             ("String.fromInt", &[Type::Int], Type::Str, &[]),
             ("String.fromFloat", &[Type::Float], Type::Str, &[]),
             ("String.fromBool", &[Type::Bool], Type::Str, &[]),
+            ("String.toUtf8", &[Type::Str], Type::named("Bytes"), &[]),
+            (
+                "String.fromUtf8",
+                &[Type::named("Bytes")],
+                Type::Result(Box::new(Type::Str), Box::new(Type::Str)),
+                &[],
+            ),
             ("String.toLower", &[Type::Str], Type::Str, &[]),
             ("String.toUpper", &[Type::Str], Type::Str, &[]),
         ];
@@ -505,7 +520,12 @@ impl TypeChecker {
         // Vector namespace — polymorphic over T.
         let vec_t = || Type::Vector(Box::new(t_var()));
         let vector_sigs: &[(&str, &[Type], Type, &[&str])] = &[
-            ("Vector.new", &[Type::Int, t_var()], vec_t(), &[]),
+            (
+                "Vector.new",
+                &[Type::Int, t_var()],
+                Type::Result(Box::new(vec_t()), Box::new(Type::Str)),
+                &[],
+            ),
             (
                 "Vector.get",
                 &[vec_t(), Type::Int],
@@ -536,17 +556,22 @@ impl TypeChecker {
             self.insert_sig(name, params, ret.clone(), effects);
         }
 
-        // Char namespace
-        let char_sigs: &[(&str, &[Type], Type, &[&str])] = &[
-            ("Char.toCode", &[Type::Str], Type::Int, &[]),
+        // Unicode scalar-value helpers live under their String owner.
+        let code_point_sigs: &[(&str, &[Type], Type, &[&str])] = &[
             (
-                "Char.fromCode",
+                "String.firstCodePoint",
+                &[Type::Str],
+                Type::Option(Box::new(Type::Int)),
+                &[],
+            ),
+            (
+                "String.fromCodePoint",
                 &[Type::Int],
                 Type::Option(Box::new(Type::Str)),
                 &[],
             ),
         ];
-        for (name, params, ret, effects) in char_sigs {
+        for (name, params, ret, effects) in code_point_sigs {
             self.insert_sig(name, params, ret.clone(), effects);
         }
 
@@ -554,6 +579,7 @@ impl TypeChecker {
         // generative-effect oracles (`(BranchPath, Int, args...) -> T`).
         // Three constructors, no other public surface.
         let branch_path_ty = || Type::named(crate::types::branch_path::TYPE_NAME.to_string());
+        let branch_path_result = || Type::Result(Box::new(branch_path_ty()), Box::new(Type::Str));
         // `BranchPath.Root` is a nullary value (like `Option.None`) —
         // PascalCase, no parens. `.child` / `.parse` are methods.
         self.value_members
@@ -562,10 +588,10 @@ impl TypeChecker {
             (
                 "BranchPath.child",
                 &[branch_path_ty(), Type::Int],
-                branch_path_ty(),
+                branch_path_result(),
                 &[],
             ),
-            ("BranchPath.parse", &[Type::Str], branch_path_ty(), &[]),
+            ("BranchPath.parse", &[Type::Str], branch_path_result(), &[]),
         ];
         for (name, params, ret, effects) in branch_path_sigs {
             self.insert_sig(name, params, ret.clone(), effects);
@@ -598,6 +624,11 @@ impl TypeChecker {
 
         // Option combinators
         self.insert_sig("Option.withDefault", &[option_t(), t_var()], t_var(), &[]);
-        self.insert_sig("Option.toResult", &[option_t(), e_var()], result_te(), &[]);
+        self.insert_sig(
+            "Result.fromOption",
+            &[option_t(), e_var()],
+            result_te(),
+            &[],
+        );
     }
 }

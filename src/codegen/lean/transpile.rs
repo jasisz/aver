@@ -40,6 +40,7 @@ fn emit_lifted_effectful_functions(
     reachable: &HashSet<crate::ir::FnId>,
     foreign_helpers: &HashMap<String, Vec<String>>,
     recursive_fns: &HashSet<String>,
+    capability_opacity: &super::capability_opaque::CapabilityOpacity,
     sampled_fns: &mut SampledFnClassification,
     sections: &mut Vec<String>,
 ) {
@@ -152,7 +153,10 @@ fn emit_lifted_effectful_functions(
                     toplevel::emit_fn_def(fd, recursive_fns, ctx)
                 }
             };
-            let Some(code) = code else { continue };
+            let Some(mut code) = code else { continue };
+            if capability_opacity.emitted_component_reaches_result_proven(&component, ctx) {
+                code = format!("noncomputable section\n\n{code}\nend");
+            }
             if component_is_kernel_opaque(&component, std::slice::from_ref(&code)) {
                 sampled_fns.opaque.extend(
                     component
@@ -507,12 +511,31 @@ fn emit_type_sections(
 ) -> Vec<String> {
     ctx.with_module_scope(scope, || {
         let mut sections = vec![toplevel::emit_type_def_in_scope(td, ctx, scope)];
-        if scope == Some("Bytes")
-            && crate::codegen::common::type_def_name(td) == "Bytes"
-            && ctx.capabilities.uses_standard_bytes()
-        {
+        if scope == Some("Bytes") && crate::codegen::common::type_def_name(td) == "Bytes" {
             sections.push(
                 "instance : Nonempty Bytes := ⟨⟨[], by simp [Bytes.allInRange]⟩⟩".to_string(),
+            );
+            // Pure builtin bridge for `String.toUtf8` / `String.fromUtf8`.
+            // Lean's native String storage is UTF-8, so encoding maps its
+            // ByteArray once and proves the ordinary Bytes refinement from
+            // UInt8's bound. Decoding delegates the one validity check to
+            // `String.fromUTF8?`; the error text matches every runtime.
+            sections.push(
+                r#"def stringToUtf8 (s : String) : Bytes :=
+  ⟨s.toUTF8.toList.map (fun byte => (byte.toNat : Int)), by
+    induction s.toUTF8.toList with
+    | nil => simp [allInRange]
+    | cons head tail ih =>
+      have hlo : (head.toNat : Int) >= 0 := Int.natCast_nonneg _
+      have hu8 := UInt8.toNat_lt head
+      have hhi : (head.toNat : Int) <= 255 := by omega
+      simp [allInRange, hlo, hhi, ih]⟩
+
+def stringFromUtf8 (bytes : Bytes) : Except String String :=
+  match String.fromUTF8? (bytes.val.map (fun byte => UInt8.ofNat byte.toNat)).toByteArray with
+  | some text => Except.ok text
+  | none => Except.error "invalid UTF-8""#
+                    .to_string(),
             );
         }
         if cert_model {
@@ -910,6 +933,7 @@ pub(super) fn transpile_unified(
         &proof_reachable,
         &dependency_helpers,
         lifted_recursive_names,
+        &capability_opacity,
         &mut sampled_fns,
         &mut entry_lifted_sections,
     );
@@ -1004,6 +1028,7 @@ pub(super) fn transpile_unified(
             &proof_reachable,
             &dependency_helpers,
             lifted_recursive_names,
+            &capability_opacity,
             &mut sampled_fns,
             &mut body_sections,
         );

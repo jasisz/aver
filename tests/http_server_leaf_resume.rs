@@ -121,7 +121,7 @@ fn starting_a_server_from_a_frameless_leaf_returns_to_the_leaf() {
     effects [Console, HttpServer]
 
 {HANDLER}
-fn serve(port: Int) -> Unit
+fn serve(port: Int) -> Result<Unit, String>
     ? "No user call and no binding, so this chunk is a frameless leaf."
     ! [HttpServer.listen]
     HttpServer.listen(port, handleRequest)
@@ -149,7 +149,7 @@ fn starting_a_server_from_a_framed_body_is_unchanged() {
     effects [Console, HttpServer]
 
 {HANDLER}
-fn serve(port: Int) -> Unit
+fn serve(port: Int) -> Result<Unit, String>
     ? "Binds a local first, so this chunk keeps a frame of its own."
     ! [HttpServer.listen]
     p = port
@@ -166,15 +166,15 @@ fn main() -> Unit
 }
 
 /// A frameless leaf with bytecode still to run after the server call — the
-/// spelling `examples/apps/notepad/app.av` uses, `Result.Ok(HttpServer.listen(
-/// ...))`. The wrap has to happen in the leaf, and `RETURN` has to find the
-/// `leaf_return` the server branch must not have disturbed.
+/// spelling `examples/apps/notepad/app.av` uses. `RETURN` has to find the
+/// `leaf_return` the server branch must not have disturbed after constructing
+/// the server's `Result`.
 ///
 /// (A leaf body is a single expression: a second statement binds the first
 /// one's value, which pushes `local_count` past `arity` and gives the chunk a
 /// frame. Wrapping the call is how a leaf does anything after it.)
 #[test]
-fn a_frameless_leaf_wraps_the_server_result_and_returns_it() {
+fn a_frameless_leaf_returns_the_server_result() {
     let src = format!(
         r#"module HttpServerLeafWrap
     intent = "a frameless leaf wraps the outcome of starting the server"
@@ -185,7 +185,7 @@ fn a_frameless_leaf_wraps_the_server_result_and_returns_it() {
 fn serve(port: Int) -> Result<Unit, String>
     ? "Starts the server and wraps the outcome, with no binding of its own."
     ! [HttpServer.listen]
-    Result.Ok(HttpServer.listen(port, handleRequest))
+    HttpServer.listen(port, handleRequest)
 
 fn main() -> Unit
     ! [Console.print, HttpServer.listen]

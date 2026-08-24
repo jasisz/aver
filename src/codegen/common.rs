@@ -1620,10 +1620,10 @@ pub fn unclassified_fn_names(ctx: &CodegenContext) -> HashSet<String> {
 /// Issue #128: does the law call any fn the proof-mode classifier
 /// rejected as "outside proof subset"?
 ///
-/// `size`, `toSorted`, `blackDepth` and friends compile to
-/// fuel-bounded helpers (`size__fuel` / `toSorted__fuel`) that the
+/// `size`, `valuesInOrder`, `blackDepth` and friends compile to
+/// fuel-bounded helpers (`size__fuel` / `valuesInOrder__fuel`) that the
 /// `induction` tactic can't drive — even when the universal claim is
-/// mathematically true (`∀ t, size t = (toSorted t).length`). The
+/// mathematically true (`∀ t, size t = (valuesInOrder t).length`). The
 /// auto-proof matcher emits an `induction t with …` chain that
 /// leaves the goal under fuel, lake fails. Skip the universal on
 /// this shape; the expanded `_sample_N` lemmas remain decidable
@@ -1650,14 +1650,14 @@ fn expr_calls_named(expr: &Spanned<Expr>, names: &HashSet<String>) -> bool {
     crate::codegen::expr_walk::any(expr, &mut |node| match &node.node {
         Expr::FnCall(callee, _) => {
             // Resolve the callee through the same path other emitters use —
-            // covers bare (`size`), dotted (`Dep.toSorted`), and resolved
+            // covers bare (`size`), dotted (`Dep.valuesInOrder`), and resolved
             // module-qualified shapes. The unclassified set is populated
             // from the recursion classifier's diagnostics, which today
             // emit the local `fd.name` (bare) regardless of which module
             // the fn lives in (see `recursion::detect`'s issue messages).
             // Match BOTH the resolved canonical name and its bare suffix
-            // so `Dep.toSorted(xs)` lands on the gate when the set holds
-            // just `toSorted` — and so a future migration to qualified
+            // so `Dep.valuesInOrder(xs)` lands on the gate when the set holds
+            // just `valuesInOrder` — and so a future migration to qualified
             // diagnostic names keeps working.
             expr_to_dotted_name(&callee.node)
                 .map(|n| {
@@ -3947,7 +3947,7 @@ mod tests {
         // `UnclassifiedFn` messages keyed by bare `fd.name`, so the
         // unclassified set the gate consults holds BARE names even
         // for fns living in a dep module. A law calling
-        // `Dep.toSorted(xs)` against a bare-`toSorted` unclassified
+        // `Dep.valuesInOrder(xs)` against a bare-`valuesInOrder` unclassified
         // set has to match on the bare suffix too — otherwise the
         // gate doesn't fire and the backend emits a non-closing
         // `induction t with …`. Also accepts a fully-qualified entry
@@ -3956,7 +3956,7 @@ mod tests {
         let lhs = sb(Expr::FnCall(
             bsb(Expr::Attr(
                 bsb(Expr::Ident("Dep".to_string())),
-                "toSorted".to_string(),
+                "valuesInOrder".to_string(),
             )),
             vec![sb(Expr::Ident("xs".to_string()))],
         ));
@@ -3966,13 +3966,13 @@ mod tests {
         // Forward-compat: a fully-qualified entry matches a dotted
         // callee directly.
         let mut canonical = HashSet::new();
-        canonical.insert("Dep.toSorted".to_string());
+        canonical.insert("Dep.valuesInOrder".to_string());
         assert!(law_calls_unclassified_fn(&law, &canonical));
 
         // Real production shape today: classifier emits bare names;
         // the gate must still catch the dotted callsite.
         let mut bare_only = HashSet::new();
-        bare_only.insert("toSorted".to_string());
+        bare_only.insert("valuesInOrder".to_string());
         assert!(
             law_calls_unclassified_fn(&law, &bare_only),
             "bare unclassified name must catch a dotted callsite via suffix match"

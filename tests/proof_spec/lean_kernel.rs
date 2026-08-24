@@ -2417,7 +2417,7 @@ fn export_kernel_decide_declines(out: &std::path::Path) -> String {
 }
 
 #[test]
-fn proof_lean_panic_capable_builtins_stay_native_decide() {
+fn proof_lean_semantically_mismatched_builtins_stay_native_decide() {
     // The ground-truth literal alone does NOT close the vacuity hole. Lean's
     // `panic!` returns `default`, and under KERNEL reduction it does so with
     // no diagnostic — so a model that panics still proves the equation
@@ -2427,16 +2427,15 @@ fn proof_lean_panic_capable_builtins_stay_native_decide() {
     // `narrowedIndex` is the two-step version an audit of single builtins
     // misses: `Vector.get(v, -1)` lowers to `v[Int.toNat (-1)]?` = `v[0]?`, so
     // the model takes the `Some` arm the VM never took (the VM returns
-    // `Option.None`), lands on `Char.toCode ""`, and defaults that panic to
-    // `0`. `0 == 65` is `false` — the very literal the VM recorded. Under
-    // `decide +kernel` that builds green and silent; under `native_decide` the
-    // `PANIC at …` line makes `aver proof --check` fail the run.
+    // `Option.None`). Both branches happen to make the final predicate false,
+    // so kernel reduction would certify the sample despite the semantic
+    // mismatch.
     //
-    // So both seams are declined per-builtin: `Char.toCode` because it can
-    // panic on an input a program can supply, `Vector.get` because it narrows
-    // a negative index the VM rejected into one it accepts. The decline is
-    // keyed on the BUILTIN, not on the case — `charCode "A"` and
-    // `firstItem [7, 8]` never come near a bad index, and still route native.
+    // `Vector.get` is therefore declined because it narrows a negative index
+    // the VM rejects into one it accepts. The decline is keyed on the builtin,
+    // not on the case, so `firstItem [7, 8]` still routes native. In contrast,
+    // `String.firstCodePoint` is total and semantically aligned, so
+    // `charCode "A"` is kernel-decided.
     // Proving in-bounds-ness per case is exactly the reasoning this
     // classifier refuses to do.
     //
@@ -2452,12 +2451,12 @@ fn proof_lean_panic_capable_builtins_stay_native_decide() {
         (
             "narrowedIndex",
             "native_decide",
-            "reaches a defaulted `Char.toCode` panic through a narrowed index",
+            "contains the index-narrowing `Vector.get` mismatch",
         ),
         (
             "charCode \"A\"",
-            "native_decide",
-            "calls the panic-capable `Char.toCode`",
+            "decide +kernel",
+            "uses the total `String.firstCodePoint`",
         ),
         (
             "firstItem [7, 8]",
@@ -2483,10 +2482,9 @@ fn proof_lean_panic_capable_builtins_stay_native_decide() {
         let _ = std::fs::remove_dir_all(&out);
         return;
     }
-    // The demotion has to make the panic VISIBLE, not merely move it: with
-    // `narrowedIndex` on `native_decide`, `aver proof --check` sees the
-    // `PANIC at …` line and fails the run. Under `decide +kernel` the same
-    // file reported `model_panicked: false, passed: true`.
+    // The semantically mismatched `Vector.get` case remains on
+    // `native_decide`, while the total code-point operation introduces no
+    // panic. The complete file must therefore build cleanly.
     let aver_bin = env!("CARGO_BIN_EXE_aver");
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let checked = temp_output_dir("aver-proof-kernel-decide-declines-check");
@@ -2516,9 +2514,9 @@ fn proof_lean_panic_capable_builtins_stay_native_decide() {
             summary["passed"].as_bool(),
             summary["build_errors"].as_u64(),
         ),
-        (Some(true), Some(false), Some(0)),
-        "the demoted case must surface its model panic as a HARD `--check` \
-         failure (and the kernel-decided twins must still build):\n{}",
+        (Some(false), Some(true), Some(0)),
+        "the mismatched index case must stay native without reintroducing a \
+         code-point model panic:\n{}",
         format_output(&run)
     );
     let _ = std::fs::remove_dir_all(&out);

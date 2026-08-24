@@ -1061,19 +1061,41 @@ impl TypeRegistry {
         }
         // Same for the count-taking `Bits` operations: their `Err` arm
         // carries a fixed message verbatim from the VM (`src/types/bits.rs`).
-        // A negative count is the ONLY catchable failure, so these two
-        // strings are the whole error surface of the namespace.
+        // Negative and oversized counts are the catchable failures, so these
+        // four strings are the whole error surface of the namespace.
         if resolved_fn_defs.iter().any(|fd| {
             fn_body_calls_builtin(fd, "Bits.shiftLeft")
                 || fn_body_calls_builtin(fd, "Bits.shiftRight")
         }) {
             intern_synthetic(b"negative shift count".to_vec());
+            intern_synthetic(b"shift count exceeds the 16777216 bit limit".to_vec());
         }
         if resolved_fn_defs
             .iter()
             .any(|fd| fn_body_calls_builtin(fd, "Bits.low"))
         {
             intern_synthetic(b"negative bit width".to_vec());
+            intern_synthetic(b"bit width exceeds the 16777216 bit limit".to_vec());
+        }
+        if resolved_fn_defs
+            .iter()
+            .any(|fd| fn_body_calls_builtin(fd, "Vector.new"))
+        {
+            intern_synthetic(b"Vector.new: size must be between 0 and 4294967295".to_vec());
+        }
+        if resolved_fn_defs
+            .iter()
+            .any(|fd| fn_body_calls_builtin(fd, "Random.int"))
+        {
+            intern_synthetic(b"Random.int: bounds must fit a 64-bit integer".to_vec());
+            intern_synthetic(b"Random.int: min must be <= max".to_vec());
+        }
+        if resolved_fn_defs
+            .iter()
+            .any(|fd| fn_body_calls_builtin(fd, "Time.sleep"))
+        {
+            intern_synthetic(b"Time.sleep: ms must fit a 64-bit integer".to_vec());
+            intern_synthetic(b"Time.sleep: ms must be non-negative".to_vec());
         }
 
         // Phase 4.2.1 (0.20) — register the placeholder error
@@ -1774,8 +1796,8 @@ fn expr_uses_string(expr: &crate::ir::hir::ResolvedExpr) -> bool {
                             | "String.charAt"
                             | "String.chars"
                             | "String.byteLength"
-                            | "Char.toCode"
-                            | "Char.fromCode"
+                            | "String.firstCodePoint"
+                            | "String.fromCodePoint"
                             // `Int.mod`, `Int.div`, `Int.fromString`,
                             // and `Float.fromString` return
                             // Result<_, String> — touching them forces the
@@ -2006,9 +2028,9 @@ fn builtin_touches_int(name: &str) -> bool {
             | "String.length"
             | "String.byteLength"
             | "String.charAt"
-            // Char codepoints are Int.
-            | "Char.toCode"
-            | "Char.fromCode"
+            // Unicode code points are Int payloads.
+            | "String.firstCodePoint"
+            | "String.fromCodePoint"
             // Indexed collection ops carry an `Int` index / length.
             | "Vector.len"
             | "Vector.get"
@@ -2461,7 +2483,7 @@ pub(super) fn aver_to_wasm(
     // dispatch. The index identifies the target fn; the `call_indirect`
     // functype is pre-registered from the param's `Fn(..)` sig so it
     // matches the target fn's own functype exactly. Verify / oracle
-    // givens (`fn pairSpec(rnd: Fn(BranchPath, Int, Int, Int) -> Int)`)
+    // givens (`fn pairSpec(rnd: Fn(BranchPath, Int, Int, Int) -> Result<Int, String>)`)
     // whose bodies are dead from `_start` carry the same i32 slot
     // harmlessly.
     if trimmed.starts_with("Fn(") {

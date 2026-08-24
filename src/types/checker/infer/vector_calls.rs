@@ -4,6 +4,7 @@ impl TypeChecker {
     pub(in super::super) fn infer_vector_call_type(
         &mut self,
         name: &str,
+        args: &[Spanned<Expr>],
         arg_types: &[Type],
     ) -> Option<Type> {
         let vector_ty = |t: Type| Type::Vector(Box::new(t));
@@ -51,7 +52,12 @@ impl TypeChecker {
                     ));
                 }
                 let elem_ty = arg_types[1].clone();
-                Some(vector_ty(elem_ty))
+                let vector = vector_ty(elem_ty);
+                if crate::ast::is_literal_vector_size(&args[0]) {
+                    Some(vector)
+                } else {
+                    Some(Type::Result(Box::new(vector), Box::new(Type::Str)))
+                }
             }
             "Vector.get" => {
                 if let Err(fallback) = expect_arity(self, 2, option_ty(Type::Invalid)) {

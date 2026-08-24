@@ -14,7 +14,7 @@ fn safeSum(a: Int, b: Int) -> Result<Int, String>
     na = Refinement.Natural.Natural.fromInt(a)?
     nb = Refinement.Natural.Natural.fromInt(b)?
     sum = Refinement.Natural.Natural.add(na, nb)?
-    Result.Ok(Refinement.Natural.Natural.toInt(sum))
+    Result.Ok(Refinement.Natural.Natural.value(sum))
 
 verify safeSum
     safeSum(3, 4)   => Result.Ok(7)

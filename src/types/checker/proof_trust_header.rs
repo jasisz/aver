@@ -232,13 +232,11 @@ pub(crate) fn generate_for_effects_with_registry(
 
     out.push_str("Effect classification (closed for Oracle v1 built-ins):\n");
     out.push_str("  Declared program capabilities use the oracle dimension pinned above.\n");
-    out.push_str("  Other built-in effects remain outside Oracle v1 and are rejected:\n");
-    out.push_str("  ambient process state (Env.set), persistent TCP sessions\n");
-    out.push_str("  (Tcp.connect / .writeLine / .readLine / .close), server\n");
-    out.push_str("  lifecycle callbacks (HttpServer.*), and terminal modal state\n");
-    out.push_str("  (Terminal.enableRawMode / .disableRawMode / .setColor /\n");
-    out.push_str("  .resetColor / .size). These remain replay-only. Oracle covers\n");
-    out.push_str("  only the fixed built-in effect set listed above.\n");
+    out.push_str("  Env.set, TCP session calls, and every Terminal operation are\n");
+    out.push_str("  classified per call; this models each request/outcome, not hidden\n");
+    out.push_str("  cross-call host state. Server lifecycle callbacks (HttpServer.*)\n");
+    out.push_str("  remain outside Oracle v1 and are rejected. Oracle covers only\n");
+    out.push_str("  the fixed built-in effect set listed above.\n");
     out.push('\n');
 
     out.push_str("Built-in oracle invariants (runtime-guaranteed):\n");

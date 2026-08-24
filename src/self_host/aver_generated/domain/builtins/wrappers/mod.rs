@@ -7,7 +7,10 @@ use crate::*;
 
 /// Dispatch Result.* and Option.* builtins.
 #[inline(always)]
-pub fn call(name: AverStr, args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn call(
+    name: AverStr,
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     {
         let __dispatch_subject = name.clone();
@@ -50,7 +53,9 @@ pub fn call(name: AverStr, args: &aver_rt::AverList<Val>) -> Result<Val, AverStr
 }
 
 /// Result.Ok(value) -> wrapped Ok value.
-pub fn builtinResultOk(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn builtinResultOk(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     Ok(crate::aver_generated::domain::value::Val::ValOk(
@@ -59,7 +64,9 @@ pub fn builtinResultOk(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
 }
 
 /// Result.Err(value) -> wrapped Err value.
-pub fn builtinResultErr(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn builtinResultErr(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     Ok(crate::aver_generated::domain::value::Val::ValErr(
@@ -68,7 +75,9 @@ pub fn builtinResultErr(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
 }
 
 /// Result.withDefault(result, default) -> unwrap Ok or return default.
-pub fn builtinResultWithDefault(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn builtinResultWithDefault(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let pair = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
     {
@@ -85,7 +94,9 @@ pub fn builtinResultWithDefault(args: &aver_rt::AverList<Val>) -> Result<Val, Av
 }
 
 /// Option.Some(value) -> wrapped Some value.
-pub fn builtinOptionSome(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn builtinOptionSome(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     Ok(crate::aver_generated::domain::value::Val::ValSome(
@@ -94,7 +105,9 @@ pub fn builtinOptionSome(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> 
 }
 
 /// Option.withDefault(option, default) -> unwrap Some or return default.
-pub fn builtinOptionWithDefault(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn builtinOptionWithDefault(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let pair = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
     {
@@ -110,8 +123,10 @@ pub fn builtinOptionWithDefault(args: &aver_rt::AverList<Val>) -> Result<Val, Av
     }
 }
 
-/// Option.toResult(option, errMsg) -> Result.
-pub fn callOptionToResult(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+/// Result.fromOption(option, errMsg) -> Result.
+pub fn callResultFromOption(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let pair = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
     {
@@ -126,7 +141,7 @@ pub fn callOptionToResult(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr>
             crate::aver_generated::domain::value::Val::ValNone => Ok(
                 crate::aver_generated::domain::value::Val::ValErr(std::sync::Arc::new(errV)),
             ),
-            _ => Err(AverStr::from("Option.toResult requires Option value")),
+            _ => Err(AverStr::from("Result.fromOption requires Option value")),
         }
     }
 }

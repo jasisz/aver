@@ -89,11 +89,9 @@ fn callBuiltinAfterList(name: String, args: List<Val>) -> Result<Val, String>
                     false -> callBuiltinOther(name, args)
 
 fn callBuiltinOther(name: String, args: List<Val>) -> Result<Val, String>
-    ? "Handle non-prefixed builtins: Result.*, Option.*, Bool.*, Map.*, services, Char, variant constructors."
+    ? "Handle non-prefixed builtins: Result.*, Option.*, Bool.*, Map.*, services, and variant constructors."
     ! [Args.get, Console.error, Console.print, Console.readLine, Console.warn, Disk.appendText, Disk.delete, Disk.deleteDir, Disk.exists, Disk.listDir, Disk.makeDir, Disk.readText, Disk.writeText, Env.get, Env.set, Http.delete, Http.get, Http.head, Http.patch, Http.post, Http.put, HttpServer.listen, HttpServer.listenWith, Random.int, Tcp.close, Tcp.connect, Tcp.ping, Tcp.readLine, Tcp.send, Tcp.writeLine, Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor, Terminal.size, Time.now, Time.sleep, Time.unixMs]
     match name
-        "Char.fromCode" -> Domain.Builtins.Primitives.callChar(name, args)
-        "Char.toCode" -> Domain.Builtins.Primitives.callChar(name, args)
         "Console.print" -> builtinConsolePrint(args)
         "Console.readLine" -> builtinConsoleReadLine(args)
         "Console.error" -> builtinConsoleError(args)
@@ -115,7 +113,7 @@ fn callBuiltinOther(name: String, args: List<Val>) -> Result<Val, String>
         "Option.Some" -> Domain.Builtins.Wrappers.call(name, args)
         "Option.None" -> Result.Ok(Val.ValNone)
         "Option.withDefault" -> Domain.Builtins.Wrappers.call(name, args)
-        "Option.toResult" -> Domain.Builtins.Wrappers.callOptionToResult(args)
+        "Result.fromOption" -> Domain.Builtins.Wrappers.callResultFromOption(args)
         "Bool.or" -> builtinBoolOr(args)
         "Bool.and" -> builtinBoolAnd(args)
         "Bool.not" -> builtinBoolNot(args)
@@ -184,7 +182,7 @@ fn builtinEnvGet(args: List<Val>) -> Result<Val, String>
         Option.None -> Result.Ok(Val.ValNone)
 
 fn builtinEnvSet(args: List<Val>) -> Result<Val, String>
-    ? "Env.set(key, value) -> Unit."
+    ? "Env.set(key, value) -> Result<Unit, String>."
     ! [Env.set]
     pair = Domain.Builtins.Helpers.twoArgs(args)?
     match pair
@@ -195,8 +193,9 @@ fn builtinEnvSetInner(keyV: Val, valueV: Val) -> Result<Val, String>
     ! [Env.set]
     key = Domain.Builtins.Helpers.expectStr(keyV)?
     value = Domain.Builtins.Helpers.expectStr(valueV)?
-    Env.set(key, value)
-    Result.Ok(Val.ValUnit)
+    match Env.set(key, value)
+        Result.Ok(_) -> Result.Ok(Val.ValOk(Val.ValUnit))
+        Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))
 
 fn stringsToVals(strs: List<String>, acc: List<Val>) -> List<Val>
     ? "Convert list of strings to list of ValStr."
@@ -369,8 +368,8 @@ fn builtinHttpServerListenInner(portV: Val, handlerV: Val) -> Result<Val, String
     ! [HttpServer.listen]
     port = Domain.Builtins.Helpers.expectInt(portV)?
     match SelfHostRuntime.httpServerListen(port, handlerV)
-        Result.Ok(_) -> Result.Ok(Val.ValUnit)
-        Result.Err(e) -> Result.Err(e)
+        Result.Ok(_) -> Result.Ok(Val.ValOk(Val.ValUnit))
+        Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))
 
 fn builtinHttpServerListenWith(args: List<Val>) -> Result<Val, String>
     ? "HttpServer.listenWith(port, context, handler) through the generated self-host runtime bridge."
@@ -388,8 +387,8 @@ fn builtinHttpServerListenWithInner(portV: Val, contextV: Val, handlerV: Val) ->
     ! [HttpServer.listenWith]
     port = Domain.Builtins.Helpers.expectInt(portV)?
     match SelfHostRuntime.httpServerListenWith(port, contextV, handlerV)
-        Result.Ok(_) -> Result.Ok(Val.ValUnit)
-        Result.Err(e) -> Result.Err(e)
+        Result.Ok(_) -> Result.Ok(Val.ValOk(Val.ValUnit))
+        Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))
 
 fn builtinRandomInt(args: List<Val>) -> Result<Val, String>
     ? "Random.int(min, max) -> random integer."
@@ -403,15 +402,18 @@ fn builtinRandomIntInner(minV: Val, maxV: Val) -> Result<Val, String>
     ! [Random.int]
     minN = Domain.Builtins.Helpers.expectInt(minV)?
     maxN = Domain.Builtins.Helpers.expectInt(maxV)?
-    Result.Ok(Val.ValInt(Random.int(minN, maxN)))
+    match Random.int(minN, maxN)
+        Result.Ok(value) -> Result.Ok(Val.ValOk(Val.ValInt(value)))
+        Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))
 
 fn builtinTimeSleep(args: List<Val>) -> Result<Val, String>
-    ? "Time.sleep(ms) -> Unit."
+    ? "Time.sleep(ms) -> Result<Unit, String>."
     ! [Time.sleep]
     v = Domain.Builtins.Helpers.oneArg(args)?
     ms = Domain.Builtins.Helpers.expectInt(v)?
-    Time.sleep(ms)
-    Result.Ok(Val.ValUnit)
+    match Time.sleep(ms)
+        Result.Ok(_) -> Result.Ok(Val.ValOk(Val.ValUnit))
+        Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))
 
 fn builtinTimeUnixMs(args: List<Val>) -> Result<Val, String>
     ? "Time.unixMs() -> Int."
@@ -434,60 +436,70 @@ fn builtinTerminalNoArg(name: String, args: List<Val>) -> Result<Val, String>
 fn termClear() -> Result<Val, String>
     ? "Clear the terminal screen."
     ! [Terminal.clear]
-    Terminal.clear()
-    Result.Ok(Val.ValUnit)
+    match Terminal.clear()
+        Result.Ok(_) -> Result.Ok(Val.ValOk(Val.ValUnit))
+        Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))
 
 fn termFlush() -> Result<Val, String>
     ? "Flush terminal output."
     ! [Terminal.flush]
-    Terminal.flush()
-    Result.Ok(Val.ValUnit)
+    match Terminal.flush()
+        Result.Ok(_) -> Result.Ok(Val.ValOk(Val.ValUnit))
+        Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))
 
 fn termEnableRawMode() -> Result<Val, String>
     ? "Enable terminal raw mode."
     ! [Terminal.enableRawMode]
-    Terminal.enableRawMode()
-    Result.Ok(Val.ValUnit)
+    match Terminal.enableRawMode()
+        Result.Ok(_) -> Result.Ok(Val.ValOk(Val.ValUnit))
+        Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))
 
 fn termDisableRawMode() -> Result<Val, String>
     ? "Disable terminal raw mode."
     ! [Terminal.disableRawMode]
-    Terminal.disableRawMode()
-    Result.Ok(Val.ValUnit)
+    match Terminal.disableRawMode()
+        Result.Ok(_) -> Result.Ok(Val.ValOk(Val.ValUnit))
+        Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))
 
 fn termHideCursor() -> Result<Val, String>
     ? "Hide terminal cursor."
     ! [Terminal.hideCursor]
-    Terminal.hideCursor()
-    Result.Ok(Val.ValUnit)
+    match Terminal.hideCursor()
+        Result.Ok(_) -> Result.Ok(Val.ValOk(Val.ValUnit))
+        Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))
 
 fn termShowCursor() -> Result<Val, String>
     ? "Show terminal cursor."
     ! [Terminal.showCursor]
-    Terminal.showCursor()
-    Result.Ok(Val.ValUnit)
+    match Terminal.showCursor()
+        Result.Ok(_) -> Result.Ok(Val.ValOk(Val.ValUnit))
+        Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))
 
 fn termResetColor() -> Result<Val, String>
     ? "Reset terminal color."
     ! [Terminal.resetColor]
-    Terminal.resetColor()
-    Result.Ok(Val.ValUnit)
+    match Terminal.resetColor()
+        Result.Ok(_) -> Result.Ok(Val.ValOk(Val.ValUnit))
+        Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))
 
 fn builtinTerminalReadKey(args: List<Val>) -> Result<Val, String>
-    ? "Terminal.readKey() -> Option<String>."
+    ? "Terminal.readKey() -> Result<Option<String>, String>."
     ! [Terminal.readKey]
     match Terminal.readKey()
-        Option.Some(k) -> Result.Ok(Val.ValSome(Val.ValStr(k)))
-        Option.None -> Result.Ok(Val.ValNone)
+        Result.Ok(key) -> match key
+            Option.Some(k) -> Result.Ok(Val.ValOk(Val.ValSome(Val.ValStr(k))))
+            Option.None -> Result.Ok(Val.ValOk(Val.ValNone))
+        Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))
 
 fn builtinTerminalSize(args: List<Val>) -> Result<Val, String>
-    ? "Terminal.size() -> Record with width and height."
+    ? "Terminal.size() -> Result record with width and height."
     ! [Terminal.size]
-    sz = Terminal.size()
-    Result.Ok(Val.ValRecord("TerminalSize", [("width", Val.ValInt(sz.width)), ("height", Val.ValInt(sz.height))]))
+    match Terminal.size()
+        Result.Ok(sz) -> Result.Ok(Val.ValOk(Val.ValRecord("TerminalSize", [("width", Val.ValInt(sz.width)), ("height", Val.ValInt(sz.height))])))
+        Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))
 
 fn builtinTerminalPrint(args: List<Val>) -> Result<Val, String>
-    ? "Terminal.print(s) -> print string to terminal."
+    ? "Terminal.print(s) -> Result<Unit, String>."
     ! [Terminal.print]
     v = Domain.Builtins.Helpers.oneArg(args)?
     match v
@@ -497,19 +509,21 @@ fn builtinTerminalPrint(args: List<Val>) -> Result<Val, String>
 fn termPrintStr(s: String) -> Result<Val, String>
     ? "Print string to terminal."
     ! [Terminal.print]
-    Terminal.print(s)
-    Result.Ok(Val.ValUnit)
+    match Terminal.print(s)
+        Result.Ok(_) -> Result.Ok(Val.ValOk(Val.ValUnit))
+        Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))
 
 fn builtinTerminalSetColor(args: List<Val>) -> Result<Val, String>
-    ? "Terminal.setColor(color) -> Unit."
+    ? "Terminal.setColor(color) -> Result<Unit, String>."
     ! [Terminal.setColor]
     v = Domain.Builtins.Helpers.oneArg(args)?
     s = Domain.Builtins.Helpers.expectStr(v)?
-    Terminal.setColor(s)
-    Result.Ok(Val.ValUnit)
+    match Terminal.setColor(s)
+        Result.Ok(_) -> Result.Ok(Val.ValOk(Val.ValUnit))
+        Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))
 
 fn builtinTerminalMoveTo(args: List<Val>) -> Result<Val, String>
-    ? "Terminal.moveTo(x, y) -> Unit."
+    ? "Terminal.moveTo(x, y) -> Result<Unit, String>."
     ! [Terminal.moveTo]
     pair = Domain.Builtins.Helpers.twoArgs(args)?
     match pair
@@ -520,8 +534,9 @@ fn builtinTerminalMoveToInner(xV: Val, yV: Val) -> Result<Val, String>
     ! [Terminal.moveTo]
     x = Domain.Builtins.Helpers.expectInt(xV)?
     y = Domain.Builtins.Helpers.expectInt(yV)?
-    Terminal.moveTo(x, y)
-    Result.Ok(Val.ValUnit)
+    match Terminal.moveTo(x, y)
+        Result.Ok(_) -> Result.Ok(Val.ValOk(Val.ValUnit))
+        Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))
 
 fn builtinDiskWriteText(args: List<Val>) -> Result<Val, String>
     ? "Disk.writeText(path, content) -> Result."

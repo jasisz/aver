@@ -30,7 +30,7 @@ def safeSum (a : Int) (b : Int) : Except String Int :=
       | .error msg => Except.error msg
       | .ok nb => match Modules.Natural.Natural.add na nb with
           | .error msg => Except.error msg
-          | .ok sum => Except.ok (Modules.Natural.Natural.toInt sum)
+          | .ok sum => Except.ok (Modules.Natural.Natural.value sum)
 
 /-- safeSum is commutative for all Int (unbounded in the proof model).
     Three observations make this tractable:
@@ -46,7 +46,7 @@ theorem safeSum_commutative : ∀ (a b : Int), safeSum a b = safeSum b a := by
   unfold safeSum
   unfold Modules.Natural.Natural.fromInt
   unfold Modules.Natural.Natural.add
-  unfold Modules.Natural.Natural.toInt
+  unfold Modules.Natural.Natural.value
   by_cases ha : a ≥ 0
   · by_cases hb : b ≥ 0
     · simp [ha, hb, Int.add_comm]

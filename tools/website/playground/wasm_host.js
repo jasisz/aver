@@ -105,6 +105,7 @@ export class AverBrowserHost {
         this.lineBufferView = null;
         this.lineBufferBytes = null;
         this.programArgs = [];
+        this.environment = new Map();
         this.rawMode = false;
         this.lastFlushMs = 0;
     }
@@ -226,6 +227,10 @@ export class AverBrowserHost {
     averToJs(s) {
         const len = Number(this.instance.exports.__rt_string_to_lm(s));
         return this.decoder.decode(this.memU8().subarray(0, len));
+    }
+
+    averIntToI64(value) {
+        return this.instance.exports.__rt_aint_to_i64_checked(value);
     }
 
     postConsole(level, text) {
@@ -422,15 +427,43 @@ export class AverBrowserHost {
                         this.callerFnFromIdx(callerIdx),
                     );
                 },
-                random_int: (min, max, callerIdx) =>
-                    this.recordOrDispatch(
+                random_int: (minRef, maxRef, callerIdx) => {
+                    const exports = this.instance.exports;
+                    let min;
+                    let max;
+                    try {
+                        min = this.averIntToI64(minRef);
+                        max = this.averIntToI64(maxRef);
+                    } catch (_err) {
+                        return exports.__rt_result_int_string_err(
+                            this.jsToAver(
+                                "Random.int: bounds must fit a 64-bit integer",
+                            ),
+                        );
+                    }
+                    let outcome = null;
+                    return this.recordOrDispatch(
                         "Random.int",
                         [Number(min), Number(max)],
-                        () => chooseRandomInt(min, max),
-                        (json) => BigInt(json ?? 0),
-                        (v) => Number(v),
+                        () => {
+                            if (min > max) {
+                                const message = `Random.int: min (${min}) must be <= max (${max})`;
+                                outcome = { $err: message };
+                                return exports.__rt_result_int_string_err(
+                                    this.jsToAver(message),
+                                );
+                            }
+                            const value = chooseRandomInt(min, max);
+                            outcome = { $ok: Number(value) };
+                            return exports.__rt_result_int_string_ok(
+                                exports.__rt_aint_from_i64(value),
+                            );
+                        },
+                        (json) => this.decodeResultIntMarker(json),
+                        () => outcome,
                         this.callerFnFromIdx(callerIdx),
-                    ),
+                    );
+                },
                 random_float: (callerIdx) =>
                     this.recordOrDispatch(
                         "Random.float",
@@ -458,15 +491,82 @@ export class AverBrowserHost {
                         () => new Date().toISOString(),
                         this.callerFnFromIdx(callerIdx),
                     ),
-                time_sleep: (millis, callerIdx) =>
-                    this.recordOrDispatch(
+                time_sleep: (millisRef, callerIdx) => {
+                    const exports = this.instance.exports;
+                    let millis;
+                    try {
+                        millis = this.averIntToI64(millisRef);
+                    } catch (_err) {
+                        return exports.__rt_result_unit_string_err(
+                            this.jsToAver(
+                                "Time.sleep: ms must fit a 64-bit integer",
+                            ),
+                        );
+                    }
+                    let outcome = null;
+                    return this.recordOrDispatch(
                         "Time.sleep",
                         [Number(millis)],
-                        () => sleepMillis(millis),
-                        () => undefined,
-                        () => null,
+                        () => {
+                            if (millis < 0n) {
+                                const message = "Time.sleep: ms must be non-negative";
+                                outcome = { $err: message };
+                                return exports.__rt_result_unit_string_err(
+                                    this.jsToAver(message),
+                                );
+                            }
+                            sleepMillis(millis);
+                            outcome = { $ok: null };
+                            return exports.__rt_result_unit_string_ok();
+                        },
+                        (json) => this.decodeResultUnitMarker(json),
+                        () => outcome,
                         this.callerFnFromIdx(callerIdx),
-                    ),
+                    );
+                },
+                env_get: (nameRef, callerIdx) => {
+                    const name = this.averToJs(nameRef);
+                    return this.recordOrDispatch(
+                        "Env.get",
+                        [name],
+                        () => this.jsToAver(this.environment.get(name) ?? ""),
+                        (json) => this.jsToAver(json ?? ""),
+                        () => this.environment.get(name) ?? "",
+                        this.callerFnFromIdx(callerIdx),
+                    );
+                },
+                env_set: (nameRef, valueRef, callerIdx) => {
+                    const exports = this.instance.exports;
+                    const name = this.averToJs(nameRef);
+                    const value = this.averToJs(valueRef);
+                    let outcome = null;
+                    return this.recordOrDispatch(
+                        "Env.set",
+                        [name, value],
+                        () => {
+                            if (name.includes("\0") || name.includes("=")) {
+                                const message = "Env.set: invalid environment variable name";
+                                outcome = { $err: message };
+                                return exports.__rt_result_unit_string_err(
+                                    this.jsToAver(message),
+                                );
+                            }
+                            if (value.includes("\0")) {
+                                const message = "Env.set: invalid environment variable value";
+                                outcome = { $err: message };
+                                return exports.__rt_result_unit_string_err(
+                                    this.jsToAver(message),
+                                );
+                            }
+                            this.environment.set(name, value);
+                            outcome = { $ok: null };
+                            return exports.__rt_result_unit_string_ok();
+                        },
+                        (json) => this.decodeResultUnitMarker(json),
+                        () => outcome,
+                        this.callerFnFromIdx(callerIdx),
+                    );
+                },
                 // Float math is pure — no recording, no replay. The
                 // wasm-gc imports list these because the engine
                 // doesn't expose `f64.sin` directly. The trailing
@@ -508,15 +608,31 @@ export class AverBrowserHost {
                         () => null,
                         this.callerFnFromIdx(callerIdx),
                     ),
-                terminal_move_to: (x, y, callerIdx) => {
+                terminal_move_to: (xRef, yRef, callerIdx) => {
+                    const exports = this.instance.exports;
+                    let x;
+                    let y;
+                    try {
+                        x = this.averIntToI64(xRef);
+                        y = this.averIntToI64(yRef);
+                    } catch (_err) {
+                        return exports.__rt_result_unit_string_err(
+                            this.jsToAver(
+                                "Terminal.moveTo: coordinates must fit a 64-bit integer",
+                            ),
+                        );
+                    }
                     const xi = Number(x);
                     const yi = Number(y);
-                    this.recordOrDispatch(
+                    return this.recordOrDispatch(
                         "Terminal.moveTo",
                         [xi, yi],
-                        () => this.terminal.moveTo(xi, yi),
-                        () => undefined,
-                        () => null,
+                        () => {
+                            this.terminal.moveTo(xi, yi);
+                            return exports.__rt_result_unit_string_ok();
+                        },
+                        (json) => this.decodeResultUnitMarker(json),
+                        () => ({ $ok: null }),
                         this.callerFnFromIdx(callerIdx),
                     );
                 },
@@ -588,22 +704,32 @@ export class AverBrowserHost {
                     return this.recordOrDispatch(
                         "Terminal.size",
                         [],
-                        () =>
-                            exports.__rt_record_terminal_size_make(
+                        () => {
+                            const record = exports.__rt_record_terminal_size_make(
                                 BigInt(cols),
                                 BigInt(rows),
-                            ),
+                            );
+                            return exports.__rt_result_terminal_size_string_ok(record);
+                        },
                         (json) => {
-                            const fields = json?.$record?.fields ?? {};
-                            return exports.__rt_record_terminal_size_make(
+                            if (json && typeof json === "object" && "$err" in json) {
+                                return exports.__rt_result_terminal_size_string_err(
+                                    this.jsToAver(json.$err ?? ""),
+                                );
+                            }
+                            const fields = json?.$ok?.$record?.fields ?? {};
+                            const record = exports.__rt_record_terminal_size_make(
                                 BigInt(fields.width ?? cols),
                                 BigInt(fields.height ?? rows),
                             );
+                            return exports.__rt_result_terminal_size_string_ok(record);
                         },
                         () => ({
-                            $record: {
-                                type: "Terminal.Size",
-                                fields: { width: cols, height: rows },
+                            $ok: {
+                                $record: {
+                                    type: "Terminal.Size",
+                                    fields: { width: cols, height: rows },
+                                },
                             },
                         }),
                         this.callerFnFromIdx(callerIdx),
@@ -670,5 +796,26 @@ export class AverBrowserHost {
         // Fallback: empty Ok (defensively, when the trace is
         // malformed at this position).
         return exports.__rt_result_string_string_ok(this.jsToAver(""));
+    }
+
+    decodeResultUnitMarker(json) {
+        const exports = this.instance.exports;
+        if (json && typeof json === "object" && "$err" in json) {
+            return exports.__rt_result_unit_string_err(
+                this.jsToAver(json.$err ?? ""),
+            );
+        }
+        return exports.__rt_result_unit_string_ok();
+    }
+
+    decodeResultIntMarker(json) {
+        const exports = this.instance.exports;
+        if (json && typeof json === "object" && "$err" in json) {
+            return exports.__rt_result_int_string_err(
+                this.jsToAver(json.$err ?? ""),
+            );
+        }
+        const value = BigInt(json?.$ok ?? 0);
+        return exports.__rt_result_int_string_ok(exports.__rt_aint_from_i64(value));
     }
 }

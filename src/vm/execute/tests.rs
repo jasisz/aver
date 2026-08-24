@@ -1296,6 +1296,13 @@ fn armed_once_then_many_frames(n: i64) -> u64 {
     let src = format!(
         "fn buildMap(n: Int, acc: Map<Int, String>) -> Map<Int, String>\n    match n > 0\n        true -> buildMap(n - 1, Map.set(acc, n, \"row-{{n}}\"))\n        false -> acc\n\nfn touch(v: Vector<String>, s: String) -> Vector<String>\n    Option.withDefault(Vector.set(v, 0, s), v)\n\nfn spin(m: Map<Int, String>, i: Int, n: Int, tag: String) -> Int\n    match i >= n\n        true -> Map.len(m) + String.len(tag)\n        false -> spin(m, i + 1, n, String.toUpper(tag))\n\nfn main() -> Int\n    m = buildMap(32, {{}})\n    v = touch(Vector.new(2, \"seed-string\"), String.toUpper(\"payload-marker\"))\n    spin(m, 0, {n}, \"tag-value\") + Vector.len(v)\n"
     );
+    // This test isolates the boundary cost of an in-place `Vector.set`.
+    // Construct the seed through the already-total conversion so changes to
+    // `Vector.new` validation do not alter the ownership fixture itself.
+    let src = src.replace(
+        "Vector.new(2, \"seed-string\")",
+        "Vector.fromList([\"seed-string\", \"seed-string\"])",
+    );
     inplace_write_scan_cost(&src)
 }
 
@@ -1304,6 +1311,10 @@ fn armed_once_then_many_frames(n: i64) -> u64 {
 fn writing_at_every_boundary(n: i64) -> u64 {
     let src = format!(
         "fn buildMap(n: Int, acc: Map<Int, String>) -> Map<Int, String>\n    match n > 0\n        true -> buildMap(n - 1, Map.set(acc, n, \"row-{{n}}\"))\n        false -> acc\n\nfn spin(v: Vector<String>, m: Map<Int, String>, i: Int, n: Int, tag: String) -> Int\n    match i >= n\n        true -> Map.len(m) + Vector.len(v) + String.len(tag)\n        false -> spin(Option.withDefault(Vector.set(v, 0, String.toUpper(\"payload-{{i}}\")), v), m, i + 1, n, String.toUpper(tag))\n\nfn main() -> Int\n    m = buildMap(32, {{}})\n    spin(Vector.new(2, \"seed-string\"), m, 0, {n}, \"tag-value\")\n"
+    );
+    let src = src.replace(
+        "Vector.new(2, \"seed-string\")",
+        "Vector.fromList([\"seed-string\", \"seed-string\"])",
     );
     inplace_write_scan_cost(&src)
 }

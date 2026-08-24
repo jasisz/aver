@@ -5,11 +5,12 @@ module Render
     depends [Board]
     effects [Terminal]
 
-fn drawAt(x: Int, y: Int, ch: String) -> Unit
+fn drawAt(x: Int, y: Int, ch: String) -> Result<Unit, String>
     ? "Print a 2-char wide cell at board coordinates"
     ! [Terminal.moveTo, Terminal.print]
-    Terminal.moveTo(x * 2, y)
-    Terminal.print(ch)
+    Terminal.moveTo(x * 2, y)?
+    Terminal.print(ch)?
+    Result.Ok(Unit)
 
 fn isSelected(x: Int, y: Int, selected: Option<Point>) -> Bool
     ? "True if this cell is the selected piece"
@@ -53,35 +54,37 @@ verify pieceColor
     pieceColor(CellContent.WhiteKing) => "blue"
     pieceColor(CellContent.Empty) => "white"
 
-fn renderCellContent(x: Int, y: Int, cell: CellContent, selected: Option<Point>, highlights: List<Point>, cursor: Point) -> Unit
+fn renderCellContent(x: Int, y: Int, cell: CellContent, selected: Option<Point>, highlights: List<Point>, cursor: Point) -> Result<Unit, String>
     ? "Render one cell with cursor/selection/highlight/normal states"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     match Bool.and(cursor.x == x, cursor.y == y)
         true -> renderCursorCell(x, y, cell, selected)
         false -> renderNonCursorCell(x, y, cell, selected, highlights)
 
-fn renderCursorCell(x: Int, y: Int, cell: CellContent, selected: Option<Point>) -> Unit
+fn renderCursorCell(x: Int, y: Int, cell: CellContent, selected: Option<Point>) -> Result<Unit, String>
     ? "Render cell at cursor position: bright color"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     match Board.isEmpty(cell)
         true -> renderCursorEmpty(x, y)
         false -> renderCursorPiece(x, y, cell)
 
-fn renderCursorEmpty(x: Int, y: Int) -> Unit
+fn renderCursorEmpty(x: Int, y: Int) -> Result<Unit, String>
     ? "Cursor on empty dark square: green block"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    Terminal.setColor("green")
-    drawAt(x + 1, y + 1, "▓▓")
-    Terminal.resetColor()
+    Terminal.setColor("green")?
+    drawAt(x + 1, y + 1, "▓▓")?
+    Terminal.resetColor()?
+    Result.Ok(Unit)
 
-fn renderCursorPiece(x: Int, y: Int, cell: CellContent) -> Unit
+fn renderCursorPiece(x: Int, y: Int, cell: CellContent) -> Result<Unit, String>
     ? "Cursor on piece: yellow glyph"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    Terminal.setColor("yellow")
-    drawAt(x + 1, y + 1, pieceGlyph(cell))
-    Terminal.resetColor()
+    Terminal.setColor("yellow")?
+    drawAt(x + 1, y + 1, pieceGlyph(cell))?
+    Terminal.resetColor()?
+    Result.Ok(Unit)
 
-fn renderNonCursorCell(x: Int, y: Int, cell: CellContent, selected: Option<Point>, highlights: List<Point>) -> Unit
+fn renderNonCursorCell(x: Int, y: Int, cell: CellContent, selected: Option<Point>, highlights: List<Point>) -> Result<Unit, String>
     ? "Render cell without cursor"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     match isSelected(x, y, selected)
@@ -90,28 +93,31 @@ fn renderNonCursorCell(x: Int, y: Int, cell: CellContent, selected: Option<Point
             true -> renderHighlightCell(x, y)
             false -> renderPieceCell(x, y, cell)
 
-fn renderSelectedCell(x: Int, y: Int, cell: CellContent) -> Unit
+fn renderSelectedCell(x: Int, y: Int, cell: CellContent) -> Result<Unit, String>
     ? "Selected piece: yellow"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    Terminal.setColor("yellow")
-    drawAt(x + 1, y + 1, pieceGlyph(cell))
-    Terminal.resetColor()
+    Terminal.setColor("yellow")?
+    drawAt(x + 1, y + 1, pieceGlyph(cell))?
+    Terminal.resetColor()?
+    Result.Ok(Unit)
 
-fn renderHighlightCell(x: Int, y: Int) -> Unit
+fn renderHighlightCell(x: Int, y: Int) -> Result<Unit, String>
     ? "Legal destination: green dots"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    Terminal.setColor("green")
-    drawAt(x + 1, y + 1, "··")
-    Terminal.resetColor()
+    Terminal.setColor("green")?
+    drawAt(x + 1, y + 1, "··")?
+    Terminal.resetColor()?
+    Result.Ok(Unit)
 
-fn renderPieceCell(x: Int, y: Int, cell: CellContent) -> Unit
+fn renderPieceCell(x: Int, y: Int, cell: CellContent) -> Result<Unit, String>
     ? "Normal piece on dark square"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    Terminal.setColor(pieceColor(cell))
-    drawAt(x + 1, y + 1, pieceGlyph(cell))
-    Terminal.resetColor()
+    Terminal.setColor(pieceColor(cell))?
+    drawAt(x + 1, y + 1, pieceGlyph(cell))?
+    Terminal.resetColor()?
+    Result.Ok(Unit)
 
-fn renderCell(board: List<List<CellContent>>, x: Int, y: Int, selected: Option<Point>, highlights: List<Point>, cursor: Point) -> Unit
+fn renderCell(board: List<List<CellContent>>, x: Int, y: Int, selected: Option<Point>, highlights: List<Point>, cursor: Point) -> Result<Unit, String>
     ? "Render one board cell"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     match Bool.and(cursor.x == x, cursor.y == y)
@@ -120,92 +126,92 @@ fn renderCell(board: List<List<CellContent>>, x: Int, y: Int, selected: Option<P
             true -> renderCellContent(x, y, Board.getCell(board, x, y), selected, highlights, cursor)
             false -> renderLightSquare(x, y)
 
-fn renderCursorOnAny(x: Int, y: Int, board: List<List<CellContent>>) -> Unit
+fn renderCursorOnAny(x: Int, y: Int, board: List<List<CellContent>>) -> Result<Unit, String>
     ? "Cursor on any square: green block or yellow piece"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     match Board.isEmpty(Board.getCell(board, x, y))
         true -> renderCursorEmpty(x, y)
         false -> renderCursorPiece(x, y, Board.getCell(board, x, y))
 
-fn renderLightSquare(x: Int, y: Int) -> Unit
+fn renderLightSquare(x: Int, y: Int) -> Result<Unit, String>
     ? "Render light square as blank"
     ! [Terminal.moveTo, Terminal.print]
     drawAt(x + 1, y + 1, "  ")
 
-fn renderRowCells(board: List<List<CellContent>>, x: Int, y: Int, selected: Option<Point>, highlights: List<Point>, cursor: Point) -> Unit
+fn renderRowCells(board: List<List<CellContent>>, x: Int, y: Int, selected: Option<Point>, highlights: List<Point>, cursor: Point) -> Result<Unit, String>
     ? "Render all cells in one row"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     match x == 8
         true -> drawAt(0, 0, "")
         false -> renderRowCellsNext(board, x, y, selected, highlights, cursor)
 
-fn renderRowCellsNext(board: List<List<CellContent>>, x: Int, y: Int, selected: Option<Point>, highlights: List<Point>, cursor: Point) -> Unit
+fn renderRowCellsNext(board: List<List<CellContent>>, x: Int, y: Int, selected: Option<Point>, highlights: List<Point>, cursor: Point) -> Result<Unit, String>
     ? "Render one cell and continue"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    renderCell(board, x, y, selected, highlights, cursor)
+    renderCell(board, x, y, selected, highlights, cursor)?
     renderRowCells(board, x + 1, y, selected, highlights, cursor)
 
-fn renderRows(board: List<List<CellContent>>, y: Int, selected: Option<Point>, highlights: List<Point>, cursor: Point) -> Unit
+fn renderRows(board: List<List<CellContent>>, y: Int, selected: Option<Point>, highlights: List<Point>, cursor: Point) -> Result<Unit, String>
     ? "Render all board rows"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     match y == 8
         true -> drawAt(0, 0, "")
         false -> renderRowsNext(board, y, selected, highlights, cursor)
 
-fn renderRowsNext(board: List<List<CellContent>>, y: Int, selected: Option<Point>, highlights: List<Point>, cursor: Point) -> Unit
+fn renderRowsNext(board: List<List<CellContent>>, y: Int, selected: Option<Point>, highlights: List<Point>, cursor: Point) -> Result<Unit, String>
     ? "Render one row and continue"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    renderRowCells(board, 0, y, selected, highlights, cursor)
+    renderRowCells(board, 0, y, selected, highlights, cursor)?
     renderRows(board, y + 1, selected, highlights, cursor)
 
-fn renderBorderH(x: Int, maxX: Int, y: Int) -> Unit
+fn renderBorderH(x: Int, maxX: Int, y: Int) -> Result<Unit, String>
     ? "Draw horizontal border"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     match x == maxX
         true -> Terminal.resetColor()
         false -> renderBorderHNext(x, maxX, y)
 
-fn renderBorderHNext(x: Int, maxX: Int, y: Int) -> Unit
+fn renderBorderHNext(x: Int, maxX: Int, y: Int) -> Result<Unit, String>
     ? "One border cell and continue"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    Terminal.setColor("white")
-    drawAt(x, y, "██")
+    Terminal.setColor("white")?
+    drawAt(x, y, "██")?
     renderBorderH(x + 1, maxX, y)
 
-fn renderBorderV(y: Int, maxY: Int, x: Int) -> Unit
+fn renderBorderV(y: Int, maxY: Int, x: Int) -> Result<Unit, String>
     ? "Draw vertical border"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     match y == maxY
         true -> Terminal.resetColor()
         false -> renderBorderVNext(y, maxY, x)
 
-fn renderBorderVNext(y: Int, maxY: Int, x: Int) -> Unit
+fn renderBorderVNext(y: Int, maxY: Int, x: Int) -> Result<Unit, String>
     ? "One border cell and continue"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    Terminal.setColor("white")
-    drawAt(x, y, "██")
+    Terminal.setColor("white")?
+    drawAt(x, y, "██")?
     renderBorderV(y + 1, maxY, x)
 
-fn renderBorder() -> Unit
+fn renderBorder() -> Result<Unit, String>
     ? "Draw board border"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    renderBorderH(0, 10, 0)
-    renderBorderH(0, 10, 9)
-    renderBorderV(1, 9, 0)
+    renderBorderH(0, 10, 0)?
+    renderBorderH(0, 10, 9)?
+    renderBorderV(1, 9, 0)?
     renderBorderV(1, 9, 9)
 
-fn renderColLabels(c: Int) -> Unit
+fn renderColLabels(c: Int) -> Result<Unit, String>
     ? "Column labels A-H"
     ! [Terminal.moveTo, Terminal.print]
     match c == 8
         true -> drawAt(0, 0, "")
         false -> renderColLabelsNext(c)
 
-fn renderColLabelsNext(c: Int) -> Unit
+fn renderColLabelsNext(c: Int) -> Result<Unit, String>
     ? "One label and continue"
     ! [Terminal.moveTo, Terminal.print]
     nextC = c + 1
-    drawAt(nextC, 10, colLabel(c))
+    drawAt(nextC, 10, colLabel(c))?
     renderColLabels(nextC)
 
 fn colLabel(c: Int) -> String
@@ -223,19 +229,19 @@ fn colLabel(c: Int) -> String
 verify colLabel
     colLabel(0) => "A "
 
-fn renderRowLabels(r: Int) -> Unit
+fn renderRowLabels(r: Int) -> Result<Unit, String>
     ? "Row labels 1-8"
     ! [Terminal.moveTo, Terminal.print]
     match r == 8
         true -> drawAt(0, 0, "")
         false -> renderRowLabelsNext(r)
 
-fn renderRowLabelsNext(r: Int) -> Unit
+fn renderRowLabelsNext(r: Int) -> Result<Unit, String>
     ? "One row label"
     ! [Terminal.moveTo, Terminal.print]
     nextR = r + 1
-    Terminal.moveTo(0, nextR)
-    Terminal.print(" {rowLabel(r)}")
+    Terminal.moveTo(0, nextR)?
+    Terminal.print(" {rowLabel(r)}")?
     renderRowLabels(nextR)
 
 fn rowLabel(r: Int) -> String
@@ -246,12 +252,12 @@ verify rowLabel
     rowLabel(0) => "8"
     rowLabel(7) => "1"
 
-fn renderBoard(board: List<List<CellContent>>, selected: Option<Point>, highlights: List<Point>, cursor: Point) -> Unit
+fn renderBoard(board: List<List<CellContent>>, selected: Option<Point>, highlights: List<Point>, cursor: Point) -> Result<Unit, String>
     ? "Draw full board with border, cells, labels"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    renderBorder()
-    renderRows(board, 0, selected, highlights, cursor)
-    renderColLabels(0)
+    renderBorder()?
+    renderRows(board, 0, selected, highlights, cursor)?
+    renderColLabels(0)?
     renderRowLabels(0)
 
 fn colorName(c: Color) -> String
@@ -274,20 +280,22 @@ verify playerColor
     playerColor(Color.Black) => "red"
     playerColor(Color.White) => "blue"
 
-fn renderStatus(currentPlayer: Color, moveNum: Int) -> Unit
+fn renderStatus(currentPlayer: Color, moveNum: Int) -> Result<Unit, String>
     ? "Show current player and move number"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    Terminal.moveTo(0, 12)
-    Terminal.setColor(playerColor(currentPlayer))
-    Terminal.print("{colorName(currentPlayer)}")
-    Terminal.resetColor()
-    Terminal.print(" to move  |  Move #{String.fromInt(moveNum)}")
+    Terminal.moveTo(0, 12)?
+    Terminal.setColor(playerColor(currentPlayer))?
+    Terminal.print("{colorName(currentPlayer)}")?
+    Terminal.resetColor()?
+    Terminal.print(" to move  |  Move #{String.fromInt(moveNum)}")?
+    Result.Ok(Unit)
 
-fn renderAiTrace(move: List<Point>, score: Int, alternatives: Int, depth: Int) -> Unit
+fn renderAiTrace(move: List<Point>, score: Int, alternatives: Int, depth: Int) -> Result<Unit, String>
     ? "Show AI decision trace"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    Terminal.moveTo(0, 13)
-    Terminal.setColor("cyan")
-    Terminal.print("AI: ")
-    Terminal.resetColor()
-    Terminal.print("score={String.fromInt(score)} alts={String.fromInt(alternatives)} depth={String.fromInt(depth)}")
+    Terminal.moveTo(0, 13)?
+    Terminal.setColor("cyan")?
+    Terminal.print("AI: ")?
+    Terminal.resetColor()?
+    Terminal.print("score={String.fromInt(score)} alts={String.fromInt(alternatives)} depth={String.fromInt(depth)}")?
+    Result.Ok(Unit)

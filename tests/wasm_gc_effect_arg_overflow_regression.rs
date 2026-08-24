@@ -1,5 +1,6 @@
-//! Regression: under `Int = ℤ`, an out-of-i64 `Int` passed as an i64-typed
-//! HOST EFFECT argument must REJECT on wasm-gc, matching the VM.
+//! Regression: under `Int = ℤ`, an out-of-i64 `Int` passed to a fallible
+//! HOST EFFECT must remain a catchable `Result.Err` on wasm-gc, matching the
+//! VM.
 //!
 //! The bug (confirmed in wasmtime on the bignum default-flip branch): an
 //! out-of-i64 Big Int passed as an i64-typed effect argument silently
@@ -12,14 +13,13 @@
 //! fit a 64-bit integer`). Worst case: `Time.sleep(2^63)` saturated to
 //! i64::MAX ms (a ~292-million-year hang) where the VM errors.
 //!
-//! The fix replaces the saturating lower at the EFFECT-arg boundary ONLY
-//! with `__aint_to_i64_checked`, which TRAPS (`unreachable`) on an out-of-
-//! i64 Big. So an out-of-range effect arg now rejects on wasm-gc (a wasm
-//! trap → `run_in_process` returns `Err`) just as the VM errors. The
-//! SATURATING path stays in place for the PURE builtins where saturation
-//! MATCHES the VM (`String.charAt`/`slice` indices, `List.take`/`drop`
-//! counts, `Char.fromCode`) — this test pins that the pure-builtin
-//! saturation is NOT regressed.
+//! `Random.int` and `Time.sleep` now import boxed Aver Ints and return the
+//! same `Result` carrier as every other backend. Their provider validates the
+//! host range before doing any work, so the error is observable Aver data —
+//! not a wasm trap and, critically, not a saturated host call. The saturating
+//! path stays in place for pure builtins where saturation matches the VM
+//! (`String.charAt`/`slice` indices, `List.take`/`drop` counts,
+//! `String.fromCodePoint`).
 
 #![cfg(feature = "wasm")]
 
@@ -111,10 +111,9 @@ fn run_wasm_gc_with_mode(
 
 /// `9223372036854775807 + 1` builds `2^63` (the first value past i64::MAX)
 /// by arithmetic, so the `$AverInt` carrier holds a Big. Passing it as the
-/// `Random.int` upper bound (an i64-typed effect arg) must TRAP on wasm-gc
-/// — the VM errors with `Random.int: bounds must fit a 64-bit integer`.
+/// `Random.int` upper bound must return the same catchable error as the VM.
 #[test]
-fn out_of_i64_random_bound_traps_on_wasm_gc() {
+fn out_of_i64_random_bound_is_catchable_on_wasm_gc() {
     let src = r#"module M
     intent =
         "out-of-i64 Random.int bound rejects"
@@ -123,23 +122,18 @@ fn out_of_i64_random_bound_traps_on_wasm_gc() {
 fn main() -> Unit
     ! [Random.int, Console.print]
     big = 9223372036854775807 + 1
-    n = Random.int(1, big)
-    Console.print("n = {n}")
+    match Random.int(1, big)
+        Result.Ok(n) -> Console.print("n = {n}")
+        Result.Err(e) -> Console.print(e)
 "#;
-    let res = run_wasm_gc(src);
-    assert!(
-        res.is_err(),
-        "an out-of-i64 Random.int upper bound must REJECT on wasm-gc (matching the VM's \
-         checked-bounds error), but the run succeeded with stdout: {res:?}"
-    );
+    let out = run_wasm_gc(src).expect("Random.int validation must be catchable Aver data");
+    assert_eq!(out, "Random.int: bounds must fit a 64-bit integer\n");
 }
 
-/// `Time.sleep(2^63)` must TRAP on wasm-gc, not saturate to i64::MAX ms (a
-/// ~292-million-year hang). The VM errors (`Time.sleep: ms must fit a
-/// 64-bit integer`). The test would HANG, not just fail, on the unfixed
-/// saturating lowering — so a clean (fast) `Err` is the regression guard.
+/// `Time.sleep(2^63)` must return `Result.Err`, not saturate to i64::MAX ms
+/// (a ~292-million-year hang). A clean, fast, catchable error is the guard.
 #[test]
-fn out_of_i64_sleep_ms_traps_on_wasm_gc() {
+fn out_of_i64_sleep_ms_is_catchable_on_wasm_gc() {
     let src = r#"module M
     intent =
         "out-of-i64 Time.sleep ms rejects (no 292-million-year hang)"
@@ -148,15 +142,12 @@ fn out_of_i64_sleep_ms_traps_on_wasm_gc() {
 fn main() -> Unit
     ! [Time.sleep, Console.print]
     big = 9223372036854775807 + 1
-    _ = Time.sleep(big)
-    Console.print("woke up")
+    match Time.sleep(big)
+        Result.Ok(_) -> Console.print("woke up")
+        Result.Err(e) -> Console.print(e)
 "#;
-    let res = run_wasm_gc(src);
-    assert!(
-        res.is_err(),
-        "Time.sleep(2^63) must TRAP on wasm-gc (terminate with an error), not saturate to \
-         i64::MAX ms and hang; run returned: {res:?}"
-    );
+    let out = run_wasm_gc(src).expect("Time.sleep validation must be catchable Aver data");
+    assert_eq!(out, "Time.sleep: ms must fit a 64-bit integer\n");
 }
 
 /// IN-RANGE effect args STILL WORK: a small `Random.int` bound and a small
@@ -247,7 +238,7 @@ fn main() -> Unit
     ! [Tcp.sendBytes, Console.print]
     match Tcp.sendBytes("127.0.0.1", {port}, Bytes.fromList([249, 190, 180, 217]))
         Result.Err(e) -> Console.print("err: {{e}}")
-        Result.Ok(response) -> Console.print("{{Bytes.toList(response) == [249, 190, 180, 217]}}")
+        Result.Ok(response) -> Console.print("{{Bytes.octets(response) == [249, 190, 180, 217]}}")
 "#
     );
     let (out, recorded) = run_wasm_gc_with_mode(&src, aver::runtime::wasm_gc::EffectMode::Record)
@@ -306,7 +297,7 @@ fn readFrame(conn: Tcp.Connection) -> Unit
     ! [Tcp.readBytes, Console.print]
     match Tcp.readBytes(conn, 4)
         Result.Err(e) -> Console.print("err: {{e}}")
-        Result.Ok(frame) -> Console.print("{{Bytes.toList(frame) == [249, 190, 180, 217]}}")
+        Result.Ok(frame) -> Console.print("{{Bytes.octets(frame) == [249, 190, 180, 217]}}")
 
 fn main() -> Unit
     ! [Tcp.connect, Tcp.readBytes, Console.print]
@@ -370,7 +361,7 @@ fn tcp_poll_then_read_some_records_and_replays_caller_ids_on_wasm_gc() {
 fn report(conn: Tcp.Connection, ready: List<Int>, chunk: Bytes) -> Unit
     ! [Tcp.close, Console.print]
     Tcp.close(conn)
-    Console.print("{{ready == [1208925819614629174706176]}}:{{Bytes.toList(chunk) == [249, 190, 180, 217]}}")
+    Console.print("{{ready == [1208925819614629174706176]}}:{{Bytes.octets(chunk) == [249, 190, 180, 217]}}")
 
 fn pollAndRead(conn: Tcp.Connection, peers: Map<Int, Tcp.Connection>) -> Unit
     ! [Tcp.poll, Tcp.readSome, Tcp.close, Console.print]

@@ -14,15 +14,37 @@
 //! each one to `emit_mir_expr`, so the conversion was purely a type +
 //! emit-call swap.
 
-use wasm_encoder::Instruction;
+use wasm_encoder::{BlockType, HeapType, Instruction, RefType, ValType};
 
 use crate::ast::Spanned;
 use crate::codegen::wasip2::CapabilityWitType;
 use crate::ir::mir::MirExpr;
 
 use super::super::WasmGcError;
+use super::emit::{emit_default_value, emit_string_literal_bytes};
 use super::from_mir::emit_mir_expr;
 use super::{EmitCtx, SlotTable};
+
+fn result_block_type(type_idx: u32) -> BlockType {
+    BlockType::Result(ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(type_idx),
+    }))
+}
+
+fn emit_result_err(
+    func: &mut wasm_encoder::Function,
+    result_type_idx: u32,
+    ok_type: &str,
+    message: &str,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    func.instruction(&Instruction::I32Const(0));
+    emit_default_value(func, ok_type, ctx.registry)?;
+    emit_string_literal_bytes(func, message.as_bytes(), ctx)?;
+    func.instruction(&Instruction::StructNew(result_type_idx));
+    Ok(())
+}
 
 /// Lower a custom capability call through its generated internal bridge.
 /// Unit arguments are still evaluated in source order but occupy no wasm
@@ -74,12 +96,12 @@ pub(super) fn emit_capability_call_wasip2(
 }
 
 /// `Int = ℤ`: emit an `Int` effect ARGUMENT and CHECKED-lower it from the
-/// `$AverInt` carrier to a raw i64 — the wasip2 effect lowerings (random
-/// bounds, sleep ms, port) compute on i64. An out-of-i64 Big TRAPS
+/// `$AverInt` carrier to a raw i64 — the remaining machine-shaped wasip2
+/// effect lowerings (notably network ports) compute on i64. An out-of-i64 Big TRAPS
 /// (`__aint_to_i64_checked`) rather than saturating, so an out-of-range
-/// effect arg REJECTS on wasm-gc exactly as the VM's host services' checked
-/// `to_i64()` errors. A no-op passthrough when no Int is reachable (the arg
-/// is already i64).
+/// at this internal ABI boundary. `Random.int` and `Time.sleep` do not use
+/// this helper: their call-site validation constructs catchable Aver Results.
+/// A no-op passthrough when no Int is reachable (the arg is already i64).
 fn emit_aint_arg_as_i64_wasip2(
     func: &mut wasm_encoder::Function,
     arg: &Spanned<MirExpr>,
@@ -573,14 +595,16 @@ pub(super) fn emit_console_read_line_wasip2(
     Ok(())
 }
 
-/// Phase 1.4c — `Time.sleep(ms: Int) -> Unit` on `--target wasip2`.
+/// Phase 1.4c — `Time.sleep(ms: Int) -> Result<Unit, String>` on
+/// `--target wasip2`.
 ///
 /// Emits the milliseconds expression onto the stack and calls
 /// `__rt_time_sleep`, which subscribes a pollable on the
 /// monotonic clock, waits for it via `wasi:io/poll.poll`, and
-/// drops the pollable. Source-level Aver still sees the same
-/// `Time.sleep(ms)` it sees on the VM target — pollables are
-/// implementation detail.
+/// drops the pollable. Argument-contract failures are constructed in
+/// guest code, before WASI is touched. A statically valid literal is
+/// unwrapped by the fail-closed HIR `__result_proven` discharge; this
+/// lowering still executes the sleep and returns its contract carrier.
 pub(super) fn emit_time_sleep_wasip2(
     func: &mut wasm_encoder::Function,
     args: &[Spanned<MirExpr>],
@@ -601,9 +625,92 @@ pub(super) fn emit_time_sleep_wasip2(
             "Time.sleep on wasip2: __rt_time_sleep fn idx missing — helper not allocated".into(),
         )
     })?;
-    // `Int = ℤ`: `ms` is the `$AverInt` carrier — saturate-lower to i64.
-    emit_aint_arg_as_i64_wasip2(func, &args[0], slots, ctx)?; // ms: i64
+    let result_idx = ctx
+        .registry
+        .result_type_idx("Result<Unit,String>")
+        .ok_or_else(|| {
+            WasmGcError::Validation("Time.sleep on wasip2: Result<Unit,String> slot missing".into())
+        })?;
+    let [ms_scratch, _] = slots.validated_effect_wasip2_i64_scratch.ok_or_else(|| {
+        WasmGcError::Validation("Time.sleep on wasip2: validated-effect i64 scratch missing".into())
+    })?;
+    let result_block = result_block_type(result_idx);
+
+    if ctx.registry.bignum {
+        let [ms_ref, _] = slots.validated_effect_wasip2_aint_scratch.ok_or_else(|| {
+            WasmGcError::Validation(
+                "Time.sleep on wasip2: validated-effect AverInt scratch missing".into(),
+            )
+        })?;
+        let aint_idx = ctx.registry.aint_struct_idx.ok_or_else(|| {
+            WasmGcError::Validation("Time.sleep on wasip2: AverInt type slot missing".into())
+        })?;
+        emit_mir_expr(func, &args[0], slots, ctx)?;
+        func.instruction(&Instruction::LocalSet(ms_ref));
+        func.instruction(&Instruction::LocalGet(ms_ref));
+        func.instruction(&Instruction::StructGet {
+            struct_type_index: aint_idx,
+            field_index: 1,
+        });
+        func.instruction(&Instruction::RefIsNull);
+        func.instruction(&Instruction::If(result_block));
+        func.instruction(&Instruction::LocalGet(ms_ref));
+        let to_i64 = ctx
+            .fn_map
+            .builtins
+            .get("__aint_to_i64_checked")
+            .copied()
+            .ok_or_else(|| {
+                WasmGcError::Validation(
+                    "Time.sleep on wasip2: __aint_to_i64_checked missing".into(),
+                )
+            })?;
+        func.instruction(&Instruction::Call(to_i64));
+        func.instruction(&Instruction::LocalSet(ms_scratch));
+        emit_validated_sleep(func, sleep_fn, ms_scratch, result_idx, ctx)?;
+        func.instruction(&Instruction::Else);
+        emit_result_err(
+            func,
+            result_idx,
+            "Unit",
+            "Time.sleep: ms must fit a 64-bit integer",
+            ctx,
+        )?;
+        func.instruction(&Instruction::End);
+    } else {
+        emit_mir_expr(func, &args[0], slots, ctx)?;
+        func.instruction(&Instruction::LocalSet(ms_scratch));
+        emit_validated_sleep(func, sleep_fn, ms_scratch, result_idx, ctx)?;
+    }
+    Ok(())
+}
+
+fn emit_validated_sleep(
+    func: &mut wasm_encoder::Function,
+    sleep_fn: u32,
+    ms_scratch: u32,
+    result_idx: u32,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    func.instruction(&Instruction::LocalGet(ms_scratch));
+    func.instruction(&Instruction::I64Const(0));
+    func.instruction(&Instruction::I64GeS);
+    func.instruction(&Instruction::If(result_block_type(result_idx)));
+    func.instruction(&Instruction::LocalGet(ms_scratch));
     func.instruction(&Instruction::Call(sleep_fn));
+    func.instruction(&Instruction::I32Const(1));
+    emit_default_value(func, "Unit", ctx.registry)?;
+    emit_default_value(func, "String", ctx.registry)?;
+    func.instruction(&Instruction::StructNew(result_idx));
+    func.instruction(&Instruction::Else);
+    emit_result_err(
+        func,
+        result_idx,
+        "Unit",
+        "Time.sleep: ms must be non-negative",
+        ctx,
+    )?;
+    func.instruction(&Instruction::End);
     Ok(())
 }
 
@@ -1111,11 +1218,11 @@ pub(super) fn emit_disk_append_bytes_wasip2(
     )
 }
 
-/// Phase 1.4 — `Random.int(min: Int, max: Int) -> Int` on
+/// Phase 1.4 — `Random.int(min: Int, max: Int) -> Result<Int, String>` on
 /// `--target wasip2`.
 ///
 /// Lowers to `wasi:random/random.get-random-u64: () -> u64` plus
-/// guest-side modulo by `(max - min + 1)` and offset by `min`. The
+/// guest-side validation, modulo by `(max - min + 1)`, and offset by `min`. The
 /// modulo is the standard slightly-biased pattern (acceptable for
 /// non-cryptographic use, matches the wasm-gc target's existing
 /// shape via `aver/random_int`).
@@ -1137,40 +1244,133 @@ pub(super) fn emit_random_int_wasip2(
     let rand_fn = lowering.random_u64_fn_idx.ok_or_else(|| {
         WasmGcError::Validation("Random.int on wasip2: random get-random-u64 fn idx missing".into())
     })?;
-    let min_scratch = slots.random_int_wasip2_min_scratch.ok_or_else(|| {
-        WasmGcError::Validation(
-            "Random.int on wasip2: i64 min scratch slot missing — \
-             SlotTable should have allocated via fn_needs_random_int_wasip2_scratch"
-                .into(),
-        )
-    })?;
-    // result = min + ((u64 % (max - min + 1)) as i64).
-    //
-    // `min` is referenced twice (the offset and `max - min`), so we
-    // evaluate `args[0]` exactly once into a scratch local. Without
-    // this, `Random.int(readBound(), 10)` would call `readBound()`
-    // twice — call-by-value violation, and any host-visible side
-    // effect inside `readBound` would fire twice.
-    //
-    // Stack discipline:
-    //   eval args[0] → LocalSet(min_scratch)
-    //   push min_scratch
-    //   push (get-random-u64() % (max - min + 1))
-    //   i64.add
-    // `Int = ℤ`: the host ABI is i64 — saturate-lower the `$AverInt`
-    // min/max bounds before the i64 arithmetic, then lift the i64 result.
-    emit_aint_arg_as_i64_wasip2(func, &args[0], slots, ctx)?; // min: i64
-    func.instruction(&Instruction::LocalSet(min_scratch));
+    let [min_scratch, max_scratch] =
+        slots.validated_effect_wasip2_i64_scratch.ok_or_else(|| {
+            WasmGcError::Validation(
+                "Random.int on wasip2: validated-effect i64 scratch pair missing".into(),
+            )
+        })?;
+    let result_idx = ctx
+        .registry
+        .result_type_idx("Result<Int,String>")
+        .ok_or_else(|| {
+            WasmGcError::Validation("Random.int on wasip2: Result<Int,String> slot missing".into())
+        })?;
+
+    // Evaluate both arguments before invoking randomness. This is observable
+    // when either bound contains an effect, and matches Aver's eager,
+    // left-to-right call semantics.
+    if ctx.registry.bignum {
+        let [min_ref, max_ref] = slots.validated_effect_wasip2_aint_scratch.ok_or_else(|| {
+            WasmGcError::Validation(
+                "Random.int on wasip2: validated-effect AverInt scratch pair missing".into(),
+            )
+        })?;
+        let aint_idx = ctx.registry.aint_struct_idx.ok_or_else(|| {
+            WasmGcError::Validation("Random.int on wasip2: AverInt type slot missing".into())
+        })?;
+        emit_mir_expr(func, &args[0], slots, ctx)?;
+        emit_mir_expr(func, &args[1], slots, ctx)?;
+        func.instruction(&Instruction::LocalSet(max_ref));
+        func.instruction(&Instruction::LocalSet(min_ref));
+        func.instruction(&Instruction::LocalGet(min_ref));
+        func.instruction(&Instruction::StructGet {
+            struct_type_index: aint_idx,
+            field_index: 1,
+        });
+        func.instruction(&Instruction::RefIsNull);
+        func.instruction(&Instruction::LocalGet(max_ref));
+        func.instruction(&Instruction::StructGet {
+            struct_type_index: aint_idx,
+            field_index: 1,
+        });
+        func.instruction(&Instruction::RefIsNull);
+        func.instruction(&Instruction::I32And);
+        func.instruction(&Instruction::If(result_block_type(result_idx)));
+        let to_i64 = ctx
+            .fn_map
+            .builtins
+            .get("__aint_to_i64_checked")
+            .copied()
+            .ok_or_else(|| {
+                WasmGcError::Validation(
+                    "Random.int on wasip2: __aint_to_i64_checked missing".into(),
+                )
+            })?;
+        func.instruction(&Instruction::LocalGet(min_ref));
+        func.instruction(&Instruction::Call(to_i64));
+        func.instruction(&Instruction::LocalSet(min_scratch));
+        func.instruction(&Instruction::LocalGet(max_ref));
+        func.instruction(&Instruction::Call(to_i64));
+        func.instruction(&Instruction::LocalSet(max_scratch));
+        emit_validated_random_int(func, rand_fn, min_scratch, max_scratch, result_idx, ctx)?;
+        func.instruction(&Instruction::Else);
+        emit_result_err(
+            func,
+            result_idx,
+            "Int",
+            "Random.int: bounds must fit a 64-bit integer",
+            ctx,
+        )?;
+        func.instruction(&Instruction::End);
+    } else {
+        emit_mir_expr(func, &args[0], slots, ctx)?;
+        emit_mir_expr(func, &args[1], slots, ctx)?;
+        func.instruction(&Instruction::LocalSet(max_scratch));
+        func.instruction(&Instruction::LocalSet(min_scratch));
+        emit_validated_random_int(func, rand_fn, min_scratch, max_scratch, result_idx, ctx)?;
+    }
+    Ok(())
+}
+
+fn emit_validated_random_int(
+    func: &mut wasm_encoder::Function,
+    rand_fn: u32,
+    min_scratch: u32,
+    max_scratch: u32,
+    result_idx: u32,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
     func.instruction(&Instruction::LocalGet(min_scratch));
-    func.instruction(&Instruction::Call(rand_fn)); // u64 -> i64 representation
-    emit_aint_arg_as_i64_wasip2(func, &args[1], slots, ctx)?; // max
+    func.instruction(&Instruction::LocalGet(max_scratch));
+    func.instruction(&Instruction::I64LeS);
+    func.instruction(&Instruction::If(result_block_type(result_idx)));
+    func.instruction(&Instruction::I32Const(1));
+
+    // A wrapped width of zero denotes the complete 2^64-sized i64 domain.
+    // In that one case every random bit pattern is already a valid offset;
+    // avoid `rem_u 0` while preserving a uniform rotation by `min`.
+    func.instruction(&Instruction::LocalGet(max_scratch));
     func.instruction(&Instruction::LocalGet(min_scratch));
     func.instruction(&Instruction::I64Sub);
     func.instruction(&Instruction::I64Const(1));
     func.instruction(&Instruction::I64Add);
-    func.instruction(&Instruction::I64RemU); // modulo unsigned
+    func.instruction(&Instruction::I64Eqz);
+    func.instruction(&Instruction::If(BlockType::Result(ValType::I64)));
+    func.instruction(&Instruction::Call(rand_fn));
+    func.instruction(&Instruction::Else);
+    func.instruction(&Instruction::Call(rand_fn));
+    func.instruction(&Instruction::LocalGet(max_scratch));
+    func.instruction(&Instruction::LocalGet(min_scratch));
+    func.instruction(&Instruction::I64Sub);
+    func.instruction(&Instruction::I64Const(1));
+    func.instruction(&Instruction::I64Add);
+    func.instruction(&Instruction::I64RemU);
+    func.instruction(&Instruction::End);
+    func.instruction(&Instruction::LocalGet(min_scratch));
     func.instruction(&Instruction::I64Add);
     lift_i64_result_to_aint_wasip2(func, ctx)?;
+    emit_default_value(func, "String", ctx.registry)?;
+    func.instruction(&Instruction::StructNew(result_idx));
+    func.instruction(&Instruction::Else);
+    emit_result_err(
+        func,
+        result_idx,
+        "Int",
+        "Random.int: min must be <= max",
+        ctx,
+    )?;
+    func.instruction(&Instruction::End);
     Ok(())
 }
 

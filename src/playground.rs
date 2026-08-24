@@ -1444,7 +1444,7 @@ fn main() -> Int
 
     #[test]
     fn check_project_reports_stdlib_shadowing() {
-        let entry = "module Main\n    intent = \"use Bytes\"\n    depends [Bytes]\n    effects []\n\nfn byteCount(values: List<Int>) -> Result<Int, String>\n    ? \"Count validated bytes.\"\n    bytes = Bytes.fromList(values)?\n    Result.Ok(List.len(Bytes.toList(bytes)))\n\nverify byteCount\n    byteCount([1, 2]) => Result.Ok(2)\n";
+        let entry = "module Main\n    intent = \"use Bytes\"\n    depends [Bytes]\n    effects []\n\nfn byteCount(values: List<Int>) -> Result<Int, String>\n    ? \"Count validated bytes.\"\n    bytes = Bytes.fromList(values)?\n    Result.Ok(List.len(Bytes.octets(bytes)))\n\nverify byteCount\n    byteCount([1, 2]) => Result.Ok(2)\n";
         let mut files = HashMap::new();
         files.insert("main.av".to_string(), entry.to_string());
         files.insert(

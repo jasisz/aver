@@ -1,7 +1,8 @@
 //! Subtype-encoded oracle bounds for proof export.
 //!
 //! Aver runtime guarantees per-classified-effect invariants — `Random.int`
-//! returns in `[min, max]`, `Random.float` in `[0.0, 1.0]`, `Time.unixMs`
+//! returns `Result.Ok` in `[min, max]` for a valid host-representable range,
+//! `Random.float` in `[0.0, 1.0]`, `Time.unixMs`
 //! is non-negative. Earlier 0.13 attempts emitted these as standalone
 //! `axiom ∀ rng, bounds` blocks, which is logically unsound: in Lean,
 //! a user could pick `rng = fun _ _ _ _ => max + 1` and derive `False`
@@ -12,9 +13,10 @@
 //!
 //! ```lean
 //! def RandomIntInBounds : Type :=
-//!   { f : BranchPath → Int → Int → Int → Int
-//!     // ∀ p n min max, min ≤ max →
-//!        min ≤ f p n min max ∧ f p n min max ≤ max }
+//!   { f : BranchPath → Int → Int → Int → Except String Int
+//!     // ∀ p n min max, i64Min ≤ min ∧ max ≤ i64Max ∧ min ≤ max →
+//!        ∃ value, f p n min max = Except.ok value ∧
+//!          min ≤ value ∧ value ≤ max }
 //! ```
 //!
 //! These are *types*, not postulates. Defining them adds no logical
@@ -69,13 +71,29 @@ pub(crate) fn lean_subtypes(declared: &DeclaredEffects) -> String {
 
     if declared.includes("Random.int") {
         push_block(
-            "abbrev RandomIntOracle := BranchPath → Int → Int → Int → Int\n\
+            "abbrev RandomIntOracle := BranchPath → Int → Int → Int → Except String Int\n\
              \n\
              def RandomIntInBounds : Type :=\n  \
                { f : RandomIntOracle //\n    \
                  ∀ (path : BranchPath) (n min max : Int),\n      \
-                 min ≤ max →\n      \
-                 min ≤ f path n min max ∧ f path n min max ≤ max }\n",
+                 (-9223372036854775808 : Int) ≤ min ∧\n      \
+                 max ≤ (9223372036854775807 : Int) ∧ min ≤ max →\n      \
+                 ∃ value : Int, f path n min max = Except.ok value ∧\n        \
+                   min ≤ value ∧ value ≤ max }\n\
+             \n\
+             noncomputable def RandomIntInBounds.valueAt\n    \
+                 (rnd : RandomIntInBounds) (path : BranchPath) (n min max : Int)\n    \
+                 (valid : (-9223372036854775808 : Int) ≤ min ∧\n      \
+                   max ≤ (9223372036854775807 : Int) ∧ min ≤ max) : Int :=\n  \
+               Classical.choose (rnd.property path n min max valid)\n\
+             \n\
+             @[simp] theorem RandomIntInBounds.result_eq\n    \
+                 (rnd : RandomIntInBounds) (path : BranchPath) (n min max : Int)\n    \
+                 (valid : (-9223372036854775808 : Int) ≤ min ∧\n      \
+                   max ≤ (9223372036854775807 : Int) ∧ min ≤ max) :\n    \
+                 rnd.val path n min max =\n      \
+                   Except.ok (rnd.valueAt path n min max valid) := by\n  \
+               exact (Classical.choose_spec (rnd.property path n min max valid)).1\n",
         );
     }
     if declared.includes("Random.float") {
@@ -128,10 +146,12 @@ pub(crate) fn dafny_subtype_predicates(declared: &DeclaredEffects) -> String {
     if declared.includes("Random.int") {
         push_block(
             "ghost predicate IsRandomIntInBounds(\n    \
-                 f: (BranchPath, int, int, int) -> int)\n\
+                 f: (BranchPath, int, int, int) -> Result<int, string>)\n\
              {\n  \
                forall path, n, min, max ::\n    \
-                 min <= max ==> min <= f(path, n, min, max) <= max\n\
+                 -9223372036854775808 <= min <= max <= 9223372036854775807 ==>\n      \
+                   exists value :: f(path, n, min, max) == Result.Ok(value)\n        \
+                     && min <= value <= max\n\
              }\n",
         );
     }
@@ -191,7 +211,8 @@ mod tests {
         let d = declared(&["Random.int"]);
         let out = lean_subtypes(&d);
         assert!(out.contains("RandomIntInBounds"));
-        assert!(out.contains("min ≤ f path n min max"));
+        assert!(out.contains("Except String Int"));
+        assert!(out.contains("f path n min max = Except.ok value"));
     }
 
     #[test]
@@ -214,6 +235,6 @@ mod tests {
     fn dafny_uses_function_arrow_syntax() {
         let d = declared(&["Random.int"]);
         let out = dafny_subtype_predicates(&d);
-        assert!(out.contains("(BranchPath, int, int, int) -> int"));
+        assert!(out.contains("(BranchPath, int, int, int) -> Result<int, string>"));
     }
 }

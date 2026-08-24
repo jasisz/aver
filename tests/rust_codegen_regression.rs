@@ -209,6 +209,13 @@ fn rust_codegen_builds_embedded_bytes_crypto_fixture() {
         entry_module.contains("values.as_slice()"),
         "Crypto.sha256 should consume proof-packed Bytes without materialization"
     );
+    assert!(
+        entry_module.contains("as_bytes().to_vec()")
+            && entry_module.contains("std::str::from_utf8")
+            && !entry_module.contains("String::from_utf8(")
+            && !entry_module.contains("iter_cloned().map(|__b|"),
+        "UTF-8 conversion should copy into packed Bytes once and validate the packed slice directly"
+    );
 
     let tests = Command::new("cargo")
         .arg("test")

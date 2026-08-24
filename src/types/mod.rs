@@ -6,13 +6,13 @@
 ///
 /// Sub-modules:
 /// - `checker` — static type checker
-/// - `bool`, `int`, `bits`, `float`, `string`, `list`, `map`, `char`, `crypto` — pure namespace helpers (no effects)
+/// - `bool`, `int`, `bits`, `float`, `string`, `list`, `map`, `code_point`, `crypto` — pure namespace helpers (no effects)
 pub mod bits;
 pub mod bool;
 pub mod branch_path;
 pub(crate) mod bytes;
-pub mod char;
 pub mod checker;
+pub mod code_point;
 pub mod crypto;
 pub mod effect_event;
 pub mod float;

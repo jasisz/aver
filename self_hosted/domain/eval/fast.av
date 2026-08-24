@@ -194,7 +194,7 @@ verify fastVectorNewSlot
 fn fastVectorNewSlotInner(sizeV: Val, fill: Int) -> Result<Val, String>
     ? "Allocate a vector when the wrapper shape is known in advance."
     match sizeV
-        Val.ValInt(size) -> Result.Ok(Val.ValVector(Vector.new(size, Val.ValInt(fill))))
+        Val.ValInt(size) -> Result.Ok(Val.ValVector(Vector.new(size, Val.ValInt(fill))?))
         _ -> Result.Err("Vector.new size must be Int")
 
 verify fastVectorNewSlotInner

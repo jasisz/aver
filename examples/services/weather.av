@@ -106,10 +106,10 @@ verify extractCity
 fn extractCityFromParts(parts: List<String>) -> Result<String, String>
     ? "Validates endpoint segment and extracts city from already split path parts."
     v = Vector.fromList(parts)
-    section = Option.toResult(Vector.get(v, 1), "Missing path segment")?
+    section = Result.fromOption(Vector.get(v, 1), "Missing path segment")?
     match section == "weather"
         false -> Result.Err("Not a weather endpoint")
-        true  -> Option.toResult(Vector.get(v, 2), "Missing city")
+        true  -> Result.fromOption(Vector.get(v, 2), "Missing city")
 
 verify extractCityFromParts
     extractCityFromParts(["", "weather", "Warsaw"]) => Result.Ok("Warsaw")
@@ -201,7 +201,7 @@ fn startServer(context: WeatherContext) -> Result<Unit, String>
     ? "Prints startup info and starts blocking HttpServer loop with explicit context."
     ! [Console.print, HttpServer.listenWith]
     Console.print("Weather service starting on port {context.config.serverPort}")
-    Result.Ok(HttpServer.listenWith(context.config.serverPort, context, handleWeather))
+    HttpServer.listenWith(context.config.serverPort, context, handleWeather)
 
 // Entry point
 

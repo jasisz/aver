@@ -4,13 +4,16 @@ module OracleIndependentProducts
         "Covers bare ! branch traces and ?! Result unwrapping with leftmost-error priority."
     effects [Disk, Random]
 
-fn counterStub(path: BranchPath, n: Int, min: Int, max: Int) -> Int
+fn counterStub(path: BranchPath, n: Int, min: Int, max: Int) -> Result<Int, String>
     ? "Return the per-branch oracle counter."
-    n
+    Result.Ok(n)
 
-fn pairSpec(path: BranchPath, rnd: Fn(BranchPath, Int, Int, Int) -> Int) -> Tuple<Int, Int>
+fn pairSpec(path: BranchPath, rnd: Fn(BranchPath, Int, Int, Int) -> Result<Int, String>) -> Result<Tuple<Int, Int>, String>
     ? "Expected pair for a two-branch independent product."
-    (rnd(BranchPath.child(path, 0), 0, 1, 6), rnd(BranchPath.child(path, 1), 0, 7, 12))
+    leftPath = BranchPath.child(path, 0)
+    rightPath = BranchPath.child(path, 1)
+    pair = (rnd(leftPath, 0, 1, 6), rnd(rightPath, 0, 7, 12))?!
+    Result.Ok(pair)
 
 fn pickPair() -> Tuple<Int, Int>
     ? "Draw two values in one independent product."
@@ -19,7 +22,7 @@ fn pickPair() -> Tuple<Int, Int>
 
 verify pickPair law branchPathLaw
     given rnd: Random.int = [counterStub]
-    pickPair() => pairSpec(BranchPath.Root, rnd)
+    Result.Ok(pickPair()) => pairSpec(BranchPath.Root, rnd)
 
 verify pickPair trace
     given rnd: Random.int = [counterStub]
@@ -56,7 +59,10 @@ verify readPair trace
     fails.trace.group(0).length() => 2
 
 verify counterStub
-    counterStub(BranchPath.Root, 0, 1, 6) => 0
+    counterStub(BranchPath.Root, 0, 1, 6) => Result.Ok(0)
+
+verify pairSpec
+    pairSpec(BranchPath.Root, counterStub) => Result.Ok((0, 0))
 
 verify fakeReadByFile
     fakeReadByFile(BranchPath.Root, 0, "left.txt") => Result.Ok("left")

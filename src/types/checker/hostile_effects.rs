@@ -3,7 +3,7 @@
 //! Where `hostile_values` produces boundary values for typed `given`
 //! domains, this module produces boundary *behaviours* for the
 //! classified-effect oracles themselves. The user usually reaches for
-//! one stub when they think about a law (`fn fairDie(...) -> Int 4`),
+//! one stub when they think about a law (`fn fairDie(...) -> Result<Int, String>`),
 //! but the world has more shapes than that. A reasonable hostile sweep
 //! tries each effect under a small set of plausible adversarial
 //! profiles:
@@ -121,12 +121,30 @@ pub fn hostile_profiles_for(method: &str) -> Vec<HostileProfile> {
                 ),
             },
         ],
+        "Env.set" => vec![
+            HostileProfile {
+                name: "normal_ok",
+                stub_fn_name: stub_name("normal_ok"),
+                stub_body: format!(
+                    "fn {}(path: BranchPath, n: Int, key: String, value: String) -> Result<Unit, String>\n    ? \"honest: the environment accepts the write\"\n    Result.Ok(Unit)\n",
+                    stub_name("normal_ok")
+                ),
+            },
+            HostileProfile {
+                name: "always_err",
+                stub_fn_name: stub_name("always_err"),
+                stub_body: format!(
+                    "fn {}(path: BranchPath, n: Int, key: String, value: String) -> Result<Unit, String>\n    ? \"hostile: the environment rejects every write\"\n    Result.Err(\"hostile: environment write rejected\")\n",
+                    stub_name("always_err")
+                ),
+            },
+        ],
         "Terminal.size" => vec![
             HostileProfile {
                 name: "normal",
                 stub_fn_name: stub_name("normal"),
                 stub_body: format!(
-                    "fn {}() -> Terminal.Size\n    ? \"honest: typical 80x24 terminal\"\n    Terminal.Size(width = 80, height = 24)\n",
+                    "fn {}() -> Result<Terminal.Size, String>\n    ? \"honest: typical 80x24 terminal\"\n    Result.Ok(Terminal.Size(width = 80, height = 24))\n",
                     stub_name("normal")
                 ),
             },
@@ -134,8 +152,76 @@ pub fn hostile_profiles_for(method: &str) -> Vec<HostileProfile> {
                 name: "minimal",
                 stub_fn_name: stub_name("minimal"),
                 stub_body: format!(
-                    "fn {}() -> Terminal.Size\n    ? \"hostile: tiny terminal, layout under pressure\"\n    Terminal.Size(width = 1, height = 1)\n",
+                    "fn {}() -> Result<Terminal.Size, String>\n    ? \"hostile: tiny terminal, layout under pressure\"\n    Result.Ok(Terminal.Size(width = 1, height = 1))\n",
                     stub_name("minimal")
+                ),
+            },
+            HostileProfile {
+                name: "always_err",
+                stub_fn_name: stub_name("always_err"),
+                stub_body: format!(
+                    "fn {}() -> Result<Terminal.Size, String>\n    ? \"hostile: terminal dimensions are unavailable\"\n    Result.Err(\"hostile: terminal size unavailable\")\n",
+                    stub_name("always_err")
+                ),
+            },
+        ],
+        "Terminal.moveTo" => vec![
+            HostileProfile {
+                name: "normal_ok",
+                stub_fn_name: stub_name("normal_ok"),
+                stub_body: format!(
+                    "fn {}(path: BranchPath, n: Int, row: Int, col: Int) -> Result<Unit, String>\n    ? \"honest: terminal accepts the cursor position\"\n    Result.Ok(Unit)\n",
+                    stub_name("normal_ok")
+                ),
+            },
+            HostileProfile {
+                name: "always_err",
+                stub_fn_name: stub_name("always_err"),
+                stub_body: format!(
+                    "fn {}(path: BranchPath, n: Int, row: Int, col: Int) -> Result<Unit, String>\n    ? \"hostile: terminal rejects every cursor movement\"\n    Result.Err(\"hostile: cursor movement rejected\")\n",
+                    stub_name("always_err")
+                ),
+            },
+        ],
+        "Terminal.clear"
+        | "Terminal.hideCursor"
+        | "Terminal.showCursor"
+        | "Terminal.flush"
+        | "Terminal.enableRawMode"
+        | "Terminal.disableRawMode"
+        | "Terminal.resetColor" => vec![
+            HostileProfile {
+                name: "normal_ok",
+                stub_fn_name: stub_name("normal_ok"),
+                stub_body: format!(
+                    "fn {}(path: BranchPath, n: Int) -> Result<Unit, String>\n    ? \"honest: terminal operation succeeds\"\n    Result.Ok(Unit)\n",
+                    stub_name("normal_ok")
+                ),
+            },
+            HostileProfile {
+                name: "always_err",
+                stub_fn_name: stub_name("always_err"),
+                stub_body: format!(
+                    "fn {}(path: BranchPath, n: Int) -> Result<Unit, String>\n    ? \"hostile: terminal operation fails\"\n    Result.Err(\"hostile: terminal operation unavailable\")\n",
+                    stub_name("always_err")
+                ),
+            },
+        ],
+        "Terminal.print" | "Terminal.setColor" => vec![
+            HostileProfile {
+                name: "normal_ok",
+                stub_fn_name: stub_name("normal_ok"),
+                stub_body: format!(
+                    "fn {}(path: BranchPath, n: Int, value: String) -> Result<Unit, String>\n    ? \"honest: terminal accepts the value\"\n    Result.Ok(Unit)\n",
+                    stub_name("normal_ok")
+                ),
+            },
+            HostileProfile {
+                name: "always_err",
+                stub_fn_name: stub_name("always_err"),
+                stub_body: format!(
+                    "fn {}(path: BranchPath, n: Int, value: String) -> Result<Unit, String>\n    ? \"hostile: terminal rejects the value\"\n    Result.Err(\"hostile: terminal output unavailable\")\n",
+                    stub_name("always_err")
                 ),
             },
         ],
@@ -209,7 +295,7 @@ pub fn hostile_profiles_for(method: &str) -> Vec<HostileProfile> {
                 name: "normal",
                 stub_fn_name: stub_name("normal"),
                 stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int) -> Option<String>\n    ? \"honest: user pressed a normal key\"\n    Option.Some(\"a\")\n",
+                    "fn {}(path: BranchPath, n: Int) -> Result<Option<String>, String>\n    ? \"honest: user pressed a normal key\"\n    Result.Ok(Option.Some(\"a\"))\n",
                     stub_name("normal")
                 ),
             },
@@ -217,8 +303,16 @@ pub fn hostile_profiles_for(method: &str) -> Vec<HostileProfile> {
                 name: "no_input",
                 stub_fn_name: stub_name("no_input"),
                 stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int) -> Option<String>\n    ? \"hostile: terminal returns no key — user idle\"\n    Option.None\n",
+                    "fn {}(path: BranchPath, n: Int) -> Result<Option<String>, String>\n    ? \"hostile: terminal returns no key — user idle\"\n    Result.Ok(Option.None)\n",
                     stub_name("no_input")
+                ),
+            },
+            HostileProfile {
+                name: "always_err",
+                stub_fn_name: stub_name("always_err"),
+                stub_body: format!(
+                    "fn {}(path: BranchPath, n: Int) -> Result<Option<String>, String>\n    ? \"hostile: terminal input fails\"\n    Result.Err(\"hostile: terminal input unavailable\")\n",
+                    stub_name("always_err")
                 ),
             },
         ],
@@ -307,6 +401,9 @@ mod tests {
             "Tcp.connect",
             "Args.get",
             "Env.get",
+            "Env.set",
+            "Terminal.size",
+            "Terminal.moveTo",
         ] {
             for p in hostile_profiles_for(method) {
                 parse_compiler_generated(&p.stub_body)
@@ -524,10 +621,13 @@ verify frameVerdict law neverReads
     /// table without profiles fails here, instead of hostile verification
     /// quietly running with that effect unmodelled.
     ///
-    /// Non-emptiness is not enough on its own. One profile is one world,
-    /// and a sweep across one world varies nothing: the run passes, and
-    /// the pass says only that the law survived the single behaviour we
-    /// happened to write down. Two is the floor.
+    /// Non-emptiness is not enough on its own for an actually variable
+    /// provider. One profile is one world, and a sweep across one world varies
+    /// nothing. `Time.sleep` is the deliberate exception: after removing the
+    /// fabricated `sleepUnavailable` failure, its only Result variation is the
+    /// deterministic validation contract encoded by `sleepContract`; the
+    /// effect still runs, but there is no second honest provider outcome to
+    /// invent merely to make a sweep wider.
     #[test]
     fn every_classified_non_output_effect_ships_enough_hostile_profiles() {
         use crate::types::checker::effect_classification::{
@@ -542,7 +642,11 @@ verify frameVerdict law neverReads
                 continue;
             }
             let count = hostile_profiles_for(c.method).len();
-            let floor = MIN_PROFILES;
+            let floor = if c.method == "Time.sleep" {
+                1
+            } else {
+                MIN_PROFILES
+            };
             if count < floor {
                 short.push(format!("{} ships {count}, needs {floor}", c.method));
             }

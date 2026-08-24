@@ -26,9 +26,20 @@ pub use replay_support::*;
 
 mod self_host_support;
 
+pub mod provider_support;
+pub use provider_support::{install_provider_bindings, install_provider_bindings_exact};
+
+fn bootstrap_provider_bindings() -> Result<(), String> {
+    provider_support::preflight_required_providers()
+}
+
 pub mod aver_generated;
 
 fn main() {
+    if let Err(error) = bootstrap_provider_bindings() {
+        eprintln!("{}", error);
+        std::process::exit(1);
+    }
     if let Ok(n_str) = std::env::var("AVER_BENCH_ITER") {
         let n: usize = n_str.parse().unwrap_or(0);
         let warmup: usize = std::env::var("AVER_BENCH_WARMUP")

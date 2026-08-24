@@ -1,5 +1,5 @@
 module Natural
-    exposes [fromInt, toInt, add, mul]
+    exposes [fromInt, value, add, mul]
     exposes opaque [Natural]
     intent =
         "Refinement-via-opaque: Aver has no refinement types in the"
@@ -34,13 +34,13 @@ verify fromInt
     fromInt(-1)  => Result.Err("Nat must be non-negative")
     fromInt(-99) => Result.Err("Nat must be non-negative")
 
-fn toInt(n: Natural) -> Int
+fn value(n: Natural) -> Int
     ? "Unwrap a Nat back into its underlying Int. Always non-negative."
     n.value
 
-verify toInt
-    toInt(Natural(value = 0)) => 0
-    toInt(Natural(value = 5)) => 5
+verify value
+    value(Natural(value = 0)) => 0
+    value(Natural(value = 5)) => 5
 
 fn add(a: Natural, b: Natural) -> Result<Natural, String>
     ? "Sum of two Nats. Routes the raw Int sum through fromInt to"

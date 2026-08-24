@@ -167,8 +167,15 @@ pub fn compile_to_wasm_gc(
     items: &[TopLevel],
     _analysis: Option<&AnalysisResult>,
 ) -> Result<Vec<u8>, WasmGcError> {
-    module::emit_module_with(items, None, TargetMode::AverBridge, &HashMap::new(), None)
-        .map(|(bytes, _, _)| bytes)
+    module::emit_module_with(
+        items,
+        None,
+        TargetMode::AverBridge,
+        &HashMap::new(),
+        None,
+        true,
+    )
+    .map(|(bytes, _, _)| bytes)
 }
 
 /// Compile a FLATTENED multi-module program, threading the identity-
@@ -187,13 +194,33 @@ pub fn compile_to_wasm_gc_flattened(
     target: TargetMode,
     type_aliases: &HashMap<String, String>,
 ) -> Result<WasmGcCompileOutput, WasmGcError> {
-    module::emit_module_with(items, handler, target, type_aliases, None).map(
-        |(bytes, mir_count, fragment_plans)| WasmGcCompileOutput {
-            bytes,
-            mir_count,
-            fragment_plans,
-        },
+    compile_to_wasm_gc_flattened_with_options(items, _analysis, handler, target, type_aliases, true)
+}
+
+/// Internal differential hook for exercising the representation-independent
+/// boxed `List<Int>` lowering without a process-global environment switch.
+#[doc(hidden)]
+pub fn compile_to_wasm_gc_flattened_with_options(
+    items: &[TopLevel],
+    _analysis: Option<&AnalysisResult>,
+    handler: Option<&str>,
+    target: TargetMode,
+    type_aliases: &HashMap<String, String>,
+    packed_sequences_enabled: bool,
+) -> Result<WasmGcCompileOutput, WasmGcError> {
+    module::emit_module_with(
+        items,
+        handler,
+        target,
+        type_aliases,
+        None,
+        packed_sequences_enabled,
     )
+    .map(|(bytes, mir_count, fragment_plans)| WasmGcCompileOutput {
+        bytes,
+        mir_count,
+        fragment_plans,
+    })
 }
 
 /// Compile a flattened wasip2 core whose custom imports and bridge
@@ -211,6 +238,7 @@ pub fn compile_to_wasm_gc_flattened_with_capabilities(
         TargetMode::Wasip2,
         type_aliases,
         Some(capabilities),
+        true,
     )
     .map(|(bytes, mir_count, fragment_plans)| WasmGcCompileOutput {
         bytes,
@@ -232,8 +260,15 @@ pub fn compile_to_wasm_gc_with_mir_count(
     items: &[TopLevel],
     _analysis: Option<&AnalysisResult>,
 ) -> Result<(Vec<u8>, usize), WasmGcError> {
-    module::emit_module_with(items, None, TargetMode::AverBridge, &HashMap::new(), None)
-        .map(|(bytes, mir_count, _)| (bytes, mir_count))
+    module::emit_module_with(
+        items,
+        None,
+        TargetMode::AverBridge,
+        &HashMap::new(),
+        None,
+        true,
+    )
+    .map(|(bytes, mir_count, _)| (bytes, mir_count))
 }
 
 /// Same as `compile_to_wasm_gc` but exports a JS-callable
@@ -252,6 +287,7 @@ pub fn compile_to_wasm_gc_with_handler(
         TargetMode::AverBridge,
         &HashMap::new(),
         None,
+        true,
     )
     .map(|(bytes, _, _)| bytes)
 }
@@ -269,6 +305,7 @@ pub fn compile_to_wasm_gc_with_handler_and_cert_plans(
         TargetMode::AverBridge,
         &HashMap::new(),
         None,
+        true,
     )
     .map(|(bytes, mir_count, fragment_plans)| WasmGcCompileOutput {
         bytes,
@@ -293,7 +330,7 @@ pub fn compile_to_wasm_gc_for_wasip2(
     items: &[TopLevel],
     _analysis: Option<&AnalysisResult>,
 ) -> Result<Vec<u8>, WasmGcError> {
-    module::emit_module_with(items, None, TargetMode::Wasip2, &HashMap::new(), None)
+    module::emit_module_with(items, None, TargetMode::Wasip2, &HashMap::new(), None, true)
         .map(|(bytes, _, _)| bytes)
 }
 
@@ -324,6 +361,7 @@ pub fn compile_to_wasm_gc_for_wasip2_with_handler(
         TargetMode::Wasip2,
         &HashMap::new(),
         None,
+        true,
     )
     .map(|(bytes, _, _)| bytes)
 }

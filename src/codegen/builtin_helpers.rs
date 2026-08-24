@@ -3,7 +3,7 @@
 //!
 //! Lean has hand-written `LEAN_PRELUDE_*` constants for things like
 //! `AverDigits` numeric parsing, `String.charAt`/`String.slice`,
-//! `Char.toCode`, the `AverList` recursion helpers, and
+//! String code-point helpers, the `AverList` recursion helpers, and
 //! `BranchPath`'s `child`/`parse` constructors. Dafny has the same
 //! shape sitting inside `DAFNY_PRELUDE_AFTER_RECORDS`. Each backend
 //! re-decides locally whether to include each piece, with a mix of
@@ -51,8 +51,9 @@ pub const BUILTIN_HELPERS: &[BuiltinHelper] = &[
     BuiltinHelper {
         key: "BranchPath",
         body_tokens: &["BranchPath"],
-        // Dafny's `BranchPath_child` uses `IntToString` (in NumericParse)
-        // and references the `datatype BranchPath` (in BranchPathDatatype).
+        // Dafny's `BranchPath_childLiteral` uses `IntToString` (in
+        // NumericParse) and references the `datatype BranchPath` (in
+        // BranchPathDatatype).
         // Lean's BranchPath structure includes both the datatype and the
         // constructors in one block, so it ignores BranchPathDatatype
         // and the NumericParse dependency.
@@ -101,10 +102,13 @@ pub const BUILTIN_HELPERS: &[BuiltinHelper] = &[
             "StringToLower(",
             "StringFromBool(",
             "StringByteLength(",
+            "StringToUtf8(",
+            "StringFromUtf8(",
             "AverString",
         ],
-        // Dafny's `StringCharAt` returns `Option<string>`.
-        depends_on: &["OptionDatatype"],
+        // Dafny's `StringCharAt` returns `Option<string>` and UTF-8 decoding
+        // returns `Result<string,string>`. Lean has both datatypes natively.
+        depends_on: &["OptionDatatype", "ResultDatatype"],
         doc: "Character/slice/intercalate + split/contains/replace/etc. \
               Lean: native `String.*`. Dafny: opaque `StringCharAt`, `StringChars`, \
               `StringJoin`, `StringSplit`, `StringContains`, etc.",
@@ -140,16 +144,15 @@ pub const BUILTIN_HELPERS: &[BuiltinHelper] = &[
               / `FloatToString` / `FloatFromString` declarations.",
     },
     BuiltinHelper {
-        key: "CharCode",
+        key: "StringCodePoint",
         body_tokens: &[
-            "Char.toCode",
-            "Char.fromCode",
-            "CharToCode(",
-            "CharFromCode(",
+            "String.firstCodePoint",
+            "String.fromCodePoint",
+            "StringFirstCodePoint(",
+            "StringFromCodePoint(",
         ],
-        // Dafny's `CharFromCode` returns `Option<string>`.
         depends_on: &["OptionDatatype"],
-        doc: "Character-code helpers.",
+        doc: "Unicode scalar-value helpers owned by String.",
     },
     BuiltinHelper {
         key: "AverBits",
@@ -256,10 +259,10 @@ pub const BUILTIN_HELPERS: &[BuiltinHelper] = &[
               Lean uses native `Option`; this key is a no-op there.",
     },
     BuiltinHelper {
-        key: "OptionToResult",
-        body_tokens: &["OptionToResult"],
+        key: "ResultFromOption",
+        body_tokens: &["ResultFromOption"],
         depends_on: &["ResultDatatype", "OptionDatatype"],
-        doc: "Dafny `OptionToResult` bridge function. Pulled implicitly when both Result and \
+        doc: "Dafny `ResultFromOption` bridge function. Pulled implicitly when both Result and \
               Option are in scope and the body explicitly converts between them.",
     },
     BuiltinHelper {
@@ -349,7 +352,15 @@ mod tests {
         // StringHelpers also depends on OptionDatatype, which is emitted
         // before StringHelpers (deps go first).
         let keys = needed_keys("...String.charAt s 0...", false);
-        assert_eq!(keys, vec!["OptionDatatype", "StringHelpers", "StringHadd"]);
+        assert_eq!(
+            keys,
+            vec![
+                "OptionDatatype",
+                "ResultDatatype",
+                "StringHelpers",
+                "StringHadd"
+            ]
+        );
     }
 
     #[test]
@@ -373,7 +384,7 @@ mod tests {
         // Many tokens drive in many helpers; each helper drags in its
         // declared dependencies. The exact set is a conjunction of:
         // explicit token matches + transitive deps.
-        let body = "AverDigits. String.charAt Char.toCode AverList. averStringPosFuel BranchPath";
+        let body = "AverDigits. String.charAt String.firstCodePointAv AverList. averStringPosFuel BranchPath";
         let keys = needed_keys(body, false);
         assert_eq!(
             keys,
@@ -385,7 +396,7 @@ mod tests {
                 "OptionDatatype",
                 "AverList",
                 "StringHelpers",
-                "CharCode",
+                "StringCodePoint",
                 "ProofFuel",
                 "StringHadd",
             ]
@@ -407,7 +418,7 @@ mod tests {
                 "OptionDatatype",
                 "AverList",
                 "StringHelpers",
-                "CharCode",
+                "StringCodePoint",
                 "AverBits",
                 "AverMeasure",
                 "AverMap",
@@ -415,7 +426,7 @@ mod tests {
                 "FloatInstances",
                 "ExceptInstances",
                 "StringHadd",
-                "OptionToResult",
+                "ResultFromOption",
             ]
         );
     }

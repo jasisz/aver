@@ -7,7 +7,10 @@ use crate::*;
 
 /// Dispatch Int.* builtins.
 #[inline(always)]
-pub fn callInt(name: AverStr, args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn callInt(
+    name: AverStr,
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     {
         let __dispatch_subject = name.clone();
@@ -66,7 +69,9 @@ pub fn callInt(name: AverStr, args: &aver_rt::AverList<Val>) -> Result<Val, Aver
 }
 
 /// Int.max(a, b) -> larger of a and b.
-pub fn builtinIntMax(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn builtinIntMax(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let pair = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
     {
@@ -76,7 +81,10 @@ pub fn builtinIntMax(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
 }
 
 /// Inner Int.max.
-pub fn builtinIntMaxInner(aV: &Val, bV: &Val) -> Result<Val, AverStr> {
+pub fn builtinIntMaxInner(
+    aV: &crate::aver_generated::domain::value::Val,
+    bV: &crate::aver_generated::domain::value::Val,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let a = crate::aver_generated::domain::builtins::helpers::expectInt(aV)?;
     let b = crate::aver_generated::domain::builtins::helpers::expectInt(bV)?;
@@ -88,7 +96,9 @@ pub fn builtinIntMaxInner(aV: &Val, bV: &Val) -> Result<Val, AverStr> {
 }
 
 /// Int.min(a, b) -> smaller of a and b.
-pub fn builtinIntMin(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn builtinIntMin(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let pair = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
     {
@@ -98,7 +108,10 @@ pub fn builtinIntMin(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
 }
 
 /// Inner Int.min.
-pub fn builtinIntMinInner(aV: &Val, bV: &Val) -> Result<Val, AverStr> {
+pub fn builtinIntMinInner(
+    aV: &crate::aver_generated::domain::value::Val,
+    bV: &crate::aver_generated::domain::value::Val,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let a = crate::aver_generated::domain::builtins::helpers::expectInt(aV)?;
     let b = crate::aver_generated::domain::builtins::helpers::expectInt(bV)?;
@@ -111,7 +124,10 @@ pub fn builtinIntMinInner(aV: &Val, bV: &Val) -> Result<Val, AverStr> {
 
 /// Dispatch String.* builtins.
 #[inline(always)]
-pub fn callString(name: AverStr, args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn callString(
+    name: AverStr,
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     {
         let __dispatch_subject = name.clone();
@@ -176,7 +192,13 @@ pub fn callString(name: AverStr, args: &aver_rt::AverList<Val>) -> Result<Val, A
                                                                         {
                                                                             crate::aver_generated::domain::builtins::primitives::builtinStringReplaceAll(args)
                                                                         } else {
-                                                                            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(40)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unknown string builtin: ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(name)))); __b }))
+                                                                            if &*__dispatch_subject
+                                                                                == "String.firstCodePoint"
+                                                                            {
+                                                                                crate::aver_generated::domain::builtins::primitives::builtinStringFirstCodePoint(args)
+                                                                            } else {
+                                                                                if &*__dispatch_subject == "String.fromCodePoint" { crate::aver_generated::domain::builtins::primitives::builtinStringFromCodePoint(args) } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(40)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unknown string builtin: ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(name)))); __b })) }
+                                                                            }
                                                                         }
                                                                     }
                                                                 }
@@ -197,36 +219,10 @@ pub fn callString(name: AverStr, args: &aver_rt::AverList<Val>) -> Result<Val, A
     }
 }
 
-/// Dispatch Char.* builtins.
-#[inline(always)]
-pub fn callChar(name: AverStr, args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
-    crate::cancel_checkpoint();
-    {
-        let __dispatch_subject = name.clone();
-        if &*__dispatch_subject == "Char.fromCode" {
-            crate::aver_generated::domain::builtins::primitives::builtinCharFromCode(args)
-        } else {
-            if &*__dispatch_subject == "Char.toCode" {
-                crate::aver_generated::domain::builtins::primitives::builtinCharToCode(args)
-            } else {
-                Err(aver_rt::AverStr::from({
-                    let mut __b = {
-                        let mut __b = aver_rt::Buffer::with_capacity(
-                            (aver_rt::AverInt::from_i64(38)).to_usize().unwrap_or(0),
-                        );
-                        __b.push_str(&AverStr::from("unknown char builtin: "));
-                        __b
-                    };
-                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(name))));
-                    __b
-                }))
-            }
-        }
-    }
-}
-
 /// Float.fromInt(n) -> Float value.
-pub fn builtinIntToFloat(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn builtinIntToFloat(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let n = crate::aver_generated::domain::builtins::helpers::expectInt(&v)?;
@@ -236,7 +232,9 @@ pub fn builtinIntToFloat(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> 
 }
 
 /// String.fromInt(n) -> string representation.
-pub fn builtinIntToString(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn builtinIntToString(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let n = crate::aver_generated::domain::builtins::helpers::expectInt(&v)?;
@@ -246,7 +244,9 @@ pub fn builtinIntToString(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr>
 }
 
 /// Int.abs(n) -> absolute value.
-pub fn builtinIntAbs(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn builtinIntAbs(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let n = crate::aver_generated::domain::builtins::helpers::expectInt(&v)?;
@@ -254,7 +254,9 @@ pub fn builtinIntAbs(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
 }
 
 /// Int.mod(a, b) -> a mod b as Result.
-pub fn builtinIntMod(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn builtinIntMod(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let pair = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
     {
@@ -264,7 +266,10 @@ pub fn builtinIntMod(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
 }
 
 /// Inner impl of Int.mod.
-pub fn builtinIntModInner(aV: &Val, bV: &Val) -> Result<Val, AverStr> {
+pub fn builtinIntModInner(
+    aV: &crate::aver_generated::domain::value::Val,
+    bV: &crate::aver_generated::domain::value::Val,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let a = crate::aver_generated::domain::builtins::helpers::expectInt(aV)?;
     let b = crate::aver_generated::domain::builtins::helpers::expectInt(bV)?;
@@ -289,7 +294,9 @@ pub fn builtinIntModInner(aV: &Val, bV: &Val) -> Result<Val, AverStr> {
 }
 
 /// Int.div(a, b) -> a div b as a Result value.
-pub fn builtinIntDiv(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn builtinIntDiv(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let pair = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
     {
@@ -299,7 +306,10 @@ pub fn builtinIntDiv(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
 }
 
 /// Inner impl of Int.div — Euclidean, Err on zero divisor or overflow.
-pub fn builtinIntDivInner(aV: &Val, bV: &Val) -> Result<Val, AverStr> {
+pub fn builtinIntDivInner(
+    aV: &crate::aver_generated::domain::value::Val,
+    bV: &crate::aver_generated::domain::value::Val,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let a = crate::aver_generated::domain::builtins::helpers::expectInt(aV)?;
     let b = crate::aver_generated::domain::builtins::helpers::expectInt(bV)?;
@@ -309,17 +319,19 @@ pub fn builtinIntDivInner(aV: &Val, bV: &Val) -> Result<Val, AverStr> {
     })
     .into_aver()
     {
-        Ok(q) => Ok(crate::aver_generated::domain::value::Val::ValOk(
+        Ok(q @ _) => Ok(crate::aver_generated::domain::value::Val::ValOk(
             std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValInt(q)),
         )),
-        Err(e) => Ok(crate::aver_generated::domain::value::Val::ValErr(
+        Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
             std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValStr(e)),
         )),
     }
 }
 
 /// String.len(s) -> length as Int.
-pub fn builtinStringLen(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn builtinStringLen(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let s = crate::aver_generated::domain::builtins::helpers::expectStr(&v)?;
@@ -329,7 +341,9 @@ pub fn builtinStringLen(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
 }
 
 /// String.charAt(s, index) -> single character string or error.
-pub fn builtinStringCharAt(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn builtinStringCharAt(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let pair = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
     {
@@ -339,7 +353,10 @@ pub fn builtinStringCharAt(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr
 }
 
 /// Inner impl of String.charAt.
-pub fn builtinStringCharAtInner(sV: &Val, idxV: &Val) -> Result<Val, AverStr> {
+pub fn builtinStringCharAtInner(
+    sV: &crate::aver_generated::domain::value::Val,
+    idxV: &crate::aver_generated::domain::value::Val,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let s = crate::aver_generated::domain::builtins::helpers::expectStr(sV)?;
     let idx = crate::aver_generated::domain::builtins::helpers::expectInt(idxV)?;
@@ -348,7 +365,7 @@ pub fn builtinStringCharAtInner(sV: &Val, idxV: &Val) -> Result<Val, AverStr> {
         .and_then(|__i| s.chars().nth(__i).map(|c| c.to_string())))
     .into_aver()
     {
-        Some(c) => Ok(crate::aver_generated::domain::value::Val::ValSome(
+        Some(c @ _) => Ok(crate::aver_generated::domain::value::Val::ValSome(
             std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValStr(c)),
         )),
         None => Ok(crate::aver_generated::domain::value::Val::ValNone),
@@ -356,7 +373,9 @@ pub fn builtinStringCharAtInner(sV: &Val, idxV: &Val) -> Result<Val, AverStr> {
 }
 
 /// String.join(list, separator) -> joined string.
-pub fn builtinStringJoin(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn builtinStringJoin(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let pair = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
     {
@@ -366,7 +385,10 @@ pub fn builtinStringJoin(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> 
 }
 
 /// Inner impl of String.join.
-pub fn builtinStringJoinInner(lstV: &Val, sepV: &Val) -> Result<Val, AverStr> {
+pub fn builtinStringJoinInner(
+    lstV: &crate::aver_generated::domain::value::Val,
+    sepV: &crate::aver_generated::domain::value::Val,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let items = crate::aver_generated::domain::builtins::helpers::expectList(lstV)?;
     let sep = crate::aver_generated::domain::builtins::helpers::expectStr(sepV)?;
@@ -382,7 +404,7 @@ pub fn builtinStringJoinInner(lstV: &Val, sepV: &Val) -> Result<Val, AverStr> {
 /// Convert list of ValStr to list of String.
 #[inline(always)]
 pub fn extractStrings(
-    mut items: aver_rt::AverList<Val>,
+    mut items: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
     mut acc: aver_rt::AverList<AverStr>,
 ) -> Result<aver_rt::AverList<AverStr>, AverStr> {
     loop {
@@ -405,7 +427,9 @@ pub fn extractStrings(
 }
 
 /// String.slice(s, start, end) -> substring.
-pub fn builtinStringSlice(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn builtinStringSlice(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     {
         let __list_subject = args.clone();
@@ -439,7 +463,11 @@ pub fn builtinStringSlice(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr>
 }
 
 /// Inner impl of String.slice.
-pub fn builtinStringSliceInner(sV: &Val, startV: &Val, endV: &Val) -> Result<Val, AverStr> {
+pub fn builtinStringSliceInner(
+    sV: &crate::aver_generated::domain::value::Val,
+    startV: &crate::aver_generated::domain::value::Val,
+    endV: &crate::aver_generated::domain::value::Val,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let s = crate::aver_generated::domain::builtins::helpers::expectStr(sV)?;
     let start = crate::aver_generated::domain::builtins::helpers::expectInt(startV)?;
@@ -455,7 +483,9 @@ pub fn builtinStringSliceInner(sV: &Val, startV: &Val, endV: &Val) -> Result<Val
 }
 
 /// String.fromBool(b) -> string.
-pub fn builtinStringFromBool(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn builtinStringFromBool(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     match v {
@@ -467,7 +497,9 @@ pub fn builtinStringFromBool(args: &aver_rt::AverList<Val>) -> Result<Val, AverS
 }
 
 /// String.fromInt(n) -> string (alias for String.fromInt).
-pub fn builtinStringFromInt(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn builtinStringFromInt(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let n = crate::aver_generated::domain::builtins::helpers::expectInt(&v)?;
@@ -477,7 +509,9 @@ pub fn builtinStringFromInt(args: &aver_rt::AverList<Val>) -> Result<Val, AverSt
 }
 
 /// String.fromFloat(f) -> string.
-pub fn builtinStringFromFloat(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn builtinStringFromFloat(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     match v {
@@ -489,7 +523,9 @@ pub fn builtinStringFromFloat(args: &aver_rt::AverList<Val>) -> Result<Val, Aver
 }
 
 /// String.contains(haystack, needle) -> Bool.
-pub fn builtinStringContains(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn builtinStringContains(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let pair = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
     {
@@ -499,7 +535,10 @@ pub fn builtinStringContains(args: &aver_rt::AverList<Val>) -> Result<Val, AverS
 }
 
 /// Inner impl of String.contains.
-pub fn builtinStringContainsInner(hV: &Val, nV: &Val) -> Result<Val, AverStr> {
+pub fn builtinStringContainsInner(
+    hV: &crate::aver_generated::domain::value::Val,
+    nV: &crate::aver_generated::domain::value::Val,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let h = crate::aver_generated::domain::builtins::helpers::expectStr(hV)?;
     let n = crate::aver_generated::domain::builtins::helpers::expectStr(nV)?;
@@ -509,7 +548,9 @@ pub fn builtinStringContainsInner(hV: &Val, nV: &Val) -> Result<Val, AverStr> {
 }
 
 /// String.startsWith(s, prefix) -> Bool.
-pub fn builtinStringStartsWith(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn builtinStringStartsWith(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let pair = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
     {
@@ -519,7 +560,10 @@ pub fn builtinStringStartsWith(args: &aver_rt::AverList<Val>) -> Result<Val, Ave
 }
 
 /// Inner impl of String.startsWith.
-pub fn builtinStringStartsWithInner(sV: &Val, pV: &Val) -> Result<Val, AverStr> {
+pub fn builtinStringStartsWithInner(
+    sV: &crate::aver_generated::domain::value::Val,
+    pV: &crate::aver_generated::domain::value::Val,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let s = crate::aver_generated::domain::builtins::helpers::expectStr(sV)?;
     let p = crate::aver_generated::domain::builtins::helpers::expectStr(pV)?;
@@ -529,7 +573,9 @@ pub fn builtinStringStartsWithInner(sV: &Val, pV: &Val) -> Result<Val, AverStr> 
 }
 
 /// String.toLower(s) -> lowercase string.
-pub fn builtinStringToLower(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn builtinStringToLower(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let s = crate::aver_generated::domain::builtins::helpers::expectStr(&v)?;
@@ -538,31 +584,44 @@ pub fn builtinStringToLower(args: &aver_rt::AverList<Val>) -> Result<Val, AverSt
     ))
 }
 
-/// Char.fromCode(n) -> single character string.
-pub fn builtinCharFromCode(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+/// String.fromCodePoint(n) -> single character string.
+pub fn builtinStringFromCodePoint(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let n = crate::aver_generated::domain::builtins::helpers::expectInt(&v)?;
     match ((n).to_u32().and_then(char::from_u32).map(|c| c.to_string())).into_aver() {
-        Some(c) => Ok(crate::aver_generated::domain::value::Val::ValSome(
+        Some(c @ _) => Ok(crate::aver_generated::domain::value::Val::ValSome(
             std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValStr(c)),
         )),
         None => Ok(crate::aver_generated::domain::value::Val::ValNone),
     }
 }
 
-/// Char.toCode(c) -> Int code point.
-pub fn builtinCharToCode(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+/// String.firstCodePoint(s) -> optional first Unicode code point.
+pub fn builtinStringFirstCodePoint(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let s = crate::aver_generated::domain::builtins::helpers::expectStr(&v)?;
-    Ok(crate::aver_generated::domain::value::Val::ValInt(
-        aver_rt::AverInt::from_i64(s.chars().next().map(|c| c as i64).unwrap_or(0)),
-    ))
+    match (s)
+        .chars()
+        .next()
+        .map(|c| aver_rt::AverInt::from_i64(c as i64))
+    {
+        Some(code @ _) => Ok(crate::aver_generated::domain::value::Val::ValSome(
+            std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValInt(code)),
+        )),
+        None => Ok(crate::aver_generated::domain::value::Val::ValNone),
+    }
 }
 
 /// Int.fromString(s) -> Result<Int, String>.
-pub fn builtinIntFromString(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn builtinIntFromString(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let s = crate::aver_generated::domain::builtins::helpers::expectStr(&v)?;
@@ -573,17 +632,19 @@ pub fn builtinIntFromString(args: &aver_rt::AverList<Val>) -> Result<Val, AverSt
     })
     .into_aver()
     {
-        Ok(n) => Ok(crate::aver_generated::domain::value::Val::ValOk(
+        Ok(n @ _) => Ok(crate::aver_generated::domain::value::Val::ValOk(
             std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValInt(n)),
         )),
-        Err(e) => Ok(crate::aver_generated::domain::value::Val::ValErr(
+        Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
             std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValStr(e)),
         )),
     }
 }
 
 /// String.chars(s) -> list of single-character strings.
-pub fn builtinStringChars(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn builtinStringChars(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let s = crate::aver_generated::domain::builtins::helpers::expectStr(&v)?;
@@ -592,7 +653,7 @@ pub fn builtinStringChars(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr>
             s.clone(),
             aver_rt::AverInt::from_i64(0),
             aver_rt::AverInt::from_i64(s.chars().count() as i64),
-            aver_rt::AverList::empty(),
+            &aver_rt::AverList::empty(),
         ),
     ))
 }
@@ -600,43 +661,27 @@ pub fn builtinStringChars(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr>
 /// Split string into list of ValStr chars.
 #[inline(always)]
 pub fn stringToCharList(
-    mut s: AverStr,
-    mut pos: aver_rt::AverInt,
-    mut total: aver_rt::AverInt,
-    mut acc: aver_rt::AverList<Val>,
-) -> aver_rt::AverList<Val> {
-    loop {
-        crate::cancel_checkpoint();
-        let reversed = acc.reverse();
-        if (pos < total) {
-            match ((pos)
-                .to_usize()
-                .and_then(|__i| s.chars().nth(__i).map(|c| c.to_string())))
-            .into_aver()
-            {
-                Some(c) => {
-                    let __tco1 = pos.add(&aver_rt::AverInt::from_i64(1));
-                    let __tco3 = aver_rt::AverList::prepend(
-                        crate::aver_generated::domain::value::Val::ValStr(c),
-                        &acc,
-                    );
-                    pos = __tco1;
-                    acc = __tco3;
-                    continue;
-                }
-                None => {
-                    return reversed;
-                }
-            }
-        } else {
-            return reversed;
-        }
-    }
+    s: AverStr,
+    pos: aver_rt::AverInt,
+    total: aver_rt::AverInt,
+    acc: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
+    crate::cancel_checkpoint();
+    crate::aver_generated::domain::builtins::primitives::stringToCharList__indexed(
+        s.clone(),
+        pos,
+        total,
+        acc.clone(),
+        aver_rt::string_index_build(&s),
+    )
 }
 
 /// Dispatch Float.* builtins.
 #[inline(always)]
-pub fn callFloat(name: AverStr, args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn callFloat(
+    name: AverStr,
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     {
         let __dispatch_subject = name.clone();
@@ -720,7 +765,9 @@ pub fn callFloat(name: AverStr, args: &aver_rt::AverList<Val>) -> Result<Val, Av
 }
 
 /// Float.fromString(s) -> Result<Float, String>.
-pub fn builtinFloatFromString(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn builtinFloatFromString(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let s = crate::aver_generated::domain::builtins::helpers::expectStr(&v)?;
@@ -731,17 +778,19 @@ pub fn builtinFloatFromString(args: &aver_rt::AverList<Val>) -> Result<Val, Aver
     })
     .into_aver()
     {
-        Ok(f) => Ok(crate::aver_generated::domain::value::Val::ValOk(
+        Ok(f @ _) => Ok(crate::aver_generated::domain::value::Val::ValOk(
             std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValFloat(f)),
         )),
-        Err(e) => Ok(crate::aver_generated::domain::value::Val::ValErr(
+        Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
             std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValStr(e)),
         )),
     }
 }
 
 /// Float.fromInt(n) -> Float.
-pub fn builtinFloatFromInt(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn builtinFloatFromInt(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let n = crate::aver_generated::domain::builtins::helpers::expectInt(&v)?;
@@ -751,7 +800,9 @@ pub fn builtinFloatFromInt(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr
 }
 
 /// Float.round(f) -> Int.
-pub fn builtinFloatRound(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn builtinFloatRound(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     match v {
@@ -765,7 +816,9 @@ pub fn builtinFloatRound(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> 
 }
 
 /// String.fromFloat(f) -> string representation.
-pub fn builtinFloatToString(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn builtinFloatToString(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     match v {
@@ -777,7 +830,9 @@ pub fn builtinFloatToString(args: &aver_rt::AverList<Val>) -> Result<Val, AverSt
 }
 
 /// Float.abs(f) -> Float.
-pub fn builtinFloatAbs(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn builtinFloatAbs(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     match v {
@@ -789,7 +844,9 @@ pub fn builtinFloatAbs(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
 }
 
 /// Float.floor(f) -> Int.
-pub fn builtinFloatFloor(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn builtinFloatFloor(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     match v {
@@ -803,7 +860,9 @@ pub fn builtinFloatFloor(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> 
 }
 
 /// Float.ceil(f) -> Int.
-pub fn builtinFloatCeil(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn builtinFloatCeil(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     match v {
@@ -817,7 +876,9 @@ pub fn builtinFloatCeil(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
 }
 
 /// Float.min(a, b) -> Float.
-pub fn builtinFloatMin(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn builtinFloatMin(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let pair = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
     match pair {
@@ -832,7 +893,9 @@ pub fn builtinFloatMin(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
 }
 
 /// Float.max(a, b) -> Float.
-pub fn builtinFloatMax(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn builtinFloatMax(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let pair = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
     match pair {
@@ -847,7 +910,9 @@ pub fn builtinFloatMax(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
 }
 
 /// Float.sin(f) -> Float.
-pub fn builtinFloatSin(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn builtinFloatSin(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     match v {
@@ -859,7 +924,9 @@ pub fn builtinFloatSin(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
 }
 
 /// Float.cos(f) -> Float.
-pub fn builtinFloatCos(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn builtinFloatCos(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     match v {
@@ -871,7 +938,9 @@ pub fn builtinFloatCos(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
 }
 
 /// Float.sqrt(f) -> Float.
-pub fn builtinFloatSqrt(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn builtinFloatSqrt(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     match v {
@@ -883,7 +952,9 @@ pub fn builtinFloatSqrt(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
 }
 
 /// Float.pow(base, exp) -> Float.
-pub fn builtinFloatPow(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn builtinFloatPow(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let pair = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
     match pair {
@@ -898,7 +969,9 @@ pub fn builtinFloatPow(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
 }
 
 /// Float.atan2(y, x) -> Float.
-pub fn builtinFloatAtan2(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn builtinFloatAtan2(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let pair = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
     match pair {
@@ -913,7 +986,9 @@ pub fn builtinFloatAtan2(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> 
 }
 
 /// Float.pi() -> Float.
-pub fn builtinFloatPi(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn builtinFloatPi(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     {
         let __list_subject = args;
@@ -928,7 +1003,9 @@ pub fn builtinFloatPi(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
 }
 
 /// String.toUpper(s) -> uppercase string.
-pub fn builtinStringToUpper(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn builtinStringToUpper(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let s = crate::aver_generated::domain::builtins::helpers::expectStr(&v)?;
@@ -938,7 +1015,9 @@ pub fn builtinStringToUpper(args: &aver_rt::AverList<Val>) -> Result<Val, AverSt
 }
 
 /// String.trim(s) -> trimmed string.
-pub fn builtinStringTrim(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn builtinStringTrim(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let s = crate::aver_generated::domain::builtins::helpers::expectStr(&v)?;
@@ -948,7 +1027,9 @@ pub fn builtinStringTrim(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> 
 }
 
 /// String.endsWith(s, suffix) -> Bool.
-pub fn builtinStringEndsWith(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn builtinStringEndsWith(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let pair = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
     {
@@ -958,7 +1039,10 @@ pub fn builtinStringEndsWith(args: &aver_rt::AverList<Val>) -> Result<Val, AverS
 }
 
 /// Inner String.endsWith.
-pub fn builtinStringEndsWithInner(sV: &Val, pV: &Val) -> Result<Val, AverStr> {
+pub fn builtinStringEndsWithInner(
+    sV: &crate::aver_generated::domain::value::Val,
+    pV: &crate::aver_generated::domain::value::Val,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let s = crate::aver_generated::domain::builtins::helpers::expectStr(sV)?;
     let p = crate::aver_generated::domain::builtins::helpers::expectStr(pV)?;
@@ -968,7 +1052,9 @@ pub fn builtinStringEndsWithInner(sV: &Val, pV: &Val) -> Result<Val, AverStr> {
 }
 
 /// String.split(s, sep) -> List<String>.
-pub fn builtinStringSplit(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn builtinStringSplit(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let pair = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
     {
@@ -978,7 +1064,10 @@ pub fn builtinStringSplit(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr>
 }
 
 /// Inner String.split.
-pub fn builtinStringSplitInner(sV: &Val, sepV: &Val) -> Result<Val, AverStr> {
+pub fn builtinStringSplitInner(
+    sV: &crate::aver_generated::domain::value::Val,
+    sepV: &crate::aver_generated::domain::value::Val,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let s = crate::aver_generated::domain::builtins::helpers::expectStr(sV)?;
     let sep = crate::aver_generated::domain::builtins::helpers::expectStr(sepV)?;
@@ -997,8 +1086,8 @@ pub fn builtinStringSplitInner(sV: &Val, sepV: &Val) -> Result<Val, AverStr> {
 #[inline(always)]
 pub fn strPartsToVals(
     mut parts: aver_rt::AverList<AverStr>,
-    mut acc: aver_rt::AverList<Val>,
-) -> aver_rt::AverList<Val> {
+    mut acc: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(parts, [] => { return acc.reverse(); }, [s, rest] => { {
@@ -1012,7 +1101,9 @@ pub fn strPartsToVals(
 }
 
 /// String.repeat(s, n) -> repeated string.
-pub fn builtinStringRepeat(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn builtinStringRepeat(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let pair = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
     {
@@ -1022,7 +1113,10 @@ pub fn builtinStringRepeat(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr
 }
 
 /// Inner String.repeat.
-pub fn builtinStringRepeatInner(sV: &Val, nV: &Val) -> Result<Val, AverStr> {
+pub fn builtinStringRepeatInner(
+    sV: &crate::aver_generated::domain::value::Val,
+    nV: &crate::aver_generated::domain::value::Val,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let s = crate::aver_generated::domain::builtins::helpers::expectStr(sV)?;
     let n = crate::aver_generated::domain::builtins::helpers::expectInt(nV)?;
@@ -1038,10 +1132,8 @@ pub fn repeatStr(mut s: AverStr, mut n: aver_rt::AverInt, mut acc: AverStr) -> A
         crate::cancel_checkpoint();
         if (n > aver_rt::AverInt::from_i64(0)) {
             {
-                let __tco0 = s.clone();
                 let __tco1 = n.sub(&aver_rt::AverInt::from_i64(1));
                 let __tco2 = (acc + &s);
-                s = __tco0;
                 n = __tco1;
                 acc = __tco2;
                 continue;
@@ -1054,7 +1146,9 @@ pub fn repeatStr(mut s: AverStr, mut n: aver_rt::AverInt, mut acc: AverStr) -> A
 
 /// String.replace(s, from, to) -> String with all occurrences replaced.
 #[inline(always)]
-pub fn builtinStringReplaceAll(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn builtinStringReplaceAll(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     if (aver_rt::AverInt::from_i64(args.len() as i64) == aver_rt::AverInt::from_i64(3)) {
         crate::aver_generated::domain::builtins::primitives::builtinStringReplaceAllExtract(args)
@@ -1065,13 +1159,19 @@ pub fn builtinStringReplaceAll(args: &aver_rt::AverList<Val>) -> Result<Val, Ave
 
 /// Extract args for String.replace.
 #[inline(always)]
-pub fn builtinStringReplaceAllExtract(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn builtinStringReplaceAllExtract(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     aver_list_match!(args.clone(), [] => Err(AverStr::from("String.replace takes 3 arguments")), [sV, r1] => aver_list_match!(r1, [] => Err(AverStr::from("String.replace takes 3 arguments")), [fromV, r2] => aver_list_match!(r2, [] => Err(AverStr::from("String.replace takes 3 arguments")), [toV, r3] => crate::aver_generated::domain::builtins::primitives::builtinStringReplaceAllDo(&sV, &fromV, &toV))))
 }
 
 /// Inner impl of String.replace.
-pub fn builtinStringReplaceAllDo(sV: &Val, fromV: &Val, toV: &Val) -> Result<Val, AverStr> {
+pub fn builtinStringReplaceAllDo(
+    sV: &crate::aver_generated::domain::value::Val,
+    fromV: &crate::aver_generated::domain::value::Val,
+    toV: &crate::aver_generated::domain::value::Val,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let s = crate::aver_generated::domain::builtins::helpers::expectStr(sV)?;
     let from = crate::aver_generated::domain::builtins::helpers::expectStr(fromV)?;
@@ -1081,10 +1181,45 @@ pub fn builtinStringReplaceAllDo(sV: &Val, fromV: &Val, toV: &Val) -> Result<Val
     ))
 }
 
+/// Synthesized indexed worker of `stringToCharList`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
+#[inline(always)]
+pub fn stringToCharList__indexed(
+    mut s: AverStr,
+    mut pos: aver_rt::AverInt,
+    mut total: aver_rt::AverInt,
+    mut acc: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    __str_index: aver_rt::StringIndex,
+) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
+    let __str_index = std::sync::Arc::new(__str_index);
+    loop {
+        crate::cancel_checkpoint();
+        let reversed = acc.reverse();
+        if (pos < total) {
+            match aver_rt::string_index_char_at(&s, &__str_index, &pos) {
+                Some(c @ _) => {
+                    let __tco1 = pos.add(&aver_rt::AverInt::from_i64(1));
+                    let __tco3 = aver_rt::AverList::prepend(
+                        crate::aver_generated::domain::value::Val::ValStr(c),
+                        &acc,
+                    );
+                    pos = __tco1;
+                    acc = __tco3;
+                    continue;
+                }
+                None => {
+                    return reversed;
+                }
+            }
+        } else {
+            return reversed;
+        }
+    }
+}
+
 /// Synthesized collecting variant of `extractStrings`. Appends to a builder where `extractStrings` prepends to `acc` and reverses on the way out, which reaches the same list without the cons chain or the reversal. Call sites that start the accumulator at `[]` are moved here.
 #[inline(always)]
 pub fn extractStrings__collected(
-    mut items: aver_rt::AverList<Val>,
+    mut items: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
     mut acc: aver_rt::AverList<AverStr>,
 ) -> Result<aver_rt::AverList<AverStr>, AverStr> {
     loop {
@@ -1110,8 +1245,8 @@ pub fn extractStrings__collected(
 #[inline(always)]
 pub fn strPartsToVals__collected(
     mut parts: aver_rt::AverList<AverStr>,
-    mut acc: aver_rt::AverList<Val>,
-) -> aver_rt::AverList<Val> {
+    mut acc: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(parts, [] => { return aver_rt::list_builder_finalize(acc); }, [s, rest] => { {

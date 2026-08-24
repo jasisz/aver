@@ -28,8 +28,8 @@ pub const FIELD_ARGS: &str = "args";
 /// Dewey-decimal path string identifying the structural position
 /// where the event was emitted. Empty for sequential-level events
 /// (outside any `!`/`?!` group) — matches the `BranchPath.root`
-/// convention. `BranchPath.parse(event.path)` round-trips the value
-/// back to an opaque `BranchPath`.
+/// convention. `BranchPath.parse(event.path)` validates and round-trips the
+/// value as `Result<BranchPath, String>`.
 pub const FIELD_PATH: &str = "path";
 
 /// Construct the arena type registration. Called alongside other builtin

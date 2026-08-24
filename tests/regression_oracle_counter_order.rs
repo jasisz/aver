@@ -6,8 +6,8 @@
 //! charge indices in that same order.
 //!
 //! Pre-fix the lifter claimed its own counter before lifting its arguments, so
-//! `Random.int(1, Random.int(2, 6))` exported as `rnd path 0 1 (rnd path 1 2 6)`
-//! while the run answered as if it were `rnd path 1 1 (rnd path 0 2 6)`. The
+//! `Random.int(0, Random.int(0, 6) + 2)` assigned the outer and inner oracle
+//! indices in the opposite order from the VM. The
 //! two never agreed, and the disagreement was fail-closed in both directions:
 //! the law that held at runtime exported a theorem `native_decide` refutes, and
 //! the law matching the export failed `verify`. A correct program was simply
@@ -29,18 +29,18 @@ const SRC: &str = r#"module CounterOrder
     intent = "Oracle indices must be charged in evaluation order."
     effects [Random]
 
-fn indexStub(path: BranchPath, n: Int, min: Int, max: Int) -> Int
+fn indexStub(path: BranchPath, n: Int, min: Int, max: Int) -> Result<Int, String>
     ? "Returns the call index so the oracle coordinate is observable."
-    n
+    Result.Ok(n)
 
-fn nested() -> Int
+fn nested() -> Result<Int, String>
     ? "Outer Random.int whose upper bound is itself a Random.int."
     ! [Random.int]
-    Random.int(1, Random.int(2, 6))
+    Random.int(0, Random.int(0, 6) + 2)
 
 verify nested law indexOrder
     given rnd: Random.int = [indexStub]
-    nested() => 1
+    nested() => Result.Ok(1)
 "#;
 
 #[test]

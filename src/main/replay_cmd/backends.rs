@@ -270,6 +270,7 @@ pub(super) fn run_wasm_gc_replay(
         mode,
         entry_info,
         None,
+        true,
     )?;
     Ok(BackendReplayOutcome {
         actual: RecordedOutcome::Value(run.output),

@@ -15,7 +15,7 @@ fn mixedLongFrame() -> Bytes
 
 fn octetCount(bytes: Bytes) -> Int
     ? "How many octets a validated frame carries."
-    List.len(Bytes.toList(bytes))
+    List.len(Bytes.octets(bytes))
 
 verify digestSizedFrame
     octetCount(digestSizedFrame()) => 32

@@ -72,13 +72,13 @@ pub(super) enum EffectName {
     /// `(name: String) -> String` — Workers env binding lookup;
     /// returns empty string when the binding is absent.
     EnvGet,
-    /// `(name: String, value: String) -> Unit` — no-op on
-    /// Workers (env is read-only).
+    /// `(name: String, value: String) -> Result<Unit, String>` — no-op Ok on
+    /// Workers (env is read-only); hosted runtimes report write failures.
     EnvSet,
     // ── CLI / runtime side effects covered by the legacy
     //    `abi.rs` table; ported one-for-one so wasm-gc has the
     //    same surface area.
-    /// `() -> String` — read one line from stdin.
+    /// `() -> Result<String, String>` — read one line from stdin.
     ConsoleReadLine,
     /// `() -> Int` — number of CLI args.
     ArgsLen,
@@ -86,9 +86,12 @@ pub(super) enum EffectName {
     ArgsGet,
     /// `() -> Float` — uniform [0, 1).
     RandomFloat,
-    /// `(lo: Int, hi: Int) -> Int` — uniform inclusive on both ends.
+    /// `(lo: Int, hi: Int) -> Result<Int, String>` — uniform inclusive on
+    /// both ends, with catchable range validation. Valid literal bounds
+    /// discharge the wrapper but not the effect call.
     RandomInt,
-    /// `(ms: Int) -> Unit` — block (or no-op when the host can't).
+    /// `(ms: Int) -> Result<Unit, String>` — validate then block. A valid
+    /// literal discharges the wrapper but not the effect call.
     TimeSleep,
     /// `() -> String` — RFC 3339 timestamp from the host clock.
     TimeNow,
@@ -102,36 +105,34 @@ pub(super) enum EffectName {
     //   ports. Hosts that don't implement Terminal (workers, browser)
     //   should treat these as no-ops; Aver `! [Terminal.foo]` effect
     //   declarations drive when imports are emitted.
-    /// `() -> Unit` — switch the host terminal to raw mode (no line
+    /// `() -> Result<Unit, String>` — switch the host terminal to raw mode (no line
     /// buffering, no echo). Pairs with `Terminal.disableRawMode`.
     TerminalEnableRawMode,
-    /// `() -> Unit` — restore the host terminal's pre-raw mode.
+    /// `() -> Result<Unit, String>` — restore the host terminal's pre-raw mode.
     TerminalDisableRawMode,
-    /// `() -> Unit` — clear the entire terminal screen.
+    /// `() -> Result<Unit, String>` — clear the entire terminal screen.
     TerminalClear,
-    /// `(row: Int, col: Int) -> Unit` — move the cursor to the given
-    /// 1-indexed row/col.
+    /// `(row: Int, col: Int) -> Result<Unit, String>` — move the cursor to the
+    /// given 1-indexed row/col; host I/O failure remains observable.
     TerminalMoveTo,
-    /// `(s: String) -> Unit` — write `s` to the terminal at the
+    /// `(s: String) -> Result<Unit, String>` — write `s` to the terminal at the
     /// current cursor position. Doesn't append a newline.
     TerminalPrint,
-    /// `(color: Int) -> Unit` — set the foreground colour to the
-    /// given ANSI 256 colour code.
+    /// `(color: String) -> Result<Unit, String>` — set the foreground colour.
     TerminalSetColor,
-    /// `() -> Unit` — reset foreground colour to default.
+    /// `() -> Result<Unit, String>` — reset foreground colour to default.
     TerminalResetColor,
-    /// `() -> Option<String>` — read one keypress non-blocking. None
-    /// if no input is available; Some(byte_string) for printable +
-    /// special-key sequences.
+    /// `() -> Result<Option<String>, String>` — read one keypress
+    /// non-blocking. `Ok(None)` means no input is available.
     TerminalReadKey,
-    /// `() -> Terminal.Size` — current terminal dimensions in
-    /// (width, height) cells.
+    /// `() -> Result<Terminal.Size, String>` — current terminal dimensions in
+    /// (width, height) cells, or a host query failure.
     TerminalSize,
-    /// `() -> Unit` — hide the cursor.
+    /// `() -> Result<Unit, String>` — hide the cursor.
     TerminalHideCursor,
-    /// `() -> Unit` — show the cursor.
+    /// `() -> Result<Unit, String>` — show the cursor.
     TerminalShowCursor,
-    /// `() -> Unit` — flush any buffered terminal output to the host.
+    /// `() -> Result<Unit, String>` — flush buffered terminal output.
     TerminalFlush,
     // ── Disk surface — POSIX-shaped file I/O wired through aver_rt::*.
     //   `Disk.exists` returns Bool; everything else returns
@@ -559,8 +560,13 @@ impl EffectName {
             Self::EnvGet => Ok(vec![any_ref_ty()]),
             Self::EnvSet => Ok(vec![any_ref_ty(), any_ref_ty()]),
             Self::ConsoleReadLine | Self::ArgsLen | Self::RandomFloat | Self::TimeNow => Ok(vec![]),
-            Self::ArgsGet | Self::TimeSleep => Ok(vec![ValType::I64]),
-            Self::RandomInt => Ok(vec![ValType::I64, ValType::I64]),
+            Self::ArgsGet => Ok(vec![ValType::I64]),
+            // These operations surface machine-range failures as Aver Result,
+            // so keep their Int arguments boxed across the host boundary. The
+            // host can then distinguish a Small from an out-of-i64 Big without
+            // an eager `__aint_to_i64_checked` trap in guest code.
+            Self::TimeSleep => Ok(vec![any_ref_ty()]),
+            Self::RandomInt => Ok(vec![any_ref_ty(), any_ref_ty()]),
             Self::FloatSin | Self::FloatCos => Ok(vec![ValType::F64]),
             Self::FloatAtan2 | Self::FloatPow => Ok(vec![ValType::F64, ValType::F64]),
             Self::TerminalEnableRawMode
@@ -572,7 +578,7 @@ impl EffectName {
             | Self::TerminalHideCursor
             | Self::TerminalShowCursor
             | Self::TerminalFlush => Ok(vec![]),
-            Self::TerminalMoveTo => Ok(vec![ValType::I64, ValType::I64]),
+            Self::TerminalMoveTo => Ok(vec![any_ref_ty(), any_ref_ty()]),
             Self::TerminalPrint => Ok(vec![any_ref_ty()]),
             // Terminal.setColor takes `color: String`, not Int — same
             // shape as Terminal.print. Was previously typed as i64 by
@@ -641,8 +647,8 @@ impl EffectName {
             Self::ResponseText
             | Self::ResponseSetHeader
             | Self::HttpAddRequestHeader
-            | Self::HttpClearRequestHeaders
-            | Self::EnvSet => Ok(vec![]),
+            | Self::HttpClearRequestHeaders => Ok(vec![]),
+            Self::EnvSet => Ok(vec![result_ref_ty(registry, "Result<Unit,String>")?]),
             Self::HttpSend => Ok(vec![
                 ValType::I64,
                 string_ref_ty(registry)?,
@@ -665,8 +671,9 @@ impl EffectName {
                 })])
             }
             Self::ArgsGet | Self::TimeNow => Ok(vec![string_ref_ty(registry)?]),
-            Self::ArgsLen | Self::RandomInt => Ok(vec![ValType::I64]),
-            Self::TimeSleep => Ok(vec![]),
+            Self::ArgsLen => Ok(vec![ValType::I64]),
+            Self::RandomInt => Ok(vec![result_ref_ty(registry, "Result<Int,String>")?]),
+            Self::TimeSleep => Ok(vec![result_ref_ty(registry, "Result<Unit,String>")?]),
             Self::RandomFloat
             | Self::FloatSin
             | Self::FloatCos
@@ -675,42 +682,21 @@ impl EffectName {
             Self::TerminalEnableRawMode
             | Self::TerminalDisableRawMode
             | Self::TerminalClear
-            | Self::TerminalMoveTo
             | Self::TerminalPrint
             | Self::TerminalSetColor
             | Self::TerminalResetColor
             | Self::TerminalHideCursor
             | Self::TerminalShowCursor
-            | Self::TerminalFlush => Ok(vec![]),
-            Self::TerminalReadKey => {
-                // `Option<String>` ref — eager-registered when any
-                // call site reaches for `String.charAt` / `Char.fromCode`,
-                // or now also when `Terminal.readKey` shows up.
-                let opt_idx =
-                    registry
-                        .option_type_idx("Option<String>")
-                        .ok_or(WasmGcError::Validation(
-                            "Terminal.readKey: Option<String> slot not registered".into(),
-                        ))?;
-                Ok(vec![ValType::Ref(wasm_encoder::RefType {
-                    nullable: true,
-                    heap_type: wasm_encoder::HeapType::Concrete(opt_idx),
-                })])
-            }
-            Self::TerminalSize => {
-                let idx =
-                    registry
-                        .record_type_idx("Terminal.Size")
-                        .ok_or(WasmGcError::Validation(
-                            "Terminal.size: Terminal.Size record slot not registered \
-                         (did you call Terminal.size in user code?)"
-                                .into(),
-                        ))?;
-                Ok(vec![ValType::Ref(wasm_encoder::RefType {
-                    nullable: true,
-                    heap_type: wasm_encoder::HeapType::Concrete(idx),
-                })])
-            }
+            | Self::TerminalFlush
+            | Self::TerminalMoveTo => Ok(vec![result_ref_ty(registry, "Result<Unit,String>")?]),
+            Self::TerminalReadKey => Ok(vec![result_ref_ty(
+                registry,
+                "Result<Option<String>,String>",
+            )?]),
+            Self::TerminalSize => Ok(vec![result_ref_ty(
+                registry,
+                "Result<Terminal.Size,String>",
+            )?]),
             Self::DiskReadText => Ok(vec![result_ref_ty(registry, "Result<String,String>")?]),
             Self::DiskReadBytes => Ok(vec![result_ref_ty(registry, "Result<Bytes,String>")?]),
             Self::DiskReadBytesAt => Ok(vec![result_ref_ty(registry, "Result<Bytes,String>")?]),

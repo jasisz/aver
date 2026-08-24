@@ -408,7 +408,7 @@ fn callResolvedById(fnId: Int, fd: FnDef, args: List<Val>, fns: FnStore) -> Resu
     ? "Call a function with a known store id: slot-based if resolved, map-based otherwise."
     ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
     match fd.slotCount > 0
-        true -> evalResolvedSlotFn(fnId, fd, Domain.Eval.Slots.buildSlotEnv(args, fd.slotCount), fns)
+        true -> evalResolvedSlotFn(fnId, fd, Domain.Eval.Slots.buildSlotEnv(args, fd.slotCount)?, fns)
         false -> evalResolvedNamedFn(fd, Domain.Eval.Store.zipArgs(fd.params, args, {}), fns)
 
 fn evalResolvedSlotFn(fnId: Int, fd: FnDef, calleeEnv: Vector<Val>, fns: FnStore) -> Result<Val, String>
@@ -515,7 +515,7 @@ fn evalTailExprSlot(selfId: Int, expr: Expr, slotCount: Int, env: Vector<Val>, s
     ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
     match expr
         Expr.ExprCallDirect(fnId, argExprs) -> match fnId == selfId
-            true -> match evalArgsSlotToSlotEnv(argExprs, env, slotMap, fns, Vector.new(slotCount, Val.ValUnit), 0)
+            true -> match evalArgsSlotToSlotEnv(argExprs, env, slotMap, fns, Vector.new(slotCount, Val.ValUnit)?, 0)
                 Result.Ok(nextEnv) -> Result.Ok(SlotTailStep.SlotTailRecurEnv(nextEnv))
                 Result.Err(e) -> Result.Err(e)
             false -> match evalCallDirectSlot(fnId, argExprs, env, slotMap, fns)
@@ -623,7 +623,7 @@ fn evalCallDirect(fnId: Int, argExprs: List<Expr>, env: Map<String, Val>, fns: F
 fn evalCallDirectMapToSlot(fnId: Int, fd: FnDef, argExprs: List<Expr>, env: Map<String, Val>, fns: FnStore) -> Result<Val, String>
     ? "Call resolved function by evaluating args directly into the callee slot env."
     ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
-    calleeEnv = evalArgsMapToSlotEnv(argExprs, env, fns, Vector.new(fd.slotCount, Val.ValUnit), 0)?
+    calleeEnv = evalArgsMapToSlotEnv(argExprs, env, fns, Vector.new(fd.slotCount, Val.ValUnit)?, 0)?
     evalResolvedSlotFn(fnId, fd, calleeEnv, fns)
 
 fn evalCallDirectMapToNamed(fd: FnDef, argExprs: List<Expr>, env: Map<String, Val>, fns: FnStore) -> Result<Val, String>
@@ -1061,7 +1061,7 @@ fn evalCallDirectSlot(fnId: Int, argExprs: List<Expr>, env: Vector<Val>, slotMap
 fn evalCallDirectSlotToSlot(fnId: Int, fd: FnDef, argExprs: List<Expr>, env: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore) -> Result<Val, String>
     ? "Call resolved function by evaluating args directly into a callee slot env from slot caller state."
     ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
-    calleeEnv = evalArgsSlotToSlotEnv(argExprs, env, slotMap, fns, Vector.new(fd.slotCount, Val.ValUnit), 0)?
+    calleeEnv = evalArgsSlotToSlotEnv(argExprs, env, slotMap, fns, Vector.new(fd.slotCount, Val.ValUnit)?, 0)?
     evalResolvedSlotFn(fnId, fd, calleeEnv, fns)
 
 fn evalCallDirectSlotToNamed(fd: FnDef, argExprs: List<Expr>, env: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore) -> Result<Val, String>

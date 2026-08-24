@@ -517,7 +517,9 @@ impl CapabilityProvider for CountingRandomProvider {
     ) -> Result<ProviderValue, ProviderFault> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         match context.operation.as_str() {
-            "Random.int" => Ok(ProviderValue::Int(4.into())),
+            "Random.int" => Ok(ProviderValue::ResultOk(Box::new(ProviderValue::Int(
+                4.into(),
+            )))),
             "Random.float" => Ok(ProviderValue::Float(0.5)),
             operation => Err(ProviderFault::new("bad_call", operation)),
         }
@@ -1301,11 +1303,11 @@ fn check_and_rust_compile_report_standard_binding_identities() {
     assert!(provider_support.contains("StandardTcpProvider"));
     assert!(
         provider_support
-            .contains("sha256:c7bd82159c4e5922771531cbf583bf6ff74a85dbb5c2c362d1e3b156c5720a49")
+            .contains("sha256:e80d264b61f2808b4db4d765ded0d3db1a9a019c814d27686ef7e71bc4c208af")
     );
     assert!(
         provider_support
-            .contains("sha256:3b9239af56c4e89e527a53ce6fe4a470a42f84b203b10078c8633f39a6cec5f6")
+            .contains("sha256:5c23bcf6fe8a6515ea430de874828421cff538f89b3bc142d03f2e6cc014dec7")
     );
     assert!(
         provider_support

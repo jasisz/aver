@@ -11,20 +11,26 @@ use crate::*;
 
 /// If variable not in env, try a top-level binding, then a named function reference, then a nullary variant.
 #[inline(always)]
-pub fn evalVarFallback(name: AverStr, fns: &FnStore) -> Result<Val, AverStr> {
+pub fn evalVarFallback(
+    name: AverStr,
+    fns: &crate::aver_generated::domain::eval::store::FnStore,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     match crate::aver_generated::domain::eval::store::lookupGlobal(fns, name.clone()) {
-        Some(v) => Ok(v),
+        Some(v @ _) => Ok(v),
         None => crate::aver_generated::domain::eval::common::evalVarFallbackNamed(name, fns),
     }
 }
 
 /// Resolve a name that is neither a local nor a top-level binding: function reference, then nullary variant.
 #[inline(always)]
-pub fn evalVarFallbackNamed(name: AverStr, fns: &FnStore) -> Result<Val, AverStr> {
+pub fn evalVarFallbackNamed(
+    name: AverStr,
+    fns: &crate::aver_generated::domain::eval::store::FnStore,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     match crate::aver_generated::domain::eval::store::lookupFnOption(fns, name.clone()) {
-        Some(fd) => Ok(crate::aver_generated::domain::value::Val::ValFnRef(
+        Some(fd @ _) => Ok(crate::aver_generated::domain::value::Val::ValFnRef(
             fd.name.clone(),
         )),
         None => match crate::aver_generated::domain::builtins::splitDotted(name.clone()) {
@@ -83,13 +89,15 @@ pub fn unwrapPropagatedError(err: AverStr) -> Option<AverStr> {
 
 /// Catch internal ? propagation at a function boundary and turn it back into Result.Err(value).
 #[inline(always)]
-pub fn normalizeFnReturn(result: &Result<Val, AverStr>) -> Result<Val, AverStr> {
+pub fn normalizeFnReturn(
+    result: &Result<crate::aver_generated::domain::value::Val, AverStr>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     match result.clone() {
-        Ok(v) => Ok(v),
-        Err(err) => {
+        Ok(v @ _) => Ok(v),
+        Err(err @ _) => {
             match crate::aver_generated::domain::eval::common::unwrapPropagatedError(err.clone()) {
-                Some(msg) => Ok(crate::aver_generated::domain::value::Val::ValErr(
+                Some(msg @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
                     std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValStr(msg)),
                 )),
                 None => Err(err),
@@ -101,9 +109,9 @@ pub fn normalizeFnReturn(result: &Result<Val, AverStr>) -> Result<Val, AverStr> 
 /// Look up a record field by name.
 #[inline(always)]
 pub fn lookupField(
-    mut fields: aver_rt::AverList<(AverStr, Val)>,
+    mut fields: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
     mut name: AverStr,
-) -> Result<Val, AverStr> {
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(fields, [] => { return Err((AverStr::from("unknown field: ") + &name)); }, [pair, rest] => { { let (k, v) = pair; if (k == name) { return Ok(v); } else { {

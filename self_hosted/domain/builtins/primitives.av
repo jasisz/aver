@@ -1,7 +1,7 @@
 module Primitives
     depends [Domain.Value, Domain.Builtins.Helpers]
-    intent = "Int, String, Float, and Char namespace builtins."
-    exposes [callInt, callString, callFloat, callChar]
+    intent = "Int, String, and Float namespace builtins."
+    exposes [callInt, callString, callFloat]
     effects []
 
 fn callInt(name: String, args: List<Val>) -> Result<Val, String>
@@ -88,22 +88,13 @@ fn callString(name: String, args: List<Val>) -> Result<Val, String>
         "String.split" -> builtinStringSplit(args)
         "String.repeat" -> builtinStringRepeat(args)
         "String.replace" -> builtinStringReplaceAll(args)
+        "String.firstCodePoint" -> builtinStringFirstCodePoint(args)
+        "String.fromCodePoint" -> builtinStringFromCodePoint(args)
         _ -> Result.Err("unknown string builtin: {name}")
 
 verify callString
     callString("String.len", [Val.ValStr("hello")]) => Result.Ok(Val.ValInt(5))
     callString("String.bogus", [Val.ValStr("x")]) => Result.Err("unknown string builtin: String.bogus")
-
-fn callChar(name: String, args: List<Val>) -> Result<Val, String>
-    ? "Dispatch Char.* builtins."
-    match name
-        "Char.fromCode" -> builtinCharFromCode(args)
-        "Char.toCode" -> builtinCharToCode(args)
-        _ -> Result.Err("unknown char builtin: {name}")
-
-verify callChar
-    callChar("Char.fromCode", [Val.ValInt(65)]) => Result.Ok(Val.ValSome(Val.ValStr("A")))
-    callChar("Char.bogus", [Val.ValInt(1)]) => Result.Err("unknown char builtin: Char.bogus")
 
 fn builtinIntToFloat(args: List<Val>) -> Result<Val, String>
     ? "Float.fromInt(n) -> Float value."
@@ -358,28 +349,30 @@ verify builtinStringToLower
     builtinStringToLower([Val.ValStr("HELLO")]) => Result.Ok(Val.ValStr("hello"))
     builtinStringToLower([Val.ValInt(1)]) => Result.Err("expected string argument")
 
-fn builtinCharFromCode(args: List<Val>) -> Result<Val, String>
-    ? "Char.fromCode(n) -> single character string."
+fn builtinStringFromCodePoint(args: List<Val>) -> Result<Val, String>
+    ? "String.fromCodePoint(n) -> single character string."
     v = Domain.Builtins.Helpers.oneArg(args)?
     n = Domain.Builtins.Helpers.expectInt(v)?
-    match Char.fromCode(n)
+    match String.fromCodePoint(n)
         Option.Some(c) -> Result.Ok(Val.ValSome(Val.ValStr(c)))
         Option.None -> Result.Ok(Val.ValNone)
 
-verify builtinCharFromCode
-    builtinCharFromCode([Val.ValInt(65)]) => Result.Ok(Val.ValSome(Val.ValStr("A")))
-    builtinCharFromCode([Val.ValStr("x")]) => Result.Err("expected int argument")
+verify builtinStringFromCodePoint
+    builtinStringFromCodePoint([Val.ValInt(65)]) => Result.Ok(Val.ValSome(Val.ValStr("A")))
+    builtinStringFromCodePoint([Val.ValStr("x")]) => Result.Err("expected int argument")
 
-fn builtinCharToCode(args: List<Val>) -> Result<Val, String>
-    ? "Char.toCode(c) -> Int code point."
+fn builtinStringFirstCodePoint(args: List<Val>) -> Result<Val, String>
+    ? "String.firstCodePoint(s) -> optional first Unicode code point."
     v = Domain.Builtins.Helpers.oneArg(args)?
     s = Domain.Builtins.Helpers.expectStr(v)?
-    Result.Ok(Val.ValInt(Char.toCode(s)))
+    match String.firstCodePoint(s)
+        Option.Some(code) -> Result.Ok(Val.ValSome(Val.ValInt(code)))
+        Option.None -> Result.Ok(Val.ValNone)
 
-verify builtinCharToCode
-    builtinCharToCode([Val.ValStr("A")]) => Result.Ok(Val.ValInt(65))
-    builtinCharToCode([Val.ValStr("0")]) => Result.Ok(Val.ValInt(48))
-    builtinCharToCode([Val.ValInt(1)]) => Result.Err("expected string argument")
+verify builtinStringFirstCodePoint
+    builtinStringFirstCodePoint([Val.ValStr("A")]) => Result.Ok(Val.ValSome(Val.ValInt(65)))
+    builtinStringFirstCodePoint([Val.ValStr("")]) => Result.Ok(Val.ValNone)
+    builtinStringFirstCodePoint([Val.ValInt(1)]) => Result.Err("expected string argument")
 
 fn builtinIntFromString(args: List<Val>) -> Result<Val, String>
     ? "Int.fromString(s) -> Result<Int, String>."

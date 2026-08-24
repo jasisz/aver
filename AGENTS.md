@@ -84,7 +84,7 @@ src/
     list.rs           — List.len/prepend/concat/reverse/contains/zip/take/drop (pure, recursive)
     vector.rs         — Vector.new/get/set/len/fromList/toList (pure, indexed O(1) COW)
     map.rs            — Map.* (pure)
-    char.rs           — Char.toCode/fromCode (pure, not a type)
+    code_point.rs     — String.firstCodePoint/fromCodePoint (pure)
     bits.rs           — Bits.and/or/xor/not/shiftLeft/shiftRight/low (pure) —
                         a bit-level VIEW of Int under infinite two's complement,
                         NOT a type. See docs/services.md#bits-namespace.

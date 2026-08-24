@@ -35,7 +35,7 @@
 
 use crate::ast::Literal;
 use crate::ast::Spanned;
-use crate::ir::hir::BuiltinCtor;
+use crate::ir::hir::{BuiltinCtor, BuiltinIntrinsic};
 use crate::ir::mir::{
     LocalId, MirCall, MirCallee, MirCtor, MirExpr, MirFn, MirLet, MirPattern, MirProgram,
     MirStrPart,
@@ -869,6 +869,7 @@ pub(super) fn compile_mir_expr(
                 return Ok(());
             }
             let mut arg_counts: Vec<u8> = Vec::with_capacity(ip.items.len());
+            let mut proven_results: Vec<bool> = Vec::with_capacity(ip.items.len());
             for item in &ip.items {
                 let inner_call = match &item.node {
                     MirExpr::Try(boxed) => &boxed.node,
@@ -877,7 +878,33 @@ pub(super) fn compile_mir_expr(
                 let MirExpr::Call(spanned_call) = inner_call else {
                     unreachable!("call_ready preflight just confirmed");
                 };
-                let call = &spanned_call.node;
+                let outer_call = &spanned_call.node;
+                // Literal effect discharge resolves to
+                // `__result_proven(<real effect call>)`. Treating that outer
+                // destructor as the branch
+                // callable would evaluate its effect-valued first argument
+                // before CALL_PAR enters the branch group, erasing the
+                // BranchPath/group coordinates. Peel only the two compiler-
+                // discharged standard effects here; the nested capability
+                // remains the branch callable and the fail-closed unwrap is
+                // applied to its result after the group joins.
+                let mut proven_result = false;
+                let call = if matches!(
+                    outer_call.callee,
+                    MirCallee::Intrinsic(BuiltinIntrinsic::ResultProven)
+                ) && outer_call.args.len() == 1
+                    && let MirExpr::Call(inner) = &outer_call.args[0].node
+                    && let MirCallee::Builtin(inner_id) = &inner.node.callee
+                    && fc
+                        .mir_program
+                        .map(|p| p.builtin_name(*inner_id))
+                        .is_some_and(|name| matches!(name, "Random.int" | "Time.sleep"))
+                {
+                    proven_result = true;
+                    &inner.node
+                } else {
+                    outer_call
+                };
                 match &call.callee {
                     MirCallee::Fn(fn_id) => {
                         let name = fc.canonical_fn_name(*fn_id)?;
@@ -934,6 +961,7 @@ pub(super) fn compile_mir_expr(
                     call.args.len(),
                     &format!("parallel call branch passes {} arguments", call.args.len()),
                 )?);
+                proven_results.push(proven_result);
             }
             let branch_count = operand_u8(
                 ip.items.len(),
@@ -942,8 +970,9 @@ pub(super) fn compile_mir_expr(
             fc.emit_op(CALL_PAR);
             fc.emit_u8(branch_count);
             fc.emit_u8(if ip.unwrap_results { 1 } else { 0 });
-            for argc in arg_counts {
+            for (argc, proven) in arg_counts.into_iter().zip(proven_results) {
                 fc.emit_u8(argc);
+                fc.emit_u8(if proven { 1 } else { 0 });
             }
             Ok(())
         }

@@ -93,7 +93,6 @@ pub fn is_builtin_namespace(name: &str) -> bool {
             | "Bits"
             | "Bool"
             | "BranchPath"
-            | "Char"
             | "Console"
             | "Crypto"
             | "Disk"

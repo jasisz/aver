@@ -12,8 +12,8 @@ use wasm_encoder::ValType;
 
 use crate::ast::{Literal, Spanned};
 use crate::ir::hir::{
-    ResolvedCallee, ResolvedExpr, ResolvedFnBody, ResolvedFnDef, ResolvedPattern, ResolvedStmt,
-    ResolvedStrPart,
+    BuiltinIntrinsic, ResolvedCallee, ResolvedExpr, ResolvedFnBody, ResolvedFnDef, ResolvedPattern,
+    ResolvedStmt, ResolvedStrPart,
 };
 use crate::types::Type;
 
@@ -53,6 +53,11 @@ pub(super) struct SlotTable {
     /// produces N elements aliasing the same `inner` ref, and the
     /// previous `array.set` in place silently rewrote every alias.
     pub(super) vector_set_scratch: HashMap<String, u32>,
+    /// Per-`Vector<T>` pair `[size, fill]` used by the dynamic
+    /// `Vector.new(size, fill) -> Result<Vector<T>, String>` lowering.
+    /// Both arguments are evaluated once, left-to-right, before the size
+    /// guard, matching VM semantics even when either argument is effectful.
+    pub(super) vector_new_scratch: HashMap<String, [u32; 2]>,
     /// Scratch i32 slot for the wasip2 `Console.{print, error, warn}`
     /// call-site lowering. Holds two i32 slots: `[len, offset]`.
     /// `len` stores the byte count returned from `__rt_string_to_lm`;
@@ -85,14 +90,17 @@ pub(super) struct SlotTable {
     /// Allocated when the fn body contains at least one `Env.get`
     /// call. Phase 1.3.3.
     pub(super) env_get_wasip2_scratch: Option<[u32; 2]>,
-    /// Scratch i64 slot for the wasip2 `Random.int(min, max)` call.
-    /// `min` is referenced twice during lowering (once as the offset
-    /// added at the end, once subtracted from `max` to compute the
-    /// modulo bound). Without a scratch we'd re-`emit_expr` the same
-    /// arg, which double-runs any side effects in `min` (e.g.
-    /// `Random.int(readBound(), 10)`). Stash `min` once after first
-    /// emit and reuse via LocalGet.
-    pub(super) random_int_wasip2_min_scratch: Option<u32>,
+    /// Scratch i64 pair for validated wasip2 effects. `Random.int`
+    /// keeps both eager-evaluated bounds here before it invokes WASI
+    /// randomness; `Time.sleep` uses the first slot after validating
+    /// its duration. This keeps argument effects left-to-right and
+    /// prevents either expression from being evaluated twice.
+    pub(super) validated_effect_wasip2_i64_scratch: Option<[u32; 2]>,
+    /// `$AverInt` counterparts of the pair above. Present only with
+    /// bignum enabled: arguments are stashed as refs first so the
+    /// lowering can turn an out-of-i64 value into `Result.Err`
+    /// instead of entering the trapping host conversion helper.
+    pub(super) validated_effect_wasip2_aint_scratch: Option<[u32; 2]>,
     /// Scratch `(ref null $AverInt)` slot for the const-compare
     /// specialization (`$AverInt` compared against an i64-fitting
     /// literal). The non-literal operand is stashed here once so the
@@ -281,7 +289,12 @@ impl SlotTable {
         // requires a typed local to hold the copy ref between
         // `array.copy` and the subsequent `array.set`.
         let mut vector_set_canonicals: HashSet<String> = HashSet::new();
-        collect_vector_set_canonicals(fd, &mut vector_set_canonicals);
+        let mut vector_new_canonicals: HashSet<String> = HashSet::new();
+        collect_vector_scratch_canonicals(
+            fd,
+            &mut vector_set_canonicals,
+            &mut vector_new_canonicals,
+        );
         let mut vector_set_scratch: HashMap<String, u32> = HashMap::new();
         let mut sorted: Vec<String> = vector_set_canonicals.into_iter().collect();
         sorted.sort(); // deterministic local order
@@ -295,6 +308,23 @@ impl SlotTable {
                 by_slot.push(ty);
                 vector_set_scratch.insert(canonical, local_idx);
             }
+        }
+        let mut vector_new_scratch: HashMap<String, [u32; 2]> = HashMap::new();
+        let mut sorted: Vec<String> = vector_new_canonicals.into_iter().collect();
+        sorted.sort();
+        for canonical in sorted {
+            let Some(elem) = TypeRegistry::vector_element_type(&canonical) else {
+                continue;
+            };
+            let Some(size_ty) = aver_to_wasm("Int", Some(registry))? else {
+                continue;
+            };
+            let fill_ty = aver_to_wasm(elem, Some(registry))?.unwrap_or(ValType::I32);
+            let size_slot = by_slot.len() as u32;
+            by_slot.push(size_ty);
+            let fill_slot = by_slot.len() as u32;
+            by_slot.push(fill_ty);
+            vector_new_scratch.insert(canonical, [size_slot, fill_slot]);
         }
         // Phase 1.2b1.5 — two i32 scratch slots for the wasip2
         // Console.* call-site glue: [len, offset]. `len` caches the
@@ -333,13 +363,27 @@ impl SlotTable {
         } else {
             None
         };
-        let random_int_wasip2_min_scratch = if fn_needs_random_int_wasip2_scratch(fd) {
-            let idx = by_slot.len() as u32;
+        let needs_validated_effect_scratch = fn_needs_validated_effect_wasip2_scratch(fd);
+        let validated_effect_wasip2_i64_scratch = if needs_validated_effect_scratch {
+            let first = by_slot.len() as u32;
             by_slot.push(ValType::I64);
-            Some(idx)
+            let second = by_slot.len() as u32;
+            by_slot.push(ValType::I64);
+            Some([first, second])
         } else {
             None
         };
+        let validated_effect_wasip2_aint_scratch =
+            match (registry.aint_struct_idx, needs_validated_effect_scratch) {
+                (Some(aint_idx), true) if registry.bignum => {
+                    let first = by_slot.len() as u32;
+                    by_slot.push(struct_ref(aint_idx));
+                    let second = by_slot.len() as u32;
+                    by_slot.push(struct_ref(aint_idx));
+                    Some([first, second])
+                }
+                _ => None,
+            };
         // Const-compare specialization scratch: a single `(ref null
         // $AverInt)` slot to stash the non-literal operand of an
         // `$AverInt`-vs-i64-constant comparison. Reserved whenever
@@ -374,10 +418,12 @@ impl SlotTable {
             subject_scratch,
             args_get_scratch,
             vector_set_scratch,
+            vector_new_scratch,
             console_print_wasip2_scratch,
             args_get_wasip2_retptr_scratch,
             env_get_wasip2_scratch,
-            random_int_wasip2_min_scratch,
+            validated_effect_wasip2_i64_scratch,
+            validated_effect_wasip2_aint_scratch,
             const_cmp_scratch,
             aint_operand_scratch,
         })
@@ -391,11 +437,10 @@ impl SlotTable {
 /// True if the body reaches a builtin whose lowering GUARDS one operand and
 /// then needs the operands again in both arms: boxed `Int.div` / `Int.mod`
 /// (guarded on a zero divisor) and the three count-taking `Bits` operations
-/// (guarded on a negative count).
+/// (guarded on the shared valid-count range).
 ///
 /// `Bits.and` / `.or` / `.xor` / `.not` are absent: they have no guard, so
-/// emitting their operands inline already evaluates each exactly once. The
-/// discharged intrinsics are absent for the same reason.
+/// emitting their operands inline already evaluates each exactly once.
 fn fn_needs_aint_operands(fd: &ResolvedFnDef) -> bool {
     fn guarded(callee: &ResolvedCallee) -> bool {
         matches!(
@@ -409,6 +454,13 @@ fn fn_needs_aint_operands(fd: &ResolvedFnDef) -> bool {
                         | "Bits.shiftRight"
                         | "Bits.low"
                 )
+        ) || matches!(
+            callee,
+            ResolvedCallee::Intrinsic(
+                BuiltinIntrinsic::BitsShiftLeft
+                    | BuiltinIntrinsic::BitsShiftRight
+                    | BuiltinIntrinsic::BitsLow
+            )
         )
     }
     fn walk(e: &ResolvedExpr) -> bool {
@@ -579,24 +631,21 @@ fn expr_reaches_env_get(expr: &ResolvedExpr) -> bool {
     expr_reaches_builtin_call(expr, &|name, _| name == "Env.get")
 }
 
-/// True if the body reaches at least one `Random.int(min, max)` call.
-/// Gates the wasip2 i64 scratch slot that stashes `min` once so the
-/// call-site lowering doesn't double-evaluate it.
-pub(super) fn fn_needs_random_int_wasip2_scratch(fd: &ResolvedFnDef) -> bool {
+/// True if the body reaches a validated wasip2 effect whose arguments
+/// must survive a range check before the host operation is invoked.
+pub(super) fn fn_needs_validated_effect_wasip2_scratch(fd: &ResolvedFnDef) -> bool {
     let ResolvedFnBody::Block(stmts) = fd.body.as_ref();
-    stmts.iter().any(stmt_reaches_random_int)
+    stmts.iter().any(stmt_reaches_validated_effect)
 }
 
-fn stmt_reaches_random_int(stmt: &ResolvedStmt) -> bool {
+fn stmt_reaches_validated_effect(stmt: &ResolvedStmt) -> bool {
     match stmt {
         ResolvedStmt::Binding { value, .. } | ResolvedStmt::Expr(value) => {
-            expr_reaches_random_int(&value.node)
+            expr_reaches_builtin_call(&value.node, &|name, _| {
+                matches!(name, "Random.int" | "Time.sleep")
+            })
         }
     }
-}
-
-fn expr_reaches_random_int(expr: &ResolvedExpr) -> bool {
-    expr_reaches_builtin_call(expr, &|name, _| name == "Random.int")
 }
 
 /// True if the body has at least one multi-arm `match` whose arms are
@@ -679,13 +728,26 @@ pub(super) fn expr_needs_scratch(expr: &ResolvedExpr, registry: &TypeRegistry) -
         }
         ResolvedExpr::Neg(inner) => expr_needs_scratch(&inner.node, registry),
         ResolvedExpr::Call(callee, args) => {
+            // `__result_proven(result)` checks the Result tag and then reads
+            // the payload from the same value. Keep the carrier in the
+            // universal subject scratch exactly like `Result.withDefault`.
+            // This must be recognised directly here: treating every
+            // ResultProven as if it matched every builtin-specific scratch
+            // predicate over-allocated unrelated Args/Console/Env locals and
+            // still failed to reserve the subject slot it actually needs.
+            if matches!(
+                callee,
+                ResolvedCallee::Intrinsic(BuiltinIntrinsic::ResultProven)
+            ) {
+                return true;
+            }
             // `Option.withDefault(opt, default)` / `Result.withDefault`
-            // / `Option.toResult` — conservatively reserve scratch; the
+            // / `Result.fromOption` — conservatively reserve scratch; the
             // boxed emitters stash the Option/Result for tag inspection.
             if let ResolvedCallee::Builtin(name) = callee
                 && matches!(
                     name.as_str(),
-                    "Option.withDefault" | "Result.withDefault" | "Option.toResult"
+                    "Option.withDefault" | "Result.withDefault" | "Result.fromOption"
                 )
             {
                 return true;
@@ -750,18 +812,26 @@ pub(super) fn count_value_params(params: &[(String, Type)]) -> usize {
 /// has a `Vector<T>` type stamp. Drives the per-fn allocation of
 /// scratch locals consumed by the clone-on-write emit in
 /// `emit_vector_set_or_default` / `emit_vector_set_boxed`.
-fn collect_vector_set_canonicals(fd: &ResolvedFnDef, out: &mut HashSet<String>) {
+fn collect_vector_scratch_canonicals(
+    fd: &ResolvedFnDef,
+    set_out: &mut HashSet<String>,
+    new_out: &mut HashSet<String>,
+) {
     let ResolvedFnBody::Block(stmts) = fd.body.as_ref();
     for stmt in stmts {
         match stmt {
             ResolvedStmt::Binding { value, .. } | ResolvedStmt::Expr(value) => {
-                walk_expr_for_vector_set(value, out)
+                walk_expr_for_vector_scratch(value, set_out, new_out)
             }
         }
     }
 }
 
-fn walk_expr_for_vector_set(expr: &Spanned<ResolvedExpr>, out: &mut HashSet<String>) {
+fn walk_expr_for_vector_scratch(
+    expr: &Spanned<ResolvedExpr>,
+    set_out: &mut HashSet<String>,
+    new_out: &mut HashSet<String>,
+) {
     match &expr.node {
         ResolvedExpr::Call(callee, args) => {
             // Direct `Vector.set(v, i, x)`.
@@ -772,64 +842,76 @@ fn walk_expr_for_vector_set(expr: &Spanned<ResolvedExpr>, out: &mut HashSet<Stri
                 let vec_aver = aver_type_str_of(&args[0]);
                 let canonical: String = vec_aver.chars().filter(|c| !c.is_whitespace()).collect();
                 if canonical.starts_with("Vector<") {
-                    out.insert(canonical);
+                    set_out.insert(canonical);
                 }
             }
+            if let ResolvedCallee::Builtin(name) = callee
+                && name == "Vector.new"
+                && args.len() == 2
+                && let Some(fill_ty) = args[1].ty()
+            {
+                new_out.insert(
+                    format!("Vector<{}>", fill_ty.display())
+                        .chars()
+                        .filter(|c| !c.is_whitespace())
+                        .collect(),
+                );
+            }
             for a in args {
-                walk_expr_for_vector_set(a, out);
+                walk_expr_for_vector_scratch(a, set_out, new_out);
             }
         }
         ResolvedExpr::BinOp(_, l, r) => {
-            walk_expr_for_vector_set(l, out);
-            walk_expr_for_vector_set(r, out);
+            walk_expr_for_vector_scratch(l, set_out, new_out);
+            walk_expr_for_vector_scratch(r, set_out, new_out);
         }
-        ResolvedExpr::Neg(inner) => walk_expr_for_vector_set(inner, out),
+        ResolvedExpr::Neg(inner) => walk_expr_for_vector_scratch(inner, set_out, new_out),
         ResolvedExpr::Match { subject, arms } => {
-            walk_expr_for_vector_set(subject, out);
+            walk_expr_for_vector_scratch(subject, set_out, new_out);
             for arm in arms {
-                walk_expr_for_vector_set(&arm.body, out);
+                walk_expr_for_vector_scratch(&arm.body, set_out, new_out);
             }
         }
         ResolvedExpr::TailCall { args, .. } => {
             for a in args {
-                walk_expr_for_vector_set(a, out);
+                walk_expr_for_vector_scratch(a, set_out, new_out);
             }
         }
-        ResolvedExpr::Attr(obj, _) => walk_expr_for_vector_set(obj, out),
-        ResolvedExpr::ErrorProp(inner) => walk_expr_for_vector_set(inner, out),
+        ResolvedExpr::Attr(obj, _) => walk_expr_for_vector_scratch(obj, set_out, new_out),
+        ResolvedExpr::ErrorProp(inner) => walk_expr_for_vector_scratch(inner, set_out, new_out),
         ResolvedExpr::Ctor(_, args) => {
             for a in args {
-                walk_expr_for_vector_set(a, out);
+                walk_expr_for_vector_scratch(a, set_out, new_out);
             }
         }
         ResolvedExpr::RecordCreate { fields, .. } => {
             for (_, e) in fields {
-                walk_expr_for_vector_set(e, out);
+                walk_expr_for_vector_scratch(e, set_out, new_out);
             }
         }
         ResolvedExpr::RecordUpdate { base, updates, .. } => {
-            walk_expr_for_vector_set(base, out);
+            walk_expr_for_vector_scratch(base, set_out, new_out);
             for (_, e) in updates {
-                walk_expr_for_vector_set(e, out);
+                walk_expr_for_vector_scratch(e, set_out, new_out);
             }
         }
         ResolvedExpr::List(items)
         | ResolvedExpr::Tuple(items)
         | ResolvedExpr::IndependentProduct(items, _) => {
             for e in items {
-                walk_expr_for_vector_set(e, out);
+                walk_expr_for_vector_scratch(e, set_out, new_out);
             }
         }
         ResolvedExpr::MapLiteral(entries) => {
             for (k, v) in entries {
-                walk_expr_for_vector_set(k, out);
-                walk_expr_for_vector_set(v, out);
+                walk_expr_for_vector_scratch(k, set_out, new_out);
+                walk_expr_for_vector_scratch(v, set_out, new_out);
             }
         }
         ResolvedExpr::InterpolatedStr(parts) => {
             for p in parts {
                 if let ResolvedStrPart::Parsed(inner) = p {
-                    walk_expr_for_vector_set(inner, out);
+                    walk_expr_for_vector_scratch(inner, set_out, new_out);
                 }
             }
         }

@@ -188,94 +188,99 @@ verify growSnake
     growSnake(gs([pt(5, 5)], 1, 0, pt(10, 10))).score => 1
     List.len(growSnake(gs([pt(5, 5)], 1, 0, pt(10, 10))).snake) => 2
 
-fn randomFood(state: GameState) -> GameState
+fn randomFood(state: GameState) -> Result<GameState, String>
     ? "Place food at a random position inside the border"
     ! [Random.int]
-    GameState.update(state, food = Point(x = Random.int(1, state.width - 2), y = Random.int(1, state.height - 2)))
+    x = Random.int(1, state.width - 2)?
+    y = Random.int(1, state.height - 2)?
+    Result.Ok(GameState.update(state, food = Point(x = x, y = y)))
 
-fn drawAt(x: Int, y: Int, ch: String) -> Unit
+fn drawAt(x: Int, y: Int, ch: String) -> Result<Unit, String>
     ? "Move cursor and print a double-wide cell (terminal chars are ~2x taller than wide)"
     ! [Terminal.moveTo, Terminal.print]
-    Terminal.moveTo(x * 2, y)
-    Terminal.print(ch)
+    Terminal.moveTo(x * 2, y)?
+    Terminal.print(ch)?
+    Result.Ok(Unit)
 
-fn renderHLine(x: Int, maxX: Int, y: Int) -> Unit
+fn renderHLine(x: Int, maxX: Int, y: Int) -> Result<Unit, String>
     ? "Draw a horizontal line"
     ! [Terminal.moveTo, Terminal.print]
     match x == maxX
         true -> drawAt(0, 0, "")
         false -> renderHNext(x, maxX, y)
 
-fn renderHNext(x: Int, maxX: Int, y: Int) -> Unit
+fn renderHNext(x: Int, maxX: Int, y: Int) -> Result<Unit, String>
     ? "Draw one cell and recurse"
     ! [Terminal.moveTo, Terminal.print]
-    drawAt(x, y, "██")
+    drawAt(x, y, "██")?
     renderHLine(x + 1, maxX, y)
 
-fn renderVLine(y: Int, maxY: Int, x: Int) -> Unit
+fn renderVLine(y: Int, maxY: Int, x: Int) -> Result<Unit, String>
     ? "Draw a vertical line"
     ! [Terminal.moveTo, Terminal.print]
     match y == maxY
         true -> drawAt(0, 0, "")
         false -> renderVNext(y, maxY, x)
 
-fn renderVNext(y: Int, maxY: Int, x: Int) -> Unit
+fn renderVNext(y: Int, maxY: Int, x: Int) -> Result<Unit, String>
     ? "Draw one cell and recurse"
     ! [Terminal.moveTo, Terminal.print]
-    drawAt(x, y, "██")
+    drawAt(x, y, "██")?
     renderVLine(y + 1, maxY, x)
 
-fn renderBorder(state: GameState) -> Unit
+fn renderBorder(state: GameState) -> Result<Unit, String>
     ? "Draw border with solid blocks"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     maxX = state.width - 1
     maxY = state.height - 1
-    Terminal.setColor("white")
-    drawAt(0, 0, "██")
-    drawAt(maxX, 0, "██")
-    drawAt(0, maxY, "██")
-    drawAt(maxX, maxY, "██")
-    renderHLine(1, maxX, 0)
-    renderHLine(1, maxX, maxY)
-    renderVLine(1, maxY, 0)
-    renderVLine(1, maxY, maxX)
-    Terminal.resetColor()
+    Terminal.setColor("white")?
+    drawAt(0, 0, "██")?
+    drawAt(maxX, 0, "██")?
+    drawAt(0, maxY, "██")?
+    drawAt(maxX, maxY, "██")?
+    renderHLine(1, maxX, 0)?
+    renderHLine(1, maxX, maxY)?
+    renderVLine(1, maxY, 0)?
+    renderVLine(1, maxY, maxX)?
+    Terminal.resetColor()?
+    Result.Ok(Unit)
 
-fn renderSegment(p: Point, i: Int) -> Unit
+fn renderSegment(p: Point, i: Int) -> Result<Unit, String>
     ? "Draw one snake segment"
     ! [Terminal.moveTo, Terminal.print, Terminal.setColor]
     match i == 0
-        true -> Terminal.setColor("green")
-        false -> Terminal.setColor("cyan")
+        true -> Terminal.setColor("green")?
+        false -> Terminal.setColor("cyan")?
     drawAt(p.x, p.y, "██")
 
-fn renderSnake(snake: List<Point>, i: Int) -> Unit
+fn renderSnake(snake: List<Point>, i: Int) -> Result<Unit, String>
     ? "Draw each segment of the snake"
     ! [Terminal.moveTo, Terminal.print, Terminal.setColor]
     match snake
         [] -> drawAt(0, 0, "")
         [p, ..rest] -> renderSnakeNext(rest, p, i)
 
-fn renderSnakeNext(rest: List<Point>, p: Point, i: Int) -> Unit
+fn renderSnakeNext(rest: List<Point>, p: Point, i: Int) -> Result<Unit, String>
     ? "Render one segment and continue"
     ! [Terminal.moveTo, Terminal.print, Terminal.setColor]
-    renderSegment(p, i)
+    renderSegment(p, i)?
     renderSnake(rest, i + 1)
 
-fn render(state: GameState) -> Unit
+fn render(state: GameState) -> Result<Unit, String>
     ? "Draw one frame"
     ! [
         Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor,
     ]
-    Terminal.clear()
-    renderBorder(state)
-    renderSnake(state.snake, 0)
-    Terminal.setColor("red")
-    drawAt(state.food.x, state.food.y, "██")
-    Terminal.resetColor()
-    Terminal.moveTo(0, state.height)
-    Terminal.print("Score: {String.fromInt(state.score)}  |  Q / ESC to quit")
-    Terminal.flush()
+    Terminal.clear()?
+    renderBorder(state)?
+    renderSnake(state.snake, 0)?
+    Terminal.setColor("red")?
+    drawAt(state.food.x, state.food.y, "██")?
+    Terminal.resetColor()?
+    Terminal.moveTo(0, state.height)?
+    Terminal.print("Score: {String.fromInt(state.score)}  |  Q / ESC to quit")?
+    Terminal.flush()?
+    Result.Ok(Unit)
 
 fn handleKey(state: GameState, k: String) -> GameState
     ? "Handle a single key press"
@@ -289,12 +294,12 @@ verify handleKey
     handleKey(gs([pt(5, 5)], 1, 0, pt(0, 0)), "esc").gameOver => true
     handleKey(gs([pt(5, 5)], 1, 0, pt(0, 0)), "up").dy => 0 - 1
 
-fn readInput(state: GameState) -> GameState
+fn readInput(state: GameState) -> Result<GameState, String>
     ? "Poll for a key press and update direction"
     ! [Terminal.readKey]
-    match Terminal.readKey()
-        Option.Some(k) -> handleKey(state, k)
-        Option.None -> state
+    match Terminal.readKey()?
+        Option.Some(k) -> Result.Ok(handleKey(state, k))
+        Option.None -> Result.Ok(state)
 
 fn tick(state: GameState) -> Result<String, String>
     ? "One game tick: move, check collision, check food"
@@ -317,7 +322,7 @@ fn tickMove(moved: GameState) -> Result<String, String>
     match checkCollision(moved)
         true -> Result.Ok("Game over! Score: {String.fromInt(moved.score)}")
         false -> match didEatFood(moved)
-            true -> gameLoop(growSnake(randomFood(moved)))
+            true -> gameLoop(growSnake(randomFood(moved)?))
             false -> gameLoop(moved)
 
 fn gameLoop(state: GameState) -> Result<String, String>
@@ -327,9 +332,9 @@ fn gameLoop(state: GameState) -> Result<String, String>
         Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor,
         Time.sleep,
     ]
-    render(state)
-    Time.sleep(state.tickMs)
-    tick(readInput(state))
+    render(state)?
+    Time.sleep(state.tickMs)?
+    tick(readInput(state)?)
 
 fn initState() -> GameState
     ? "Starting game state"
@@ -346,12 +351,12 @@ fn run() -> Result<String, String>
         Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor,
         Time.sleep,
     ]
-    Terminal.enableRawMode()
-    Terminal.hideCursor()
+    Terminal.enableRawMode()?
+    Terminal.hideCursor()?
     result = gameLoop(initState())
-    Terminal.showCursor()
-    Terminal.disableRawMode()
-    Terminal.clear()
+    Terminal.showCursor()?
+    Terminal.disableRawMode()?
+    Terminal.clear()?
     result
 
 fn main()

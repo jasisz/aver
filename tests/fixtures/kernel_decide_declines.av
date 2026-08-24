@@ -9,11 +9,11 @@ fn narrowedIndex() -> Bool
     s = match Vector.get(Vector.fromList(["x"]), 0 - 1)
         Option.None -> "B"
         Option.Some(_) -> ""
-    Char.toCode(s) == 65
+    Option.withDefault(String.firstCodePoint(s), 0) == 65
 
 fn charCode(text: String) -> Int
     ? "Read the code point of the first character."
-    Char.toCode(text)
+    Option.withDefault(String.firstCodePoint(text), 0)
 
 fn firstItem(xs: List<Int>) -> Option<Int>
     ? "Read the first element through a vector index."

@@ -27,7 +27,7 @@ mod triangle_sum;
 use super::VerifyEmitMode;
 use super::expr::aver_name_to_lean;
 use super::recursive_pure_fn_names;
-use crate::ast::{VerifyBlock, VerifyLaw};
+use crate::ast::{Expr, VerifyBlock, VerifyGivenDomain, VerifyLaw};
 use crate::codegen::CodegenContext;
 use crate::verify_law::{collect_missing_helper_law_hints, missing_helper_law_message};
 use sampled::emit_guarded_domain_law;
@@ -178,6 +178,35 @@ pub(in crate::codegen::lean) use transparent_chain::recognize_transparent_chain;
 /// harness in the `aver` binary; see [`induction::residual_probe_body`].
 pub use induction::{residual_probe_body, residual_probe_body_dump};
 
+/// A normalization tactic for ground Oracle samples whose call cone crosses
+/// `Except.proven`. Such definitions are intentionally noncomputable, so
+/// `native_decide` is unavailable; the bounded-oracle subtype theorem and the
+/// concrete stub definitions reduce the successful path without assigning a
+/// value to an impossible provider error.
+pub(in crate::codegen::lean) fn result_proven_sample_tactic(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+) -> String {
+    let mut defs = shared::law_simp_defs(ctx, vb, law);
+    for given in &law.givens {
+        let VerifyGivenDomain::Explicit(values) = &given.domain else {
+            continue;
+        };
+        for value in values {
+            let name = match &value.node {
+                Expr::Ident(name) | Expr::Resolved { name, .. } => Some(name),
+                _ => None,
+            };
+            if let Some(name) = name {
+                defs.insert(aver_name_to_lean(name));
+            }
+        }
+    }
+    defs.insert("Except.proven".to_string());
+    format!("simp [{}]", defs.into_iter().collect::<Vec<_>>().join(", "))
+}
+
 pub struct AutoProof {
     pub support_lines: Vec<String>,
     /// The proof body as a structured tactic tree (`:= by` block). Built by
@@ -207,6 +236,38 @@ fn law_strategy_for(
         .iter()
         .find(|t| t.fn_id == fn_id && t.law_name == law_name)
         .map(|t| t.strategy.clone())
+}
+
+/// Lean needs an explicit case split when unfolding equal computations over a
+/// `Result`/`Option` oracle value leaves a named-match equation behind. Verify
+/// givens retain the operation name (for example `Terminal.size`) rather than
+/// the lifted carrier type, so recognize both spellings here.
+fn sum_carrier_given_names(law: &VerifyLaw, ctx: &CodegenContext) -> Vec<String> {
+    law.givens
+        .iter()
+        .filter(|g| {
+            let ty = g.type_name.trim();
+            ty.starts_with("Result<")
+                || ty.starts_with("Option<")
+                || crate::types::checker::effect_classification::oracle_signature_with_registry(
+                    &ctx.capabilities,
+                    ty,
+                )
+                .or_else(|| crate::types::checker::effect_classification::oracle_signature(ty))
+                .is_some_and(|signature| {
+                    matches!(
+                        signature,
+                        crate::types::Type::Fn(_, ret, _)
+                            if matches!(
+                                ret.as_ref(),
+                                crate::types::Type::Result(_, _)
+                                    | crate::types::Type::Option(_)
+                            )
+                    )
+                })
+        })
+        .map(|g| aver_name_to_lean(&g.name))
+        .collect()
 }
 
 /// Whether a hand-proof SIDECAR exists for this law in the active backend's
@@ -1272,11 +1333,25 @@ fn emit_verify_law_forall_auto_proof_inner(
         law_strategy_for(ctx, &vb.fn_name, &law.name)
     {
         let lean_names: Vec<String> = extra_unfolds.iter().map(|n| aver_name_to_lean(n)).collect();
+        let defs = lean_names.join(", ");
+        let sum_givens = sum_carrier_given_names(law, ctx);
+        let tactic = if sum_givens.is_empty() {
+            format!("simp [{defs}]")
+        } else {
+            format!(
+                "{} <;> simp [{defs}]",
+                sum_givens
+                    .iter()
+                    .map(|name| format!("cases {name}"))
+                    .collect::<Vec<_>>()
+                    .join(" <;> ")
+            )
+        };
         return Some(AutoProof {
             support_lines: Vec::new(),
             body: crate::codegen::lean::tactic_ir::Tactic::raw(intro_then(
                 &proof_intro_names,
-                vec![format!("simp [{}]", lean_names.join(", "))],
+                vec![tactic],
             )),
             replaces_theorem: false,
         });
@@ -1291,15 +1366,35 @@ fn emit_verify_law_forall_auto_proof_inner(
         ref spec_fn,
     }) = law_strategy_for(ctx, &vb.fn_name, &law.name)
     {
+        let defs = format!(
+            "{}, {}",
+            aver_name_to_lean(impl_fn),
+            aver_name_to_lean(spec_fn)
+        );
+        // Oracle values with a Result/Option carrier can leave a named-match
+        // equation on one side after unfolding (`match h : size with ...`).
+        // `simp` alone does not eliminate that dependent equation even when
+        // both functions are the same branchwise computation. Split the
+        // finite carrier first; each branch then closes definitionally. This
+        // stays shape-gated to EffectfulSpecEquivalence and sum-shaped givens.
+        let sum_givens = sum_carrier_given_names(law, ctx);
+        let tactic = if sum_givens.is_empty() {
+            format!("simp [{defs}]")
+        } else {
+            format!(
+                "{} <;> simp [{defs}]",
+                sum_givens
+                    .iter()
+                    .map(|name| format!("cases {name}"))
+                    .collect::<Vec<_>>()
+                    .join(" <;> ")
+            )
+        };
         return Some(AutoProof {
             support_lines: Vec::new(),
             body: crate::codegen::lean::tactic_ir::Tactic::raw(intro_then(
                 &proof_intro_names,
-                vec![format!(
-                    "simp [{}, {}]",
-                    aver_name_to_lean(impl_fn),
-                    aver_name_to_lean(spec_fn)
-                )],
+                vec![tactic],
             )),
             replaces_theorem: false,
         });

@@ -5,7 +5,7 @@ use crate::ast::{BinOp, Expr, FnDef, Literal, Pattern, Spanned, Stmt, TailCallDa
 use super::CheckFinding;
 
 const PURE_PREFIXES: &[&str] = &[
-    "List.", "Vector.", "Map.", "String.", "Int.", "Float.", "Bool.", "Char.",
+    "List.", "Vector.", "Map.", "String.", "Int.", "Float.", "Bool.",
 ];
 
 // ---------------------------------------------------------------------------

@@ -1,5 +1,5 @@
 module IntRange
-    exposes [fromInt, toInt, add]
+    exposes [fromInt, value, add]
     exposes opaque [IntRange]
     intent =
         "Refinement-via-opaque, range-bounded variant. Smart"
@@ -28,12 +28,12 @@ verify fromInt
     fromInt(-1)  => Result.Err("IntRange must be in 0..=100")
     fromInt(101) => Result.Err("IntRange must be in 0..=100")
 
-fn toInt(n: IntRange) -> Int
+fn value(n: IntRange) -> Int
     ? "Unwrap into the underlying Int. Always in 0..=100."
     n.value
 
-verify toInt
-    toInt(IntRange(value = 50)) => 50
+verify value
+    value(IntRange(value = 50)) => 50
 
 fn add(a: IntRange, b: IntRange) -> Result<IntRange, String>
     ? "Sum of two IntRange values — may overflow the upper bound, so the result is Result-bound; fromInt re-validates."

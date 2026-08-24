@@ -363,11 +363,11 @@ verify f
     fn merge_verify_blocks_keeps_distinct_case_stub_worlds_separate() {
         let items = parse_items(
             r#"
-fn low(path: BranchPath, call: Int, min: Int, max: Int) -> Int
-    min
+fn low(path: BranchPath, call: Int, min: Int, max: Int) -> Result<Int, String>
+Result.Ok(min)
 
-fn high(path: BranchPath, call: Int, min: Int, max: Int) -> Int
-    max
+fn high(path: BranchPath, call: Int, min: Int, max: Int) -> Result<Int, String>
+Result.Ok(max)
 
 fn roll() -> Int
     ! [Random.int]

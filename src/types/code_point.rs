@@ -1,11 +1,8 @@
-/// Char namespace — Unicode scalar value operations on strings.
-///
-/// Char is NOT a type — these are functions operating on String (first character)
-/// and Int (code point).
+/// Unicode scalar-value operations owned by the String namespace.
 ///
 /// Methods:
-///   Char.toCode(s: String)    → Int             — Unicode scalar value of first char
-///   Char.fromCode(n: Int)     → Option<String>  — code point to 1-char string
+///   String.firstCodePoint(s: String) → Option<Int>    — first Unicode scalar value
+///   String.fromCodePoint(n: Int)     → Option<String> — code point to 1-char string
 ///
 /// No effects required.
 use crate::nan_value::{Arena, NanIntExt, NanValue};
@@ -21,43 +18,44 @@ pub fn call_nv(
     arena: &mut Arena,
 ) -> Option<Result<NanValue, RuntimeError>> {
     match name {
-        "Char.toCode" => Some(to_code_nv(args, arena)),
-        "Char.fromCode" => Some(from_code_nv(args, arena)),
+        "String.firstCodePoint" => Some(first_code_point_nv(args, arena)),
+        "String.fromCodePoint" => Some(from_code_point_nv(args, arena)),
         _ => None,
     }
 }
 
-fn to_code_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
+fn first_code_point_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
     if args.len() != 1 {
         return Err(RuntimeError::Error(format!(
-            "Char.toCode() takes 1 argument, got {}",
+            "String.firstCodePoint() takes 1 argument, got {}",
             args.len()
         )));
     }
     if !args[0].is_string() {
         return Err(RuntimeError::Error(
-            "Char.toCode: argument must be a String".to_string(),
+            "String.firstCodePoint: argument must be a String".to_string(),
         ));
     }
     let s = arena.get_string_value(args[0]);
     match s.chars().next() {
-        Some(c) => Ok(NanValue::new_int(c as i64, arena)),
-        None => Err(RuntimeError::Error(
-            "Char.toCode: string is empty".to_string(),
-        )),
+        Some(c) => {
+            let code = NanValue::new_int(c as i64, arena);
+            Ok(NanValue::new_some_value(code, arena))
+        }
+        None => Ok(NanValue::NONE),
     }
 }
 
-fn from_code_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
+fn from_code_point_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
     if args.len() != 1 {
         return Err(RuntimeError::Error(format!(
-            "Char.fromCode() takes 1 argument, got {}",
+            "String.fromCodePoint() takes 1 argument, got {}",
             args.len()
         )));
     }
     if !args[0].is_int() {
         return Err(RuntimeError::Error(
-            "Char.fromCode: argument must be an Int".to_string(),
+            "String.fromCodePoint: argument must be an Int".to_string(),
         ));
     }
     let Some(code) = args[0].as_aver_int(arena).to_u32() else {

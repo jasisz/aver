@@ -90,7 +90,7 @@ pub(crate) const NON_ALLOCATING_BUILTINS: &[&str] = &[
     "Float.pow",
     "Float.atan2",
     "Float.pi",
-    "Char.toCode",
+    "String.firstCodePoint",
     "String.len",
     "String.byteLength",
     "String.startsWith",

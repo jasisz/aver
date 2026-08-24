@@ -521,7 +521,6 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
         if let TopLevel::FnDef(fd) = item
             && !fd.effects.is_empty()
             && fd.name != "main"
-            && !body_uses_error_prop(&fd.body)
             && crate::codegen::common::fn_id_for_decl(ctx, fd)
                 .is_some_and(|fn_id| reachable.contains(&fn_id))
             && fd.effects.iter().all(|e| {
@@ -542,7 +541,6 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
         if let TopLevel::FnDef(fd) = item
             && !fd.effects.is_empty()
             && fd.name != "main"
-            && !body_uses_error_prop(&fd.body)
             && crate::codegen::common::fn_id_for_decl(ctx, fd)
                 .is_some_and(|fn_id| reachable.contains(&fn_id))
             && fd.effects.iter().all(|e| {
@@ -559,6 +557,14 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
                     &ctx.capabilities,
                 )
         {
+            // Lift effects first, then apply the ordinary pure-`?` lowering.
+            // Gating on the source body here used to omit every effectful
+            // function that propagated a now-fallible capability Result (for
+            // example `Terminal.size()?`), even though `emit_fn_def` can lower
+            // the lifted, effect-free body to a match cascade.
+            if body_keeps_error_prop_after_lowering(&lifted) {
+                continue;
+            }
             let mut resolve_ctx = crate::ir::hir::ResolveCtx::new(&ctx.symbol_table);
             resolve_ctx.current_module = ctx.entry_module_name();
             let resolved_lifted = crate::ir::hir::resolve_fn_def_external(&resolve_ctx, &lifted)
@@ -732,14 +738,14 @@ fn dafny_helper_block(key: &str) -> Option<&'static str> {
         "AverList" => Some(DAFNY_HELPER_AVER_LIST),
         "StringHelpers" => Some(DAFNY_HELPER_STRING_HELPERS),
         "NumericParse" => Some(DAFNY_HELPER_NUMERIC_PARSE),
-        "CharCode" => Some(DAFNY_HELPER_CHAR),
+        "StringCodePoint" => Some(DAFNY_HELPER_CODE_POINT),
         "AverBits" => Some(DAFNY_HELPER_BITS),
         "AverMap" => Some(DAFNY_HELPER_AVER_MAP),
         "AverMeasure" | "ProofFuel" => None,
         "FloatInstances" | "ExceptInstances" | "StringHadd" => None,
         "ResultDatatype" => Some(DAFNY_HELPER_RESULT_DATATYPE),
         "OptionDatatype" => Some(DAFNY_HELPER_OPTION_DATATYPE),
-        "OptionToResult" => Some(DAFNY_HELPER_OPTION_TO_RESULT),
+        "ResultFromOption" => Some(DAFNY_HELPER_OPTION_TO_RESULT),
         "BranchPathDatatype" => Some(DAFNY_HELPER_BRANCH_PATH_DATATYPE),
         other => panic!(
             "Dafny backend has no implementation for builtin helper key '{}'. \
@@ -760,6 +766,12 @@ function ResultWithDefault<T, E>(r: Result<T, E>, d: T): T {
   case Ok(v) => v
   case Err(_) => d
 }
+
+function ResultProven<T, E>(r: Result<T, E>): T
+  requires r.Ok?
+{
+  r.value
+}
 "#;
 
 const DAFNY_HELPER_OPTION_DATATYPE: &str = r#"
@@ -773,7 +785,7 @@ function OptionWithDefault<T>(o: Option<T>, d: T): T {
 "#;
 
 const DAFNY_HELPER_OPTION_TO_RESULT: &str = r#"
-function OptionToResult<T, E>(o: Option<T>, err: E): Result<T, E> {
+function ResultFromOption<T, E>(o: Option<T>, err: E): Result<T, E> {
   match o
   case Some(v) => Result.Ok(v)
   case None => Result.Err(err)
@@ -799,22 +811,47 @@ function ToString<T>(v: T): string
 
 /// `BranchPath` constructors. Emitted only when the body uses Oracle
 /// lifting (any `BranchPath` reference); pure-math files don't need
-/// them. Note `BranchPath_child` calls `IntToString`, so when this
+/// them. Note `BranchPath_childLiteral` calls `IntToString`, so when this
 /// helper is included the StringHelpers piece must come along too —
 /// that's enforced via `BUILTIN_HELPERS::depends_on` for `BranchPath`
 /// pulling in `NumericParse` (whose tokens cover `IntToString`).
 const DAFNY_HELPER_BRANCH_PATH: &str = r#"
 const BranchPath_Root: BranchPath := BranchPath("")
 
-function BranchPath_child(p: BranchPath, idx: int): BranchPath
+function BranchPath_childLiteral(p: BranchPath, idx: int): BranchPath
   requires idx >= 0
 {
   if |p.dewey| == 0 then BranchPath(IntToString(idx))
   else BranchPath(p.dewey + "." + IntToString(idx))
 }
 
-function BranchPath_parse(s: string): BranchPath {
+function BranchPath_child(p: BranchPath, idx: int): Result<BranchPath, string> {
+  if idx < 0 then Result.Err("BranchPath.child: `idx` must be non-negative")
+  else Result.Ok(BranchPath_childLiteral(p, idx))
+}
+
+function BranchPath_validTail(s: string, i: int, hasDigit: bool): bool
+  requires 0 <= i <= |s|
+  decreases |s| - i
+{
+  if i == |s| then hasDigit
+  else if s[i] == '.' then hasDigit && BranchPath_validTail(s, i + 1, false)
+  else '0' <= s[i] <= '9' && BranchPath_validTail(s, i + 1, true)
+}
+
+function BranchPath_validDewey(s: string): bool {
+  |s| == 0 || BranchPath_validTail(s, 0, false)
+}
+
+function BranchPath_parseLiteral(s: string): BranchPath
+  requires BranchPath_validDewey(s)
+{
   BranchPath(s)
+}
+
+function BranchPath_parse(s: string): Result<BranchPath, string> {
+  if BranchPath_validDewey(s) then Result.Ok(BranchPath_parseLiteral(s))
+  else Result.Err("BranchPath.parse: invalid dewey-decimal path: `" + s + "`")
 }
 "#;
 
@@ -970,6 +1007,9 @@ function StringToUpper(s: string): string
 function StringToLower(s: string): string
 function StringFromBool(b: bool): string
 function StringByteLength(s: string): int
+function {:axiom} StringToUtf8(s: string): seq<int>
+  ensures forall i :: 0 <= i < |StringToUtf8(s)| ==> 0 <= StringToUtf8(s)[i] <= 255
+function StringFromUtf8(bytes: seq<int>): Result<string, string>
 
 function ListReverseStr(xs: seq<string>): seq<string>
 "#;
@@ -993,9 +1033,9 @@ function FloatDiv(a: real, b: real): real
 }
 "#;
 
-const DAFNY_HELPER_CHAR: &str = r#"
-function CharToCode(c: string): int
-function CharFromCode(n: int): Option<string>
+const DAFNY_HELPER_CODE_POINT: &str = r#"
+function StringFirstCodePoint(s: string): Option<int>
+function StringFromCodePoint(n: int): Option<string>
 "#;
 
 /// The `Bits` namespace's proof model — the Dafny mirror of Lean's
@@ -1176,9 +1216,9 @@ mod tests {
         // proof body and introduces `BranchPath` references, pulling in
         // both the datatype declaration and the constructor helpers.
         let src_eff = "module M\n    intent = \"t\"\n\n\
-                       fn rollMax(path: BranchPath, n: Int, lo: Int, hi: Int) -> Int\n    hi\n\n\
-                       fn roll() -> Int\n    ! [Random.int]\n    Random.int(1, 6)\n\n\
-                       verify roll law alwaysSix\n    given rnd: Random.int = [rollMax]\n    roll() => 6\n";
+                       fn rollMax(path: BranchPath, n: Int, lo: Int, hi: Int) -> Result<Int, String>\n    Result.Ok(hi)\n\n\
+fn roll() -> Int\n    ! [Random.int]\n    Random.int(1, 6)\n\n\
+verify roll law alwaysSix\n    given rnd: Random.int = [rollMax]\n    roll() => 6\n";
         let ctx_eff = ctx_from_source(src_eff, "m");
         let out_eff = transpile(&ctx_eff);
         let dfy_eff = dafny_output(&out_eff);
@@ -1237,22 +1277,23 @@ mod tests {
 
     #[test]
     fn effectful_fn_with_unclassified_effect_is_still_skipped() {
-        // Env.set is ambient stateful — not in the v1 proof subset (process
-        // env is global and read-after-write depends on the whole ambient
-        // map, not a per-call oracle). The fn must not appear in the emitted
-        // Dafny output.
+        // Server lifecycle/callback wiring remains outside the proof subset.
+        // The handler can be proved separately, but the listen call itself
+        // must not appear in the emitted Dafny output.
         let src = "module M\n\
              \x20   intent = \"t\"\n\
              \n\
-             fn configure(key: String, value: String) -> Unit\n\
-             \x20   ! [Env.set]\n\
-             \x20   Env.set(key, value)\n";
+             fn handle(req: HttpRequest) -> HttpResponse\n\
+             \x20   HttpResponse(status = 200, body = \"ok\", headers = {})\n\
+             fn serve(port: Int) -> Result<Unit, String>\n\
+             \x20   ! [HttpServer.listen]\n\
+             \x20   HttpServer.listen(port, handle)\n";
         let ctx = ctx_from_source(src, "m");
         let out = transpile(&ctx);
         let dfy = dafny_output(&out);
         assert!(
-            !dfy.contains("function configure"),
-            "stateful effectful fn should be skipped; got:\n{}",
+            !dfy.contains("function serve"),
+            "server lifecycle fn should be skipped; got:\n{}",
             dfy
         );
     }
@@ -1276,12 +1317,12 @@ mod tests {
         let out = transpile(&ctx);
         let dfy = dafny_output(&out);
         assert!(
-            dfy.contains("BranchPath_child(path, 0)"),
+            dfy.contains("BranchPath_childLiteral(path, 0)"),
             "branch 0 path missing:\n{}",
             dfy
         );
         assert!(
-            dfy.contains("BranchPath_child(path, 1)"),
+            dfy.contains("BranchPath_childLiteral(path, 1)"),
             "branch 1 path missing:\n{}",
             dfy
         );
@@ -1300,7 +1341,7 @@ mod tests {
         let out = transpile(&ctx);
         let dfy = dafny_output(&out);
         assert!(
-            dfy.contains("BranchPath_child(BranchPath_Root, 2)"),
+            dfy.contains("BranchPath_childLiteral(BranchPath_Root, 2)"),
             "expected underscore-form call; got:\n{}",
             dfy
         );

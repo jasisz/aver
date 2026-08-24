@@ -14,9 +14,9 @@
 //! into a pure form shaped like
 //!
 //! ```aver
-//! fn pickThree_lifted(path: BranchPath, oracle: (BranchPath, Int, Int, Int) -> Int)
+//! fn pickThree_lifted(path: BranchPath, oracle: (BranchPath, Int, Int, Int) -> Result<Int, String>)
 //!     -> (Int, Int, Int)
-//!     (oracle(path, 0, 1, 100), oracle(path, 1, 1, 100), oracle(path, 2, 1, 100))
+//!     (__result_proven(oracle(path, 0, 1, 100)), __result_proven(oracle(path, 1, 1, 100)), __result_proven(oracle(path, 2, 1, 100)))
 //! ```
 //!
 //! Scope:
@@ -794,13 +794,37 @@ fn lift_classified_call(
             // evaluates arguments eagerly and only then takes its oracle
             // coordinates, so a generative call nested inside the arguments
             // consumes the LOWER index and the surrounding call the higher one
-            // (`Random.int(1, Random.int(2, 6))` charges the inner read first).
+            // (`Random.int(0, Random.int(0, 6) + 2)` charges the inner read
+            // first).
             // Claiming this call's counter first inverted the two, and the
             // inversion is invisible: a law that holds at runtime then exports a
             // theorem the kernel refutes, while the law matching the export
             // fails `verify`. Same hazard the Output arm above documents, in the
             // opposite direction.
             let lifted_args = lift_args(args, cfg, path_expr, counter)?;
+            // Keep the source call's literal-discharge boundary after it is
+            // rewritten to an oracle invocation. The callee name is no
+            // longer `Random.int` / `Time.sleep` after lifting, so the normal
+            // typechecker rule cannot rediscover the proof from syntax.
+            // `__result_proven` models the same unreachable-Err elimination
+            // used by HIR while the nested oracle call remains fully visible
+            // to the proof model. It is deliberately fail-closed: an Oracle
+            // profile returning Err for a statically valid request violates
+            // the capability contract instead of supplying a fake value.
+            let discharged = match effect_name {
+                "Random.int"
+                    if args.len() == 2
+                        && crate::ast::is_literal_random_int_range(&args[0], &args[1]) =>
+                {
+                    true
+                }
+                "Time.sleep"
+                    if args.len() == 1 && crate::ast::is_literal_sleep_duration(&args[0]) =>
+                {
+                    true
+                }
+                _ => false,
+            };
             let current_counter = *counter;
             *counter += 1;
             let path_arg = path_expr.clone();
@@ -813,13 +837,26 @@ fn lift_classified_call(
                 new_args.push(Spanned::new(Expr::Ident(fresh_name.clone()), original.line));
             }
             new_args.extend(lifted_args);
-            Ok(Expr::FnCall(
-                Box::new(Spanned::new(
-                    Expr::Ident(oracle_name.clone()),
-                    original.line,
-                )),
-                new_args,
-            ))
+            let oracle_call = Spanned::new(
+                Expr::FnCall(
+                    Box::new(Spanned::new(
+                        Expr::Ident(oracle_name.clone()),
+                        original.line,
+                    )),
+                    new_args,
+                ),
+                original.line,
+            );
+            if discharged {
+                return Ok(Expr::FnCall(
+                    Box::new(Spanned::new(
+                        Expr::Ident("__result_proven".to_string()),
+                        original.line,
+                    )),
+                    vec![oracle_call],
+                ));
+            }
+            Ok(oracle_call.node)
         }
     }
 }
@@ -1237,6 +1274,19 @@ mod tests {
         oracle_name: &str,
         expected_arg_count: usize,
     ) -> Vec<Expr> {
+        // A statically valid Random.int / Time.sleep keeps the real oracle
+        // call but discharges its impossible Err through
+        // the fail-closed `__result_proven` intrinsic. Most structural lifting assertions care about
+        // the nested oracle coordinates, so peel exactly that wrapper here.
+        let expr = match expr {
+            Expr::FnCall(callee, args)
+                if args.len() == 1
+                    && matches!(&callee.node, Expr::Ident(name) if name == "__result_proven") =>
+            {
+                &args[0].node
+            }
+            _ => expr,
+        };
         match expr {
             Expr::FnCall(callee, args) => {
                 match &callee.node {
@@ -1584,7 +1634,10 @@ mod tests {
         assert_eq!(lifted.params[0].0, "path");
         assert_eq!(lifted.params[0].1, "BranchPath");
         assert_eq!(lifted.params[1].0, "rnd_Random_int");
-        assert_eq!(lifted.params[1].1, "Fn(BranchPath, Int, Int, Int) -> Int");
+        assert_eq!(
+            lifted.params[1].1,
+            "Fn(BranchPath, Int, Int, Int) -> Result<Int, String>"
+        );
         // Body: oracle call using the prepended names.
         let [Stmt::Expr(tail)] = lifted.body.stmts() else {
             panic!("expected single expr stmt");

@@ -50,6 +50,48 @@ pub(crate) fn host_option_string_none(
     })
 }
 
+pub(crate) fn host_result_option_string_ok(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    value: Option<wasmtime::Rooted<wasmtime::AnyRef>>,
+) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
+    use wasmtime::Val;
+    let factory = caller
+        .get_export("__rt_result_option_string_string_ok")
+        .and_then(|e| e.into_func());
+    let Some(factory) = factory else {
+        return Ok(None);
+    };
+    let mut out = [Val::AnyRef(None)];
+    factory.call(&mut *caller, &[Val::AnyRef(value)], &mut out)?;
+    Ok(match &out[0] {
+        Val::AnyRef(r) => *r,
+        _ => None,
+    })
+}
+
+pub(crate) fn host_result_option_string_err(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    text: &str,
+) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
+    use wasmtime::Val;
+    let s = match lm_string_from_host(caller, text)? {
+        Some(r) => r,
+        None => return Ok(None),
+    };
+    let factory = caller
+        .get_export("__rt_result_option_string_string_err")
+        .and_then(|e| e.into_func());
+    let Some(factory) = factory else {
+        return Ok(None);
+    };
+    let mut out = [Val::AnyRef(None)];
+    factory.call(&mut *caller, &[Val::AnyRef(Some(s))], &mut out)?;
+    Ok(match &out[0] {
+        Val::AnyRef(r) => *r,
+        _ => None,
+    })
+}
+
 /// Build a `Terminal.Size(width, height)` record via the
 /// `__rt_record_terminal_size_make` factory.
 pub(crate) fn host_terminal_size_make(
@@ -290,6 +332,50 @@ pub(crate) fn host_result_err_unit_string(
     factory.call(&mut *caller, &[Val::AnyRef(Some(s))], &mut out)?;
     Ok(match &out[0] {
         Val::AnyRef(r) => *r,
+        _ => None,
+    })
+}
+
+/// Wrap a wasm-owned `Terminal.Size` record in
+/// `Result<Terminal.Size, String>::Ok`.
+pub(crate) fn host_result_terminal_size_ok(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    record: Option<wasmtime::Rooted<wasmtime::AnyRef>>,
+) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
+    use wasmtime::Val;
+    let factory = caller
+        .get_export("__rt_result_terminal_size_string_ok")
+        .and_then(|e| e.into_func());
+    let Some(factory) = factory else {
+        return Ok(None);
+    };
+    let mut out = [Val::AnyRef(None)];
+    factory.call(&mut *caller, &[Val::AnyRef(record)], &mut out)?;
+    Ok(match &out[0] {
+        Val::AnyRef(value) => *value,
+        _ => None,
+    })
+}
+
+pub(crate) fn host_result_terminal_size_err(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    text: &str,
+) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
+    use wasmtime::Val;
+    let text = match lm_string_from_host(caller, text)? {
+        Some(value) => value,
+        None => return Ok(None),
+    };
+    let factory = caller
+        .get_export("__rt_result_terminal_size_string_err")
+        .and_then(|e| e.into_func());
+    let Some(factory) = factory else {
+        return Ok(None);
+    };
+    let mut out = [Val::AnyRef(None)];
+    factory.call(&mut *caller, &[Val::AnyRef(Some(text))], &mut out)?;
+    Ok(match &out[0] {
+        Val::AnyRef(value) => *value,
         _ => None,
     })
 }

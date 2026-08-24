@@ -108,7 +108,6 @@ pub use toplevel::PROOF_FUEL_EXHAUSTED_MSG;
 /// ```text
 /// info: ././././FuelProbe.lean:27:0: PANIC at stepSum__fuel FuelProbe:8:9: Aver proof fuel exhausted
 /// PANIC at stepSumAcc__fuel FuelProbe:19:9: Aver proof fuel exhausted
-/// info: ././././PanicProbe.lean:11:0: PANIC at Char.toCode AverCommon:11:12: Char.toCode: string is empty
 /// ```
 ///
 /// (lake prefixes the first diagnostic of a build step with `info: <loc>:`,
@@ -130,7 +129,7 @@ pub const LEAN_PANIC_LINE_MARKER: &str = "PANIC at ";
 /// Scans for the generic `PANIC at ` line marker, not a per-site message:
 /// the emitted exports contain `panic!` only at compiler-generated sites —
 /// the fuel wrappers' exhaustion arm ([`PROOF_FUEL_EXHAUSTED_MSG`]) and
-/// partial prelude builtins (e.g. `Char.toCode` on an empty string) — and
+/// partial prelude builtins — and
 /// every one of them shares the same panic-returns-`default` vacuity vector.
 /// A green check has no legitimate panic, and the generic marker also
 /// catches panics raised inside Lean's own stdlib (e.g. a `get!` deep in a

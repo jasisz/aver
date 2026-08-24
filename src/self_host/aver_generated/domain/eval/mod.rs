@@ -10,26 +10,28 @@ use crate::aver_generated::domain::value::*;
 use crate::*;
 
 /// Evaluate a complete program through the self-hosted evaluator.
-pub fn evalProgram(prog: &Program) -> Result<Val, AverStr> {
+pub fn evalProgram(
+    prog: &crate::aver_generated::domain::ast::Program,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::eval::core::evalProgram(prog)
 }
 
 /// Evaluate a program with additional loaded module functions.
 pub fn evalProgramWithFns(
-    prog: &Program,
-    extraFns: &aver_rt::AverList<FnDef>,
-) -> Result<Val, AverStr> {
+    prog: &crate::aver_generated::domain::ast::Program,
+    extraFns: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::eval::core::evalProgramWithFns(prog, extraFns)
 }
 
 /// Stable facade for calling an already-resolved self-hosted function.
 pub fn callResolved(
-    fd: &FnDef,
-    args: &aver_rt::AverList<Val>,
-    fns: &FnStore,
-) -> Result<Val, AverStr> {
+    fd: &crate::aver_generated::domain::ast::FnDef,
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    fns: &crate::aver_generated::domain::eval::store::FnStore,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::eval::core::callResolved(fd, args, fns)
 }

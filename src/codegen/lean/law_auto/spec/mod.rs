@@ -53,6 +53,20 @@ fn emit_effectful_spec_equivalence_law(
             aver_name_to_lean_ident(&impl_name),
             aver_name_to_lean_ident(&spec_name),
         ];
+        let defs = simp_defs.join(", ");
+        let sum_givens = super::sum_carrier_given_names(law, ctx);
+        let tactic = if sum_givens.is_empty() {
+            format!("simp [{defs}]")
+        } else {
+            format!(
+                "{} <;> simp [{defs}]",
+                sum_givens
+                    .iter()
+                    .map(|name| format!("cases {name}"))
+                    .collect::<Vec<_>>()
+                    .join(" <;> ")
+            )
+        };
         return Some(AutoProof {
             support_lines: Vec::new(),
             body: crate::codegen::lean::tactic_ir::Tactic::raw(intro_then(
@@ -61,7 +75,7 @@ fn emit_effectful_spec_equivalence_law(
                 // linter warning when no goal is left to close after
                 // unfolding — a bare def-equality match doesn't need
                 // `simpa`'s cleanup step.
-                vec![format!("simp [{}]", simp_defs.join(", "))],
+                vec![tactic],
             )),
             replaces_theorem: false,
         });
@@ -77,12 +91,23 @@ fn emit_effectful_spec_equivalence_law(
     // reduces.
     let _impl_name = match_impl_call_one_side(vb, law)?;
     let simp_defs: Vec<String> = law_simp_defs(ctx, vb, law).into_iter().collect();
+    let defs = simp_defs.join(", ");
+    let sum_givens = super::sum_carrier_given_names(law, ctx);
+    let tactic = if sum_givens.is_empty() {
+        format!("simp [{defs}]")
+    } else {
+        format!(
+            "{} <;> simp [{defs}]",
+            sum_givens
+                .iter()
+                .map(|name| format!("cases {name}"))
+                .collect::<Vec<_>>()
+                .join(" <;> ")
+        )
+    };
     Some(AutoProof {
         support_lines: Vec::new(),
-        body: crate::codegen::lean::tactic_ir::Tactic::raw(intro_then(
-            intro_names,
-            vec![format!("simp [{}]", simp_defs.join(", "))],
-        )),
+        body: crate::codegen::lean::tactic_ir::Tactic::raw(intro_then(intro_names, vec![tactic])),
         replaces_theorem: false,
     })
 }

@@ -21,6 +21,7 @@ use crate::ir::hir::{ResolvedCallee, ResolvedExpr, ResolvedStmt};
 #[derive(Clone, Default)]
 pub(super) struct CapabilityOpacity {
     operations_by_fn: HashMap<FnId, BTreeSet<String>>,
+    result_proven_fns: HashSet<FnId>,
     unsupported_operations: BTreeSet<String>,
 }
 
@@ -28,6 +29,7 @@ impl CapabilityOpacity {
     pub(super) fn analyze(ctx: &CodegenContext) -> Self {
         let mut calls_by_fn = HashMap::<FnId, HashSet<FnId>>::new();
         let mut operations_by_fn = HashMap::<FnId, BTreeSet<String>>::new();
+        let mut result_proven_fns = HashSet::new();
 
         for fd in ctx.resolved_program.entry_fns().chain(
             ctx.resolved_program
@@ -37,9 +39,19 @@ impl CapabilityOpacity {
         ) {
             let mut calls = HashSet::new();
             let mut operations = BTreeSet::new();
+            let mut reaches_result_proven = false;
             for stmt in fd.body.stmts() {
                 let (ResolvedStmt::Expr(expr) | ResolvedStmt::Binding { value: expr, .. }) = stmt;
-                collect_dependencies(expr, ctx, &mut calls, &mut operations);
+                collect_dependencies(
+                    expr,
+                    ctx,
+                    &mut calls,
+                    &mut operations,
+                    &mut reaches_result_proven,
+                );
+            }
+            if reaches_result_proven {
+                result_proven_fns.insert(fd.fn_id);
             }
             calls_by_fn.insert(fd.fn_id, calls);
             operations_by_fn.insert(fd.fn_id, operations);
@@ -50,6 +62,7 @@ impl CapabilityOpacity {
         // provider-owned cone.
         loop {
             let snapshot = operations_by_fn.clone();
+            let result_proven_snapshot = result_proven_fns.clone();
             let mut changed = false;
             for (fn_id, callees) in &calls_by_fn {
                 let reached = operations_by_fn.entry(*fn_id).or_default();
@@ -60,6 +73,14 @@ impl CapabilityOpacity {
                     }
                 }
                 changed |= reached.len() != before;
+                if !result_proven_fns.contains(fn_id)
+                    && callees
+                        .iter()
+                        .any(|callee| result_proven_snapshot.contains(callee))
+                {
+                    result_proven_fns.insert(*fn_id);
+                    changed = true;
+                }
             }
             if !changed {
                 break;
@@ -79,6 +100,7 @@ impl CapabilityOpacity {
 
         Self {
             operations_by_fn,
+            result_proven_fns,
             unsupported_operations,
         }
     }
@@ -119,6 +141,70 @@ impl CapabilityOpacity {
         operations.into_iter().collect()
     }
 
+    /// Whether an emitted function component crosses the fail-closed
+    /// `ResultProven` boundary. Lifted Oracle functions are resolved from a
+    /// rewritten source body here, because the intrinsic can be introduced by
+    /// effect lifting rather than appearing in the original declaration.
+    pub(super) fn emitted_component_reaches_result_proven(
+        &self,
+        component: &[&crate::ast::FnDef],
+        ctx: &CodegenContext,
+    ) -> bool {
+        component.iter().any(|fd| {
+            if crate::codegen::common::fn_id_for_emitted_decl(ctx, fd)
+                .is_some_and(|fn_id| self.result_proven_fns.contains(&fn_id))
+            {
+                return true;
+            }
+            let scope = ctx.active_module_scope();
+            let body = ctx.resolve_rewritten_fn_body(&fd.body, scope.as_deref());
+            let mut calls = HashSet::new();
+            let mut operations = BTreeSet::new();
+            let mut reaches_result_proven = false;
+            for stmt in body.stmts() {
+                let (ResolvedStmt::Expr(expr) | ResolvedStmt::Binding { value: expr, .. }) = stmt;
+                collect_dependencies(
+                    expr,
+                    ctx,
+                    &mut calls,
+                    &mut operations,
+                    &mut reaches_result_proven,
+                );
+            }
+            reaches_result_proven
+                || calls
+                    .iter()
+                    .any(|fn_id| self.result_proven_fns.contains(fn_id))
+        })
+    }
+
+    /// Whether any expression root reaches `ResultProven`, directly or
+    /// through the transitive user-function call cone.
+    pub(super) fn roots_reach_result_proven(
+        &self,
+        roots: &[&Spanned<crate::ast::Expr>],
+        ctx: &CodegenContext,
+    ) -> bool {
+        let scope = ctx.active_module_scope();
+        let mut calls = HashSet::new();
+        let mut operations = BTreeSet::new();
+        let mut reaches_result_proven = false;
+        for root in roots {
+            let resolved = ctx.resolve_expr(root, scope.as_deref());
+            collect_dependencies(
+                &resolved,
+                ctx,
+                &mut calls,
+                &mut operations,
+                &mut reaches_result_proven,
+            );
+        }
+        reaches_result_proven
+            || calls
+                .iter()
+                .any(|fn_id| self.result_proven_fns.contains(fn_id))
+    }
+
     /// The refusal for a claim whose `roots` — everything the claim
     /// evaluates — reach a capability operation, or `None` when they reach
     /// none.  An operation without a witness was not exported at all, which
@@ -131,9 +217,16 @@ impl CapabilityOpacity {
         let scope = ctx.active_module_scope();
         let mut calls = HashSet::new();
         let mut operations = BTreeSet::new();
+        let mut reaches_result_proven = false;
         for root in roots {
             let resolved = ctx.resolve_expr(root, scope.as_deref());
-            collect_dependencies(&resolved, ctx, &mut calls, &mut operations);
+            collect_dependencies(
+                &resolved,
+                ctx,
+                &mut calls,
+                &mut operations,
+                &mut reaches_result_proven,
+            );
         }
         for fn_id in calls {
             if let Some(reached) = self.operations_by_fn.get(&fn_id) {
@@ -193,6 +286,7 @@ fn collect_dependencies(
     ctx: &CodegenContext,
     calls: &mut HashSet<FnId>,
     operations: &mut BTreeSet<String>,
+    reaches_result_proven: &mut bool,
 ) {
     super::decl_order::for_each_resolved_callee(expr, &mut |callee| match callee {
         ResolvedCallee::Fn(fn_id) => {
@@ -205,6 +299,9 @@ fn collect_dependencies(
                 .is_some_and(|operation| !operation.is_effectful()) =>
         {
             operations.insert(name.clone());
+        }
+        ResolvedCallee::Intrinsic(crate::ir::hir::BuiltinIntrinsic::ResultProven) => {
+            *reaches_result_proven = true;
         }
         _ => {}
     });

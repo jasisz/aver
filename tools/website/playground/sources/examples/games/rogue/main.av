@@ -608,8 +608,8 @@ verify loopPatrol
 fn nullBehavior(state: GameState, entity: Entity, i: Int) -> GameState
     ? "null: teleports to random nearby floor tile (unpredictable)"
     ! [Random.int]
-    tx = entity.pos.x + Random.int(0 - 4, 4)
-    ty = entity.pos.y + Random.int(0 - 4, 4)
+    tx = entity.pos.x + Random.int(-4, 4)
+    ty = entity.pos.y + Random.int(-4, 4)
     match Map.inMap(tx, ty)
         true -> match Types.tileWalkable(Map.getT(state.gameMap, tx, ty))
             true -> match Combat.entityAtPos(state.entities, Types.pt(tx, ty), 0)
@@ -632,8 +632,8 @@ verify entityMoveToward
 fn entityMoveRandom(state: GameState, entity: Entity, i: Int) -> GameState
     ? "Move entity in random direction"
     ! [Random.int]
-    dx = Random.int(0 - 1, 1)
-    dy = Random.int(0 - 1, 1)
+    dx = Random.int(-1, 1)
+    dy = Random.int(-1, 1)
     target = Types.pt(entity.pos.x + dx, entity.pos.y + dy)
     match Types.tileWalkable(Map.getT(state.gameMap, target.x, target.y))
         true -> match Combat.entityAtPos(state.entities, target, 0)
@@ -689,21 +689,22 @@ fn playerTurn(state: GameState, key: String) -> GameState
     afterAI = entityAI(moved, 0)
     updateFov(afterAI)
 
-fn renderFrame(state: GameState) -> Unit
+fn renderFrame(state: GameState) -> Result<Unit, String>
     ? "Draw everything"
     ! [
         Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor,
     ]
-    Terminal.clear()
-    Render.renderMap(state.gameMap, state.visGrid, state.remembered, state.entities, state.items, state.player)
-    Render.renderHud(state.player, state.messages)
-    Terminal.flush()
+    Terminal.clear()?
+    Render.renderMap(state.gameMap, state.visGrid, state.remembered, state.entities, state.items, state.player)?
+    Render.renderHud(state.player, state.messages)?
+    Terminal.flush()?
+    Result.Ok(Unit)
 
-fn readKey(state: GameState) -> GameState
+fn readKey(state: GameState) -> Result<GameState, String>
     ? "Wait for a keypress"
     ! [Random.int, Terminal.readKey]
-    match Terminal.readKey()
-        Option.Some(k) -> handleInput(state, k)
+    match Terminal.readKey()?
+        Option.Some(k) -> Result.Ok(handleInput(state, k))
         Option.None -> readKey(state)
 
 fn gameLoop(state: GameState) -> Result<String, String>
@@ -713,7 +714,7 @@ fn gameLoop(state: GameState) -> Result<String, String>
         Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor,
         Time.sleep,
     ]
-    renderFrame(state)
+    renderFrame(state)?
     match state.gameOver
         true -> Result.Ok("Game over on floor {String.fromInt(state.player.floor)}. EXP: {String.fromInt(state.player.exp)}. The Aver way prevails!")
         false -> waitAndProcess(state)
@@ -725,7 +726,7 @@ fn waitAndProcess(state: GameState) -> Result<String, String>
         Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor,
         Time.sleep,
     ]
-    match Terminal.readKey()
+    match Terminal.readKey()?
         Option.Some(k) -> gameLoop(playerTurn(state, k))
         Option.None -> waitAndProcess(state)
 
@@ -736,13 +737,13 @@ fn run() -> Result<String, String>
         Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor,
         Time.sleep,
     ]
-    Terminal.enableRawMode()
-    Terminal.hideCursor()
+    Terminal.enableRawMode()?
+    Terminal.hideCursor()?
     seed = Random.int(1, 999999)
     result = gameLoop(initGame(seed))
-    Terminal.showCursor()
-    Terminal.disableRawMode()
-    Terminal.clear()
+    Terminal.showCursor()?
+    Terminal.disableRawMode()?
+    Terminal.clear()?
     result
 
 fn main()

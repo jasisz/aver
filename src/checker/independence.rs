@@ -502,11 +502,11 @@ fn left() -> Unit
     ! [Console.print]
     Console.print("a")
 
-fn right() -> Unit
+fn right() -> Result<Unit, String>
     ! [Terminal.flush]
     Terminal.flush()
 
-fn demo() -> Tuple<Unit, Unit>
+fn demo() -> Tuple<Unit, Result<Unit, String>>
     ! [Console.print, Terminal.flush]
     (left(), right())!
 "#,

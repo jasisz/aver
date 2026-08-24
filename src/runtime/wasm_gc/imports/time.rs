@@ -1,9 +1,11 @@
 //! `Time.*` host imports — `Time.now`, `Time.unixMs`, `Time.sleep`.
 
 use super::super::RunWasmGcHost;
-use super::super::decode::decode_string;
-use super::lm::{lm_string_from_host, val_i64};
-use super::replay_glue::{record_effect_if_recording, try_replay};
+use super::super::decode::{decode_result_unit, decode_string};
+use super::factories::{host_result_err_unit_string, host_result_ok_unit};
+use super::lm::lm_string_from_host;
+use super::replay_glue::{json_err, json_ok, record_effect_if_recording, try_replay};
+use super::tcp::{decode_guest_int, guest_int_json};
 
 pub(super) fn dispatch(
     name: &str,
@@ -56,21 +58,28 @@ pub(super) fn dispatch(
             Ok(true)
         }
         "time_sleep" => {
-            let ms = params.first().and_then(val_i64).unwrap_or(0);
-            if try_replay(caller, "Time.sleep", vec![aver::replay::JsonValue::Int(ms)])?.is_some() {
-                // In replay: don't actually sleep — observation-equivalent
-                // means we skip the wall-clock side effect.
+            let ms = params
+                .first()
+                .ok_or_else(|| wasmtime::Error::msg("Time.sleep: missing ms"))?;
+            let ms = decode_guest_int(caller, ms, "Time.sleep: malformed ms Int")?;
+            let args = vec![guest_int_json(&ms)];
+            if let Some(cached) = try_replay(caller, "Time.sleep", args.clone())? {
+                results[0] = Val::AnyRef(decode_result_unit(caller, &cached)?);
                 return Ok(true);
             }
-            aver_rt::provider::standard_time_sleep(&aver_rt::AverInt::from_i64(ms))
-                .map_err(|fault| wasmtime::Error::msg(fault.to_string()))?;
-            record_effect_if_recording(
-                caller,
-                "Time.sleep",
-                vec![aver::replay::JsonValue::Int(ms)],
-                aver::replay::JsonValue::Null,
-                caller_fn,
-            );
+            let ms = aver_rt::AverInt::from_bigint(ms.big);
+            let (result, outcome) = match aver_rt::provider::standard_time_sleep(&ms) {
+                Ok(()) => (
+                    host_result_ok_unit(caller)?,
+                    json_ok(aver::replay::JsonValue::Null),
+                ),
+                Err(fault) => (
+                    host_result_err_unit_string(caller, &fault.message)?,
+                    json_err(&fault.message),
+                ),
+            };
+            results[0] = Val::AnyRef(result);
+            record_effect_if_recording(caller, "Time.sleep", args, outcome, caller_fn);
             Ok(true)
         }
         _ => Ok(false),

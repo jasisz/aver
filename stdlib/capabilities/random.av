@@ -3,8 +3,8 @@ module Random
     semantics = effectful
     exposes [int, float]
 
-operation int(min: Int, max: Int) -> Int
-    ? "Returns a random integer in the inclusive range from min to max."
+operation int(min: Int, max: Int) -> Result<Int, String>
+    ? "Returns a random integer in the inclusive range, or an error when the bounds are invalid or outside the portable host range."
     oracle = generative
     replay = recorded
     hostile = [intMidrange, intAlwaysMin, intAlwaysMax, intAlternating]
@@ -15,23 +15,43 @@ operation float() -> Float
     replay = recorded
     hostile = [floatMidrange, floatAlwaysZero, floatAlwaysOne]
 
-fn intMidrange(path: BranchPath, call: Int, min: Int, max: Int) -> Int
+fn intMidrange(path: BranchPath, call: Int, min: Int, max: Int) -> Result<Int, String>
     ? "Honest profile: every roll lands in the middle of the requested range."
-    Int.div(min + max, 2)
+    inHostRange = Bool.and(min >= -9223372036854775808, max <= 9223372036854775807)
+    match inHostRange
+        false -> Result.Err("Random.int: bounds must fit a 64-bit integer")
+        true -> match min <= max
+            true -> Result.Ok(Int.div(min + max, 2))
+            false -> Result.Err("Random.int: min ({min}) must be <= max ({max})")
 
-fn intAlwaysMin(path: BranchPath, call: Int, min: Int, max: Int) -> Int
+fn intAlwaysMin(path: BranchPath, call: Int, min: Int, max: Int) -> Result<Int, String>
     ? "Hostile profile: every roll is stuck at the lower bound."
-    min
+    inHostRange = Bool.and(min >= -9223372036854775808, max <= 9223372036854775807)
+    match inHostRange
+        false -> Result.Err("Random.int: bounds must fit a 64-bit integer")
+        true -> match min <= max
+            true -> Result.Ok(min)
+            false -> Result.Err("Random.int: min ({min}) must be <= max ({max})")
 
-fn intAlwaysMax(path: BranchPath, call: Int, min: Int, max: Int) -> Int
+fn intAlwaysMax(path: BranchPath, call: Int, min: Int, max: Int) -> Result<Int, String>
     ? "Hostile profile: every roll is stuck at the upper bound."
-    max
+    inHostRange = Bool.and(min >= -9223372036854775808, max <= 9223372036854775807)
+    match inHostRange
+        false -> Result.Err("Random.int: bounds must fit a 64-bit integer")
+        true -> match min <= max
+            true -> Result.Ok(max)
+            false -> Result.Err("Random.int: min ({min}) must be <= max ({max})")
 
-fn intAlternating(path: BranchPath, call: Int, min: Int, max: Int) -> Int
+fn intAlternating(path: BranchPath, call: Int, min: Int, max: Int) -> Result<Int, String>
     ? "Hostile profile: rolls alternate between both bounds."
-    match Int.mod(call, 2)
-        0 -> min
-        _ -> max
+    inHostRange = Bool.and(min >= -9223372036854775808, max <= 9223372036854775807)
+    match inHostRange
+        false -> Result.Err("Random.int: bounds must fit a 64-bit integer")
+        true -> match min <= max
+            false -> Result.Err("Random.int: min ({min}) must be <= max ({max})")
+            true -> match Int.mod(call, 2)
+                0 -> Result.Ok(min)
+                _ -> Result.Ok(max)
 
 fn floatMidrange(path: BranchPath, call: Int) -> Float
     ? "Honest profile: every roll lands at the midpoint."

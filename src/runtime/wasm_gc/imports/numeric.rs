@@ -6,7 +6,10 @@
 //! because the engine doesn't yet expose a built-in `f64.sin`.
 
 use super::super::RunWasmGcHost;
-use super::replay_glue::{record_effect_if_recording, try_replay};
+use super::super::decode::decode_result_int;
+use super::factories::{host_result_err_int, host_result_ok_int};
+use super::replay_glue::{json_err, json_ok, record_effect_if_recording, try_replay};
+use super::tcp::{decode_guest_int, guest_int_json};
 
 pub(super) fn dispatch(
     name: &str,
@@ -18,41 +21,39 @@ pub(super) fn dispatch(
     use wasmtime::Val;
     match name {
         "random_int" => {
-            let (min, max) = match (params.first(), params.get(1)) {
-                (Some(Val::I64(a)), Some(Val::I64(b))) => (*a, *b),
-                _ => (0, 0),
-            };
-            if let Some(cached) = try_replay(
-                caller,
-                "Random.int",
-                vec![
-                    aver::replay::JsonValue::Int(min),
-                    aver::replay::JsonValue::Int(max),
-                ],
-            )? {
-                let aver::replay::JsonValue::Int(v) = cached else {
-                    return Err(wasmtime::Error::msg(
-                        "replay Random.int: trace value is not an Int",
-                    ));
-                };
-                results[0] = Val::I64(v);
+            let min = params
+                .first()
+                .ok_or_else(|| wasmtime::Error::msg("Random.int: missing min"))?;
+            let max = params
+                .get(1)
+                .ok_or_else(|| wasmtime::Error::msg("Random.int: missing max"))?;
+            let min = decode_guest_int(caller, min, "Random.int: malformed min Int")?;
+            let max = decode_guest_int(caller, max, "Random.int: malformed max Int")?;
+            let args = vec![guest_int_json(&min), guest_int_json(&max)];
+            if let Some(cached) = try_replay(caller, "Random.int", args.clone())? {
+                results[0] = Val::AnyRef(decode_result_int(caller, &cached)?);
                 return Ok(true);
             }
-            // aver_rt::random_int returns Result, but the wasm import
-            // contract is a plain i64. The host falls back to `min` on
-            // an inverted range — same surface the VM exposes.
-            let v = aver_rt::random::random_int(min, max).unwrap_or(min);
-            results[0] = Val::I64(v);
-            record_effect_if_recording(
-                caller,
-                "Random.int",
-                vec![
-                    aver::replay::JsonValue::Int(min),
-                    aver::replay::JsonValue::Int(max),
-                ],
-                aver::replay::JsonValue::Int(v),
-                caller_fn,
-            );
+            let min_value = aver_rt::AverInt::from_bigint(min.big);
+            let max_value = aver_rt::AverInt::from_bigint(max.big);
+            let (result, outcome) =
+                match aver_rt::provider::standard_random_int(&min_value, &max_value) {
+                    Ok(value) => {
+                        let value = value
+                            .to_i64()
+                            .expect("Random.int result lies inside machine-range bounds");
+                        (
+                            host_result_ok_int(caller, value)?,
+                            json_ok(aver::replay::JsonValue::Int(value)),
+                        )
+                    }
+                    Err(fault) => (
+                        host_result_err_int(caller, &fault.message)?,
+                        json_err(&fault.message),
+                    ),
+                };
+            results[0] = Val::AnyRef(result);
+            record_effect_if_recording(caller, "Random.int", args, outcome, caller_fn);
             Ok(true)
         }
         "random_float" => {

@@ -111,6 +111,19 @@ def withDefault (r : Except ε α) (d : α) : α :=
   match r with
   | .ok v => v
   | .error _ => d
+
+/- Partial-correctness model for compiler-discharged Results. Runtime
+   backends fault on `.error`; the proof model therefore assigns no chosen
+   source value to that path. `Classical.choice` stays opaque, unlike a
+   concrete default such as zero, so an Err branch cannot prove facts by
+   silently pretending a particular payload was returned. -/
+noncomputable def proven [Nonempty α] (r : Except ε α) : α :=
+  match r with
+  | .ok v => v
+  | .error _ => Classical.choice (inferInstance : Nonempty α)
+
+@[simp] theorem proven_ok [Nonempty α] (v : α) :
+    proven (Except.ok v : Except ε α) = v := rfl
 end Except"#;
 
 const LEAN_PRELUDE_OPTION_TO_EXCEPT: &str = r#"def Option.toExcept (o : Option α) (e : ε) : Except ε α :=
@@ -284,7 +297,19 @@ def BranchPath.child (p : BranchPath) (idx : Int) : BranchPath :=
   if p.dewey.isEmpty then { dewey := toString idx }
   else { dewey := p.dewey ++ "." ++ toString idx }
 
-def BranchPath.parse (s : String) : BranchPath := { dewey := s }"#;
+def BranchPath.childResult (p : BranchPath) (idx : Int) : Except String BranchPath :=
+  if idx < 0 then Except.error "BranchPath.child: `idx` must be non-negative"
+  else Except.ok (BranchPath.child p idx)
+
+def BranchPath.validDewey (s : String) : Bool :=
+  s.isEmpty || (s.splitOn ".").all fun segment =>
+    !segment.isEmpty && segment.toList.all Char.isDigit
+
+def BranchPath.parse (s : String) : BranchPath := { dewey := s }
+
+def BranchPath.parseResult (s : String) : Except String BranchPath :=
+  if BranchPath.validDewey s then Except.ok (BranchPath.parse s)
+  else Except.error ("BranchPath.parse: invalid dewey-decimal path: `" ++ s ++ "`")"#;
 
 const LEAN_PRELUDE_PROOF_FUEL: &str = r#"def averStringPosFuel (s : String) (pos : Int) (rankBudget : Nat) : Nat :=
   (((s.toList.length) - pos.toNat) + 1) * rankBudget"#;
@@ -1023,11 +1048,9 @@ def Float.fromString (s : String) : Except String Float :=
              else Float.ofScientific mantissa true ((-shift).toNat)
     .ok (if neg then -f else f)"#;
 
-const LEAN_PRELUDE_CHAR_CODE: &str = r#"def Char.toCode (s : String) : Int :=
-  match s.toList.head? with
-  | some c => (c.toNat : Int)
-  | none => panic! "Char.toCode: string is empty"
-def Char.fromCode (n : Int) : Option String :=
+const LEAN_PRELUDE_STRING_CODE_POINT: &str = r#"def String.firstCodePointAv (s : String) : Option Int :=
+  s.toList.head?.map (fun c => (c.toNat : Int))
+def String.fromCodePointAv (n : Int) : Option String :=
   if n < 0 || n > 1114111 then none
   else if n >= 55296 && n <= 57343 then none
   else some (Char.toString (Char.ofNat n.toNat))"#;
@@ -1187,7 +1210,7 @@ fn generate_prelude_for_body(body: &str, include_all_helpers: bool) -> String {
                 false,
             )),
             "NumericParse" => parts.push(generate_numeric_parse_prelude(body, include_all_helpers)),
-            "CharCode" => parts.push(LEAN_PRELUDE_CHAR_CODE.to_string()),
+            "StringCodePoint" => parts.push(LEAN_PRELUDE_STRING_CODE_POINT.to_string()),
             "AverBits" => parts.push(LEAN_PRELUDE_AVER_BITS.to_string()),
             "AverMeasure" => parts.push(LEAN_PRELUDE_AVER_MEASURE.to_string()),
             "AverMap" => parts.push(generate_map_prelude(body, include_all_helpers)),
@@ -1205,7 +1228,7 @@ fn generate_prelude_for_body(body: &str, include_all_helpers: bool) -> String {
             // Dafny-side datatype declarations — Lean has Result/Option
             // natively (`Except`/`Option`) and BranchPath ships as part
             // of the BranchPath helper key, so all four are no-ops here.
-            "ResultDatatype" | "OptionDatatype" | "OptionToResult" | "BranchPathDatatype" => {}
+            "ResultDatatype" | "OptionDatatype" | "ResultFromOption" | "BranchPathDatatype" => {}
             other => panic!(
                 "Lean backend has no implementation for builtin helper key '{}'. \
                  Add a match arm in generate_prelude_for_body or remove the key \
@@ -1417,7 +1440,7 @@ pub(super) fn build_common_lean(union_body: &str, cert_model: bool) -> String {
                 union_body, false, cert_model,
             )),
             "NumericParse" => parts.push(generate_numeric_parse_prelude(union_body, false)),
-            "CharCode" => parts.push(LEAN_PRELUDE_CHAR_CODE.to_string()),
+            "StringCodePoint" => parts.push(LEAN_PRELUDE_STRING_CODE_POINT.to_string()),
             "AverBits" => parts.push(LEAN_PRELUDE_AVER_BITS.to_string()),
             "AverMeasure" => parts.push(LEAN_PRELUDE_AVER_MEASURE.to_string()),
             "AverMap" => parts.push(generate_map_prelude(union_body, false)),
@@ -1437,7 +1460,7 @@ pub(super) fn build_common_lean(union_body: &str, cert_model: bool) -> String {
                 LEAN_PRELUDE_OPTION_TO_EXCEPT.to_string(),
             ]),
             "StringHadd" => parts.push(generate_string_hadd_prelude(union_body, false)),
-            "ResultDatatype" | "OptionDatatype" | "OptionToResult" | "BranchPathDatatype" => {}
+            "ResultDatatype" | "OptionDatatype" | "ResultFromOption" | "BranchPathDatatype" => {}
             other => panic!(
                 "Lean backend has no implementation for builtin helper key '{}'. \
                  Add a match arm in build_common_lean or remove the key from BUILTIN_HELPERS.",

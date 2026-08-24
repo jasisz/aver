@@ -101,8 +101,8 @@ pub(in crate::types::checker) fn type_is_fully_concrete(ty: &Type) -> bool {
 /// what the `__to_str` lowering (`src/ir/interp_lower.rs`) can render on
 /// every backend: the wasm-gc interpolation emitter dispatches on
 /// `String` (identity), `Int`, `Float` and `Bool` and has no other
-/// stringifier. There is no `Char` type in Aver (`Char.toCode` /
-/// `Char.fromCode` work on codepoint `Int`s), so no `Char` arm exists on
+/// stringifier. There is no `Char` type in Aver (String's code-point helpers
+/// work on codepoint `Int`s), so no `Char` arm exists on
 /// either side. Every other type is a compound display and must be
 /// converted by a function the user writes.
 ///
@@ -178,25 +178,6 @@ pub(in crate::types::checker) fn is_bare_none_expr(expr: &Expr) -> bool {
         }
         Expr::FnCall(callee, args) if args.is_empty() => is_bare_none_expr(&callee.node),
         _ => false,
-    }
-}
-
-fn const_int_expr(expr: &Spanned<Expr>) -> Option<i64> {
-    match &expr.node {
-        Expr::Literal(crate::ast::Literal::Int(i)) => Some(*i),
-        Expr::Neg(inner) => const_int_expr(inner).and_then(|v| v.checked_neg()),
-        Expr::BinOp(op, left, right) => {
-            let l = const_int_expr(left)?;
-            let r = const_int_expr(right)?;
-            match op {
-                crate::ast::BinOp::Add => l.checked_add(r),
-                crate::ast::BinOp::Sub => l.checked_sub(r),
-                crate::ast::BinOp::Mul => l.checked_mul(r),
-                crate::ast::BinOp::Div => l.checked_div(r),
-                _ => None,
-            }
-        }
-        _ => None,
     }
 }
 
@@ -454,7 +435,7 @@ impl TypeChecker {
                         Some(Type::Result(ok.clone(), Box::new(inferred)))
                     }
 
-                    // Option.toResult(o, e) — push the expected error type
+                    // Result.fromOption(o, e) — push the expected error type
                     // into the error argument so a generic literal there
                     // (`[]`, `{}`) picks up its element type.
                     //
@@ -463,7 +444,7 @@ impl TypeChecker {
                     // only, and the error value is unrelated to it. The
                     // expected type is the sole source, so the recogniser
                     // has to sit here.
-                    ("Option.toResult", 2, Type::Result(_, err)) => {
+                    ("Result.fromOption", 2, Type::Result(_, err)) => {
                         let mark = self.error_mark();
                         let subject = self.infer_type(&args[0]);
                         // Declining hands the call back to the general
@@ -795,21 +776,6 @@ impl TypeChecker {
                         Self::instantiate_type(&sig.ret, &subst)
                     }
                 };
-                let validate_special_call =
-                    |tc: &mut Self, display_name: &str, call_args: &[Spanned<Expr>]| {
-                        if display_name == "Time.sleep"
-                            && call_args.len() == 1
-                            && let Some(ms) = const_int_expr(&call_args[0])
-                            && ms < 0
-                        {
-                            tc.error_at_line(
-                                err_line,
-                                "Argument 1 of 'Time.sleep' must be a non-negative Int constant"
-                                    .to_string(),
-                            );
-                        }
-                    };
-
                 if let Expr::Ident(name) = &fn_expr.node {
                     if let Some((resolved_id, sig)) = self
                         .find_fn_sig_resolved(name)
@@ -834,7 +800,6 @@ impl TypeChecker {
                                 .is_some()
                         });
                         let ret = check_call(self, name, sig);
-                        validate_special_call(self, name, args);
                         if discharged && let Type::Result(payload, _) = ret {
                             return *payload;
                         }
@@ -865,7 +830,7 @@ impl TypeChecker {
                     if let Some(ty) = self.infer_map_call_type(&display_name, &arg_types) {
                         return ty;
                     }
-                    if let Some(ty) = self.infer_vector_call_type(&display_name, &arg_types) {
+                    if let Some(ty) = self.infer_vector_call_type(&display_name, args, &arg_types) {
                         return ty;
                     }
 
@@ -912,14 +877,14 @@ impl TypeChecker {
                                 }
                                 return arg_types[1].clone();
                             }
-                        "Option.toResult"
+                        "Result.fromOption"
                             // (Option<T>, E) -> Result<T, E>
                             if arg_types.len() == 2 => {
                                 if !matches!(&arg_types[0], Type::Option(_) | Type::Invalid) {
                                     self.error_at_line(
                                         err_line,
                                         format!(
-                                            "Argument 1 of 'Option.toResult': expected Option<T>, got {}",
+                                            "Argument 1 of 'Result.fromOption': expected Option<T>, got {}",
                                             arg_types[0].display()
                                         ),
                                     );
@@ -953,18 +918,10 @@ impl TypeChecker {
                             }
                             return Type::Int;
                         }
-                        // Literal-count discharge: the three `Bits`
-                        // operations that take a shift amount or a bit width
-                        // are partial ONLY below zero (infinite two's
-                        // complement defines the rest), so a SYNTACTIC
-                        // non-negative integer literal count cannot fail and
-                        // the call types as plain `Int`. Same narrow
-                        // mechanism as the divisor rule above, sharing its
-                        // shape down to the HIR resolver, which lowers this
-                        // exact shape to the total intrinsics. A negative
-                        // literal or any non-literal count falls through to
-                        // the registered `Result` signature.
-                        "Bits.shiftLeft" | "Bits.shiftRight" | "Bits.low"
+                        // Literal-count discharge for operations that may
+                        // materialize `n` bits. A negative, oversized, or
+                        // non-literal count keeps the registered `Result`.
+                        "Bits.shiftLeft" | "Bits.low"
                             if args.len() == 2
                                 && crate::ast::is_literal_nonneg_int_count(&args[1]) =>
                         {
@@ -972,6 +929,66 @@ impl TypeChecker {
                                 check_call(self, &display_name, sig);
                             }
                             return Type::Int;
+                        }
+                        // Right shift only shrinks its input, so every
+                        // syntactic non-negative literal is total. Huge
+                        // literals lower to the O(1) infinite sign tail.
+                        "Bits.shiftRight"
+                            if args.len() == 2
+                                && crate::ast::is_literal_nonneg_shift_right_count(&args[1]) =>
+                        {
+                            if let Some(sig) = self.find_fn_sig(&display_name).cloned() {
+                                check_call(self, &display_name, sig);
+                            }
+                            return Type::Int;
+                        }
+                        // BranchPath constructors are catchable for dynamic
+                        // input, while syntactically valid literals discharge
+                        // to the opaque value used by Oracle lifting. The HIR
+                        // resolver shares both predicates and lowers the same
+                        // shapes to unchecked intrinsics.
+                        "BranchPath.child"
+                            if args.len() == 2
+                                && crate::ast::is_literal_branch_index(&args[1]) =>
+                        {
+                            if let Some(sig) = self.find_fn_sig(&display_name).cloned() {
+                                check_call(self, &display_name, sig);
+                            }
+                            return Type::named(crate::types::branch_path::TYPE_NAME.to_string());
+                        }
+                        "BranchPath.parse"
+                            if args.len() == 1
+                                && crate::ast::is_literal_branch_path(&args[0]) =>
+                        {
+                            if let Some(sig) = self.find_fn_sig(&display_name).cloned() {
+                                check_call(self, &display_name, sig);
+                            }
+                            return Type::named(crate::types::branch_path::TYPE_NAME.to_string());
+                        }
+                        // Effect-aware literal discharge. These calls remain
+                        // effects — they are still invoked, traced, replayed,
+                        // and replaceable through `given`. Only the Result
+                        // wrapper for argument validation disappears when the
+                        // complete precondition is visible in syntax.
+                        "Random.int"
+                            if args.len() == 2
+                                && crate::ast::is_literal_random_int_range(
+                                    &args[0], &args[1],
+                                ) =>
+                        {
+                            if let Some(sig) = self.find_fn_sig(&display_name).cloned() {
+                                check_call(self, &display_name, sig);
+                            }
+                            return Type::Int;
+                        }
+                        "Time.sleep"
+                            if args.len() == 1
+                                && crate::ast::is_literal_sleep_duration(&args[0]) =>
+                        {
+                            if let Some(sig) = self.find_fn_sig(&display_name).cloned() {
+                                check_call(self, &display_name, sig);
+                            }
+                            return Type::Unit;
                         }
                         _ => {}
                     }
@@ -1018,7 +1035,6 @@ impl TypeChecker {
                     }
                     if let Some(sig) = self.find_fn_sig(&display_name).cloned() {
                         let ret = check_call(self, &display_name, sig);
-                        validate_special_call(self, &display_name, args);
                         // Cross-arg validation for `listenWith` family: the
                         // context arg (#2) must match the handler's first
                         // parameter type. Builtin sigs use `Type::Invalid`

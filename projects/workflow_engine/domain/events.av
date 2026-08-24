@@ -134,7 +134,7 @@ verify replayTask
 fn replayTaskFrom(events: List<TaskEventRecord>, current: Option<Task>) -> Result<Task, String>
     ? "Tail-recursive task replay."
     match events
-        [] -> Option.toResult(current, "No events for task")
+        [] -> Result.fromOption(current, "No events for task")
         [event, ..rest] -> replayTaskStep(current, event, rest)
 
 verify replayTaskFrom

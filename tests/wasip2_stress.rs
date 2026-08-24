@@ -204,7 +204,7 @@ fn main() -> Result<Unit, String>
     Disk.appendBytes("copy.bin", part)?
     length = Disk.size("source.bin")?
     large = Disk.readBytesAt("large.bin", 100, 5000000000)?
-    largeLength = List.len(Bytes.toList(large))
+    largeLength = List.len(Bytes.octets(large))
     Console.print("{Bytes.toHex(all)}:{Bytes.toHex(part)}:{Bytes.toHex(past)}:{length}:{largeLength}")
     Result.Ok(Unit)
 "#;

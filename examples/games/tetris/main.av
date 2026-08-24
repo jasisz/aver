@@ -16,153 +16,159 @@ decision ImmutableBoardRepresentation
     rejected = ["MutableArray", "SparseMap"]
     impacts = [Logic.GameState, Logic.placePiece, Board.clearLines, Logic.checkCollision]
 
-fn drawAt(x: Int, y: Int, ch: String) -> Unit
+fn drawAt(x: Int, y: Int, ch: String) -> Result<Unit, String>
     ? "Print a double-wide cell at game coordinates"
     ! [Terminal.moveTo, Terminal.print]
-    Terminal.moveTo(x * 2, y)
-    Terminal.print(ch)
+    Terminal.moveTo(x * 2, y)?
+    Terminal.print(ch)?
+    Result.Ok(Unit)
 
-fn renderBorderH(x: Int, maxX: Int, y: Int) -> Unit
+fn renderBorderH(x: Int, maxX: Int, y: Int) -> Result<Unit, String>
     ? "Draw horizontal border segment"
     ! [Terminal.moveTo, Terminal.print]
     match x == maxX
         true -> drawAt(0, 0, "")
         false -> renderBorderHNext(x, maxX, y)
 
-fn renderBorderHNext(x: Int, maxX: Int, y: Int) -> Unit
+fn renderBorderHNext(x: Int, maxX: Int, y: Int) -> Result<Unit, String>
     ? "Draw one border cell and continue"
     ! [Terminal.moveTo, Terminal.print]
-    drawAt(x, y, "██")
+    drawAt(x, y, "██")?
     renderBorderH(x + 1, maxX, y)
 
-fn renderBorderV(y: Int, maxY: Int, x: Int) -> Unit
+fn renderBorderV(y: Int, maxY: Int, x: Int) -> Result<Unit, String>
     ? "Draw vertical border segment"
     ! [Terminal.moveTo, Terminal.print]
     match y == maxY
         true -> drawAt(0, 0, "")
         false -> renderBorderVNext(y, maxY, x)
 
-fn renderBorderVNext(y: Int, maxY: Int, x: Int) -> Unit
+fn renderBorderVNext(y: Int, maxY: Int, x: Int) -> Result<Unit, String>
     ? "Draw one border cell and continue"
     ! [Terminal.moveTo, Terminal.print]
-    drawAt(x, y, "██")
+    drawAt(x, y, "██")?
     renderBorderV(y + 1, maxY, x)
 
-fn renderBorder() -> Unit
+fn renderBorder() -> Result<Unit, String>
     ? "Draw the playfield border"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    Terminal.setColor("white")
-    renderBorderH(0, 12, 0)
-    renderBorderH(0, 12, 21)
-    renderBorderV(1, 21, 0)
-    renderBorderV(1, 21, 11)
-    Terminal.resetColor()
+    Terminal.setColor("white")?
+    renderBorderH(0, 12, 0)?
+    renderBorderH(0, 12, 21)?
+    renderBorderV(1, 21, 0)?
+    renderBorderV(1, 21, 11)?
+    Terminal.resetColor()?
+    Result.Ok(Unit)
 
-fn renderCellAt(board: List<List<Option<PieceKind>>>, x: Int, y: Int) -> Unit
+fn renderCellAt(board: List<List<Option<PieceKind>>>, x: Int, y: Int) -> Result<Unit, String>
     ? "Draw one board cell if non-empty"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     match Board.getCell(board, x, y)
         Option.None -> drawAt(0, 0, "")
         Option.Some(kind) -> renderColorCell(x, y, kind)
 
-fn renderColorCell(x: Int, y: Int, kind: PieceKind) -> Unit
+fn renderColorCell(x: Int, y: Int, kind: PieceKind) -> Result<Unit, String>
     ? "Draw a colored cell"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    Terminal.setColor(Pieces.pieceColor(kind))
-    drawAt(x + 1, y + 1, "██")
-    Terminal.resetColor()
+    Terminal.setColor(Pieces.pieceColor(kind))?
+    drawAt(x + 1, y + 1, "██")?
+    Terminal.resetColor()?
+    Result.Ok(Unit)
 
-fn renderRowCells(board: List<List<Option<PieceKind>>>, x: Int, y: Int) -> Unit
+fn renderRowCells(board: List<List<Option<PieceKind>>>, x: Int, y: Int) -> Result<Unit, String>
     ? "Render cells in one row"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     match x == 10
         true -> drawAt(0, 0, "")
         false -> renderRowCellNext(board, x, y)
 
-fn renderRowCellNext(board: List<List<Option<PieceKind>>>, x: Int, y: Int) -> Unit
+fn renderRowCellNext(board: List<List<Option<PieceKind>>>, x: Int, y: Int) -> Result<Unit, String>
     ? "Render one cell and continue row"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    renderCellAt(board, x, y)
+    renderCellAt(board, x, y)?
     renderRowCells(board, x + 1, y)
 
-fn renderRows(board: List<List<Option<PieceKind>>>, y: Int) -> Unit
+fn renderRows(board: List<List<Option<PieceKind>>>, y: Int) -> Result<Unit, String>
     ? "Render all board rows"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     match y == 20
         true -> drawAt(0, 0, "")
         false -> renderRowsNext(board, y)
 
-fn renderRowsNext(board: List<List<Option<PieceKind>>>, y: Int) -> Unit
+fn renderRowsNext(board: List<List<Option<PieceKind>>>, y: Int) -> Result<Unit, String>
     ? "Render one row and continue"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    renderRowCells(board, 0, y)
+    renderRowCells(board, 0, y)?
     renderRows(board, y + 1)
 
-fn renderPieceCell(p: Point, color: String) -> Unit
+fn renderPieceCell(p: Point, color: String) -> Result<Unit, String>
     ? "Draw one piece cell"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    Terminal.setColor(color)
-    drawAt(p.x + 1, p.y + 1, "██")
-    Terminal.resetColor()
+    Terminal.setColor(color)?
+    drawAt(p.x + 1, p.y + 1, "██")?
+    Terminal.resetColor()?
+    Result.Ok(Unit)
 
-fn renderPieceCells(points: List<Point>, color: String) -> Unit
+fn renderPieceCells(points: List<Point>, color: String) -> Result<Unit, String>
     ? "Draw all piece cells"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     match points
         [] -> drawAt(0, 0, "")
         [p, ..rest] -> renderPieceCellNext(rest, p, color)
 
-fn renderPieceCellNext(rest: List<Point>, p: Point, color: String) -> Unit
+fn renderPieceCellNext(rest: List<Point>, p: Point, color: String) -> Result<Unit, String>
     ? "Draw one piece cell and continue"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    renderPieceCell(p, color)
+    renderPieceCell(p, color)?
     renderPieceCells(rest, color)
 
-fn renderPiece(state: GameState) -> Unit
+fn renderPiece(state: GameState) -> Result<Unit, String>
     ? "Draw the current falling piece"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     renderPieceCells(Pieces.absolutePoints(state.piece, state.px, state.py), Pieces.pieceColor(state.piece.kind))
 
-fn renderInfo(state: GameState) -> Unit
+fn renderInfo(state: GameState) -> Result<Unit, String>
     ? "Draw score, level, lines info"
     ! [Terminal.moveTo, Terminal.print]
-    Terminal.moveTo(26, 2)
-    Terminal.print("Score: {String.fromInt(state.score)}")
-    Terminal.moveTo(26, 4)
-    Terminal.print("Level: {String.fromInt(state.level)}")
-    Terminal.moveTo(26, 6)
-    Terminal.print("Lines: {String.fromInt(state.lines)}")
-    Terminal.moveTo(26, 10)
-    Terminal.print("Controls:")
-    Terminal.moveTo(26, 11)
-    Terminal.print("← → Move")
-    Terminal.moveTo(26, 12)
-    Terminal.print("↑   Rotate")
-    Terminal.moveTo(26, 13)
-    Terminal.print("↓   Soft drop")
-    Terminal.moveTo(26, 14)
-    Terminal.print("SPC Hard drop")
-    Terminal.moveTo(26, 15)
-    Terminal.print("Q   Quit")
+    Terminal.moveTo(26, 2)?
+    Terminal.print("Score: {String.fromInt(state.score)}")?
+    Terminal.moveTo(26, 4)?
+    Terminal.print("Level: {String.fromInt(state.level)}")?
+    Terminal.moveTo(26, 6)?
+    Terminal.print("Lines: {String.fromInt(state.lines)}")?
+    Terminal.moveTo(26, 10)?
+    Terminal.print("Controls:")?
+    Terminal.moveTo(26, 11)?
+    Terminal.print("← → Move")?
+    Terminal.moveTo(26, 12)?
+    Terminal.print("↑   Rotate")?
+    Terminal.moveTo(26, 13)?
+    Terminal.print("↓   Soft drop")?
+    Terminal.moveTo(26, 14)?
+    Terminal.print("SPC Hard drop")?
+    Terminal.moveTo(26, 15)?
+    Terminal.print("Q   Quit")?
+    Result.Ok(Unit)
 
-fn render(state: GameState) -> Unit
+fn render(state: GameState) -> Result<Unit, String>
     ? "Draw one frame"
     ! [
         Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor,
     ]
-    Terminal.clear()
-    renderBorder()
-    renderRows(state.board, 0)
-    renderPiece(state)
-    renderInfo(state)
-    Terminal.flush()
+    Terminal.clear()?
+    renderBorder()?
+    renderRows(state.board, 0)?
+    renderPiece(state)?
+    renderInfo(state)?
+    Terminal.flush()?
+    Result.Ok(Unit)
 
-fn readInput(state: GameState) -> GameState
+fn readInput(state: GameState) -> Result<GameState, String>
     ? "Drain all queued keys, applying each one"
     ! [Terminal.readKey]
-    match Terminal.readKey()
+    match Terminal.readKey()?
         Option.Some(k) -> readInput(Logic.handleKey(state, k))
-        Option.None -> state
+        Option.None -> Result.Ok(state)
 
 fn spawnPiece(state: GameState) -> GameState
     ? "Spawn a random piece at top center"
@@ -214,9 +220,9 @@ fn gameLoop(state: GameState) -> Result<String, String>
         Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor,
         Time.sleep,
     ]
-    render(state)
-    Time.sleep(state.tickMs)
-    tick(readInput(state))
+    render(state)?
+    Time.sleep(state.tickMs)?
+    tick(readInput(state)?)
 
 fn initState() -> GameState
     ? "Create initial game state"
@@ -230,12 +236,12 @@ fn run() -> Result<String, String>
         Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor,
         Time.sleep,
     ]
-    Terminal.enableRawMode()
-    Terminal.hideCursor()
+    Terminal.enableRawMode()?
+    Terminal.hideCursor()?
     result = gameLoop(initState())
-    Terminal.showCursor()
-    Terminal.disableRawMode()
-    Terminal.clear()
+    Terminal.showCursor()?
+    Terminal.disableRawMode()?
+    Terminal.clear()?
     result
 
 fn main()

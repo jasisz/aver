@@ -7,7 +7,10 @@ use crate::*;
 
 /// Dispatch Vector.* builtins.
 #[inline(always)]
-pub fn call(name: AverStr, args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn call(
+    name: AverStr,
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     {
         let __dispatch_subject = name.clone();
@@ -57,25 +60,29 @@ pub fn call(name: AverStr, args: &aver_rt::AverList<Val>) -> Result<Val, AverStr
     }
 }
 
-/// Vector.new(size, default) -> Vector<T>.
-pub fn builtinVectorNew(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+/// Vector.new(size, default) -> Result<Vector<T>, String>.
+pub fn builtinVectorNew(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let pair = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
     match pair {
         (crate::aver_generated::domain::value::Val::ValInt(size), defaultVal) => Ok(
-            crate::aver_generated::domain::value::Val::ValVector(aver_rt::AverVector::new(
-                (size)
-                    .to_usize()
-                    .expect("Vector.new: size must be a non-negative, machine-sized Int"),
-                defaultVal,
-            )),
+            crate::aver_generated::domain::value::Val::ValVector(match (size).to_u32() {
+                Some(__n) => Ok(aver_rt::AverVector::new(__n as usize, defaultVal)),
+                None => Err(aver_rt::AverStr::from(
+                    "Vector.new: size must be between 0 and 4294967295",
+                )),
+            }?),
         ),
         _ => Err(AverStr::from("Vector.new: first arg must be Int")),
     }
 }
 
 /// Vector.get(vec, idx) -> Option<T>.
-pub fn builtinVectorGet(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn builtinVectorGet(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let pair = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
     match pair {
@@ -83,7 +90,7 @@ pub fn builtinVectorGet(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
             crate::aver_generated::domain::value::Val::ValVector(vec),
             crate::aver_generated::domain::value::Val::ValInt(idx),
         ) => match (idx).to_usize().and_then(|__i| vec.get(__i).cloned()) {
-            Some(v) => Ok(crate::aver_generated::domain::value::Val::ValSome(
+            Some(v @ _) => Ok(crate::aver_generated::domain::value::Val::ValSome(
                 std::sync::Arc::new(v),
             )),
             None => Ok(crate::aver_generated::domain::value::Val::ValNone),
@@ -93,7 +100,9 @@ pub fn builtinVectorGet(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
 }
 
 /// Vector.set(vec, idx, val) -> Option<Vector<T>>.
-pub fn builtinVectorSet(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn builtinVectorSet(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     {
         let __list_subject = args.clone();
@@ -123,7 +132,11 @@ pub fn builtinVectorSet(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
 }
 
 /// Validate types and bounds before delegating to builtinVectorSetInBounds.
-pub fn builtinVectorSetInner(vecV: &Val, idxV: &Val, valV: &Val) -> Result<Val, AverStr> {
+pub fn builtinVectorSetInner(
+    vecV: &crate::aver_generated::domain::value::Val,
+    idxV: &crate::aver_generated::domain::value::Val,
+    valV: &crate::aver_generated::domain::value::Val,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     match vecV.clone() {
         crate::aver_generated::domain::value::Val::ValVector(vec) => {
@@ -149,16 +162,16 @@ pub fn builtinVectorSetInner(vecV: &Val, idxV: &Val, valV: &Val) -> Result<Val, 
 /// Set a vector element when bounds have already been checked.
 #[inline(always)]
 pub fn builtinVectorSetInBounds(
-    vec: &aver_rt::AverVector<Val>,
+    vec: &aver_rt::AverVector<crate::aver_generated::domain::value::Val>,
     idx: aver_rt::AverInt,
-    valV: &Val,
-) -> Result<Val, AverStr> {
+    valV: &crate::aver_generated::domain::value::Val,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     match (idx)
         .to_usize()
         .and_then(|__i| vec.clone().set_owned(__i, valV.clone()))
     {
-        Some(newVec) => Ok(crate::aver_generated::domain::value::Val::ValSome(
+        Some(newVec @ _) => Ok(crate::aver_generated::domain::value::Val::ValSome(
             std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValVector(newVec)),
         )),
         None => Err(AverStr::from("Vector.set: index out of bounds")),
@@ -166,7 +179,9 @@ pub fn builtinVectorSetInBounds(
 }
 
 /// Vector.len(vec) -> Int.
-pub fn builtinVectorLen(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn builtinVectorLen(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     match v {
@@ -180,7 +195,9 @@ pub fn builtinVectorLen(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
 }
 
 /// Vector.fromList(list) -> Vector<T>.
-pub fn builtinVectorFromList(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn builtinVectorFromList(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     match v {
@@ -194,7 +211,9 @@ pub fn builtinVectorFromList(args: &aver_rt::AverList<Val>) -> Result<Val, AverS
 }
 
 /// List.fromVector(vec) -> List<T>.
-pub fn builtinVectorToList(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+pub fn builtinVectorToList(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     match v {

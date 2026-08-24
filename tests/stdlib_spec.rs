@@ -40,7 +40,7 @@ fn check_warns_when_project_module_is_shadowed_by_the_stdlib() {
     let entry = dir.path().join("main.av");
     std::fs::write(
         &entry,
-        "module Main\n    intent = \"use Bytes\"\n    depends [Bytes]\n    effects []\n\nfn byteCount(values: List<Int>) -> Result<Int, String>\n    ? \"Validate bytes and count them.\"\n    bytes = Bytes.fromList(values)?\n    Result.Ok(List.len(Bytes.toList(bytes)))\n\nverify byteCount\n    byteCount([1, 2]) => Result.Ok(2)\n    byteCount([300]) => Result.Err(\"byte value outside 0..=255\")\n",
+        "module Main\n    intent = \"use Bytes\"\n    depends [Bytes]\n    effects []\n\nfn byteCount(values: List<Int>) -> Result<Int, String>\n    ? \"Validate bytes and count them.\"\n    bytes = Bytes.fromList(values)?\n    Result.Ok(List.len(Bytes.octets(bytes)))\n\nverify byteCount\n    byteCount([1, 2]) => Result.Ok(2)\n    byteCount([300]) => Result.Err(\"byte value outside 0..=255\")\n",
     )
     .expect("write main.av");
     let root = dir.path().to_string_lossy().into_owned();
@@ -80,7 +80,7 @@ fn stdlib_shadow_loader_warning_is_printed_once_per_command() {
     let entry = dir.path().join("main.av");
     std::fs::write(
         &entry,
-        "module Main\n    intent = \"use Bytes\"\n    depends [Bytes]\n    effects []\n\nfn byteCount(values: List<Int>) -> Result<Int, String>\n    ? \"Validate bytes and count them.\"\n    bytes = Bytes.fromList(values)?\n    Result.Ok(List.len(Bytes.toList(bytes)))\n\nverify byteCount\n    byteCount([1, 2]) => Result.Ok(2)\n    byteCount([300]) => Result.Err(\"byte value outside 0..=255\")\n",
+        "module Main\n    intent = \"use Bytes\"\n    depends [Bytes]\n    effects []\n\nfn byteCount(values: List<Int>) -> Result<Int, String>\n    ? \"Validate bytes and count them.\"\n    bytes = Bytes.fromList(values)?\n    Result.Ok(List.len(Bytes.octets(bytes)))\n\nverify byteCount\n    byteCount([1, 2]) => Result.Ok(2)\n    byteCount([300]) => Result.Err(\"byte value outside 0..=255\")\n",
     )
     .expect("write main.av");
     let root = dir.path().to_string_lossy().into_owned();
@@ -106,7 +106,7 @@ fn check_stays_silent_when_no_project_file_shadows_the_stdlib() {
     let entry = dir.path().join("main.av");
     std::fs::write(
         &entry,
-        "module Main\n    intent = \"use Bytes\"\n    depends [Bytes]\n    effects []\n\nfn byteCount(values: List<Int>) -> Result<Int, String>\n    ? \"Validate bytes and count them.\"\n    bytes = Bytes.fromList(values)?\n    Result.Ok(List.len(Bytes.toList(bytes)))\n\nverify byteCount\n    byteCount([1, 2]) => Result.Ok(2)\n    byteCount([300]) => Result.Err(\"byte value outside 0..=255\")\n",
+        "module Main\n    intent = \"use Bytes\"\n    depends [Bytes]\n    effects []\n\nfn byteCount(values: List<Int>) -> Result<Int, String>\n    ? \"Validate bytes and count them.\"\n    bytes = Bytes.fromList(values)?\n    Result.Ok(List.len(Bytes.octets(bytes)))\n\nverify byteCount\n    byteCount([1, 2]) => Result.Ok(2)\n    byteCount([300]) => Result.Err(\"byte value outside 0..=255\")\n",
     )
     .expect("write main.av");
     let root = dir.path().to_string_lossy().into_owned();

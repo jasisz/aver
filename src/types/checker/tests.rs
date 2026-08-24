@@ -472,7 +472,7 @@ fn inBareBinding(r: Result<List<Int>, String>) -> Int
 }
 
 #[test]
-fn option_to_result_types_empty_error_from_expected() {
+fn result_from_option_types_empty_error_from_expected() {
     // The error argument is unrelated to the subject's payload, so its
     // type can only come from the expected `Result`'s error side.
     let items = parse_items(
@@ -483,14 +483,14 @@ fn reasons(r: Result<Int, List<String>>) -> Int
         Result.Err(rs) -> List.len(rs)
 
 fn inReturn(o: Option<Int>) -> Result<Int, List<String>>
-    Option.toResult(o, [])
+    Result.fromOption(o, [])
 
 fn inAnnotatedBinding(o: Option<Int>) -> Int
-    r: Result<Int, List<String>> = Option.toResult(o, [])
+    r: Result<Int, List<String>> = Result.fromOption(o, [])
     reasons(r)
 
 fn inArgument(o: Option<Int>) -> Int
-    reasons(Option.toResult(o, []))
+    reasons(Result.fromOption(o, []))
 "#,
     );
     let errs = errors(items);
@@ -515,7 +515,7 @@ fn g() -> Int
     Option.withDefault("x", 0)
 
 fn h() -> Result<Int, String>
-    Option.toResult(7, "missing")
+    Result.fromOption(7, "missing")
 "#,
     );
     let errs = errors(items);
@@ -533,8 +533,8 @@ fn h() -> Result<Int, String>
     );
     assert!(
         errs.iter()
-            .any(|e| e.contains("Argument 1 of 'Option.toResult': expected Option<T>, got Int")),
-        "expected Option.toResult to reject an Int subject, got: {errs:?}"
+            .any(|e| e.contains("Argument 1 of 'Result.fromOption': expected Option<T>, got Int")),
+        "expected Result.fromOption to reject an Int subject, got: {errs:?}"
     );
 }
 

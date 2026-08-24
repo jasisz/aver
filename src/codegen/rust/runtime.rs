@@ -58,6 +58,12 @@ impl IntoAverStr for Option<String> {
     type Output = Option<AverStr>;
     fn into_aver(self) -> Option<AverStr> { self.map(AverStr::from) }
 }
+impl IntoAverStr for Result<Option<String>, String> {
+    type Output = Result<Option<AverStr>, AverStr>;
+    fn into_aver(self) -> Result<Option<AverStr>, AverStr> {
+        self.map(|value| value.map(AverStr::from)).map_err(AverStr::from)
+    }
+}
 impl IntoAverStr for aver_rt::AverList<String> {
     type Output = aver_rt::AverList<AverStr>;
     fn into_aver(self) -> aver_rt::AverList<AverStr> {
@@ -103,12 +109,10 @@ pub fn aver_int_clamp_i64(n: &aver_rt::AverInt) -> i64 {
     })
 }
 
-/// Convert an `AverInt` to `i64` at an effectful HOST boundary that the VM
-/// ERRORS on for out-of-range values (e.g. `Random.int` bounds, host ports,
-/// `Time.sleep` ms, `Terminal.moveTo` coords). There is no `Result` channel
-/// at these call sites, so an out-of-`i64` value ABORTS with the VM's exact
-/// message — never a silent `unwrap_or(0)` (which would substitute a wrong
-/// value and diverge from the VM's hard error).
+/// Convert an `AverInt` to `i64` at an internal host boundary with no recovery
+/// channel. Surface operations whose contract is fallible (`Random.int`,
+/// `Time.sleep`, `Terminal.moveTo`, and similar) validate into their `Result`
+/// before crossing such a boundary. Never silently substitute a value here.
 pub fn to_host_i64(n: &aver_rt::AverInt, vm_message: &str) -> i64 {
     n.to_i64().expect(vm_message)
 }

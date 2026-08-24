@@ -57,7 +57,7 @@ codegen_builtins! {
     // --- Result/Option combinators ---
     ResultWithDefault => "Result.withDefault",
     OptionWithDefault => "Option.withDefault",
-    OptionToResult => "Option.toResult",
+    ResultFromOption => "Result.fromOption",
 
     // --- Int ---
     IntAbs => "Int.abs",
@@ -110,6 +110,8 @@ codegen_builtins! {
     StringFromInt => "String.fromInt",
     StringFromFloat => "String.fromFloat",
     StringFromBool => "String.fromBool",
+    StringToUtf8 => "String.toUtf8",
+    StringFromUtf8 => "String.fromUtf8",
     StringByteLength => "String.byteLength",
 
     // --- Bool ---
@@ -117,9 +119,9 @@ codegen_builtins! {
     BoolAnd => "Bool.and",
     BoolNot => "Bool.not",
 
-    // --- Char ---
-    CharToCode => "Char.toCode",
-    CharFromCode => "Char.fromCode",
+    // --- Unicode code points (owned by String) ---
+    StringFirstCodePoint => "String.firstCodePoint",
+    StringFromCodePoint => "String.fromCodePoint",
 
     // --- Crypto ---
     CryptoSha256 => "Crypto.sha256",
