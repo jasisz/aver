@@ -505,7 +505,7 @@ fn entry_effectful_loop_over_a_dependency_read_forwards_path_and_oracles() {
 }
 
 #[test]
-fn symbolic_oracle_case_over_partial_recursion_is_explicitly_declined() {
+fn symbolic_oracle_case_over_partial_recursion_or_forwarder_is_explicitly_declined() {
     // A symbolic oracle can be simplified away from a concrete non-recursive
     // branch, but `partial def` exposes no equation theorem for the simplifier
     // to use. Native evaluation rejects the remaining free function, and
@@ -525,7 +525,7 @@ operation get(key: String) -> Result<String, String>
 "#;
     let entry = r#"module Main
     intent = "Exercises a base case of an intentionally non-terminating shape."
-    exposes [main, climb]
+    exposes [main, climb, forwarded, guarded]
     depends [Probe]
     effects [Probe.get]
 
@@ -545,6 +545,24 @@ fn climbOne(n: Int) -> Result<Int, String>
 verify climb
     climb(0) => Result.Ok(0)
 
+fn forwarded(n: Int) -> Result<Int, String>
+    ? "Forward to the partial group without adding a branch."
+    ! [Probe.get]
+    climb(n)
+
+verify forwarded
+    forwarded(0) => Result.Ok(0)
+
+fn guarded(n: Int) -> Result<Int, String>
+    ? "Remove the partial branch before native evaluation."
+    ! [Probe.get]
+    match n
+        0 -> Result.Ok(0)
+        _ -> climb(n)
+
+verify guarded
+    guarded(0) => Result.Ok(0)
+
 fn main() -> Unit
     ? "Entry point."
     Unit
@@ -561,6 +579,17 @@ fn main() -> Unit
             && main.contains("kernel-opaque Lean function(s) climb")
             && main.contains("no theorem emitted"),
         "the unprovable symbolic-oracle/partial-recursion case must be an explicit decline:\n{main}"
+    );
+    assert!(
+        main.contains("verify forwarded case 1: the case has a symbolic capability oracle")
+            && main.contains("kernel-opaque Lean function(s) climb")
+            && main.contains("no theorem emitted"),
+        "a transparent forwarder must not hide the partial recursion from the decline gate:\n{main}"
+    );
+    assert!(
+        !main.contains("verify guarded case 1:")
+            && main.contains("guarded BranchPath.Root rnd_Probe_get 0 = Except.ok 0"),
+        "a concrete branch that removes the partial call must remain provable:\n{main}"
     );
 }
 
