@@ -35,6 +35,10 @@ pub(super) enum EffectName {
     /// `Process.stopRequested() -> Bool`. The host observation must be
     /// monotonic: once true for a branch path, later calls stay true.
     ProcessStopRequested,
+    /// Internal fail-closed diagnostic sink used by `__result_proven`.
+    /// This is not an Aver effect and is never recorded or replayed: the
+    /// guest passes the provider's `Err` text to the host, then traps.
+    ProviderContractViolation,
     // ── Fetch bridge — used by `--handler X` on `--target wasm-gc`.
     //   The synthesised `aver_http_handle` wrapper reads request
     //   fields through these and dispatches the user's HttpResponse
@@ -203,6 +207,7 @@ impl EffectName {
         Self::ConsoleWarn,
         Self::TimeUnixMs,
         Self::ProcessStopRequested,
+        Self::ProviderContractViolation,
         Self::RequestMethod,
         Self::RequestUrl,
         Self::RequestQuery,
@@ -363,6 +368,7 @@ impl EffectName {
             Self::ConsoleWarn => "Console.warn",
             Self::TimeUnixMs => "Time.unixMs",
             Self::ProcessStopRequested => "Process.stopRequested",
+            Self::ProviderContractViolation => "__provider_contract_violation",
             Self::RequestMethod => "Request.method",
             Self::RequestUrl => "Request.url",
             Self::RequestQuery => "Request.query",
@@ -451,6 +457,7 @@ impl EffectName {
             Self::ConsoleWarn => ("aver", "console_warn"),
             Self::TimeUnixMs => ("aver", "time_unix_ms"),
             Self::ProcessStopRequested => ("aver", "process_stop_requested"),
+            Self::ProviderContractViolation => ("aver", "provider_contract_violation"),
             Self::RequestMethod => ("aver", "request_method"),
             Self::RequestUrl => ("aver", "request_url"),
             Self::RequestQuery => ("aver", "request_query"),
@@ -552,7 +559,10 @@ impl EffectName {
 
     fn params_without_caller(self, registry: &TypeRegistry) -> Result<Vec<ValType>, WasmGcError> {
         match self {
-            Self::ConsolePrint | Self::ConsoleError | Self::ConsoleWarn => Ok(vec![any_ref_ty()]),
+            Self::ConsolePrint
+            | Self::ConsoleError
+            | Self::ConsoleWarn
+            | Self::ProviderContractViolation => Ok(vec![any_ref_ty()]),
             Self::TimeUnixMs | Self::ProcessStopRequested => Ok(vec![]),
             Self::RequestMethod
             | Self::RequestUrl
@@ -643,7 +653,10 @@ impl EffectName {
 
     pub(super) fn results(self, registry: &TypeRegistry) -> Result<Vec<ValType>, WasmGcError> {
         match self {
-            Self::ConsolePrint | Self::ConsoleError | Self::ConsoleWarn => Ok(vec![]),
+            Self::ConsolePrint
+            | Self::ConsoleError
+            | Self::ConsoleWarn
+            | Self::ProviderContractViolation => Ok(vec![]),
             Self::TimeUnixMs => Ok(vec![ValType::I64]),
             Self::ProcessStopRequested => Ok(vec![ValType::I32]),
             Self::RequestMethod

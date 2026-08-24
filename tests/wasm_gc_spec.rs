@@ -224,6 +224,207 @@ fn default_val(ty: &wasmtime::ValType) -> wasmtime::Val {
     }
 }
 
+#[derive(Default)]
+struct ContractDiagnosticHost {
+    messages: Vec<String>,
+}
+
+fn guest_string_from_host<T: 'static>(
+    caller: &mut wasmtime::Caller<'_, T>,
+    text: &str,
+) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
+    use wasmtime::Val;
+    let memory = caller
+        .get_export("memory")
+        .and_then(|export| export.into_memory())
+        .ok_or_else(|| wasmtime::Error::msg("memory export missing"))?;
+    memory.write(&mut *caller, 0, text.as_bytes())?;
+    let from_lm = caller
+        .get_export("__rt_string_from_lm")
+        .and_then(|export| export.into_func())
+        .ok_or_else(|| wasmtime::Error::msg("__rt_string_from_lm export missing"))?;
+    let mut result = [Val::AnyRef(None)];
+    from_lm.call(&mut *caller, &[Val::I32(text.len() as i32)], &mut result)?;
+    match result[0] {
+        Val::AnyRef(value) => Ok(value),
+        _ => Err(wasmtime::Error::msg(
+            "__rt_string_from_lm returned a non-reference",
+        )),
+    }
+}
+
+fn guest_string_to_host<T: 'static>(
+    caller: &mut wasmtime::Caller<'_, T>,
+    value: Option<&wasmtime::Val>,
+) -> Result<String, wasmtime::Error> {
+    use wasmtime::Val;
+    let string_ref = match value {
+        Some(Val::AnyRef(Some(value))) => *value,
+        _ => return Ok(String::new()),
+    };
+    let to_lm = caller
+        .get_export("__rt_string_to_lm")
+        .and_then(|export| export.into_func())
+        .ok_or_else(|| wasmtime::Error::msg("__rt_string_to_lm export missing"))?;
+    let memory = caller
+        .get_export("memory")
+        .and_then(|export| export.into_memory())
+        .ok_or_else(|| wasmtime::Error::msg("memory export missing"))?;
+    let mut len = [Val::I32(0)];
+    to_lm.call(&mut *caller, &[Val::AnyRef(Some(string_ref))], &mut len)?;
+    let len = match len[0] {
+        Val::I32(len) => len.max(0) as usize,
+        _ => 0,
+    };
+    let mut bytes = vec![0; len];
+    memory.read(&*caller, 0, &mut bytes)?;
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+fn guest_result_err<T: 'static>(
+    caller: &mut wasmtime::Caller<'_, T>,
+    factory_name: &str,
+    error: &str,
+) -> Result<wasmtime::Val, wasmtime::Error> {
+    use wasmtime::Val;
+    let error_ref = guest_string_from_host(caller, error)?;
+    let factory = caller
+        .get_export(factory_name)
+        .and_then(|export| export.into_func())
+        .ok_or_else(|| wasmtime::Error::msg(format!("{factory_name} export missing")))?;
+    let mut result = [Val::AnyRef(None)];
+    factory.call(&mut *caller, &[Val::AnyRef(error_ref)], &mut result)?;
+    Ok(result[0])
+}
+
+fn run_with_contract_violating_provider(
+    source: &str,
+    failing_import: &str,
+    err_factory: &str,
+    provider_error: &str,
+) -> (String, Vec<String>) {
+    let bytes = compile_bytes(source);
+    let mut config = wasmtime::Config::new();
+    config.wasm_gc(true);
+    config.wasm_tail_call(true);
+    config.wasm_function_references(true);
+    config.wasm_reference_types(true);
+    config.wasm_multi_value(true);
+    config.wasm_bulk_memory(true);
+    let engine = wasmtime::Engine::new(&config).expect("wasmtime engine");
+    let module = wasmtime::Module::new(&engine, &bytes).expect("valid wasm-gc module");
+    let mut linker = wasmtime::Linker::new(&engine);
+
+    for import in module.imports() {
+        let wasmtime::ExternType::Func(function_type) = import.ty() else {
+            continue;
+        };
+        let result_types: Vec<wasmtime::ValType> = function_type.results().collect();
+        let function_type =
+            wasmtime::FuncType::new(&engine, function_type.params(), function_type.results());
+        let module_name = import.module().to_string();
+        let field_name = import.name().to_string();
+        let failing_import = failing_import.to_string();
+        let err_factory = err_factory.to_string();
+        let provider_error = provider_error.to_string();
+        let closure_field_name = field_name.clone();
+        linker
+            .func_new(
+                &module_name,
+                &field_name,
+                function_type,
+                move |mut caller: wasmtime::Caller<'_, ContractDiagnosticHost>,
+                      params: &[wasmtime::Val],
+                      results: &mut [wasmtime::Val]| {
+                    if closure_field_name == failing_import {
+                        results[0] = guest_result_err(&mut caller, &err_factory, &provider_error)?;
+                        return Ok(());
+                    }
+                    if closure_field_name == "provider_contract_violation" {
+                        let error = guest_string_to_host(&mut caller, params.first())?;
+                        caller.data_mut().messages.push(format!(
+                            "provider contract violated: discharged Result returned Err({error})"
+                        ));
+                        return Ok(());
+                    }
+                    for (slot, ty) in results.iter_mut().zip(result_types.iter()) {
+                        *slot = default_val(ty);
+                    }
+                    Ok(())
+                },
+            )
+            .expect("register import");
+    }
+
+    let mut store = wasmtime::Store::new(&engine, ContractDiagnosticHost::default());
+    let instance = linker
+        .instantiate(&mut store, &module)
+        .expect("instantiate wasm-gc module");
+    let main = instance.get_func(&mut store, "main").expect("main export");
+    let mut result = [wasmtime::Val::AnyRef(None)];
+    let trap = main
+        .call(&mut store, &[], &mut result)
+        .expect_err("contract violation must trap");
+    (format!("{trap:#}"), store.data().messages.clone())
+}
+
+#[test]
+fn result_proven_reports_unit_provider_error_before_trapping() {
+    let source = r#"module SleepDiagnostic
+    intent = "exercise fail-closed literal discharge"
+    depends []
+    effects [Time.sleep]
+
+fn main() -> Int
+    ? "Sleep with a statically valid literal, then return."
+    ! [Time.sleep]
+    Time.sleep(1)
+    7
+"#;
+    let (trap, messages) = run_with_contract_violating_provider(
+        source,
+        "time_sleep",
+        "__rt_result_unit_string_err",
+        "hostile sleep provider",
+    );
+    assert!(
+        trap.contains("unreachable"),
+        "expected fail-closed trap: {trap}"
+    );
+    assert_eq!(
+        messages,
+        ["provider contract violated: discharged Result returned Err(hostile sleep provider)"]
+    );
+}
+
+#[test]
+fn result_proven_reports_value_provider_error_before_trapping() {
+    let source = r#"module RandomDiagnostic
+    intent = "exercise fail-closed literal discharge"
+    depends []
+    effects [Random.int]
+
+fn main() -> Int
+    ? "Draw from statically valid literal bounds."
+    ! [Random.int]
+    Random.int(1, 6)
+"#;
+    let (trap, messages) = run_with_contract_violating_provider(
+        source,
+        "random_int",
+        "__rt_result_int_string_err",
+        "hostile random provider",
+    );
+    assert!(
+        trap.contains("unreachable"),
+        "expected fail-closed trap: {trap}"
+    );
+    assert_eq!(
+        messages,
+        ["provider contract violated: discharged Result returned Err(hostile random provider)"]
+    );
+}
+
 #[test]
 fn process_stop_requested_uses_the_declared_wasm_gc_host_import() {
     let source = r#"module ProcessPoll

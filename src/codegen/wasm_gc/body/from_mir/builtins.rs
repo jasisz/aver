@@ -1766,11 +1766,16 @@ pub(crate) fn emit_mir_result_proven(
             "__result_proven: argument `{result_aver}` is not a registered Result<T,E>"
         ))
     })?;
-    let (payload, _) = TypeRegistry::result_te(&canonical).ok_or_else(|| {
+    let (payload, error) = TypeRegistry::result_te(&canonical).ok_or_else(|| {
         WasmGcError::Validation(format!(
             "__result_proven: malformed Result type `{canonical}`"
         ))
     })?;
+    if error != "String" {
+        return Err(WasmGcError::Validation(format!(
+            "__result_proven: expected String error payload, got `{error}`"
+        )));
+    }
     let scratch = slots.subject_scratch.ok_or(WasmGcError::Validation(
         "__result_proven needs a subject scratch slot".into(),
     ))?;
@@ -1797,7 +1802,7 @@ pub(crate) fn emit_mir_result_proven(
     if payload == "Unit" {
         func.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
         func.instruction(&Instruction::Else);
-        func.instruction(&Instruction::Unreachable);
+        emit_provider_contract_violation(func, result_idx, scratch, ctx)?;
         func.instruction(&Instruction::End);
         return Ok(MirBuiltinEmit::Produced(false));
     }
@@ -1819,9 +1824,43 @@ pub(crate) fn emit_mir_result_proven(
         field_index: 1,
     });
     func.instruction(&Instruction::Else);
-    func.instruction(&Instruction::Unreachable);
+    emit_provider_contract_violation(func, result_idx, scratch, ctx)?;
     func.instruction(&Instruction::End);
     Ok(MirBuiltinEmit::Produced(true))
+}
+
+/// Report the actual provider `Err` payload at the wasm-gc host boundary,
+/// then trap unconditionally. `--target wasip2` has no private `aver/*`
+/// imports, so it retains the fail-closed trap until the WASI stderr path can
+/// carry this internal diagnostic; the AverBridge ABI always has the sink.
+fn emit_provider_contract_violation(
+    func: &mut Function,
+    result_idx: u32,
+    scratch: u32,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    if let Some(diagnostic_idx) = ctx
+        .effect_idx_lookup
+        .get("__provider_contract_violation")
+        .copied()
+    {
+        func.instruction(&Instruction::LocalGet(scratch));
+        func.instruction(&Instruction::RefCastNonNull(
+            wasm_encoder::HeapType::Concrete(result_idx),
+        ));
+        func.instruction(&Instruction::StructGet {
+            struct_type_index: result_idx,
+            field_index: 2,
+        });
+        emit_caller_fn_idx(func, ctx)?;
+        func.instruction(&Instruction::Call(diagnostic_idx));
+    } else if ctx.wasip2_lowering.is_none() {
+        return Err(WasmGcError::Validation(
+            "__result_proven: provider-contract diagnostic import is missing".into(),
+        ));
+    }
+    func.instruction(&Instruction::Unreachable);
+    Ok(())
 }
 
 /// Lower `Result.fromOption(option, err)` between the concrete GC wrappers.

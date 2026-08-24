@@ -47,7 +47,7 @@ The wasm-gc column covers the **default invocation** (`--target wasm-gc`, host w
 | `HttpServer.listen` / `listenWith` | ✅ (`runtime-net`) | ✅ (`runtime-net`) | n/a — `--handler <fn>` shape | ❌ deferred to 0.19+ (lowers via `wasi:http/proxy`) | Oracle | Oracle |
 | `Random.int` | ✅ | ✅ | ✅ wasmtime / `Math.random` | ✅ `wasi:random/random.get-random-u64` + range scale | Oracle (`[min, max]` lemma) | Oracle |
 | `Random.float` | ✅ | ✅ | ✅ wasmtime / `Math.random` | ✅ `wasi:random/random.get-random-u64` → `[0.0, 1.0)` | Oracle (`[0.0, 1.0)` lemma) | Oracle |
-| `Process.stopRequested` | ✅ SIGINT/SIGTERM | ✅ SIGINT/SIGTERM | ✅ `aver.process_stop_requested` host import | n/a — WASI 0.2 has no process-signal binding | Oracle (monotonic across calls) | Oracle (monotonic across calls) |
+| `Process.stopRequested` | ✅ SIGINT/SIGTERM | ✅ SIGINT/SIGTERM | ✅ wasmtime SIGINT/SIGTERM / `false` in browser and Worker hosts | n/a — WASI 0.2 has no process-signal binding | Oracle (monotonic across calls) | Oracle (monotonic across calls) |
 | `Tcp.*` | ✅ | ✅ | ✅ wasmtime / ❌ in JS hosts | ✅ `wasi:sockets`; `poll` uses input-stream subscriptions + `wasi:io/poll` | Oracle | Oracle |
 | `Terminal.*` (12 methods) | ✅ via `crossterm` (`terminal` feature) | ✅ via `crossterm` | ✅ wasmtime / ❌ in JS hosts | n/a — WASI 0.2 has no terminal interface | Oracle | Oracle |
 | `Time.now` (ISO string) | ✅ | ✅ | ✅ wasmtime / `new Date().toISOString()` | ✅ `wasi:clocks/wall-clock.now` + guest-side civil_from_days | Oracle | Oracle |
@@ -71,6 +71,8 @@ The recommended target. Same `aver/*` import surface across every host that runs
 
 - **`aver run --wasm-gc <file>`** — embedded wasmtime executor with the full effect surface (Args, Console incl. `readLine`, Time, Random, Process, Float math, Terminal, Disk, Env, Tcp, Http) wired against `aver_rt::*`. This is the cell on the left of the slash.
 - **JS hosts (Cloudflare Workers, browsers, Deno, Bun, Node 22+)** — playground / `worker.js` template / custom embedder satisfies the `aver/*` imports. JS-host effects available are the cell on the right of the slash. Disk / raw TCP / Terminal don't have native JS equivalents and stub to `Result.Err` / `Option.None` / `Unit`.
+
+The bridge also has one internal, non-effect import: `aver.provider_contract_violation(message, caller_fn_idx)`. The compiler includes it only when a literal call discharges a `Result` validation boundary. A conforming host reports the supplied provider `Err` text and returns; the guest immediately traps, so this diagnostic can never become a fallback value and is never part of record/replay.
 
 `--handler <fn>` (and the bundled `--preset cloudflare --handler <fn>`) generates an `aver_http_handle()` synthesised wrapper that consumes Request fields via dedicated host imports (`request_method`, `request_url`, `request_query`, `request_body`, `request_headers_load`) and writes the response via `response_text` / `response_set_header`. Inside the handler body, `Http.*` calls still go through the standard effect surface (✅ JSPI-suspending `fetch()` on Workers, ✅ wasmtime if you ever ran the same handler under `aver run --wasm-gc`).
 

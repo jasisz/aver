@@ -19,6 +19,8 @@ def CAPABILITY_REGISTRY : List (String × String) := [
   ("aver", "console_error"),
   ("aver", "console_warn"),
   ("aver", "time_unix_ms"),
+  ("aver", "process_stop_requested"),
+  ("aver", "provider_contract_violation"),
   ("aver", "request_method"),
   ("aver", "request_url"),
   ("aver", "request_query"),

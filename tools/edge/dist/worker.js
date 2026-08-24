@@ -99,6 +99,7 @@ async function init() {
   const imports = {
     aver: {
       time_unix_ms: (_caller) => BigInt(Date.now()),
+      process_stop_requested: (_caller) => 0,
       request_method: (_caller) => jsToAver(pendingReq.method),
       request_url: (_caller) => jsToAver(new URL(pendingReq.url).pathname),
       request_query: (_caller) => jsToAver(new URL(pendingReq.url).search.slice(1)),
@@ -118,6 +119,9 @@ async function init() {
       console_print: (msgRef, _caller) => { console.log(averToJs(msgRef)); },
       console_error: (msgRef, _caller) => { console.error(averToJs(msgRef)); },
       console_warn:  (msgRef, _caller) => { console.warn(averToJs(msgRef)); },
+      provider_contract_violation: (msgRef, _caller) => {
+        console.error(`provider contract violated: discharged Result returned Err(${averToJs(msgRef)})`);
+      },
     },
   };
   const instance = await WebAssembly.instantiate(userWasm, imports);

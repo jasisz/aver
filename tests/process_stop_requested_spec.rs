@@ -117,3 +117,39 @@ fn guard_rejects_an_injected_blinking_profile() {
     let error = validate_profile(&blinking).expect_err("blinking profile must fail the guard");
     assert!(error.contains("call 1 is true but later call 2 is false"));
 }
+
+#[cfg(feature = "wasm")]
+#[test]
+fn embedded_wasm_gc_host_polls_the_native_process_provider() {
+    use std::process::Command;
+
+    let dir = tempfile::tempdir().expect("temporary Process wasm-gc project");
+    let source_path = dir.path().join("process_poll.av");
+    std::fs::write(
+        &source_path,
+        r#"module ProcessWasmGcHost
+    intent = "exercise the embedded wasm-gc Process host binding"
+    depends []
+    effects [Process.stopRequested, Console.print]
+
+fn main()
+    ? "Print the initial cooperative-stop observation."
+    ! [Process.stopRequested, Console.print]
+    Console.print(String.fromBool(Process.stopRequested()))
+"#,
+    )
+    .expect("write Process wasm-gc source");
+    let output = Command::new(env!("CARGO_BIN_EXE_aver"))
+        .arg("run")
+        .arg(&source_path)
+        .arg("--wasm-gc")
+        .output()
+        .expect("run embedded wasm-gc host");
+    assert!(
+        output.status.success(),
+        "wasm-gc Process host failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "false");
+}

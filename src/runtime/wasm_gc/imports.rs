@@ -1,12 +1,12 @@
-//! `aver/*` host import dispatch root. The 29 effect arms have been
-//! carved into per-namespace submodules under `imports/`; this file
-//! is the chained `dispatch_aver_import` that walks them in order
-//! and the central re-export hub for helpers `decode.rs` consumes.
+//! `aver/*` host import dispatch root. Effect and internal protocol arms are
+//! carved into focused submodules under `imports/`; this file is the chained
+//! `dispatch_aver_import` that walks them in order and the central re-export
+//! hub for helpers `decode.rs` consumes.
 //!
 //! Per-namespace layout:
 //!
-//! - `args` / `console` / `disk` / `env` / `numeric` (Random + float
-//!   math) / `tcp` / `terminal` / `time` — one-effect-namespace each,
+//! - `args` / `console` / `diagnostics` / `disk` / `env` / `numeric` (Random + float
+//!   math) / `process` / `tcp` / `terminal` / `time` — one-effect-namespace each,
 //!   each exposing a `dispatch(name, caller, params, results) ->
 //!   Result<bool>` that returns `true` when it handled the name and
 //!   `false` otherwise.
@@ -26,6 +26,8 @@ use super::RunWasmGcHost;
 mod args;
 #[path = "imports/console.rs"]
 mod console;
+#[path = "imports/diagnostics.rs"]
+mod diagnostics;
 #[path = "imports/disk.rs"]
 mod disk;
 #[path = "imports/env.rs"]
@@ -40,6 +42,8 @@ mod http;
 mod lm;
 #[path = "imports/numeric.rs"]
 mod numeric;
+#[path = "imports/process.rs"]
+mod process;
 #[path = "imports/replay_glue.rs"]
 mod replay_glue;
 #[path = "imports/tcp.rs"]
@@ -110,6 +114,9 @@ pub(super) fn dispatch_aver_import(
     if console::dispatch(name, caller, params, results, caller_fn_ref)? {
         return Ok(true);
     }
+    if diagnostics::dispatch(name, caller, params, results, caller_fn_ref)? {
+        return Ok(true);
+    }
     if disk::dispatch(name, caller, params, results, caller_fn_ref)? {
         return Ok(true);
     }
@@ -120,6 +127,9 @@ pub(super) fn dispatch_aver_import(
         return Ok(true);
     }
     if numeric::dispatch(name, caller, params, results, caller_fn_ref)? {
+        return Ok(true);
+    }
+    if process::dispatch(name, caller, params, results, caller_fn_ref)? {
         return Ok(true);
     }
     if tcp::dispatch(name, caller, params, results, caller_fn_ref)? {
