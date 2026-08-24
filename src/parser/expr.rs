@@ -57,10 +57,17 @@ impl Parser {
                     "<<" => "Bits.shiftLeft(x, n)",
                     _ => "Bits.shiftRight(x, n)",
                 };
+                let literal_rule = match shift {
+                    "<<" => format!(
+                        "a non-negative literal within the {}-bit materialization limit",
+                        aver_rt::MAX_MATERIALIZED_BITS
+                    ),
+                    _ => "any non-negative integer literal".to_string(),
+                };
                 return Err(self.error(format!(
                     "the '{shift}' operator does not exist in Aver — a bit-level shift is the \
                      function {named} : Result<Int, String>, which returns plain Int when the \
-                     count is a non-negative literal within the 16777216-bit limit"
+                     count is {literal_rule}"
                 )));
             }
             let line = self.current().line;

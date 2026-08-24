@@ -468,8 +468,9 @@ fn emit_fn_call(
 
 /// A count-taking `Bits` operation with its negative-count guard.
 fn dafny_bits_counted(op: &str, a: &[String], negative: &str, too_large: &str) -> String {
+    let limit = aver_rt::MAX_MATERIALIZED_BITS;
     format!(
-        "(if {n} < 0 then Result<int, string>.Err(\"{negative}\") else if {n} > 16777216 then Result<int, string>.Err(\"{too_large}\") else Result<int, string>.Ok({op}({x}, {n})))",
+        "(if {n} < 0 then Result<int, string>.Err(\"{negative}\") else if {n} > {limit} then Result<int, string>.Err(\"{too_large}\") else Result<int, string>.Ok({op}({x}, {n})))",
         x = a[0],
         n = a[1]
     )
@@ -484,8 +485,10 @@ fn dafny_bits_shift_right(a: &[String]) -> String {
 }
 
 fn dafny_bits_low(a: &[String]) -> String {
+    let limit = aver_rt::MAX_MATERIALIZED_BITS;
+    let too_large = aver_rt::bit_width_too_large_message();
     format!(
-        "(if {n} < 0 then Result<int, string>.Err(\"negative bit width\") else if {x} < 0 && {n} > 16777216 then Result<int, string>.Err(\"bit width exceeds the 16777216 bit limit\") else Result<int, string>.Ok(BitsLow({x}, {n})))",
+        "(if {n} < 0 then Result<int, string>.Err(\"negative bit width\") else if {x} < 0 && {n} > {limit} then Result<int, string>.Err(\"{too_large}\") else Result<int, string>.Ok(BitsLow({x}, {n})))",
         x = a[0],
         n = a[1]
     )
@@ -584,7 +587,7 @@ pub(super) fn emit_dafny_builtin(b: crate::codegen::builtins::Builtin, a: &[Stri
             "BitsShiftLeft",
             a,
             "negative shift count",
-            "shift count exceeds the 16777216 bit limit",
+            &aver_rt::shift_count_too_large_message(),
         ),
         BitsShiftRight => dafny_bits_shift_right(a),
         BitsLow => dafny_bits_low(a),

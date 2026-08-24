@@ -48,11 +48,6 @@ pub const NEGATIVE_SHIFT: &str = "negative shift count";
 /// The `Result.Err` payload for a negative bit width.
 pub const NEGATIVE_WIDTH: &str = "negative bit width";
 
-/// Oversized materialization messages. The numeric limit is part of the
-/// public error contract and is shared with every backend.
-pub const SHIFT_TOO_LARGE: &str = "shift count exceeds the 16777216 bit limit";
-pub const WIDTH_TOO_LARGE: &str = "bit width exceeds the 16777216 bit limit";
-
 /// Returns `Some(result)` when `name` is owned by this namespace, `None` otherwise.
 pub fn call_nv(
     name: &str,
@@ -155,11 +150,11 @@ fn counted_nv(
         }
         Err(ShiftCountError::TooLarge) => {
             let message = if name == "Bits.low" {
-                WIDTH_TOO_LARGE
+                aver_rt::bit_width_too_large_message()
             } else {
-                SHIFT_TOO_LARGE
+                aver_rt::shift_count_too_large_message()
             };
-            let inner = NanValue::new_string_value(message, arena);
+            let inner = NanValue::new_string_value(&message, arena);
             Ok(NanValue::new_err_value(inner, arena))
         }
     }

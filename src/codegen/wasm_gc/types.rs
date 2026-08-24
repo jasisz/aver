@@ -1068,14 +1068,14 @@ impl TypeRegistry {
                 || fn_body_calls_builtin(fd, "Bits.shiftRight")
         }) {
             intern_synthetic(b"negative shift count".to_vec());
-            intern_synthetic(b"shift count exceeds the 16777216 bit limit".to_vec());
+            intern_synthetic(aver_rt::shift_count_too_large_message().into_bytes());
         }
         if resolved_fn_defs
             .iter()
             .any(|fd| fn_body_calls_builtin(fd, "Bits.low"))
         {
             intern_synthetic(b"negative bit width".to_vec());
-            intern_synthetic(b"bit width exceeds the 16777216 bit limit".to_vec());
+            intern_synthetic(aver_rt::bit_width_too_large_message().into_bytes());
         }
         if resolved_fn_defs
             .iter()
