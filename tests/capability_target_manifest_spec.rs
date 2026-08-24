@@ -178,6 +178,68 @@ fn human_manifest_names_every_binding_state() {
 }
 
 #[test]
+fn process_missing_wasip2_binding_is_explicitly_unsupported() {
+    let output = run_capabilities("process_client.av", true);
+    assert!(
+        output.status.success(),
+        "capabilities failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("valid Process manifest JSON");
+    let rows = json["rows"].as_array().expect("rows array");
+    let process = |target: &str| {
+        rows.iter()
+            .find(|row| row["capability"] == "Process" && row["target"] == target)
+            .expect("Process target row")
+    };
+
+    for target in ["vm", "rust", "wasm-gc"] {
+        assert_eq!(process(target)["status"]["kind"], "provided");
+    }
+    let wasip2 = process("wasip2");
+    assert_eq!(wasip2["status"]["kind"], "unsupported");
+    assert_eq!(
+        wasip2["status"]["reason"]["code"],
+        "standard-binding-unavailable"
+    );
+    let message = wasip2["status"]["reason"]["message"]
+        .as_str()
+        .expect("reason message");
+    assert!(message.contains("WASI 0.2 has no SIGINT/SIGTERM"));
+    assert!(message.contains("wasm-gc"));
+}
+
+#[test]
+#[cfg(feature = "wasip2")]
+fn wasip2_compile_rejects_process_with_the_target_matrix_reason() {
+    let root = fixture_root();
+    let output_dir = temp_output("process-wasip2");
+    let output = Command::new(aver_bin())
+        .arg("compile")
+        .arg(root.join("process_client.av"))
+        .arg("--module-root")
+        .arg(&root)
+        .args(["--target", "wasip2", "-o"])
+        .arg(&output_dir)
+        .output()
+        .expect("compile Process for wasip2");
+    assert!(!output.status.success());
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(text.contains("error[capability-target-unsupported]"));
+    assert!(text.contains("WASI 0.2 has no SIGINT/SIGTERM"));
+    assert!(text.contains("wasm-gc"));
+    assert!(
+        !output_dir.exists(),
+        "rejected target must not emit an artifact"
+    );
+}
+
+#[test]
 fn rust_compilation_emits_a_host_bound_provider_artifact() {
     let root = fixture_root();
     let output_dir = temp_output("host-bound-rust");

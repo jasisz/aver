@@ -183,7 +183,7 @@ fn highDie(path: BranchPath, k: Int, lo: Int, hi: Int) -> Result<Int, String>
 
 Rules:
 - `given name: Effect.method = [stubFn, ...]` binds a stub for the classified effect. Multi-value list expands cartesian with cases; one `given` per effect — duplicates are rejected
-- Stub signature for generative and generative-output effects (`Random.*`, `Http.*`, `Disk.*`, `Tcp.*`, `Console.readLine`, `Time.*`, `Env.set`, and every `Terminal.*` operation except `size`): `(path: BranchPath, k: Int, args...) -> ReturnType`
+- Stub signature for generative and generative-output effects (`Random.*`, `Process.stopRequested`, `Http.*`, `Disk.*`, `Tcp.*`, `Console.readLine`, `Time.*`, `Env.set`, and every `Terminal.*` operation except `size`): `(path: BranchPath, k: Int, args...) -> ReturnType`
 - Stub signature for snapshot effects (`Args.get`, `Env.get`, `Terminal.size`): `(args...) -> ReturnType` — no path/counter prefix
 - Output-only effects (`Console.print/.error/.warn`) don't need stubs; they append to the trace directly
 - `BranchPath.Root` is a nullary value constructor — no parens, PascalCase. `BranchPath.child(parent, idx)` and `BranchPath.parse(str)` are the constructors for nested paths

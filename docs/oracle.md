@@ -494,7 +494,11 @@ the two real options today.
 > local, the user states it explicitly). The axiom block emitted into
 > Lean / Dafny by `aver proof` carries *runtime invariants* (global,
 > guaranteed by Aver: `Random.int` respects bounds, `Random.float ∈
-> [0,1]`, `Time.unixMs ≥ 0`). Both feed the proof side, but they sit
+> [0,1]`, `Time.unixMs ≥ 0`, and `Process.stopRequested` is monotonic
+> across calls: `i ≤ j ∧ stop(path, i) = true` implies
+> `stop(path, j) = true`). The Process law is the first invariant that
+> relates two oracle observations rather than constraining one result.
+> Both kinds feed the proof side, but they sit
 > at different scopes — `when` scopes one law, axioms hold across the
 > whole project.
 

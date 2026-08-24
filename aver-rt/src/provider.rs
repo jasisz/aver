@@ -7,6 +7,7 @@
 
 mod codec;
 mod disk;
+mod process;
 mod runtime;
 mod tcp;
 
@@ -20,6 +21,10 @@ use crate::AverInt;
 
 pub use codec::{ProviderCodec, provider_value_order_key};
 pub use disk::{STANDARD_DISK_FINGERPRINT, STANDARD_DISK_NATIVE_IDENTITY, StandardDiskProvider};
+pub use process::{
+    STANDARD_PROCESS_FINGERPRINT, STANDARD_PROCESS_NATIVE_IDENTITY, StandardProcessProvider,
+    standard_process_stop_requested,
+};
 pub use runtime::{
     NativeProviderRegistry, STANDARD_TIME_FINGERPRINT, STANDARD_TIME_NATIVE_IDENTITY,
     StandardTimeProvider, standard_time_now, standard_time_sleep, standard_time_unix_ms,

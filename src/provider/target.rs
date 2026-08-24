@@ -83,6 +83,11 @@ impl HostBindingReason {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UnsupportedReason {
     HostImportAdapterNotGenerated,
+    StandardBindingUnavailable {
+        capability: String,
+        target: CapabilityTarget,
+        detail: &'static str,
+    },
     WitBoundaryTypeUnsupported(crate::codegen::wasip2::CapabilityWitUnsupported),
 }
 
@@ -90,6 +95,7 @@ impl UnsupportedReason {
     pub const fn code(&self) -> &'static str {
         match self {
             Self::HostImportAdapterNotGenerated => "host-import-adapter-not-generated",
+            Self::StandardBindingUnavailable { .. } => "standard-binding-unavailable",
             Self::WitBoundaryTypeUnsupported(_) => "wit-boundary-type-unsupported",
         }
     }
@@ -100,6 +106,11 @@ impl UnsupportedReason {
                 "wasm-gc has no generated host-import adapter for this capability contract"
                     .to_string()
             }
+            Self::StandardBindingUnavailable {
+                capability,
+                target,
+                detail,
+            } => format!("standard capability `{capability}` has no `{target}` binding: {detail}"),
             Self::WitBoundaryTypeUnsupported(detail) => detail.description(),
         }
     }
@@ -220,8 +231,20 @@ fn binding_status(
     contract: &CapabilityContract,
     contracts: &CapabilityRegistry,
 ) -> TargetBindingStatus {
-    if let Some(provider) = standard_target_provider(target, contract) {
-        return TargetBindingStatus::Provided(provider);
+    if let Some(binding) = exact_standard_binding(contract) {
+        return match binding.target_identity(target) {
+            Some(identity) => TargetBindingStatus::Provided(TargetProvider {
+                identity: identity.to_string(),
+                fingerprint: binding.fingerprint().to_string(),
+            }),
+            None => TargetBindingStatus::Unsupported {
+                reason: UnsupportedReason::StandardBindingUnavailable {
+                    capability: contract.module.clone(),
+                    target,
+                    detail: binding.unsupported_target_detail(target),
+                },
+            },
+        };
     }
 
     match target {
@@ -244,10 +267,9 @@ fn binding_status(
     }
 }
 
-fn standard_target_provider(
-    target: CapabilityTarget,
+fn exact_standard_binding(
     contract: &CapabilityContract,
-) -> Option<TargetProvider> {
+) -> Option<super::standard::StandardCapabilityBinding> {
     if !crate::stdlib::is_standard_capability(&contract.module) {
         return None;
     }
@@ -262,10 +284,7 @@ fn standard_target_provider(
     }
     let binding = super::standard::for_module(&contract.module)
         .expect("standard capability has execution metadata");
-    Some(TargetProvider {
-        identity: binding.target_identity(target).to_string(),
-        fingerprint: binding.fingerprint().to_string(),
-    })
+    Some(binding)
 }
 
 /// Syntactically required capability operations across the loaded program.

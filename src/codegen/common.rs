@@ -3410,9 +3410,10 @@ where
     // classified Generative-shape given. Other modes leave the body
     // alone.
     if matches!(mode, OracleInjectionMode::LemmaBindingProjected) {
-        // Only givens whose effect has a bounded-subtype carrier
+        // Only givens whose effect has an invariant-subtype carrier
         // (`RandomIntInBounds` / `RandomFloatInUnit` /
-        // `TimeUnixMsNonneg`) get `.val` projection. `EffectDimension::
+        // `TimeUnixMsNonneg` / `ProcessStopRequestedMonotonic`) get `.val`
+        // projection. `EffectDimension::
         // Generative*` covers more effects than that — e.g.
         // `Disk.writeText` is `GenerativeOutput` but the quant param
         // stays a plain function in both Lean and Dafny because there's
@@ -3422,7 +3423,7 @@ where
         let oracle_names: std::collections::HashSet<String> = law
             .givens
             .iter()
-            .filter(|g| crate::types::checker::oracle_subtypes::has_bounded_subtype(&g.type_name))
+            .filter(|g| crate::types::checker::oracle_subtypes::has_oracle_subtype(&g.type_name))
             .map(|g| g.name.clone())
             .collect();
         if !oracle_names.is_empty() {
@@ -3604,6 +3605,12 @@ where
                             )),
                             "Root".to_string(),
                         ),
+                        expr.line,
+                    ));
+                }
+                if crate::types::checker::effect_lifting::uses_threaded_oracle_counter(fd) {
+                    injected.push(Spanned::new(
+                        Expr::Literal(crate::ast::Literal::Int(0)),
                         expr.line,
                     ));
                 }

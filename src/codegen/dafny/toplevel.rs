@@ -20,13 +20,9 @@ pub(super) fn resolve_rewrite_output(
 /// Emit a Dafny type from an Aver type annotation string.
 /// Ghost-predicate names emitted by `oracle_subtypes::dafny_subtype_predicates`
 /// for classified Generative-shape effects. Keep in sync with that module.
-fn bounded_oracle_predicate_for(method: &str) -> Option<&'static str> {
-    match method {
-        "Random.int" => Some("IsRandomIntInBounds"),
-        "Random.float" => Some("IsRandomFloatInUnit"),
-        "Time.unixMs" => Some("IsTimeUnixMsNonneg"),
-        _ => None,
-    }
+fn oracle_predicate_for(method: &str) -> Option<&'static str> {
+    crate::types::checker::oracle_subtypes::OracleSubtypeKind::for_effect(method)
+        .map(|kind| kind.dafny_predicate_name())
 }
 
 pub fn emit_type(type_str: &str) -> String {
@@ -668,6 +664,17 @@ fn body_has_recursive_call(body: &FnBody, fn_name: &str) -> bool {
             Stmt::Expr(expr) => expr_has_call(expr, fn_name),
         }),
     }
+}
+
+/// Effect-lifted recursion has no source-side `RecursionContract`. When Dafny
+/// cannot infer a decreasing source parameter, emit the same opaque boundary
+/// Lean uses for `partial def` instead of generating a definition that Dafny
+/// rejects for non-termination. This is especially important for cooperative
+/// stop polling: monotonicity does not imply that a provider must ever return
+/// true (`stopNever` is a valid profile), so the general function is genuinely
+/// partial even though concrete terminating profiles remain executable in Lean.
+pub(super) fn effect_lifted_recursion_needs_axiom(fd: &FnDef) -> bool {
+    body_has_recursive_call(fd.body.as_ref(), &fd.name) && infer_decreases(fd).is_none()
 }
 
 fn expr_has_call(expr: &Spanned<Expr>, fn_name: &str) -> bool {
@@ -1522,7 +1529,7 @@ fn sample_seed_lemma_available(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenC
         return false;
     }
     law.givens.iter().all(|g| {
-        bounded_oracle_predicate_for(&g.type_name).is_none()
+        oracle_predicate_for(&g.type_name).is_none()
             && crate::codegen::common::refinement_lift_for_given(
                 &g.name,
                 &g.type_name,
@@ -3560,7 +3567,7 @@ pub fn emit_verify_law(
     // carriers, just using Dafny's idiom (predicate + requires)
     // instead of first-class subtype types over functions.
     for given in &law.givens {
-        if let Some(pred) = bounded_oracle_predicate_for(&given.type_name) {
+        if let Some(pred) = oracle_predicate_for(&given.type_name) {
             let oracle_name = aver_name_to_dafny(&given.name);
             lines.push(format!("  requires {}({})", pred, oracle_name));
         }

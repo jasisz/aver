@@ -34,6 +34,12 @@ rand = { version = "0.9", optional = true }
 sha2 = "0.10"
 ureq = { version = "2", optional = true }
 
+[target.'cfg(unix)'.dependencies]
+signal-hook = "0.3"
+
+[target.'cfg(all(not(unix), not(target_family = "wasm")))'.dependencies]
+ctrlc = "3.5"
+
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 polling = "3.11"
 

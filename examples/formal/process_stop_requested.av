@@ -1,0 +1,22 @@
+module ProcessStopRequestedExample
+    intent =
+        "Poll cooperative process shutdown without treating a signal as an exception."
+        "The observation is monotonic: once true, every later poll stays true."
+    depends []
+    exposes [follow]
+    effects [Process.stopRequested]
+
+fn follow(steps: Int) -> Int
+    ? "Continue tail-recursively until the process asks this branch to stop."
+    ! [Process.stopRequested]
+    match Process.stopRequested()
+        true -> steps
+        false -> follow(steps + 1)
+
+fn stopAfterThreeForProof(path: BranchPath, call: Int) -> Bool
+    ? "Deterministic proof stub matching the standard stopAfterThree profile."
+    call >= 3
+
+verify follow
+    given stop: Process.stopRequested = [stopAfterThreeForProof]
+    follow(0) => 3

@@ -32,19 +32,58 @@
 //! Naming convention (stable across releases):
 //!   `<Effect>Oracle`        — the plain function type, alias for
 //!                              parser-friendly use sites.
-//!   `<Effect>InBounds`      — the constrained subtype carrying the
-//!                              invariant proof.
+//!   effect-specific suffix  — the constrained carrier states the law
+//!                              (`InBounds`, `Nonneg`, `Monotonic`, ...).
 
 use crate::codegen::common::DeclaredEffects;
 
-/// True when the effect has a bounded-subtype carrier in the proof
-/// export (`RandomIntInBounds`, `RandomFloatInUnit`, `TimeUnixMsNonneg`).
-/// Used by `rewrite_effectful_calls_in_law` to decide which oracle
-/// givens need `.val` projection on call sites. Keep in sync with
-/// [`lean_subtypes`] / [`dafny_subtype_predicates`] and with the
-/// per-backend `bounded_oracle_subtype_for` helpers.
-pub fn has_bounded_subtype(effect: &str) -> bool {
-    matches!(effect, "Random.int" | "Random.float" | "Time.unixMs")
+/// Runtime invariant carried by an oracle subtype/predicate in proof export.
+///
+/// The older name "bounded subtype" stopped describing the set once
+/// `Process.stopRequested` added a cross-call monotonicity law. This enum is
+/// now the shared classification; backend helpers only select the spelling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OracleSubtypeKind {
+    RandomIntInBounds,
+    RandomFloatInUnit,
+    TimeUnixMsNonneg,
+    ProcessStopRequestedMonotonic,
+}
+
+impl OracleSubtypeKind {
+    pub fn for_effect(effect: &str) -> Option<Self> {
+        match effect {
+            "Random.int" => Some(Self::RandomIntInBounds),
+            "Random.float" => Some(Self::RandomFloatInUnit),
+            "Time.unixMs" => Some(Self::TimeUnixMsNonneg),
+            "Process.stopRequested" => Some(Self::ProcessStopRequestedMonotonic),
+            _ => None,
+        }
+    }
+
+    pub const fn lean_type_name(self) -> &'static str {
+        match self {
+            Self::RandomIntInBounds => "RandomIntInBounds",
+            Self::RandomFloatInUnit => "RandomFloatInUnit",
+            Self::TimeUnixMsNonneg => "TimeUnixMsNonneg",
+            Self::ProcessStopRequestedMonotonic => "ProcessStopRequestedMonotonic",
+        }
+    }
+
+    pub const fn dafny_predicate_name(self) -> &'static str {
+        match self {
+            Self::RandomIntInBounds => "IsRandomIntInBounds",
+            Self::RandomFloatInUnit => "IsRandomFloatInUnit",
+            Self::TimeUnixMsNonneg => "IsTimeUnixMsNonneg",
+            Self::ProcessStopRequestedMonotonic => "IsProcessStopRequestedMonotonic",
+        }
+    }
+}
+
+/// True when the effect has any runtime-invariant oracle carrier in proof
+/// export. Call sites project `.val` from these carriers.
+pub fn has_oracle_subtype(effect: &str) -> bool {
+    OracleSubtypeKind::for_effect(effect).is_some()
 }
 
 /// Lean 4 helper type definitions for every classified effect declared
@@ -56,7 +95,7 @@ pub(crate) fn lean_subtypes(declared: &DeclaredEffects) -> String {
     let mut push_block = |body: &str| {
         if !emitted_any {
             out.push_str(
-                "-- Bounded-oracle helper types. These are *type definitions*,\n\
+                "-- Oracle-invariant helper types. These are *type definitions*,\n\
                  -- not axioms — instantiating one requires a proof of the\n\
                  -- bound. User-side theorems that need the bound on a stub\n\
                  -- can construct an instance via `⟨stub, by decide⟩` for\n\
@@ -115,6 +154,16 @@ pub(crate) fn lean_subtypes(declared: &DeclaredEffects) -> String {
                  ∀ (path : BranchPath) (n : Int), 0 ≤ f path n }\n",
         );
     }
+    if declared.includes("Process.stopRequested") {
+        push_block(
+            "abbrev ProcessStopRequestedOracle := BranchPath → Int → Bool\n\
+             \n\
+             def ProcessStopRequestedMonotonic : Type :=\n  \
+               { f : ProcessStopRequestedOracle //\n    \
+                 ∀ (path : BranchPath) (i j : Int),\n      \
+                 i ≤ j → f path i = true → f path j = true }\n",
+        );
+    }
     out
 }
 
@@ -130,7 +179,7 @@ pub(crate) fn dafny_subtype_predicates(declared: &DeclaredEffects) -> String {
     let mut push_block = |body: &str| {
         if !emitted_any {
             out.push_str(
-                "// Bounded-oracle predicates. These are *predicates*, not\n\
+                "// Oracle-invariant predicates. These are *predicates*, not\n\
                  // axioms — a lemma that needs the bound on a stub takes\n\
                  // it as a `requires` precondition. The runtime trust\n\
                  // assumption documented in the header above discharges\n\
@@ -170,6 +219,16 @@ pub(crate) fn dafny_subtype_predicates(declared: &DeclaredEffects) -> String {
                  f: (BranchPath, int) -> int)\n\
              {\n  \
                forall path, n :: 0 <= f(path, n)\n\
+             }\n",
+        );
+    }
+    if declared.includes("Process.stopRequested") {
+        push_block(
+            "ghost predicate IsProcessStopRequestedMonotonic(\n    \
+                 f: (BranchPath, int) -> bool)\n\
+             {\n  \
+               forall path, i, j ::\n    \
+                 i <= j && f(path, i) ==> f(path, j)\n\
              }\n",
         );
     }
@@ -236,5 +295,26 @@ mod tests {
         let d = declared(&["Random.int"]);
         let out = dafny_subtype_predicates(&d);
         assert!(out.contains("(BranchPath, int, int, int) -> Result<int, string>"));
+    }
+
+    #[test]
+    fn process_uses_a_cross_call_monotonicity_carrier() {
+        let d = declared(&["Process.stopRequested"]);
+        let lean = lean_subtypes(&d);
+        assert!(lean.contains("ProcessStopRequestedMonotonic"));
+        assert!(lean.contains("i ≤ j → f path i = true → f path j = true"));
+
+        let dafny = dafny_subtype_predicates(&d);
+        assert!(dafny.contains("IsProcessStopRequestedMonotonic"));
+        assert!(dafny.contains("i <= j && f(path, i) ==> f(path, j)"));
+
+        let kind = OracleSubtypeKind::for_effect("Process.stopRequested")
+            .expect("Process invariant classification");
+        assert_eq!(kind.lean_type_name(), "ProcessStopRequestedMonotonic");
+        assert_eq!(
+            kind.dafny_predicate_name(),
+            "IsProcessStopRequestedMonotonic"
+        );
+        assert!(has_oracle_subtype("Process.stopRequested"));
     }
 }

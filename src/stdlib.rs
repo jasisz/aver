@@ -32,6 +32,10 @@ pub(crate) fn find(name: &str) -> Option<EmbeddedModule> {
             virtual_path: "<aver-stdlib>/capabilities/random.av",
             source: include_str!("../stdlib/capabilities/random.av"),
         }),
+        "Process" => Some(EmbeddedModule {
+            virtual_path: "<aver-stdlib>/capabilities/process.av",
+            source: include_str!("../stdlib/capabilities/process.av"),
+        }),
         "Disk" => Some(EmbeddedModule {
             virtual_path: "<aver-stdlib>/capabilities/disk.av",
             source: include_str!("../stdlib/capabilities/disk.av"),
@@ -47,7 +51,8 @@ pub(crate) fn find(name: &str) -> Option<EmbeddedModule> {
 /// Provider-backed standard capability modules. Operation identities and
 /// semantics are derived from their embedded Aver contracts rather than
 /// repeated in a Rust table.
-pub(crate) const STANDARD_CAPABILITY_MODULES: &[&str] = &["Disk", "Random", "Tcp", "Time"];
+pub(crate) const STANDARD_CAPABILITY_MODULES: &[&str] =
+    &["Disk", "Process", "Random", "Tcp", "Time"];
 
 /// Host-backed calls whose signatures cross nominal record types owned by
 /// embedded standard modules, paired with the modules those types live in.
@@ -252,8 +257,8 @@ fn collect_standard_modules_from_type(ty: &crate::types::Type, deps: &mut Vec<St
 /// Parse the standard capability contracts shipped by the compiler.
 ///
 /// They are globally reserved and automatically visible; callers do not need
-/// a `depends [Time]`, `depends [Random]`, or `depends [Disk]` merely to use
-/// a built-in standard capability.
+/// a `depends [Time]`, `depends [Random]`, `depends [Process]`, or
+/// `depends [Disk]` merely to use a built-in standard capability.
 pub(crate) fn standard_capability_modules() -> Vec<crate::source::LoadedModule> {
     STANDARD_CAPABILITY_MODULES
         .iter()
@@ -544,6 +549,46 @@ mod tests {
         assert_eq!(implicit_stdlib_deps(&items), vec!["Disk"]);
         let embedded = find("Disk").expect("reserved Disk module");
         assert_eq!(embedded.virtual_path, "<aver-stdlib>/capabilities/disk.av");
+
+        let items = parse(
+            "module Worker\n    effects [Process.stopRequested]\n\nfn stopping() -> Bool\n    ! [Process.stopRequested]\n    Process.stopRequested()\n",
+        );
+        assert_eq!(implicit_stdlib_deps(&items), vec!["Process"]);
+        let embedded = find("Process").expect("reserved Process module");
+        assert_eq!(
+            embedded.virtual_path,
+            "<aver-stdlib>/capabilities/process.av"
+        );
+    }
+
+    #[test]
+    fn standard_process_contract_model_and_profiles_are_stable() {
+        let registry = standard_capability_registry();
+        let contract = registry.contract("Process").expect("Process contract");
+        assert_eq!(
+            contract.contract_hash,
+            "sha256:5625844cde1e2704aeb154587181efb18ffe95ad2be047da00f8dd2b69874357"
+        );
+        assert_eq!(
+            contract.model_hash,
+            "sha256:a005e95c1d4b21297cf1e365417651ec0feb6433c56233d32afc86983f387ab5"
+        );
+        assert_eq!(
+            standard_hostile_profiles("Process.stopRequested")
+                .into_iter()
+                .map(|(label, _, _)| label)
+                .collect::<Vec<_>>(),
+            vec![
+                "stop_never",
+                "stop_immediately",
+                "stop_after_one",
+                "stop_after_three"
+            ]
+        );
+        assert_eq!(
+            standard_hostile_profile_label("Process.stopRequested", "Process.stopAfterThree"),
+            Some("stop_after_three")
+        );
     }
 
     #[test]

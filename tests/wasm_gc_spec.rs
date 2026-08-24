@@ -224,6 +224,37 @@ fn default_val(ty: &wasmtime::ValType) -> wasmtime::Val {
     }
 }
 
+#[test]
+fn process_stop_requested_uses_the_declared_wasm_gc_host_import() {
+    let source = r#"module ProcessPoll
+    intent = "poll cooperative shutdown"
+    depends []
+    effects [Process.stopRequested]
+
+fn main() -> Int
+    ! [Process.stopRequested]
+    match Process.stopRequested()
+        false -> 0
+        true -> 1
+"#;
+    let bytes = compile_bytes(source);
+    let mut found = false;
+    for payload in wasmparser::Parser::new(0).parse_all(&bytes) {
+        if let wasmparser::Payload::ImportSection(reader) = payload.expect("parse wasm-gc") {
+            found |= reader
+                .into_imports()
+                .flatten()
+                .any(|import| import.module == "aver" && import.name == "process_stop_requested");
+        }
+    }
+    assert!(found, "Process.stopRequested host import is missing");
+    assert_eq!(
+        run_int(source),
+        0,
+        "the test host returns the default false"
+    );
+}
+
 /// Multi-module compile: parses entry + dep sources, runs the
 /// pipeline with `WithLoaded`, flattens dep fns into the entry
 /// namespace, runs the post-link resolver pass, and emits wasm
