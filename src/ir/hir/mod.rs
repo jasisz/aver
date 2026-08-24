@@ -615,6 +615,11 @@ pub enum BuiltinIntrinsic {
     /// `__str_index_char_at(<s>, <index>, <i>)` — the public
     /// `String.charAt` answer using an already-built codepoint index.
     StrIndexCharAt,
+    /// `__str_index_code_at(<s>, <index>, <i>)` — the Unicode scalar at
+    /// codepoint position `i`, or `-1` when public `String.charAt` would
+    /// return `Option.None`. Emitted only when the `Some` string cannot
+    /// escape character dispatch.
+    StrIndexCodeAt,
     /// `__str_index_slice(<s>, <index>, <from>, <to>)` — the public
     /// `String.slice` answer using the same codepoint index.
     StrIndexSlice,
@@ -686,6 +691,7 @@ impl BuiltinIntrinsic {
             Self::StrFoldUpper => "__str_fold_upper",
             Self::StrIndexBuild => "__str_index_build",
             Self::StrIndexCharAt => "__str_index_char_at",
+            Self::StrIndexCodeAt => "__str_index_code_at",
             Self::StrIndexSlice => "__str_index_slice",
             Self::LstNew => "__lst_new",
             Self::LstPush => "__lst_push",
@@ -726,6 +732,7 @@ impl BuiltinIntrinsic {
             "__str_fold_upper" => Some(Self::StrFoldUpper),
             "__str_index_build" => Some(Self::StrIndexBuild),
             "__str_index_char_at" => Some(Self::StrIndexCharAt),
+            "__str_index_code_at" => Some(Self::StrIndexCodeAt),
             "__str_index_slice" => Some(Self::StrIndexSlice),
             "__lst_new" => Some(Self::LstNew),
             "__lst_push" => Some(Self::LstPush),

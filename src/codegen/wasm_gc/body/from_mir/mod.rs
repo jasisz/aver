@@ -258,7 +258,21 @@ fn emit_mir_int_stringify(
 /// / `Float.*` bridges) lift at their own site and are NOT listed here, so
 /// nothing double-wraps.
 fn registered_builtin_returns_raw_int(dotted: &str) -> bool {
-    matches!(dotted, "String.len" | "String.byteLength")
+    matches!(
+        dotted,
+        "String.len" | "String.byteLength" | "__str_index_code_at"
+    )
+}
+
+fn mir_is_index_code_call(e: &MirExpr) -> bool {
+    matches!(
+        e,
+        MirExpr::Call(c)
+            if matches!(
+                c.node.callee,
+                MirCallee::Intrinsic(crate::ir::hir::BuiltinIntrinsic::StrIndexCodeAt)
+            )
+    )
 }
 
 /// `Int = ℤ`: zero-based argument positions a registered `fn_map.builtins`
@@ -274,6 +288,7 @@ fn registered_builtin_int_arg_positions(dotted: &str) -> &'static [usize] {
         "String.charAt" => &[1],
         "String.slice" => &[1, 2],
         "__str_index_char_at" => &[2],
+        "__str_index_code_at" => &[2],
         "__str_index_slice" => &[2, 3],
         _ => &[],
     }
@@ -1123,6 +1138,11 @@ pub(crate) fn emit_mir_expr(
                             {
                                 return Ok(None);
                             }
+                            if registered_builtin_returns_raw_int(intr.name())
+                                && !mir_renders_raw_i64(&expr.node, ctx)
+                            {
+                                lift_i64_result_to_aint(func, ctx)?;
+                            }
                             Ok(Some(aver_type_str_of(expr).trim() != "Unit"))
                         }
                         None => Err(WasmGcError::Validation(format!(
@@ -1564,6 +1584,9 @@ pub(crate) fn mir_renders_raw_i64(e: &MirExpr, ctx: &EmitCtx<'_>) -> bool {
         // ETAP-2 carrier-`i64`: a bare carrier's `.value` read is a genuine
         // raw i64 (the project bridge is skipped), like an `Unbox`.
         MirExpr::Project(_) => mir_is_bare_carrier_project(e, ctx),
+        // The helper ABI itself returns a native i64; the MIR rewrite wraps
+        // it in `Box` whenever a general `Int` sink needs `$AverInt`.
+        MirExpr::Call(_) => mir_is_index_code_call(e),
         MirExpr::Box(_) => false,
         // A standalone `Int` literal is raw-COMPATIBLE (it can lower to an
         // `i64.const`), but on its own it is NOT proof of a raw context — its
@@ -1607,6 +1630,7 @@ fn mir_arith_leaves_raw_compatible(e: &MirExpr, ctx: &EmitCtx<'_>) -> bool {
         MirExpr::Unbox(_) => true,
         // ETAP-2 carrier-`i64`: a bare carrier's `.value` is a raw i64 leaf.
         MirExpr::Project(_) => mir_is_bare_carrier_project(e, ctx),
+        MirExpr::Call(_) => mir_is_index_code_call(e),
         MirExpr::Literal(l) => matches!(l.node, Literal::Int(_)),
         MirExpr::Neg(inner) => mir_arith_leaves_raw_compatible(&inner.node, ctx),
         MirExpr::BinOp(b) => {
@@ -1734,6 +1758,7 @@ fn mir_has_raw_anchor(e: &MirExpr, ctx: &EmitCtx<'_>) -> bool {
         // ETAP-2 carrier-`i64`: a bare carrier's `.value` read is a genuine
         // raw anchor (a real i64 value, not a literal).
         MirExpr::Project(_) => mir_is_bare_carrier_project(e, ctx),
+        MirExpr::Call(_) => mir_is_index_code_call(e),
         MirExpr::Neg(inner) => mir_has_raw_anchor(&inner.node, ctx),
         MirExpr::BinOp(b) => {
             mir_has_raw_anchor(&b.node.lhs.node, ctx) || mir_has_raw_anchor(&b.node.rhs.node, ctx)

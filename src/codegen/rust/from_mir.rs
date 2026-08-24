@@ -458,6 +458,28 @@ impl MirFnEmitPolicy {
         }
     }
 
+    /// Apply the analysis facts, then restrict them to the representation
+    /// tags carried by the rewritten MIR function itself. Mutual-TCO pins the
+    /// shared trampoline ABI boxed, but may still retain independently proven
+    /// compiler-owned codepoint binders as local `i64` slots; the trampoline
+    /// arm must see exactly that restricted view when it chooses literal-match
+    /// representation.
+    pub(super) fn apply_rewritten_bare_i64(
+        &mut self,
+        mir_fn: &crate::ir::mir::MirFn,
+        ctx: &CodegenContext,
+    ) {
+        self.apply_bare_i64(mir_fn.fn_id, ctx);
+        self.bare
+            .values
+            .retain(|slot, _| mir_fn.repr.slot_is_bare(*slot));
+        self.bare
+            .carrier_slots
+            .retain(|slot, _| mir_fn.repr.slot_is_bare_carrier(*slot));
+        self.bare.bare_params = mir_fn.repr.bare_params.clone();
+        self.bare.bare_return = mir_fn.repr.bare_return;
+    }
+
     /// Apply the MIR ownership facts to this policy. A `Vector`/`Map` param
     /// graduates when `own_param` cleared its alias bit. A named record param
     /// graduates when its returned successor is a `RecordUpdate` rooted in
@@ -1270,9 +1292,13 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                 // The Rust backend deforests differently, so a buffered
                 // fn's MIR shape may not byte-match HIR — the parity
                 // gate then falls back safely.
-                MirCallee::Intrinsic(intrinsic) => {
-                    emit_mir_intrinsic_call(*intrinsic, &call.args, expr.ty(), emit_ctx)
-                }
+                MirCallee::Intrinsic(intrinsic) => emit_mir_intrinsic_call(
+                    *intrinsic,
+                    &call.args,
+                    expr.ty(),
+                    mir_expr_is_bare_i64(expr, emit_ctx),
+                    emit_ctx,
+                ),
                 // First-class fn value held in a slot — calling a `Fn(..)`
                 // param. Post-#379 the slot holds a plain fn-pointer (no
                 // closures / `dyn Fn` — `Type::Fn` is param-only), so this
@@ -3314,7 +3340,9 @@ fn mir_projection_root_local(expr: &MirExpr) -> Option<&MirLocal> {
 fn emit_bare_return_tail(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Option<String> {
     match &expr.node {
         // A directly bare-eligible leaf / arithmetic tail.
-        _ if mir_expr_is_bare_i64(expr, ctx) => emit_bare_i64(expr),
+        _ if mir_expr_is_bare_i64(expr, ctx) => {
+            emit_bare_i64(expr).or_else(|| emit_mir_expr(expr, ctx))
+        }
         // A `Match` over Int literals whose arm bodies are bare tails. Reuse
         // the Int-literal guard chain but render each arm's tail bare.
         MirExpr::Match(m) => emit_mir_match_with(&m.node, ctx, &|arm_body, ctx| {
@@ -3753,11 +3781,8 @@ fn emit_mir_value_return(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Optio
     // bare arithmetic) so the returned expression's type is `i64`. The
     // analysis only set `bare_return` when EVERY tail leaf is bare-eligible
     // (`tail_value_is_bare`), so this path renders.
-    if ctx.bare.bare_return
-        && mir_expr_is_bare_i64(expr, ctx)
-        && let Some(bare) = emit_bare_i64(expr)
-    {
-        return Some(bare);
+    if ctx.bare.bare_return && mir_expr_is_bare_i64(expr, ctx) {
+        return emit_bare_i64(expr).or_else(|| emit_mir_expr(expr, ctx));
     }
     // ETAP-2 SLICE 1: the boxed-return tail boundary (defects Q5 / subj_ret)
     // is now an EXPLICIT `Box` node the `bare_i64_rewrite` pass inserted
@@ -3958,6 +3983,11 @@ pub(super) fn emit_mir_mutual_tco_block(
         // skips a clone.
         let mut policy = MirFnEmitPolicy::from_resolved(group_fns[i], scope, false);
         policy.rc_wrapped = rc_names.clone();
+        // The trampoline signature stays boxed, while the rewritten member
+        // body may contain raw compiler-owned character locals. Use the MIR's
+        // explicit restricted tags rather than the pre-rewrite whole-function
+        // facts so match subjects and their literals agree on `i64`.
+        policy.apply_rewritten_bare_i64(mir_fn, ctx);
         let mut arm_ctx = MirEmitCtx::for_fn(ctx, &policy);
         // Mutual invariants are `rc_wrapped` for owning reads, but unlike
         // self-TCO's `Arc<T>` representation they are extra `&T` trampoline
@@ -5346,6 +5376,7 @@ fn emit_mir_intrinsic_call(
     intrinsic: BuiltinIntrinsic,
     args: &[Spanned<MirExpr>],
     result_ty: Option<&Type>,
+    raw_result: bool,
     ctx: &MirEmitCtx<'_>,
 ) -> Option<String> {
     match intrinsic {
@@ -5474,9 +5505,13 @@ fn emit_mir_intrinsic_call(
         BuiltinIntrinsic::StrCursorCode => {
             let s = emit_mir_expr(&args[0], ctx)?;
             let i = emit_mir_expr(&args[1], ctx)?;
-            Some(format!(
-                "aver_rt::AverInt::from_i64(aver_rt::str_cursor_code(&{s}, ({i}).to_usize().unwrap_or(usize::MAX)))"
-            ))
+            let call =
+                format!("aver_rt::str_cursor_code(&{s}, ({i}).to_usize().unwrap_or(usize::MAX))");
+            Some(if raw_result {
+                call
+            } else {
+                format!("aver_rt::AverInt::from_i64({call})")
+            })
         }
         // Codepoint-level case fold. A code outside i64 is outside the
         // scalar range, and the fold answers -1 for every non-scalar —
@@ -5487,9 +5522,12 @@ fn emit_mir_intrinsic_call(
                 _ => "str_fold_upper",
             };
             let c = emit_mir_expr(&args[0], ctx)?;
-            Some(format!(
-                "aver_rt::AverInt::from_i64(aver_rt::{f}(({c}).to_i64().unwrap_or(-1)))"
-            ))
+            let call = format!("aver_rt::{f}({c})");
+            Some(if raw_result {
+                call
+            } else {
+                format!("aver_rt::AverInt::from_i64({call})")
+            })
         }
         BuiltinIntrinsic::StrCode1
         | BuiltinIntrinsic::StrCode1Lower
@@ -5513,6 +5551,17 @@ fn emit_mir_intrinsic_call(
             Some(format!(
                 "aver_rt::string_index_char_at(&{s}, &{index}, &{position})"
             ))
+        }
+        BuiltinIntrinsic::StrIndexCodeAt => {
+            let s = emit_mir_expr(&args[0], ctx)?;
+            let index = emit_mir_expr(&args[1], ctx)?;
+            let position = emit_mir_expr(&args[2], ctx)?;
+            let call = format!("aver_rt::string_index_code_at(&{s}, &{index}, &{position})");
+            Some(if raw_result {
+                call
+            } else {
+                format!("aver_rt::AverInt::from_i64({call})")
+            })
         }
         BuiltinIntrinsic::StrIndexSlice => {
             let s = emit_mir_expr(&args[0], ctx)?;

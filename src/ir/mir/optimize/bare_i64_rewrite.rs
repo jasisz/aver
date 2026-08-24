@@ -112,13 +112,14 @@ fn rewrite(
     // Collect ids first to avoid borrowing `program.fns` while mutating it.
     let ids: Vec<crate::ir::FnId> = program.fns.keys().copied().collect();
     for id in ids {
-        // A boxed-signature fn (mutual-TCO member) is emitted with a boxed
-        // (`AverInt`) signature regardless of the analysis. We MUST still
-        // rewrite its BODY — but with its OWN repr forced all-boxed (empty
-        // `FnBareFacts`) — so two things hold: (1) its own params/return/slots
-        // stay `AverInt` (matching the pinned boxed signature; a bare tag
-        // would desync), and (2) every boundary INTO another fn's bare repr
-        // is still inserted — crucially, a `Box` around a bare-RETURNING
+        // A boxed-signature fn (mutual-TCO member) is emitted with boxed
+        // (`AverInt`) params/return regardless of the analysis. We MUST still
+        // rewrite its BODY with those boundaries pinned boxed, while retaining
+        // independently proven compiler-owned character binders as local i64
+        // slots. This keeps the recursive ABI byte-identical without boxing a
+        // fresh codepoint solely because its enclosing worker is mutually
+        // recursive. Every boundary INTO another fn's bare repr is still
+        // inserted — crucially, a `Box` around a bare-RETURNING
         // callee whose result this fn returns / stores (the Q5 case). Without
         // the body rewrite, a mutual-TCO member calling a `bare_return` fn
         // (`abAtDepth`'s `[] -> abNoMoves(isMax)` arm, `abNoMoves` bare) would
@@ -126,9 +127,12 @@ fn rewrite(
         // `AverInt` — a wasm VALIDATION error. The all-boxed facts make
         // `rewrite_boxed`/`rewrite_call_args` box that result.
         let fn_facts = if boxed_signature_fns.contains(&id) {
-            // Empty `values` / `carrier_slots` / `bare_params` / `bare_return`
-            // (its own signature + slots stay boxed `AverInt`, matching the
-            // pinned mutual-TCO signature). BUT keep the TYPE-driven carrier
+            // Params, return and ordinary locals stay boxed `AverInt`, matching
+            // the pinned mutual-TCO signature. A match binder whose subject is
+            // a compiler-owned codepoint intrinsic retains its analyzed local
+            // fact: its range does not depend on any recursive parameter, and
+            // the match binding merely aliases that raw intrinsic result.
+            // Also keep the TYPE-driven carrier
             // recognition tables (`carrier_types` / `field_carrier_intervals`):
             // a NESTED carrier-field read (`state.score.value`, base type a
             // single-field carrier) or a DIRECT bounded multi-field read is
@@ -143,7 +147,26 @@ fn rewrite(
             // (the snake `tick`/`tickMove` SCC stringifying `score.value`).
             // These tables are global (same for every fn), so this never
             // introduces bareness the analysis didn't already prove.
+            let Some(analyzed) = facts.for_fn(id) else {
+                continue;
+            };
+            let Some(original) = program.fns.get(&id) else {
+                continue;
+            };
+            let values = analyzed
+                .values
+                .iter()
+                .filter(|(slot, fact)| {
+                    fact.is_bare()
+                        && super::bare_i64::local_is_code_carrier_binder(
+                            &original.body.node,
+                            **slot,
+                        )
+                })
+                .map(|(slot, fact)| (*slot, fact.clone()))
+                .collect();
             FnBareFacts {
+                values,
                 carrier_types: carrier.clone(),
                 field_carrier_intervals: field_carrier.clone(),
                 ..FnBareFacts::default()
@@ -944,8 +967,10 @@ fn rewrite_children_inner(e: Spanned<MirExpr>, ctx: &RewriteCtx<'_>) -> Spanned<
 /// Rewrite the args of a `Call(Fn)` / `TailCall`: each arg is rewritten in
 /// the callee's i-th param context — raw if the callee param is bare
 /// (`Unbox` a boxed arg, keep a raw one), boxed otherwise (`Box` a raw arg).
-/// A non-`Fn` callee (builtin / intrinsic / fn-value) treats every Int arg
-/// as a general-Int (boxed) context.
+/// A non-`Fn` callee (builtin / intrinsic / fn-value) normally treats every
+/// Int arg as a general-Int (boxed) context. Compiler-owned character folds
+/// are the narrow exception: their first argument is the same raw scalar
+/// carrier they return.
 fn rewrite_call_args(
     args: Vec<Spanned<MirExpr>>,
     callee: &MirCallee,
@@ -958,7 +983,9 @@ fn rewrite_call_args(
     args.into_iter()
         .enumerate()
         .map(|(i, a)| {
-            if callee_facts.is_some_and(|f| f.param_is_bare(i)) {
+            if callee_facts.is_some_and(|f| f.param_is_bare(i))
+                || super::bare_i64::intrinsic_accepts_raw_code_arg(callee, i)
+            {
                 rewrite_raw(a, ctx)
             } else {
                 rewrite_boxed(a, ctx)
@@ -1006,7 +1033,7 @@ mod tests {
     use crate::ir::mir::{lower_program, optimize};
     use crate::source::parse_source;
 
-    fn rewritten(src: &str) -> MirProgram {
+    fn optimized(src: &str) -> MirProgram {
         let mut items = parse_source(src).expect("parse");
         let cfg = crate::ir::pipeline::PipelineConfig {
             typecheck: Some(crate::ir::pipeline::TypecheckMode::Full { base_dir: None }),
@@ -1022,12 +1049,29 @@ mod tests {
             result.typecheck.map(|t| t.errors)
         );
         let mir_items = result.resolved_items.clone();
-        let program = optimize(lower_program(&mir_items));
+        optimize(lower_program(&mir_items))
+    }
+
+    fn rewritten(src: &str) -> MirProgram {
+        let program = optimized(src);
         rewrite_for_rust(
             program,
             &std::collections::HashSet::new(),
             &super::super::bare_i64::CarrierIntervals::new(),
         )
+    }
+
+    fn rewritten_with_mutual_boxing(
+        src: &str,
+    ) -> (MirProgram, std::collections::HashSet<crate::ir::FnId>) {
+        let program = optimized(src);
+        let boxed = mutual_recursion_box_set(&program);
+        let rewritten = rewrite_for_rust(
+            program,
+            &boxed,
+            &super::super::bare_i64::CarrierIntervals::new(),
+        );
+        (rewritten, boxed)
     }
 
     fn fn_named<'a>(program: &'a MirProgram, name: &str) -> &'a MirFn {
@@ -1053,6 +1097,188 @@ mod tests {
             _ => {}
         }
         super::super::bare_i64::tests_visit_children(e, &mut |c| count_rec(c, boxes, unboxes));
+    }
+
+    fn count_code_carrier_calls(e: &MirExpr, boxed: bool, out: &mut (usize, usize)) {
+        let is_code_call = matches!(
+            e,
+            MirExpr::Call(c)
+                if matches!(
+                    c.node.callee,
+                    MirCallee::Intrinsic(
+                        crate::ir::hir::BuiltinIntrinsic::StrIndexCodeAt
+                            | crate::ir::hir::BuiltinIntrinsic::StrCursorCode
+                            | crate::ir::hir::BuiltinIntrinsic::StrFoldLower
+                            | crate::ir::hir::BuiltinIntrinsic::StrFoldUpper
+                    )
+                )
+        );
+        if is_code_call {
+            out.0 += 1;
+            out.1 += usize::from(boxed);
+        }
+        match e {
+            MirExpr::Box(inner) => count_code_carrier_calls(&inner.node, true, out),
+            _ => super::super::bare_i64::tests_visit_children(e, &mut |child| {
+                count_code_carrier_calls(child, false, out)
+            }),
+        }
+    }
+
+    #[test]
+    fn indexed_character_dispatch_keeps_code_carrier_raw() {
+        let src = r#"
+module IndexedDispatch
+    intent = "t"
+    depends []
+
+fn scoreChar(c: String) -> Int
+    match c
+        "a" -> 1
+        _ -> 100
+
+fn scoreAt(text: String, pos: Int, acc: Int) -> Int
+    match String.charAt(text, pos)
+        Option.None -> acc
+        Option.Some(c) -> scoreAt(text, pos + 1, acc + scoreChar(c))
+
+fn main() -> Int
+    scoreAt("aą", 0, 0)
+"#;
+        let program = rewritten(src);
+        let classifier = fn_named(&program, "scoreChar__code");
+        assert_eq!(classifier.params[0].name, "__str_index_code");
+        assert!(
+            classifier.repr.param_is_bare(0),
+            "the compiler-owned Unicode scalar crosses the classifier ABI as i64"
+        );
+
+        let worker = fn_named(&program, "scoreAt__indexed");
+        let mut calls = (0, 0);
+        count_code_carrier_calls(&worker.body.node, false, &mut calls);
+        assert!(calls.0 > 0, "the indexed codepoint path should fire");
+        assert_eq!(
+            calls.1, 0,
+            "StrIndexCodeAt must not be boxed before character dispatch"
+        );
+    }
+
+    #[test]
+    fn cursor_character_dispatch_keeps_code_carrier_raw() {
+        let src = r#"
+module CursorDispatch
+    intent = "t"
+    depends []
+
+fn scoreChar(c: String) -> Int
+    match c
+        "a" -> 1
+        _ -> 100
+
+fn walk(chars: List<String>, acc: Int) -> Int
+    match chars
+        [] -> acc
+        [head, ..tail] -> walk(tail, acc + scoreChar(head))
+
+fn main() -> Int
+    walk(String.chars("aą"), 0)
+"#;
+        let program = rewritten(src);
+        let classifier = fn_named(&program, "scoreChar__code");
+        assert_eq!(classifier.params[0].name, "__str_code");
+        assert!(classifier.repr.param_is_bare(0));
+
+        let worker = fn_named(&program, "walk__cursor");
+        let mut calls = (0, 0);
+        count_code_carrier_calls(&worker.body.node, false, &mut calls);
+        assert!(calls.0 > 0, "the cursor codepoint path should fire");
+        assert_eq!(calls.1, 0, "StrCursorCode must stay raw before dispatch");
+    }
+
+    #[test]
+    fn folded_cursor_character_dispatch_stays_raw_across_fold() {
+        let src = r#"
+module FoldedCursorDispatch
+    intent = "t"
+    depends []
+
+fn scoreChar(c: String) -> Int
+    match String.toLower(c)
+        "a" -> 1
+        _ -> 100
+
+fn walk(chars: List<String>, acc: Int) -> Int
+    match chars
+        [] -> acc
+        [head, ..tail] -> walk(tail, acc + scoreChar(head))
+
+fn main() -> Int
+    walk(String.chars("AaĄ"), 0)
+"#;
+        let program = rewritten(src);
+        let classifier = fn_named(&program, "scoreChar__code");
+        assert!(classifier.repr.param_is_bare(0));
+
+        let mut calls = (0, 0);
+        count_code_carrier_calls(&classifier.body.node, false, &mut calls);
+        assert!(
+            calls.0 > 0,
+            "the codepoint classifier should fold the scalar"
+        );
+        assert_eq!(
+            calls.1, 0,
+            "the character carrier must stay raw through StrFoldLower"
+        );
+    }
+
+    #[test]
+    fn mutual_tco_worker_keeps_fresh_indexed_character_binder_raw() {
+        let src = r#"
+module MutualIndexedDispatch
+    intent = "t"
+    depends []
+
+fn scoreChar(c: String) -> Int
+    match c
+        "a" -> 1
+        _ -> 100
+
+fn even(text: String, pos: Int, acc: Int) -> Int
+    match String.charAt(text, pos)
+        Option.None -> acc
+        Option.Some(c) -> odd(text, pos + 1, acc + scoreChar(c))
+
+fn odd(text: String, pos: Int, acc: Int) -> Int
+    match String.charAt(text, pos)
+        Option.None -> acc
+        Option.Some(c) -> even(text, pos + 1, acc + scoreChar(c))
+
+fn main() -> Int
+    even("aą", 0, 0)
+"#;
+        let (program, boxed) = rewritten_with_mutual_boxing(src);
+        let worker = fn_named(&program, "even__indexed");
+        let worker_id = program
+            .iter()
+            .find(|(_, f)| f.name == "even__indexed")
+            .map(|(id, _)| *id)
+            .expect("even indexed worker id");
+        assert!(
+            boxed.contains(&worker_id),
+            "worker must exercise boxed SCC ABI"
+        );
+        assert!(
+            !worker.repr.bare_params.iter().any(|bare| *bare) && !worker.repr.bare_return,
+            "the mutual-recursion signature remains boxed"
+        );
+
+        let mut calls = (0, 0);
+        count_code_carrier_calls(&worker.body.node, false, &mut calls);
+        assert!(calls.0 > 0, "the indexed codepoint path should fire");
+        assert_eq!(
+            calls.1, 0,
+            "a fresh StrIndexCodeAt result must not be boxed inside a boxed-signature SCC"
+        );
     }
 
     #[test]

@@ -455,10 +455,8 @@ pub fn parseHexChars__cursor(
             return Ok(acc.reverse());
         } else {
             {
-                let __cur_c2 = aver_rt::AverInt::from_i64(aver_rt::str_cursor_code(
-                    &__cur_s,
-                    (__cur_i).to_usize().unwrap_or(usize::MAX),
-                ));
+                let __cur_c2 =
+                    aver_rt::str_cursor_code(&__cur_s, (__cur_i).to_usize().unwrap_or(usize::MAX));
                 {
                     let __cur_i1 = aver_rt::AverInt::from_i64(aver_rt::str_cursor_next(
                         &__cur_s,
@@ -473,10 +471,10 @@ pub fn parseHexChars__cursor(
                         ));
                     } else {
                         {
-                            let __cur_c1 = aver_rt::AverInt::from_i64(aver_rt::str_cursor_code(
+                            let __cur_c1 = aver_rt::str_cursor_code(
                                 &__cur_s,
                                 (__cur_i1).to_usize().unwrap_or(usize::MAX),
-                            ));
+                            );
                             {
                                 let __cur_i2 = aver_rt::AverInt::from_i64(
                                     aver_rt::str_cursor_next(
@@ -577,74 +575,65 @@ pub fn parseHexChars__cursor(
 
 /// Synthesized codepoint variant of `hexDigitValue`. A cursor loop whose head only ever reaches this classifier hands over the character's code instead of materialising a one-character string.
 #[inline(always)]
-pub fn hexDigitValue__code(code: aver_rt::AverInt) -> Option<aver_rt::AverInt> {
+pub fn hexDigitValue__code(__str_code: i64) -> Option<aver_rt::AverInt> {
     crate::cancel_checkpoint();
     {
-        let __dispatch_subject =
-            aver_rt::AverInt::from_i64(aver_rt::str_fold_lower((code).to_i64().unwrap_or(-1)));
-        if __dispatch_subject == aver_rt::AverInt::from_i64(48) {
+        let __dispatch_subject = aver_rt::str_fold_lower(__str_code);
+        if __dispatch_subject == 48i64 {
             Some(aver_rt::AverInt::from_i64(0))
         } else {
-            if __dispatch_subject == aver_rt::AverInt::from_i64(49) {
+            if __dispatch_subject == 49i64 {
                 Some(aver_rt::AverInt::from_i64(1))
             } else {
-                if __dispatch_subject == aver_rt::AverInt::from_i64(50) {
+                if __dispatch_subject == 50i64 {
                     Some(aver_rt::AverInt::from_i64(2))
                 } else {
-                    if __dispatch_subject == aver_rt::AverInt::from_i64(51) {
+                    if __dispatch_subject == 51i64 {
                         Some(aver_rt::AverInt::from_i64(3))
                     } else {
-                        if __dispatch_subject == aver_rt::AverInt::from_i64(52) {
+                        if __dispatch_subject == 52i64 {
                             Some(aver_rt::AverInt::from_i64(4))
                         } else {
-                            if __dispatch_subject == aver_rt::AverInt::from_i64(53) {
+                            if __dispatch_subject == 53i64 {
                                 Some(aver_rt::AverInt::from_i64(5))
                             } else {
-                                if __dispatch_subject == aver_rt::AverInt::from_i64(54) {
+                                if __dispatch_subject == 54i64 {
                                     Some(aver_rt::AverInt::from_i64(6))
                                 } else {
-                                    if __dispatch_subject == aver_rt::AverInt::from_i64(55) {
+                                    if __dispatch_subject == 55i64 {
                                         Some(aver_rt::AverInt::from_i64(7))
                                     } else {
-                                        if __dispatch_subject == aver_rt::AverInt::from_i64(56) {
+                                        if __dispatch_subject == 56i64 {
                                             Some(aver_rt::AverInt::from_i64(8))
                                         } else {
-                                            if __dispatch_subject == aver_rt::AverInt::from_i64(57)
-                                            {
+                                            if __dispatch_subject == 57i64 {
                                                 Some(aver_rt::AverInt::from_i64(9))
                                             } else {
-                                                if __dispatch_subject
-                                                    == aver_rt::AverInt::from_i64(97)
-                                                {
+                                                if __dispatch_subject == 97i64 {
                                                     Some(aver_rt::AverInt::from_i64(10))
                                                 } else {
-                                                    if __dispatch_subject
-                                                        == aver_rt::AverInt::from_i64(98)
-                                                    {
+                                                    if __dispatch_subject == 98i64 {
                                                         Some(aver_rt::AverInt::from_i64(11))
                                                     } else {
-                                                        if __dispatch_subject
-                                                            == aver_rt::AverInt::from_i64(99)
-                                                        {
+                                                        if __dispatch_subject == 99i64 {
                                                             Some(aver_rt::AverInt::from_i64(12))
                                                         } else {
-                                                            if __dispatch_subject
-                                                                == aver_rt::AverInt::from_i64(100)
-                                                            {
+                                                            if __dispatch_subject == 100i64 {
                                                                 Some(aver_rt::AverInt::from_i64(13))
                                                             } else {
-                                                                if __dispatch_subject
-                                                                    == aver_rt::AverInt::from_i64(
-                                                                        101,
-                                                                    )
-                                                                {
+                                                                if __dispatch_subject == 101i64 {
                                                                     Some(
                                                                         aver_rt::AverInt::from_i64(
                                                                             14,
                                                                         ),
                                                                     )
                                                                 } else {
-                                                                    if __dispatch_subject == aver_rt::AverInt::from_i64(102) { Some(aver_rt::AverInt::from_i64(15)) } else { None }
+                                                                    if __dispatch_subject == 102i64
+                                                                    {
+                                                                        Some(aver_rt::AverInt::from_i64(15))
+                                                                    } else {
+                                                                        None
+                                                                    }
                                                                 }
                                                             }
                                                         }
@@ -686,10 +675,8 @@ pub fn parseHexChars__cursor__collected(
             }
         } else {
             {
-                let __cur_c2 = aver_rt::AverInt::from_i64(aver_rt::str_cursor_code(
-                    &__cur_s,
-                    (__cur_i).to_usize().unwrap_or(usize::MAX),
-                ));
+                let __cur_c2 =
+                    aver_rt::str_cursor_code(&__cur_s, (__cur_i).to_usize().unwrap_or(usize::MAX));
                 {
                     let __cur_i1 = aver_rt::AverInt::from_i64(aver_rt::str_cursor_next(
                         &__cur_s,
@@ -704,10 +691,10 @@ pub fn parseHexChars__cursor__collected(
                         ));
                     } else {
                         {
-                            let __cur_c1 = aver_rt::AverInt::from_i64(aver_rt::str_cursor_code(
+                            let __cur_c1 = aver_rt::str_cursor_code(
                                 &__cur_s,
                                 (__cur_i1).to_usize().unwrap_or(usize::MAX),
-                            ));
+                            );
                             {
                                 let __cur_i2 = aver_rt::AverInt::from_i64(
                                     aver_rt::str_cursor_next(

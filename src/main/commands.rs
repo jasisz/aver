@@ -5205,6 +5205,7 @@ fn merge_dep_string_index(diagnostics: &mut [aver::ir::PassDiagnostic], dep_repo
         {
             entry.components += dep.components;
             entry.indexed_accesses += dep.indexed_accesses;
+            entry.codepoint_accesses += dep.codepoint_accesses;
             entry.indexed_fns.extend(
                 dep.indexed_fns
                     .iter()
@@ -5212,6 +5213,11 @@ fn merge_dep_string_index(diagnostics: &mut [aver::ir::PassDiagnostic], dep_repo
             );
             entry.synthesized.extend(
                 dep.synthesized
+                    .iter()
+                    .map(|name| format!("{prefix}.{name}")),
+            );
+            entry.code_variants.extend(
+                dep.code_variants
                     .iter()
                     .map(|name| format!("{prefix}.{name}")),
             );
@@ -5223,6 +5229,7 @@ fn merge_dep_string_index(diagnostics: &mut [aver::ir::PassDiagnostic], dep_repo
         }
         entry.indexed_fns.sort();
         entry.synthesized.sort();
+        entry.code_variants.sort();
     }
 }
 
@@ -5672,8 +5679,17 @@ fn render_pass_diagnostics(diags: &[aver::ir::pipeline::PassDiagnostic]) -> Stri
                         "{label} {} recursive String component(s) indexed, {} access site(s) rewritten\n",
                         r.components, r.indexed_accesses
                     ));
+                    if r.codepoint_accesses > 0 {
+                        out.push_str(&format!(
+                            "  • {} charAt site(s) dispatch on a codepoint without Option/String allocation\n",
+                            r.codepoint_accesses
+                        ));
+                    }
                     for fn_name in &r.synthesized {
                         out.push_str(&format!("  • synthesized {fn_name}\n"));
+                    }
+                    for fn_name in &r.code_variants {
+                        out.push_str(&format!("  • codepoint classifier {fn_name}\n"));
                     }
                     out.push_str(&format!("  • {STRING_INDEX_TARGETS_NOTE}\n"));
                 }
@@ -6005,12 +6021,15 @@ fn render_pass_diagnostics_json(diags: &[aver::ir::pipeline::PassDiagnostic]) ->
                 }
                 declined.push('}');
                 out.push_str(&format!(
-                    "{{\"components\":{},\"indexed_accesses\":{},\"indexed_fns\":{},\
-                     \"synthesized\":{},\"declined\":{},\"targets\":{}}}",
+                    "{{\"components\":{},\"indexed_accesses\":{},\"codepoint_accesses\":{},\
+                     \"indexed_fns\":{},\"synthesized\":{},\"code_variants\":{},\
+                     \"declined\":{},\"targets\":{}}}",
                     r.components,
                     r.indexed_accesses,
+                    r.codepoint_accesses,
                     json_str_array(&r.indexed_fns),
                     json_str_array(&r.synthesized),
+                    json_str_array(&r.code_variants),
                     declined,
                     STRING_INDEX_TARGETS_JSON
                 ));

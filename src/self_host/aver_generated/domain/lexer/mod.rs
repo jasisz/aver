@@ -834,28 +834,34 @@ fn __mutual_tco_trampoline_4(
             __MutualTco4::CountIndentChar__indexed(mut src, mut pos, mut spaces) => {
                 crate::cancel_checkpoint();
                 let nextPos = pos.add(&aver_rt::AverInt::from_i64(1));
-                match aver_rt::string_index_char_at(&src, &__str_index, &pos) {
-                    Some(c @ _) => {
-                        let __dispatch_subject = aver_rt::AverInt::from_i64(aver_rt::str_code1(&c));
-                        if __dispatch_subject == aver_rt::AverInt::from_i64(32) {
-                            __MutualTco4::CountIndent__indexed(
-                                src,
-                                nextPos,
-                                spaces.add(&aver_rt::AverInt::from_i64(1)),
-                            )
-                        } else {
-                            if __dispatch_subject == aver_rt::AverInt::from_i64(10) {
+                {
+                    let __int_match_subject =
+                        aver_rt::string_index_code_at(&src, &__str_index, &pos);
+                    if __int_match_subject == -1i64 {
+                        return (spaces, pos);
+                    } else {
+                        let __str_ix_c1 = __int_match_subject;
+                        {
+                            let __dispatch_subject = __str_ix_c1;
+                            if __dispatch_subject == 32i64 {
                                 __MutualTco4::CountIndent__indexed(
                                     src,
                                     nextPos,
-                                    aver_rt::AverInt::from_i64(0),
+                                    spaces.add(&aver_rt::AverInt::from_i64(1)),
                                 )
                             } else {
-                                return (spaces, pos);
+                                if __dispatch_subject == 10i64 {
+                                    __MutualTco4::CountIndent__indexed(
+                                        src,
+                                        nextPos,
+                                        aver_rt::AverInt::from_i64(0),
+                                    )
+                                } else {
+                                    return (spaces, pos);
+                                }
                             }
                         }
                     }
-                    None => return (spaces, pos),
                 }
             }
         };
@@ -2500,7 +2506,6 @@ pub fn tokenizeBang__indexed(
 }
 
 /// Synthesized indexed worker of `tokenizeEq`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
-#[inline(always)]
 pub fn tokenizeEq__indexed(
     src: AverStr,
     pos: aver_rt::AverInt,
@@ -2509,22 +2514,20 @@ pub fn tokenizeEq__indexed(
     crate::cancel_checkpoint();
     let nextPos = pos.add(&aver_rt::AverInt::from_i64(1));
     let pos2 = pos.add(&aver_rt::AverInt::from_i64(2));
-    match aver_rt::string_index_char_at(&src, &__str_index, &nextPos) {
-        Some(c @ _) => {
-            let __dispatch_subject = aver_rt::AverInt::from_i64(aver_rt::str_code1(&c));
-            if __dispatch_subject == aver_rt::AverInt::from_i64(61) {
-                aver_rt::AverList::prepend(
-                    crate::aver_generated::domain::token::Token::TkEqEq,
-                    &crate::aver_generated::domain::lexer::tokenize__indexed(
-                        src,
-                        pos2,
-                        __str_index,
-                    ),
-                )
-            } else {
-                if __dispatch_subject == aver_rt::AverInt::from_i64(62) {
+    {
+        let __int_match_subject = aver_rt::string_index_code_at(&src, &__str_index, &nextPos);
+        if __int_match_subject == -1i64 {
+            aver_rt::AverList::prepend(
+                crate::aver_generated::domain::token::Token::TkEq,
+                &crate::aver_generated::domain::lexer::tokenize__indexed(src, nextPos, __str_index),
+            )
+        } else {
+            let __str_ix_c1 = __int_match_subject;
+            {
+                let __dispatch_subject = __str_ix_c1;
+                if __dispatch_subject == 61i64 {
                     aver_rt::AverList::prepend(
-                        crate::aver_generated::domain::token::Token::TkFatArrow,
+                        crate::aver_generated::domain::token::Token::TkEqEq,
                         &crate::aver_generated::domain::lexer::tokenize__indexed(
                             src,
                             pos2,
@@ -2532,21 +2535,28 @@ pub fn tokenizeEq__indexed(
                         ),
                     )
                 } else {
-                    aver_rt::AverList::prepend(
-                        crate::aver_generated::domain::token::Token::TkEq,
-                        &crate::aver_generated::domain::lexer::tokenize__indexed(
-                            src,
-                            nextPos,
-                            __str_index,
-                        ),
-                    )
+                    if __dispatch_subject == 62i64 {
+                        aver_rt::AverList::prepend(
+                            crate::aver_generated::domain::token::Token::TkFatArrow,
+                            &crate::aver_generated::domain::lexer::tokenize__indexed(
+                                src,
+                                pos2,
+                                __str_index,
+                            ),
+                        )
+                    } else {
+                        aver_rt::AverList::prepend(
+                            crate::aver_generated::domain::token::Token::TkEq,
+                            &crate::aver_generated::domain::lexer::tokenize__indexed(
+                                src,
+                                nextPos,
+                                __str_index,
+                            ),
+                        )
+                    }
                 }
             }
         }
-        None => aver_rt::AverList::prepend(
-            crate::aver_generated::domain::token::Token::TkEq,
-            &crate::aver_generated::domain::lexer::tokenize__indexed(src, nextPos, __str_index),
-        ),
     }
 }
 

@@ -145,6 +145,7 @@ pub(super) enum BuiltinName {
     /// matching intrinsic names directly.
     StringIndexBuild,
     StringIndexCharAt,
+    StringIndexCodeAt,
     StringIndexSlice,
     StringFirstCodePoint,
     StringFromCodePoint,
@@ -273,6 +274,7 @@ impl BuiltinName {
             "String.charAt" => Some(Self::StringCharAt),
             "__str_index_build" => Some(Self::StringIndexBuild),
             "__str_index_char_at" => Some(Self::StringIndexCharAt),
+            "__str_index_code_at" => Some(Self::StringIndexCodeAt),
             "__str_index_slice" => Some(Self::StringIndexSlice),
             "String.firstCodePoint" => Some(Self::StringFirstCodePoint),
             "String.fromCodePoint" => Some(Self::StringFromCodePoint),
@@ -308,6 +310,7 @@ impl BuiltinName {
             Self::StringCharAt => "String.charAt",
             Self::StringIndexBuild => "__str_index_build",
             Self::StringIndexCharAt => "__str_index_char_at",
+            Self::StringIndexCodeAt => "__str_index_code_at",
             Self::StringIndexSlice => "__str_index_slice",
             Self::StringFirstCodePoint => "String.firstCodePoint",
             Self::StringFromCodePoint => "String.fromCodePoint",
@@ -376,6 +379,11 @@ impl BuiltinName {
             Self::StringCharAt => Ok(vec![string_ref_ty(registry)?, ValType::I64]),
             Self::StringIndexBuild => Ok(vec![string_ref_ty(registry)?]),
             Self::StringIndexCharAt => Ok(vec![
+                string_ref_ty(registry)?,
+                string_index_ref_ty(registry)?,
+                ValType::I64,
+            ]),
+            Self::StringIndexCodeAt => Ok(vec![
                 string_ref_ty(registry)?,
                 string_index_ref_ty(registry)?,
                 ValType::I64,
@@ -465,6 +473,7 @@ impl BuiltinName {
             }
             Self::StringIndexBuild => Ok(vec![string_index_ref_ty(registry)?]),
             Self::StringIndexCharAt => Ok(vec![option_ref_ty(registry, "Option<String>")?]),
+            Self::StringIndexCodeAt => Ok(vec![ValType::I64]),
             Self::StringIndexSlice => Ok(vec![string_ref_ty(registry)?]),
             Self::StringChars => Ok(vec![list_ref_ty(registry, "List<String>")?]),
             Self::StringReplace => Ok(vec![string_ref_ty(registry)?]),
@@ -526,6 +535,7 @@ impl BuiltinName {
             Self::StringCharAt => emit_string_char_at(registry),
             Self::StringIndexBuild => emit_string_index_build(registry),
             Self::StringIndexCharAt => emit_string_index_char_at(registry),
+            Self::StringIndexCodeAt => emit_string_index_code_at(registry),
             Self::StringIndexSlice => emit_string_index_slice(registry),
             Self::StringFirstCodePoint => emit_string_first_code_point(registry),
             Self::StringFromCodePoint => emit_string_from_code_point(registry),
@@ -2800,6 +2810,90 @@ fn emit_string_index_char_at(registry: &TypeRegistry) -> Result<Function, WasmGc
             local.get $out i32.const 0 local.get $s local.get $from local.get $len
             array.copy $string $string
             i32.const 1 local.get $out struct.new $option_string)
+        )
+    "#
+    );
+    wat_helper::compile_wat_helper(&wat)
+}
+
+/// Allocation-free indexed character read. The boundary table gives the
+/// first UTF-8 byte in O(1); valid Aver strings make the leading-byte decode
+/// sufficient. `-1` is the exact sentinel used by the codepoint-match pass
+/// for the `Option.None` branch.
+fn emit_string_index_code_at(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    let string_idx = registry
+        .string_array_type_idx
+        .ok_or(WasmGcError::Validation(
+            "indexed codepoint read requires String slot".into(),
+        ))?;
+    let index_idx = registry
+        .string_index_array_type_idx
+        .ok_or(WasmGcError::Validation(
+            "indexed codepoint read requires index slot".into(),
+        ))?;
+    if index_idx <= string_idx {
+        return Err(WasmGcError::Validation(format!(
+            "String.Index type must follow String (got {index_idx} vs {string_idx})"
+        )));
+    }
+    let before_string = wat_helper::padding_types(string_idx);
+    let between = wat_helper::padding_types(index_idx - string_idx - 1);
+    let wat = format!(
+        r#"
+        (module
+          {before_string}
+          (type $string (array (mut i8)))
+          {between}
+          (type $string_index (array (mut i32)))
+          (func (export "helper")
+                (param $s (ref null $string))
+                (param $index (ref null $string_index))
+                (param $i i64)
+                (result i64)
+            (local $char_count i32)
+            (local $from i32)
+            (local $b0 i32)
+            (local $b1 i32)
+            (local $b2 i32)
+            (local $b3 i32)
+
+            local.get $i i64.const 0 i64.lt_s
+            (if (then i64.const -1 return))
+            local.get $index array.len i32.const 1 i32.sub local.set $char_count
+            local.get $i local.get $char_count i64.extend_i32_u i64.ge_u
+            (if (then i64.const -1 return))
+
+            local.get $index local.get $i i32.wrap_i64
+            array.get $string_index local.set $from
+            local.get $s local.get $from array.get_u $string local.set $b0
+
+            local.get $b0 i32.const 0x80 i32.lt_u
+            (if (then local.get $b0 i64.extend_i32_u return))
+
+            local.get $s local.get $from i32.const 1 i32.add
+            array.get_u $string local.set $b1
+            local.get $b0 i32.const 0xE0 i32.lt_u
+            (if (then
+              local.get $b0 i32.const 0x1F i32.and i32.const 6 i32.shl
+              local.get $b1 i32.const 0x3F i32.and i32.or
+              i64.extend_i32_u return))
+
+            local.get $s local.get $from i32.const 2 i32.add
+            array.get_u $string local.set $b2
+            local.get $b0 i32.const 0xF0 i32.lt_u
+            (if (then
+              local.get $b0 i32.const 0x0F i32.and i32.const 12 i32.shl
+              local.get $b1 i32.const 0x3F i32.and i32.const 6 i32.shl i32.or
+              local.get $b2 i32.const 0x3F i32.and i32.or
+              i64.extend_i32_u return))
+
+            local.get $s local.get $from i32.const 3 i32.add
+            array.get_u $string local.set $b3
+            local.get $b0 i32.const 0x07 i32.and i32.const 18 i32.shl
+            local.get $b1 i32.const 0x3F i32.and i32.const 12 i32.shl i32.or
+            local.get $b2 i32.const 0x3F i32.and i32.const 6 i32.shl i32.or
+            local.get $b3 i32.const 0x3F i32.and i32.or
+            i64.extend_i32_u)
         )
     "#
     );

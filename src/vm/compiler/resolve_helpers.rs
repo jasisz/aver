@@ -15,7 +15,7 @@ use crate::vm::opcode::{
     INT_MOD_EUCLID, LIST_BUILDER_FINALIZE, LIST_BUILDER_NEW, LIST_BUILDER_PUSH, RESULT_PROVEN,
     STR_CODE1, STR_CODE1_LOWER, STR_CODE1_UPPER, STR_CURSOR_CODE, STR_CURSOR_END, STR_CURSOR_HEAD,
     STR_CURSOR_NEXT, STR_FOLD_LOWER, STR_FOLD_UPPER, STR_INDEX_BUILD, STR_INDEX_CHAR_AT,
-    STR_INDEX_SLICE, VECTOR_NEW_LITERAL,
+    STR_INDEX_CODE_AT, STR_INDEX_SLICE, VECTOR_NEW_LITERAL,
 };
 use std::str::FromStr;
 
@@ -56,6 +56,7 @@ pub(super) fn buffer_intrinsic_opcode(intrinsic: BuiltinIntrinsic) -> Option<(u8
         BuiltinIntrinsic::StrFoldUpper => Some((STR_FOLD_UPPER, 1)),
         BuiltinIntrinsic::StrIndexBuild => Some((STR_INDEX_BUILD, 1)),
         BuiltinIntrinsic::StrIndexCharAt => Some((STR_INDEX_CHAR_AT, 3)),
+        BuiltinIntrinsic::StrIndexCodeAt => Some((STR_INDEX_CODE_AT, 3)),
         BuiltinIntrinsic::StrIndexSlice => Some((STR_INDEX_SLICE, 4)),
         BuiltinIntrinsic::LstNew => Some((LIST_BUILDER_NEW, 1)),
         BuiltinIntrinsic::LstPush => Some((LIST_BUILDER_PUSH, 2)),
