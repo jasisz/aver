@@ -11,6 +11,7 @@
 ///   [[check.suppress]]
 ///   slug   = "non-tail-recursion"
 ///   files  = ["self_hosted/**"]
+///   fn     = "walkTree"
 ///   reason = "Tree walkers are structural recursive"
 use std::collections::HashMap;
 use std::path::Path;
@@ -92,6 +93,9 @@ pub struct CheckSuppression {
     pub slug: String,
     /// Optional file glob patterns.  Empty = suppress globally.
     pub files: Vec<String>,
+    /// Optional exact function name. `None` = every function in matching
+    /// files. Diagnostics without a function never match a scoped rule.
+    pub fn_name: Option<String>,
     /// Mandatory explanation — why the warning is acceptable.
     pub reason: String,
 }
@@ -554,8 +558,9 @@ impl ProjectConfig {
             .map(|e| e.layer.as_str())
     }
 
-    /// Returns `true` if a diagnostic with the given `slug` at `file_path`
-    /// is suppressed by any `[[check.suppress]]` rule.
+    /// Returns `true` if a diagnostic with no function identity and the given
+    /// `slug` at `file_path` is suppressed. Function-aware diagnostic paths
+    /// use [`ProjectConfig::check_suppression_applies_to`] directly.
     pub fn is_check_suppressed(&self, slug: &str, file_path: &str) -> bool {
         (0..self.check_suppressions.len())
             .any(|idx| self.check_suppression_applies(idx, slug, file_path))
@@ -565,8 +570,27 @@ impl ProjectConfig {
     /// report on waiver hygiene need to know *which* rules did the work, not
     /// just that some rule did.
     pub fn check_suppression_applies(&self, idx: usize, slug: &str, file_path: &str) -> bool {
+        self.check_suppression_applies_to(idx, slug, file_path, None)
+    }
+
+    /// Whether the rule at `idx` waives `slug` for one diagnostic, including
+    /// its optional function scope.
+    pub fn check_suppression_applies_to(
+        &self,
+        idx: usize,
+        slug: &str,
+        file_path: &str,
+        fn_name: Option<&str>,
+    ) -> bool {
         match self.check_suppressions.get(idx) {
-            Some(rule) => rule.slug == slug && self.suppression_covers_file(idx, file_path),
+            Some(rule) => {
+                rule.slug == slug
+                    && self.suppression_covers_file(idx, file_path)
+                    && rule
+                        .fn_name
+                        .as_deref()
+                        .is_none_or(|expected| fn_name == Some(expected))
+            }
             None => false,
         }
     }
@@ -1080,9 +1104,26 @@ fn parse_check_suppressions(table: &toml::Table) -> Result<Vec<CheckSuppression>
             Vec::new()
         };
 
+        let fn_name = match t.get("fn") {
+            Some(value) => {
+                let name = value.as_str().ok_or_else(|| {
+                    format!("aver.toml: [[check.suppress]][{}] `fn` must be a string", i)
+                })?;
+                if name.trim().is_empty() {
+                    return Err(format!(
+                        "aver.toml: [[check.suppress]][{}] `fn` must not be empty",
+                        i
+                    ));
+                }
+                Some(name.to_string())
+            }
+            None => None,
+        };
+
         suppressions.push(CheckSuppression {
             slug,
             files,
+            fn_name,
             reason,
         });
     }
@@ -1925,6 +1966,52 @@ reason = "Tree walkers cannot be converted to tail recursion"
                 .reason
                 .contains("tail recursion")
         );
+    }
+
+    #[test]
+    fn check_suppress_can_scope_one_function() {
+        let toml = r#"
+[[check.suppress]]
+slug = "verify-coverage"
+files = ["domain/**"]
+fn = "eachInBranch"
+reason = "Its Result error arm is uninhabited by construction"
+"#;
+        let config = ProjectConfig::parse(toml).unwrap();
+        assert_eq!(
+            config.check_suppressions[0].fn_name.as_deref(),
+            Some("eachInBranch")
+        );
+        assert!(config.check_suppression_applies_to(
+            0,
+            "verify-coverage",
+            "domain/checks.av",
+            Some("eachInBranch")
+        ));
+        assert!(!config.check_suppression_applies_to(
+            0,
+            "verify-coverage",
+            "domain/checks.av",
+            Some("otherFunction")
+        ));
+        assert!(!config.check_suppression_applies_to(
+            0,
+            "verify-coverage",
+            "domain/checks.av",
+            None
+        ));
+    }
+
+    #[test]
+    fn check_suppress_rejects_an_empty_function_scope() {
+        let toml = r#"
+[[check.suppress]]
+slug = "verify-coverage"
+fn = "  "
+reason = "Invalid on purpose"
+"#;
+        let error = ProjectConfig::parse(toml).unwrap_err();
+        assert!(error.contains("`fn` must not be empty"), "{error}");
     }
 
     #[test]

@@ -1102,7 +1102,7 @@ fn apply_check_suppressions(
         // overlapping waiver is never reported as dead.
         let mut suppressed = false;
         for idx in 0..cfg.check_suppressions.len() {
-            if cfg.check_suppression_applies(idx, diag.slug, key) {
+            if cfg.check_suppression_applies_to(idx, diag.slug, key, diag.fn_name.as_deref()) {
                 suppressed = true;
                 if let Some(fired) = tracker.fired.get_mut(idx) {
                     *fired = true;
@@ -1145,11 +1145,16 @@ fn report_dead_suppressions(
         } else {
             "matched no checked file — the path may be stale"
         };
+        let fn_scope = rule
+            .fn_name
+            .as_deref()
+            .map_or(String::new(), |name| format!(", fn: {name}"));
         eprintln!(
-            "{} aver.toml [[check.suppress]] slug = \"{}\" (files: {}) {}",
+            "{} aver.toml [[check.suppress]] slug = \"{}\" (files: {}{}) {}",
             "warning:".yellow(),
             rule.slug,
             scope,
+            fn_scope,
             detail
         );
     }

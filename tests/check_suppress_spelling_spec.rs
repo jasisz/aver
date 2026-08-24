@@ -249,6 +249,38 @@ fn audit_suppression_cannot_hide_errors() {
     );
 }
 
+#[test]
+fn suppression_can_waive_one_function_without_hiding_its_neighbour() {
+    let project = Project::new("function_scope");
+    project.write(
+        "aver.toml",
+        "[[check.suppress]]\nslug = \"verify-coverage\"\nfiles = [\"domain/version.av\"]\nfn = \"first\"\nreason = \"The error arm is uninhabited by this adapter\"\n",
+    );
+    project.write(
+        "domain/version.av",
+        "module Version\n    intent =\n        \"Fixture for function-scoped coverage suppression.\"\n    exposes [first, second]\n    effects []\n\nfn first(n: Int) -> Result<Int, String>\n    ? \"Always succeeds.\"\n    Result.Ok(n)\n\nverify first\n    first(1) => Result.Ok(1)\n\nfn second(n: Int) -> Result<Int, String>\n    ? \"Also always succeeds.\"\n    Result.Ok(n)\n\nverify second\n    second(1) => Result.Ok(1)\n",
+    );
+
+    let run = project.run(&["check", "domain/version.av"]);
+    assert!(
+        !run.stdout
+            .contains("verify examples for first do not include any Result.Err case"),
+        "{}",
+        run.describe("the named function was not suppressed")
+    );
+    assert!(
+        run.stdout
+            .contains("verify examples for second do not include any Result.Err case"),
+        "{}",
+        run.describe("the neighbouring function was hidden by a scoped waiver")
+    );
+    assert!(
+        run.stdout.contains("1 warning(s) suppressed by aver.toml"),
+        "{}",
+        run.describe("the scoped waiver did not report its use")
+    );
+}
+
 /// Defect 3 — a rule that removed nothing during a whole-directory run is
 /// named on stderr, without touching the exit code or the live rule.
 #[test]
