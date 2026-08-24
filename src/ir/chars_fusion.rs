@@ -109,12 +109,14 @@ const CURSOR_SUFFIX: &str = "__cursor";
 
 /// Suffix of the classifier variant that takes the character's
 /// codepoint instead of its one-character string.
-const CODE_SUFFIX: &str = "__code";
+pub(super) const CODE_SUFFIX: &str = "__code";
 
 /// The classifier variant's one parameter. Chosen once and checked
 /// against the callee's body: a body that reads or binds this name
 /// could capture it, so such a callee simply grows no variant.
-const CODE_PARAM: &str = "code";
+/// Reserved scalar parameter on compiler-synthesized cursor classifiers.
+/// Like the indexed-string carrier, it is exactly `-1 | Unicode scalar`.
+pub(super) const CODE_PARAM: &str = "__str_code";
 
 /// Prefix of the fresh binder that holds the head's codepoint in a
 /// rewritten peel. The per-variant counter keeps the pass's own binders
@@ -1554,7 +1556,7 @@ pub(super) fn taken_names(items: &[TopLevel]) -> HashSet<String> {
 /// `__cur_` namespace free in this loop?", "is `<fn>__cursor` free in
 /// this program?") are questions about binders, so they share one
 /// collector.
-fn collect_bound_names(fd: &FnDef, out: &mut HashSet<String>) {
+pub(super) fn collect_bound_names(fd: &FnDef, out: &mut HashSet<String>) {
     out.extend(fd.params.iter().map(|(n, _)| n.clone()));
     for stmt in fd.body.stmts() {
         if let Stmt::Binding(name, _, _) = stmt {

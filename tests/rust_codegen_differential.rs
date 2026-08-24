@@ -592,12 +592,36 @@ fn walk(text: String, pos: Int, seen: Int) -> String
         Option.None -> "{seen}:{String.slice(text, 1, 3)}"
         Option.Some(_) -> walk(text, pos + 1, seen + 1)
 
+fn scoreChar(c: String) -> Int
+    match c
+        "a" -> 1
+        "z" -> 10
+        _ -> 100
+
+fn scoreAt(text: String, pos: Int, acc: Int) -> Int
+    match String.charAt(text, pos)
+        Option.None -> acc
+        Option.Some(c) -> scoreAt(text, pos + 1, acc + scoreChar(c))
+
+fn score(text: String) -> Int
+    scoreAt(text, 0, 0)
+
+fn mutualEven(text: String, pos: Int, acc: Int) -> Int
+    match String.charAt(text, pos)
+        Option.None -> acc
+        Option.Some(c) -> mutualOdd(text, pos + 1, acc + scoreChar(c))
+
+fn mutualOdd(text: String, pos: Int, acc: Int) -> Int
+    match String.charAt(text, pos)
+        Option.None -> acc
+        Option.Some(c) -> mutualEven(text, pos + 1, acc + scoreChar(c))
+
 fn main() -> Unit
     ? "Print the indexed result for backend parity."
     ! [Console.print]
-    Console.print(walk("aą😀z", 0, 0))
+    Console.print("{walk("aą😀z", 0, 0)}|{score("aą😀z")}|{mutualEven("aą😀z", 0, 0)}")
 "#;
-    let expected = "4:ą😀";
+    let expected = "4:ą😀|211|211";
     let vm = run_vm_inline("string_index", src).expect("VM run");
     let rust =
         build_run_rust_inline("string_index", src).expect("Rust compile + cargo build + run");

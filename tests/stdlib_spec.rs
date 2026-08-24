@@ -361,7 +361,8 @@ fn the_vm_bytecode_reads_the_codepoint_at_the_cursor() {
 /// `Json` is loaded as a dependency, then parsed again by the VM compiler.
 /// The second copy must adopt the same String-index workers its symbol table
 /// learned from the first; output parity alone would not catch a silent fall
-/// back to repeated source-level `String.charAt` scans.
+/// back to repeated source-level `String.charAt` scans or allocation of each
+/// character's surface `Option<String>`.
 #[test]
 fn the_vm_adopts_string_index_workers_from_a_dependency() {
     let run = run_aver(&[
@@ -378,7 +379,7 @@ fn the_vm_adopts_string_index_workers_from_a_dependency() {
         String::from_utf8_lossy(&run.stderr)
     );
     assert!(
-        profile.contains("STR_INDEX_CHAR_AT") && profile.contains("Json.parseStringChunk__indexed"),
+        profile.contains("STR_INDEX_CODE_AT") && profile.contains("Json.parseStringChunk__indexed"),
         "the VM must execute dependency-side indexed workers:\n{profile}"
     );
 }

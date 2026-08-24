@@ -88,6 +88,24 @@ pub fn string_index_char_at(
     Some(AverStr::from(&text[from..to]))
 }
 
+/// Codepoint-only indexed `String.charAt`: the scalar value, or `-1` for
+/// `Option.None`. This is the allocation-free lowering for a `charAt` whose
+/// `Some` payload is consumed only by character dispatch.
+pub fn string_index_code_at(text: &AverStr, index: &StringIndex, position: &AverInt) -> i64 {
+    let Some(position) = position.to_usize() else {
+        return -1;
+    };
+    if position >= index.char_len() {
+        return -1;
+    }
+    let from = index.boundary(position);
+    let to = index.boundary(position + 1);
+    text[from..to]
+        .chars()
+        .next()
+        .map_or(-1, |ch| i64::from(u32::from(ch)))
+}
+
 /// Indexed equivalent of `String.slice`, including its clamping semantics.
 pub fn string_index_slice(
     text: &AverStr,
@@ -131,6 +149,14 @@ mod tests {
             Some(AverStr::from("😀"))
         );
         assert_eq!(
+            string_index_code_at(&text, &index, &AverInt::from_i64(1)),
+            i64::from(u32::from('ą'))
+        );
+        assert_eq!(
+            string_index_code_at(&text, &index, &AverInt::from_i64(2)),
+            i64::from(u32::from('😀'))
+        );
+        assert_eq!(
             string_index_slice(&text, &index, &AverInt::from_i64(1), &AverInt::from_i64(3)),
             AverStr::from("ą😀")
         );
@@ -148,6 +174,14 @@ mod tests {
         assert_eq!(
             string_index_char_at(&text, &index, &AverInt::from_i64(3)),
             None
+        );
+        assert_eq!(
+            string_index_code_at(&text, &index, &AverInt::from_i64(-1)),
+            -1
+        );
+        assert_eq!(
+            string_index_code_at(&text, &index, &AverInt::from_i64(3)),
+            -1
         );
         assert_eq!(
             string_index_slice(

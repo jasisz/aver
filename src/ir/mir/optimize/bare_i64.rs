@@ -47,6 +47,59 @@ use crate::ir::interval::{Interval, OpClass, raw_i64_eligible};
 use super::super::expr::{MirCallee, MirExpr, MirPattern};
 use super::super::program::{LocalId, MirFn, MirProgram};
 
+/// The exact range of compiler-owned character-code carriers. `-1` is the
+/// end/out-of-bounds/non-scalar sentinel; every successful value is a Unicode
+/// scalar.
+fn index_code_interval() -> Interval {
+    Interval::between(-1, char::MAX as u32 as i128)
+}
+
+fn is_code_carrier_call(e: &MirExpr) -> bool {
+    matches!(
+        e,
+        MirExpr::Call(c)
+            if matches!(
+                c.node.callee,
+                MirCallee::Intrinsic(
+                    crate::ir::hir::BuiltinIntrinsic::StrIndexCodeAt
+                        | crate::ir::hir::BuiltinIntrinsic::StrCursorCode
+                        | crate::ir::hir::BuiltinIntrinsic::StrFoldLower
+                        | crate::ir::hir::BuiltinIntrinsic::StrFoldUpper
+                )
+            )
+    )
+}
+
+/// Does intrinsic argument `i` consume the compiler-owned character carrier
+/// directly as an `i64`? The fold helpers are the only such boundary: they
+/// map one scalar/sentinel to another without ever entering general `Int`.
+/// Keeping this predicate beside [`is_code_carrier_call`] makes the analysis
+/// and explicit MIR boundary rewrite agree about both sides of that call.
+pub(super) fn intrinsic_accepts_raw_code_arg(callee: &MirCallee, i: usize) -> bool {
+    i == 0
+        && matches!(
+            callee,
+            MirCallee::Intrinsic(
+                crate::ir::hir::BuiltinIntrinsic::StrFoldLower
+                    | crate::ir::hir::BuiltinIntrinsic::StrFoldUpper
+            )
+        )
+}
+
+/// Compiler-synthesized `__code` functions are unnameable from Aver source,
+/// and these reserved parameters are populated only from `StrIndexCodeAt`,
+/// `StrCursorCode`, or another such parameter. Their range is therefore a
+/// construction invariant, not a guess based on an ordinary user `Int`.
+fn is_code_carrier_param(f: &MirFn, i: usize) -> bool {
+    f.name.ends_with(crate::ir::chars_fusion::CODE_SUFFIX)
+        && f.params.get(i).is_some_and(|p| {
+            matches!(
+                p.name.as_str(),
+                crate::ir::string_index::INDEX_CODE_PARAM | crate::ir::chars_fusion::CODE_PARAM
+            ) && ty_str_is_int(&p.ty)
+        })
+}
+
 /// ETAP-2 SLICE 0+1 — per-carrier-type proven bound, keyed by the opaque
 /// type's bare Aver name (the `MirParam.ty` string). Built once by
 /// [`crate::codegen::proof_lower::carrier_interval_table`] and threaded into
@@ -361,6 +414,9 @@ impl FnBareFacts {
             // ETAP-2 carrier-`i64`: a bare carrier's `.value` is a native i64
             // leaf carrying the carrier's proven bound.
             MirExpr::Project(_) => self.carrier_project_interval(e),
+            // Indexed dispatch returns either the `-1` sentinel or a Unicode
+            // scalar, directly as the backend's native i64 carrier.
+            MirExpr::Call(_) if is_code_carrier_call(e) => Some(index_code_interval()),
             MirExpr::Neg(inner) => {
                 let r = Interval::point(0).sub(self.bare_expr_interval(&inner.node)?);
                 r.fits_i64().then_some(r)
@@ -400,6 +456,7 @@ impl FnBareFacts {
             MirExpr::Local(local) => self.is_bare(local.node.slot),
             // ETAP-2 carrier-`i64`: a bare carrier's `.value` reads raw i64.
             MirExpr::Project(_) => self.is_carrier_project(e),
+            MirExpr::Call(_) => is_code_carrier_call(e),
             // A compound: require the WHOLE-TREE result interval to fit i64.
             MirExpr::Neg(_) | MirExpr::BinOp(_) => self.bare_expr_interval(e).is_some_and(|iv| {
                 raw_i64_eligible(Some(iv), std::iter::once(&OpClass::OverflowFree))
@@ -653,7 +710,11 @@ fn compute_summary(
         //      body's escape predicate so the two never disagree. The
         //      escape set depends on the current bare-param seed (a bare
         //      callee param does not escape its arg), so recompute it inside
-        //      the fixpoint; demotion is monotone.
+        //      the fixpoint; demotion is monotone. The sole exception is a
+        //      compiler-owned character-code parameter: its bounded ABI is a
+        //      construction invariant and the explicit MIR rewrite boxes it
+        //      at each actual general-Int sink instead of demoting the hot
+        //      path wholesale.
         let tmp = Summary {
             bare_params: bare_params.clone(),
             bare_return: bare_return.clone(),
@@ -663,7 +724,10 @@ fn compute_summary(
             let mut escaping: HashSet<LocalId> = HashSet::new();
             scan_escapes(&f.body.node, &tmp, &mut escaping);
             for (i, p) in f.params.iter().enumerate() {
-                if bare_params[id].get(i).copied().unwrap_or(false) && escaping.contains(&p.local) {
+                if bare_params[id].get(i).copied().unwrap_or(false)
+                    && escaping.contains(&p.local)
+                    && !is_code_carrier_param(f, i)
+                {
                     demote_param(&mut bare_params, *id, i, &mut changed);
                 }
             }
@@ -1018,6 +1082,7 @@ fn arg_supplies_bare(
             arg_supplies_bare(&b.node.lhs.node, caller, program, bare_params, bare_return)
                 && arg_supplies_bare(&b.node.rhs.node, caller, program, bare_params, bare_return)
         }
+        MirExpr::Call(_) if is_code_carrier_call(arg) => true,
         MirExpr::Call(c) => match c.node.callee {
             MirCallee::Fn(target) => bare_return.get(&target).copied().unwrap_or(false),
             _ => false,
@@ -1045,7 +1110,30 @@ fn local_supplies_bare(
                 .unwrap_or(false);
         }
     }
-    false
+    local_is_code_carrier_binder(&f.body.node, slot)
+}
+
+/// A wildcard/identifier arm binding aliases its match subject. The string
+/// indexing and cursor passes bind their code results this way before
+/// forwarding them to synthesized classifiers, so the aliases carry the same
+/// proven scalar range.
+pub(super) fn local_is_code_carrier_binder(e: &MirExpr, slot: LocalId) -> bool {
+    if let MirExpr::Match(m) = e
+        && is_code_carrier_call(&m.node.subject.node)
+        && m.node
+            .arms
+            .iter()
+            .any(|arm| matches!(arm.pattern, MirPattern::Bind(bound, _) if bound == slot))
+    {
+        return true;
+    }
+    let mut found = false;
+    visit_children(e, &mut |child| {
+        if !found {
+            found = local_is_code_carrier_binder(child, slot);
+        }
+    });
+    found
 }
 
 // ── The guard-seeded interval FIXPOINT (the bound producer) ──────────────
@@ -1171,6 +1259,9 @@ fn compute_bare_param_intervals(
         let fl = &floors[id];
         let ivs: Vec<Option<Interval>> = (0..f.params.len())
             .map(|i| {
+                if is_code_carrier_param(f, i) {
+                    return Some(index_code_interval());
+                }
                 let iv = cells[i];
                 if fl[i] != top && iv.fits_i64() {
                     Some(iv)
@@ -1868,7 +1959,16 @@ fn analyze_fn(
             .get(slot)
             .copied()
             .unwrap_or(OpClass::OverflowFree);
-        let escapes = escaping.contains(slot);
+        let trusted_code_param = f
+            .params
+            .iter()
+            .enumerate()
+            .any(|(i, p)| p.local == *slot && is_code_carrier_param(f, i));
+        // The explicit MIR rewrite inserts a `Box` at every general-Int sink.
+        // Keep this compiler-owned scalar carrier raw and pay that boundary
+        // only on an escaping branch; ordinary params retain the older,
+        // conservative whole-param demotion.
+        let escapes = escaping.contains(slot) && !trusted_code_param;
         let eligible = raw_i64_eligible(Some(*iv), std::iter::once(&op_class));
         let repr = if eligible && !escapes {
             Repr::Bare
@@ -1999,6 +2099,7 @@ fn eval_interval(
         MirExpr::Project(_) => facts
             .carrier_project_interval(e)
             .unwrap_or_else(Interval::unbounded),
+        MirExpr::Call(_) if is_code_carrier_call(e) => index_code_interval(),
         MirExpr::Neg(inner) => {
             let r = Interval::point(0).sub(eval_interval(&inner.node, env, worst, facts));
             *worst = worst.hull(r);
@@ -2097,13 +2198,19 @@ fn scan_escapes(e: &MirExpr, summary: &Summary, out: &mut HashSet<LocalId>) {
                     scan_escapes(&a.node, summary, out);
                 }
             }
-            // A builtin / intrinsic / fn-value callee is a NON-converting
-            // position: its Int args emit without `boxed_int_operand`, so a
-            // bare leaf inside a `BinOp`/`Neg` arg (`String.fromInt(n + 1)`)
-            // escapes too — `*_deep` (BUG 3).
+            // A builtin / intrinsic / fn-value callee is normally a
+            // NON-converting position: its Int args emit without
+            // `boxed_int_operand`, so a bare leaf inside a `BinOp`/`Neg` arg
+            // (`String.fromInt(n + 1)`) escapes too — `*_deep` (BUG 3).
+            // The compiler-only codepoint folds are the deliberate exception:
+            // their first argument is an i64 character carrier and their
+            // result is another bounded carrier, so no general-Int boundary
+            // exists on either side.
             _ => {
-                for a in &c.node.args {
-                    mark_operand_escapes_deep(&a.node, out);
+                for (i, a) in c.node.args.iter().enumerate() {
+                    if !intrinsic_accepts_raw_code_arg(&c.node.callee, i) {
+                        mark_operand_escapes_deep(&a.node, out);
+                    }
                     scan_escapes(&a.node, summary, out);
                 }
             }
@@ -2204,6 +2311,7 @@ fn tail_value_is_bare(e: &MirExpr, facts: &FnBareFacts, escaping: &HashSet<Local
         // ETAP-2 carrier-`i64`: a tail `c.value` over a bare carrier reads raw
         // i64, so the fn may return bare i64 (skip the project bridge).
         MirExpr::Project(_) => facts.is_carrier_project(e),
+        MirExpr::Call(_) => is_code_carrier_call(e),
         _ => false,
     }
 }

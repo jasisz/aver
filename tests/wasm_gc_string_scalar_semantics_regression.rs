@@ -122,6 +122,49 @@ verify charAtOf
     );
 }
 
+/// Recursive indexed character dispatch takes the allocation-free hidden
+/// `codeAt` route. Non-ASCII scalars are included so the wasm helper must
+/// decode the UTF-8 leading sequence rather than return its first byte.
+#[test]
+fn indexed_dispatch_decodes_codepoints_without_materializing_characters() {
+    assert_all_pass_on_both(
+        r#"
+fn scoreChar(c: String) -> Int
+    match c
+        "a" -> 1
+        "z" -> 10
+        _ -> 100
+
+fn scoreAt(text: String, pos: Int, acc: Int) -> Int
+    match String.charAt(text, pos)
+        Option.None -> acc
+        Option.Some(c) -> scoreAt(text, pos + 1, acc + scoreChar(c))
+
+fn score(text: String) -> Int
+    scoreAt(text, 0, 0)
+
+fn mutualEven(text: String, pos: Int, acc: Int) -> Int
+    match String.charAt(text, pos)
+        Option.None -> acc
+        Option.Some(c) -> mutualOdd(text, pos + 1, acc + scoreChar(c))
+
+fn mutualOdd(text: String, pos: Int, acc: Int) -> Int
+    match String.charAt(text, pos)
+        Option.None -> acc
+        Option.Some(c) -> mutualEven(text, pos + 1, acc + scoreChar(c))
+
+verify score
+    score("") => 0
+    score("az") => 11
+    score("aą😀z") => 211
+
+verify mutualEven
+    mutualEven("aą😀z", 0, 0) => 211
+"#,
+        4,
+    );
+}
+
 /// `String.slice` takes scalar indices with the VM's clamping rules
 /// (negatives to 0, past-the-end to the end, `start >= end` empty).
 #[test]

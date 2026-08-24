@@ -579,6 +579,10 @@ pub const BRANCH_PATH_PARSE_LITERAL: u8 = 0xAD;
 /// not `UNWRAP_RESULT_OR`: a provider contract violation has no fallback.
 pub const RESULT_PROVEN: u8 = 0xAE;
 
+/// Pop i, pop index, pop s → push its Unicode scalar, or -1 when the
+/// corresponding `String.charAt` result is `Option.None`.
+pub const STR_INDEX_CODE_AT: u8 = 0xAF;
+
 /// Opcode name for debug/disassembly.
 pub fn opcode_name(op: u8) -> &'static str {
     match op {
@@ -690,6 +694,7 @@ pub fn opcode_name(op: u8) -> &'static str {
         BYTE_BUILDER_FINALIZE => "BYTE_BUILDER_FINALIZE",
         STR_INDEX_BUILD => "STR_INDEX_BUILD",
         STR_INDEX_CHAR_AT => "STR_INDEX_CHAR_AT",
+        STR_INDEX_CODE_AT => "STR_INDEX_CODE_AT",
         STR_INDEX_SLICE => "STR_INDEX_SLICE",
         VECTOR_NEW_LITERAL => "VECTOR_NEW_LITERAL",
         BRANCH_PATH_CHILD_LITERAL => "BRANCH_PATH_CHILD_LITERAL",
@@ -773,6 +778,7 @@ pub fn opcode_operand_width(op: u8, code: &[u8], ip: usize) -> usize {
         | BYTE_BUILDER_FINALIZE
         | STR_INDEX_BUILD
         | STR_INDEX_CHAR_AT
+        | STR_INDEX_CODE_AT
         | STR_INDEX_SLICE
         | VECTOR_NEW_LITERAL
         | BRANCH_PATH_CHILD_LITERAL

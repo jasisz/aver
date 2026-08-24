@@ -2453,6 +2453,30 @@ impl VM {
                     self.stack.push(some);
                 }
 
+                STR_INDEX_CODE_AT => {
+                    let position = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let index = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let s = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let Some(position) = position.as_aver_int(&self.arena).to_usize() else {
+                        self.stack.push(NanValue::new_int(-1, &mut self.arena));
+                        continue;
+                    };
+                    let offsets = self.arena.vector_ref_value(index);
+                    if position >= offsets.len().saturating_sub(1) {
+                        self.stack.push(NanValue::new_int(-1, &mut self.arena));
+                        continue;
+                    }
+                    let from = offsets[position]
+                        .as_aver_int(&self.arena)
+                        .to_usize()
+                        .ok_or_else(|| VmError::runtime("malformed String.Index boundary"))?;
+                    let code = {
+                        let text = self.arena.get_string_value(s);
+                        aver_rt::str_cursor_code(&text, from)
+                    };
+                    self.stack.push(NanValue::new_int(code, &mut self.arena));
+                }
+
                 STR_INDEX_SLICE => {
                     let to = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let from = self.stack.pop().ok_or(VmError::StackUnderflow)?;

@@ -6983,6 +6983,7 @@ fn refuse_fabricated_intrinsics(
             | BuiltinIntrinsic::ResultProven
             | BuiltinIntrinsic::StrIndexBuild
             | BuiltinIntrinsic::StrIndexCharAt
+            | BuiltinIntrinsic::StrIndexCodeAt
             | BuiltinIntrinsic::StrIndexSlice => true,
             // Older fusion-pass fabrications — VM / Rust codegen only.
             BuiltinIntrinsic::BufNew

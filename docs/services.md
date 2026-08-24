@@ -217,6 +217,13 @@ Source: `src/types/string.rs`
 | `String.toLower` | `String -> String` | Unicode-aware lowercase |
 | `String.toUpper` | `String -> String` | Unicode-aware uppercase |
 
+Repeated `String.charAt` / `String.slice` access through a recursive call cone
+shares one hidden codepoint-to-UTF-8 boundary index. When a `charAt` result is
+used only to dispatch on the character—directly or through recognised pure
+helpers—the runtime reads its Unicode scalar without constructing the surface
+`Option<String>`. Public positions and return types are unchanged; any String
+use the compiler cannot eliminate stays on the general indexed path.
+
 ### `Map` namespace
 
 Source: `src/types/map.rs`

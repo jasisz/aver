@@ -566,7 +566,8 @@ fn main() -> Int
     assert!(
         after.contains("count__indexed")
             && after.contains("__str_index_build")
-            && after.contains("__str_index_char_at"),
+            && after.contains("__str_index_code_at")
+            && !after.contains("__str_index_char_at"),
         "the String-index dump must expose its wrapper, worker and indexed read:\n{after}"
     );
 
@@ -579,6 +580,7 @@ fn main() -> Int
         .expect("string_index pass present")["data"];
     assert_eq!(data["components"], 1, "{data}");
     assert_eq!(data["indexed_accesses"], 1, "{data}");
+    assert_eq!(data["codepoint_accesses"], 1, "{data}");
     assert_eq!(
         data["indexed_fns"].as_array().unwrap(),
         &vec![serde_json::json!("count")]
@@ -658,6 +660,7 @@ fn main() -> Int
         .expect("string_index pass present")["data"];
     assert_eq!(data["components"], 1, "{data}");
     assert_eq!(data["indexed_accesses"], 1, "{data}");
+    assert_eq!(data["codepoint_accesses"], 1, "{data}");
     assert!(
         data["synthesized"]
             .as_array()

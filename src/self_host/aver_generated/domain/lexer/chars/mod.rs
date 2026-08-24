@@ -346,14 +346,20 @@ pub fn readNumberLoop__indexed(
     loop {
         crate::cancel_checkpoint();
         if (pos < aver_rt::AverInt::from_i64(src.chars().count() as i64)) {
-            match aver_rt::string_index_char_at(&src, &__str_index, &pos) {
-                Some(c @ _) => {
-                    if crate::aver_generated::domain::lexer::chars::isDigit(c.clone()) {
+            {
+                let __int_match_subject = aver_rt::string_index_code_at(&src, &__str_index, &pos);
+                if __int_match_subject == -1i64 {
+                    return (acc, pos);
+                } else {
+                    let __str_ix_c1 = __int_match_subject;
+                    if crate::aver_generated::domain::lexer::chars::isDigit__code(__str_ix_c1) {
                         {
                             let __tco1 = pos.add(&aver_rt::AverInt::from_i64(1));
-                            let __tco2 = acc
-                                .mul(&aver_rt::AverInt::from_i64(10))
-                                .add(&crate::aver_generated::domain::lexer::chars::digitVal(c));
+                            let __tco2 = acc.mul(&aver_rt::AverInt::from_i64(10)).add(
+                                &crate::aver_generated::domain::lexer::chars::digitVal__code(
+                                    __str_ix_c1,
+                                ),
+                            );
                             pos = __tco1;
                             acc = __tco2;
                             continue;
@@ -361,9 +367,6 @@ pub fn readNumberLoop__indexed(
                     } else {
                         return (acc, pos);
                     }
-                }
-                None => {
-                    return (acc, pos);
                 }
             }
         } else {
@@ -485,5 +488,105 @@ pub fn readIdent__indexed(
             acc,
             __str_index.clone(),
         )
+    }
+}
+
+/// Synthesized codepoint variant of `digitVal` for indexed character dispatch. Parameter `c` is the Unicode scalar of the one-character String accepted by the source function.
+#[inline(always)]
+pub fn digitVal__code(__str_index_code: i64) -> aver_rt::AverInt {
+    crate::cancel_checkpoint();
+    {
+        let __dispatch_subject = __str_index_code;
+        if __dispatch_subject == 48i64 {
+            aver_rt::AverInt::from_i64(0)
+        } else {
+            if __dispatch_subject == 49i64 {
+                aver_rt::AverInt::from_i64(1)
+            } else {
+                if __dispatch_subject == 50i64 {
+                    aver_rt::AverInt::from_i64(2)
+                } else {
+                    if __dispatch_subject == 51i64 {
+                        aver_rt::AverInt::from_i64(3)
+                    } else {
+                        if __dispatch_subject == 52i64 {
+                            aver_rt::AverInt::from_i64(4)
+                        } else {
+                            if __dispatch_subject == 53i64 {
+                                aver_rt::AverInt::from_i64(5)
+                            } else {
+                                if __dispatch_subject == 54i64 {
+                                    aver_rt::AverInt::from_i64(6)
+                                } else {
+                                    if __dispatch_subject == 55i64 {
+                                        aver_rt::AverInt::from_i64(7)
+                                    } else {
+                                        if __dispatch_subject == 56i64 {
+                                            aver_rt::AverInt::from_i64(8)
+                                        } else {
+                                            if __dispatch_subject == 57i64 {
+                                                aver_rt::AverInt::from_i64(9)
+                                            } else {
+                                                aver_rt::AverInt::from_i64(0)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Synthesized codepoint variant of `isDigit` for indexed character dispatch. Parameter `c` is the Unicode scalar of the one-character String accepted by the source function.
+#[inline(always)]
+pub fn isDigit__code(__str_index_code: i64) -> bool {
+    crate::cancel_checkpoint();
+    {
+        let __dispatch_subject = __str_index_code;
+        if __dispatch_subject == 48i64 {
+            true
+        } else {
+            if __dispatch_subject == 49i64 {
+                true
+            } else {
+                if __dispatch_subject == 50i64 {
+                    true
+                } else {
+                    if __dispatch_subject == 51i64 {
+                        true
+                    } else {
+                        if __dispatch_subject == 52i64 {
+                            true
+                        } else {
+                            if __dispatch_subject == 53i64 {
+                                true
+                            } else {
+                                if __dispatch_subject == 54i64 {
+                                    true
+                                } else {
+                                    if __dispatch_subject == 55i64 {
+                                        true
+                                    } else {
+                                        if __dispatch_subject == 56i64 {
+                                            true
+                                        } else {
+                                            if __dispatch_subject == 57i64 {
+                                                true
+                                            } else {
+                                                false
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
