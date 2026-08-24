@@ -569,7 +569,11 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
             resolve_ctx.current_module = ctx.entry_module_name();
             let resolved_lifted = crate::ir::hir::resolve_fn_def_external(&resolve_ctx, &lifted)
                 .expect("effect-lifted Dafny function must resolve before emission");
-            entry_sections.push(toplevel::emit_fn_def(&lifted, &resolved_lifted, ctx));
+            if toplevel::effect_lifted_recursion_needs_axiom(&lifted) {
+                entry_sections.push(toplevel::emit_fn_def_axiom(&lifted, &resolved_lifted, ctx));
+            } else {
+                entry_sections.push(toplevel::emit_fn_def(&lifted, &resolved_lifted, ctx));
+            }
         }
     }
 

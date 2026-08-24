@@ -245,10 +245,13 @@ pub(crate) fn generate_for_effects_with_registry(
     out.push_str("  - Random.float(path, n): in the closed unit interval [0.0, 1.0].\n");
     out.push_str("  - Time.unixMs(path, n): non-negative — clocks count from\n");
     out.push_str("    the unix epoch onward in this proof subset.\n");
+    out.push_str("  - Process.stopRequested(path, n): monotonic across calls on one\n");
+    out.push_str("    branch path — once true, every later observation is true.\n");
     out.push_str("  - Disk.exists(path, n, file): the result is a Bool — no\n");
     out.push_str("    third state. Trivially total.\n");
     out.push_str("  Surfaced as subtype helper types in the section below\n");
-    out.push_str("  (`RandomIntInBounds`, `RandomFloatInUnit`, `TimeUnixMsNonneg`\n");
+    out.push_str("  (`RandomIntInBounds`, `RandomFloatInUnit`, `TimeUnixMsNonneg`,\n");
+    out.push_str("  `ProcessStopRequestedMonotonic`)\n");
     out.push_str("  in Lean; `IsRandomIntInBounds` etc. as ghost predicates in\n");
     out.push_str("  Dafny). These are *types* / *predicates*, not axioms — a\n");
     out.push_str("  value of `RandomIntInBounds` is a function plus a proof of\n");

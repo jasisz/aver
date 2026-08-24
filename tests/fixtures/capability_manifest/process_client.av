@@ -1,0 +1,9 @@
+module ProcessClient
+    intent = "show the Process target matrix"
+    depends []
+    exposes [main]
+    effects [Process.stopRequested]
+
+fn main() -> Bool
+    ! [Process.stopRequested]
+    Process.stopRequested()

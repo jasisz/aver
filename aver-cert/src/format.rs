@@ -44,6 +44,7 @@ pub const WASM_GC_CAPABILITIES: &[(&str, &str)] = &[
     ("aver", "console_error"),
     ("aver", "console_warn"),
     ("aver", "time_unix_ms"),
+    ("aver", "process_stop_requested"),
     ("aver", "request_method"),
     ("aver", "request_url"),
     ("aver", "request_query"),

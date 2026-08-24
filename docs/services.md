@@ -485,6 +485,25 @@ Contract source: `stdlib/capabilities/random.av`. Native VM and generated Rust s
 
 Literal discharge is fail-closed: it removes user-side `Result` ceremony, not the provider contract. If a provider or Oracle stub returns `Err` for proven-valid literal bounds, execution faults as a contract violation. The compiler never substitutes `min`, `0`, or another apparently valid random sample.
 
+### `Process` namespace — use `! [Process.stopRequested]`
+
+Contract source: `stdlib/capabilities/process.av`. Native VM and generated
+Rust install one process-wide SIGINT/SIGTERM flag; wasm-gc calls the
+`aver.process_stop_requested` host import. WASI 0.2 has no corresponding
+signal binding, so wasip2 rejects this effect at compile time and points to
+`--target wasm-gc`.
+
+| Function | Signature | Notes |
+|---|---|---|
+| `Process.stopRequested` | `() -> Bool` | Cooperative stop observation; once one call returns `true`, every later call on the same branch returns `true` |
+
+The native handler only changes the flag from `false` to `true`; the flag is
+never reset. Oracle hostile profiles obey the same cross-call law, and Lean
+and Dafny receive it as a capability invariant. Poll at a cleanup-safe point:
+the operation does not interrupt a blocking effect or run a shutdown hook.
+See `examples/formal/process_stop_requested.av` for a recursive loop checked
+against `stopAfterThree`.
+
 ### `Time` namespace — use granular effects (`! [Time.now]`, `! [Time.unixMs]`, `! [Time.sleep]`)
 
 Contract source: `stdlib/capabilities/time.av`. Native VM and generated Rust share the `aver-rt` Time adapter; wasm-gc uses the existing `aver.time_*` imports and wasip2 uses WASI clocks/poll. All four bindings are checked/accounted against the same contract and model hashes.

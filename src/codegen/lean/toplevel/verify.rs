@@ -14,15 +14,11 @@ const LAW_SAMPLE_CAP: usize = 512;
 /// Emit a Lean 4 type definition from an Aver TypeDef.
 /// Subtype helper-type names that the oracle_subtypes module emits at
 /// the top of every artifact. Returned name matches the
-/// `<...>InBounds` / `<...>InUnit` / `<...>Nonneg` declarations in
-/// `oracle_subtypes::lean_subtypes` — keep these in sync.
-fn bounded_oracle_subtype_for(method: &str) -> Option<&'static str> {
-    match method {
-        "Random.int" => Some("RandomIntInBounds"),
-        "Random.float" => Some("RandomFloatInUnit"),
-        "Time.unixMs" => Some("TimeUnixMsNonneg"),
-        _ => None,
-    }
+/// `<...>InBounds` / `<...>InUnit` / `<...>Nonneg` / `<...>Monotonic`
+/// declarations in `oracle_subtypes::lean_subtypes`.
+fn oracle_subtype_for(method: &str) -> Option<&'static str> {
+    crate::types::checker::oracle_subtypes::OracleSubtypeKind::for_effect(method)
+        .map(|kind| kind.lean_type_name())
 }
 
 /// Render a per-sample instantiated `when` guard with every Int literal
@@ -826,7 +822,7 @@ fn emit_verify_law_block(
                 // (`Natural`, `M.Type`) — spell them as Lean type text so a
                 // reserved-token segment carries the trailing-quote guard.
                 crate::codegen::lean::types::lean_named_type_name(refined)
-            } else if let Some(subtype) = bounded_oracle_subtype_for(&given.type_name) {
+            } else if let Some(subtype) = oracle_subtype_for(&given.type_name) {
                 subtype.to_string()
             } else {
                 match crate::types::checker::effect_classification::oracle_signature_with_registry(
@@ -2066,7 +2062,7 @@ fn law_given_domain_prop(given: &VerifyGiven, ctx: &CodegenContext) -> String {
     // `.val` projection on the LHS of the equality so the comparison
     // type-checks against the underlying plain function the user's
     // stub delivers. Other givens compare the raw value directly.
-    let given_name = if bounded_oracle_subtype_for(&given.type_name).is_some() {
+    let given_name = if oracle_subtype_for(&given.type_name).is_some() {
         format!("{raw_name}.val")
     } else {
         raw_name

@@ -57,6 +57,13 @@ pub struct LiftConfig {
     /// Identifier name in the generated AST for the current `BranchPath`
     /// parameter. Specs conventionally use `"path"`.
     pub path_name: String,
+    /// Hidden proof-side base for the per-branch oracle occurrence.
+    ///
+    /// `Process.stopRequested` is constrained across calls, so recursive
+    /// polling must carry the dynamic occurrence into the next invocation
+    /// instead of restarting every lifted body at literal zero. Functions
+    /// without that capability keep the v1 static call-site counters.
+    pub oracle_counter_name: Option<String>,
     /// Map from effect method (`"Random.int"`) → local binding name
     /// (`"rnd"`) the lifted body should call in place of the effect.
     pub oracles: HashMap<String, String>,
@@ -316,6 +323,7 @@ fn helper_injection(
     helper_effects: &[String],
     cfg: &LiftConfig,
     path_expr: &Spanned<Expr>,
+    counter: u32,
     line: SourceLine,
 ) -> Vec<Spanned<Expr>> {
     let mut injected: Vec<Spanned<Expr>> = Vec::new();
@@ -327,6 +335,12 @@ fn helper_injection(
     });
     if needs_path {
         injected.push(path_expr.clone());
+    }
+    if helper_effects
+        .iter()
+        .any(|effect| effect == "Process.stopRequested")
+    {
+        injected.push(oracle_counter_expr(cfg, counter, line));
     }
     let mut seen = std::collections::HashSet::new();
     for e in helper_effects {
@@ -352,6 +366,22 @@ fn helper_injection(
         }
     }
     injected
+}
+
+fn oracle_counter_expr(cfg: &LiftConfig, offset: u32, line: SourceLine) -> Spanned<Expr> {
+    let literal = || spanned(Expr::Literal(Literal::Int(offset as i64)), line);
+    let Some(base) = &cfg.oracle_counter_name else {
+        return literal();
+    };
+    let base = spanned(Expr::Ident(base.clone()), line);
+    if offset == 0 {
+        base
+    } else {
+        spanned(
+            Expr::BinOp(crate::ast::BinOp::Add, Box::new(base), Box::new(literal())),
+            line,
+        )
+    }
 }
 
 /// Deterministic binding name for the k-th `?!` branch's unwrapped
@@ -563,7 +593,8 @@ fn lift_expr(
                 // the helper's lifted arity.
                 let new_callee = lift_expr(callee, cfg, path_expr, counter)?;
                 let new_args = lift_args(args, cfg, path_expr, counter)?;
-                let mut injected = helper_injection(&helper_effects, cfg, path_expr, expr.line);
+                let mut injected =
+                    helper_injection(&helper_effects, cfg, path_expr, *counter, expr.line);
                 injected.extend(new_args);
                 Expr::FnCall(Box::new(new_callee), injected)
             } else {
@@ -686,7 +717,9 @@ fn lift_expr(
             // mismatch on the first source argument.
             let new_args = lift_args(&inner.args, cfg, path_expr, counter)?;
             let mut args = match cfg.effectful_helpers.get(&inner.target) {
-                Some(helper_effects) => helper_injection(helper_effects, cfg, path_expr, expr.line),
+                Some(helper_effects) => {
+                    helper_injection(helper_effects, cfg, path_expr, *counter, expr.line)
+                }
                 None => Vec::new(),
             };
             args.extend(new_args);
@@ -732,7 +765,7 @@ fn lift_classified_call(
             let new_args = lift_args(args, cfg, path_expr, counter)?;
             let mut injected = match cfg.effectful_helpers.get(effect_name) {
                 Some(helper_effects) => {
-                    helper_injection(helper_effects, cfg, path_expr, original.line)
+                    helper_injection(helper_effects, cfg, path_expr, *counter, original.line)
                 }
                 None => Vec::new(),
             };
@@ -828,10 +861,7 @@ fn lift_classified_call(
             let current_counter = *counter;
             *counter += 1;
             let path_arg = path_expr.clone();
-            let counter_arg = Spanned::new(
-                Expr::Literal(Literal::Int(current_counter as i64)),
-                original.line,
-            );
+            let counter_arg = oracle_counter_expr(cfg, current_counter, original.line);
             let mut new_args = vec![path_arg, counter_arg];
             if let Some(fresh_name) = cfg.fresh_resources.get(effect_name) {
                 new_args.push(Spanned::new(Expr::Ident(fresh_name.clone()), original.line));
@@ -1035,6 +1065,7 @@ pub fn lower_pure_question_bang_fn(fd: &FnDef) -> Result<Option<FnDef>, LiftErro
 
     let cfg = LiftConfig {
         path_name: "path".to_string(),
+        oracle_counter_name: None,
         oracles: HashMap::new(),
         fresh_resources: HashMap::new(),
         effectful_helpers: HashMap::new(),
@@ -1143,6 +1174,25 @@ pub fn lift_fn_def_with_helpers_and_registry(
     if needs_path {
         new_params.push((path_name.clone(), "BranchPath".to_string()));
     }
+    let oracle_counter_name = if uses_threaded_oracle_counter(fd) {
+        let mut used: std::collections::HashSet<&str> =
+            fd.params.iter().map(|(name, _)| name.as_str()).collect();
+        used.insert(path_name.as_str());
+        let name = ["oracleIndex", "effectIndex", "__oracle_index__"]
+            .into_iter()
+            .find(|candidate| !used.contains(candidate))
+            .map(str::to_string)
+            .unwrap_or_else(|| {
+                (0u32..)
+                    .map(|suffix| format!("__oracle_index_{suffix}__"))
+                    .find(|candidate| !used.contains(candidate.as_str()))
+                    .expect("u32 exhausted while picking a proof oracle index name")
+            });
+        new_params.push((name.clone(), "Int".to_string()));
+        Some(name)
+    } else {
+        None
+    };
     for (name, ty) in &oracle_params {
         new_params.push((name.clone(), ty.clone()));
     }
@@ -1203,6 +1253,7 @@ pub fn lift_fn_def_with_helpers_and_registry(
     }
     let cfg = LiftConfig {
         path_name,
+        oracle_counter_name,
         oracles: oracles_map,
         fresh_resources,
         effectful_helpers: helpers.clone(),
@@ -1221,6 +1272,17 @@ pub fn lift_fn_def_with_helpers_and_registry(
         body: Arc::new(lifted_body),
         resolution: None,
     }))
+}
+
+/// Whether proof lifting must thread a dynamic oracle occurrence through this
+/// function. Process polling is the first capability whose contract relates
+/// different calls, so restarting its counter on recursion would falsify the
+/// contract's meaning and can make a terminating hostile profile diverge in
+/// the proof backend.
+pub fn uses_threaded_oracle_counter(fd: &FnDef) -> bool {
+    fd.effects
+        .iter()
+        .any(|effect| effect.node == "Process.stopRequested")
 }
 
 fn rebuild_dotted_callee(full_name: &str, from: &Spanned<Expr>) -> Spanned<Expr> {
@@ -1259,6 +1321,7 @@ mod tests {
     fn simple_cfg_with(oracles: &[(&str, &str)]) -> LiftConfig {
         LiftConfig {
             path_name: "path".to_string(),
+            oracle_counter_name: None,
             oracles: oracles
                 .iter()
                 .map(|(k, v)| (k.to_string(), v.to_string()))
@@ -1651,6 +1714,66 @@ mod tests {
             Expr::Literal(Literal::Int(0)) => {}
             other => panic!("expected counter 0, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn process_polling_threads_dynamic_counter_through_self_tail_call() {
+        let source = "fn follow(steps: Int) -> Int\n\
+                      \x20   ! [Process.stopRequested]\n\
+                      \x20   match Process.stopRequested()\n\
+                      \x20       true -> steps\n\
+                      \x20       false -> follow(steps + 1)\n";
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.tokenize().expect("lex");
+        let mut parser = Parser::new(tokens);
+        let mut items = parser.parse().expect("parse");
+        crate::tco::transform_program(&mut items);
+        let crate::ast::TopLevel::FnDef(fd) = items.into_iter().next().unwrap() else {
+            panic!("expected fn def");
+        };
+        let helpers = HashMap::from([(
+            "follow".to_string(),
+            vec!["Process.stopRequested".to_string()],
+        )]);
+        let lifted = lift_fn_def_with_helpers(&fd, &helpers)
+            .unwrap()
+            .expect("effectful function must lift");
+
+        assert_eq!(
+            lifted.params[0],
+            ("path".to_string(), "BranchPath".to_string())
+        );
+        assert_eq!(
+            lifted.params[1],
+            ("oracleIndex".to_string(), "Int".to_string())
+        );
+        assert_eq!(lifted.params[2].0, "rnd_Process_stopRequested");
+
+        let [Stmt::Expr(tail)] = lifted.body.stmts() else {
+            panic!("expected one match expression");
+        };
+        let Expr::Match { subject, arms } = &tail.node else {
+            panic!("expected match body");
+        };
+        let poll_args =
+            assert_looks_like_oracle_call(&subject.node, "rnd_Process_stopRequested", 2);
+        assert!(matches!(&poll_args[1], Expr::Ident(name) if name == "oracleIndex"));
+
+        let Expr::TailCall(call) = &arms[1].body.node else {
+            panic!("false arm must remain a tail call");
+        };
+        assert_eq!(call.args.len(), 4);
+        assert!(matches!(&call.args[0].node, Expr::Ident(name) if name == "path"));
+        assert!(matches!(
+            &call.args[1].node,
+            Expr::BinOp(crate::ast::BinOp::Add, left, right)
+                if matches!(&left.node, Expr::Ident(name) if name == "oracleIndex")
+                    && matches!(&right.node, Expr::Literal(Literal::Int(1)))
+        ));
+        assert!(matches!(
+            &call.args[2].node,
+            Expr::Ident(name) if name == "rnd_Process_stopRequested"
+        ));
     }
 
     #[test]

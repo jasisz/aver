@@ -132,6 +132,11 @@ fn classify(effect: &str) -> Option<UnsupportedReason> {
                    implementation can ever satisfy a write",
         });
     }
+    if effect == "Process.stopRequested" {
+        return Some(UnsupportedReason::Permanent {
+            hint: "WASI 0.2 has no SIGINT/SIGTERM subscription API; compile for `wasm-gc` and provide the `aver.process_stop_requested` host import",
+        });
+    }
     // Time.sleep graduated in Phase 1.4c — the wasip2 codegen now
     // wraps `subscribe-duration` + `poll` + `[resource-drop]pollable`
     // inside `__rt_time_sleep`. The pollable model is hidden in the
@@ -245,6 +250,17 @@ mod tests {
             classify("Env.set"),
             Some(UnsupportedReason::Permanent { .. })
         ));
+        let process = classify("Process.stopRequested").expect("Process must be rejected");
+        assert!(matches!(process, UnsupportedReason::Permanent { .. }));
+        assert!(
+            render_errors(&[UnsupportedEffect {
+                effect: "Process.stopRequested".to_string(),
+                fn_name: "follow".to_string(),
+                line: 7,
+                reason: process,
+            }])
+            .contains("wasm-gc")
+        );
         // Time.sleep moved out of `Permanent` in Phase 1.4c — it now
         // lowers via subscribe-duration + poll + drop-pollable. The
         // earlier reject was a 0.18 scope choice, not a fundamental

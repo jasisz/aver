@@ -19,6 +19,28 @@ fn proof_export_builds_entry_that_shares_function_names_with_dependency() {
 }
 
 #[test]
+fn proof_export_builds_recursive_process_polling_with_monotonic_oracle() {
+    // The hostile profile becomes true only at call index three. If effect
+    // lifting restarts the oracle counter at zero on every recursive call,
+    // Lean's native evaluator diverges here instead of completing the build.
+    assert_proof_builds(
+        "examples/formal/process_stop_requested.av",
+        "aver-proof-process-stop-requested",
+    );
+}
+
+#[test]
+fn dafny_export_accepts_recursive_process_polling_boundary() {
+    // Monotonic does not mean eventually true: stopNever is valid. Dafny must
+    // therefore keep the recursive loop opaque (matching Lean's partial def)
+    // while still checking the emitted cross-call oracle predicate.
+    assert_dafny_verifies_and_passes(
+        "examples/formal/process_stop_requested.av",
+        "aver-dafny-process-stop-requested",
+    );
+}
+
+#[test]
 fn proof_export_builds_log_line_length_when_lake_is_available() {
     // Pure builtin String-length additivity (`String.len(a + b) =
     // String.len(a) + String.len(b)`) on a life-like log-line byte-budget

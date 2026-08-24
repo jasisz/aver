@@ -927,6 +927,7 @@ fn target_manifest_is_total_and_standard_capabilities_are_provided_everywhere() 
     let registry = crate::stdlib::standard_capability_registry();
     let required = [
         "Disk.readText".to_string(),
+        "Process.stopRequested".to_string(),
         "Random.int".to_string(),
         "Tcp.ping".to_string(),
         "Time.now".to_string(),
@@ -934,7 +935,7 @@ fn target_manifest_is_total_and_standard_capabilities_are_provided_everywhere() 
     .into_iter()
     .collect();
     let manifest = CapabilityTargetManifest::build(&registry, &required).expect("manifest");
-    assert_eq!(manifest.rows().len(), 16);
+    assert_eq!(manifest.rows().len(), 20);
     for (capability, operations, required_operation, native, wasm_gc, wasip2, fingerprint) in [
         (
             "Disk",
@@ -1027,6 +1028,48 @@ fn target_manifest_is_total_and_standard_capabilities_are_provided_everywhere() 
             );
         }
     }
+
+    let process = registry.contract("Process").expect("Process contract");
+    for (target, identity) in [
+        (CapabilityTarget::Vm, "aver.standard.Process/native"),
+        (CapabilityTarget::Rust, "aver.standard.Process/native"),
+        (
+            CapabilityTarget::WasmGc,
+            "aver.standard.Process/wasm-gc-imports",
+        ),
+    ] {
+        let row = manifest
+            .for_target(target)
+            .find(|row| row.capability == "Process")
+            .expect("Process target row");
+        let TargetBindingStatus::Provided(provider) = &row.status else {
+            panic!("Process must be provided on {target}");
+        };
+        assert_eq!(provider.identity, identity);
+        assert_eq!(
+            provider.fingerprint,
+            aver_rt::provider::STANDARD_PROCESS_FINGERPRINT
+        );
+        assert_eq!(row.contract_hash, process.contract_hash);
+        assert_eq!(row.model_hash, process.model_hash);
+        assert_eq!(
+            row.declared_operations,
+            ["Process.stopRequested".to_string()].into_iter().collect()
+        );
+        assert_eq!(row.required_operations, row.declared_operations);
+    }
+
+    let wasip2_process = manifest
+        .for_target(CapabilityTarget::Wasip2)
+        .find(|row| row.capability == "Process")
+        .expect("Process wasip2 row");
+    let TargetBindingStatus::Unsupported { reason } = &wasip2_process.status else {
+        panic!("a standard capability with no target identity must be unsupported");
+    };
+    assert_eq!(reason.code(), "standard-binding-unavailable");
+    let description = reason.description();
+    assert!(description.contains("WASI 0.2 has no SIGINT/SIGTERM"));
+    assert!(description.contains("wasm-gc"));
     assert!(
         "unknown"
             .parse::<CapabilityTarget>()
@@ -1042,34 +1085,30 @@ fn shipped_provenance_projects_only_provided_manifest_rows() {
 
     for target in CapabilityTarget::ALL {
         let provenance = super::shipped_target_provenance(target, &registry);
-        assert_eq!(
-            provenance.len(),
-            4,
-            "all four standards are provided on {target}"
-        );
+        let expected_capabilities = match target {
+            CapabilityTarget::Wasip2 => vec!["Disk", "Random", "Tcp", "Time"],
+            CapabilityTarget::Vm | CapabilityTarget::Rust | CapabilityTarget::WasmGc => {
+                vec!["Disk", "Process", "Random", "Tcp", "Time"]
+            }
+        };
         assert_eq!(
             provenance
                 .iter()
                 .map(|entry| entry.capability.as_str())
                 .collect::<Vec<_>>(),
-            vec!["Disk", "Random", "Tcp", "Time"]
+            expected_capabilities
         );
-        assert_eq!(
-            provenance[0].fingerprint,
-            aver_rt::provider::STANDARD_DISK_FINGERPRINT
-        );
-        assert_eq!(
-            provenance[1].fingerprint,
-            aver_rt::provider::STANDARD_RANDOM_FINGERPRINT
-        );
-        assert_eq!(
-            provenance[2].fingerprint,
-            aver_rt::provider::STANDARD_TCP_FINGERPRINT
-        );
-        assert_eq!(
-            provenance[3].fingerprint,
-            aver_rt::provider::STANDARD_TIME_FINGERPRINT
-        );
+        for entry in &provenance {
+            let expected = match entry.capability.as_str() {
+                "Disk" => aver_rt::provider::STANDARD_DISK_FINGERPRINT,
+                "Process" => aver_rt::provider::STANDARD_PROCESS_FINGERPRINT,
+                "Random" => aver_rt::provider::STANDARD_RANDOM_FINGERPRINT,
+                "Tcp" => aver_rt::provider::STANDARD_TCP_FINGERPRINT,
+                "Time" => aver_rt::provider::STANDARD_TIME_FINGERPRINT,
+                other => panic!("unexpected standard capability {other}"),
+            };
+            assert_eq!(entry.fingerprint, expected);
+        }
     }
 }
 

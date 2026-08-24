@@ -1,0 +1,26 @@
+module Process
+    kind = capability
+    semantics = effectful
+    exposes [stopRequested]
+
+operation stopRequested() -> Bool
+    ? "Reports whether SIGINT or SIGTERM requested cooperative shutdown; once true, every later observation is true."
+    oracle = generative
+    replay = recorded
+    hostile = [stopNever, stopImmediately, stopAfterOne, stopAfterThree]
+
+fn stopNever(path: BranchPath, call: Int) -> Bool
+    ? "Hostile profile: shutdown is never requested."
+    false
+
+fn stopImmediately(path: BranchPath, call: Int) -> Bool
+    ? "Hostile profile: shutdown is already requested at the first observation."
+    true
+
+fn stopAfterOne(path: BranchPath, call: Int) -> Bool
+    ? "Hostile profile: one false observation is followed by a permanent stop request."
+    call >= 1
+
+fn stopAfterThree(path: BranchPath, call: Int) -> Bool
+    ? "Hostile profile: three false observations are followed by a permanent stop request."
+    call >= 3

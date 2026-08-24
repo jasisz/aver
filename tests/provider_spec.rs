@@ -457,6 +457,42 @@ fn main() -> String
 }
 
 #[test]
+fn standard_process_provider_is_polled_through_the_registry() {
+    let root = temp_root("process-stop-requested");
+    fs::write(
+        root.join("main.av"),
+        "\
+module Client
+    exposes [main]
+    effects [Process.stopRequested]
+
+fn main() -> Bool
+    ! [Process.stopRequested]
+    Process.stopRequested()
+",
+    )
+    .expect("write entry");
+
+    let (mut machine, _contracts) = compile_vm(&root, "main.av");
+    let value = machine
+        .run()
+        .expect("default Process provider")
+        .to_value(&machine.arena);
+    assert_eq!(value, Value::Bool(false));
+
+    let (mut machine, contracts) = compile_vm(&root, "main.av");
+    let mut providers = ProviderRegistry::for_program(contracts).expect("standard registry");
+    providers.unbind("Process");
+    machine.set_provider_registry(Arc::new(providers));
+    let error = machine
+        .run()
+        .expect_err("Process must not bypass the provider registry");
+    let message = error.to_string();
+    assert!(message.contains("error[capability-provider-missing]"));
+    assert!(message.contains("Process.stopRequested") && message.contains("contract_hash sha256:"));
+}
+
+#[test]
 fn standard_random_uses_the_default_provider_and_cannot_bypass_it() {
     let root = temp_root("random-fault-injection");
     fs::write(
