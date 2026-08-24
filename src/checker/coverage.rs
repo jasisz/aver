@@ -5,15 +5,16 @@ use crate::call_graph::find_recursive_fns;
 use crate::types::Type;
 use crate::types::parse_type_str_strict;
 
+mod shapes;
+
 use super::coverage_flow::flow_covered_fns;
 use super::{
-    CheckFinding, collect_target_call_args, constructor_tag_from_expr, expr_is_bool_case,
-    expr_is_empty_list_case, expr_is_empty_string_case, expr_is_int_literal_case,
-    expr_is_non_empty_list_case, expr_is_option_none_case, expr_is_option_some_case,
-    expr_is_result_err_case, expr_is_result_ok_case, local_sum_type_constructors,
-    merge_verify_blocks, module_name_for_items, verify_case_unwraps_target,
-    verify_cases_block_is_well_formed,
+    CheckFinding, collect_target_call_args, expr_is_empty_string_case, expr_is_int_literal_case,
+    local_sum_type_constructors, merge_verify_blocks, module_name_for_items,
+    verify_case_unwraps_target, verify_cases_block_is_well_formed,
 };
+use shapes::OuterShape;
+pub(super) use shapes::ShapeAnalysis;
 
 fn direct_match_target(f: &FnDef) -> Option<(usize, &[crate::ast::MatchArm])> {
     let Expr::Match { subject, arms, .. } = &f.body.tail_expr()?.node else {
@@ -70,24 +71,24 @@ pub(super) fn return_shape_gaps(
     f: &FnDef,
     block: &VerifyBlock,
     items: &[TopLevel],
+    analysis: &ShapeAnalysis,
 ) -> Option<Vec<String>> {
     let name = block.fn_name.as_str();
     let mut gaps = Vec::new();
     match parse_type_str_strict(&f.return_type).ok()? {
         Type::Result(_, _) => {
             if !block.cases.iter().any(|(left, right)| {
-                expr_is_result_ok_case(right) || verify_case_unwraps_target(left, name)
+                exact_constructor_tag(analysis, right).as_deref() == Some("Result.Ok")
+                    || verify_case_unwraps_target(left, name)
             }) {
                 gaps.push(format!(
                     "verify examples for {} do not include any Result.Ok case",
                     name
                 ));
             }
-            if !block
-                .cases
-                .iter()
-                .any(|(_, right)| expr_is_result_err_case(right))
-            {
+            if !block.cases.iter().any(|(_, right)| {
+                exact_constructor_tag(analysis, right).as_deref() == Some("Result.Err")
+            }) {
                 gaps.push(format!(
                     "verify examples for {} do not include any Result.Err case",
                     name
@@ -95,21 +96,17 @@ pub(super) fn return_shape_gaps(
             }
         }
         Type::Option(_) => {
-            if !block
-                .cases
-                .iter()
-                .any(|(_, right)| expr_is_option_some_case(right))
-            {
+            if !block.cases.iter().any(|(_, right)| {
+                exact_constructor_tag(analysis, right).as_deref() == Some("Option.Some")
+            }) {
                 gaps.push(format!(
                     "verify examples for {} do not include any Option.Some case",
                     name
                 ));
             }
-            if !block
-                .cases
-                .iter()
-                .any(|(_, right)| expr_is_option_none_case(right))
-            {
+            if !block.cases.iter().any(|(_, right)| {
+                exact_constructor_tag(analysis, right).as_deref() == Some("Option.None")
+            }) {
                 gaps.push(format!(
                     "verify examples for {} do not include any Option.None case",
                     name
@@ -120,7 +117,7 @@ pub(super) fn return_shape_gaps(
             if !block
                 .cases
                 .iter()
-                .any(|(_, right)| expr_is_bool_case(right, true))
+                .any(|(_, right)| exact_shape_is(analysis, right, OuterShape::Bool(true)))
             {
                 gaps.push(format!(
                     "verify examples for {} do not include any `true` result",
@@ -130,7 +127,7 @@ pub(super) fn return_shape_gaps(
             if !block
                 .cases
                 .iter()
-                .any(|(_, right)| expr_is_bool_case(right, false))
+                .any(|(_, right)| exact_shape_is(analysis, right, OuterShape::Bool(false)))
             {
                 gaps.push(format!(
                     "verify examples for {} do not include any `false` result",
@@ -141,10 +138,24 @@ pub(super) fn return_shape_gaps(
         Type::Named {
             name: type_name, ..
         } => {
-            let constructors = local_sum_type_constructors(items, &type_name)?;
+            let declared: BTreeSet<String> = local_sum_type_constructors(items, &type_name)?
+                .into_iter()
+                .collect();
+            let summary = analysis.function(&f.name)?;
+            if !summary.complete {
+                return None;
+            }
+            let constructors: BTreeSet<String> = summary
+                .shapes
+                .iter()
+                .filter_map(|shape| match shape {
+                    OuterShape::Constructor(tag) if declared.contains(tag) => Some(tag.clone()),
+                    _ => None,
+                })
+                .collect();
             let mut covered = BTreeSet::new();
             for (_, right) in &block.cases {
-                if let Some(tag) = constructor_tag_from_expr(right)
+                if let Some(tag) = exact_constructor_tag(analysis, right)
                     && constructors.contains(&tag)
                 {
                     covered.insert(tag);
@@ -162,6 +173,24 @@ pub(super) fn return_shape_gaps(
         _ => return None,
     }
     Some(gaps)
+}
+
+fn exact_constructor_tag(
+    analysis: &ShapeAnalysis,
+    expr: &crate::ast::Spanned<Expr>,
+) -> Option<String> {
+    match analysis.exact_expr_shape(expr)? {
+        OuterShape::Constructor(tag) => Some(tag),
+        _ => None,
+    }
+}
+
+fn exact_shape_is(
+    analysis: &ShapeAnalysis,
+    expr: &crate::ast::Spanned<Expr>,
+    expected: OuterShape,
+) -> bool {
+    analysis.exact_expr_shape(expr).as_ref() == Some(&expected)
 }
 
 pub fn collect_verify_coverage_warnings(items: &[TopLevel]) -> Vec<CheckFinding> {
@@ -184,7 +213,8 @@ pub fn collect_verify_coverage_warnings_in(
             }
         })
         .collect();
-    let flow_covered = flow_covered_fns(items);
+    let shape_analysis = ShapeAnalysis::new(items);
+    let flow_covered = flow_covered_fns(items, &shape_analysis);
 
     let mut warnings = Vec::new();
     for block in merge_verify_blocks(items) {
@@ -210,14 +240,14 @@ pub fn collect_verify_coverage_warnings_in(
         // say nothing about the helper's own argument domain, which is what
         // the input-shape checks below claim.
         if !flow_covered.contains(block.fn_name.as_str())
-            && let Some(gaps) = return_shape_gaps(f, &block, items)
+            && let Some(gaps) = return_shape_gaps(f, &block, items, &shape_analysis)
         {
             for message in gaps {
                 warnings.push(CheckFinding {
                     line: block.line,
                     module: module_name.clone(),
                     file: source_file.map(|s| s.to_string()),
-                    fn_name: None,
+                    fn_name: Some(block.fn_name.clone()),
                     message,
                     extra_spans: vec![],
                 });
@@ -230,7 +260,7 @@ pub fn collect_verify_coverage_warnings_in(
                 let mut args = Vec::new();
                 collect_target_call_args(left, &block.fn_name, param_index, &mut args);
                 for arg in args {
-                    if let Some(tag) = constructor_tag_from_expr(arg)
+                    if let Some(tag) = exact_constructor_tag(&shape_analysis, arg)
                         && constructors.contains(&tag)
                     {
                         covered.insert(tag);
@@ -242,7 +272,7 @@ pub fn collect_verify_coverage_warnings_in(
                     line: block.line,
                     module: module_name.clone(),
                     file: source_file.map(|s| s.to_string()),
-                    fn_name: None,
+                    fn_name: Some(block.fn_name.clone()),
                     message: format!(
                         "verify examples for {} cover {}/{} enum constructors",
                         block.fn_name,
@@ -260,12 +290,15 @@ pub fn collect_verify_coverage_warnings_in(
             for (left, _) in &block.cases {
                 collect_target_call_args(left, &block.fn_name, param_index, &mut args);
             }
-            if !args.iter().any(|arg| expr_is_bool_case(arg, true)) {
+            if !args
+                .iter()
+                .any(|arg| exact_shape_is(&shape_analysis, arg, OuterShape::Bool(true)))
+            {
                 warnings.push(CheckFinding {
                     line: block.line,
                     module: module_name.clone(),
                     file: source_file.map(|s| s.to_string()),
-                    fn_name: None,
+                    fn_name: Some(block.fn_name.clone()),
                     message: format!(
                         "verify examples for {} do not cover `{}` = `true`",
                         block.fn_name, param_name
@@ -273,12 +306,15 @@ pub fn collect_verify_coverage_warnings_in(
                     extra_spans: vec![],
                 });
             }
-            if !args.iter().any(|arg| expr_is_bool_case(arg, false)) {
+            if !args
+                .iter()
+                .any(|arg| exact_shape_is(&shape_analysis, arg, OuterShape::Bool(false)))
+            {
                 warnings.push(CheckFinding {
                     line: block.line,
                     module: module_name.clone(),
                     file: source_file.map(|s| s.to_string()),
-                    fn_name: None,
+                    fn_name: Some(block.fn_name.clone()),
                     message: format!(
                         "verify examples for {} do not cover `{}` = `false`",
                         block.fn_name, param_name
@@ -294,12 +330,15 @@ pub fn collect_verify_coverage_warnings_in(
             for (left, _) in &block.cases {
                 collect_target_call_args(left, &block.fn_name, param_index, &mut args);
             }
-            if !args.iter().any(|arg| expr_is_empty_list_case(arg)) {
+            if !args
+                .iter()
+                .any(|arg| exact_shape_is(&shape_analysis, arg, OuterShape::EmptyList))
+            {
                 warnings.push(CheckFinding {
                     line: block.line,
                     module: module_name.clone(),
                     file: source_file.map(|s| s.to_string()),
-                    fn_name: None,
+                    fn_name: Some(block.fn_name.clone()),
                     message: format!(
                         "verify examples for {} do not cover empty list input for `{}`",
                         block.fn_name, param_name
@@ -307,12 +346,15 @@ pub fn collect_verify_coverage_warnings_in(
                     extra_spans: vec![],
                 });
             }
-            if !args.iter().any(|arg| expr_is_non_empty_list_case(arg)) {
+            if !args
+                .iter()
+                .any(|arg| exact_shape_is(&shape_analysis, arg, OuterShape::NonEmptyList))
+            {
                 warnings.push(CheckFinding {
                     line: block.line,
                     module: module_name.clone(),
                     file: source_file.map(|s| s.to_string()),
-                    fn_name: None,
+                    fn_name: Some(block.fn_name.clone()),
                     message: format!(
                         "verify examples for {} do not cover non-empty list input for `{}`",
                         block.fn_name, param_name
@@ -341,7 +383,7 @@ pub fn collect_verify_coverage_warnings_in(
                                 line: block.line,
                                 module: module_name.clone(),
                                 file: source_file.map(|s| s.to_string()),
-                                fn_name: None,
+                                fn_name: Some(block.fn_name.clone()),
                                 message: format!(
                                     "verify examples for recursive function {} may not include a numeric base-case input for `{}` (`0` or `1`)",
                                     block.fn_name, param_name
@@ -350,12 +392,16 @@ pub fn collect_verify_coverage_warnings_in(
                             });
                     }
                 }
-                Type::List(_) if !args.iter().any(|arg| expr_is_empty_list_case(arg)) => {
+                Type::List(_)
+                    if !args
+                        .iter()
+                        .any(|arg| exact_shape_is(&shape_analysis, arg, OuterShape::EmptyList)) =>
+                {
                     warnings.push(CheckFinding {
                                 line: block.line,
                                 module: module_name.clone(),
                                 file: source_file.map(|s| s.to_string()),
-                                fn_name: None,
+                                fn_name: Some(block.fn_name.clone()),
                                 message: format!(
                                     "verify examples for recursive function {} may not include an empty list input for `{}`",
                                     block.fn_name, param_name
@@ -368,7 +414,7 @@ pub fn collect_verify_coverage_warnings_in(
                                 line: block.line,
                                 module: module_name.clone(),
                                 file: source_file.map(|s| s.to_string()),
-                                fn_name: None,
+                                fn_name: Some(block.fn_name.clone()),
                                 message: format!(
                                     "verify examples for recursive function {} may not include an empty string input for `{}`",
                                     block.fn_name, param_name
@@ -400,7 +446,7 @@ pub fn collect_verify_coverage_warnings_in(
                         line: block.line,
                         module: module_name.clone(),
                         file: source_file.map(|s| s.to_string()),
-                        fn_name: None,
+                        fn_name: Some(block.fn_name.clone()),
                         message: format!(
                             "verify examples for {} may not include an empty string input for `{}`",
                             block.fn_name, param_name
@@ -569,6 +615,161 @@ verify classify
             }),
             "expected output-constructor coverage warning, got {:?}",
             warnings
+        );
+    }
+
+    #[test]
+    fn sum_output_coverage_counts_the_function_image_not_the_whole_type() {
+        let items = parse_items(
+            r#"
+type Finding
+    WorkMet
+    WorkUnmet
+    SignatureValid
+    SignatureInvalid
+
+fn workFinding(met: Bool) -> Finding
+    match met
+        true -> Finding.WorkMet
+        false -> Finding.WorkUnmet
+
+verify workFinding
+    workFinding(true) => Finding.WorkMet
+"#,
+        );
+        let warnings = collect_verify_coverage_warnings(&items);
+        assert!(
+            warnings.iter().any(|warning| {
+                warning.message == "verify examples for workFinding cover 1/2 output constructors"
+                    && warning.fn_name.as_deref() == Some("workFinding")
+            }),
+            "expected the reachable 1/2 denominator and function scope, got {warnings:?}"
+        );
+        assert!(
+            warnings
+                .iter()
+                .all(|warning| !warning.message.contains("/4")),
+            "the unreachable constructors must not enter the denominator: {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn sum_output_image_includes_local_return_calls_transitively() {
+        let items = parse_items(
+            r#"
+type Finding
+    WorkMet
+    WorkUnmet
+    Irrelevant
+
+fn unmet() -> Finding
+    Finding.WorkUnmet
+
+fn workFinding(met: Bool) -> Finding
+    match met
+        true -> Finding.WorkMet
+        false -> unmet()
+
+verify workFinding
+    workFinding(true) => Finding.WorkMet
+    workFinding(false) => unmet()
+"#,
+        );
+        let warnings = collect_verify_coverage_warnings(&items);
+        assert!(
+            warnings
+                .iter()
+                .all(|warning| !warning.message.contains("workFinding cover")),
+            "the local helper should count in both the image and the example: {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn unknown_output_path_declines_to_invent_a_denominator() {
+        let items = parse_items(
+            r#"
+type Finding
+    Known
+    Other
+
+fn classify(flag: Bool) -> Finding
+    match flag
+        true -> Finding.Known
+        false -> externalFinding()
+
+verify classify
+    classify(true) => Finding.Known
+"#,
+        );
+        let warnings = collect_verify_coverage_warnings(&items);
+        assert!(
+            warnings
+                .iter()
+                .all(|warning| !warning.message.contains("output constructors")),
+            "an incomplete static image must not become a denominator: {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn local_helpers_with_one_outer_shape_are_credited() {
+        let items = parse_items(
+            r#"
+fn blank() -> Result<Int, String>
+    Result.Err("blank")
+
+fn oneItem() -> List<Int>
+    [1]
+
+fn decodedFrom(input: Result<Int, String>) -> Result<Int, String>
+    input
+
+verify decodedFrom
+    decodedFrom(Result.Ok(1)) => Result.Ok(1)
+    decodedFrom(Result.Err("bad")) => blank()
+
+fn headOrZero(items: List<Int>) -> Int
+    match items
+        [] -> 0
+        [head, ..tail] -> head
+
+verify headOrZero
+    headOrZero([]) => 0
+    headOrZero(oneItem()) => 1
+"#,
+        );
+        let warnings = collect_verify_coverage_warnings(&items);
+        assert!(
+            warnings.iter().all(|warning| {
+                !warning.message.contains("decodedFrom") && !warning.message.contains("headOrZero")
+            }),
+            "single-shape helpers should be credited without flattening: {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn a_multi_shape_helper_is_not_guessed_from_its_call_arguments() {
+        let items = parse_items(
+            r#"
+fn expected(flag: Bool) -> Result<Int, String>
+    match flag
+        true -> Result.Ok(1)
+        false -> Result.Err("bad")
+
+fn decodedFrom(input: Result<Int, String>) -> Result<Int, String>
+    input
+
+verify decodedFrom
+    decodedFrom(Result.Ok(1)) => Result.Ok(1)
+    decodedFrom(Result.Err("bad")) => expected(false)
+"#,
+        );
+        let warnings = collect_verify_coverage_warnings(&items);
+        assert!(
+            warnings.iter().any(|warning| {
+                warning.message
+                    == "verify examples for decodedFrom do not include any Result.Err case"
+            }),
+            "the static shape summary must not pretend to evaluate helper arguments: {warnings:?}"
         );
     }
 

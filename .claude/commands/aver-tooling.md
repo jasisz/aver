@@ -386,12 +386,13 @@ paths = ["./data/**"]
 keys = ["APP_*", "TOKEN"]
 
 [[check.suppress]]
-slug = "non-tail-recursion"
-files = ["**/eval/**"]
-reason = "Tree-walking interpreter — CPS would destroy correspondence."
+slug = "verify-coverage"
+files = ["domain/checks.av"]
+fn = "eachInBranch"
+reason = "Its Result error arm is uninhabited by constructible inputs."
 ```
 
-Effect-host / path / key allowlists narrow which hosts, files, and env keys the runtime will admit. `[[check.suppress]]` lets a project waive specific lint slugs in specific paths with a reason.
+Effect-host / path / key allowlists narrow which hosts, files, and env keys the runtime will admit. `[[check.suppress]]` lets a project waive specific lint slugs in specific paths, optionally for one exact function, with a reason.
 
 Disk path patterns have deliberately small, explicit semantics:
 
@@ -407,6 +408,7 @@ An empty pattern, unsupported `*` placement, or a `..`-rooted pattern is also a 
 `[[check.suppress]]` rules in detail:
 
 - `files` globs match the file's path **relative to the module root**, so a leading `./` is insignificant on either side and every spelling of the same file (`aver check domain/version.av`, `aver check ./domain/version.av`, `aver check .`, an absolute path, or a dependency module of the program) honours the same rule. A rule with no `files` key applies everywhere.
+- `fn` is optional. When present, it matches only diagnostics carrying that exact function name; diagnostics without a function cannot match it. Use it to accept one deliberate residue without silencing neighbouring functions.
 - `aver check` and `aver audit` apply the same rules. Both print how many warnings a file's waivers removed.
 - Suppression applies to warnings only. It can never hide an `error[...]`, a verify failure, or the `needs-format` result, so a waiver can never change a command's exit code.
 - A rule that removes nothing during a whole-directory run (`aver check .`, `aver audit .`) is reported on stderr, telling you whether its globs matched no checked file at all or matched files whose warning no longer fires. Single-file runs stay quiet, since they legitimately never exercise rules scoped to other paths.

@@ -222,30 +222,6 @@ fn constructor_tag_from_expr(expr: &Spanned<Expr>) -> Option<String> {
     }
 }
 
-fn expr_is_result_err_case(expr: &Spanned<Expr>) -> bool {
-    match &expr.node {
-        Expr::FnCall(callee, _) => dotted_name(callee)
-            .and_then(|path| normalize_constructor_tag(&path))
-            .is_some_and(|tag| tag == "Result.Err"),
-        Expr::Constructor(name, _) => {
-            normalize_constructor_tag(name).is_some_and(|tag| tag == "Result.Err")
-        }
-        _ => false,
-    }
-}
-
-fn expr_is_result_ok_case(expr: &Spanned<Expr>) -> bool {
-    match &expr.node {
-        Expr::FnCall(callee, _) => dotted_name(callee)
-            .and_then(|path| normalize_constructor_tag(&path))
-            .is_some_and(|tag| tag == "Result.Ok"),
-        Expr::Constructor(name, _) => {
-            normalize_constructor_tag(name).is_some_and(|tag| tag == "Result.Ok")
-        }
-        _ => false,
-    }
-}
-
 /// True when the left side of a verify case applies `?` directly to a call of
 /// the function under verification, however that `?` is wrapped —
 /// `readOne([7, 9])?.value => 7` or `List.len(readOne(xs)?.rest) => 1`.
@@ -272,42 +248,6 @@ fn expr_is_target_call(expr: &Spanned<Expr>, fn_name: &str) -> bool {
         Expr::TailCall(boxed) => boxed.target == fn_name,
         _ => false,
     }
-}
-
-fn expr_is_option_none_case(expr: &Spanned<Expr>) -> bool {
-    match &expr.node {
-        Expr::Attr(_, _) => dotted_name(expr)
-            .and_then(|path| normalize_constructor_tag(&path))
-            .is_some_and(|tag| tag == "Option.None"),
-        Expr::Constructor(name, None) => {
-            normalize_constructor_tag(name).is_some_and(|tag| tag == "Option.None")
-        }
-        _ => false,
-    }
-}
-
-fn expr_is_option_some_case(expr: &Spanned<Expr>) -> bool {
-    match &expr.node {
-        Expr::FnCall(callee, _) => dotted_name(callee)
-            .and_then(|path| normalize_constructor_tag(&path))
-            .is_some_and(|tag| tag == "Option.Some"),
-        Expr::Constructor(name, _) => {
-            normalize_constructor_tag(name).is_some_and(|tag| tag == "Option.Some")
-        }
-        _ => false,
-    }
-}
-
-fn expr_is_bool_case(expr: &Spanned<Expr>, expected: bool) -> bool {
-    matches!(&expr.node, Expr::Literal(Literal::Bool(value)) if *value == expected)
-}
-
-fn expr_is_empty_list_case(expr: &Spanned<Expr>) -> bool {
-    matches!(&expr.node, Expr::List(items) if items.is_empty())
-}
-
-fn expr_is_non_empty_list_case(expr: &Spanned<Expr>) -> bool {
-    matches!(&expr.node, Expr::List(items) if !items.is_empty())
 }
 
 fn expr_is_empty_string_case(expr: &Spanned<Expr>) -> bool {
