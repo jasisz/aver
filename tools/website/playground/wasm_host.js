@@ -365,6 +365,15 @@ export class AverBrowserHost {
                         this.callerFnFromIdx(callerIdx),
                     );
                 },
+                process_stop_requested: (callerIdx) =>
+                    this.recordOrDispatch(
+                        "Process.stopRequested",
+                        [],
+                        () => false,
+                        (json) => Boolean(json),
+                        (value) => Boolean(value),
+                        this.callerFnFromIdx(callerIdx),
+                    ),
                 console_print: (sref, callerIdx) => {
                     const text = this.averToJs(sref);
                     this.recordOrDispatch(
@@ -396,6 +405,13 @@ export class AverBrowserHost {
                         () => undefined,
                         () => null,
                         this.callerFnFromIdx(callerIdx),
+                    );
+                },
+                provider_contract_violation: (sref, _callerIdx) => {
+                    const error = this.averToJs(sref);
+                    this.postConsole(
+                        "stderr",
+                        `provider contract violated: discharged Result returned Err(${error})`,
                     );
                 },
                 console_read_line: (callerIdx) => {

@@ -13,6 +13,10 @@
 //!   trace, no real disk write happens during replay.
 //! - Int-returning `main` with `Time.unixMs` records the actual
 //!   integer return; replay → `Output: MATCH`.
+//! - `Process.stopRequested` reaches the native provider and preserves its
+//!   Bool observation through record/replay.
+//! - A replayed `Err` at a literal-discharge boundary reaches the native
+//!   provider-contract diagnostic before the guest traps.
 //! - Tampering the recorded `output` value flips replay to
 //!   `Output: DIFFERS` with a non-zero exit shape that the JSON
 //!   diagnostic surfaces (`expected: …, actual: …`).
@@ -130,6 +134,95 @@ fn wasm_gc_record_replay_unit_main_round_trips() {
     assert!(
         stdout.contains("Output:  MATCH"),
         "expected `Output: MATCH` for clean replay, got:\n{stdout}"
+    );
+
+    let _ = fs::remove_dir_all(&work);
+    let _ = fs::remove_dir_all(&rec_dir);
+}
+
+#[test]
+fn wasm_gc_process_stop_observation_records_and_replays() {
+    let work = temp_dir("aver-wasm-gc-rec-process");
+    let prog = write_program(
+        &work,
+        "main.av",
+        "module ProcessReplay\n    intent = \"Process host record/replay smoke\"\n\n\
+         fn main() -> Bool\n    ! [Process.stopRequested]\n    \
+         Process.stopRequested()\n",
+    );
+    let rec_dir = temp_dir("aver-wasm-gc-rec-process-traces");
+
+    let rec_path = record_via_cli(&prog, &rec_dir);
+    let raw = fs::read_to_string(&rec_path).expect("read Process recording");
+    assert!(
+        raw.contains("\"Process.stopRequested\"") && raw.contains("\"value\": false"),
+        "recording must contain the initial false Process observation:\n{raw}"
+    );
+
+    let replay = replay_via_cli(&rec_path);
+    assert!(
+        replay.status.success(),
+        "Process replay failed:\n{}",
+        format_output(&replay)
+    );
+    assert!(
+        String::from_utf8_lossy(&replay.stdout).contains("Output:  MATCH"),
+        "Process replay output must match:\n{}",
+        String::from_utf8_lossy(&replay.stdout)
+    );
+
+    let _ = fs::remove_dir_all(&work);
+    let _ = fs::remove_dir_all(&rec_dir);
+}
+
+#[test]
+fn wasm_gc_replay_reports_discharged_provider_error_before_trapping() {
+    let work = temp_dir("aver-wasm-gc-rec-contract-violation");
+    let prog = write_program(
+        &work,
+        "main.av",
+        "module ContractViolationReplay\n    intent = \"diagnostic boundary smoke\"\n\n\
+         fn main() -> Unit\n    ! [Time.sleep]\n    Time.sleep(1)\n",
+    );
+    let rec_dir = temp_dir("aver-wasm-gc-rec-contract-violation-traces");
+    let rec_path = record_via_cli(&prog, &rec_dir);
+    let raw = fs::read_to_string(&rec_path).expect("read Time.sleep recording");
+    let mut recording =
+        aver::replay::parse_session_recording(&raw).expect("parse Time.sleep recording");
+    let sleep = recording
+        .effects
+        .iter_mut()
+        .find(|effect| effect.effect_type == "Time.sleep")
+        .expect("Time.sleep effect record");
+    let mut marker = std::collections::BTreeMap::new();
+    marker.insert(
+        "$err".to_string(),
+        aver::replay::JsonValue::String("hostile replay provider".to_string()),
+    );
+    sleep.outcome = aver::replay::RecordedOutcome::Value(aver::replay::JsonValue::Object(marker));
+    let hostile_path = work.join("hostile.json");
+    fs::write(
+        &hostile_path,
+        aver::replay::session_recording_to_string_pretty(&recording),
+    )
+    .expect("write hostile Time.sleep recording");
+
+    let replay = replay_via_cli(&hostile_path);
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&replay.stdout),
+        String::from_utf8_lossy(&replay.stderr)
+    );
+    assert!(
+        combined.contains(
+            "provider contract violated: discharged Result returned Err(hostile replay provider)"
+        ),
+        "native wasm-gc host lost the provider diagnostic:\n{combined}"
+    );
+    assert!(
+        combined.contains("fail[replay-error]")
+            && combined.contains("wasm `unreachable` instruction executed"),
+        "discharged provider Err must trap instead of producing a fallback:\n{combined}"
     );
 
     let _ = fs::remove_dir_all(&work);

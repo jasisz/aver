@@ -487,9 +487,10 @@ Literal discharge is fail-closed: it removes user-side `Result` ceremony, not th
 
 ### `Process` namespace — use `! [Process.stopRequested]`
 
-Contract source: `stdlib/capabilities/process.av`. Native VM and generated
-Rust install one process-wide SIGINT/SIGTERM flag; wasm-gc calls the
-`aver.process_stop_requested` host import. WASI 0.2 has no corresponding
+Contract source: `stdlib/capabilities/process.av`. Native VM, generated Rust,
+and the embedded wasm-gc wasmtime host install one process-wide SIGINT/SIGTERM
+flag. Browser and Worker wasm-gc hosts satisfy `aver.process_stop_requested`
+with `false`, because they have no process signal. WASI 0.2 has no corresponding
 signal binding, so wasip2 rejects this effect at compile time and points to
 `--target wasm-gc`.
 

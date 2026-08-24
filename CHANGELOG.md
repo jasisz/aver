@@ -275,6 +275,10 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Fixed
 
+- **wasm-gc now says when a provider breaks a statically discharged contract.** A call such as `Time.sleep(1)` or `Random.int(1, 6)` still executes without source-level `Result` ceremony, but if its host returns `Err` anyway the guest now sends that exact error text through the internal `aver.provider_contract_violation` diagnostic import before trapping. The branch remains fail-closed—there is still no fallback value—and the import is compiler/runtime protocol rather than a recordable Aver effect. Closes [#1112](https://github.com/jasisz/aver/issues/1112).
+
+- **The wasm-gc hosts and certificate wall now fully admit `Process.stopRequested`.** The embedded wasmtime runner polls the native monotonic SIGINT/SIGTERM provider and records/replays the observation; browser and Cloudflare hosts explicitly return `false`, where no process signal exists, instead of relying on a generic missing-import stub. The independent Lean wall's closed host-import registry now includes both this binding and the new provider-contract diagnostic, with a recomputed wall identity.
+
 - **A source file with many diagnostics is linear to render again.** Diagnostic construction now indexes the file's lines once and shares that table across every finding instead of splitting and rescanning the complete source for every error. A half-written large module no longer turns `aver check` diagnostics into quadratic work.
 
 - **The nightly wasm-gc/wasip2 fuzz lanes build again.** The production multi-module flattener gained capability-registry and runtime/verification-surface arguments, but its three fuzz callers kept the old two-argument call and failed during compilation before AFL started. The codegen and VM↔wasm-gc parity targets now pass the typechecked program registry and runtime surface, matching the production compile path they exercise.

@@ -6620,10 +6620,13 @@ fn discover_builtins_in_expr(
                     builtins.register(BuiltinName::IntDivEuclid);
                 }
             }
-            if let ResolvedCallee::Intrinsic(intrinsic) = callee
-                && let Some(name) = BuiltinName::from_dotted(intrinsic.name())
-            {
-                builtins.register(name);
+            if let ResolvedCallee::Intrinsic(intrinsic) = callee {
+                if let Some(name) = BuiltinName::from_dotted(intrinsic.name()) {
+                    builtins.register(name);
+                }
+                if matches!(intrinsic, crate::ir::hir::BuiltinIntrinsic::ResultProven) {
+                    effects.register(EffectName::ProviderContractViolation);
+                }
             }
             for arg in args {
                 discover_builtins_in_expr(
