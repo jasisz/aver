@@ -6353,7 +6353,7 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
         }
         #[cfg(not(feature = "wasm"))]
         {
-            let _ = (handler, optimize, pack, certify);
+            let _ = (handler, optimize, pack, certify, packed_sequences_enabled);
             eprintln!(
                 "{}",
                 "WASM target requires --features wasm (rebuild with: \
