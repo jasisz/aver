@@ -766,6 +766,12 @@ function ResultWithDefault<T, E>(r: Result<T, E>, d: T): T {
   case Ok(v) => v
   case Err(_) => d
 }
+
+function ResultProven<T, E>(r: Result<T, E>): T
+  requires r.Ok?
+{
+  r.value
+}
 "#;
 
 const DAFNY_HELPER_OPTION_DATATYPE: &str = r#"

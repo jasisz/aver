@@ -183,6 +183,48 @@ pub fn hostile_profiles_for(method: &str) -> Vec<HostileProfile> {
                 ),
             },
         ],
+        "Terminal.clear"
+        | "Terminal.hideCursor"
+        | "Terminal.showCursor"
+        | "Terminal.flush"
+        | "Terminal.enableRawMode"
+        | "Terminal.disableRawMode"
+        | "Terminal.resetColor" => vec![
+            HostileProfile {
+                name: "normal_ok",
+                stub_fn_name: stub_name("normal_ok"),
+                stub_body: format!(
+                    "fn {}(path: BranchPath, n: Int) -> Result<Unit, String>\n    ? \"honest: terminal operation succeeds\"\n    Result.Ok(Unit)\n",
+                    stub_name("normal_ok")
+                ),
+            },
+            HostileProfile {
+                name: "always_err",
+                stub_fn_name: stub_name("always_err"),
+                stub_body: format!(
+                    "fn {}(path: BranchPath, n: Int) -> Result<Unit, String>\n    ? \"hostile: terminal operation fails\"\n    Result.Err(\"hostile: terminal operation unavailable\")\n",
+                    stub_name("always_err")
+                ),
+            },
+        ],
+        "Terminal.print" | "Terminal.setColor" => vec![
+            HostileProfile {
+                name: "normal_ok",
+                stub_fn_name: stub_name("normal_ok"),
+                stub_body: format!(
+                    "fn {}(path: BranchPath, n: Int, value: String) -> Result<Unit, String>\n    ? \"honest: terminal accepts the value\"\n    Result.Ok(Unit)\n",
+                    stub_name("normal_ok")
+                ),
+            },
+            HostileProfile {
+                name: "always_err",
+                stub_fn_name: stub_name("always_err"),
+                stub_body: format!(
+                    "fn {}(path: BranchPath, n: Int, value: String) -> Result<Unit, String>\n    ? \"hostile: terminal rejects the value\"\n    Result.Err(\"hostile: terminal output unavailable\")\n",
+                    stub_name("always_err")
+                ),
+            },
+        ],
         "Console.readLine" => vec![
             HostileProfile {
                 name: "normal",
@@ -253,7 +295,7 @@ pub fn hostile_profiles_for(method: &str) -> Vec<HostileProfile> {
                 name: "normal",
                 stub_fn_name: stub_name("normal"),
                 stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int) -> Option<String>\n    ? \"honest: user pressed a normal key\"\n    Option.Some(\"a\")\n",
+                    "fn {}(path: BranchPath, n: Int) -> Result<Option<String>, String>\n    ? \"honest: user pressed a normal key\"\n    Result.Ok(Option.Some(\"a\"))\n",
                     stub_name("normal")
                 ),
             },
@@ -261,8 +303,16 @@ pub fn hostile_profiles_for(method: &str) -> Vec<HostileProfile> {
                 name: "no_input",
                 stub_fn_name: stub_name("no_input"),
                 stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int) -> Option<String>\n    ? \"hostile: terminal returns no key — user idle\"\n    Option.None\n",
+                    "fn {}(path: BranchPath, n: Int) -> Result<Option<String>, String>\n    ? \"hostile: terminal returns no key — user idle\"\n    Result.Ok(Option.None)\n",
                     stub_name("no_input")
+                ),
+            },
+            HostileProfile {
+                name: "always_err",
+                stub_fn_name: stub_name("always_err"),
+                stub_body: format!(
+                    "fn {}(path: BranchPath, n: Int) -> Result<Option<String>, String>\n    ? \"hostile: terminal input fails\"\n    Result.Err(\"hostile: terminal input unavailable\")\n",
+                    stub_name("always_err")
                 ),
             },
         ],

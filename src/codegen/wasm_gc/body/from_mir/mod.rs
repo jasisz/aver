@@ -1013,6 +1013,12 @@ pub(crate) fn emit_mir_expr(
                     // mix an i64 helper with ref operands (invalid wasm)
                     // and silently truncate a Big.
                     use crate::ir::hir::BuiltinIntrinsic;
+                    if matches!(intr, BuiltinIntrinsic::ResultProven) {
+                        return match emit_mir_result_proven(func, &call.args, slots, ctx)? {
+                            MirBuiltinEmit::Produced(produces) => Ok(Some(produces)),
+                            MirBuiltinEmit::Fallback | MirBuiltinEmit::NotHandled => Ok(None),
+                        };
+                    }
                     if matches!(intr, BuiltinIntrinsic::VectorNew) {
                         return match emit_mir_vector_new_literal(func, &call.args, slots, ctx)? {
                             MirBuiltinEmit::Produced(produces) => Ok(Some(produces)),
@@ -1058,7 +1064,8 @@ pub(crate) fn emit_mir_expr(
                     }
                     // Literal-count discharge of `Bits.shiftLeft` /
                     // `.shiftRight` / `.low`: the count is a syntactic
-                    // bounded non-negative literal, so no `Result` is built. Shares
+                    // non-negative literal (bounded for shift-left/low, any
+                    // size for shift-right), so no `Result` is built. Shares
                     // `emit_bits_counted_value` with the guarded surface
                     // call, so the two forms compute the same thing by
                     // construction.

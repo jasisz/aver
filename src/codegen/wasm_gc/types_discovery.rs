@@ -120,12 +120,24 @@ pub(super) fn collect_results_from_builtin_uses(
                         "Console.readLine" | "Disk.readText" => intern("Result<String,String>"),
                         "Time.sleep"
                         | "Env.set"
+                        | "Terminal.enableRawMode"
+                        | "Terminal.disableRawMode"
+                        | "Terminal.clear"
                         | "Terminal.moveTo"
+                        | "Terminal.print"
+                        | "Terminal.setColor"
+                        | "Terminal.resetColor"
+                        | "Terminal.hideCursor"
+                        | "Terminal.showCursor"
+                        | "Terminal.flush"
                         | "HttpServer.listen"
                         | "HttpServer.listenWith"
                         | "SelfHostRuntime.httpServerListen"
                         | "SelfHostRuntime.httpServerListenWith" => intern("Result<Unit,String>"),
                         "Terminal.size" => intern("Result<Terminal.Size,String>"),
+                        "Terminal.readKey" => {
+                            intern("Result<Option<String>,String>");
+                        }
                         "Disk.readBytes" => {
                             // wasip2 reuses the raw-octet Disk.readText helper
                             // internally, then adapts its carrier to Bytes.

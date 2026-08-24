@@ -1,6 +1,8 @@
 /// Terminal service — raw mode, cursor control, colored output, key input.
 ///
-/// Built on `crossterm`. All public functions return `Result<_, String>` or `Option<String>`.
+/// Built on `crossterm`. Every public operation reports adapter failures as
+/// `Result<_, String>`; a successful key poll still uses `Option<String>` to
+/// distinguish "no key available" from an input error.
 use crossterm::{
     cursor,
     event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
@@ -91,19 +93,19 @@ pub fn reset_color() -> Result<(), String> {
     })
 }
 
-/// Non-blocking key read. Returns `None` if no key is available.
-pub fn read_key() -> Option<String> {
-    if !event::poll(Duration::ZERO).ok()? {
-        return None;
+/// Non-blocking key read. Returns `Ok(None)` if no key is available.
+pub fn read_key() -> Result<Option<String>, String> {
+    if !event::poll(Duration::ZERO).map_err(|e| e.to_string())? {
+        return Ok(None);
     }
-    let event = event::read().ok()?;
-    match event {
+    let event = event::read().map_err(|e| e.to_string())?;
+    Ok(match event {
         Event::Key(KeyEvent {
             code, modifiers, ..
         }) => {
             // Ctrl+C always produces "esc" so the game can exit
             if modifiers.contains(KeyModifiers::CONTROL) && code == KeyCode::Char('c') {
-                return Some("esc".to_string());
+                return Ok(Some("esc".to_string()));
             }
             match code {
                 KeyCode::Up => Some("up".to_string()),
@@ -117,7 +119,7 @@ pub fn read_key() -> Option<String> {
             }
         }
         _ => None,
-    }
+    })
 }
 
 pub fn size() -> Result<(i64, i64), String> {

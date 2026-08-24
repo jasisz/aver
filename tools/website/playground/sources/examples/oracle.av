@@ -16,12 +16,12 @@ fn highDie(path: BranchPath, k: Int, lo: Int, hi: Int) -> Result<Int, String>
 
 verify roll law usesOracle
     given rnd: Random.int = [highDie]
-    roll() => Result.withDefault(rnd(BranchPath.Root, 0, 1, 6), 1)
+    Result.Ok(roll()) => rnd(BranchPath.Root, 0, 1, 6)
 
 verify roll trace
     given rnd: Random.int = [highDie]
     rolled = roll()
-    rolled.result => Result.withDefault(rnd(BranchPath.Root, 0, 1, 6), 1)
+    Result.Ok(rolled.result) => rnd(BranchPath.Root, 0, 1, 6)
     rolled.trace.length() => 1
     rolled.trace.contains(Random.int(1, 6)) => true
 

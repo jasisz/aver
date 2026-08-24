@@ -197,7 +197,7 @@ pub fn emit_verify_block(
     }
 
     if let VerifyKind::Law(law) = &vb.kind {
-        return emit_verify_law_block(vb, law, ctx, verify_mode, case_index_start);
+        return emit_verify_law_block(vb, law, ctx, verify_mode, case_index_start, decidability);
     }
 
     // Oracle v1: `verify fn trace` cases-form — mix of provable and
@@ -209,7 +209,13 @@ pub fn emit_verify_block(
     // rest with a pointer to docs/oracle.md. Both are checked at
     // runtime via `aver verify` regardless.
     if vb.trace {
-        return emit_verify_trace_block_proofs(vb, ctx, verify_mode, case_index_start);
+        return emit_verify_trace_block_proofs(
+            vb,
+            ctx,
+            verify_mode,
+            case_index_start,
+            decidability,
+        );
     }
 
     // Same gate the law form gets in `emit_verify_law_block`. A sampled case
@@ -423,7 +429,7 @@ fn emit_statement_rhs(
     ctx: &CodegenContext,
 ) -> (String, bool) {
     if let Some(literal) = ground_truth {
-        return (ascribe_refined_record_rhs(right, literal), false);
+        return (ascribe_ground_truth_rhs(right, literal, ctx), false);
     }
     let scope = ctx.active_module_scope();
     let resolved = ctx.resolve_expr(right, scope.as_deref());
@@ -435,6 +441,38 @@ fn emit_statement_rhs(
     }
     let body = ctx.with_lean_do_block(true, || super::expr::emit_expr(&resolved, ctx));
     (format!("(do pure ({}))", body), true)
+}
+
+fn ascribe_ground_truth_rhs(
+    right: &Spanned<Expr>,
+    emitted: String,
+    ctx: &CodegenContext,
+) -> String {
+    let emitted = ascribe_refined_record_rhs(right, emitted);
+    let inferred = right
+        .ty()
+        .cloned()
+        .or_else(|| {
+            let scope = ctx.active_module_scope();
+            ctx.resolve_expr(right, scope.as_deref()).ty().cloned()
+        })
+        .or_else(|| {
+            let Expr::FnCall(callee, _) = &right.node else {
+                return None;
+            };
+            let name = crate::codegen::common::expr_to_dotted_name(&callee.node)?;
+            let scope = ctx.active_module_scope();
+            let fd = ctx.fn_def_by_name(&name, scope.as_deref())?;
+            Some(crate::codegen::common::parse_type_annotation(
+                &fd.return_type,
+            ))
+        });
+    match inferred.as_ref() {
+        Some(ty @ Type::Result(_, _)) if emitted.trim_start().starts_with("Except.") => {
+            format!("({emitted} : {})", super::types::type_to_lean(ty))
+        }
+        _ => emitted,
+    }
 }
 
 /// Give Lean an expected type for direct refinement-record RHS literals.
@@ -479,6 +517,7 @@ fn emit_verify_trace_block_proofs(
     ctx: &CodegenContext,
     verify_mode: VerifyEmitMode,
     case_index_start: usize,
+    decidability: &CaseDecidability,
 ) -> (String, usize) {
     use crate::ast::Expr;
     let mut lines = Vec::new();
@@ -548,9 +587,14 @@ fn emit_verify_trace_block_proofs(
 
         match verify_mode {
             VerifyEmitMode::NativeDecide => {
+                let tactic = if decidability.roots_reach_result_proven(&[&fn_call, right], ctx) {
+                    result_proven_trace_sample_tactic(&fn_call, right, case_bindings)
+                } else {
+                    "native_decide".to_string()
+                };
                 lines.push(format!(
-                    "example : {} = {} := by native_decide",
-                    lhs_str, rhs_str
+                    "example : {} = {} := by {}",
+                    lhs_str, rhs_str, tactic
                 ));
             }
             VerifyEmitMode::Sorry => {
@@ -574,12 +618,34 @@ fn emit_verify_trace_block_proofs(
     (lines.join("\n"), case_index_start + case_total)
 }
 
+fn result_proven_trace_sample_tactic(
+    left: &Spanned<Expr>,
+    right: &Spanned<Expr>,
+    case_bindings: &[(String, Spanned<Expr>)],
+) -> String {
+    let mut source_defs = std::collections::BTreeSet::new();
+    crate::codegen::proof_recognize::collect_called_fns(left, &mut source_defs);
+    crate::codegen::proof_recognize::collect_called_fns(right, &mut source_defs);
+    for (_, value) in case_bindings {
+        if let Expr::Ident(name) | Expr::Resolved { name, .. } = &value.node {
+            source_defs.insert(name.clone());
+        }
+    }
+    let mut defs = source_defs
+        .into_iter()
+        .map(|name| aver_name_to_lean(&name))
+        .collect::<std::collections::BTreeSet<_>>();
+    defs.insert("Except.proven".to_string());
+    format!("simp [{}]", defs.into_iter().collect::<Vec<_>>().join(", "))
+}
+
 fn emit_verify_law_block(
     vb: &VerifyBlock,
     law: &VerifyLaw,
     ctx: &CodegenContext,
     verify_mode: VerifyEmitMode,
     case_index_start: usize,
+    decidability: &CaseDecidability,
 ) -> (String, usize) {
     let mut lines = Vec::new();
     let fn_name = aver_name_to_lean(&vb.fn_name);
@@ -731,10 +797,12 @@ fn emit_verify_law_block(
     // the token parametrically; close those by definitional reduction instead.
     // If a future construct makes the claim depend on the token, `rfl` fails
     // closed rather than smuggling an equality/inhabitedness assumption in.
-    let ground_sample_tactic = if fresh_resource_params.is_empty() {
-        "native_decide"
+    let ground_sample_tactic = if !fresh_resource_params.is_empty() {
+        "rfl".to_string()
+    } else if decidability.roots_reach_result_proven(&[&law.lhs, &law.rhs], ctx) {
+        super::law_auto::result_proven_sample_tactic(vb, law, ctx)
     } else {
-        "rfl"
+        "native_decide".to_string()
     };
     let mut quant_param_parts = law
         .givens

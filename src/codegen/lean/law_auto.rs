@@ -27,7 +27,7 @@ mod triangle_sum;
 use super::VerifyEmitMode;
 use super::expr::aver_name_to_lean;
 use super::recursive_pure_fn_names;
-use crate::ast::{VerifyBlock, VerifyLaw};
+use crate::ast::{Expr, VerifyBlock, VerifyGivenDomain, VerifyLaw};
 use crate::codegen::CodegenContext;
 use crate::verify_law::{collect_missing_helper_law_hints, missing_helper_law_message};
 use sampled::emit_guarded_domain_law;
@@ -177,6 +177,35 @@ pub(in crate::codegen::lean) use transparent_chain::recognize_transparent_chain;
 /// (`unsolved goals`). Re-exported up to `codegen::lean` for the `--check`
 /// harness in the `aver` binary; see [`induction::residual_probe_body`].
 pub use induction::{residual_probe_body, residual_probe_body_dump};
+
+/// A normalization tactic for ground Oracle samples whose call cone crosses
+/// `Except.proven`. Such definitions are intentionally noncomputable, so
+/// `native_decide` is unavailable; the bounded-oracle subtype theorem and the
+/// concrete stub definitions reduce the successful path without assigning a
+/// value to an impossible provider error.
+pub(in crate::codegen::lean) fn result_proven_sample_tactic(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+) -> String {
+    let mut defs = shared::law_simp_defs(ctx, vb, law);
+    for given in &law.givens {
+        let VerifyGivenDomain::Explicit(values) = &given.domain else {
+            continue;
+        };
+        for value in values {
+            let name = match &value.node {
+                Expr::Ident(name) | Expr::Resolved { name, .. } => Some(name),
+                _ => None,
+            };
+            if let Some(name) = name {
+                defs.insert(aver_name_to_lean(name));
+            }
+        }
+    }
+    defs.insert("Except.proven".to_string());
+    format!("simp [{}]", defs.into_iter().collect::<Vec<_>>().join(", "))
+}
 
 pub struct AutoProof {
     pub support_lines: Vec<String>,

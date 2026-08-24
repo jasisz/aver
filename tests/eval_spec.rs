@@ -4087,6 +4087,36 @@ fn vm_records_classified_effect_emissions_when_trace_collecting() {
     }
 }
 
+#[test]
+fn literal_random_discharge_faults_when_an_oracle_returns_err() {
+    let src = concat!(
+        "fn rejectRoll(path: BranchPath, n: Int, min: Int, max: Int) -> Result<Int, String>\n",
+        "    ? \"violates the Random.int contract for valid bounds\"\n",
+        "    Result.Err(\"broken random provider\")\n",
+        "fn rollPair() -> Tuple<Int, Int>\n",
+        "    ? \"Two literal rolls exercise discharge inside an independent product.\"\n",
+        "    ! [Random.int]\n",
+        "    (Random.int(1, 6), Random.int(1, 6))!\n",
+    );
+    let items = parse(src);
+    let mut machine = vm_compile(&items);
+    machine.run_top_level().expect("top-level");
+
+    let stub_fn_id = machine
+        .find_fn_id("rejectRoll")
+        .expect("rejectRoll must resolve");
+    let mut stubs = std::collections::HashMap::new();
+    stubs.insert("Random.int".to_string(), stub_fn_id);
+    machine.install_oracle_stubs(stubs);
+
+    let error = machine
+        .run_named_function("rollPair", &[])
+        .expect_err("a discharged Err must fault instead of fabricating a random sample");
+    let message = error.to_string();
+    assert!(message.contains("provider contract violated"), "{message}");
+    assert!(message.contains("broken random provider"), "{message}");
+}
+
 // ---------------------------------------------------------------------------
 // BranchPath — opaque builtin for Oracle-proof specs
 // ---------------------------------------------------------------------------

@@ -148,6 +148,7 @@ pub(super) fn emit_module_with(
     target: super::TargetMode,
     type_aliases: &HashMap<String, String>,
     capability_wit_plan: Option<&crate::codegen::wasip2::CapabilityWitPlan>,
+    packed_sequences_enabled: bool,
 ) -> Result<
     (
         Vec<u8>,
@@ -395,9 +396,7 @@ pub(super) fn emit_module_with(
     // name or merely spotting a one-field record. Unlike scalar i64 erasure,
     // packed refs are supported by Map's key/value storage and eq/hash paths,
     // so Map-key use does not require a representation demotion.
-    let packed_sequence_layouts = if std::env::var("AVER_NO_PACKED_SEQUENCES").is_ok() {
-        std::collections::HashMap::new()
-    } else {
+    let packed_sequence_layouts = if packed_sequences_enabled {
         let inputs = crate::codegen::proof_lower::ProofLowerInputs {
             entry_items: items,
             dep_modules: &[],
@@ -426,6 +425,8 @@ pub(super) fn emit_module_with(
             .into_iter()
             .filter(|(name, _)| !demoted.contains(name))
             .collect()
+    } else {
+        std::collections::HashMap::new()
     };
     // The proof scan can see an otherwise-unused dependency even when MIR
     // instantiation discovery quite correctly omitted `List<Int>`. Packing
@@ -6976,6 +6977,7 @@ fn refuse_fabricated_intrinsics(
             | BuiltinIntrinsic::BitsShiftRight
             | BuiltinIntrinsic::BitsLow
             | BuiltinIntrinsic::VectorNew
+            | BuiltinIntrinsic::ResultProven
             | BuiltinIntrinsic::StrIndexBuild
             | BuiltinIntrinsic::StrIndexCharAt
             | BuiltinIntrinsic::StrIndexSlice => true,
@@ -7455,15 +7457,19 @@ fn emit_list_string_cons(registry: &TypeRegistry) -> Result<wasm_encoder::Functi
 ///
 /// This is the same per-instantiation pattern as `__rt_string_from_lm`
 /// and the per-(K,V) Map probes — pre-1.0 we ship one helper pair per
-/// effect that needs it. Generic factories aren't worth the slot churn
-/// while only three effects (`Terminal.readKey`, `Terminal.size`,
-/// `Console.readLine`) cross the boundary with structured returns.
+/// concrete result shape that needs it. Generic factories aren't worth the
+/// slot churn: the registry allocates only the shapes reached by this module,
+/// including the uniform `Result<Unit,String>` terminal control/output family.
 #[derive(Default)]
 struct FactoryExports {
     /// `__rt_option_string_some(s)` / `__rt_option_string_none()` —
     /// emitted when `Terminal.readKey` is registered.
     opt_string_some: Option<FactorySlot>,
     opt_string_none: Option<FactorySlot>,
+    /// `Terminal.readKey` host/replay builders for
+    /// `Result<Option<String>, String>`.
+    result_option_string_string_ok: Option<FactorySlot>,
+    result_option_string_string_err: Option<FactorySlot>,
     /// `__rt_record_terminal_size_make(width, height)` — emitted when
     /// `Terminal.size` is registered.
     terminal_size_make: Option<FactorySlot>,
@@ -7583,6 +7589,28 @@ fn allocate_factory_exports(
 
         types.ty().function([], [opt_ref]);
         fx.opt_string_none = Some(FactorySlot {
+            type_idx: *next_type_idx,
+            fn_idx: *next_fn_idx,
+        });
+        *next_type_idx += 1;
+        *next_fn_idx += 1;
+
+        let result_idx = registry
+            .result_type_idx("Result<Option<String>,String>")
+            .ok_or(WasmGcError::Validation(
+                "Terminal.readKey factory requires Result<Option<String>,String> slot".into(),
+            ))?;
+        let result_ref = ref_null(result_idx);
+        types.ty().function([opt_ref], [result_ref]);
+        fx.result_option_string_string_ok = Some(FactorySlot {
+            type_idx: *next_type_idx,
+            fn_idx: *next_fn_idx,
+        });
+        *next_type_idx += 1;
+        *next_fn_idx += 1;
+
+        types.ty().function([s_ref], [result_ref]);
+        fx.result_option_string_string_err = Some(FactorySlot {
             type_idx: *next_type_idx,
             fn_idx: *next_fn_idx,
         });
@@ -7716,8 +7744,9 @@ fn allocate_factory_exports(
     }
 
     // Result<Unit, String> factories — Disk.{writeText, appendText,
-    // delete, deleteDir, makeDir} all yield this shape; same for the
-    // shape-equivalent Tcp.{writeLine, writeBytes, close, ping} effects.
+    // delete, deleteDir, makeDir}, Tcp.{writeLine, writeBytes, close, ping},
+    // Env.set, Time.sleep, and the terminal output/control effects all yield
+    // this shape.
     // Tcp.send is ephemeral (Phase 4.7+ pass 4) — its body returns
     // Result<String,String> directly and never materialises a
     // Result<Unit,String>, so it's not in the union.
@@ -7737,7 +7766,16 @@ fn allocate_factory_exports(
                 | EffectName::TcpPing
                 | EffectName::EnvSet
                 | EffectName::TimeSleep
+                | EffectName::TerminalEnableRawMode
+                | EffectName::TerminalDisableRawMode
+                | EffectName::TerminalClear
                 | EffectName::TerminalMoveTo
+                | EffectName::TerminalPrint
+                | EffectName::TerminalSetColor
+                | EffectName::TerminalResetColor
+                | EffectName::TerminalHideCursor
+                | EffectName::TerminalShowCursor
+                | EffectName::TerminalFlush
         )
     });
     if needs_result_unit_string {
@@ -8163,6 +8201,20 @@ impl FactoryExports {
         if let Some(s) = self.opt_string_none {
             exports.export("__rt_option_string_none", ExportKind::Func, s.fn_idx);
         }
+        if let Some(s) = self.result_option_string_string_ok {
+            exports.export(
+                "__rt_result_option_string_string_ok",
+                ExportKind::Func,
+                s.fn_idx,
+            );
+        }
+        if let Some(s) = self.result_option_string_string_err {
+            exports.export(
+                "__rt_result_option_string_string_err",
+                ExportKind::Func,
+                s.fn_idx,
+            );
+        }
         if let Some(s) = self.terminal_size_make {
             exports.export("__rt_record_terminal_size_make", ExportKind::Func, s.fn_idx);
         }
@@ -8301,6 +8353,12 @@ impl FactoryExports {
         if self.opt_string_none.is_some() {
             codes.function(&emit_factory_option_string_none(registry)?);
         }
+        if self.result_option_string_string_ok.is_some() {
+            codes.function(&emit_factory_result_option_string_string_ok(registry)?);
+        }
+        if self.result_option_string_string_err.is_some() {
+            codes.function(&emit_factory_result_option_string_string_err(registry)?);
+        }
         if self.terminal_size_make.is_some() {
             codes.function(&emit_factory_terminal_size_make(registry)?);
         }
@@ -8392,6 +8450,8 @@ impl FactoryExports {
         [
             self.opt_string_some,
             self.opt_string_none,
+            self.result_option_string_string_ok,
+            self.result_option_string_string_err,
             self.terminal_size_make,
             self.result_terminal_size_string_ok,
             self.result_terminal_size_string_err,
@@ -8454,6 +8514,46 @@ fn emit_factory_option_string_none(
         s_idx,
     )));
     f.instruction(&Instruction::StructNew(opt_idx));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+fn emit_factory_result_option_string_string_ok(
+    registry: &TypeRegistry,
+) -> Result<wasm_encoder::Function, WasmGcError> {
+    let result_idx = registry
+        .result_type_idx("Result<Option<String>,String>")
+        .expect("checked at allocation");
+    let string_idx = registry
+        .string_array_type_idx
+        .expect("checked at allocation");
+    let mut f = Function::new([]);
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
+        string_idx,
+    )));
+    f.instruction(&Instruction::StructNew(result_idx));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+fn emit_factory_result_option_string_string_err(
+    registry: &TypeRegistry,
+) -> Result<wasm_encoder::Function, WasmGcError> {
+    let result_idx = registry
+        .result_type_idx("Result<Option<String>,String>")
+        .expect("checked at allocation");
+    let option_idx = registry
+        .option_type_idx("Option<String>")
+        .expect("checked at allocation");
+    let mut f = Function::new([]);
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
+        option_idx,
+    )));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructNew(result_idx));
     f.instruction(&Instruction::End);
     Ok(f)
 }

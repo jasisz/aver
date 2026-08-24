@@ -215,6 +215,9 @@ pub(super) enum Commands {
         /// `aver/*` import ABI.
         #[arg(long = "wasm-gc", conflicts_with_all = ["self_host", "profile", "wasip2"])]
         wasm_gc: bool,
+        /// Internal representation-differential hook used by backend tests.
+        #[arg(long = "test-boxed-sequences", hide = true, requires = "wasm_gc")]
+        test_boxed_sequences: bool,
         /// Compile to a WASI 0.2 component (`--target wasip2` shape) and
         /// execute it via embedded wasmtime + wasmtime-wasi. Aver effects
         /// reach the host through canonical-ABI WASI imports — no `aver/*`
@@ -466,6 +469,9 @@ pub(super) enum Commands {
         /// the certificate binds the emitter's exact module bytes.
         #[arg(long, default_value_t = false, conflicts_with = "optimize")]
         certify: bool,
+        /// Internal representation-differential hook used by backend tests.
+        #[arg(long = "test-boxed-sequences", hide = true)]
+        test_boxed_sequences: bool,
         /// Print the IR after the named pipeline stage and exit before codegen.
         /// One of: `tco`, `typecheck`, `interp_lower`, `buffer_build`, `resolve`,
         /// `last_use`, `analyze`, `escape`, `build_symbols`, `name_resolve`,

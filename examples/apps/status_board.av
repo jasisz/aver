@@ -145,9 +145,9 @@ fn drawText(x: Int, y: Int, color: String, text: String) -> Result<Unit, String>
     ? "Draws one colored text fragment."
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     Terminal.moveTo(x, y)?
-    Terminal.setColor(color)
-    Terminal.print(text)
-    Terminal.resetColor()
+    Terminal.setColor(color)?
+    Terminal.print(text)?
+    Terminal.resetColor()?
     Result.Ok(Unit)
 
 fn probeService(service: Service) -> Result<Snapshot, String>
@@ -248,12 +248,12 @@ fn renderFrame(ready: List<Snapshot>, pending: List<Service>, batchIndex: Int, s
     ]
     nowMs = Time.unixMs()
     visible = minInt(List.len(ready), Int.div(frame, 2) + 1)
-    Terminal.clear()
+    Terminal.clear()?
     drawHeader(batchIndex, batchIndex + 1, hasNext, startMs, nowMs, frame)?
     drawReadyRows(ready, visible, 8)?
     drawPendingRows(pending, 8, frame, 0)?
     drawFooter()?
-    Terminal.flush()
+    Terminal.flush()?
     Result.Ok(Unit)
 
 fn renderWarmFrame(firstBatch: List<Service>, startMs: Int, frame: Int) -> Result<Unit, String>
@@ -263,7 +263,7 @@ fn renderWarmFrame(firstBatch: List<Service>, startMs: Int, frame: Int) -> Resul
         Time.unixMs,
     ]
     nowMs = Time.unixMs()
-    Terminal.clear()
+    Terminal.clear()?
     drawText(0, 0, "cyan", "===================== STATUS WALL =====================")?
     drawText(0, 1, "white", "{elapsedPrefix(startMs, nowMs)} warming first batch")?
     drawText(0, 2, "white", "{spinner(frame)} no data on the left yet - batch 1 is still probing")?
@@ -276,7 +276,7 @@ fn renderWarmFrame(firstBatch: List<Service>, startMs: Int, frame: Int) -> Resul
     drawPendingRows(firstBatch, 8, frame, 0)?
     drawText(0, 19, "white", "the pipeline starts as soon as batch 1 exists")?
     drawText(0, 20, "white", "after that, left and right columns overlap")?
-    Terminal.flush()
+    Terminal.flush()?
     Result.Ok(Unit)
 
 fn animateProbeLoop(ready: List<Snapshot>, pending: List<Service>, batchIndex: Int, startMs: Int, frame: Int, remainingFrames: Int) -> Result<Unit, String>
@@ -408,7 +408,7 @@ fn main() -> Result<Unit, String>
     startMs = Time.unixMs()
     _ = runBoard(demoServices(), 2, startMs)?
     Terminal.moveTo(0, 22)?
-    Terminal.resetColor()
-    Terminal.print("done.")
-    Terminal.flush()
+    Terminal.resetColor()?
+    Terminal.print("done.")?
+    Terminal.flush()?
     Result.Ok(Unit)

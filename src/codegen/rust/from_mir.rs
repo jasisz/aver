@@ -5116,10 +5116,10 @@ fn emit_mir_builtin_call(
         // A bit-level VIEW of `Int` under infinite two's complement, on the
         // same `AverInt` routines the VM calls (`src/types/bits.rs`), so
         // there is one implementation of the semantics and two callers.
-        // `and` / `or` / `xor` / `not` are total; the three count-taking
-        // operations refuse negative counts and counts above the fixed
-        // materialization bound; their error strings are verbatim from the
-        // VM so a `Result.Err` is byte-identical across backends.
+        // `and` / `or` / `xor` / `not` are total. Count-taking operations
+        // refuse negatives; only paths that may grow/materialize a result
+        // apply the fixed bound (`shiftLeft`, plus `low` for negative input).
+        // `shiftRight` reaches the 0/-1 sign tail without allocating.
         "Bits.and" => format!("({}).bit_and(&({}))", arg!(0), arg!(1)),
         "Bits.or" => format!("({}).bit_or(&({}))", arg!(0), arg!(1)),
         "Bits.xor" => format!("({}).bit_xor(&({}))", arg!(0), arg!(1)),
@@ -5423,6 +5423,13 @@ fn emit_mir_intrinsic_call(
         BuiltinIntrinsic::BranchPathParse => {
             let raw = mir_str_arg_or_deref(&args[0], ctx)?;
             Some(format!("aver_rt::BranchPath::parse_literal({})", raw))
+        }
+        BuiltinIntrinsic::ResultProven => {
+            let result = emit_mir_expr(&args[0], ctx)?;
+            Some(format!(
+                "({}).unwrap_or_else(|__error| panic!(\"provider contract violated: discharged Result returned Err({{}})\", __error))",
+                result
+            ))
         }
         // Codepoint cursor (chars fusion). Each one is a call into
         // `aver_rt::strcursor` — the VM executes the same routines, so

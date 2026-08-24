@@ -871,88 +871,130 @@ pub fn builtinTerminalNoArg(
 /// Clear the terminal screen.
 pub fn termClear() -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    {
+    match {
         crate::cancel_checkpoint();
         aver_replay::invoke_effect("Terminal.clear", vec![], || {
-            aver_rt::terminal_clear().unwrap()
+            aver_rt::terminal_clear().map_err(aver_rt::AverStr::from)
         })
-    };
-    Ok(crate::aver_generated::domain::value::Val::ValUnit)
+    } {
+        Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
+            std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValUnit),
+        )),
+        Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
+            std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValStr(e)),
+        )),
+    }
 }
 
 /// Flush terminal output.
 pub fn termFlush() -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    {
+    match {
         crate::cancel_checkpoint();
         aver_replay::invoke_effect("Terminal.flush", vec![], || {
-            aver_rt::terminal_flush().unwrap()
+            aver_rt::terminal_flush().map_err(aver_rt::AverStr::from)
         })
-    };
-    Ok(crate::aver_generated::domain::value::Val::ValUnit)
+    } {
+        Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
+            std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValUnit),
+        )),
+        Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
+            std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValStr(e)),
+        )),
+    }
 }
 
 /// Enable terminal raw mode.
 pub fn termEnableRawMode() -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    {
+    match {
         crate::cancel_checkpoint();
         aver_replay::invoke_effect("Terminal.enableRawMode", vec![], || {
-            aver_rt::terminal_enable_raw_mode().unwrap()
+            aver_rt::terminal_enable_raw_mode().map_err(aver_rt::AverStr::from)
         })
-    };
-    Ok(crate::aver_generated::domain::value::Val::ValUnit)
+    } {
+        Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
+            std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValUnit),
+        )),
+        Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
+            std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValStr(e)),
+        )),
+    }
 }
 
 /// Disable terminal raw mode.
 pub fn termDisableRawMode() -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    {
+    match {
         crate::cancel_checkpoint();
         aver_replay::invoke_effect("Terminal.disableRawMode", vec![], || {
-            aver_rt::terminal_disable_raw_mode().unwrap()
+            aver_rt::terminal_disable_raw_mode().map_err(aver_rt::AverStr::from)
         })
-    };
-    Ok(crate::aver_generated::domain::value::Val::ValUnit)
+    } {
+        Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
+            std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValUnit),
+        )),
+        Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
+            std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValStr(e)),
+        )),
+    }
 }
 
 /// Hide terminal cursor.
 pub fn termHideCursor() -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    {
+    match {
         crate::cancel_checkpoint();
         aver_replay::invoke_effect("Terminal.hideCursor", vec![], || {
-            aver_rt::terminal_hide_cursor().unwrap()
+            aver_rt::terminal_hide_cursor().map_err(aver_rt::AverStr::from)
         })
-    };
-    Ok(crate::aver_generated::domain::value::Val::ValUnit)
+    } {
+        Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
+            std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValUnit),
+        )),
+        Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
+            std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValStr(e)),
+        )),
+    }
 }
 
 /// Show terminal cursor.
 pub fn termShowCursor() -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    {
+    match {
         crate::cancel_checkpoint();
         aver_replay::invoke_effect("Terminal.showCursor", vec![], || {
-            aver_rt::terminal_show_cursor().unwrap()
+            aver_rt::terminal_show_cursor().map_err(aver_rt::AverStr::from)
         })
-    };
-    Ok(crate::aver_generated::domain::value::Val::ValUnit)
+    } {
+        Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
+            std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValUnit),
+        )),
+        Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
+            std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValStr(e)),
+        )),
+    }
 }
 
 /// Reset terminal color.
 pub fn termResetColor() -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    {
+    match {
         crate::cancel_checkpoint();
         aver_replay::invoke_effect("Terminal.resetColor", vec![], || {
-            aver_rt::terminal_reset_color().unwrap()
+            aver_rt::terminal_reset_color().map_err(aver_rt::AverStr::from)
         })
-    };
-    Ok(crate::aver_generated::domain::value::Val::ValUnit)
+    } {
+        Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
+            std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValUnit),
+        )),
+        Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
+            std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValStr(e)),
+        )),
+    }
 }
 
-/// Terminal.readKey() -> Option<String>.
+/// Terminal.readKey() -> Result<Option<String>, String>.
 pub fn builtinTerminalReadKey(
     args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
@@ -963,10 +1005,19 @@ pub fn builtinTerminalReadKey(
             (aver_rt::terminal_read_key()).into_aver()
         })
     } {
-        Some(k @ _) => Ok(crate::aver_generated::domain::value::Val::ValSome(
-            std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValStr(k)),
+        Ok(key @ _) => match key {
+            Some(k @ _) => Ok(crate::aver_generated::domain::value::Val::ValOk(
+                std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValSome(
+                    std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValStr(k)),
+                )),
+            )),
+            None => Ok(crate::aver_generated::domain::value::Val::ValOk(
+                std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValNone),
+            )),
+        },
+        Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
+            std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValStr(e)),
         )),
-        None => Ok(crate::aver_generated::domain::value::Val::ValNone),
     }
 }
 
@@ -1007,7 +1058,7 @@ pub fn builtinTerminalSize(
     }
 }
 
-/// Terminal.print(s) -> print string to terminal.
+/// Terminal.print(s) -> Result<Unit, String>.
 pub fn builtinTerminalPrint(
     args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
@@ -1026,7 +1077,7 @@ pub fn builtinTerminalPrint(
 /// Print string to terminal.
 pub fn termPrintStr(s: AverStr) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    {
+    match {
         let __effect_arg0 = s;
         crate::cancel_checkpoint();
         aver_replay::invoke_effect(
@@ -1034,30 +1085,42 @@ pub fn termPrintStr(s: AverStr) -> Result<crate::aver_generated::domain::value::
             vec![serde_json::Value::String(format!("{}", __effect_arg0))],
             || {
                 let __s = format!("{}", __effect_arg0);
-                aver_rt::terminal_print(&__s).unwrap()
+                aver_rt::terminal_print(&__s).map_err(aver_rt::AverStr::from)
             },
         )
-    };
-    Ok(crate::aver_generated::domain::value::Val::ValUnit)
+    } {
+        Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
+            std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValUnit),
+        )),
+        Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
+            std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValStr(e)),
+        )),
+    }
 }
 
-/// Terminal.setColor(color) -> Unit.
+/// Terminal.setColor(color) -> Result<Unit, String>.
 pub fn builtinTerminalSetColor(
     args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let s = crate::aver_generated::domain::builtins::helpers::expectStr(&v)?;
-    {
+    match {
         let __effect_arg0 = s;
         crate::cancel_checkpoint();
         aver_replay::invoke_effect(
             "Terminal.setColor",
             vec![aver_replay::ReplayValue::to_replay_json(&__effect_arg0)],
-            || aver_rt::terminal_set_color(&__effect_arg0).unwrap(),
+            || aver_rt::terminal_set_color(&__effect_arg0).map_err(aver_rt::AverStr::from),
         )
-    };
-    Ok(crate::aver_generated::domain::value::Val::ValUnit)
+    } {
+        Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
+            std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValUnit),
+        )),
+        Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
+            std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValStr(e)),
+        )),
+    }
 }
 
 /// Terminal.moveTo(x, y) -> Result<Unit, String>.

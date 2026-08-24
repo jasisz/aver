@@ -993,8 +993,8 @@ pub(crate) fn emit_mir_int_div_mod_boxed(
 ///   remainder is already in `[0, 2^w)`.
 ///
 /// The three count-taking operations build the concrete `Result<Int,String>`
-/// struct, guarding a negative or oversized count into `Result.Err` with the
-/// VM's exact message bytes. The range tests use `__aint_to_i64_sat`,
+/// struct, guarding the operation-specific partiality into `Result.Err` with
+/// the VM's exact message bytes. The range tests use `__aint_to_i64_sat`,
 /// which saturates a Big to `i64::MIN`/`MAX` — so its sign is the value's
 /// sign for every operand, Small or Big.
 pub(crate) fn emit_mir_bits(
@@ -1102,25 +1102,38 @@ pub(crate) fn emit_mir_bits(
     emit_string_literal_bytes(func, op.negative_message(), ctx)?;
     func.instruction(&Instruction::StructNew(res_idx));
     func.instruction(&Instruction::Else);
-    // else if count exceeds the fixed materialization bound -> Result.Err
-    func.instruction(&Instruction::LocalGet(count_slot));
-    func.instruction(&Instruction::Call(to_i64_sat));
-    func.instruction(&Instruction::I64Const(
-        aver_rt::MAX_MATERIALIZED_BITS as i64,
-    ));
-    func.instruction(&Instruction::I64GtS);
-    func.instruction(&Instruction::If(res_block));
-    func.instruction(&Instruction::I32Const(0));
-    emit_default_value(func, "Int", ctx.registry)?;
-    emit_string_literal_bytes(func, op.too_large_message(), ctx)?;
-    func.instruction(&Instruction::StructNew(res_idx));
-    func.instruction(&Instruction::Else);
-    // else Result.Ok(<the operation>)
+    if !matches!(op, BitsOp::ShiftRight) {
+        // shiftLeft is bounded whenever count exceeds the limit. `low` is
+        // bounded only for a negative input: a non-negative result contains
+        // no more information than the already-resident input.
+        func.instruction(&Instruction::LocalGet(count_slot));
+        func.instruction(&Instruction::Call(to_i64_sat));
+        func.instruction(&Instruction::I64Const(
+            aver_rt::MAX_MATERIALIZED_BITS as i64,
+        ));
+        func.instruction(&Instruction::I64GtS);
+        if matches!(op, BitsOp::Low) {
+            func.instruction(&Instruction::LocalGet(value_slot));
+            func.instruction(&Instruction::Call(to_i64_sat));
+            func.instruction(&Instruction::I64Const(0));
+            func.instruction(&Instruction::I64LtS);
+            func.instruction(&Instruction::I32And);
+        }
+        func.instruction(&Instruction::If(res_block));
+        func.instruction(&Instruction::I32Const(0));
+        emit_default_value(func, "Int", ctx.registry)?;
+        emit_string_literal_bytes(func, op.too_large_message(), ctx)?;
+        func.instruction(&Instruction::StructNew(res_idx));
+        func.instruction(&Instruction::Else);
+    }
+    // Result.Ok(<the operation>)
     func.instruction(&Instruction::I32Const(1));
-    emit_bits_counted_from_slots(func, op, value_slot, count_slot, &helper)?;
+    emit_bits_counted_from_slots(func, op, value_slot, count_slot, ctx, &helper)?;
     emit_default_value(func, "String", ctx.registry)?;
     func.instruction(&Instruction::StructNew(res_idx));
-    func.instruction(&Instruction::End);
+    if !matches!(op, BitsOp::ShiftRight) {
+        func.instruction(&Instruction::End);
+    }
     func.instruction(&Instruction::End);
     Ok(MirBuiltinEmit::Produced(true))
 }
@@ -1135,11 +1148,160 @@ fn emit_bits_counted_from_slots(
     op: BitsOp,
     value_slot: u32,
     count_slot: u32,
+    ctx: &EmitCtx<'_>,
     helper: &impl Fn(&str) -> Result<u32, WasmGcError>,
 ) -> Result<(), WasmGcError> {
+    let aint_idx = ctx.registry.aint_struct_idx.ok_or(WasmGcError::Validation(
+        "Bits counted operation needs the $AverInt struct".into(),
+    ))?;
+    let aint_ref = wasm_encoder::BlockType::Result(ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(aint_idx),
+    }));
+
+    if matches!(op, BitsOp::ShiftRight) {
+        emit_count_reaches_value_bits(func, value_slot, count_slot, ctx, helper)?;
+        func.instruction(&Instruction::If(aint_ref));
+        // Once every magnitude bit is gone, arithmetic right shift is the
+        // infinite sign tail. No `2^count` allocation is involved.
+        func.instruction(&Instruction::LocalGet(value_slot));
+        func.instruction(&Instruction::Call(helper("__aint_to_i64_sat")?));
+        func.instruction(&Instruction::I64Const(0));
+        func.instruction(&Instruction::I64LtS);
+        func.instruction(&Instruction::If(wasm_encoder::BlockType::Result(
+            ValType::I64,
+        )));
+        func.instruction(&Instruction::I64Const(-1));
+        func.instruction(&Instruction::Else);
+        func.instruction(&Instruction::I64Const(0));
+        func.instruction(&Instruction::End);
+        func.instruction(&Instruction::Call(helper("__aint_from_i64")?));
+        func.instruction(&Instruction::Else);
+        func.instruction(&Instruction::LocalGet(value_slot));
+        func.instruction(&Instruction::LocalGet(count_slot));
+        emit_bits_counted_tail(func, op, helper)?;
+        func.instruction(&Instruction::End);
+        return Ok(());
+    }
+
+    if matches!(op, BitsOp::Low) {
+        // A non-negative value with a window reaching its highest set bit is
+        // already the answer. This also makes a Big width O(1).
+        func.instruction(&Instruction::LocalGet(value_slot));
+        func.instruction(&Instruction::Call(helper("__aint_to_i64_sat")?));
+        func.instruction(&Instruction::I64Const(0));
+        func.instruction(&Instruction::I64GeS);
+        emit_count_reaches_value_bits(func, value_slot, count_slot, ctx, helper)?;
+        func.instruction(&Instruction::I32And);
+        func.instruction(&Instruction::If(aint_ref));
+        func.instruction(&Instruction::LocalGet(value_slot));
+        func.instruction(&Instruction::Else);
+        func.instruction(&Instruction::LocalGet(value_slot));
+        func.instruction(&Instruction::LocalGet(count_slot));
+        emit_bits_counted_tail(func, op, helper)?;
+        func.instruction(&Instruction::End);
+        return Ok(());
+    }
+
     func.instruction(&Instruction::LocalGet(value_slot));
     func.instruction(&Instruction::LocalGet(count_slot));
     emit_bits_counted_tail(func, op, helper)
+}
+
+/// Push `count >= bit_length(abs(value))` for non-negative `count`. Counts are
+/// compared through the saturating i64 view; a Big count saturates upward and
+/// therefore reaches every resident magnitude. Big values derive their bit
+/// length from the canonical 32-bit limb array without allocation.
+fn emit_count_reaches_value_bits(
+    func: &mut Function,
+    value_slot: u32,
+    count_slot: u32,
+    ctx: &EmitCtx<'_>,
+    helper: &impl Fn(&str) -> Result<u32, WasmGcError>,
+) -> Result<(), WasmGcError> {
+    let aint_idx = ctx.registry.aint_struct_idx.ok_or(WasmGcError::Validation(
+        "Bits bit-length check needs the $AverInt struct".into(),
+    ))?;
+    let mag_idx = ctx
+        .registry
+        .aint_mag_array_idx
+        .ok_or(WasmGcError::Validation(
+            "Bits bit-length check needs the $AverInt magnitude array".into(),
+        ))?;
+
+    func.instruction(&Instruction::LocalGet(count_slot));
+    func.instruction(&Instruction::Call(helper("__aint_to_i64_sat")?));
+    func.instruction(&Instruction::LocalGet(value_slot));
+    func.instruction(&Instruction::StructGet {
+        struct_type_index: aint_idx,
+        field_index: 1,
+    });
+    func.instruction(&Instruction::RefIsNull);
+    func.instruction(&Instruction::If(wasm_encoder::BlockType::Result(
+        ValType::I64,
+    )));
+    // Small: bit_length(abs(small)), including i64::MIN via wrapping negate.
+    func.instruction(&Instruction::I64Const(64));
+    func.instruction(&Instruction::LocalGet(value_slot));
+    func.instruction(&Instruction::StructGet {
+        struct_type_index: aint_idx,
+        field_index: 0,
+    });
+    func.instruction(&Instruction::I64Const(0));
+    func.instruction(&Instruction::I64LtS);
+    func.instruction(&Instruction::If(wasm_encoder::BlockType::Result(
+        ValType::I64,
+    )));
+    func.instruction(&Instruction::I64Const(0));
+    func.instruction(&Instruction::LocalGet(value_slot));
+    func.instruction(&Instruction::StructGet {
+        struct_type_index: aint_idx,
+        field_index: 0,
+    });
+    func.instruction(&Instruction::I64Sub);
+    func.instruction(&Instruction::Else);
+    func.instruction(&Instruction::LocalGet(value_slot));
+    func.instruction(&Instruction::StructGet {
+        struct_type_index: aint_idx,
+        field_index: 0,
+    });
+    func.instruction(&Instruction::End);
+    func.instruction(&Instruction::I64Clz);
+    func.instruction(&Instruction::I64Sub);
+    func.instruction(&Instruction::Else);
+    // Big: (limbs - 1) * 32 + bit_length(top_limb).
+    func.instruction(&Instruction::LocalGet(value_slot));
+    func.instruction(&Instruction::StructGet {
+        struct_type_index: aint_idx,
+        field_index: 1,
+    });
+    func.instruction(&Instruction::ArrayLen);
+    func.instruction(&Instruction::I32Const(1));
+    func.instruction(&Instruction::I32Sub);
+    func.instruction(&Instruction::I64ExtendI32U);
+    func.instruction(&Instruction::I64Const(32));
+    func.instruction(&Instruction::I64Mul);
+    func.instruction(&Instruction::I64Const(64));
+    func.instruction(&Instruction::LocalGet(value_slot));
+    func.instruction(&Instruction::StructGet {
+        struct_type_index: aint_idx,
+        field_index: 1,
+    });
+    func.instruction(&Instruction::LocalGet(value_slot));
+    func.instruction(&Instruction::StructGet {
+        struct_type_index: aint_idx,
+        field_index: 1,
+    });
+    func.instruction(&Instruction::ArrayLen);
+    func.instruction(&Instruction::I32Const(1));
+    func.instruction(&Instruction::I32Sub);
+    func.instruction(&Instruction::ArrayGet(mag_idx));
+    func.instruction(&Instruction::I64Clz);
+    func.instruction(&Instruction::I64Sub);
+    func.instruction(&Instruction::I64Add);
+    func.instruction(&Instruction::End);
+    func.instruction(&Instruction::I64GeU);
+    Ok(())
 }
 
 /// `2^count` applied to the operand beneath it: the shared tail of both the
@@ -1182,8 +1344,9 @@ pub(crate) fn emit_bits_counted_value(
     ctx: &EmitCtx<'_>,
     helper: &impl Fn(&str) -> Result<u32, WasmGcError>,
 ) -> Result<(), WasmGcError> {
-    // No scratch needed here: the discharged form has no guard, so emitting
-    // the operands inline already evaluates each exactly once, left to right.
+    let [value_slot, count_slot, _] = slots.aint_operand_scratch.ok_or(WasmGcError::Validation(
+        "discharged Bits operation needs operand scratch slots".into(),
+    ))?;
     if emit_mir_expr(func, &args[0], slots, ctx)?.is_none() {
         return Err(WasmGcError::Validation(
             "Bits operand failed to lower".into(),
@@ -1192,7 +1355,9 @@ pub(crate) fn emit_bits_counted_value(
     if emit_mir_expr(func, &args[1], slots, ctx)?.is_none() {
         return Err(WasmGcError::Validation("Bits count failed to lower".into()));
     }
-    emit_bits_counted_tail(func, op, helper)
+    func.instruction(&Instruction::LocalSet(count_slot));
+    func.instruction(&Instruction::LocalSet(value_slot));
+    emit_bits_counted_from_slots(func, op, value_slot, count_slot, ctx, helper)
 }
 
 /// The `Bits` operations, as one enum so the surface-call and discharged
@@ -1576,6 +1741,84 @@ pub(crate) fn emit_mir_result_with_default(
     });
     func.instruction(&Instruction::Else);
     e!(default);
+    func.instruction(&Instruction::End);
+    Ok(MirBuiltinEmit::Produced(true))
+}
+
+/// Unwrap a compiler-discharged Result without inventing a fallback value.
+/// The resolver emits this only when source syntax proves the capability's
+/// validation precondition. Reaching `Err` therefore means the provider or
+/// Oracle profile violated that contract, and wasm traps fail-closed.
+pub(crate) fn emit_mir_result_proven(
+    func: &mut Function,
+    args: &[Spanned<MirExpr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<MirBuiltinEmit, WasmGcError> {
+    let [result] = args else {
+        return Ok(MirBuiltinEmit::NotHandled);
+    };
+    let result_aver = aver_type_str_of(result);
+    let canonical = normalize_compound(&result_aver);
+    let result_idx = ctx.registry.result_type_idx(&canonical).ok_or_else(|| {
+        WasmGcError::Validation(format!(
+            "__result_proven: argument `{result_aver}` is not a registered Result<T,E>"
+        ))
+    })?;
+    let (payload, _) = TypeRegistry::result_te(&canonical).ok_or_else(|| {
+        WasmGcError::Validation(format!(
+            "__result_proven: malformed Result type `{canonical}`"
+        ))
+    })?;
+    let scratch = slots.subject_scratch.ok_or(WasmGcError::Validation(
+        "__result_proven needs a subject scratch slot".into(),
+    ))?;
+    let Some(produces) = emit_mir_expr(func, result, slots, ctx)? else {
+        return Ok(MirBuiltinEmit::Fallback);
+    };
+    if !produces {
+        return Err(WasmGcError::Validation(
+            "__result_proven argument produced no Result value".into(),
+        ));
+    }
+    func.instruction(&Instruction::LocalSet(scratch));
+    func.instruction(&Instruction::LocalGet(scratch));
+    func.instruction(&Instruction::RefCastNonNull(
+        wasm_encoder::HeapType::Concrete(result_idx),
+    ));
+    func.instruction(&Instruction::StructGet {
+        struct_type_index: result_idx,
+        field_index: 0,
+    });
+    func.instruction(&Instruction::I32Const(1));
+    func.instruction(&Instruction::I32Eq);
+
+    if payload == "Unit" {
+        func.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+        func.instruction(&Instruction::Else);
+        func.instruction(&Instruction::Unreachable);
+        func.instruction(&Instruction::End);
+        return Ok(MirBuiltinEmit::Produced(false));
+    }
+
+    let payload_ty = aver_to_wasm(payload, Some(ctx.registry))?.ok_or_else(|| {
+        WasmGcError::Validation(format!(
+            "__result_proven: payload type `{payload}` has no wasm representation"
+        ))
+    })?;
+    func.instruction(&Instruction::If(wasm_encoder::BlockType::Result(
+        payload_ty,
+    )));
+    func.instruction(&Instruction::LocalGet(scratch));
+    func.instruction(&Instruction::RefCastNonNull(
+        wasm_encoder::HeapType::Concrete(result_idx),
+    ));
+    func.instruction(&Instruction::StructGet {
+        struct_type_index: result_idx,
+        field_index: 1,
+    });
+    func.instruction(&Instruction::Else);
+    func.instruction(&Instruction::Unreachable);
     func.instruction(&Instruction::End);
     Ok(MirBuiltinEmit::Produced(true))
 }

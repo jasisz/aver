@@ -3411,7 +3411,10 @@ fn verify_cases_on_stateful_effect_is_not_rejected_as_proof_subset() {
 #[test]
 #[cfg(feature = "terminal")]
 fn error_terminal_clear_without_effect() {
-    let src = concat!("fn wipe() -> Unit\n", "    Terminal.clear()\n",);
+    let src = concat!(
+        "fn wipe() -> Result<Unit, String>\n",
+        "    Terminal.clear()\n",
+    );
     assert_error_containing(src, "has effect 'Terminal.clear'");
 }
 
@@ -3419,7 +3422,7 @@ fn error_terminal_clear_without_effect() {
 #[cfg(feature = "terminal")]
 fn error_terminal_move_to_wrong_arg_count() {
     let src = concat!(
-        "fn go(x: Int) -> Unit\n",
+        "fn go(x: Int) -> Result<Unit, String>\n",
         "    ! [Terminal.moveTo]\n",
         "    Terminal.moveTo(x)\n",
     );
@@ -3428,9 +3431,9 @@ fn error_terminal_move_to_wrong_arg_count() {
 
 #[test]
 #[cfg(feature = "terminal")]
-fn terminal_read_key_returns_option_string() {
+fn terminal_read_key_returns_result_option_string() {
     let src = concat!(
-        "fn poll() -> Option<String>\n",
+        "fn poll() -> Result<Option<String>, String>\n",
         "    ! [Terminal.readKey]\n",
         "    Terminal.readKey()\n",
     );

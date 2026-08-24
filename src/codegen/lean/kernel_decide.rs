@@ -180,6 +180,21 @@ impl CaseDecidability {
         self.capability_opacity.decline_reason(roots, ctx)
     }
 
+    /// `ResultProven` is logically usable under an Oracle subtype proof, but
+    /// it is intentionally noncomputable. Sample theorems in its call cone
+    /// must normalize with the subtype lemmas instead of using
+    /// `native_decide`.
+    pub(super) fn roots_reach_result_proven(
+        &self,
+        roots: &[&Spanned<crate::ast::Expr>],
+        ctx: &CodegenContext,
+    ) -> bool {
+        self.enabled
+            && self
+                .capability_opacity
+                .roots_reach_result_proven(roots, ctx)
+    }
+
     /// Canonical names of every function with an unbounded fuel fallback
     /// reachable from `roots`, including transitive user-function calls, each
     /// with its group's refusal when the call edge analysis has one.

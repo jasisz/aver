@@ -20,7 +20,7 @@ fn drawAt(x: Int, y: Int, ch: String) -> Result<Unit, String>
     ? "Print a double-wide cell at game coordinates"
     ! [Terminal.moveTo, Terminal.print]
     Terminal.moveTo(x * 2, y)?
-    Terminal.print(ch)
+    Terminal.print(ch)?
     Result.Ok(Unit)
 
 fn renderBorderH(x: Int, maxX: Int, y: Int) -> Result<Unit, String>
@@ -52,12 +52,12 @@ fn renderBorderVNext(y: Int, maxY: Int, x: Int) -> Result<Unit, String>
 fn renderBorder() -> Result<Unit, String>
     ? "Draw the playfield border"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    Terminal.setColor("white")
+    Terminal.setColor("white")?
     renderBorderH(0, 12, 0)?
     renderBorderH(0, 12, 21)?
     renderBorderV(1, 21, 0)?
     renderBorderV(1, 21, 11)?
-    Terminal.resetColor()
+    Terminal.resetColor()?
     Result.Ok(Unit)
 
 fn renderCellAt(board: List<List<Option<PieceKind>>>, x: Int, y: Int) -> Result<Unit, String>
@@ -70,9 +70,9 @@ fn renderCellAt(board: List<List<Option<PieceKind>>>, x: Int, y: Int) -> Result<
 fn renderColorCell(x: Int, y: Int, kind: PieceKind) -> Result<Unit, String>
     ? "Draw a colored cell"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    Terminal.setColor(Pieces.pieceColor(kind))
+    Terminal.setColor(Pieces.pieceColor(kind))?
     drawAt(x + 1, y + 1, "██")?
-    Terminal.resetColor()
+    Terminal.resetColor()?
     Result.Ok(Unit)
 
 fn renderRowCells(board: List<List<Option<PieceKind>>>, x: Int, y: Int) -> Result<Unit, String>
@@ -104,9 +104,9 @@ fn renderRowsNext(board: List<List<Option<PieceKind>>>, y: Int) -> Result<Unit, 
 fn renderPieceCell(p: Point, color: String) -> Result<Unit, String>
     ? "Draw one piece cell"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    Terminal.setColor(color)
+    Terminal.setColor(color)?
     drawAt(p.x + 1, p.y + 1, "██")?
-    Terminal.resetColor()
+    Terminal.resetColor()?
     Result.Ok(Unit)
 
 fn renderPieceCells(points: List<Point>, color: String) -> Result<Unit, String>
@@ -131,23 +131,23 @@ fn renderInfo(state: GameState) -> Result<Unit, String>
     ? "Draw score, level, lines info"
     ! [Terminal.moveTo, Terminal.print]
     Terminal.moveTo(26, 2)?
-    Terminal.print("Score: {String.fromInt(state.score)}")
+    Terminal.print("Score: {String.fromInt(state.score)}")?
     Terminal.moveTo(26, 4)?
-    Terminal.print("Level: {String.fromInt(state.level)}")
+    Terminal.print("Level: {String.fromInt(state.level)}")?
     Terminal.moveTo(26, 6)?
-    Terminal.print("Lines: {String.fromInt(state.lines)}")
+    Terminal.print("Lines: {String.fromInt(state.lines)}")?
     Terminal.moveTo(26, 10)?
-    Terminal.print("Controls:")
+    Terminal.print("Controls:")?
     Terminal.moveTo(26, 11)?
-    Terminal.print("← → Move")
+    Terminal.print("← → Move")?
     Terminal.moveTo(26, 12)?
-    Terminal.print("↑   Rotate")
+    Terminal.print("↑   Rotate")?
     Terminal.moveTo(26, 13)?
-    Terminal.print("↓   Soft drop")
+    Terminal.print("↓   Soft drop")?
     Terminal.moveTo(26, 14)?
-    Terminal.print("SPC Hard drop")
+    Terminal.print("SPC Hard drop")?
     Terminal.moveTo(26, 15)?
-    Terminal.print("Q   Quit")
+    Terminal.print("Q   Quit")?
     Result.Ok(Unit)
 
 fn render(state: GameState) -> Result<Unit, String>
@@ -155,20 +155,20 @@ fn render(state: GameState) -> Result<Unit, String>
     ! [
         Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor,
     ]
-    Terminal.clear()
+    Terminal.clear()?
     renderBorder()?
     renderRows(state.board, 0)?
     renderPiece(state)?
     renderInfo(state)?
-    Terminal.flush()
+    Terminal.flush()?
     Result.Ok(Unit)
 
-fn readInput(state: GameState) -> GameState
+fn readInput(state: GameState) -> Result<GameState, String>
     ? "Drain all queued keys, applying each one"
     ! [Terminal.readKey]
-    match Terminal.readKey()
+    match Terminal.readKey()?
         Option.Some(k) -> readInput(Logic.handleKey(state, k))
-        Option.None -> state
+        Option.None -> Result.Ok(state)
 
 fn spawnPiece(state: GameState) -> GameState
     ? "Spawn a random piece at top center"
@@ -222,7 +222,7 @@ fn gameLoop(state: GameState) -> Result<String, String>
     ]
     render(state)?
     Time.sleep(state.tickMs)?
-    tick(readInput(state))
+    tick(readInput(state)?)
 
 fn initState() -> GameState
     ? "Create initial game state"
@@ -236,12 +236,12 @@ fn run() -> Result<String, String>
         Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor,
         Time.sleep,
     ]
-    Terminal.enableRawMode()
-    Terminal.hideCursor()
+    Terminal.enableRawMode()?
+    Terminal.hideCursor()?
     result = gameLoop(initState())
-    Terminal.showCursor()
-    Terminal.disableRawMode()
-    Terminal.clear()
+    Terminal.showCursor()?
+    Terminal.disableRawMode()?
+    Terminal.clear()?
     result
 
 fn main()

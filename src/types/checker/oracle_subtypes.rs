@@ -79,7 +79,21 @@ pub(crate) fn lean_subtypes(declared: &DeclaredEffects) -> String {
                  (-9223372036854775808 : Int) ≤ min ∧\n      \
                  max ≤ (9223372036854775807 : Int) ∧ min ≤ max →\n      \
                  ∃ value : Int, f path n min max = Except.ok value ∧\n        \
-                   min ≤ value ∧ value ≤ max }\n",
+                   min ≤ value ∧ value ≤ max }\n\
+             \n\
+             noncomputable def RandomIntInBounds.valueAt\n    \
+                 (rnd : RandomIntInBounds) (path : BranchPath) (n min max : Int)\n    \
+                 (valid : (-9223372036854775808 : Int) ≤ min ∧\n      \
+                   max ≤ (9223372036854775807 : Int) ∧ min ≤ max) : Int :=\n  \
+               Classical.choose (rnd.property path n min max valid)\n\
+             \n\
+             @[simp] theorem RandomIntInBounds.result_eq\n    \
+                 (rnd : RandomIntInBounds) (path : BranchPath) (n min max : Int)\n    \
+                 (valid : (-9223372036854775808 : Int) ≤ min ∧\n      \
+                   max ≤ (9223372036854775807 : Int) ∧ min ≤ max) :\n    \
+                 rnd.val path n min max =\n      \
+                   Except.ok (rnd.valueAt path n min max valid) := by\n  \
+               exact (Classical.choose_spec (rnd.property path n min max valid)).1\n",
         );
     }
     if declared.includes("Random.float") {

@@ -22,9 +22,9 @@ fn drawChar(x: Int, y: Int, ch: String, color: String) -> Result<Unit, String>
     ? "Print a colored character at terminal position (x, y)"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     Terminal.moveTo(x, y)?
-    Terminal.setColor(color)
-    Terminal.print(ch)
-    Terminal.resetColor()
+    Terminal.setColor(color)?
+    Terminal.print(ch)?
+    Terminal.resetColor()?
     Result.Ok(Unit)
 
 fn renderTile(x: Int, y: Int, tile: Tile, visible: Bool, isRemembered: Bool) -> Result<Unit, String>
@@ -165,9 +165,9 @@ fn renderHudLine(col: Int, row: Int, label: String, color: String) -> Result<Uni
     ? "Print a HUD label at the given column and row"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     Terminal.moveTo(col, row)?
-    Terminal.setColor(color)
-    Terminal.print(label)
-    Terminal.resetColor()
+    Terminal.setColor(color)?
+    Terminal.print(label)?
+    Terminal.resetColor()?
     Result.Ok(Unit)
 
 fn renderHud(player: Player, messages: List<String>) -> Result<Unit, String>

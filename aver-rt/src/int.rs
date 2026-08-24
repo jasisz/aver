@@ -39,26 +39,41 @@ pub enum ShiftCountError {
     /// infinite two's complement, and must not silently reverse direction,
     /// clamp, or wrap: the caller reports it as `Result.Err`.
     Negative,
-    /// The count exceeds [`MAX_MATERIALIZED_BITS`], or cannot be represented
-    /// even well enough to compare after the sign check.
+    /// The operation would have to materialize more than
+    /// [`MAX_MATERIALIZED_BITS`] result bits. `shift_right` never returns this
+    /// error because its result only gets smaller.
     TooLarge,
 }
 
-/// Maximum shift count / requested low-bit width. The largest materialized
-/// result attributable to the count is about 2 MiB of raw bits. This is a
+/// Maximum number of result bits one `shift_left` / `low_bits` call may have
+/// to materialize. The corresponding raw magnitude is about 2 MiB. This is a
 /// language constant, not a host `usize` limit, so VM, generated Rust, wasm,
 /// and proof models share one refusal boundary.
 pub const MAX_MATERIALIZED_BITS: usize = 16 * 1024 * 1024;
 
-/// Validate a shift count / bit width once, for all three width-taking
-/// operations, so the negative rule is stated in exactly one place.
-fn shift_count(n: &AverInt) -> Result<usize, ShiftCountError> {
+/// Validate a count for an operation that may allocate proportionally to it.
+fn materializing_count(n: &AverInt) -> Result<usize, ShiftCountError> {
     if n < &AverInt::zero() {
         return Err(ShiftCountError::Negative);
     }
     match n.to_usize() {
         Some(count) if count <= MAX_MATERIALIZED_BITS => Ok(count),
         Some(_) | None => Err(ShiftCountError::TooLarge),
+    }
+}
+
+/// Whether a non-negative count reaches or passes the magnitude of `value`.
+/// A `Big` count is necessarily beyond every magnitude that can already be
+/// resident in this process, so it reaches the sign tail without conversion
+/// to a host-sized integer.
+fn count_reaches_sign_tail(n: &AverInt, value: &AverInt) -> bool {
+    let value_bits = match value {
+        AverInt::Small(value) => 64 - value.unsigned_abs().leading_zeros() as u64,
+        AverInt::Big(value) => value.bits(),
+    };
+    match n {
+        AverInt::Small(count) => (*count as u64) >= value_bits,
+        AverInt::Big(_) => true,
     }
 }
 
@@ -316,7 +331,7 @@ impl AverInt {
     /// `self * 2^n` — the bit sequence moved `n` places toward the more
     /// significant end. Over ℤ this never truncates.
     pub fn shift_left(&self, n: &AverInt) -> Result<AverInt, ShiftCountError> {
-        let count = shift_count(n)?;
+        let count = materializing_count(n)?;
         if let AverInt::Small(a) = self
             && count < 63
         {
@@ -336,16 +351,17 @@ impl AverInt {
     /// what gets shifted in, so `shift_right(-3, 1) == -2`, never `-1` and
     /// never a host language's logical shift.
     pub fn shift_right(&self, n: &AverInt) -> Result<AverInt, ShiftCountError> {
-        let count = shift_count(n)?;
+        if n < &AverInt::zero() {
+            return Err(ShiftCountError::Negative);
+        }
+        if count_reaches_sign_tail(n, self) {
+            return Ok(AverInt::Small(if self < &AverInt::zero() { -1 } else { 0 }));
+        }
+        let count = n
+            .to_usize()
+            .expect("a count below a resident integer's bit length fits usize");
         if let AverInt::Small(a) = self {
-            // Rust's `>>` is arithmetic but only DEFINED below the bit
-            // width. At or above it every value bit has been shifted out
-            // and all that remains is the infinite sign tail.
-            return Ok(AverInt::Small(if count >= 63 {
-                if *a < 0 { -1 } else { 0 }
-            } else {
-                a >> count
-            }));
+            return Ok(AverInt::Small(a >> count));
         }
         Ok(AverInt::from_bigint(self.to_bigint() >> count))
     }
@@ -355,7 +371,24 @@ impl AverInt {
     /// explicitly. Always in `[0, 2^width)`, so `low_bits(-1, 8) == 255` and
     /// `low_bits(x, 0) == 0`.
     pub fn low_bits(&self, width: &AverInt) -> Result<AverInt, ShiftCountError> {
-        let count = shift_count(width)?;
+        if width < &AverInt::zero() {
+            return Err(ShiftCountError::Negative);
+        }
+        // A non-negative value already has an infinite zero tail. Once the
+        // requested window reaches its highest set bit, `low` is exactly the
+        // original value and allocates nothing — even for a Big width.
+        let count = if self >= &AverInt::zero() {
+            if count_reaches_sign_tail(width, self) {
+                return Ok(self.clone());
+            }
+            width
+                .to_usize()
+                .expect("a width below a resident integer's bit length fits usize")
+        } else {
+            // A negative integer has an infinite one tail, so the requested
+            // width is the size of a genuinely new non-negative magnitude.
+            materializing_count(width)?
+        };
         if let AverInt::Small(a) = self {
             if count >= 64 {
                 // A non-negative i64 is entirely below bit 64, so every bit
@@ -937,7 +970,7 @@ mod tests {
     }
 
     #[test]
-    fn counts_outside_the_language_bound_are_refused_before_work() {
+    fn negative_counts_are_refused_by_every_counted_bits_operation() {
         let i = AverInt::from_i64;
         for op in [AverInt::shift_left, AverInt::shift_right, AverInt::low_bits] {
             assert_eq!(op(&i(42), &i(-1)), Err(ShiftCountError::Negative));
@@ -945,12 +978,30 @@ mod tests {
             // the representability check.
             let huge_negative = two_pow(200).neg();
             assert_eq!(op(&i(42), &huge_negative), Err(ShiftCountError::Negative));
-            let huge = two_pow(200);
-            assert_eq!(op(&i(42), &huge), Err(ShiftCountError::TooLarge));
-            assert_eq!(
-                op(&i(42), &i(MAX_MATERIALIZED_BITS as i64 + 1)),
-                Err(ShiftCountError::TooLarge)
-            );
         }
+    }
+
+    #[test]
+    fn materialization_limit_only_refuses_operations_that_can_grow_the_result() {
+        let i = AverInt::from_i64;
+        let above_limit = i(MAX_MATERIALIZED_BITS as i64 + 1);
+        let huge = two_pow(200);
+
+        assert_eq!(
+            i(42).shift_left(&above_limit),
+            Err(ShiftCountError::TooLarge)
+        );
+        assert_eq!(i(42).shift_left(&huge), Err(ShiftCountError::TooLarge));
+
+        assert_eq!(i(42).shift_right(&above_limit).unwrap(), i(0));
+        assert_eq!(i(-42).shift_right(&huge).unwrap(), i(-1));
+
+        assert_eq!(i(42).low_bits(&above_limit).unwrap(), i(42));
+        assert_eq!(i(42).low_bits(&huge).unwrap(), i(42));
+        assert_eq!(
+            i(-42).low_bits(&above_limit),
+            Err(ShiftCountError::TooLarge)
+        );
+        assert_eq!(i(-42).low_bits(&huge), Err(ShiftCountError::TooLarge));
     }
 }

@@ -64,7 +64,6 @@ pub enum EffectMode {
 /// `flatten_multimodule` returned — leaving it empty makes qualified
 /// dep-type spellings decline fail-closed instead of resolving their
 /// canonical layouts.
-#[derive(Default)]
 pub struct RunConfig {
     /// Argv visible to the program through `Args.get` / `Args.all`.
     pub program_args: Vec<String>,
@@ -80,6 +79,23 @@ pub struct RunConfig {
     /// `flatten_multimodule` when the caller flattened a multi-module
     /// program. Empty for single-file programs (the fuzz harness path).
     pub type_aliases: std::collections::HashMap<String, String>,
+    /// Internal differential hook. Production callers keep this `true`;
+    /// representation tests set it to `false` to exercise boxed sequences.
+    #[doc(hidden)]
+    pub packed_sequences_enabled: bool,
+}
+
+impl Default for RunConfig {
+    fn default() -> Self {
+        Self {
+            program_args: Vec::new(),
+            entry_info: None,
+            mode: EffectMode::default(),
+            tcp_settings: aver_rt::tcp::TcpSettings::default(),
+            type_aliases: std::collections::HashMap::new(),
+            packed_sequences_enabled: true,
+        }
+    }
 }
 
 /// What one `run_in_process` invocation actually produced. Carries
@@ -138,12 +154,13 @@ pub fn run_in_process(
     analysis: Option<&AnalysisResult>,
     config: RunConfig,
 ) -> Result<RunOutcome, String> {
-    let bytes = aver::codegen::wasm_gc::compile_to_wasm_gc_flattened(
+    let bytes = aver::codegen::wasm_gc::compile_to_wasm_gc_flattened_with_options(
         items,
         analysis,
         None,
         aver::codegen::wasm_gc::TargetMode::AverBridge,
         &config.type_aliases,
+        config.packed_sequences_enabled,
     )
     .map(|out| out.bytes)
     .map_err(|e| format!("{e}"))?;

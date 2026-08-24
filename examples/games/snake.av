@@ -199,7 +199,7 @@ fn drawAt(x: Int, y: Int, ch: String) -> Result<Unit, String>
     ? "Move cursor and print a double-wide cell (terminal chars are ~2x taller than wide)"
     ! [Terminal.moveTo, Terminal.print]
     Terminal.moveTo(x * 2, y)?
-    Terminal.print(ch)
+    Terminal.print(ch)?
     Result.Ok(Unit)
 
 fn renderHLine(x: Int, maxX: Int, y: Int) -> Result<Unit, String>
@@ -233,7 +233,7 @@ fn renderBorder(state: GameState) -> Result<Unit, String>
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     maxX = state.width - 1
     maxY = state.height - 1
-    Terminal.setColor("white")
+    Terminal.setColor("white")?
     drawAt(0, 0, "██")?
     drawAt(maxX, 0, "██")?
     drawAt(0, maxY, "██")?
@@ -242,15 +242,15 @@ fn renderBorder(state: GameState) -> Result<Unit, String>
     renderHLine(1, maxX, maxY)?
     renderVLine(1, maxY, 0)?
     renderVLine(1, maxY, maxX)?
-    Terminal.resetColor()
+    Terminal.resetColor()?
     Result.Ok(Unit)
 
 fn renderSegment(p: Point, i: Int) -> Result<Unit, String>
     ? "Draw one snake segment"
     ! [Terminal.moveTo, Terminal.print, Terminal.setColor]
     match i == 0
-        true -> Terminal.setColor("green")
-        false -> Terminal.setColor("cyan")
+        true -> Terminal.setColor("green")?
+        false -> Terminal.setColor("cyan")?
     drawAt(p.x, p.y, "██")
 
 fn renderSnake(snake: List<Point>, i: Int) -> Result<Unit, String>
@@ -271,15 +271,15 @@ fn render(state: GameState) -> Result<Unit, String>
     ! [
         Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor,
     ]
-    Terminal.clear()
+    Terminal.clear()?
     renderBorder(state)?
     renderSnake(state.snake, 0)?
-    Terminal.setColor("red")
+    Terminal.setColor("red")?
     drawAt(state.food.x, state.food.y, "██")?
-    Terminal.resetColor()
+    Terminal.resetColor()?
     Terminal.moveTo(0, state.height)?
-    Terminal.print("Score: {String.fromInt(state.score)}  |  Q / ESC to quit")
-    Terminal.flush()
+    Terminal.print("Score: {String.fromInt(state.score)}  |  Q / ESC to quit")?
+    Terminal.flush()?
     Result.Ok(Unit)
 
 fn handleKey(state: GameState, k: String) -> GameState
@@ -294,12 +294,12 @@ verify handleKey
     handleKey(gs([pt(5, 5)], 1, 0, pt(0, 0)), "esc").gameOver => true
     handleKey(gs([pt(5, 5)], 1, 0, pt(0, 0)), "up").dy => 0 - 1
 
-fn readInput(state: GameState) -> GameState
+fn readInput(state: GameState) -> Result<GameState, String>
     ? "Poll for a key press and update direction"
     ! [Terminal.readKey]
-    match Terminal.readKey()
-        Option.Some(k) -> handleKey(state, k)
-        Option.None -> state
+    match Terminal.readKey()?
+        Option.Some(k) -> Result.Ok(handleKey(state, k))
+        Option.None -> Result.Ok(state)
 
 fn tick(state: GameState) -> Result<String, String>
     ? "One game tick: move, check collision, check food"
@@ -334,7 +334,7 @@ fn gameLoop(state: GameState) -> Result<String, String>
     ]
     render(state)?
     Time.sleep(state.tickMs)?
-    tick(readInput(state))
+    tick(readInput(state)?)
 
 fn initState() -> GameState
     ? "Starting game state"
@@ -351,12 +351,12 @@ fn run() -> Result<String, String>
         Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor,
         Time.sleep,
     ]
-    Terminal.enableRawMode()
-    Terminal.hideCursor()
+    Terminal.enableRawMode()?
+    Terminal.hideCursor()?
     result = gameLoop(initState())
-    Terminal.showCursor()
-    Terminal.disableRawMode()
-    Terminal.clear()
+    Terminal.showCursor()?
+    Terminal.disableRawMode()?
+    Terminal.clear()?
     result
 
 fn main()

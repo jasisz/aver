@@ -105,6 +105,7 @@ fn main_impl(
             self_host,
             profile,
             wasm_gc,
+            test_boxed_sequences,
             wasip2,
             program_args,
         } => {
@@ -165,6 +166,7 @@ fn main_impl(
                         program_args.clone(),
                         record.as_deref(),
                         None,
+                        *test_boxed_sequences,
                     );
                 } else {
                     // Batch: each --expr gets its own fresh wasmtime
@@ -177,6 +179,7 @@ fn main_impl(
                             program_args.clone(),
                             record.as_deref(),
                             Some(expr_src.as_str()),
+                            *test_boxed_sequences,
                         );
                     }
                 }
@@ -333,6 +336,7 @@ fn main_impl(
             world,
             optimize,
             certify,
+            test_boxed_sequences,
             emit_ir_after,
             explain_passes,
             explain_mir_coverage,
@@ -428,6 +432,7 @@ fn main_impl(
                 world: *world,
                 optimize: *optimize,
                 certify: *certify,
+                packed_sequences_enabled: !*test_boxed_sequences,
             });
         }
         Commands::Why {

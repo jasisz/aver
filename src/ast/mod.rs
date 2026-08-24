@@ -157,17 +157,16 @@ pub fn is_literal_nonzero_int_divisor(expr: &Spanned<Expr>) -> bool {
     }
 }
 
-/// Literal-count discharge predicate, the `Bits` sibling of
-/// [`is_literal_nonzero_int_divisor`]: `Bits.shiftLeft(x, N)`,
-/// `Bits.shiftRight(x, N)` and `Bits.low(x, N)` type and lower as TOTAL
-/// (plain `Int`, no `Result` to unwrap) exactly when the count `N` is a
-/// syntactic NON-NEGATIVE integer literal no greater than the language's
-/// fixed [`aver_rt::MAX_MATERIALIZED_BITS`] bound.
+/// Literal-count discharge predicate for the two `Bits` operations that may
+/// materialize a result proportional to their count: `Bits.shiftLeft(x, N)`
+/// and `Bits.low(x, N)` type and lower as plain `Int` when `N` is a syntactic
+/// non-negative integer literal no greater than the language's fixed
+/// [`aver_rt::MAX_MATERIALIZED_BITS`] bound.
 ///
 /// The two predicates differ in which literal they refuse, because the two
 /// families are partial for different reasons. Division is undefined only at
-/// `0`, so `-3` discharges it; a bit count is refused below zero and above the
-/// fixed materialization bound, so `0` discharges (`Bits.low(x, 0)` is a
+/// `0`, so `-3` discharges it; a materializing bit count is refused below zero
+/// and above the fixed bound, so `0` discharges (`Bits.low(x, 0)` is a
 /// well-defined `0`) while `-3`, `16_777_217`, and every `BigInt` literal stay
 /// on the catchable `Result` path.
 ///
@@ -190,6 +189,16 @@ pub fn is_literal_nonneg_int_count(expr: &Spanned<Expr>) -> bool {
         Expr::Literal(Literal::BigInt(_)) => false,
         _ => false,
     }
+}
+
+/// Literal discharge for `Bits.shiftRight(x, N)`. Right shift never grows its
+/// result, so every syntactic non-negative integer literal is total — including
+/// a `BigInt` count, which immediately returns the infinite sign tail.
+pub fn is_literal_nonneg_shift_right_count(expr: &Spanned<Expr>) -> bool {
+    matches!(
+        &expr.node,
+        Expr::Literal(Literal::Int(0..)) | Expr::Literal(Literal::BigInt(_))
+    )
 }
 
 /// Literal discharge for `BranchPath.child(path, index)`. A branch index is

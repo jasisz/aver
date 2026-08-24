@@ -436,51 +436,60 @@ fn builtinTerminalNoArg(name: String, args: List<Val>) -> Result<Val, String>
 fn termClear() -> Result<Val, String>
     ? "Clear the terminal screen."
     ! [Terminal.clear]
-    Terminal.clear()
-    Result.Ok(Val.ValUnit)
+    match Terminal.clear()
+        Result.Ok(_) -> Result.Ok(Val.ValOk(Val.ValUnit))
+        Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))
 
 fn termFlush() -> Result<Val, String>
     ? "Flush terminal output."
     ! [Terminal.flush]
-    Terminal.flush()
-    Result.Ok(Val.ValUnit)
+    match Terminal.flush()
+        Result.Ok(_) -> Result.Ok(Val.ValOk(Val.ValUnit))
+        Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))
 
 fn termEnableRawMode() -> Result<Val, String>
     ? "Enable terminal raw mode."
     ! [Terminal.enableRawMode]
-    Terminal.enableRawMode()
-    Result.Ok(Val.ValUnit)
+    match Terminal.enableRawMode()
+        Result.Ok(_) -> Result.Ok(Val.ValOk(Val.ValUnit))
+        Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))
 
 fn termDisableRawMode() -> Result<Val, String>
     ? "Disable terminal raw mode."
     ! [Terminal.disableRawMode]
-    Terminal.disableRawMode()
-    Result.Ok(Val.ValUnit)
+    match Terminal.disableRawMode()
+        Result.Ok(_) -> Result.Ok(Val.ValOk(Val.ValUnit))
+        Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))
 
 fn termHideCursor() -> Result<Val, String>
     ? "Hide terminal cursor."
     ! [Terminal.hideCursor]
-    Terminal.hideCursor()
-    Result.Ok(Val.ValUnit)
+    match Terminal.hideCursor()
+        Result.Ok(_) -> Result.Ok(Val.ValOk(Val.ValUnit))
+        Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))
 
 fn termShowCursor() -> Result<Val, String>
     ? "Show terminal cursor."
     ! [Terminal.showCursor]
-    Terminal.showCursor()
-    Result.Ok(Val.ValUnit)
+    match Terminal.showCursor()
+        Result.Ok(_) -> Result.Ok(Val.ValOk(Val.ValUnit))
+        Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))
 
 fn termResetColor() -> Result<Val, String>
     ? "Reset terminal color."
     ! [Terminal.resetColor]
-    Terminal.resetColor()
-    Result.Ok(Val.ValUnit)
+    match Terminal.resetColor()
+        Result.Ok(_) -> Result.Ok(Val.ValOk(Val.ValUnit))
+        Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))
 
 fn builtinTerminalReadKey(args: List<Val>) -> Result<Val, String>
-    ? "Terminal.readKey() -> Option<String>."
+    ? "Terminal.readKey() -> Result<Option<String>, String>."
     ! [Terminal.readKey]
     match Terminal.readKey()
-        Option.Some(k) -> Result.Ok(Val.ValSome(Val.ValStr(k)))
-        Option.None -> Result.Ok(Val.ValNone)
+        Result.Ok(key) -> match key
+            Option.Some(k) -> Result.Ok(Val.ValOk(Val.ValSome(Val.ValStr(k))))
+            Option.None -> Result.Ok(Val.ValOk(Val.ValNone))
+        Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))
 
 fn builtinTerminalSize(args: List<Val>) -> Result<Val, String>
     ? "Terminal.size() -> Result record with width and height."
@@ -490,7 +499,7 @@ fn builtinTerminalSize(args: List<Val>) -> Result<Val, String>
         Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))
 
 fn builtinTerminalPrint(args: List<Val>) -> Result<Val, String>
-    ? "Terminal.print(s) -> print string to terminal."
+    ? "Terminal.print(s) -> Result<Unit, String>."
     ! [Terminal.print]
     v = Domain.Builtins.Helpers.oneArg(args)?
     match v
@@ -500,16 +509,18 @@ fn builtinTerminalPrint(args: List<Val>) -> Result<Val, String>
 fn termPrintStr(s: String) -> Result<Val, String>
     ? "Print string to terminal."
     ! [Terminal.print]
-    Terminal.print(s)
-    Result.Ok(Val.ValUnit)
+    match Terminal.print(s)
+        Result.Ok(_) -> Result.Ok(Val.ValOk(Val.ValUnit))
+        Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))
 
 fn builtinTerminalSetColor(args: List<Val>) -> Result<Val, String>
-    ? "Terminal.setColor(color) -> Unit."
+    ? "Terminal.setColor(color) -> Result<Unit, String>."
     ! [Terminal.setColor]
     v = Domain.Builtins.Helpers.oneArg(args)?
     s = Domain.Builtins.Helpers.expectStr(v)?
-    Terminal.setColor(s)
-    Result.Ok(Val.ValUnit)
+    match Terminal.setColor(s)
+        Result.Ok(_) -> Result.Ok(Val.ValOk(Val.ValUnit))
+        Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))
 
 fn builtinTerminalMoveTo(args: List<Val>) -> Result<Val, String>
     ? "Terminal.moveTo(x, y) -> Result<Unit, String>."

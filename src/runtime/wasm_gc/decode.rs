@@ -20,9 +20,9 @@ use super::imports::{
     host_result_err_list_string, host_result_err_string, host_result_err_unit_string,
     host_result_http_response_err, host_result_http_response_ok, host_result_ok_bytes,
     host_result_ok_int, host_result_ok_list_string, host_result_ok_string, host_result_ok_unit,
-    host_result_tcp_connection_err, host_result_tcp_connection_ok, host_result_terminal_size_err,
-    host_result_terminal_size_ok, host_tcp_connection_make, host_terminal_size_make,
-    lm_string_from_host,
+    host_result_option_string_err, host_result_option_string_ok, host_result_tcp_connection_err,
+    host_result_tcp_connection_ok, host_result_terminal_size_err, host_result_terminal_size_ok,
+    host_tcp_connection_make, host_terminal_size_make, lm_string_from_host,
 };
 
 pub(crate) fn decode_main_return_typed(
@@ -574,6 +574,26 @@ pub(crate) fn decode_option_string(
         ("$none", _) => host_option_string_none(caller),
         _ => Err(wasmtime::Error::msg(
             "replay decode Option<String>: unexpected payload",
+        )),
+    }
+}
+
+/// Decode `Result<Option<String>, String>` used by `Terminal.readKey`.
+pub(crate) fn decode_result_option_string(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    json: &aver::replay::JsonValue,
+) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
+    let (marker, inner) = expect_marker(json, &["$ok", "$err"])?;
+    match (marker, inner) {
+        ("$ok", value) => {
+            let option = decode_option_string(caller, value)?;
+            host_result_option_string_ok(caller, option)
+        }
+        ("$err", aver::replay::JsonValue::String(message)) => {
+            host_result_option_string_err(caller, message)
+        }
+        _ => Err(wasmtime::Error::msg(
+            "replay decode Result<Option<String>, String>: unexpected payload",
         )),
     }
 }

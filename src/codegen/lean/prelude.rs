@@ -111,6 +111,19 @@ def withDefault (r : Except ε α) (d : α) : α :=
   match r with
   | .ok v => v
   | .error _ => d
+
+/- Partial-correctness model for compiler-discharged Results. Runtime
+   backends fault on `.error`; the proof model therefore assigns no chosen
+   source value to that path. `Classical.choice` stays opaque, unlike a
+   concrete default such as zero, so an Err branch cannot prove facts by
+   silently pretending a particular payload was returned. -/
+noncomputable def proven [Nonempty α] (r : Except ε α) : α :=
+  match r with
+  | .ok v => v
+  | .error _ => Classical.choice (inferInstance : Nonempty α)
+
+@[simp] theorem proven_ok [Nonempty α] (v : α) :
+    proven (Except.ok v : Except ε α) = v := rfl
 end Except"#;
 
 const LEAN_PRELUDE_OPTION_TO_EXCEPT: &str = r#"def Option.toExcept (o : Option α) (e : ε) : Except ε α :=

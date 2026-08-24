@@ -377,7 +377,9 @@ fn resolve_expr(ctx: &ResolveCtx<'_>, expr: &Spanned<Expr>) -> ResolvedExpr {
                     "Bits.shiftLeft" if crate::ast::is_literal_nonneg_int_count(&args[1]) => {
                         Some(BuiltinIntrinsic::BitsShiftLeft)
                     }
-                    "Bits.shiftRight" if crate::ast::is_literal_nonneg_int_count(&args[1]) => {
+                    "Bits.shiftRight"
+                        if crate::ast::is_literal_nonneg_shift_right_count(&args[1]) =>
+                    {
                         Some(BuiltinIntrinsic::BitsShiftRight)
                     }
                     "Bits.low" if crate::ast::is_literal_nonneg_int_count(&args[1]) => {
@@ -410,34 +412,30 @@ fn resolve_expr(ctx: &ResolveCtx<'_>, expr: &Spanned<Expr>) -> ResolvedExpr {
             // MUST remain visible as their original capability operations so
             // recording, replay, policy, and proof-oracle routing still see
             // `Random.int` / `Time.sleep`. Wrap the real effect call in the
-            // ordinary Result destructor instead of replacing it with a pure
-            // intrinsic. A conforming provider cannot produce `Err` for these
-            // statically valid arguments; the default is the total semantic
-            // fallback used if a provider violates that stronger contract.
+            // fail-closed Result destructor instead of replacing it with a
+            // pure intrinsic. A conforming provider cannot produce `Err` for
+            // these statically valid arguments. If one does, execution faults:
+            // manufacturing a deterministic fallback would silently corrupt
+            // Random's distribution and hide a provider contract violation.
             if let ResolvedCallee::Builtin(name) = &resolved_callee {
-                let default = match name.as_str() {
+                let discharged = match name.as_str() {
                     "Random.int"
                         if args.len() == 2
                             && resolved_args.len() == 2
                             && crate::ast::is_literal_random_int_range(&args[0], &args[1]) =>
                     {
-                        Some(resolved_args[0].clone())
+                        true
                     }
                     "Time.sleep"
                         if args.len() == 1
                             && resolved_args.len() == 1
                             && crate::ast::is_literal_sleep_duration(&args[0]) =>
                     {
-                        let unit = Spanned::new(
-                            ResolvedExpr::Literal(crate::ast::Literal::Unit),
-                            expr.line,
-                        );
-                        unit.set_ty(crate::types::Type::Unit);
-                        Some(unit)
+                        true
                     }
-                    _ => None,
+                    _ => false,
                 };
-                if let Some(default) = default {
+                if discharged {
                     let effect_call = Spanned::new(
                         ResolvedExpr::Call(resolved_callee.clone(), resolved_args),
                         expr.line,
@@ -452,8 +450,8 @@ fn resolve_expr(ctx: &ResolveCtx<'_>, expr: &Spanned<Expr>) -> ResolvedExpr {
                         Box::new(crate::types::Type::Str),
                     ));
                     return ResolvedExpr::Call(
-                        ResolvedCallee::Builtin("Result.withDefault".to_string()),
-                        vec![effect_call, default],
+                        ResolvedCallee::Intrinsic(BuiltinIntrinsic::ResultProven),
+                        vec![effect_call],
                     );
                 }
             }

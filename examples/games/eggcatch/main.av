@@ -64,12 +64,12 @@ fn runInteractive(seed: Int, mode: Core.Mode) -> Result<Unit, String>
         Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.showCursor,
         Time.sleep,
     ]
-    Terminal.enableRawMode()
-    Terminal.hideCursor()
+    Terminal.enableRawMode()?
+    Terminal.hideCursor()?
     result = loop(Core.initialState(seed, mode))?
-    Terminal.showCursor()
-    Terminal.disableRawMode()
-    Terminal.clear()
+    Terminal.showCursor()?
+    Terminal.disableRawMode()?
+    Terminal.clear()?
     Console.print("Game over — final score: {String.fromInt(Core.finalScore(result))}")
     Result.Ok(Unit)
 
@@ -105,7 +105,7 @@ fn pollSlices(gs: Core.GameState, left: Int) -> Result<Core.GameState, String>
     ]
     match left <= 0
         true -> loop(Core.step(gs, Core.Input.Tick))
-        false -> pollOne(gs, left, keyString(Terminal.readKey()))
+        false -> pollOne(gs, left, keyString(Terminal.readKey()?))
 
 fn pollOne(gs: Core.GameState, left: Int, key: String) -> Result<Core.GameState, String>
     ? "Handle one polled key: esc quits, no key just sleeps the slice, a game"
@@ -151,9 +151,9 @@ verify keyString
 fn draw(gs: Core.GameState) -> Result<Unit, String>
     ? "Clear and paint the fixed-size frame, one Core.render row per terminal row."
     ! [Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print]
-    Terminal.clear()
+    Terminal.clear()?
     drawRows(String.split(Core.render(gs), "\n"), 0)?
-    Terminal.flush()
+    Terminal.flush()?
     Result.Ok(Unit)
 
 fn drawRows(rows: List<String>, y: Int) -> Result<Unit, String>
@@ -167,5 +167,5 @@ fn drawRow(row: String, rest: List<String>, y: Int) -> Result<Unit, String>
     ? "Paint one row at column 0, line y, then continue with the rest."
     ! [Terminal.moveTo, Terminal.print]
     Terminal.moveTo(0, y)?
-    Terminal.print(row)
+    Terminal.print(row)?
     drawRows(rest, y + 1)

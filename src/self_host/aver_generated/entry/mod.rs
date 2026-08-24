@@ -197,8 +197,8 @@ pub fn loadModules(
     ),
     AverStr,
 > {
-    let loaded = std::sync::Arc::new(loaded);
     let acc = std::sync::Arc::new(acc);
+    let loaded = std::sync::Arc::new(loaded);
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(deps, [] => { return Ok(((*acc).clone(), (*loaded).clone())); }, [dep, rest] => { if loaded.contains_key(&dep) { {

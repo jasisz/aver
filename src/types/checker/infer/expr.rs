@@ -776,9 +776,6 @@ impl TypeChecker {
                         Self::instantiate_type(&sig.ret, &subst)
                     }
                 };
-                let validate_special_call =
-                    |_tc: &mut Self, _display_name: &str, _call_args: &[Spanned<Expr>]| {};
-
                 if let Expr::Ident(name) = &fn_expr.node {
                     if let Some((resolved_id, sig)) = self
                         .find_fn_sig_resolved(name)
@@ -803,7 +800,6 @@ impl TypeChecker {
                                 .is_some()
                         });
                         let ret = check_call(self, name, sig);
-                        validate_special_call(self, name, args);
                         if discharged && let Type::Result(payload, _) = ret {
                             return *payload;
                         }
@@ -922,20 +918,24 @@ impl TypeChecker {
                             }
                             return Type::Int;
                         }
-                        // Literal-count discharge: the three `Bits`
-                        // operations that take a shift amount or a bit width
-                        // refuse negative counts and counts above the fixed
-                        // materialization bound, so a SYNTACTIC non-negative
-                        // integer literal inside that bound cannot fail and
-                        // the call types as plain `Int`. Same narrow
-                        // mechanism as the divisor rule above, sharing its
-                        // shape down to the HIR resolver, which lowers this
-                        // exact shape to the total intrinsics. A negative or
-                        // oversized literal, or any non-literal count, falls
-                        // through to the registered `Result` signature.
-                        "Bits.shiftLeft" | "Bits.shiftRight" | "Bits.low"
+                        // Literal-count discharge for operations that may
+                        // materialize `n` bits. A negative, oversized, or
+                        // non-literal count keeps the registered `Result`.
+                        "Bits.shiftLeft" | "Bits.low"
                             if args.len() == 2
                                 && crate::ast::is_literal_nonneg_int_count(&args[1]) =>
+                        {
+                            if let Some(sig) = self.find_fn_sig(&display_name).cloned() {
+                                check_call(self, &display_name, sig);
+                            }
+                            return Type::Int;
+                        }
+                        // Right shift only shrinks its input, so every
+                        // syntactic non-negative literal is total. Huge
+                        // literals lower to the O(1) infinite sign tail.
+                        "Bits.shiftRight"
+                            if args.len() == 2
+                                && crate::ast::is_literal_nonneg_shift_right_count(&args[1]) =>
                         {
                             if let Some(sig) = self.find_fn_sig(&display_name).cloned() {
                                 check_call(self, &display_name, sig);
@@ -1035,7 +1035,6 @@ impl TypeChecker {
                     }
                     if let Some(sig) = self.find_fn_sig(&display_name).cloned() {
                         let ret = check_call(self, &display_name, sig);
-                        validate_special_call(self, &display_name, args);
                         // Cross-arg validation for `listenWith` family: the
                         // context arg (#2) must match the handler's first
                         // parameter type. Builtin sigs use `Type::Invalid`

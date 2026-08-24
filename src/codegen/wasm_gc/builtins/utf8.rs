@@ -4,7 +4,7 @@
 //! (with distinct nominal wasm types). Encoding is one `array.copy`. Decoding
 //! uses one streaming pass which copies each octet and validates UTF-8 with a
 //! three-integer continuation state. The boxed `List<Int>` representation is
-//! kept as a differential fallback for `AVER_NO_PACKED_SEQUENCES`.
+//! kept as a differential fallback selected by internal emitter configuration.
 
 use wasm_encoder::Function;
 

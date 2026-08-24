@@ -1,18 +1,18 @@
 /// Terminal service — raw mode, cursor, color, key input.
 ///
 /// Methods:
-///   Terminal.enableRawMode()   — enter raw mode
-///   Terminal.disableRawMode()  — leave raw mode
-///   Terminal.clear()           — clear screen
+///   Terminal.enableRawMode()   — enter raw mode → Result<Unit,String>
+///   Terminal.disableRawMode()  — leave raw mode → Result<Unit,String>
+///   Terminal.clear()           — clear screen → Result<Unit,String>
 ///   Terminal.moveTo(x, y)      — move cursor → Result<Unit,String>
-///   Terminal.print(s)          — print string at cursor (no newline)
-///   Terminal.setColor(color)   — set foreground color
-///   Terminal.resetColor()      — reset colors to default
-///   Terminal.readKey()         — non-blocking key poll → Option<String>
+///   Terminal.print(s)          — print string at cursor → Result<Unit,String>
+///   Terminal.setColor(color)   — set foreground color → Result<Unit,String>
+///   Terminal.resetColor()      — reset colors → Result<Unit,String>
+///   Terminal.readKey()         — non-blocking poll → Result<Option<String>,String>
 ///   Terminal.size()            — terminal size → Result<Terminal.Size,String>
-///   Terminal.hideCursor()      — hide cursor
-///   Terminal.showCursor()      — show cursor
-///   Terminal.flush()           — flush stdout
+///   Terminal.hideCursor()      — hide cursor → Result<Unit,String>
+///   Terminal.showCursor()      — show cursor → Result<Unit,String>
+///   Terminal.flush()           — flush stdout → Result<Unit,String>
 ///
 /// Effects are granular per method.
 use crate::nan_value::{Arena, NanValue, NanValueConvert};
@@ -35,44 +35,29 @@ pub const DECLARED_EFFECTS: &[&str] = &[
 
 pub fn call(name: &str, args: &[Value]) -> Option<Result<Value, RuntimeError>> {
     match name {
-        "Terminal.enableRawMode" => Some(no_args(name, args, || {
-            aver_rt::terminal_enable_raw_mode().map(|()| Value::Unit)
+        "Terminal.enableRawMode" => Some(no_args_result(name, args, || {
+            aver_rt::terminal_enable_raw_mode()
         })),
-        "Terminal.disableRawMode" => Some(no_args(name, args, || {
-            aver_rt::terminal_disable_raw_mode().map(|()| Value::Unit)
+        "Terminal.disableRawMode" => Some(no_args_result(name, args, || {
+            aver_rt::terminal_disable_raw_mode()
         })),
-        "Terminal.clear" => Some(no_args(name, args, || {
-            aver_rt::terminal_clear().map(|()| Value::Unit)
-        })),
+        "Terminal.clear" => Some(no_args_result(name, args, aver_rt::terminal_clear)),
         "Terminal.moveTo" => Some(move_to(args)),
         "Terminal.print" => Some(print(args)),
         "Terminal.setColor" => Some(set_color(args)),
-        "Terminal.resetColor" => Some(no_args(name, args, || {
-            aver_rt::terminal_reset_color().map(|()| Value::Unit)
-        })),
-        "Terminal.readKey" => Some(no_args(name, args, || {
-            Ok(match aver_rt::terminal_read_key() {
-                Some(key) => Value::Some(Box::new(Value::Str(key))),
-                None => Value::None,
-            })
-        })),
+        "Terminal.resetColor" => Some(no_args_result(name, args, aver_rt::terminal_reset_color)),
+        "Terminal.readKey" => Some(read_key(args)),
         "Terminal.size" => Some(size(args)),
-        "Terminal.hideCursor" => Some(no_args(name, args, || {
-            aver_rt::terminal_hide_cursor().map(|()| Value::Unit)
-        })),
-        "Terminal.showCursor" => Some(no_args(name, args, || {
-            aver_rt::terminal_show_cursor().map(|()| Value::Unit)
-        })),
-        "Terminal.flush" => Some(no_args(name, args, || {
-            aver_rt::terminal_flush().map(|()| Value::Unit)
-        })),
+        "Terminal.hideCursor" => Some(no_args_result(name, args, aver_rt::terminal_hide_cursor)),
+        "Terminal.showCursor" => Some(no_args_result(name, args, aver_rt::terminal_show_cursor)),
+        "Terminal.flush" => Some(no_args_result(name, args, aver_rt::terminal_flush)),
         _ => None,
     }
 }
 
-fn no_args<F>(name: &str, args: &[Value], f: F) -> Result<Value, RuntimeError>
+fn no_args_result<F>(name: &str, args: &[Value], f: F) -> Result<Value, RuntimeError>
 where
-    F: FnOnce() -> Result<Value, String>,
+    F: FnOnce() -> Result<(), String>,
 {
     if !args.is_empty() {
         return Err(RuntimeError::Error(format!(
@@ -81,7 +66,14 @@ where
             args.len()
         )));
     }
-    f().map_err(RuntimeError::Error)
+    Ok(unit_result(f()))
+}
+
+fn unit_result(result: Result<(), String>) -> Value {
+    match result {
+        Ok(()) => Value::Ok(Box::new(Value::Unit)),
+        Err(message) => Value::Err(Box::new(Value::Str(message))),
+    }
 }
 
 fn move_to(args: &[Value]) -> Result<Value, RuntimeError> {
@@ -132,6 +124,20 @@ fn size(args: &[Value]) -> Result<Value, RuntimeError> {
     })
 }
 
+fn read_key(args: &[Value]) -> Result<Value, RuntimeError> {
+    if !args.is_empty() {
+        return Err(RuntimeError::Error(format!(
+            "Terminal.readKey() takes 0 arguments, got {}",
+            args.len()
+        )));
+    }
+    Ok(match aver_rt::terminal_read_key() {
+        Ok(Some(key)) => Value::Ok(Box::new(Value::Some(Box::new(Value::Str(key))))),
+        Ok(None) => Value::Ok(Box::new(Value::None)),
+        Err(message) => Value::Err(Box::new(Value::Str(message))),
+    })
+}
+
 fn print(args: &[Value]) -> Result<Value, RuntimeError> {
     let [s_val] = args else {
         return Err(RuntimeError::Error(format!(
@@ -140,8 +146,7 @@ fn print(args: &[Value]) -> Result<Value, RuntimeError> {
         )));
     };
     let s = crate::value::aver_display(s_val).unwrap_or_default();
-    aver_rt::terminal_print(&s).map_err(RuntimeError::Error)?;
-    Ok(Value::Unit)
+    Ok(unit_result(aver_rt::terminal_print(&s)))
 }
 
 fn set_color(args: &[Value]) -> Result<Value, RuntimeError> {
@@ -156,8 +161,7 @@ fn set_color(args: &[Value]) -> Result<Value, RuntimeError> {
             "Terminal.setColor: argument must be a String".to_string(),
         ));
     };
-    aver_rt::terminal_set_color(color).map_err(RuntimeError::Error)?;
-    Ok(Value::Unit)
+    Ok(unit_result(aver_rt::terminal_set_color(color)))
 }
 
 // ─── NanValue-native API ─────────────────────────────────────────────────────

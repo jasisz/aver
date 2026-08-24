@@ -3239,8 +3239,8 @@ pub fn evalConcatParts(
     fns: crate::aver_generated::domain::eval::store::FnStore,
     mut acc: AverStr,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
-    let env = std::sync::Arc::new(env);
     let fns = std::sync::Arc::new(fns);
+    let env = std::sync::Arc::new(env);
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(parts, [] => { return Ok(crate::aver_generated::domain::value::Val::ValStr(acc)); }, [p, rest] => { match crate::aver_generated::domain::eval::core::evalExpr(&p, &*env, &*fns) { Err(e @ _) => { return Err(e); }, Ok(v @ _) => { {
@@ -3354,8 +3354,8 @@ pub fn evalListItemsRev(
     fns: crate::aver_generated::domain::eval::store::FnStore,
     mut acc: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<aver_rt::AverList<crate::aver_generated::domain::value::Val>, AverStr> {
-    let env = std::sync::Arc::new(env);
     let fns = std::sync::Arc::new(fns);
+    let env = std::sync::Arc::new(env);
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(exprs, [] => { return Ok(acc.reverse()); }, [e, rest] => { match crate::aver_generated::domain::eval::core::evalExpr(&e, &*env, &*fns) { Err(err @ _) => { return Err(err); }, Ok(v @ _) => { {
@@ -3497,8 +3497,8 @@ pub fn evalResolvedSlotLoop(
     mut calleeEnv: aver_rt::AverVector<crate::aver_generated::domain::value::Val>,
     fns: crate::aver_generated::domain::eval::store::FnStore,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
-    let fd = std::sync::Arc::new(fd);
     let fns = std::sync::Arc::new(fns);
+    let fd = std::sync::Arc::new(fd);
     loop {
         crate::cancel_checkpoint();
         let step = crate::aver_generated::domain::eval::core::evalResolvedSlotStep(
@@ -4453,8 +4453,8 @@ pub fn evalConcatPartsSlot(
     mut acc: AverStr,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     let env = std::sync::Arc::new(env);
-    let slotMap = std::sync::Arc::new(slotMap);
     let fns = std::sync::Arc::new(fns);
+    let slotMap = std::sync::Arc::new(slotMap);
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(parts, [] => { return Ok(crate::aver_generated::domain::value::Val::ValStr(acc)); }, [p, rest] => { match crate::aver_generated::domain::eval::core::evalExprSlot(&p, &*env, &*slotMap, &*fns) { Err(e @ _) => { return Err(e); }, Ok(v @ _) => { {
@@ -4754,9 +4754,9 @@ pub fn evalArgsSlotRev(
     fns: crate::aver_generated::domain::eval::store::FnStore,
     mut acc: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<aver_rt::AverList<crate::aver_generated::domain::value::Val>, AverStr> {
+    let env = std::sync::Arc::new(env);
     let fns = std::sync::Arc::new(fns);
     let slotMap = std::sync::Arc::new(slotMap);
-    let env = std::sync::Arc::new(env);
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(exprs, [] => { return Ok(acc.reverse()); }, [e, rest] => { match crate::aver_generated::domain::eval::core::evalExprSlot(&e, &*env, &*slotMap, &*fns) { Err(err @ _) => { return Err(err); }, Ok(v @ _) => { {
@@ -4777,8 +4777,8 @@ pub fn evalArgsMapToSlotEnv(
     mut acc: aver_rt::AverVector<crate::aver_generated::domain::value::Val>,
     mut idx: aver_rt::AverInt,
 ) -> Result<aver_rt::AverVector<crate::aver_generated::domain::value::Val>, AverStr> {
-    let fns = std::sync::Arc::new(fns);
     let env = std::sync::Arc::new(env);
+    let fns = std::sync::Arc::new(fns);
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(exprs, [] => { return Ok(acc); }, [e, rest] => { match crate::aver_generated::domain::eval::core::evalExpr(&e, &*env, &*fns) { Err(err @ _) => { return Err(err); }, Ok(v @ _) => { {
@@ -4802,9 +4802,9 @@ pub fn evalArgsSlotToSlotEnv(
     mut acc: aver_rt::AverVector<crate::aver_generated::domain::value::Val>,
     mut idx: aver_rt::AverInt,
 ) -> Result<aver_rt::AverVector<crate::aver_generated::domain::value::Val>, AverStr> {
+    let fns = std::sync::Arc::new(fns);
     let env = std::sync::Arc::new(env);
     let slotMap = std::sync::Arc::new(slotMap);
-    let fns = std::sync::Arc::new(fns);
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(exprs, [] => { return Ok(acc); }, [e, rest] => { match crate::aver_generated::domain::eval::core::evalExprSlot(&e, &*env, &*slotMap, &*fns) { Err(err @ _) => { return Err(err); }, Ok(v @ _) => { {

@@ -8,13 +8,12 @@ fn counterStub(path: BranchPath, n: Int, min: Int, max: Int) -> Result<Int, Stri
     ? "Return the per-branch oracle counter."
     Result.Ok(n)
 
-fn pairSpec(path: BranchPath, rnd: Fn(BranchPath, Int, Int, Int) -> Result<Int, String>) -> Tuple<Int, Int>
+fn pairSpec(path: BranchPath, rnd: Fn(BranchPath, Int, Int, Int) -> Result<Int, String>) -> Result<Tuple<Int, Int>, String>
     ? "Expected pair for a two-branch independent product."
     leftPath = BranchPath.child(path, 0)
     rightPath = BranchPath.child(path, 1)
-    left = Result.withDefault(rnd(leftPath, 0, 1, 6), 1)
-    right = Result.withDefault(rnd(rightPath, 0, 7, 12), 7)
-    (left, right)
+    pair = (rnd(leftPath, 0, 1, 6), rnd(rightPath, 0, 7, 12))?!
+    Result.Ok(pair)
 
 fn pickPair() -> Tuple<Int, Int>
     ? "Draw two values in one independent product."
@@ -23,7 +22,7 @@ fn pickPair() -> Tuple<Int, Int>
 
 verify pickPair law branchPathLaw
     given rnd: Random.int = [counterStub]
-    pickPair() => pairSpec(BranchPath.Root, rnd)
+    Result.Ok(pickPair()) => pairSpec(BranchPath.Root, rnd)
 
 verify pickPair trace
     given rnd: Random.int = [counterStub]
@@ -63,7 +62,7 @@ verify counterStub
     counterStub(BranchPath.Root, 0, 1, 6) => Result.Ok(0)
 
 verify pairSpec
-    pairSpec(BranchPath.Root, counterStub) => (0, 0)
+    pairSpec(BranchPath.Root, counterStub) => Result.Ok((0, 0))
 
 verify fakeReadByFile
     fakeReadByFile(BranchPath.Root, 0, "left.txt") => Result.Ok("left")

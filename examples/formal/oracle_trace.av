@@ -19,7 +19,7 @@ fn rollOnce() -> Int
 
 verify rollOnce law usesOracle
     given rnd: Random.int = [highDie]
-    rollOnce() => Result.withDefault(rnd(BranchPath.Root, 0, 1, 6), 1)
+    Result.Ok(rollOnce()) => rnd(BranchPath.Root, 0, 1, 6)
 
 fn fakeLine(path: BranchPath, n: Int) -> Result<String, String>
     ? "Deterministic Console.readLine stub."
@@ -41,9 +41,9 @@ fn fakeWriteErr(path: BranchPath, n: Int, file: String, content: String) -> Resu
     ? "Deterministic failing Disk.writeText stub."
     Result.Err("disk full")
 
-fn fakeKey(path: BranchPath, n: Int) -> Option<String>
+fn fakeKey(path: BranchPath, n: Int) -> Result<Option<String>, String>
     ? "Deterministic Terminal.readKey stub."
-    Option.Some("q")
+    Result.Ok(Option.Some("q"))
 
 fn fakeSleep(path: BranchPath, n: Int, ms: Int) -> Result<Unit, String>
     ? "Deterministic Time.sleep stub that validates without delaying verification."
@@ -66,9 +66,8 @@ fn rollAndReport() -> Int
 
 verify rollAndReport trace
     given rnd: Random.int = [lowDie, highDie]
-    expected = Result.withDefault(rnd(BranchPath.Root, 0, 1, 6), 1)
     report = rollAndReport()
-    report.result => expected
+    Result.Ok(report.result) => rnd(BranchPath.Root, 0, 1, 6)
     report.trace.contains(Random.int(1, 6)) => true
     report.trace.length() => 2
 
@@ -125,17 +124,17 @@ verify pauseThenAnswer trace
     paused.result => 42
     paused.trace.contains(Time.sleep(5)) => true
 
-fn readKeyOrEmpty() -> String
+fn readKeyOrEmpty() -> Result<String, String>
     ? "Reads one terminal key."
     ! [Terminal.readKey]
-    match Terminal.readKey()
-        Option.Some(key) -> key
-        Option.None      -> ""
+    match Terminal.readKey()?
+        Option.Some(key) -> Result.Ok(key)
+        Option.None      -> Result.Ok("")
 
 verify readKeyOrEmpty trace
     given key: Terminal.readKey = [fakeKey]
     typed = readKeyOrEmpty()
-    typed.result => "q"
+    typed.result => Result.Ok("q")
     typed.trace.contains(Terminal.readKey()) => true
 
 fn sendPing() -> Result<String, String>

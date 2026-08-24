@@ -9,7 +9,7 @@ fn drawAt(x: Int, y: Int, ch: String) -> Result<Unit, String>
     ? "Print a 2-char wide cell at board coordinates"
     ! [Terminal.moveTo, Terminal.print]
     Terminal.moveTo(x * 2, y)?
-    Terminal.print(ch)
+    Terminal.print(ch)?
     Result.Ok(Unit)
 
 fn isSelected(x: Int, y: Int, selected: Option<Point>) -> Bool
@@ -71,17 +71,17 @@ fn renderCursorCell(x: Int, y: Int, cell: CellContent, selected: Option<Point>) 
 fn renderCursorEmpty(x: Int, y: Int) -> Result<Unit, String>
     ? "Cursor on empty dark square: green block"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    Terminal.setColor("green")
+    Terminal.setColor("green")?
     drawAt(x + 1, y + 1, "▓▓")?
-    Terminal.resetColor()
+    Terminal.resetColor()?
     Result.Ok(Unit)
 
 fn renderCursorPiece(x: Int, y: Int, cell: CellContent) -> Result<Unit, String>
     ? "Cursor on piece: yellow glyph"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    Terminal.setColor("yellow")
+    Terminal.setColor("yellow")?
     drawAt(x + 1, y + 1, pieceGlyph(cell))?
-    Terminal.resetColor()
+    Terminal.resetColor()?
     Result.Ok(Unit)
 
 fn renderNonCursorCell(x: Int, y: Int, cell: CellContent, selected: Option<Point>, highlights: List<Point>) -> Result<Unit, String>
@@ -96,25 +96,25 @@ fn renderNonCursorCell(x: Int, y: Int, cell: CellContent, selected: Option<Point
 fn renderSelectedCell(x: Int, y: Int, cell: CellContent) -> Result<Unit, String>
     ? "Selected piece: yellow"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    Terminal.setColor("yellow")
+    Terminal.setColor("yellow")?
     drawAt(x + 1, y + 1, pieceGlyph(cell))?
-    Terminal.resetColor()
+    Terminal.resetColor()?
     Result.Ok(Unit)
 
 fn renderHighlightCell(x: Int, y: Int) -> Result<Unit, String>
     ? "Legal destination: green dots"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    Terminal.setColor("green")
+    Terminal.setColor("green")?
     drawAt(x + 1, y + 1, "··")?
-    Terminal.resetColor()
+    Terminal.resetColor()?
     Result.Ok(Unit)
 
 fn renderPieceCell(x: Int, y: Int, cell: CellContent) -> Result<Unit, String>
     ? "Normal piece on dark square"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    Terminal.setColor(pieceColor(cell))
+    Terminal.setColor(pieceColor(cell))?
     drawAt(x + 1, y + 1, pieceGlyph(cell))?
-    Terminal.resetColor()
+    Terminal.resetColor()?
     Result.Ok(Unit)
 
 fn renderCell(board: List<List<CellContent>>, x: Int, y: Int, selected: Option<Point>, highlights: List<Point>, cursor: Point) -> Result<Unit, String>
@@ -168,13 +168,13 @@ fn renderBorderH(x: Int, maxX: Int, y: Int) -> Result<Unit, String>
     ? "Draw horizontal border"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     match x == maxX
-        true -> Result.Ok(Terminal.resetColor())
+        true -> Terminal.resetColor()
         false -> renderBorderHNext(x, maxX, y)
 
 fn renderBorderHNext(x: Int, maxX: Int, y: Int) -> Result<Unit, String>
     ? "One border cell and continue"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    Terminal.setColor("white")
+    Terminal.setColor("white")?
     drawAt(x, y, "██")?
     renderBorderH(x + 1, maxX, y)
 
@@ -182,13 +182,13 @@ fn renderBorderV(y: Int, maxY: Int, x: Int) -> Result<Unit, String>
     ? "Draw vertical border"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     match y == maxY
-        true -> Result.Ok(Terminal.resetColor())
+        true -> Terminal.resetColor()
         false -> renderBorderVNext(y, maxY, x)
 
 fn renderBorderVNext(y: Int, maxY: Int, x: Int) -> Result<Unit, String>
     ? "One border cell and continue"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    Terminal.setColor("white")
+    Terminal.setColor("white")?
     drawAt(x, y, "██")?
     renderBorderV(y + 1, maxY, x)
 
@@ -241,7 +241,7 @@ fn renderRowLabelsNext(r: Int) -> Result<Unit, String>
     ! [Terminal.moveTo, Terminal.print]
     nextR = r + 1
     Terminal.moveTo(0, nextR)?
-    Terminal.print(" {rowLabel(r)}")
+    Terminal.print(" {rowLabel(r)}")?
     renderRowLabels(nextR)
 
 fn rowLabel(r: Int) -> String
@@ -284,18 +284,18 @@ fn renderStatus(currentPlayer: Color, moveNum: Int) -> Result<Unit, String>
     ? "Show current player and move number"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     Terminal.moveTo(0, 12)?
-    Terminal.setColor(playerColor(currentPlayer))
-    Terminal.print("{colorName(currentPlayer)}")
-    Terminal.resetColor()
-    Terminal.print(" to move  |  Move #{String.fromInt(moveNum)}")
+    Terminal.setColor(playerColor(currentPlayer))?
+    Terminal.print("{colorName(currentPlayer)}")?
+    Terminal.resetColor()?
+    Terminal.print(" to move  |  Move #{String.fromInt(moveNum)}")?
     Result.Ok(Unit)
 
 fn renderAiTrace(move: List<Point>, score: Int, alternatives: Int, depth: Int) -> Result<Unit, String>
     ? "Show AI decision trace"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     Terminal.moveTo(0, 13)?
-    Terminal.setColor("cyan")
-    Terminal.print("AI: ")
-    Terminal.resetColor()
-    Terminal.print("score={String.fromInt(score)} alts={String.fromInt(alternatives)} depth={String.fromInt(depth)}")
+    Terminal.setColor("cyan")?
+    Terminal.print("AI: ")?
+    Terminal.resetColor()?
+    Terminal.print("score={String.fromInt(score)} alts={String.fromInt(alternatives)} depth={String.fromInt(depth)}")?
     Result.Ok(Unit)

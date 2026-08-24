@@ -603,7 +603,7 @@ pub(super) fn emit_console_read_line_wasip2(
 /// monotonic clock, waits for it via `wasi:io/poll.poll`, and
 /// drops the pollable. Argument-contract failures are constructed in
 /// guest code, before WASI is touched. A statically valid literal is
-/// unwrapped by the ordinary HIR `Result.withDefault` discharge; this
+/// unwrapped by the fail-closed HIR `__result_proven` discharge; this
 /// lowering still executes the sleep and returns its contract carrier.
 pub(super) fn emit_time_sleep_wasip2(
     func: &mut wasm_encoder::Function,

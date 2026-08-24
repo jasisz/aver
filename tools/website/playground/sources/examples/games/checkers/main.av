@@ -191,12 +191,12 @@ fn renderFrame(state: GameState) -> Result<Unit, String>
     ! [
         Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor,
     ]
-    Terminal.clear()
+    Terminal.clear()?
     Render.renderBoard(state.board, state.selected, highlights(state), Board.pt(state.cursorX, state.cursorY))?
     Render.renderStatus(state.currentPlayer, state.moveNum)?
     renderAiInfo(state)?
     renderHelp(state)?
-    Terminal.flush()
+    Terminal.flush()?
     Result.Ok(Unit)
 
 fn renderAiInfo(state: GameState) -> Result<Unit, String>
@@ -210,13 +210,13 @@ fn renderAiPanel(result: AiResult) -> Result<Unit, String>
     ? "Draw AI decision panel on the right side of the board"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     Terminal.moveTo(22, 1)?
-    Terminal.setColor("cyan")
-    Terminal.print("AI depth={String.fromInt(result.depth)} {String.fromInt(result.thinkMs)}ms")
-    Terminal.resetColor()
+    Terminal.setColor("cyan")?
+    Terminal.print("AI depth={String.fromInt(result.depth)} {String.fromInt(result.thinkMs)}ms")?
+    Terminal.resetColor()?
     Terminal.moveTo(22, 2)?
-    Terminal.setColor("yellow")
-    Terminal.print("root-parallel x{String.fromInt(Ai.rootParallelWidth())} | {String.fromInt(List.len(result.candidates))} moves")
-    Terminal.resetColor()
+    Terminal.setColor("yellow")?
+    Terminal.print("root-parallel x{String.fromInt(Ai.rootParallelWidth())} | {String.fromInt(List.len(result.candidates))} moves")?
+    Terminal.resetColor()?
     renderCandidates(result.candidates, result.move, 0)
 
 fn renderCandidates(candidates: List<ScoredMove>, chosen: List<Point>, i: Int) -> Result<Unit, String>
@@ -240,19 +240,19 @@ fn renderOneCandidate(candidates: List<ScoredMove>, chosen: List<Point>, sm: Sco
 fn renderChosenCandidate(sm: ScoredMove, i: Int) -> Result<Unit, String>
     ? "Render the chosen move in green"
     ! [Terminal.print, Terminal.resetColor, Terminal.setColor]
-    Terminal.setColor("green")
-    Terminal.print("★ ")
-    Terminal.print(moveLabel(sm.move))
-    Terminal.print("  {String.fromInt(sm.score)}")
-    Terminal.resetColor()
+    Terminal.setColor("green")?
+    Terminal.print("★ ")?
+    Terminal.print(moveLabel(sm.move))?
+    Terminal.print("  {String.fromInt(sm.score)}")?
+    Terminal.resetColor()?
     Result.Ok(Unit)
 
 fn renderOtherCandidate(sm: ScoredMove, i: Int) -> Result<Unit, String>
     ? "Render non-chosen candidate in white"
     ! [Terminal.print]
-    Terminal.print("  ")
-    Terminal.print(moveLabel(sm.move))
-    Terminal.print("  {String.fromInt(sm.score)}")
+    Terminal.print("  ")?
+    Terminal.print(moveLabel(sm.move))?
+    Terminal.print("  {String.fromInt(sm.score)}")?
     Result.Ok(Unit)
 
 fn isChosenMove(a: List<Point>, b: List<Point>) -> Bool
@@ -309,13 +309,13 @@ fn renderHelp(state: GameState) -> Result<Unit, String>
     ? "Show who plays whom, AI depth, and controls"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     Terminal.moveTo(0, 14)?
-    Terminal.setColor("green")
-    Terminal.print(" You (black) vs AI (white) · depth {String.fromInt(state.searchDepth)} · +/- to change")
-    Terminal.resetColor()
+    Terminal.setColor("green")?
+    Terminal.print(" You (black) vs AI (white) · depth {String.fromInt(state.searchDepth)} · +/- to change")?
+    Terminal.resetColor()?
     Terminal.moveTo(0, 15)?
     match state.selected
-        Option.Some(sel) -> Terminal.print(" Arrows:move  Enter:confirm  Esc:deselect  Q:quit")
-        Option.None -> Terminal.print(" Arrows:move  Enter:select piece  Q:quit            ")
+        Option.Some(sel) -> Terminal.print(" Arrows:move  Enter:confirm  Esc:deselect  Q:quit")?
+        Option.None -> Terminal.print(" Arrows:move  Enter:select piece  Q:quit            ")?
     Result.Ok(Unit)
 
 fn handleKey(state: GameState, key: String) -> GameState
@@ -372,21 +372,21 @@ fn applyPlayerMove(state: GameState, turn: List<Point>) -> GameState
 verify applyPlayerMove
     applyPlayerMove(initState(6), [Board.pt(0, 5), Board.pt(1, 4)]).moveNum => 2
 
-fn readInput(state: GameState, playerColor: Color) -> GameState
+fn readInput(state: GameState, playerColor: Color) -> Result<GameState, String>
     ? "Drain queued keys, stop if turn changed or game over."
     ! [Terminal.readKey]
     match state.gameOver
-        true -> state
+        true -> Result.Ok(state)
         false -> match state.currentPlayer == playerColor
-            false -> state
+            false -> Result.Ok(state)
             true -> readOneKey(state, playerColor)
 
-fn readOneKey(state: GameState, playerColor: Color) -> GameState
+fn readOneKey(state: GameState, playerColor: Color) -> Result<GameState, String>
     ? "Read one key and continue draining if still player's turn."
     ! [Terminal.readKey]
-    match Terminal.readKey()
+    match Terminal.readKey()?
         Option.Some(k) -> readInput(handleKey(state, k), playerColor)
-        Option.None -> state
+        Option.None -> Result.Ok(state)
 
 fn playerPhase(state: GameState) -> Result<String, String>
     ? "Player turn: render, read input, check if move was made"
@@ -396,7 +396,7 @@ fn playerPhase(state: GameState) -> Result<String, String>
     ]
     renderFrame(state)?
     Time.sleep(50)
-    newState = readInput(state, state.currentPlayer)
+    newState = readInput(state, state.currentPlayer)?
     match newState.currentPlayer == state.currentPlayer
         true -> playerPhaseCheck(newState)
         false -> gameLoop(checkGameOver(newState))
@@ -419,8 +419,8 @@ fn aiPhase(state: GameState) -> Result<String, String>
     ]
     renderFrame(state)?
     Terminal.moveTo(0, 14)?
-    Terminal.print("AI thinking (depth {String.fromInt(state.searchDepth)}, root-parallel x{String.fromInt(Ai.rootParallelWidth())})...")
-    Terminal.flush()
+    Terminal.print("AI thinking (depth {String.fromInt(state.searchDepth)}, root-parallel x{String.fromInt(Ai.rootParallelWidth())})...")?
+    Terminal.flush()?
     t0 = Time.unixMs()
     aiState = handleAiTurn(state)
     t1 = Time.unixMs()
@@ -444,8 +444,8 @@ fn gameOverResult(state: GameState) -> Result<String, String>
     ]
     renderFrame(state)?
     Terminal.moveTo(0, 14)?
-    Terminal.print("Game over!")
-    Terminal.flush()
+    Terminal.print("Game over!")?
+    Terminal.flush()?
     Time.sleep(2000)
     Result.Ok("Game over! Move {String.fromInt(state.moveNum)}")
 
@@ -467,12 +467,12 @@ fn run() -> Result<String, String>
         Time.sleep, Time.unixMs,
     ]
     depth = parseDepth(Args.get())
-    Terminal.enableRawMode()
-    Terminal.hideCursor()
+    Terminal.enableRawMode()?
+    Terminal.hideCursor()?
     result = gameLoop(initState(depth))
-    Terminal.showCursor()
-    Terminal.disableRawMode()
-    Terminal.clear()
+    Terminal.showCursor()?
+    Terminal.disableRawMode()?
+    Terminal.clear()?
     result
 
 fn main()

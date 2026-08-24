@@ -12,10 +12,9 @@
 //!    some other convention (`not x == -x - 1`, `and(-1, x) == x`,
 //!    `shiftLeft(x, n) == x * 2^n`, `0 <= low(x, w) < 2^w`). A value test
 //!    passes for the wrong reason; these do not.
-//! 3. **Typing** — a syntactic non-negative literal count within the fixed
-//!    materialization bound discharges the error and the call types as plain
-//!    `Int`; anything else keeps `Result<Int, String>`. That boundary is the
-//!    whole literal-discharge rule, and it is easy to widen by accident.
+//! 3. **Typing** — literal discharge mirrors allocation risk: shiftLeft/low
+//!    use the materialization bound, while shiftRight accepts every syntactic
+//!    non-negative literal because it only shrinks its operand.
 //!
 //! Cross-backend agreement lives with each backend's own differential suite
 //! (`rust_codegen_differential.rs`, `wasm_gc_spec.rs`, `proof_spec`), so a
@@ -287,10 +286,10 @@ verify lowOfZeroWidthIsZero
 
 #[test]
 fn invalid_dynamic_counts_are_catchable_errors() {
-    // A negative or oversized count must be `Result.Err` — never a panic,
-    // never a silent direction flip, never a clamp to zero, and never an
-    // allocation sized by untrusted input. The reported 2^32 case is kept as
-    // a regression guard: it used to be accepted on 64-bit hosts.
+    // Negative counts are always `Result.Err`. The upper bound follows actual
+    // materialization: shiftLeft can grow, low can manufacture a finite value
+    // from a negative input, while shiftRight and positive low only shrink or
+    // preserve an already-resident value.
     let src = r#"fn shift(x: Int, n: Int) -> String
     ? "Reports how a caller-supplied shift amount was treated."
     match Bits.shiftLeft(x, n)
@@ -318,8 +317,10 @@ fn main() -> Unit
     Console.print(down(-3, 1))
     Console.print(down(-3, -1))
     Console.print(down(-3, 16777217))
+    Console.print(down(3, 4294967296))
     Console.print(width(-1, 8))
     Console.print(width(-1, -1))
+    Console.print(width(42, 4294967296))
     Console.print(width(-1, 4294967296))
 "#;
     let got = run_source("dynamic counts", src);
@@ -331,9 +332,11 @@ fn main() -> Unit
          err shift count exceeds the 16777216 bit limit\n\
          ok -2\n\
          err negative shift count\n\
-         err shift count exceeds the 16777216 bit limit\n\
+         ok -1\n\
+         ok 0\n\
          ok 255\n\
          err negative bit width\n\
+         ok 42\n\
          err bit width exceeds the 16777216 bit limit"
     );
 }
@@ -358,13 +361,17 @@ fn materializationLimitDischarges(x: Int) -> Int
     ? "The exact shared limit is still on the total literal path."
     Bits.low(x, 16777216)
 
+fn hugeRightShiftDischarges(x: Int) -> Int
+    ? "Right shift has no materialization ceiling; even a BigInt literal is total."
+    Bits.shiftRight(x, 9223372036854775808)
+
 fn main() -> Unit
     ! [Console.print]
-    Console.print("{packed(1, 0)} {zeroWidthDischarges(7)}")
+    Console.print("{packed(1, 0)} {zeroWidthDischarges(7)} {hugeRightShiftDischarges(-7)}")
 "#;
     let (ok, out) = typecheck_source(src);
     assert!(ok, "literal counts should discharge:\n{out}");
-    assert_eq!(run_source("discharged", src), "32 0");
+    assert_eq!(run_source("discharged", src), "32 0 -1");
 }
 
 #[test]

@@ -131,30 +131,49 @@ fn emit_effectful_builtin_call_with_temps(name: &str, args: &[String]) -> Option
             args[0], args[1]
         )),
         "Random.float" => Some("aver_rt::provider::standard_random_float()".to_string()),
-        "Terminal.enableRawMode" => Some("aver_rt::terminal_enable_raw_mode().unwrap()".to_string()),
-        "Terminal.disableRawMode" => {
-            Some("aver_rt::terminal_disable_raw_mode().unwrap()".to_string())
+        "Terminal.enableRawMode" => {
+            Some("aver_rt::terminal_enable_raw_mode().map_err(aver_rt::AverStr::from)".to_string())
         }
-        "Terminal.clear" => Some("aver_rt::terminal_clear().unwrap()".to_string()),
+        "Terminal.disableRawMode" => {
+            Some(
+                "aver_rt::terminal_disable_raw_mode().map_err(aver_rt::AverStr::from)".to_string(),
+            )
+        }
+        "Terminal.clear" => {
+            Some("aver_rt::terminal_clear().map_err(aver_rt::AverStr::from)".to_string())
+        }
         "Terminal.moveTo" => Some(format!(
             "{{ let __x = {}; let __y = {}; match (__x.to_i64(), __y.to_i64()) {{ (Some(x), Some(y)) => aver_rt::terminal_move_to(x, y).map_err(aver_rt::AverStr::from), _ => Err(aver_rt::AverStr::from(\"Terminal.moveTo: coordinates must fit a 64-bit integer\")) }} }}",
             args[0], args[1]
         )),
         "Terminal.print" => Some(format!(
-            "{{ let __s = format!(\"{{}}\", {}); aver_rt::terminal_print(&__s).unwrap() }}",
+            "{{ let __s = format!(\"{{}}\", {}); aver_rt::terminal_print(&__s).map_err(aver_rt::AverStr::from) }}",
             args[0]
         )),
         "Terminal.setColor" => {
-            Some(format!("aver_rt::terminal_set_color(&{}).unwrap()", args[0]))
+            Some(format!(
+                "aver_rt::terminal_set_color(&{}).map_err(aver_rt::AverStr::from)",
+                args[0]
+            ))
         }
-        "Terminal.resetColor" => Some("aver_rt::terminal_reset_color().unwrap()".to_string()),
-        "Terminal.readKey" => Some("aver_rt::terminal_read_key()".to_string()),
+        "Terminal.resetColor" => {
+            Some("aver_rt::terminal_reset_color().map_err(aver_rt::AverStr::from)".to_string())
+        }
+        "Terminal.readKey" => {
+            Some("aver_rt::terminal_read_key()".to_string())
+        }
         "Terminal.size" => Some(
             "aver_rt::terminal_size().map(|(w, h)| crate::Terminal_Size { width: aver_rt::AverInt::from_i64(w), height: aver_rt::AverInt::from_i64(h) }).map_err(aver_rt::AverStr::from)".to_string(),
         ),
-        "Terminal.hideCursor" => Some("aver_rt::terminal_hide_cursor().unwrap()".to_string()),
-        "Terminal.showCursor" => Some("aver_rt::terminal_show_cursor().unwrap()".to_string()),
-        "Terminal.flush" => Some("aver_rt::terminal_flush().unwrap()".to_string()),
+        "Terminal.hideCursor" => {
+            Some("aver_rt::terminal_hide_cursor().map_err(aver_rt::AverStr::from)".to_string())
+        }
+        "Terminal.showCursor" => {
+            Some("aver_rt::terminal_show_cursor().map_err(aver_rt::AverStr::from)".to_string())
+        }
+        "Terminal.flush" => {
+            Some("aver_rt::terminal_flush().map_err(aver_rt::AverStr::from)".to_string())
+        }
         _ => None,
     }
 }
@@ -439,30 +458,47 @@ fn compose_effectful_builtin_raw(name: &str, args: &[String]) -> Option<String> 
 
         // ---- Terminal ----
         "Terminal.enableRawMode" => {
-            Some("aver_rt::terminal_enable_raw_mode().unwrap()".to_string())
+            Some("aver_rt::terminal_enable_raw_mode().map_err(aver_rt::AverStr::from)".to_string())
         }
         "Terminal.disableRawMode" => {
-            Some("aver_rt::terminal_disable_raw_mode().unwrap()".to_string())
+            Some(
+                "aver_rt::terminal_disable_raw_mode().map_err(aver_rt::AverStr::from)".to_string(),
+            )
         }
-        "Terminal.clear" => Some("aver_rt::terminal_clear().unwrap()".to_string()),
+        "Terminal.clear" => {
+            Some("aver_rt::terminal_clear().map_err(aver_rt::AverStr::from)".to_string())
+        }
         "Terminal.moveTo" => Some(format!(
             "{{ let __x = {}; let __y = {}; match (__x.to_i64(), __y.to_i64()) {{ (Some(x), Some(y)) => aver_rt::terminal_move_to(x, y).map_err(aver_rt::AverStr::from), _ => Err(aver_rt::AverStr::from(\"Terminal.moveTo: coordinates must fit a 64-bit integer\")) }} }}",
             a(0),
             a(1)
         )),
         "Terminal.print" => Some(format!(
-            "{{ let __s = aver_rt::aver_display(&{}); aver_rt::terminal_print(&__s).unwrap() }}",
+            "{{ let __s = aver_rt::aver_display(&{}); aver_rt::terminal_print(&__s).map_err(aver_rt::AverStr::from) }}",
             a(0)
         )),
-        "Terminal.setColor" => Some(format!("aver_rt::terminal_set_color(&{}).unwrap()", a(0))),
-        "Terminal.resetColor" => Some("aver_rt::terminal_reset_color().unwrap()".to_string()),
-        "Terminal.readKey" => Some("aver_rt::terminal_read_key()".to_string()),
+        "Terminal.setColor" => Some(format!(
+            "aver_rt::terminal_set_color(&{}).map_err(aver_rt::AverStr::from)",
+            a(0)
+        )),
+        "Terminal.resetColor" => {
+            Some("aver_rt::terminal_reset_color().map_err(aver_rt::AverStr::from)".to_string())
+        }
+        "Terminal.readKey" => {
+            Some("aver_rt::terminal_read_key()".to_string())
+        }
         "Terminal.size" => Some(
             "aver_rt::terminal_size().map(|(w, h)| crate::Terminal_Size { width: aver_rt::AverInt::from_i64(w), height: aver_rt::AverInt::from_i64(h) }).map_err(aver_rt::AverStr::from)".to_string(),
         ),
-        "Terminal.hideCursor" => Some("aver_rt::terminal_hide_cursor().unwrap()".to_string()),
-        "Terminal.showCursor" => Some("aver_rt::terminal_show_cursor().unwrap()".to_string()),
-        "Terminal.flush" => Some("aver_rt::terminal_flush().unwrap()".to_string()),
+        "Terminal.hideCursor" => {
+            Some("aver_rt::terminal_hide_cursor().map_err(aver_rt::AverStr::from)".to_string())
+        }
+        "Terminal.showCursor" => {
+            Some("aver_rt::terminal_show_cursor().map_err(aver_rt::AverStr::from)".to_string())
+        }
+        "Terminal.flush" => {
+            Some("aver_rt::terminal_flush().map_err(aver_rt::AverStr::from)".to_string())
+        }
 
         _ => None,
     }

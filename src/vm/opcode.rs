@@ -227,12 +227,12 @@ pub const TUPLE_NEW: u8 = 0x68; // count:u32
 /// Enters/exits replay group around parallel dispatch.
 ///
 /// Encoding: CALL_PAR count:u8 unwrap:u8
-/// `[argc:u8 discharged_default:u8 × count]`
+/// `[argc:u8 proven_result:u8 × count]`
 /// unwrap=1 (?!): unwrap each Result, propagate first Err.
 /// unwrap=0 (!): return raw tuple.
-/// discharged_default=1: the branch bundle carries one extra default value;
-/// invoke the nested effect callable inside the group, then apply the proven
-/// `Result.withDefault` destructor before constructing the raw tuple.
+/// proven_result=1: invoke the nested effect callable inside the group, then
+/// apply the fail-closed `RESULT_PROVEN` destructor before constructing the
+/// raw tuple.
 pub const CALL_PAR: u8 = 0x86;
 
 /// Update selected fields on a record, preserving the rest from the base value.
@@ -574,6 +574,11 @@ pub const BRANCH_PATH_CHILD_LITERAL: u8 = 0xAC;
 /// dewey-decimal validator has discharged `BranchPath.parse`.
 pub const BRANCH_PATH_PARSE_LITERAL: u8 = 0xAD;
 
+/// Pop a statically discharged `Result`, push its `Ok` payload, or fault when
+/// the supposedly unreachable `Err` branch is reached. This is intentionally
+/// not `UNWRAP_RESULT_OR`: a provider contract violation has no fallback.
+pub const RESULT_PROVEN: u8 = 0xAE;
+
 /// Opcode name for debug/disassembly.
 pub fn opcode_name(op: u8) -> &'static str {
     match op {
@@ -689,6 +694,7 @@ pub fn opcode_name(op: u8) -> &'static str {
         VECTOR_NEW_LITERAL => "VECTOR_NEW_LITERAL",
         BRANCH_PATH_CHILD_LITERAL => "BRANCH_PATH_CHILD_LITERAL",
         BRANCH_PATH_PARSE_LITERAL => "BRANCH_PATH_PARSE_LITERAL",
+        RESULT_PROVEN => "RESULT_PROVEN",
         CALL_PAR => "CALL_PAR",
         NOP => "NOP",
         _ => "UNKNOWN",
@@ -771,6 +777,7 @@ pub fn opcode_operand_width(op: u8, code: &[u8], ip: usize) -> usize {
         | VECTOR_NEW_LITERAL
         | BRANCH_PATH_CHILD_LITERAL
         | BRANCH_PATH_PARSE_LITERAL
+        | RESULT_PROVEN
         | NOP => 0,
 
         // 1-byte

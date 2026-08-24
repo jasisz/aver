@@ -6301,6 +6301,7 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
         world,
         optimize,
         certify,
+        packed_sequences_enabled,
     } = opts;
 
     // `--certify` needs the certificate engine (feature `certify`, part of
@@ -6346,6 +6347,7 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
                 optimize,
                 pack,
                 certify,
+                packed_sequences_enabled,
             );
             return;
         }
@@ -6475,6 +6477,7 @@ fn cmd_compile_wasm_gc(
     optimize: Option<super::cli::WasmOptMode>,
     pack: Option<super::cli::DeployPack>,
     certify: bool,
+    packed_sequences_enabled: bool,
 ) {
     use aver::codegen::wasm_gc;
 
@@ -6569,12 +6572,13 @@ fn cmd_compile_wasm_gc(
     // container-held collections through extracted locals (#950).
     aver::ir::pipeline::resolve_and_reannotate(&mut items);
 
-    let wasm_gc_output = match wasm_gc::compile_to_wasm_gc_flattened(
+    let wasm_gc_output = match wasm_gc::compile_to_wasm_gc_flattened_with_options(
         &items,
         result.analysis.as_ref(),
         handler,
         wasm_gc::TargetMode::AverBridge,
         &type_aliases,
+        packed_sequences_enabled,
     ) {
         Ok(output) => output,
         Err(e) => {
@@ -7307,6 +7311,7 @@ pub(super) struct CompileOptions<'a> {
     pub(super) world: super::cli::Wasip2World,
     pub(super) optimize: Option<super::cli::WasmOptMode>,
     pub(super) certify: bool,
+    pub(super) packed_sequences_enabled: bool,
 }
 
 /// Load hand-proof SIDECARS for `file`'s project and `backend` into the

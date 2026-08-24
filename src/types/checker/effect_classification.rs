@@ -223,9 +223,9 @@ fn classifications() -> &'static [EffectClassification] {
             },
             EffectClassification {
                 method: "Terminal.clear",
-                dimension: EffectDimension::Output,
+                dimension: EffectDimension::GenerativeOutput,
                 params: vec![],
-                ret: Type::Unit,
+                ret: err_str(Type::Unit),
             },
             EffectClassification {
                 method: "Terminal.moveTo",
@@ -235,61 +235,60 @@ fn classifications() -> &'static [EffectClassification] {
             },
             EffectClassification {
                 method: "Terminal.print",
-                dimension: EffectDimension::Output,
+                dimension: EffectDimension::GenerativeOutput,
                 params: vec![Type::Str],
-                ret: Type::Unit,
+                ret: err_str(Type::Unit),
             },
             EffectClassification {
                 method: "Terminal.readKey",
                 dimension: EffectDimension::Generative,
                 params: vec![],
-                ret: Type::Option(Box::new(Type::Str)),
+                ret: err_str(Type::Option(Box::new(Type::Str))),
             },
             EffectClassification {
                 method: "Terminal.hideCursor",
-                dimension: EffectDimension::Output,
+                dimension: EffectDimension::GenerativeOutput,
                 params: vec![],
-                ret: Type::Unit,
+                ret: err_str(Type::Unit),
             },
             EffectClassification {
                 method: "Terminal.showCursor",
-                dimension: EffectDimension::Output,
+                dimension: EffectDimension::GenerativeOutput,
                 params: vec![],
-                ret: Type::Unit,
+                ret: err_str(Type::Unit),
             },
             EffectClassification {
                 method: "Terminal.flush",
-                dimension: EffectDimension::Output,
+                dimension: EffectDimension::GenerativeOutput,
                 params: vec![],
-                ret: Type::Unit,
+                ret: err_str(Type::Unit),
             },
-            // Terminal modal/visual — output only. Mode and color changes are
-            // observable via trace; the oracle does NOT model that a later `print`
-            // is "now in raw mode" or "now in red". If a test cares, it asserts the
-            // sequence of trace events.
+            // Terminal modal/visual effects also return their adapter outcome.
+            // The oracle still does NOT model that a later `print` is "now in
+            // raw mode" or "now in red"; it models only this call's Result.
             EffectClassification {
                 method: "Terminal.enableRawMode",
-                dimension: EffectDimension::Output,
+                dimension: EffectDimension::GenerativeOutput,
                 params: vec![],
-                ret: Type::Unit,
+                ret: err_str(Type::Unit),
             },
             EffectClassification {
                 method: "Terminal.disableRawMode",
-                dimension: EffectDimension::Output,
+                dimension: EffectDimension::GenerativeOutput,
                 params: vec![],
-                ret: Type::Unit,
+                ret: err_str(Type::Unit),
             },
             EffectClassification {
                 method: "Terminal.setColor",
-                dimension: EffectDimension::Output,
+                dimension: EffectDimension::GenerativeOutput,
                 params: vec![Type::Str],
-                ret: Type::Unit,
+                ret: err_str(Type::Unit),
             },
             EffectClassification {
                 method: "Terminal.resetColor",
-                dimension: EffectDimension::Output,
+                dimension: EffectDimension::GenerativeOutput,
                 params: vec![],
-                ret: Type::Unit,
+                ret: err_str(Type::Unit),
             },
         ];
         let standard = crate::stdlib::standard_capability_registry_ref();
@@ -579,10 +578,11 @@ mod tests {
     fn program_capability_mechanism_explains_terminal_except_audited_snapshot() {
         let registry = capability_registry(
             "TerminalCompat",
-            "module TerminalCompat\n    kind = capability\n    semantics = effectful\n\noperation clear() -> Unit\n    oracle = output\n    replay = suppressed\n\noperation moveTo(row: Int, col: Int) -> Unit\n    oracle = output\n    replay = suppressed\n\noperation print(text: String) -> Unit\n    oracle = output\n    replay = reissued\n\noperation readKey() -> Option<String>\n    oracle = generative\n    replay = recorded\n\noperation hideCursor() -> Unit\n    oracle = output\n    replay = suppressed\n\noperation showCursor() -> Unit\n    oracle = output\n    replay = suppressed\n\noperation flush() -> Unit\n    oracle = output\n    replay = suppressed\n\noperation enableRawMode() -> Unit\n    oracle = output\n    replay = suppressed\n\noperation disableRawMode() -> Unit\n    oracle = output\n    replay = suppressed\n\noperation setColor(color: String) -> Unit\n    oracle = output\n    replay = suppressed\n\noperation resetColor() -> Unit\n    oracle = output\n    replay = suppressed\n",
+            "module TerminalCompat\n    kind = capability\n    semantics = effectful\n\noperation clear() -> Result<Unit, String>\n    oracle = generativeOutput\n    replay = recorded\n\noperation moveTo(row: Int, col: Int) -> Result<Unit, String>\n    oracle = generativeOutput\n    replay = recorded\n\noperation print(text: String) -> Result<Unit, String>\n    oracle = generativeOutput\n    replay = recorded\n\noperation readKey() -> Result<Option<String>, String>\n    oracle = generative\n    replay = recorded\n\noperation hideCursor() -> Result<Unit, String>\n    oracle = generativeOutput\n    replay = recorded\n\noperation showCursor() -> Result<Unit, String>\n    oracle = generativeOutput\n    replay = recorded\n\noperation flush() -> Result<Unit, String>\n    oracle = generativeOutput\n    replay = recorded\n\noperation enableRawMode() -> Result<Unit, String>\n    oracle = generativeOutput\n    replay = recorded\n\noperation disableRawMode() -> Result<Unit, String>\n    oracle = generativeOutput\n    replay = recorded\n\noperation setColor(color: String) -> Result<Unit, String>\n    oracle = generativeOutput\n    replay = recorded\n\noperation resetColor() -> Result<Unit, String>\n    oracle = generativeOutput\n    replay = recorded\n",
         );
         for method in [
             "clear",
+            "moveTo",
             "print",
             "readKey",
             "hideCursor",
@@ -599,15 +599,6 @@ mod tests {
                 &registry,
             );
         }
-        let fallible_terminal = capability_registry(
-            "FallibleTerminalCompat",
-            "module FallibleTerminalCompat\n    kind = capability\n    semantics = effectful\n\noperation moveTo(row: Int, col: Int) -> Result<Unit, String>\n    oracle = generativeOutput\n    replay = recorded\n",
-        );
-        assert_same_shape(
-            "Terminal.moveTo",
-            "FallibleTerminalCompat.moveTo",
-            &fallible_terminal,
-        );
 
         // Terminal.size is the deliberate standard-only exception: its
         // snapshot promise was audited by Aver. A program cannot grant itself
@@ -874,7 +865,7 @@ mod tests {
         assert!(oracle_signature("Console.error").is_none());
         assert!(oracle_signature("Console.warn").is_none());
         assert!(oracle_signature("Time.sleep").is_some());
-        assert!(oracle_signature("Terminal.print").is_none());
+        assert!(oracle_signature("Terminal.print").is_some());
     }
 
     #[test]
@@ -972,19 +963,25 @@ mod tests {
 
     #[test]
     fn extended_oracle_v1_methods_classified() {
-        // Output: infallible terminal modal/visual changes — emitted to trace,
-        // no oracle signature.
+        // Every terminal write/control operation exposes the adapter outcome,
+        // so each has both a trace request and an oracle Result.
         for name in &[
+            "Terminal.clear",
+            "Terminal.moveTo",
+            "Terminal.print",
+            "Terminal.hideCursor",
+            "Terminal.showCursor",
+            "Terminal.flush",
             "Terminal.enableRawMode",
             "Terminal.disableRawMode",
             "Terminal.setColor",
             "Terminal.resetColor",
         ] {
             let c = classify(name).unwrap_or_else(|| panic!("{} should be classified", name));
-            assert_eq!(c.dimension, EffectDimension::Output);
+            assert_eq!(c.dimension, EffectDimension::GenerativeOutput);
         }
-        // Fallible writes/moves have both a trace request and an oracle result.
-        for name in &["Env.set", "Terminal.moveTo"] {
+        // Env.set likewise has both a trace request and an oracle result.
+        for name in &["Env.set"] {
             let c = classify(name).unwrap_or_else(|| panic!("{} should be classified", name));
             assert_eq!(c.dimension, EffectDimension::GenerativeOutput);
         }

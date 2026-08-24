@@ -2,11 +2,13 @@
 //! moves, colour control, clear, flush, key reads, size queries.
 
 use super::super::RunWasmGcHost;
-use super::super::decode::{decode_option_string, decode_result_terminal_size, decode_result_unit};
+use super::super::decode::{
+    decode_result_option_string, decode_result_terminal_size, decode_result_unit,
+};
 use super::factories::{
     host_option_string_none, host_option_string_some, host_result_err_unit_string,
-    host_result_ok_unit, host_result_terminal_size_err, host_result_terminal_size_ok,
-    host_terminal_size_make,
+    host_result_ok_unit, host_result_option_string_err, host_result_option_string_ok,
+    host_result_terminal_size_err, host_result_terminal_size_ok, host_terminal_size_make,
 };
 use super::lm::lm_string_to_host;
 use super::replay_glue::{
@@ -24,45 +26,36 @@ pub(super) fn dispatch(
     use wasmtime::Val;
     match name {
         "terminal_enable_raw_mode" => {
-            if try_replay(caller, "Terminal.enableRawMode", vec![])?.is_some() {
-                return Ok(true);
-            }
-            let _ = aver_rt::terminal_enable_raw_mode();
-            record_effect_if_recording(
+            dispatch_unit_result(
                 caller,
+                results,
                 "Terminal.enableRawMode",
                 vec![],
-                aver::replay::JsonValue::Null,
                 caller_fn,
-            );
+                aver_rt::terminal_enable_raw_mode,
+            )?;
             Ok(true)
         }
         "terminal_disable_raw_mode" => {
-            if try_replay(caller, "Terminal.disableRawMode", vec![])?.is_some() {
-                return Ok(true);
-            }
-            let _ = aver_rt::terminal_disable_raw_mode();
-            record_effect_if_recording(
+            dispatch_unit_result(
                 caller,
+                results,
                 "Terminal.disableRawMode",
                 vec![],
-                aver::replay::JsonValue::Null,
                 caller_fn,
-            );
+                aver_rt::terminal_disable_raw_mode,
+            )?;
             Ok(true)
         }
         "terminal_clear" => {
-            if try_replay(caller, "Terminal.clear", vec![])?.is_some() {
-                return Ok(true);
-            }
-            let _ = aver_rt::terminal_clear();
-            record_effect_if_recording(
+            dispatch_unit_result(
                 caller,
+                results,
                 "Terminal.clear",
                 vec![],
-                aver::replay::JsonValue::Null,
                 caller_fn,
-            );
+                aver_rt::terminal_clear,
+            )?;
             Ok(true)
         }
         "terminal_move_to" => {
@@ -103,106 +96,94 @@ pub(super) fn dispatch(
             // respects raw-mode without injecting a trailing newline.
             let text = lm_string_to_host(caller, params.first())?.unwrap_or_default();
             let args = vec![aver::replay::JsonValue::String(text.clone())];
-            if try_replay(caller, "Terminal.print", args.clone())?.is_some() {
-                return Ok(true);
-            }
-            let _ = aver_rt::terminal_print(&text);
-            record_effect_if_recording(
-                caller,
-                "Terminal.print",
-                args,
-                aver::replay::JsonValue::Null,
-                caller_fn,
-            );
+            dispatch_unit_result(caller, results, "Terminal.print", args, caller_fn, || {
+                aver_rt::terminal_print(&text)
+            })?;
             Ok(true)
         }
         "terminal_set_color" => {
             let text = lm_string_to_host(caller, params.first())?.unwrap_or_default();
             let args = vec![aver::replay::JsonValue::String(text.clone())];
-            if try_replay(caller, "Terminal.setColor", args.clone())?.is_some() {
-                return Ok(true);
-            }
-            let _ = aver_rt::terminal_set_color(&text);
-            record_effect_if_recording(
+            dispatch_unit_result(
                 caller,
+                results,
                 "Terminal.setColor",
                 args,
-                aver::replay::JsonValue::Null,
                 caller_fn,
-            );
+                || aver_rt::terminal_set_color(&text),
+            )?;
             Ok(true)
         }
         "terminal_reset_color" => {
-            if try_replay(caller, "Terminal.resetColor", vec![])?.is_some() {
-                return Ok(true);
-            }
-            let _ = aver_rt::terminal_reset_color();
-            record_effect_if_recording(
+            dispatch_unit_result(
                 caller,
+                results,
                 "Terminal.resetColor",
                 vec![],
-                aver::replay::JsonValue::Null,
                 caller_fn,
-            );
+                aver_rt::terminal_reset_color,
+            )?;
             Ok(true)
         }
         "terminal_hide_cursor" => {
-            if try_replay(caller, "Terminal.hideCursor", vec![])?.is_some() {
-                return Ok(true);
-            }
-            let _ = aver_rt::terminal_hide_cursor();
-            record_effect_if_recording(
+            dispatch_unit_result(
                 caller,
+                results,
                 "Terminal.hideCursor",
                 vec![],
-                aver::replay::JsonValue::Null,
                 caller_fn,
-            );
+                aver_rt::terminal_hide_cursor,
+            )?;
             Ok(true)
         }
         "terminal_show_cursor" => {
-            if try_replay(caller, "Terminal.showCursor", vec![])?.is_some() {
-                return Ok(true);
-            }
-            let _ = aver_rt::terminal_show_cursor();
-            record_effect_if_recording(
+            dispatch_unit_result(
                 caller,
+                results,
                 "Terminal.showCursor",
                 vec![],
-                aver::replay::JsonValue::Null,
                 caller_fn,
-            );
+                aver_rt::terminal_show_cursor,
+            )?;
             Ok(true)
         }
         "terminal_flush" => {
-            if try_replay(caller, "Terminal.flush", vec![])?.is_some() {
-                return Ok(true);
-            }
-            let _ = aver_rt::terminal_flush();
-            record_effect_if_recording(
+            dispatch_unit_result(
                 caller,
+                results,
                 "Terminal.flush",
                 vec![],
-                aver::replay::JsonValue::Null,
                 caller_fn,
-            );
+                aver_rt::terminal_flush,
+            )?;
             Ok(true)
         }
         "terminal_read_key" => {
             if let Some(cached) = try_replay(caller, "Terminal.readKey", vec![])? {
-                let opt_ref = decode_option_string(caller, &cached)?;
-                results[0] = Val::AnyRef(opt_ref);
+                results[0] = Val::AnyRef(decode_result_option_string(caller, &cached)?);
                 return Ok(true);
             }
-            let key = aver_rt::terminal_read_key();
-            let (opt_ref, outcome) = match &key {
-                Some(text) => (
-                    host_option_string_some(caller, text)?,
-                    json_some(aver::replay::JsonValue::String(text.clone())),
+            let (result_ref, outcome) = match aver_rt::terminal_read_key() {
+                Ok(Some(text)) => {
+                    let option = host_option_string_some(caller, &text)?;
+                    (
+                        host_result_option_string_ok(caller, option)?,
+                        json_ok(json_some(aver::replay::JsonValue::String(text))),
+                    )
+                }
+                Ok(None) => {
+                    let option = host_option_string_none(caller)?;
+                    (
+                        host_result_option_string_ok(caller, option)?,
+                        json_ok(json_none()),
+                    )
+                }
+                Err(error) => (
+                    host_result_option_string_err(caller, &error)?,
+                    json_err(&error),
                 ),
-                None => (host_option_string_none(caller)?, json_none()),
             };
-            results[0] = Val::AnyRef(opt_ref);
+            results[0] = Val::AnyRef(result_ref);
             record_effect_if_recording(caller, "Terminal.readKey", vec![], outcome, caller_fn);
             Ok(true)
         }
@@ -237,4 +218,32 @@ pub(super) fn dispatch(
         }
         _ => Ok(false),
     }
+}
+
+fn dispatch_unit_result(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    results: &mut [wasmtime::Val],
+    effect: &str,
+    args: Vec<aver::replay::JsonValue>,
+    caller_fn: &str,
+    run: impl FnOnce() -> Result<(), String>,
+) -> Result<(), wasmtime::Error> {
+    use wasmtime::Val;
+    if let Some(cached) = try_replay(caller, effect, args.clone())? {
+        results[0] = Val::AnyRef(decode_result_unit(caller, &cached)?);
+        return Ok(());
+    }
+    let (result, outcome) = match run() {
+        Ok(()) => (
+            host_result_ok_unit(caller)?,
+            json_ok(aver::replay::JsonValue::Null),
+        ),
+        Err(error) => (
+            host_result_err_unit_string(caller, &error)?,
+            json_err(&error),
+        ),
+    };
+    results[0] = Val::AnyRef(result);
+    record_effect_if_recording(caller, effect, args, outcome, caller_fn);
+    Ok(())
 }

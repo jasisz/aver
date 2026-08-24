@@ -18,6 +18,22 @@ fn bits_counted(op: &str, a: &[String], negative: &str, too_large: &str) -> Stri
     )
 }
 
+fn bits_shift_right(a: &[String]) -> String {
+    format!(
+        "(if {n} < 0 then Except.error \"negative shift count\" else Except.ok (AverBits.shiftRight {x} {n}) : Except String Int)",
+        x = p(&a[0]),
+        n = p(&a[1])
+    )
+}
+
+fn bits_low(a: &[String]) -> String {
+    format!(
+        "(if {n} < 0 then Except.error \"negative bit width\" else if {x} < 0 ∧ {n} > 16777216 then Except.error \"bit width exceeds the 16777216 bit limit\" else Except.ok (AverBits.low {x} {n}) : Except String Int)",
+        x = p(&a[0]),
+        n = p(&a[1])
+    )
+}
+
 /// Try to emit a builtin call as Lean 4 code.
 /// Returns `None` if the name is not a pure builtin.
 ///
@@ -121,18 +137,8 @@ pub fn emit_builtin_call(
             "negative shift count",
             "shift count exceeds the 16777216 bit limit",
         ),
-        BitsShiftRight => bits_counted(
-            "shiftRight",
-            &a,
-            "negative shift count",
-            "shift count exceeds the 16777216 bit limit",
-        ),
-        BitsLow => bits_counted(
-            "low",
-            &a,
-            "negative bit width",
-            "bit width exceeds the 16777216 bit limit",
-        ),
+        BitsShiftRight => bits_shift_right(&a),
+        BitsLow => bits_low(&a),
 
         // ---- Bool ----
         BoolOr => format!("({} || {})", a[0], a[1]),

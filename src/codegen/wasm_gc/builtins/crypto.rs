@@ -19,7 +19,7 @@ const SHA256_K: [u32; 64] = [
 /// Emit SHA-256 directly into the GC module. When the proof-derived structural
 /// refinement pass packed `Bytes`, the helper reads and writes its `(array i8)`
 /// directly. The boxed `record Bytes { List<Int> }` path remains as the exact
-/// differential fallback selected by `AVER_NO_PACKED_SEQUENCES`.
+/// differential fallback selected by the internal emitter configuration.
 pub(super) fn emit_sha256(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     let byte_array_idx = registry.crypto_byte_array_type_idx.ok_or_else(|| {
         WasmGcError::Validation("Crypto.sha256 requires byte scratch type".into())

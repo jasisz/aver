@@ -3,7 +3,7 @@ module Main
         "Doom-like raycasting FPS rendered with Unicode Braille characters."
         "Procedural levels, wall textures, enemies with AI, minimap."
     depends [Math, Level, Render, Types, Rng, Enemy]
-    effects [Console, Random, Terminal, Time]
+    effects [Random, Terminal, Time]
 
 decision BrailleRendering
     date = "2026-03-24"
@@ -30,17 +30,10 @@ fn turnSpeed() -> Float
 verify turnSpeed
     turnSpeed() => 0.14
 
-fn sleepOrReport(ms: Int) -> Unit
-    ? "Delay one frame, reporting an invalid host duration while allowing the terminal teardown path to continue."
-    ! [Console.print, Time.sleep]
-    match Time.sleep(ms)
-        Result.Ok(_) -> Unit
-        Result.Err(message) -> Console.print("Time.sleep failed: {message}")
-
-fn randomOrMin(min: Int, max: Int) -> Int
-    ? "Draw a random value, using the lower bound if the host rejects the requested range."
-    ! [Random.int]
-    Result.withDefault(Random.int(min, max), min)
+fn sleepChecked(ms: Int) -> Result<Unit, String>
+    ? "Delay one frame and propagate an invalid duration or provider error."
+    ! [Time.sleep]
+    Time.sleep(ms)
 
 fn spawnInRoom(room: Level.Room, seed: Int) -> Enemy
     ? "Spawn an enemy at the center of a room"
@@ -243,92 +236,85 @@ verify trimMessages
     trimMessages(["a", "b"]) => ["a", "b"]
     trimMessages([]) => []
 
-fn gameLoop(state: GameState) -> Unit
+fn gameLoop(state: GameState) -> Result<Unit, String>
     ? "Main game loop: render, read input, update state, repeat"
     ! [
-        Console.print,
         Random.int,
         Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor,
         Time.sleep,
     ]
-    Terminal.clear()
-    Render.renderFrame(state)
-    Terminal.flush()
+    Terminal.clear()?
+    Render.renderFrame(state)?
+    Terminal.flush()?
     match state.gameOver
         true -> gameOverScreen(state)
         false -> waitAndProcess(state)
 
-fn gameOverScreen(state: GameState) -> Unit
+fn gameOverScreen(state: GameState) -> Result<Unit, String>
     ? "Show game over then wait for quit"
     ! [
-        Console.print,
         Random.int,
         Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor,
         Time.sleep,
     ]
-    Terminal.setColor("red")
-    Render.moveToOrReport(25, 10)
-    Terminal.print("YOU DIED")
-    Terminal.setColor("white")
-    Render.moveToOrReport(20, 12)
-    Terminal.print("Press X to quit")
-    Terminal.resetColor()
-    Terminal.flush()
+    Terminal.setColor("red")?
+    Render.moveToChecked(25, 10)?
+    Terminal.print("YOU DIED")?
+    Terminal.setColor("white")?
+    Render.moveToChecked(20, 12)?
+    Terminal.print("Press X to quit")?
+    Terminal.resetColor()?
+    Terminal.flush()?
     waitForQuit()
 
-fn waitForQuit() -> Unit
+fn waitForQuit() -> Result<Unit, String>
     ? "Wait for q key to exit"
     ! [
-        Console.print,
         Random.int,
         Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor,
         Time.sleep,
     ]
-    match Terminal.readKey()
+    match Terminal.readKey()?
         Option.Some(k) -> match k
             "escape" -> cleanup()
             "x" -> cleanup()
             _ -> waitForQuit()
         Option.None -> waitForQuitSleep()
 
-fn waitForQuitSleep() -> Unit
+fn waitForQuitSleep() -> Result<Unit, String>
     ? "Sleep and retry"
     ! [
-        Console.print,
         Random.int,
         Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor,
         Time.sleep,
     ]
-    sleepOrReport(16)
+    sleepChecked(16)?
     waitForQuit()
 
-fn waitAndProcess(state: GameState) -> Unit
+fn waitAndProcess(state: GameState) -> Result<Unit, String>
     ? "Wait for key then dispatch"
     ! [
-        Console.print,
         Random.int,
         Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor,
         Time.sleep,
     ]
-    match Terminal.readKey()
+    match Terminal.readKey()?
         Option.Some(k) -> dispatch(state, k)
         Option.None -> waitAfterNone(state)
 
-fn waitAfterNone(state: GameState) -> Unit
+fn waitAfterNone(state: GameState) -> Result<Unit, String>
     ? "Brief sleep then retry"
     ! [
-        Console.print,
         Random.int,
         Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor,
         Time.sleep,
     ]
-    sleepOrReport(16)
+    sleepChecked(16)?
     waitAndProcess(state)
 
-fn dispatch(state: GameState, key: String) -> Unit
+fn dispatch(state: GameState, key: String) -> Result<Unit, String>
     ? "Handle quit or continue game loop"
     ! [
-        Console.print,
         Random.int,
         Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor,
         Time.sleep,
@@ -338,28 +324,27 @@ fn dispatch(state: GameState, key: String) -> Unit
         "x" -> cleanup()
         _ -> gameLoop(updateTurn(handleInput(state, key)))
 
-fn cleanup() -> Unit
+fn cleanup() -> Result<Unit, String>
     ? "Restore terminal state before exit"
     ! [
         Terminal.clear, Terminal.disableRawMode, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.showCursor,
     ]
-    Terminal.disableRawMode()
-    Terminal.showCursor()
-    Terminal.clear()
-    Render.moveToOrReport(0, 0)
-    Terminal.resetColor()
-    Terminal.print("Thanks for playing Braille Doom!\n")
+    Terminal.disableRawMode()?
+    Terminal.showCursor()?
+    Terminal.clear()?
+    Render.moveToChecked(0, 0)?
+    Terminal.resetColor()?
+    Terminal.print("Thanks for playing Braille Doom!\n")?
     Terminal.flush()
 
-fn main() -> Unit
+fn main() -> Result<Unit, String>
     ! [
-        Console.print,
         Random.int,
         Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor,
         Time.sleep,
     ]
-    Terminal.enableRawMode()
-    Terminal.hideCursor()
-    Terminal.clear()
-    seed = randomOrMin(1, 999999)
+    Terminal.enableRawMode()?
+    Terminal.hideCursor()?
+    Terminal.clear()?
+    seed = Random.int(1, 999999)
     gameLoop(initGame(seed))

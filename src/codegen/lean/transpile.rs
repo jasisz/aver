@@ -40,6 +40,7 @@ fn emit_lifted_effectful_functions(
     reachable: &HashSet<crate::ir::FnId>,
     foreign_helpers: &HashMap<String, Vec<String>>,
     recursive_fns: &HashSet<String>,
+    capability_opacity: &super::capability_opaque::CapabilityOpacity,
     sampled_fns: &mut SampledFnClassification,
     sections: &mut Vec<String>,
 ) {
@@ -152,7 +153,10 @@ fn emit_lifted_effectful_functions(
                     toplevel::emit_fn_def(fd, recursive_fns, ctx)
                 }
             };
-            let Some(code) = code else { continue };
+            let Some(mut code) = code else { continue };
+            if capability_opacity.emitted_component_reaches_result_proven(&component, ctx) {
+                code = format!("noncomputable section\n\n{code}\nend");
+            }
             if component_is_kernel_opaque(&component, std::slice::from_ref(&code)) {
                 sampled_fns.opaque.extend(
                     component
@@ -929,6 +933,7 @@ pub(super) fn transpile_unified(
         &proof_reachable,
         &dependency_helpers,
         lifted_recursive_names,
+        &capability_opacity,
         &mut sampled_fns,
         &mut entry_lifted_sections,
     );
@@ -1023,6 +1028,7 @@ pub(super) fn transpile_unified(
             &proof_reachable,
             &dependency_helpers,
             lifted_recursive_names,
+            &capability_opacity,
             &mut sampled_fns,
             &mut body_sections,
         );

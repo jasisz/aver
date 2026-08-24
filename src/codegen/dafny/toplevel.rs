@@ -258,14 +258,12 @@ pub fn emit_fn_def(
     let ret_type = emit_type_from(&rfd.return_type);
 
     let lowered = lower_pure_question_bang_for_emit(fd);
-    let rewritten_body;
-    let body = if let Some(lowered_fd) = lowered.as_ref() {
+    let rewritten_body = lowered.as_ref().map(|lowered_fd| {
         let active = ctx.active_module_scope();
-        rewritten_body = ctx.resolve_rewritten_fn_body(&lowered_fd.body, active.as_deref());
-        emit_fn_body_with_expected(&rewritten_body, ctx, &rfd.return_type)
-    } else {
-        emit_fn_body_with_expected(&rfd.body, ctx, &rfd.return_type)
-    };
+        ctx.resolve_rewritten_fn_body(&lowered_fd.body, active.as_deref())
+    });
+    let emitted_body = rewritten_body.as_ref().unwrap_or(&rfd.body);
+    let body = emit_fn_body_with_expected(emitted_body, ctx, &rfd.return_type);
     let body_ast = lowered
         .as_ref()
         .map(|lowered_fd| lowered_fd.body.as_ref())
@@ -285,6 +283,15 @@ pub fn emit_fn_def(
         params.join(", "),
         ret_type
     ));
+
+    // `ResultProven` models a compiler-discharged Result: execution faults if
+    // the provider violates the statically proven argument contract. Dafny's
+    // prelude makes that partial-correctness boundary explicit with
+    // `requires r.Ok?`; carry the exact obligation onto every generated
+    // function that crosses it so callers must discharge the same fact.
+    for requirement in result_proven_requirements(emitted_body, ctx) {
+        lines.push(format!("  requires {requirement}.Ok?"));
+    }
 
     // Guard-validated floor-division countdown (shared classifier —
     // `RecursionContract::WellFoundedToNat { floor_div: Some(_) }`):
@@ -320,6 +327,96 @@ pub fn emit_fn_def(
     lines.push("}\n".to_string());
 
     lines.join("\n")
+}
+
+fn result_proven_requirements(
+    body: &crate::ir::hir::ResolvedFnBody,
+    ctx: &CodegenContext,
+) -> std::collections::BTreeSet<String> {
+    let mut requirements = std::collections::BTreeSet::new();
+    for stmt in body.stmts() {
+        let expr = match stmt {
+            crate::ir::hir::ResolvedStmt::Expr(expr)
+            | crate::ir::hir::ResolvedStmt::Binding { value: expr, .. } => expr,
+        };
+        collect_result_proven_requirements(expr, ctx, &mut requirements);
+    }
+    requirements
+}
+
+fn collect_result_proven_requirements(
+    expr: &Spanned<crate::ir::hir::ResolvedExpr>,
+    ctx: &CodegenContext,
+    requirements: &mut std::collections::BTreeSet<String>,
+) {
+    use crate::ir::hir::{BuiltinIntrinsic, ResolvedCallee, ResolvedExpr, ResolvedStrPart};
+
+    match &expr.node {
+        ResolvedExpr::Call(callee, args) => {
+            if matches!(
+                callee,
+                ResolvedCallee::Intrinsic(BuiltinIntrinsic::ResultProven)
+            ) && let [inner] = args.as_slice()
+            {
+                requirements.insert(emit_expr(inner, ctx));
+            }
+            if let ResolvedCallee::Unresolved { callee } = callee {
+                collect_result_proven_requirements(callee, ctx, requirements);
+            }
+            for arg in args {
+                collect_result_proven_requirements(arg, ctx, requirements);
+            }
+        }
+        ResolvedExpr::TailCall { args, .. }
+        | ResolvedExpr::Ctor(_, args)
+        | ResolvedExpr::List(args)
+        | ResolvedExpr::Tuple(args)
+        | ResolvedExpr::IndependentProduct(args, _) => {
+            for arg in args {
+                collect_result_proven_requirements(arg, ctx, requirements);
+            }
+        }
+        ResolvedExpr::Attr(inner, _)
+        | ResolvedExpr::Neg(inner)
+        | ResolvedExpr::ErrorProp(inner) => {
+            collect_result_proven_requirements(inner, ctx, requirements)
+        }
+        ResolvedExpr::BinOp(_, left, right) => {
+            collect_result_proven_requirements(left, ctx, requirements);
+            collect_result_proven_requirements(right, ctx, requirements);
+        }
+        ResolvedExpr::Match { subject, arms } => {
+            collect_result_proven_requirements(subject, ctx, requirements);
+            for arm in arms {
+                collect_result_proven_requirements(&arm.body, ctx, requirements);
+            }
+        }
+        ResolvedExpr::MapLiteral(entries) => {
+            for (key, value) in entries {
+                collect_result_proven_requirements(key, ctx, requirements);
+                collect_result_proven_requirements(value, ctx, requirements);
+            }
+        }
+        ResolvedExpr::RecordCreate { fields, .. } => {
+            for (_, value) in fields {
+                collect_result_proven_requirements(value, ctx, requirements);
+            }
+        }
+        ResolvedExpr::RecordUpdate { base, updates, .. } => {
+            collect_result_proven_requirements(base, ctx, requirements);
+            for (_, value) in updates {
+                collect_result_proven_requirements(value, ctx, requirements);
+            }
+        }
+        ResolvedExpr::InterpolatedStr(parts) => {
+            for part in parts {
+                if let ResolvedStrPart::Parsed(inner) = part {
+                    collect_result_proven_requirements(inner, ctx, requirements);
+                }
+            }
+        }
+        ResolvedExpr::Literal(_) | ResolvedExpr::Ident(_) | ResolvedExpr::Resolved { .. } => {}
+    }
 }
 
 fn lower_pure_question_bang_for_emit(fd: &FnDef) -> Option<FnDef> {

@@ -77,6 +77,50 @@ fn wasm_gc_console_print_writes_to_capture_buffer() {
     );
 }
 
+#[cfg(feature = "terminal")]
+#[test]
+fn wasm_gc_terminal_result_family_builds_and_validates() {
+    const SOURCE: &str = r#"module M
+    intent = "compile every fallible terminal result shape"
+    effects [Terminal]
+
+fn exercise() -> Result<Unit, String>
+    ! [Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor]
+    Terminal.enableRawMode()?
+    Terminal.disableRawMode()?
+    Terminal.clear()?
+    Terminal.moveTo(0, 0)?
+    Terminal.print("x")?
+    Terminal.setColor("red")?
+    Terminal.resetColor()?
+    Terminal.hideCursor()?
+    Terminal.showCursor()?
+    Terminal.flush()?
+    _ = Terminal.readKey()?
+    Result.Ok(Unit)
+
+fn main() -> Unit
+    Unit
+"#;
+
+    let mut lexer = aver::lexer::Lexer::new(SOURCE);
+    let tokens = lexer.tokenize().expect("lex");
+    let mut parser = aver::parser::Parser::new(tokens);
+    let mut items = parser.parse().expect("parse");
+    let result = aver::ir::pipeline::run(
+        &mut items,
+        PipelineConfig {
+            typecheck: Some(TypecheckMode::Full { base_dir: None }),
+            ..Default::default()
+        },
+    );
+    let errors = &result.typecheck.expect("typecheck").errors;
+    assert!(errors.is_empty(), "unexpected type errors: {errors:?}");
+
+    aver::codegen::wasm_gc::compile_to_wasm_gc(&items, result.analysis.as_ref())
+        .expect("all Terminal Result factories must form a valid wasm-gc module");
+}
+
 // Boxed `match Int.div`/`match Int.mod` Err arms carry the VM's exact message
 // strings (`src/types/int.rs`): `"division by zero"` for both. `Int = ℤ`:
 // `Int.div`'s `i64::MIN / -1` is NO LONGER an overflow Err — it is the valid
@@ -185,12 +229,23 @@ fn dynamic(count: Int) -> String
         Result.Ok(v)  -> "ok {v}"
         Result.Err(e) -> e
 
+fn dynamicDown(value: Int, count: Int) -> String
+    match Bits.shiftRight(value, count)
+        Result.Ok(v)  -> "ok {v}"
+        Result.Err(e) -> e
+
+fn dynamicLow(value: Int, width: Int) -> String
+    match Bits.low(value, width)
+        Result.Ok(v)  -> "ok {v}"
+        Result.Err(e) -> e
+
 fn main() -> Unit
     ! [Console.print]
     huge = Bits.shiftLeft(1, 100)
     Console.print("{Bits.and(6, 3)}|{Bits.or(6, 3)}|{Bits.xor(6, 3)}|{Bits.and(-1, 42)}|{Bits.not(-1)}")
     Console.print("{huge}|{Bits.not(huge)}|{Bits.or(huge, 1)}|{Bits.xor(huge, huge)}|{Bits.and(Bits.not(huge), huge)}")
     Console.print("{Bits.shiftRight(-3, 1)}|{Bits.low(-1, 8)}|{Bits.low(123, 0)}|{dynamic(4)}|{dynamic(-1)}|{dynamic(16777217)}|{dynamic(4294967296)}")
+    Console.print("{Bits.shiftRight(-3, 9223372036854775808)}|{dynamicDown(-3, 4294967296)}|{dynamicLow(42, 4294967296)}|{dynamicLow(-1, 4294967296)}")
 "#;
 
 #[test]
@@ -229,7 +284,8 @@ fn wasm_gc_bits_namespace_matches_vm() {
         "2|7|5|42|0\n\
          1267650600228229401496703205376|-1267650600228229401496703205377|\
          1267650600228229401496703205377|0|0\n\
-         -2|255|0|ok 16|negative shift count|shift count exceeds the 16777216 bit limit|shift count exceeds the 16777216 bit limit\n",
+         -2|255|0|ok 16|negative shift count|shift count exceeds the 16777216 bit limit|shift count exceeds the 16777216 bit limit\n\
+         -1|ok -1|ok 42|bit width exceeds the 16777216 bit limit\n",
         "wasm-gc Bits results must match the VM verbatim"
     );
     assert!(

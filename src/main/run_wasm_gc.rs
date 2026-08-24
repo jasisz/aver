@@ -53,6 +53,7 @@ pub(super) fn cmd_run_wasm_gc(
     program_args: Vec<String>,
     record_dir: Option<&str>,
     entry_expr: Option<&str>,
+    test_boxed_sequences: bool,
 ) {
     #[cfg(feature = "wasm")]
     {
@@ -77,6 +78,7 @@ pub(super) fn cmd_run_wasm_gc(
             mode,
             entry_info,
             record_dir,
+            !test_boxed_sequences,
         );
     }
     #[cfg(not(feature = "wasm"))]
@@ -87,6 +89,7 @@ pub(super) fn cmd_run_wasm_gc(
             program_args,
             record_dir,
             entry_expr,
+            test_boxed_sequences,
         );
         eprintln!("{}", "WASM requires --features wasm".red());
         process::exit(1);
@@ -105,6 +108,7 @@ pub(super) fn cmd_run_wasm_gc_with_mode(
     mode: rt::EffectMode,
     entry_info: Option<(String, Vec<aver::value::Value>)>,
     record_dir: Option<&str>,
+    packed_sequences_enabled: bool,
 ) {
     if let Err(e) = try_run_wasm_gc(
         file,
@@ -113,6 +117,7 @@ pub(super) fn cmd_run_wasm_gc_with_mode(
         mode,
         entry_info,
         record_dir,
+        packed_sequences_enabled,
     ) {
         eprintln!("{}", e.red());
         process::exit(1);
@@ -132,6 +137,7 @@ pub(super) fn try_run_wasm_gc(
     mode: rt::EffectMode,
     entry_info: Option<(String, Vec<aver::value::Value>)>,
     record_dir: Option<&str>,
+    packed_sequences_enabled: bool,
 ) -> Result<rt::RunOutcome, String> {
     use aver::ir::{NeutralAllocPolicy, PipelineConfig, TypecheckMode};
 
@@ -226,6 +232,7 @@ pub(super) fn try_run_wasm_gc(
             mode,
             tcp_settings,
             type_aliases,
+            packed_sequences_enabled,
         },
     )?;
 

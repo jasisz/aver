@@ -561,6 +561,12 @@ pub enum BuiltinIntrinsic {
     /// syntactically valid dewey-decimal string literal. Dynamic strings use
     /// the catchable `BranchPath.parse` builtin instead.
     BranchPathParse,
+    /// `__result_proven(<result>)` — unwrap a `Result` whose `Err` branch was
+    /// discharged from source syntax. Unlike `Result.withDefault`, this is
+    /// fail-closed: reaching `Err` is a compiler/provider contract violation,
+    /// never permission to fabricate a payload. Produced for effectful
+    /// literal discharge, where the capability call must still execute.
+    ResultProven,
     /// `__str_cursor_end(<s>, <i>)` — `(String, Int) -> Bool`, true when
     /// the byte offset `i` has reached the end of `s`. The chars-fusion
     /// pass emits it where the loop matched `[]`.
@@ -667,6 +673,7 @@ impl BuiltinIntrinsic {
             Self::VectorNew => "__vector_new",
             Self::BranchPathChild => "__branch_path_child",
             Self::BranchPathParse => "__branch_path_parse",
+            Self::ResultProven => "__result_proven",
             Self::StrCursorEnd => "__str_cursor_end",
             Self::StrCursorHead => "__str_cursor_head",
             Self::StrCursorNext => "__str_cursor_next",
@@ -703,6 +710,10 @@ impl BuiltinIntrinsic {
             "__buf_append_sep_unless_first" => Some(Self::BufAppendSepUnlessFirst),
             "__buf_finalize" => Some(Self::BufFinalize),
             "__to_str" => Some(Self::ToStr),
+            // The effect-lifting pass synthesises this spelling after source
+            // typechecking. User source cannot call it because no signature
+            // is registered in the Result namespace.
+            "__result_proven" => Some(Self::ResultProven),
             "__str_cursor_end" => Some(Self::StrCursorEnd),
             "__str_cursor_head" => Some(Self::StrCursorHead),
             "__str_cursor_next" => Some(Self::StrCursorNext),

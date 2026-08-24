@@ -20,7 +20,7 @@ fn run(source: &str, wasm_gc: bool, packed: bool) -> (bool, String) {
         command.arg("--wasm-gc");
     }
     if !packed {
-        command.env("AVER_NO_PACKED_SEQUENCES", "1");
+        command.arg("--test-boxed-sequences");
     }
     let output = command.output().expect("run aver");
     let _ = std::fs::remove_dir_all(dir);
@@ -39,7 +39,7 @@ fn run(source: &str, wasm_gc: bool, packed: bool) -> (bool, String) {
 /// `aver verify` twin of `run` — the verify runner has its own wasm-gc
 /// execution path (`aver verify --wasm-gc`), so a codegen gap can be red
 /// there while `aver run` is green (and vice versa).
-fn verify(source: &str, wasm_gc: bool, packed: bool) -> (bool, String) {
+fn verify(source: &str, wasm_gc: bool) -> (bool, String) {
     let id = NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
     let dir = std::env::temp_dir().join(format!(
         "aver-packed-sequence-verify-{}-{id}",
@@ -52,9 +52,6 @@ fn verify(source: &str, wasm_gc: bool, packed: bool) -> (bool, String) {
     command.arg("verify").arg(&path);
     if wasm_gc {
         command.arg("--wasm-gc");
-    }
-    if !packed {
-        command.env("AVER_NO_PACKED_SEQUENCES", "1");
     }
     let output = command.output().expect("verify aver");
     let _ = std::fs::remove_dir_all(dir);
@@ -124,7 +121,7 @@ fn run_multi(
         command.arg("--wasm-gc");
     }
     if !packed {
-        command.env("AVER_NO_PACKED_SEQUENCES", "1");
+        command.arg("--test-boxed-sequences");
     }
     let output = command.output().expect("run aver");
     let _ = std::fs::remove_dir_all(dir);
@@ -159,7 +156,7 @@ fn compile(source: &str, packed: bool) -> Vec<u8> {
         .arg("-o")
         .arg(&out_dir);
     if !packed {
-        command.env("AVER_NO_PACKED_SEQUENCES", "1");
+        command.arg("--test-boxed-sequences");
     }
     let output = command.output().expect("compile aver");
     assert!(
@@ -198,7 +195,7 @@ fn compile_multi(entry_src: &str, dep_file: &str, dep_src: &str, packed: bool) -
         .arg("-o")
         .arg(&out_dir);
     if !packed {
-        command.env("AVER_NO_PACKED_SEQUENCES", "1");
+        command.arg("--test-boxed-sequences");
     }
     let output = command.output().expect("compile aver");
     assert!(
@@ -232,6 +229,34 @@ fn i8_array_count(wasm: &[u8]) -> usize {
             )
         })
         .count()
+}
+
+const UTF8_ROUND_TRIP: &str = r#"module M
+    intent = "exercise String UTF-8 bridges in packed and boxed Bytes layouts"
+    depends [Bytes]
+    effects [Console]
+
+fn decode(result: Result<String, String>) -> String
+    match result
+        Result.Ok(text) -> text
+        Result.Err(error) -> "error:{error}"
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(decode(String.fromUtf8(String.toUtf8("Zażółć 🦀"))))
+"#;
+
+#[test]
+fn string_to_utf8_round_trips_through_the_boxed_fallback() {
+    let (vm_ok, vm) = run(UTF8_ROUND_TRIP, false, true);
+    let (packed_ok, packed) = run(UTF8_ROUND_TRIP, true, true);
+    let (boxed_ok, boxed) = run(UTF8_ROUND_TRIP, true, false);
+    assert!(vm_ok, "VM failed: {vm}");
+    assert!(packed_ok, "packed wasm failed: {packed}");
+    assert!(boxed_ok, "boxed wasm failed: {boxed}");
+    assert_eq!(vm, "Zażółć 🦀");
+    assert_eq!(packed, vm);
+    assert_eq!(boxed, vm);
 }
 
 const OCTETS: &str = r#"module M
@@ -495,7 +520,7 @@ fn qualified_ungated_multi_field_constructor_demotes_instead_of_trapping() {
         "carrier-enabled wasm failed (beyond-i64 construct trapped instead \
          of demoting): {packed}"
     );
-    assert!(boxed_ok, "AVER_NO_PACKED_SEQUENCES wasm failed: {boxed}");
+    assert!(boxed_ok, "boxed-sequence wasm failed: {boxed}");
     assert_eq!(
         packed, vm,
         "carrier-enabled wasm must demote the qualified ungated Coord, not \
@@ -841,16 +866,12 @@ verify render
 
 #[test]
 fn named_conversion_render_verifies_on_the_wasm_gc_runner() {
-    let (vm_ok, vm) = verify(NAMED_SHOW_OCTETS_VERIFY, false, true);
-    let (packed_ok, packed) = verify(NAMED_SHOW_OCTETS_VERIFY, true, true);
-    let (boxed_ok, boxed) = verify(NAMED_SHOW_OCTETS_VERIFY, true, false);
+    let (vm_ok, vm) = verify(NAMED_SHOW_OCTETS_VERIFY, false);
+    let (packed_ok, packed) = verify(NAMED_SHOW_OCTETS_VERIFY, true);
     assert!(vm_ok, "VM verify failed: {vm}");
     assert!(packed_ok, "packed wasm-gc verify failed: {packed}");
-    assert!(boxed_ok, "boxed wasm-gc verify failed: {boxed}");
-    for (label, out) in [("packed", &packed), ("boxed", &boxed)] {
-        assert!(
-            out.contains("3/3 cases passed"),
-            "{label} wasm-gc verify did not pass every case: {out}"
-        );
-    }
+    assert!(
+        packed.contains("3/3 cases passed"),
+        "packed wasm-gc verify did not pass every case: {packed}"
+    );
 }

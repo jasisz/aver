@@ -1,5 +1,5 @@
 use super::{ReturnControl, VM};
-use crate::nan_value::{Arena, NanIntExt, NanValue};
+use crate::nan_value::{Arena, NanIntExt, NanValue, NanValueConvert};
 use crate::vm::builtin::VmBuiltin;
 use crate::vm::opcode::*;
 use crate::vm::types::{CallFrame, VmError};
@@ -1308,10 +1308,7 @@ impl VM {
                     // `total_items` cells for the length of the product and
                     // nothing else: every branch frame is pushed above this
                     // point and truncates back to its own base on the way out.
-                    let total_items: usize = descs
-                        .iter()
-                        .map(|(argc, discharged)| argc + 1 + usize::from(*discharged))
-                        .sum();
+                    let total_items: usize = descs.iter().map(|(argc, _proven)| argc + 1).sum();
                     let items_start = self.stack.len() - total_items;
                     let flat_items: Vec<NanValue> = self.stack[items_start..].to_vec();
 
@@ -1341,24 +1338,17 @@ impl VM {
                     // above.
                     let mut element_calls: Vec<(NanValue, Vec<NanValue>)> =
                         Vec::with_capacity(count);
-                    let mut discharged_defaults: Vec<Option<NanValue>> = Vec::with_capacity(count);
+                    let mut proven_results: Vec<bool> = Vec::with_capacity(count);
                     let mut bundle_spans: Vec<(usize, usize)> = Vec::with_capacity(count);
                     let mut item_offset = 0;
-                    for (argc, discharged) in &descs {
+                    for (argc, proven) in &descs {
                         let bundle_start = items_start + item_offset;
                         let callable = flat_items[item_offset];
                         item_offset += 1;
                         let args = flat_items[item_offset..item_offset + *argc].to_vec();
                         item_offset += *argc;
-                        let default = if *discharged {
-                            let value = flat_items[item_offset];
-                            item_offset += 1;
-                            Some(value)
-                        } else {
-                            None
-                        };
                         element_calls.push((callable, args));
-                        discharged_defaults.push(default);
+                        proven_results.push(*proven);
                         bundle_spans.push((bundle_start, items_start + item_offset));
                     }
 
@@ -1606,19 +1596,28 @@ impl VM {
                     self.runtime.replay_exit_group();
 
                     // A source-level literal discharge is represented in HIR
-                    // as `Result.withDefault(effect(...), default)`. CALL_PAR
+                    // as `__result_proven(effect(...))`. CALL_PAR
                     // invokes the nested effect as the actual branch callable
                     // so its trace coordinates stay inside the group; apply
-                    // the destructor now, after every branch has completed.
+                    // the fail-closed destructor now, after every branch has
+                    // completed.
                     if !unwrap {
-                        for (result, default) in results.iter_mut().zip(discharged_defaults.iter())
-                        {
-                            if let Some(default) = default {
-                                *result = if result.is_ok() {
-                                    result.wrapper_inner(&self.arena)
+                        for (result, proven) in results.iter_mut().zip(proven_results.iter()) {
+                            if *proven {
+                                if result.is_ok() {
+                                    *result = result.wrapper_inner(&self.arena);
+                                } else if result.is_err() {
+                                    let error =
+                                        result.wrapper_inner(&self.arena).to_value(&self.arena);
+                                    return Err(VmError::runtime(format!(
+                                        "provider contract violated: discharged Result returned Err({})",
+                                        crate::value::aver_repr(&error)
+                                    )));
                                 } else {
-                                    *default
-                                };
+                                    return Err(VmError::runtime(
+                                        "compiler contract violated: proven CALL_PAR branch returned a non-Result",
+                                    ));
+                                }
                             }
                         }
                     }
@@ -2275,6 +2274,23 @@ impl VM {
                         crate::types::branch_path::parse_literal_nv(&[raw], &mut self.arena)
                             .map_err(|error| VmError::runtime(error.to_string()))?;
                     self.stack.push(value);
+                }
+
+                RESULT_PROVEN => {
+                    let result = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    if result.is_ok() {
+                        self.stack.push(result.wrapper_inner(&self.arena));
+                    } else if result.is_err() {
+                        let error = result.wrapper_inner(&self.arena).to_value(&self.arena);
+                        return Err(VmError::runtime(format!(
+                            "provider contract violated: discharged Result returned Err({})",
+                            crate::value::aver_repr(&error)
+                        )));
+                    } else {
+                        return Err(VmError::runtime(
+                            "compiler contract violated: __result_proven received a non-Result",
+                        ));
+                    }
                 }
 
                 // Codepoint cursor (chars fusion). Every arm delegates

@@ -12,8 +12,8 @@ use wasm_encoder::ValType;
 
 use crate::ast::{Literal, Spanned};
 use crate::ir::hir::{
-    ResolvedCallee, ResolvedExpr, ResolvedFnBody, ResolvedFnDef, ResolvedPattern, ResolvedStmt,
-    ResolvedStrPart,
+    BuiltinIntrinsic, ResolvedCallee, ResolvedExpr, ResolvedFnBody, ResolvedFnDef, ResolvedPattern,
+    ResolvedStmt, ResolvedStrPart,
 };
 use crate::types::Type;
 
@@ -440,8 +440,7 @@ impl SlotTable {
 /// (guarded on the shared valid-count range).
 ///
 /// `Bits.and` / `.or` / `.xor` / `.not` are absent: they have no guard, so
-/// emitting their operands inline already evaluates each exactly once. The
-/// discharged intrinsics are absent for the same reason.
+/// emitting their operands inline already evaluates each exactly once.
 fn fn_needs_aint_operands(fd: &ResolvedFnDef) -> bool {
     fn guarded(callee: &ResolvedCallee) -> bool {
         matches!(
@@ -455,6 +454,13 @@ fn fn_needs_aint_operands(fd: &ResolvedFnDef) -> bool {
                         | "Bits.shiftRight"
                         | "Bits.low"
                 )
+        ) || matches!(
+            callee,
+            ResolvedCallee::Intrinsic(
+                BuiltinIntrinsic::BitsShiftLeft
+                    | BuiltinIntrinsic::BitsShiftRight
+                    | BuiltinIntrinsic::BitsLow
+            )
         )
     }
     fn walk(e: &ResolvedExpr) -> bool {
@@ -722,6 +728,19 @@ pub(super) fn expr_needs_scratch(expr: &ResolvedExpr, registry: &TypeRegistry) -
         }
         ResolvedExpr::Neg(inner) => expr_needs_scratch(&inner.node, registry),
         ResolvedExpr::Call(callee, args) => {
+            // `__result_proven(result)` checks the Result tag and then reads
+            // the payload from the same value. Keep the carrier in the
+            // universal subject scratch exactly like `Result.withDefault`.
+            // This must be recognised directly here: treating every
+            // ResultProven as if it matched every builtin-specific scratch
+            // predicate over-allocated unrelated Args/Console/Env locals and
+            // still failed to reserve the subject slot it actually needs.
+            if matches!(
+                callee,
+                ResolvedCallee::Intrinsic(BuiltinIntrinsic::ResultProven)
+            ) {
+                return true;
+            }
             // `Option.withDefault(opt, default)` / `Result.withDefault`
             // / `Result.fromOption` — conservatively reserve scratch; the
             // boxed emitters stash the Option/Result for tag inspection.

@@ -35,6 +35,13 @@ impl IntoAverStr for Option<String> {
         self.map(AverStr::from)
     }
 }
+impl IntoAverStr for Result<Option<String>, String> {
+    type Output = Result<Option<AverStr>, AverStr>;
+    fn into_aver(self) -> Result<Option<AverStr>, AverStr> {
+        self.map(|value| value.map(AverStr::from))
+            .map_err(AverStr::from)
+    }
+}
 impl IntoAverStr for aver_rt::AverList<String> {
     type Output = aver_rt::AverList<AverStr>;
     fn into_aver(self) -> aver_rt::AverList<AverStr> {

@@ -76,7 +76,7 @@ impl TypeChecker {
             );
         }
         let net_ret = || Type::Result(Box::new(Type::named("HttpResponse")), Box::new(Type::Str));
-        let disk_unit = || Type::Result(Box::new(Type::Unit), Box::new(Type::Str));
+        let result_unit = || Type::Result(Box::new(Type::Unit), Box::new(Type::Str));
         // Http.post/put/patch headers param: same shape as the
         // record fields above (`Map<String, List<String>>`).
         let header_list = header_map;
@@ -178,13 +178,13 @@ impl TypeChecker {
             (
                 "HttpServer.listen",
                 &[Type::Int, http_handler()],
-                disk_unit(),
+                result_unit(),
                 &["HttpServer.listen"],
             ),
             (
                 "HttpServer.listenWith",
                 &[Type::Int, context_var(), http_handler_with_context()],
-                disk_unit(),
+                result_unit(),
                 &["HttpServer.listenWith"],
             ),
             // SelfHostRuntime.* are the self-host bridge calls — the
@@ -198,7 +198,7 @@ impl TypeChecker {
             (
                 "SelfHostRuntime.httpServerListen",
                 &[Type::Int, Type::Var("Handler".to_string())],
-                disk_unit(),
+                result_unit(),
                 &["HttpServer.listen"],
             ),
             (
@@ -208,7 +208,7 @@ impl TypeChecker {
                     Type::Var("Ctx".to_string()),
                     Type::Var("Handler".to_string()),
                 ],
-                disk_unit(),
+                result_unit(),
                 &["HttpServer.listenWith"],
             ),
             (
@@ -220,7 +220,7 @@ impl TypeChecker {
             (
                 "Env.set",
                 &[Type::Str, Type::Str],
-                disk_unit(),
+                result_unit(),
                 &["Env.set"],
             ),
         ];
@@ -238,44 +238,47 @@ impl TypeChecker {
                 (
                     "Terminal.enableRawMode",
                     &[],
-                    Type::Unit,
+                    result_unit(),
                     &["Terminal.enableRawMode"],
                 ),
                 (
                     "Terminal.disableRawMode",
                     &[],
-                    Type::Unit,
+                    result_unit(),
                     &["Terminal.disableRawMode"],
                 ),
-                ("Terminal.clear", &[], Type::Unit, &["Terminal.clear"]),
+                ("Terminal.clear", &[], result_unit(), &["Terminal.clear"]),
                 (
                     "Terminal.moveTo",
                     &[Type::Int, Type::Int],
-                    disk_unit(),
+                    result_unit(),
                     &["Terminal.moveTo"],
                 ),
                 (
                     "Terminal.print",
                     &[Type::Str],
-                    Type::Unit,
+                    result_unit(),
                     &["Terminal.print"],
                 ),
                 (
                     "Terminal.setColor",
                     &[Type::Str],
-                    Type::Unit,
+                    result_unit(),
                     &["Terminal.setColor"],
                 ),
                 (
                     "Terminal.resetColor",
                     &[],
-                    Type::Unit,
+                    result_unit(),
                     &["Terminal.resetColor"],
                 ),
                 (
                     "Terminal.readKey",
                     &[],
-                    Type::Option(Box::new(Type::Str)),
+                    Type::Result(
+                        Box::new(Type::Option(Box::new(Type::Str))),
+                        Box::new(Type::Str),
+                    ),
                     &["Terminal.readKey"],
                 ),
                 (
@@ -287,16 +290,16 @@ impl TypeChecker {
                 (
                     "Terminal.hideCursor",
                     &[],
-                    Type::Unit,
+                    result_unit(),
                     &["Terminal.hideCursor"],
                 ),
                 (
                     "Terminal.showCursor",
                     &[],
-                    Type::Unit,
+                    result_unit(),
                     &["Terminal.showCursor"],
                 ),
-                ("Terminal.flush", &[], Type::Unit, &["Terminal.flush"]),
+                ("Terminal.flush", &[], result_unit(), &["Terminal.flush"]),
             ];
             for (name, params, ret, effects) in terminal_sigs {
                 self.insert_sig(name, params, ret.clone(), effects);
@@ -347,11 +350,10 @@ impl TypeChecker {
         //
         // `and` / `or` / `xor` / `not` are total: that reading is defined
         // for every integer, so there is nothing to fail on. The three
-        // count-taking operations register the DYNAMIC type; when the count
-        // is a syntactic non-negative integer literal inside the fixed
-        // materialization bound they type as plain `Int` instead — the
-        // literal-count discharge rule in `infer/expr.rs`
-        // (`is_literal_nonneg_int_count`), the same shape as `Int.div`.
+        // count-taking operations register the DYNAMIC type. Literal
+        // discharge is operation-specific: shiftLeft/low retain the fixed
+        // materialization bound, while shiftRight accepts every non-negative
+        // literal because its result cannot grow.
         let bits_sigs: &[(&str, &[Type], Type, &[&str])] = &[
             ("Bits.and", &[Type::Int, Type::Int], Type::Int, &[]),
             ("Bits.or", &[Type::Int, Type::Int], Type::Int, &[]),

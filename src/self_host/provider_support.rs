@@ -57,7 +57,7 @@ fn build_registry(
         ProviderContractSpec::new(
             "Time",
             "sha256:e80d264b61f2808b4db4d765ded0d3db1a9a019c814d27686ef7e71bc4c208af",
-            "sha256:30d2e4e49965d6cf8eec13daf864fd10c5ee22d5ec188251e39421cec466e7e1",
+            "sha256:07ad032ad093e63f61e39f59f9452b4787936c18f97953a955c998e6593ac294",
             vec![
                 "Time.now".to_string(),
                 "Time.sleep".to_string(),

@@ -415,6 +415,9 @@ fn emit_fn_call(
                 BuiltinIntrinsic::BranchPathParse if a.len() == 1 => {
                     format!("BranchPath_parseLiteral({})", a[0])
                 }
+                BuiltinIntrinsic::ResultProven if a.len() == 1 => {
+                    format!("ResultProven({})", a[0])
+                }
                 // Compiler-synthesised `__buf_*` / `__to_str` intrinsics
                 // don't reach the Dafny backend in practice (Dafny emit
                 // doesn't see post-interp-lower buffer shapes), but the
@@ -467,6 +470,22 @@ fn emit_fn_call(
 fn dafny_bits_counted(op: &str, a: &[String], negative: &str, too_large: &str) -> String {
     format!(
         "(if {n} < 0 then Result<int, string>.Err(\"{negative}\") else if {n} > 16777216 then Result<int, string>.Err(\"{too_large}\") else Result<int, string>.Ok({op}({x}, {n})))",
+        x = a[0],
+        n = a[1]
+    )
+}
+
+fn dafny_bits_shift_right(a: &[String]) -> String {
+    format!(
+        "(if {n} < 0 then Result<int, string>.Err(\"negative shift count\") else Result<int, string>.Ok(BitsShiftRight({x}, {n})))",
+        x = a[0],
+        n = a[1]
+    )
+}
+
+fn dafny_bits_low(a: &[String]) -> String {
+    format!(
+        "(if {n} < 0 then Result<int, string>.Err(\"negative bit width\") else if {x} < 0 && {n} > 16777216 then Result<int, string>.Err(\"bit width exceeds the 16777216 bit limit\") else Result<int, string>.Ok(BitsLow({x}, {n})))",
         x = a[0],
         n = a[1]
     )
@@ -567,18 +586,8 @@ pub(super) fn emit_dafny_builtin(b: crate::codegen::builtins::Builtin, a: &[Stri
             "negative shift count",
             "shift count exceeds the 16777216 bit limit",
         ),
-        BitsShiftRight => dafny_bits_counted(
-            "BitsShiftRight",
-            a,
-            "negative shift count",
-            "shift count exceeds the 16777216 bit limit",
-        ),
-        BitsLow => dafny_bits_counted(
-            "BitsLow",
-            a,
-            "negative bit width",
-            "bit width exceeds the 16777216 bit limit",
-        ),
+        BitsShiftRight => dafny_bits_shift_right(a),
+        BitsLow => dafny_bits_low(a),
 
         // Bool
         BoolOr => format!("({} || {})", a[0], a[1]),

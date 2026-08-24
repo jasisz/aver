@@ -16,7 +16,7 @@
 //! ```aver
 //! fn pickThree_lifted(path: BranchPath, oracle: (BranchPath, Int, Int, Int) -> Result<Int, String>)
 //!     -> (Int, Int, Int)
-//!     (Result.withDefault(oracle(path, 0, 1, 100), 1), Result.withDefault(oracle(path, 1, 1, 100), 1), Result.withDefault(oracle(path, 2, 1, 100), 1))
+//!     (__result_proven(oracle(path, 0, 1, 100)), __result_proven(oracle(path, 1, 1, 100)), __result_proven(oracle(path, 2, 1, 100)))
 //! ```
 //!
 //! Scope:
@@ -806,22 +806,24 @@ fn lift_classified_call(
             // rewritten to an oracle invocation. The callee name is no
             // longer `Random.int` / `Time.sleep` after lifting, so the normal
             // typechecker rule cannot rediscover the proof from syntax.
-            // `Result.withDefault` models the same unreachable-Err
-            // elimination used by HIR while the nested oracle call remains
-            // fully visible to the proof model.
-            let discharged_default = match effect_name {
+            // `__result_proven` models the same unreachable-Err elimination
+            // used by HIR while the nested oracle call remains fully visible
+            // to the proof model. It is deliberately fail-closed: an Oracle
+            // profile returning Err for a statically valid request violates
+            // the capability contract instead of supplying a fake value.
+            let discharged = match effect_name {
                 "Random.int"
                     if args.len() == 2
                         && crate::ast::is_literal_random_int_range(&args[0], &args[1]) =>
                 {
-                    Some(lifted_args[0].clone())
+                    true
                 }
                 "Time.sleep"
                     if args.len() == 1 && crate::ast::is_literal_sleep_duration(&args[0]) =>
                 {
-                    Some(Spanned::new(Expr::Literal(Literal::Unit), original.line))
+                    true
                 }
-                _ => None,
+                _ => false,
             };
             let current_counter = *counter;
             *counter += 1;
@@ -845,15 +847,13 @@ fn lift_classified_call(
                 ),
                 original.line,
             );
-            if let Some(default) = discharged_default {
-                let result_ns = Spanned::new(Expr::Ident("Result".to_string()), original.line);
-                let with_default = Spanned::new(
-                    Expr::Attr(Box::new(result_ns), "withDefault".to_string()),
-                    original.line,
-                );
+            if discharged {
                 return Ok(Expr::FnCall(
-                    Box::new(with_default),
-                    vec![oracle_call, default],
+                    Box::new(Spanned::new(
+                        Expr::Ident("__result_proven".to_string()),
+                        original.line,
+                    )),
+                    vec![oracle_call],
                 ));
             }
             Ok(oracle_call.node)
@@ -1276,17 +1276,12 @@ mod tests {
     ) -> Vec<Expr> {
         // A statically valid Random.int / Time.sleep keeps the real oracle
         // call but discharges its impossible Err through
-        // `Result.withDefault`. Most structural lifting assertions care about
+        // the fail-closed `__result_proven` intrinsic. Most structural lifting assertions care about
         // the nested oracle coordinates, so peel exactly that wrapper here.
         let expr = match expr {
             Expr::FnCall(callee, args)
-                if args.len() == 2
-                    && matches!(
-                        &callee.node,
-                        Expr::Attr(head, method)
-                            if method == "withDefault"
-                                && matches!(&head.node, Expr::Ident(ns) if ns == "Result")
-                    ) =>
+                if args.len() == 1
+                    && matches!(&callee.node, Expr::Ident(name) if name == "__result_proven") =>
             {
                 &args[0].node
             }

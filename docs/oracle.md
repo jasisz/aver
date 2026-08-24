@@ -31,7 +31,7 @@ fn pickOne() -> Int
 
 verify pickOne law usesOracle
     given rnd: Random.int = [fairDie]
-    pickOne() => Result.withDefault(rnd(BranchPath.Root, 0, 1, 6), 1)
+    Result.Ok(pickOne()) => rnd(BranchPath.Root, 0, 1, 6)
 ```
 
 Breakdown:
@@ -41,14 +41,16 @@ Breakdown:
 - `rnd` is a local alias for the oracle; the law can call it directly.
 - `aver proof` can lift `pickOne` to a pure proof function and quantify over that oracle.
 
+The comparison keeps the provider outcome as a `Result`: `Result.Ok(pickOne()) => rnd(...)`. Do not turn the oracle response into a sample with `Result.withDefault`; an `Err` is a provider-contract violation after literal discharge, not permission to pretend that a chosen default was randomly produced.
+
 The stub is not special syntax. It is just an Aver function whose type matches the oracle signature for the effect.
 
-The generated Lean shape is:
+Schematically, the generated Lean shape keeps that `Except` boundary visible:
 
 ```lean
 theorem pickOne_law_usesOracle :
-    ∀ (rnd : BranchPath → Int → Int → Int → Int),
-        pickOne BranchPath.Root rnd = rnd BranchPath.Root 0 1 6 := by
+    ∀ (rnd : BranchPath → Int → Int → Int → Except String Int),
+        Except.ok (pickOne BranchPath.Root rnd) = rnd BranchPath.Root 0 1 6 := by
     intro rnd
     simp [pickOne]
 ```
@@ -104,7 +106,7 @@ effects or when you want runtime assertions over the collected trace:
 verify pickOne trace
     given rnd: Random.int = [fairDie]
     picked = pickOne()
-    picked.result => Result.withDefault(rnd(BranchPath.Root, 0, 1, 6), 1)
+    Result.Ok(picked.result) => rnd(BranchPath.Root, 0, 1, 6)
     picked.trace.length() => 1
     picked.trace.contains(Random.int(1, 6)) => true
 ```
@@ -215,7 +217,7 @@ A `given` list is a concrete domain:
 ```aver
 verify pickOne trace
     given rnd: Random.int = [lowDie, highDie]
-    pickOne().result => Result.withDefault(rnd(BranchPath.Root, 0, 1, 6), 1)
+    Result.Ok(pickOne().result) => rnd(BranchPath.Root, 0, 1, 6)
 ```
 
 This expands to two cases. Multiple `given` lists expand as a cartesian product, capped at `10_000` cases (`[verify] max-cases` in `aver.toml` moves the cap for the project, and `max-cases` in a `[[verify.costly]]` entry moves it for one function). Stub names may be local (`lowDie`) or qualified imports (`Helpers.lowDie`).

@@ -105,36 +105,34 @@ pub(super) enum EffectName {
     //   ports. Hosts that don't implement Terminal (workers, browser)
     //   should treat these as no-ops; Aver `! [Terminal.foo]` effect
     //   declarations drive when imports are emitted.
-    /// `() -> Unit` — switch the host terminal to raw mode (no line
+    /// `() -> Result<Unit, String>` — switch the host terminal to raw mode (no line
     /// buffering, no echo). Pairs with `Terminal.disableRawMode`.
     TerminalEnableRawMode,
-    /// `() -> Unit` — restore the host terminal's pre-raw mode.
+    /// `() -> Result<Unit, String>` — restore the host terminal's pre-raw mode.
     TerminalDisableRawMode,
-    /// `() -> Unit` — clear the entire terminal screen.
+    /// `() -> Result<Unit, String>` — clear the entire terminal screen.
     TerminalClear,
     /// `(row: Int, col: Int) -> Result<Unit, String>` — move the cursor to the
     /// given 1-indexed row/col; host I/O failure remains observable.
     TerminalMoveTo,
-    /// `(s: String) -> Unit` — write `s` to the terminal at the
+    /// `(s: String) -> Result<Unit, String>` — write `s` to the terminal at the
     /// current cursor position. Doesn't append a newline.
     TerminalPrint,
-    /// `(color: Int) -> Unit` — set the foreground colour to the
-    /// given ANSI 256 colour code.
+    /// `(color: String) -> Result<Unit, String>` — set the foreground colour.
     TerminalSetColor,
-    /// `() -> Unit` — reset foreground colour to default.
+    /// `() -> Result<Unit, String>` — reset foreground colour to default.
     TerminalResetColor,
-    /// `() -> Option<String>` — read one keypress non-blocking. None
-    /// if no input is available; Some(byte_string) for printable +
-    /// special-key sequences.
+    /// `() -> Result<Option<String>, String>` — read one keypress
+    /// non-blocking. `Ok(None)` means no input is available.
     TerminalReadKey,
     /// `() -> Result<Terminal.Size, String>` — current terminal dimensions in
     /// (width, height) cells, or a host query failure.
     TerminalSize,
-    /// `() -> Unit` — hide the cursor.
+    /// `() -> Result<Unit, String>` — hide the cursor.
     TerminalHideCursor,
-    /// `() -> Unit` — show the cursor.
+    /// `() -> Result<Unit, String>` — show the cursor.
     TerminalShowCursor,
-    /// `() -> Unit` — flush any buffered terminal output to the host.
+    /// `() -> Result<Unit, String>` — flush buffered terminal output.
     TerminalFlush,
     // ── Disk surface — POSIX-shaped file I/O wired through aver_rt::*.
     //   `Disk.exists` returns Bool; everything else returns
@@ -689,23 +687,12 @@ impl EffectName {
             | Self::TerminalResetColor
             | Self::TerminalHideCursor
             | Self::TerminalShowCursor
-            | Self::TerminalFlush => Ok(vec![]),
-            Self::TerminalMoveTo => Ok(vec![result_ref_ty(registry, "Result<Unit,String>")?]),
-            Self::TerminalReadKey => {
-                // `Option<String>` ref — eager-registered when any
-                // call site reaches for `String.charAt` / `String.fromCodePoint`,
-                // or now also when `Terminal.readKey` shows up.
-                let opt_idx =
-                    registry
-                        .option_type_idx("Option<String>")
-                        .ok_or(WasmGcError::Validation(
-                            "Terminal.readKey: Option<String> slot not registered".into(),
-                        ))?;
-                Ok(vec![ValType::Ref(wasm_encoder::RefType {
-                    nullable: true,
-                    heap_type: wasm_encoder::HeapType::Concrete(opt_idx),
-                })])
-            }
+            | Self::TerminalFlush
+            | Self::TerminalMoveTo => Ok(vec![result_ref_ty(registry, "Result<Unit,String>")?]),
+            Self::TerminalReadKey => Ok(vec![result_ref_ty(
+                registry,
+                "Result<Option<String>,String>",
+            )?]),
             Self::TerminalSize => Ok(vec![result_ref_ty(
                 registry,
                 "Result<Terminal.Size,String>",
