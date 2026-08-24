@@ -91,7 +91,7 @@ pub fn connect_with_settings(
 
     let socket_addr = resolve(&format!("{}:{}", host, port))?;
     let stream = TcpStream::connect_timeout(&socket_addr, settings.connect_timeout)
-        .map_err(|error| format_io_error("Tcp.connect", &error))?;
+        .map_err(|error| format_connect_error("Tcp.connect", &error, settings.connect_timeout))?;
 
     // A persistent session has no read/write deadline. Any later I/O error
     // poisons the handle instead of letting a caller continue after an
@@ -370,7 +370,7 @@ pub fn ping_with_settings(host: &str, port: i64, settings: TcpSettings) -> Resul
     validate_port(port)?;
     let socket_addr = resolve(&format!("{}:{}", host, port))?;
     TcpStream::connect_timeout(&socket_addr, settings.connect_timeout)
-        .map_err(|error| format_io_error("Tcp.ping", &error))?;
+        .map_err(|error| format_connect_error("Tcp.ping", &error, settings.connect_timeout))?;
     Ok(())
 }
 
@@ -380,7 +380,7 @@ fn request_stream(
     operation: &str,
 ) -> Result<TcpStream, String> {
     let stream = TcpStream::connect_timeout(socket_addr, settings.connect_timeout)
-        .map_err(|error| format_io_error(operation, &error))?;
+        .map_err(|error| format_connect_error(operation, &error, settings.connect_timeout))?;
     stream
         .set_read_timeout(Some(settings.request_idle_timeout))
         .map_err(|error| format_io_error(operation, &error))?;
@@ -422,6 +422,20 @@ fn format_io_error(operation: &str, error: &io::Error) -> String {
         format!("{operation}: I/O timed out")
     } else {
         format!("{operation}: {error}")
+    }
+}
+
+fn format_connect_error(operation: &str, error: &io::Error, deadline: Duration) -> String {
+    if matches!(
+        error.kind(),
+        io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+    ) {
+        format!(
+            "{operation}: socket establishment timed out (deadline: {} ms)",
+            deadline.as_millis()
+        )
+    } else {
+        format_io_error(operation, error)
     }
 }
 
@@ -502,6 +516,17 @@ mod tests {
             assert_eq!(
                 format_io_error("Tcp.readBytes", &error),
                 "Tcp.readBytes: I/O timed out"
+            );
+        }
+    }
+
+    #[test]
+    fn connect_timeout_error_names_the_selected_deadline() {
+        for kind in [io::ErrorKind::TimedOut, io::ErrorKind::WouldBlock] {
+            let error = io::Error::from(kind);
+            assert_eq!(
+                format_connect_error("Tcp.connect", &error, Duration::from_secs(7)),
+                "Tcp.connect: socket establishment timed out (deadline: 7000 ms)"
             );
         }
     }

@@ -25,7 +25,7 @@ operation ping(host: String, port: Int) -> Result<Unit, String>
     hostile = [pingNormalOk, pingAlwaysErr]
 
 operation connect(host: String, port: Int) -> Result<Tcp.Connection, String>
-    ? "Opens a persistent TCP session and returns its provider-owned resource handle."
+    ? "Opens a persistent TCP session and returns its provider-owned resource handle. Socket establishment uses the provider's deployment deadline: 5 seconds by default on Aver native and in-process wasm-gc hosts; wasip2 timing is host-controlled."
     oracle = generativeOutput
     replay = recorded
     hostile = [connectNormalOk, connectAlwaysErr]

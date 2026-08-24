@@ -6856,20 +6856,12 @@ fn cmd_compile_wasip2(
                 process::exit(1);
             }
         };
-        if project_config
-            .as_ref()
-            .is_some_and(|config| config.tcp_settings_configured)
-            && required
-                .iter()
-                .any(|operation| operation.starts_with("Tcp."))
-        {
-            eprintln!(
-                "{}",
-                "warning[tcp-timeout-unsupported]: `--target wasip2` cannot honour explicit \
-                 [effects.Tcp] connect/request timeout settings; the component uses the host's \
-                 WASI socket timing instead"
-                    .yellow()
-            );
+        if let Some(warning) = crate::cli_entry::shared::wasip2_tcp_timeout_warning(
+            "--target wasip2",
+            &required,
+            project_config.as_ref(),
+        ) {
+            eprintln!("{}", warning.yellow());
         }
         let capability_wit_plan =
             aver::codegen::wasip2::CapabilityWitPlan::build(capabilities, &required)
