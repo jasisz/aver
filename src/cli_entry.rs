@@ -364,6 +364,13 @@ fn main_impl(
                 ),
                 None => (*target, *pack),
             };
+            if let Some(error) =
+                cli::boxed_sequences_target_rejection(*test_boxed_sequences, effective_target)
+            {
+                use colored::Colorize;
+                eprintln!("{}", error.red());
+                std::process::exit(1);
+            }
             // `--certify` is a wasm-gc-only artifact certificate. Clap
             // already blocks `--certify --optimize`; reject any non-wasm-gc
             // target here so the flag never silently no-ops.

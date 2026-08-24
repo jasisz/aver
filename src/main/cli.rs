@@ -110,6 +110,15 @@ pub(super) enum CompileTarget {
     Wasip2,
 }
 
+pub(super) fn boxed_sequences_target_rejection(
+    enabled: bool,
+    target: CompileTarget,
+) -> Option<&'static str> {
+    (enabled && !matches!(target, CompileTarget::WasmGc)).then_some(
+        "--test-boxed-sequences requires --target wasm-gc (the hook controls only the wasm-gc emitter)",
+    )
+}
+
 /// WASI 0.2 world the component targets. Used only by
 /// `--target wasip2`; ignored by every other target. Defaults to
 /// `wasi:cli/command` (a long-lived process exporting `wasi:cli/run`).
@@ -469,7 +478,7 @@ pub(super) enum Commands {
         /// the certificate binds the emitter's exact module bytes.
         #[arg(long, default_value_t = false, conflicts_with = "optimize")]
         certify: bool,
-        /// Internal representation-differential hook used by backend tests.
+        /// Internal representation-differential hook used by wasm-gc backend tests.
         #[arg(long = "test-boxed-sequences", hide = true)]
         test_boxed_sequences: bool,
         /// Print the IR after the named pipeline stage and exit before codegen.
@@ -984,6 +993,19 @@ mod tests {
             }
             _ => panic!("expected compile command"),
         }
+    }
+
+    #[test]
+    fn boxed_sequence_test_hook_rejects_non_wasm_gc_compile_targets() {
+        assert_eq!(
+            boxed_sequences_target_rejection(true, CompileTarget::Rust),
+            Some(
+                "--test-boxed-sequences requires --target wasm-gc (the hook controls only the wasm-gc emitter)"
+            )
+        );
+        assert!(boxed_sequences_target_rejection(true, CompileTarget::Wasip2).is_some());
+        assert!(boxed_sequences_target_rejection(true, CompileTarget::WasmGc).is_none());
+        assert!(boxed_sequences_target_rejection(false, CompileTarget::Rust).is_none());
     }
 
     #[test]

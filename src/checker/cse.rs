@@ -9,7 +9,7 @@ mod body_duplicates;
 use body_duplicates::check_fn_body_duplicates;
 
 const PURE_NAMESPACE_PREFIXES: &[&str] = &[
-    "List.", "Vector.", "Map.", "String.", "Int.", "Float.", "Bool.", "Char.",
+    "List.", "Vector.", "Map.", "String.", "Int.", "Float.", "Bool.",
 ];
 
 /// Collect warnings for repeated arithmetic subexpressions across match condition

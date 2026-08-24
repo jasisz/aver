@@ -181,8 +181,8 @@ pub fn emit_builtin_call(
         StringFromFloat => format!("String.fromFloat {}", p(&a[0])),
         StringFromBool => format!("String.fromBool {}", p(&a[0])),
         StringByteLength => format!("{}.utf8ByteSize", p(&a[0])),
-        StringToUtf8 => format!("Bytes.fromUtf8String {}", p(&a[0])),
-        StringFromUtf8 => format!("Bytes.toUtf8String {}", p(&a[0])),
+        StringToUtf8 => format!("Bytes.stringToUtf8 {}", p(&a[0])),
+        StringFromUtf8 => format!("Bytes.stringFromUtf8 {}", p(&a[0])),
 
         // ---- List ----
         ListLen => {

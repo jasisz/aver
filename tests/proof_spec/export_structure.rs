@@ -625,6 +625,10 @@ fn embedded_bytes_and_crypto_digest_preserve_refinements_in_both_proof_backends(
     // its owner (`Bytes.Bytes`) in `Crypto.Digest32`, like every foreign type.
     assert!(
         bytes_lean.contains("abbrev Bytes := { xs : List Int // Bytes.allInRange xs }")
+            && bytes_lean.contains("def stringToUtf8 (s : String) : Bytes")
+            && bytes_lean.contains("def stringFromUtf8 (bytes : Bytes) : Except String String")
+            && !bytes_lean.contains("def fromUtf8String")
+            && !bytes_lean.contains("def toUtf8String")
             && digest_lean.contains(
                 "abbrev Digest32 := { payload : Bytes.Bytes // Crypto.Digest32.hasLength32 payload }"
             ),

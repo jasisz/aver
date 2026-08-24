@@ -3,7 +3,7 @@
 //! Where `hostile_values` produces boundary values for typed `given`
 //! domains, this module produces boundary *behaviours* for the
 //! classified-effect oracles themselves. The user usually reaches for
-//! one stub when they think about a law (`fn fairDie(...) -> Int 4`),
+//! one stub when they think about a law (`fn fairDie(...) -> Result<Int, String>`),
 //! but the world has more shapes than that. A reasonable hostile sweep
 //! tries each effect under a small set of plausible adversarial
 //! profiles:

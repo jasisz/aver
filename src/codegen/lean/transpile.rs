@@ -521,7 +521,7 @@ fn emit_type_sections(
             // UInt8's bound. Decoding delegates the one validity check to
             // `String.fromUTF8?`; the error text matches every runtime.
             sections.push(
-                r#"def fromUtf8String (s : String) : Bytes :=
+                r#"def stringToUtf8 (s : String) : Bytes :=
   ⟨s.toUTF8.toList.map (fun byte => (byte.toNat : Int)), by
     induction s.toUTF8.toList with
     | nil => simp [allInRange]
@@ -531,7 +531,7 @@ fn emit_type_sections(
       have hhi : (head.toNat : Int) <= 255 := by omega
       simp [allInRange, hlo, hhi, ih]⟩
 
-def toUtf8String (bytes : Bytes) : Except String String :=
+def stringFromUtf8 (bytes : Bytes) : Except String String :=
   match String.fromUTF8? (bytes.val.map (fun byte => UInt8.ofNat byte.toNat)).toByteArray with
   | some text => Except.ok text
   | none => Except.error "invalid UTF-8""#

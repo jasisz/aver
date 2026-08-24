@@ -176,16 +176,16 @@ verify roll trace
     rolled.trace.length() => 1
     rolled.trace.contains(Random.int) => true
 
-fn highDie(path: BranchPath, k: Int, lo: Int, hi: Int) -> Int
+fn highDie(path: BranchPath, k: Int, lo: Int, hi: Int) -> Result<Int, String>
     ? "stub oracle: always max."
-    hi
+    Result.Ok(hi)
 ```
 
 Rules:
 - `given name: Effect.method = [stubFn, ...]` binds a stub for the classified effect. Multi-value list expands cartesian with cases; one `given` per effect — duplicates are rejected
-- Stub signature for generative effects (`Random.*`, `Http.*`, `Disk.*`, `Tcp.send/.ping`, `Console.readLine`, `Terminal.readKey`, `Time.now/.unixMs`): `(path: BranchPath, k: Int, args...) -> ReturnType`
-- Stub signature for snapshot effects (`Args.get`, `Env.get`): `(args...) -> ReturnType` — no path/counter prefix
-- Output-only effects (`Console.print/.error/.warn`, `Time.sleep`, `Terminal.clear/.moveTo/.print/.hideCursor/.showCursor/.flush`) don't need stubs; they append to the trace directly
+- Stub signature for generative and generative-output effects (`Random.*`, `Http.*`, `Disk.*`, `Tcp.*`, `Console.readLine`, `Time.*`, `Env.set`, and every `Terminal.*` operation except `size`): `(path: BranchPath, k: Int, args...) -> ReturnType`
+- Stub signature for snapshot effects (`Args.get`, `Env.get`, `Terminal.size`): `(args...) -> ReturnType` — no path/counter prefix
+- Output-only effects (`Console.print/.error/.warn`) don't need stubs; they append to the trace directly
 - `BranchPath.Root` is a nullary value constructor — no parens, PascalCase. `BranchPath.child(parent, idx)` and `BranchPath.parse(str)` are the constructors for nested paths
 - Case LHS projections:
   - `fn(args).result` — return value
@@ -197,7 +197,7 @@ Rules:
   - `fn(args).trace.group(N).branch(idx).*` — tree-nav into `!`/`?!` independent products (0-based N, idx)
 - Local bindings with `name = expr` go between `given` clauses and case assertions; they're substituted into every case (so each case still runs its own fresh `fn()` invocation)
 - Every generative/gen+output effect the fn uses must have a `given` stub under `trace`; missing stubs are rejected with a pointer at the fix
-- Unclassified effects (`Env.set`, `Tcp.connect/writeLine/readLine/close`, `Terminal.enableRawMode/setColor/resetColor/size`, `HttpServer.listen`) are rejected by `verify trace` — use record/replay for those
+- Unclassified server-lifecycle effects (`HttpServer.listen` / `listenWith`) are rejected by `verify trace` — use record/replay for those
 
 ### Decision blocks
 
@@ -251,16 +251,16 @@ fn sum(xs: List<Int>) -> Int
 Use namespaced builtins only.
 
 Common pure namespaces:
-- `Int`, `Float`, `String`, `List`, `Vector`, `Map`, `Bool`, `Bits`, `Char`, `Crypto`, `Result`, `Option`
+- `Int`, `Float`, `String`, `List`, `Vector`, `Map`, `Bool`, `Bits`, `Crypto`, `Result`, `Option`
 
 `Bytes` and `Crypto.Digest32` are embedded Aver modules. With
 `depends [Bytes, Crypto.Digest32]`, `Crypto.sha256 : Bytes -> Digest32` is total
 and pure: the input already guarantees octets and the result guarantees exactly
 32 bytes.
 
-- `Bytes.fromList : List<Int> -> Result<Bytes, String>` (a list literal whose every element is an integer literal in `0..=255` discharges to plain `Bytes`), `Bytes.toList : Bytes -> List<Int>`
+- `Bytes.fromList : List<Int> -> Result<Bytes, String>` (a list literal whose every element is an integer literal in `0..=255` discharges to plain `Bytes`), `Bytes.octets : Bytes -> List<Int>`
 - `Bytes.fromHex : String -> Result<Bytes, String>` (even length, case-insensitive, no `0x` prefix), `Bytes.toHex : Bytes -> String`
-- `Crypto.Digest32.fromBytes : Bytes -> Result<Digest32, String>`, `Crypto.Digest32.toBytes : Digest32 -> Bytes`
+- `Crypto.Digest32.fromBytes : Bytes -> Result<Digest32, String>`, `Crypto.Digest32.bytes : Digest32 -> Bytes`
 - `Crypto.Digest32.fromHex : String -> Result<Digest32, String>`, `Crypto.Digest32.toHex : Digest32 -> String`
 
 Key `String` API:
@@ -269,13 +269,14 @@ Key `String` API:
 - `String.charAt : (String, Int) -> Option<String>`, `String.slice : (String, Int, Int) -> String` — character indices; a slice with an out-of-range end clamps
 - `String.toUpper`, `String.toLower`, `String.trim`, `String.replace : (String, String, String) -> String`
 - `String.join`, `String.split`, `String.chars` — concat is the `+` operator
+- `String.toUtf8 : String -> Bytes`, `String.fromUtf8 : Bytes -> Result<String, String>` — explicit, lossless encoding and validated decoding
 - `Int.fromString : String -> Result<Int, String>`, `String.fromInt : Int -> String`
 - `Float.fromString`, `String.fromFloat`, `String.fromBool` — convention: `<targetTyp>.from<source>`
 - string interpolation: `"Hello, {name}!"` is the idiomatic way to render PRIMITIVES into text; reserve `String.fromInt` etc. for explicit data conversion (e.g. building keys: `"user:" + String.fromInt(id)`). Compound values have no built-in rendering — write your own `fn show(x: T) -> String`.
 
-Key `Char` API — a namespace, not a type; it works on `String` and `Int`:
-- `Char.toCode : String -> Int` — Unicode scalar value of the first character
-- `Char.fromCode : Int -> Option<String>` — code point to a 1-character string, `Option.None` for surrogates and out-of-range values
+Key code-point API:
+- `String.firstCodePoint : String -> Option<Int>` — first Unicode scalar value, `Option.None` for empty text
+- `String.fromCodePoint : Int -> Option<String>` — code point to a 1-character string, `Option.None` for surrogates and out-of-range values
 
 Key `Int` API:
 - `Int.abs : Int -> Int`, `Int.min`, `Int.max` — `(Int, Int) -> Int`
@@ -291,7 +292,7 @@ Key `Float` API:
 
 Key `Result` / `Option` API:
 - `Result.withDefault : (Result<T, E>, T) -> T`, `Option.withDefault : (Option<T>, T) -> T`
-- `Option.toResult : (Option<T>, E) -> Result<T, E>` — the bridge that lets an `Option` join a `?` chain
+- `Result.fromOption : (Option<T>, E) -> Result<T, E>` — the bridge that lets an `Option` join a `?` chain
 
 Key `List` API (small, recursion-first):
 - `List.len`, `List.prepend`, `List.concat`, `List.reverse`, `List.contains`, `List.zip`, `List.take`, `List.drop`, `List.fromVector`
@@ -299,7 +300,8 @@ Key `List` API (small, recursion-first):
 - empty list literal: `[]`
 
 Key `Vector` API (O(1) indexed access):
-- `Vector.new(n, default)`, `Vector.get(v, i) -> Option<T>`, `Vector.set(v, i, val) -> Option<Vector<T>>`
+- `Vector.new(n, default) -> Result<Vector<T>, String>` for a dynamic size; a syntactic literal in the portable range discharges directly to `Vector<T>`
+- `Vector.get(v, i) -> Option<T>`, `Vector.set(v, i, val) -> Option<Vector<T>>`
 - `Vector.len(v) -> Int`
 - `Vector.fromList(l)` — conversion in the other direction lives on `List`
 
@@ -313,9 +315,9 @@ Effectful namespaces:
 - `Http`: get, post, put, patch, delete, head
 - `Disk`: readText, writeText, appendText, exists, delete, deleteDir, listDir, makeDir
 - `Tcp`: connect, writeLine, writeBytes, readLine, readBytes, close, send, sendBytes, ping — `send`/`readLine` are text-only (UTF-8); binary payloads use nominal `Bytes` through `sendBytes`, `writeBytes`, and `readBytes`
-- `Terminal`: enableRawMode, disableRawMode, readKey, moveTo, print, setColor, resetColor, clear, size, hideCursor, showCursor, flush — the cursor move is `Terminal.moveTo(x, y)`, and `Terminal.print` / `Terminal.setColor` also take `String`.
-- `Time`: now, unixMs, sleep
-- `Random`: int, float — `Random.int(lo, hi)` is inclusive on both ends, `Random.float()` is in `[0.0, 1.0)`
+- `Terminal`: every operation is fallible. Control/output calls return `Result<Unit, String>`, `readKey` returns `Result<Option<String>, String>`, and `size` returns `Result<Terminal.Size, String>`. The cursor move is `Terminal.moveTo(x, y)`; `Terminal.print` / `Terminal.setColor` take `String`.
+- `Time`: now, unixMs, sleep — `Time.sleep(ms) -> Result<Unit, String>` for a dynamic duration; a valid non-negative i64 literal discharges directly to `Unit`
+- `Random`: int, float — `Random.int(lo, hi) -> Result<Int, String>` is inclusive on both ends; safe literal bounds discharge directly to `Int`. `Random.float()` is in `[0.0, 1.0)`
 - `Env`: get, set
 - `Args`: get
 - `HttpServer`: listen, listenWith

@@ -109,6 +109,8 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
   Target binding accounting is now total rather than a positive-only list. `aver capabilities FILE` (or `--json`) emits one deterministic row for every loaded contract across VM, Rust, wasm-gc, and wasip2, separating `provided`, VM `host-bound`, and explicit `unsupported(reason)` states. The full declared operation set and the program-required subset are both present, so an unused capability remains visible without becoming a compile requirement. Generated Rust, wasm-gc, wasip2, run shortcuts, replay provenance, and `aver check` project from this same table. A missing VM installation keeps `error[capability-provider-missing]`; an artifact target with no adapter now reports `error[capability-target-unsupported]` with a stable mechanism-specific reason plus contract/model identities. This table is the direct input for later contract-to-WIT and Component Model composition.
 
+- **Strings and nominal bytes now have explicit UTF-8 conversion.** `String.toUtf8 : String -> Bytes` encodes every string losslessly, while `String.fromUtf8 : Bytes -> Result<String, String>` validates input and reports invalid UTF-8 instead of replacing or dropping bytes. Both operations have matching VM, Rust, wasm-gc, Lean, and Dafny semantics.
+
 ### Changed
 
 - **Standard-library names and partiality contracts now say who owns a conversion and where failure is catchable.** This is a source-breaking cleanup; the migration table is the complete user-facing map:
