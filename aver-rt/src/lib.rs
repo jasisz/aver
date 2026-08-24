@@ -383,6 +383,32 @@ where
 
 // ── AverVector: COW indexed sequence ─────────────────────────────────────────
 
+/// Maximum number of elements one `Vector.new` call may materialize.
+///
+/// This is an element budget, not a guessed byte estimate: Aver has no
+/// portable `sizeof(T)`, and the VM, generated Rust, wasm GC, Lean, and Dafny
+/// intentionally use different representations for the same element type.
+/// One mebielement still gives every backend one exact semantic boundary and
+/// caps the operation at a finite number of clones/slots. On the VM it is
+/// roughly 8 MiB of `NanValue` slots before arena overhead.
+pub const MAX_MATERIALIZED_VECTOR_ELEMENTS: usize = 1024 * 1024;
+
+/// Convert an Aver integer to a materializable vector length.
+///
+/// `None` covers negative, arbitrary-precision, addressability, and policy
+/// overflow uniformly. The policy bound is below every supported backend's
+/// addressability ceiling, so callers cannot accidentally enforce the two in
+/// the opposite order.
+pub fn checked_vector_size(size: &AverInt) -> Option<usize> {
+    size.to_usize()
+        .filter(|&size| size <= MAX_MATERIALIZED_VECTOR_ELEMENTS)
+}
+
+/// Stable value-level error for a refused `Vector.new` materialization.
+pub fn vector_size_error_message() -> String {
+    format!("Vector.new: size must be between 0 and {MAX_MATERIALIZED_VECTOR_ELEMENTS}")
+}
+
 pub struct AverVector<T> {
     inner: Rc<Vec<T>>,
 }
@@ -1677,6 +1703,22 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn vector_materialization_boundary_is_inclusive_and_owns_its_message() {
+        let limit = super::MAX_MATERIALIZED_VECTOR_ELEMENTS;
+        let at_limit = super::AverInt::from_i64(limit as i64);
+        let above_limit = super::AverInt::from_i64(limit as i64 + 1);
+        let negative = super::AverInt::from_i64(-1);
+
+        assert_eq!(super::checked_vector_size(&at_limit), Some(limit));
+        assert_eq!(super::checked_vector_size(&above_limit), None);
+        assert_eq!(super::checked_vector_size(&negative), None);
+        assert_eq!(
+            super::vector_size_error_message(),
+            format!("Vector.new: size must be between 0 and {limit}")
+        );
     }
 
     /// Sharing must stay invisible to programs. A `Vector` hands its backing

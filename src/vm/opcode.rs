@@ -563,7 +563,7 @@ pub const STR_INDEX_CHAR_AT: u8 = 0xA9;
 pub const STR_INDEX_SLICE: u8 = 0xAA;
 
 /// Pop fill, pop size, push a fresh Vector. Emitted only for a syntactic
-/// non-negative size literal in the portable `u32` range.
+/// non-negative size literal inside the portable element budget.
 pub const VECTOR_NEW_LITERAL: u8 = 0xAB;
 
 /// Pop index, pop BranchPath → push the extended BranchPath directly.

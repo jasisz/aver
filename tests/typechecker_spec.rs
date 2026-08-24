@@ -1791,7 +1791,10 @@ fn literal_divisor_discharge_parentheses_are_transparent() {
 #[test]
 fn literal_vector_size_discharge_is_portable_and_syntactic() {
     assert_no_errors("fn f() -> Vector<Int>\n    Vector.new(3, 0)\n");
-    assert_no_errors("fn f() -> Vector<Int>\n    Vector.new(4294967295, 0)\n");
+    assert_no_errors(&format!(
+        "fn f() -> Vector<Int>\n    Vector.new({}, 0)\n",
+        aver_rt::MAX_MATERIALIZED_VECTOR_ELEMENTS
+    ));
 }
 
 #[test]
@@ -1842,8 +1845,11 @@ fn valid_literal_sleep_discharges_but_dynamic_or_invalid_sleep_stays_result() {
 }
 
 #[test]
-fn out_of_portable_range_vector_literal_stays_result() {
-    assert_no_errors("fn f() -> Result<Vector<Int>, String>\n    Vector.new(4294967296, 0)\n");
+fn first_literal_above_the_vector_budget_stays_result() {
+    assert_no_errors(&format!(
+        "fn f() -> Result<Vector<Int>, String>\n    Vector.new({}, 0)\n",
+        aver_rt::MAX_MATERIALIZED_VECTOR_ELEMENTS + 1
+    ));
 }
 
 #[test]

@@ -42,13 +42,12 @@ fn vec_new_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeE
             "Vector.new: size must be an Int".to_string(),
         ));
     }
-    let Some(size) = args[0].as_aver_int(arena).to_u32() else {
+    let Some(size) = aver_rt::checked_vector_size(&args[0].as_aver_int(arena)) else {
         return Ok(NanValue::new_err_value(
-            NanValue::new_string_value("Vector.new: size must be between 0 and 4294967295", arena),
+            NanValue::new_string_value(&aver_rt::vector_size_error_message(), arena),
             arena,
         ));
     };
-    let size = size as usize;
     let items = vec![args[1]; size];
     let vector = if items.is_empty() {
         NanValue::EMPTY_VECTOR

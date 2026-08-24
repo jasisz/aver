@@ -1117,7 +1117,7 @@ fn __mutual_tco_trampoline_2(
                 match expr.clone() {
                     crate::aver_generated::domain::ast::Expr::ExprCallDirect(fnId, argExprs) => {
                         if (fnId == selfId) {
-                            match crate::aver_generated::domain::eval::core::evalArgsSlotToSlotEnv(argExprs, env, (*slotMap).clone(), (*fns).clone(), match (slotCount).to_u32() { Some(__n) => Ok(aver_rt::AverVector::new(__n as usize, crate::aver_generated::domain::value::Val::ValUnit)), None => Err(aver_rt::AverStr::from("Vector.new: size must be between 0 and 4294967295")) }?, aver_rt::AverInt::from_i64(0)) { Ok(nextEnv @ _) => { return Ok(crate::aver_generated::domain::eval::core::SlotTailStep::SlotTailRecurEnv(nextEnv)) }, Err(e @ _) => { return Err(e) } }
+                            match crate::aver_generated::domain::eval::core::evalArgsSlotToSlotEnv(argExprs, env, (*slotMap).clone(), (*fns).clone(), match aver_rt::checked_vector_size(&(slotCount)) { Some(__n) => Ok(aver_rt::AverVector::new(__n, crate::aver_generated::domain::value::Val::ValUnit)), None => Err(aver_rt::AverStr::from(aver_rt::vector_size_error_message())) }?, aver_rt::AverInt::from_i64(0)) { Ok(nextEnv @ _) => { return Ok(crate::aver_generated::domain::eval::core::SlotTailStep::SlotTailRecurEnv(nextEnv)) }, Err(e @ _) => { return Err(e) } }
                         } else {
                             match crate::aver_generated::domain::eval::core::evalCallDirectSlot(fnId, &argExprs, &env, &*slotMap, &*fns) { Ok(v @ _) => { return Ok(crate::aver_generated::domain::eval::core::SlotTailStep::SlotTailDone(v)) }, Err(e @ _) => { return Err(e) } }
                         }
@@ -3390,8 +3390,8 @@ pub fn evalArgsRev(
     fns: crate::aver_generated::domain::eval::store::FnStore,
     mut acc: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<aver_rt::AverList<crate::aver_generated::domain::value::Val>, AverStr> {
-    let env = std::sync::Arc::new(env);
     let fns = std::sync::Arc::new(fns);
+    let env = std::sync::Arc::new(env);
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(exprs, [] => { return Ok(acc.reverse()); }, [e, rest] => { match crate::aver_generated::domain::eval::core::evalExpr(&e, &*env, &*fns) { Err(err @ _) => { return Err(err); }, Ok(v @ _) => { {
@@ -3497,8 +3497,8 @@ pub fn evalResolvedSlotLoop(
     mut calleeEnv: aver_rt::AverVector<crate::aver_generated::domain::value::Val>,
     fns: crate::aver_generated::domain::eval::store::FnStore,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
-    let fns = std::sync::Arc::new(fns);
     let fd = std::sync::Arc::new(fd);
+    let fns = std::sync::Arc::new(fns);
     loop {
         crate::cancel_checkpoint();
         let step = crate::aver_generated::domain::eval::core::evalResolvedSlotStep(
@@ -4031,14 +4031,12 @@ pub fn evalCallDirectMapToSlot(
         argExprs.clone(),
         env.clone(),
         fns.clone(),
-        match (fd.slotCount).to_u32() {
+        match aver_rt::checked_vector_size(&(fd.slotCount)) {
             Some(__n) => Ok(aver_rt::AverVector::new(
-                __n as usize,
+                __n,
                 crate::aver_generated::domain::value::Val::ValUnit,
             )),
-            None => Err(aver_rt::AverStr::from(
-                "Vector.new: size must be between 0 and 4294967295",
-            )),
+            None => Err(aver_rt::AverStr::from(aver_rt::vector_size_error_message())),
         }?,
         aver_rt::AverInt::from_i64(0),
     )?;
@@ -4453,8 +4451,8 @@ pub fn evalConcatPartsSlot(
     mut acc: AverStr,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     let env = std::sync::Arc::new(env);
-    let fns = std::sync::Arc::new(fns);
     let slotMap = std::sync::Arc::new(slotMap);
+    let fns = std::sync::Arc::new(fns);
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(parts, [] => { return Ok(crate::aver_generated::domain::value::Val::ValStr(acc)); }, [p, rest] => { match crate::aver_generated::domain::eval::core::evalExprSlot(&p, &*env, &*slotMap, &*fns) { Err(e @ _) => { return Err(e); }, Ok(v @ _) => { {
@@ -4645,14 +4643,12 @@ pub fn evalCallDirectSlotToSlot(
         env.clone(),
         slotMap.clone(),
         fns.clone(),
-        match (fd.slotCount).to_u32() {
+        match aver_rt::checked_vector_size(&(fd.slotCount)) {
             Some(__n) => Ok(aver_rt::AverVector::new(
-                __n as usize,
+                __n,
                 crate::aver_generated::domain::value::Val::ValUnit,
             )),
-            None => Err(aver_rt::AverStr::from(
-                "Vector.new: size must be between 0 and 4294967295",
-            )),
+            None => Err(aver_rt::AverStr::from(aver_rt::vector_size_error_message())),
         }?,
         aver_rt::AverInt::from_i64(0),
     )?;
@@ -4754,9 +4750,9 @@ pub fn evalArgsSlotRev(
     fns: crate::aver_generated::domain::eval::store::FnStore,
     mut acc: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<aver_rt::AverList<crate::aver_generated::domain::value::Val>, AverStr> {
-    let env = std::sync::Arc::new(env);
     let fns = std::sync::Arc::new(fns);
     let slotMap = std::sync::Arc::new(slotMap);
+    let env = std::sync::Arc::new(env);
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(exprs, [] => { return Ok(acc.reverse()); }, [e, rest] => { match crate::aver_generated::domain::eval::core::evalExprSlot(&e, &*env, &*slotMap, &*fns) { Err(err @ _) => { return Err(err); }, Ok(v @ _) => { {
@@ -4777,8 +4773,8 @@ pub fn evalArgsMapToSlotEnv(
     mut acc: aver_rt::AverVector<crate::aver_generated::domain::value::Val>,
     mut idx: aver_rt::AverInt,
 ) -> Result<aver_rt::AverVector<crate::aver_generated::domain::value::Val>, AverStr> {
-    let env = std::sync::Arc::new(env);
     let fns = std::sync::Arc::new(fns);
+    let env = std::sync::Arc::new(env);
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(exprs, [] => { return Ok(acc); }, [e, rest] => { match crate::aver_generated::domain::eval::core::evalExpr(&e, &*env, &*fns) { Err(err @ _) => { return Err(err); }, Ok(v @ _) => { {
@@ -4802,9 +4798,9 @@ pub fn evalArgsSlotToSlotEnv(
     mut acc: aver_rt::AverVector<crate::aver_generated::domain::value::Val>,
     mut idx: aver_rt::AverInt,
 ) -> Result<aver_rt::AverVector<crate::aver_generated::domain::value::Val>, AverStr> {
-    let fns = std::sync::Arc::new(fns);
     let env = std::sync::Arc::new(env);
     let slotMap = std::sync::Arc::new(slotMap);
+    let fns = std::sync::Arc::new(fns);
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(exprs, [] => { return Ok(acc); }, [e, rest] => { match crate::aver_generated::domain::eval::core::evalExprSlot(&e, &*env, &*slotMap, &*fns) { Err(err @ _) => { return Err(err); }, Ok(v @ _) => { {

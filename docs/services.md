@@ -85,12 +85,14 @@ Vector is a persistent indexed sequence — use it for grids, buffers, lookup ta
 
 | Function | Signature | Notes |
 |---|---|---|
-| `Vector.new` | `(Int, T) -> Result<Vector<T>, String>` | Rejects negative, oversized, or unrepresentable lengths; a syntactic literal in `0..=u32::MAX` discharges to plain `Vector<T>` |
+| `Vector.new` | `(Int, T) -> Result<Vector<T>, String>` | Rejects sizes outside `0..=1_048_576`; a syntactic literal in that range discharges to plain `Vector<T>` |
 | `Vector.get` | `(Vector<T>, Int) -> Option<T>` | O(1) indexed access |
 | `Vector.set` | `(Vector<T>, Int, T) -> Option<Vector<T>>` | O(1) COW update; `None` if out of bounds |
 | `Vector.len` | `Vector<T> -> Int` | |
 | `Vector.fromList` | `List<T> -> Vector<T>` | Convert list to vector |
 | `List.fromVector` | `Vector<T> -> List<T>` | Convert vector to list |
+
+The `Vector.new` ceiling is one mebielement on every backend. It is an element budget, not a byte estimate: Aver has no portable storage layout for an arbitrary `T`, while the operation has the same observable cost shape everywhere—one slot and one clone per element. The lower bound also sits safely below wasm GC's `u32` array-addressability ceiling; that representation detail is no longer mistaken for a safe allocation policy.
 
 ### `Result` namespace
 

@@ -12,14 +12,12 @@ pub fn buildSlotEnv(
     Ok(
         crate::aver_generated::domain::eval::slots::buildSlotEnvLoop(
             args.clone(),
-            match (slotCount).to_u32() {
+            match aver_rt::checked_vector_size(&(slotCount)) {
                 Some(__n) => Ok(aver_rt::AverVector::new(
-                    __n as usize,
+                    __n,
                     crate::aver_generated::domain::value::Val::ValUnit,
                 )),
-                None => Err(aver_rt::AverStr::from(
-                    "Vector.new: size must be between 0 and 4294967295",
-                )),
+                None => Err(aver_rt::AverStr::from(aver_rt::vector_size_error_message())),
             }?,
             aver_rt::AverInt::from_i64(0),
         ),

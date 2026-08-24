@@ -225,16 +225,16 @@ pub fn is_literal_branch_path(expr: &Spanned<Expr>) -> bool {
 }
 
 /// Literal-size discharge for `Vector.new(N, fill)`. A syntactic integer
-/// literal in the portable WebAssembly/native array-length range cannot hit
-/// the builtin's value-level refusal, so it types and lowers as a plain
-/// `Vector<T>`. Dynamic, negative, big-integer, and wider literals keep the
-/// catchable `Result<Vector<T>, String>` path.
+/// literal inside the portable element-materialization budget cannot hit the
+/// builtin's value-level refusal, so it types and lowers as a plain `Vector<T>`.
+/// Dynamic, negative, big-integer, and wider literals keep the catchable
+/// `Result<Vector<T>, String>` path.
 ///
-/// `u32::MAX` is the shared representation ceiling: wasm GC array lengths
-/// are `i32` stack values interpreted as unsigned lengths, while every
-/// supported native target can losslessly widen `u32` to `usize`.
+/// The element budget is lower than every backend's addressability ceiling.
+/// It is intentionally not a byte estimate: Aver has no portable storage
+/// layout for an arbitrary `T`.
 pub fn is_literal_vector_size(expr: &Spanned<Expr>) -> bool {
-    matches!(&expr.node, Expr::Literal(Literal::Int(n)) if *n >= 0 && (*n as u64) <= u32::MAX as u64)
+    matches!(&expr.node, Expr::Literal(Literal::Int(n)) if *n >= 0 && (*n as u64) <= aver_rt::MAX_MATERIALIZED_VECTOR_ELEMENTS as u64)
 }
 
 /// Syntactic `Int` literal that fits the host capability transport, allowing

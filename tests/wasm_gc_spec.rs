@@ -2172,6 +2172,35 @@ fn main() -> Int
 }
 
 #[test]
+fn vector_new_honours_the_shared_materialization_boundary() {
+    let limit = aver_rt::MAX_MATERIALIZED_VECTOR_ELEMENTS;
+    let error = aver_rt::vector_size_error_message();
+    let source = format!(
+        r#"module Tmp
+    intent = "vector materialization boundary"
+    depends []
+
+fn allocate(size: Int) -> Result<Vector<Int>, String>
+    Vector.new(size, 0)
+
+fn rejected() -> Int
+    match allocate({})
+        Result.Ok(_) -> -1
+        Result.Err(message) -> match message == "{error}"
+            true -> 0
+            false -> -2
+
+fn main() -> Int
+    Vector.len(Vector.new({limit}, 0)) + rejected()
+"#,
+        limit + 1
+    );
+    assert_eq!(run_int(&source), limit as i64);
+    #[cfg(feature = "runtime")]
+    assert_eq!(run_int_on_vm(&source), limit as i64);
+}
+
+#[test]
 fn vector_to_list_len_matches() {
     assert_eq!(
         run_int(

@@ -13,7 +13,7 @@ fn buildSlotEnv(args: List<Val>, slotCount: Int) -> Result<Vector<Val>, String>
 verify buildSlotEnv
     buildSlotEnv([Val.ValInt(1)], 3) => Result.Ok(Vector.fromList([Val.ValInt(1), Val.ValUnit, Val.ValUnit]))
     buildSlotEnv([Val.ValInt(1), Val.ValInt(2)], 2) => Result.Ok(Vector.fromList([Val.ValInt(1), Val.ValInt(2)]))
-    buildSlotEnv([], 0 - 1) => Result.Err("Vector.new: size must be between 0 and 4294967295")
+    buildSlotEnv([], 0 - 1) => Result.Err("Vector.new: size must be between 0 and 1048576")
 
 fn buildSlotEnvLoop(args: List<Val>, acc: Vector<Val>, idx: Int) -> Vector<Val>
     ? "Fill slot env from arg list."

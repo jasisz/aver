@@ -674,8 +674,8 @@ fn builtin_panic_capability(builtin: Builtin) -> PanicCapability {
         VectorSet => NarrowsPastVm,
         // `Vector.new` lowers its `Int` size through `Int.toNat`. Negative
         // sizes therefore become an empty model array, while the VM rejects
-        // them; values outside the portable `u32` range are rejected by the
-        // VM too. The lowering builds and is useful under explicit source
+        // them; values outside the portable element budget are rejected by
+        // the VM too. The lowering builds and is useful under explicit source
         // guards, but an unrestricted claim cannot use kernel evaluation.
         VectorNew => NarrowsPastVm,
 
