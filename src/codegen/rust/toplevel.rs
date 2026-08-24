@@ -127,7 +127,12 @@ fn rust_hash_eq_safe_type(
             rust_hash_eq_safe_type(ok, ctx, visiting) && rust_hash_eq_safe_type(err, ctx, visiting)
         }
         Type::Option(inner) => rust_hash_eq_safe_type(inner, ctx, visiting),
-        Type::List(_) | Type::Vector(_) => false,
+        // `AverList<T>` and `AverIntList` implement Eq and Hash whenever their
+        // element does, so a list is only unsafe for what it holds. `Vector`
+        // stays out: the runtime's key comparator has no order for it, and the
+        // checker refuses a key that reaches one.
+        Type::List(inner) => rust_hash_eq_safe_type(inner, ctx, visiting),
+        Type::Vector(_) => false,
         Type::Tuple(items) => items
             .iter()
             .all(|item| rust_hash_eq_safe_type(item, ctx, visiting)),
@@ -150,17 +155,27 @@ fn rust_hash_eq_safe_named(
         return true;
     }
 
-    let safe = find_type_def(name, ctx).is_some_and(|td| match td {
-        TypeDef::Sum { variants, .. } => variants.iter().all(|variant| {
-            variant.fields.iter().all(|field_ty| {
+    let safe = find_type_def(name, ctx).is_some_and(|td| {
+        // A packed byte sequence is carried by `aver_rt::AverPackedU8`, which
+        // implements Eq, Hash and Ord, so the source-level `List<Int>` below
+        // describes a field this struct does not hold. Answering from the
+        // source type is what kept `Map<Bytes, T>` — and anything holding a
+        // `Bytes` — from deriving what the map needs on this backend.
+        if super::uses_packed_u8(ctx, crate::codegen::common::type_def_name(td)) {
+            return true;
+        }
+        match td {
+            TypeDef::Sum { variants, .. } => variants.iter().all(|variant| {
+                variant.fields.iter().all(|field_ty| {
+                    let parsed = crate::types::parse_type_str(field_ty);
+                    rust_hash_eq_safe_type(&parsed, ctx, visiting)
+                })
+            }),
+            TypeDef::Product { fields, .. } => fields.iter().all(|(_, field_ty)| {
                 let parsed = crate::types::parse_type_str(field_ty);
                 rust_hash_eq_safe_type(&parsed, ctx, visiting)
-            })
-        }),
-        TypeDef::Product { fields, .. } => fields.iter().all(|(_, field_ty)| {
-            let parsed = crate::types::parse_type_str(field_ty);
-            rust_hash_eq_safe_type(&parsed, ctx, visiting)
-        }),
+            }),
+        }
     });
 
     visiting.remove(name);
@@ -1752,6 +1767,72 @@ mod tests {
 
         let emitted = emit_public_type_def(&td, &ctx);
         assert!(emitted.contains("#[derive(Clone, Debug, PartialEq, Eq, Hash)]"));
+    }
+
+    #[test]
+    fn list_field_derives_eq_hash_from_its_element() {
+        // `AverList<T>` and `AverIntList` implement Eq and Hash whenever the
+        // element does, so a record holding `List<Int>` is a usable Map key
+        // and one holding `List<Float>` is not. Refusing every list answered
+        // for a carrier that has had these impls all along.
+        let int_key = TypeDef::Product {
+            name: "Key".to_string(),
+            fields: vec![("parts".to_string(), "List<Int>".to_string())],
+            line: 1,
+        };
+        let float_key = TypeDef::Product {
+            name: "Weights".to_string(),
+            fields: vec![("values".to_string(), "List<Float>".to_string())],
+            line: 2,
+        };
+        let mut ctx = empty_ctx();
+        ctx.type_defs.push(int_key.clone());
+        ctx.type_defs.push(float_key.clone());
+
+        assert!(
+            emit_public_type_def(&int_key, &ctx)
+                .contains("#[derive(Clone, Debug, PartialEq, Eq, Hash)]"),
+            "a list of Int is a usable key"
+        );
+        let floats = emit_public_type_def(&float_key, &ctx);
+        assert!(
+            !floats.contains("Eq, Hash"),
+            "a list of Float has no order the proof model can state, got:\n{floats}"
+        );
+    }
+
+    #[test]
+    fn packed_byte_sequence_derives_eq_hash() {
+        // `Bytes` declares `values: List<Int>`, but this backend emits
+        // `aver_rt::AverPackedU8`, which implements Eq, Hash and Ord. Deciding
+        // the derives from the declared list answered for a field the struct
+        // does not hold, which left `Map<Bytes, T>` passing check, verify and
+        // compile and then failing `cargo build` on the bounds a map key
+        // needs. jasisz/aver#1127.
+        let td = TypeDef::Product {
+            name: "Bytes".to_string(),
+            fields: vec![("values".to_string(), "List<Int>".to_string())],
+            line: 1,
+        };
+        let mut ctx = empty_ctx();
+        ctx.type_defs.push(td.clone());
+        ctx.packed_sequence_layouts.insert(
+            "Bytes".to_string(),
+            crate::codegen::proof_lower::PackedSequenceLayout {
+                element_interval: crate::ir::interval::Interval::unbounded(),
+                element: crate::codegen::proof_lower::PackedIntElement::U8,
+            },
+        );
+
+        let emitted = emit_public_type_def(&td, &ctx);
+        assert!(
+            emitted.contains("aver_rt::AverPackedU8"),
+            "expected the packed carrier, got:\n{emitted}"
+        );
+        assert!(
+            emitted.contains("#[derive(Clone, Debug, PartialEq, Eq, Hash)]"),
+            "a packed byte sequence must derive what a Map key needs, got:\n{emitted}"
+        );
     }
 
     #[test]

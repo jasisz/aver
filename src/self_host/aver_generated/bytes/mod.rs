@@ -1,9 +1,21 @@
 #[allow(unused_imports)]
 use crate::*;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Bytes {
     pub values: aver_rt::AverPackedU8,
+}
+
+impl PartialOrd for Bytes {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Bytes {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        std::cmp::Ordering::Equal.then_with(|| self.values.cmp(&other.values))
+    }
 }
 
 impl aver_rt::AverDisplay for Bytes {
