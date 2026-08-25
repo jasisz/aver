@@ -709,10 +709,7 @@ mod tests {
             ("Tcp.ping", vec!["normal_ok", "always_err"]),
             ("Tcp.connect", vec!["normal_ok", "always_err"]),
             ("Tcp.beginConnect", vec!["normal_ok", "always_err"]),
-            (
-                "Tcp.dialled",
-                vec!["connected", "still_pending", "refused"],
-            ),
+            ("Tcp.dialled", vec!["connected", "still_pending", "refused"]),
             ("Tcp.listen", vec!["normal_ok", "port_taken"]),
             (
                 "Tcp.accept",
