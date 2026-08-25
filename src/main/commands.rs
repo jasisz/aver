@@ -11663,7 +11663,7 @@ pub(super) fn load_compile_deps(
 #[cfg(test)]
 mod tests {
     use super::{resolve_av_inputs, suppression_path, validate_self_host_guest_entry_contract};
-    use aver::ast::{Expr, FnBody, FnDef, Literal, Spanned, Stmt, TopLevel};
+    use aver::ast::{Expr, FnBody, FnDef, Literal, Spanned};
     use aver::codegen::CodegenContext;
     use std::collections::{HashMap, HashSet};
     use std::fs;

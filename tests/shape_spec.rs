@@ -25,20 +25,20 @@ fn natural_is_smart_constructor() {
 }
 
 #[test]
-fn weather_is_orchestration_with_shell_effects() {
+fn weather_is_orchestration_with_classified_capabilities() {
     // weather.av declares `effects [Console, Http, Tcp, Process]`.
-    // `Tcp.listen` is a shell/lifecycle effect (long-running,
-    // not Oracle-classifiable by design — see memory), so purity must
-    // be ShellEffectful, NOT something that suggests "compiler can't
-    // recognize it" (the classifier knows every Aver effect).
+    // The old callback-backed HttpServer.listenWith was an unclassified
+    // shell effect. Its replacement is ordinary Aver over Tcp and Process;
+    // both are capabilities whose operations, including Tcp.listen, have an
+    // explicit Oracle classification.
     let r = shape::analyze_path(
         std::path::Path::new("examples/services/weather.av"),
         Some("examples"),
     )
     .expect("weather analyze");
     assert!(
-        matches!(r.shape.purity, Purity::ShellEffectful),
-        "weather mixes request effects with the Tcp.listen shell — must be ShellEffectful, got {:?}",
+        matches!(r.shape.purity, Purity::ClassifiedEffectful),
+        "weather now uses only Oracle-classified effects — got {:?}",
         r.shape.purity
     );
     assert!(matches!(r.shape.entry, Entry::Main));

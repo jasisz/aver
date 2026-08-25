@@ -144,7 +144,7 @@ impl Purity {
                 "all effects are Oracle-classified (one-shot req/resp shape)"
             }
             Purity::ShellEffectful => {
-                "contains at least one shell/lifecycle effect (e.g. Tcp.listen) — Oracle skips by design"
+                "contains at least one effect outside the Oracle classification"
             }
         }
     }
@@ -227,9 +227,7 @@ impl Kind {
             Kind::Orchestration => "classified effects with main entry point",
             Kind::ServiceClient => "classified effects threaded through a runtime handle",
             Kind::EffectfulLibrary => "effectful library — exposed surface, no main",
-            Kind::EffectfulShell => {
-                "shell/lifecycle effects (e.g. Tcp.listen) — long-running, not Oracle-classified"
-            }
+            Kind::EffectfulShell => "contains an effect outside the Oracle classification",
         }
     }
 }
@@ -241,9 +239,8 @@ impl Kind {
 const EFFECTFUL_FN_RATIO_FOR_ORCHESTRATION: f64 = 0.3;
 
 pub fn derive_kind(shape: &ModuleShape, effectful_fn_ratio: f64) -> Kind {
-    // Effectful Kinds (both Classified and Shell flavors): a Shell effect
-    // is a long-running lifecycle (for example Tcp.listen) — Oracle
-    // skips it by design, not because the classifier doesn't recognize it.
+    // Effectful Kinds (both Classified and Shell flavors): Shell means at
+    // least one effect remains outside the Oracle classification.
     // From the user's perspective a module with a shell-effect entrypoint
     // is still Orchestration (or ServiceClient if it threads a handle);
     // the `purity` field tells the rest of the story.
