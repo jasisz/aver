@@ -4307,6 +4307,102 @@ fn mir_expr_contains_last_use_of_slot(expr: &MirExpr, slot: LocalId) -> bool {
     found
 }
 
+/// Whether evaluating `expr` in an owning (`true`) or borrowing (`false`)
+/// argument position may move the final read of `slot`. Named calls can be
+/// inspected recursively through their callee borrow masks; unfamiliar
+/// compound shapes stay conservative.
+fn mir_expr_may_move_slot(
+    expr: &MirExpr,
+    slot: LocalId,
+    owning_position: bool,
+    ctx: &MirEmitCtx<'_>,
+) -> bool {
+    match expr {
+        MirExpr::Local(local) => owning_position && local.node.slot == slot && local.node.last_use,
+        MirExpr::Project(project) => {
+            // A projection used as a named-call argument is either borrowed
+            // in place or cloned by `mir_clone_arg`; neither moves its base.
+            // Still inspect a compound base because evaluating it may contain
+            // an owning nested call before the projection happens.
+            mir_expr_may_move_slot(&project.node.base.node, slot, false, ctx)
+        }
+        MirExpr::Call(call) => {
+            let MirCallee::Fn(fn_id) = &call.node.callee else {
+                return mir_expr_contains_last_use_of_slot(expr, slot);
+            };
+            let Some(cg) = ctx.codegen else {
+                return mir_expr_contains_last_use_of_slot(expr, slot);
+            };
+            let name = ctx.symbol_table.fn_entry(*fn_id).key.canonical();
+            let nested_mask = callee_borrow_mask(&name, call.node.args.len(), cg);
+            call.node.args.iter().enumerate().any(|(index, arg)| {
+                mir_expr_may_move_slot(
+                    &arg.node,
+                    slot,
+                    !nested_mask.get(index).copied().unwrap_or(false),
+                    ctx,
+                )
+            })
+        }
+        MirExpr::TailCall(call) => {
+            let Some(cg) = ctx.codegen else {
+                return mir_expr_contains_last_use_of_slot(expr, slot);
+            };
+            let name = ctx.symbol_table.fn_entry(call.node.target).key.canonical();
+            let nested_mask = callee_borrow_mask(&name, call.node.args.len(), cg);
+            call.node.args.iter().enumerate().any(|(index, arg)| {
+                mir_expr_may_move_slot(
+                    &arg.node,
+                    slot,
+                    !nested_mask.get(index).copied().unwrap_or(false),
+                    ctx,
+                )
+            })
+        }
+        _ => mir_expr_contains_last_use_of_slot(expr, slot),
+    }
+}
+
+/// Whether borrowing call argument `arg_index` directly would overlap a move
+/// from the same local while Rust evaluates a later argument. A direct later
+/// argument whose callee position is also borrowed cannot move the local; for
+/// a compound later expression, a final read may occur in an owning nested
+/// position, so conservatively detach the earlier borrow.
+fn mir_call_borrow_overlaps_later_move(
+    arg_index: usize,
+    args: &[Spanned<MirExpr>],
+    borrow_mask: &[bool],
+    ctx: &MirEmitCtx<'_>,
+) -> bool {
+    let Some(local) = args.get(arg_index).and_then(|arg| local_of(&arg.node)) else {
+        return false;
+    };
+    let name = local.name.as_str();
+    // None of these representations can be moved by a later owning use:
+    // Copy values copy, borrowed / pass-through params clone their referent,
+    // and a loop-carried param retains a hidden next-iteration use that makes
+    // every visible owning position clone as well.
+    if ctx.is_copy(name)
+        || ctx.is_borrowed_param(name)
+        || ctx.is_rc_wrapped(name)
+        || ctx.is_loop_carried_param(name)
+    {
+        return false;
+    }
+
+    args.iter()
+        .enumerate()
+        .skip(arg_index + 1)
+        .any(|(later_index, later)| {
+            mir_expr_may_move_slot(
+                &later.node,
+                local.slot,
+                !borrow_mask.get(later_index).copied().unwrap_or(false),
+                ctx,
+            )
+        })
+}
+
 /// Should `.clone()` be skipped for this MIR expr? Mirror of HIR's
 /// `expr_skip_clone`. A local read skips clone on its last use or
 /// when Copy; `rc_wrapped` / `borrowed_params` never skip (they
@@ -4462,6 +4558,15 @@ fn emit_named_call_to(
         }
         let code = emit_mir_expr(a, ctx)?;
         let s = if borrow_mask.get(i).copied().unwrap_or(false) {
+            // Rust keeps this borrow live through evaluation of every later
+            // argument. Detach it when a later nested call consumes the same
+            // local (for example `f(x, g(x))` where `f` borrows and `g` owns),
+            // otherwise rustc rejects the valid Aver program with E0505.
+            let code = if mir_call_borrow_overlaps_later_move(i, args, &borrow_mask, ctx) {
+                mir_maybe_clone(code, &a.node, ctx)
+            } else {
+                code
+            };
             mir_borrow_arg(code, &a.node, ctx)
         } else {
             mir_clone_arg(code, &a.node, ctx)
