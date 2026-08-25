@@ -8096,10 +8096,12 @@ fn run_proof_check(
                         "{}",
                         "--check: could not parse Dafny verifier output (missing \"finished with X verified, Y errors\" line)".red()
                     );
-                    if !check_json {
-                        eprint!("{}", stderr);
-                        print!("{}", stdout);
-                    }
+                    // A missing summary normally means Dafny rejected the
+                    // program before verification. Keep JSON mode's stdout
+                    // machine-clean, but never hide the resolver/parser
+                    // diagnostic that explains the fail-closed exit.
+                    eprintln!("Dafny stdout:\n{stdout}");
+                    eprintln!("Dafny stderr:\n{stderr}");
                     std::process::exit(2);
                 }
             };
