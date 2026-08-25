@@ -1278,7 +1278,8 @@ impl TypeRegistry {
 
     pub(super) fn list_type_idx(&self, canonical: &str) -> Option<u32> {
         let normalized = normalize_compound(canonical);
-        if let Some(idx) = self.list_types.get(&normalized).copied() {
+        let aliased = apply_type_name_aliases(&normalized, &self.type_name_aliases);
+        if let Some(idx) = self.list_types.get(&aliased).copied() {
             return Some(idx);
         }
         // Cross-module: a fn signature may spell a record as
@@ -1286,8 +1287,8 @@ impl TypeRegistry {
         // type registry only has one slot per record (keyed by the
         // bare name), so strip dotted prefixes from inner type names
         // and retry.
-        let bare = strip_inner_dotted_prefixes(&normalized);
-        if bare != normalized {
+        let bare = strip_inner_dotted_prefixes(&aliased);
+        if bare != aliased {
             self.list_types.get(&bare).copied()
         } else {
             None
@@ -1301,11 +1302,13 @@ impl TypeRegistry {
     }
 
     pub(super) fn result_type_idx(&self, canonical: &str) -> Option<u32> {
-        if let Some(idx) = self.result_types.get(canonical).copied() {
+        let normalized = normalize_compound(canonical);
+        let aliased = apply_type_name_aliases(&normalized, &self.type_name_aliases);
+        if let Some(idx) = self.result_types.get(&aliased).copied() {
             return Some(idx);
         }
-        let bare = strip_inner_dotted_prefixes(canonical);
-        if bare != canonical {
+        let bare = strip_inner_dotted_prefixes(&aliased);
+        if bare != aliased {
             self.result_types.get(&bare).copied()
         } else {
             None
@@ -1337,11 +1340,13 @@ impl TypeRegistry {
     }
 
     pub(super) fn map_slots(&self, canonical: &str) -> Option<MapSlots> {
-        if let Some(s) = self.map_types.get(canonical).copied() {
+        let normalized = normalize_compound(canonical);
+        let aliased = apply_type_name_aliases(&normalized, &self.type_name_aliases);
+        if let Some(s) = self.map_types.get(&aliased).copied() {
             return Some(s);
         }
-        let bare = strip_inner_dotted_prefixes(canonical);
-        if bare != canonical {
+        let bare = strip_inner_dotted_prefixes(&aliased);
+        if bare != aliased {
             self.map_types.get(&bare).copied()
         } else {
             None
@@ -1349,9 +1354,9 @@ impl TypeRegistry {
     }
 
     pub(super) fn primitive_key_box_idx(&self, k_aver: &str) -> Option<u32> {
-        self.primitive_key_box
-            .get(&normalize_compound(k_aver))
-            .copied()
+        let normalized = normalize_compound(k_aver);
+        let aliased = apply_type_name_aliases(&normalized, &self.type_name_aliases);
+        self.primitive_key_box.get(&aliased).copied()
     }
 
     /// True for scalar K kinds whose map hash/eq helpers operate on raw wasm
@@ -1366,11 +1371,12 @@ impl TypeRegistry {
         // (Aver surface syntax). Normalize the latter, strip
         // whitespace, then look up.
         let normalized = normalize_tuple_canonical(canonical);
-        if let Some(idx) = self.tuple_types.get(normalized.as_ref()).copied() {
+        let aliased = apply_type_name_aliases(normalized.as_ref(), &self.type_name_aliases);
+        if let Some(idx) = self.tuple_types.get(&aliased).copied() {
             return Some(idx);
         }
-        let bare = strip_inner_dotted_prefixes(normalized.as_ref());
-        if bare.as_str() != normalized.as_ref() {
+        let bare = strip_inner_dotted_prefixes(&aliased);
+        if bare != aliased {
             self.tuple_types.get(&bare).copied()
         } else {
             None
@@ -1433,11 +1439,12 @@ impl TypeRegistry {
         // must find the `Option<Tuple<Int,Int>>` slot. Same
         // normalisation `list_type_idx` applies.
         let normalized = normalize_compound(canonical);
-        if let Some(idx) = self.option_types.get(&normalized).copied() {
+        let aliased = apply_type_name_aliases(&normalized, &self.type_name_aliases);
+        if let Some(idx) = self.option_types.get(&aliased).copied() {
             return Some(idx);
         }
-        let bare = strip_inner_dotted_prefixes(&normalized);
-        if bare != normalized {
+        let bare = strip_inner_dotted_prefixes(&aliased);
+        if bare != aliased {
             self.option_types.get(&bare).copied()
         } else {
             None
@@ -1461,11 +1468,13 @@ impl TypeRegistry {
     /// Wasm type idx for a canonical Aver `Vector<T>` string, if the
     /// instantiation was registered during `build`.
     pub(super) fn vector_type_idx(&self, canonical: &str) -> Option<u32> {
-        if let Some(idx) = self.vector_types.get(canonical).copied() {
+        let normalized = normalize_compound(canonical);
+        let aliased = apply_type_name_aliases(&normalized, &self.type_name_aliases);
+        if let Some(idx) = self.vector_types.get(&aliased).copied() {
             return Some(idx);
         }
-        let bare = strip_inner_dotted_prefixes(canonical);
-        if bare != canonical {
+        let bare = strip_inner_dotted_prefixes(&aliased);
+        if bare != aliased {
             self.vector_types.get(&bare).copied()
         } else {
             None

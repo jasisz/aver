@@ -6145,11 +6145,10 @@ fn emit_user_types(
             super::types::aver_to_wasm(element, Some(registry))?.ok_or(WasmGcError::Validation(
                 format!("Vector element type `{element}` has no wasm representation"),
             ))?;
-        let idx = registry
-            .vector_type_idx(canonical)
-            .ok_or(WasmGcError::Validation(format!(
-                "vector `{canonical}` not registered"
-            )))?;
+        let idx = *registry
+            .vector_types
+            .get(canonical)
+            .expect("vector order entry missing its allocated slot");
         entries.push((
             idx,
             mk_array(wasm_encoder::FieldType {
@@ -6171,11 +6170,10 @@ fn emit_user_types(
             )))?;
         let t_val = super::types::aver_to_wasm(t_aver, Some(registry))?.unwrap_or(ValType::I32);
         let e_val = super::types::aver_to_wasm(e_aver, Some(registry))?.unwrap_or(ValType::I32);
-        let idx = registry
-            .result_type_idx(canonical)
-            .ok_or(WasmGcError::Validation(format!(
-                "result `{canonical}` not registered"
-            )))?;
+        let idx = *registry
+            .result_types
+            .get(canonical)
+            .expect("result order entry missing its allocated slot");
         entries.push((
             idx,
             mk_struct(vec![
@@ -6204,9 +6202,10 @@ fn emit_user_types(
             super::types::aver_to_wasm(element, Some(registry))?.ok_or(WasmGcError::Validation(
                 format!("List element type `{element}` has no wasm representation"),
             ))?;
-        let own_idx = registry
-            .list_type_idx(canonical)
-            .expect("just-registered list slot");
+        let own_idx = *registry
+            .list_types
+            .get(canonical)
+            .expect("list order entry missing its allocated slot");
         let tail_ref = wasm_encoder::ValType::Ref(wasm_encoder::RefType {
             nullable: true,
             heap_type: wasm_encoder::HeapType::Concrete(own_idx),
@@ -6236,11 +6235,10 @@ fn emit_user_types(
             super::types::aver_to_wasm(element, Some(registry))?.ok_or(WasmGcError::Validation(
                 format!("Option element type `{element}` has no wasm representation"),
             ))?;
-        let idx = registry
-            .option_type_idx(canonical)
-            .ok_or(WasmGcError::Validation(format!(
-                "option `{canonical}` not registered"
-            )))?;
+        let idx = *registry
+            .option_types
+            .get(canonical)
+            .expect("option order entry missing its allocated slot");
         entries.push((
             idx,
             mk_struct(vec![
@@ -6279,9 +6277,10 @@ fn emit_user_types(
                 format!("Map key type `{k_aver}` has no wasm representation"),
             ))?
         };
-        let slots = registry
-            .map_slots(canonical)
-            .expect("just-registered map slots");
+        let slots = *registry
+            .map_types
+            .get(canonical)
+            .expect("map order entry missing its allocated slots");
         entries.push((
             slots.keys_array,
             mk_array(wasm_encoder::FieldType {
@@ -6345,11 +6344,10 @@ fn emit_user_types(
             super::types::aver_to_wasm(k_aver, Some(registry))?.ok_or(WasmGcError::Validation(
                 format!("primitive key box: K=`{k_aver}` has no wasm representation"),
             ))?;
-        let idx = registry
-            .primitive_key_box_idx(k_aver)
-            .ok_or(WasmGcError::Validation(format!(
-                "primitive key box for `{k_aver}` not registered"
-            )))?;
+        let idx = *registry
+            .primitive_key_box
+            .get(k_aver)
+            .expect("primitive-key-box order entry missing its allocated slot");
         entries.push((
             idx,
             mk_struct(vec![wasm_encoder::FieldType {
@@ -6379,11 +6377,10 @@ fn emit_user_types(
                 mutable: true,
             });
         }
-        let idx = registry
-            .tuple_type_idx(canonical)
-            .ok_or(WasmGcError::Validation(format!(
-                "tuple `{canonical}` not registered"
-            )))?;
+        let idx = *registry
+            .tuple_types
+            .get(canonical)
+            .expect("tuple order entry missing its allocated slot");
         entries.push((idx, mk_struct(fields)));
     }
 
