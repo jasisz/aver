@@ -1,13 +1,16 @@
-# tools/edge-gc — Cloudflare Workers config for the wasm-gc PoC.
+# tools/edge — production Cloudflare Workers config for the wasm-gc demo.
 # `worker.js` ESM-imports `./handler.wasm`; the wasm module exports
 # `handle(query: String) -> String` plus the `__rt_string_*` /
 # `__rt_memory_*` LM bridge described in worker.js. Wasm-gc + tail
 # calls are stable on workerd's V8 build, so no compat flags are
 # needed beyond the recent compatibility_date.
 
-name = "aver-edge-gc-demo"
+name = "aver-edge-demo"
 main = "worker.js"
 compatibility_date = "2025-01-01"
+workers_dev = false
+preview_urls = false
+routes = [{ pattern = "edge.averlang.dev", custom_domain = true }]
 
 [observability]
 [observability.logs]

@@ -1815,11 +1815,9 @@ def deploy_edge(dry_run: bool) -> None:
         check=True,
     )
 
-    # Smoke. Endpoint URL comes from wrangler's deploy output, but for the
-    # canonical demo it's the production hostname workers.dev assigns.
-    # Hard-coded here matches what the worker.js / wrangler.toml shipped
-    # in `tools/edge/dist/` declare.
-    base = "https://aver-edge-gc-demo.jasisz.workers.dev"
+    # Smoke the public production domain declared by the shipped Wrangler
+    # configuration. The workers.dev and preview routes stay disabled.
+    base = "https://edge.averlang.dev"
     for path in ("/", "/api", "/fractal"):
         url = base + path
         with urllib.request.urlopen(url, timeout=10) as resp:
