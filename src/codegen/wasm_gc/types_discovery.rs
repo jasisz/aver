@@ -129,11 +129,7 @@ pub(super) fn collect_results_from_builtin_uses(
                         | "Terminal.resetColor"
                         | "Terminal.hideCursor"
                         | "Terminal.showCursor"
-                        | "Terminal.flush"
-                        | "HttpServer.listen"
-                        | "HttpServer.listenWith"
-                        | "SelfHostRuntime.httpServerListen"
-                        | "SelfHostRuntime.httpServerListenWith" => intern("Result<Unit,String>"),
+                        | "Terminal.flush" => intern("Result<Unit,String>"),
                         "Terminal.size" => intern("Result<Terminal.Size,String>"),
                         "Terminal.readKey" => {
                             intern("Result<Option<String>,String>");

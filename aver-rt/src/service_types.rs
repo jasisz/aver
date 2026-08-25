@@ -52,6 +52,7 @@ impl AverDisplay for HttpResponse {
 pub struct HttpRequest {
     pub method: AverStr,
     pub path: AverStr,
+    pub query: AverStr,
     pub body: AverStr,
     pub headers: HttpHeaders,
 }
@@ -59,9 +60,10 @@ pub struct HttpRequest {
 impl AverDisplay for HttpRequest {
     fn aver_display(&self) -> String {
         format!(
-            "HttpRequest(method: {}, path: {}, body: {}, headers: {})",
+            "HttpRequest(method: {}, path: {}, query: {}, body: {}, headers: {})",
             self.method.aver_display_inner(),
             self.path.aver_display_inner(),
+            self.query.aver_display_inner(),
             self.body.aver_display_inner(),
             self.headers.aver_display_inner()
         )

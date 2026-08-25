@@ -53,14 +53,16 @@ pub fn emit_world_wit_with_capabilities(
         Wasip2World::CliCommand => {
             "// Phase 1.2b1.3 — wasm-gc emits `wasi:cli/run@0.2.4#run` to satisfy this world."
         }
-        // Phase 3 / 0.19 — HttpServer.listen. Component exports
+        // Phase 3 / 0.19 — explicit HTTP handler. Component exports
         // `wasi:http/incoming-handler.handle`, host (e.g.
         // `wasmtime serve --http=:N`) calls into our handler per
         // request. `include wasi:http/proxy@0.2.4` brings the export
         // requirement plus every wasi:http/types / wasi:io/streams /
         // wasi:clocks import the request/response choreography
         // consumes — single declaration covers both directions.
-        Wasip2World::HttpProxy => "// Phase 3 / 0.19 — HttpServer.listen on `--target wasip2`.",
+        Wasip2World::HttpProxy => {
+            "// HTTP handler export on `--target wasip2 --world wasi:http/proxy`."
+        }
     };
     let mut package = Package::new(PackageName::new("aver", "user", None));
     for capability in capabilities.interfaces() {

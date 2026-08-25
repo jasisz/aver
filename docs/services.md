@@ -323,26 +323,53 @@ Source: `src/services/http.rs`
 
 A response that by definition carries no body — any `Http.head` response, a `204 No Content`, a `304 Not Modified` — arrives with `body: ""` and its header fields intact. Every other response is read to the end, so a server that closes before sending the `Content-Length` it announced is an error, not a short body.
 
-### `HttpServer` namespace — use `! [HttpServer.listen]` or `! [HttpServer.listenWith]`
+### Incoming HTTP — `HttpWire`, `HttpServer`, and `--handler`
 
-Source: `src/services/http_server.rs`
+Sources: `stdlib/http_wire.av`, `stdlib/http_server.av`
 
-| Function | Signature |
-|---|---|
-| `HttpServer.listen` | `(Int, Fn(HttpRequest) -> HttpResponse ! [...method-level effects...]) -> Result<Unit, String>` |
-| `HttpServer.listenWith` | `(Int, T, Fn(T, HttpRequest) -> HttpResponse ! [...method-level effects...]) -> Result<Unit, String>` |
+Incoming HTTP is not a provider callback. Native programs build it from two
+ordinary Aver layers:
 
-`HttpServer.listen` and `HttpServer.listenWith` accept top-level function values. `listenWith` is the preferred form when a handler needs configuration, connections, or other app state, because the context stays explicit instead of being hidden in closure capture.
+| Layer | Surface | Responsibility |
+|---|---|---|
+| `HttpWire` | `frameRequest`, `renderResponse`, `requestCloses`, `responseCloses` | Pure HTTP/1.1 framing over `Bytes` |
+| `HttpServer` | `listen`, `serve` | Listener, poll loop, sessions, pipelining, writes, and cooperative shutdown over `Tcp` + `Process` |
 
-This is the main intended use of function values in Aver: named handlers and callbacks with explicit types and explicit effects. Most user code still stays first-order.
+```aver
+module Hello
+    depends [HttpServer]
+    effects [Tcp, Process]
 
-The handler itself still uses exact method-level effects such as `Http.get`, `Tcp.readLine`, or `Console.print`. The server call does not widen those into namespace-level grants.
+fn hello(req: HttpRequest) -> HttpResponse
+    HttpResponse(status = 200, body = "hello {req.path}\n", headers = {})
 
-`HttpRequest` record: `{ method: String, path: String, body: String, headers: Map<String, List<String>> }`.
-`HttpResponse` record: `{ status: Int, body: String, headers: Map<String, List<String>> }`.
-Header keys are case-insensitive by convention (the runtime normalises incoming names to lowercase; outgoing should match).
+fn main() -> Result<Unit, String>
+    ! [Tcp.listen, Tcp.poll, Tcp.accept, Tcp.readSome, Tcp.writeBytes,
+       Tcp.close, Tcp.closeListener, Process.stopRequested]
+    HttpServer.listen(8080, hello)
+```
 
-The caller declares only `HttpServer.listen` / `HttpServer.listenWith`. The handler carries its own `! [...]` declaration; its effects are checked on the handler function itself rather than copied onto the caller.
+`HttpServer.listen` has signature
+`(Int, Fn(HttpRequest) -> HttpResponse ! [_]) -> Result<Unit, String>`.
+The `[_]` forwards the concrete named handler's effects to the call site: an
+effectful handler still requires those exact effects in `main`; no ambient or
+hidden grant is introduced.
+
+`HttpRequest` is
+`{ method: String, path: String, query: String, body: String, headers: Map<String, List<String>> }`.
+`HttpResponse` is
+`{ status: Int, body: String, headers: Map<String, List<String>> }`.
+Incoming header names are normalised to lowercase and repeated fields retain
+wire order. The current pure framer deliberately supports bounded,
+content-length HTTP/1.1 with UTF-8 request bodies; transfer encoding and
+`Expect` are rejected before a body wait.
+
+Fetch-style deployments do not run `HttpServer`: the host already owns the
+listener and invokes one request handler. Select the same handler explicitly
+with `--handler <fn>` (for example `aver compile app.av --preset cloudflare
+--handler handler`, or the `wasi:http/proxy` world). This boundary stays a
+simple `Fn(HttpRequest) -> HttpResponse`; there is no synthetic listener call
+in `main` and no provider-owned request token.
 
 ### `Disk` namespace — use granular effects (`! [Disk.readText]`, `! [Disk.writeText]`, etc.)
 

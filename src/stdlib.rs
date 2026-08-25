@@ -24,6 +24,14 @@ pub(crate) fn find(name: &str) -> Option<EmbeddedModule> {
             virtual_path: "<aver-stdlib>/crypto/digest32.av",
             source: include_str!("../stdlib/crypto/digest32.av"),
         }),
+        "HttpWire" => Some(EmbeddedModule {
+            virtual_path: "<aver-stdlib>/http_wire.av",
+            source: include_str!("../stdlib/http_wire.av"),
+        }),
+        "HttpServer" => Some(EmbeddedModule {
+            virtual_path: "<aver-stdlib>/http_server.av",
+            source: include_str!("../stdlib/http_server.av"),
+        }),
         "Time" => Some(EmbeddedModule {
             virtual_path: "<aver-stdlib>/capabilities/time.av",
             source: include_str!("../stdlib/capabilities/time.av"),

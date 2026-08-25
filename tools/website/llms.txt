@@ -254,7 +254,7 @@ Rules:
   - `fn(args).trace.group(N).branch(idx).*` — tree-nav into `!`/`?!` independent products (0-based N, idx)
 - Local bindings with `name = expr` go between `given` clauses and case assertions; they're substituted into every case (so each case still runs its own fresh `fn()` invocation)
 - Every generative/gen+output effect the fn uses must have a `given` stub under `trace`; missing stubs are rejected with a pointer at the fix
-- Unclassified effects (`Env.set`, `Tcp.connect/writeLine/readLine/close`, `Terminal.enableRawMode/setColor/resetColor/size`, `HttpServer.listen`) are rejected by `verify trace` — use record/replay for those
+- Long-running or stateful effects (`Env.set`, persistent `Tcp.*`, terminal modes) are rejected by `verify trace` — use record/replay for those
 
 ### Decision blocks
 
@@ -374,7 +374,7 @@ Effectful namespaces:
 - `Random`: int, float — `Random.int(lo, hi)` is inclusive on both ends, `Random.float()` is in `[0.0, 1.0)`
 - `Env`: get, set
 - `Args`: get
-- `HttpServer`: listen, listenWith
+- Incoming HTTP: pure `HttpWire`, native `HttpServer` over `Tcp`, or explicit `--handler` on proxy hosts
 
 ### Common patterns
 

@@ -234,7 +234,7 @@ pub(crate) fn generate_for_effects_with_registry(
     out.push_str("  Declared program capabilities use the oracle dimension pinned above.\n");
     out.push_str("  Env.set, TCP session calls, and every Terminal operation are\n");
     out.push_str("  classified per call; this models each request/outcome, not hidden\n");
-    out.push_str("  cross-call host state. Server lifecycle callbacks (HttpServer.*)\n");
+    out.push_str("  cross-call host state. Long-running server loops over Tcp.*\n");
     out.push_str("  remain outside Oracle v1 and are rejected. Oracle covers only\n");
     out.push_str("  the fixed built-in effect set listed above.\n");
     out.push('\n');

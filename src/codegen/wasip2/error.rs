@@ -3,7 +3,7 @@
 //! Kept separate so the surface is small and easy to extend as
 //! Phase 1 fills in effect mappings (Phase 1.2-1.4) and Phase 1.6
 //! adds the `target-effect-unsupported` reject path for `Terminal`,
-//! `Http`, `Tcp`, and `HttpServer` under `--target wasip2`.
+//! `Http` and `Tcp` under `--target wasip2`.
 
 use std::fmt;
 

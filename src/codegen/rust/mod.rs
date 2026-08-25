@@ -179,13 +179,12 @@ fn transpile_project(
 
     let has_tcp_runtime = used_services.contains("Tcp");
     let has_http_runtime = used_services.contains("Http");
-    let has_http_server_runtime = used_services.contains("HttpServer");
     let has_terminal_runtime = used_services.contains("Terminal");
 
     let has_tcp_types =
         (has_tcp_runtime || needs_tcp_types) && ctx.capabilities.contract("Tcp").is_none();
-    let has_http_types = has_http_runtime || has_http_server_runtime || needs_http_types;
-    let has_http_server_types = has_http_server_runtime || needs_named_type(ctx, "HttpRequest");
+    let has_http_types = has_http_runtime || needs_http_types;
+    let has_http_request_types = needs_named_type(ctx, "HttpRequest");
     let has_terminal_types = has_terminal_runtime || needs_terminal_types;
 
     // Root dispatch consumes the canonical resolved declaration. Resolve
@@ -254,7 +253,7 @@ fn transpile_project(
             render_runtime_support(
                 has_tcp_types,
                 has_http_types,
-                has_http_server_types,
+                has_http_request_types,
                 has_terminal_types,
                 needs_branch_path,
                 ctx.emit_replay_runtime,
@@ -306,7 +305,7 @@ fn transpile_project(
                 has_terminal_types,
                 has_tcp_types,
                 has_http_types,
-                has_http_server_types,
+                has_http_request_types,
                 embedded_independence_cancel,
                 standard_capabilities: ctx
                     .capabilities
@@ -608,7 +607,7 @@ fn render_root_main(
 fn render_runtime_support(
     has_tcp_types: bool,
     has_http_types: bool,
-    has_http_server_types: bool,
+    has_http_request_types: bool,
     has_terminal_types: bool,
     needs_branch_path: bool,
     has_replay: bool,
@@ -616,7 +615,6 @@ fn render_runtime_support(
 ) -> String {
     let mut sections = vec![runtime::generate_runtime(
         has_replay,
-        has_http_server_types,
         embedded_independence_cancel,
     )];
     if has_tcp_types {
@@ -625,8 +623,8 @@ fn render_runtime_support(
     if has_http_types {
         sections.push(runtime::generate_http_types());
     }
-    if has_http_server_types {
-        sections.push(runtime::generate_http_server_types());
+    if has_http_request_types {
+        sections.push(runtime::generate_http_request_types());
     }
     if has_terminal_types {
         sections.push(runtime::generate_terminal_types());

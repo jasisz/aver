@@ -203,7 +203,8 @@ aver compile self_hosted/main.av \
 
 This emits `src/replay_support.rs` and adds the `serde` / `serde_json` / `toml` dependencies needed for recording files and guest-scoped runtime policy. Without `--with-replay`, generated projects stay smaller and do not carry replay support.
 
-Use `--with-self-host-support` only for generated programs that are themselves self-host-like meta-runtimes and need `SelfHostRuntime.*` builtins such as the self-hosted `HttpServer` bridge:
+Use `--with-self-host-support` only for generated programs that are themselves
+self-host-like meta-runtimes and need the evaluator's scoped function store:
 
 ```bash
 aver compile self_hosted/main.av \
@@ -273,7 +274,7 @@ All language features are transpilable:
 | Module imports (`depends [X]`) | OK |
 | `Console` service | OK |
 | `Http` service | OK |
-| `HttpServer` service (`listen`, `listenWith`) | OK |
+| `HttpWire` / `HttpServer` standard modules | OK |
 | `Tcp` capability (provider-backed persistent connections) | OK |
 | `Disk` service | OK |
 | `Env` service | OK |
@@ -310,5 +311,6 @@ Generated Rust uses `aver-rt` as the shared runtime. The actual service implemen
 - `Tcp`: standard capability provider over the shared `aver-rt::tcp` runtime;
   `Tcp.Connection` crosses generated code as a provider-owned resource
 - `Http`: shared `aver-rt::http` client, enabled by the `http` feature
-- `HttpServer`: shared `aver-rt::http_server` loop and request/response types
+- incoming HTTP: pure `HttpWire` framing plus the Aver `HttpServer` loop over
+  provider-backed `Tcp`; fetch-style targets expose an explicit `--handler`
 - `Console`, `Time`, `Disk`, `Env`, `Args`: shared helpers from `aver-rt`

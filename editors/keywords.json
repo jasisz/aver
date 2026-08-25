@@ -37,7 +37,6 @@
   "namespaces": [
     "Console",
     "Http",
-    "HttpServer",
     "Disk",
     "Tcp",
     "Int",

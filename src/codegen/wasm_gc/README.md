@@ -209,7 +209,7 @@ Audited 2026-05-02 against `src/codegen/wasm/abi.rs` + `src/types/checker/builti
 | Request/Response/Http/Env | ✅ all 13 fetch-bridge effects | full |
 | Terminal.*     | ✅ enableRawMode/disableRawMode/clear/moveTo/print/setColor/resetColor/readKey/size/hideCursor/showCursor/flush + `Terminal.Size` builtin record (auto-registered when any fn declares `! [Terminal.size]`) | full |
 | Print/Format.value | ❌ deliberately | wasm-gc lowers interpolations natively via `__wasmgc_concat_n` + `String.fromInt`; debug helpers not needed |
-| Disk.*, Tcp.*, HttpServer.listen* | ❌ deliberately | per-deployment policy domain; see `docs/effects.md` |
+| Disk.*, Tcp.* | ❌ deliberately | per-deployment policy domain; see `docs/effects.md` |
 
 **Pure builtins parity:**
 

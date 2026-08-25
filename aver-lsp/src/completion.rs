@@ -355,16 +355,6 @@ pub fn namespace_completions(namespace: &str) -> Vec<CompletionItem> {
                 detail: "fn(String, String, String, List<Header>) -> Result<HttpResponse, String> ! [Http.patch]",
             },
         ],
-        "HttpServer" => &[
-            Member {
-                name: "listen",
-                detail: "fn(Int, Fn(HttpRequest) -> HttpResponse ! [...]) -> Unit ! [HttpServer.listen]",
-            },
-            Member {
-                name: "listenWith",
-                detail: "fn(Int, context, Fn(context, HttpRequest) -> HttpResponse ! [...]) -> Unit ! [HttpServer.listenWith]",
-            },
-        ],
         "Disk" => &[
             Member {
                 name: "readText",
@@ -502,14 +492,6 @@ pub fn effect_completions() -> Vec<CompletionItem> {
             "Http.put",
             "(String, String, String, List<Header>) -> Result<HttpResponse, String>",
         ),
-        (
-            "HttpServer.listen",
-            "(Int, Fn(HttpRequest) -> HttpResponse ! [...]) -> Unit",
-        ),
-        (
-            "HttpServer.listenWith",
-            "(Int, context, Fn(context, HttpRequest) -> HttpResponse ! [...]) -> Unit",
-        ),
         ("Tcp.close", "(Tcp.Connection) -> Result<Unit, String>"),
         (
             "Tcp.connect",
@@ -557,7 +539,6 @@ pub fn all_namespaces() -> Vec<CompletionItem> {
         ("Args", "Command-line arguments"),
         ("Console", "Console I/O"),
         ("Http", "HTTP client"),
-        ("HttpServer", "HTTP server"),
         ("Disk", "File system operations"),
         ("Tcp", "TCP networking"),
         ("Time", "Clock and sleeping"),

@@ -952,16 +952,6 @@ mod tests {
     }
 
     #[test]
-    fn server_lifecycle_remains_unclassified() {
-        // HttpServer.listen is a long-running protocol with callbacks — its
-        // handler is the unit of proof, not the lifecycle call itself. Stays
-        // outside Oracle by design.
-        for name in &["HttpServer.listen", "HttpServer.listenWith"] {
-            assert!(!is_classified(name), "{} should NOT be classified", name);
-        }
-    }
-
-    #[test]
     fn extended_oracle_v1_methods_classified() {
         // Every terminal write/control operation exposes the adapter outcome,
         // so each has both a trace request and an oracle Result.

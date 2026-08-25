@@ -559,7 +559,7 @@ pub(super) enum Wasip2ImportSlot {
     /// Canonical-ABI signature: `(handle: i32) -> ()`.
     HttpTypesResourceDropOutgoingBody,
 
-    // ── 0.19 "Phase 3" — wasi:http/* slots for `HttpServer.listen`.
+    // ── 0.19 "Phase 3" — wasi:http/* slots for the explicit handler export.
     //
     // The proxy world inverts ownership vs. the outgoing-handler
     // path: the host hands us an incoming-request + a response-

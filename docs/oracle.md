@@ -598,8 +598,8 @@ Oracle does not try to model every side effect.
 
 Not supported:
 
-- `HttpServer.listen` / `listenWith`. Server lifecycle and callbacks are
-  long-running protocols, not one call/result effects.
+- Whole server loops. `HttpServer` is ordinary Aver over persistent `Tcp`
+  resources; verify its pure `HttpWire` and handler pieces separately.
 - Stateful capability models / hidden filesystem-or-clock state. Effect stubs are
   stateless by design (see the section above) — if a property depends on memory
   across effect calls, model the state in pure user code.

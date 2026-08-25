@@ -119,7 +119,7 @@ fn llmsTxt() -> String
         "",
         "## How the handler is wired",
         "",
-        "`--preset cloudflare` expands to `--target wasm --bridge fetch --pack cloudflare`: a single bundled `app.wasm` (Aver runtime inlined via `wasm-merge`), a `worker.js` ES-module bootstrap that satisfies the `aver/*` host imports against the JS environment (`console.*`, `Date.now()`, `Math.random()`, Fetch API + JSPI for `Http.*`), and a `wrangler.toml`. Cloudflare Workers reject `WebAssembly.instantiate(bytes, …)` from runtime-fetched bytes, so the single-bundle shape is the only viable path; browsers / Deno / Bun can use the thinner `--target edge-wasm` shape with the runtime fetched from `averlang.dev/runtime/`.",
+        "`--preset cloudflare --handler handler` expands to `--target wasm-gc --pack cloudflare --handler handler`: a self-contained `app.wasm`, a `worker.js` ES-module bootstrap that satisfies the `aver/*` host imports against the JS environment (`console.*`, `Date.now()`, `Math.random()`, Fetch API + JSPI for `Http.*`), and a `wrangler.toml`. Cloudflare owns the listener and calls the explicitly exported Aver handler through `aver_http_handle`; no native server loop or synthetic listen call is bundled.",
         "",
         "## What this URL is *not*",
         "",

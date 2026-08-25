@@ -99,7 +99,6 @@ pub fn is_builtin_namespace(name: &str) -> bool {
             | "Env"
             | "Float"
             | "Http"
-            | "HttpServer"
             | "Int"
             | "List"
             | "Map"

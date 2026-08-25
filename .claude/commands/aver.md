@@ -42,7 +42,7 @@ Primitives: `Int`, `Float`, `String`, `Bool`, `Unit` — each has exactly one sp
 Compound:
 - `Result<T, E>`, `Option<T>`, `List<T>`, `Vector<T>`, `Map<K, V>` — `K` must be a type that orders; records, variants, lists and tuples all do, `Float` does not
 - tuples: type is `Tuple<A, B, ...>` (2+ elements). Value literal and pattern are both paren: `(a, b)`. The type spelling and the value spelling are deliberately different.
-- function types: `Fn(A) -> B`, `Fn(A) -> B ! [Console.print]`
+- function types: `Fn(A) -> B`, `Fn(A) -> B ! [Console.print]`; `! [_]` on a callback parameter forwards the concrete named callback's effects at the helper call site
 
 Notes:
 - top-level named functions can be passed where `Fn(...)` is expected
@@ -197,7 +197,7 @@ Rules:
   - `fn(args).trace.group(N).branch(idx).*` — tree-nav into `!`/`?!` independent products (0-based N, idx)
 - Local bindings with `name = expr` go between `given` clauses and case assertions; they're substituted into every case (so each case still runs its own fresh `fn()` invocation)
 - Every generative/gen+output effect the fn uses must have a `given` stub under `trace`; missing stubs are rejected with a pointer at the fix
-- Unclassified server-lifecycle effects (`HttpServer.listen` / `listenWith`) are rejected by `verify trace` — use record/replay for those
+- Whole server loops are not trace laws: verify pure `HttpWire` and handler functions separately, and use record/replay for the persistent `Tcp` session loop
 
 ### Decision blocks
 
@@ -320,7 +320,8 @@ Effectful namespaces:
 - `Random`: int, float — `Random.int(lo, hi) -> Result<Int, String>` is inclusive on both ends; safe literal bounds discharge directly to `Int`. `Random.float()` is in `[0.0, 1.0)`
 - `Env`: get, set
 - `Args`: get
-- `HttpServer`: listen, listenWith
+
+Incoming HTTP is not an effect namespace: use pure `HttpWire`, native `HttpServe` over `Tcp` + `Process.stopRequested`, or an explicit `--handler <fn>` on fetch/proxy hosts.
 
 ### Common patterns
 

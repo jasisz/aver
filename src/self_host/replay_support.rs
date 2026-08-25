@@ -1886,61 +1886,6 @@ impl aver_replay::ReplayValue for crate::HttpResponse {
     }
 }
 
-impl aver_replay::ReplayValue for aver_rt::HttpRequest {
-    fn to_replay_json(&self) -> serde_json::Value {
-        let mut fields = serde_json::Map::new();
-        fields.insert(
-            "method".to_string(),
-            ReplayValue::to_replay_json(&self.method),
-        );
-        fields.insert("path".to_string(), ReplayValue::to_replay_json(&self.path));
-        fields.insert("body".to_string(), ReplayValue::to_replay_json(&self.body));
-        fields.insert(
-            "headers".to_string(),
-            ReplayValue::to_replay_json(&self.headers),
-        );
-        let mut payload = serde_json::Map::new();
-        payload.insert(
-            "type".to_string(),
-            serde_json::Value::String("HttpRequest".to_string()),
-        );
-        payload.insert("fields".to_string(), serde_json::Value::Object(fields));
-        aver_replay::wrap_marker("$record", serde_json::Value::Object(payload))
-    }
-
-    fn from_replay_json(value: &serde_json::Value) -> Result<Self, String> {
-        let payload = aver_replay::expect_marker(value, "$record")?;
-        let obj = aver_replay::expect_object(payload, "$record")?;
-        let fields = aver_replay::expect_object(
-            obj.get("fields")
-                .ok_or_else(|| "$record missing field 'fields'".to_string())?,
-            "$record.fields",
-        )?;
-        Ok(Self {
-            method: <aver_rt::AverStr as ReplayValue>::from_replay_json(
-                fields
-                    .get("method")
-                    .ok_or_else(|| "$record HttpRequest missing field 'method'".to_string())?,
-            )?,
-            path: <aver_rt::AverStr as ReplayValue>::from_replay_json(
-                fields
-                    .get("path")
-                    .ok_or_else(|| "$record HttpRequest missing field 'path'".to_string())?,
-            )?,
-            body: <aver_rt::AverStr as ReplayValue>::from_replay_json(
-                fields
-                    .get("body")
-                    .ok_or_else(|| "$record HttpRequest missing field 'body'".to_string())?,
-            )?,
-            headers: <aver_rt::HttpHeaders as ReplayValue>::from_replay_json(
-                fields
-                    .get("headers")
-                    .ok_or_else(|| "$record HttpRequest missing field 'headers'".to_string())?,
-            )?,
-        })
-    }
-}
-
 impl aver_replay::ReplayValue for crate::Terminal_Size {
     fn to_replay_json(&self) -> serde_json::Value {
         let mut fields = serde_json::Map::new();

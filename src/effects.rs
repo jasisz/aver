@@ -1,3 +1,13 @@
+/// Marker used only inside a direct callback parameter type:
+/// `Fn(A) -> B ! [_]` accepts the concrete named callback's statically known
+/// effects and forwards them to the call site. It is not an ambient effect and
+/// never satisfies an ordinary function effect declaration.
+pub const FORWARDED_CALLBACK_EFFECT: &str = "_";
+
+pub fn forwards_callback_effects(effects: &[String]) -> bool {
+    effects == [FORWARDED_CALLBACK_EFFECT]
+}
+
 /// Returns true if a declared effect satisfies a required effect.
 ///
 /// Rules:
@@ -54,5 +64,16 @@ mod tests {
     fn no_cross_namespace() {
         assert!(!effect_satisfies("Http", "Disk.readText"));
         assert!(!effect_satisfies("Console", "Terminal.clear"));
+    }
+
+    #[test]
+    fn callback_forwarding_marker_is_not_an_ambient_effect() {
+        assert!(forwards_callback_effects(&["_".to_string()]));
+        assert!(!forwards_callback_effects(&[
+            "_".to_string(),
+            "Console.print".to_string(),
+        ]));
+        assert!(!effect_satisfies("_", "Console.print"));
+        assert!(!effect_satisfies("Console.print", "_"));
     }
 }

@@ -2,10 +2,10 @@ module App
     intent =
         "A simple note-taking HTTP API."
         "Demonstrates a multi-module Aver application with Disk as a database"
-        "and HttpServer for the REST interface."
+        "and the Aver HttpServer loop over Tcp for the REST interface."
     exposes [main]
-    depends [Apps.Notepad.Store, Apps.Notepad.Routes]
-    effects [Console, Disk, HttpServer]
+    depends [Apps.Notepad.Store, Apps.Notepad.Routes, HttpServer]
+    effects [Console, Disk, Tcp, Process]
 
 decision DiskAsDatabase
     date = "2026-03-01"
@@ -19,7 +19,7 @@ decision DiskAsDatabase
 
 fn main() -> Result<Unit, String>
     ? "Initializes the store and starts the HTTP server on port 3000."
-    ! [Console.print, Disk.appendText, Disk.exists, Disk.makeDir, Disk.writeText, HttpServer.listen]
+    ! [Console.print, Disk.appendText, Disk.exists, Disk.makeDir, Disk.readText, Disk.writeText, Tcp.listen, Tcp.poll, Tcp.accept, Tcp.readSome, Tcp.writeBytes, Tcp.close, Tcp.closeListener, Process.stopRequested]
     _ = Apps.Notepad.Store.initStore()?
     Console.print("Notepad API running on http://localhost:3000")
     Console.print("")

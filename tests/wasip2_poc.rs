@@ -123,7 +123,7 @@ fn accepts_http_proxy_world_wit_shape() {
     // a real codegen path: the wasm-gc emitter synthesises a
     // `wasi:http/incoming-handler.handle` export when given a server-
     // shaped program. This test stops short of a full handler core
-    // (covered end-to-end in `tests/wasip2_http_server.rs`); it just
+    // (covered end-to-end in `tests/wasip2_http_handler.rs`); it just
     // pins the WIT emission for the proxy world — the `include
     // wasi:http/proxy@0.2.4;` body has to round-trip through
     // `UnresolvedPackageGroup` cleanly so the metadata embed step

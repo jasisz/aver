@@ -1,4 +1,4 @@
-//! Wasip2 `HttpServer.listen` stress + variety tests.
+//! Wasip2 explicit HTTP-handler stress + variety tests.
 //!
 //! Pin behaviour the happy-path e2e tests don't reach:
 //! - large bodies in both directions (drain loop buffer growth +
@@ -193,10 +193,6 @@ fn big_handler(req: HttpRequest) -> HttpResponse
     s9: String = dbl(s8)
     s10: String = dbl(s9)
     HttpResponse(status = 200, body = s10, headers = {})
-
-fn main() -> Unit
-    ! [HttpServer.listen]
-    HttpServer.listen(0, big_handler)
 "#;
     let Some((mut server, port, dir)) = setup("large-resp", src, "bigresp", "big_handler") else {
         return;
@@ -242,10 +238,6 @@ fn echo_handler(req: HttpRequest) -> HttpResponse
         body = "len={String.len(req.body)}",
         headers = {}
     )
-
-fn main() -> Unit
-    ! [HttpServer.listen]
-    HttpServer.listen(0, echo_handler)
 "#;
     let Some((mut server, port, dir)) = setup("large-req", src, "bigreq", "echo_handler") else {
         return;
@@ -293,10 +285,6 @@ fn count_handler(req: HttpRequest) -> HttpResponse
         body = "method={req.method} path={req.path}",
         headers = {"x-aver" => ["ok"]}
     )
-
-fn main() -> Unit
-    ! [HttpServer.listen]
-    HttpServer.listen(0, count_handler)
 "#;
     let Some((mut server, port, dir)) = setup("sequential", src, "seq", "count_handler") else {
         return;
@@ -330,10 +318,6 @@ fn concurrent_requests_each_isolated() {
     let src = r#"
 fn id_handler(req: HttpRequest) -> HttpResponse
     HttpResponse(status = 200, body = req.body, headers = {})
-
-fn main() -> Unit
-    ! [HttpServer.listen]
-    HttpServer.listen(0, id_handler)
 "#;
     let Some((mut server, port, dir)) = setup("concurrent", src, "conc", "id_handler") else {
         return;
@@ -382,10 +366,6 @@ fn route_handler(req: HttpRequest) -> HttpResponse
         "/created" -> HttpResponse(status = 201, body = "created", headers = {})
         "/teapot" -> HttpResponse(status = 418, body = "im a teapot", headers = {})
         _ -> HttpResponse(status = 404, body = "nope", headers = {})
-
-fn main() -> Unit
-    ! [HttpServer.listen]
-    HttpServer.listen(0, route_handler)
 "#;
     let Some((mut server, port, dir)) = setup("routing", src, "rt", "route_handler") else {
         return;
@@ -431,10 +411,6 @@ fn method_dispatch_returns_method_name() {
     let src = r#"
 fn method_handler(req: HttpRequest) -> HttpResponse
     HttpResponse(status = 200, body = req.method, headers = {})
-
-fn main() -> Unit
-    ! [HttpServer.listen]
-    HttpServer.listen(0, method_handler)
 "#;
     let Some((mut server, port, dir)) = setup("methods", src, "mthd", "method_handler") else {
         return;
@@ -493,10 +469,6 @@ fn json_handler(req: HttpRequest) -> HttpResponse
         body = body,
         headers = {"content-type" => ["application/json"]}
     )
-
-fn main() -> Unit
-    ! [HttpServer.listen]
-    HttpServer.listen(0, json_handler)
 "#;
     let Some((mut server, port, dir)) = setup("json", src, "jsn", "json_handler") else {
         return;
@@ -537,10 +509,6 @@ fn count_handler(req: HttpRequest) -> HttpResponse
         body = "headers={Map.len(req.headers)}",
         headers = {}
     )
-
-fn main() -> Unit
-    ! [HttpServer.listen]
-    HttpServer.listen(0, count_handler)
 "#;
     let Some((mut server, port, dir)) = setup("manyhdr", src, "mhdr", "count_handler") else {
         return;

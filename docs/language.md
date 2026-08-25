@@ -277,7 +277,7 @@ host dispatch and points to `verify <fn> trace` or record/replay. Aver does not
 infer path reachability from the function-wide effect list, and plain verify is
 not a real-world smoke-test mode.
 
-Effects outside Oracle's classified set still belong in record/replay, especially ambient state, persistent protocol sessions, terminal modes, and server callbacks. See [oracle.md](oracle.md) for the supported effect set, stub signatures, and trace API.
+Effects outside Oracle's classified set still belong in record/replay, especially ambient state, persistent protocol sessions, terminal modes, and server loops. See [oracle.md](oracle.md) for the supported effect set, stub signatures, and trace API.
 
 `aver check` expects pure, non-trivial, non-`main` functions to carry a colocated `verify` block.
 
@@ -302,10 +302,14 @@ decision UseResultNotExceptions
 ## No closures
 
 All user-defined functions are top-level. At call time, a function sees globals + its own parameters — no closure capture at definition time.
-Top-level functions are still first-class values, so higher-order builtins such as `HttpServer.listenWith(port, context, handle)` work without introducing lambda syntax or hidden captures.
+Top-level functions are still first-class values, so higher-order helpers such as `HttpServer.listen(port, handle)` work without introducing lambda syntax or hidden captures.
 There is no lambda syntax. List processing is typically written with recursion and pattern matching rather than callback-based helpers.
 
-This means `Fn(...) -> ...` is a real type, but a function value may appear **only as a function parameter** — i.e. a named function (or builtin / constructor) passed directly in call-argument position, exactly as `HttpServer.listenWith(port, context, handle)` does. A `Fn(...)` type used as a function's **return type**, a **record or variant field**, a **collection or tuple element**, or nested inside another `Fn`, and binding a function value to a local (`g = double`) — are all rejected at type-check time. Function values therefore never escape callback-argument position, so the concrete callee at every call — and with it the set of effects it can perform — stays statically knowable, which is what the effect system, the Oracle, and `aver verify` rely on. If you need to select between functions dynamically, branch at the call site or model the choice as a sum type and `match` on it.
+This means `Fn(...) -> ...` is a real type, but a function value may appear **only as a function parameter** — i.e. a named function (or builtin / constructor) passed directly in call-argument position, exactly as `HttpServer.listen(port, handle)` does. A `Fn(...)` type used as a function's **return type**, a **record or variant field**, a **collection or tuple element**, or nested inside another `Fn`, and binding a function value to a local (`g = double`) — are all rejected at type-check time. Function values therefore never escape callback-argument position, so the concrete callee at every call — and with it the set of effects it can perform — stays statically knowable, which is what the effect system, the Oracle, and `aver verify` rely on. If you need to select between functions dynamically, branch at the call site or model the choice as a sum type and `match` on it.
+
+A callback effect list of `! [_]` means “forward the concrete named callback's
+effects”. It is resolved statically at the helper call site; it is not an
+ambient wildcard or a hidden capability grant.
 
 ```aver
 fn applyTwice(f: Fn(Int) -> Int, x: Int) -> Int

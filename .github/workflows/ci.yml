@@ -254,8 +254,8 @@ jobs:
             stdlib_spec \
             wasip2_codegen_regression \
             wasip2_http \
-            wasip2_http_server \
-            wasip2_http_server_stress \
+            wasip2_http_handler \
+            wasip2_http_handler_stress \
             wasip2_poc \
             wasip2_stress \
             wasip2_tcp \

@@ -3424,8 +3424,8 @@ pub(super) fn emit_module_with(
     //   (request, outparam) -> ()` — body is the full per-request
     //   choreography emitted via `emit_aver_http_handle`. `main`
     //   is never invoked (it's emitted as a normal user fn and
-    //   never called from here); its `HttpServer.listen(_, _)`
-    //   call lowered to a no-op upstream.
+    //   never called from here). The selected handler is an explicit
+    //   deployment entry point rather than an inferred listener callback.
     if proxy_mode {
         let user_handler_idx = handler_name
             .and_then(|name| fn_defs.iter().position(|fd| fd.name == name))
@@ -3485,7 +3485,7 @@ pub(super) fn emit_module_with(
             })
         };
         use super::wasip2_imports::Wasip2ImportSlot as Slot;
-        let indices = super::wasip2_http_server::ServerHandlerIndices {
+        let indices = super::wasip2_http_handler::ServerHandlerIndices {
             fn_type: start_type_idx,
             fn_idx: start_wasm_idx,
             string_type_idx: string_idx,
@@ -3498,7 +3498,7 @@ pub(super) fn emit_module_with(
             option_list_string_type_idx: opt_list_string_idx,
             aint_to_i64_checked_fn_idx: registry.aint_to_i64_checked_fn_idx,
         };
-        let helpers = super::wasip2_http_server::ServerHandlerHelperFns {
+        let helpers = super::wasip2_http_handler::ServerHandlerHelperFns {
             cabi_realloc_fn: cabi,
             str_to_lm_fn: bridge_ref.to_lm_fn,
             from_lm_fn: bridge_ref.from_lm_fn,
@@ -3587,7 +3587,7 @@ pub(super) fn emit_module_with(
             map_get_fn: map_h.get,
             user_handler_fn: user_handler_wasm_idx,
         };
-        codes.function(&super::wasip2_http_server::emit_aver_http_handle(
+        codes.function(&super::wasip2_http_handler::emit_aver_http_handle(
             &indices, &helpers,
         ));
     } else {

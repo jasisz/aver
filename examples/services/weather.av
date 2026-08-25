@@ -5,8 +5,8 @@ module Weather
         "and serves JSON responses over HTTP."
         "Demonstrates HttpServer, Http, Tcp, and Console working together."
     exposes [main]
-    depends [Services.Redis]
-    effects [Console, Http, HttpServer, Tcp]
+    depends [Services.Redis, HttpServer]
+    effects [Console, Http, Tcp, Process]
 
 decision CacheFirstArchitecture
     date = "2026-02-26"
@@ -30,17 +30,16 @@ decision SimpleJsonTemplates
     rejected = ["JsonBuilder", "RawConcatenation"]
     impacts = [jsonOk, jsonErr]
 
-decision HttpServerContextParameter
+decision RequestScopedHandlerDependencies
     date = "2026-02-26"
     author = "ChallengeSession"
     reason =
-        "Handlers need access to configuration and connections."
-        "Closure captures hide dependencies from signatures and context export."
-        "Mutable module-level state contradicts explicit-everything philosophy."
-        "A context record parameter keeps dependencies visible, typed, and queryable."
-    chosen = "ExplicitContextRecord"
-    rejected = ["ClosureCapture", "MutableModuleState", "GlobalRegistry"]
-    impacts = [HttpServer, "HandlerSignature", "AIContext"]
+        "HttpServer is ordinary Aver code and takes one named HttpRequest handler."
+        "The demo therefore opens and closes its Redis dependency per request instead of hiding a persistent connection in a host callback context."
+        "The handler signature remains identical on native Tcp and proxy-hosted --handler deployments."
+    chosen = "RequestScopedDependency"
+    rejected = ["HostCallbackContext", "ClosureCapture", "MutableModuleState"]
+    impacts = [HttpServer, "HandlerSignature", "DeploymentParity"]
 
 record WeatherConfig
     apiHost: String
@@ -197,17 +196,36 @@ fn handleWeather(context: WeatherContext, req: HttpRequest) -> HttpResponse
                 Result.Ok(data)  -> HttpResponse(status = 200, body = jsonOk(city, data), headers = {})
                 Result.Err(msg)  -> HttpResponse(status = 502, body = jsonErr(msg), headers = {})
 
-fn startServer(context: WeatherContext) -> Result<Unit, String>
-    ? "Prints startup info and starts blocking HttpServer loop with explicit context."
-    ! [Console.print, HttpServer.listenWith]
-    Console.print("Weather service starting on port {context.config.serverPort}")
-    HttpServer.listenWith(context.config.serverPort, context, handleWeather)
+fn defaultConfig() -> WeatherConfig
+    ? "Keeps the demo deployment settings explicit and shared by main and its request handler."
+    WeatherConfig(apiHost = "api.weather.com", apiKey = "demo-key", redisHost = "127.0.0.1", redisPort = 6379, serverPort = 8080)
+
+verify defaultConfig
+    defaultConfig() => WeatherConfig(apiHost = "api.weather.com", apiKey = "demo-key", redisHost = "127.0.0.1", redisPort = 6379, serverPort = 8080)
+
+fn handleRequest(req: HttpRequest) -> HttpResponse
+    ? "Opens the request-scoped Redis dependency, routes the request, and closes it before returning the response."
+    ! [Http.get, Tcp.connect, Tcp.readLine, Tcp.writeLine, Tcp.close]
+    config = defaultConfig()
+    match Services.Redis.connect(RedisConfig(host = config.redisHost, port = config.redisPort))
+        Result.Err(msg) -> HttpResponse(status = 502, body = jsonErr(msg), headers = {})
+        Result.Ok(conn) -> closeAfter(handleWeather(WeatherContext(config = config, conn = conn), req), conn)
+
+fn closeAfter(response: HttpResponse, conn: Tcp.Connection) -> HttpResponse
+    ? "Connection cleanup is attempted even though an HTTP response can no longer report its failure as a typed Result."
+    ! [Tcp.close]
+    match Services.Redis.disconnect(conn)
+        Result.Err(_) -> response
+        Result.Ok(_) -> response
+
+fn startServer(config: WeatherConfig) -> Result<Unit, String>
+    ? "Prints startup info and enters the program-owned HttpServer loop."
+    ! [Console.print, Http.get, Tcp.connect, Tcp.readLine, Tcp.writeLine, Tcp.listen, Tcp.poll, Tcp.accept, Tcp.readSome, Tcp.writeBytes, Tcp.close, Tcp.closeListener, Process.stopRequested]
+    Console.print("Weather service starting on port {config.serverPort}")
+    HttpServer.listen(config.serverPort, handleRequest)
 
 // Entry point
 
 fn main() -> Result<Unit, String>
-    ! [Console.print, HttpServer.listenWith, Tcp.connect]
-    config = WeatherConfig(apiHost = "api.weather.com", apiKey = "demo-key", redisHost = "127.0.0.1", redisPort = 6379, serverPort = 8080)
-
-    conn = Services.Redis.connect(RedisConfig(host = config.redisHost, port = config.redisPort))?
-    startServer(WeatherContext(config = config, conn = conn))
+    ! [Console.print, Http.get, Tcp.connect, Tcp.readLine, Tcp.writeLine, Tcp.listen, Tcp.poll, Tcp.accept, Tcp.readSome, Tcp.writeBytes, Tcp.close, Tcp.closeListener, Process.stopRequested]
+    startServer(defaultConfig())

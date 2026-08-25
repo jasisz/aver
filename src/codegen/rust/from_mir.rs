@@ -4628,8 +4628,8 @@ fn mir_borrow_arg(code: String, expr: &MirExpr, ctx: &MirEmitCtx<'_>) -> String 
 // Mirror of the HIR oracle `emit_builtin_call` / `emit_builtin_call_inner`
 // (`builtins.rs`) for the ~88 PURE builtins (Result / Option / Int /
 // Float / String / List / Map / Vector / Bool / Char). The
-// EFFECTFUL families (Args / Console / Http / HttpServer / Disk / Env /
-// Random / SelfHostRuntime / Tcp / Terminal / Time) are split off at the
+// EFFECTFUL families (Args / Console / Http / Disk / Env /
+// Random / Tcp / Terminal / Time) are split off at the
 // `Call(Builtin)` arm to `emit_mir_effectful_builtin_call` (Wave 3b,
 // below) — they are NOT handled here.
 //
@@ -5389,7 +5389,7 @@ fn emit_mir_builtin_call(
 //
 // SECURITY-SENSITIVE. Mirror of the HIR oracle `emit_builtin_call`
 // (`builtins.rs`) for the 11 EFFECTFUL families (Args / Console / Http /
-// HttpServer / Disk / Env / Random / SelfHostRuntime / Tcp / Terminal /
+// Disk / Env / Random / Tcp / Terminal /
 // Time). Wave 3a gated these out (`builtin_is_effectful` → `None` → HIR
 // fallback); Wave 3b emits them, threading `ctx.policy` +
 // `ctx.emit_replay_runtime` (reachable through `ctx.codegen`).

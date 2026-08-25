@@ -109,10 +109,25 @@ fn collect_used_effects_expr(expr: &Spanned<Expr>, fn_sigs: &FnSigMap, out: &mut
     match &expr.node {
         Expr::FnCall(callee, args) => {
             if let Some(callee_name) = dotted_name(callee)
-                && let Some((_, _, effects)) = fn_sigs.get(&callee_name)
+                && let Some((params, _, effects)) = fn_sigs.get(&callee_name)
             {
                 for effect in effects {
                     out.insert(effect.clone());
+                }
+                for (param, argument) in params.iter().zip(args.iter()) {
+                    let crate::types::Type::Fn(_, _, callback_slot_effects) = param else {
+                        continue;
+                    };
+                    if !crate::effects::forwards_callback_effects(callback_slot_effects) {
+                        continue;
+                    }
+                    if let Some(callback_name) = dotted_name(argument)
+                        && let Some((_, _, callback_effects)) = fn_sigs.get(&callback_name)
+                    {
+                        for effect in callback_effects {
+                            out.insert(effect.clone());
+                        }
+                    }
                 }
             }
             collect_used_effects_expr(callee, fn_sigs, out);
@@ -229,7 +244,7 @@ fn collect_declared_symbols(items: &[TopLevel]) -> std::collections::HashSet<Str
 
 fn collect_known_effect_symbols(fn_sigs: Option<&FnSigMap>) -> std::collections::HashSet<String> {
     let mut out = std::collections::HashSet::new();
-    for effect_namespace in ["Console", "Http", "Disk", "Tcp", "HttpServer"] {
+    for effect_namespace in ["Console", "Http", "Disk", "Tcp"] {
         out.insert(effect_namespace.to_string());
     }
     if let Some(sigs) = fn_sigs {

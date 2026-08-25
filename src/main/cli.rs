@@ -234,7 +234,7 @@ pub(super) enum Commands {
         /// `aver compile --target wasip2`: `Console.{print, error, warn,
         /// readLine}`, `Time.{unixMs, now, sleep}`, `Random.{int, float}`,
         /// `Args.get`, `Env.get`, all `Disk.*`, `Http.*`, and `Tcp.*`.
-        /// `Terminal`, `Env.set`, and `HttpServer.listenWith` are rejected
+        /// `Terminal` and `Env.set` are rejected
         /// (see docs/wasip2.md "Why X is rejected, not stubbed").
         #[arg(long = "wasip2", conflicts_with_all = ["self_host", "profile", "wasm_gc"])]
         wasip2: bool,
@@ -433,7 +433,7 @@ pub(super) enum Commands {
         /// Explicit guest execution boundary for scoped replay/policy (self-host style)
         #[arg(long)]
         guest_entry: Option<String>,
-        /// Emit extra self-host-only runtime glue (FnStore callbacks, HttpServer bridge)
+        /// Emit extra self-host-only runtime glue for the evaluator's FnStore
         #[arg(long)]
         with_self_host_support: bool,
         /// Deployment bundle pack — drops extra files (worker.js,
@@ -453,8 +453,8 @@ pub(super) enum Commands {
         /// `Fn(HttpRequest) -> HttpResponse`. Compiler exports it
         /// as `aver_http_handle`; the pack's bootstrap (worker.js
         /// for Cloudflare, etc.) routes requests through it. No
-        /// magic detection of `HttpServer.listen` in `main` — the
-        /// handler is whatever you point this flag at.
+        /// listener inference from `main` — the handler is exactly
+        /// the function named by this flag.
         #[arg(long)]
         handler: Option<String>,
         /// WASI 0.2 world the component targets. Used only by

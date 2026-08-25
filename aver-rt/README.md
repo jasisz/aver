@@ -30,7 +30,6 @@ programs and the VM-facing adapters that rely on the same semantics.
 - shared service runtimes:
   - `tcp`
   - `http` (behind the `http` feature)
-  - `http_server`
 
 ## `AverList` representation
 

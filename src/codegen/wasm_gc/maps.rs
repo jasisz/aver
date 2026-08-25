@@ -84,7 +84,7 @@ mod order;
 ///
 /// Shared with the three places that inline the same empty-map
 /// allocation instead of calling the `empty` helper: `wasip2_http`,
-/// `wasip2_http_server` and `body::builtins_wasip2`. They used to
+/// `wasip2_http_handler` and `body::builtins_wasip2`. They used to
 /// carry their own copy of the number with a comment saying it had
 /// to match this one.
 pub(super) const INITIAL_CAP: i32 = 16;
