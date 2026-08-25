@@ -71,6 +71,16 @@ pub mod aver_replay {
         }
     }
 
+    impl ReplayKey for aver_rt::AverInt {
+        fn replay_string_key(&self) -> Option<String> {
+            // Int keys retain their numeric replay shape.  Returning None
+            // selects the existing `$map` array-of-pairs encoding instead of
+            // coercing the key into a JSON object property that could not be
+            // decoded by `ReplayValue for AverInt`.
+            None
+        }
+    }
+
     impl ReplayValue for () {
         fn to_replay_json(&self) -> ReplayJson {
             ReplayJson::Null
@@ -790,6 +800,7 @@ pub mod aver_replay {
         effect_policies: BTreeMap<String, RuntimeEffectPolicy>,
         tcp_connect_timeout_secs: u64,
         tcp_request_idle_timeout_secs: u64,
+        tcp_max_connections: usize,
         independence_mode_cancel: bool,
     }
 
@@ -799,6 +810,7 @@ pub mod aver_replay {
                 effect_policies: BTreeMap::new(),
                 tcp_connect_timeout_secs: aver_rt::tcp::DEFAULT_CONNECT_TIMEOUT_SECS,
                 tcp_request_idle_timeout_secs: aver_rt::tcp::DEFAULT_REQUEST_IDLE_TIMEOUT_SECS,
+                tcp_max_connections: aver_rt::tcp::DEFAULT_MAX_CONNECTIONS,
                 independence_mode_cancel: false,
             }
         }
@@ -823,6 +835,7 @@ pub mod aver_replay {
             let mut effect_policies = BTreeMap::new();
             let mut tcp_connect_timeout_secs = aver_rt::tcp::DEFAULT_CONNECT_TIMEOUT_SECS;
             let mut tcp_request_idle_timeout_secs = aver_rt::tcp::DEFAULT_REQUEST_IDLE_TIMEOUT_SECS;
+            let mut tcp_max_connections = aver_rt::tcp::DEFAULT_MAX_CONNECTIONS;
             if let Some(toml::Value::Table(effects_table)) = table.get("effects") {
                 for (name, value) in effects_table {
                     let section = value
@@ -841,6 +854,12 @@ pub mod aver_replay {
                             section,
                             "request_idle_timeout_secs",
                             tcp_request_idle_timeout_secs,
+                        )?;
+                        tcp_max_connections = parse_positive_usize(
+                            name,
+                            section,
+                            "max_connections",
+                            tcp_max_connections,
                         )?;
                     }
                     let hosts = parse_policy_list(section, "hosts", name)?;
@@ -885,6 +904,7 @@ pub mod aver_replay {
                 effect_policies,
                 tcp_connect_timeout_secs,
                 tcp_request_idle_timeout_secs,
+                tcp_max_connections,
                 independence_mode_cancel,
             })
         }
@@ -965,7 +985,11 @@ pub mod aver_replay {
             ("Http", _) => &["hosts"],
             ("Disk", _) => &["paths"],
             ("Env", _) => &["keys"],
-            ("Tcp", "Tcp") => &["connect_timeout_secs", "request_idle_timeout_secs"],
+            ("Tcp", "Tcp") => &[
+                "connect_timeout_secs",
+                "request_idle_timeout_secs",
+                "max_connections",
+            ],
             ("Tcp", _) => &[],
             _ => &[],
         };
@@ -1002,6 +1026,24 @@ pub mod aver_replay {
         u64::try_from(seconds)
             .ok()
             .filter(|seconds| *seconds > 0)
+            .ok_or_else(|| format!("aver.toml: [effects.{effect}].{key} must be greater than zero"))
+    }
+
+    fn parse_positive_usize(
+        effect: &str,
+        section: &toml::Table,
+        key: &str,
+        default: usize,
+    ) -> Result<usize, String> {
+        let Some(value) = section.get(key) else {
+            return Ok(default);
+        };
+        let number = value.as_integer().ok_or_else(|| {
+            format!("aver.toml: [effects.{effect}].{key} must be a positive integer")
+        })?;
+        usize::try_from(number)
+            .ok()
+            .filter(|number| *number > 0)
             .ok_or_else(|| format!("aver.toml: [effects.{effect}].{key} must be greater than zero"))
     }
 
@@ -1121,9 +1163,10 @@ pub mod aver_replay {
 
     pub(crate) fn tcp_provider_settings_from_env() -> Result<aver_rt::tcp::TcpSettings, String> {
         let policy = load_runtime_policy_from_env()?.unwrap_or_default();
-        aver_rt::tcp::TcpSettings::from_secs(
+        aver_rt::tcp::TcpSettings::from_policy(
             policy.tcp_connect_timeout_secs,
             policy.tcp_request_idle_timeout_secs,
+            policy.tcp_max_connections,
         )
     }
 
@@ -1435,8 +1478,15 @@ pub mod aver_replay {
                 "Disk.writeText" => Some("Disk"),
                 "Random.float" => Some("Random"),
                 "Random.int" => Some("Random"),
+                "Tcp.accept" => Some("Tcp"),
+                "Tcp.beginConnect" => Some("Tcp"),
                 "Tcp.close" => Some("Tcp"),
+                "Tcp.closeDial" => Some("Tcp"),
+                "Tcp.closeListener" => Some("Tcp"),
                 "Tcp.connect" => Some("Tcp"),
+                "Tcp.dialled" => Some("Tcp"),
+                "Tcp.listen" => Some("Tcp"),
+                "Tcp.peerAddress" => Some("Tcp"),
                 "Tcp.ping" => Some("Tcp"),
                 "Tcp.poll" => Some("Tcp"),
                 "Tcp.readBytes" => Some("Tcp"),

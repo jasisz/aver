@@ -79,6 +79,52 @@ pub struct TcpConnection {
     pub port: i64,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
+pub struct TcpDial {
+    pub id: AverStr,
+}
+
+impl TcpDial {
+    pub fn from_id(id: String) -> Self {
+        Self {
+            id: AverStr::from(id),
+        }
+    }
+}
+
+impl AverDisplay for TcpDial {
+    fn aver_display(&self) -> String {
+        "Tcp.Dial(<resource>)".to_string()
+    }
+
+    fn aver_display_inner(&self) -> String {
+        self.aver_display()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
+pub struct TcpListener {
+    pub id: AverStr,
+}
+
+impl TcpListener {
+    pub fn from_id(id: String) -> Self {
+        Self {
+            id: AverStr::from(id),
+        }
+    }
+}
+
+impl AverDisplay for TcpListener {
+    fn aver_display(&self) -> String {
+        "Tcp.Listener(<resource>)".to_string()
+    }
+
+    fn aver_display_inner(&self) -> String {
+        self.aver_display()
+    }
+}
+
 impl TcpConnection {
     pub fn from_parts(id: String, host: String, port: i64) -> Self {
         Self {

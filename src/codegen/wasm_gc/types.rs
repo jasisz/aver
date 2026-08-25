@@ -371,11 +371,13 @@ impl TypeRegistry {
             // threads a `Tcp.Connection` through internally.
             let force_handler = handler_active
                 && (record.aver_name == "HttpRequest" || record.aver_name == "HttpResponse");
-            let force_tcp = record.aver_name == "Tcp.Connection"
-                && items.iter().any(|item| match item {
-                    TopLevel::FnDef(fd) => fd.effects.iter().any(|e| e.node.starts_with("Tcp.")),
-                    _ => false,
-                });
+            let force_tcp = matches!(
+                record.aver_name,
+                "Tcp.Connection" | "Tcp.Dial" | "Tcp.Listener"
+            ) && items.iter().any(|item| match item {
+                TopLevel::FnDef(fd) => fd.effects.iter().any(|e| e.node.starts_with("Tcp.")),
+                _ => false,
+            });
             let force = force_handler || force_tcp;
             if !force && !items_reference_name(items, record.aver_name) {
                 continue;
@@ -717,6 +719,18 @@ impl TypeRegistry {
         if needs_indexed_char_at && !option_types.contains_key("Option<String>") {
             option_types.insert("Option<String>".to_string(), next_idx);
             option_order.push("Option<String>".to_string());
+            next_idx += 1;
+        }
+        let needs_option_tcp_connection = items.iter().any(|item| match item {
+            TopLevel::FnDef(fd) => fd
+                .effects
+                .iter()
+                .any(|effect| matches!(effect.node.as_str(), "Tcp.dialled" | "Tcp.accept")),
+            _ => false,
+        });
+        if needs_option_tcp_connection && !option_types.contains_key("Option<Tcp.Connection>") {
+            option_types.insert("Option<Tcp.Connection>".to_string(), next_idx);
+            option_order.push("Option<Tcp.Connection>".to_string());
             next_idx += 1;
         }
         // Record field walk — `record GameState { lastAiResult:
@@ -1134,6 +1148,7 @@ impl TypeRegistry {
                 b"Tcp.readSome: maxBytes exceeds the read limit".as_ref(),
                 b"Tcp.poll: timeoutMs is negative".as_ref(),
                 b"Tcp.poll: timeoutMs exceeds the poll limit".as_ref(),
+                b"Tcp.poll: wasip2 supports only Tcp.Socket.Connected values".as_ref(),
                 b"tcp: read failed".as_ref(),
                 // Phase 4.7+ — port validation. VM message verbatim
                 // (`Tcp: port N is out of range (0\u{2013}65535)`)
@@ -1156,6 +1171,16 @@ impl TypeRegistry {
                 // `aver-rt::tcp::send` caps at 10 MiB; wasip2 used
                 // to grow the buffer unbounded.
                 b"tcp: response exceeds 10 MiB limit".as_ref(),
+                // #1131 Level B on wasip2: asynchronous dial/listen resource
+                // operations remain callable and fail as typed Results until
+                // the backend grows resource-pool support for them.
+                b"Tcp.beginConnect: native sockets are unavailable on this target".as_ref(),
+                b"Tcp.dialled: native sockets are unavailable on this target".as_ref(),
+                b"Tcp.listen: native socket listening is unavailable on this target".as_ref(),
+                b"Tcp.accept: native socket listening is unavailable on this target".as_ref(),
+                b"Tcp.peerAddress: native sockets are unavailable on this target".as_ref(),
+                b"Tcp.closeDial: native sockets are unavailable on this target".as_ref(),
+                b"Tcp.closeListener: native sockets are unavailable on this target".as_ref(),
             ] {
                 let bytes = msg.to_vec();
                 string_literal_idx.entry(bytes.clone()).or_insert_with(|| {
@@ -2041,6 +2066,8 @@ fn builtin_touches_int(name: &str) -> bool {
             | "Random.int"
             | "Time.unixMs"
             | "Tcp.sendBytes"
+            | "Tcp.beginConnect"
+            | "Tcp.listen"
             | "Tcp.readBytes"
             | "Tcp.readSome"
             | "Tcp.poll"
@@ -2714,6 +2741,13 @@ fn items_reference_name(items: &[crate::ast::TopLevel], name: &str) -> bool {
                     .iter()
                     .any(|e| effect_implies_builtin_record(e.node.as_str(), name))
         }
+        TopLevel::TypeDef(crate::ast::TypeDef::Product { fields, .. }) => {
+            fields.iter().any(|(_, ty)| ty.contains(name))
+        }
+        TopLevel::TypeDef(crate::ast::TypeDef::Sum { variants, .. }) => variants
+            .iter()
+            .flat_map(|variant| variant.fields.iter())
+            .any(|ty| ty.contains(name)),
         _ => false,
     })
 }

@@ -9,15 +9,21 @@ use std::str::FromStr;
 use super::super::RunWasmGcHost;
 use super::super::decode::{
     decode_result_bytes, decode_result_string, decode_result_tcp_connection, decode_result_unit,
+    expect_marker, expect_record,
 };
 use super::factories::{
     host_result_err_bytes, host_result_err_list_int, host_result_err_string,
     host_result_err_unit_string, host_result_ok_bytes, host_result_ok_list_int_refs,
-    host_result_ok_string, host_result_ok_unit, host_result_tcp_connection_err,
-    host_result_tcp_connection_ok, host_tcp_connection_id, host_tcp_connection_make,
+    host_result_ok_string, host_result_ok_unit, host_result_option_tcp_connection_err,
+    host_result_option_tcp_connection_none, host_result_option_tcp_connection_some,
+    host_result_tcp_connection_err, host_result_tcp_connection_ok, host_result_tcp_dial_err,
+    host_result_tcp_dial_ok, host_result_tcp_listener_err, host_result_tcp_listener_ok,
+    host_tcp_connection_id, host_tcp_connection_make, host_tcp_socket_kind,
 };
 use super::lm::{lm_string_from_host, lm_string_to_host, val_i64};
-use super::replay_glue::{json_err, json_ok, json_record, record_effect_if_recording, try_replay};
+use super::replay_glue::{
+    json_err, json_none, json_ok, json_record, json_some, record_effect_if_recording, try_replay,
+};
 
 pub(super) fn dispatch(
     name: &str,
@@ -73,6 +79,139 @@ pub(super) fn dispatch(
             record_effect_if_recording(caller, "Tcp.connect", args, outcome, caller_fn);
             Ok(true)
         }
+        "tcp_begin_connect" => {
+            let host = lm_string_to_host(caller, params.first())?.unwrap_or_default();
+            let port = params
+                .get(1)
+                .ok_or_else(|| wasmtime::Error::msg("Tcp.beginConnect: missing port"))?;
+            let port = decode_guest_int(caller, port, "Tcp.beginConnect: malformed port")?;
+            let args = vec![
+                aver::replay::JsonValue::String(host.clone()),
+                guest_int_json(&port),
+            ];
+            if let Some(cached) = try_replay(caller, "Tcp.beginConnect", args.clone())? {
+                results[0] = Val::AnyRef(decode_result_tcp_dial(caller, &cached)?);
+                return Ok(true);
+            }
+            let started = match port.value {
+                Some(port) => aver_rt::tcp::begin_connect_with_settings(&host, port, tcp_settings),
+                None => Err("Tcp.beginConnect: port must fit a 64-bit integer".to_string()),
+            };
+            let (result, outcome) = match started {
+                Ok(dial) => {
+                    let id = dial.id.as_ref().to_string();
+                    (
+                        host_result_tcp_dial_ok(caller, &id)?,
+                        json_ok(json_dial(&id)),
+                    )
+                }
+                Err(error) => (host_result_tcp_dial_err(caller, &error)?, json_err(&error)),
+            };
+            results[0] = Val::AnyRef(result);
+            record_effect_if_recording(caller, "Tcp.beginConnect", args, outcome, caller_fn);
+            Ok(true)
+        }
+        "tcp_dialled" => {
+            let id = socket_resource_id(
+                caller,
+                params
+                    .first()
+                    .ok_or_else(|| wasmtime::Error::msg("Tcp.dialled: missing Dial"))?,
+            )?;
+            let args = vec![json_dial(&id)];
+            if let Some(cached) = try_replay(caller, "Tcp.dialled", args.clone())? {
+                results[0] = Val::AnyRef(decode_result_option_tcp_connection(caller, &cached)?);
+                return Ok(true);
+            }
+            let dial = aver_rt::TcpDial::from_id(id);
+            let (result, outcome) =
+                option_connection_outcome(caller, aver_rt::tcp::dialled(&dial))?;
+            results[0] = Val::AnyRef(result);
+            record_effect_if_recording(caller, "Tcp.dialled", args, outcome, caller_fn);
+            Ok(true)
+        }
+        "tcp_listen" => {
+            let port = params
+                .first()
+                .ok_or_else(|| wasmtime::Error::msg("Tcp.listen: missing port"))?;
+            let port = decode_guest_int(caller, port, "Tcp.listen: malformed port")?;
+            let backlog = params
+                .get(1)
+                .ok_or_else(|| wasmtime::Error::msg("Tcp.listen: missing backlog"))?;
+            let backlog = decode_guest_int(caller, backlog, "Tcp.listen: malformed backlog")?;
+            let args = vec![guest_int_json(&port), guest_int_json(&backlog)];
+            if let Some(cached) = try_replay(caller, "Tcp.listen", args.clone())? {
+                results[0] = Val::AnyRef(decode_result_tcp_listener(caller, &cached)?);
+                return Ok(true);
+            }
+            let listened = match (port.value, backlog.value) {
+                (Some(port), Some(backlog)) => {
+                    aver_rt::tcp::listen_with_settings(port, backlog, tcp_settings)
+                }
+                (None, _) => Err(format!(
+                    "Tcp.listen: port {} exceeds the host integer range",
+                    port.display
+                )),
+                (_, None) => Err(format!(
+                    "Tcp.listen: backlog {} exceeds the host integer range",
+                    backlog.display
+                )),
+            };
+            let (result, outcome) = match listened {
+                Ok(listener) => {
+                    let id = listener.id.as_ref().to_string();
+                    (
+                        host_result_tcp_listener_ok(caller, &id)?,
+                        json_ok(json_listener(&id)),
+                    )
+                }
+                Err(error) => (
+                    host_result_tcp_listener_err(caller, &error)?,
+                    json_err(&error),
+                ),
+            };
+            results[0] = Val::AnyRef(result);
+            record_effect_if_recording(caller, "Tcp.listen", args, outcome, caller_fn);
+            Ok(true)
+        }
+        "tcp_accept" => {
+            let id = socket_resource_id(
+                caller,
+                params
+                    .first()
+                    .ok_or_else(|| wasmtime::Error::msg("Tcp.accept: missing Listener"))?,
+            )?;
+            let args = vec![json_listener(&id)];
+            if let Some(cached) = try_replay(caller, "Tcp.accept", args.clone())? {
+                results[0] = Val::AnyRef(decode_result_option_tcp_connection(caller, &cached)?);
+                return Ok(true);
+            }
+            let listener = aver_rt::TcpListener::from_id(id);
+            let (result, outcome) =
+                option_connection_outcome(caller, aver_rt::tcp::accept(&listener))?;
+            results[0] = Val::AnyRef(result);
+            record_effect_if_recording(caller, "Tcp.accept", args, outcome, caller_fn);
+            Ok(true)
+        }
+        "tcp_peer_address" => {
+            let id = host_tcp_connection_id(caller, params.first())?.unwrap_or_default();
+            let args = vec![json_connection(&id)];
+            if let Some(cached) = try_replay(caller, "Tcp.peerAddress", args.clone())? {
+                results[0] = Val::AnyRef(decode_result_string(caller, &cached)?);
+                return Ok(true);
+            }
+            let connection = aver_rt::TcpConnection::from_parts(id, String::new(), 0);
+            let (result, outcome) = match aver_rt::tcp::peer_address(&connection) {
+                Ok(address) => (
+                    host_result_ok_string(caller, &address)?,
+                    json_ok(aver::replay::JsonValue::String(address)),
+                ),
+                Err(error) => (host_result_err_string(caller, &error)?, json_err(&error)),
+            };
+            results[0] = Val::AnyRef(result);
+            record_effect_if_recording(caller, "Tcp.peerAddress", args, outcome, caller_fn);
+            Ok(true)
+        }
         "tcp_poll" => {
             let mut entries = decode_poll_entries(caller, params.first())?;
             entries.sort_by(|left, right| left.provider_order.cmp(&right.provider_order));
@@ -91,7 +230,7 @@ pub(super) fn dispatch(
                 Some(timeout) => aver_rt::tcp::poll(
                     &entries
                         .iter()
-                        .map(|entry| entry.connection.clone())
+                        .map(|entry| entry.socket.clone())
                         .collect::<Vec<_>>(),
                     timeout,
                 ),
@@ -367,6 +506,42 @@ pub(super) fn dispatch(
             record_effect_if_recording(caller, "Tcp.close", args, outcome, caller_fn);
             Ok(true)
         }
+        "tcp_close_dial" => {
+            let id = socket_resource_id(
+                caller,
+                params
+                    .first()
+                    .ok_or_else(|| wasmtime::Error::msg("Tcp.closeDial: missing Dial"))?,
+            )?;
+            let args = vec![json_dial(&id)];
+            if let Some(cached) = try_replay(caller, "Tcp.closeDial", args.clone())? {
+                results[0] = Val::AnyRef(decode_result_unit(caller, &cached)?);
+                return Ok(true);
+            }
+            let dial = aver_rt::TcpDial::from_id(id);
+            let (result, outcome) = unit_outcome(caller, aver_rt::tcp::close_dial(&dial))?;
+            results[0] = Val::AnyRef(result);
+            record_effect_if_recording(caller, "Tcp.closeDial", args, outcome, caller_fn);
+            Ok(true)
+        }
+        "tcp_close_listener" => {
+            let id = socket_resource_id(
+                caller,
+                params
+                    .first()
+                    .ok_or_else(|| wasmtime::Error::msg("Tcp.closeListener: missing Listener"))?,
+            )?;
+            let args = vec![json_listener(&id)];
+            if let Some(cached) = try_replay(caller, "Tcp.closeListener", args.clone())? {
+                results[0] = Val::AnyRef(decode_result_unit(caller, &cached)?);
+                return Ok(true);
+            }
+            let listener = aver_rt::TcpListener::from_id(id);
+            let (result, outcome) = unit_outcome(caller, aver_rt::tcp::close_listener(&listener))?;
+            results[0] = Val::AnyRef(result);
+            record_effect_if_recording(caller, "Tcp.closeListener", args, outcome, caller_fn);
+            Ok(true)
+        }
         "tcp_send" => {
             let host = lm_string_to_host(caller, params.first())?.unwrap_or_default();
             let port = params.get(1).and_then(val_i64).unwrap_or(0);
@@ -477,13 +652,226 @@ fn json_connection(id: &str) -> aver::replay::JsonValue {
     )
 }
 
+fn json_dial(id: &str) -> aver::replay::JsonValue {
+    json_record(
+        "Tcp.Dial",
+        vec![("id", aver::replay::JsonValue::String(id.to_string()))],
+    )
+}
+
+fn json_listener(id: &str) -> aver::replay::JsonValue {
+    json_record(
+        "Tcp.Listener",
+        vec![("id", aver::replay::JsonValue::String(id.to_string()))],
+    )
+}
+
+fn resource_id_from_recorded(
+    value: &aver::replay::JsonValue,
+    type_name: &str,
+) -> Result<String, wasmtime::Error> {
+    let fields = expect_record(value, type_name)?;
+    match fields.get("id") {
+        Some(aver::replay::JsonValue::String(id)) => Ok(id.clone()),
+        _ => Err(wasmtime::Error::msg(format!(
+            "replay decode {type_name}: missing resource id"
+        ))),
+    }
+}
+
+fn decode_result_tcp_dial(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    json: &aver::replay::JsonValue,
+) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
+    let (marker, value) = expect_marker(json, &["$ok", "$err"])?;
+    match marker {
+        "$ok" => host_result_tcp_dial_ok(caller, &resource_id_from_recorded(value, "Tcp.Dial")?),
+        "$err" => match value {
+            aver::replay::JsonValue::String(error) => host_result_tcp_dial_err(caller, error),
+            _ => Err(wasmtime::Error::msg(
+                "replay decode Result<Tcp.Dial,String>: Err is not String",
+            )),
+        },
+        _ => unreachable!(),
+    }
+}
+
+fn decode_result_tcp_listener(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    json: &aver::replay::JsonValue,
+) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
+    let (marker, value) = expect_marker(json, &["$ok", "$err"])?;
+    match marker {
+        "$ok" => {
+            host_result_tcp_listener_ok(caller, &resource_id_from_recorded(value, "Tcp.Listener")?)
+        }
+        "$err" => match value {
+            aver::replay::JsonValue::String(error) => host_result_tcp_listener_err(caller, error),
+            _ => Err(wasmtime::Error::msg(
+                "replay decode Result<Tcp.Listener,String>: Err is not String",
+            )),
+        },
+        _ => unreachable!(),
+    }
+}
+
+fn decode_result_option_tcp_connection(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    json: &aver::replay::JsonValue,
+) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
+    let (marker, value) = expect_marker(json, &["$ok", "$err"])?;
+    match marker {
+        "$err" => match value {
+            aver::replay::JsonValue::String(error) => {
+                host_result_option_tcp_connection_err(caller, error)
+            }
+            _ => Err(wasmtime::Error::msg(
+                "replay decode Result<Option<Tcp.Connection>,String>: Err is not String",
+            )),
+        },
+        "$ok" => {
+            let (option, value) = expect_marker(value, &["$some", "$none"])?;
+            match option {
+                "$none" => host_result_option_tcp_connection_none(caller),
+                "$some" => {
+                    let fields = expect_record(value, "Tcp.Connection")?;
+                    let id = match fields.get("id") {
+                        Some(aver::replay::JsonValue::String(id)) => id.clone(),
+                        _ => String::new(),
+                    };
+                    let host = match fields.get("host") {
+                        Some(aver::replay::JsonValue::String(host)) => host.clone(),
+                        _ => String::new(),
+                    };
+                    let port = match fields.get("port") {
+                        Some(aver::replay::JsonValue::Int(port)) => *port,
+                        _ => 0,
+                    };
+                    let id = lm_string_from_host(caller, &id)?;
+                    let host = lm_string_from_host(caller, &host)?;
+                    let connection = host_tcp_connection_make(caller, id, host, port)?;
+                    host_result_option_tcp_connection_some(caller, connection)
+                }
+                _ => unreachable!(),
+            }
+        }
+        _ => unreachable!(),
+    }
+}
+
+fn option_connection_outcome(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    outcome: Result<Option<aver_rt::TcpConnection>, String>,
+) -> Result<
+    (
+        Option<wasmtime::Rooted<wasmtime::AnyRef>>,
+        aver::replay::JsonValue,
+    ),
+    wasmtime::Error,
+> {
+    match outcome {
+        Ok(Some(connection)) => {
+            let id = lm_string_from_host(caller, connection.id.as_ref())?;
+            let host = lm_string_from_host(caller, connection.host.as_ref())?;
+            let value = host_tcp_connection_make(caller, id, host, connection.port)?;
+            let json = json_record(
+                "Tcp.Connection",
+                vec![
+                    (
+                        "id",
+                        aver::replay::JsonValue::String(connection.id.as_ref().to_string()),
+                    ),
+                    (
+                        "host",
+                        aver::replay::JsonValue::String(connection.host.as_ref().to_string()),
+                    ),
+                    ("port", aver::replay::JsonValue::Int(connection.port)),
+                ],
+            );
+            Ok((
+                host_result_option_tcp_connection_some(caller, value)?,
+                json_ok(json_some(json)),
+            ))
+        }
+        Ok(None) => Ok((
+            host_result_option_tcp_connection_none(caller)?,
+            json_ok(json_none()),
+        )),
+        Err(error) => Ok((
+            host_result_option_tcp_connection_err(caller, &error)?,
+            json_err(&error),
+        )),
+    }
+}
+
+fn unit_outcome(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    outcome: Result<(), String>,
+) -> Result<
+    (
+        Option<wasmtime::Rooted<wasmtime::AnyRef>>,
+        aver::replay::JsonValue,
+    ),
+    wasmtime::Error,
+> {
+    match outcome {
+        Ok(()) => Ok((
+            host_result_ok_unit(caller)?,
+            json_ok(aver::replay::JsonValue::Null),
+        )),
+        Err(error) => Ok((
+            host_result_err_unit_string(caller, &error)?,
+            json_err(&error),
+        )),
+    }
+}
+
+fn json_socket(variant: &str, resource: aver::replay::JsonValue) -> aver::replay::JsonValue {
+    let mut payload = std::collections::BTreeMap::new();
+    payload.insert(
+        "type".to_string(),
+        aver::replay::JsonValue::String("Tcp.Socket".to_string()),
+    );
+    payload.insert(
+        "name".to_string(),
+        aver::replay::JsonValue::String(variant.to_string()),
+    );
+    payload.insert(
+        "fields".to_string(),
+        aver::replay::JsonValue::Array(vec![resource]),
+    );
+    let mut wrapper = std::collections::BTreeMap::new();
+    wrapper.insert(
+        "$variant".to_string(),
+        aver::replay::JsonValue::Object(payload),
+    );
+    aver::replay::JsonValue::Object(wrapper)
+}
+
+fn socket_resource_id(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    value: &wasmtime::Val,
+) -> Result<String, wasmtime::Error> {
+    use wasmtime::Val;
+    let resource_ref = match value {
+        Val::AnyRef(Some(value)) => *value,
+        _ => return Err(wasmtime::Error::msg("Tcp.poll: malformed socket resource")),
+    };
+    let resource = resource_ref
+        .as_struct(&*caller)?
+        .ok_or_else(|| wasmtime::Error::msg("Tcp.poll: malformed socket resource"))?;
+    let id = resource.field(&mut *caller, 0)?;
+    lm_string_to_host(caller, Some(&id))?
+        .ok_or_else(|| wasmtime::Error::msg("Tcp.poll: malformed socket resource id"))
+}
+
 struct PollEntry {
     provider_order: Vec<u8>,
     numeric: BigInt,
     key_ref: wasmtime::Rooted<wasmtime::AnyRef>,
     key_json: aver::replay::JsonValue,
-    connection: aver_rt::TcpConnection,
-    connection_json: aver::replay::JsonValue,
+    socket: aver_rt::tcp::TcpSocket,
+    socket_json: aver::replay::JsonValue,
 }
 
 fn decode_poll_entries(
@@ -493,11 +881,11 @@ fn decode_poll_entries(
     use wasmtime::Val;
     let map_ref = match value {
         Some(Val::AnyRef(Some(value))) => *value,
-        _ => return Err(wasmtime::Error::msg("Tcp.poll: connections must be a Map")),
+        _ => return Err(wasmtime::Error::msg("Tcp.poll: sockets must be a Map")),
     };
     let map = map_ref
         .as_struct(&*caller)?
-        .ok_or_else(|| wasmtime::Error::msg("Tcp.poll: malformed connections Map"))?;
+        .ok_or_else(|| wasmtime::Error::msg("Tcp.poll: malformed sockets Map"))?;
     let capacity = match map.field(&mut *caller, 1)? {
         Val::I32(capacity) if capacity >= 0 => capacity as u32,
         _ => return Err(wasmtime::Error::msg("Tcp.poll: malformed Map capacity")),
@@ -548,20 +936,55 @@ fn decode_poll_entries(
         )
         .map_err(wasmtime::Error::msg)?;
 
-        let connection_value = values.get(&mut *caller, index)?;
-        let id = host_tcp_connection_id(caller, Some(&connection_value))?
-            .ok_or_else(|| wasmtime::Error::msg("Tcp.poll: malformed Tcp.Connection value"))?;
+        let socket_value = values.get(&mut *caller, index)?;
+        let kind = host_tcp_socket_kind(caller, Some(&socket_value))?
+            .ok_or_else(|| wasmtime::Error::msg("Tcp.poll: malformed Tcp.Socket value"))?;
+        let wrapper_ref = match socket_value {
+            Val::AnyRef(Some(value)) => value,
+            _ => return Err(wasmtime::Error::msg("Tcp.poll: malformed Tcp.Socket value")),
+        };
+        let wrapper = wrapper_ref
+            .as_struct(&*caller)?
+            .ok_or_else(|| wasmtime::Error::msg("Tcp.poll: malformed Tcp.Socket variant"))?;
+        let resource = wrapper.field(&mut *caller, 0)?;
+        let id = socket_resource_id(caller, &resource)?;
+        let (variant, socket, resource_json) = match kind {
+            0 => (
+                "Listening",
+                aver_rt::tcp::TcpSocket::Listening(aver_rt::TcpListener::from_id(id.clone())),
+                json_record(
+                    "Tcp.Listener",
+                    vec![("id", aver::replay::JsonValue::String(id.clone()))],
+                ),
+            ),
+            1 => (
+                "Dialing",
+                aver_rt::tcp::TcpSocket::Dialing(aver_rt::TcpDial::from_id(id.clone())),
+                json_record(
+                    "Tcp.Dial",
+                    vec![("id", aver::replay::JsonValue::String(id.clone()))],
+                ),
+            ),
+            2 => (
+                "Connected",
+                aver_rt::tcp::TcpSocket::Connected(aver_rt::TcpConnection::from_parts(
+                    id.clone(),
+                    String::new(),
+                    0,
+                )),
+                json_connection(&id),
+            ),
+            _ => {
+                return Err(wasmtime::Error::msg("Tcp.poll: unknown Tcp.Socket variant"));
+            }
+        };
         entries.push(PollEntry {
             provider_order,
             numeric: key.big.clone(),
             key_ref,
             key_json: guest_int_json(&key),
-            connection: aver_rt::TcpConnection {
-                id: aver_rt::AverStr::from(id.as_str()),
-                host: aver_rt::AverStr::from(""),
-                port: 0,
-            },
-            connection_json: json_connection(&id),
+            socket,
+            socket_json: json_socket(variant, resource_json),
         });
     }
     Ok(entries)
@@ -571,10 +994,7 @@ fn poll_map_json(entries: &[PollEntry]) -> aver::replay::JsonValue {
     let pairs = entries
         .iter()
         .map(|entry| {
-            aver::replay::JsonValue::Array(vec![
-                entry.key_json.clone(),
-                entry.connection_json.clone(),
-            ])
+            aver::replay::JsonValue::Array(vec![entry.key_json.clone(), entry.socket_json.clone()])
         })
         .collect();
     let mut marker = std::collections::BTreeMap::new();

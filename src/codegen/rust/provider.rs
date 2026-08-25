@@ -49,8 +49,10 @@ pub(super) fn generate_provider_runtime(
             "crate::aver_replay::tcp_provider_settings_from_env()?".to_string()
         } else if let Some(settings) = embedded_tcp_settings {
             format!(
-                "aver_rt::tcp::TcpSettings::from_secs({}, {})?",
-                settings.connect_timeout_secs, settings.request_idle_timeout_secs
+                "aver_rt::tcp::TcpSettings::from_policy({}, {}, {})?",
+                settings.connect_timeout_secs,
+                settings.request_idle_timeout_secs,
+                settings.max_connections
             )
         } else {
             "aver_rt::tcp::TcpSettings::default()".to_string()

@@ -35,8 +35,8 @@ use std::collections::HashMap;
 
 use wasm_encoder::{
     CodeSection, ConstExpr, DataCountSection, DataSection, ElementSection, Elements, EntityType,
-    ExportKind, ExportSection, Function, FunctionSection, ImportSection, Instruction, Module,
-    RefType, TableSection, TableType, TypeSection, ValType,
+    ExportKind, ExportSection, Function, FunctionSection, HeapType, ImportSection, Instruction,
+    Module, RefType, TableSection, TableType, TypeSection, ValType,
 };
 
 use super::WasmGcError;
@@ -2835,12 +2835,13 @@ pub(super) fn emit_module_with(
     // helper idx the call-site lowering for `Console.print` /
     // `Console.error` / `Console.warn` needs to emit canonical-ABI
     // calls instead of the AverBridge `aver/console_print` import.
-    // Constructed only when wasip2 imports were registered AND the
-    // bridge fn machinery is in place (the latter implies
-    // `__rt_string_to_lm` has been allocated — the call site uses
-    // it to marshal the Aver String into LM[0..len]).
+    // Constructed for every wasip2 module, even when no WIT import was
+    // registered.  Some target-native lowerings (notably explicit Level-B
+    // `Result.Err` implementations) are pure guest code and need the target
+    // marker without needing a host import.  Individual optional fields still
+    // say which WIT helpers are actually available.
     let wasip2_lowering: Option<super::body::Wasip2Lowering> =
-        if matches!(target, super::TargetMode::Wasip2) && wasip2_import_count > 0 {
+        if matches!(target, super::TargetMode::Wasip2) {
             use super::wasip2_imports::Wasip2ImportSlot;
             // Console.* needs both the bridge `__rt_string_to_lm`
             // helper and the resource-handle globals; clocks /
@@ -7529,6 +7530,19 @@ struct FactoryExports {
     /// to recover the socket-pool key when dispatching writeLine /
     /// readLine / close.
     tcp_connection_id: Option<FactorySlot>,
+    /// `__rt_tcp_socket_kind(socket) -> i32` — nominal discriminator
+    /// for the three `Tcp.Socket` variants. The host cannot infer this
+    /// from structural field shapes because `Tcp.Dial` and
+    /// `Tcp.Listener` deliberately have the same opaque representation.
+    tcp_socket_kind: Option<FactorySlot>,
+    /// Resource/result builders for the reactor lifecycle operations.
+    result_tcp_dial_string_ok: Option<FactorySlot>,
+    result_tcp_dial_string_err: Option<FactorySlot>,
+    result_tcp_listener_string_ok: Option<FactorySlot>,
+    result_tcp_listener_string_err: Option<FactorySlot>,
+    result_option_tcp_connection_string_some: Option<FactorySlot>,
+    result_option_tcp_connection_string_none: Option<FactorySlot>,
+    result_option_tcp_connection_string_err: Option<FactorySlot>,
     /// `__rt_result_tcp_connection_string_ok(c)` /
     /// `__rt_result_tcp_connection_string_err(e)` — emitted when
     /// `Tcp.connect` is registered.
@@ -7550,6 +7564,47 @@ struct FactoryExports {
 struct FactorySlot {
     type_idx: u32,
     fn_idx: u32,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn allocate_resource_result_factories(
+    types: &mut TypeSection,
+    next_type_idx: &mut u32,
+    next_fn_idx: &mut u32,
+    registry: &TypeRegistry,
+    resource: &str,
+    result: &str,
+    ok_slot: &mut Option<FactorySlot>,
+    err_slot: &mut Option<FactorySlot>,
+) -> Result<(), WasmGcError> {
+    let resource_idx = registry
+        .record_type_idx(resource)
+        .ok_or_else(|| WasmGcError::Validation(format!("factory requires {resource}")))?;
+    let result_idx = registry
+        .result_type_idx(result)
+        .ok_or_else(|| WasmGcError::Validation(format!("factory requires {result}")))?;
+    let string_idx = registry
+        .string_array_type_idx
+        .ok_or_else(|| WasmGcError::Validation(format!("factory for {result} requires String")))?;
+    let result_ref = ref_null(result_idx);
+    // The resource records are one opaque String token. The Ok helper accepts
+    // that token and constructs both the resource and its Result wrapper.
+    types.ty().function([ref_null(string_idx)], [result_ref]);
+    *ok_slot = Some(FactorySlot {
+        type_idx: *next_type_idx,
+        fn_idx: *next_fn_idx,
+    });
+    *next_type_idx += 1;
+    *next_fn_idx += 1;
+    types.ty().function([ref_null(string_idx)], [result_ref]);
+    *err_slot = Some(FactorySlot {
+        type_idx: *next_type_idx,
+        fn_idx: *next_fn_idx,
+    });
+    *next_type_idx += 1;
+    *next_fn_idx += 1;
+    let _ = resource_idx;
+    Ok(())
 }
 
 fn allocate_factory_exports(
@@ -7676,6 +7731,7 @@ fn allocate_factory_exports(
             EffectName::ConsoleReadLine
                 | EffectName::DiskReadText
                 | EffectName::DiskReadBytes
+                | EffectName::TcpPeerAddress
                 | EffectName::TcpReadLine
                 | EffectName::TcpSend
         )
@@ -7767,6 +7823,8 @@ fn allocate_factory_exports(
                 | EffectName::TcpWriteLine
                 | EffectName::TcpWriteBytes
                 | EffectName::TcpClose
+                | EffectName::TcpCloseDial
+                | EffectName::TcpCloseListener
                 | EffectName::TcpPing
                 | EffectName::EnvSet
                 | EffectName::TimeSleep
@@ -7824,6 +7882,9 @@ fn allocate_factory_exports(
         matches!(
             e,
             EffectName::TcpConnect
+                | EffectName::TcpDialled
+                | EffectName::TcpAccept
+                | EffectName::TcpPeerAddress
                 | EffectName::TcpWriteLine
                 | EffectName::TcpWriteBytes
                 | EffectName::TcpReadLine
@@ -7857,6 +7918,108 @@ fn allocate_factory_exports(
 
         types.ty().function([rec_ref], [s_ref]);
         fx.tcp_connection_id = Some(FactorySlot {
+            type_idx: *next_type_idx,
+            fn_idx: *next_fn_idx,
+        });
+        *next_type_idx += 1;
+        *next_fn_idx += 1;
+    }
+    if effect_registry.iter().any(|e| e == EffectName::TcpPoll) {
+        let root_idx = registry
+            .sum_root_type_idx("Tcp.Socket")
+            .ok_or(WasmGcError::Validation(
+                "Tcp.poll requires the Tcp.Socket sum slot".into(),
+            ))?;
+        for variant in ["Listening", "Dialing", "Connected"] {
+            registry
+                .variant_in("Tcp.Socket", variant)
+                .or_else(|| registry.variant_in("Socket", variant))
+                .ok_or_else(|| {
+                    WasmGcError::Validation(format!(
+                        "Tcp.poll requires the Tcp.Socket.{variant} variant slot"
+                    ))
+                })?;
+        }
+        types.ty().function([ref_null(root_idx)], [ValType::I32]);
+        fx.tcp_socket_kind = Some(FactorySlot {
+            type_idx: *next_type_idx,
+            fn_idx: *next_fn_idx,
+        });
+        *next_type_idx += 1;
+        *next_fn_idx += 1;
+    }
+    if effect_registry
+        .iter()
+        .any(|e| e == EffectName::TcpBeginConnect)
+    {
+        allocate_resource_result_factories(
+            types,
+            next_type_idx,
+            next_fn_idx,
+            registry,
+            "Tcp.Dial",
+            "Result<Tcp.Dial,String>",
+            &mut fx.result_tcp_dial_string_ok,
+            &mut fx.result_tcp_dial_string_err,
+        )?;
+    }
+    if effect_registry.iter().any(|e| e == EffectName::TcpListen) {
+        allocate_resource_result_factories(
+            types,
+            next_type_idx,
+            next_fn_idx,
+            registry,
+            "Tcp.Listener",
+            "Result<Tcp.Listener,String>",
+            &mut fx.result_tcp_listener_string_ok,
+            &mut fx.result_tcp_listener_string_err,
+        )?;
+    }
+    if effect_registry
+        .iter()
+        .any(|e| matches!(e, EffectName::TcpDialled | EffectName::TcpAccept))
+    {
+        let conn_idx =
+            registry
+                .record_type_idx("Tcp.Connection")
+                .ok_or(WasmGcError::Validation(
+                    "Tcp.dialled/accept factories require Tcp.Connection".into(),
+                ))?;
+        let option_idx =
+            registry
+                .option_type_idx("Option<Tcp.Connection>")
+                .ok_or(WasmGcError::Validation(
+                    "Tcp.dialled/accept factories require Option<Tcp.Connection>".into(),
+                ))?;
+        let result_idx = registry
+            .result_type_idx("Result<Option<Tcp.Connection>,String>")
+            .ok_or(WasmGcError::Validation(
+                "Tcp.dialled/accept factories require Result<Option<Tcp.Connection>,String>".into(),
+            ))?;
+        let string_idx = registry
+            .string_array_type_idx
+            .ok_or(WasmGcError::Validation(
+                "Tcp.dialled/accept factories require String".into(),
+            ))?;
+        let conn_ref = ref_null(conn_idx);
+        let result_ref = ref_null(result_idx);
+        types.ty().function([conn_ref], [result_ref]);
+        fx.result_option_tcp_connection_string_some = Some(FactorySlot {
+            type_idx: *next_type_idx,
+            fn_idx: *next_fn_idx,
+        });
+        *next_type_idx += 1;
+        *next_fn_idx += 1;
+        types.ty().function([], [result_ref]);
+        fx.result_option_tcp_connection_string_none = Some(FactorySlot {
+            type_idx: *next_type_idx,
+            fn_idx: *next_fn_idx,
+        });
+        *next_type_idx += 1;
+        *next_fn_idx += 1;
+        let _ = option_idx;
+        types.ty().function([ref_null(string_idx)], [result_ref]);
+        fx.result_option_tcp_connection_string_err = Some(FactorySlot {
             type_idx: *next_type_idx,
             fn_idx: *next_fn_idx,
         });
@@ -8306,6 +8469,54 @@ impl FactoryExports {
         if let Some(s) = self.tcp_connection_id {
             exports.export("__rt_tcp_connection_id", ExportKind::Func, s.fn_idx);
         }
+        if let Some(s) = self.tcp_socket_kind {
+            exports.export("__rt_tcp_socket_kind", ExportKind::Func, s.fn_idx);
+        }
+        if let Some(s) = self.result_tcp_dial_string_ok {
+            exports.export("__rt_result_tcp_dial_string_ok", ExportKind::Func, s.fn_idx);
+        }
+        if let Some(s) = self.result_tcp_dial_string_err {
+            exports.export(
+                "__rt_result_tcp_dial_string_err",
+                ExportKind::Func,
+                s.fn_idx,
+            );
+        }
+        if let Some(s) = self.result_tcp_listener_string_ok {
+            exports.export(
+                "__rt_result_tcp_listener_string_ok",
+                ExportKind::Func,
+                s.fn_idx,
+            );
+        }
+        if let Some(s) = self.result_tcp_listener_string_err {
+            exports.export(
+                "__rt_result_tcp_listener_string_err",
+                ExportKind::Func,
+                s.fn_idx,
+            );
+        }
+        if let Some(s) = self.result_option_tcp_connection_string_some {
+            exports.export(
+                "__rt_result_option_tcp_connection_string_some",
+                ExportKind::Func,
+                s.fn_idx,
+            );
+        }
+        if let Some(s) = self.result_option_tcp_connection_string_none {
+            exports.export(
+                "__rt_result_option_tcp_connection_string_none",
+                ExportKind::Func,
+                s.fn_idx,
+            );
+        }
+        if let Some(s) = self.result_option_tcp_connection_string_err {
+            exports.export(
+                "__rt_result_option_tcp_connection_string_err",
+                ExportKind::Func,
+                s.fn_idx,
+            );
+        }
         if let Some(s) = self.result_tcp_connection_string_ok {
             exports.export(
                 "__rt_result_tcp_connection_string_ok",
@@ -8396,6 +8607,52 @@ impl FactoryExports {
         if self.tcp_connection_id.is_some() {
             codes.function(&emit_factory_tcp_connection_id(registry)?);
         }
+        if self.tcp_socket_kind.is_some() {
+            codes.function(&emit_factory_tcp_socket_kind(registry)?);
+        }
+        if self.result_tcp_dial_string_ok.is_some() {
+            codes.function(&emit_factory_result_resource_string_ok(
+                registry,
+                "Tcp.Dial",
+                "Result<Tcp.Dial,String>",
+            )?);
+        }
+        if self.result_tcp_dial_string_err.is_some() {
+            codes.function(&emit_factory_result_resource_string_err(
+                registry,
+                "Tcp.Dial",
+                "Result<Tcp.Dial,String>",
+            )?);
+        }
+        if self.result_tcp_listener_string_ok.is_some() {
+            codes.function(&emit_factory_result_resource_string_ok(
+                registry,
+                "Tcp.Listener",
+                "Result<Tcp.Listener,String>",
+            )?);
+        }
+        if self.result_tcp_listener_string_err.is_some() {
+            codes.function(&emit_factory_result_resource_string_err(
+                registry,
+                "Tcp.Listener",
+                "Result<Tcp.Listener,String>",
+            )?);
+        }
+        if self.result_option_tcp_connection_string_some.is_some() {
+            codes.function(&emit_factory_result_option_tcp_connection_string_some(
+                registry,
+            )?);
+        }
+        if self.result_option_tcp_connection_string_none.is_some() {
+            codes.function(&emit_factory_result_option_tcp_connection_string_none(
+                registry,
+            )?);
+        }
+        if self.result_option_tcp_connection_string_err.is_some() {
+            codes.function(&emit_factory_result_option_tcp_connection_string_err(
+                registry,
+            )?);
+        }
         if self.result_tcp_connection_string_ok.is_some() {
             codes.function(&emit_factory_result_tcp_connection_string_ok(registry)?);
         }
@@ -8467,6 +8724,14 @@ impl FactoryExports {
             self.result_unit_string_err,
             self.tcp_connection_make,
             self.tcp_connection_id,
+            self.tcp_socket_kind,
+            self.result_tcp_dial_string_ok,
+            self.result_tcp_dial_string_err,
+            self.result_tcp_listener_string_ok,
+            self.result_tcp_listener_string_err,
+            self.result_option_tcp_connection_string_some,
+            self.result_option_tcp_connection_string_none,
+            self.result_option_tcp_connection_string_err,
             self.result_tcp_connection_string_ok,
             self.result_tcp_connection_string_err,
             self.http_response_make,
@@ -8986,6 +9251,159 @@ fn emit_factory_tcp_connection_id(
         struct_type_index: rec_idx,
         field_index: 0,
     });
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+/// Return the nominal `Tcp.Socket` variant tag used by the host boundary:
+/// Listening=0, Dialing=1, Connected=2, and -1 for null/invalid input.
+fn emit_factory_tcp_socket_kind(
+    registry: &TypeRegistry,
+) -> Result<wasm_encoder::Function, WasmGcError> {
+    use wasm_encoder::{BlockType, HeapType};
+
+    let variant_idx = |name: &str| {
+        registry
+            .variant_in("Tcp.Socket", name)
+            .or_else(|| registry.variant_in("Socket", name))
+            .map(|info| info.type_idx)
+            .expect("checked at allocation")
+    };
+    let listening = variant_idx("Listening");
+    let dialing = variant_idx("Dialing");
+    let connected = variant_idx("Connected");
+
+    let mut f = Function::new([]);
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::RefTestNonNull(HeapType::Concrete(listening)));
+    f.instruction(&Instruction::If(BlockType::Result(ValType::I32)));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::Else);
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::RefTestNonNull(HeapType::Concrete(dialing)));
+    f.instruction(&Instruction::If(BlockType::Result(ValType::I32)));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::Else);
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::RefTestNonNull(HeapType::Concrete(connected)));
+    f.instruction(&Instruction::If(BlockType::Result(ValType::I32)));
+    f.instruction(&Instruction::I32Const(2));
+    f.instruction(&Instruction::Else);
+    f.instruction(&Instruction::I32Const(-1));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+fn emit_factory_result_resource_string_ok(
+    registry: &TypeRegistry,
+    resource: &str,
+    result: &str,
+) -> Result<wasm_encoder::Function, WasmGcError> {
+    let resource_idx = registry
+        .record_type_idx(resource)
+        .expect("checked at allocation");
+    let result_idx = registry
+        .result_type_idx(result)
+        .expect("checked at allocation");
+    let string_idx = registry
+        .string_array_type_idx
+        .expect("checked at allocation");
+    let mut f = Function::new([]);
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructNew(resource_idx));
+    f.instruction(&Instruction::RefNull(HeapType::Concrete(string_idx)));
+    f.instruction(&Instruction::StructNew(result_idx));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+fn emit_factory_result_resource_string_err(
+    registry: &TypeRegistry,
+    resource: &str,
+    result: &str,
+) -> Result<wasm_encoder::Function, WasmGcError> {
+    let resource_idx = registry
+        .record_type_idx(resource)
+        .expect("checked at allocation");
+    let result_idx = registry
+        .result_type_idx(result)
+        .expect("checked at allocation");
+    let mut f = Function::new([]);
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::RefNull(HeapType::Concrete(resource_idx)));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructNew(result_idx));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+fn emit_factory_result_option_tcp_connection_string_some(
+    registry: &TypeRegistry,
+) -> Result<wasm_encoder::Function, WasmGcError> {
+    let option_idx = registry
+        .option_type_idx("Option<Tcp.Connection>")
+        .expect("checked at allocation");
+    let result_idx = registry
+        .result_type_idx("Result<Option<Tcp.Connection>,String>")
+        .expect("checked at allocation");
+    let string_idx = registry
+        .string_array_type_idx
+        .expect("checked at allocation");
+    let mut f = Function::new([]);
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructNew(option_idx));
+    f.instruction(&Instruction::RefNull(HeapType::Concrete(string_idx)));
+    f.instruction(&Instruction::StructNew(result_idx));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+fn emit_factory_result_option_tcp_connection_string_none(
+    registry: &TypeRegistry,
+) -> Result<wasm_encoder::Function, WasmGcError> {
+    let conn_idx = registry
+        .record_type_idx("Tcp.Connection")
+        .expect("checked at allocation");
+    let option_idx = registry
+        .option_type_idx("Option<Tcp.Connection>")
+        .expect("checked at allocation");
+    let result_idx = registry
+        .result_type_idx("Result<Option<Tcp.Connection>,String>")
+        .expect("checked at allocation");
+    let string_idx = registry
+        .string_array_type_idx
+        .expect("checked at allocation");
+    let mut f = Function::new([]);
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::RefNull(HeapType::Concrete(conn_idx)));
+    f.instruction(&Instruction::StructNew(option_idx));
+    f.instruction(&Instruction::RefNull(HeapType::Concrete(string_idx)));
+    f.instruction(&Instruction::StructNew(result_idx));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+fn emit_factory_result_option_tcp_connection_string_err(
+    registry: &TypeRegistry,
+) -> Result<wasm_encoder::Function, WasmGcError> {
+    let option_idx = registry
+        .option_type_idx("Option<Tcp.Connection>")
+        .expect("checked at allocation");
+    let result_idx = registry
+        .result_type_idx("Result<Option<Tcp.Connection>,String>")
+        .expect("checked at allocation");
+    let mut f = Function::new([]);
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::RefNull(HeapType::Concrete(option_idx)));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructNew(result_idx));
     f.instruction(&Instruction::End);
     Ok(f)
 }

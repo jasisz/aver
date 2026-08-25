@@ -96,7 +96,7 @@ pub(crate) fn mir_expr_coverable(expr: &Spanned<MirExpr>) -> bool {
             // differential test is the real gate.
             matches!(
                 spanned_call.node.callee,
-                MirCallee::Fn(_) | MirCallee::LocalSlot { .. }
+                MirCallee::Fn(_) | MirCallee::Builtin(_) | MirCallee::LocalSlot { .. }
             ) && spanned_call.node.args.iter().all(mir_expr_coverable)
         }
         MirExpr::TailCall(spanned_tc) => spanned_tc.node.args.iter().all(mir_expr_coverable),

@@ -523,7 +523,7 @@ pub(super) struct Wasip2Lowering {
     pub(super) tcp_read_bytes_fn_idx: Option<u32>,
     /// `__rt_tcp_read_some(conn, maxBytes) -> ref Result<Bytes, String>`.
     pub(super) tcp_read_some_fn_idx: Option<u32>,
-    /// `__rt_tcp_poll(Map<Int, Connection>, timeoutMs) ->
+    /// `__rt_tcp_poll(Map<Int, Socket>, timeoutMs) ->
     /// ref Result<List<Int>, String>`.
     pub(super) tcp_poll_fn_idx: Option<u32>,
     /// Phase 4.5a (0.20) — `__rt_tcp_send(host, port, data) ->

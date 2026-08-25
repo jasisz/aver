@@ -726,17 +726,24 @@ fn allocate_poll(
     let result_idx = registry.result_type_idx("Result<List<Int>,String>")?;
     let list_int_idx = registry.list_type_idx("List<Int>")?;
     let int_idx = registry.aint_struct_idx?;
-    let map = registry.map_slots("Map<Int,Tcp.Connection>")?;
+    let map = registry.map_slots("Map<Int,Tcp.Socket>")?;
     let key_box_idx = registry.primitive_key_box_idx("Int")?;
+    let socket_idx = registry.sum_root_type_idx("Tcp.Socket")?;
+    let connected_idx = registry
+        .variant_in("Tcp.Socket", "Connected")
+        .or_else(|| registry.variant_in("Socket", "Connected"))?
+        .type_idx;
     let connection_idx = registry.record_type_idx("Tcp.Connection")?;
     let slot_idx = registry.tcp_slot_type_idx?;
     let pool_idx = registry.tcp_pool_type_idx?;
     let negative = b"Tcp.poll: timeoutMs is negative";
     let poll_limit = b"Tcp.poll: timeoutMs exceeds the poll limit";
     let unknown = b"tcp: unknown connection";
+    let unsupported_socket = b"Tcp.poll: wasip2 supports only Tcp.Socket.Connected values";
     let negative_segment_idx = registry.string_literal_segment(negative)?;
     let poll_limit_segment_idx = registry.string_literal_segment(poll_limit)?;
     let unknown_segment_idx = registry.string_literal_segment(unknown)?;
+    let unsupported_socket_segment_idx = registry.string_literal_segment(unsupported_socket)?;
     for slot in [
         Wasip2ImportSlot::InputStreamSubscribe,
         Wasip2ImportSlot::ClocksMonotonicSubscribeDuration,
@@ -775,6 +782,8 @@ fn allocate_poll(
         map_keys_array_type_idx: map.keys_array,
         map_values_array_type_idx: map.values_array,
         int_key_box_type_idx: key_box_idx,
+        tcp_socket_type_idx: socket_idx,
+        tcp_connected_variant_type_idx: connected_idx,
         tcp_connection_type_idx: connection_idx,
         tcp_slot_type_idx: slot_idx,
         tcp_pool_type_idx: pool_idx,
@@ -784,6 +793,8 @@ fn allocate_poll(
         poll_limit_len: poll_limit.len() as u32,
         unknown_segment_idx,
         unknown_len: unknown.len() as u32,
+        unsupported_socket_segment_idx,
+        unsupported_socket_len: unsupported_socket.len() as u32,
     })
 }
 

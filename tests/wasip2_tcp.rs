@@ -560,9 +560,9 @@ fn report(c: Tcp.Connection, ready: List<Int>, chunk: Bytes) -> Unit
     Tcp.close(c)
     Console.print("{{ready == [1208925819614629174706176]}}:{{Bytes.octets(chunk) == [249, 190, 180, 217]}}")
 
-fn pollAndRead(c: Tcp.Connection, peers: Map<Int, Tcp.Connection>) -> Unit
+fn pollAndRead(c: Tcp.Connection, sockets: Map<Int, Tcp.Socket>) -> Unit
     ! [Tcp.poll, Tcp.readSome, Tcp.close, Console.print]
-    match Tcp.poll(peers, 1000)
+    match Tcp.poll(sockets, 1000)
         Result.Err(e) -> Console.print("poll err: {{e}}")
         Result.Ok(ready) -> match Tcp.readSome(c, 64)
             Result.Err(e) -> Console.print("read err: {{e}}")
@@ -572,7 +572,7 @@ fn main() -> Unit
     ! [Tcp.connect, Tcp.poll, Tcp.readSome, Tcp.close, Console.print]
     match Tcp.connect("127.0.0.1", {port})
         Result.Err(e) -> Console.print("connect err: {{e}}")
-        Result.Ok(c) -> pollAndRead(c, {{1208925819614629174706176 => c}})
+        Result.Ok(c) -> pollAndRead(c, {{1208925819614629174706176 => Tcp.Socket.Connected(c)}})
 "#
     );
     let fixture = write_fixture(&dir, "poll_read_some.av", &src);

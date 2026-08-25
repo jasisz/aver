@@ -166,10 +166,12 @@ Boundary notes:
 - Mutating `Disk.*` calls are modeled as operation/result effects: the requested
   operation is emitted to the trace, and success/failure comes from the oracle.
   Oracle does not assert persistent filesystem state after the operation.
-- `Tcp.connect` / `readLine` / `writeLine` / `close` are session methods using an opaque
-  `Tcp.Connection` token. Stubs are stateless: a `writeLine` does not affect what a
-  later `readLine` returns. If the test wants request/response symmetry, encode it
-  explicitly in the stub.
+- Tcp sessions use distinct opaque `Tcp.Connection`, `Tcp.Dial`, and
+  `Tcp.Listener` tokens, wrapped by the represented `Tcp.Socket` sum only when
+  one readiness map needs to carry every state. Stubs are stateless: a
+  `writeLine` does not affect what a later `readLine` returns, and hidden kernel
+  readiness is not invented as Oracle state. If the test wants
+  request/response symmetry, encode it explicitly in the stub.
 - Terminal drawing and modal calls are output trace events. Mode (raw / cooked) and
   color state are not modeled — assert the sequence of trace events instead.
 
@@ -420,10 +422,14 @@ user already wrote is not re-run.
 | `Terminal.readKey` | `normal`, `no_input` |
 | `Http.{get,head,delete,post,put,patch}` | `normal_ok`, `always_err` |
 | `Disk.{writeText,appendText,writeBytes,appendBytes,delete,deleteDir,makeDir}` | `normal_ok`, `always_err` |
-| `Tcp.{send,sendBytes,ping,readLine,writeLine,close}` | `normal_ok`, `always_err` |
+| `Tcp.{send,sendBytes,ping,readLine,writeLine,close,closeDial,closeListener,peerAddress}` | `normal_ok`, `always_err` |
 | `Tcp.readBytes` | `normal_ok`, `short_read`, `always_err` |
 | `Tcp.writeBytes` | `normal_ok`, `always_err` |
 | `Tcp.connect` | `normal_ok` (fresh connection resource), `always_err` |
+| `Tcp.beginConnect` / `Tcp.listen` | `normal_ok` (fresh resource), `always_err` |
+| `Tcp.dialled` | `connected`, `still_pending`, `refused` |
+| `Tcp.accept` | `nothing_pending`, `once_then_nothing`, `always_err` |
+| `Tcp.poll` | `none_ready`, `everything_ready`, `always_err` |
 
 User-given pins are **not** a pre-empt: hostile profiles always layer
 on top, since the user's stub is itself an assumption. The runtime stub

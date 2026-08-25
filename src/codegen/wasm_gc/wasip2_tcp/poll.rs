@@ -3,8 +3,10 @@
 //! Each live connection's input stream is subscribed to a `pollable`; a
 //! duration pollable occupies the final slot and represents timeout. The
 //! returned dense poll indices are mapped back to the caller's `Map<Int,
-//! Tcp.Connection>` keys, sorted with Aver's arbitrary-precision comparator,
-//! and materialised without narrowing the IDs.
+//! Tcp.Socket>` keys, sorted with Aver's arbitrary-precision comparator, and
+//! materialised without narrowing the IDs. WASI currently supports only the
+//! `Connected` state; listener and non-blocking dial resources remain an
+//! explicit Level-B error on this target.
 
 use wasm_encoder::{Function, Instruction, ValType};
 
@@ -21,6 +23,8 @@ pub(in crate::codegen::wasm_gc) struct TcpPollIndices {
     pub map_keys_array_type_idx: u32,
     pub map_values_array_type_idx: u32,
     pub int_key_box_type_idx: u32,
+    pub tcp_socket_type_idx: u32,
+    pub tcp_connected_variant_type_idx: u32,
     pub tcp_connection_type_idx: u32,
     pub tcp_slot_type_idx: u32,
     pub tcp_pool_type_idx: u32,
@@ -30,6 +34,8 @@ pub(in crate::codegen::wasm_gc) struct TcpPollIndices {
     pub poll_limit_len: u32,
     pub unknown_segment_idx: u32,
     pub unknown_len: u32,
+    pub unsupported_socket_segment_idx: u32,
+    pub unsupported_socket_len: u32,
 }
 
 pub(in crate::codegen::wasm_gc) struct TcpPollHelperFns {
@@ -119,6 +125,10 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_poll(
         nullable: true,
         heap_type: HeapType::Concrete(indices.tcp_connection_type_idx),
     });
+    let socket_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(indices.tcp_socket_type_idx),
+    });
     let key_box_ref = ValType::Ref(RefType {
         nullable: true,
         heap_type: HeapType::Concrete(indices.int_key_box_type_idx),
@@ -128,7 +138,7 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_poll(
         heap_type: HeapType::Concrete(indices.list_int_type_idx),
     });
     // Params 0=Map, 1=timeout. Locals 2..23 are i32 scratch/cursors;
-    // 24..29 are typed GC refs.
+    // 24..30 are typed GC refs.
     let mut function = Function::new(vec![
         (22, ValType::I32),
         (1, slot_ref),
@@ -137,6 +147,7 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_poll(
         (1, connection_ref),
         (1, key_box_ref),
         (1, list_ref),
+        (1, socket_ref),
     ]);
     let saved_alloc = 2;
     let capacity = 3;
@@ -166,6 +177,7 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_poll(
     let connection = 27;
     let key_box = 28;
     let list = 29;
+    let socket = 30;
     let mem4 = MemArg {
         offset: 0,
         align: 2,
@@ -308,6 +320,27 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_poll(
     function.instruction(&Instruction::LocalGet(values));
     function.instruction(&Instruction::LocalGet(map_cursor));
     function.instruction(&Instruction::ArrayGet(indices.map_values_array_type_idx));
+    function.instruction(&Instruction::LocalSet(socket));
+    function.instruction(&Instruction::LocalGet(socket));
+    function.instruction(&Instruction::RefTestNonNull(HeapType::Concrete(
+        indices.tcp_connected_variant_type_idx,
+    )));
+    function.instruction(&Instruction::I32Eqz);
+    function.instruction(&Instruction::If(BlockType::Empty));
+    emit_error(
+        &mut function,
+        indices.unsupported_socket_segment_idx,
+        indices.unsupported_socket_len,
+    );
+    function.instruction(&Instruction::End);
+    function.instruction(&Instruction::LocalGet(socket));
+    function.instruction(&Instruction::RefCastNonNull(HeapType::Concrete(
+        indices.tcp_connected_variant_type_idx,
+    )));
+    function.instruction(&Instruction::StructGet {
+        struct_type_index: indices.tcp_connected_variant_type_idx,
+        field_index: 0,
+    });
     function.instruction(&Instruction::LocalSet(connection));
     function.instruction(&Instruction::LocalGet(connection));
     function.instruction(&Instruction::StructGet {

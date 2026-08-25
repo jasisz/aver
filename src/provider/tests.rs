@@ -972,8 +972,15 @@ fn target_manifest_is_total_and_standard_capabilities_are_provided_everywhere() 
         (
             "Tcp",
             &[
+                "Tcp.accept",
+                "Tcp.beginConnect",
                 "Tcp.close",
+                "Tcp.closeDial",
+                "Tcp.closeListener",
                 "Tcp.connect",
+                "Tcp.dialled",
+                "Tcp.listen",
+                "Tcp.peerAddress",
                 "Tcp.ping",
                 "Tcp.poll",
                 "Tcp.readBytes",

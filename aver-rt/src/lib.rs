@@ -41,7 +41,8 @@ pub use runtime::{
     write_bytes, write_text,
 };
 pub use service_types::{
-    BranchPath, HttpHeaders, HttpRequest, HttpResponse, TcpConnection, TerminalSize,
+    BranchPath, HttpHeaders, HttpRequest, HttpResponse, TcpConnection, TcpDial, TcpListener,
+    TerminalSize,
 };
 pub use strcursor::{
     str_code1, str_code1_lower, str_code1_upper, str_cursor_code, str_cursor_end, str_cursor_head,

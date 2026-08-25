@@ -6875,7 +6875,7 @@ fn cmd_compile_wasip2(
                 process::exit(1);
             }
         };
-        if let Some(warning) = crate::cli_entry::shared::wasip2_tcp_timeout_warning(
+        if let Some(warning) = crate::cli_entry::shared::wasip2_tcp_policy_warning(
             "--target wasip2",
             &required,
             project_config.as_ref(),

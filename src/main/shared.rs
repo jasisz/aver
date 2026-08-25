@@ -54,14 +54,16 @@ pub(super) fn apply_runtime_policy_to_vm(
     Ok(())
 }
 
-/// Explain when wasip2 cannot preserve Aver's Tcp deployment deadlines.
+/// Explain when wasip2 cannot preserve Aver's Tcp deployment policy.
 ///
 /// Persistent-session reads and writes deliberately have no Aver deadline, so
 /// using only those operations must not produce this warning. Socket opening
 /// uses the connect deadline; the one-shot send operations additionally use
-/// the request-idle deadline.
+/// the request-idle deadline. Its connected-socket pool is currently fixed at
+/// the native default, so a non-default `max_connections` also needs a loud
+/// warning when the program creates pooled connections.
 #[cfg(feature = "wasip2")]
-pub(super) fn wasip2_tcp_timeout_warning(
+pub(super) fn wasip2_tcp_policy_warning(
     target: &str,
     required: &BTreeSet<String>,
     config: Option<&aver::config::ProjectConfig>,
@@ -72,15 +74,14 @@ pub(super) fn wasip2_tcp_timeout_warning(
             "Tcp.connect" | "Tcp.ping" | "Tcp.send" | "Tcp.sendBytes"
         )
     });
-    if !uses_connect_deadline {
-        return None;
-    }
-
     let uses_request_idle_deadline = required
         .iter()
         .any(|operation| matches!(operation.as_str(), "Tcp.send" | "Tcp.sendBytes"));
     let settings = config.map(|config| config.tcp_settings).unwrap_or_default();
-    let source = if config.is_some_and(|config| config.tcp_settings_configured) {
+    let defaults = aver::config::TcpEffectSettings::default();
+    let source = if settings.connect_timeout_secs != defaults.connect_timeout_secs
+        || settings.request_idle_timeout_secs != defaults.request_idle_timeout_secs
+    {
         "configured"
     } else {
         "default"
@@ -94,10 +95,23 @@ pub(super) fn wasip2_tcp_timeout_warning(
         format!("connect {} s", settings.connect_timeout_secs)
     };
 
-    Some(format!(
-        "warning[tcp-timeout-unsupported]: `{target}` cannot honour Aver's {source} Tcp timeout \
-         policy ({deadlines}); the component uses the host's WASI socket timing instead"
-    ))
+    let mut warnings = Vec::new();
+    if uses_connect_deadline {
+        warnings.push(format!(
+            "warning[tcp-timeout-unsupported]: `{target}` cannot honour Aver's {source} Tcp \
+             timeout policy ({deadlines}); the component uses the host's WASI socket timing \
+             instead"
+        ));
+    }
+    if required.contains("Tcp.connect") && settings.max_connections != defaults.max_connections {
+        warnings.push(format!(
+            "warning[tcp-connection-limit-unsupported]: `{target}` cannot honour Aver's \
+             configured Tcp connection limit ({}); this backend currently uses its fixed \
+             {}-slot connected-socket pool",
+            settings.max_connections, defaults.max_connections
+        ));
+    }
+    (!warnings.is_empty()).then(|| warnings.join("\n"))
 }
 
 pub(super) fn print_type_errors(errors: &[TypeError]) {
@@ -173,7 +187,7 @@ mod tests {
     #[test]
     fn wasip2_warns_about_the_default_connect_deadline() {
         let warning =
-            wasip2_tcp_timeout_warning("--target wasip2", &required(&["Tcp.connect"]), None)
+            wasip2_tcp_policy_warning("--target wasip2", &required(&["Tcp.connect"]), None)
                 .expect("connect uses the deadline");
 
         assert!(warning.contains("default Tcp timeout policy (connect 5 s)"));
@@ -186,16 +200,28 @@ mod tests {
         )
         .expect("valid policy");
         let warning =
-            wasip2_tcp_timeout_warning("--wasip2", &required(&["Tcp.sendBytes"]), Some(&config))
+            wasip2_tcp_policy_warning("--wasip2", &required(&["Tcp.sendBytes"]), Some(&config))
                 .expect("one-shot send uses both deadlines");
 
         assert!(warning.contains("configured Tcp timeout policy (connect 7 s, request idle 45 s)"));
     }
 
     #[test]
+    fn wasip2_warns_when_configured_connection_limit_cannot_be_honoured() {
+        let config = aver::config::ProjectConfig::parse("[effects.Tcp]\nmax_connections = 128\n")
+            .expect("valid policy");
+        let warning =
+            wasip2_tcp_policy_warning("--wasip2", &required(&["Tcp.connect"]), Some(&config))
+                .expect("connect uses the configured pool limit");
+
+        assert!(warning.contains("configured Tcp connection limit (128)"));
+        assert!(warning.contains("fixed 256-slot connected-socket pool"));
+    }
+
+    #[test]
     fn wasip2_does_not_warn_for_persistent_session_io() {
         assert!(
-            wasip2_tcp_timeout_warning("--wasip2", &required(&["Tcp.readLine"]), None).is_none()
+            wasip2_tcp_policy_warning("--wasip2", &required(&["Tcp.readLine"]), None).is_none()
         );
     }
 }

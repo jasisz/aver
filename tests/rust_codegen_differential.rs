@@ -2081,10 +2081,10 @@ fn rust_tcp_poll_and_read_some_build_through_the_standard_provider() {
     depends [Bytes]
     effects [Console, Tcp]
 
-fn ready(connections: Map<Int, Tcp.Connection>, timeoutMs: Int) -> Result<List<Int>, String>
-    ? "Return caller-owned IDs whose connections can be read without waiting."
+fn ready(sockets: Map<Int, Tcp.Socket>, timeoutMs: Int) -> Result<List<Int>, String>
+    ? "Return caller-owned IDs whose sockets can make progress without waiting."
     ! [Tcp.poll]
-    Tcp.poll(connections, timeoutMs)
+    Tcp.poll(sockets, timeoutMs)
 
 fn readChunk(conn: Tcp.Connection, maxBytes: Int) -> Result<Bytes, String>
     ? "Read the bytes currently available, up to the caller's bound."

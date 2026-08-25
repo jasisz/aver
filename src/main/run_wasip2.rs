@@ -166,7 +166,7 @@ fn build_component(
     let project_config =
         aver::config::ProjectConfig::load_from_dir(std::path::Path::new(&module_root))?;
     if let Some(warning) =
-        super::shared::wasip2_tcp_timeout_warning("--wasip2", &required, project_config.as_ref())
+        super::shared::wasip2_tcp_policy_warning("--wasip2", &required, project_config.as_ref())
     {
         eprintln!("{}", warning.yellow());
     }

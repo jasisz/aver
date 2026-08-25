@@ -1,8 +1,8 @@
 use super::{CapabilityProvider, ProviderContext, ProviderFault, ProviderResource, ProviderValue};
-
 /// Standard native Tcp provider shared by the bytecode VM and generated Rust.
-/// The capability boundary carries a `Tcp.Connection` as a provider-owned
-/// resource; only this adapter can recover the host-side connection token.
+/// The capability boundary carries `Tcp.Connection`, `Tcp.Dial`, and
+/// `Tcp.Listener` as provider-owned resources; only this adapter can recover
+/// their host-side tokens.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct StandardTcpProvider {
     settings: crate::tcp::TcpSettings,
@@ -76,6 +76,101 @@ fn connection<'a>(
                 format!("{operation} received a resource from an incompatible provider"),
             )
         })
+}
+
+fn dial<'a>(
+    operation: &str,
+    value: &'a ProviderValue,
+) -> Result<&'a crate::TcpDial, ProviderFault> {
+    resource(operation, value, "Tcp.Dial")
+}
+
+fn listener<'a>(
+    operation: &str,
+    value: &'a ProviderValue,
+) -> Result<&'a crate::TcpListener, ProviderFault> {
+    resource(operation, value, "Tcp.Listener")
+}
+
+fn resource<'a, T: 'static>(
+    operation: &str,
+    value: &'a ProviderValue,
+    expected: &str,
+) -> Result<&'a T, ProviderFault> {
+    let ProviderValue::Resource(resource) = value else {
+        return Err(ProviderFault::new(
+            "invalid_arguments",
+            format!("{operation} expects a {expected} resource"),
+        ));
+    };
+    resource.downcast_ref::<T>().ok_or_else(|| {
+        ProviderFault::new(
+            "invalid_resource",
+            format!("{operation} received a resource from an incompatible provider"),
+        )
+    })
+}
+
+fn socket_map(
+    operation: &str,
+    value: &ProviderValue,
+) -> Result<(Vec<crate::AverInt>, Vec<crate::tcp::TcpSocket>), ProviderFault> {
+    let ProviderValue::Map(entries) = value else {
+        return Err(ProviderFault::new(
+            "invalid_arguments",
+            format!("{operation} expects a Map<Int, Tcp.Socket>"),
+        ));
+    };
+    let mut keys = Vec::with_capacity(entries.len());
+    let mut sockets = Vec::with_capacity(entries.len());
+    for (key, socket) in entries {
+        let ProviderValue::Int(key) = key else {
+            return Err(ProviderFault::new(
+                "invalid_arguments",
+                "Tcp.poll expects Int map keys",
+            ));
+        };
+        let ProviderValue::Variant {
+            type_name,
+            variant,
+            fields,
+        } = socket
+        else {
+            return Err(ProviderFault::new(
+                "invalid_arguments",
+                "Tcp.poll expects Tcp.Socket map values",
+            ));
+        };
+        if type_name != "Tcp.Socket" || fields.len() != 1 {
+            return Err(ProviderFault::new(
+                "invalid_arguments",
+                format!(
+                    "Tcp.poll expects one-field Tcp.Socket variants, got {type_name}.{variant} with {} field(s)",
+                    fields.len()
+                ),
+            ));
+        }
+        let socket = match variant.as_str() {
+            "Listening" => crate::tcp::TcpSocket::Listening(
+                resource::<crate::TcpListener>(operation, &fields[0], "Tcp.Listener")?.clone(),
+            ),
+            "Dialing" => crate::tcp::TcpSocket::Dialing(
+                resource::<crate::TcpDial>(operation, &fields[0], "Tcp.Dial")?.clone(),
+            ),
+            "Connected" => crate::tcp::TcpSocket::Connected(
+                resource::<crate::TcpConnection>(operation, &fields[0], "Tcp.Connection")?.clone(),
+            ),
+            other => {
+                return Err(ProviderFault::new(
+                    "invalid_arguments",
+                    format!("Tcp.poll received unknown Tcp.Socket variant '{other}'"),
+                ));
+            }
+        };
+        keys.push(key.clone());
+        sockets.push(socket);
+    }
+    Ok((keys, sockets))
 }
 
 impl CapabilityProvider for StandardTcpProvider {
@@ -156,11 +251,88 @@ impl CapabilityProvider for StandardTcpProvider {
                     |connection| ProviderValue::Resource(ProviderResource::new(connection)),
                 )
             }
-            "Tcp.poll" => {
-                let [ProviderValue::Map(entries), ProviderValue::Int(timeout_ms)] = args else {
+            "Tcp.beginConnect" => {
+                let (host, port) = host_port(operation, args)?;
+                tcp_result(
+                    crate::tcp::begin_connect_with_settings(host, port, self.settings),
+                    |dial| ProviderValue::Resource(ProviderResource::new(dial)),
+                )
+            }
+            "Tcp.dialled" => {
+                let [dial_value] = args else {
+                    return Err(invalid_arguments(operation, "(Tcp.Dial dial)", args.len()));
+                };
+                tcp_result(
+                    crate::tcp::dialled(dial(operation, dial_value)?),
+                    |settled| {
+                        settled.map_or(ProviderValue::OptionNone, |connection| {
+                            ProviderValue::OptionSome(Box::new(ProviderValue::Resource(
+                                ProviderResource::new(connection),
+                            )))
+                        })
+                    },
+                )
+            }
+            "Tcp.listen" => {
+                let [ProviderValue::Int(port), ProviderValue::Int(backlog)] = args else {
                     return Err(invalid_arguments(
                         operation,
-                        "(Map<Int, Tcp.Connection> connections, Int timeoutMs)",
+                        "(Int port, Int backlog)",
+                        args.len(),
+                    ));
+                };
+                let Some(port) = port.to_i64() else {
+                    return Ok(ProviderValue::ResultErr(Box::new(ProviderValue::String(
+                        format!("Tcp.listen: port {port} exceeds the host integer range"),
+                    ))));
+                };
+                let Some(backlog) = backlog.to_i64() else {
+                    return Ok(ProviderValue::ResultErr(Box::new(ProviderValue::String(
+                        format!("Tcp.listen: backlog {backlog} exceeds the host integer range"),
+                    ))));
+                };
+                tcp_result(
+                    crate::tcp::listen_with_settings(port, backlog, self.settings),
+                    |listener| ProviderValue::Resource(ProviderResource::new(listener)),
+                )
+            }
+            "Tcp.accept" => {
+                let [listener_value] = args else {
+                    return Err(invalid_arguments(
+                        operation,
+                        "(Tcp.Listener listener)",
+                        args.len(),
+                    ));
+                };
+                tcp_result(
+                    crate::tcp::accept(listener(operation, listener_value)?),
+                    |accepted| {
+                        accepted.map_or(ProviderValue::OptionNone, |connection| {
+                            ProviderValue::OptionSome(Box::new(ProviderValue::Resource(
+                                ProviderResource::new(connection),
+                            )))
+                        })
+                    },
+                )
+            }
+            "Tcp.peerAddress" => {
+                let [connection_value] = args else {
+                    return Err(invalid_arguments(
+                        operation,
+                        "(Tcp.Connection connection)",
+                        args.len(),
+                    ));
+                };
+                tcp_result(
+                    crate::tcp::peer_address(connection(operation, connection_value)?),
+                    ProviderValue::String,
+                )
+            }
+            "Tcp.poll" => {
+                let [sockets_value, ProviderValue::Int(timeout_ms)] = args else {
+                    return Err(invalid_arguments(
+                        operation,
+                        "(Map<Int, Tcp.Socket> sockets, Int timeoutMs)",
                         args.len(),
                     ));
                 };
@@ -169,19 +341,8 @@ impl CapabilityProvider for StandardTcpProvider {
                         format!("Tcp.poll: timeoutMs {timeout_ms} exceeds the poll limit"),
                     ))));
                 };
-                let mut keys = Vec::with_capacity(entries.len());
-                let mut connections = Vec::with_capacity(entries.len());
-                for (key, value) in entries {
-                    let ProviderValue::Int(key) = key else {
-                        return Err(ProviderFault::new(
-                            "invalid_arguments",
-                            "Tcp.poll expects Int map keys",
-                        ));
-                    };
-                    keys.push(key.clone());
-                    connections.push(connection(operation, value)?.clone());
-                }
-                tcp_result(crate::tcp::poll(&connections, timeout_ms), |positions| {
+                let (keys, sockets) = socket_map(operation, sockets_value)?;
+                tcp_result(crate::tcp::poll(&sockets, timeout_ms), |positions| {
                     let mut ready = positions
                         .into_iter()
                         .filter_map(|position| keys.get(position).cloned())
@@ -279,6 +440,27 @@ impl CapabilityProvider for StandardTcpProvider {
                     |_| ProviderValue::Unit,
                 )
             }
+            "Tcp.closeDial" => {
+                let [dial_value] = args else {
+                    return Err(invalid_arguments(operation, "(Tcp.Dial dial)", args.len()));
+                };
+                tcp_result(crate::tcp::close_dial(dial(operation, dial_value)?), |_| {
+                    ProviderValue::Unit
+                })
+            }
+            "Tcp.closeListener" => {
+                let [listener_value] = args else {
+                    return Err(invalid_arguments(
+                        operation,
+                        "(Tcp.Listener listener)",
+                        args.len(),
+                    ));
+                };
+                tcp_result(
+                    crate::tcp::close_listener(listener(operation, listener_value)?),
+                    |_| ProviderValue::Unit,
+                )
+            }
             _ => Err(ProviderFault::new(
                 "unknown_operation",
                 format!("standard Tcp provider cannot invoke '{operation}'"),
@@ -323,6 +505,11 @@ mod tests {
 
         let large = crate::AverInt::from_str("1208925819614629174706176").expect("large Int");
         let resource = ProviderResource::new(connection.clone());
+        let connected = |resource| ProviderValue::Variant {
+            type_name: "Tcp.Socket".to_string(),
+            variant: "Connected".to_string(),
+            fields: vec![ProviderValue::Resource(resource)],
+        };
         let result = StandardTcpProvider::default()
             .invoke(
                 &context("Tcp.poll"),
@@ -330,12 +517,9 @@ mod tests {
                     ProviderValue::Map(vec![
                         (
                             ProviderValue::Int(crate::AverInt::from(10)),
-                            ProviderValue::Resource(resource.clone()),
+                            connected(resource.clone()),
                         ),
-                        (
-                            ProviderValue::Int(large.clone()),
-                            ProviderValue::Resource(resource),
-                        ),
+                        (ProviderValue::Int(large.clone()), connected(resource)),
                     ]),
                     ProviderValue::Int(crate::AverInt::from(1_000)),
                 ],

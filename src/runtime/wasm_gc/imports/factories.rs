@@ -252,6 +252,33 @@ pub(crate) fn host_tcp_connection_id(
     lm_string_to_host(caller, Some(&out[0]))
 }
 
+/// Ask the guest's nominal type hierarchy which `Tcp.Socket` variant this
+/// value inhabits. Returning an explicit tag avoids guessing from payload
+/// layout (`Tcp.Dial` and `Tcp.Listener` are both opaque one-field records).
+pub(crate) fn host_tcp_socket_kind(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    val: Option<&wasmtime::Val>,
+) -> Result<Option<i32>, wasmtime::Error> {
+    use wasmtime::Val;
+    let any_ref = match val {
+        Some(Val::AnyRef(r)) => *r,
+        _ => return Ok(None),
+    };
+    let Some(_) = any_ref else { return Ok(None) };
+    let getter = caller
+        .get_export("__rt_tcp_socket_kind")
+        .and_then(|e| e.into_func());
+    let Some(getter) = getter else {
+        return Ok(None);
+    };
+    let mut out = [Val::I32(-1)];
+    getter.call(&mut *caller, &[Val::AnyRef(any_ref)], &mut out)?;
+    Ok(match out[0] {
+        Val::I32(kind) if kind >= 0 => Some(kind),
+        _ => None,
+    })
+}
+
 pub(crate) fn host_result_tcp_connection_ok(
     caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
     conn: Option<wasmtime::Rooted<wasmtime::AnyRef>>,
@@ -292,6 +319,104 @@ pub(crate) fn host_result_tcp_connection_err(
         Val::AnyRef(r) => *r,
         _ => None,
     })
+}
+
+fn host_result_one_string_arg(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    export: &str,
+    text: &str,
+) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
+    use wasmtime::Val;
+    let text = match lm_string_from_host(caller, text)? {
+        Some(value) => value,
+        None => return Ok(None),
+    };
+    let factory = caller.get_export(export).and_then(|e| e.into_func());
+    let Some(factory) = factory else {
+        return Ok(None);
+    };
+    let mut out = [Val::AnyRef(None)];
+    factory.call(&mut *caller, &[Val::AnyRef(Some(text))], &mut out)?;
+    Ok(match out[0] {
+        Val::AnyRef(value) => value,
+        _ => None,
+    })
+}
+
+pub(crate) fn host_result_tcp_dial_ok(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    id: &str,
+) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
+    host_result_one_string_arg(caller, "__rt_result_tcp_dial_string_ok", id)
+}
+
+pub(crate) fn host_result_tcp_dial_err(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    error: &str,
+) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
+    host_result_one_string_arg(caller, "__rt_result_tcp_dial_string_err", error)
+}
+
+pub(crate) fn host_result_tcp_listener_ok(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    id: &str,
+) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
+    host_result_one_string_arg(caller, "__rt_result_tcp_listener_string_ok", id)
+}
+
+pub(crate) fn host_result_tcp_listener_err(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    error: &str,
+) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
+    host_result_one_string_arg(caller, "__rt_result_tcp_listener_string_err", error)
+}
+
+pub(crate) fn host_result_option_tcp_connection_some(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    connection: Option<wasmtime::Rooted<wasmtime::AnyRef>>,
+) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
+    use wasmtime::Val;
+    let factory = caller
+        .get_export("__rt_result_option_tcp_connection_string_some")
+        .and_then(|e| e.into_func());
+    let Some(factory) = factory else {
+        return Ok(None);
+    };
+    let mut out = [Val::AnyRef(None)];
+    factory.call(&mut *caller, &[Val::AnyRef(connection)], &mut out)?;
+    Ok(match out[0] {
+        Val::AnyRef(value) => value,
+        _ => None,
+    })
+}
+
+pub(crate) fn host_result_option_tcp_connection_none(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
+    use wasmtime::Val;
+    let factory = caller
+        .get_export("__rt_result_option_tcp_connection_string_none")
+        .and_then(|e| e.into_func());
+    let Some(factory) = factory else {
+        return Ok(None);
+    };
+    let mut out = [Val::AnyRef(None)];
+    factory.call(&mut *caller, &[], &mut out)?;
+    Ok(match out[0] {
+        Val::AnyRef(value) => value,
+        _ => None,
+    })
+}
+
+pub(crate) fn host_result_option_tcp_connection_err(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    error: &str,
+) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
+    host_result_one_string_arg(
+        caller,
+        "__rt_result_option_tcp_connection_string_err",
+        error,
+    )
 }
 
 /// `Result<Unit, String>::Ok(())` via the matching factory export.

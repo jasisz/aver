@@ -30,9 +30,12 @@ pub(crate) fn emit_mir_constructor_with_args(
         }
         return Ok(produced.map(|_| ()));
     }
-    for arg in args {
+    for (index, arg) in args.iter().enumerate() {
         if emit_mir_expr(func, arg, slots, ctx)?.is_none() {
-            return Ok(None);
+            return Err(WasmGcError::Validation(format!(
+                "variant of `{}` field {index} has an unsupported wasm-gc expression",
+                info.parent
+            )));
         }
     }
     func.instruction(&Instruction::StructNew(info.type_idx));

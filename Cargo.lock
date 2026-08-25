@@ -221,6 +221,7 @@ dependencies = [
  "rand 0.9.2",
  "sha2",
  "signal-hook",
+ "socket2",
  "ureq",
 ]
 

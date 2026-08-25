@@ -829,6 +829,28 @@ pub(crate) fn emit_mir_expr(
                         return Ok(None);
                     };
                     let dotted = dotted.as_str();
+                    // Capability-owned represented sum constructors are
+                    // surfaced to the entry module as dotted builtins by
+                    // multi-module flattening (for example
+                    // `Tcp.Socket.Connected`). They are still ordinary
+                    // nominal user variants at the wasm layer, so lower them
+                    // before the service/builtin dispatch below.
+                    if let Some((parent, variant)) = dotted.rsplit_once('.')
+                        && let Some(info) = ctx.registry.variant_in(parent, variant).or_else(|| {
+                            parent.rsplit_once('.').and_then(|(_, bare_parent)| {
+                                ctx.registry.variant_in(bare_parent, variant)
+                            })
+                        })
+                    {
+                        return match emit_mir_constructor_with_args(
+                            func, info, &call.args, slots, ctx,
+                        )? {
+                            Some(()) => Ok(Some(aver_type_str_of(expr).trim() != "Unit")),
+                            None => Err(WasmGcError::Validation(format!(
+                                "constructor `{dotted}` has an unsupported wasm-gc payload expression"
+                            ))),
+                        };
+                    }
                     // `--target wasip2`: every effect lowers to a
                     // canonical-ABI call sequence (Console / Args / Env /
                     // Time / Random / Disk / Http / Tcp), NOT the AverBridge
@@ -1286,7 +1308,10 @@ pub(crate) fn emit_mir_expr(
             };
             match covered {
                 Some(()) => Ok(Some(aver_type_str_of(expr).trim() != "Unit")),
-                None => Ok(None),
+                None => Err(WasmGcError::Validation(format!(
+                    "constructor {:?} has an unsupported wasm-gc payload expression",
+                    con.ctor
+                ))),
             }
         }
         MirExpr::RecordCreate(spanned_rec) => {
@@ -1444,12 +1469,17 @@ pub(crate) fn emit_mir_expr(
                 (helpers.empty, helpers.set)
             };
             func.instruction(&Instruction::Call(empty_fn));
-            for (k_expr, v_expr) in entries {
+            for (index, (k_expr, v_expr)) in entries.iter().enumerate() {
                 if emit_mir_expr(func, k_expr, slots, ctx)?.is_none() {
-                    return Ok(None);
+                    return Err(WasmGcError::Validation(format!(
+                        "Map literal `{canonical}` key {index} has an unsupported wasm-gc expression"
+                    )));
                 }
                 if emit_mir_expr(func, v_expr, slots, ctx)?.is_none() {
-                    return Ok(None);
+                    return Err(WasmGcError::Validation(format!(
+                        "Map literal `{canonical}` value {index} has an unsupported wasm-gc expression: {:?}",
+                        v_expr.node
+                    )));
                 }
                 func.instruction(&Instruction::Call(set_fn));
             }

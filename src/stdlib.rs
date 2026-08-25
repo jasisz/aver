@@ -697,18 +697,32 @@ mod tests {
         let contract = registry.contract("Tcp").expect("Tcp contract");
         assert_eq!(
             contract.contract_hash,
-            "sha256:29c33e54d33ef032f469b3f4543c81ea48a3c28d985f5cc4fede4acbfda18385"
+            "sha256:2f32788e56fb4be7a05fa348315e52285e09c8e671ba02c05285105a68911af9"
         );
         assert_eq!(
             contract.model_hash,
-            "sha256:3ea8be66d5660ffd5005ce718841c23c8903be734297b2fbd2f5a6b140615d87"
+            "sha256:4d6a91832fe25919d9dcce68bb86397a72f959e24c4a685923abde7d3359a407"
         );
         for (method, labels) in [
             ("Tcp.send", vec!["normal_ok", "always_err"]),
             ("Tcp.sendBytes", vec!["normal_ok", "always_err"]),
             ("Tcp.ping", vec!["normal_ok", "always_err"]),
             ("Tcp.connect", vec!["normal_ok", "always_err"]),
-            ("Tcp.poll", vec!["none_ready", "always_err"]),
+            ("Tcp.beginConnect", vec!["normal_ok", "always_err"]),
+            (
+                "Tcp.dialled",
+                vec!["connected", "still_pending", "refused"],
+            ),
+            ("Tcp.listen", vec!["normal_ok", "port_taken"]),
+            (
+                "Tcp.accept",
+                vec!["nothing_pending", "once_then_nothing", "always_err"],
+            ),
+            ("Tcp.peerAddress", vec!["normal_ok", "always_err"]),
+            (
+                "Tcp.poll",
+                vec!["none_ready", "everything_ready", "always_err"],
+            ),
             ("Tcp.writeLine", vec!["normal_ok", "always_err"]),
             ("Tcp.writeBytes", vec!["normal_ok", "always_err"]),
             ("Tcp.readLine", vec!["normal_ok", "always_err"]),
@@ -718,6 +732,8 @@ mod tests {
             ),
             ("Tcp.readSome", vec!["normal_ok", "eof", "always_err"]),
             ("Tcp.close", vec!["normal_ok", "always_err"]),
+            ("Tcp.closeDial", vec!["normal_ok", "always_err"]),
+            ("Tcp.closeListener", vec!["normal_ok", "always_err"]),
         ] {
             assert_eq!(
                 standard_hostile_profiles(method)

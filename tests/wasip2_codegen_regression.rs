@@ -256,10 +256,10 @@ fn tcp_poll_and_read_some_compile_and_validate_as_component() {
     exposes [ready, chunk]
     effects [Tcp.poll, Tcp.readSome]
 
-fn ready(connections: Map<Int, Tcp.Connection>, timeoutMs: Int) -> Result<List<Int>, String>
-    ? "Return the caller IDs whose connections can be read without waiting."
+fn ready(sockets: Map<Int, Tcp.Socket>, timeoutMs: Int) -> Result<List<Int>, String>
+    ? "Return caller IDs whose sockets can make progress without waiting."
     ! [Tcp.poll]
-    Tcp.poll(connections, timeoutMs)
+    Tcp.poll(sockets, timeoutMs)
 
 fn chunk(conn: Tcp.Connection, maxBytes: Int) -> Result<Bytes, String>
     ? "Read one available chunk without requiring the buffer to fill."
@@ -273,6 +273,82 @@ fn chunk(conn: Tcp.Connection, maxBytes: Int) -> Result<Bytes, String>
         .unwrap_or_else(|e| panic!("wasip2 core compile: {e}\n--- source ---\n{source}"));
     let (component_bytes, _) = aver::codegen::wasip2::compile_to_component(
         &core_bytes,
+        aver::codegen::wasip2::Wasip2World::CliCommand,
+    )
+    .unwrap_or_else(|e| panic!("wasip2 component wrap: {e}\n--- source ---\n{source}"));
+    wasmparser::Validator::new_with_features(wasmparser::WasmFeatures::default())
+        .validate_all(&component_bytes)
+        .unwrap_or_else(|e| panic!("component validate: {e}\n--- source ---\n{source}"));
+}
+
+#[test]
+fn tcp_async_resources_land_as_explicit_level_b_errors_on_wasip2() {
+    let source = r#"module Probe
+    intent = "Compile every asynchronous TCP resource operation without bridge imports."
+    exposes [begin, finish, listen, acceptOne, peer, closeDial, closeListener]
+    effects [Tcp.beginConnect, Tcp.dialled, Tcp.listen, Tcp.accept, Tcp.peerAddress, Tcp.closeDial, Tcp.closeListener]
+
+fn begin(host: String, port: Int) -> Result<Tcp.Dial, String>
+    ? "Start one outbound connection attempt."
+    ! [Tcp.beginConnect]
+    Tcp.beginConnect(host, port)
+
+fn finish(dial: Tcp.Dial) -> Result<Option<Tcp.Connection>, String>
+    ? "Inspect one outbound connection attempt."
+    ! [Tcp.dialled]
+    Tcp.dialled(dial)
+
+fn listen(port: Int, backlog: Int) -> Result<Tcp.Listener, String>
+    ? "Start one listener."
+    ! [Tcp.listen]
+    Tcp.listen(port, backlog)
+
+fn acceptOne(listener: Tcp.Listener) -> Result<Option<Tcp.Connection>, String>
+    ? "Accept one inbound connection if present."
+    ! [Tcp.accept]
+    Tcp.accept(listener)
+
+fn peer(conn: Tcp.Connection) -> Result<String, String>
+    ? "Describe the remote endpoint."
+    ! [Tcp.peerAddress]
+    Tcp.peerAddress(conn)
+
+fn closeDial(dial: Tcp.Dial) -> Result<Unit, String>
+    ? "Release one outbound attempt."
+    ! [Tcp.closeDial]
+    Tcp.closeDial(dial)
+
+fn closeListener(listener: Tcp.Listener) -> Result<Unit, String>
+    ? "Release one listener."
+    ! [Tcp.closeListener]
+    Tcp.closeListener(listener)
+"#;
+    let (items, aliases) =
+        parse_pipeline_with_module_root(source, Some(env!("CARGO_MANIFEST_DIR")))
+            .unwrap_or_else(|e| panic!("{e}\n--- source ---\n{source}"));
+    let bytes = compile_core_flattened(&items, &aliases)
+        .unwrap_or_else(|e| panic!("wasip2 core compile: {e}\n--- source ---\n{source}"));
+
+    let (segments, body_refs) = segments_and_body_data_refs(&bytes);
+    for message in [
+        b"Tcp.beginConnect: native sockets are unavailable on this target".as_slice(),
+        b"Tcp.dialled: native sockets are unavailable on this target".as_slice(),
+        b"Tcp.listen: native socket listening is unavailable on this target".as_slice(),
+        b"Tcp.accept: native socket listening is unavailable on this target".as_slice(),
+        b"Tcp.peerAddress: native sockets are unavailable on this target".as_slice(),
+        b"Tcp.closeDial: native sockets are unavailable on this target".as_slice(),
+        b"Tcp.closeListener: native sockets are unavailable on this target".as_slice(),
+    ] {
+        let idx = segment_idx(&segments, message);
+        assert!(
+            body_refs.iter().any(|refs| refs.contains(&idx)),
+            "Level-B Err message {:?} must be materialized by a function body",
+            String::from_utf8_lossy(message)
+        );
+    }
+
+    let (component_bytes, _) = aver::codegen::wasip2::compile_to_component(
+        &bytes,
         aver::codegen::wasip2::Wasip2World::CliCommand,
     )
     .unwrap_or_else(|e| panic!("wasip2 component wrap: {e}\n--- source ---\n{source}"));
