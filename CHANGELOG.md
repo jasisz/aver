@@ -49,7 +49,7 @@ Aver 0.29 turns the host boundary into explicit, source-owned contracts. Standar
 
 - **Maps have one deterministic order on every backend.** Iteration is sorted by key, `keys[i]` pairs with `values[i]`, and equality uses the same canonical form in execution and proof. Map keys must have a modelled total order; `Float` keys are rejected instead of giving NaN or proof-model divergences.
 
-- **The VM and generated backends avoid several formerly quadratic paths.** List traversal and `List.drop`, string/codepoint scans, list/string/byte builders, map construction and folding, immutable collection relocation, large append-only stores, and generated-Rust accumulator returns now preserve sharing or ownership instead of repeatedly rebuilding live data. The embedded wasm engine also moves to wasmtime 46's copying collector.
+- **The VM and generated Rust avoid several formerly quadratic paths.** List traversal and `List.drop`, string/codepoint scans, list/string/byte builders, map construction and folding, immutable collection relocation, large append-only stores, and generated-Rust accumulator returns now preserve sharing or ownership instead of repeatedly rebuilding live data. The embedded wasm engine separately moves to wasmtime 46's copying collector.
 
 - **Generated projects pin the compiler's actual source provenance.** Path builds emit path dependencies, git builds pin the repository and revision, and registry builds emit exact registry versions for both `aver-lang` and `aver-rt`.
 
