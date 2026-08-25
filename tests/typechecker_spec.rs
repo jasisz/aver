@@ -1435,13 +1435,36 @@ fn valid_tcp_read_bytes_returns_nominal_bytes() {
 }
 
 #[test]
-fn valid_tcp_poll_returns_caller_connection_ids() {
+fn valid_tcp_poll_returns_caller_socket_ids() {
     let src = concat!(
-        "fn ready(connections: Map<Int, Tcp.Connection>, timeoutMs: Int) -> Result<List<Int>, String>\n",
+        "fn ready(sockets: Map<Int, Tcp.Socket>, timeoutMs: Int) -> Result<List<Int>, String>\n",
         "    ! [Tcp.poll]\n",
-        "    Tcp.poll(connections, timeoutMs)\n",
+        "    Tcp.poll(sockets, timeoutMs)\n",
     );
     assert_no_errors(src);
+}
+
+#[test]
+fn valid_tcp_socket_sum_dispatches_to_resource_specific_operations() {
+    let src = concat!(
+        "fn closeSocket(socket: Tcp.Socket) -> Result<Unit, String>\n",
+        "    ! [Tcp.close, Tcp.closeDial, Tcp.closeListener]\n",
+        "    match socket\n",
+        "        Tcp.Socket.Listening(listener) -> Tcp.closeListener(listener)\n",
+        "        Tcp.Socket.Dialing(dial) -> Tcp.closeDial(dial)\n",
+        "        Tcp.Socket.Connected(connection) -> Tcp.close(connection)\n",
+    );
+    assert_no_errors(src);
+}
+
+#[test]
+fn error_tcp_dial_cannot_be_used_as_connected_socket() {
+    let src = concat!(
+        "fn sendBeforeConnected(dial: Tcp.Dial) -> Result<Unit, String>\n",
+        "    ! [Tcp.writeLine]\n",
+        "    Tcp.writeLine(dial, \"too early\")\n",
+    );
+    assert_error_containing(src, "expected Tcp.Connection");
 }
 
 #[test]

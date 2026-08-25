@@ -382,25 +382,46 @@ accounting derive from that source contract.
 | `Tcp.sendBytes` | `(String, Int, Bytes) -> Result<Bytes, String>` |
 | `Tcp.ping` | `(String, Int) -> Result<Unit, String>` |
 
-**Persistent connections:**
+**Persistent connections and readiness resources:**
 
 | Function | Signature | Notes |
 |---|---|---|
 | `Tcp.connect` | `(String, Int) -> Result<Tcp.Connection, String>` | Provider-owned resource. Socket establishment has a 5-second default deadline on native and the in-process wasm-gc host; configure it with `[effects.Tcp].connect_timeout_secs`. wasip2 timing is host-controlled. |
+| `Tcp.beginConnect` | `(String, Int) -> Result<Tcp.Dial, String>` | Starts a non-blocking outbound attempt. A `Dial` cannot be read or written. |
+| `Tcp.dialled` | `Tcp.Dial -> Result<Option<Tcp.Connection>, String>` | `None` means still in flight (including a false wake), `Some` promotes the dial to a usable connection, and `Err` means refusal or deadline expiry. |
+| `Tcp.listen` | `(Int, Int) -> Result<Tcp.Listener, String>` | Binds a port with the requested positive backlog. A listener cannot be read or written. |
+| `Tcp.accept` | `Tcp.Listener -> Result<Option<Tcp.Connection>, String>` | Accepts at most one queued client without blocking; `None` is a legal false wake or an empty backlog. |
+| `Tcp.peerAddress` | `Tcp.Connection -> Result<String, String>` | Returns the remote endpoint, including brackets around an IPv6 address. |
 | `Tcp.writeLine` | `(Tcp.Connection, String) -> Result<Unit, String>` | Appends `\r\n` on the wire. |
 | `Tcp.writeBytes` | `(Tcp.Connection, Bytes) -> Result<Unit, String>` | Exact bytes; nothing appended, nothing encoded. |
 | `Tcp.readLine` | `Tcp.Connection -> Result<String, String>` | Strips the trailing `\r\n`; `Ok("")` on a clean EOF before any byte. |
 | `Tcp.readBytes` | `(Tcp.Connection, Int) -> Result<Bytes, String>` | Reads exactly N bytes, no decoding. Short read is an error. |
 | `Tcp.readSome` | `(Tcp.Connection, Int) -> Result<Bytes, String>` | Reads 1–N bytes without waiting to fill N; empty `Bytes` means clean EOF. |
-| `Tcp.poll` | `(Map<Int, Tcp.Connection>, Int) -> Result<List<Int>, String>` | Returns the sorted caller IDs ready for `readSome`; `[]` means timeout. |
+| `Tcp.poll` | `(Map<Int, Tcp.Socket>, Int) -> Result<List<Int>, String>` | One wait over connected peers, in-flight dials, and listeners. Returns sorted caller IDs; `[]` means timeout. |
 | `Tcp.close` | `Tcp.Connection -> Result<Unit, String>` | `Err("tcp: unknown connection ...")` on a double-close. |
+| `Tcp.closeDial` | `Tcp.Dial -> Result<Unit, String>` | Cancels an in-flight attempt and invalidates the handle. |
+| `Tcp.closeListener` | `Tcp.Listener -> Result<Unit, String>` | Releases the bound port; accepted connections remain live. |
 
-`Tcp.Connection` is a capability **resource**: only the provider can mint one,
-while construction, field reads, equality, hashing, and pattern matches are
-rejected by the type checker. Native VM and generated Rust carry the provider's
-host token inside that resource; backend-specific socket tables and handles
-remain implementation details. Aver code can store, pass, and return the token,
-but cannot inspect its internals or manufacture a replacement.
+`Tcp.Connection`, `Tcp.Dial`, and `Tcp.Listener` are distinct capability
+**resources**: only the provider can mint them, while construction, field
+reads, equality, hashing, and pattern matches are rejected by the type checker.
+The distinction is typestate: `writeBytes` is not merely likely to fail on a
+dial or listener; those calls do not typecheck. `Tcp.Socket` is an ordinary
+represented sum used to keep all three states in one caller-owned map:
+
+```aver
+type Socket
+    Listening(Tcp.Listener)
+    Dialing(Tcp.Dial)
+    Connected(Tcp.Connection)
+```
+
+The sum removes the old cross-map invariant. One key names exactly one socket
+state, and exhaustive matching says what may happen next: `Listening` can be
+accepted, `Dialing` can become `Connected`, and `Connected` can be read or
+written. Native VM and generated Rust carry provider host tokens inside the
+resource payloads; backend-specific socket tables and handles remain
+implementation details.
 
 Persistent session I/O has deliberately **no read or write deadline**. A
 session operation may therefore wait indefinitely until it completes, reaches
@@ -419,18 +440,24 @@ Socket establishment and one-shot request calls retain deployment defaults:
 [effects.Tcp]
 connect_timeout_secs = 5
 request_idle_timeout_secs = 30
+max_connections = 256
 ```
 
 `request_idle_timeout_secs` applies only to blocking operations within
 `Tcp.send` and `Tcp.sendBytes`, not to their total wall-clock duration and never
-to persistent sessions. Both settings must be positive integers. Effect
+to persistent sessions. `max_connections` is shared by established outbound
+and accepted connections plus in-flight dials; listeners and one-shot
+`send`/`sendBytes`/`ping` calls do not occupy the pool. `accept` checks the pool
+before removing a client from the OS backlog, so a full process does not
+silently discard the pending connection. All three settings must be positive
+integers. Effect
 sections reject unknown or misplaced keys, so a typo cannot silently select a
 default. Native VM, generated Rust, and the in-process wasm-gc host honour the
-settings. wasip2 currently uses host-controlled WASI socket timing and emits a
-warning whenever a required operation depends on a default or explicitly
-configured Tcp deadline that the target cannot honour.
+settings. wasip2 currently uses host-controlled WASI socket timing and a fixed
+256-slot connected-socket pool; it emits a warning when a required operation
+depends on a Tcp deployment setting that target cannot honour.
 
-`Tcp.send` is stateless and ephemeral — it opens a fresh socket, writes the request bytes raw (no `\r\n` append), `shutdown(Write)` to signal end-of-request, then reads the peer's response until EOF, capped at 10 MiB. It does **not** touch the persistent-connection pool, so a program holding 256 live `Tcp.connect` handles can still issue `Tcp.send` to another peer. Stream errors (`stream-error.last-operation-failed`) surface as `Result.Err("tcp: stream error")`; a clean half-close (`stream-error.closed`) returns whatever the peer flushed.
+`Tcp.send` is stateless and ephemeral — it opens a fresh socket, writes the request bytes raw (no `\r\n` append), `shutdown(Write)` to signal end-of-request, then reads the peer's response until EOF, capped at 10 MiB. It does **not** touch the persistent-connection pool, so a program already holding its configured maximum of live session/dial handles can still issue `Tcp.send` to another peer. Stream errors (`stream-error.last-operation-failed`) surface as `Result.Err("tcp: stream error")`; a clean half-close (`stream-error.closed`) returns whatever the peer flushed.
 
 `Tcp.sendBytes` is the byte-clean form of `Tcp.send`: same socket behaviour, but
 the payload and response stay `Bytes` and no UTF-8 encoding or decoding
@@ -448,13 +475,23 @@ arbitrary offsets — and goes through `BufRead::read_line`, which rejects
 non-UTF-8 input outright. `readBytes` does neither: it reads exactly the
 requested count and decodes nothing.
 
-`Tcp.poll` and `Tcp.readSome` form the event-loop receive path. The caller owns
-the `Int` keys in the map, so they can also key peer metadata without making the
-provider-owned `Tcp.Connection` resource comparable. `poll` returns a sorted,
-duplicate-free subset of those keys. A key is ready when its connection has
-buffered input, the underlying stream reports readability, or EOF/error can be
-observed without waiting. Readiness is only a hint: another consumer may race
-the read, and the following operation can still fail.
+`Tcp.poll` is the one event-loop wait. The caller owns the `Int` keys in its
+`Map<Int, Tcp.Socket>`, so the same keys can index protocol metadata without
+making provider resources comparable. The standard provider watches all three
+states with one poller and returns every readiness event it observes as a
+sorted, duplicate-free subset of the supplied keys. An unknown or stale
+resource makes the whole call `Err` rather than disappearing from the result.
+The requested timeout is clipped to the nearest dial deadline, so an expiring
+attempt cannot remain asleep behind a longer idle timeout.
+
+A `Connected` key is ready for buffered input, stream readability, EOF, or an
+observable error. A `Dialing` key is ready when establishment settles or its
+deadline expires. A `Listening` key is ready when a client can be accepted.
+Readiness is still a hint: false wakes are legal, so `dialled` and `accept` may
+return `Ok(None)`, and the following operation can fail. Completeness is a
+provider/runtime obligation over hidden host readiness, not a fabricated pure
+Oracle law; the standard implementation tests that simultaneous connection,
+dial, and listener events are all returned.
 
 `readSome(connection, maxBytes)` performs one bounded read and returns as soon
 as any bytes are available instead of waiting to fill `maxBytes`. `maxBytes`

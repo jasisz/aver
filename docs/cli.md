@@ -447,6 +447,7 @@ keys = ["APP_*", "TOKEN"]
 [effects.Tcp]
 connect_timeout_secs = 5
 request_idle_timeout_secs = 30
+max_connections = 256
 
 [[check.suppress]]
 slug = "verify-coverage"
@@ -466,7 +467,7 @@ max-cases  = 40_000              # raise the case ceiling for this fn
 reason     = "Bitcoin Core corpus includes consensus-max 10,000-byte scripts"
 ```
 
-Effect-host / path / key allowlists narrow which hosts, files, and env keys the runtime will admit. Tcp's positive-integer settings configure connection establishment and one-shot request idle timeouts; they never impose a deadline on persistent session I/O. Unknown or misplaced keys inside an effect section are errors. `[[check.suppress]]` lets a project waive specific lint slugs in specific paths, optionally for one exact function, with a reason.
+Effect-host / path / key allowlists narrow which hosts, files, and env keys the runtime will admit. Tcp's positive-integer settings configure connection establishment, one-shot request idle timeouts, and one shared limit for established/accepted connections plus in-flight dials; they never impose a deadline on persistent session I/O. Unknown or misplaced keys inside an effect section are errors. `[[check.suppress]]` lets a project waive specific lint slugs in specific paths, optionally for one exact function, with a reason.
 
 Disk path patterns have deliberately small, explicit semantics:
 

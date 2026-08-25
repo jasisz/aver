@@ -151,12 +151,17 @@ pub(super) fn collect_results_from_builtin_uses(
                         | "Disk.makeDir" => intern("Result<Unit,String>"),
                         "Disk.listDir" => intern("Result<List<String>,String>"),
                         "Tcp.connect" => intern("Result<Tcp.Connection,String>"),
+                        "Tcp.beginConnect" => intern("Result<Tcp.Dial,String>"),
+                        "Tcp.listen" => intern("Result<Tcp.Listener,String>"),
+                        "Tcp.dialled" | "Tcp.accept" => {
+                            intern("Result<Option<Tcp.Connection>,String>")
+                        }
+                        "Tcp.peerAddress" => intern("Result<String,String>"),
                         "Tcp.readLine" => intern("Result<String,String>"),
                         "Tcp.readBytes" | "Tcp.readSome" => intern("Result<Bytes,String>"),
                         "Tcp.poll" => intern("Result<List<Int>,String>"),
-                        "Tcp.writeLine" | "Tcp.writeBytes" | "Tcp.close" => {
-                            intern("Result<Unit,String>")
-                        }
+                        "Tcp.writeLine" | "Tcp.writeBytes" | "Tcp.close" | "Tcp.closeDial"
+                        | "Tcp.closeListener" => intern("Result<Unit,String>"),
                         // `Tcp.send`, `Tcp.sendBytes`, and `Tcp.ping`
                         // are ephemeral (Phase 4.7+ passes 4 / 5) —
                         // none calls `__rt_tcp_connect` or returns a

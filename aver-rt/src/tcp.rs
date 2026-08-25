@@ -1,15 +1,22 @@
-use crate::{AverStr, TcpConnection};
-use std::cell::RefCell;
-use std::collections::HashMap;
+use crate::{TcpConnection, TcpDial, TcpListener};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
+
+#[cfg(not(target_family = "wasm"))]
+mod reactor;
 
 pub const DEFAULT_CONNECT_TIMEOUT_SECS: u64 = 5;
 pub const DEFAULT_REQUEST_IDLE_TIMEOUT_SECS: u64 = 30;
+pub const DEFAULT_MAX_CONNECTIONS: usize = 256;
 const BODY_LIMIT: usize = 10 * 1024 * 1024;
-const MAX_CONNECTIONS: usize = 256;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TcpSocket {
+    Listening(TcpListener),
+    Dialing(TcpDial),
+    Connected(TcpConnection),
+}
 
 /// Deployment settings for the standard native Tcp provider.
 ///
@@ -21,6 +28,7 @@ const MAX_CONNECTIONS: usize = 256;
 pub struct TcpSettings {
     pub connect_timeout: Duration,
     pub request_idle_timeout: Duration,
+    pub max_connections: usize,
 }
 
 impl TcpSettings {
@@ -28,15 +36,31 @@ impl TcpSettings {
         connect_timeout_secs: u64,
         request_idle_timeout_secs: u64,
     ) -> Result<Self, String> {
+        Self::from_policy(
+            connect_timeout_secs,
+            request_idle_timeout_secs,
+            DEFAULT_MAX_CONNECTIONS,
+        )
+    }
+
+    pub fn from_policy(
+        connect_timeout_secs: u64,
+        request_idle_timeout_secs: u64,
+        max_connections: usize,
+    ) -> Result<Self, String> {
         if connect_timeout_secs == 0 {
             return Err("Tcp connect timeout must be greater than zero".to_string());
         }
         if request_idle_timeout_secs == 0 {
             return Err("Tcp request idle timeout must be greater than zero".to_string());
         }
+        if max_connections == 0 {
+            return Err("Tcp connection limit must be greater than zero".to_string());
+        }
         Ok(Self {
             connect_timeout: Duration::from_secs(connect_timeout_secs),
             request_idle_timeout: Duration::from_secs(request_idle_timeout_secs),
+            max_connections,
         })
     }
 }
@@ -46,15 +70,9 @@ impl Default for TcpSettings {
         Self {
             connect_timeout: Duration::from_secs(DEFAULT_CONNECT_TIMEOUT_SECS),
             request_idle_timeout: Duration::from_secs(DEFAULT_REQUEST_IDLE_TIMEOUT_SECS),
+            max_connections: DEFAULT_MAX_CONNECTIONS,
         }
     }
-}
-
-static NEXT_ID: AtomicU64 = AtomicU64::new(1);
-
-thread_local! {
-    static CONNECTIONS: RefCell<HashMap<String, BufReader<TcpStream>>> =
-        RefCell::new(HashMap::new());
 }
 
 /// Phase 4.7+ fix #13 — cross-backend port validation.
@@ -75,17 +93,18 @@ pub fn connect(host: &str, port: i64) -> Result<TcpConnection, String> {
     connect_with_settings(host, port, TcpSettings::default())
 }
 
+#[cfg(not(target_family = "wasm"))]
 pub fn connect_with_settings(
     host: &str,
     port: i64,
     settings: TcpSettings,
 ) -> Result<TcpConnection, String> {
     validate_port(port)?;
-    let count = CONNECTIONS.with(|map| map.borrow().len());
-    if count >= MAX_CONNECTIONS {
+    let count = reactor::live_connection_count();
+    if count >= settings.max_connections {
         return Err(format!(
             "Tcp.connect: connection limit reached ({} max)",
-            MAX_CONNECTIONS
+            settings.max_connections
         ));
     }
 
@@ -97,16 +116,16 @@ pub fn connect_with_settings(
     // poisons the handle instead of letting a caller continue after an
     // unknown partial read or write.
 
-    let id = format!("tcp-{}", NEXT_ID.fetch_add(1, Ordering::Relaxed));
-    CONNECTIONS.with(|map| {
-        map.borrow_mut().insert(id.clone(), BufReader::new(stream));
-    });
+    Ok(reactor::register_connection(stream, host.to_string(), port))
+}
 
-    Ok(TcpConnection {
-        id: AverStr::from(id),
-        host: AverStr::from(host),
-        port,
-    })
+#[cfg(target_family = "wasm")]
+pub fn connect_with_settings(
+    _host: &str,
+    _port: i64,
+    _settings: TcpSettings,
+) -> Result<TcpConnection, String> {
+    Err("Tcp.connect: native sockets are unavailable on this target".to_string())
 }
 
 pub fn write_line(conn: &TcpConnection, line: &str) -> Result<(), String> {
@@ -205,95 +224,126 @@ pub fn read_some(conn: &TcpConnection, max_bytes: i64) -> Result<Vec<u8>, String
     })
 }
 
-/// Return the positions of persistent connections that can make read
-/// progress without blocking. Positions preserve duplicate handles in the
-/// input; the capability adapter maps them back to caller-owned peer IDs.
-///
-/// Bytes already held by a connection's [`BufReader`] count as readable even
-/// when the underlying socket itself is idle. Closed/broken sockets also count
-/// as readable so the following read can surface EOF or the concrete I/O
-/// failure. Polling itself never poisons a session.
 #[cfg(not(target_family = "wasm"))]
-pub fn poll(connections: &[TcpConnection], timeout_ms: i64) -> Result<Vec<usize>, String> {
-    if timeout_ms < 0 {
-        return Err(format!("Tcp.poll: timeoutMs {timeout_ms} is negative"));
-    }
-
-    CONNECTIONS.with(|map| {
-        let live = map.borrow();
-        let mut ready = vec![false; connections.len()];
-        let mut group_by_id: HashMap<String, usize> = HashMap::new();
-        let mut groups: Vec<(&TcpStream, Vec<usize>)> = Vec::new();
-
-        for (position, connection) in connections.iter().enumerate() {
-            let id: &str = &connection.id;
-            let Some(reader) = live.get(id) else {
-                return Err(format!("Tcp.poll: unknown connection '{}'", connection.id));
-            };
-            if !reader.buffer().is_empty() {
-                ready[position] = true;
-                continue;
-            }
-            if let Some(group) = group_by_id.get(id).copied() {
-                groups[group].1.push(position);
-            } else {
-                let group = groups.len();
-                group_by_id.insert(id.to_string(), group);
-                groups.push((reader.get_ref(), vec![position]));
-            }
-        }
-
-        let poller = polling::Poller::new().map_err(|error| format_io_error("Tcp.poll", &error))?;
-        for (group, (stream, _)) in groups.iter().enumerate() {
-            // SAFETY: `live` immutably borrows the connection table until
-            // after `poller` is dropped, so every registered TcpStream remains
-            // alive and at the same address for the whole registration.
-            unsafe {
-                poller
-                    .add(*stream, polling::Event::readable(group))
-                    .map_err(|error| format_io_error("Tcp.poll", &error))?;
-            }
-        }
-
-        let timeout = if ready.iter().any(|is_ready| *is_ready) {
-            Duration::ZERO
-        } else {
-            Duration::from_millis(timeout_ms as u64)
-        };
-        let mut events = polling::Events::new();
-        poller
-            .wait(&mut events, Some(timeout))
-            .map_err(|error| format_io_error("Tcp.poll", &error))?;
-        for event in events.iter() {
-            if (event.readable || event.is_err().unwrap_or(false))
-                && let Some((_, positions)) = groups.get(event.key)
-            {
-                for position in positions {
-                    ready[*position] = true;
-                }
-            }
-        }
-
-        Ok(ready
-            .into_iter()
-            .enumerate()
-            .filter_map(|(position, is_ready)| is_ready.then_some(position))
-            .collect())
-    })
+pub fn poll(sockets: &[TcpSocket], timeout_ms: i64) -> Result<Vec<usize>, String> {
+    reactor::poll(sockets, timeout_ms)
 }
 
 #[cfg(target_family = "wasm")]
-pub fn poll(_connections: &[TcpConnection], _timeout_ms: i64) -> Result<Vec<usize>, String> {
+pub fn poll(_sockets: &[TcpSocket], _timeout_ms: i64) -> Result<Vec<usize>, String> {
     Err("Tcp.poll: native socket polling is unavailable on this target".to_string())
 }
 
+#[cfg(not(target_family = "wasm"))]
+pub fn listen(port: i64, backlog: i64) -> Result<TcpListener, String> {
+    listen_with_settings(port, backlog, TcpSettings::default())
+}
+
+#[cfg(not(target_family = "wasm"))]
+pub fn listen_with_settings(
+    port: i64,
+    backlog: i64,
+    settings: TcpSettings,
+) -> Result<TcpListener, String> {
+    reactor::listen(validate_port(port)?, backlog, settings)
+}
+
+#[cfg(target_family = "wasm")]
+pub fn listen(_port: i64, _backlog: i64) -> Result<TcpListener, String> {
+    Err("Tcp.listen: native socket listening is unavailable on this target".to_string())
+}
+
+#[cfg(target_family = "wasm")]
+pub fn listen_with_settings(
+    _port: i64,
+    _backlog: i64,
+    _settings: TcpSettings,
+) -> Result<TcpListener, String> {
+    Err("Tcp.listen: native socket listening is unavailable on this target".to_string())
+}
+
+#[cfg(not(target_family = "wasm"))]
+pub fn accept(listener: &TcpListener) -> Result<Option<TcpConnection>, String> {
+    reactor::accept(listener)
+}
+
+#[cfg(target_family = "wasm")]
+pub fn accept(_listener: &TcpListener) -> Result<Option<TcpConnection>, String> {
+    Err("Tcp.accept: native socket listening is unavailable on this target".to_string())
+}
+
+#[cfg(not(target_family = "wasm"))]
+pub fn begin_connect_with_settings(
+    host: &str,
+    port: i64,
+    settings: TcpSettings,
+) -> Result<TcpDial, String> {
+    validate_port(port)?;
+    let address = resolve(&format!("{}:{}", host, port))?;
+    reactor::begin_connect(host, port, address, settings)
+}
+
+pub fn begin_connect(host: &str, port: i64) -> Result<TcpDial, String> {
+    begin_connect_with_settings(host, port, TcpSettings::default())
+}
+
+#[cfg(target_family = "wasm")]
+pub fn begin_connect_with_settings(
+    _host: &str,
+    _port: i64,
+    _settings: TcpSettings,
+) -> Result<TcpDial, String> {
+    Err("Tcp.beginConnect: native sockets are unavailable on this target".to_string())
+}
+
+#[cfg(not(target_family = "wasm"))]
+pub fn dialled(dial: &TcpDial) -> Result<Option<TcpConnection>, String> {
+    reactor::dialled(dial)
+}
+
+#[cfg(target_family = "wasm")]
+pub fn dialled(_dial: &TcpDial) -> Result<Option<TcpConnection>, String> {
+    Err("Tcp.dialled: native sockets are unavailable on this target".to_string())
+}
+
+#[cfg(not(target_family = "wasm"))]
+pub fn close_listener(listener: &TcpListener) -> Result<(), String> {
+    reactor::close_listener(listener)
+}
+
+#[cfg(target_family = "wasm")]
+pub fn close_listener(_listener: &TcpListener) -> Result<(), String> {
+    Err("Tcp.closeListener: native sockets are unavailable on this target".to_string())
+}
+
+#[cfg(not(target_family = "wasm"))]
+pub fn close_dial(dial: &TcpDial) -> Result<(), String> {
+    reactor::close_dial(dial)
+}
+
+#[cfg(target_family = "wasm")]
+pub fn close_dial(_dial: &TcpDial) -> Result<(), String> {
+    Err("Tcp.closeDial: native sockets are unavailable on this target".to_string())
+}
+
+#[cfg(not(target_family = "wasm"))]
+pub fn peer_address(connection: &TcpConnection) -> Result<String, String> {
+    reactor::peer_address(connection)
+}
+
+#[cfg(target_family = "wasm")]
+pub fn peer_address(_connection: &TcpConnection) -> Result<String, String> {
+    Err("Tcp.peerAddress: native sockets are unavailable on this target".to_string())
+}
+
+#[cfg(not(target_family = "wasm"))]
 pub fn close(conn: &TcpConnection) -> Result<(), String> {
-    let id: &str = &conn.id;
-    let removed = CONNECTIONS.with(|map| map.borrow_mut().remove(id));
-    match removed {
-        Some(_) => Ok(()),
-        None => Err(format!("Tcp.close: unknown connection '{}'", conn.id)),
-    }
+    reactor::close_connection(conn)
+}
+
+#[cfg(target_family = "wasm")]
+pub fn close(_conn: &TcpConnection) -> Result<(), String> {
+    Err("Tcp.close: native sockets are unavailable on this target".to_string())
 }
 
 pub fn send(host: &str, port: i64, message: &str) -> Result<String, String> {
@@ -390,31 +440,27 @@ fn request_stream(
     Ok(stream)
 }
 
+#[cfg(not(target_family = "wasm"))]
 fn with_connection_io<T>(
     conn: &TcpConnection,
     operation: &str,
     io: impl FnOnce(&mut BufReader<TcpStream>) -> io::Result<T>,
 ) -> Result<T, String> {
-    CONNECTIONS.with(|map| {
-        let mut connections = map.borrow_mut();
-        let id: &str = &conn.id;
-        let Some(reader) = connections.get_mut(id) else {
-            return Err(format!("{operation}: unknown connection '{}'", conn.id));
-        };
-        match io(reader) {
-            Ok(value) => Ok(value),
-            Err(error) => {
-                // A failed read may already have consumed bytes and a failed write
-                // may already have sent bytes. The stream position is unknowable;
-                // keeping the handle would permit silent protocol corruption.
-                connections.remove(id);
-                Err(format_io_error(operation, &error))
-            }
-        }
-    })
+    reactor::with_connection_io(conn, operation, io)
 }
 
-fn format_io_error(operation: &str, error: &io::Error) -> String {
+#[cfg(target_family = "wasm")]
+fn with_connection_io<T>(
+    _conn: &TcpConnection,
+    operation: &str,
+    _io: impl FnOnce(&mut BufReader<TcpStream>) -> io::Result<T>,
+) -> Result<T, String> {
+    Err(format!(
+        "{operation}: native sockets are unavailable on this target"
+    ))
+}
+
+pub(super) fn format_io_error(operation: &str, error: &io::Error) -> String {
     if matches!(
         error.kind(),
         io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
@@ -425,7 +471,11 @@ fn format_io_error(operation: &str, error: &io::Error) -> String {
     }
 }
 
-fn format_connect_error(operation: &str, error: &io::Error, deadline: Duration) -> String {
+pub(super) fn format_connect_error(
+    operation: &str,
+    error: &io::Error,
+    deadline: Duration,
+) -> String {
     if matches!(
         error.kind(),
         io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
@@ -452,6 +502,7 @@ mod tests {
     use std::net::{Shutdown, TcpListener};
     use std::sync::mpsc;
     use std::thread;
+    use std::time::Instant;
 
     fn loopback_connection(
         server: impl FnOnce(TcpStream) + Send + 'static,
@@ -469,14 +520,10 @@ mod tests {
     #[test]
     fn persistent_connections_have_no_read_or_write_deadline() {
         let (connection, server) = loopback_connection(|_| {});
-        CONNECTIONS.with(|map| {
-            let connections = map.borrow();
-            let reader = connections
-                .get(connection.id.as_ref())
-                .expect("live handle");
-            assert_eq!(reader.get_ref().read_timeout().unwrap(), None);
-            assert_eq!(reader.get_ref().write_timeout().unwrap(), None);
-        });
+        assert_eq!(
+            reactor::connection_timeouts(&connection),
+            Some((None, None))
+        );
         close(&connection).expect("close client");
         server.join().expect("server thread");
     }
@@ -502,9 +549,7 @@ mod tests {
         let (connection, server) = loopback_connection(|_| {});
         assert!(read_bytes(&connection, -1).is_err());
         assert!(read_some(&connection, 0).is_err());
-        CONNECTIONS.with(|map| {
-            assert!(map.borrow().contains_key(connection.id.as_ref()));
-        });
+        assert!(reactor::connection_exists(&connection));
         close(&connection).expect("close client");
         server.join().expect("server thread");
     }
@@ -563,7 +608,10 @@ mod tests {
         written_rx.recv().expect("peer wrote bytes");
 
         assert_eq!(read_line(&connection).expect("read line"), "hello");
-        assert_eq!(poll(std::slice::from_ref(&connection), 1_000).unwrap(), [0]);
+        assert_eq!(
+            poll(&[TcpSocket::Connected(connection.clone())], 1_000).unwrap(),
+            [0]
+        );
         assert_eq!(
             read_some(&connection, 64).expect("read buffered rest"),
             b"rest"
@@ -582,13 +630,13 @@ mod tests {
         });
 
         assert!(
-            poll(std::slice::from_ref(&connection), 5)
+            poll(&[TcpSocket::Connected(connection.clone())], 5)
                 .expect("quiet poll")
                 .is_empty()
         );
         let unknown = TcpConnection::from_parts("tcp-missing".to_string(), String::new(), 0);
         assert!(
-            poll(&[unknown], 0)
+            poll(&[TcpSocket::Connected(unknown)], 0)
                 .expect_err("unknown handle")
                 .contains("unknown connection")
         );
@@ -596,5 +644,132 @@ mod tests {
         close(&connection).expect("close client");
         release_tx.send(()).expect("release peer");
         server.join().expect("server thread");
+    }
+
+    #[test]
+    fn max_connections_is_shared_and_a_full_pool_does_not_drain_the_backlog() {
+        let settings = TcpSettings::from_policy(1, 1, 1).expect("one connection policy");
+        let listener = listen_with_settings(0, 16, settings).expect("open runtime listener");
+        let listener_address = reactor::listener_local_address(&listener);
+        let waiting_client = TcpStream::connect(listener_address).expect("queue inbound client");
+
+        let (release_tx, release_rx) = mpsc::channel();
+        let (occupied, occupied_server) = loopback_connection(move |_| {
+            release_rx.recv().expect("hold occupied connection open");
+        });
+
+        let error = accept(&listener).expect_err("full shared pool must reject accept");
+        assert!(
+            error.contains("connection limit reached (1 max)"),
+            "{error}"
+        );
+
+        close(&occupied).expect("free shared pool slot");
+        let accepted = accept(&listener)
+            .expect("accept after freeing slot")
+            .expect("queued client must remain in backlog");
+        close(&accepted).expect("close accepted client");
+        close_listener(&listener).expect("close listener");
+        drop(waiting_client);
+        release_tx.send(()).expect("release occupied peer");
+        occupied_server.join().expect("occupied server");
+    }
+
+    #[test]
+    fn one_poller_handles_connections_dials_and_listeners_and_clips_to_dial_deadline() {
+        let (written_tx, written_rx) = mpsc::channel();
+        let (release_connection_tx, release_connection_rx) = mpsc::channel();
+        let (connection, connection_server) = loopback_connection(move |mut stream| {
+            stream
+                .write_all(b"line\r\nbuffered")
+                .expect("write buffered connection bytes");
+            written_tx.send(()).expect("announce connection bytes");
+            release_connection_rx
+                .recv()
+                .expect("hold connection peer open");
+        });
+        written_rx.recv().expect("connection peer wrote");
+        assert_eq!(read_line(&connection).expect("prime BufReader"), "line");
+
+        let listener = listen(0, 16).expect("open runtime listener");
+        let listener_address = reactor::listener_local_address(&listener);
+        let waiting_client = TcpStream::connect(listener_address).expect("queue inbound client");
+
+        let dial_target = TcpListener::bind(("127.0.0.1", 0)).expect("bind dial target");
+        let dial_port = dial_target
+            .local_addr()
+            .expect("dial target address")
+            .port();
+        let (release_dial_tx, release_dial_rx) = mpsc::channel();
+        let dial_server = thread::spawn(move || {
+            let (_stream, _) = dial_target.accept().expect("accept outbound dial");
+            release_dial_rx.recv().expect("hold dial target open");
+        });
+        let dial = begin_connect("127.0.0.1", i64::from(dial_port)).expect("begin dial");
+        assert_eq!(
+            poll(&[TcpSocket::Dialing(dial.clone())], 1_000).expect("wait for outbound dial"),
+            [0]
+        );
+
+        let ready = poll(
+            &[
+                TcpSocket::Connected(connection.clone()),
+                TcpSocket::Dialing(dial.clone()),
+                TcpSocket::Listening(listener.clone()),
+            ],
+            1_000,
+        )
+        .expect("poll three socket states");
+        assert_eq!(ready, [0, 1, 2]);
+
+        let promoted = dialled(&dial)
+            .expect("inspect ready dial")
+            .expect("ready dial connected");
+        close(&promoted).expect("close promoted dial");
+        let accepted = accept(&listener)
+            .expect("accept queued client")
+            .expect("queued client present");
+        close(&accepted).expect("close accepted client");
+        close_listener(&listener).expect("close listener");
+        drop(waiting_client);
+        close(&connection).expect("close buffered connection");
+        release_connection_tx
+            .send(())
+            .expect("release connection peer");
+        release_dial_tx.send(()).expect("release dial target");
+        connection_server.join().expect("connection server");
+        dial_server.join().expect("dial server");
+
+        let blocked_listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind quiet peer");
+        let blocked_address = blocked_listener.local_addr().expect("quiet peer address");
+        let (release_blocked_tx, release_blocked_rx) = mpsc::channel();
+        let blocked_server = thread::spawn(move || {
+            let (_stream, _) = blocked_listener.accept().expect("accept quiet stream");
+            release_blocked_rx.recv().expect("hold quiet stream open");
+        });
+        let blocked_stream = TcpStream::connect(blocked_address).expect("connect quiet stream");
+        blocked_stream
+            .set_nonblocking(true)
+            .expect("make quiet stream nonblocking");
+
+        let deadline = Duration::from_millis(40);
+        let blocked_dial = reactor::insert_test_dial(blocked_stream, deadline);
+        let started = Instant::now();
+        let ready = poll(&[TcpSocket::Dialing(blocked_dial.clone())], 1_000)
+            .expect("deadline-clipped poll");
+        let elapsed = started.elapsed();
+        assert_eq!(ready, [0]);
+        assert!(
+            elapsed >= Duration::from_millis(20),
+            "returned too early: {elapsed:?}"
+        );
+        assert!(
+            elapsed < Duration::from_millis(300),
+            "ignored dial deadline: {elapsed:?}"
+        );
+        let error = dialled(&blocked_dial).expect_err("expired dial must fail");
+        assert!(error.contains("timed out"), "{error}");
+        release_blocked_tx.send(()).expect("release blocked peer");
+        blocked_server.join().expect("blocked server");
     }
 }

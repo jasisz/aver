@@ -46,6 +46,85 @@ fn emit_result_err(
     Ok(())
 }
 
+/// Level-B landing for the asynchronous Tcp resources.  WASI 0.2 has the
+/// raw socket operations needed to implement these eventually, but this
+/// backend does not yet keep `Tcp.Dial` / `Tcp.Listener` resources in its
+/// socket pool.  Evaluate every argument (preserving Aver evaluation order)
+/// and return an ordinary, typed `Result.Err` instead of advertising support
+/// and falling through to a missing host import or a wasm trap.
+pub(super) fn emit_tcp_resource_unavailable_wasip2(
+    func: &mut wasm_encoder::Function,
+    dotted: &str,
+    args: &[Spanned<MirExpr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let (arity, result, ok_type, message) = match dotted {
+        "Tcp.beginConnect" => (
+            2,
+            "Result<Tcp.Dial,String>",
+            "Tcp.Dial",
+            "Tcp.beginConnect: native sockets are unavailable on this target",
+        ),
+        "Tcp.dialled" => (
+            1,
+            "Result<Option<Tcp.Connection>,String>",
+            "Option<Tcp.Connection>",
+            "Tcp.dialled: native sockets are unavailable on this target",
+        ),
+        "Tcp.listen" => (
+            2,
+            "Result<Tcp.Listener,String>",
+            "Tcp.Listener",
+            "Tcp.listen: native socket listening is unavailable on this target",
+        ),
+        "Tcp.accept" => (
+            1,
+            "Result<Option<Tcp.Connection>,String>",
+            "Option<Tcp.Connection>",
+            "Tcp.accept: native socket listening is unavailable on this target",
+        ),
+        "Tcp.peerAddress" => (
+            1,
+            "Result<String,String>",
+            "String",
+            "Tcp.peerAddress: native sockets are unavailable on this target",
+        ),
+        "Tcp.closeDial" => (
+            1,
+            "Result<Unit,String>",
+            "Unit",
+            "Tcp.closeDial: native sockets are unavailable on this target",
+        ),
+        "Tcp.closeListener" => (
+            1,
+            "Result<Unit,String>",
+            "Unit",
+            "Tcp.closeListener: native sockets are unavailable on this target",
+        ),
+        _ => {
+            return Err(WasmGcError::Validation(format!(
+                "unknown Level-B Tcp resource operation `{dotted}`"
+            )));
+        }
+    };
+    if args.len() != arity {
+        return Err(WasmGcError::Validation(format!(
+            "{dotted} on `--target wasip2` expects {arity} arguments, got {}",
+            args.len()
+        )));
+    }
+    for arg in args {
+        if emit_mir_expr(func, arg, slots, ctx)?.is_some_and(|produces| produces) {
+            func.instruction(&Instruction::Drop);
+        }
+    }
+    let result_idx = ctx.registry.result_type_idx(result).ok_or_else(|| {
+        WasmGcError::Validation(format!("{dotted} on wasip2: `{result}` slot missing"))
+    })?;
+    emit_result_err(func, result_idx, ok_type, message, ctx)
+}
+
 /// Lower a custom capability call through its generated internal bridge.
 /// Unit arguments are still evaluated in source order but occupy no wasm
 /// value slot; every other phase-3a value is passed directly to the bridge.
@@ -920,7 +999,7 @@ pub(super) fn emit_tcp_poll_wasip2(
     })?;
     if args.len() != 2 {
         return Err(WasmGcError::Validation(format!(
-            "Tcp.poll on `--target wasip2` expects 2 args (connections, timeoutMs), got {}",
+            "Tcp.poll on `--target wasip2` expects 2 args (sockets, timeoutMs), got {}",
             args.len()
         )));
     }

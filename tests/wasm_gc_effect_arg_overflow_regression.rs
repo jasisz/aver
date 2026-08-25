@@ -363,9 +363,9 @@ fn report(conn: Tcp.Connection, ready: List<Int>, chunk: Bytes) -> Unit
     Tcp.close(conn)
     Console.print("{{ready == [1208925819614629174706176]}}:{{Bytes.octets(chunk) == [249, 190, 180, 217]}}")
 
-fn pollAndRead(conn: Tcp.Connection, peers: Map<Int, Tcp.Connection>) -> Unit
+fn pollAndRead(conn: Tcp.Connection, sockets: Map<Int, Tcp.Socket>) -> Unit
     ! [Tcp.poll, Tcp.readSome, Tcp.close, Console.print]
-    match Tcp.poll(peers, 1000)
+    match Tcp.poll(sockets, 1000)
         Result.Err(e) -> Console.print("poll err: {{e}}")
         Result.Ok(ready) -> match Tcp.readSome(conn, 64)
             Result.Err(e) -> Console.print("read err: {{e}}")
@@ -375,7 +375,7 @@ fn main() -> Unit
     ! [Tcp.connect, Tcp.poll, Tcp.readSome, Tcp.close, Console.print]
     match Tcp.connect("127.0.0.1", {port})
         Result.Err(e) -> Console.print("connect err: {{e}}")
-        Result.Ok(conn) -> pollAndRead(conn, {{1208925819614629174706176 => conn}})
+        Result.Ok(conn) -> pollAndRead(conn, {{1208925819614629174706176 => Tcp.Socket.Connected(conn)}})
 "#
     );
     let (out, recorded) = run_wasm_gc_with_mode(&src, aver::runtime::wasm_gc::EffectMode::Record)
@@ -408,6 +408,140 @@ fn main() -> Unit
         "replay must suppress Console.print"
     );
     assert_eq!(replayed.effects_consumed, replayed.effects_total);
+}
+
+#[test]
+fn tcp_begin_connect_dialled_and_peer_address_record_and_replay_on_wasm_gc() {
+    use std::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback dial target");
+    let port = listener.local_addr().expect("dial target address").port();
+    let server = std::thread::spawn(move || {
+        let (_stream, _) = listener.accept().expect("accept non-blocking Aver dial");
+    });
+    let src = format!(
+        r#"module M
+    intent = "Settle one non-blocking connection through the shared poll map."
+    effects [Tcp, Console]
+
+fn awaitDial(dial: Tcp.Dial) -> Result<Tcp.Connection, String>
+    ? "Poll until the dial is either connected or rejected."
+    ! [Tcp.poll, Tcp.dialled]
+    _ = Tcp.poll({{9 => Tcp.Socket.Dialing(dial)}}, 1000)?
+    match Tcp.dialled(dial)?
+        Option.None -> awaitDial(dial)
+        Option.Some(connection) -> Result.Ok(connection)
+
+fn finish(connection: Tcp.Connection, address: String) -> Unit
+    ! [Tcp.close, Console.print]
+    _ = Tcp.close(connection)
+    Console.print("connected:{{String.len(address) > 0}}")
+
+fn main() -> Unit
+    ! [Tcp.beginConnect, Tcp.poll, Tcp.dialled, Tcp.peerAddress, Tcp.close, Console.print]
+    match Tcp.beginConnect("127.0.0.1", {port})
+        Result.Err(error) -> Console.print("begin err: {{error}}")
+        Result.Ok(dial) -> match awaitDial(dial)
+            Result.Err(error) -> Console.print("dial err: {{error}}")
+            Result.Ok(connection) -> match Tcp.peerAddress(connection)
+                Result.Err(error) -> Console.print("peer err: {{error}}")
+                Result.Ok(address) -> finish(connection, address)
+"#
+    );
+
+    let (stdout, recorded) =
+        run_wasm_gc_with_mode(&src, aver::runtime::wasm_gc::EffectMode::Record)
+            .expect("wasm-gc non-blocking dial lifecycle");
+    server.join().expect("dial target server");
+    assert_eq!(stdout, "connected:true\n");
+
+    let recording = aver::replay::SessionRecording {
+        schema_version: 1,
+        request_id: "tcp-dial-test".to_string(),
+        timestamp: String::new(),
+        program_file: String::new(),
+        module_root: String::new(),
+        entry_fn: "main".to_string(),
+        input: aver::replay::JsonValue::Null,
+        capabilities: Vec::new(),
+        effects: recorded
+            .recorded_effects
+            .expect("record mode must return the dial trace"),
+        output: aver::replay::RecordedOutcome::Value(recorded.output),
+    };
+    let (stdout, replayed) = run_wasm_gc_with_mode(
+        &src,
+        aver::runtime::wasm_gc::EffectMode::Replay(Box::new(recording), true),
+    )
+    .expect("replay the non-blocking dial lifecycle");
+    assert!(stdout.is_empty());
+    assert_eq!(replayed.effects_consumed, replayed.effects_total);
+}
+
+#[test]
+fn tcp_listen_accept_and_close_listener_run_on_wasm_gc() {
+    use std::io::Write;
+    use std::net::{TcpListener, TcpStream};
+    use std::time::{Duration, Instant};
+
+    let reservation = TcpListener::bind("127.0.0.1:0").expect("reserve listener port");
+    let port = reservation.local_addr().expect("reserved address").port();
+    drop(reservation);
+
+    let client = std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            match TcpStream::connect(("127.0.0.1", port)) {
+                Ok(mut stream) => {
+                    stream.write_all(b"ready").expect("write accepted payload");
+                    return;
+                }
+                Err(error) if Instant::now() < deadline => {
+                    let _ = error;
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Err(error) => panic!("connect to Aver listener: {error}"),
+            }
+        }
+    });
+
+    let src = format!(
+        r#"module M
+    intent = "Accept one inbound connection through Tcp.Socket.Listening."
+    effects [Tcp, Console]
+
+fn awaitClient(listener: Tcp.Listener) -> Result<Tcp.Connection, String>
+    ? "Poll and drain one listener backlog entry."
+    ! [Tcp.poll, Tcp.accept]
+    _ = Tcp.poll({{4 => Tcp.Socket.Listening(listener)}}, 1000)?
+    match Tcp.accept(listener)?
+        Option.None -> awaitClient(listener)
+        Option.Some(connection) -> Result.Ok(connection)
+
+fn accepted(listener: Tcp.Listener, connection: Tcp.Connection, address: String) -> Unit
+    ! [Tcp.close, Tcp.closeListener, Console.print]
+    closedConnection = Tcp.close(connection)
+    closedListener = Tcp.closeListener(listener)
+    Console.print("accepted:{{String.len(address) > 0}}")
+
+fn finish(listener: Tcp.Listener, connection: Tcp.Connection) -> Unit
+    ! [Tcp.peerAddress, Tcp.close, Tcp.closeListener, Console.print]
+    match Tcp.peerAddress(connection)
+        Result.Err(error) -> Console.print("peer err: {{error}}")
+        Result.Ok(address) -> accepted(listener, connection, address)
+
+fn main() -> Unit
+    ! [Tcp.listen, Tcp.poll, Tcp.accept, Tcp.peerAddress, Tcp.close, Tcp.closeListener, Console.print]
+    match Tcp.listen({port}, 16)
+        Result.Err(error) -> Console.print("listen err: {{error}}")
+        Result.Ok(listener) -> match awaitClient(listener)
+            Result.Err(error) -> Console.print("accept err: {{error}}")
+            Result.Ok(connection) -> finish(listener, connection)
+"#
+    );
+    let stdout = run_wasm_gc(&src).expect("wasm-gc listener lifecycle");
+    client.join().expect("loopback listener client");
+    assert_eq!(stdout, "accepted:true\n");
 }
 
 #[test]

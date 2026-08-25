@@ -6,6 +6,7 @@
 ///   [effects.Env]    keys  = ["APP_*", "TOKEN"]
 ///   [effects.Tcp]    connect_timeout_secs = 5
 ///                    request_idle_timeout_secs = 30
+///                    max_connections = 256
 ///
 /// And check-time warning suppression:
 ///   [[check.suppress]]
@@ -42,6 +43,7 @@ pub struct EffectPolicy {
 pub struct TcpEffectSettings {
     pub connect_timeout_secs: u64,
     pub request_idle_timeout_secs: u64,
+    pub max_connections: usize,
 }
 
 impl Default for TcpEffectSettings {
@@ -49,17 +51,19 @@ impl Default for TcpEffectSettings {
         Self {
             connect_timeout_secs: aver_rt::tcp::DEFAULT_CONNECT_TIMEOUT_SECS,
             request_idle_timeout_secs: aver_rt::tcp::DEFAULT_REQUEST_IDLE_TIMEOUT_SECS,
+            max_connections: aver_rt::tcp::DEFAULT_MAX_CONNECTIONS,
         }
     }
 }
 
 impl TcpEffectSettings {
     pub fn native(self) -> aver_rt::tcp::TcpSettings {
-        aver_rt::tcp::TcpSettings::from_secs(
+        aver_rt::tcp::TcpSettings::from_policy(
             self.connect_timeout_secs,
             self.request_idle_timeout_secs,
+            self.max_connections,
         )
-        .expect("ProjectConfig validates positive Tcp timeout settings")
+        .expect("ProjectConfig validates positive Tcp settings")
     }
 }
 
@@ -368,6 +372,9 @@ impl ProjectConfig {
                     if section.contains_key("request_idle_timeout_secs") {
                         tcp_settings_configured = true;
                     }
+                    if section.contains_key("max_connections") {
+                        tcp_settings_configured = true;
+                    }
                     tcp_settings.connect_timeout_secs = parse_positive_timeout_secs(
                         name,
                         section,
@@ -379,6 +386,12 @@ impl ProjectConfig {
                         section,
                         "request_idle_timeout_secs",
                         tcp_settings.request_idle_timeout_secs,
+                    )?;
+                    tcp_settings.max_connections = parse_positive_usize(
+                        name,
+                        section,
+                        "max_connections",
+                        tcp_settings.max_connections,
                     )?;
                 }
 
@@ -718,7 +731,11 @@ fn validate_effect_section_keys(
         ("Http", _) => &["hosts"],
         ("Disk", _) => &["paths"],
         ("Env", _) => &["keys"],
-        ("Tcp", "Tcp") => &["connect_timeout_secs", "request_idle_timeout_secs"],
+        ("Tcp", "Tcp") => &[
+            "connect_timeout_secs",
+            "request_idle_timeout_secs",
+            "max_connections",
+        ],
         ("Tcp", _) => &[],
         _ => &[],
     };
@@ -755,6 +772,24 @@ fn parse_positive_timeout_secs(
     u64::try_from(seconds)
         .ok()
         .filter(|seconds| *seconds > 0)
+        .ok_or_else(|| format!("aver.toml: [effects.{effect}].{key} must be greater than zero"))
+}
+
+fn parse_positive_usize(
+    effect: &str,
+    section: &toml::map::Map<String, toml::Value>,
+    key: &str,
+    default: usize,
+) -> Result<usize, String> {
+    let Some(value) = section.get(key) else {
+        return Ok(default);
+    };
+    let number = value
+        .as_integer()
+        .ok_or_else(|| format!("aver.toml: [effects.{effect}].{key} must be a positive integer"))?;
+    usize::try_from(number)
+        .ok()
+        .filter(|number| *number > 0)
         .ok_or_else(|| format!("aver.toml: [effects.{effect}].{key} must be greater than zero"))
 }
 
@@ -1431,6 +1466,7 @@ mod tests {
                 "validate_effect_section_keys(name, section)",
                 "connect_timeout_secs",
                 "request_idle_timeout_secs",
+                "max_connections",
             ] {
                 assert!(
                     body.contains(marker),
@@ -1451,7 +1487,7 @@ mod tests {
     #[test]
     fn test_parse_tcp_provider_settings() {
         let config = ProjectConfig::parse(
-            "[effects.Tcp]\nconnect_timeout_secs = 7\nrequest_idle_timeout_secs = 45\n",
+            "[effects.Tcp]\nconnect_timeout_secs = 7\nrequest_idle_timeout_secs = 45\nmax_connections = 128\n",
         )
         .unwrap();
         assert_eq!(
@@ -1459,6 +1495,7 @@ mod tests {
             TcpEffectSettings {
                 connect_timeout_secs: 7,
                 request_idle_timeout_secs: 45,
+                max_connections: 128,
             }
         );
         assert!(config.tcp_settings_configured);
@@ -1471,6 +1508,8 @@ mod tests {
             ("request_idle_timeout_secs", "-1", "greater than zero"),
             ("connect_timeout_secs", "1.5", "positive integer"),
             ("request_idle_timeout_secs", "\"30\"", "positive integer"),
+            ("max_connections", "0", "greater than zero"),
+            ("max_connections", "1.5", "positive integer"),
         ] {
             let error = ProjectConfig::parse(&format!("[effects.Tcp]\n{key} = {value}\n"))
                 .expect_err("invalid Tcp setting must be rejected");

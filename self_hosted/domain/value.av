@@ -27,6 +27,8 @@ type Val
     ValTuple(List<Val>)
     ValRecord(String, List<Tuple<String, Val>>)
     ValTcpConnection(Tcp.Connection)
+    ValTcpDial(Tcp.Dial)
+    ValTcpListener(Tcp.Listener)
     ValVariant(Int, String, List<Val>)
     ValMap(Map<String, Val>)
     ValUnit
@@ -61,6 +63,8 @@ fn valRepr(v: Val) -> String
         Val.ValNone -> "Option.None"
         Val.ValRecord(name, _) -> "{name}(...)"
         Val.ValTcpConnection(_) -> "Tcp.Connection(<resource>)"
+        Val.ValTcpDial(_) -> "Tcp.Dial(<resource>)"
+        Val.ValTcpListener(_) -> "Tcp.Listener(<resource>)"
         Val.ValMap(m) -> valMapRepr(Map.entries(m), "", true)
         Val.ValVariant(_, fullName, fields) -> valVariantReprTagged(fullName, fields)
         Val.ValUnit -> "()"

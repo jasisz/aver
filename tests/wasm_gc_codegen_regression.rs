@@ -253,10 +253,10 @@ fn tcp_poll_and_read_some_import_host_functions_and_validate() {
     exposes [ready, chunk]
     effects [Tcp.poll, Tcp.readSome]
 
-fn ready(connections: Map<Int, Tcp.Connection>, timeoutMs: Int) -> Result<List<Int>, String>
-    ? "Return the caller IDs whose connections can be read without waiting."
+fn ready(sockets: Map<Int, Tcp.Socket>, timeoutMs: Int) -> Result<List<Int>, String>
+    ? "Return caller IDs whose sockets can make progress without waiting."
     ! [Tcp.poll]
-    Tcp.poll(connections, timeoutMs)
+    Tcp.poll(sockets, timeoutMs)
 
 fn chunk(conn: Tcp.Connection, maxBytes: Int) -> Result<Bytes, String>
     ? "Read one available chunk without requiring the buffer to fill."

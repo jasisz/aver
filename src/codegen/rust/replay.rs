@@ -555,6 +555,7 @@ const RUNTIME_POLICY_CHECK_SNIPPET: &str = r#"    #[derive(Clone, Debug, Default
         effect_policies: BTreeMap<String, RuntimeEffectPolicy>,
         tcp_connect_timeout_secs: u64,
         tcp_request_idle_timeout_secs: u64,
+        tcp_max_connections: usize,
         independence_mode_cancel: bool,
     }
 
@@ -564,6 +565,7 @@ const RUNTIME_POLICY_CHECK_SNIPPET: &str = r#"    #[derive(Clone, Debug, Default
                 effect_policies: BTreeMap::new(),
                 tcp_connect_timeout_secs: aver_rt::tcp::DEFAULT_CONNECT_TIMEOUT_SECS,
                 tcp_request_idle_timeout_secs: aver_rt::tcp::DEFAULT_REQUEST_IDLE_TIMEOUT_SECS,
+                tcp_max_connections: aver_rt::tcp::DEFAULT_MAX_CONNECTIONS,
                 independence_mode_cancel: false,
             }
         }
@@ -588,6 +590,7 @@ const RUNTIME_POLICY_CHECK_SNIPPET: &str = r#"    #[derive(Clone, Debug, Default
             let mut effect_policies = BTreeMap::new();
             let mut tcp_connect_timeout_secs = aver_rt::tcp::DEFAULT_CONNECT_TIMEOUT_SECS;
             let mut tcp_request_idle_timeout_secs = aver_rt::tcp::DEFAULT_REQUEST_IDLE_TIMEOUT_SECS;
+            let mut tcp_max_connections = aver_rt::tcp::DEFAULT_MAX_CONNECTIONS;
             if let Some(toml::Value::Table(effects_table)) = table.get("effects") {
                 for (name, value) in effects_table {
                     let section = value
@@ -606,6 +609,12 @@ const RUNTIME_POLICY_CHECK_SNIPPET: &str = r#"    #[derive(Clone, Debug, Default
                             section,
                             "request_idle_timeout_secs",
                             tcp_request_idle_timeout_secs,
+                        )?;
+                        tcp_max_connections = parse_positive_usize(
+                            name,
+                            section,
+                            "max_connections",
+                            tcp_max_connections,
                         )?;
                     }
                     let hosts = parse_policy_list(section, "hosts", name)?;
@@ -656,6 +665,7 @@ const RUNTIME_POLICY_CHECK_SNIPPET: &str = r#"    #[derive(Clone, Debug, Default
                 effect_policies,
                 tcp_connect_timeout_secs,
                 tcp_request_idle_timeout_secs,
+                tcp_max_connections,
                 independence_mode_cancel,
             })
         }
@@ -736,7 +746,7 @@ const RUNTIME_POLICY_CHECK_SNIPPET: &str = r#"    #[derive(Clone, Debug, Default
             ("Http", _) => &["hosts"],
             ("Disk", _) => &["paths"],
             ("Env", _) => &["keys"],
-            ("Tcp", "Tcp") => &["connect_timeout_secs", "request_idle_timeout_secs"],
+            ("Tcp", "Tcp") => &["connect_timeout_secs", "request_idle_timeout_secs", "max_connections"],
             ("Tcp", _) => &[],
             _ => &[],
         };
@@ -772,6 +782,26 @@ const RUNTIME_POLICY_CHECK_SNIPPET: &str = r#"    #[derive(Clone, Debug, Default
         u64::try_from(seconds)
             .ok()
             .filter(|seconds| *seconds > 0)
+            .ok_or_else(|| {
+                format!("aver.toml: [effects.{effect}].{key} must be greater than zero")
+            })
+    }
+
+    fn parse_positive_usize(
+        effect: &str,
+        section: &toml::Table,
+        key: &str,
+        default: usize,
+    ) -> Result<usize, String> {
+        let Some(value) = section.get(key) else {
+            return Ok(default);
+        };
+        let number = value.as_integer().ok_or_else(|| {
+            format!("aver.toml: [effects.{effect}].{key} must be a positive integer")
+        })?;
+        usize::try_from(number)
+            .ok()
+            .filter(|number| *number > 0)
             .ok_or_else(|| {
                 format!("aver.toml: [effects.{effect}].{key} must be greater than zero")
             })
@@ -889,9 +919,10 @@ const RUNTIME_POLICY_CHECK_SNIPPET: &str = r#"    #[derive(Clone, Debug, Default
 
     pub(crate) fn tcp_provider_settings_from_env() -> Result<aver_rt::tcp::TcpSettings, String> {
         let policy = load_runtime_policy_from_env()?.unwrap_or_default();
-        aver_rt::tcp::TcpSettings::from_secs(
+        aver_rt::tcp::TcpSettings::from_policy(
             policy.tcp_connect_timeout_secs,
             policy.tcp_request_idle_timeout_secs,
+            policy.tcp_max_connections,
         )
     }
 
@@ -1009,6 +1040,7 @@ mod policy_tests {
         );
         assert!(RUNTIME_POLICY_CHECK_SNIPPET.contains("connect_timeout_secs"));
         assert!(RUNTIME_POLICY_CHECK_SNIPPET.contains("request_idle_timeout_secs"));
+        assert!(RUNTIME_POLICY_CHECK_SNIPPET.contains("max_connections"));
         assert!(RUNTIME_POLICY_CHECK_SNIPPET.contains("tcp_provider_settings_from_env"));
     }
 
@@ -1115,6 +1147,16 @@ const REPLAY_RUNTIME_TEMPLATE: &str = r#"pub mod aver_replay {
     impl ReplayKey for aver_rt::AverStr {
         fn replay_string_key(&self) -> Option<String> {
             Some(self.to_string())
+        }
+    }
+
+    impl ReplayKey for aver_rt::AverInt {
+        fn replay_string_key(&self) -> Option<String> {
+            // Int keys retain their numeric replay shape.  Returning None
+            // selects the existing `$map` array-of-pairs encoding instead of
+            // coercing the key into a JSON object property that could not be
+            // decoded by `ReplayValue for AverInt`.
+            None
         }
     }
 

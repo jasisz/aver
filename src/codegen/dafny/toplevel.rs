@@ -29,6 +29,10 @@ pub fn emit_type(type_str: &str) -> String {
     type_to_dafny(&parse_type_annotation(type_str))
 }
 
+fn emit_type_in_scope(type_str: &str, scope: Option<&str>) -> String {
+    type_to_dafny_in_scope(&parse_type_annotation(type_str), scope)
+}
+
 /// Render a typed `Type` directly to its Dafny representation —
 /// skips the `parse_type_annotation(string)` round-trip.
 ///
@@ -53,22 +57,45 @@ pub fn type_ref_to_dafny(ty: &Type) -> String {
 
 /// Convert an Aver `Type` to a Dafny type string.
 fn type_to_dafny(ty: &Type) -> String {
+    type_to_dafny_in_scope(ty, None)
+}
+
+/// Convert an Aver type while rendering references owned by `scope` locally.
+///
+/// Dafny modules cannot refer to their own outer name from inside the module:
+/// `module Aver_Tcp { function f(x: Aver_Tcp.Socket) ... }` is a resolver
+/// error, while `Socket` is the source-faithful local spelling. Foreign
+/// module types remain qualified so cross-module identity stays explicit.
+fn type_to_dafny_in_scope(ty: &Type, scope: Option<&str>) -> String {
     match ty {
         Type::Int => "int".to_string(),
         Type::Float => "real".to_string(),
         Type::Str => "string".to_string(),
         Type::Bool => "bool".to_string(),
         Type::Unit => "()".to_string(),
-        Type::List(inner) => format!("seq<{}>", type_to_dafny(inner)),
-        Type::Vector(inner) => format!("seq<{}>", type_to_dafny(inner)),
+        Type::List(inner) => format!("seq<{}>", type_to_dafny_in_scope(inner, scope)),
+        Type::Vector(inner) => format!("seq<{}>", type_to_dafny_in_scope(inner, scope)),
         Type::Map(k, v) if crate::codegen::common::is_set_type(ty) => {
-            format!("set<{}>", type_to_dafny(k))
+            format!("set<{}>", type_to_dafny_in_scope(k, scope))
         }
-        Type::Map(k, v) => format!("map<{}, {}>", type_to_dafny(k), type_to_dafny(v)),
-        Type::Result(ok, err) => format!("Result<{}, {}>", type_to_dafny(ok), type_to_dafny(err)),
-        Type::Option(inner) => format!("Option<{}>", type_to_dafny(inner)),
+        Type::Map(k, v) => format!(
+            "map<{}, {}>",
+            type_to_dafny_in_scope(k, scope),
+            type_to_dafny_in_scope(v, scope)
+        ),
+        Type::Result(ok, err) => format!(
+            "Result<{}, {}>",
+            type_to_dafny_in_scope(ok, scope),
+            type_to_dafny_in_scope(err, scope)
+        ),
+        Type::Option(inner) => {
+            format!("Option<{}>", type_to_dafny_in_scope(inner, scope))
+        }
         Type::Tuple(items) => {
-            let parts: Vec<String> = items.iter().map(type_to_dafny).collect();
+            let parts: Vec<String> = items
+                .iter()
+                .map(|item| type_to_dafny_in_scope(item, scope))
+                .collect();
             format!("({})", parts.join(", "))
         }
         Type::Fn(params, ret, _) => {
@@ -76,8 +103,11 @@ fn type_to_dafny(ty: &Type) -> String {
             // requires tuple form `(A, B, C) -> D`. Curry-style
             // `A -> B -> C` would parse as `A -> (B -> C)` and break
             // at the call site (wrong number of arguments).
-            let parts: Vec<String> = params.iter().map(type_to_dafny).collect();
-            let ret_ty = type_to_dafny(ret);
+            let parts: Vec<String> = params
+                .iter()
+                .map(|param| type_to_dafny_in_scope(param, scope))
+                .collect();
+            let ret_ty = type_to_dafny_in_scope(ret, scope);
             if parts.len() == 1 {
                 format!("{} -> {}", parts[0], ret_ty)
             } else {
@@ -102,7 +132,11 @@ fn type_to_dafny(ty: &Type) -> String {
             } else if let Some(dot) = name.rfind('.') {
                 let module_part = &name[..dot];
                 let local = &name[dot + 1..];
-                format!("Aver_{}.{}", module_part.replace('.', "_"), local)
+                if scope == Some(module_part) {
+                    local.to_string()
+                } else {
+                    format!("Aver_{}.{}", module_part.replace('.', "_"), local)
+                }
             } else {
                 name.to_string()
             }
@@ -162,7 +196,9 @@ pub fn emit_type_def_in_scope(
                             .fields
                             .iter()
                             .enumerate()
-                            .map(|(i, f)| format!("{}_{}: {}", prefix, i, emit_type(f)))
+                            .map(|(i, f)| {
+                                format!("{}_{}: {}", prefix, i, emit_type_in_scope(f, scope))
+                            })
                             .collect();
                         format!("{}({})", v.name, fields.join(", "))
                     }
@@ -178,7 +214,7 @@ pub fn emit_type_def_in_scope(
             if let Some(decl) = crate::codegen::common::find_refined_type_scoped(ctx, name, scope) {
                 let predicate = super::expr::emit_expr(&decl.invariant.expr, ctx);
                 let bind = aver_name_to_dafny(&decl.predicate_param);
-                let carrier = emit_type(&decl.carrier_type);
+                let carrier = emit_type_in_scope(&decl.carrier_type, scope);
                 let witness = decl.witness.clone().unwrap_or_else(|| "*".to_string());
                 return Some(format!(
                     "type {name} = {bind}: {carrier} | {predicate} witness {witness}\n"
@@ -187,7 +223,11 @@ pub fn emit_type_def_in_scope(
             let field_strs: Vec<String> = fields
                 .iter()
                 .map(|(fname, ftype)| {
-                    format!("{}: {}", aver_name_to_dafny(fname), emit_type(ftype))
+                    format!(
+                        "{}: {}",
+                        aver_name_to_dafny(fname),
+                        emit_type_in_scope(ftype, scope)
+                    )
                 })
                 .collect();
             Some(format!(
@@ -211,15 +251,22 @@ pub fn emit_type_def_in_scope(
 pub fn emit_fn_def_axiom(
     fd: &FnDef,
     rfd: &crate::ir::hir::ResolvedFnDef,
-    _ctx: &CodegenContext,
+    ctx: &CodegenContext,
 ) -> String {
     let name = aver_name_to_dafny(&fd.name);
+    let active_scope = ctx.active_module_scope();
     let params: Vec<String> = rfd
         .params
         .iter()
-        .map(|(pname, ptype)| format!("{}: {}", aver_name_to_dafny(pname), emit_type_from(ptype)))
+        .map(|(pname, ptype)| {
+            format!(
+                "{}: {}",
+                aver_name_to_dafny(pname),
+                type_to_dafny_in_scope(ptype, active_scope.as_deref())
+            )
+        })
         .collect();
-    let ret_type = emit_type_from(&rfd.return_type);
+    let ret_type = type_to_dafny_in_scope(&rfd.return_type, active_scope.as_deref());
 
     let mut lines = Vec::new();
     if let Some(desc) = &fd.desc {
@@ -244,14 +291,21 @@ pub fn emit_fn_def(
     ctx: &CodegenContext,
 ) -> String {
     let name = aver_name_to_dafny(&fd.name);
+    let active_scope = ctx.active_module_scope();
 
     let params: Vec<String> = rfd
         .params
         .iter()
-        .map(|(pname, ptype)| format!("{}: {}", aver_name_to_dafny(pname), emit_type_from(ptype)))
+        .map(|(pname, ptype)| {
+            format!(
+                "{}: {}",
+                aver_name_to_dafny(pname),
+                type_to_dafny_in_scope(ptype, active_scope.as_deref())
+            )
+        })
         .collect();
 
-    let ret_type = emit_type_from(&rfd.return_type);
+    let ret_type = type_to_dafny_in_scope(&rfd.return_type, active_scope.as_deref());
 
     let lowered = lower_pure_question_bang_for_emit(fd);
     let rewritten_body = lowered.as_ref().map(|lowered_fd| {
@@ -3966,7 +4020,30 @@ pub fn emit_verify_law(
 
 #[cfg(test)]
 mod tests {
-    use super::replace_ident_word;
+    use super::{replace_ident_word, type_to_dafny_in_scope};
+    use crate::types::Type;
+
+    #[test]
+    fn current_module_types_render_locally_but_foreign_types_stay_qualified() {
+        let sockets = Type::Map(Box::new(Type::Int), Box::new(Type::named("Tcp.Socket")));
+
+        assert_eq!(
+            type_to_dafny_in_scope(&sockets, Some("Tcp")),
+            "map<int, Socket>"
+        );
+        assert_eq!(
+            type_to_dafny_in_scope(&sockets, Some("Node")),
+            "map<int, Aver_Tcp.Socket>"
+        );
+    }
+
+    #[test]
+    fn compiler_owned_resource_names_keep_their_backend_carrier_in_module_scope() {
+        assert_eq!(
+            type_to_dafny_in_scope(&Type::named("Tcp.Connection"), Some("Tcp")),
+            "Tcp_Connection"
+        );
+    }
 
     #[test]
     fn replace_ident_word_slices_whole_words_but_not_substrings() {

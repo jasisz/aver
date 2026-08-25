@@ -42,6 +42,7 @@ ctrlc = "3.5"
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 polling = "3.11"
+socket2 = "0.6"
 
 [dev-dependencies]
 criterion = "0.5"

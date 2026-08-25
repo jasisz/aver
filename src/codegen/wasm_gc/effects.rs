@@ -164,6 +164,11 @@ pub(super) enum EffectName {
     //   in `aver_rt::tcp`. Connection records cross the boundary as
     //   `Tcp.Connection` struct refs.
     TcpConnect,
+    TcpBeginConnect,
+    TcpDialled,
+    TcpListen,
+    TcpAccept,
+    TcpPeerAddress,
     TcpWriteLine,
     TcpWriteBytes,
     TcpReadLine,
@@ -171,6 +176,8 @@ pub(super) enum EffectName {
     TcpReadSome,
     TcpPoll,
     TcpClose,
+    TcpCloseDial,
+    TcpCloseListener,
     TcpSend,
     TcpSendBytes,
     TcpPing,
@@ -257,6 +264,11 @@ impl EffectName {
         Self::DiskListDir,
         Self::DiskMakeDir,
         Self::TcpConnect,
+        Self::TcpBeginConnect,
+        Self::TcpDialled,
+        Self::TcpListen,
+        Self::TcpAccept,
+        Self::TcpPeerAddress,
         Self::TcpWriteLine,
         Self::TcpWriteBytes,
         Self::TcpReadLine,
@@ -264,6 +276,8 @@ impl EffectName {
         Self::TcpReadSome,
         Self::TcpPoll,
         Self::TcpClose,
+        Self::TcpCloseDial,
+        Self::TcpCloseListener,
         Self::TcpSend,
         Self::TcpSendBytes,
         Self::TcpPing,
@@ -341,6 +355,11 @@ impl EffectName {
             "Disk.listDir" => Some(Self::DiskListDir),
             "Disk.makeDir" => Some(Self::DiskMakeDir),
             "Tcp.connect" => Some(Self::TcpConnect),
+            "Tcp.beginConnect" => Some(Self::TcpBeginConnect),
+            "Tcp.dialled" => Some(Self::TcpDialled),
+            "Tcp.listen" => Some(Self::TcpListen),
+            "Tcp.accept" => Some(Self::TcpAccept),
+            "Tcp.peerAddress" => Some(Self::TcpPeerAddress),
             "Tcp.writeLine" => Some(Self::TcpWriteLine),
             "Tcp.writeBytes" => Some(Self::TcpWriteBytes),
             "Tcp.readLine" => Some(Self::TcpReadLine),
@@ -348,6 +367,8 @@ impl EffectName {
             "Tcp.readSome" => Some(Self::TcpReadSome),
             "Tcp.poll" => Some(Self::TcpPoll),
             "Tcp.close" => Some(Self::TcpClose),
+            "Tcp.closeDial" => Some(Self::TcpCloseDial),
+            "Tcp.closeListener" => Some(Self::TcpCloseListener),
             "Tcp.send" => Some(Self::TcpSend),
             "Tcp.sendBytes" => Some(Self::TcpSendBytes),
             "Tcp.ping" => Some(Self::TcpPing),
@@ -423,6 +444,11 @@ impl EffectName {
             Self::DiskListDir => "Disk.listDir",
             Self::DiskMakeDir => "Disk.makeDir",
             Self::TcpConnect => "Tcp.connect",
+            Self::TcpBeginConnect => "Tcp.beginConnect",
+            Self::TcpDialled => "Tcp.dialled",
+            Self::TcpListen => "Tcp.listen",
+            Self::TcpAccept => "Tcp.accept",
+            Self::TcpPeerAddress => "Tcp.peerAddress",
             Self::TcpWriteLine => "Tcp.writeLine",
             Self::TcpWriteBytes => "Tcp.writeBytes",
             Self::TcpReadLine => "Tcp.readLine",
@@ -430,6 +456,8 @@ impl EffectName {
             Self::TcpReadSome => "Tcp.readSome",
             Self::TcpPoll => "Tcp.poll",
             Self::TcpClose => "Tcp.close",
+            Self::TcpCloseDial => "Tcp.closeDial",
+            Self::TcpCloseListener => "Tcp.closeListener",
             Self::TcpSend => "Tcp.send",
             Self::TcpSendBytes => "Tcp.sendBytes",
             Self::TcpPing => "Tcp.ping",
@@ -507,6 +535,11 @@ impl EffectName {
             Self::DiskListDir => ("aver", "disk_list_dir"),
             Self::DiskMakeDir => ("aver", "disk_make_dir"),
             Self::TcpConnect => ("aver", "tcp_connect"),
+            Self::TcpBeginConnect => ("aver", "tcp_begin_connect"),
+            Self::TcpDialled => ("aver", "tcp_dialled"),
+            Self::TcpListen => ("aver", "tcp_listen"),
+            Self::TcpAccept => ("aver", "tcp_accept"),
+            Self::TcpPeerAddress => ("aver", "tcp_peer_address"),
             Self::TcpWriteLine => ("aver", "tcp_write_line"),
             Self::TcpWriteBytes => ("aver", "tcp_write_bytes"),
             Self::TcpReadLine => ("aver", "tcp_read_line"),
@@ -514,6 +547,8 @@ impl EffectName {
             Self::TcpReadSome => ("aver", "tcp_read_some"),
             Self::TcpPoll => ("aver", "tcp_poll"),
             Self::TcpClose => ("aver", "tcp_close"),
+            Self::TcpCloseDial => ("aver", "tcp_close_dial"),
+            Self::TcpCloseListener => ("aver", "tcp_close_listener"),
             Self::TcpSend => ("aver", "tcp_send"),
             Self::TcpSendBytes => ("aver", "tcp_send_bytes"),
             Self::TcpPing => ("aver", "tcp_ping"),
@@ -618,15 +653,23 @@ impl EffectName {
             Self::DiskReadBytesAt => Ok(vec![any_ref_ty(), any_ref_ty(), any_ref_ty()]),
             // Tcp.connect: (host, port). Returns Result<Tcp.Connection, String>.
             Self::TcpConnect => Ok(vec![any_ref_ty(), ValType::I64]),
+            // New reactor operations keep machine-range validation inside the
+            // provider, so Int arguments stay boxed and failures remain
+            // catchable Result.Err values.
+            Self::TcpBeginConnect => Ok(vec![any_ref_ty(), any_ref_ty()]),
+            Self::TcpListen => Ok(vec![any_ref_ty(), any_ref_ty()]),
+            Self::TcpDialled | Self::TcpAccept | Self::TcpPeerAddress => Ok(vec![any_ref_ty()]),
             // Tcp.writeLine / readLine / close all take a Connection as
             // first arg. Carrying it as `any_ref` lets the host
             // `struct.get` the id field directly without us having to
             // mention the concrete record type idx in the import sig.
-            Self::TcpClose | Self::TcpReadLine => Ok(vec![any_ref_ty()]),
+            Self::TcpClose | Self::TcpCloseDial | Self::TcpCloseListener | Self::TcpReadLine => {
+                Ok(vec![any_ref_ty()])
+            }
             // Keep the count boxed so an arbitrary-precision Int can become a
             // catchable Result.Err instead of trapping at the host ABI.
             Self::TcpReadBytes | Self::TcpReadSome => Ok(vec![any_ref_ty(), any_ref_ty()]),
-            Self::TcpPoll => Ok(vec![map_int_tcp_connection_ref_ty(registry)?, any_ref_ty()]),
+            Self::TcpPoll => Ok(vec![map_int_tcp_socket_ref_ty(registry)?, any_ref_ty()]),
             Self::TcpWriteLine | Self::TcpWriteBytes => Ok(vec![any_ref_ty(), any_ref_ty()]),
             Self::TcpSend => Ok(vec![any_ref_ty(), ValType::I64, any_ref_ty()]),
             // Bytes is a nominal record. Keep the import parameter as anyref,
@@ -738,16 +781,28 @@ impl EffectName {
                 registry,
                 "Result<Tcp.Connection,String>",
             )?]),
-            Self::TcpReadLine | Self::TcpSend => {
+            Self::TcpBeginConnect => Ok(vec![result_ref_ty(registry, "Result<Tcp.Dial,String>")?]),
+            Self::TcpListen => Ok(vec![result_ref_ty(
+                registry,
+                "Result<Tcp.Listener,String>",
+            )?]),
+            Self::TcpDialled | Self::TcpAccept => Ok(vec![result_ref_ty(
+                registry,
+                "Result<Option<Tcp.Connection>,String>",
+            )?]),
+            Self::TcpReadLine | Self::TcpSend | Self::TcpPeerAddress => {
                 Ok(vec![result_ref_ty(registry, "Result<String,String>")?])
             }
             Self::TcpSendBytes | Self::TcpReadBytes | Self::TcpReadSome => {
                 Ok(vec![result_ref_ty(registry, "Result<Bytes,String>")?])
             }
             Self::TcpPoll => Ok(vec![result_ref_ty(registry, "Result<List<Int>,String>")?]),
-            Self::TcpWriteLine | Self::TcpWriteBytes | Self::TcpClose | Self::TcpPing => {
-                Ok(vec![result_ref_ty(registry, "Result<Unit,String>")?])
-            }
+            Self::TcpWriteLine
+            | Self::TcpWriteBytes
+            | Self::TcpClose
+            | Self::TcpCloseDial
+            | Self::TcpCloseListener
+            | Self::TcpPing => Ok(vec![result_ref_ty(registry, "Result<Unit,String>")?]),
             Self::HttpGet
             | Self::HttpHead
             | Self::HttpDelete
@@ -792,7 +847,8 @@ fn result_ref_ty(registry: &TypeRegistry, canonical: &str) -> Result<ValType, Wa
     let idx = registry
         .result_type_idx(canonical)
         .ok_or(WasmGcError::Validation(format!(
-            "effect requires `{canonical}` slot but none was registered"
+            "effect requires `{canonical}` slot but none was registered (available: {:?})",
+            registry.result_order
         )))?;
     Ok(ValType::Ref(wasm_encoder::RefType {
         nullable: true,
@@ -812,11 +868,11 @@ fn map_string_list_string_ref_ty(registry: &TypeRegistry) -> Result<ValType, Was
     }))
 }
 
-fn map_int_tcp_connection_ref_ty(registry: &TypeRegistry) -> Result<ValType, WasmGcError> {
+fn map_int_tcp_socket_ref_ty(registry: &TypeRegistry) -> Result<ValType, WasmGcError> {
     let slots = registry
-        .map_slots("Map<Int,Tcp.Connection>")
+        .map_slots("Map<Int,Tcp.Socket>")
         .ok_or(WasmGcError::Validation(
-            "Tcp.poll requires `Map<Int, Tcp.Connection>` slot but none was registered".into(),
+            "Tcp.poll requires `Map<Int, Tcp.Socket>` slot but none was registered".into(),
         ))?;
     Ok(ValType::Ref(wasm_encoder::RefType {
         nullable: true,
@@ -929,6 +985,11 @@ impl EffectName {
                 | EffectName::HttpPut
                 | EffectName::HttpPatch
                 | EffectName::TcpConnect
+                | EffectName::TcpBeginConnect
+                | EffectName::TcpDialled
+                | EffectName::TcpListen
+                | EffectName::TcpAccept
+                | EffectName::TcpPeerAddress
                 | EffectName::TcpWriteLine
                 | EffectName::TcpWriteBytes
                 | EffectName::TcpReadLine
@@ -938,6 +999,8 @@ impl EffectName {
                 | EffectName::TcpSend
                 | EffectName::TcpSendBytes
                 | EffectName::TcpClose
+                | EffectName::TcpCloseDial
+                | EffectName::TcpCloseListener
                 | EffectName::TcpPing,
         )
     }

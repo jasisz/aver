@@ -2,9 +2,16 @@ module Tcp
     kind = capability
     semantics = effectful
     depends [Bytes]
-    exposes [Connection, send, sendBytes, ping, connect, poll, writeLine, writeBytes, readLine, readBytes, readSome, close]
+    exposes [Connection, Dial, Listener, Socket, send, sendBytes, ping, connect, beginConnect, dialled, listen, accept, peerAddress, poll, writeLine, writeBytes, readLine, readBytes, readSome, close, closeDial, closeListener]
 
 resource Connection
+resource Dial
+resource Listener
+
+type Socket
+    Listening(Tcp.Listener)
+    Dialing(Tcp.Dial)
+    Connected(Tcp.Connection)
 
 operation send(host: String, port: Int, data: String) -> Result<String, String>
     ? "Opens a connection, writes text, reads the response to EOF, and closes."
@@ -30,11 +37,41 @@ operation connect(host: String, port: Int) -> Result<Tcp.Connection, String>
     replay = recorded
     hostile = [connectNormalOk, connectAlwaysErr]
 
-operation poll(connections: Map<Int, Tcp.Connection>, timeoutMs: Int) -> Result<List<Int>, String>
-    ? "Returns the caller-owned IDs whose connections can make read progress without blocking."
+operation beginConnect(host: String, port: Int) -> Result<Tcp.Dial, String>
+    ? "Starts one non-blocking connection attempt. The returned Dial can only be polled, settled, or closed; the deployment connect deadline remains its upper bound."
     oracle = generativeOutput
     replay = recorded
-    hostile = [pollNoneReady, pollAlwaysErr]
+    hostile = [beginConnectNormalOk, beginConnectAlwaysErr]
+
+operation dialled(dial: Tcp.Dial) -> Result<Option<Tcp.Connection>, String>
+    ? "Settles a Dial without blocking: None is still in flight, Some is the now-usable connection, and Err is refusal or expiry in Tcp.connect terms."
+    oracle = generativeOutput
+    replay = recorded
+    hostile = [dialledConnected, dialledStillPending, dialledRefused]
+
+operation listen(port: Int, backlog: Int) -> Result<Tcp.Listener, String>
+    ? "Binds a TCP listener. backlog controls the socket queue; accepted and outbound connections share the provider deployment limit."
+    oracle = generativeOutput
+    replay = recorded
+    hostile = [listenNormalOk, listenPortTaken]
+
+operation accept(listener: Tcp.Listener) -> Result<Option<Tcp.Connection>, String>
+    ? "Accepts at most one connection without blocking. None means no client remains pending; Err means the listener itself failed."
+    oracle = generativeOutput
+    replay = recorded
+    hostile = [acceptNothingPending, acceptOnceThenNothing, acceptAlwaysErr]
+
+operation peerAddress(connection: Tcp.Connection) -> Result<String, String>
+    ? "Returns the remote endpoint in Tcp.connect-compatible form, including brackets around IPv6 addresses."
+    oracle = generativeOutput
+    replay = recorded
+    hostile = [peerAddressNormalOk, peerAddressAlwaysErr]
+
+operation poll(sockets: Map<Int, Tcp.Socket>, timeoutMs: Int) -> Result<List<Int>, String>
+    ? "Returns every ready caller-owned key in ascending order from one socket-state map: readable connections, settled or expired dials, and listeners with a pending client. False-positive readiness is allowed."
+    oracle = generativeOutput
+    replay = recorded
+    hostile = [pollNoneReady, pollEverythingReady, pollAlwaysErr]
 
 operation writeLine(connection: Tcp.Connection, line: String) -> Result<Unit, String>
     ? "Writes UTF-8 text followed by CRLF to a persistent connection."
@@ -72,6 +109,18 @@ operation close(connection: Tcp.Connection) -> Result<Unit, String>
     replay = recorded
     hostile = [closeNormalOk, closeAlwaysErr]
 
+operation closeDial(dial: Tcp.Dial) -> Result<Unit, String>
+    ? "Cancels an in-flight dial and invalidates its handle."
+    oracle = generativeOutput
+    replay = recorded
+    hostile = [closeDialNormalOk, closeDialAlwaysErr]
+
+operation closeListener(listener: Tcp.Listener) -> Result<Unit, String>
+    ? "Closes a listener and releases its bound port; accepted connections remain live."
+    oracle = generativeOutput
+    replay = recorded
+    hostile = [closeListenerNormalOk, closeListenerAlwaysErr]
+
 fn sendNormalOk(branch: BranchPath, call: Int, host: String, port: Int, data: String) -> Result<String, String>
     ? "honest: tcp send succeeds with an acknowledgement"
     Result.Ok("ack")
@@ -104,8 +153,58 @@ fn connectAlwaysErr(branch: BranchPath, call: Int, fresh: Tcp.Connection, host: 
     ? "hostile: cannot establish connection"
     Result.Err("hostile: refused")
 
-fn pollNoneReady(branch: BranchPath, call: Int, connections: Map<Int, Tcp.Connection>, timeoutMs: Int) -> Result<List<Int>, String>
-    ? "honest: no connection becomes readable before the timeout"
+fn beginConnectNormalOk(branch: BranchPath, call: Int, fresh: Tcp.Dial, host: String, port: Int) -> Result<Tcp.Dial, String>
+    ? "honest: the non-blocking connection attempt starts"
+    Result.Ok(fresh)
+
+fn beginConnectAlwaysErr(branch: BranchPath, call: Int, fresh: Tcp.Dial, host: String, port: Int) -> Result<Tcp.Dial, String>
+    ? "hostile: the connection attempt cannot be started"
+    Result.Err("hostile: cannot start dial")
+
+fn dialledConnected(branch: BranchPath, call: Int, fresh: Tcp.Connection, dial: Tcp.Dial) -> Result<Option<Tcp.Connection>, String>
+    ? "honest: the dial has become an ordinary connection"
+    Result.Ok(Option.Some(fresh))
+
+fn dialledStillPending(branch: BranchPath, call: Int, fresh: Tcp.Connection, dial: Tcp.Dial) -> Result<Option<Tcp.Connection>, String>
+    ? "hostile boundary: a false wakeup leaves the dial in flight"
+    Result.Ok(Option.None)
+
+fn dialledRefused(branch: BranchPath, call: Int, fresh: Tcp.Connection, dial: Tcp.Dial) -> Result<Option<Tcp.Connection>, String>
+    ? "hostile: the candidate refuses the connection"
+    Result.Err("hostile: connection refused")
+
+fn listenNormalOk(branch: BranchPath, call: Int, fresh: Tcp.Listener, port: Int, backlog: Int) -> Result<Tcp.Listener, String>
+    ? "honest: the port is bound and listening"
+    Result.Ok(fresh)
+
+fn listenPortTaken(branch: BranchPath, call: Int, fresh: Tcp.Listener, port: Int, backlog: Int) -> Result<Tcp.Listener, String>
+    ? "hostile: another process already owns the port"
+    Result.Err("hostile: address already in use")
+
+fn acceptNothingPending(branch: BranchPath, call: Int, fresh: Tcp.Connection, listener: Tcp.Listener) -> Result<Option<Tcp.Connection>, String>
+    ? "honest boundary: no client remains after a readiness notification"
+    Result.Ok(Option.None)
+
+fn acceptOnceThenNothing(branch: BranchPath, call: Int, fresh: Tcp.Connection, listener: Tcp.Listener) -> Result<Option<Tcp.Connection>, String>
+    ? "honest: one inbound peer followed by an empty queue"
+    match call
+        0 -> Result.Ok(Option.Some(fresh))
+        _ -> Result.Ok(Option.None)
+
+fn acceptAlwaysErr(branch: BranchPath, call: Int, fresh: Tcp.Connection, listener: Tcp.Listener) -> Result<Option<Tcp.Connection>, String>
+    ? "hostile: the listener fails"
+    Result.Err("hostile: listener failed")
+
+fn peerAddressNormalOk(branch: BranchPath, call: Int, connection: Tcp.Connection) -> Result<String, String>
+    ? "honest: the remote endpoint is available"
+    Result.Ok("203.0.113.7:8333")
+
+fn peerAddressAlwaysErr(branch: BranchPath, call: Int, connection: Tcp.Connection) -> Result<String, String>
+    ? "hostile: the socket no longer has a remote endpoint"
+    Result.Err("hostile: socket is not connected")
+
+fn pollNoneReady(branch: BranchPath, call: Int, sockets: Map<Int, Tcp.Socket>, timeoutMs: Int) -> Result<List<Int>, String>
+    ? "honest: no resource becomes ready before the timeout"
     match timeoutMs > 9223372036854775807
         true -> Result.Err("Tcp.poll: timeoutMs {timeoutMs} exceeds the poll limit")
         false -> match timeoutMs < 0 - 9223372036854775808
@@ -114,7 +213,11 @@ fn pollNoneReady(branch: BranchPath, call: Int, connections: Map<Int, Tcp.Connec
                 true -> Result.Err("Tcp.poll: timeoutMs {timeoutMs} is negative")
                 false -> Result.Ok([])
 
-fn pollAlwaysErr(branch: BranchPath, call: Int, connections: Map<Int, Tcp.Connection>, timeoutMs: Int) -> Result<List<Int>, String>
+fn pollEverythingReady(branch: BranchPath, call: Int, sockets: Map<Int, Tcp.Socket>, timeoutMs: Int) -> Result<List<Int>, String>
+    ? "hostile but legal: every supplied socket reports ready, exercising complete dispatch without starving any state"
+    Result.Ok(Map.keys(sockets))
+
+fn pollAlwaysErr(branch: BranchPath, call: Int, sockets: Map<Int, Tcp.Socket>, timeoutMs: Int) -> Result<List<Int>, String>
     ? "hostile: readiness polling fails"
     Result.Err("hostile: poll failed")
 
@@ -189,3 +292,19 @@ fn closeNormalOk(branch: BranchPath, call: Int, connection: Tcp.Connection) -> R
 fn closeAlwaysErr(branch: BranchPath, call: Int, connection: Tcp.Connection) -> Result<Unit, String>
     ? "hostile: close sees an already-dropped connection"
     Result.Err("hostile: dropped")
+
+fn closeDialNormalOk(branch: BranchPath, call: Int, dial: Tcp.Dial) -> Result<Unit, String>
+    ? "honest: the pending dial is cancelled"
+    Result.Ok(Unit)
+
+fn closeDialAlwaysErr(branch: BranchPath, call: Int, dial: Tcp.Dial) -> Result<Unit, String>
+    ? "hostile: the dial was already settled or closed"
+    Result.Err("hostile: dial already closed")
+
+fn closeListenerNormalOk(branch: BranchPath, call: Int, listener: Tcp.Listener) -> Result<Unit, String>
+    ? "honest: the listener closes"
+    Result.Ok(Unit)
+
+fn closeListenerAlwaysErr(branch: BranchPath, call: Int, listener: Tcp.Listener) -> Result<Unit, String>
+    ? "hostile: the listener was already lost"
+    Result.Err("hostile: listener already closed")

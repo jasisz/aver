@@ -173,6 +173,24 @@ pub const BUILTIN_RECORDS: &[BuiltinRecord] = &[
         doc: "Returned by `Tcp.connect`; consumed by the rest of `Tcp.*`.",
     },
     BuiltinRecord {
+        aver_name: "Tcp.Dial",
+        fields: &[BuiltinField {
+            name: "id",
+            ty: BuiltinType::Str,
+        }],
+        depends_on: &[],
+        doc: "Provider-owned handle for an in-flight `Tcp.beginConnect` attempt.",
+    },
+    BuiltinRecord {
+        aver_name: "Tcp.Listener",
+        fields: &[BuiltinField {
+            name: "id",
+            ty: BuiltinType::Str,
+        }],
+        depends_on: &[],
+        doc: "Provider-owned handle for a bound `Tcp.listen` socket.",
+    },
+    BuiltinRecord {
         aver_name: "Terminal.Size",
         fields: &[
             BuiltinField {

@@ -2210,6 +2210,509 @@ pub fn valToTcpConn(
     }
 }
 
+/// Tcp.beginConnect(host, port) -> Result<Tcp.Dial, String>.
+pub fn builtinTcpBeginConnect(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
+    crate::cancel_checkpoint();
+    let pair = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
+    {
+        let (hostV, portV) = pair;
+        crate::aver_generated::domain::builtins::builtinTcpBeginConnectInner(&hostV, &portV)
+    }
+}
+
+/// Inner Tcp.beginConnect.
+pub fn builtinTcpBeginConnectInner(
+    hostV: &crate::aver_generated::domain::value::Val,
+    portV: &crate::aver_generated::domain::value::Val,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
+    crate::cancel_checkpoint();
+    let host = crate::aver_generated::domain::builtins::helpers::expectStr(hostV)?;
+    let port = crate::aver_generated::domain::builtins::helpers::expectInt(portV)?;
+    match {
+        let __provider_arg0 = host;
+        let __provider_arg1 = port;
+        crate::cancel_checkpoint();
+        crate::aver_replay::invoke_capability_effect(
+            "Tcp.beginConnect",
+            "recorded",
+            vec![
+                crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg0),
+                crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg1),
+            ],
+            || {
+                crate::provider_support::invoke::<Result<crate::aver_generated::tcp::Dial, AverStr>>(
+                    "Tcp",
+                    "Tcp.beginConnect",
+                    vec![
+                        crate::provider_support::encode(__provider_arg0, "Tcp"),
+                        crate::provider_support::encode(__provider_arg1, "Tcp"),
+                    ],
+                    Some("Tcp.Dial"),
+                    "Result<Tcp.Dial, String>",
+                )
+            },
+        )
+    } {
+        Ok(dial @ _) => Ok(crate::aver_generated::domain::value::Val::ValOk(
+            std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValTcpDial(dial)),
+        )),
+        Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
+            std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValStr(e)),
+        )),
+    }
+}
+
+/// Recover an opaque host Tcp.Dial resource from Val.
+pub fn valToTcpDial(
+    v: &crate::aver_generated::domain::value::Val,
+) -> Result<crate::aver_generated::tcp::Dial, AverStr> {
+    crate::cancel_checkpoint();
+    match v.clone() {
+        crate::aver_generated::domain::value::Val::ValTcpDial(dial) => Ok(dial),
+        _ => Err(AverStr::from("expected Tcp.Dial resource")),
+    }
+}
+
+/// Tcp.dialled(dial) -> Result<Option<Tcp.Connection>, String>.
+pub fn builtinTcpDialled(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
+    crate::cancel_checkpoint();
+    let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
+    let dial = crate::aver_generated::domain::builtins::valToTcpDial(&v)?;
+    match {
+        let __provider_arg0 = dial;
+        crate::cancel_checkpoint();
+        crate::aver_replay::invoke_capability_effect(
+            "Tcp.dialled",
+            "recorded",
+            vec![crate::aver_replay::ReplayValue::to_replay_json(
+                &__provider_arg0,
+            )],
+            || {
+                crate::provider_support::invoke::<
+                    Result<Option<crate::aver_generated::tcp::Connection>, AverStr>,
+                >(
+                    "Tcp",
+                    "Tcp.dialled",
+                    vec![crate::provider_support::encode(__provider_arg0, "Tcp")],
+                    Some("Tcp.Connection"),
+                    "Result<Option<Tcp.Connection>, String>",
+                )
+            },
+        )
+    } {
+        Ok(settled @ _) => match settled {
+            None => Ok(crate::aver_generated::domain::value::Val::ValOk(
+                std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValNone),
+            )),
+            Some(conn @ _) => Ok(crate::aver_generated::domain::value::Val::ValOk(
+                std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValSome(
+                    std::sync::Arc::new(crate::aver_generated::domain::builtins::tcpConnToVal(
+                        &conn,
+                    )),
+                )),
+            )),
+        },
+        Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
+            std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValStr(e)),
+        )),
+    }
+}
+
+/// Tcp.listen(port, backlog) -> Result<Tcp.Listener, String>.
+pub fn builtinTcpListen(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
+    crate::cancel_checkpoint();
+    let pair = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
+    {
+        let (portV, backlogV) = pair;
+        crate::aver_generated::domain::builtins::builtinTcpListenInner(&portV, &backlogV)
+    }
+}
+
+/// Inner Tcp.listen.
+pub fn builtinTcpListenInner(
+    portV: &crate::aver_generated::domain::value::Val,
+    backlogV: &crate::aver_generated::domain::value::Val,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
+    crate::cancel_checkpoint();
+    let port = crate::aver_generated::domain::builtins::helpers::expectInt(portV)?;
+    let backlog = crate::aver_generated::domain::builtins::helpers::expectInt(backlogV)?;
+    match {
+        let __provider_arg0 = port;
+        let __provider_arg1 = backlog;
+        crate::cancel_checkpoint();
+        crate::aver_replay::invoke_capability_effect(
+            "Tcp.listen",
+            "recorded",
+            vec![
+                crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg0),
+                crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg1),
+            ],
+            || {
+                crate::provider_support::invoke::<
+                    Result<crate::aver_generated::tcp::Listener, AverStr>,
+                >(
+                    "Tcp",
+                    "Tcp.listen",
+                    vec![
+                        crate::provider_support::encode(__provider_arg0, "Tcp"),
+                        crate::provider_support::encode(__provider_arg1, "Tcp"),
+                    ],
+                    Some("Tcp.Listener"),
+                    "Result<Tcp.Listener, String>",
+                )
+            },
+        )
+    } {
+        Ok(listener @ _) => Ok(crate::aver_generated::domain::value::Val::ValOk(
+            std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValTcpListener(
+                listener,
+            )),
+        )),
+        Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
+            std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValStr(e)),
+        )),
+    }
+}
+
+/// Recover an opaque host Tcp.Listener resource from Val.
+pub fn valToTcpListener(
+    v: &crate::aver_generated::domain::value::Val,
+) -> Result<crate::aver_generated::tcp::Listener, AverStr> {
+    crate::cancel_checkpoint();
+    match v.clone() {
+        crate::aver_generated::domain::value::Val::ValTcpListener(listener) => Ok(listener),
+        _ => Err(AverStr::from("expected Tcp.Listener resource")),
+    }
+}
+
+/// Tcp.accept(listener) -> Result<Option<Tcp.Connection>, String>.
+pub fn builtinTcpAccept(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
+    crate::cancel_checkpoint();
+    let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
+    let listener = crate::aver_generated::domain::builtins::valToTcpListener(&v)?;
+    match {
+        let __provider_arg0 = listener;
+        crate::cancel_checkpoint();
+        crate::aver_replay::invoke_capability_effect(
+            "Tcp.accept",
+            "recorded",
+            vec![crate::aver_replay::ReplayValue::to_replay_json(
+                &__provider_arg0,
+            )],
+            || {
+                crate::provider_support::invoke::<
+                    Result<Option<crate::aver_generated::tcp::Connection>, AverStr>,
+                >(
+                    "Tcp",
+                    "Tcp.accept",
+                    vec![crate::provider_support::encode(__provider_arg0, "Tcp")],
+                    Some("Tcp.Connection"),
+                    "Result<Option<Tcp.Connection>, String>",
+                )
+            },
+        )
+    } {
+        Ok(accepted @ _) => match accepted {
+            None => Ok(crate::aver_generated::domain::value::Val::ValOk(
+                std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValNone),
+            )),
+            Some(conn @ _) => Ok(crate::aver_generated::domain::value::Val::ValOk(
+                std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValSome(
+                    std::sync::Arc::new(crate::aver_generated::domain::builtins::tcpConnToVal(
+                        &conn,
+                    )),
+                )),
+            )),
+        },
+        Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
+            std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValStr(e)),
+        )),
+    }
+}
+
+/// Tcp.peerAddress(connection) -> Result<String, String>.
+pub fn builtinTcpPeerAddress(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
+    crate::cancel_checkpoint();
+    let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
+    let connection = crate::aver_generated::domain::builtins::valToTcpConn(&v)?;
+    match {
+        let __provider_arg0 = connection;
+        crate::cancel_checkpoint();
+        crate::aver_replay::invoke_capability_effect(
+            "Tcp.peerAddress",
+            "recorded",
+            vec![crate::aver_replay::ReplayValue::to_replay_json(
+                &__provider_arg0,
+            )],
+            || {
+                crate::provider_support::invoke::<Result<AverStr, AverStr>>(
+                    "Tcp",
+                    "Tcp.peerAddress",
+                    vec![crate::provider_support::encode(__provider_arg0, "Tcp")],
+                    None,
+                    "Result<String, String>",
+                )
+            },
+        )
+    } {
+        Ok(address @ _) => Ok(crate::aver_generated::domain::value::Val::ValOk(
+            std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValStr(address)),
+        )),
+        Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
+            std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValStr(e)),
+        )),
+    }
+}
+
+/// Decode the self-host's nominal variant carrier into Tcp.Socket.
+pub fn valToTcpSocket(
+    v: &crate::aver_generated::domain::value::Val,
+) -> Result<crate::aver_generated::tcp::Socket, AverStr> {
+    crate::cancel_checkpoint();
+    match v.clone() {
+        crate::aver_generated::domain::value::Val::ValVariant(_, name, fields) => {
+            crate::aver_generated::domain::builtins::valVariantToTcpSocket(name, &fields)
+        }
+        _ => Err(AverStr::from("expected Tcp.Socket value")),
+    }
+}
+
+/// Decode one named Tcp.Socket variant.
+#[inline(always)]
+pub fn valVariantToTcpSocket(
+    name: AverStr,
+    fields: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::tcp::Socket, AverStr> {
+    crate::cancel_checkpoint();
+    {
+        let __dispatch_subject = name;
+        if &*__dispatch_subject == "Tcp.Socket.Listening" {
+            match crate::aver_generated::domain::builtins::helpers::oneArg(fields) {
+                Ok(listenerV @ _) => Ok(crate::aver_generated::tcp::Socket::Listening(
+                    crate::aver_generated::domain::builtins::valToTcpListener(&listenerV)?,
+                )),
+                Err(_) => Err(AverStr::from("Tcp.Socket.Listening takes one resource")),
+            }
+        } else {
+            if &*__dispatch_subject == "Tcp.Socket.Dialing" {
+                match crate::aver_generated::domain::builtins::helpers::oneArg(fields) {
+                    Ok(dialV @ _) => Ok(crate::aver_generated::tcp::Socket::Dialing(
+                        crate::aver_generated::domain::builtins::valToTcpDial(&dialV)?,
+                    )),
+                    Err(_) => Err(AverStr::from("Tcp.Socket.Dialing takes one resource")),
+                }
+            } else {
+                if &*__dispatch_subject == "Tcp.Socket.Connected" {
+                    match crate::aver_generated::domain::builtins::helpers::oneArg(fields) {
+                        Ok(connV @ _) => Ok(crate::aver_generated::tcp::Socket::Connected(
+                            crate::aver_generated::domain::builtins::valToTcpConn(&connV)?,
+                        )),
+                        Err(_) => Err(AverStr::from("Tcp.Socket.Connected takes one resource")),
+                    }
+                } else {
+                    Err(AverStr::from("expected Tcp.Socket value"))
+                }
+            }
+        }
+    }
+}
+
+/// Recover integer caller keys and typed socket states from a self-host Val map.
+#[inline(always)]
+pub fn tcpSocketEntriesToMap(
+    mut entries: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
+    mut acc: aver_rt::AverMap<aver_rt::AverInt, crate::aver_generated::tcp::Socket>,
+) -> Result<aver_rt::AverMap<aver_rt::AverInt, crate::aver_generated::tcp::Socket>, AverStr> {
+    loop {
+        crate::cancel_checkpoint();
+        aver_list_match!(entries, [] => { return Ok(acc); }, [pair, rest] => { { let (keyText, socketV) = pair; {
+            let __tco0 = rest;
+            let __tco1 = acc.insert_owned(({ let __s = &(keyText); __s.parse::<aver_rt::AverInt>().map_err(|_| format!("Cannot parse '{}' as Int", __s)) }).into_aver()?, crate::aver_generated::domain::builtins::valToTcpSocket(&socketV)?);
+            entries = __tco0;
+            acc = __tco1;
+            continue;
+        } } })
+    }
+}
+
+/// Convert ready caller keys back into self-host values.
+#[inline(always)]
+pub fn tcpReadyKeysToVals(
+    mut keys: aver_rt::AverIntList,
+    mut acc: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
+    loop {
+        crate::cancel_checkpoint();
+        aver_list_match!(keys, [] => { return acc.reverse(); }, [key, rest] => { {
+            let __tco0 = rest;
+            let __tco1 = aver_rt::AverList::prepend(crate::aver_generated::domain::value::Val::ValInt(key), &acc);
+            keys = __tco0;
+            acc = __tco1;
+            continue;
+        } })
+    }
+}
+
+/// Tcp.poll(sockets, timeoutMs) over the single caller-owned socket map.
+pub fn builtinTcpPoll(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
+    crate::cancel_checkpoint();
+    let pair = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
+    {
+        let (socketsV, timeoutV) = pair;
+        match socketsV {
+            crate::aver_generated::domain::value::Val::ValMap(sockets) => {
+                crate::aver_generated::domain::builtins::builtinTcpPollInner(&sockets, &timeoutV)
+            }
+            _ => Err(AverStr::from(
+                "Tcp.poll requires a Map as its first argument",
+            )),
+        }
+    }
+}
+
+/// Inner Tcp.poll.
+pub fn builtinTcpPollInner(
+    sockets: &aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val>,
+    timeoutV: &crate::aver_generated::domain::value::Val,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
+    crate::cancel_checkpoint();
+    let timeoutMs = crate::aver_generated::domain::builtins::helpers::expectInt(timeoutV)?;
+    let typedSockets = crate::aver_generated::domain::builtins::tcpSocketEntriesToMap(
+        {
+            let mut es: Vec<_> = sockets
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            es.sort_by(|a, b| a.0.cmp(&b.0));
+            aver_rt::AverList::from_vec(es)
+        },
+        HashMap::new(),
+    )?;
+    match {
+        let __provider_arg0 = typedSockets;
+        let __provider_arg1 = timeoutMs;
+        crate::cancel_checkpoint();
+        crate::aver_replay::invoke_capability_effect(
+            "Tcp.poll",
+            "recorded",
+            vec![
+                crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg0),
+                crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg1),
+            ],
+            || {
+                crate::provider_support::invoke::<Result<aver_rt::AverIntList, AverStr>>(
+                    "Tcp",
+                    "Tcp.poll",
+                    vec![
+                        crate::provider_support::encode(__provider_arg0, "Tcp"),
+                        crate::provider_support::encode(__provider_arg1, "Tcp"),
+                    ],
+                    None,
+                    "Result<List<Int>, String>",
+                )
+            },
+        )
+    } {
+        Ok(keys @ _) => Ok(crate::aver_generated::domain::value::Val::ValOk(
+            std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValList(
+                crate::aver_generated::domain::builtins::tcpReadyKeysToVals__collected(
+                    keys,
+                    aver_rt::list_builder_new(
+                        (aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0),
+                    ),
+                ),
+            )),
+        )),
+        Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
+            std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValStr(e)),
+        )),
+    }
+}
+
+/// Tcp.closeDial(dial) -> Result<Unit, String>.
+pub fn builtinTcpCloseDial(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
+    crate::cancel_checkpoint();
+    let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
+    let dial = crate::aver_generated::domain::builtins::valToTcpDial(&v)?;
+    match {
+        let __provider_arg0 = dial;
+        crate::cancel_checkpoint();
+        crate::aver_replay::invoke_capability_effect(
+            "Tcp.closeDial",
+            "recorded",
+            vec![crate::aver_replay::ReplayValue::to_replay_json(
+                &__provider_arg0,
+            )],
+            || {
+                crate::provider_support::invoke::<Result<(), AverStr>>(
+                    "Tcp",
+                    "Tcp.closeDial",
+                    vec![crate::provider_support::encode(__provider_arg0, "Tcp")],
+                    None,
+                    "Result<Unit, String>",
+                )
+            },
+        )
+    } {
+        Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
+            std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValUnit),
+        )),
+        Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
+            std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValStr(e)),
+        )),
+    }
+}
+
+/// Tcp.closeListener(listener) -> Result<Unit, String>.
+pub fn builtinTcpCloseListener(
+    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
+    crate::cancel_checkpoint();
+    let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
+    let listener = crate::aver_generated::domain::builtins::valToTcpListener(&v)?;
+    match {
+        let __provider_arg0 = listener;
+        crate::cancel_checkpoint();
+        crate::aver_replay::invoke_capability_effect(
+            "Tcp.closeListener",
+            "recorded",
+            vec![crate::aver_replay::ReplayValue::to_replay_json(
+                &__provider_arg0,
+            )],
+            || {
+                crate::provider_support::invoke::<Result<(), AverStr>>(
+                    "Tcp",
+                    "Tcp.closeListener",
+                    vec![crate::provider_support::encode(__provider_arg0, "Tcp")],
+                    None,
+                    "Result<Unit, String>",
+                )
+            },
+        )
+    } {
+        Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
+            std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValUnit),
+        )),
+        Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
+            std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValStr(e)),
+        )),
+    }
+}
+
 /// Tcp.writeLine(conn, line) -> Result<Unit, String>.
 pub fn builtinTcpWriteLine(
     args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
@@ -2667,21 +3170,21 @@ pub fn callBuiltinServices__indexed(
                                                                     crate::aver_generated::domain::builtins::builtinTcpConnect(args)
                                                                 } else {
                                                                     if &*__dispatch_subject
-                                                                        == "Tcp.writeLine"
+                                                                        == "Tcp.beginConnect"
                                                                     {
-                                                                        crate::aver_generated::domain::builtins::builtinTcpWriteLine(args)
+                                                                        crate::aver_generated::domain::builtins::builtinTcpBeginConnect(args)
                                                                     } else {
                                                                         if &*__dispatch_subject
-                                                                            == "Tcp.readLine"
+                                                                            == "Tcp.dialled"
                                                                         {
-                                                                            crate::aver_generated::domain::builtins::builtinTcpReadLine(args)
+                                                                            crate::aver_generated::domain::builtins::builtinTcpDialled(args)
                                                                         } else {
                                                                             if &*__dispatch_subject
-                                                                                == "Tcp.close"
+                                                                                == "Tcp.listen"
                                                                             {
-                                                                                crate::aver_generated::domain::builtins::builtinTcpClose(args)
+                                                                                crate::aver_generated::domain::builtins::builtinTcpListen(args)
                                                                             } else {
-                                                                                if &*__dispatch_subject == "Terminal.clear" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, args, __str_index) } else { if &*__dispatch_subject == "Terminal.flush" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, args, __str_index) } else { if &*__dispatch_subject == "Terminal.enableRawMode" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, args, __str_index) } else { if &*__dispatch_subject == "Terminal.disableRawMode" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, args, __str_index) } else { if &*__dispatch_subject == "Terminal.hideCursor" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, args, __str_index) } else { if &*__dispatch_subject == "Terminal.showCursor" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, args, __str_index) } else { if &*__dispatch_subject == "Terminal.resetColor" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, args, __str_index) } else { if &*__dispatch_subject == "Terminal.readKey" { crate::aver_generated::domain::builtins::builtinTerminalReadKey(args) } else { if &*__dispatch_subject == "Terminal.size" { crate::aver_generated::domain::builtins::builtinTerminalSize(args) } else { if &*__dispatch_subject == "Terminal.print" { crate::aver_generated::domain::builtins::builtinTerminalPrint(args) } else { if &*__dispatch_subject == "Terminal.setColor" { crate::aver_generated::domain::builtins::builtinTerminalSetColor(args) } else { if &*__dispatch_subject == "Terminal.moveTo" { crate::aver_generated::domain::builtins::builtinTerminalMoveTo(args) } else { crate::aver_generated::domain::builtins::tryVariantConstructor__indexed(name, args, __str_index) } } } } } } } } } } } }
+                                                                                if &*__dispatch_subject == "Tcp.accept" { crate::aver_generated::domain::builtins::builtinTcpAccept(args) } else { if &*__dispatch_subject == "Tcp.peerAddress" { crate::aver_generated::domain::builtins::builtinTcpPeerAddress(args) } else { if &*__dispatch_subject == "Tcp.poll" { crate::aver_generated::domain::builtins::builtinTcpPoll(args) } else { if &*__dispatch_subject == "Tcp.writeLine" { crate::aver_generated::domain::builtins::builtinTcpWriteLine(args) } else { if &*__dispatch_subject == "Tcp.readLine" { crate::aver_generated::domain::builtins::builtinTcpReadLine(args) } else { if &*__dispatch_subject == "Tcp.close" { crate::aver_generated::domain::builtins::builtinTcpClose(args) } else { if &*__dispatch_subject == "Tcp.closeDial" { crate::aver_generated::domain::builtins::builtinTcpCloseDial(args) } else { if &*__dispatch_subject == "Tcp.closeListener" { crate::aver_generated::domain::builtins::builtinTcpCloseListener(args) } else { if &*__dispatch_subject == "Terminal.clear" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, args, __str_index) } else { if &*__dispatch_subject == "Terminal.flush" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, args, __str_index) } else { if &*__dispatch_subject == "Terminal.enableRawMode" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, args, __str_index) } else { if &*__dispatch_subject == "Terminal.disableRawMode" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, args, __str_index) } else { if &*__dispatch_subject == "Terminal.hideCursor" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, args, __str_index) } else { if &*__dispatch_subject == "Terminal.showCursor" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, args, __str_index) } else { if &*__dispatch_subject == "Terminal.resetColor" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, args, __str_index) } else { if &*__dispatch_subject == "Terminal.readKey" { crate::aver_generated::domain::builtins::builtinTerminalReadKey(args) } else { if &*__dispatch_subject == "Terminal.size" { crate::aver_generated::domain::builtins::builtinTerminalSize(args) } else { if &*__dispatch_subject == "Terminal.print" { crate::aver_generated::domain::builtins::builtinTerminalPrint(args) } else { if &*__dispatch_subject == "Terminal.setColor" { crate::aver_generated::domain::builtins::builtinTerminalSetColor(args) } else { if &*__dispatch_subject == "Terminal.moveTo" { crate::aver_generated::domain::builtins::builtinTerminalMoveTo(args) } else { crate::aver_generated::domain::builtins::tryVariantConstructor__indexed(name, args, __str_index) } } } } } } } } } } } } } } } } } } } }
                                                                             }
                                                                         }
                                                                     }
@@ -2898,6 +3401,24 @@ pub fn stringsToValStrs__collected(
             let __tco0 = rest;
             let __tco1 = aver_rt::list_builder_push(acc, crate::aver_generated::domain::value::Val::ValStr(v));
             values = __tco0;
+            acc = __tco1;
+            continue;
+        } })
+    }
+}
+
+/// Synthesized collecting variant of `tcpReadyKeysToVals`. Appends to a builder where `tcpReadyKeysToVals` prepends to `acc` and reverses on the way out, which reaches the same list without the cons chain or the reversal. Call sites that start the accumulator at `[]` are moved here.
+#[inline(always)]
+pub fn tcpReadyKeysToVals__collected(
+    mut keys: aver_rt::AverIntList,
+    mut acc: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
+    loop {
+        crate::cancel_checkpoint();
+        aver_list_match!(keys, [] => { return aver_rt::list_builder_finalize(acc); }, [key, rest] => { {
+            let __tco0 = rest;
+            let __tco1 = aver_rt::list_builder_push(acc, crate::aver_generated::domain::value::Val::ValInt(key));
+            keys = __tco0;
             acc = __tco1;
             continue;
         } })

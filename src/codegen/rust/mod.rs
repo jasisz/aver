@@ -2743,7 +2743,7 @@ fn main() -> Result<Unit, String>
         );
         ctx.policy = Some(
             crate::config::ProjectConfig::parse(
-                "[effects.Tcp]\nconnect_timeout_secs = 7\nrequest_idle_timeout_secs = 45\n",
+                "[effects.Tcp]\nconnect_timeout_secs = 7\nrequest_idle_timeout_secs = 45\nmax_connections = 128\n",
             )
             .expect("Tcp policy"),
         );
@@ -2751,7 +2751,7 @@ fn main() -> Result<Unit, String>
         let out = transpile(&mut ctx);
         let provider_support = generated_file(&out, "src/provider_support.rs");
 
-        assert!(provider_support.contains("TcpSettings::from_secs(7, 45)?"));
+        assert!(provider_support.contains("TcpSettings::from_policy(7, 45, 128)?"));
         assert!(provider_support.contains("StandardTcpProvider::new(standard_tcp_settings)"));
     }
 
