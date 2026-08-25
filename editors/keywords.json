@@ -69,7 +69,7 @@
     "Vector",
     "Map",
     "Fn",
-    "HttpResponse",
+    "Http.Response",
     "HttpRequest",
     "Header"
   ]

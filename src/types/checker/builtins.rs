@@ -4,8 +4,8 @@ impl TypeChecker {
     pub(super) fn register_builtins(&mut self) {
         // No flat builtins — all functions live in namespaces.
 
-        // Register built-in record field types for HttpResponse / HttpRequest.
-        // This enables checked dot-access: resp.status → Int, req.path → String, etc.
+        // Register the server-side HttpRequest record. Client responses now
+        // belong to the source-owned Http capability as Http.Response.
         // HTTP headers are `Map<String, List<String>>` — multi-value
         // semantics match HTTP (RFC 9110 same-name fields, RFC 6265
         // Set-Cookie). Keys are case-insensitive by convention; the
@@ -17,15 +17,6 @@ impl TypeChecker {
                 Box::new(Type::List(Box::new(Type::Str))),
             )
         };
-        let net_resp_fields: &[(&str, Type)] = &[
-            ("status", Type::Int),
-            ("body", Type::Str),
-            ("headers", header_map()),
-        ];
-        for (field, ty) in net_resp_fields {
-            self.record_field_types
-                .insert(RecordFieldKey::new("HttpResponse", *field), ty.clone());
-        }
         let net_req_fields: &[(&str, Type)] = &[
             ("method", Type::Str),
             ("path", Type::Str),
@@ -73,169 +64,6 @@ impl TypeChecker {
                 ty.clone(),
             );
         }
-        let net_ret = || Type::Result(Box::new(Type::named("HttpResponse")), Box::new(Type::Str));
-        let result_unit = || Type::Result(Box::new(Type::Unit), Box::new(Type::Str));
-        // Http.post/put/patch headers param: same shape as the
-        // record fields above (`Map<String, List<String>>`).
-        let header_list = header_map;
-        let service_sigs: &[(&str, &[Type], Type, &[&str])] = &[
-            (
-                "Args.get",
-                &[],
-                Type::List(Box::new(Type::Str)),
-                &["Args.get"],
-            ),
-            // Console.print/error/warn take String. Stringification of
-            // non-String values is the caller's job (use interpolation
-            // `"{x}"` or explicit `Int.toString` / `Float.toString` /
-            // record-field-by-field formatting). Keeps the effect ABI
-            // trivial across backends and makes value→string
-            // conversion explicit at the call site, which the AI-
-            // reading-code-as-letter principle of Aver wants over
-            // implicit Show/Display dispatch.
-            (
-                "Console.print",
-                &[Type::Str],
-                Type::Unit,
-                &["Console.print"],
-            ),
-            (
-                "Console.error",
-                &[Type::Str],
-                Type::Unit,
-                &["Console.error"],
-            ),
-            ("Console.warn", &[Type::Str], Type::Unit, &["Console.warn"]),
-            (
-                "Console.readLine",
-                &[],
-                Type::Result(Box::new(Type::Str), Box::new(Type::Str)),
-                &["Console.readLine"],
-            ),
-            ("Http.get", &[Type::Str], net_ret(), &["Http.get"]),
-            ("Http.head", &[Type::Str], net_ret(), &["Http.head"]),
-            ("Http.delete", &[Type::Str], net_ret(), &["Http.delete"]),
-            (
-                "Http.post",
-                &[Type::Str, Type::Str, Type::Str, header_list()],
-                net_ret(),
-                &["Http.post"],
-            ),
-            (
-                "Http.put",
-                &[Type::Str, Type::Str, Type::Str, header_list()],
-                net_ret(),
-                &["Http.put"],
-            ),
-            (
-                "Http.patch",
-                &[Type::Str, Type::Str, Type::Str, header_list()],
-                net_ret(),
-                &["Http.patch"],
-            ),
-            (
-                "Env.get",
-                &[Type::Str],
-                Type::Option(Box::new(Type::Str)),
-                &["Env.get"],
-            ),
-            (
-                "Env.set",
-                &[Type::Str, Type::Str],
-                result_unit(),
-                &["Env.set"],
-            ),
-        ];
-        for (name, params, ret, effects) in service_sigs {
-            self.insert_sig(name, params, ret.clone(), effects);
-        }
-
-        // Terminal namespace — always register signatures so static
-        // analysis (playground, LSP, `aver check`) knows about them.
-        // The runtime impl is still gated by `feature = "terminal"`
-        // (crossterm doesn't build on wasm32-unknown-unknown). WASM
-        // codegen routes Terminal.* to host imports, no runtime dep.
-        {
-            let terminal_sigs: &[(&str, &[Type], Type, &[&str])] = &[
-                (
-                    "Terminal.enableRawMode",
-                    &[],
-                    result_unit(),
-                    &["Terminal.enableRawMode"],
-                ),
-                (
-                    "Terminal.disableRawMode",
-                    &[],
-                    result_unit(),
-                    &["Terminal.disableRawMode"],
-                ),
-                ("Terminal.clear", &[], result_unit(), &["Terminal.clear"]),
-                (
-                    "Terminal.moveTo",
-                    &[Type::Int, Type::Int],
-                    result_unit(),
-                    &["Terminal.moveTo"],
-                ),
-                (
-                    "Terminal.print",
-                    &[Type::Str],
-                    result_unit(),
-                    &["Terminal.print"],
-                ),
-                (
-                    "Terminal.setColor",
-                    &[Type::Str],
-                    result_unit(),
-                    &["Terminal.setColor"],
-                ),
-                (
-                    "Terminal.resetColor",
-                    &[],
-                    result_unit(),
-                    &["Terminal.resetColor"],
-                ),
-                (
-                    "Terminal.readKey",
-                    &[],
-                    Type::Result(
-                        Box::new(Type::Option(Box::new(Type::Str))),
-                        Box::new(Type::Str),
-                    ),
-                    &["Terminal.readKey"],
-                ),
-                (
-                    "Terminal.size",
-                    &[],
-                    Type::Result(Box::new(Type::named("Terminal.Size")), Box::new(Type::Str)),
-                    &["Terminal.size"],
-                ),
-                (
-                    "Terminal.hideCursor",
-                    &[],
-                    result_unit(),
-                    &["Terminal.hideCursor"],
-                ),
-                (
-                    "Terminal.showCursor",
-                    &[],
-                    result_unit(),
-                    &["Terminal.showCursor"],
-                ),
-                ("Terminal.flush", &[], result_unit(), &["Terminal.flush"]),
-            ];
-            for (name, params, ret, effects) in terminal_sigs {
-                self.insert_sig(name, params, ret.clone(), effects);
-            }
-
-            // Terminal.Size record field types
-            let terminal_size_fields: &[(&str, Type)] =
-                &[("width", Type::Int), ("height", Type::Int)];
-            for (field, ty) in terminal_size_fields {
-                self.record_field_types
-                    .insert(RecordFieldKey::new("Terminal.Size", *field), ty.clone());
-            }
-        }
-
         // Bool namespace
         let bool_sigs: &[(&str, &[Type], Type, &[&str])] = &[
             ("Bool.or", &[Type::Bool, Type::Bool], Type::Bool, &[]),

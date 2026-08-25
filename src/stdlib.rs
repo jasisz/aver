@@ -32,6 +32,26 @@ pub(crate) fn find(name: &str) -> Option<EmbeddedModule> {
             virtual_path: "<aver-stdlib>/http_server.av",
             source: include_str!("../stdlib/http_server.av"),
         }),
+        "Args" => Some(EmbeddedModule {
+            virtual_path: "<aver-stdlib>/capabilities/args.av",
+            source: include_str!("../stdlib/capabilities/args.av"),
+        }),
+        "Console" => Some(EmbeddedModule {
+            virtual_path: "<aver-stdlib>/capabilities/console.av",
+            source: include_str!("../stdlib/capabilities/console.av"),
+        }),
+        "Env" => Some(EmbeddedModule {
+            virtual_path: "<aver-stdlib>/capabilities/env.av",
+            source: include_str!("../stdlib/capabilities/env.av"),
+        }),
+        "Http" => Some(EmbeddedModule {
+            virtual_path: "<aver-stdlib>/capabilities/http.av",
+            source: include_str!("../stdlib/capabilities/http.av"),
+        }),
+        "Terminal" => Some(EmbeddedModule {
+            virtual_path: "<aver-stdlib>/capabilities/terminal.av",
+            source: include_str!("../stdlib/capabilities/terminal.av"),
+        }),
         "Time" => Some(EmbeddedModule {
             virtual_path: "<aver-stdlib>/capabilities/time.av",
             source: include_str!("../stdlib/capabilities/time.av"),
@@ -59,8 +79,9 @@ pub(crate) fn find(name: &str) -> Option<EmbeddedModule> {
 /// Provider-backed standard capability modules. Operation identities and
 /// semantics are derived from their embedded Aver contracts rather than
 /// repeated in a Rust table.
-pub(crate) const STANDARD_CAPABILITY_MODULES: &[&str] =
-    &["Disk", "Process", "Random", "Tcp", "Time"];
+pub(crate) const STANDARD_CAPABILITY_MODULES: &[&str] = &[
+    "Args", "Console", "Disk", "Env", "Http", "Process", "Random", "Tcp", "Terminal", "Time",
+];
 
 /// Host-backed calls whose signatures cross nominal record types owned by
 /// embedded standard modules, paired with the modules those types live in.
@@ -130,6 +151,12 @@ pub fn implicit_stdlib_deps(items: &[crate::ast::TopLevel]) -> Vec<String> {
     }
     for item in items {
         collect_standard_type_dependencies(item, &mut deps);
+    }
+    if let Some(owner) = items.iter().find_map(|item| match item {
+        crate::ast::TopLevel::Module(module) => Some(module.name.as_str()),
+        _ => None,
+    }) {
+        deps.retain(|dependency| dependency != owner);
     }
     deps
 }
@@ -337,11 +364,20 @@ pub(crate) fn append_required_standard_capability_modules(
     modules: &mut Vec<crate::source::LoadedModule>,
 ) {
     let mut required = std::collections::BTreeSet::new();
-    for items in
-        std::iter::once(entry_items).chain(modules.iter().map(|module| module.items.as_slice()))
-    {
+    let entry_scope = entry_items.iter().find_map(|item| match item {
+        crate::ast::TopLevel::Module(module) => Some(module.name.as_str()),
+        _ => None,
+    });
+    let owners_and_items = std::iter::once((entry_scope, entry_items)).chain(
+        modules
+            .iter()
+            .map(|module| (Some(module.dep_name.as_str()), module.items.as_slice())),
+    );
+    for (owner, items) in owners_and_items {
         for dependency in implicit_stdlib_deps(items) {
-            if is_standard_capability(&dependency) {
+            // Calls made by a capability's own hostile profiles refer to the
+            // current module; they do not import a second copy of its contract.
+            if owner != Some(dependency.as_str()) && is_standard_capability(&dependency) {
                 required.insert(dependency);
             }
         }

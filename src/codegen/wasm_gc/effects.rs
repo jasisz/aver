@@ -41,7 +41,7 @@ pub(super) enum EffectName {
     ProviderContractViolation,
     // ── Fetch bridge — used by `--handler X` on `--target wasm-gc`.
     //   The synthesised `aver_http_handle` wrapper reads request
-    //   fields through these and dispatches the user's HttpResponse
+    //   fields through these and dispatches the user's Http.Response
     //   via `Response.text` / `Response.setHeader`. Native wasm-gc
     //   shapes — refs to `(array i8)` carriers, not `(ptr, len)`
     //   pairs. Map<String, List<String>> for headers carries the
@@ -810,7 +810,7 @@ impl EffectName {
             | Self::HttpPut
             | Self::HttpPatch => Ok(vec![result_ref_ty(
                 registry,
-                "Result<HttpResponse,String>",
+                "Result<Http.Response,String>",
             )?]),
             Self::RecordEnterGroup | Self::RecordSetBranch | Self::RecordExitGroup => Ok(vec![]),
         }
@@ -840,6 +840,23 @@ mod certificate_format_tests {
             aver_cert::format::WASM_GC_CAPABILITIES,
             "compiler effect imports and the independent certificate verifier must stay in lockstep"
         );
+    }
+
+    #[test]
+    fn every_standard_capability_operation_has_a_wasm_lowering_route() {
+        for operation in crate::stdlib::standard_capability_registry_ref().operations() {
+            // Args.get expands to the paired Args.len/Args._get imports.
+            if operation.canonical_name == "Args.get" {
+                assert!(EffectName::from_dotted("Args.len").is_some());
+                assert!(EffectName::from_dotted("Args._get").is_some());
+                continue;
+            }
+            assert!(
+                EffectName::from_dotted(&operation.canonical_name).is_some(),
+                "standard capability operation {} has no wasm-gc lowering route",
+                operation.canonical_name
+            );
+        }
     }
 }
 
@@ -941,16 +958,11 @@ impl EffectRegistry {
 }
 
 impl EffectName {
-    /// True iff this effect is wired on `TargetMode::Wasip2` today.
-    /// Drives the population of `Wasip2ImportRegistry` from the
-    /// effects discovered by the per-fn walker. Stays `false` for
-    /// every effect not yet lowered; those effects are rejected
-    /// upstream by `wasip2::effect_check` before reaching the
-    /// wasm-gc emitter.
-    ///
-    /// Set grows as each phase commit lands: 1.2b1 wired Console.*,
-    /// 1.4 added Time.unixMs + Random.{int,float}, 1.3.2 added
-    /// ArgsGet, 1.3.3 added EnvGet.
+    /// True iff this effect has a canonical-ABI lowering for wasip2.
+    /// Drives `Wasip2ImportRegistry` population from the effects found
+    /// by the per-function walker. The standard capability target
+    /// manifest rejects unavailable operations before this emitter is
+    /// entered; tests keep its supported rows aligned with this set.
     pub(super) fn lowers_on_wasip2(self) -> bool {
         matches!(
             self,

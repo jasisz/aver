@@ -436,18 +436,11 @@ mod tests {
     }
 
     #[test]
-    fn symbol_table_reuses_builtin_name_for_effect() {
+    fn capability_effect_name_is_not_a_builtin_symbol() {
         let mut table = VmSymbolTable::default();
         let effect_sym = table.intern_name("Console.print");
-        let builtin_sym = table
-            .intern_builtin(VmBuiltin::ConsolePrint)
-            .expect("intern Console.print");
-
-        assert_eq!(effect_sym, builtin_sym);
-        assert_eq!(
-            table.required_effects(builtin_sym),
-            Some([builtin_sym].as_slice())
-        );
+        assert_eq!(table.find("Console.print"), Some(effect_sym));
+        assert_eq!(table.resolve_builtin(effect_sym), None);
     }
 
     #[test]

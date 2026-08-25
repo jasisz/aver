@@ -32,14 +32,9 @@ pub use profile::{
 };
 pub use types::{CallFrame, CodeStore, FnChunk, VmError};
 
-/// Register builtin service record types (HttpResponse, HttpRequest, etc.)
-/// in the arena before compilation. These types are used by services but
-/// not declared in user code.
+/// Register compiler-owned host record types in the arena before compilation.
+/// Capability-owned records are compiled from their embedded Aver modules.
 pub fn register_service_types(arena: &mut crate::nan_value::Arena) {
-    arena.register_record_type(
-        "HttpResponse",
-        vec!["status".into(), "body".into(), "headers".into()],
-    );
     arena.register_record_type(
         "HttpRequest",
         vec![
@@ -53,10 +48,6 @@ pub fn register_service_types(arena: &mut crate::nan_value::Arena) {
         "Tcp.Connection",
         vec!["id".into(), "host".into(), "port".into()],
     );
-    // Always register Terminal.Size so record-field access works in
-    // every build (the playground wasm ships without `terminal` but
-    // the compiler still emits field reads against the stubs).
-    arena.register_record_type("Terminal.Size", vec!["width".into(), "height".into()]);
     // Oracle: BranchPath is an opaque builtin wrapping a dewey-decimal string.
     // Only reachable via BranchPath.root / .child / .parse constructors.
     arena.register_record_type("BranchPath", vec!["dewey".into()]);

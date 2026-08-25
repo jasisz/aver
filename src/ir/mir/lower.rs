@@ -381,7 +381,7 @@ fn lower_expr(
             return Err(SkipReason::UnresolvedCtor);
         }
         // User records carry a `TypeId`; built-in product types
-        // (`HttpResponse`, `Header`, `Buffer`, …) carry `None` and ride
+        // (`Http.Response`, `Header`, `Buffer`, …) carry `None` and ride
         // their canonical `type_name`. Both lower the same shape — the
         // walker resolves the arena type via `TypeId` when present, else
         // by name.

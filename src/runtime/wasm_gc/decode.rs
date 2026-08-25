@@ -598,7 +598,7 @@ pub(crate) fn decode_result_option_string(
     }
 }
 
-/// Decode a `Result<HttpResponse, String>` value. `HttpResponse` is a
+/// Decode a `Result<Http.Response, String>` value. `Http.Response` is a
 /// `$record` with `status: Int`, `body: String`, `headers: Map<…>`.
 /// Headers cross as an empty map — the recording path emits the same
 /// shape today.
@@ -611,11 +611,11 @@ pub(crate) fn decode_result_http_response(
         "$err" => match inner {
             aver::replay::JsonValue::String(s) => host_result_http_response_err(caller, s),
             _ => Err(wasmtime::Error::msg(
-                "replay decode Result<HttpResponse, String>.Err: payload not a String",
+                "replay decode Result<Http.Response, String>.Err: payload not a String",
             )),
         },
         "$ok" => {
-            let fields = expect_record(inner, "HttpResponse")?;
+            let fields = expect_record(inner, "Http.Response")?;
             let status = match fields.get("status") {
                 Some(aver::replay::JsonValue::Int(n)) => *n,
                 _ => 0,

@@ -280,7 +280,13 @@ impl TypeChecker {
             // in `B`'s own `depends [...]` declaration so the only
             // bare-name aliases the sub-checker sees come from
             // modules `B` itself imported.
-            let own_depends = Self::visible_module_roots(&module.items);
+            let mut own_depends = Self::visible_module_roots(&module.items);
+            // A standard capability's hostile profiles call the capability's
+            // own operations. Implicit-dependency discovery therefore sees
+            // the owner module name too, but that is not an import: loading
+            // its exported types here would pre-register them immediately
+            // before `build_signatures` registers the same local declarations.
+            own_depends.retain(|dependency| dependency != &module.dep_name);
             sub.integrate_loaded_modules(modules, &own_depends);
             sub.build_signatures(&module.items);
             sub.check_top_level_stmts(&module.items);

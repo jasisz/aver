@@ -1,5 +1,4 @@
-//! Single source of truth for built-in record types that appear in
-//! Aver's effect signatures and proof exports.
+//! Single source of truth for compiler-owned host carrier records.
 //!
 //! Lean and Dafny both need declarations for these types in their
 //! preludes. Previously each backend kept its own hard-coded literal
@@ -30,8 +29,8 @@ pub enum BuiltinType {
     Float,
     /// `List<T>` / `seq<T>` of another built-in record.
     ListOf(&'static str),
-    /// `Map<String, List<String>>` — used by `HttpResponse.headers`
-    /// and `HttpRequest.headers`. Multi-value semantics match HTTP
+    /// `Map<String, List<String>>` — used by `HttpRequest.headers`.
+    /// Multi-value semantics match HTTP
     /// (RFC 9110: same-name fields, plus RFC 6265 Set-Cookie). Keys
     /// are case-insensitive by convention; runtime normalizes
     /// incoming names to lowercase, user code is expected to do the
@@ -60,15 +59,14 @@ impl BuiltinType {
 }
 
 /// Description of a built-in record type. `aver_name` is the dotted
-/// or undotted name as it appears in Aver source (`Terminal.Size`,
-/// `HttpResponse`). Backends derive their identifier by replacing
+/// or undotted name as it appears in Aver source (`Tcp.Connection`,
+/// `HttpRequest`). Backends derive their identifier by replacing
 /// dots with underscores.
 pub struct BuiltinRecord {
     pub aver_name: &'static str,
     pub fields: &'static [BuiltinField],
     /// Other built-in records this one references (so the dependency
-    /// can be emitted before this one — e.g. `Header` before
-    /// `HttpResponse`).
+    /// can be emitted before this one.
     pub depends_on: &'static [&'static str],
     /// Maintainer-facing description; not consumed by codegen, but
     /// kept as documentation alongside the table.
@@ -107,25 +105,6 @@ impl BuiltinRecord {
 
 /// All built-in record types in declaration order.
 pub const BUILTIN_RECORDS: &[BuiltinRecord] = &[
-    BuiltinRecord {
-        aver_name: "HttpResponse",
-        fields: &[
-            BuiltinField {
-                name: "status",
-                ty: BuiltinType::Int,
-            },
-            BuiltinField {
-                name: "body",
-                ty: BuiltinType::Str,
-            },
-            BuiltinField {
-                name: "headers",
-                ty: BuiltinType::MapStrListStr,
-            },
-        ],
-        depends_on: &[],
-        doc: "Returned by classified `Http.get`/`.head`/`.delete`/`.post`/`.put`/`.patch`.",
-    },
     BuiltinRecord {
         aver_name: "HttpRequest",
         fields: &[
@@ -189,21 +168,6 @@ pub const BUILTIN_RECORDS: &[BuiltinRecord] = &[
         }],
         depends_on: &[],
         doc: "Provider-owned handle for a bound `Tcp.listen` socket.",
-    },
-    BuiltinRecord {
-        aver_name: "Terminal.Size",
-        fields: &[
-            BuiltinField {
-                name: "width",
-                ty: BuiltinType::Int,
-            },
-            BuiltinField {
-                name: "height",
-                ty: BuiltinType::Int,
-            },
-        ],
-        depends_on: &[],
-        doc: "Returned by classified `Terminal.size` (snapshot effect).",
     },
 ];
 
@@ -343,33 +307,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn http_response_renders_to_dafny_datatype() {
-        let r = find("HttpResponse").unwrap();
-        let dafny = render_dafny(r);
-        assert_eq!(
-            dafny,
-            "datatype HttpResponse = HttpResponse(status: int, body: string, headers: map<string, seq<string>>)"
-        );
-    }
-
-    #[test]
     fn http_request_field_method_is_renamed_in_dafny() {
         let r = find("HttpRequest").unwrap();
         let dafny = render_dafny(r);
         assert!(dafny.contains("method_: string"));
-    }
-
-    #[test]
-    fn terminal_size_dotted_name_maps_to_underscore() {
-        let r = find("Terminal.Size").unwrap();
-        assert_eq!(r.backend_name(), "Terminal_Size");
-        let lean = render_lean(r);
-        assert!(lean.starts_with("structure Terminal_Size where"));
-        let dafny = render_dafny(r);
-        assert_eq!(
-            dafny,
-            "datatype Terminal_Size = Terminal_Size(width: int, height: int)"
-        );
     }
 
     #[test]
@@ -391,7 +332,6 @@ mod tests {
         // Headers field is `Map<String, List<String>>` (built-in shape),
         // so HTTP records carry no record-level dependency. The legacy
         // `Header` record was retired in 0.14.1 — confirm it's gone.
-        assert!(find("HttpResponse").unwrap().depends_on.is_empty());
         assert!(find("HttpRequest").unwrap().depends_on.is_empty());
         assert!(find("Header").is_none());
     }

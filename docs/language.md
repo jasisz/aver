@@ -206,7 +206,7 @@ Arguments after `--` are available as `List<String>`. Without `--`, the list is 
 fn add(a: Int, b: Int) -> Int
     a + b
 
-fn fetchUser(id: String) -> Result<HttpResponse, String>
+fn fetchUser(id: String) -> Result<Http.Response, String>
     ? "Fetches a user record from an API."
     ! [Http.get]
     Http.get("https://api.example.com/users/{id}")

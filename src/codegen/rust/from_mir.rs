@@ -610,16 +610,12 @@ pub(super) fn owned_collection_param_names(
     out
 }
 
-/// Dotted built-in record/service types whose source `type_name`
-/// (e.g. `Tcp.Connection`, `Terminal.Size`) maps to a re-exported
-/// flat-named Rust struct (`Tcp_Connection`, `Terminal_Size`) brought
-/// in by the matching `generate_*_types()` `pub use` alias. Returns the
-/// Rust name on a hit, `None` for ordinary user records (which keep
-/// their verbatim `type_name`).
+/// The legacy representation-backed `Tcp.Connection` carrier maps to its
+/// flat root alias. Capability-owned represented records such as
+/// `Terminal.Size` take the ordinary module-qualified path below.
 fn builtin_dotted_record_rename(type_name: &str) -> Option<&'static str> {
     match type_name {
         "Tcp.Connection" => Some("Tcp_Connection"),
-        "Terminal.Size" => Some("Terminal_Size"),
         _ => None,
     }
 }
@@ -1264,12 +1260,9 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                     let name = emit_ctx.symbol_table.fn_entry(*fn_id).key.canonical();
                     emit_named_call_to(&name, Some(*fn_id), &call.args, emit_ctx)
                 }
-                // Resolve the interned dotted name and dispatch:
-                //   - EFFECTFUL builtins (Wave 3b) →
-                //     `emit_mir_effectful_builtin_call`, which mirrors
-                //     HIR's `emit_builtin_call` replay-reroute / policy-
-                //     wrap / bare-frame machinery byte-for-byte.
-                //   - PURE builtins (Wave 3a) → `emit_mir_builtin_call`.
+                // Resolve the interned dotted name and dispatch. Every host
+                // operation is capability-backed; the remaining builtin
+                // table is pure.
                 // An out-of-range id (a lowering-invariant violation we
                 // tolerate defensively) returns `None` → HIR fallback.
                 MirCallee::Builtin(id) => {
@@ -1280,11 +1273,7 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                     {
                         return emit_mir_capability_call(operation, &call.args, emit_ctx);
                     }
-                    if super::builtins::builtin_is_effectful(name) {
-                        emit_mir_effectful_builtin_call(name, &call.args, emit_ctx)
-                    } else {
-                        emit_mir_builtin_call(name, &call.args, emit_ctx)
-                    }
+                    emit_mir_builtin_call(name, &call.args, emit_ctx)
                 }
                 // Wave 3a: the 5 deforestation intrinsics (buffer build
                 // + `__to_str`). Args are by-value (no clone / borrow),
@@ -1754,12 +1743,11 @@ fn emit_owned_record_field_successor(
 /// Emit one program-defined or standard capability call through the
 /// native provider registry generated for this Rust artifact.
 ///
-/// Policy parity with builtins: when the project carries an `aver.toml`
+/// Policy parity with the VM: when the project carries an `aver.toml`
 /// policy (and the replay runtime is not the active door), an operation
 /// in a policy-guarded namespace (`Http.`/`Disk.`/`Env.`) checks its
 /// first String argument through `aver_policy` BEFORE the provider
-/// invoke — the same seam `compose_effectful_builtin` applies to the
-/// builtin table. The check runs on the encoded `ProviderValue` so the
+/// invoke. The check runs on the encoded `ProviderValue` so the
 /// argument is still evaluated exactly once.
 fn emit_mir_capability_call(
     operation: &crate::capability::CapabilityOperation,
@@ -1781,9 +1769,8 @@ fn emit_mir_capability_call(
         .unwrap_or_else(|| "None".to_string());
     let expected = operation.return_type.display();
 
-    // Mirror of `emit_mir_effectful_builtin_call`'s flag: the policy door
-    // only exists when the project renders `aver_policy` and the replay
-    // runtime is not the active wrap.
+    // The policy door only exists when the project renders `aver_policy`
+    // and the replay runtime is not the active wrap.
     let policy_helper = ctx
         .codegen
         .filter(|codegen| codegen.policy.is_some() && !codegen.emit_replay_runtime)
@@ -1793,6 +1780,16 @@ fn emit_mir_capability_call(
     for arg in args {
         owned_args.push(mir_clone_arg(emit_mir_expr(arg, ctx)?, &arg.node, ctx));
     }
+    let owned_arg_types = operation
+        .params
+        .iter()
+        .map(|(_, ty)| match ctx.codegen {
+            Some(codegen) => {
+                super::types::type_to_rust_scoped(ty, codegen, ctx.current_module_scope)
+            }
+            None => super::types::type_to_rust(ty),
+        })
+        .collect::<Vec<_>>();
 
     let invoke_with = |names: &[String]| {
         let encoded = names
@@ -1822,8 +1819,8 @@ fn emit_mir_capability_call(
             .collect::<Vec<_>>();
         let mut lines = vec!["{".to_string()];
         lines.push("    crate::cancel_checkpoint();".to_string());
-        for (name, value) in names.iter().zip(&owned_args) {
-            lines.push(format!("    let {name} = {value};"));
+        for ((name, value), ty) in names.iter().zip(&owned_args).zip(&owned_arg_types) {
+            lines.push(format!("    let {name}: {ty} = {value};"));
         }
         lines.push(format!(
             "    let {} = crate::provider_support::encode({}, {:?});",
@@ -1869,8 +1866,8 @@ fn emit_mir_capability_call(
         if operation.is_effectful() {
             lines.push("    crate::cancel_checkpoint();".to_string());
         }
-        for (name, value) in names.iter().zip(&owned_args) {
-            lines.push(format!("    let {name} = {value};"));
+        for ((name, value), ty) in names.iter().zip(&owned_args).zip(&owned_arg_types) {
+            lines.push(format!("    let {name}: {ty} = {value};"));
         }
         lines.push(format!("    {}", invoke_with(&names)));
         lines.push("}".to_string());
@@ -1887,8 +1884,8 @@ fn emit_mir_capability_call(
         .collect::<Vec<_>>()
         .join(", ");
     let mut lines = vec!["{".to_string()];
-    for (name, value) in names.iter().zip(&owned_args) {
-        lines.push(format!("    let {name} = {value};"));
+    for ((name, value), ty) in names.iter().zip(&owned_args).zip(&owned_arg_types) {
+        lines.push(format!("    let {name}: {ty} = {value};"));
     }
     lines.push("    crate::cancel_checkpoint();".to_string());
     lines.push(format!(
@@ -5385,92 +5382,6 @@ fn emit_mir_builtin_call(
     }
 }
 
-// ── Wave 3b: EFFECTFUL builtin calls (replay / policy / bare framing) ───
-//
-// SECURITY-SENSITIVE. Mirror of the HIR oracle `emit_builtin_call`
-// (`builtins.rs`) for the 11 EFFECTFUL families (Args / Console / Http /
-// Disk / Env / Random / Tcp / Terminal /
-// Time). Wave 3a gated these out (`builtin_is_effectful` → `None` → HIR
-// fallback); Wave 3b emits them, threading `ctx.policy` +
-// `ctx.emit_replay_runtime` (reachable through `ctx.codegen`).
-//
-// The wrappers HIR applies are reproduced by the SAME shared composers
-// `emit_builtin_call` calls — `compose_replay_effect_call` (replay
-// reroute) and `compose_effectful_builtin` (the raw `aver_rt::*` body,
-// the policy `check_*`, and the bare `cancel_checkpoint` framing) — so
-// the MIR output is byte-identical to HIR by construction. The only
-// walker-specific inputs are the per-arg renders: `mir_clone_arg` (the
-// replay temps, HIR's `clone_arg`) and the raw `emit_mir_expr` (the
-// non-replay args, HIR's `emit_expr`).
-//
-// A dropped composer here silently disables aver.toml DENY enforcement
-// or record/replay capture (invisible to rustc + coverage + happy-path
-// stdout) — the differential security test under `AVER_RUST_MIR_ONLY=1`
-// forces this path and is revert-proofed against exactly that drop.
-
-/// Emit an EFFECTFUL builtin call from MIR, byte-identical to the HIR
-/// oracle's `emit_builtin_call`. `name` is already known effectful (the
-/// `Call(Builtin)` arm routed it here). Returns `None` (→ HIR fallback)
-/// when an arg can't render, when the production `CodegenContext` is
-/// absent (coverage path — no policy/replay info), or when the raw
-/// effect body isn't one the oracle covers.
-fn emit_mir_effectful_builtin_call(
-    name: &str,
-    args: &[Spanned<MirExpr>],
-    ctx: &MirEmitCtx<'_>,
-) -> Option<String> {
-    // The policy / replay flags live on the full `CodegenContext`. The
-    // coverage / test path has none → fall back to HIR (which the
-    // coverage walk reads as a `None`, conservative + fine). The
-    // production parity gate always carries a ctx.
-    let codegen = ctx.codegen?;
-
-    // (1) Replay reroute — mirror of `emit_builtin_call`'s
-    //     `if ctx.emit_replay_runtime && builtin_is_effectful(name)`.
-    //     Each arg is bound to `__effect_argN` via the `clone_arg`
-    //     mirror; the shared composer emits the
-    //     `cancel_checkpoint` + `invoke_effect(<effect>, vec![json], || raw)`
-    //     block from the temp names.
-    if codegen.emit_replay_runtime {
-        let mut arg_clones = Vec::with_capacity(args.len());
-        for a in args {
-            arg_clones.push(mir_clone_arg(emit_mir_expr(a, ctx)?, &a.node, ctx));
-        }
-        return super::builtins::compose_replay_effect_call(name, &arg_clones);
-    }
-
-    // (2) Raw effect body + policy / bare framing — mirror of
-    //     `emit_builtin_call`'s tail. Every arg is rendered ONCE here
-    //     (raw `emit_mir_expr`, HIR's `emit_arg`); the shared composer
-    //     owns every use of those strings, including the policy check's,
-    //     so no argument expression can reach the output twice.
-    //
-    //     One arg is rendered differently: when the policy check is on,
-    //     argument 0 becomes `let __policy_arg = …;`, which is an OWNING
-    //     position and so takes the same clone step every other owning
-    //     position takes — `mir_clone_arg`, the one the replay temps just
-    //     above use for exactly the same job. Rendering it raw there binds
-    //     a local the program reads again (E0382) or moves a field out of
-    //     a borrowed record param (E0507); the guarded raw bodies all read
-    //     argument 0 as `&{}`, so nothing asked for ownership until the
-    //     temp did. `mir_clone_arg` leaves an owned rvalue (a call result,
-    //     a literal, a last-use local) untouched, so the emission only
-    //     moves for the shapes that were breaking, and the clone is on the
-    //     one render — the argument is still evaluated exactly once.
-    let policy_active = codegen.policy.is_some() && !codegen.emit_replay_runtime;
-    let owning_first_arg = super::builtins::policy_binds_first_arg(name, policy_active);
-    let mut arg_strs = Vec::with_capacity(args.len());
-    for (i, a) in args.iter().enumerate() {
-        let code = emit_mir_expr(a, ctx)?;
-        arg_strs.push(if i == 0 && owning_first_arg {
-            mir_clone_arg(code, &a.node, ctx)
-        } else {
-            code
-        });
-    }
-    super::builtins::compose_effectful_builtin(name, &arg_strs, policy_active)
-}
-
 /// Emit one of the 5 deforestation intrinsics from MIR, byte-identical
 /// to the HIR oracle's `emit_builtin_call_inner` intrinsic arms. Args
 /// are by-value (raw `emit_mir_expr`, no clone / borrow), matching the
@@ -6046,13 +5957,10 @@ mod tests {
     }
 
     #[test]
-    fn effectful_builtin_returns_none_without_codegen_ctx() {
-        // Wave 3b: effectful builtins DO emit on the production path, but
-        // they need the `CodegenContext` (for `ctx.policy` /
-        // `ctx.emit_replay_runtime`). The coverage / test path carries no
-        // ctx, so `Console.print` returns `None` → HIR fallback there,
-        // which the coverage walk reads conservatively. (Production emit
-        // is exercised by the differential security test.)
+    fn capability_operation_returns_none_without_codegen_ctx() {
+        // Capability operations need their source contract from the
+        // production CodegenContext and cannot fall through to a legacy
+        // host-builtin emitter.
         let call = MirCall {
             callee: MirCallee::Builtin(crate::ir::BuiltinId(0)),
             args: vec![span(MirExpr::Literal(span(crate::ast::Literal::Str(
@@ -6062,8 +5970,7 @@ mod tests {
         let expr = span(MirExpr::Call(span(call)));
         assert!(
             emit_mir_expr(&expr, &ctx_with_builtin("Console.print")).is_none(),
-            "effectful Console.print needs a CodegenContext; without one it \
-             falls back to HIR"
+            "capability-backed Console.print needs a CodegenContext"
         );
     }
 
@@ -6092,17 +5999,16 @@ mod tests {
         assert_eq!(emit, "return aver_rt::AverInt::from_i64(7)");
     }
 
-    fn symbols_with_one_type(name: &str, scoped: bool) -> SymbolTable {
+    fn symbols_with_one_type(name: &str, scope: Option<&str>) -> SymbolTable {
         use crate::ir::ModuleId;
         use crate::ir::identity::TypeKey;
         use crate::ir::symbol_table::{ModuleEntry, TypeEntry};
         let mut st = SymbolTable::default();
         st.modules.push(ModuleEntry { prefix: None });
-        let key = if scoped {
-            TypeKey::in_module("Tcp", name)
-        } else {
-            TypeKey::entry(name)
-        };
+        let key = scope.map_or_else(
+            || TypeKey::entry(name),
+            |module| TypeKey::in_module(module, name),
+        );
         st.types.push(TypeEntry {
             key,
             module: ModuleId(0),
@@ -6134,7 +6040,7 @@ mod tests {
             fields: vec![field_x, field_y],
         };
         let expr = span(MirExpr::RecordCreate(span(rec)));
-        let st = symbols_with_one_type("Point", false);
+        let st = symbols_with_one_type("Point", None);
         let prefixes = HashSet::new();
         let ctx = MirEmitCtx::for_test(&st, &prefixes);
         let emit = emit_mir_expr(&expr, &ctx).expect("record create should emit");
@@ -6156,7 +6062,7 @@ mod tests {
             fields: vec![],
         };
         let expr = span(MirExpr::RecordCreate(span(rec)));
-        let st = symbols_with_one_type("Connection", true);
+        let st = symbols_with_one_type("Connection", Some("Tcp"));
         let prefixes = HashSet::new();
         let ctx = MirEmitCtx::for_test(&st, &prefixes);
         let emit = emit_mir_expr(&expr, &ctx).expect("tcp connection record should emit");
@@ -6164,12 +6070,7 @@ mod tests {
     }
 
     #[test]
-    fn emits_terminal_size_record_with_rename() {
-        // `Terminal.Size` is renamed to the re-exported `Terminal_Size`
-        // struct (alias `pub use aver_rt::TerminalSize as Terminal_Size`),
-        // mirroring the `Tcp.Connection` special-case — so the dotted
-        // ctor `Terminal.Size(width = .., height = ..)` emits a valid Rust
-        // struct literal instead of the malformed `Terminal.Size { .. }`.
+    fn emits_terminal_size_record_through_capability_module() {
         let field_w = crate::ir::mir::MirRecordField {
             name: "width".to_string(),
             value: span(MirExpr::Literal(span(crate::ast::Literal::Int(80)))),
@@ -6184,13 +6085,13 @@ mod tests {
             fields: vec![field_w, field_h],
         };
         let expr = span(MirExpr::RecordCreate(span(rec)));
-        let st = symbols_with_one_type("Size", true);
-        let prefixes = HashSet::new();
+        let st = symbols_with_one_type("Size", Some("Terminal"));
+        let prefixes = HashSet::from(["Terminal".to_string()]);
         let ctx = MirEmitCtx::for_test(&st, &prefixes);
         let emit = emit_mir_expr(&expr, &ctx).expect("terminal size record should emit");
         assert_eq!(
             emit,
-            "Terminal_Size { width: aver_rt::AverInt::from_i64(80), height: aver_rt::AverInt::from_i64(24) }"
+            "crate::aver_generated::terminal::Size { width: aver_rt::AverInt::from_i64(80), height: aver_rt::AverInt::from_i64(24) }"
         );
     }
 
@@ -6292,7 +6193,7 @@ mod tests {
             updates: vec![update],
         };
         let expr = span(MirExpr::RecordUpdate(span(upd)));
-        let st = symbols_with_one_type("Point", false);
+        let st = symbols_with_one_type("Point", None);
         let prefixes = HashSet::new();
         let ctx = MirEmitCtx::for_test(&st, &prefixes);
         let emit = emit_mir_expr(&expr, &ctx).expect("record update should emit");

@@ -5,11 +5,16 @@
 //! resource payloads. A future IPC or Component Model adapter can therefore
 //! preserve this boundary without inheriting VM representation details.
 
+mod args;
 mod codec;
+mod console;
 mod disk;
+mod env;
+mod http;
 mod process;
 mod runtime;
 mod tcp;
+mod terminal;
 
 use std::any::Any;
 use std::collections::BTreeSet;
@@ -19,8 +24,14 @@ use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 use crate::AverInt;
 
+pub use args::{STANDARD_ARGS_FINGERPRINT, STANDARD_ARGS_NATIVE_IDENTITY, StandardArgsProvider};
 pub use codec::{ProviderCodec, provider_value_order_key};
+pub use console::{
+    STANDARD_CONSOLE_FINGERPRINT, STANDARD_CONSOLE_NATIVE_IDENTITY, StandardConsoleProvider,
+};
 pub use disk::{STANDARD_DISK_FINGERPRINT, STANDARD_DISK_NATIVE_IDENTITY, StandardDiskProvider};
+pub use env::{STANDARD_ENV_FINGERPRINT, STANDARD_ENV_NATIVE_IDENTITY, StandardEnvProvider};
+pub use http::{STANDARD_HTTP_FINGERPRINT, STANDARD_HTTP_NATIVE_IDENTITY, StandardHttpProvider};
 pub use process::{
     STANDARD_PROCESS_FINGERPRINT, STANDARD_PROCESS_NATIVE_IDENTITY, StandardProcessProvider,
     standard_process_stop_requested,
@@ -35,6 +46,9 @@ pub use runtime::{
     standard_random_float, standard_random_int,
 };
 pub use tcp::{STANDARD_TCP_FINGERPRINT, STANDARD_TCP_NATIVE_IDENTITY, StandardTcpProvider};
+pub use terminal::{
+    STANDARD_TERMINAL_FINGERPRINT, STANDARD_TERMINAL_NATIVE_IDENTITY, StandardTerminalProvider,
+};
 
 /// A host-owned payload carried by a capability resource.
 ///

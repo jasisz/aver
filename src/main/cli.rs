@@ -51,7 +51,7 @@ pub(super) enum DeployPack {
 /// One-flag UX shortcut that expands to a `(target, pack)` preset.
 /// `--preset cloudflare` ≡ `--target wasm-gc --pack cloudflare`.
 /// Requires `--handler <fn>` (the Aver fn with signature
-/// `Fn(HttpRequest) -> HttpResponse` to expose as the worker's
+/// `Fn(HttpRequest) -> Http.Response` to expose as the worker's
 /// request handler). Equivalent CLI surface, fewer keystrokes.
 ///
 /// Workerd's V8 ships stable wasm-gc + tail calls, the runtime is
@@ -450,7 +450,7 @@ pub(super) enum Commands {
         preset: Option<DeployPreset>,
         /// Top-level Aver function to expose as the HTTP handler in
         /// the deployment pack. Must have signature
-        /// `Fn(HttpRequest) -> HttpResponse`. Compiler exports it
+        /// `Fn(HttpRequest) -> Http.Response`. Compiler exports it
         /// as `aver_http_handle`; the pack's bootstrap (worker.js
         /// for Cloudflare, etc.) routes requests through it. No
         /// listener inference from `main` — the handler is exactly

@@ -274,7 +274,7 @@ pub fn compile_to_wasm_gc_with_mir_count(
 /// Same as `compile_to_wasm_gc` but exports a JS-callable
 /// `aver_http_handle(method, url, query, body, country) ->
 /// (status, body)` wrapper around the named user fn (whose
-/// signature must be `(HttpRequest) -> HttpResponse`). Equivalent
+/// signature must be `(HttpRequest) -> Http.Response`). Equivalent
 /// to the legacy backend's `--bridge fetch`.
 pub fn compile_to_wasm_gc_with_handler(
     items: &[TopLevel],
@@ -335,12 +335,12 @@ pub fn compile_to_wasm_gc_for_wasip2(
 }
 
 /// `--target wasip2 --world wasi:http/proxy` entry — Phase 3 / 0.19.
-/// `handler` names the user-source fn `(HttpRequest) -> HttpResponse`
+/// `handler` names the user-source fn `(HttpRequest) -> Http.Response`
 /// explicitly selected by the CLI. The wasm-gc emitter swaps
 /// the `wasi:cli/run` entry-point for `wasi:http/incoming-handler#
 /// handle`, decodes the host-supplied incoming-request resource into
 /// an Aver `HttpRequest`, runs `handler`, encodes the returned
-/// `HttpResponse` into an outgoing-response, and calls
+/// `Http.Response` into an outgoing-response, and calls
 /// `response-outparam.set` — the host (`wasmtime serve` / Spin /
 /// wasmCloud) then writes the response bytes back to the client.
 ///

@@ -1,15 +1,61 @@
 use crate::{AverDisplay, AverList, aver_display};
+use std::cell::RefCell;
+
+thread_local! {
+    static CONSOLE_CAPTURE: RefCell<Option<(Vec<u8>, Vec<u8>)>> = const { RefCell::new(None) };
+}
+
+pub fn capture_console_output<F, R>(f: F) -> (R, Vec<u8>, Vec<u8>)
+where
+    F: FnOnce() -> R,
+{
+    CONSOLE_CAPTURE.with(|capture| {
+        let mut slot = capture.borrow_mut();
+        assert!(
+            slot.is_none(),
+            "capture_console_output: nested capture is not supported"
+        );
+        *slot = Some((Vec::new(), Vec::new()));
+    });
+    let result = f();
+    let (stdout, stderr) = CONSOLE_CAPTURE
+        .with(|capture| capture.borrow_mut().take())
+        .unwrap_or_default();
+    (result, stdout, stderr)
+}
+
+fn write_console_stdout(text: &str) {
+    CONSOLE_CAPTURE.with(|capture| {
+        if let Some((stdout, _)) = capture.borrow_mut().as_mut() {
+            stdout.extend_from_slice(text.as_bytes());
+            stdout.push(b'\n');
+        } else {
+            println!("{text}");
+        }
+    });
+}
+
+fn write_console_stderr(text: &str) {
+    CONSOLE_CAPTURE.with(|capture| {
+        if let Some((_, stderr)) = capture.borrow_mut().as_mut() {
+            stderr.extend_from_slice(text.as_bytes());
+            stderr.push(b'\n');
+        } else {
+            eprintln!("{text}");
+        }
+    });
+}
 
 pub fn console_print<T: AverDisplay>(val: &T) {
-    println!("{}", aver_display(val));
+    write_console_stdout(&aver_display(val));
 }
 
 pub fn console_error<T: AverDisplay>(val: &T) {
-    eprintln!("{}", aver_display(val));
+    write_console_stderr(&aver_display(val));
 }
 
 pub fn console_warn<T: AverDisplay>(val: &T) {
-    eprintln!("[warn] {}", aver_display(val));
+    write_console_stderr(&format!("[warn] {}", aver_display(val)));
 }
 
 pub fn read_line() -> Result<String, String> {

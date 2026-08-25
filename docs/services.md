@@ -312,14 +312,14 @@ Source: `src/services/http.rs`
 
 | Function | Signature | Notes |
 |---|---|---|
-| `Http.get` | `String -> Result<HttpResponse, String>` | |
-| `Http.head` | `String -> Result<HttpResponse, String>` | headers only, `body` is `""`; requests the identity encoding so `content-length` describes the resource |
-| `Http.delete` | `String -> Result<HttpResponse, String>` | |
-| `Http.post` | `(String, String, String, Map<String, List<String>>) -> Result<HttpResponse, String>` | url, body, content-type, headers |
-| `Http.put` | `(String, String, String, Map<String, List<String>>) -> Result<HttpResponse, String>` | |
-| `Http.patch` | `(String, String, String, Map<String, List<String>>) -> Result<HttpResponse, String>` | |
+| `Http.get` | `String -> Result<Http.Response, String>` | |
+| `Http.head` | `String -> Result<Http.Response, String>` | headers only, `body` is `""`; requests the identity encoding so `content-length` describes the resource |
+| `Http.delete` | `String -> Result<Http.Response, String>` | |
+| `Http.post` | `(String, String, String, Map<String, List<String>>) -> Result<Http.Response, String>` | url, body, content-type, headers |
+| `Http.put` | `(String, String, String, Map<String, List<String>>) -> Result<Http.Response, String>` | |
+| `Http.patch` | `(String, String, String, Map<String, List<String>>) -> Result<Http.Response, String>` | |
 
-`HttpResponse` record: `{ status: Int, body: String, headers: Map<String, List<String>> }`. Headers are a multimap — a single name can carry multiple values (Set-Cookie, Vary, …).
+`Http.Response` record: `{ status: Int, body: String, headers: Map<String, List<String>> }`. Headers are a multimap — a single name can carry multiple values (Set-Cookie, Vary, …).
 
 A response that by definition carries no body — any `Http.head` response, a `204 No Content`, a `304 Not Modified` — arrives with `body: ""` and its header fields intact. Every other response is read to the end, so a server that closes before sending the `Content-Length` it announced is an error, not a short body.
 
@@ -340,8 +340,8 @@ module Hello
     depends [HttpServer]
     effects [Tcp, Process]
 
-fn hello(req: HttpRequest) -> HttpResponse
-    HttpResponse(status = 200, body = "hello {req.path}\n", headers = {})
+fn hello(req: HttpRequest) -> Http.Response
+    Http.Response(status = 200, body = "hello {req.path}\n", headers = {})
 
 fn main() -> Result<Unit, String>
     ! [Tcp.listen, Tcp.poll, Tcp.accept, Tcp.readSome, Tcp.writeBytes,
@@ -350,14 +350,14 @@ fn main() -> Result<Unit, String>
 ```
 
 `HttpServer.listen` has signature
-`(Int, Fn(HttpRequest) -> HttpResponse ! [_]) -> Result<Unit, String>`.
+`(Int, Fn(HttpRequest) -> Http.Response ! [_]) -> Result<Unit, String>`.
 The `[_]` forwards the concrete named handler's effects to the call site: an
 effectful handler still requires those exact effects in `main`; no ambient or
 hidden grant is introduced.
 
 `HttpRequest` is
 `{ method: String, path: String, query: String, body: String, headers: Map<String, List<String>> }`.
-`HttpResponse` is
+`Http.Response` is
 `{ status: Int, body: String, headers: Map<String, List<String>> }`.
 Incoming header names are normalised to lowercase and repeated fields retain
 wire order. The current pure framer deliberately supports bounded,
@@ -368,7 +368,7 @@ Fetch-style deployments do not run `HttpServer`: the host already owns the
 listener and invokes one request handler. Select the same handler explicitly
 with `--handler <fn>` (for example `aver compile app.av --preset cloudflare
 --handler handler`, or the `wasi:http/proxy` world). This boundary stays a
-simple `Fn(HttpRequest) -> HttpResponse`; there is no synthetic listener call
+simple `Fn(HttpRequest) -> Http.Response`; there is no synthetic listener call
 in `main` and no provider-owned request token.
 
 ### `Disk` namespace — use granular effects (`! [Disk.readText]`, `! [Disk.writeText]`, etc.)

@@ -337,7 +337,7 @@ fn processPayment(amount: Int) -> Result<String, String>
 ```
 
 ```aver
-fn fetchExchangeRate(currency: String) -> Result<HttpResponse, String>
+fn fetchExchangeRate(currency: String) -> Result<Http.Response, String>
     ? "Fetches live rate from the ECB feed."
     ! [Http.get]
     Http.get("https://api.ecb.europa.eu/rates/{currency}")

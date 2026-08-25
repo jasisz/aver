@@ -107,10 +107,14 @@ impl CapabilityOperation {
     }
 
     pub fn oracle_params(&self) -> Vec<Type> {
-        let mut params = vec![
-            Type::named(crate::types::branch_path::TYPE_NAME.to_string()),
-            Type::Int,
-        ];
+        let mut params = if self.oracle == Some(OracleDimension::Snapshot) {
+            Vec::new()
+        } else {
+            vec![
+                Type::named(crate::types::branch_path::TYPE_NAME.to_string()),
+                Type::Int,
+            ]
+        };
         if let Some(resource) = &self.minted_resource {
             params.push(Type::named(resource.clone()));
         }
@@ -195,6 +199,10 @@ impl CapabilityRegistry {
 
     pub fn boundary_type(&self, canonical_name: &str) -> Option<&TypeDef> {
         self.boundary_types.get(canonical_name)
+    }
+
+    pub fn boundary_types(&self) -> impl Iterator<Item = (&String, &TypeDef)> {
+        self.boundary_types.iter()
     }
 
     pub fn profile_source_counts(&self, canonical_name: &str) -> (usize, usize) {
@@ -623,6 +631,9 @@ fn parse_operation(
                 Some("generative") => Some(OracleDimension::Generative),
                 Some("output") => Some(OracleDimension::Output),
                 Some("generativeOutput") => Some(OracleDimension::GenerativeOutput),
+                Some("snapshot") if crate::stdlib::is_standard_capability(scope) => {
+                    Some(OracleDimension::Snapshot)
+                }
                 Some("snapshot") => {
                     errors.push(CapabilityError::at(
                         op.line,
@@ -688,7 +699,7 @@ fn parse_operation(
                         replay,
                         ReplaySemantics::Reissued | ReplaySemantics::Suppressed
                     ),
-                    OracleDimension::Snapshot => false,
+                    OracleDimension::Snapshot => replay == ReplaySemantics::Recorded,
                 };
                 if !valid {
                     errors.push(CapabilityError::at(

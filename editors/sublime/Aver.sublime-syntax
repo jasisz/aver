@@ -112,7 +112,7 @@ contexts:
           pop: true
 
   builtin-types:
-    - match: '\b(Int|Float|String|Bool|Unit|Result|Option|List|Vector|Map|Fn|HttpResponse|HttpRequest|Header)\b'
+    - match: '\b(Int|Float|String|Bool|Unit|Result|Option|List|Vector|Map|Fn|Http\.Response|HttpRequest|Header)\b'
       scope: support.type.aver
 
   builtin-values:

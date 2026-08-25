@@ -16,8 +16,8 @@ decision HttpAsCapability
     rejected = ["NetworkDotAv", "ImplicitIO"]
     impacts = [fetch, checkStatus, post]
 
-fn fetch(url: String) -> Result<HttpResponse, String>
-    ? "GET a URL. Returns Ok(HttpResponse) on any HTTP reply, Err on transport failure."
+fn fetch(url: String) -> Result<Http.Response, String>
+    ? "GET a URL. Returns Ok(Http.Response) on any HTTP reply, Err on transport failure."
     ! [Http.get]
     Http.get(url)
 
@@ -27,7 +27,7 @@ fn checkStatus(url: String) -> Result<Int, String>
     resp = Http.get(url)?
     Result.Ok(resp.status)
 
-fn post(url: String, payload: String, token: String) -> Result<HttpResponse, String>
+fn post(url: String, payload: String, token: String) -> Result<Http.Response, String>
     ? "POST JSON with a Bearer token. Builds the Authorization header explicitly."
     ! [Http.post]
     headers = {"authorization" => ["Bearer {token}"]}
@@ -38,27 +38,27 @@ fn post(url: String, payload: String, token: String) -> Result<HttpResponse, Str
 // signature, so the verify blocks below can pre-pick a deterministic
 // world.
 
-fn fakeGet200(path: BranchPath, n: Int, url: String) -> Result<HttpResponse, String>
+fn fakeGet200(path: BranchPath, n: Int, url: String) -> Result<Http.Response, String>
     ? "Deterministic Http.get stub: 200 OK with a short body."
-    Result.Ok(HttpResponse(status = 200, body = "{{\"ok\": true}}", headers = {}))
+    Result.Ok(Http.Response(status = 200, body = "{{\"ok\": true}}", headers = {}))
 
-fn fakeGet404(path: BranchPath, n: Int, url: String) -> Result<HttpResponse, String>
+fn fakeGet404(path: BranchPath, n: Int, url: String) -> Result<Http.Response, String>
     ? "Deterministic Http.get stub: server reachable, returns 404."
-    Result.Ok(HttpResponse(status = 404, body = "not found", headers = {}))
+    Result.Ok(Http.Response(status = 404, body = "not found", headers = {}))
 
-fn fakeGetDown(path: BranchPath, n: Int, url: String) -> Result<HttpResponse, String>
+fn fakeGetDown(path: BranchPath, n: Int, url: String) -> Result<Http.Response, String>
     ? "Deterministic Http.get stub: transport error. Exercises the `?` Err short-circuit in checkStatus."
     Result.Err("timeout")
 
-fn fakePost200(path: BranchPath, n: Int, url: String, body: String, contentType: String, headers: Map<String, List<String>>) -> Result<HttpResponse, String>
+fn fakePost200(path: BranchPath, n: Int, url: String, body: String, contentType: String, headers: Map<String, List<String>>) -> Result<Http.Response, String>
     ? "Deterministic Http.post stub: 200 OK echoing a fixed body."
-    Result.Ok(HttpResponse(status = 200, body = "accepted", headers = {}))
+    Result.Ok(Http.Response(status = 200, body = "accepted", headers = {}))
 
 verify fakeGet200
-    fakeGet200(BranchPath.Root, 0, "https://x") => Result.Ok(HttpResponse(status = 200, body = "{{\"ok\": true}}", headers = {}))
+    fakeGet200(BranchPath.Root, 0, "https://x") => Result.Ok(Http.Response(status = 200, body = "{{\"ok\": true}}", headers = {}))
 
 verify fakeGet404
-    fakeGet404(BranchPath.Root, 0, "https://x") => Result.Ok(HttpResponse(status = 404, body = "not found", headers = {}))
+    fakeGet404(BranchPath.Root, 0, "https://x") => Result.Ok(Http.Response(status = 404, body = "not found", headers = {}))
 
 verify fakeGetDown
     fakeGetDown(BranchPath.Root, 0, "https://x") => Result.Err("timeout")

@@ -28,7 +28,7 @@ The two WASM rows are independent compilation paths. `--target wasm-gc` covers J
 
 ## Matrix
 
-The wasm-gc column covers the **default invocation** (`--target wasm-gc`, host wires `aver/*` imports). The HTTP-handler shape (`--handler <fn>`, `--preset cloudflare`) is the same column with `Request.*` / `Response.*` host imports replacing the corresponding effect cells when `aver_http_handle()` runs — see *Notes per backend* below. The wasip2 column is what `--target wasip2` produces today (0.18 "Span" landed all 17 effect call sites listed); cells marked `n/a` indicate the effect can't structurally land on WASI 0.2 and is rejected at compile time by `wasip2::effect_check`.
+The wasm-gc column covers the **default invocation** (`--target wasm-gc`, host wires `aver/*` imports). The HTTP-handler shape (`--handler <fn>`, `--preset cloudflare`) is the same column with `Request.*` / `Response.*` host imports replacing the corresponding effect cells when `aver_http_handle()` runs — see *Notes per backend* below. The wasip2 column is what `--target wasip2` produces today; cells marked `n/a` indicate the effect can't structurally land on WASI 0.2 and is rejected by the standard capability target manifest before code generation.
 
 | Effect | VM | Rust | **wasm-gc** | **wasip2** | Lean | Dafny |
 |---|---|---|---|---|---|---|
@@ -66,7 +66,7 @@ Incoming HTTP is a composition rather than an effect family. Native VM and
 Rust programs run the ordinary Aver `HttpServer` module over the `Tcp.*` and
 `Process.stopRequested` rows above; pure `HttpWire` owns HTTP/1.1 framing.
 Fetch-style wasm-gc and `wasi:http/proxy` deployments instead select a
-`Fn(HttpRequest) -> HttpResponse` explicitly with `--handler`, because the host
+`Fn(HttpRequest) -> Http.Response` explicitly with `--handler`, because the host
 already owns the listener.
 
 ## Notes per backend

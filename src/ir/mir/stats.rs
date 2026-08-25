@@ -72,7 +72,7 @@ pub enum SkipReason {
     /// [`Self::UnresolvedCtor`], reported the same way.
     UnsupportedCallee,
     /// `Record{...}` / `Record{base & ...}` on a built-in type
-    /// (`HttpResponse`, `Header`, `Buffer`, …) with no `TypeId`.
+    /// (`Http.Response`, `Header`, `Buffer`, …) with no `TypeId`.
     /// Wave 3c-i / 3c-iv territory depending on the type.
     BuiltinRecord,
     /// `Try` (the `?` propagation node) — wave 3c-ii.

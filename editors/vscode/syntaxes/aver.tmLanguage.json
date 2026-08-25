@@ -172,7 +172,7 @@
       ]
     },
     "type-names": {
-      "match": "\\b(HttpResponse|HttpRequest|Header|Option|Result|String|Vector|Float|Bool|List|Unit|Int|Map|Fn)\\b",
+      "match": "\\b(Http.Response|HttpRequest|Header|Option|Result|String|Vector|Float|Bool|List|Unit|Int|Map|Fn)\\b",
       "name": "support.type.aver"
     },
     "identifier": {

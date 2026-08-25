@@ -240,13 +240,13 @@ fn newtype_specialization() {
 
 #[test]
 fn builtin_record_construction_and_projection() {
-    // `HttpResponse(...)` is a built-in product type — it carries no
-    // user `TypeId`, so MIR's RecordCreate rides its canonical
+    // `Http.Response(...)` is a capability-owned product type — it
+    // carries no local user `TypeId`, so MIR's RecordCreate rides its canonical
     // `type_name` and the walker resolves the arena type by name. Build
     // one and read a field back; identical on both paths.
     let src = prog(
-        "fn mk(code: Int) -> HttpResponse\n    \
-         HttpResponse(status = code, body = \"ok\", headers = {})\n\n\
+        "fn mk(code: Int) -> Http.Response\n    \
+         Http.Response(status = code, body = \"ok\", headers = {})\n\n\
          fn run() -> Int\n    mk(200).status\n",
     );
     assert_golden("builtin_record", &src, "run", "Int(200)");

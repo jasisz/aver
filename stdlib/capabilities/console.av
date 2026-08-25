@@ -1,0 +1,37 @@
+module Console
+    kind = capability
+    semantics = effectful
+    exposes [print, error, warn, readLine]
+
+operation print(message: String) -> Unit
+    ? "Writes one line to standard output."
+    oracle = output
+    replay = reissued
+
+operation error(message: String) -> Unit
+    ? "Writes one unprefixed line to standard error."
+    oracle = output
+    replay = reissued
+
+operation warn(message: String) -> Unit
+    ? "Writes one warning-prefixed line to standard error."
+    oracle = output
+    replay = reissued
+
+operation readLine() -> Result<String, String>
+    ? "Reads one line from standard input, or reports EOF or a host input failure."
+    oracle = generative
+    replay = recorded
+    hostile = [lineNormal, lineEof, lineEmpty]
+
+fn lineNormal(path: BranchPath, call: Int) -> Result<String, String>
+    ? "Honest profile: the user enters a plausible line."
+    Result.Ok("hello")
+
+fn lineEof(path: BranchPath, call: Int) -> Result<String, String>
+    ? "Hostile profile: standard input is already closed."
+    Result.Err("hostile: eof")
+
+fn lineEmpty(path: BranchPath, call: Int) -> Result<String, String>
+    ? "Hostile boundary: the user submits an empty line."
+    Result.Ok("")

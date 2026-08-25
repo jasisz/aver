@@ -418,10 +418,10 @@ pub enum ResolvedExpr {
     /// `{"a" => 1, "b" => 2}` map literal.
     MapLiteral(Vec<(Spanned<ResolvedExpr>, Spanned<ResolvedExpr>)>),
     /// `Shape(name = "...", count = 0)` record-create form. The
-    /// `type_id` is `Some` for user records resolved through the
-    /// symbol table, `None` for built-in record types (`HttpResponse`,
-    /// `Header`, `Tcp.Connection`, `Buffer`, …) which don't carry
-    /// `TypeId`s by design.
+    /// `type_id` is `Some` for records resolved through the local symbol
+    /// table, `None` for imported capability-owned and compiler-owned
+    /// records (`Http.Response`, `Header`, `Tcp.Connection`, `Buffer`, …)
+    /// which don't carry a local `TypeId`.
     RecordCreate {
         type_id: Option<TypeId>,
         /// Source-level type name kept verbatim for diagnostics +

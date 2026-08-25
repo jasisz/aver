@@ -1127,6 +1127,36 @@ pub(super) fn transpile_unified(
 
     // ---- Entry sections ----
     let mut entry_body_sections = emit_capability_resource_types(ctx, None);
+    // Synthetic/proof-only callers may provide the validated capability
+    // registry without materialising its embedded module in `ctx.modules`.
+    // Emit those represented boundary types under their canonical name so a
+    // source-owned `Http.Response`/`Terminal.Size` never falls back to a
+    // compiler-prelude record or disappears from the proof model.
+    for (canonical, type_def) in ctx.capabilities.boundary_types() {
+        let Some((owner, _)) = canonical.rsplit_once('.') else {
+            continue;
+        };
+        let owner_is_materialized = ctx.entry_module_name().as_deref() == Some(owner)
+            || ctx.modules.iter().any(|module| module.prefix == owner);
+        if owner_is_materialized {
+            continue;
+        }
+        let mut qualified = type_def.clone();
+        match &mut qualified {
+            crate::ast::TypeDef::Product { name, .. } | crate::ast::TypeDef::Sum { name, .. } => {
+                *name = canonical.clone()
+            }
+        }
+        entry_body_sections.extend(emit_type_sections(
+            &qualified,
+            None,
+            ctx,
+            emit_mode,
+            cert_model,
+            &recursive_types,
+            &measure_sig_type_refs,
+        ));
+    }
     let entry_plan =
         super::decl_order::plan_scoped_declarations(ctx, &ctx.type_defs, &ctx.fn_defs, None);
     for decl in &entry_plan.order {

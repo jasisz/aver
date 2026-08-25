@@ -41,6 +41,8 @@ pub fn is_provider_setup_error(error: &str) -> bool {
 pub struct ProviderRegistry {
     contracts: CapabilityRegistry,
     native: NativeProviderRegistry,
+    standard_args: Vec<String>,
+    standard_args_binding_id: Option<u64>,
     standard_tcp_settings: aver_rt::tcp::TcpSettings,
     /// Runtime identity of the compiler-installed Tcp binding. Provider
     /// identity strings are host-supplied metadata and therefore cannot prove
@@ -90,8 +92,10 @@ impl ProviderRegistry {
                 ProviderBinding::new(module, contract.contract_hash, operations, provider);
             let binding_id = binding.runtime_id();
             registry.bind(binding)?;
-            if module == "Tcp" {
-                registry.standard_tcp_binding_id = Some(binding_id);
+            match module {
+                "Args" => registry.standard_args_binding_id = Some(binding_id),
+                "Tcp" => registry.standard_tcp_binding_id = Some(binding_id),
+                _ => {}
             }
         }
         Ok(registry)
@@ -139,9 +143,48 @@ impl ProviderRegistry {
         Self {
             contracts,
             native,
+            standard_args: Vec::new(),
+            standard_args_binding_id: None,
             standard_tcp_settings: aver_rt::tcp::TcpSettings::default(),
             standard_tcp_binding_id: None,
         }
+    }
+
+    /// Give the compiler-installed Args provider the guest argument vector.
+    /// Explicit host bindings remain authoritative and are never replaced.
+    pub fn configure_standard_args(&mut self, args: Vec<String>) -> Result<(), String> {
+        if self.standard_args == args {
+            return Ok(());
+        }
+        let Some(binding) = self.binding("Args") else {
+            self.standard_args = args;
+            return Ok(());
+        };
+        if Some(binding.runtime_id()) != self.standard_args_binding_id {
+            self.standard_args = args;
+            return Ok(());
+        }
+        let contract = self
+            .contracts
+            .contract("Args")
+            .expect("an installed standard Args binding has a contract");
+        let operations = self
+            .contracts
+            .operations()
+            .filter(|operation| operation.module == "Args")
+            .map(|operation| operation.canonical_name.clone())
+            .collect::<Vec<_>>();
+        let replacement = ProviderBinding::new(
+            "Args",
+            contract.contract_hash.clone(),
+            operations,
+            std::sync::Arc::new(aver_rt::provider::StandardArgsProvider::new(args.clone())),
+        );
+        let replacement_id = replacement.runtime_id();
+        self.replace_binding(replacement)?;
+        self.standard_args_binding_id = Some(replacement_id);
+        self.standard_args = args;
+        Ok(())
     }
 
     /// Configure the compiler-shipped Tcp provider before execution begins.

@@ -103,7 +103,7 @@ pub(crate) fn json_none() -> aver::replay::JsonValue {
 
 /// Build the recorder-side JSON for an Aver record value
 /// (`{"$record": {"type": <name>, "fields": {<k>: <v>, …}}}`).
-/// Used for `HttpResponse`, `Tcp.Connection`, `Terminal.Size`.
+/// Used for `Http.Response`, `Tcp.Connection`, `Terminal.Size`.
 pub(crate) fn json_record(
     type_name: &str,
     fields: Vec<(&str, aver::replay::JsonValue)>,

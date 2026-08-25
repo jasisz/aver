@@ -6,6 +6,7 @@ use std::str::FromStr;
 use std::sync::Arc as Rc;
 
 use aver::ast::{FnBody, FnDef, Stmt, TopLevel};
+use aver::codegen::ModuleInfo;
 use aver::ir::SymbolTable;
 use aver::ir::hir::{self, ResolvedTopLevel};
 use aver::lexer::Lexer;
@@ -16,8 +17,11 @@ use aver::tco;
 use aver::value::{Value, list_from_vec, list_to_vec};
 use aver::vm;
 
-fn resolve_for_vm(items: &[TopLevel]) -> (Vec<ResolvedTopLevel>, SymbolTable) {
-    let symbols = SymbolTable::build(items, &[]);
+fn resolve_for_vm(
+    items: &[TopLevel],
+    dep_modules: &[ModuleInfo],
+) -> (Vec<ResolvedTopLevel>, SymbolTable) {
+    let symbols = SymbolTable::build(items, dep_modules);
     let resolved = hir::resolve_program(&symbols, items);
     (resolved, symbols)
 }
@@ -38,12 +42,31 @@ fn vm_compile(items: &[TopLevel]) -> vm::VM {
     let mut items = items.to_vec();
     tco::transform_program(&mut items);
     resolve_program(&mut items);
+    let mut dependencies = items
+        .iter()
+        .find_map(|item| match item {
+            TopLevel::Module(module) => Some(module.depends.clone()),
+            _ => None,
+        })
+        .unwrap_or_default();
+    for dependency in aver::stdlib::implicit_stdlib_deps(&items) {
+        if !dependencies.contains(&dependency) {
+            dependencies.push(dependency);
+        }
+    }
+    let loaded = aver::source::load_module_tree(&dependencies, ".")
+        .expect("load explicit and implicit VM dependencies");
+    let dep_modules = loaded
+        .iter()
+        .map(ModuleInfo::from_loaded)
+        .collect::<Vec<_>>();
     let mut arena = Arena::new();
     vm::register_service_types(&mut arena);
-    let (resolved, symbols) = resolve_for_vm(&items);
-    let (code, globals) =
-        vm::compile_program_with_modules(&resolved, &symbols, &mut arena, None, "<test>", None)
-            .expect("VM compile failed");
+    let (resolved, symbols) = resolve_for_vm(&items, &dep_modules);
+    let (code, globals) = vm::compile_program_with_loaded_modules(
+        &resolved, &symbols, &mut arena, loaded, "<test>", None,
+    )
+    .expect("VM compile failed");
     vm::VM::new(code, globals, arena)
 }
 
@@ -282,7 +305,8 @@ fn runtime_gate_blocks_top_level_print() {
 
 #[test]
 fn runtime_gate_allows_effectful_entrypoint_with_grant() {
-    let src = "fn log(n: Int) -> Unit\n    ! [Console.print]\n    Console.print(n)\n";
+    let src =
+        "fn log(n: Int) -> Unit\n    ! [Console.print]\n    Console.print(String.fromInt(n))\n";
     // With effect grant via run_named_function (which sets effects from fn metadata), should succeed
     let result = call_fn_with_effects(src, "log", vec![Value::int(2)]);
     assert!(result.is_ok(), "expected granted call to pass");
@@ -1600,7 +1624,7 @@ mod http_tests {
             return;
         };
         let src = format!(
-            "fn fetch() -> Result<HttpResponse, String>\n    ! [Http.get]\n    Http.get(\"{}\")\n",
+            "fn fetch() -> Result<Http.Response, String>\n    ! [Http.get]\n    Http.get(\"{}\")\n",
             url
         );
         let val = run_http_fn(&src, "fetch");
@@ -1610,7 +1634,7 @@ mod http_tests {
                     type_name,
                     ref fields,
                 } => {
-                    assert_eq!(type_name, "HttpResponse");
+                    assert_eq!(type_name, "Http.Response");
                     let status = fields.iter().find(|(k, _)| k == "status").map(|(_, v)| v);
                     assert_eq!(status, Some(&Value::int(200)));
                     let body = fields.iter().find(|(k, _)| k == "body").map(|(_, v)| v);
@@ -1629,7 +1653,7 @@ mod http_tests {
             return;
         };
         let src = format!(
-            "fn fetch() -> Result<HttpResponse, String>\n    ! [Http.get]\n    Http.get(\"{}\")\n",
+            "fn fetch() -> Result<Http.Response, String>\n    ! [Http.get]\n    Http.get(\"{}\")\n",
             url
         );
         let val = run_http_fn(&src, "fetch");
@@ -1648,7 +1672,7 @@ mod http_tests {
     #[test]
     fn http_get_transport_error_returns_err() {
         // Port 1 is almost certainly not listening
-        let src = "fn fetch() -> Result<HttpResponse, String>\n    ! [Http.get]\n    Http.get(\"http://127.0.0.1:1/\")\n";
+        let src = "fn fetch() -> Result<Http.Response, String>\n    ! [Http.get]\n    Http.get(\"http://127.0.0.1:1/\")\n";
         let val = call_fn_with_effects(src, "fetch", vec![]).expect("call itself should not panic");
         assert!(
             matches!(val, Value::Err(_)),
@@ -1664,7 +1688,7 @@ mod http_tests {
             return;
         };
         let src = format!(
-            "fn send() -> Result<HttpResponse, String>\n    ! [Http.post]\n    Http.post(\"{}\", \"data\", \"text/plain\", [])\n",
+            "fn send() -> Result<Http.Response, String>\n    ! [Http.post]\n    Http.post(\"{}\", \"data\", \"text/plain\", [])\n",
             url
         );
         let val = run_http_fn(&src, "send");
@@ -1683,7 +1707,7 @@ mod http_tests {
     #[test]
     fn http_post_bad_headers_returns_runtime_error() {
         // Pass a non-list for headers — validation fails before any HTTP call
-        let src = "fn send() -> Result<HttpResponse, String>\n    ! [Http.post]\n    Http.post(\"http://127.0.0.1:1/\", \"\", \"text/plain\", \"bad\")\n";
+        let src = "fn send() -> Result<Http.Response, String>\n    ! [Http.post]\n    Http.post(\"http://127.0.0.1:1/\", \"\", \"text/plain\", \"bad\")\n";
         let result = call_fn_with_effects(src, "send", vec![]);
         assert!(result.is_err(), "expected RuntimeError for bad headers");
     }
@@ -1990,27 +2014,28 @@ mod console_tests {
     }
 
     #[test]
-    fn console_error_unit_value_is_silent() {
-        // Passing Unit to Console.error should not error — just emit nothing.
-        // Console.print returns Unit, so we use its result as the argument.
+    fn console_error_rejects_unit_at_the_provider_boundary() {
+        // This source deliberately bypasses typechecking. The provider boundary
+        // must still enforce Console.error(String) instead of retaining the old
+        // service adapter's silent Unit coercion.
         let src = concat!(
             "fn run() -> Unit\n",
             "    ! [Console.error, Console.print]\n",
             "    Console.error(Console.print(\"setup\"))\n",
         );
-        let val = run_console_fn(src, "run");
-        assert_eq!(val, Value::Unit);
+        let err = call_fn_with_effects(src, "run", vec![]).expect_err("Unit must be rejected");
+        assert!(err.contains("expected String, got Unit"), "got: {err}");
     }
 
     #[test]
-    fn console_warn_unit_value_is_silent() {
+    fn console_warn_rejects_unit_at_the_provider_boundary() {
         let src = concat!(
             "fn run() -> Unit\n",
             "    ! [Console.warn, Console.print]\n",
             "    Console.warn(Console.print(\"setup\"))\n",
         );
-        let val = run_console_fn(src, "run");
-        assert_eq!(val, Value::Unit);
+        let err = call_fn_with_effects(src, "run", vec![]).expect_err("Unit must be rejected");
+        assert!(err.contains("expected String, got Unit"), "got: {err}");
     }
 
     #[test]
@@ -3491,7 +3516,7 @@ fn check() -> Bool
             .expect("all effects should be consumed");
     }
 
-    /// A recorded `Http.get` returning `Ok(HttpResponse(status = 418, body =
+    /// A recorded `Http.get` returning `Ok(Http.Response(status = 418, body =
     /// "teapot", headers = {}))`, ready to hand to `start_replay`.
     fn recorded_teapot_response() -> EffectRecord {
         // One header, not none: an empty map is indistinguishable from
@@ -3502,7 +3527,7 @@ fn check() -> Bool
             Value::Str("text/plain".to_string()),
         );
         let outcome = value_to_json(&Value::Ok(Box::new(Value::Record {
-            type_name: "HttpResponse".to_string(),
+            type_name: "Http.Response".to_string(),
             fields: vec![
                 ("status".to_string(), Value::int(418)),
                 ("body".to_string(), Value::Str("teapot".to_string())),
@@ -3510,7 +3535,7 @@ fn check() -> Bool
             ]
             .into(),
         })))
-        .expect("an HttpResponse must be representable as a recorded outcome");
+        .expect("an Http.Response must be representable as a recorded outcome");
 
         EffectRecord {
             seq: 1,
@@ -3548,7 +3573,7 @@ fn reachedServer() -> Bool
         assert_eq!(
             out,
             Value::Bool(true),
-            "Replay must substitute the recorded Ok(HttpResponse) instead of calling out"
+            "Replay must substitute the recorded Ok(Http.Response) instead of calling out"
         );
         machine
             .ensure_replay_consumed()
@@ -3559,7 +3584,7 @@ fn reachedServer() -> Bool
     ///
     /// A recording writes a record's fields into a JSON object keyed by name,
     /// so they come back name-sorted, and rebuilding filled the type's slots
-    /// by position. `HttpResponse` is declared `status, body, headers` and
+    /// by position. `Http.Response` is declared `status, body, headers` and
     /// sorts `body, headers, status`, so replay handed the body to every
     /// reader of `.status`.
     ///
@@ -3652,7 +3677,7 @@ fn statusPlusOne() -> Int
     /// asking for the width of an 80x24 terminal got 24, with the run
     /// reporting success. Nothing about the two `Int`s can catch this except
     /// carrying the names through, which is why it is pinned next to the
-    /// `HttpResponse` probes rather than trusted to them.
+    /// `Http.Response` probes rather than trusted to them.
     #[test]
     fn replay_mode_preserves_same_typed_record_fields() {
         let src = r#"
@@ -3713,7 +3738,7 @@ fn status() -> Int
         Result.Err(msg) -> 0
 "#;
         let outcome = value_to_json(&Value::Ok(Box::new(Value::Record {
-            type_name: "HttpResponse".to_string(),
+            type_name: "Http.Response".to_string(),
             fields: vec![
                 ("status".to_string(), Value::int(418)),
                 ("body".to_string(), Value::Str("teapot".to_string())),
@@ -3733,7 +3758,7 @@ fn status() -> Int
             .expect_err("a recording that does not match the type must fail the replay");
         let text = format!("{:?}", err);
         assert!(
-            text.contains("trailers") && text.contains("HttpResponse"),
+            text.contains("trailers") && text.contains("Http.Response"),
             "the failure must name the field and the type it does not belong to, \
              got: {text}"
         );

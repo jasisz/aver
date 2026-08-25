@@ -126,7 +126,7 @@ pub(crate) fn http_outcome_to_result(
 }
 
 /// Mirror an `aver_rt::HttpResponse` outcome into the JSON shape the
-/// VM recorder uses (`{"$ok": {"$record": {"type": "HttpResponse",
+/// VM recorder uses (`{"$ok": {"$record": {"type": "Http.Response",
 /// "fields": {"status": …, "body": …, "headers": {}}}}}`). Headers
 /// always serialise as an empty `Map<String, List<String>>` for now —
 /// `aver_rt::HttpResponse` carries the fields the host bridge
@@ -137,7 +137,7 @@ pub(crate) fn http_outcome_to_json(
 ) -> aver::replay::JsonValue {
     match outcome {
         Ok(resp) => json_ok(json_record(
-            "HttpResponse",
+            "Http.Response",
             vec![
                 ("status", aver::replay::JsonValue::Int(resp.status)),
                 (

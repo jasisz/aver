@@ -1,0 +1,22 @@
+module Args
+    kind = capability
+    semantics = effectful
+    exposes [get]
+
+operation get() -> List<String>
+    ? "Returns the command-line arguments supplied to the Aver program."
+    oracle = snapshot
+    replay = recorded
+    hostile = [argsNormal, argsEmpty, argsMany]
+
+fn argsNormal() -> List<String>
+    ? "Honest profile: a plausible option and value."
+    ["--input", "data.txt"]
+
+fn argsEmpty() -> List<String>
+    ? "Hostile boundary: the program receives no arguments."
+    []
+
+fn argsMany() -> List<String>
+    ? "Hostile boundary: arguments include empty and unusual values."
+    ["", "\0", "--flag"]

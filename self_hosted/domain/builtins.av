@@ -757,7 +757,7 @@ fn builtinTimeNow(args: List<Val>) -> Result<Val, String>
     Result.Ok(Val.ValStr(Time.now()))
 
 fn builtinHttpSimple(args: List<Val>, method: String) -> Result<Val, String>
-    ? "Http.get/head/delete(url) -> Result<HttpResponse, String> forwarded to host."
+    ? "Http.get/head/delete(url) -> Result<Http.Response, String> forwarded to host."
     ! [Http.delete, Http.get, Http.head]
     v = Domain.Builtins.Helpers.oneArg(args)?
     url = Domain.Builtins.Helpers.expectStr(v)?
@@ -790,15 +790,15 @@ fn builtinHttpBodyInner(urlV: Val, bodyV: Val, ctV: Val, hdrsV: Val, method: Str
         "put" -> Result.Ok(httpResponseToVal(Http.put(url, body, ct, {})))
         _ -> Result.Ok(httpResponseToVal(Http.patch(url, body, ct, {})))
 
-fn httpResponseToVal(result: Result<HttpResponse, String>) -> Val
-    ? "Convert host HttpResponse to Val."
+fn httpResponseToVal(result: Result<Http.Response, String>) -> Val
+    ? "Convert host Http.Response to Val."
     match result
-        Result.Ok(resp) -> Val.ValOk(Val.ValRecord("HttpResponse", [("status", Val.ValInt(resp.status)), ("body", Val.ValStr(resp.body)), ("headers", headersToVal(resp.headers))]))
+        Result.Ok(resp) -> Val.ValOk(Val.ValRecord("Http.Response", [("status", Val.ValInt(resp.status)), ("body", Val.ValStr(resp.body)), ("headers", headersToVal(resp.headers))]))
         Result.Err(e) -> Val.ValErr(Val.ValStr(e))
 
 verify httpResponseToVal
     httpResponseToVal(Result.Err("fail")) => Val.ValErr(Val.ValStr("fail"))
-    httpResponseToVal(Result.Ok(HttpResponse(status = 200, body = "ok", headers = {}))) => Val.ValOk(Val.ValRecord("HttpResponse", [("status", Val.ValInt(200)), ("body", Val.ValStr("ok")), ("headers", Val.ValMap({}))]))
+    httpResponseToVal(Result.Ok(Http.Response(status = 200, body = "ok", headers = {}))) => Val.ValOk(Val.ValRecord("Http.Response", [("status", Val.ValInt(200)), ("body", Val.ValStr("ok")), ("headers", Val.ValMap({}))]))
 
 fn headersToVal(headers: Map<String, List<String>>) -> Val
     ? "Convert host headers Map<String, List<String>> to a Val.ValMap whose values are Val.ValList of Val.ValStr."

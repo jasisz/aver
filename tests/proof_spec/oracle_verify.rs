@@ -739,7 +739,7 @@ fn aver_verify_trace_http_get_generative_output_end_to_end() {
     // Oracle v1: Http.get is the first generative+output effect —
     // stubbed response comes from the oracle, request body lands in
     // the trace. This test exercises the full path: given-bound stub
-    // returning a non-trivial Result<HttpResponse, String>, with
+    // returning a non-trivial Result<Http.Response, String>, with
     // `.trace.contains(Http.get(...))` resolving the request event.
     let dir = temp_output_dir("aver-verify-trace-http");
     std::fs::create_dir_all(&dir).expect("create temp dir");
@@ -753,11 +753,11 @@ fn aver_verify_trace_http_get_generative_output_end_to_end() {
         "module Prog\n\
          \x20   intent = \"t\"\n\
          \n\
-         fn fakeFetch(path: BranchPath, n: Int, url: String) -> Result<HttpResponse, String>\n\
+         fn fakeFetch(path: BranchPath, n: Int, url: String) -> Result<Http.Response, String>\n\
          \x20   ? \"deterministic fake fetch\"\n\
-         \x20   Result.Ok(HttpResponse(status = 200, body = \"hello\", headers = {}))\n\
+         \x20   Result.Ok(Http.Response(status = 200, body = \"hello\", headers = {}))\n\
          \n\
-         fn fetch() -> Result<HttpResponse, String>\n\
+         fn fetch() -> Result<Http.Response, String>\n\
          \x20   ? \"fetches\"\n\
          \x20   ! [Http.get]\n\
          \x20   Http.get(\"https://x.test/y\")\n\
@@ -1373,11 +1373,11 @@ fn aver_verify_trace_case_rhs_wraps_to_indented_next_line() {
         "module Prog\n\
          \x20   intent = \"t\"\n\
          \n\
-         fn fakeFetch(path: BranchPath, n: Int, url: String) -> Result<HttpResponse, String>\n\
+         fn fakeFetch(path: BranchPath, n: Int, url: String) -> Result<Http.Response, String>\n\
          \x20   ? \"deterministic\"\n\
-         \x20   Result.Ok(HttpResponse(status = 200, body = \"ok\", headers = {}))\n\
+         \x20   Result.Ok(Http.Response(status = 200, body = \"ok\", headers = {}))\n\
          \n\
-         fn app() -> Result<HttpResponse, String>\n\
+         fn app() -> Result<Http.Response, String>\n\
          \x20   ? \"fetch one\"\n\
          \x20   ! [Http.get]\n\
          \x20   Http.get(\"https://example.test/api\")\n\

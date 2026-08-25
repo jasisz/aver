@@ -19,38 +19,38 @@ record DispatchFailure
     server: Server
     reason: String
 
-fn listen(port: Int, handler: Fn(HttpRequest) -> HttpResponse ! [_]) -> Result<Unit, String>
+fn listen(port: Int, handler: Fn(HttpRequest) -> Http.Response ! [_]) -> Result<Unit, String>
     ? "Binds a conventional backlog and runs until Process requests cooperative shutdown or the listener fails."
     ! [Tcp.listen, Tcp.poll, Tcp.accept, Tcp.readSome, Tcp.writeBytes, Tcp.close, Tcp.closeListener, Process.stopRequested]
     serve(Tcp.listen(port, 128)?, handler)
 
-fn serve(listener: Tcp.Listener, handler: Fn(HttpRequest) -> HttpResponse ! [_]) -> Result<Unit, String>
+fn serve(listener: Tcp.Listener, handler: Fn(HttpRequest) -> Http.Response ! [_]) -> Result<Unit, String>
     ? "Serves an already-bound listener, useful when deployment policy owns backlog or socket creation."
     ! [Tcp.poll, Tcp.accept, Tcp.readSome, Tcp.writeBytes, Tcp.close, Tcp.closeListener, Process.stopRequested]
     run(Server(listener = listener, sessions = {}, nextKey = 1), handler)
 
-fn run(server: Server, handler: Fn(HttpRequest) -> HttpResponse ! [_]) -> Result<Unit, String>
+fn run(server: Server, handler: Fn(HttpRequest) -> Http.Response ! [_]) -> Result<Unit, String>
     ? "Checks shutdown before each bounded poll so SIGINT and SIGTERM are ordinary program control flow."
     ! [Tcp.poll, Tcp.accept, Tcp.readSome, Tcp.writeBytes, Tcp.close, Tcp.closeListener, Process.stopRequested]
     match Process.stopRequested()
         true -> shutdown(server)
         false -> pollNext(server, handler, Tcp.poll(sockets(server.sessions, Map.keys(server.sessions), {0 => Tcp.Socket.Listening(server.listener)}), 250))
 
-fn pollNext(server: Server, handler: Fn(HttpRequest) -> HttpResponse ! [_], ready: Result<List<Int>, String>) -> Result<Unit, String>
+fn pollNext(server: Server, handler: Fn(HttpRequest) -> Http.Response ! [_], ready: Result<List<Int>, String>) -> Result<Unit, String>
     ? "A poll failure closes every resource before the original error escapes."
     ! [Tcp.poll, Tcp.accept, Tcp.readSome, Tcp.writeBytes, Tcp.close, Tcp.closeListener, Process.stopRequested]
     match ready
         Result.Err(reason) -> fail(server, reason)
         Result.Ok(keys) -> continue(server, handler, dispatch(server, handler, keys))
 
-fn continue(server: Server, handler: Fn(HttpRequest) -> HttpResponse ! [_], next: Result<Server, DispatchFailure>) -> Result<Unit, String>
+fn continue(server: Server, handler: Fn(HttpRequest) -> Http.Response ! [_], next: Result<Server, DispatchFailure>) -> Result<Unit, String>
     ? "Listener failures retain the latest session state for cleanup; per-session failures do not kill the server."
     ! [Tcp.poll, Tcp.accept, Tcp.readSome, Tcp.writeBytes, Tcp.close, Tcp.closeListener, Process.stopRequested]
     match next
         Result.Err(failure) -> fail(failure.server, failure.reason)
         Result.Ok(updated) -> run(updated, handler)
 
-fn dispatch(server: Server, handler: Fn(HttpRequest) -> HttpResponse ! [_], ready: List<Int>) -> Result<Server, DispatchFailure>
+fn dispatch(server: Server, handler: Fn(HttpRequest) -> Http.Response ! [_], ready: List<Int>) -> Result<Server, DispatchFailure>
     ? "Handles every ready key returned by the complete deterministic Tcp.poll contract."
     ! [Tcp.accept, Tcp.readSome, Tcp.writeBytes, Tcp.close]
     match ready
@@ -59,7 +59,7 @@ fn dispatch(server: Server, handler: Fn(HttpRequest) -> HttpResponse ! [_], read
             Result.Err(reason) -> Result.Err(DispatchFailure(server = server, reason = reason))
             Result.Ok(updated) -> dispatch(updated, handler, rest)
 
-fn serveKey(server: Server, handler: Fn(HttpRequest) -> HttpResponse ! [_], key: Int) -> Result<Server, String>
+fn serveKey(server: Server, handler: Fn(HttpRequest) -> Http.Response ! [_], key: Int) -> Result<Server, String>
     ? "Key zero is the listener; positive keys are caller-owned HTTP sessions."
     ! [Tcp.accept, Tcp.readSome, Tcp.writeBytes, Tcp.close]
     match key == 0
@@ -77,14 +77,14 @@ fn acceptOne(server: Server) -> Result<Server, String>
             Option.None -> Result.Ok(server)
             Option.Some(connection) -> Result.Ok(Server(listener = server.listener, sessions = Map.set(server.sessions, server.nextKey, Session(connection = connection, buffer = String.toUtf8(""))), nextKey = server.nextKey + 1))
 
-fn pump(server: Server, handler: Fn(HttpRequest) -> HttpResponse ! [_], key: Int, session: Session) -> Result<Server, String>
+fn pump(server: Server, handler: Fn(HttpRequest) -> Http.Response ! [_], key: Int, session: Session) -> Result<Server, String>
     ? "Reads one available chunk; connection-local failures remove only that session."
     ! [Tcp.readSome, Tcp.writeBytes, Tcp.close]
     match Tcp.readSome(session.connection, 65536)
         Result.Err(_) -> dropSession(server, key, session)
         Result.Ok(chunk) -> absorb(server, handler, key, session, chunk)
 
-fn absorb(server: Server, handler: Fn(HttpRequest) -> HttpResponse ! [_], key: Int, session: Session, chunk: Bytes) -> Result<Server, String>
+fn absorb(server: Server, handler: Fn(HttpRequest) -> Http.Response ! [_], key: Int, session: Session, chunk: Bytes) -> Result<Server, String>
     ? "Empty Bytes is clean EOF; non-empty Bytes extends the protocol buffer."
     ! [Tcp.writeBytes, Tcp.close]
     match Bytes.octets(chunk)
@@ -93,7 +93,7 @@ fn absorb(server: Server, handler: Fn(HttpRequest) -> HttpResponse ! [_], key: I
             Result.Err(_) -> dropSession(server, key, session)
             Result.Ok(buffer) -> frame(server, handler, key, Session(connection = session.connection, buffer = buffer))
 
-fn frame(server: Server, handler: Fn(HttpRequest) -> HttpResponse ! [_], key: Int, session: Session) -> Result<Server, String>
+fn frame(server: Server, handler: Fn(HttpRequest) -> Http.Response ! [_], key: Int, session: Session) -> Result<Server, String>
     ? "Pipelined complete requests are drained immediately; partial requests return to Tcp.poll."
     ! [Tcp.writeBytes, Tcp.close]
     match HttpWire.frameRequest(session.buffer)
@@ -101,7 +101,7 @@ fn frame(server: Server, handler: Fn(HttpRequest) -> HttpResponse ! [_], key: In
         HttpWire.Framed.Malformed(reason) -> refuse(server, key, session, reason)
         HttpWire.Framed.Complete(request, used) -> answer(server, handler, key, session, request, used, handler(request))
 
-fn answer(server: Server, handler: Fn(HttpRequest) -> HttpResponse ! [_], key: Int, session: Session, request: HttpRequest, used: Int, response: HttpResponse) -> Result<Server, String>
+fn answer(server: Server, handler: Fn(HttpRequest) -> Http.Response ! [_], key: Int, session: Session, request: HttpRequest, used: Int, response: Http.Response) -> Result<Server, String>
     ? "The connection itself is request identity; response routing needs no provider-owned request token."
     ! [Tcp.writeBytes, Tcp.close]
     match HttpWire.renderResponse(response)
@@ -110,7 +110,7 @@ fn answer(server: Server, handler: Fn(HttpRequest) -> HttpResponse ! [_], key: I
             Result.Err(_) -> dropSession(server, key, session)
             Result.Ok(_) -> afterAnswer(server, handler, key, session, request, used, response)
 
-fn afterAnswer(server: Server, handler: Fn(HttpRequest) -> HttpResponse ! [_], key: Int, session: Session, request: HttpRequest, used: Int, response: HttpResponse) -> Result<Server, String>
+fn afterAnswer(server: Server, handler: Fn(HttpRequest) -> Http.Response ! [_], key: Int, session: Session, request: HttpRequest, used: Int, response: Http.Response) -> Result<Server, String>
     ? "Honors connection-close and otherwise advances exactly by the framer-reported byte count."
     ! [Tcp.writeBytes, Tcp.close]
     match Bool.or(HttpWire.requestCloses(request), HttpWire.responseCloses(response))
@@ -122,7 +122,7 @@ fn afterAnswer(server: Server, handler: Fn(HttpRequest) -> HttpResponse ! [_], k
 fn refuse(server: Server, key: Int, session: Session, reason: String) -> Result<Server, String>
     ? "Malformed framing receives one bounded 400 response and the unsynchronizable stream closes."
     ! [Tcp.writeBytes, Tcp.close]
-    response = HttpResponse(status = 400, body = reason + "\n", headers = {"connection" => ["close"], "content-type" => ["text/plain; charset=utf-8"]})
+    response = Http.Response(status = 400, body = reason + "\n", headers = {"connection" => ["close"], "content-type" => ["text/plain; charset=utf-8"]})
     match HttpWire.renderResponse(response)
         Result.Err(_) -> dropSession(server, key, session)
         Result.Ok(payload) -> match Tcp.writeBytes(session.connection, payload)

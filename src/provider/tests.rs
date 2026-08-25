@@ -918,7 +918,7 @@ fn normal(path: BranchPath, call: Int) -> Int
 }
 
 #[test]
-fn target_manifest_is_total_and_standard_capabilities_are_provided_everywhere() {
+fn target_manifest_is_total_and_standard_capabilities_have_explicit_rows() {
     let empty =
         CapabilityTargetManifest::build(&CapabilityRegistry::default(), &Default::default())
             .expect("empty manifest");
@@ -935,7 +935,7 @@ fn target_manifest_is_total_and_standard_capabilities_are_provided_everywhere() 
     .into_iter()
     .collect();
     let manifest = CapabilityTargetManifest::build(&registry, &required).expect("manifest");
-    assert_eq!(manifest.rows().len(), 20);
+    assert_eq!(manifest.rows().len(), 40);
     for (capability, operations, required_operation, native, wasm_gc, wasip2, fingerprint) in [
         (
             "Disk",
@@ -1093,9 +1093,16 @@ fn shipped_provenance_projects_only_provided_manifest_rows() {
     for target in CapabilityTarget::ALL {
         let provenance = super::shipped_target_provenance(target, &registry);
         let expected_capabilities = match target {
-            CapabilityTarget::Wasip2 => vec!["Disk", "Random", "Tcp", "Time"],
+            CapabilityTarget::Wasip2 => {
+                vec![
+                    "Args", "Console", "Disk", "Env", "Http", "Random", "Tcp", "Time",
+                ]
+            }
             CapabilityTarget::Vm | CapabilityTarget::Rust | CapabilityTarget::WasmGc => {
-                vec!["Disk", "Process", "Random", "Tcp", "Time"]
+                vec![
+                    "Args", "Console", "Disk", "Env", "Http", "Process", "Random", "Tcp",
+                    "Terminal", "Time",
+                ]
             }
         };
         assert_eq!(
@@ -1107,16 +1114,47 @@ fn shipped_provenance_projects_only_provided_manifest_rows() {
         );
         for entry in &provenance {
             let expected = match entry.capability.as_str() {
+                "Args" => aver_rt::provider::STANDARD_ARGS_FINGERPRINT,
+                "Console" => aver_rt::provider::STANDARD_CONSOLE_FINGERPRINT,
                 "Disk" => aver_rt::provider::STANDARD_DISK_FINGERPRINT,
+                "Env" => aver_rt::provider::STANDARD_ENV_FINGERPRINT,
+                "Http" => aver_rt::provider::STANDARD_HTTP_FINGERPRINT,
                 "Process" => aver_rt::provider::STANDARD_PROCESS_FINGERPRINT,
                 "Random" => aver_rt::provider::STANDARD_RANDOM_FINGERPRINT,
                 "Tcp" => aver_rt::provider::STANDARD_TCP_FINGERPRINT,
+                "Terminal" => aver_rt::provider::STANDARD_TERMINAL_FINGERPRINT,
                 "Time" => aver_rt::provider::STANDARD_TIME_FINGERPRINT,
                 other => panic!("unexpected standard capability {other}"),
             };
             assert_eq!(entry.fingerprint, expected);
         }
     }
+}
+
+#[test]
+fn wasip2_env_set_is_rejected_by_the_provider_manifest_not_an_effect_table() {
+    let registry = crate::stdlib::standard_capability_registry();
+    let get_required = ["Env.get".to_string()].into_iter().collect();
+    let get_manifest =
+        CapabilityTargetManifest::build(&registry, &get_required).expect("Env.get manifest");
+    let get = get_manifest
+        .for_target(CapabilityTarget::Wasip2)
+        .find(|row| row.capability == "Env")
+        .expect("Env wasip2 row");
+    assert!(matches!(get.status, TargetBindingStatus::Provided(_)));
+
+    let set_required = ["Env.set".to_string()].into_iter().collect();
+    let set_manifest =
+        CapabilityTargetManifest::build(&registry, &set_required).expect("Env.set manifest");
+    let set = set_manifest
+        .for_target(CapabilityTarget::Wasip2)
+        .find(|row| row.capability == "Env")
+        .expect("Env wasip2 row");
+    let TargetBindingStatus::Unsupported { reason } = &set.status else {
+        panic!("Env.set must be explicitly unsupported on wasip2");
+    };
+    assert_eq!(reason.code(), "standard-operations-unavailable");
+    assert!(reason.description().contains("Env.set"));
 }
 
 #[test]

@@ -262,9 +262,9 @@ pub(super) struct TypeRegistry {
     pub(super) aint_from_i64_fn_idx: Option<u32>,
     /// wasm fn idx of `__aint_to_i64_checked` (TRAPS on an out-of-i64 Big).
     /// `Some` iff `bignum`. Used by the `--handler` proxy synthesis to
-    /// CHECKED-lower the user's `HttpResponse.status` `$AverInt` field to
+    /// CHECKED-lower the user's `Http.Response.status` `$AverInt` field to
     /// i64 before `set-status-code` — the VM rejects an out-of-range status
-    /// (`HttpResponse.status is out of range`), so an out-of-range status
+    /// (`Http.Response.status is out of range`), so an out-of-range status
     /// TRAPS here rather than saturating into a wrong in-range code.
     pub(super) aint_to_i64_checked_fn_idx: Option<u32>,
     /// bignum size dedup — wasm fn indices of the shared sub-routines the
@@ -298,7 +298,7 @@ pub(super) struct MapSlots {
 
 impl TypeRegistry {
     /// Build the registry with a `--handler` shape — pre-register
-    /// HttpRequest/HttpResponse refs in case the handler fn is the
+    /// HttpRequest/Http.Response refs in case the handler fn is the
     /// only place they appear (otherwise the auto-discovery picks
     /// them up). Also intern the `"cf-ipcountry"` string literal so
     /// the synthesised `aver_http_handle` wrapper has a valid data
@@ -348,8 +348,8 @@ impl TypeRegistry {
                 _ => {}
             }
         }
-        // Built-in records (`HttpRequest`, `HttpResponse`,
-        // `Tcp.Connection`, `Terminal.Size`) — populate `record_fields`
+        // Compiler-owned carrier records (`HttpRequest`, `Tcp.Connection`,
+        // `Tcp.Dial`, `Tcp.Listener`) — populate `record_fields`
         // up front so List / Map field-walking discovery can pick up
         // `Map<String, List<String>>`, but defer slot assignment to the
         // end of `build` because their fields reference String / Map /
@@ -358,11 +358,11 @@ impl TypeRegistry {
         // to wait until after the dependencies.
         let mut builtin_record_names: Vec<String> = Vec::new();
         for record in crate::codegen::builtin_records::BUILTIN_RECORDS {
-            // `--handler` mode forces HttpRequest + HttpResponse to be
-            // registered even if no fn signature mentions them — the
-            // synthesised `aver_http_handle` wrapper builds an
-            // HttpRequest from host effects and reads HttpResponse
-            // back, both of which are codegen-only references.
+            // `--handler` mode forces HttpRequest to be registered even
+            // if no fn signature mentions it — the synthesised
+            // `aver_http_handle` wrapper builds one from host inputs.
+            // `Http.Response` is discovered from the handler signature
+            // through the source-owned `Http` capability module.
             //
             // Phase 4.5a similarly forces `Tcp.Connection` whenever
             // any `Tcp.*` effect is declared: even programs that only
@@ -370,7 +370,7 @@ impl TypeRegistry {
             // need its slot allocated because the orchestrator helper
             // threads a `Tcp.Connection` through internally.
             let force_handler = handler_active
-                && (record.aver_name == "HttpRequest" || record.aver_name == "HttpResponse");
+                && (record.aver_name == "HttpRequest" || record.aver_name == "Http.Response");
             let force_tcp = matches!(
                 record.aver_name,
                 "Tcp.Connection" | "Tcp.Dial" | "Tcp.Listener"
@@ -824,7 +824,7 @@ impl TypeRegistry {
         let mut map_order: Vec<String> = Vec::new();
         let mut pending_maps: Vec<String> = Vec::new();
         // Built-in record fields contribute too — `HttpRequest.headers`
-        // / `HttpResponse.headers` carry `Map<String, List<String>>`.
+        // / `Http.Response.headers` carry `Map<String, List<String>>`.
         for name in &record_names_sorted {
             let fields = &record_fields[name];
             for (_, ty) in fields {
@@ -1629,6 +1629,41 @@ impl TypeRegistry {
             if let Some(fields) = self.record_fields.get(&canonical).cloned() {
                 self.record_fields.entry(alias).or_insert(fields);
             }
+        }
+        // Monomorphised collection/wrapper slots are discovered before the
+        // flatten aliases are installed. A provider operation can therefore
+        // seed `Result<Http.Response,String>` while the flattened user body
+        // refers to the same slot as `Result<Response,String>`. Mirror every
+        // compound lookup key through the identity-proven aliases; the order
+        // vectors remain untouched, so this never emits a second wasm type.
+        let mirror_u32 = |table: &mut HashMap<String, u32>| {
+            let aliases = table
+                .iter()
+                .filter_map(|(key, value)| {
+                    let canonical = apply_type_name_aliases(key, &self.type_name_aliases);
+                    (canonical != *key).then_some((canonical, *value))
+                })
+                .collect::<Vec<_>>();
+            for (alias, value) in aliases {
+                table.entry(alias).or_insert(value);
+            }
+        };
+        mirror_u32(&mut self.vector_types);
+        mirror_u32(&mut self.option_types);
+        mirror_u32(&mut self.list_types);
+        mirror_u32(&mut self.result_types);
+        mirror_u32(&mut self.tuple_types);
+        mirror_u32(&mut self.primitive_key_box);
+        let map_aliases = self
+            .map_types
+            .iter()
+            .filter_map(|(key, value)| {
+                let canonical = apply_type_name_aliases(key, &self.type_name_aliases);
+                (canonical != *key).then_some((canonical, *value))
+            })
+            .collect::<Vec<_>>();
+        for (alias, value) in map_aliases {
+            self.map_types.entry(alias).or_insert(value);
         }
         // Re-run the Map-key newtype suppression with alias-aware key
         // spellings. The build-time scan populated `non_newtypable_keys`
@@ -2757,7 +2792,7 @@ fn items_reference_name(items: &[crate::ast::TopLevel], name: &str) -> bool {
 /// returns `Terminal.Size`, so the record slot allocates as soon as
 /// any fn declares the effect, even before the body runs the call.
 /// Same logic underpins `--handler` auto-registering HttpRequest /
-/// HttpResponse from the synthesised wrapper.
+/// Http.Response from the synthesised wrapper.
 fn effect_implies_builtin_record(effect: &str, record_name: &str) -> bool {
     let needed = match effect {
         "Terminal.size" => "Terminal.Size",
@@ -2768,15 +2803,15 @@ fn effect_implies_builtin_record(effect: &str, record_name: &str) -> bool {
         // slot allocated.
         "Tcp.connect" | "Tcp.poll" | "Tcp.writeLine" | "Tcp.writeBytes" | "Tcp.readLine"
         | "Tcp.readBytes" | "Tcp.readSome" | "Tcp.close" => "Tcp.Connection",
-        // HTTP verb effects all return Result<HttpResponse, String> —
+        // HTTP verb effects all return Result<Http.Response, String> —
         // ensure the response record slot is allocated even when no
         // user fn signature mentions it.
         "Http.get" | "Http.head" | "Http.delete" | "Http.post" | "Http.put" | "Http.patch" => {
-            "HttpResponse"
+            "Http.Response"
         }
         // Request / Response surface comes via the user's
         // `! [Request.method]` etc. The Aver type checker already
-        // requires HttpRequest / HttpResponse in the handler's
+        // requires HttpRequest / Http.Response in the handler's
         // signature, so they get picked up by the param/return
         // walk. No extra mapping needed here.
         _ => return false,
@@ -3000,6 +3035,33 @@ pub(super) fn strip_inner_dotted_prefixes(s: &str) -> String {
             }
         }
         i += 1;
+    }
+    out
+}
+
+/// Rewrite nominal tokens inside a compound type through aliases proven by
+/// the multi-module flattener. Punctuation and generic structure are kept
+/// byte-for-byte; only complete identifier tokens such as `Http.Response`
+/// are eligible, so `ResponseMeta` cannot be rewritten accidentally.
+fn apply_type_name_aliases(s: &str, aliases: &HashMap<String, String>) -> String {
+    let bytes = s.as_bytes();
+    let mut out = String::with_capacity(s.len());
+    let mut start = 0;
+    while start < bytes.len() {
+        if bytes[start].is_ascii_alphabetic() || bytes[start] == b'_' {
+            let mut end = start + 1;
+            while end < bytes.len()
+                && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_' || bytes[end] == b'.')
+            {
+                end += 1;
+            }
+            let token = &s[start..end];
+            out.push_str(aliases.get(token).map_or(token, String::as_str));
+            start = end;
+        } else {
+            out.push(bytes[start] as char);
+            start += 1;
+        }
     }
     out
 }

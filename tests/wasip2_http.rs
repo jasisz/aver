@@ -6,8 +6,7 @@
 //! `Http.get` against it. Asserts the surfaced HTTP status and
 //! that the body bytes round-trip into the printed Aver String.
 //!
-//! Pre-fix this didn't compile at all (`Http.*` rejected by
-//! `effect_check.rs`). Post-fix the wasip2 backend lowers
+//! The wasip2 backend lowers
 //! `Http.get` to the wasi:http/outgoing-handler.handle pipeline
 //! via `__rt_http_get`.
 //!
@@ -224,7 +223,7 @@ fn header(headers: Map<String, List<String>>, name: String) -> String
         Option.Some(values) -> first_or(values, "missing")
         Option.None -> "absent"
 
-fn dump(r: HttpResponse) -> Unit
+fn dump(r: Http.Response) -> Unit
     ! [Console.print]
     ct: String = header(r.headers, "content-type")
     Console.print("status={{r.status}} body_len={{String.len(r.body)}} headers_len={{Map.len(r.headers)}} ct={{ct}}")
@@ -314,7 +313,7 @@ fn header_join(headers: Map<String, List<String>>, name: String) -> String
         Option.Some(values) -> list_join(values, ",")
         Option.None -> "absent"
 
-fn dump(r: HttpResponse) -> Unit
+fn dump(r: Http.Response) -> Unit
     ! [Console.print]
     cookies: String = header_join(r.headers, "set-cookie")
     order: String = header_join(r.headers, "x-order")
@@ -385,7 +384,7 @@ fn header(headers: Map<String, List<String>>, name: String) -> String
         Option.Some(values) -> first_or(values, "missing")
         Option.None -> "absent"
 
-fn dump(label: String, r: HttpResponse) -> Unit
+fn dump(label: String, r: Http.Response) -> Unit
     ! [Console.print]
     method: String = header(r.headers, "x-method")
     Console.print("{{label}} status={{r.status}} method={{method}} body_len={{String.len(r.body)}}")
@@ -464,7 +463,7 @@ fn header(headers: Map<String, List<String>>, name: String) -> String
         Option.Some(values) -> first_or(values, "missing")
         Option.None -> "absent"
 
-fn dump(label: String, r: HttpResponse) -> Unit
+fn dump(label: String, r: Http.Response) -> Unit
     ! [Console.print]
     method: String = header(r.headers, "x-method")
     echo_type: String = header(r.headers, "x-echo-type")

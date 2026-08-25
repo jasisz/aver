@@ -81,10 +81,10 @@ pub(super) fn collect_vectors_from_str(
     }
 }
 
-/// Walk a fn body for builtin calls whose declared return type is a
-/// `Result<T, E>` not otherwise visible in signatures. Phase-3c
-/// targets the curated set the bench scenarios use; broader auto-
-/// discovery would mean reading `types::checker::builtins` directly.
+/// Walk a fn body for calls whose declared return type is a `Result<T, E>`
+/// not otherwise visible in signatures. Standard host operations read their
+/// return shape from the source-owned capability registry; only pure compiler
+/// builtins retain a small local table.
 pub(super) fn collect_results_from_builtin_uses(
     fd: &crate::ir::hir::ResolvedFnDef,
     out: &mut HashMap<String, u32>,
@@ -92,86 +92,58 @@ pub(super) fn collect_results_from_builtin_uses(
     next_idx: &mut u32,
 ) {
     use crate::ir::hir::{ResolvedExpr, ResolvedFnBody, ResolvedStmt};
+    fn intern_result(
+        canonical: &str,
+        out: &mut HashMap<String, u32>,
+        order: &mut Vec<String>,
+        next_idx: &mut u32,
+    ) {
+        if !out.contains_key(canonical) {
+            out.insert(canonical.to_string(), *next_idx);
+            order.push(canonical.to_string());
+            *next_idx += 1;
+        }
+    }
+
     fn walk(
         e: &ResolvedExpr,
         out: &mut HashMap<String, u32>,
         order: &mut Vec<String>,
         next_idx: &mut u32,
     ) {
-        let mut intern = |canonical: &str| {
-            if !out.contains_key(canonical) {
-                out.insert(canonical.to_string(), *next_idx);
-                order.push(canonical.to_string());
-                *next_idx += 1;
-            }
-        };
         match e {
             ResolvedExpr::Call(callee, args) => {
                 if let crate::ir::hir::ResolvedCallee::Builtin(dotted) = callee {
-                    match dotted.as_str() {
-                        "Float.fromString" => intern("Result<Float,String>"),
-                        "Int.fromString" | "Int.mod" | "Int.div" | "Random.int" => {
-                            intern("Result<Int,String>")
+                    if let Some(operation) =
+                        crate::stdlib::standard_capability_registry_ref().operation(dotted)
+                    {
+                        collect_results_from_str(
+                            &operation.return_type.display(),
+                            out,
+                            order,
+                            next_idx,
+                        );
+                        // The wasip2 byte reader reuses a text-shaped internal
+                        // helper before adapting its carrier to Bytes.
+                        if dotted == "Disk.readBytes" {
+                            intern_result("Result<String,String>", out, order, next_idx);
                         }
-                        "Bits.shiftLeft" | "Bits.shiftRight" | "Bits.low" => {
-                            intern("Result<Int,String>")
+                    } else {
+                        match dotted.as_str() {
+                            "Float.fromString" => {
+                                intern_result("Result<Float,String>", out, order, next_idx)
+                            }
+                            "Int.fromString" | "Int.mod" | "Int.div" => {
+                                intern_result("Result<Int,String>", out, order, next_idx)
+                            }
+                            "Bits.shiftLeft" | "Bits.shiftRight" | "Bits.low" => {
+                                intern_result("Result<Int,String>", out, order, next_idx)
+                            }
+                            "String.fromUtf8" => {
+                                intern_result("Result<String,String>", out, order, next_idx)
+                            }
+                            _ => {}
                         }
-                        "String.fromUtf8" => intern("Result<String,String>"),
-                        "Console.readLine" | "Disk.readText" => intern("Result<String,String>"),
-                        "Time.sleep"
-                        | "Env.set"
-                        | "Terminal.enableRawMode"
-                        | "Terminal.disableRawMode"
-                        | "Terminal.clear"
-                        | "Terminal.moveTo"
-                        | "Terminal.print"
-                        | "Terminal.setColor"
-                        | "Terminal.resetColor"
-                        | "Terminal.hideCursor"
-                        | "Terminal.showCursor"
-                        | "Terminal.flush" => intern("Result<Unit,String>"),
-                        "Terminal.size" => intern("Result<Terminal.Size,String>"),
-                        "Terminal.readKey" => {
-                            intern("Result<Option<String>,String>");
-                        }
-                        "Disk.readBytes" => {
-                            // wasip2 reuses the raw-octet Disk.readText helper
-                            // internally, then adapts its carrier to Bytes.
-                            intern("Result<String,String>");
-                            intern("Result<Bytes,String>");
-                        }
-                        "Disk.readBytesAt" => intern("Result<Bytes,String>"),
-                        "Disk.size" => intern("Result<Int,String>"),
-                        "Disk.writeText" | "Disk.appendText" | "Disk.writeBytes"
-                        | "Disk.appendBytes" | "Disk.delete" | "Disk.deleteDir"
-                        | "Disk.makeDir" => intern("Result<Unit,String>"),
-                        "Disk.listDir" => intern("Result<List<String>,String>"),
-                        "Tcp.connect" => intern("Result<Tcp.Connection,String>"),
-                        "Tcp.beginConnect" => intern("Result<Tcp.Dial,String>"),
-                        "Tcp.listen" => intern("Result<Tcp.Listener,String>"),
-                        "Tcp.dialled" | "Tcp.accept" => {
-                            intern("Result<Option<Tcp.Connection>,String>")
-                        }
-                        "Tcp.peerAddress" => intern("Result<String,String>"),
-                        "Tcp.readLine" => intern("Result<String,String>"),
-                        "Tcp.readBytes" | "Tcp.readSome" => intern("Result<Bytes,String>"),
-                        "Tcp.poll" => intern("Result<List<Int>,String>"),
-                        "Tcp.writeLine" | "Tcp.writeBytes" | "Tcp.close" | "Tcp.closeDial"
-                        | "Tcp.closeListener" => intern("Result<Unit,String>"),
-                        // `Tcp.send`, `Tcp.sendBytes`, and `Tcp.ping`
-                        // are ephemeral (Phase 4.7+ passes 4 / 5) —
-                        // none calls `__rt_tcp_connect` or returns a
-                        // `Tcp.Connection`, so they only need their
-                        // own return-shape slot. Earlier wrappers
-                        // also interned `Result<Tcp.Connection,String>`
-                        // and `Result<Unit,String>`; both are dead
-                        // weight on the ephemeral path.
-                        "Tcp.send" => intern("Result<String,String>"),
-                        "Tcp.sendBytes" => intern("Result<Bytes,String>"),
-                        "Tcp.ping" => intern("Result<Unit,String>"),
-                        "Http.get" | "Http.head" | "Http.delete" | "Http.post" | "Http.put"
-                        | "Http.patch" => intern("Result<HttpResponse,String>"),
-                        _ => {}
                     }
                 }
                 for a in args {
@@ -240,7 +212,9 @@ pub(super) fn collect_results_from_builtin_uses(
             }
             // A big-int literal lowers through `Int.fromString` (returns
             // `Result<Int,String>`), so its result type slot must exist.
-            ResolvedExpr::Literal(crate::ast::Literal::BigInt(_)) => intern("Result<Int,String>"),
+            ResolvedExpr::Literal(crate::ast::Literal::BigInt(_)) => {
+                intern_result("Result<Int,String>", out, order, next_idx)
+            }
             _ => {}
         }
     }

@@ -1661,7 +1661,7 @@ pub(super) fn emit_disk_list_dir_wasip2(
 }
 
 /// Phase 2 — `Http.*(url[, content_type, body, headers]) ->
-/// Result<HttpResponse, String>` on `--target wasip2`. The shared
+/// Result<Http.Response, String>` on `--target wasip2`. The shared
 /// `__rt_http_request` helper takes 5 params: method_tag i32,
 /// url ref string, content_type ref string, body ref string,
 /// headers ref map. Per-method dispatchers push the appropriate
@@ -1732,7 +1732,7 @@ fn emit_http_simple_method_wasip2(
 
 /// Body-bearing dispatch shared by POST/PUT/PATCH. Aver source
 /// signature: `(url: String, content_type: String, body: String,
-/// headers: Map<String, List<String>>) -> Result<HttpResponse,
+/// headers: Map<String, List<String>>) -> Result<Http.Response,
 /// String>`.
 fn emit_http_body_method_wasip2(
     method_name: &str,

@@ -28,8 +28,8 @@ pub enum Type {
     /// [`crate::ir::SymbolTable`] (#138 phase B). The `id` is `None` for
     /// transient parser output (before typecheck has run), for the
     /// types the compiler declares itself rather than registering in
-    /// the user-program symbol table (`HttpResponse`, `Tcp.Connection`,
-    /// `Terminal.Size`, `Trace`, `BranchPath`, …), for names
+    /// the user-program symbol table (`HttpRequest`, `Trace`,
+    /// `BranchPath`, …), for names
     /// synthesised after typecheck (`Buffer`, from the accumulator
     /// rewrite in `crate::ir::buffer_build`), and for stamps the
     /// checker couldn't resolve.
@@ -72,7 +72,7 @@ impl Type {
     }
 
     /// Source-faithful name of a `Named` (`"Shape"` / `"A.Shape"` /
-    /// `"HttpResponse"`); `None` for any non-`Named` variant.
+    /// `"Http.Response"`); `None` for any non-`Named` variant.
     pub fn named_name(&self) -> Option<&str> {
         match self {
             Type::Named { name, .. } => Some(name.as_str()),
@@ -147,7 +147,7 @@ impl Type {
                 // entry-fallback bug, where a dep module's
                 // unresolved bare `Shape` silently bound to the
                 // entry module's own `Shape`. Builtins like
-                // `HttpResponse` never set `id` on either side, so
+                // Compiler-owned named types may not set `id` on either side, so
                 // they exercise the `(None, None)` branch below;
                 // genuine cross-module typed/raw mixes hit this
                 // branch and must fail.

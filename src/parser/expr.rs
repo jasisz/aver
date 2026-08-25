@@ -241,8 +241,9 @@ impl Parser {
                     if let Some(path) = Self::dotted_name(&expr) {
                         self.reject_zero_arg_constructor_call(&path)?;
                     }
-                    let named_arg_start = matches!(&self.peek(1).kind, TokenKind::Ident(_))
-                        && self.peek(2).kind == TokenKind::Assign;
+                    let named_arg_start =
+                        matches!(&self.peek_skip_formatting(1).kind, TokenKind::Ident(_))
+                            && self.peek_skip_formatting(2).kind == TokenKind::Assign;
                     if named_arg_start && let Some(path) = Self::dotted_name(&expr) {
                         // Dotted record constructor: Tcp.Connection(id = ..., host = ...)
                         let ctor_line = self.current().line;

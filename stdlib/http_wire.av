@@ -179,13 +179,13 @@ fn checkedLength(text: String, parsed: Result<Int, String>) -> Result<Int, Strin
                 true -> Result.Err("content-length '{text}' exceeds 10485760 bytes")
                 false -> Result.Ok(value)
 
-fn renderResponse(response: HttpResponse) -> Result<Bytes, String>
+fn renderResponse(response: Http.Response) -> Result<Bytes, String>
     ? "Validates status and header lines, owns content-length, and UTF-8 encodes the complete response."
     match Bool.or(response.status < 100, response.status > 999)
         true -> Result.Err("HTTP response status {response.status} is outside 100..999")
         false -> withRenderedFields(response, renderFields(response.headers, Map.keys(response.headers), ""))
 
-fn withRenderedFields(response: HttpResponse, fields: Result<String, String>) -> Result<Bytes, String>
+fn withRenderedFields(response: Http.Response, fields: Result<String, String>) -> Result<Bytes, String>
     ? "Assembles the wire response only after every user header has passed injection checks."
     match fields
         Result.Err(reason) -> Result.Err(reason)
@@ -227,7 +227,7 @@ fn requestCloses(request: HttpRequest) -> Bool
     ? "HTTP/1.1 keeps a connection alive unless the request explicitly says close."
     headerContains(request.headers, "connection", "close")
 
-fn responseCloses(response: HttpResponse) -> Bool
+fn responseCloses(response: Http.Response) -> Bool
     ? "The handler may explicitly end the session through its response headers."
     headerContains(response.headers, "connection", "close")
 
@@ -301,9 +301,9 @@ verify bodyLength
     bodyLength({"transfer-encoding" => ["chunked"]}) => Result.Err("transfer-encoding is not supported")
 
 verify renderResponse
-    renderResponse(HttpResponse(status = 200, body = "ok", headers = {})) => Result.Ok(String.toUtf8("HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok"))
-    renderResponse(HttpResponse(status = 99, body = "", headers = {})) => Result.Err("HTTP response status 99 is outside 100..999")
-    renderResponse(HttpResponse(status = 200, body = "", headers = {"x" => ["a\r\nb"]})) => Result.Err("HTTP response header 'x' contains a line break")
+    renderResponse(Http.Response(status = 200, body = "ok", headers = {})) => Result.Ok(String.toUtf8("HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok"))
+    renderResponse(Http.Response(status = 99, body = "", headers = {})) => Result.Err("HTTP response status 99 is outside 100..999")
+    renderResponse(Http.Response(status = 200, body = "", headers = {"x" => ["a\r\nb"]})) => Result.Err("HTTP response header 'x' contains a line break")
 
 verify requestCloses
     requestCloses(HttpRequest(method = "GET", path = "/", query = "", body = "", headers = {})) => false
@@ -390,8 +390,8 @@ verify checkedLength
     checkedLength("x", Result.Err("bad")) => Result.Err("content-length 'x' is not a number")
 
 verify withRenderedFields
-    withRenderedFields(HttpResponse(status = 200, body = "ok", headers = {}), Result.Err("bad")) => Result.Err("bad")
-    withRenderedFields(HttpResponse(status = 200, body = "ok", headers = {}), Result.Ok("")) => Result.Ok(String.toUtf8("HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok"))
+    withRenderedFields(Http.Response(status = 200, body = "ok", headers = {}), Result.Err("bad")) => Result.Err("bad")
+    withRenderedFields(Http.Response(status = 200, body = "ok", headers = {}), Result.Ok("")) => Result.Ok(String.toUtf8("HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok"))
 
 verify renderFields
     renderFields({}, [], "") => Result.Ok("")

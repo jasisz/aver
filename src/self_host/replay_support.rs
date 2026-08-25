@@ -1463,6 +1463,11 @@ pub mod aver_replay {
         }
         for effect in &session.effects {
             let capability = match effect.effect_type.as_str() {
+                "Args.get" => Some("Args"),
+                "Console.error" => Some("Console"),
+                "Console.print" => Some("Console"),
+                "Console.readLine" => Some("Console"),
+                "Console.warn" => Some("Console"),
                 "Disk.appendBytes" => Some("Disk"),
                 "Disk.appendText" => Some("Disk"),
                 "Disk.delete" => Some("Disk"),
@@ -1476,6 +1481,14 @@ pub mod aver_replay {
                 "Disk.size" => Some("Disk"),
                 "Disk.writeBytes" => Some("Disk"),
                 "Disk.writeText" => Some("Disk"),
+                "Env.get" => Some("Env"),
+                "Env.set" => Some("Env"),
+                "Http.delete" => Some("Http"),
+                "Http.get" => Some("Http"),
+                "Http.head" => Some("Http"),
+                "Http.patch" => Some("Http"),
+                "Http.post" => Some("Http"),
+                "Http.put" => Some("Http"),
                 "Random.float" => Some("Random"),
                 "Random.int" => Some("Random"),
                 "Tcp.accept" => Some("Tcp"),
@@ -1496,15 +1509,32 @@ pub mod aver_replay {
                 "Tcp.sendBytes" => Some("Tcp"),
                 "Tcp.writeBytes" => Some("Tcp"),
                 "Tcp.writeLine" => Some("Tcp"),
+                "Terminal.clear" => Some("Terminal"),
+                "Terminal.disableRawMode" => Some("Terminal"),
+                "Terminal.enableRawMode" => Some("Terminal"),
+                "Terminal.flush" => Some("Terminal"),
+                "Terminal.hideCursor" => Some("Terminal"),
+                "Terminal.moveTo" => Some("Terminal"),
+                "Terminal.print" => Some("Terminal"),
+                "Terminal.readKey" => Some("Terminal"),
+                "Terminal.resetColor" => Some("Terminal"),
+                "Terminal.setColor" => Some("Terminal"),
+                "Terminal.showCursor" => Some("Terminal"),
+                "Terminal.size" => Some("Terminal"),
                 "Time.now" => Some("Time"),
                 "Time.sleep" => Some("Time"),
                 "Time.unixMs" => Some("Time"),
                 _ => None,
             };
             if let Some(capability) = capability {
-                if !(capability == "Disk"
+                if !(capability == "Args"
+                    || capability == "Console"
+                    || capability == "Disk"
+                    || capability == "Env"
+                    || capability == "Http"
                     || capability == "Random"
                     || capability == "Tcp"
+                    || capability == "Terminal"
                     || capability == "Time")
                     && !seen.contains(capability)
                 {
@@ -1513,6 +1543,35 @@ pub mod aver_replay {
                         effect.effect_type
                     );
                 }
+            }
+        }
+        for capability in ["Console"] {
+            let recorded = session
+                .capabilities
+                .iter()
+                .find(|entry| entry.capability == capability)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "Live replay capability '{}' has no provider provenance in the replay",
+                        capability
+                    )
+                });
+            let expected = current
+                .iter()
+                .find(|entry| entry.capability == capability)
+                .expect("live capability contract validated above");
+            let (Some(provider), Some(fingerprint)) = (&expected.provider, &expected.fingerprint)
+            else {
+                panic!(
+                    "Capability '{}' requires a live provider during replay",
+                    capability
+                );
+            };
+            if recorded.provider != *provider || recorded.fingerprint != *fingerprint {
+                panic!(
+                    "Live provider mismatch for '{}': recorded {}@{}, current {}@{}",
+                    capability, recorded.provider, recorded.fingerprint, provider, fingerprint
+                );
             }
         }
     }
@@ -1836,95 +1895,3 @@ pub mod aver_replay {
 }
 
 pub use aver_replay::*;
-
-impl aver_replay::ReplayValue for crate::HttpResponse {
-    fn to_replay_json(&self) -> serde_json::Value {
-        let mut fields = serde_json::Map::new();
-        fields.insert(
-            "status".to_string(),
-            ReplayValue::to_replay_json(&self.status),
-        );
-        fields.insert("body".to_string(), ReplayValue::to_replay_json(&self.body));
-        fields.insert(
-            "headers".to_string(),
-            ReplayValue::to_replay_json(&self.headers),
-        );
-        let mut payload = serde_json::Map::new();
-        payload.insert(
-            "type".to_string(),
-            serde_json::Value::String("HttpResponse".to_string()),
-        );
-        payload.insert("fields".to_string(), serde_json::Value::Object(fields));
-        aver_replay::wrap_marker("$record", serde_json::Value::Object(payload))
-    }
-
-    fn from_replay_json(value: &serde_json::Value) -> Result<Self, String> {
-        let payload = aver_replay::expect_marker(value, "$record")?;
-        let obj = aver_replay::expect_object(payload, "$record")?;
-        let fields = aver_replay::expect_object(
-            obj.get("fields")
-                .ok_or_else(|| "$record missing field 'fields'".to_string())?,
-            "$record.fields",
-        )?;
-        Ok(Self {
-            status: <aver_rt::AverInt as ReplayValue>::from_replay_json(
-                fields
-                    .get("status")
-                    .ok_or_else(|| "$record HttpResponse missing field 'status'".to_string())?,
-            )?,
-            body: <aver_rt::AverStr as ReplayValue>::from_replay_json(
-                fields
-                    .get("body")
-                    .ok_or_else(|| "$record HttpResponse missing field 'body'".to_string())?,
-            )?,
-            headers: <aver_rt::HttpHeaders as ReplayValue>::from_replay_json(
-                fields
-                    .get("headers")
-                    .ok_or_else(|| "$record HttpResponse missing field 'headers'".to_string())?,
-            )?,
-        })
-    }
-}
-
-impl aver_replay::ReplayValue for crate::Terminal_Size {
-    fn to_replay_json(&self) -> serde_json::Value {
-        let mut fields = serde_json::Map::new();
-        fields.insert(
-            "width".to_string(),
-            ReplayValue::to_replay_json(&self.width),
-        );
-        fields.insert(
-            "height".to_string(),
-            ReplayValue::to_replay_json(&self.height),
-        );
-        let mut payload = serde_json::Map::new();
-        payload.insert(
-            "type".to_string(),
-            serde_json::Value::String("Terminal.Size".to_string()),
-        );
-        payload.insert("fields".to_string(), serde_json::Value::Object(fields));
-        aver_replay::wrap_marker("$record", serde_json::Value::Object(payload))
-    }
-
-    fn from_replay_json(value: &serde_json::Value) -> Result<Self, String> {
-        let payload = aver_replay::expect_marker(value, "$record")?;
-        let obj = aver_replay::expect_object(payload, "$record")?;
-        let fields = aver_replay::expect_object(
-            obj.get("fields")
-                .ok_or_else(|| "$record missing field 'fields'".to_string())?,
-            "$record.fields",
-        )?;
-        Ok(Self {
-            width: <aver_rt::AverInt as ReplayValue>::from_replay_json(
-                fields
-                    .get("width")
-                    .ok_or_else(|| "$record Terminal.Size missing field 'width'".to_string())?,
-            )?,
-            height: <aver_rt::AverInt as ReplayValue>::from_replay_json(
-                fields
-                    .get("height")
-                    .ok_or_else(|| "$record Terminal.Size missing field 'height'".to_string())?,
-            )?,
-        })
-    }
-}

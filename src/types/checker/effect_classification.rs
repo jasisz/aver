@@ -7,8 +7,8 @@
 //! - For snapshot and generative, the corresponding capability/oracle
 //!   signature that lifted specs bind via `given name: E.m = [...]`.
 //!
-//! Output-only effects (for example `Console.print` and terminal drawing
-//! calls) are classified but do not have an oracle signature:
+//! Output-only effects (for example `Console.print`) are classified but do
+//! not have an oracle signature:
 //! they append to the per-branch trace segment and are asserted about via the
 //! trace API, not by binding an oracle in `given`.
 //!
@@ -19,19 +19,15 @@
 //! - Lifting of effectful function bodies at proof-export time.
 //! - Rejection diagnostics for unclassified effects.
 //!
-//! Source of runtime signatures: builtin registrations for legacy services,
-//! and capability declarations for provider-backed standard/project effects.
-//!
-//! The parameter and return types below are cross-checked against either the
-//! signatures `builtins.rs` registers or the canonical standard capability
-//! contracts — see
+//! Runtime signatures and Oracle dimensions come from capability declarations
+//! for standard and project effects. The derived parameter and return types are
+//! cross-checked against the canonical standard capability contracts — see
 //! `every_classified_entry_matches_its_builtin_or_standard_contract_signature`. The
 //! agreement used to rest on a comment asking the reader to keep the two in
 //! sync, and that had already failed: `Console.print` carried a printable type
 //! variable here for twelve minor releases after 0.16 gave it a plain string.
-//! What is still hand-authored for legacy builtins, and cannot be derived from
-//! `FnSig`, is the DIMENSION. Standard and project capabilities instead derive
-//! it from their source-owned Oracle declaration.
+//! Both standard and project capabilities derive the dimension from their
+//! source-owned Oracle declaration.
 
 use super::super::Type;
 use crate::types::branch_path;
@@ -76,13 +72,6 @@ pub struct RegisteredEffectClassification {
     pub ret: Type,
 }
 
-/// `Result<ok, String>` — the shape every fallible service method returns.
-/// Spelled once here so the table below reads as the signatures do, rather
-/// than as a wall of `Box::new`.
-fn err_str(ok: Type) -> Type {
-    Type::Result(Box::new(ok), Box::new(Type::Str))
-}
-
 /// Full classification table, built once on first use.
 ///
 /// It was a `const` array until now, which forced every parameter and return
@@ -100,197 +89,7 @@ fn err_str(ok: Type) -> Type {
 fn classifications() -> &'static [EffectClassification] {
     static REGISTRY: OnceLock<Vec<EffectClassification>> = OnceLock::new();
     REGISTRY.get_or_init(|| {
-        let mut entries = vec![
-            // Snapshot
-            EffectClassification {
-                method: "Args.get",
-                dimension: EffectDimension::Snapshot,
-                params: vec![],
-                ret: Type::List(Box::new(Type::Str)),
-            },
-            EffectClassification {
-                method: "Env.get",
-                dimension: EffectDimension::Snapshot,
-                params: vec![Type::Str],
-                ret: Type::Option(Box::new(Type::Str)),
-            },
-            // Terminal.size: stable within a verify scope (a resize while
-            // proving is not modelled). Host failure remains explicit in the
-            // snapshot value: () -> Result<Terminal.Size, String>.
-            EffectClassification {
-                method: "Terminal.size",
-                dimension: EffectDimension::Snapshot,
-                params: vec![],
-                ret: err_str(Type::named("Terminal.Size")),
-            },
-            // Generative
-            EffectClassification {
-                method: "Console.readLine",
-                dimension: EffectDimension::Generative,
-                params: vec![],
-                ret: err_str(Type::Str),
-            },
-            // Generative + output (Http)
-            EffectClassification {
-                method: "Http.get",
-                dimension: EffectDimension::GenerativeOutput,
-                params: vec![Type::Str],
-                ret: err_str(Type::named("HttpResponse")),
-            },
-            EffectClassification {
-                method: "Http.head",
-                dimension: EffectDimension::GenerativeOutput,
-                params: vec![Type::Str],
-                ret: err_str(Type::named("HttpResponse")),
-            },
-            EffectClassification {
-                method: "Http.delete",
-                dimension: EffectDimension::GenerativeOutput,
-                params: vec![Type::Str],
-                ret: err_str(Type::named("HttpResponse")),
-            },
-            // Http.post/.put/.patch — four-arg form `(url, body, contentType, headers)`.
-            EffectClassification {
-                method: "Http.post",
-                dimension: EffectDimension::GenerativeOutput,
-                params: vec![
-                    Type::Str,
-                    Type::Str,
-                    Type::Str,
-                    Type::Map(
-                        Box::new(Type::Str),
-                        Box::new(Type::List(Box::new(Type::Str))),
-                    ),
-                ],
-                ret: err_str(Type::named("HttpResponse")),
-            },
-            EffectClassification {
-                method: "Http.put",
-                dimension: EffectDimension::GenerativeOutput,
-                params: vec![
-                    Type::Str,
-                    Type::Str,
-                    Type::Str,
-                    Type::Map(
-                        Box::new(Type::Str),
-                        Box::new(Type::List(Box::new(Type::Str))),
-                    ),
-                ],
-                ret: err_str(Type::named("HttpResponse")),
-            },
-            EffectClassification {
-                method: "Http.patch",
-                dimension: EffectDimension::GenerativeOutput,
-                params: vec![
-                    Type::Str,
-                    Type::Str,
-                    Type::Str,
-                    Type::Map(
-                        Box::new(Type::Str),
-                        Box::new(Type::List(Box::new(Type::Str))),
-                    ),
-                ],
-                ret: err_str(Type::named("HttpResponse")),
-            },
-            // Output-only — no oracle signature, but classified for completeness.
-            // Env.set is stateless under Oracle: emitted to trace, but does NOT
-            // make a later `Env.get` return the written value. If the program
-            // depends on read-after-write consistency, the model belongs in pure
-            // user code, not in the effect oracle.
-            EffectClassification {
-                method: "Env.set",
-                dimension: EffectDimension::GenerativeOutput,
-                params: vec![Type::Str, Type::Str],
-                ret: err_str(Type::Unit),
-            },
-            EffectClassification {
-                method: "Console.print",
-                dimension: EffectDimension::Output,
-                params: vec![Type::Str],
-                ret: Type::Unit,
-            },
-            EffectClassification {
-                method: "Console.error",
-                dimension: EffectDimension::Output,
-                params: vec![Type::Str],
-                ret: Type::Unit,
-            },
-            EffectClassification {
-                method: "Console.warn",
-                dimension: EffectDimension::Output,
-                params: vec![Type::Str],
-                ret: Type::Unit,
-            },
-            EffectClassification {
-                method: "Terminal.clear",
-                dimension: EffectDimension::GenerativeOutput,
-                params: vec![],
-                ret: err_str(Type::Unit),
-            },
-            EffectClassification {
-                method: "Terminal.moveTo",
-                dimension: EffectDimension::GenerativeOutput,
-                params: vec![Type::Int, Type::Int],
-                ret: err_str(Type::Unit),
-            },
-            EffectClassification {
-                method: "Terminal.print",
-                dimension: EffectDimension::GenerativeOutput,
-                params: vec![Type::Str],
-                ret: err_str(Type::Unit),
-            },
-            EffectClassification {
-                method: "Terminal.readKey",
-                dimension: EffectDimension::Generative,
-                params: vec![],
-                ret: err_str(Type::Option(Box::new(Type::Str))),
-            },
-            EffectClassification {
-                method: "Terminal.hideCursor",
-                dimension: EffectDimension::GenerativeOutput,
-                params: vec![],
-                ret: err_str(Type::Unit),
-            },
-            EffectClassification {
-                method: "Terminal.showCursor",
-                dimension: EffectDimension::GenerativeOutput,
-                params: vec![],
-                ret: err_str(Type::Unit),
-            },
-            EffectClassification {
-                method: "Terminal.flush",
-                dimension: EffectDimension::GenerativeOutput,
-                params: vec![],
-                ret: err_str(Type::Unit),
-            },
-            // Terminal modal/visual effects also return their adapter outcome.
-            // The oracle still does NOT model that a later `print` is "now in
-            // raw mode" or "now in red"; it models only this call's Result.
-            EffectClassification {
-                method: "Terminal.enableRawMode",
-                dimension: EffectDimension::GenerativeOutput,
-                params: vec![],
-                ret: err_str(Type::Unit),
-            },
-            EffectClassification {
-                method: "Terminal.disableRawMode",
-                dimension: EffectDimension::GenerativeOutput,
-                params: vec![],
-                ret: err_str(Type::Unit),
-            },
-            EffectClassification {
-                method: "Terminal.setColor",
-                dimension: EffectDimension::GenerativeOutput,
-                params: vec![Type::Str],
-                ret: err_str(Type::Unit),
-            },
-            EffectClassification {
-                method: "Terminal.resetColor",
-                dimension: EffectDimension::GenerativeOutput,
-                params: vec![],
-                ret: err_str(Type::Unit),
-            },
-        ];
+        let mut entries = Vec::new();
         let standard = crate::stdlib::standard_capability_registry_ref();
         for operation in standard
             .operations()
@@ -493,6 +292,10 @@ pub fn classified_effects_summary_with_registry(
 mod tests {
     use super::*;
 
+    fn err_str(ok: Type) -> Type {
+        Type::Result(Box::new(ok), Box::new(Type::Str))
+    }
+
     fn capability_registry(scope: &str, source: &str) -> crate::capability::CapabilityRegistry {
         let items = crate::source::parse_source(source).expect("parse capability differential");
         let (registry, errors) = crate::capability::CapabilityRegistry::from_module(scope, &items);
@@ -619,12 +422,12 @@ mod tests {
     }
 
     #[test]
-    fn program_capability_http_get_has_the_standard_proof_shape() {
+    fn source_capability_http_get_has_the_standard_proof_shape() {
         let registry = capability_registry(
-            "HttpCompat",
-            "module HttpCompat\n    kind = capability\n    semantics = effectful\n\nrecord HttpResponse\n    status: Int\n    body: String\n    headers: Map<String, List<String>>\n\noperation get(url: String) -> Result<HttpResponse, String>\n    oracle = generativeOutput\n    replay = recorded\n",
+            "Http",
+            "module Http\n    kind = capability\n    semantics = effectful\n\nrecord Response\n    status: Int\n    body: String\n    headers: Map<String, List<String>>\n\noperation get(url: String) -> Result<Http.Response, String>\n    oracle = generativeOutput\n    replay = recorded\n",
         );
-        assert_same_shape("Http.get", "HttpCompat.get", &registry);
+        assert_same_shape("Http.get", "Http.get", &registry);
     }
 
     #[test]
@@ -761,7 +564,7 @@ mod tests {
     #[test]
     fn oracle_signature_for_http_get_is_branch_indexed() {
         let sig = oracle_signature("Http.get").unwrap();
-        // (BranchPath, Int, String) -> Result<HttpResponse, String>
+        // (BranchPath, Int, String) -> Result<Http.Response, String>
         match sig {
             Type::Fn(params, ret, _) => {
                 assert_eq!(params.len(), 3);
@@ -771,7 +574,7 @@ mod tests {
                 match *ret {
                     Type::Result(ok, err) => {
                         assert!(
-                            matches!(*ok, Type::Named { name: ref n, .. } if n == "HttpResponse")
+                            matches!(*ok, Type::Named { name: ref n, .. } if n == "Http.Response")
                         );
                         assert_eq!(*err, Type::Str);
                     }
@@ -918,7 +721,7 @@ mod tests {
     #[test]
     fn oracle_signature_for_http_post_has_four_runtime_params() {
         let sig = oracle_signature("Http.post").unwrap();
-        // (BranchPath, Int, Str, Str, Str, Map<Str, List<Str>>) -> Result<HttpResponse, String>
+        // (BranchPath, Int, Str, Str, Str, Map<Str, List<Str>>) -> Result<Http.Response, String>
         match sig {
             Type::Fn(params, ret, _) => {
                 assert_eq!(params.len(), 6);
@@ -940,7 +743,7 @@ mod tests {
                 match *ret {
                     Type::Result(ok, err) => {
                         assert!(
-                            matches!(*ok, Type::Named { name: ref n, .. } if n == "HttpResponse")
+                            matches!(*ok, Type::Named { name: ref n, .. } if n == "Http.Response")
                         );
                         assert_eq!(*err, Type::Str);
                     }

@@ -39,8 +39,6 @@
 //!   `Resolve` so the user world can `include wasi:cli/command;`.
 
 #[cfg(feature = "wasip2")]
-mod effect_check;
-#[cfg(feature = "wasip2")]
 mod error;
 mod plan;
 #[cfg(feature = "wasip2")]
@@ -50,10 +48,6 @@ mod wit;
 #[cfg(feature = "wasip2")]
 mod wrap;
 
-#[cfg(feature = "wasip2")]
-pub use effect_check::{
-    UnsupportedEffect, UnsupportedReason, check_supported_effects, render_errors,
-};
 #[cfg(feature = "wasip2")]
 pub use error::Wasip2Error;
 pub use plan::{

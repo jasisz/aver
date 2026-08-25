@@ -14,11 +14,9 @@
 //! cannot retrofit. See the plan in
 //! `~/.claude-personal/plans/zaplanujmy-sobie-adnie-to-snug-rabin.md`.
 //!
-//! Phase 1.2b1.2 wires the registry skeleton + the import-section
-//! branch. The slots themselves get exercised in Phase 1.2b1.5
-//! when the call-site lowering for Console.print/error/warn lands.
-//! Until then, programs that touch any wasip2-relevant effect are
-//! still rejected upstream by `wasip2::effect_check`.
+//! Source capability target rows reject unavailable operations before
+//! this registry is populated; every operation that reaches this layer
+//! therefore has a corresponding canonical-ABI lowering.
 
 use std::collections::HashMap;
 
@@ -564,7 +562,7 @@ pub(super) enum Wasip2ImportSlot {
     // The proxy world inverts ownership vs. the outgoing-handler
     // path: the host hands us an incoming-request + a response-
     // outparam, we decode, run the user's Aver handler, encode the
-    // returned `HttpResponse` into an outgoing-response, and call
+    // returned `Http.Response` into an outgoing-response, and call
     // `response-outparam.set`. Every slot below is a piece of that
     // choreography. Reused slots (fields.append, fields.entries,
     // outgoing-body.write/finish, output-stream.blocking-write-and-

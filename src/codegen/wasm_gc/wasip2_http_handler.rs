@@ -6,7 +6,7 @@
 //! outparam>)`. The host calls into us once per inbound HTTP
 //! request; we decode the incoming-request resource into an Aver
 //! `HttpRequest`, run the user's source-level handler fn, encode
-//! the returned `HttpResponse` into an outgoing-response resource,
+//! the returned `Http.Response` into an outgoing-response resource,
 //! and call `response-outparam.set` — the host then writes the
 //! response bytes back to the client.
 //!
@@ -38,7 +38,7 @@
 //! 8. Build `HttpRequest` via `struct.new` over (method, path,
 //!    query, body_string, headers_map).
 //! 9. Call user handler — wasm fn idx known at module-emit time.
-//! 10. Extract `HttpResponse.{status, body, headers}` from the
+//! 10. Extract `Http.Response.{status, body, headers}` from the
 //!     returned struct ref.
 //! 11. Allocate response fields, append every (key, value) pair
 //!     from the response Map, plus a synthesised `Content-Length`.
@@ -89,7 +89,7 @@ pub(super) struct ServerHandlerIndices {
     /// `HttpRequest` struct type idx (method, path, query, body,
     /// headers).
     pub http_request_type_idx: u32,
-    /// `HttpResponse` struct type idx (status, body, headers).
+    /// `Http.Response` struct type idx (status, body, headers).
     pub http_response_type_idx: u32,
     /// `Map<String, List<String>>` slot triple — used for both the
     /// request-headers in (built bottom-up from fields.entries) and
@@ -106,10 +106,10 @@ pub(super) struct ServerHandlerIndices {
     /// request-headers build.
     pub option_list_string_type_idx: u32,
     /// `Int = ℤ`: wasm fn idx of `__aint_to_i64_checked` (TRAPS on an
-    /// out-of-i64 Big), `Some` iff bignum. The user `HttpResponse.status`
+    /// out-of-i64 Big), `Some` iff bignum. The user `Http.Response.status`
     /// field is the `$AverInt` carrier and flows OUT to the host; reading it
     /// for `set-status-code` CHECKED-lowers to i64 (then `i32.wrap`) so an
-    /// out-of-range status REJECTS, mirroring the VM (`HttpResponse.status
+    /// out-of-range status REJECTS, mirroring the VM (`Http.Response.status
     /// is out of range`), instead of an `i32.wrap` saturating a Big into a
     /// wrong in-range code.
     pub aint_to_i64_checked_fn_idx: Option<u32>,
@@ -161,7 +161,7 @@ pub(super) struct ServerHandlerHelperFns {
     pub map_set_fn: u32,
     pub map_get_fn: u32,
 
-    /// The user's `(HttpRequest) -> HttpResponse` handler fn —
+    /// The user's `(HttpRequest) -> Http.Response` handler fn —
     /// resolved at module emit time from the `--handler` name.
     pub user_handler_fn: u32,
 }
@@ -299,11 +299,11 @@ pub(super) fn emit_aver_http_handle(
     // 61  = uh_values  (ref values_arr)
     // 62  = uh_node    (ref list_string)
     // 63  = req_headers_map  (ref map)  built from incoming-request.headers
-    // 64  = resp_headers_map (ref map)  pulled out of HttpResponse
+    // 64  = resp_headers_map (ref map)  pulled out of Http.Response
     // 65  = h_opt      (ref Option<List<String>>)
     // 66  = h_tail     (ref list_string)
     // 67  = req_struct (ref HttpRequest)
-    // 68  = resp_struct (ref HttpResponse)
+    // 68  = resp_struct (ref Http.Response)
     let i32_count = 52u32 - 2; // 50 i32 locals (after the 2 params)
     let mut f = Function::new([
         (i32_count, ValType::I32),
@@ -1057,7 +1057,7 @@ pub(super) fn emit_aver_http_handle(
     f.instruction(&Instruction::Call(h.user_handler_fn));
     f.instruction(&Instruction::LocalSet(l_resp_struct));
 
-    // ── 10. Extract HttpResponse.{status, body, headers}.
+    // ── 10. Extract Http.Response.{status, body, headers}.
     f.instruction(&Instruction::LocalGet(l_resp_struct));
     f.instruction(&Instruction::StructGet {
         struct_type_index: resp_idx,
@@ -1065,7 +1065,7 @@ pub(super) fn emit_aver_http_handle(
     });
     // `Int = ℤ`: the status field is the `$AverInt` carrier flowing OUT to
     // the host — CHECKED-lower to i64 before the `i32.wrap` so an out-of-
-    // i64 status TRAPS (the VM rejects it: `HttpResponse.status is out of
+    // i64 status TRAPS (the VM rejects it: `Http.Response.status is out of
     // range`) instead of saturating a Big into a wrong in-range code.
     if let Some(to_checked) = indices.aint_to_i64_checked_fn_idx {
         f.instruction(&Instruction::Call(to_checked));

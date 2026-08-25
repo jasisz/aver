@@ -14,7 +14,7 @@
 //! Wave 2 still requires single-stmt expr bodies (multi-stmt with
 //! `Let` lands in wave 3 alongside `match` / `Try`). Built-in
 //! constructors (`Result.Ok`, `Option.Some`, …) and record types
-//! with no `TypeId` (`HttpResponse`, `Header`, …) are also wave 3.
+//! with no `TypeId` (`Http.Response`, `Header`, …) are also wave 3.
 
 use aver::ir::mir::lower_program;
 use aver::ir::pipeline::{self, PipelineConfig, TypecheckMode};

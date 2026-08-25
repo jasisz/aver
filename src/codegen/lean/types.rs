@@ -213,11 +213,11 @@ pub fn type_to_lean(ty: &Type) -> String {
 
 /// Lean structure name for an Aver named record/type.
 ///
-/// A builtin HOST carrier record (`Tcp.Connection`, `HttpResponse`,
-/// `Terminal.Size`, …) is emitted into `AverCommon` under a dot →
+/// A compiler-owned host carrier record (`Tcp.Connection`, `Tcp.Dial`,
+/// `Tcp.Listener`, …) is emitted into `AverCommon` under a dot →
 /// underscore mangled name (see [`crate::codegen::builtin_records`],
 /// the single source of truth for these), so every reference to one
-/// must mangle the same way. A USER record is emitted inside its
+/// must mangle the same way. A source-owned record is emitted inside its
 /// owning module's `namespace M`, so its Lean name is the dotted
 /// namespaced path (`Domain.Rational.Fraction`) — the dots must be
 /// preserved or the type ascription fails to resolve, with each

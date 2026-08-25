@@ -34,10 +34,10 @@ pub use int_list::{
 pub use listbuilder::{list_builder_finalize, list_builder_new, list_builder_push};
 pub use packed_u8::AverPackedU8;
 pub use runtime::{
-    append_bytes, append_text, cli_args, console_error, console_print, console_warn, delete_dir,
-    delete_file, env_get, env_set, file_size, list_dir, make_dir, path_exists, read_bytes,
-    read_bytes_at, read_line, read_text, string_slice, time_now, time_sleep, time_unix_ms,
-    write_bytes, write_text,
+    append_bytes, append_text, capture_console_output, cli_args, console_error, console_print,
+    console_warn, delete_dir, delete_file, env_get, env_set, file_size, list_dir, make_dir,
+    path_exists, read_bytes, read_bytes_at, read_line, read_text, string_slice, time_now,
+    time_sleep, time_unix_ms, write_bytes, write_text,
 };
 pub use service_types::{
     BranchPath, HttpHeaders, HttpRequest, HttpResponse, TcpConnection, TcpDial, TcpListener,
