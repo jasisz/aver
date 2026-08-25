@@ -1289,6 +1289,38 @@ pub fn fn_key_for_decl(ctx: &CodegenContext, fd: &FnDef) -> crate::ir::FnKey {
 /// Round-7: build a [`crate::ir::TypeKey`] from a borrowed
 /// `&TypeDef`. Same shape as [`fn_key_for_decl`] — pointer-eq
 /// against `ctx.modules[*].type_defs` resolves the owning module.
+/// Module prefixes a bare name asked from `scope` is allowed to reach: the
+/// transitive `depends` closure of the asking module.
+///
+/// `None` means "no restriction" — `scope` is the entry (or names nothing
+/// this program loaded), and every module in the list is there because the
+/// entry reaches it.
+///
+/// Backends that resolve a bare type name have to consult this. A bare name
+/// carries no module, so walking every loaded module let a declaration the
+/// asker never imports answer for it, decided by nothing but the order the
+/// module list happens to be in. jasisz/aver#1134.
+pub fn visible_module_prefixes(
+    scope: Option<&str>,
+    ctx: &CodegenContext,
+) -> Option<HashSet<String>> {
+    let scope = scope?;
+    ctx.modules.iter().find(|module| module.prefix == scope)?;
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut pending = vec![scope.to_string()];
+    while let Some(prefix) = pending.pop() {
+        let Some(module) = ctx.modules.iter().find(|module| module.prefix == prefix) else {
+            continue;
+        };
+        for dependency in &module.depends {
+            if seen.insert(dependency.clone()) {
+                pending.push(dependency.clone());
+            }
+        }
+    }
+    Some(seen)
+}
+
 pub fn type_key_for_decl(ctx: &CodegenContext, td: &TypeDef) -> crate::ir::TypeKey {
     for m in &ctx.modules {
         for t in &m.type_defs {

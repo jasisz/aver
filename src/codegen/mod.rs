@@ -1264,6 +1264,68 @@ impl crate::verify_law::FnSigOracle for CodegenContext {
     }
 }
 
+/// Minimal `CodegenContext` for unit tests that only exercise name and
+/// scope resolution over `modules`. Everything a resolution test does not
+/// read is left empty.
+#[cfg(test)]
+pub(crate) fn empty_test_ctx() -> CodegenContext {
+    CodegenContext {
+        items: vec![],
+        type_defs: vec![],
+        fn_defs: vec![],
+        project_name: "test".to_string(),
+        modules: vec![],
+        capabilities: Default::default(),
+        module_prefixes: std::collections::HashSet::new(),
+        policy: None,
+        emit_replay_runtime: false,
+        runtime_policy_from_env: false,
+        guest_entry: None,
+        emit_self_host_support: false,
+        mutual_tco_members: std::collections::HashSet::new(),
+        recursive_fns: std::collections::HashSet::new(),
+        buffer_build_sinks: std::collections::HashMap::new(),
+        buffer_fusion_sites: Vec::new(),
+        synthesized_buffered_fns: Vec::new(),
+        packed_sequence_layouts: std::collections::HashMap::new(),
+        proof_ir: crate::ir::ProofIR::default(),
+        symbol_table: crate::ir::SymbolTable::default(),
+        current_module_scope: std::cell::RefCell::new(None),
+        lean_do_block: std::cell::Cell::new(false),
+        declined_claims: std::cell::RefCell::new(std::collections::BTreeMap::new()),
+        substituted_compile_errors: std::cell::RefCell::new(Vec::new()),
+        omitted_verify_cases: std::cell::RefCell::new(Vec::new()),
+        resolved_program: crate::codegen::program_view::ResolvedProgramView::default(),
+        program_shape: None,
+        mir_program: None,
+        bare_i64: Default::default(),
+        discovered_lemmas: Vec::new(),
+        sample_expected: std::collections::HashMap::new(),
+        declined_cases: std::collections::HashMap::new(),
+        allow_mathlib: false,
+        hand_proofs: Default::default(),
+    }
+}
+
+/// A `ModuleInfo` carrying only what a resolution test needs: which module
+/// this is, what it may see through `depends`, and what it declares.
+#[cfg(test)]
+pub(crate) fn test_module(prefix: &str, depends: &[&str], type_defs: Vec<TypeDef>) -> ModuleInfo {
+    ModuleInfo {
+        prefix: prefix.to_string(),
+        depends: depends.iter().map(|d| d.to_string()).collect(),
+        exposes: vec![],
+        exposes_opaque: vec![],
+        type_defs,
+        fn_defs: vec![],
+        capability_items: vec![],
+        capability_semantics: None,
+        verify_blocks: vec![],
+        verify_laws: vec![],
+        analysis: None,
+    }
+}
+
 #[cfg(test)]
 mod project_output_tests {
     use super::ProjectOutput;
