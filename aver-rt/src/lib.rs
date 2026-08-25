@@ -7,7 +7,6 @@ pub mod crypto;
 mod display;
 #[cfg(feature = "http")]
 pub mod http;
-pub mod http_server;
 pub mod int;
 pub mod int_list;
 pub mod listbuilder;

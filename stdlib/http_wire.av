@@ -1,0 +1,431 @@
+module HttpWire
+    intent =
+        "Frames HTTP/1.1 requests from Bytes and renders responses back to Bytes."
+        "The module is pure Aver source: sockets and deployment hosts stay outside."
+    depends [Bytes]
+    exposes [Framed, frameRequest, renderResponse, requestCloses, responseCloses]
+    effects []
+
+type Framed
+    Complete(HttpRequest, Int)
+    Partial
+    Malformed(String)
+
+fn frameRequest(buffer: Bytes) -> Framed
+    ? "Returns one complete request and consumed byte count, or says whether the buffer needs more bytes or is malformed."
+    withHeadEnd(Bytes.octets(buffer), headEnd(Bytes.octets(buffer), 0))
+
+fn withHeadEnd(octets: List<Int>, end: Int) -> Framed
+    ? "A request head is bounded whether its terminator has arrived or not."
+    match end < 0
+        true -> match List.len(octets) > 65536
+            true -> Framed.Malformed("request head exceeds 65536 bytes")
+            false -> Framed.Partial
+        false -> match end > 65536
+            true -> Framed.Malformed("request head exceeds 65536 bytes")
+            false -> withHeadBytes(octets, end, Bytes.fromList(List.take(octets, end - 4)))
+
+fn withHeadBytes(octets: List<Int>, end: Int, head: Result<Bytes, String>) -> Framed
+    ? "The request head must be valid UTF-8 before line parsing."
+    match head
+        Result.Err(reason) -> Framed.Malformed(reason)
+        Result.Ok(bytes) -> withHeadText(octets, end, String.fromUtf8(bytes))
+
+fn withHeadText(octets: List<Int>, end: Int, head: Result<String, String>) -> Framed
+    ? "Splits a decoded head into request-line and header lines."
+    match head
+        Result.Err(_) -> Framed.Malformed("request head is not valid UTF-8")
+        Result.Ok(text) -> withLines(octets, end, String.split(text, "\r\n"))
+
+fn withLines(octets: List<Int>, end: Int, lines: List<String>) -> Framed
+    ? "The first line is the request line; every remaining line is a field."
+    match lines
+        [] -> Framed.Malformed("empty request head")
+        [requestLine, ..headerLines] -> withRequestLine(octets, end, String.split(requestLine, " "), collectHeaders(headerLines, {}))
+
+fn withRequestLine(octets: List<Int>, end: Int, parts: List<String>, headers: Result<Map<String, List<String>>, String>) -> Framed
+    ? "Accepts exactly METHOD SP TARGET SP HTTP/1.1."
+    match parts
+        [] -> Framed.Malformed("empty request line")
+        [method, ..afterMethod] -> match method == ""
+            true -> Framed.Malformed("request line has empty method")
+            false -> match afterMethod
+                [] -> Framed.Malformed("request line has no target")
+                [target, ..afterTarget] -> match target == ""
+                    true -> Framed.Malformed("request line has empty target")
+                    false -> match afterTarget
+                        [] -> Framed.Malformed("request line has no version")
+                        [version, ..rest] -> withVersion(octets, end, method, target, version, rest, headers)
+
+fn withVersion(octets: List<Int>, end: Int, method: String, target: String, version: String, rest: List<String>, headers: Result<Map<String, List<String>>, String>) -> Framed
+    ? "Rejects other HTTP versions and extra request-line fields explicitly."
+    match List.len(rest) > 0
+        true -> Framed.Malformed("request line has trailing fields")
+        false -> match version == "HTTP/1.1"
+            false -> Framed.Malformed("unsupported version '{version}'")
+            true -> withHeaders(octets, end, method, target, headers)
+
+fn withHeaders(octets: List<Int>, end: Int, method: String, target: String, headers: Result<Map<String, List<String>>, String>) -> Framed
+    ? "Header parsing and content length decide whether the body is complete."
+    match headers
+        Result.Err(reason) -> Framed.Malformed(reason)
+        Result.Ok(fields) -> match Map.get(fields, "expect")
+            Option.Some(_) -> Framed.Malformed("expect is not supported")
+            Option.None -> withLength(octets, end, method, target, fields, bodyLength(fields))
+
+fn withLength(octets: List<Int>, end: Int, method: String, target: String, headers: Map<String, List<String>>, length: Result<Int, String>) -> Framed
+    ? "A short body is partial; an excessive declared body is rejected before allocation."
+    match length
+        Result.Err(reason) -> Framed.Malformed(reason)
+        Result.Ok(declared) -> match List.len(octets) < end + declared
+            true -> Framed.Partial
+            false -> withBody(end, method, target, headers, declared, Bytes.fromList(List.take(List.drop(octets, end), declared)))
+
+fn withBody(end: Int, method: String, target: String, headers: Map<String, List<String>>, declared: Int, body: Result<Bytes, String>) -> Framed
+    ? "The public HttpRequest remains text-shaped, so non-UTF-8 request bodies fail explicitly."
+    match body
+        Result.Err(reason) -> Framed.Malformed(reason)
+        Result.Ok(bytes) -> withBodyText(end, method, target, headers, declared, String.fromUtf8(bytes))
+
+fn withBodyText(end: Int, method: String, target: String, headers: Map<String, List<String>>, declared: Int, body: Result<String, String>) -> Framed
+    ? "Separates path and query while preserving every query delimiter after the first."
+    match body
+        Result.Err(_) -> Framed.Malformed("request body is not valid UTF-8")
+        Result.Ok(text) -> requestFromTarget(end, method, String.split(target, "?"), headers, declared, text)
+
+fn requestFromTarget(end: Int, method: String, parts: List<String>, headers: Map<String, List<String>>, declared: Int, body: String) -> Framed
+    ? "Builds the same HttpRequest record consumed by native and lifted edge handlers."
+    match parts
+        [] -> Framed.Malformed("request target is empty")
+        [path, ..queryParts] -> Framed.Complete(HttpRequest(method = method, path = path, query = String.join(queryParts, "?"), body = body, headers = headers), end + declared)
+
+fn headEnd(octets: List<Int>, index: Int) -> Int
+    ? "Returns the index after CRLF CRLF, or -1 while the head is incomplete."
+    match octets
+        [] -> -1
+        [a, ..t1] -> match t1
+            [] -> -1
+            [b, ..t2] -> match t2
+                [] -> -1
+                [c, ..t3] -> match t3
+                    [] -> -1
+                    [d, .._] -> match isBlankLine(a, b, c, d)
+                        true -> index + 4
+                        false -> headEnd(t1, index + 1)
+
+fn isBlankLine(a: Int, b: Int, c: Int, d: Int) -> Bool
+    ? "Recognizes CRLF CRLF without decoding the byte stream."
+    Bool.and(Bool.and(a == 13, b == 10), Bool.and(c == 13, d == 10))
+
+fn collectHeaders(lines: List<String>, acc: Map<String, List<String>>) -> Result<Map<String, List<String>>, String>
+    ? "Normalizes field names to lowercase and preserves repeated values."
+    match lines
+        [] -> Result.Ok(acc)
+        [line, ..rest] -> match line == ""
+            true -> collectHeaders(rest, acc)
+            false -> collectOne(line, String.split(line, ":"), rest, acc)
+
+fn collectOne(line: String, parts: List<String>, rest: List<String>, acc: Map<String, List<String>>) -> Result<Map<String, List<String>>, String>
+    ? "Splits only the first colon logically by joining the remaining value fragments."
+    match parts
+        [] -> Result.Err("header line '{line}' has no name")
+        [name, ..value] -> match value
+            [] -> Result.Err("header line '{line}' has no colon")
+            [_, .._] -> checkedHeader(line, String.toLower(String.trim(name)), String.trim(String.join(value, ":")), rest, acc)
+
+fn checkedHeader(line: String, name: String, value: String, rest: List<String>, acc: Map<String, List<String>>) -> Result<Map<String, List<String>>, String>
+    ? "Empty or whitespace-bearing field names are rejected instead of normalized ambiguously."
+    match Bool.or(name == "", Bool.or(String.contains(name, " "), String.contains(name, "\t")))
+        true -> Result.Err("header line '{line}' has invalid name")
+        false -> collectHeaders(rest, appendHeader(acc, name, value))
+
+fn appendHeader(headers: Map<String, List<String>>, name: String, value: String) -> Map<String, List<String>>
+    ? "Repeated fields append in wire order."
+    match Map.get(headers, name)
+        Option.None -> Map.set(headers, name, [value])
+        Option.Some(values) -> Map.set(headers, name, List.concat(values, [value]))
+
+fn bodyLength(headers: Map<String, List<String>>) -> Result<Int, String>
+    ? "HTTP/1.1 chunking is deliberately unsupported; repeated content-length values must agree."
+    match Map.get(headers, "transfer-encoding")
+        Option.Some(_) -> Result.Err("transfer-encoding is not supported")
+        Option.None -> match Map.get(headers, "content-length")
+            Option.None -> Result.Ok(0)
+            Option.Some(values) -> consistentLengths(values, Option.None)
+
+fn consistentLengths(values: List<String>, expected: Option<Int>) -> Result<Int, String>
+    ? "Accepts duplicate identical lengths and rejects conflicting framing."
+    match values
+        [] -> Result.Err("content-length has no value")
+        [text, ..rest] -> match checkedLength(text, Int.fromString(text))
+            Result.Err(reason) -> Result.Err(reason)
+            Result.Ok(value) -> match expected
+                Option.None -> match rest
+                    [] -> Result.Ok(value)
+                    [_, .._] -> consistentLengths(rest, Option.Some(value))
+                Option.Some(wanted) -> match value == wanted
+                    false -> Result.Err("conflicting content-length values")
+                    true -> match rest
+                        [] -> Result.Ok(value)
+                        [_, .._] -> consistentLengths(rest, expected)
+
+fn checkedLength(text: String, parsed: Result<Int, String>) -> Result<Int, String>
+    ? "Bounds request bodies to the same ten-megabyte order as Tcp reads."
+    match parsed
+        Result.Err(_) -> Result.Err("content-length '{text}' is not a number")
+        Result.Ok(value) -> match value < 0
+            true -> Result.Err("content-length '{text}' is negative")
+            false -> match value > 10485760
+                true -> Result.Err("content-length '{text}' exceeds 10485760 bytes")
+                false -> Result.Ok(value)
+
+fn renderResponse(response: HttpResponse) -> Result<Bytes, String>
+    ? "Validates status and header lines, owns content-length, and UTF-8 encodes the complete response."
+    match Bool.or(response.status < 100, response.status > 999)
+        true -> Result.Err("HTTP response status {response.status} is outside 100..999")
+        false -> withRenderedFields(response, renderFields(response.headers, Map.keys(response.headers), ""))
+
+fn withRenderedFields(response: HttpResponse, fields: Result<String, String>) -> Result<Bytes, String>
+    ? "Assembles the wire response only after every user header has passed injection checks."
+    match fields
+        Result.Err(reason) -> Result.Err(reason)
+        Result.Ok(text) -> Result.Ok(String.toUtf8("HTTP/1.1 {response.status} {statusReason(response.status)}\r\n" + text + "content-length: {String.byteLength(response.body)}\r\n\r\n" + response.body))
+
+fn renderFields(headers: Map<String, List<String>>, names: List<String>, acc: String) -> Result<String, String>
+    ? "Renders every value separately and replaces any caller-provided content-length."
+    match names
+        [] -> Result.Ok(acc)
+        [name, ..rest] -> match String.toLower(name) == "content-length"
+            true -> renderFields(headers, rest, acc)
+            false -> match safeHeaderName(name)
+                false -> Result.Err("HTTP response header name '{name}' is invalid")
+                true -> renderValues(headers, names, name, rest, Map.get(headers, name), acc)
+
+fn renderValues(headers: Map<String, List<String>>, names: List<String>, name: String, rest: List<String>, values: Option<List<String>>, acc: String) -> Result<String, String>
+    ? "A missing map value is impossible for Map.keys but remains fail-closed."
+    match values
+        Option.None -> Result.Err("HTTP response header '{name}' disappeared during rendering")
+        Option.Some(items) -> appendValues(headers, rest, name, items, acc)
+
+fn appendValues(headers: Map<String, List<String>>, rest: List<String>, name: String, values: List<String>, acc: String) -> Result<String, String>
+    ? "Rejects CR/LF in values so a response cannot smuggle a second header or status line."
+    match values
+        [] -> renderFields(headers, rest, acc)
+        [value, ..tail] -> match safeHeaderValue(value)
+            false -> Result.Err("HTTP response header '{name}' contains a line break")
+            true -> appendValues(headers, rest, name, tail, acc + "{name}: {value}\r\n")
+
+fn safeHeaderName(name: String) -> Bool
+    ? "A compact conservative field-name check sufficient to prevent line injection and ambiguity."
+    Bool.and(name != "", Bool.not(Bool.or(String.contains(name, ":"), Bool.or(String.contains(name, "\r"), Bool.or(String.contains(name, "\n"), Bool.or(String.contains(name, " "), String.contains(name, "\t")))))))
+
+fn safeHeaderValue(value: String) -> Bool
+    ? "Header values may contain ordinary punctuation but never line breaks."
+    Bool.not(Bool.or(String.contains(value, "\r"), String.contains(value, "\n")))
+
+fn requestCloses(request: HttpRequest) -> Bool
+    ? "HTTP/1.1 keeps a connection alive unless the request explicitly says close."
+    headerContains(request.headers, "connection", "close")
+
+fn responseCloses(response: HttpResponse) -> Bool
+    ? "The handler may explicitly end the session through its response headers."
+    headerContains(response.headers, "connection", "close")
+
+fn headerContains(headers: Map<String, List<String>>, name: String, wanted: String) -> Bool
+    ? "Matches a normalized token across repeated header values."
+    match Map.get(headers, name)
+        Option.None -> false
+        Option.Some(values) -> valuesContain(values, wanted)
+
+fn valuesContain(values: List<String>, wanted: String) -> Bool
+    ? "Comma-separated connection tokens are compared case-insensitively."
+    match values
+        [] -> false
+        [value, ..rest] -> match tokensContain(String.split(String.toLower(value), ","), wanted)
+            true -> true
+            false -> valuesContain(rest, wanted)
+
+fn tokensContain(tokens: List<String>, wanted: String) -> Bool
+    ? "Trims each comma-separated header token."
+    match tokens
+        [] -> false
+        [token, ..rest] -> match String.trim(token) == wanted
+            true -> true
+            false -> tokensContain(rest, wanted)
+
+fn statusReason(status: Int) -> String
+    ? "Provides conventional reason phrases; unknown valid statuses remain wire-valid."
+    match status
+        100 -> "Continue"
+        200 -> "OK"
+        201 -> "Created"
+        202 -> "Accepted"
+        204 -> "No Content"
+        301 -> "Moved Permanently"
+        302 -> "Found"
+        304 -> "Not Modified"
+        400 -> "Bad Request"
+        401 -> "Unauthorized"
+        403 -> "Forbidden"
+        404 -> "Not Found"
+        405 -> "Method Not Allowed"
+        408 -> "Request Timeout"
+        413 -> "Content Too Large"
+        417 -> "Expectation Failed"
+        429 -> "Too Many Requests"
+        500 -> "Internal Server Error"
+        501 -> "Not Implemented"
+        502 -> "Bad Gateway"
+        503 -> "Service Unavailable"
+        _ -> "Status"
+
+fn consumed(framed: Framed) -> Int
+    ? "Exposes the framing bound for laws without affecting the public serving API."
+    match framed
+        Framed.Complete(_, count) -> count
+        Framed.Partial -> 0
+        Framed.Malformed(_) -> 0
+
+verify frameRequest
+    frameRequest(String.toUtf8("GET /")) => Framed.Partial
+    frameRequest(String.toUtf8("GET /hello?name=ada HTTP/1.1\r\nhost: example\r\n\r\n")) => Framed.Complete(HttpRequest(method = "GET", path = "/hello", query = "name=ada", body = "", headers = {"host" => ["example"]}), 47)
+    frameRequest(String.toUtf8("GET / HTTP/1.0\r\n\r\n")) => Framed.Malformed("unsupported version 'HTTP/1.0'")
+    frameRequest(String.toUtf8("POST / HTTP/1.1\r\ncontent-length: 5\r\n\r\nab")) => Framed.Partial
+    frameRequest(String.toUtf8("POST / HTTP/1.1\r\ncontent-length: 2\r\ncontent-length: 3\r\n\r\nab")) => Framed.Malformed("conflicting content-length values")
+    frameRequest(String.toUtf8("POST / HTTP/1.1\r\nexpect: 100-continue\r\ncontent-length: 2\r\n\r\n")) => Framed.Malformed("expect is not supported")
+
+verify bodyLength
+    bodyLength({}) => Result.Ok(0)
+    bodyLength({"content-length" => ["12", "12"]}) => Result.Ok(12)
+    bodyLength({"content-length" => ["12", "13"]}) => Result.Err("conflicting content-length values")
+    bodyLength({"transfer-encoding" => ["chunked"]}) => Result.Err("transfer-encoding is not supported")
+
+verify renderResponse
+    renderResponse(HttpResponse(status = 200, body = "ok", headers = {})) => Result.Ok(String.toUtf8("HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok"))
+    renderResponse(HttpResponse(status = 99, body = "", headers = {})) => Result.Err("HTTP response status 99 is outside 100..999")
+    renderResponse(HttpResponse(status = 200, body = "", headers = {"x" => ["a\r\nb"]})) => Result.Err("HTTP response header 'x' contains a line break")
+
+verify requestCloses
+    requestCloses(HttpRequest(method = "GET", path = "/", query = "", body = "", headers = {})) => false
+    requestCloses(HttpRequest(method = "GET", path = "/", query = "", body = "", headers = {"connection" => ["keep-alive, Close"]})) => true
+
+verify consumed law neverOverrunsTheBuffer
+    given text: String = ["", "GET /", "GET / HTTP/1.1\r\n\r\n", "GET / HTTP/1.0\r\n\r\n", "POST / HTTP/1.1\r\ncontent-length: 2\r\n\r\nab"]
+    consumed(frameRequest(String.toUtf8(text))) <= String.byteLength(text) => true
+
+verify withHeadEnd
+    withHeadEnd([], -1) => Framed.Partial
+    withHeadEnd([13, 10, 13, 10], 4) => Framed.Malformed("request line has empty method")
+    withHeadEnd([], 65537) => Framed.Malformed("request head exceeds 65536 bytes")
+
+verify withHeadBytes
+    withHeadBytes([], 4, Result.Err("bad bytes")) => Framed.Malformed("bad bytes")
+
+verify withHeadText
+    withHeadText([], 4, Result.Err("x")) => Framed.Malformed("request head is not valid UTF-8")
+
+verify withLines
+    withLines([], 4, []) => Framed.Malformed("empty request head")
+
+verify withRequestLine
+    withRequestLine([], 4, [], Result.Ok({})) => Framed.Malformed("empty request line")
+    withRequestLine([], 4, ["GET"], Result.Ok({})) => Framed.Malformed("request line has no target")
+    withRequestLine([], 4, ["GET", "/"], Result.Ok({})) => Framed.Malformed("request line has no version")
+
+verify withVersion
+    withVersion([], 4, "GET", "/", "HTTP/1.0", [], Result.Ok({})) => Framed.Malformed("unsupported version 'HTTP/1.0'")
+    withVersion([], 4, "GET", "/", "HTTP/1.1", ["extra"], Result.Ok({})) => Framed.Malformed("request line has trailing fields")
+
+verify withHeaders
+    withHeaders([], 4, "GET", "/", Result.Err("bad header")) => Framed.Malformed("bad header")
+    withHeaders([], 4, "POST", "/", Result.Ok({"expect" => ["100-continue"]})) => Framed.Malformed("expect is not supported")
+
+verify withLength
+    withLength([], 4, "GET", "/", {}, Result.Err("bad length")) => Framed.Malformed("bad length")
+    withLength([13, 10, 13, 10], 4, "GET", "/", {}, Result.Ok(2)) => Framed.Partial
+
+verify withBody
+    withBody(4, "GET", "/", {}, 0, Result.Err("bad body")) => Framed.Malformed("bad body")
+
+verify withBodyText
+    withBodyText(4, "GET", "/", {}, 0, Result.Err("bad text")) => Framed.Malformed("request body is not valid UTF-8")
+
+verify requestFromTarget
+    requestFromTarget(4, "GET", ["/x", "a=1", "b=2"], {}, 0, "") => Framed.Complete(HttpRequest(method = "GET", path = "/x", query = "a=1?b=2", body = "", headers = {}), 4)
+
+verify headEnd
+    headEnd([], 0) => -1
+    headEnd([13, 10, 13, 10], 0) => 4
+    headEnd([71, 13, 10, 13, 10], 0) => 5
+
+verify isBlankLine
+    isBlankLine(13, 10, 13, 10) => true
+    isBlankLine(13, 10, 13, 11) => false
+
+verify collectHeaders
+    collectHeaders([], {}) => Result.Ok({})
+    collectHeaders(["Host: a", "host: b"], {}) => Result.Ok({"host" => ["a", "b"]})
+    collectHeaders(["nope"], {}) => Result.Err("header line 'nope' has no colon")
+
+verify collectOne
+    collectOne("nope", ["nope"], [], {}) => Result.Err("header line 'nope' has no colon")
+    collectOne("x: y", ["x", " y"], [], {}) => Result.Ok({"x" => ["y"]})
+
+verify checkedHeader
+    checkedHeader(" : x", "", "x", [], {}) => Result.Err("header line ' : x' has invalid name")
+    checkedHeader("x: y", "x", "y", [], {}) => Result.Ok({"x" => ["y"]})
+
+verify appendHeader
+    appendHeader({}, "x", "a") => {"x" => ["a"]}
+    appendHeader({"x" => ["a"]}, "x", "b") => {"x" => ["a", "b"]}
+
+verify consistentLengths
+    consistentLengths([], Option.None) => Result.Err("content-length has no value")
+    consistentLengths(["5", "5"], Option.None) => Result.Ok(5)
+    consistentLengths(["5", "6"], Option.None) => Result.Err("conflicting content-length values")
+
+verify checkedLength
+    checkedLength("5", Result.Ok(5)) => Result.Ok(5)
+    checkedLength("-1", Result.Ok(-1)) => Result.Err("content-length '-1' is negative")
+    checkedLength("x", Result.Err("bad")) => Result.Err("content-length 'x' is not a number")
+
+verify withRenderedFields
+    withRenderedFields(HttpResponse(status = 200, body = "ok", headers = {}), Result.Err("bad")) => Result.Err("bad")
+    withRenderedFields(HttpResponse(status = 200, body = "ok", headers = {}), Result.Ok("")) => Result.Ok(String.toUtf8("HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok"))
+
+verify renderFields
+    renderFields({}, [], "") => Result.Ok("")
+    renderFields({"content-length" => ["99"]}, ["content-length"], "") => Result.Ok("")
+
+verify renderValues
+    renderValues({}, ["x"], "x", [], Option.None, "") => Result.Err("HTTP response header 'x' disappeared during rendering")
+
+verify appendValues
+    appendValues({}, [], "x", ["a", "b"], "") => Result.Ok("x: a\r\nx: b\r\n")
+    appendValues({}, [], "x", ["a\r\nb"], "") => Result.Err("HTTP response header 'x' contains a line break")
+
+verify safeHeaderName
+    safeHeaderName("content-type") => true
+    safeHeaderName("bad name") => false
+    safeHeaderName("x:y") => false
+
+verify safeHeaderValue
+    safeHeaderValue("text/plain; charset=utf-8") => true
+    safeHeaderValue("x\ny") => false
+
+verify headerContains
+    headerContains({}, "connection", "close") => false
+    headerContains({"connection" => ["keep-alive", "close"]}, "connection", "close") => true
+
+verify valuesContain
+    valuesContain([], "close") => false
+    valuesContain(["keep-alive, CLOSE"], "close") => true
+
+verify tokensContain
+    tokensContain([], "close") => false
+    tokensContain([" keep-alive ", " close "], "close") => true
+
+verify statusReason
+    statusReason(200) => "OK"
+    statusReason(404) => "Not Found"
+    statusReason(799) => "Status"

@@ -26,8 +26,8 @@ fn natural_is_smart_constructor() {
 
 #[test]
 fn weather_is_orchestration_with_shell_effects() {
-    // weather.av declares `effects [Console, Http, HttpServer, Tcp]`.
-    // `HttpServer.listen*` is a shell/lifecycle effect (long-running,
+    // weather.av declares `effects [Console, Http, Tcp, Process]`.
+    // `Tcp.listen` is a shell/lifecycle effect (long-running,
     // not Oracle-classifiable by design — see memory), so purity must
     // be ShellEffectful, NOT something that suggests "compiler can't
     // recognize it" (the classifier knows every Aver effect).
@@ -38,7 +38,7 @@ fn weather_is_orchestration_with_shell_effects() {
     .expect("weather analyze");
     assert!(
         matches!(r.shape.purity, Purity::ShellEffectful),
-        "weather mixes Oracle (Http.get, Tcp.*) with shell (HttpServer.listenWith) — must be ShellEffectful, got {:?}",
+        "weather mixes request effects with the Tcp.listen shell — must be ShellEffectful, got {:?}",
         r.shape.purity
     );
     assert!(matches!(r.shape.entry, Entry::Main));

@@ -173,42 +173,6 @@ where
     })
 }
 
-pub(crate) fn should_skip_http_server() -> bool {
-    crate::aver_replay::is_record_mode()
-}
-
-pub fn http_server_listen<F>(port: i64, mut handler: F) -> Result<(), AverStr>
-where
-    F: FnMut(&aver_rt::HttpRequest) -> HttpResponse,
-{
-    if should_skip_http_server() {
-        return Ok(());
-    }
-    // User handlers are emitted borrow-by-default (`fn(&HttpRequest)`),
-    // so adapt the owned-value `aver_rt` callback to a by-reference call.
-    // The handler yields the surface `HttpResponse` (`AverInt` status); lower
-    // it to the host struct (`i64` status) before `aver_rt::http_server`.
-    aver_rt::http_server::listen(port, move |req| http_response_to_host(handler(&req)))
-        .map_err(AverStr::from)
-}
-
-pub fn http_server_listen_with<C, F>(port: i64, context: C, mut handler: F) -> Result<(), AverStr>
-where
-    C: Clone,
-    F: FnMut(&C, &aver_rt::HttpRequest) -> HttpResponse,
-{
-    if should_skip_http_server() {
-        return Ok(());
-    }
-    // User handlers take both the context and the request by reference
-    // (`fn(&Ctx, &HttpRequest)`); adapt the owned-value `aver_rt`
-    // callback accordingly.
-    aver_rt::http_server::listen_with(port, context, move |ctx, req| {
-        http_response_to_host(handler(&ctx, &req))
-    })
-    .map_err(AverStr::from)
-}
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct HttpResponse {
     pub status: aver_rt::AverInt,
@@ -237,23 +201,12 @@ fn convert_http_response(r: aver_rt::HttpResponse) -> HttpResponse {
         headers: r.headers,
     }
 }
-/// Surface (`AverInt` status) → host `aver_rt::HttpResponse` (`i64` status),
-/// applied before a handler's response reaches `aver_rt::http_server`.
-pub fn http_response_to_host(r: HttpResponse) -> aver_rt::HttpResponse {
-    aver_rt::HttpResponse {
-        status: r.status.to_i64().unwrap_or(0),
-        body: r.body,
-        headers: r.headers,
-    }
-}
 impl IntoAverStr for Result<aver_rt::HttpResponse, String> {
     type Output = Result<HttpResponse, AverStr>;
     fn into_aver(self) -> Result<HttpResponse, AverStr> {
         self.map(convert_http_response).map_err(AverStr::from)
     }
 }
-
-pub use aver_rt::HttpRequest;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Terminal_Size {

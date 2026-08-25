@@ -76,7 +76,7 @@ mod wasip2_disk_bytes;
 mod wasip2_disk_read_at;
 mod wasip2_helpers;
 mod wasip2_http;
-mod wasip2_http_server;
+mod wasip2_http_handler;
 mod wasip2_imports;
 mod wasip2_tcp;
 mod wat_helper;
@@ -336,8 +336,7 @@ pub fn compile_to_wasm_gc_for_wasip2(
 
 /// `--target wasip2 --world wasi:http/proxy` entry — Phase 3 / 0.19.
 /// `handler` names the user-source fn `(HttpRequest) -> HttpResponse`
-/// reachable from `main`'s trailing `HttpServer.listen(port, handler)`
-/// call (extracted upstream by the CLI). The wasm-gc emitter swaps
+/// explicitly selected by the CLI. The wasm-gc emitter swaps
 /// the `wasi:cli/run` entry-point for `wasi:http/incoming-handler#
 /// handle`, decodes the host-supplied incoming-request resource into
 /// an Aver `HttpRequest`, runs `handler`, encodes the returned
@@ -346,10 +345,8 @@ pub fn compile_to_wasm_gc_for_wasip2(
 /// wasmCloud) then writes the response bytes back to the client.
 ///
 /// `main` still gets emitted as a regular wasm fn but is never
-/// invoked at runtime (the proxy world has no `_start`); the
-/// `HttpServer.listen` call inside it lowers to a no-op so body
-/// validation passes. The `port` arg is ignored at codegen time —
-/// the host's listener flag (`--http=:N`) decides the bind socket.
+/// invoked at runtime (the proxy world has no `_start`). The host's
+/// listener configuration decides the bind socket.
 pub fn compile_to_wasm_gc_for_wasip2_with_handler(
     items: &[TopLevel],
     _analysis: Option<&AnalysisResult>,

@@ -113,7 +113,6 @@ Today the heuristic is intentionally small and conservative:
 
 - Any mix of `Console.*` and `Terminal.*` warns. This includes cross-namespace pairs like `Console.print` with `Terminal.flush`, because both share the terminal/output channel.
 - Any pair of `Tcp.*` effects warns.
-- Any pair of `HttpServer.*` effects warns.
 - `Disk.*` warns when at least one side is mutating: `writeText`, `appendText`, `delete`, `deleteDir`, `makeDir`.
 - `Http.*` warns when at least one side is mutating: `post`, `put`, `patch`, `delete`.
 - `Env.*` warns when at least one side is mutating: `set`.

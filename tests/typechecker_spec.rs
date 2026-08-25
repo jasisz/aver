@@ -315,6 +315,44 @@ fn valid_pure_callback_for_effectful_slot() {
 }
 
 #[test]
+fn valid_forwarded_callback_effect_is_required_only_at_call_site() {
+    let src = "fn applyOnce(f: Fn(Int) -> Int ! [_], x: Int) -> Int\n    f(x)\nfn noisy(n: Int) -> Int\n    ! [Console.print]\n    Console.print(\"called\")\n    n + 1\nfn main() -> Int\n    ! [Console.print]\n    applyOnce(noisy, 10)\n";
+    assert_no_errors(src);
+}
+
+#[test]
+fn invalid_missing_forwarded_callback_effect_at_call_site() {
+    assert_error_containing(
+        "fn applyOnce(f: Fn(Int) -> Int ! [_], x: Int) -> Int\n    f(x)\nfn noisy(n: Int) -> Int\n    ! [Console.print]\n    Console.print(\"called\")\n    n + 1\nfn main() -> Int\n    applyOnce(noisy, 10)\n",
+        "passes callback 'noisy' with effect 'Console.print'",
+    );
+}
+
+#[test]
+fn invalid_forwarded_callback_marker_mixed_with_concrete_effect() {
+    assert_error_containing(
+        "fn applyOnce(f: Fn(Int) -> Int ! [_, Console.print], x: Int) -> Int\n    ! [Console.print]\n    f(x)\n",
+        "callback effect '_' must be the sole effect",
+    );
+}
+
+#[test]
+fn invalid_forwarded_callback_marker_as_ordinary_function_effect() {
+    assert_error_containing(
+        "fn dishonest() -> Int\n    ! [_]\n    1\n",
+        "Effect '_' is allowed only as the sole effect of a direct callback parameter type",
+    );
+}
+
+#[test]
+fn invalid_forwarded_callback_marker_as_module_effect() {
+    assert_error_containing(
+        "module Main\n    effects [_]\n    exposes [main]\n    intent = \"Reject an ambient callback marker.\"\n\nfn main() -> Int\n    1\n",
+        "Effect '_' is allowed only as the sole effect of a direct callback parameter type",
+    );
+}
+
+#[test]
 fn valid_simple_binding_in_fn() {
     assert_no_errors("fn f() -> Int\n    x = 5\n    x\n");
 }
@@ -1332,30 +1370,6 @@ fn error_tcp_ping_without_effect() {
         "    Tcp.ping(host, port)\n",
     );
     assert_error_containing(src, "has effect 'Tcp.ping'");
-}
-
-#[test]
-fn valid_http_server_listen_with_context() {
-    let src = concat!(
-        "fn handle(ctx: String, req: HttpRequest) -> HttpResponse\n",
-        "    HttpResponse(status = 200, body = ctx, headers = {})\n",
-        "fn main() -> Result<Unit, String>\n",
-        "    ! [HttpServer.listenWith]\n",
-        "    HttpServer.listenWith(8080, \"ok\", handle)\n",
-    );
-    assert_no_errors(src);
-}
-
-#[test]
-fn error_http_server_listen_with_bad_handler_signature_uses_context_var_in_message() {
-    let src = concat!(
-        "fn bad(ctx: Int, req: Int) -> HttpResponse\n",
-        "    HttpResponse(status = 200, body = \"ok\", headers = {})\n",
-        "fn main() -> Result<Unit, String>\n",
-        "    ! [HttpServer.listenWith]\n",
-        "    HttpServer.listenWith(8080, \"ok\", bad)\n",
-    );
-    assert_error_containing(src, "expected Fn(Context, HttpRequest) -> HttpResponse");
 }
 
 #[test]

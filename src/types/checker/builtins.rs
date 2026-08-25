@@ -43,8 +43,6 @@ impl TypeChecker {
         // caller's job (interpolation `"{x}"` or explicit
         // `Int.toString` / `Float.toString` / record-field-by-field
         // formatting). Effect ABI stays trivial across backends.
-        let context_var = || Type::Var("Context".to_string());
-
         // Oracle v1: EffectEvent = { method: String, args: List<EffectArg> }.
         // `args` element type is heterogeneous across effects (Int for
         // Random.int, Str for Console.print<T=Str>, etc.) — v0 types it
@@ -80,46 +78,6 @@ impl TypeChecker {
         // Http.post/put/patch headers param: same shape as the
         // record fields above (`Map<String, List<String>>`).
         let header_list = header_map;
-        let server_handler_effects = || {
-            let mut effects = vec![
-                "Args.get".to_string(),
-                "Console.print".to_string(),
-                "Console.error".to_string(),
-                "Console.warn".to_string(),
-                "Console.readLine".to_string(),
-                "Http.get".to_string(),
-                "Http.head".to_string(),
-                "Http.delete".to_string(),
-                "Http.post".to_string(),
-                "Http.put".to_string(),
-                "Http.patch".to_string(),
-                "Env.get".to_string(),
-                "Env.set".to_string(),
-                "HttpServer.listen".to_string(),
-                "HttpServer.listenWith".to_string(),
-            ];
-            effects.extend(
-                crate::stdlib::standard_capability_registry_ref()
-                    .operations()
-                    .filter(|operation| operation.is_effectful())
-                    .map(|operation| operation.canonical_name.clone()),
-            );
-            effects
-        };
-        let http_handler = || {
-            Type::Fn(
-                vec![Type::named("HttpRequest")],
-                Box::new(Type::named("HttpResponse")),
-                server_handler_effects(),
-            )
-        };
-        let http_handler_with_context = || {
-            Type::Fn(
-                vec![context_var(), Type::named("HttpRequest")],
-                Box::new(Type::named("HttpResponse")),
-                server_handler_effects(),
-            )
-        };
         let service_sigs: &[(&str, &[Type], Type, &[&str])] = &[
             (
                 "Args.get",
@@ -174,42 +132,6 @@ impl TypeChecker {
                 &[Type::Str, Type::Str, Type::Str, header_list()],
                 net_ret(),
                 &["Http.patch"],
-            ),
-            (
-                "HttpServer.listen",
-                &[Type::Int, http_handler()],
-                result_unit(),
-                &["HttpServer.listen"],
-            ),
-            (
-                "HttpServer.listenWith",
-                &[Type::Int, context_var(), http_handler_with_context()],
-                result_unit(),
-                &["HttpServer.listenWith"],
-            ),
-            // SelfHostRuntime.* are the self-host bridge calls — the
-            // generated Rust passes a `Val` (sumtype carrying the
-            // already-evaluated guest fn through `Val::ValFn`), not a
-            // typed `Fn(...)`. Accept any handler-position argument
-            // here; the runtime code path unwraps `Val::ValFn` and
-            // dispatches. `HttpServer.listen` (the user-facing
-            // builtin, defined above) keeps the strict `Fn(...)`
-            // signature — this opening is scoped to the bridge.
-            (
-                "SelfHostRuntime.httpServerListen",
-                &[Type::Int, Type::Var("Handler".to_string())],
-                result_unit(),
-                &["HttpServer.listen"],
-            ),
-            (
-                "SelfHostRuntime.httpServerListenWith",
-                &[
-                    Type::Int,
-                    Type::Var("Ctx".to_string()),
-                    Type::Var("Handler".to_string()),
-                ],
-                result_unit(),
-                &["HttpServer.listenWith"],
             ),
             (
                 "Env.get",

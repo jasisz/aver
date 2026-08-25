@@ -318,6 +318,7 @@ fn finalize_check_result(mut checker: TypeChecker, items: &[TopLevel]) -> TypeCh
     }
 
     check_capability_effect_shorthand(items, &checker.capabilities, &mut checker.errors);
+    check_forwarded_effect_marker(items, &mut checker.errors);
     check_module_effect_boundary(items, &mut checker.errors);
 
     TypeCheckResult {
@@ -325,6 +326,45 @@ fn finalize_check_result(mut checker: TypeChecker, items: &[TopLevel]) -> TypeCh
         fn_sigs,
         unused_bindings: checker.unused_warnings,
         capabilities: checker.capabilities,
+    }
+}
+
+fn check_forwarded_effect_marker(items: &[TopLevel], errors: &mut Vec<TypeError>) {
+    let mut reject = |line| {
+        errors.push(TypeError {
+            message: "Effect '_' is allowed only as the sole effect of a direct callback parameter type (`Fn(...) -> ... ! [_]`); it forwards that named callback's concrete effects at the call site and is not an ambient effect".to_string(),
+            line,
+            col: 1,
+            origin: None,
+            secondary: None,
+        });
+    };
+    for item in items {
+        match item {
+            TopLevel::Module(module) => {
+                if let Some(effects) = &module.effects
+                    && effects
+                        .iter()
+                        .any(|effect| effect == crate::effects::FORWARDED_CALLBACK_EFFECT)
+                {
+                    reject(module.effects_line.unwrap_or(module.line));
+                }
+            }
+            TopLevel::FnDef(fd)
+                if fd
+                    .effects
+                    .iter()
+                    .any(|effect| effect.node == crate::effects::FORWARDED_CALLBACK_EFFECT) =>
+            {
+                reject(
+                    fd.effects
+                        .iter()
+                        .find(|effect| effect.node == crate::effects::FORWARDED_CALLBACK_EFFECT)
+                        .map_or(fd.line, |effect| effect.line),
+                );
+            }
+            _ => {}
+        }
     }
 }
 
@@ -966,7 +1006,7 @@ impl TypeChecker {
         source_ctx: &str,
     ) {
         match ty {
-            Type::Fn(params, ret, _) => {
+            Type::Fn(params, ret, effects) => {
                 if !allow_top_level_param {
                     self.error_at_line(
                         line,
@@ -978,6 +1018,18 @@ impl TypeChecker {
                         ),
                     );
                     return;
+                }
+                if effects
+                    .iter()
+                    .any(|effect| effect == crate::effects::FORWARDED_CALLBACK_EFFECT)
+                    && !crate::effects::forwards_callback_effects(effects)
+                {
+                    self.error_at_line(
+                        line,
+                        format!(
+                            "{source_ctx}: callback effect '_' must be the sole effect (`Fn(...) -> ... ! [_]`); it stands for the named callback's complete concrete effect set"
+                        ),
+                    );
                 }
                 // A callback parameter may not itself take or return a fn.
                 for p in params {
@@ -1907,11 +1959,12 @@ impl TypeChecker {
                             )
                         },
                     ) && Self::match_expected_type_inner(actual_ret, expected_ret, subst, checker)
-                        && actual_effects.iter().all(|actual| {
-                            expected_effects
-                                .iter()
-                                .any(|expected| crate::effects::effect_satisfies(expected, actual))
-                        })
+                        && (crate::effects::forwards_callback_effects(expected_effects)
+                            || actual_effects.iter().all(|actual| {
+                                expected_effects.iter().any(|expected| {
+                                    crate::effects::effect_satisfies(expected, actual)
+                                })
+                            }))
                 }
                 _ => false,
             },

@@ -352,7 +352,6 @@ mod tests {
 
     #[test]
     fn unclassified_method_returns_empty() {
-        assert!(hostile_profiles_for("HttpServer.listen").is_empty());
         assert!(hostile_profiles_for("Console.print").is_empty());
         assert!(hostile_profiles_for("Foo.bar").is_empty());
     }

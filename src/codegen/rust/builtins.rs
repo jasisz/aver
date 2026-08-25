@@ -50,30 +50,10 @@ pub(super) fn builtin_needs_str_conversion(name: &str) -> bool {
     )
 }
 
-fn builtin_effect_name(name: &str) -> &str {
-    match name {
-        "SelfHostRuntime.httpServerListen" => "HttpServer.listen",
-        "SelfHostRuntime.httpServerListenWith" => "HttpServer.listenWith",
-        _ => name,
-    }
-}
-
 pub(super) fn builtin_is_effectful(name: &str) -> bool {
     matches!(
-        builtin_effect_name(name).split('.').next(),
-        Some(
-            "Args"
-                | "Console"
-                | "Http"
-                | "HttpServer"
-                | "Disk"
-                | "Env"
-                | "Random"
-                | "SelfHostRuntime"
-                | "Tcp"
-                | "Terminal"
-                | "Time"
-        )
+        name.split('.').next(),
+        Some("Args" | "Console" | "Http" | "Disk" | "Env" | "Random" | "Tcp" | "Terminal" | "Time")
     )
 }
 
@@ -97,22 +77,6 @@ fn emit_effectful_builtin_call_with_temps(name: &str, args: &[String]) -> Option
         "Http.patch" => Some(format!(
             "aver_rt::http::patch(&{}, &{}, &{}, &{})",
             args[0], args[1], args[2], args[3]
-        )),
-        "HttpServer.listen" => Some(format!(
-            "{{ let __port_value = {}; let __handler = {}; match __port_value.to_i64() {{ Some(__port) if (0..=65535).contains(&__port) => crate::http_server_listen(__port, __handler).map_err(aver_rt::AverStr::from), _ => Err(aver_rt::AverStr::from(format!(\"HttpServer.listen: port {{}} is out of range (0-65535)\", __port_value))) }} }}",
-            args[0], args[1]
-        )),
-        "HttpServer.listenWith" => Some(format!(
-            "{{ let __port_value = {}; let __context = {}.clone(); let __handler = {}; match __port_value.to_i64() {{ Some(__port) if (0..=65535).contains(&__port) => crate::http_server_listen_with(__port, __context, __handler).map_err(aver_rt::AverStr::from), _ => Err(aver_rt::AverStr::from(format!(\"HttpServer.listen: port {{}} is out of range (0-65535)\", __port_value))) }} }}",
-            args[0], args[1], args[2]
-        )),
-        "SelfHostRuntime.httpServerListen" => Some(format!(
-            "{{ let __port_value = {}; let __handler = {}; match __port_value.to_i64() {{ Some(__port) if (0..=65535).contains(&__port) => crate::self_host_support::http_server_listen(__port, __handler), _ => Err(aver_rt::AverStr::from(format!(\"HttpServer.listen: port {{}} is out of range (0-65535)\", __port_value))) }} }}",
-            args[0], args[1]
-        )),
-        "SelfHostRuntime.httpServerListenWith" => Some(format!(
-            "{{ let __port_value = {}; let __context = {}.clone(); let __handler = {}; match __port_value.to_i64() {{ Some(__port) if (0..=65535).contains(&__port) => crate::self_host_support::http_server_listen_with(__port, __context, __handler), _ => Err(aver_rt::AverStr::from(format!(\"HttpServer.listen: port {{}} is out of range (0-65535)\", __port_value))) }} }}",
-            args[0], args[1], args[2]
         )),
         "Env.get" => Some(format!("aver_rt::env_get(&{})", args[0])),
         "Env.set" => Some(format!(
@@ -191,7 +155,7 @@ fn emit_effectful_builtin_call_with_temps(name: &str, args: &[String]) -> Option
 /// depend only on the *count* of args, not on how each was rendered —
 /// which is why the shared composer can stay walker-agnostic.
 pub(super) fn compose_replay_effect_call(name: &str, arg_clones: &[String]) -> Option<String> {
-    let effect_name = builtin_effect_name(name);
+    let effect_name = name;
     let temp_names = (0..arg_clones.len())
         .map(|idx| format!("__effect_arg{}", idx))
         .collect::<Vec<_>>();
@@ -223,24 +187,6 @@ fn emit_replay_effect_arg_json(name: &str, temp_names: &[String]) -> Vec<String>
             "serde_json::Value::String(format!(\"{{}}\", {}))",
             temp_names[0]
         )],
-        "HttpServer.listen" => vec![
-            format!(
-                "aver_replay::ReplayValue::to_replay_json(&{})",
-                temp_names[0]
-            ),
-            "serde_json::Value::String(\"<handler>\".to_string())".to_string(),
-        ],
-        "HttpServer.listenWith" => vec![
-            format!(
-                "aver_replay::ReplayValue::to_replay_json(&{})",
-                temp_names[0]
-            ),
-            format!(
-                "aver_replay::ReplayValue::to_replay_json(&{})",
-                temp_names[1]
-            ),
-            "serde_json::Value::String(\"<handler>\".to_string())".to_string(),
-        ],
         _ => temp_names
             .iter()
             .map(|name| format!("aver_replay::ReplayValue::to_replay_json(&{})", name))
@@ -403,30 +349,6 @@ fn compose_effectful_builtin_raw(name: &str, args: &[String]) -> Option<String> 
             a(1),
             a(2),
             a(3)
-        )),
-
-        // ---- HttpServer ----
-        "HttpServer.listen" => Some(format!(
-            "{{ let __port_value = {}; let __handler = {}; match __port_value.to_i64() {{ Some(__port) if (0..=65535).contains(&__port) => crate::http_server_listen(__port, __handler).map_err(aver_rt::AverStr::from), _ => Err(aver_rt::AverStr::from(format!(\"HttpServer.listen: port {{}} is out of range (0-65535)\", __port_value))) }} }}",
-            a(0),
-            a(1)
-        )),
-        "HttpServer.listenWith" => Some(format!(
-            "{{ let __port_value = {}; let __context = {}.clone(); let __handler = {}; match __port_value.to_i64() {{ Some(__port) if (0..=65535).contains(&__port) => crate::http_server_listen_with(__port, __context, __handler).map_err(aver_rt::AverStr::from), _ => Err(aver_rt::AverStr::from(format!(\"HttpServer.listen: port {{}} is out of range (0-65535)\", __port_value))) }} }}",
-            a(0),
-            a(1),
-            a(2)
-        )),
-        "SelfHostRuntime.httpServerListen" => Some(format!(
-            "{{ let __port_value = {}; let __handler = {}; match __port_value.to_i64() {{ Some(__port) if (0..=65535).contains(&__port) => crate::self_host_support::http_server_listen(__port, __handler), _ => Err(aver_rt::AverStr::from(format!(\"HttpServer.listen: port {{}} is out of range (0-65535)\", __port_value))) }} }}",
-            a(0),
-            a(1)
-        )),
-        "SelfHostRuntime.httpServerListenWith" => Some(format!(
-            "{{ let __port_value = {}; let __context = {}.clone(); let __handler = {}; match __port_value.to_i64() {{ Some(__port) if (0..=65535).contains(&__port) => crate::self_host_support::http_server_listen_with(__port, __context, __handler), _ => Err(aver_rt::AverStr::from(format!(\"HttpServer.listen: port {{}} is out of range (0-65535)\", __port_value))) }} }}",
-            a(0),
-            a(1),
-            a(2)
         )),
 
         // ---- Disk ----

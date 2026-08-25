@@ -299,10 +299,6 @@ impl VmRuntime {
         self.allowed_effects = effects;
     }
 
-    pub(super) fn swap_allowed_effects(&mut self, effects: Vec<u32>) -> Vec<u32> {
-        std::mem::replace(&mut self.allowed_effects, effects)
-    }
-
     /// Check if a required effect is allowed, supporting namespace shorthand.
     /// E.g., allowed "Disk" (id=X) covers required "Disk.readText" (id=Y).
     fn vm_effect_allowed(&self, required_id: u32, symbols: &VmSymbolTable) -> bool {
@@ -487,10 +483,6 @@ impl VmRuntime {
         args: &[NanValue],
         arena: &mut Arena,
     ) -> Result<NanValue, VmError> {
-        debug_assert!(
-            !builtin.is_http_server(),
-            "HttpServer builtins require VM callback handling outside VmRuntime"
-        );
         self.ensure_builtin_effects_allowed(symbols, builtin, symbol_id)?;
         self.check_runtime_policy(builtin.name(), args, arena)?;
 

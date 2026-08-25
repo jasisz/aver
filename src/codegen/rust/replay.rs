@@ -10,7 +10,7 @@ pub(super) struct ReplayRuntimeOptions {
     pub has_terminal_types: bool,
     pub has_tcp_types: bool,
     pub has_http_types: bool,
-    pub has_http_server_types: bool,
+    pub has_http_request_types: bool,
     pub embedded_independence_cancel: bool,
     pub standard_capabilities: Vec<String>,
     pub has_provider_runtime: bool,
@@ -25,7 +25,7 @@ pub fn generate_replay_runtime(options: ReplayRuntimeOptions) -> String {
         has_terminal_types,
         has_tcp_types,
         has_http_types,
-        has_http_server_types,
+        has_http_request_types,
         embedded_independence_cancel,
         standard_capabilities,
         has_provider_runtime,
@@ -160,8 +160,8 @@ pub fn generate_replay_runtime(options: ReplayRuntimeOptions) -> String {
     if has_http_types {
         sections.push(http_type_impls());
     }
-    if has_http_server_types {
-        sections.push(http_server_type_impls());
+    if has_http_request_types {
+        sections.push(http_request_type_impls());
     }
     if has_terminal_types {
         sections.push(terminal_type_impls());
@@ -403,12 +403,13 @@ fn http_type_impls() -> String {
     .to_string()
 }
 
-fn http_server_type_impls() -> String {
+fn http_request_type_impls() -> String {
     r#"impl aver_replay::ReplayValue for aver_rt::HttpRequest {
     fn to_replay_json(&self) -> serde_json::Value {
         let mut fields = serde_json::Map::new();
         fields.insert("method".to_string(), ReplayValue::to_replay_json(&self.method));
         fields.insert("path".to_string(), ReplayValue::to_replay_json(&self.path));
+        fields.insert("query".to_string(), ReplayValue::to_replay_json(&self.query));
         fields.insert("body".to_string(), ReplayValue::to_replay_json(&self.body));
         fields.insert("headers".to_string(), ReplayValue::to_replay_json(&self.headers));
         let mut payload = serde_json::Map::new();
@@ -430,6 +431,9 @@ fn http_server_type_impls() -> String {
             )?,
             path: <aver_rt::AverStr as ReplayValue>::from_replay_json(
                 fields.get("path").ok_or_else(|| "$record HttpRequest missing field 'path'".to_string())?,
+            )?,
+            query: <aver_rt::AverStr as ReplayValue>::from_replay_json(
+                fields.get("query").ok_or_else(|| "$record HttpRequest missing field 'query'".to_string())?,
             )?,
             body: <aver_rt::AverStr as ReplayValue>::from_replay_json(
                 fields.get("body").ok_or_else(|| "$record HttpRequest missing field 'body'".to_string())?,

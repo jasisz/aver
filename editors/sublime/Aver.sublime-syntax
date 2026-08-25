@@ -100,7 +100,7 @@ contexts:
 
   namespaces:
     # Namespace.method calls: Console.print, String.len, String.firstCodePoint, etc.
-    - match: '\b(HttpServer|Terminal|Console|Option|Random|Result|String|Vector|Float|Args|Bits|Bool|Byte|Char|Disk|Http|List|Time|Env|Int|Map|Tcp)(\.)'
+    - match: '\b(Terminal|Console|Option|Random|Result|String|Vector|Float|Args|Bits|Bool|Byte|Char|Disk|Http|List|Time|Env|Int|Map|Tcp)(\.)'
       captures:
         1: support.class.namespace.aver
         2: punctuation.accessor.aver

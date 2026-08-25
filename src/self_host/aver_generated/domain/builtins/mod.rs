@@ -595,157 +595,6 @@ pub fn callBuiltinServices(
     )
 }
 
-/// Fail explicitly for host services that still need callback/runtime bridging in the self-host.
-pub fn builtinUnsupportedHostService(
-    name: AverStr,
-) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
-    crate::cancel_checkpoint();
-    Err(aver_rt::AverStr::from({
-        let mut __b = {
-            let mut __b = aver_rt::Buffer::with_capacity(
-                (aver_rt::AverInt::from_i64(68)).to_usize().unwrap_or(0),
-            );
-            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(name))));
-            __b
-        };
-        __b.push_str(&AverStr::from(
-            " is not supported in the self-hosted interpreter yet",
-        ));
-        __b
-    }))
-}
-
-/// HttpServer.listen(port, handler) through the generated self-host runtime bridge.
-pub fn builtinHttpServerListen(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
-) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
-    crate::cancel_checkpoint();
-    let pair = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
-    {
-        let (portV, handlerV) = pair;
-        crate::aver_generated::domain::builtins::builtinHttpServerListenInner(&portV, &handlerV)
-    }
-}
-
-/// Inner HttpServer.listen bridge.
-pub fn builtinHttpServerListenInner(
-    portV: &crate::aver_generated::domain::value::Val,
-    handlerV: &crate::aver_generated::domain::value::Val,
-) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
-    crate::cancel_checkpoint();
-    let port = crate::aver_generated::domain::builtins::helpers::expectInt(portV)?;
-    match {
-        let __effect_arg0 = port;
-        let __effect_arg1 = handlerV.clone();
-        crate::cancel_checkpoint();
-        aver_replay::invoke_effect(
-            "HttpServer.listen",
-            vec![
-                aver_replay::ReplayValue::to_replay_json(&__effect_arg0),
-                serde_json::Value::String("<handler>".to_string()),
-            ],
-            || {
-                let __port_value = __effect_arg0;
-                let __handler = __effect_arg1;
-                match __port_value.to_i64() {
-                    Some(__port) if (0..=65535).contains(&__port) => {
-                        crate::self_host_support::http_server_listen(__port, __handler)
-                    }
-                    _ => Err(aver_rt::AverStr::from(format!(
-                        "HttpServer.listen: port {} is out of range (0-65535)",
-                        __port_value
-                    ))),
-                }
-            },
-        )
-    } {
-        Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
-            std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValUnit),
-        )),
-        Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
-            std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValStr(e)),
-        )),
-    }
-}
-
-/// HttpServer.listenWith(port, context, handler) through the generated self-host runtime bridge.
-pub fn builtinHttpServerListenWith(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
-) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
-    crate::cancel_checkpoint();
-    {
-        let __list_subject = args.clone();
-        if let Some((portV, rest1)) = aver_rt::list_uncons_cloned(&__list_subject) {
-            {
-                let __list_subject = rest1;
-                if let Some((contextV, rest2)) = aver_rt::list_uncons_cloned(&__list_subject) {
-                    {
-                        let __list_subject = rest2;
-                        if let Some((handlerV, ignored)) =
-                            aver_rt::list_uncons_cloned(&__list_subject)
-                        {
-                            crate::aver_generated::domain::builtins::builtinHttpServerListenWithInner(&portV, &contextV, &handlerV)
-                        } else {
-                            Err(AverStr::from("HttpServer.listenWith takes 3 arguments"))
-                        }
-                    }
-                } else {
-                    Err(AverStr::from("HttpServer.listenWith takes 3 arguments"))
-                }
-            }
-        } else {
-            Err(AverStr::from("HttpServer.listenWith takes 3 arguments"))
-        }
-    }
-}
-
-/// Inner HttpServer.listenWith bridge.
-pub fn builtinHttpServerListenWithInner(
-    portV: &crate::aver_generated::domain::value::Val,
-    contextV: &crate::aver_generated::domain::value::Val,
-    handlerV: &crate::aver_generated::domain::value::Val,
-) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
-    crate::cancel_checkpoint();
-    let port = crate::aver_generated::domain::builtins::helpers::expectInt(portV)?;
-    match {
-        let __effect_arg0 = port;
-        let __effect_arg1 = contextV.clone();
-        let __effect_arg2 = handlerV.clone();
-        crate::cancel_checkpoint();
-        aver_replay::invoke_effect(
-            "HttpServer.listenWith",
-            vec![
-                aver_replay::ReplayValue::to_replay_json(&__effect_arg0),
-                aver_replay::ReplayValue::to_replay_json(&__effect_arg1),
-                serde_json::Value::String("<handler>".to_string()),
-            ],
-            || {
-                let __port_value = __effect_arg0;
-                let __context = __effect_arg1.clone();
-                let __handler = __effect_arg2;
-                match __port_value.to_i64() {
-                    Some(__port) if (0..=65535).contains(&__port) => {
-                        crate::self_host_support::http_server_listen_with(
-                            __port, __context, __handler,
-                        )
-                    }
-                    _ => Err(aver_rt::AverStr::from(format!(
-                        "HttpServer.listen: port {} is out of range (0-65535)",
-                        __port_value
-                    ))),
-                }
-            },
-        )
-    } {
-        Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
-            std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValUnit),
-        )),
-        Err(e @ _) => Ok(crate::aver_generated::domain::value::Val::ValErr(
-            std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValStr(e)),
-        )),
-    }
-}
-
 /// Random.int(min, max) -> random integer.
 pub fn builtinRandomInt(
     args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
@@ -3150,41 +2999,41 @@ pub fn callBuiltinServices__indexed(
                                             if &*__dispatch_subject == "Http.patch" {
                                                 crate::aver_generated::domain::builtins::builtinHttpBody(args, AverStr::from("patch"))
                                             } else {
-                                                if &*__dispatch_subject == "HttpServer.listen" {
-                                                    crate::aver_generated::domain::builtins::builtinHttpServerListen(args)
+                                                if &*__dispatch_subject == "Tcp.send" {
+                                                    crate::aver_generated::domain::builtins::builtinTcpSend(args)
                                                 } else {
-                                                    if &*__dispatch_subject
-                                                        == "HttpServer.listenWith"
-                                                    {
-                                                        crate::aver_generated::domain::builtins::builtinHttpServerListenWith(args)
+                                                    if &*__dispatch_subject == "Tcp.ping" {
+                                                        crate::aver_generated::domain::builtins::builtinTcpPing(args)
                                                     } else {
-                                                        if &*__dispatch_subject == "Tcp.send" {
-                                                            crate::aver_generated::domain::builtins::builtinTcpSend(args)
+                                                        if &*__dispatch_subject == "Tcp.connect" {
+                                                            crate::aver_generated::domain::builtins::builtinTcpConnect(args)
                                                         } else {
-                                                            if &*__dispatch_subject == "Tcp.ping" {
-                                                                crate::aver_generated::domain::builtins::builtinTcpPing(args)
+                                                            if &*__dispatch_subject
+                                                                == "Tcp.beginConnect"
+                                                            {
+                                                                crate::aver_generated::domain::builtins::builtinTcpBeginConnect(args)
                                                             } else {
                                                                 if &*__dispatch_subject
-                                                                    == "Tcp.connect"
+                                                                    == "Tcp.dialled"
                                                                 {
-                                                                    crate::aver_generated::domain::builtins::builtinTcpConnect(args)
+                                                                    crate::aver_generated::domain::builtins::builtinTcpDialled(args)
                                                                 } else {
                                                                     if &*__dispatch_subject
-                                                                        == "Tcp.beginConnect"
+                                                                        == "Tcp.listen"
                                                                     {
-                                                                        crate::aver_generated::domain::builtins::builtinTcpBeginConnect(args)
+                                                                        crate::aver_generated::domain::builtins::builtinTcpListen(args)
                                                                     } else {
                                                                         if &*__dispatch_subject
-                                                                            == "Tcp.dialled"
+                                                                            == "Tcp.accept"
                                                                         {
-                                                                            crate::aver_generated::domain::builtins::builtinTcpDialled(args)
+                                                                            crate::aver_generated::domain::builtins::builtinTcpAccept(args)
                                                                         } else {
                                                                             if &*__dispatch_subject
-                                                                                == "Tcp.listen"
+                                                                                == "Tcp.peerAddress"
                                                                             {
-                                                                                crate::aver_generated::domain::builtins::builtinTcpListen(args)
+                                                                                crate::aver_generated::domain::builtins::builtinTcpPeerAddress(args)
                                                                             } else {
-                                                                                if &*__dispatch_subject == "Tcp.accept" { crate::aver_generated::domain::builtins::builtinTcpAccept(args) } else { if &*__dispatch_subject == "Tcp.peerAddress" { crate::aver_generated::domain::builtins::builtinTcpPeerAddress(args) } else { if &*__dispatch_subject == "Tcp.poll" { crate::aver_generated::domain::builtins::builtinTcpPoll(args) } else { if &*__dispatch_subject == "Tcp.writeLine" { crate::aver_generated::domain::builtins::builtinTcpWriteLine(args) } else { if &*__dispatch_subject == "Tcp.readLine" { crate::aver_generated::domain::builtins::builtinTcpReadLine(args) } else { if &*__dispatch_subject == "Tcp.close" { crate::aver_generated::domain::builtins::builtinTcpClose(args) } else { if &*__dispatch_subject == "Tcp.closeDial" { crate::aver_generated::domain::builtins::builtinTcpCloseDial(args) } else { if &*__dispatch_subject == "Tcp.closeListener" { crate::aver_generated::domain::builtins::builtinTcpCloseListener(args) } else { if &*__dispatch_subject == "Terminal.clear" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, args, __str_index) } else { if &*__dispatch_subject == "Terminal.flush" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, args, __str_index) } else { if &*__dispatch_subject == "Terminal.enableRawMode" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, args, __str_index) } else { if &*__dispatch_subject == "Terminal.disableRawMode" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, args, __str_index) } else { if &*__dispatch_subject == "Terminal.hideCursor" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, args, __str_index) } else { if &*__dispatch_subject == "Terminal.showCursor" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, args, __str_index) } else { if &*__dispatch_subject == "Terminal.resetColor" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, args, __str_index) } else { if &*__dispatch_subject == "Terminal.readKey" { crate::aver_generated::domain::builtins::builtinTerminalReadKey(args) } else { if &*__dispatch_subject == "Terminal.size" { crate::aver_generated::domain::builtins::builtinTerminalSize(args) } else { if &*__dispatch_subject == "Terminal.print" { crate::aver_generated::domain::builtins::builtinTerminalPrint(args) } else { if &*__dispatch_subject == "Terminal.setColor" { crate::aver_generated::domain::builtins::builtinTerminalSetColor(args) } else { if &*__dispatch_subject == "Terminal.moveTo" { crate::aver_generated::domain::builtins::builtinTerminalMoveTo(args) } else { crate::aver_generated::domain::builtins::tryVariantConstructor__indexed(name, args, __str_index) } } } } } } } } } } } } } } } } } } } }
+                                                                                if &*__dispatch_subject == "Tcp.poll" { crate::aver_generated::domain::builtins::builtinTcpPoll(args) } else { if &*__dispatch_subject == "Tcp.writeLine" { crate::aver_generated::domain::builtins::builtinTcpWriteLine(args) } else { if &*__dispatch_subject == "Tcp.readLine" { crate::aver_generated::domain::builtins::builtinTcpReadLine(args) } else { if &*__dispatch_subject == "Tcp.close" { crate::aver_generated::domain::builtins::builtinTcpClose(args) } else { if &*__dispatch_subject == "Tcp.closeDial" { crate::aver_generated::domain::builtins::builtinTcpCloseDial(args) } else { if &*__dispatch_subject == "Tcp.closeListener" { crate::aver_generated::domain::builtins::builtinTcpCloseListener(args) } else { if &*__dispatch_subject == "Terminal.clear" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, args, __str_index) } else { if &*__dispatch_subject == "Terminal.flush" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, args, __str_index) } else { if &*__dispatch_subject == "Terminal.enableRawMode" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, args, __str_index) } else { if &*__dispatch_subject == "Terminal.disableRawMode" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, args, __str_index) } else { if &*__dispatch_subject == "Terminal.hideCursor" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, args, __str_index) } else { if &*__dispatch_subject == "Terminal.showCursor" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, args, __str_index) } else { if &*__dispatch_subject == "Terminal.resetColor" { crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(name, args, __str_index) } else { if &*__dispatch_subject == "Terminal.readKey" { crate::aver_generated::domain::builtins::builtinTerminalReadKey(args) } else { if &*__dispatch_subject == "Terminal.size" { crate::aver_generated::domain::builtins::builtinTerminalSize(args) } else { if &*__dispatch_subject == "Terminal.print" { crate::aver_generated::domain::builtins::builtinTerminalPrint(args) } else { if &*__dispatch_subject == "Terminal.setColor" { crate::aver_generated::domain::builtins::builtinTerminalSetColor(args) } else { if &*__dispatch_subject == "Terminal.moveTo" { crate::aver_generated::domain::builtins::builtinTerminalMoveTo(args) } else { crate::aver_generated::domain::builtins::tryVariantConstructor__indexed(name, args, __str_index) } } } } } } } } } } } } } } } } } }
                                                                             }
                                                                         }
                                                                     }

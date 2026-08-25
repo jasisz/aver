@@ -9,16 +9,13 @@
 //! error class instead of a cryptic `ComponentEncoder failed: core
 //! imports unknown name` later.
 //!
-//! Three categories of reject, all surfaced through the same slug:
+//! Two categories of reject, both surfaced through the same slug:
 //!
 //! 1. **Permanent** — WASI 0.2 fundamentally cannot satisfy the
 //!    effect (`Terminal.*` raw mode, `Env.set` against a read-only
 //!    environment). These will not land on `--target wasip2`
 //!    regardless of phase.
-//! 2. **Out of 0.18 release scope** — direct WIT lowering is
-//!    feasible but deliberately deferred (`Http.*`, `Tcp.*`,
-//!    `HttpServer.*`). Lands in 0.19+ via Phase 2 / 3 work.
-//! 3. **Pending phase** — Aver effects whose lowering is planned
+//! 2. **Pending phase** — Aver effects whose lowering is planned
 //!    inside 0.18 but not yet shipped (`Console.*`, `Args.get`,
 //!    `Env.get`, `Time.now`/`unixMs`, `Random.*`, `Disk.*`). Each
 //!    entry here disappears as the corresponding phase commit
@@ -41,8 +38,6 @@ pub struct UnsupportedEffect {
 pub enum UnsupportedReason {
     /// WASI 0.2 cannot satisfy this effect by design.
     Permanent { hint: &'static str },
-    /// Out of 0.18 release scope; lands in 0.19+.
-    OutOfRelease { phase: &'static str },
     /// Inside 0.18 scope but not yet wired by the current phase.
     PendingPhase { phase: &'static str },
 }
@@ -91,15 +86,6 @@ pub fn render_errors(errors: &[UnsupportedEffect]) -> String {
                      This effect cannot ever be supported on `--target wasip2`. \
                      Use `--target wasm-gc` or `aver run` (VM) for programs that \
                      need this capability.",
-                    e.effect, e.fn_name, e.line
-                ));
-            }
-            UnsupportedReason::OutOfRelease { phase } => {
-                out.push_str(&format!(
-                    "  ! [{}] in fn `{}` (line {}): out of 0.18 scope ({phase}).\n  \
-                     Direct WIT lowering for this effect is planned but not in \
-                     this release. Use `--target wasm-gc` for the time being, \
-                     or wait for {phase}.",
                     e.effect, e.fn_name, e.line
                 ));
             }
@@ -167,26 +153,6 @@ fn classify(effect: &str) -> Option<UnsupportedReason> {
     //                                  pool slot; Result<Unit, String>)
     if effect.starts_with("Tcp.") {
         return None;
-    }
-    // `HttpServer.listen` graduated in 0.19 Phase 3: the wasm-gc
-    // emit path now synthesises a `wasi:http/incoming-handler.handle`
-    // export when invoked with `--world wasi:http/proxy`, decoding
-    // the host-supplied incoming-request into an Aver `HttpRequest`,
-    // running the user's handler, and writing the response back
-    // through `response-outparam.set`. The `port` argument is
-    // ignored at codegen time — the host's listener flag
-    // (`wasmtime serve --http=:N`) drives socket binding.
-    //
-    // `HttpServer.listenWith` (per-instance context handler) is
-    // deferred — needs a wasm global + initialiser plumbing that
-    // doesn't pull its weight for the v1 shape.
-    if effect == "HttpServer.listen" {
-        return None;
-    }
-    if effect.starts_with("HttpServer.") {
-        return Some(UnsupportedReason::OutOfRelease {
-            phase: "Phase 3 / 0.19+",
-        });
     }
     // ---------- Pending phase rejects (0.18 in-flight) ----------
     // Each entry vanishes as the phase commit lands.
@@ -266,19 +232,6 @@ mod tests {
         // earlier reject was a 0.18 scope choice, not a fundamental
         // limitation.
         assert!(classify("Time.sleep").is_none());
-    }
-
-    #[test]
-    fn classifies_out_of_release_rejects() {
-        // 0.20 Phase 4 graduated every `Tcp.*` method.
-        // `HttpServer.listenWith` is the only remaining HTTP-side
-        // out-of-release reject (per-instance context handler — needs
-        // wasm-global context plumbing that didn't make 0.19).
-        assert!(matches!(
-            classify("HttpServer.listenWith"),
-            Some(UnsupportedReason::OutOfRelease { .. })
-        ));
-        assert!(classify("HttpServer.listen").is_none());
     }
 
     #[test]

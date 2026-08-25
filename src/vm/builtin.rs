@@ -48,11 +48,6 @@ vm_builtins! {
     HttpPut => "Http.put",
     HttpPatch => "Http.patch",
 
-    HttpServerListen => "HttpServer.listen",
-    HttpServerListenWith => "HttpServer.listenWith",
-    SelfHostRuntimeHttpServerListen => "SelfHostRuntime.httpServerListen",
-    SelfHostRuntimeHttpServerListenWith => "SelfHostRuntime.httpServerListenWith",
-
     EnvGet => "Env.get",
     EnvSet => "Env.set",
 
@@ -169,16 +164,6 @@ pub(crate) enum VmBuiltinParentThinClass {
 }
 
 impl VmBuiltin {
-    pub(crate) const fn is_http_server(self) -> bool {
-        matches!(
-            self,
-            Self::HttpServerListen
-                | Self::HttpServerListenWith
-                | Self::SelfHostRuntimeHttpServerListen
-                | Self::SelfHostRuntimeHttpServerListenWith
-        )
-    }
-
     pub(crate) const fn parent_thin_class(self) -> VmBuiltinParentThinClass {
         match self {
             Self::BoolOr
@@ -241,13 +226,6 @@ impl VmBuiltin {
             Self::HttpPost => &["Http.post"],
             Self::HttpPut => &["Http.put"],
             Self::HttpPatch => &["Http.patch"],
-
-            Self::HttpServerListen
-            | Self::HttpServerListenWith
-            | Self::SelfHostRuntimeHttpServerListen
-            | Self::SelfHostRuntimeHttpServerListenWith => {
-                crate::services::http_server::effects(self.name())
-            }
 
             Self::ArgsGet => args::effects(self.name()),
 
@@ -451,11 +429,6 @@ impl VmBuiltin {
             Self::BranchPathChild | Self::BranchPathParse => {
                 branch_path::call_nv(self.name(), args, arena)
             }
-
-            Self::HttpServerListen
-            | Self::HttpServerListenWith
-            | Self::SelfHostRuntimeHttpServerListen
-            | Self::SelfHostRuntimeHttpServerListenWith => None,
         };
 
         result.expect("VmBuiltin list and call_nv dispatch are out of sync")
@@ -559,7 +532,7 @@ mod tests {
         let mut seen = std::collections::HashSet::new();
         for builtin in [
             VmBuiltin::ConsolePrint,
-            VmBuiltin::HttpServerListenWith,
+            VmBuiltin::HttpPatch,
             VmBuiltin::StringReplace,
             VmBuiltin::ResultFromOption,
             VmBuiltin::MapFromList,

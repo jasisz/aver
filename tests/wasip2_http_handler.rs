@@ -1,7 +1,7 @@
-//! Wasip2 `HttpServer.listen` end-to-end test (0.19 Phase 3).
+//! Wasip2 explicit HTTP-handler end-to-end test.
 //!
-//! Compiles a small Aver program that wires `HttpServer.listen(_,
-//! handler)` against `--target wasip2 --world wasi:http/proxy`,
+//! Compiles a small Aver handler selected by `--handler` against
+//! `--target wasip2 --world wasi:http/proxy`,
 //! spawns `wasmtime serve --addr=127.0.0.1:0 <component>`, parses
 //! the bound port out of wasmtime's stderr (`Serving HTTP on
 //! http://127.0.0.1:N/`), then runs a handful of HTTP requests
@@ -141,23 +141,17 @@ fn write_fixture(dir: &Path, name: &str, source: &str) -> PathBuf {
 }
 
 #[test]
-fn http_server_echoes_request_body() {
+fn http_handler_echoes_request_body() {
     if !wasmtime_serve_supported() {
-        eprintln!("wasmtime serve unavailable — skipping wasip2_http_server test");
+        eprintln!("wasmtime serve unavailable — skipping wasip2_http_handler test");
         return;
     }
     let dir = tempdir("echo");
-    // `main` still wires `HttpServer.listen` so the same source runs
-    // under `aver run` (VM honours the call); the wasip2 codegen
-    // lowers the call to a no-op and reads the handler identity
-    // from `--handler echo_handler` instead.
+    // Proxy deployment has no synthetic listener call: the handler
+    // identity comes only from `--handler echo_handler`.
     let src = r#"
 fn echo_handler(req: HttpRequest) -> HttpResponse
     HttpResponse(status = 200, body = "echo: {req.body}", headers = {})
-
-fn main() -> Unit
-    ! [HttpServer.listen]
-    HttpServer.listen(0, echo_handler)
 "#;
     let fixture = write_fixture(&dir, "echo.av", src);
     let component = compile_proxy(&dir, &fixture, "echo", "echo_handler");
@@ -201,9 +195,9 @@ fn main() -> Unit
 }
 
 #[test]
-fn http_server_surfaces_method_path_and_query() {
+fn http_handler_surfaces_method_path_and_query() {
     if !wasmtime_serve_supported() {
-        eprintln!("wasmtime serve unavailable — skipping wasip2_http_server test");
+        eprintln!("wasmtime serve unavailable — skipping wasip2_http_handler test");
         return;
     }
     let dir = tempdir("introspect");
@@ -216,10 +210,6 @@ fn intro_handler(req: HttpRequest) -> HttpResponse
         body = "m={req.method} p={req.path} q={req.query}",
         headers = {}
     )
-
-fn main() -> Unit
-    ! [HttpServer.listen]
-    HttpServer.listen(0, intro_handler)
 "#;
     let fixture = write_fixture(&dir, "intro.av", src);
     let component = compile_proxy(&dir, &fixture, "intro", "intro_handler");
@@ -275,9 +265,9 @@ fn main() -> Unit
 }
 
 #[test]
-fn http_server_round_trips_response_headers() {
+fn http_handler_round_trips_response_headers() {
     if !wasmtime_serve_supported() {
-        eprintln!("wasmtime serve unavailable — skipping wasip2_http_server test");
+        eprintln!("wasmtime serve unavailable — skipping wasip2_http_handler test");
         return;
     }
     let dir = tempdir("hdr");
@@ -300,10 +290,6 @@ fn hdr_handler(req: HttpRequest) -> HttpResponse
         body = "ok",
         headers = {"x-echo" => [foo], "x-flavor" => ["aver"]}
     )
-
-fn main() -> Unit
-    ! [HttpServer.listen]
-    HttpServer.listen(0, hdr_handler)
 "#;
     let fixture = write_fixture(&dir, "hdr.av", src);
     let component = compile_proxy(&dir, &fixture, "hdr", "hdr_handler");

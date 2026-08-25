@@ -24,7 +24,7 @@ The two WASM rows are independent compilation paths. `--target wasm-gc` covers J
 | ✅ | Real implementation; the effect does what its source-side signature promises |
 | ⚠️ | Partial / convention-based; documented caveat on the cell |
 | ❌ | Stubbed; the call typechecks and runs but returns a documented sentinel (`Result.Err`, `Option.None`, `Unit`) — programs branch through the failure shape, not crash |
-| n/a | Concept doesn't apply on this host (e.g. `HttpServer.listen` under a fetch-style host — the worker IS the server, the handler shape is the API) |
+| n/a | Concept doesn't apply on this host (e.g. process signals in a fetch-style worker) |
 
 ## Matrix
 
@@ -43,8 +43,7 @@ The wasm-gc column covers the **default invocation** (`--target wasm-gc`, host w
 | `Disk.exists` / `delete` / `deleteDir` / `listDir` / `makeDir` | ✅ | ✅ | ✅ wasmtime / ❌ in JS hosts | ✅ `wasi:filesystem/types` (stat-at / unlink-file-at / etc.) | Oracle | Oracle |
 | `Env.get` | ✅ | ✅ | ✅ wasmtime / Workers `env` | ✅ `wasi:cli/environment.get-environment` + linear search | Oracle | Oracle |
 | `Env.set` | ✅ | ✅ | ⚠️ wasmtime / no-op in JS | n/a — WASI 0.2 environment is read-only by design | Oracle | Oracle |
-| `Http.get` / `head` / `delete` / `post` / `put` / `patch` | ✅ | ✅ | ✅ wasmtime / ✅ JSPI-suspending `fetch()` | ❌ deferred to 0.19+ (lowering planned for `wasi:http`) | Oracle | Oracle |
-| `HttpServer.listen` / `listenWith` | ✅ (`runtime-net`) | ✅ (`runtime-net`) | n/a — `--handler <fn>` shape | ❌ deferred to 0.19+ (lowers via `wasi:http/proxy`) | Oracle | Oracle |
+| `Http.get` / `head` / `delete` / `post` / `put` / `patch` | ✅ | ✅ | ✅ wasmtime / ✅ JSPI-suspending `fetch()` | ✅ `wasi:http/outgoing-handler` | Oracle | Oracle |
 | `Random.int` | ✅ | ✅ | ✅ wasmtime / `Math.random` | ✅ `wasi:random/random.get-random-u64` + range scale | Oracle (`[min, max]` lemma) | Oracle |
 | `Random.float` | ✅ | ✅ | ✅ wasmtime / `Math.random` | ✅ `wasi:random/random.get-random-u64` → `[0.0, 1.0)` | Oracle (`[0.0, 1.0)` lemma) | Oracle |
 | `Process.stopRequested` | ✅ SIGINT/SIGTERM | ✅ SIGINT/SIGTERM | ✅ wasmtime SIGINT/SIGTERM / `false` in browser and Worker hosts | n/a — WASI 0.2 has no process-signal binding | Oracle (monotonic across calls) | Oracle (monotonic across calls) |
@@ -63,6 +62,13 @@ blocking `Tcp.readLine`, `Console.readLine`, or `Time.sleep`, and it is not wire
 into independent-product cancellation. Use bounded waits such as `Tcp.poll`
 when a long-running loop must remain responsive to a stop request.
 
+Incoming HTTP is a composition rather than an effect family. Native VM and
+Rust programs run the ordinary Aver `HttpServer` module over the `Tcp.*` and
+`Process.stopRequested` rows above; pure `HttpWire` owns HTTP/1.1 framing.
+Fetch-style wasm-gc and `wasi:http/proxy` deployments instead select a
+`Fn(HttpRequest) -> HttpResponse` explicitly with `--handler`, because the host
+already owns the listener.
+
 ## Notes per backend
 
 ### wasm-gc (`--target wasm-gc`)
@@ -76,7 +82,8 @@ The bridge also has one internal, non-effect import: `aver.provider_contract_vio
 
 `--handler <fn>` (and the bundled `--preset cloudflare --handler <fn>`) generates an `aver_http_handle()` synthesised wrapper that consumes Request fields via dedicated host imports (`request_method`, `request_url`, `request_query`, `request_body`, `request_headers_load`) and writes the response via `response_text` / `response_set_header`. Inside the handler body, `Http.*` calls still go through the standard effect surface (✅ JSPI-suspending `fetch()` on Workers, ✅ wasmtime if you ever ran the same handler under `aver run --wasm-gc`).
 
-`HttpServer.listen` is n/a on wasm-gc — the deployment shape is "the host calls into your handler", which is exactly what `--handler <fn>` declares. There's no listening loop to write.
+In fetch-style deployment the host calls the selected `--handler <fn>`; there
+is no listening loop or synthetic listener effect in the program.
 
 ### wasip2 (`--target wasip2`)
 
@@ -89,8 +96,8 @@ aver run app.av --wasip2  -- alpha beta   # embedded wasmtime + wasmtime-wasi
 
 What lands today (0.18) vs. deferred:
 
-- ✅ Console, Args.get, Env.get, Time, Random, Disk, outgoing Http, HttpServer.listen, and all Tcp operations including binary reads/writes, `poll`, and `readSome`.
-- ❌ `HttpServer.listenWith` remains deferred; Process, Terminal, and `Env.set` are structurally absent from WASI 0.2.
+- ✅ Console, Args.get, Env.get, Time, Random, Disk, outgoing Http, and all Tcp operations including binary reads/writes, `poll`, and `readSome`.
+- ✅ Incoming HTTP through `--world wasi:http/proxy --handler <fn>`.
 - n/a Process.stopRequested, Env.set, Terminal.* — structurally absent from WASI 0.2 (no process-signal binding, a read-only environment, and no terminal interface). Rejected at compile time.
 
 Effect calls > 4 KB on `Console.*` / `Disk.write*` chunk through `blocking-write-and-flush` (wasmtime-wasi enforces a 4096-byte limit per call); the chunked-write loop lives in `emit_chunked_blocking_write` and is shared by both call sites. `Time.sleep` uses `subscribe-duration` + `poll` + `[resource-drop]pollable` (real wait, not busy-loop).

@@ -247,56 +247,6 @@ fn reentrant_call_function_returns_nested_result_without_resuming_caller() {
 }
 
 #[test]
-fn collect_live_vm_roots_drops_callback_only_stable_values() {
-    let mut code = CodeStore::new();
-    let string_idx = {
-        let mut arena = Arena::new();
-        arena.push_string("callback")
-    };
-    let callback_id = code.add_function(FnChunk {
-        name: "callback".to_string(),
-        arity: 0,
-        local_count: 0,
-        code: vec![LOAD_CONST, 0, 0, RETURN],
-        constants: vec![NanValue::new_string(string_idx)],
-        effects: Vec::new(),
-        thin: false,
-        parent_thin: false,
-        leaf: false,
-        no_alloc: false,
-        source_file: String::new(),
-        line_table: Vec::new(),
-    });
-
-    let mut arena = Arena::new();
-    let const_idx = arena.push_string("callback");
-    code.functions[callback_id as usize].constants = vec![NanValue::new_string(const_idx)];
-    let mut vm = VM::new(code, Vec::new(), arena);
-
-    let result = vm
-        .call_function(callback_id, &[])
-        .expect("callback should return");
-    assert_eq!(
-        result.to_value(&vm.arena),
-        crate::value::Value::Str("callback".to_string())
-    );
-    assert!(
-        vm.arena.stable_len() > 0,
-        "top-level callback return should have promoted result into stable before cleanup"
-    );
-
-    let value = result.to_value(&vm.arena);
-    vm.collect_live_vm_roots();
-
-    assert_eq!(value, crate::value::Value::Str("callback".to_string()));
-    assert_eq!(
-        vm.arena.stable_len(),
-        0,
-        "stable should be cleaned when callback result is no longer a VM root"
-    );
-}
-
-#[test]
 fn profiling_tracks_opcodes_and_fast_returns() {
     let mut code = CodeStore::new();
     let fn_id = code.add_function(FnChunk {

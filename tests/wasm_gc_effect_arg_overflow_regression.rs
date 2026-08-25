@@ -7,7 +7,7 @@
 //! SATURATED on wasm-gc and proceeded, where the VM raises a runtime error.
 //! `effect_int_arg_positions` lowered the Int args of host effects via
 //! `__aint_to_i64_sat` (`2^63 -> i64::MAX`) BEFORE the host call, for
-//! `Random.int` bounds, `Time.sleep` ms, `Tcp.*` ports, `HttpServer.*`
+//! `Random.int` bounds, `Time.sleep` ms, and `Tcp.*` ports
 //! bind ports, and `Terminal.moveTo` coordinates. The VM's host services do
 //! a CHECKED `to_i64()` and ERROR instead (e.g. `Random.int: bounds must
 //! fit a 64-bit integer`). Worst case: `Time.sleep(2^63)` saturated to

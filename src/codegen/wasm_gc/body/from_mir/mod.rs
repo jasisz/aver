@@ -305,9 +305,8 @@ fn registered_builtin_int_arg_positions(dotted: &str) -> &'static [usize] {
 fn effect_int_arg_positions(dotted: &str) -> &'static [usize] {
     match dotted {
         "Response.text" => &[0],
-        // Network port / server bind port / terminal coordinates.
+        // Network port / terminal coordinates.
         "Tcp.send" | "Tcp.sendBytes" | "Tcp.ping" | "Tcp.connect" => &[1],
-        "HttpServer.listen" | "HttpServer.listenWith" => &[0],
         _ => &[],
     }
 }

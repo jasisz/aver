@@ -396,18 +396,12 @@ That logic does not live in the main execute loop. Instead:
 
 This split is intentional: the VM core should mostly be “bytecode mechanics”, while effectful services stay at the boundary.
 
-## Callback Boundaries
+## Higher-order calls
 
-`HttpServer.listen` and `HttpServer.listenWith` are special because they need to call back into Aver from host code.
-
-Today that bridge works by:
-
-- converting callback args into VM values
-- resolving the callback's inline `symbol_id` back to a VM function
-- calling that VM function
-- converting the result back into host `Value`
-
-This boundary is more complex than normal builtin calls and is one of the few places where the VM still has explicit host-runtime plumbing.
+Named top-level functions can be passed directly to an ordinary Aver helper.
+The VM invokes them through its normal `CALL_VALUE` path; there is no
+host-to-guest callback bridge. `HttpServer`, for example, runs entirely in Aver
+and calls its request handler like any other function value.
 
 ## Tail Calls
 
@@ -429,7 +423,6 @@ What is still true today:
 - the bytecode format is internal and not stable yet
 - function values are modeled around top-level Aver functions, which matches the language today
 - builtin calls are primarily compiled as direct builtin operations, not passed around as first-class VM values
-- some host-service edges, especially callback-heavy ones like `HttpServer`, still need more runtime plumbing than the pure VM core
 
 These are mostly implementation boundaries, not evidence that the VM is “toy” or “partial”. The VM should be thought of as a real runtime path whose internals are still settling.
 

@@ -191,7 +191,6 @@ fn check_independent_product(
 enum HazardKind {
     SharedOutput,
     SharedTransport,
-    SharedServerLifecycle,
     DiskMutation,
     HttpMutation,
     EnvMutation,
@@ -202,7 +201,6 @@ impl HazardKind {
         match self {
             HazardKind::SharedOutput => "shared terminal/output hazard",
             HazardKind::SharedTransport => "shared tcp/socket hazard",
-            HazardKind::SharedServerLifecycle => "shared server lifecycle hazard",
             HazardKind::DiskMutation => "disk mutation hazard",
             HazardKind::HttpMutation => "http mutation hazard",
             HazardKind::EnvMutation => "environment mutation hazard",
@@ -228,10 +226,25 @@ fn collect_used_effects_expr(expr: &Spanned<Expr>, fn_sigs: &FnSigMap, out: &mut
     match &expr.node {
         Expr::FnCall(callee, args) => {
             if let Some(callee_name) = dotted_name(callee)
-                && let Some((_, _, effects)) = fn_sigs.get(&callee_name)
+                && let Some((params, _, effects)) = fn_sigs.get(&callee_name)
             {
                 for effect in effects {
                     out.insert(effect.clone());
+                }
+                for (param, argument) in params.iter().zip(args.iter()) {
+                    let crate::types::Type::Fn(_, _, callback_slot_effects) = param else {
+                        continue;
+                    };
+                    if !crate::effects::forwards_callback_effects(callback_slot_effects) {
+                        continue;
+                    }
+                    if let Some(callback_name) = dotted_name(argument)
+                        && let Some((_, _, callback_effects)) = fn_sigs.get(&callback_name)
+                    {
+                        for effect in callback_effects {
+                            out.insert(effect.clone());
+                        }
+                    }
                 }
             }
             collect_used_effects_expr(callee, fn_sigs, out);
@@ -303,8 +316,6 @@ fn effect_hazard(left: &str, right: &str) -> Option<HazardKind> {
         Some(HazardKind::SharedOutput)
     } else if same_namespace_any(left, right, "Tcp") {
         Some(HazardKind::SharedTransport)
-    } else if same_namespace_any(left, right, "HttpServer") {
-        Some(HazardKind::SharedServerLifecycle)
     } else if same_namespace_with_mutation(left, right, "Disk", is_disk_mutating) {
         Some(HazardKind::DiskMutation)
     } else if same_namespace_with_mutation(left, right, "Http", is_http_mutating) {

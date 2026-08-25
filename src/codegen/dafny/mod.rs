@@ -1281,17 +1281,15 @@ verify roll law alwaysSix\n    given rnd: Random.int = [rollMax]\n    roll() => 
 
     #[test]
     fn effectful_fn_with_unclassified_effect_is_still_skipped() {
-        // Server lifecycle/callback wiring remains outside the proof subset.
-        // The handler can be proved separately, but the listen call itself
-        // must not appear in the emitted Dafny output.
+        // Server lifecycle wiring remains outside the proof subset.
+        // Pure protocol helpers can be proved separately, but the Tcp listen
+        // call itself must not appear in the emitted Dafny output.
         let src = "module M\n\
              \x20   intent = \"t\"\n\
              \n\
-             fn handle(req: HttpRequest) -> HttpResponse\n\
-             \x20   HttpResponse(status = 200, body = \"ok\", headers = {})\n\
-             fn serve(port: Int) -> Result<Unit, String>\n\
-             \x20   ! [HttpServer.listen]\n\
-             \x20   HttpServer.listen(port, handle)\n";
+             fn serve(port: Int) -> Result<Tcp.Listener, String>\n\
+             \x20   ! [Tcp.listen]\n\
+             \x20   Tcp.listen(port, 128)\n";
         let ctx = ctx_from_source(src, "m");
         let out = transpile(&ctx);
         let dfy = dafny_output(&out);

@@ -2,16 +2,8 @@
 ///
 /// This module is embedded in the generated `main.rs` and re-exports pieces
 /// from the shared `aver-rt` crate.
-pub fn generate_runtime(
-    has_replay: bool,
-    has_http_server_runtime: bool,
-    embedded_independence_cancel: bool,
-) -> String {
-    let mut sections = vec![base_runtime(has_replay, embedded_independence_cancel)];
-    if has_http_server_runtime {
-        sections.push(http_server_helpers(has_replay));
-    }
-    sections.join("\n\n")
+pub fn generate_runtime(has_replay: bool, embedded_independence_cancel: bool) -> String {
+    base_runtime(has_replay, embedded_independence_cancel)
 }
 
 fn base_runtime(has_replay: bool, embedded_independence_cancel: bool) -> String {
@@ -196,53 +188,6 @@ where
 }
 "##;
 
-fn http_server_helpers(has_replay: bool) -> String {
-    let replay_guard = if has_replay {
-        "crate::aver_replay::is_record_mode()"
-    } else {
-        "false"
-    };
-
-    format!(
-        r#"
-pub(crate) fn should_skip_http_server() -> bool {{
-    {replay_guard}
-}}
-
-pub fn http_server_listen<F>(port: i64, mut handler: F) -> Result<(), AverStr>
-where
-    F: FnMut(&aver_rt::HttpRequest) -> HttpResponse,
-{{
-    if should_skip_http_server() {{
-        return Ok(());
-    }}
-    // User handlers are emitted borrow-by-default (`fn(&HttpRequest)`),
-    // so adapt the owned-value `aver_rt` callback to a by-reference call.
-    // The handler yields the surface `HttpResponse` (`AverInt` status); lower
-    // it to the host struct (`i64` status) before `aver_rt::http_server`.
-    aver_rt::http_server::listen(port, move |req| http_response_to_host(handler(&req)))
-        .map_err(AverStr::from)
-}}
-
-pub fn http_server_listen_with<C, F>(port: i64, context: C, mut handler: F) -> Result<(), AverStr>
-where
-    C: Clone,
-    F: FnMut(&C, &aver_rt::HttpRequest) -> HttpResponse,
-{{
-    if should_skip_http_server() {{
-        return Ok(());
-    }}
-    // User handlers take both the context and the request by reference
-    // (`fn(&Ctx, &HttpRequest)`); adapt the owned-value `aver_rt`
-    // callback accordingly.
-    aver_rt::http_server::listen_with(port, context, move |ctx, req| {{
-        http_response_to_host(handler(&ctx, &req))
-    }})
-    .map_err(AverStr::from)
-}}"#
-    )
-}
-
 /// Emit the self-host compatibility carrier for `Tcp.Connection`.
 /// Ordinary programs use the standard capability's provider resource.
 ///
@@ -314,10 +259,8 @@ pub fn generate_branch_path_types() -> String {
 /// `aver_rt::AverInt`), while the host `aver_rt::HttpResponse` keeps an `i64`
 /// `status`. Like `Tcp.Connection` / `Terminal.Size`, we emit a SURFACE
 /// record (`AverInt` status) and convert at the effect boundary: `Http.*`
-/// lands the host struct as the surface (`convert_http_response`), and an
-/// `HttpServer` handler's surface response is lowered back to the host struct
-/// (`http_response_to_host`) before `aver_rt::http_server` sends it. Keeping
-/// the surface type distinct is what lets `resp.status.add(&…)` typecheck.
+/// lands the host struct as the surface (`convert_http_response`). Keeping the
+/// surface type distinct is what lets `resp.status.add(&…)` typecheck.
 pub fn generate_http_types() -> String {
     r#"#[derive(Clone, Debug, PartialEq)]
 pub struct HttpResponse {
@@ -347,15 +290,6 @@ fn convert_http_response(r: aver_rt::HttpResponse) -> HttpResponse {
         headers: r.headers,
     }
 }
-/// Surface (`AverInt` status) → host `aver_rt::HttpResponse` (`i64` status),
-/// applied before a handler's response reaches `aver_rt::http_server`.
-pub fn http_response_to_host(r: HttpResponse) -> aver_rt::HttpResponse {
-    aver_rt::HttpResponse {
-        status: r.status.to_i64().unwrap_or(0),
-        body: r.body,
-        headers: r.headers,
-    }
-}
 impl IntoAverStr for Result<aver_rt::HttpResponse, String> {
     type Output = Result<HttpResponse, AverStr>;
     fn into_aver(self) -> Result<HttpResponse, AverStr> {
@@ -365,8 +299,9 @@ impl IntoAverStr for Result<aver_rt::HttpResponse, String> {
     .to_string()
 }
 
-/// Bring shared HTTP server request type into the generated program.
-pub fn generate_http_server_types() -> String {
+/// Bring the shared HTTP request type into the generated program.
+/// Native `HttpServer` constructs it in Aver; edge hosts use it at `--handler`.
+pub fn generate_http_request_types() -> String {
     "pub use aver_rt::HttpRequest;".to_string()
 }
 

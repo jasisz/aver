@@ -145,10 +145,7 @@ impl VM {
         // Sites that take their RESUME POSITION from it. Getting this wrong
         // runs the caller's function at this chunk's offset, which is the whole
         // bug class. Five: `RETURN`, the two exits this macro serves, and
-        // `is_http_server` under `CALL_BUILTIN` — all four ask `leaf_return`
-        // first — plus `is_http_server` under `CALL_VALUE`, which is covered by
-        // classification instead: a chunk containing `CALL_VALUE` is never a
-        // leaf.
+        // both exits this macro serves — all three ask `leaf_return` first.
         //
         // Sites that PARK a position in it across a nested call, for whatever
         // walks `self.frames` while that call runs. `CALL_KNOWN` and
@@ -627,30 +624,6 @@ impl VM {
                             let args: Vec<NanValue> = self.stack[args_start..].to_vec();
                             self.stack.truncate(args_start);
 
-                            if builtin.is_http_server() {
-                                self.runtime.ensure_builtin_effects_allowed(
-                                    &self.code.symbols,
-                                    builtin,
-                                    symbol_id,
-                                )?;
-                                // Unlike the `CALL_BUILTIN` twin below, this
-                                // one may park its position in
-                                // `self.frames.last()` unconditionally: reaching
-                                // it means the chunk contains `CALL_VALUE`, and
-                                // `classify_leaf_chunk` refuses leaf status to
-                                // any chunk that does — so this chunk always
-                                // owns the frame it is writing to.
-                                self.frames.last_mut().unwrap().ip = ip as u32;
-                                let result = self.dispatch_http_server(builtin, &args)?;
-                                self.stack.push(result);
-                                let f = self.frames.last().unwrap();
-                                fn_id = f.fn_id;
-                                ip = f.ip as usize;
-                                bp = f.bp as usize;
-                                refresh_code!();
-                                continue;
-                            }
-
                             // Oracle v1: record who issued this effect
                             // call so trace_event_is_direct can filter
                             // helper-boundary emissions.
@@ -874,43 +847,6 @@ impl VM {
                         && !self.runtime_confirms_vector_grant(target)
                     {
                         owned_mask &= !1;
-                    }
-
-                    if builtin.is_http_server() {
-                        self.runtime.ensure_builtin_effects_allowed(
-                            &self.code.symbols,
-                            builtin,
-                            symbol_id,
-                        )?;
-                        // The server call runs request handlers through a
-                        // nested `call_function`, so this chunk's position is
-                        // parked in its `CallFrame` across it and read back
-                        // afterwards. A chunk entered through `CALL_LEAF` owns
-                        // no `CallFrame`: `self.frames.last()` is its CALLER's.
-                        // Parking there would overwrite the caller's saved `ip`
-                        // with this chunk's, and reading it back would resume
-                        // the CALLER's function at THIS chunk's offset. The
-                        // interpreter-local `fn_id`/`ip`/`bp` come back from
-                        // the nested call untouched, so a frameless chunk just
-                        // keeps them — the same rule `RETURN` and the two error
-                        // exits follow. `HttpServer.listen` alone in a body is
-                        // exactly that shape: `CALL_BUILTIN` does not disqualify
-                        // a leaf, so `fn serve(port: Int) -> Unit
-                        // HttpServer.listen(port, handleRequest)` is one.
-                        let framed = leaf_return.is_none();
-                        if framed {
-                            self.frames.last_mut().unwrap().ip = ip as u32;
-                        }
-                        let result = self.dispatch_http_server(builtin, &args)?;
-                        self.stack.push(result);
-                        if framed {
-                            let f = self.frames.last().unwrap();
-                            fn_id = f.fn_id;
-                            ip = f.ip as usize;
-                            bp = f.bp as usize;
-                            refresh_code!();
-                        }
-                        continue;
                     }
 
                     // Oracle v1: redirect classified-effect calls to an

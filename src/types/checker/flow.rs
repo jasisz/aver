@@ -929,11 +929,64 @@ impl TypeChecker {
                         self.current_fn_line.unwrap_or(1)
                     };
                     for effect in &effects {
+                        // A direct callback parameter typed `Fn(...) ! [_]`
+                        // forwards the concrete callback's effects to the
+                        // outer call site. `_` is not an effect the helper
+                        // itself performs, so its body does not declare it.
+                        if effect == crate::effects::FORWARDED_CALLBACK_EFFECT {
+                            continue;
+                        }
                         if !self.caller_has_effect(caller_effects, effect) {
                             self.error_at_line(err_line, format!(
                                 "Function '{}' calls '{}' which has effect '{}', but '{}' does not declare it",
                                 caller_name, callee_name, effect, caller_name
                             ));
+                        }
+                    }
+                }
+
+                // The other half of forwarding: at `helper(..., namedFn)`,
+                // pair callback parameters marked `! [_]` with their direct
+                // named arguments and require the argument's exact effects
+                // from the caller. Function values cannot escape argument
+                // position in Aver, so this remains fully static.
+                if let Some(callee_name) = Self::callee_key(&fn_expr.node)
+                    && let Some(sig) = self.find_fn_sig(&callee_name).cloned()
+                {
+                    for (expected, argument) in sig.params.iter().zip(args.iter()) {
+                        let Type::Fn(_, _, expected_effects) = expected else {
+                            continue;
+                        };
+                        if !crate::effects::forwards_callback_effects(expected_effects) {
+                            continue;
+                        }
+                        let Some((callback_name, callback_effects)) =
+                            self.callable_effects(&argument.node)
+                        else {
+                            continue;
+                        };
+                        let err_line = if argument.line > 0 {
+                            argument.line
+                        } else {
+                            self.current_fn_line.unwrap_or(1)
+                        };
+                        for effect in callback_effects {
+                            if effect == crate::effects::FORWARDED_CALLBACK_EFFECT {
+                                continue;
+                            }
+                            if !self.caller_has_effect(caller_effects, &effect) {
+                                self.error_at_line(
+                                    err_line,
+                                    format!(
+                                        "Function '{}' passes callback '{}' with effect '{}' to '{}', but '{}' does not declare it",
+                                        caller_name,
+                                        callback_name,
+                                        effect,
+                                        callee_name,
+                                        caller_name
+                                    ),
+                                );
+                            }
                         }
                     }
                 }

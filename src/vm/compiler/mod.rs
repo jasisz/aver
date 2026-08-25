@@ -1646,24 +1646,4 @@ fn bucket(n: Int) -> Int
             chunk.code
         );
     }
-
-    #[test]
-    fn self_host_runtime_http_server_aliases_compile_in_vm() {
-        let source = r#"
-module Demo
-
-fn listen(handler: Int) -> Unit
-    SelfHostRuntime.httpServerListen(8080, handler)
-
-fn listenWith(context: Int, handler: Int) -> Unit
-    SelfHostRuntime.httpServerListenWith(8081, context, handler)
-"#;
-
-        let code = compile_via_pipeline(source);
-        assert!(code.find("listen").is_some(), "listen should compile");
-        assert!(
-            code.find("listenWith").is_some(),
-            "listenWith should compile"
-        );
-    }
 }

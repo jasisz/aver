@@ -6,9 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use colored::Colorize;
 
-use aver::ast::{
-    CapabilityItem, Expr, FnDef, Pattern, Spanned, Stmt, TopLevel, TypeDef, VerifyKind,
-};
+use aver::ast::{CapabilityItem, Expr, Pattern, Spanned, Stmt, TopLevel, TypeDef, VerifyKind};
 use aver::checker::{CheckFinding, VerifyResult, index_decisions};
 use aver::codegen;
 use aver::codegen::ModuleInfo;
@@ -385,89 +383,6 @@ fn expr_path_parts(expr: &Spanned<Expr>) -> Option<Vec<String>> {
         Expr::Constructor(name, _) => Some(name.split('.').map(|part| part.to_string()).collect()),
         _ => None,
     }
-}
-
-fn expr_self_host_runtime_name(expr: &Spanned<Expr>) -> Option<String> {
-    match &expr.node {
-        Expr::Ident(name) => Some(name.clone()),
-        Expr::Attr(_, _) => expr_path_parts(expr).map(|parts| parts.join(".")),
-        Expr::Constructor(name, _) => Some(name.clone()),
-        _ => None,
-    }
-}
-
-fn expr_uses_self_host_runtime(expr: &Spanned<Expr>) -> bool {
-    if expr_self_host_runtime_name(expr).is_some_and(|name| name.starts_with("SelfHostRuntime.")) {
-        return true;
-    }
-
-    match &expr.node {
-        Expr::Attr(inner, _) | Expr::Constructor(_, Some(inner)) | Expr::ErrorProp(inner) => {
-            expr_uses_self_host_runtime(inner)
-        }
-        Expr::FnCall(callee, args) => {
-            expr_uses_self_host_runtime(callee) || args.iter().any(expr_uses_self_host_runtime)
-        }
-        Expr::BinOp(_, left, right) => {
-            expr_uses_self_host_runtime(left) || expr_uses_self_host_runtime(right)
-        }
-        Expr::Neg(inner) => expr_uses_self_host_runtime(inner),
-        Expr::Match { subject, arms, .. } => {
-            expr_uses_self_host_runtime(subject)
-                || arms
-                    .iter()
-                    .any(|arm| expr_uses_self_host_runtime(&arm.body))
-        }
-        Expr::InterpolatedStr(parts) => parts.iter().any(|part| match part {
-            aver::ast::StrPart::Literal(_) => false,
-            aver::ast::StrPart::Parsed(inner) => expr_uses_self_host_runtime(inner),
-        }),
-        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
-            items.iter().any(expr_uses_self_host_runtime)
-        }
-        Expr::MapLiteral(entries) => entries.iter().any(|(key, value)| {
-            expr_uses_self_host_runtime(key) || expr_uses_self_host_runtime(value)
-        }),
-        Expr::RecordCreate { fields, .. } => fields
-            .iter()
-            .any(|(_, value)| expr_uses_self_host_runtime(value)),
-        Expr::RecordUpdate { base, updates, .. } => {
-            expr_uses_self_host_runtime(base)
-                || updates
-                    .iter()
-                    .any(|(_, value)| expr_uses_self_host_runtime(value))
-        }
-        Expr::TailCall(inner) => inner.args.iter().any(expr_uses_self_host_runtime),
-        Expr::Literal(_) | Expr::Ident(_) | Expr::Constructor(_, None) | Expr::Resolved { .. } => {
-            false
-        }
-    }
-}
-
-fn stmt_uses_self_host_runtime(stmt: &Stmt) -> bool {
-    match stmt {
-        Stmt::Binding(_, _, expr) | Stmt::Expr(expr) => expr_uses_self_host_runtime(expr),
-    }
-}
-
-fn fn_uses_self_host_runtime(fd: &FnDef) -> bool {
-    fd.body.stmts().iter().any(stmt_uses_self_host_runtime)
-}
-
-fn item_uses_self_host_runtime(item: &TopLevel) -> bool {
-    match item {
-        TopLevel::FnDef(fd) => fn_uses_self_host_runtime(fd),
-        TopLevel::Stmt(stmt) => stmt_uses_self_host_runtime(stmt),
-        _ => false,
-    }
-}
-
-fn codegen_uses_self_host_runtime(ctx: &codegen::CodegenContext) -> bool {
-    ctx.items.iter().any(item_uses_self_host_runtime)
-        || ctx
-            .modules
-            .iter()
-            .any(|module| module.fn_defs.iter().any(fn_uses_self_host_runtime))
 }
 
 fn validate_self_host_guest_entry_contract(ctx: &codegen::CodegenContext) -> Result<(), String> {
@@ -6441,14 +6356,6 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
         eprintln!("{}", err.red());
         process::exit(1);
     }
-    if codegen_uses_self_host_runtime(&ctx) && !with_self_host_support {
-        eprintln!(
-            "{}",
-            "This program uses SelfHostRuntime.* builtins; re-run with --with-self-host-support"
-                .red()
-        );
-        process::exit(1);
-    }
     let project_config = match aver::config::ProjectConfig::load_from_dir(Path::new(&module_root)) {
         Ok(config) => config,
         Err(error) => {
@@ -6755,9 +6662,9 @@ fn emit_artifact_certificate(
 ///
 /// Effect surface today: `Console.print/error/warn`,
 /// `Console.readLine`, `Time.unixMs/now/sleep`, `Random.int/float`,
-/// `Args.get`, `Env.get`, all `Disk.*`. Effects that the wasip2
-/// pipeline cannot lower (`Terminal.*`, `Http.*`, `HttpServer.*`,
-/// `Tcp.*`) are rejected at this command's entry — see
+/// `Args.get`, `Env.get`, all `Disk.*`, `Http.*`, and `Tcp.*`.
+/// Effects that the wasip2 pipeline cannot lower (`Terminal.*`,
+/// `Env.set`, and `Process.*`) are rejected at this command's entry — see
 /// `docs/wasip2.md` "Why X is rejected, not stubbed" for the
 /// dynamic-host vs static-target axis.
 fn cmd_compile_wasip2(
@@ -6946,11 +6853,9 @@ fn cmd_compile_wasip2(
         // `--world wasi:http/proxy` (0.19 Phase 3) splits off here:
         // the `--handler X` flag (same flag the wasm-gc + Cloudflare
         // path uses) names the user fn that becomes the proxy
-        // handler. No magic detection from `main` — the source can
-        // still have `HttpServer.listen(port, handler)` in main for
-        // `aver run` local execution (VM honours it; codegen lowers
-        // it to a no-op on wasip2 proxy), but the codegen path
-        // reads the handler identity from the flag alone.
+        // handler. There is no listener call to detect or lower in
+        // proxy mode: the codegen path reads handler identity from
+        // the explicit flag alone.
         let core_bytes = if matches!(world, super::cli::Wasip2World::HttpProxy) {
             let handler_name = handler.unwrap_or_else(|| {
                 eprintln!(
@@ -11757,10 +11662,7 @@ pub(super) fn load_compile_deps(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        codegen_uses_self_host_runtime, resolve_av_inputs, suppression_path,
-        validate_self_host_guest_entry_contract,
-    };
+    use super::{resolve_av_inputs, suppression_path, validate_self_host_guest_entry_contract};
     use aver::ast::{Expr, FnBody, FnDef, Literal, Spanned, Stmt, TopLevel};
     use aver::codegen::CodegenContext;
     use std::collections::{HashMap, HashSet};
@@ -12763,23 +12665,6 @@ Dafny program verifier finished with 158 verified, 2 errors, 12 time outs";
         );
 
         fs::remove_dir_all(&dir).expect("cleanup temp dir");
-    }
-
-    #[test]
-    fn detects_self_host_runtime_in_top_level_statement() {
-        let mut ctx = empty_codegen_ctx();
-        ctx.items = vec![TopLevel::Stmt(Stmt::Expr(Spanned::bare(Expr::FnCall(
-            Box::new(Spanned::bare(Expr::Attr(
-                Box::new(Spanned::bare(Expr::Ident("SelfHostRuntime".to_string()))),
-                "httpServerListen".to_string(),
-            ))),
-            vec![
-                Spanned::bare(Expr::Literal(Literal::Int(3000))),
-                Spanned::bare(Expr::Ident("handler".to_string())),
-            ],
-        ))))];
-
-        assert!(codegen_uses_self_host_runtime(&ctx));
     }
 
     #[test]
