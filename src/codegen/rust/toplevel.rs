@@ -71,8 +71,16 @@ pub fn emit_public_type_def(td: &TypeDef, ctx: &CodegenContext) -> String {
 fn emit_type_def_with_visibility(td: &TypeDef, public: bool, ctx: &CodegenContext) -> String {
     let key = crate::codegen::common::type_key_for_decl(ctx, td);
     let scope = key.scope_str();
+    // Answered from the declaration in hand, once, and handed down. The
+    // emitters used to rebuild a `TypeDef` from the pieces and ask again by
+    // name, which put the question through `find_type_def` — first-match-wins
+    // for a bare name — so a same-named type in another module answered
+    // instead. jasisz/aver#1134.
+    let hash_eq = type_can_derive_hash_eq(td, ctx, scope);
     match td {
-        TypeDef::Sum { name, variants, .. } => emit_sum_type(name, variants, public, ctx, scope),
+        TypeDef::Sum { name, variants, .. } => {
+            emit_sum_type(name, variants, public, ctx, scope, hash_eq)
+        }
         TypeDef::Product { name, fields, .. } => emit_product_type(
             name,
             fields,
@@ -80,6 +88,7 @@ fn emit_type_def_with_visibility(td: &TypeDef, public: bool, ctx: &CodegenContex
             ctx,
             scope,
             super::uses_packed_u8(ctx, name),
+            hash_eq,
         ),
     }
 }
@@ -113,9 +122,39 @@ fn find_type_def<'a>(name: &str, ctx: &'a CodegenContext) -> Option<&'a TypeDef>
         })
 }
 
+/// The key the field EMITTER would resolve this reference to.
+///
+/// The derives have to describe the struct that is actually emitted, so a
+/// field's type name has to resolve here exactly as it does in
+/// [`crate::codegen::rust::types::type_to_rust_scoped`] — a bare name in the
+/// scope of the module that declares the field. Resolving it first-match-wins
+/// across modules picked a same-named type from somewhere else, and the
+/// derives then described a struct nobody emitted. jasisz/aver#1134.
+///
+/// `None` keeps the previous bare-name behaviour for compiler-owned named
+/// types, which carry no `TypeId` to disambiguate with.
+fn scoped_named_key(
+    ctx: &CodegenContext,
+    ty: &crate::types::Type,
+    scope: Option<&str>,
+) -> Option<String> {
+    let crate::types::Type::Named { id, name } = ty else {
+        return None;
+    };
+    if let Some(id) = id {
+        return Some(ctx.symbol_table.type_entry(*id).key.canonical());
+    }
+    let key = crate::codegen::common::type_key_for_name(ctx, name, scope);
+    ctx.symbol_table
+        .type_id_of(&key)
+        .map(|_| key.canonical())
+        .or_else(|| Some(name.clone()))
+}
+
 fn rust_hash_eq_safe_type(
     ty: &crate::types::Type,
     ctx: &CodegenContext,
+    scope: Option<&str>,
     visiting: &mut HashSet<String>,
 ) -> bool {
     use crate::types::Type;
@@ -124,21 +163,22 @@ fn rust_hash_eq_safe_type(
         Type::Int | Type::Bool | Type::Unit | Type::Str => true,
         Type::Float => false,
         Type::Result(ok, err) => {
-            rust_hash_eq_safe_type(ok, ctx, visiting) && rust_hash_eq_safe_type(err, ctx, visiting)
+            rust_hash_eq_safe_type(ok, ctx, scope, visiting)
+                && rust_hash_eq_safe_type(err, ctx, scope, visiting)
         }
-        Type::Option(inner) => rust_hash_eq_safe_type(inner, ctx, visiting),
+        Type::Option(inner) => rust_hash_eq_safe_type(inner, ctx, scope, visiting),
         // `AverList<T>` and `AverIntList` implement Eq and Hash whenever their
         // element does, so a list is only unsafe for what it holds. `Vector`
         // stays out: the runtime's key comparator has no order for it, and the
         // checker refuses a key that reaches one.
-        Type::List(inner) => rust_hash_eq_safe_type(inner, ctx, visiting),
+        Type::List(inner) => rust_hash_eq_safe_type(inner, ctx, scope, visiting),
         Type::Vector(_) => false,
         Type::Tuple(items) => items
             .iter()
-            .all(|item| rust_hash_eq_safe_type(item, ctx, visiting)),
+            .all(|item| rust_hash_eq_safe_type(item, ctx, scope, visiting)),
         Type::Map(_, _) | Type::Fn(_, _, _) | Type::Var(_) | Type::Invalid => false,
         Type::Named { .. } => {
-            let Some(key) = crate::codegen::common::backend_named_type_key(ctx, ty) else {
+            let Some(key) = scoped_named_key(ctx, ty, scope) else {
                 return false;
             };
             rust_hash_eq_safe_named(&key, ctx, visiting)
@@ -146,46 +186,75 @@ fn rust_hash_eq_safe_type(
     }
 }
 
+/// Whether THIS declaration's own fields can carry `Eq` and `Hash`.
+///
+/// Takes the `TypeDef` rather than looking one up, because a bare name does
+/// not identify a declaration: two modules may each declare `Progress`, and
+/// [`find_type_def`] answers a bare name first-match-wins. Asking by name
+/// stamped one twin's answer onto the other — a record holding a value that
+/// can never be `Eq` came out `#[derive(.., Eq, Hash)]` and only `cargo build`
+/// saw it. jasisz/aver#1134.
+///
+/// `key` is the cycle-guard identity only; it never selects the declaration.
+fn rust_hash_eq_safe_def(
+    td: &TypeDef,
+    key: &str,
+    ctx: &CodegenContext,
+    scope: Option<&str>,
+    visiting: &mut HashSet<String>,
+) -> bool {
+    if !visiting.insert(key.to_string()) {
+        return true;
+    }
+
+    // A packed byte sequence is carried by `aver_rt::AverPackedU8`, which
+    // implements Eq, Hash and Ord, so the source-level `List<Int>` below
+    // describes a field this struct does not hold. Answering from the
+    // source type is what kept `Map<Bytes, T>` — and anything holding a
+    // `Bytes` — from deriving what the map needs on this backend.
+    let safe = if super::uses_packed_u8(ctx, crate::codegen::common::type_def_name(td)) {
+        true
+    } else {
+        match td {
+            TypeDef::Sum { variants, .. } => variants.iter().all(|variant| {
+                variant.fields.iter().all(|field_ty| {
+                    let parsed = crate::types::parse_type_str(field_ty);
+                    rust_hash_eq_safe_type(&parsed, ctx, scope, visiting)
+                })
+            }),
+            TypeDef::Product { fields, .. } => fields.iter().all(|(_, field_ty)| {
+                let parsed = crate::types::parse_type_str(field_ty);
+                rust_hash_eq_safe_type(&parsed, ctx, scope, visiting)
+            }),
+        }
+    };
+
+    visiting.remove(key);
+    safe
+}
+
+/// Field-reference entry point: a field names a type, so this one has to
+/// resolve. An unresolvable name is not safe.
 fn rust_hash_eq_safe_named(
     name: &str,
     ctx: &CodegenContext,
     visiting: &mut HashSet<String>,
 ) -> bool {
-    if !visiting.insert(name.to_string()) {
-        return true;
+    match find_type_def(name, ctx) {
+        Some(td) => {
+            // A dependency's own fields are written in ITS scope, not in the
+            // scope of whoever named it, so the descent re-scopes here.
+            let owner = crate::codegen::common::type_key_for_decl(ctx, td);
+            rust_hash_eq_safe_def(td, name, ctx, owner.scope_str(), visiting)
+        }
+        None => false,
     }
-
-    let safe = find_type_def(name, ctx).is_some_and(|td| {
-        // A packed byte sequence is carried by `aver_rt::AverPackedU8`, which
-        // implements Eq, Hash and Ord, so the source-level `List<Int>` below
-        // describes a field this struct does not hold. Answering from the
-        // source type is what kept `Map<Bytes, T>` — and anything holding a
-        // `Bytes` — from deriving what the map needs on this backend.
-        if super::uses_packed_u8(ctx, crate::codegen::common::type_def_name(td)) {
-            return true;
-        }
-        match td {
-            TypeDef::Sum { variants, .. } => variants.iter().all(|variant| {
-                variant.fields.iter().all(|field_ty| {
-                    let parsed = crate::types::parse_type_str(field_ty);
-                    rust_hash_eq_safe_type(&parsed, ctx, visiting)
-                })
-            }),
-            TypeDef::Product { fields, .. } => fields.iter().all(|(_, field_ty)| {
-                let parsed = crate::types::parse_type_str(field_ty);
-                rust_hash_eq_safe_type(&parsed, ctx, visiting)
-            }),
-        }
-    });
-
-    visiting.remove(name);
-    safe
 }
 
-fn type_can_derive_hash_eq(td: &TypeDef, ctx: &CodegenContext) -> bool {
+fn type_can_derive_hash_eq(td: &TypeDef, ctx: &CodegenContext, scope: Option<&str>) -> bool {
     let mut visiting = HashSet::new();
     let key = crate::codegen::common::backend_type_def_key(ctx, td);
-    rust_hash_eq_safe_named(&key, ctx, &mut visiting)
+    rust_hash_eq_safe_def(td, &key, ctx, scope, &mut visiting)
 }
 
 /// Whether the generated type can carry the canonical key order.
@@ -210,17 +279,11 @@ fn emit_sum_type(
     public: bool,
     ctx: &CodegenContext,
     scope: Option<&str>,
+    hash_eq: bool,
 ) -> String {
     let mut out = String::new();
     let visibility = visibility_prefix(public);
-    let derives = if type_can_derive_hash_eq(
-        &TypeDef::Sum {
-            name: name.to_string(),
-            variants: variants.to_vec(),
-            line: 0,
-        },
-        ctx,
-    ) {
+    let derives = if hash_eq {
         "#[derive(Clone, Debug, PartialEq, Eq, Hash)]"
     } else {
         "#[derive(Clone, Debug, PartialEq)]"
@@ -255,15 +318,7 @@ fn emit_sum_type(
     // field name: declaration order is not observable anywhere else, so
     // ordering by it would make reordering two constructors change how every
     // map on this key iterates.
-    if type_can_derive_hash_eq(
-        &TypeDef::Sum {
-            name: name.to_string(),
-            variants: variants.to_vec(),
-            line: 0,
-        },
-        ctx,
-    ) && type_parts_are_orderable(variants.iter().flat_map(|v| v.fields.iter()))
-    {
+    if hash_eq && type_parts_are_orderable(variants.iter().flat_map(|v| v.fields.iter())) {
         let mut by_name: Vec<&TypeVariant> = variants.iter().collect();
         by_name.sort_by(|a, b| a.name.cmp(&b.name));
         writeln!(out).unwrap();
@@ -392,17 +447,11 @@ fn emit_product_type(
     ctx: &CodegenContext,
     scope: Option<&str>,
     packed_u8: bool,
+    hash_eq: bool,
 ) -> String {
     let mut out = String::new();
     let visibility = visibility_prefix(public);
-    let derives = if type_can_derive_hash_eq(
-        &TypeDef::Product {
-            name: name.to_string(),
-            fields: fields.to_vec(),
-            line: 0,
-        },
-        ctx,
-    ) {
+    let derives = if hash_eq {
         "#[derive(Clone, Debug, PartialEq, Eq, Hash)]"
     } else {
         "#[derive(Clone, Debug, PartialEq)]"
@@ -435,15 +484,7 @@ fn emit_product_type(
     // anywhere else in Aver — a record is built and read by name, and there is
     // no positional pattern — so ordering by it would make reordering two
     // fields change how every map on this key iterates.
-    if type_can_derive_hash_eq(
-        &TypeDef::Product {
-            name: name.to_string(),
-            fields: fields.to_vec(),
-            line: 0,
-        },
-        ctx,
-    ) && type_parts_are_orderable(fields.iter().map(|(_, ty)| ty))
-    {
+    if hash_eq && type_parts_are_orderable(fields.iter().map(|(_, ty)| ty)) {
         let mut by_name: Vec<&(String, String)> = fields.iter().collect();
         by_name.sort_by(|a, b| a.0.cmp(&b.0));
         writeln!(out).unwrap();

@@ -2962,4 +2962,173 @@ fn main() -> Result<Tuple<Int, Int>, String>
         assert!(replay_support.contains("candidate.effect_occurrence"));
         assert!(replay_support.contains("candidate.args != args"));
     }
+
+    #[test]
+    fn same_bare_name_in_two_modules_keeps_its_own_derives() {
+        // jasisz/aver#1134 — two modules each declare `Progress`. The carrier
+        // analysis decided a type's derives by resolving its UNQUALIFIED name
+        // back to a declaration, so the Eq/Hash answer found for one twin
+        // landed on the other: a record holding a value that can never be Eq
+        // came out `#[derive(.., Eq, Hash)]` and `cargo build` failed on the
+        // bounds, after check, verify and compile had all passed.
+        let ctx = ctx_from_multi(
+            r#"
+module Entry
+    depends [Snapshot, Bodies]
+    intent = "Two dependencies that each declare a record named Progress."
+    effects []
+
+fn main() -> Int
+    Snapshot.done(Snapshot.Progress(done = 1)) + Bodies.count(Bodies.Progress(ratio = 0.5))
+"#,
+            &[
+                (
+                    "Snapshot",
+                    r#"
+module Snapshot
+    exposes [Progress, done]
+    intent = "An all-Int record, usable as a map key."
+    effects []
+
+record Progress
+    done: Int
+
+fn done(p: Progress) -> Int
+    ? "Reads the counter."
+    p.done
+
+verify done
+    done(Progress(done = 1)) => 1
+"#,
+                ),
+                (
+                    "Bodies",
+                    r#"
+module Bodies
+    exposes [Progress, count]
+    intent = "A same-named record carrying something that can never be Eq."
+    effects []
+
+record Progress
+    ratio: Float
+
+fn count(p: Progress) -> Int
+    ? "Ignores the ratio."
+    0
+
+verify count
+    count(Progress(ratio = 0.5)) => 0
+"#,
+                ),
+            ],
+            "collision",
+        );
+
+        let progress_of = |prefix: &str| {
+            ctx.modules
+                .iter()
+                .find(|m| m.prefix == prefix)
+                .unwrap_or_else(|| panic!("module {prefix} should be loaded"))
+                .type_defs
+                .iter()
+                .find(|td| crate::codegen::common::type_def_name(td) == "Progress")
+                .unwrap_or_else(|| panic!("{prefix} should declare Progress"))
+        };
+
+        let snapshot =
+            crate::codegen::rust::toplevel::emit_public_type_def(progress_of("Snapshot"), &ctx);
+        let bodies =
+            crate::codegen::rust::toplevel::emit_public_type_def(progress_of("Bodies"), &ctx);
+
+        assert!(
+            snapshot.contains("Eq, Hash"),
+            "an all-Int record is a usable map key, got:\n{snapshot}"
+        );
+        assert!(
+            !bodies.contains("Eq, Hash"),
+            "a record holding a Float can never be Eq, and its same-named twin must not answer for it, got:\n{bodies}"
+        );
+    }
+
+    #[test]
+    fn a_field_naming_a_duplicated_type_resolves_in_its_own_module() {
+        // jasisz/aver#1134, one level down: the derives must describe the
+        // struct that is actually emitted. `Walk.step` is written bare, and
+        // the field emitter resolves it in the declaring module — so the
+        // derive analysis has to resolve it the same way. Resolving it
+        // first-match-wins across modules picked the other `Progress` and
+        // derived `Eq` for a struct whose field holds an `f64`.
+        let ctx = ctx_from_multi(
+            r#"
+module Entry
+    depends [Snapshot, Bodies]
+    intent = "Two dependencies that each declare a record named Progress."
+    effects []
+
+fn main() -> Int
+    Snapshot.done(Snapshot.Progress(done = 1)) + Bodies.count(Bodies.Walk(step = Bodies.Progress(ratio = 0.5)))
+"#,
+            &[
+                (
+                    "Snapshot",
+                    r#"
+module Snapshot
+    exposes [Progress, done]
+    intent = "An all-Int record, usable as a map key."
+    effects []
+
+record Progress
+    done: Int
+
+fn done(p: Progress) -> Int
+    ? "Reads the counter."
+    p.done
+
+verify done
+    done(Progress(done = 1)) => 1
+"#,
+                ),
+                (
+                    "Bodies",
+                    r#"
+module Bodies
+    exposes [Progress, Walk, count]
+    intent = "A same-named record, and a holder naming it bare."
+    effects []
+
+record Progress
+    ratio: Float
+
+record Walk
+    step: Progress
+
+fn count(w: Walk) -> Int
+    ? "Ignores the walk."
+    0
+
+verify count
+    count(Walk(step = Progress(ratio = 0.5))) => 0
+"#,
+                ),
+            ],
+            "collisionfield",
+        );
+
+        let bodies = ctx
+            .modules
+            .iter()
+            .find(|m| m.prefix == "Bodies")
+            .expect("Bodies should be loaded");
+        let walk = bodies
+            .type_defs
+            .iter()
+            .find(|td| crate::codegen::common::type_def_name(td) == "Walk")
+            .expect("Bodies should declare Walk");
+
+        let emitted = crate::codegen::rust::toplevel::emit_public_type_def(walk, &ctx);
+        assert!(
+            !emitted.contains("Eq, Hash"),
+            "Walk holds Bodies.Progress, which holds a Float, so it can carry neither, got:\n{emitted}"
+        );
+    }
 }
