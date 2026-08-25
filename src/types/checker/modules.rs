@@ -60,19 +60,18 @@ impl TypeChecker {
                 }
             }
         }
+        // Capability resources may be carried by represented types declared
+        // in the same module. Their nominal identities already exist in the
+        // symbol table, but the bare local aliases must be installed before
+        // constructor fields are canonicalized below. Consumer modules did
+        // not expose this ordering bug because they receive the resource
+        // identity while their dependency registry is integrated.
+        self.register_capability_sigs();
         for item in items {
             if let TopLevel::TypeDef(td) = item {
                 self.register_type_def_sigs(td, &module_name);
             }
         }
-        // Capability resources participate in ordinary function signatures:
-        // hostile profiles for a resource-minting operation receive the fresh
-        // resource as an explicit oracle parameter.  Register their nominal
-        // identities before walking FnDefs, otherwise a perfectly valid local
-        // profile such as `fn accept(..., fresh: Token)` is diagnosed as using
-        // an unknown type merely because operation signatures used to be
-        // installed last.
-        self.register_capability_sigs();
         for item in items {
             if let TopLevel::FnDef(f) = item {
                 let mut params = Vec::new();
