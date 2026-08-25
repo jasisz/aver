@@ -145,9 +145,15 @@ fn validate_live_provider(
     binding: &ProviderBinding,
     boundary: &str,
 ) -> Result<(), String> {
-    if provenance.provider == binding.provider_identity()
-        && provenance.fingerprint == binding.provider_fingerprint()
-    {
+    let same_fingerprint = provenance.fingerprint == binding.provider_fingerprint();
+    let same_provider = provenance.provider == binding.provider_identity();
+    let compatible_standard_adapter =
+        aver_rt::provider::standard_provider_adapters_replay_compatible(
+            &provenance.capability,
+            &provenance.provider,
+            binding.provider_identity(),
+        );
+    if same_fingerprint && (same_provider || compatible_standard_adapter) {
         return Ok(());
     }
     Err(format!(

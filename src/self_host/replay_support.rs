@@ -1567,7 +1567,15 @@ pub mod aver_replay {
                     capability
                 );
             };
-            if recorded.provider != *provider || recorded.fingerprint != *fingerprint {
+            let compatible_standard_adapter = recorded.fingerprint == *fingerprint
+                && aver_rt::provider::standard_provider_adapters_replay_compatible(
+                    capability,
+                    &recorded.provider,
+                    provider,
+                );
+            if (recorded.provider != *provider || recorded.fingerprint != *fingerprint)
+                && !compatible_standard_adapter
+            {
                 panic!(
                     "Live provider mismatch for '{}': recorded {}@{}, current {}@{}",
                     capability, recorded.provider, recorded.fingerprint, provider, fingerprint

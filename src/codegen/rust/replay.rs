@@ -115,7 +115,15 @@ pub fn generate_replay_runtime(options: ReplayRuntimeOptions) -> String {
             let (Some(provider), Some(fingerprint)) = (&expected.provider, &expected.fingerprint) else {{
                 panic!("Capability '{{}}' requires a live provider during replay", capability);
             }};
-            if recorded.provider != *provider || recorded.fingerprint != *fingerprint {{
+            let compatible_standard_adapter = recorded.fingerprint == *fingerprint
+                && aver_rt::provider::standard_provider_adapters_replay_compatible(
+                    capability,
+                    &recorded.provider,
+                    provider,
+                );
+            if (recorded.provider != *provider || recorded.fingerprint != *fingerprint)
+                && !compatible_standard_adapter
+            {{
                 panic!(
                     "Live provider mismatch for '{{}}': recorded {{}}@{{}}, current {{}}@{{}}",
                     capability, recorded.provider, recorded.fingerprint, provider, fingerprint
@@ -997,6 +1005,17 @@ mod policy_tests {
         });
         assert!(!runtime.contains("for capability in []"));
         assert!(!runtime.contains("let capability = match"));
+    }
+
+    #[test]
+    fn live_replay_accepts_only_fingerprinted_standard_adapter_families() {
+        let runtime = generate_replay_runtime(ReplayRuntimeOptions {
+            has_provider_runtime: true,
+            live_replay_capabilities: vec!["Console".to_string()],
+            ..ReplayRuntimeOptions::default()
+        });
+        assert!(runtime.contains("standard_provider_adapters_replay_compatible"));
+        assert!(runtime.contains("recorded.fingerprint == *fingerprint"));
     }
 }
 

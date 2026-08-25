@@ -50,6 +50,32 @@ pub use terminal::{
     STANDARD_TERMINAL_FINGERPRINT, STANDARD_TERMINAL_NATIVE_IDENTITY, StandardTerminalProvider,
 };
 
+/// Whether two recorded/live identities name compiler-shipped adapters for
+/// the same standard capability. The adapter suffix is target-specific audit
+/// metadata; replay portability across native, wasm-gc, and wasip2 is pinned
+/// by the shared implementation fingerprint instead.
+///
+/// This deliberately recognizes only Aver's closed standard identity shape.
+/// Custom providers, including providers for standard contracts that use
+/// their own identity, remain identity-exact during live replay.
+pub fn standard_provider_adapters_replay_compatible(
+    capability: &str,
+    recorded: &str,
+    current: &str,
+) -> bool {
+    fn is_shipped_adapter(capability: &str, identity: &str) -> bool {
+        let Some(rest) = identity.strip_prefix("aver.standard.") else {
+            return false;
+        };
+        let Some((module, adapter)) = rest.split_once('/') else {
+            return false;
+        };
+        module == capability && matches!(adapter, "native" | "wasm-gc-imports" | "wasip2-wasi")
+    }
+
+    is_shipped_adapter(capability, recorded) && is_shipped_adapter(capability, current)
+}
+
 /// A host-owned payload carried by a capability resource.
 ///
 /// Only providers can create one. Aver programs receive an opaque handle; the
@@ -358,5 +384,34 @@ impl ProviderResourceHandle {
             slot,
             generation,
         }
+    }
+}
+
+#[cfg(test)]
+mod replay_identity_tests {
+    use super::standard_provider_adapters_replay_compatible;
+
+    #[test]
+    fn only_same_standard_capability_adapters_share_a_replay_family() {
+        assert!(standard_provider_adapters_replay_compatible(
+            "Console",
+            "aver.standard.Console/wasm-gc-imports",
+            "aver.standard.Console/native",
+        ));
+        assert!(standard_provider_adapters_replay_compatible(
+            "Console",
+            "aver.standard.Console/wasip2-wasi",
+            "aver.standard.Console/wasm-gc-imports",
+        ));
+        assert!(!standard_provider_adapters_replay_compatible(
+            "Console",
+            "aver.standard.Time/wasm-gc-imports",
+            "aver.standard.Console/native",
+        ));
+        assert!(!standard_provider_adapters_replay_compatible(
+            "Console",
+            "example.console/wasm-gc-imports",
+            "aver.standard.Console/native",
+        ));
     }
 }

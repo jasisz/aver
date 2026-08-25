@@ -830,6 +830,40 @@ operation flush() -> Unit
 }
 
 #[test]
+fn standard_target_adapters_share_replay_identity_only_with_the_same_fingerprint() {
+    let contracts = crate::stdlib::standard_capability_registry();
+    let providers = ProviderRegistry::for_program(contracts).expect("standard providers");
+    let mut provenance = providers.provenance();
+    let console = provenance
+        .iter()
+        .position(|entry| entry.capability == "Console")
+        .expect("Console provenance");
+    provenance[console].provider = "aver.standard.Console/wasm-gc-imports".to_string();
+
+    providers
+        .validate_replay_provenance_for_operations(&provenance, &[], ["Console.print"])
+        .expect("same-version shipped adapters are cross-target replay compatible");
+
+    let expected_fingerprint = provenance[console].fingerprint.clone();
+    provenance[console].fingerprint = "changed-standard-console".to_string();
+    assert!(
+        providers
+            .validate_replay_provenance_for_operations(&provenance, &[], ["Console.print"])
+            .expect_err("a changed standard implementation must remain pinned")
+            .contains("live provider mismatch")
+    );
+
+    provenance[console].fingerprint = expected_fingerprint;
+    provenance[console].provider = "example.console/custom".to_string();
+    assert!(
+        providers
+            .validate_replay_provenance_for_operations(&provenance, &[], ["Console.print"])
+            .expect_err("custom identities are not members of the standard adapter family")
+            .contains("live provider mismatch")
+    );
+}
+
+#[test]
 fn replay_rejects_duplicate_capability_provenance() {
     let registry = contracts("Probe", PURE);
     let mut providers = ProviderRegistry::for_contracts(registry.clone());
