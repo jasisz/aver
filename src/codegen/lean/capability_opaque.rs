@@ -485,7 +485,93 @@ fn find_type_def<'a>(
     {
         return Some((td, module.prefix.as_str()));
     }
+    // A bare name means whatever the ASKING module can see, so the walk is
+    // its `depends` closure and not the whole program. Walking every module
+    // let a declaration the asker never imports supply — or, worse, deny —
+    // the Nonempty witness for somebody else's type, decided by nothing but
+    // the order this list happens to be in. jasisz/aver#1134.
+    let visible = crate::codegen::common::visible_module_prefixes(Some(scope), ctx);
     ctx.modules
         .iter()
+        .filter(|module| {
+            visible
+                .as_ref()
+                .is_none_or(|prefixes| prefixes.contains(&module.prefix))
+        })
         .find_map(|module| named(&module.type_defs, name).map(|td| (td, module.prefix.as_str())))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::find_type_def;
+    use crate::ast::TypeDef;
+    use crate::codegen::{empty_test_ctx, test_module};
+
+    fn product(name: &str, field: &str, ty: &str) -> TypeDef {
+        TypeDef::Product {
+            name: name.to_string(),
+            fields: vec![(field.to_string(), ty.to_string())],
+            line: 1,
+        }
+    }
+
+    #[test]
+    fn a_bare_name_never_resolves_outside_what_the_asking_module_depends_on() {
+        // A field annotation is re-parsed from text, so it reaches the witness
+        // walk as a bare name with no stamped identity. `Bodies` writes
+        // `Progress` meaning the one it imports from `Snapshot`; `Unrelated`
+        // happens to declare that name too and is not in anybody's `depends`.
+        // Answering with the first module that carries the name let an
+        // unimported declaration supply — or deny — the Nonempty witness for
+        // somebody else's type. jasisz/aver#1134.
+        let mut ctx = empty_test_ctx();
+        ctx.modules = vec![
+            test_module("Unrelated", &[], vec![product("Progress", "tag", "String")]),
+            test_module("Snapshot", &[], vec![product("Progress", "done", "Int")]),
+            test_module(
+                "Bodies",
+                &["Snapshot"],
+                vec![product("Walk", "step", "Progress")],
+            ),
+        ];
+
+        let (_, owner) =
+            find_type_def("Progress", "Bodies", &ctx).expect("Bodies can see Snapshot.Progress");
+        assert_eq!(
+            owner, "Snapshot",
+            "a bare name must resolve inside what Bodies depends on, not to the first module declaring it"
+        );
+    }
+
+    #[test]
+    fn a_module_still_prefers_its_own_declaration() {
+        // The scope-first step is the reason the fallback is narrow, not
+        // absent: a module that declares the name answers for itself.
+        let mut ctx = empty_test_ctx();
+        ctx.modules = vec![
+            test_module("Snapshot", &[], vec![product("Progress", "done", "Int")]),
+            test_module(
+                "Bodies",
+                &["Snapshot"],
+                vec![product("Progress", "ratio", "Float")],
+            ),
+        ];
+
+        let (_, owner) =
+            find_type_def("Progress", "Bodies", &ctx).expect("Bodies declares Progress itself");
+        assert_eq!(owner, "Bodies");
+    }
+
+    #[test]
+    fn a_dotted_name_still_names_its_module() {
+        let mut ctx = empty_test_ctx();
+        ctx.modules = vec![
+            test_module("Snapshot", &[], vec![product("Progress", "done", "Int")]),
+            test_module("Bodies", &[], vec![product("Progress", "ratio", "Float")]),
+        ];
+
+        let (_, owner) = find_type_def("Snapshot.Progress", "Bodies", &ctx)
+            .expect("a canonical key names its module outright");
+        assert_eq!(owner, "Snapshot");
+    }
 }

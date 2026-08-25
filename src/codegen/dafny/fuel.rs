@@ -437,17 +437,23 @@ fn named_type_default(
     ctx: &CodegenContext,
     visiting: &mut HashSet<String>,
 ) -> Option<String> {
-    if visiting.contains(name) {
+    // Resolve first, then guard: the key has to be the declaration we
+    // actually reached, not the bare name that led here. Two modules may
+    // declare the same name, and keying the guard on the bare form made one
+    // of them look like a cycle the other was already inside — a refusal,
+    // and so an axiom, for a type that has a perfectly good default.
+    let td = find_type_def(ctx, name)?;
+    let key = crate::codegen::common::type_key_for_decl(ctx, td).canonical();
+    if visiting.contains(&key) {
         // Left-recursive ADT (e.g. first variant references the type
         // itself before a base case). Refuse the default — the SCC
         // will fall back to axiom emission, the parallel of Lean's
         // `partial def`.
         return None;
     }
-    visiting.insert(name.to_string());
-    let td = find_type_def(ctx, name)?;
+    visiting.insert(key.clone());
     let result = type_def_default(td, ctx, visiting);
-    visiting.remove(name);
+    visiting.remove(&key);
     result
 }
 
@@ -471,10 +477,125 @@ fn find_type_def<'a>(ctx: &'a CodegenContext, target: &str) -> Option<&'a TypeDe
             }
         }
     }
-    ctx.type_defs
-        .iter()
-        .chain(ctx.modules.iter().flat_map(|m| m.type_defs.iter()))
-        .find(|td| crate::codegen::common::type_def_name(td) == target)
+    // A bare name means whatever the module being emitted can see. The
+    // emitter already tracks that scope (`with_module_scope` wraps this
+    // whole walk); reading it here is what keeps a declaration the asker
+    // never imports from answering. Its own types come first, then its
+    // `depends` closure, and the entry last — the entry is another module
+    // from a dependency's point of view. jasisz/aver#1134.
+    let scope = ctx.active_module_scope();
+    if let Some(scope) = scope.as_deref()
+        && let Some(module) = ctx.modules.iter().find(|m| m.prefix == scope)
+        && let Some(td) = module
+            .type_defs
+            .iter()
+            .find(|td| crate::codegen::common::type_def_name(td) == target)
+    {
+        return Some(td);
+    }
+    match crate::codegen::common::visible_module_prefixes(scope.as_deref(), ctx) {
+        // Emitting a dependency: only what it depends on. The entry is
+        // another module from its point of view and never names it.
+        Some(prefixes) => ctx
+            .modules
+            .iter()
+            .filter(|m| prefixes.contains(&m.prefix))
+            .flat_map(|m| m.type_defs.iter())
+            .find(|td| crate::codegen::common::type_def_name(td) == target),
+        // Emitting the entry: everything loaded is there because the entry
+        // reaches it, and the entry's own declarations come first.
+        None => ctx
+            .type_defs
+            .iter()
+            .chain(ctx.modules.iter().flat_map(|m| m.type_defs.iter()))
+            .find(|td| crate::codegen::common::type_def_name(td) == target),
+    }
+}
+
+#[cfg(test)]
+mod resolution_tests {
+    use super::find_type_def;
+    use crate::ast::TypeDef;
+    use crate::codegen::{empty_test_ctx, test_module};
+
+    fn product(name: &str, field: &str, ty: &str) -> TypeDef {
+        TypeDef::Product {
+            name: name.to_string(),
+            fields: vec![(field.to_string(), ty.to_string())],
+            line: 1,
+        }
+    }
+
+    #[test]
+    fn a_bare_name_never_resolves_outside_what_the_emitted_module_depends_on() {
+        // The fuel emitter reads a return type as text, so a named type
+        // reaches this walk as a bare name. `Bodies` means the `Progress` it
+        // imports; `Unrelated` declares that name and is in nobody's
+        // `depends`. jasisz/aver#1134.
+        let mut ctx = empty_test_ctx();
+        ctx.type_defs = vec![product("Progress", "entry", "Bool")];
+        ctx.modules = vec![
+            test_module("Unrelated", &[], vec![product("Progress", "tag", "String")]),
+            test_module("Snapshot", &[], vec![product("Progress", "done", "Int")]),
+            test_module(
+                "Bodies",
+                &["Snapshot"],
+                vec![product("Walk", "step", "Progress")],
+            ),
+        ];
+
+        let found =
+            ctx.with_module_scope(Some("Bodies"), || find_type_def(&ctx, "Progress").cloned());
+        let TypeDef::Product { fields, .. } = found.expect("Bodies can see Snapshot.Progress")
+        else {
+            panic!("expected a product type");
+        };
+        assert_eq!(
+            fields[0].0, "done",
+            "a bare name must resolve inside what Bodies depends on, and never to the entry"
+        );
+    }
+
+    #[test]
+    fn the_emitted_module_prefers_its_own_declaration() {
+        let mut ctx = empty_test_ctx();
+        ctx.modules = vec![
+            test_module("Snapshot", &[], vec![product("Progress", "done", "Int")]),
+            test_module(
+                "Bodies",
+                &["Snapshot"],
+                vec![product("Progress", "ratio", "Float")],
+            ),
+        ];
+
+        let found =
+            ctx.with_module_scope(Some("Bodies"), || find_type_def(&ctx, "Progress").cloned());
+        let TypeDef::Product { fields, .. } = found.expect("Bodies declares Progress itself")
+        else {
+            panic!("expected a product type");
+        };
+        assert_eq!(fields[0].0, "ratio");
+    }
+
+    #[test]
+    fn the_entry_still_sees_its_own_types_first() {
+        // No active scope means the entry is being emitted, and its own
+        // declarations keep answering before any dependency's.
+        let mut ctx = empty_test_ctx();
+        ctx.type_defs = vec![product("Progress", "entry", "Bool")];
+        ctx.modules = vec![test_module(
+            "Snapshot",
+            &[],
+            vec![product("Progress", "done", "Int")],
+        )];
+
+        let TypeDef::Product { fields, .. } =
+            find_type_def(&ctx, "Progress").expect("the entry declares Progress")
+        else {
+            panic!("expected a product type");
+        };
+        assert_eq!(fields[0].0, "entry");
+    }
 }
 
 fn type_def_default(
