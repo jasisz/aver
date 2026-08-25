@@ -4627,6 +4627,96 @@ fn main() -> Unit
     result.unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// Regression for #1130: Rust keeps a borrow from an earlier call argument
+/// alive while evaluating every later argument. If one of those later
+/// expressions consumes the same owned match binding, the earlier borrow
+/// must point at a detached clone rather than the value being moved.
+#[test]
+fn borrowed_call_argument_detaches_before_later_move() {
+    let ws = temp_dir("borrowed_call_arg_later_move");
+    let source = ws.join("main.av");
+    fs::write(
+        &source,
+        r#"module Main
+    intent = "Use one match binding by reference and by value in one call."
+    effects [Console]
+
+record Sample
+    atMs: Int
+    done: Int
+
+fn lastOf(samples: List<Sample>, fallback: Sample) -> Sample
+    ? "Return the last sample, or the fallback."
+    match samples
+        [] -> fallback
+        [head, ..tail] -> lastOf(tail, head)
+
+fn slopeOf(newest: Sample, oldest: Sample) -> Int
+    ? "Return the completed-work difference."
+    newest.done - oldest.done
+
+fn rateOf(samples: List<Sample>) -> Int
+    ? "Borrow newest for slopeOf while lastOf consumes it as its fallback."
+    match samples
+        [] -> 0
+        [newest, ..older] -> slopeOf(newest, lastOf(older, newest))
+
+fn sameOf(samples: List<Sample>) -> Int
+    ? "Borrow the same owned match binding twice without consuming it."
+    match samples
+        [] -> 0
+        [newest, ..older] -> slopeOf(newest, newest)
+
+fn main() -> Unit
+    ! [Console.print]
+    samples = [Sample(atMs = 2, done = 4), Sample(atMs = 0, done = 1)]
+    Console.print("{rateOf(samples)}:{sameOf(samples)}")
+"#,
+    )
+    .expect("write borrowed-call-argument probe source");
+
+    let vm_stdout = run_vm(&source, None).expect("VM run");
+    assert_eq!(vm_stdout, "3:0");
+
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let result = (|| -> Result<(), String> {
+        compile_rust(&source, &project, "borrowed_call_arg_later_move", None, &[])?;
+        let emitted = generated_entry(&project)?;
+        if !emitted.contains("slopeOf(&newest.clone(), &lastOf(older, newest))") {
+            return Err(format!(
+                "the earlier borrow was not detached before the later move:\n{emitted}"
+            ));
+        }
+        if !emitted.contains("slopeOf(&newest, &newest)") {
+            return Err(format!(
+                "two borrowed arguments cloned despite having no later move:\n{emitted}"
+            ));
+        }
+
+        let bin = cargo_build(&project, "borrowed_call_arg_later_move")?;
+        let out = Command::new(&bin)
+            .output()
+            .map_err(|e| format!("run borrowed-call-argument binary: {e}"))?;
+        if !out.status.success() {
+            return Err(format!(
+                "borrowed-call-argument generated binary failed:\n{}",
+                format_output(&out)
+            ));
+        }
+        let rust_stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if rust_stdout != vm_stdout {
+            return Err(format!(
+                "borrowed-call-argument stdout mismatch\n--- VM ---\n{vm_stdout}\n--- Rust ---\n{rust_stdout}"
+            ));
+        }
+        Ok(())
+    })();
+
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// A self-TCO identity argument is elided from the Rust loop rather than
 /// evaluated. If a later tail-call argument moves that same non-Copy param
 /// into a helper, the value is still live on the hidden loop edge and must be
