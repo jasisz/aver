@@ -1,10 +1,11 @@
-//! wasm-gc MIR body-emitter coverage + validity gate (single-file).
+//! wasm-gc MIR body-emitter coverage + validity gate (single-entry-file).
 //!
 //! MIR is the only wasm-gc codegen path: the `ResolvedExpr` body walker
 //! was retired, so fns the MIR walker doesn't cover (today only
 //! higher-order / `MirCallee::LocalSlot` shapes) get an `unreachable`
 //! trap-stub body rather than a second walker. This test compiles every
-//! single-file `examples/**/*.av` program through the production path and
+//! single-entry-file `examples/**/*.av` program through the production
+//! dependency-loader + flattening path and
 //! asserts:
 //!   * it compiles (no hard error), and the emitted bytes are valid
 //!     wasm-gc (the compiler runs `wasmparser` validation before
@@ -72,10 +73,15 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// Run the same pipeline shape `aver compile --target wasm-gc` uses
-/// (skip the VM-only interp_lower / buffer_build passes). Returns the
-/// post-pipeline items fed to the compiler.
-fn run_pipeline(source: &str) -> Result<Vec<TopLevel>, String> {
+/// Run the same dependency-loader, pipeline, and flattening shape
+/// `aver compile --target wasm-gc` uses. The examples have no explicit
+/// dependencies, but their standard capabilities are implicit source
+/// dependencies and must still be present when boundary records are
+/// lowered.
+fn run_pipeline(
+    source: &str,
+) -> Result<(Vec<TopLevel>, std::collections::HashMap<String, String>), String> {
+    let module_root = env!("CARGO_MANIFEST_DIR");
     let mut lexer = Lexer::new(source);
     let tokens = lexer.tokenize().map_err(|e| format!("lex: {:?}", e))?;
     let mut parser = Parser::new(tokens);
@@ -83,7 +89,9 @@ fn run_pipeline(source: &str) -> Result<Vec<TopLevel>, String> {
     let result = ir::pipeline::run(
         &mut items,
         ir::PipelineConfig {
-            typecheck: Some(ir::TypecheckMode::Full { base_dir: None }),
+            typecheck: Some(ir::TypecheckMode::Full {
+                base_dir: Some(module_root),
+            }),
             run_interp_lower: false,
             run_buffer_build: false,
             run_chars_fusion: false,
@@ -100,7 +108,19 @@ fn run_pipeline(source: &str) -> Result<Vec<TopLevel>, String> {
             tc.errors.first()
         ));
     }
-    Ok(items)
+    let dep_modules = aver::source::load_compile_deps(&items, module_root)?;
+    let type_aliases = aver::codegen::wasm_gc::flatten_multimodule(
+        &mut items,
+        &dep_modules,
+        &result
+            .typecheck
+            .as_ref()
+            .expect("typecheck requested")
+            .capabilities,
+        aver::codegen::wasm_gc::CapabilityFunctionSurface::Runtime,
+    );
+    aver::ir::pipeline::resolve(&mut items);
+    Ok((items, type_aliases))
 }
 
 #[test]
@@ -124,7 +144,7 @@ fn mir_body_emitter_compiles_and_validates_every_single_file_example() {
                 continue;
             }
         };
-        let items = match run_pipeline(&source) {
+        let (items, type_aliases) = match run_pipeline(&source) {
             Ok(v) => v,
             Err(e) => {
                 failures.push(format!("{}: {}", path.display(), e));
@@ -132,15 +152,19 @@ fn mir_body_emitter_compiles_and_validates_every_single_file_example() {
             }
         };
 
-        // `compile_to_wasm_gc_with_mir_count` is the production
-        // `compile_to_wasm_gc` plus the per-fn MIR-coverage count. A
-        // successful return means the emitted bytes passed the backend's
-        // built-in `wasmparser` validation (it validates before
-        // returning) — so a compile is a validity pass.
-        match aver::codegen::wasm_gc::compile_to_wasm_gc_with_mir_count(&items, None) {
-            Ok((bytes, mir_emitted)) => {
-                total_bytes += bytes.len();
-                total_mir_emitted += mir_emitted;
+        // The flattened production entry also reports the per-fn MIR
+        // coverage count. A successful return means the emitted bytes
+        // passed the backend's built-in `wasmparser` validation.
+        match aver::codegen::wasm_gc::compile_to_wasm_gc_flattened(
+            &items,
+            None,
+            None,
+            aver::codegen::wasm_gc::TargetMode::AverBridge,
+            &type_aliases,
+        ) {
+            Ok(output) => {
+                total_bytes += output.bytes.len();
+                total_mir_emitted += output.mir_count;
                 compiled += 1;
             }
             Err(e) => failures.push(format!("{}: compile: {}", path.display(), e)),
