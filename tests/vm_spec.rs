@@ -1757,14 +1757,14 @@ fn vm_error_prop_chain() {
 #[test]
 fn vm_effect_allowed() {
     // main declares ! [Console.print] — Console.print should work.
-    let src = "fn main() -> Unit\n    ! [Console.print]\n    Console.print(42)\n";
+    let src = "fn main() -> Unit\n    ! [Console.print]\n    Console.print(\"hello\")\n";
     let _ = vm_run(src); // should not panic
 }
 
 #[test]
 fn vm_effect_violation() {
     // main declares no effects — Console.print should be blocked.
-    let src = "fn main() -> Unit\n    Console.print(42)\n";
+    let src = "fn main() -> Unit\n    Console.print(\"hello\")\n";
     let mut items = parse(src);
     tco::transform_program(&mut items);
     resolver::resolve_program(&mut items);
