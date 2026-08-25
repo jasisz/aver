@@ -106,6 +106,10 @@ const LEAN_PRELUDE_EXCEPT_DEC_EQ: &str = r#"instance [DecidableEq ε] [Decidable
   | .ok _, .error _ => isFalse (by intro h; cases h)
   | .error _, .ok _ => isFalse (by intro h; cases h)"#;
 
+// Keep `proven_ok` untagged. `AverCommon.lean` is certificate DATA and the
+// verifier correctly rejects elaboration-active attributes (`@[...]`) there.
+// Result-discharge tactics name `Except.proven` explicitly in their simp set,
+// so reducing the successful branch does not rely on a global simp attribute.
 const LEAN_PRELUDE_EXCEPT_NS: &str = r#"namespace Except
 def withDefault (r : Except ε α) (d : α) : α :=
   match r with
@@ -122,7 +126,7 @@ noncomputable def proven [Nonempty α] (r : Except ε α) : α :=
   | .ok v => v
   | .error _ => Classical.choice (inferInstance : Nonempty α)
 
-@[simp] theorem proven_ok [Nonempty α] (v : α) :
+theorem proven_ok [Nonempty α] (v : α) :
     proven (Except.ok v : Except ε α) = v := rfl
 end Except"#;
 
