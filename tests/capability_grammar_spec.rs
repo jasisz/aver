@@ -576,6 +576,37 @@ fn tick() -> Int
 }
 
 #[test]
+fn capability_types_may_carry_their_own_resource() {
+    let dir = temp_dir("local-resource-carriers");
+    fs::write(
+        dir.join("Sock.av"),
+        "\
+module Sock
+    kind = capability
+    semantics = effectful
+    exposes [Slot, Socket, Stored]
+    effects []
+
+resource Slot
+
+type Socket
+    Listening(Slot)
+    Open(Slot)
+
+record Stored
+    slot: Slot
+",
+    )
+    .expect("write Sock.av");
+
+    let (code, text) = run("check", &dir, "Sock.av");
+    assert_eq!(
+        code, 0,
+        "a capability's own sum types and records must be able to carry its resource:\n{text}"
+    );
+}
+
+#[test]
 fn capability_effects_require_operation_granularity() {
     let dir = temp_dir("effect-shorthand");
     fs::write(dir.join("Clock.av"), VALID_EFFECT_CAPABILITY).expect("write Clock.av");
