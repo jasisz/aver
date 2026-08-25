@@ -212,17 +212,27 @@ fn nestedArg(n: Int, d: Int) -> Result<Int, String>
 }
 
 #[test]
-fn cert_result_discharge_prelude_has_no_elaboration_active_attribute() {
-    let mut ctx = ctx_from_source(
-        r#"
+fn result_discharge_prelude_keeps_proof_simp_but_cert_data_attribute_free() {
+    let source = r#"
 module CertDischarge
     effects []
 
 fn checkedHalf(n: Int) -> Result<Int, String>
     Result.Ok(Int.div(n, 2))
-"#,
-        "CertDischarge",
+"#;
+    let mut proof_ctx = ctx_from_source(source, "CertDischarge");
+    let proof_out = transpile_for_proof_mode(&mut proof_ctx, VerifyEmitMode::NativeDecide);
+    let proof_common = proof_out
+        .files
+        .iter()
+        .find_map(|(name, content)| (name == "AverCommon.lean").then_some(content))
+        .expect("proof export should emit AverCommon.lean");
+    assert!(
+        proof_common.contains("@[simp] theorem proven_ok"),
+        "standalone proof reduction needs the simp attribute:\n{proof_common}"
     );
+
+    let mut ctx = ctx_from_source(source, "CertDischarge");
     let out = transpile_for_cert_model(&mut ctx);
     let common = out
         .files

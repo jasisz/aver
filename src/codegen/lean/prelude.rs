@@ -106,11 +106,16 @@ const LEAN_PRELUDE_EXCEPT_DEC_EQ: &str = r#"instance [DecidableEq ε] [Decidable
   | .ok _, .error _ => isFalse (by intro h; cases h)
   | .error _, .ok _ => isFalse (by intro h; cases h)"#;
 
-// Keep `proven_ok` untagged. `AverCommon.lean` is certificate DATA and the
-// verifier correctly rejects elaboration-active attributes (`@[...]`) there.
-// Result-discharge tactics name `Except.proven` explicitly in their simp set,
-// so reducing the successful branch does not rely on a global simp attribute.
-const LEAN_PRELUDE_EXCEPT_NS: &str = r#"namespace Except
+/// The shared Result-discharge model, with one deliberate mode difference.
+/// Standalone proof export needs `proven_ok` in the global simp set for laws
+/// whose Oracle reduction exposes an `Except.proven (Except.ok ...)` only
+/// after simplifying the caller. Certificate model files are untrusted DATA,
+/// so the verifier correctly rejects elaboration-active attributes (`@[...]`)
+/// there; its generated tactics name `Except.proven` explicitly instead.
+fn generate_except_namespace_prelude(cert_model: bool) -> String {
+    let proven_ok_attribute = if cert_model { "" } else { "@[simp] " };
+    format!(
+        r#"namespace Except
 def withDefault (r : Except ε α) (d : α) : α :=
   match r with
   | .ok v => v
@@ -126,9 +131,11 @@ noncomputable def proven [Nonempty α] (r : Except ε α) : α :=
   | .ok v => v
   | .error _ => Classical.choice (inferInstance : Nonempty α)
 
-theorem proven_ok [Nonempty α] (v : α) :
+{proven_ok_attribute}theorem proven_ok [Nonempty α] (v : α) :
     proven (Except.ok v : Except ε α) = v := rfl
-end Except"#;
+end Except"#
+    )
+}
 
 const LEAN_PRELUDE_OPTION_TO_EXCEPT: &str = r#"def Option.toExcept (o : Option α) (e : ε) : Except ε α :=
   match o with
@@ -1225,7 +1232,7 @@ fn generate_prelude_for_body(body: &str, include_all_helpers: bool) -> String {
             ]),
             "ExceptInstances" => parts.extend([
                 LEAN_PRELUDE_EXCEPT_DEC_EQ.to_string(),
-                LEAN_PRELUDE_EXCEPT_NS.to_string(),
+                generate_except_namespace_prelude(false),
                 LEAN_PRELUDE_OPTION_TO_EXCEPT.to_string(),
             ]),
             "StringHadd" => parts.push(generate_string_hadd_prelude(body, include_all_helpers)),
@@ -1460,7 +1467,7 @@ pub(super) fn build_common_lean(union_body: &str, cert_model: bool) -> String {
             ]),
             "ExceptInstances" => parts.extend([
                 LEAN_PRELUDE_EXCEPT_DEC_EQ.to_string(),
-                LEAN_PRELUDE_EXCEPT_NS.to_string(),
+                generate_except_namespace_prelude(cert_model),
                 LEAN_PRELUDE_OPTION_TO_EXCEPT.to_string(),
             ]),
             "StringHadd" => parts.push(generate_string_hadd_prelude(union_body, false)),
