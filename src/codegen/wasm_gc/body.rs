@@ -483,11 +483,11 @@ pub(super) struct Wasip2Lowering {
     /// loop + drops; cons-builds a `List<String>` of entry names.
     pub(super) disk_list_dir_fn_idx: Option<u32>,
     /// Phase 2.0 — `__rt_http_get(url: ref string) -> ref
-    /// Result<HttpResponse, String>` helper wasm fn idx. Owns
+    /// Result<Http.Response, String>` helper wasm fn idx. Owns
     /// the entire wasi:http/outgoing-handler.handle pipeline
     /// (URL parse, fields/request constructors, setters, handle,
     /// poll, future.get, status, consume, body.stream, drain,
-    /// per-call resource drops, HttpResponse build). `Some(...)`
+    /// per-call resource drops, Http.Response build). `Some(...)`
     /// when `Http.get` is registered.
     pub(super) http_get_fn_idx: Option<u32>,
 

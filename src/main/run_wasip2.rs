@@ -10,12 +10,10 @@
 //! process's real stdout, `Time.unixMs` reads the wall clock,
 //! `Random.*` gets cryptographically-random bytes from the OS.
 //!
-//! Effect surface is whatever the wasm-gc backend's wasip2 path
-//! has wired today (see `EffectName::lowers_on_wasip2`):
-//! `Console.{print, error, warn}` (Phase 1.2b1.5), `Time.unixMs`,
-//! `Random.{int, float}` (Phase 1.4). Programs touching effects
-//! that are not yet wired are rejected at compile time by
-//! `wasip2::effect_check`.
+//! The source capability registry and target manifest decide which
+//! operations wasip2 supports. Programs requiring a missing binding
+//! are rejected before code generation with a stable target-support
+//! diagnostic.
 
 use std::process;
 
@@ -207,20 +205,6 @@ fn build_component(
     // `aliased_slots`, and the wasm-gc in-place fast path then mutates
     // container-held collections through extracted locals (#950).
     aver::ir::pipeline::resolve_and_reannotate(&mut items);
-
-    if let Err(unsupported) = wasip2_codegen::check_supported_effects(&items) {
-        let mut out = format!(
-            "error[target-effect-unsupported]: {} effect site(s) cannot be lowered by \
-             `--wasip2`\n",
-            unsupported.len()
-        );
-        out.push_str(&wasip2_codegen::render_errors(&unsupported));
-        out.push_str(
-            "\n  See docs/wasip2.md (\"Why X is rejected, not stubbed\") for the \
-             static-target vs dynamic-host axis.",
-        );
-        return Err(out);
-    }
 
     let core_bytes = wasm_gc::compile_to_wasm_gc_flattened_with_capabilities(
         &items,

@@ -6,11 +6,11 @@ module HttpServerDemo
     exposes [main, hello]
     effects [Tcp.listen, Tcp.poll, Tcp.accept, Tcp.readSome, Tcp.writeBytes, Tcp.close, Tcp.closeListener, Process.stopRequested]
 
-fn hello(request: HttpRequest) -> HttpResponse
+fn hello(request: HttpRequest) -> Http.Response
     ? "Returns a small text response from an ordinary, directly verifiable Aver function."
     match request.path == "/"
-        true -> HttpResponse(status = 200, body = "hello from Aver\n", headers = {"content-type" => ["text/plain; charset=utf-8"]})
-        false -> HttpResponse(status = 404, body = "not found\n", headers = {"content-type" => ["text/plain; charset=utf-8"]})
+        true -> Http.Response(status = 200, body = "hello from Aver\n", headers = {"content-type" => ["text/plain; charset=utf-8"]})
+        false -> Http.Response(status = 404, body = "not found\n", headers = {"content-type" => ["text/plain; charset=utf-8"]})
 
 fn main() -> Result<Unit, String>
     ? "Binds port 8080 and serves until SIGINT or SIGTERM requests cooperative shutdown."
@@ -18,5 +18,5 @@ fn main() -> Result<Unit, String>
     HttpServer.listen(8080, hello)
 
 verify hello
-    hello(HttpRequest(method = "GET", path = "/", query = "", body = "", headers = {})) => HttpResponse(status = 200, body = "hello from Aver\n", headers = {"content-type" => ["text/plain; charset=utf-8"]})
-    hello(HttpRequest(method = "GET", path = "/missing", query = "", body = "", headers = {})) => HttpResponse(status = 404, body = "not found\n", headers = {"content-type" => ["text/plain; charset=utf-8"]})
+    hello(HttpRequest(method = "GET", path = "/", query = "", body = "", headers = {})) => Http.Response(status = 200, body = "hello from Aver\n", headers = {"content-type" => ["text/plain; charset=utf-8"]})
+    hello(HttpRequest(method = "GET", path = "/missing", query = "", body = "", headers = {})) => Http.Response(status = 404, body = "not found\n", headers = {"content-type" => ["text/plain; charset=utf-8"]})

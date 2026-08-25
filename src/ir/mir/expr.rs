@@ -548,10 +548,10 @@ pub struct MirConstruct {
     pub args: Vec<Spanned<MirExpr>>,
 }
 
-/// Build a fresh record. `type_id` is `Some` for user-declared
-/// records; built-in product types (`HttpResponse`, `Header`,
-/// `Buffer`, …) carry no user `TypeId`, so they ride `type_name`
-/// alone (the canonical builtin name the arena registers them under).
+/// Build a fresh record. `type_id` is `Some` for records declared in
+/// the current user program; imported capability-owned and compiler-owned
+/// product types (`Http.Response`, `Header`, `Buffer`, …) carry no local
+/// `TypeId`, so they ride `type_name` alone.
 #[derive(Debug, Clone)]
 pub struct MirRecordCreate {
     pub type_id: Option<TypeId>,

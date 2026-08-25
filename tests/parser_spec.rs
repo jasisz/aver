@@ -1529,6 +1529,32 @@ fn parse_record_create_expression() {
 }
 
 #[test]
+fn parse_multiline_qualified_record_create_expression() {
+    let src = concat!(
+        "Http.Response(\n",
+        "    status = 200,\n",
+        "    body = \"ok\",\n",
+        "    headers = {}\n",
+        ")\n",
+    );
+    let items = parse(src);
+    if let TopLevel::Stmt(Stmt::Expr(ref spanned)) = items[0]
+        && let Expr::RecordCreate { type_name, fields } = &spanned.node
+    {
+        assert_eq!(type_name, "Http.Response");
+        assert_eq!(
+            fields
+                .iter()
+                .map(|(name, _)| name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["status", "body", "headers"]
+        );
+    } else {
+        panic!("expected qualified RecordCreate, got: {:?}", items[0]);
+    }
+}
+
+#[test]
 fn parse_user_defined_constructor_pattern() {
     let src = "fn classify(s: Shape) -> Float\n  match s\n    Shape.Circle(r) -> r\n    Shape.Rect(w, h) -> w\n    Shape.Point -> 0.0\n";
     let items = parse(src);

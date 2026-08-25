@@ -406,10 +406,9 @@ fn allocate_parse_id(
     // rather than the connect helper specifically. close / write_line
     // / read_line each need parse_id; a program that only consumes a
     // `Tcp.Connection` parameter (e.g. `fn handle(c: Tcp.Connection)
-    // ! [Tcp.close]`) graduates close in `effect_check` without ever
-    // declaring `Tcp.connect`, and would otherwise hit an `expect`
-    // at emit time. The slot type idx check stays as the registry
-    // availability gate.
+    // ! [Tcp.close]`) may require close without ever declaring
+    // `Tcp.connect`, and would otherwise hit an `expect` at emit time.
+    // The slot type idx check stays as the registry availability gate.
     registry.tcp_slot_type_idx?;
     let s_idx = registry.string_array_type_idx?;
     let s_ref = ValType::Ref(wasm_encoder::RefType {

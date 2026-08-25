@@ -7,9 +7,7 @@ use super::types::type_annotation_to_rust;
 pub(super) struct ReplayRuntimeOptions {
     pub has_embedded_policy: bool,
     pub has_runtime_policy: bool,
-    pub has_terminal_types: bool,
     pub has_tcp_types: bool,
-    pub has_http_types: bool,
     pub has_http_request_types: bool,
     pub embedded_independence_cancel: bool,
     pub standard_capabilities: Vec<String>,
@@ -22,9 +20,7 @@ pub fn generate_replay_runtime(options: ReplayRuntimeOptions) -> String {
     let ReplayRuntimeOptions {
         has_embedded_policy,
         has_runtime_policy,
-        has_terminal_types,
         has_tcp_types,
-        has_http_types,
         has_http_request_types,
         embedded_independence_cancel,
         standard_capabilities,
@@ -119,7 +115,15 @@ pub fn generate_replay_runtime(options: ReplayRuntimeOptions) -> String {
             let (Some(provider), Some(fingerprint)) = (&expected.provider, &expected.fingerprint) else {{
                 panic!("Capability '{{}}' requires a live provider during replay", capability);
             }};
-            if recorded.provider != *provider || recorded.fingerprint != *fingerprint {{
+            let compatible_standard_adapter = recorded.fingerprint == *fingerprint
+                && aver_rt::provider::standard_provider_adapters_replay_compatible(
+                    capability,
+                    &recorded.provider,
+                    provider,
+                );
+            if (recorded.provider != *provider || recorded.fingerprint != *fingerprint)
+                && !compatible_standard_adapter
+            {{
                 panic!(
                     "Live provider mismatch for '{{}}': recorded {{}}@{{}}, current {{}}@{{}}",
                     capability, recorded.provider, recorded.fingerprint, provider, fingerprint
@@ -157,14 +161,8 @@ pub fn generate_replay_runtime(options: ReplayRuntimeOptions) -> String {
             ),
     ];
 
-    if has_http_types {
-        sections.push(http_type_impls());
-    }
     if has_http_request_types {
         sections.push(http_request_type_impls());
-    }
-    if has_terminal_types {
-        sections.push(terminal_type_impls());
     }
     if has_tcp_types {
         sections.push(tcp_type_impls());
@@ -367,42 +365,6 @@ fn replay_variant_field_type(type_name: &str, field_type: &str) -> String {
     }
 }
 
-fn http_type_impls() -> String {
-    r#"impl aver_replay::ReplayValue for crate::HttpResponse {
-    fn to_replay_json(&self) -> serde_json::Value {
-        let mut fields = serde_json::Map::new();
-        fields.insert("status".to_string(), ReplayValue::to_replay_json(&self.status));
-        fields.insert("body".to_string(), ReplayValue::to_replay_json(&self.body));
-        fields.insert("headers".to_string(), ReplayValue::to_replay_json(&self.headers));
-        let mut payload = serde_json::Map::new();
-        payload.insert("type".to_string(), serde_json::Value::String("HttpResponse".to_string()));
-        payload.insert("fields".to_string(), serde_json::Value::Object(fields));
-        aver_replay::wrap_marker("$record", serde_json::Value::Object(payload))
-    }
-
-    fn from_replay_json(value: &serde_json::Value) -> Result<Self, String> {
-        let payload = aver_replay::expect_marker(value, "$record")?;
-        let obj = aver_replay::expect_object(payload, "$record")?;
-        let fields = aver_replay::expect_object(
-            obj.get("fields").ok_or_else(|| "$record missing field 'fields'".to_string())?,
-            "$record.fields",
-        )?;
-        Ok(Self {
-            status: <aver_rt::AverInt as ReplayValue>::from_replay_json(
-                fields.get("status").ok_or_else(|| "$record HttpResponse missing field 'status'".to_string())?,
-            )?,
-            body: <aver_rt::AverStr as ReplayValue>::from_replay_json(
-                fields.get("body").ok_or_else(|| "$record HttpResponse missing field 'body'".to_string())?,
-            )?,
-            headers: <aver_rt::HttpHeaders as ReplayValue>::from_replay_json(
-                fields.get("headers").ok_or_else(|| "$record HttpResponse missing field 'headers'".to_string())?,
-            )?,
-        })
-    }
-}"#
-    .to_string()
-}
-
 fn http_request_type_impls() -> String {
     r#"impl aver_replay::ReplayValue for aver_rt::HttpRequest {
     fn to_replay_json(&self) -> serde_json::Value {
@@ -440,41 +402,6 @@ fn http_request_type_impls() -> String {
             )?,
             headers: <aver_rt::HttpHeaders as ReplayValue>::from_replay_json(
                 fields.get("headers").ok_or_else(|| "$record HttpRequest missing field 'headers'".to_string())?,
-            )?,
-        })
-    }
-}"#
-    .to_string()
-}
-
-fn terminal_type_impls() -> String {
-    // Targets the SURFACE `Terminal_Size` (AverInt fields), not the host
-    // `aver_rt::TerminalSize` (i64 fields) — the generated program only ever
-    // holds the surface record.
-    r#"impl aver_replay::ReplayValue for crate::Terminal_Size {
-    fn to_replay_json(&self) -> serde_json::Value {
-        let mut fields = serde_json::Map::new();
-        fields.insert("width".to_string(), ReplayValue::to_replay_json(&self.width));
-        fields.insert("height".to_string(), ReplayValue::to_replay_json(&self.height));
-        let mut payload = serde_json::Map::new();
-        payload.insert("type".to_string(), serde_json::Value::String("Terminal.Size".to_string()));
-        payload.insert("fields".to_string(), serde_json::Value::Object(fields));
-        aver_replay::wrap_marker("$record", serde_json::Value::Object(payload))
-    }
-
-    fn from_replay_json(value: &serde_json::Value) -> Result<Self, String> {
-        let payload = aver_replay::expect_marker(value, "$record")?;
-        let obj = aver_replay::expect_object(payload, "$record")?;
-        let fields = aver_replay::expect_object(
-            obj.get("fields").ok_or_else(|| "$record missing field 'fields'".to_string())?,
-            "$record.fields",
-        )?;
-        Ok(Self {
-            width: <aver_rt::AverInt as ReplayValue>::from_replay_json(
-                fields.get("width").ok_or_else(|| "$record Terminal.Size missing field 'width'".to_string())?,
-            )?,
-            height: <aver_rt::AverInt as ReplayValue>::from_replay_json(
-                fields.get("height").ok_or_else(|| "$record Terminal.Size missing field 'height'".to_string())?,
             )?,
         })
     }
@@ -1078,6 +1005,17 @@ mod policy_tests {
         });
         assert!(!runtime.contains("for capability in []"));
         assert!(!runtime.contains("let capability = match"));
+    }
+
+    #[test]
+    fn live_replay_accepts_only_fingerprinted_standard_adapter_families() {
+        let runtime = generate_replay_runtime(ReplayRuntimeOptions {
+            has_provider_runtime: true,
+            live_replay_capabilities: vec!["Console".to_string()],
+            ..ReplayRuntimeOptions::default()
+        });
+        assert!(runtime.contains("standard_provider_adapters_replay_compatible"));
+        assert!(runtime.contains("recorded.fingerprint == *fingerprint"));
     }
 }
 

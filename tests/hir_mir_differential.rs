@@ -24,11 +24,17 @@ use aver::value::Value;
 use aver::vm;
 
 fn run_mir(src: &str, entry: &str) -> Value {
+    let module_root = env!("CARGO_MANIFEST_DIR");
     let mut items = parse_source(src).expect("parse failed");
+    let dep_modules =
+        aver::source::load_compile_deps(&items, module_root).expect("load implicit dependencies");
     let result = pipeline::run(
         &mut items,
         PipelineConfig {
-            typecheck: Some(TypecheckMode::Full { base_dir: None }),
+            typecheck: Some(TypecheckMode::Full {
+                base_dir: Some(module_root),
+            }),
+            dep_modules: &dep_modules,
             ..Default::default()
         },
     );
@@ -41,9 +47,15 @@ fn run_mir(src: &str, entry: &str) -> Value {
 
     let mut arena = Arena::new();
     vm::register_service_types(&mut arena);
-    let (code, globals) =
-        vm::compile_program_with_mir_fallback(&resolved, &symbols, &mut arena, analysis.as_ref())
-            .expect("MIR compile failed");
+    let (code, globals) = vm::compile_program_with_modules(
+        &resolved,
+        &symbols,
+        &mut arena,
+        Some(module_root),
+        "<inline>",
+        analysis.as_ref(),
+    )
+    .expect("MIR compile failed");
     run_entry(code, globals, arena, entry)
 }
 
@@ -240,13 +252,13 @@ fn newtype_specialization() {
 
 #[test]
 fn builtin_record_construction_and_projection() {
-    // `HttpResponse(...)` is a built-in product type — it carries no
-    // user `TypeId`, so MIR's RecordCreate rides its canonical
+    // `Http.Response(...)` is a capability-owned product type — it
+    // carries no local user `TypeId`, so MIR's RecordCreate rides its canonical
     // `type_name` and the walker resolves the arena type by name. Build
     // one and read a field back; identical on both paths.
     let src = prog(
-        "fn mk(code: Int) -> HttpResponse\n    \
-         HttpResponse(status = code, body = \"ok\", headers = {})\n\n\
+        "fn mk(code: Int) -> Http.Response\n    \
+         Http.Response(status = code, body = \"ok\", headers = {})\n\n\
          fn run() -> Int\n    mk(200).status\n",
     );
     assert_golden("builtin_record", &src, "run", "Int(200)");

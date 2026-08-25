@@ -114,7 +114,7 @@ pub(crate) fn host_terminal_size_make(
     })
 }
 
-/// Build an `HttpResponse(status, body, headers)` ref via the matching
+/// Build an `Http.Response(status, body, headers)` ref via the matching
 /// factory export.
 pub(crate) fn host_http_response_make(
     caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,

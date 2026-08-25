@@ -1,10 +1,10 @@
 //! wasm-gc codegen regression suite.
 //!
-//! For every single-file `examples/**/*.av` program (no `depends`
-//! clause), drive the full frontend → IR pipeline → `compile_to_wasm_gc`
-//! → `wasmparser::Validator` walk. Asserts: no panic, no compile
-//! error, no validator rejection. Focused multi-module cases use the
-//! library dependency loader and the same flattening step as the CLI.
+//! For every single-file `examples/**/*.av` program (no explicit `depends`
+//! clause), drive the full frontend → dependency loader → IR pipeline →
+//! flattened wasm-gc codegen → `wasmparser::Validator` walk. Implicit
+//! standard capability dependencies are therefore exercised exactly like
+//! the CLI. Asserts: no panic, no compile error, no validator rejection.
 //!
 //! Catches:
 //!   - codegen panics on real-world shapes (caught early, no AFL needed)
@@ -481,14 +481,15 @@ fn wasm_gc_codegen_emits_valid_module_for_every_single_file_example() {
                 continue;
             }
         };
-        let items = match parse_pipeline(&source) {
-            Ok(i) => i,
-            Err(e) => {
-                failures.push(format!("{}: {}", path.display(), e));
-                continue;
-            }
-        };
-        let bytes = match aver::codegen::wasm_gc::compile_to_wasm_gc(&items, None) {
+        let (items, type_aliases) =
+            match parse_pipeline_with_module_root(&source, Some(env!("CARGO_MANIFEST_DIR"))) {
+                Ok(result) => result,
+                Err(e) => {
+                    failures.push(format!("{}: {}", path.display(), e));
+                    continue;
+                }
+            };
+        let bytes = match compile_flattened(&items, &type_aliases) {
             Ok(b) => b,
             Err(e) => {
                 failures.push(format!("{}: compile_to_wasm_gc: {}", path.display(), e));

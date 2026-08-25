@@ -613,7 +613,7 @@ struct TypeChecker {
     value_members: HashMap<String, Type>,
     /// Field types for record types, keyed by `(type_name, field_name)`.
     /// Populated for both user-defined `record` types and built-in records
-    /// (HttpResponse, Trace, …). Single entry per (canonical type name, field);
+    /// (Http.Response, Trace, …). Single entry per (canonical type name, field);
     /// lookup canonicalises `type_name` through `SymbolTable` at read time.
     /// Enables checked dot-access on Named types.
     record_field_types: HashMap<RecordFieldKey, Type>,
@@ -637,7 +637,7 @@ struct TypeChecker {
     /// Type names that are opaque in this module's context (imported via `exposes opaque`).
     opaque_types: HashSet<String>,
     /// Every named type the compiler itself declares — the host
-    /// records effect signatures hand back (`HttpResponse`,
+    /// records effect signatures hand back (`Http.Response`,
     /// `Terminal.Size`, …), the Oracle nominals
     /// (`Trace`, `EffectEvent`, `BranchPath`) and the embedded
     /// standard library's refinements (`Bytes`, `Digest32`).
@@ -731,7 +731,7 @@ impl TypeChecker {
     /// Snapshot every named type the just-registered builtin
     /// signatures mention, before a single user declaration lands in
     /// the same maps. Reads four sources: the record schemas
-    /// (`HttpResponse`, `Trace`, `Terminal.Size`, …) by key and by
+    /// (`Http.Response`, `Trace`, `Terminal.Size`, …) by key and by
     /// field type, the opaque host handles, the namespace-method
     /// signatures (which is where `BranchPath`, `Bytes` and
     /// `Digest32` surface), and the nullary value members.
@@ -1839,7 +1839,7 @@ impl TypeChecker {
                 // string through `resolve_type_id` to bring it into
                 // the typed identity domain; without the checker (or
                 // for references that don't resolve, like builtin
-                // `HttpResponse`) we fall back to canonical-name
+                // `Http.Response`) we fall back to canonical-name
                 // equality.
                 Type::Named {
                     id: actual_id,
@@ -1855,7 +1855,7 @@ impl TypeChecker {
                     // owner context. If a `Type::Named` reaches the
                     // matcher with `id = None`, that's a deliberate
                     // unresolved state — either a genuine builtin
-                    // (HttpResponse) or a resolution gap the matcher
+                    // (Http.Response) or a resolution gap the matcher
                     // must surface, not silently paper over by
                     // re-resolving in the wrong scope.
                     let exp_id = *expected_id;
@@ -1869,7 +1869,7 @@ impl TypeChecker {
                     // string fallback below. Distinguish "ambiguous
                     // bare reference, identity deliberately
                     // suppressed" from "builtin name that has no
-                    // typed identity by design (`HttpResponse`,
+                    // typed identity by design (`Http.Response`,
                     // `Buffer`, …)" by asking the checker whether the
                     // unresolved side's name is recorded as
                     // ambiguous; reject in that case, allow name

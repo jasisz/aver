@@ -588,8 +588,9 @@ fn collect_dependency_keys(
 
 /// Load the program named by an already parsed entry module.
 ///
-/// A file without a `module` declaration names a program of itself: it has
-/// no `depends` to follow, and its builtin calls imply nothing either.
+/// A file without a `module` declaration names a program of itself: it has no
+/// written `depends`, but standard modules implied by its calls and nominal
+/// boundary types are still ordinary dependencies of the compiled program.
 pub fn load_program(
     entry_path: &Path,
     entry_source: &str,
@@ -751,16 +752,16 @@ impl<'a> Walk<'a> {
         parent_path: &Path,
         parent_items: &[TopLevel],
     ) -> Result<(), LoadError> {
-        let Some(declaration) = visibility::module_decl(parent_items) else {
-            return Ok(());
-        };
-        for name in &declaration.depends {
+        let written_dependencies = visibility::module_decl(parent_items)
+            .map(|declaration| declaration.depends.as_slice())
+            .unwrap_or_default();
+        for name in written_dependencies {
             let resolved = self.resolve(name, Some(parent_path))?;
             self.load(name, resolved)?;
         }
         let parent_key = canonicalize_path(parent_path);
         for name in crate::stdlib::implicit_stdlib_deps(parent_items) {
-            if declaration.depends.contains(&name) {
+            if written_dependencies.contains(&name) {
                 continue;
             }
             let resolved = self.resolve(&name, Some(parent_path))?;
@@ -1153,6 +1154,30 @@ mod tests {
         assert_eq!(loaded.len(), 2);
         assert_eq!(loaded[0].dep_name, "Bytes");
         assert_eq!(loaded[1].dep_name, "Crypto.Digest32");
+    }
+
+    #[test]
+    fn moduleless_program_loads_its_implicit_standard_capability_types() {
+        let source = "fn status(response: Http.Response) -> Int\n    response.status\n";
+        let items = parse_source(source).expect("parse moduleless program");
+        let mut cache = ProgramLoadCache::default();
+        let program = load_program_with_cache(
+            std::path::Path::new("probe.av"),
+            source,
+            &items,
+            "/path/that/does/not/exist",
+            LoadMode::Strict,
+            &mut cache,
+        )
+        .expect("load moduleless standard dependency");
+        assert_eq!(
+            program
+                .dependencies()
+                .iter()
+                .map(|module| module.dep_name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Http"]
+        );
     }
 
     #[test]

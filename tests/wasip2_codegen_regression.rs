@@ -452,18 +452,19 @@ fn wasip2_codegen_emits_valid_component_for_every_single_file_example() {
                 continue;
             }
         };
-        let items = match parse_pipeline(&source) {
-            Ok(i) => i,
-            Err(e) => {
-                failures.push(format!("{}: {}", path.display(), e));
-                continue;
-            }
-        };
-        let core_bytes = match aver::codegen::wasm_gc::compile_to_wasm_gc_for_wasip2(&items, None) {
+        let (items, type_aliases) =
+            match parse_pipeline_with_module_root(&source, Some(env!("CARGO_MANIFEST_DIR"))) {
+                Ok(i) => i,
+                Err(e) => {
+                    failures.push(format!("{}: {}", path.display(), e));
+                    continue;
+                }
+            };
+        let core_bytes = match compile_core_flattened(&items, &type_aliases) {
             Ok(b) => b,
             Err(e) => {
                 failures.push(format!(
-                    "{}: compile_to_wasm_gc_for_wasip2: {}",
+                    "{}: flattened wasip2 compile: {}",
                     path.display(),
                     e
                 ));

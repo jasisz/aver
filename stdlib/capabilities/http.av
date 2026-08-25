@@ -1,0 +1,61 @@
+module Http
+    kind = capability
+    semantics = effectful
+    exposes [Response, get, head, delete, post, put, patch]
+
+record Response
+    status: Int
+    body: String
+    headers: Map<String, List<String>>
+
+operation get(url: String) -> Result<Http.Response, String>
+    ? "Performs an HTTP GET; completed exchanges, including 4xx and 5xx, return Response."
+    oracle = generativeOutput
+    replay = recorded
+    hostile = [simpleNormal, simpleAlwaysErr]
+
+operation head(url: String) -> Result<Http.Response, String>
+    ? "Performs an HTTP HEAD; completed exchanges, including 4xx and 5xx, return Response."
+    oracle = generativeOutput
+    replay = recorded
+    hostile = [simpleNormal, simpleAlwaysErr]
+
+operation delete(url: String) -> Result<Http.Response, String>
+    ? "Performs an HTTP DELETE; completed exchanges, including 4xx and 5xx, return Response."
+    oracle = generativeOutput
+    replay = recorded
+    hostile = [simpleNormal, simpleAlwaysErr]
+
+operation post(url: String, body: String, contentType: String, headers: Map<String, List<String>>) -> Result<Http.Response, String>
+    ? "Performs an HTTP POST with explicit content type and multi-value headers."
+    oracle = generativeOutput
+    replay = recorded
+    hostile = [bodyNormal, bodyAlwaysErr]
+
+operation put(url: String, body: String, contentType: String, headers: Map<String, List<String>>) -> Result<Http.Response, String>
+    ? "Performs an HTTP PUT with explicit content type and multi-value headers."
+    oracle = generativeOutput
+    replay = recorded
+    hostile = [bodyNormal, bodyAlwaysErr]
+
+operation patch(url: String, body: String, contentType: String, headers: Map<String, List<String>>) -> Result<Http.Response, String>
+    ? "Performs an HTTP PATCH with explicit content type and multi-value headers."
+    oracle = generativeOutput
+    replay = recorded
+    hostile = [bodyNormal, bodyAlwaysErr]
+
+fn simpleNormal(path: BranchPath, call: Int, url: String) -> Result<Http.Response, String>
+    ? "Honest profile: the server completes a small successful exchange."
+    Result.Ok(Http.Response(status = 200, body = "ok", headers = {}))
+
+fn simpleAlwaysErr(path: BranchPath, call: Int, url: String) -> Result<Http.Response, String>
+    ? "Hostile profile: the server is unreachable."
+    Result.Err("hostile: connection refused")
+
+fn bodyNormal(path: BranchPath, call: Int, url: String, body: String, contentType: String, headers: Map<String, List<String>>) -> Result<Http.Response, String>
+    ? "Honest profile: the server accepts a request carrying a body."
+    Result.Ok(Http.Response(status = 200, body = "ok", headers = {}))
+
+fn bodyAlwaysErr(path: BranchPath, call: Int, url: String, body: String, contentType: String, headers: Map<String, List<String>>) -> Result<Http.Response, String>
+    ? "Hostile profile: a body request cannot reach the server."
+    Result.Err("hostile: connection refused")

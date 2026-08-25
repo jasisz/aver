@@ -50,7 +50,7 @@ fn landing(country: String) -> String
         "  <h1>This page is served by Aver.</h1>",
         "  <p class=\"sub\">Compiled with <code>aver compile --preset cloudflare</code> and running as a Cloudflare Worker.</p>",
         "  <p>The request enters a normal Aver function:</p>",
-        "  <pre>fn handler(req: HttpRequest) -&gt; HttpResponse",
+        "  <pre>fn handler(req: HttpRequest) -&gt; Http.Response",
         "    ! [Time.unixMs]</pre>",
         "  <p>Routing, response bodies, and headers are pure Aver code. The only declared runtime effect is the timestamp used by <code>/api</code>.</p>",
         "  <p class=\"sub\">Cloudflare sees this request as: <strong>{country}</strong></p>",
@@ -102,7 +102,7 @@ fn llmsTxt() -> String
     String.join([
         "# edge.averlang.dev",
         "",
-        "> An Aver `fn handler(req: HttpRequest) -> HttpResponse` compiled with `aver compile --preset cloudflare` and deployed to Cloudflare Workers. The handler declares `! [Time.unixMs]` as its only runtime effect; routing, response bodies, and headers are pure Aver code. ~100 lines of source.",
+        "> An Aver `fn handler(req: HttpRequest) -> Http.Response` compiled with `aver compile --preset cloudflare` and deployed to Cloudflare Workers. The handler declares `! [Time.unixMs]` as its only runtime effect; routing, response bodies, and headers are pure Aver code. ~100 lines of source.",
         "",
         "- Source: [tools/edge/app.av](https://github.com/jasisz/aver/blob/main/tools/edge/app.av)",
         "- Language: [averlang.dev](https://averlang.dev)",
@@ -127,33 +127,33 @@ fn llmsTxt() -> String
         ""
     ], "\n")
 
-fn jsonResponse(body: String) -> HttpResponse
+fn jsonResponse(body: String) -> Http.Response
     ? "200 OK with application/json content-type."
-    HttpResponse(
+    Http.Response(
         status = 200,
         body = body,
         headers = { "content-type" => ["application/json; charset=utf-8"] },
     )
 
-fn htmlResponse(body: String) -> HttpResponse
+fn htmlResponse(body: String) -> Http.Response
     ? "200 OK with text/html content-type."
-    HttpResponse(
+    Http.Response(
         status = 200,
         body = body,
         headers = { "content-type" => ["text/html; charset=utf-8"] },
     )
 
-fn textResponse(body: String) -> HttpResponse
+fn textResponse(body: String) -> Http.Response
     ? "200 OK with text/plain content-type — used for /llms.txt."
-    HttpResponse(
+    Http.Response(
         status = 200,
         body = body,
         headers = { "content-type" => ["text/plain; charset=utf-8"] },
     )
 
-fn notFound(path: String) -> HttpResponse
+fn notFound(path: String) -> Http.Response
     ? "404 with a styled HTML body — keeps the look consistent with the landing page."
-    HttpResponse(
+    Http.Response(
         status = 404,
         body = notFoundHtml(path),
         headers = { "content-type" => ["text/html; charset=utf-8"] },
@@ -185,10 +185,10 @@ verify extractCountry
     extractCountry(HttpRequest(method = "GET", path = "/", query = "", body = "", headers = {"cf-ipcountry" => ["PL"]})) => "PL"
     extractCountry(HttpRequest(method = "GET", path = "/", query = "", body = "", headers = {})) => "??"
 
-fn fractalResponse(query: String) -> HttpResponse
+fn fractalResponse(query: String) -> Http.Response
     ? "Renders one coloured half-block Mandelbrot view, with cx / cy / w taken from the query string (defaults to the full set). Grid + iter both tier on `view.cxRange` (`gridWFor` / `gridHFor` / `iterFor`) so total compute stays roughly constant across zoom depths — shallow views get max resolution at low iter, deep views get smaller grid + more iter. No caching — every click really does re-render in pure Aver, that's the whole demo."
     view = Fractal.viewFromQuery(query)
-    HttpResponse(
+    Http.Response(
         status = 200,
         body = Fractal.page(
             Fractal.render(
@@ -209,7 +209,7 @@ verify fractalResponse
     fractalResponse("").status            => 200
     fractalResponse("w=0.5").status       => 200
 
-fn handler(req: HttpRequest) -> HttpResponse
+fn handler(req: HttpRequest) -> Http.Response
     ? "Routes by path. `/` HTML, `/api` JSON, `/fractal` coloured half-block Mandelbrot, `/llms.txt` plain text, everything else 404s."
     ! [Time.unixMs]
     country = extractCountry(req)

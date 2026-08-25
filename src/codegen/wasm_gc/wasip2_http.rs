@@ -1,5 +1,5 @@
 //! Phase 2.0 — `__rt_http_get(url: ref string) ->
-//! ref Result<HttpResponse, String>` body emitter.
+//! ref Result<Http.Response, String>` body emitter.
 //!
 //! Lowers `Http.get(url)` to the wasi:http/outgoing-handler.handle
 //! pipeline. The compiler-side helper owns the entire request /
@@ -31,7 +31,7 @@
 //!     ownership) → future-trailers; drop future-trailers; drop
 //!     incoming-response; drop future-incoming-response.
 //! 13. Materialise body bytes as a fresh `(array i8)`, build
-//!     HttpResponse { status, body, headers = empty Map<String,
+//!     Http.Response { status, body, headers = empty Map<String,
 //!     List<String>> }, wrap in Result.Ok.
 //!
 //! v1 PoC scope:
@@ -59,9 +59,9 @@ pub(super) struct HttpGetIndices {
     pub fn_type: u32,
     pub fn_idx: u32,
     pub string_type_idx: u32,
-    /// `Result<HttpResponse, String>` struct type idx.
+    /// `Result<Http.Response, String>` struct type idx.
     pub result_http_response_string_type_idx: u32,
-    /// `HttpResponse` struct type idx (status: i64, body: ref
+    /// `Http.Response` struct type idx (status: i64, body: ref
     /// string, headers: ref map).
     pub http_response_type_idx: u32,
     /// `Map<String, List<String>>` slot triple — initialised empty
@@ -81,9 +81,9 @@ pub(super) struct HttpGetIndices {
     /// to extract tag (offset 0) + payload (offset 1).
     pub option_list_string_type_idx: u32,
     /// `Int = ℤ`: wasm fn idx of `__aint_from_i64`, `Some` iff bignum.
-    /// The `HttpResponse.status` field is the `$AverInt` carrier, so the
+    /// The `Http.Response.status` field is the `$AverInt` carrier, so the
     /// inline u16→i64-widened status is lifted through this before the
-    /// `struct.new HttpResponse`.
+    /// `struct.new Http.Response`.
     pub aint_from_i64_fn_idx: Option<u32>,
 }
 
@@ -248,7 +248,7 @@ const ERROR_CODE_NAMES: &[&[u8]] = &[
 /// idx in `module.rs`, call it from here).
 ///
 /// Signature: `(method_tag: i32, url: ref string) -> ref Result<
-/// HttpResponse, String>`. `method_tag` selects the HTTP verb
+/// Http.Response, String>`. `method_tag` selects the HTTP verb
 /// per wasi:http's `method` variant ordinals (0=GET, 1=HEAD,
 /// 2=POST, 3=PUT, 4=DELETE, 8=PATCH). For GET we skip the
 /// set-method call (default); for others we call set-method
@@ -323,7 +323,7 @@ pub(super) fn emit_http_get(indices: &HttpGetIndices, h: &HttpGetHelperFns) -> F
     //   57 = h_val_str  (ref string)  per-response-header value
     //   58 = uh_key (ref string)      per-user-header key (Step K)
     //   59 = uh_val (ref string)      per-user-header value
-    //   60 = resp (ref HttpResponse)
+    //   60 = resp (ref Http.Response)
     //   61 = h_map (ref map)          accumulated response headers map
     //   62 = h_opt (ref Option<List<String>>)
     //   63 = uh_node (ref list_string) inner list iter cursor (Step K)
@@ -479,7 +479,7 @@ pub(super) fn emit_http_get(indices: &HttpGetIndices, h: &HttpGetHelperFns) -> F
 
     // Allocate a fresh (array i8) holding `msg` bytes, store it
     // into l_arr, then build `Result.Err(arr)` (tag = 0, ok = null
-    // HttpResponse, err = arr) and Return. Inlined per call site —
+    // Http.Response, err = arr) and Return. Inlined per call site —
     // the bytes change but the shape is identical, so a closure
     // keeps the source compact without paying a runtime fn-call.
     let emit_err = |f: &mut Function, msg: &[u8]| {
@@ -492,7 +492,7 @@ pub(super) fn emit_http_get(indices: &HttpGetIndices, h: &HttpGetHelperFns) -> F
             f.instruction(&Instruction::I32Const(*b as i32));
             f.instruction(&Instruction::ArraySet(string_type_idx));
         }
-        // Result.Err: tag = 0, ok = ref-null HttpResponse, err = arr.
+        // Result.Err: tag = 0, ok = ref-null Http.Response, err = arr.
         f.instruction(&Instruction::I32Const(0));
         f.instruction(&Instruction::RefNull(HeapType::Concrete(resp_idx)));
         f.instruction(&Instruction::LocalGet(l_arr));
@@ -1900,13 +1900,13 @@ pub(super) fn emit_http_get(indices: &HttpGetIndices, h: &HttpGetHelperFns) -> F
     // legal in core wasm; wit-component still binds them.
     let _ = h.drop_outgoing_request_fn;
 
-    // ── 16. Build HttpResponse + Result.Ok ─────────────────────
-    // HttpResponse field order matches `BUILTIN_RECORDS`:
+    // ── 16. Build Http.Response + Result.Ok ─────────────────────
+    // Http.Response field order matches the source capability contract:
     //   status: Int (i64), body: String (ref array i8),
     //   headers: Map<String, List<String>> (ref map struct).
     //
     // Ok payload is built inline; the surrounding Result is
-    // tag = 1 (Ok), ok = HttpResponse, err = ref-null string.
+    // tag = 1 (Ok), ok = Http.Response, err = ref-null string.
 
     // Body bytes → fresh (array i8) of size buf_len, copied byte
     // by byte. Reuses the disk-read pattern.
@@ -1936,13 +1936,13 @@ pub(super) fn emit_http_get(indices: &HttpGetIndices, h: &HttpGetHelperFns) -> F
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::End);
 
-    // Build HttpResponse fields onto the stack in declaration
-    // order, then struct.new HttpResponse, store into l_resp.
+    // Build Http.Response fields onto the stack in declaration
+    // order, then struct.new Http.Response, store into l_resp.
     //
     // status: i64 — wasi returned u16 zero-extended in i32; widen.
     f.instruction(&Instruction::LocalGet(l_in_buf));
     f.instruction(&Instruction::I64ExtendI32U);
-    // `Int = ℤ`: the `HttpResponse.status` field is the `$AverInt`
+    // `Int = ℤ`: the `Http.Response.status` field is the `$AverInt`
     // carrier — lift the widened i64 before `struct.new`.
     if let Some(from_i64) = indices.aint_from_i64_fn_idx {
         f.instruction(&Instruction::Call(from_i64));
@@ -1958,7 +1958,7 @@ pub(super) fn emit_http_get(indices: &HttpGetIndices, h: &HttpGetHelperFns) -> F
     f.instruction(&Instruction::StructNew(resp_idx));
     f.instruction(&Instruction::LocalSet(l_resp));
 
-    // Result.Ok: tag = 1, ok = HttpResponse, err = ref-null string.
+    // Result.Ok: tag = 1, ok = Http.Response, err = ref-null string.
     f.instruction(&Instruction::I32Const(1));
     f.instruction(&Instruction::LocalGet(l_resp));
     f.instruction(&Instruction::RefNull(HeapType::Concrete(string_type_idx)));

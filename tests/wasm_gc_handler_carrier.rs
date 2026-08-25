@@ -1,7 +1,7 @@
 //! Regression: the synthesized `aver_http_handle` wrapper (`--handler X` /
-//! `--preset cloudflare`) reads `HttpResponse.status` and hands it to the
+//! `--preset cloudflare`) reads `Http.Response.status` and hands it to the
 //! `Response.text` host import as an i64. Under `Int = ℤ` the status field is
-//! the `$AverInt` carrier (the HttpResponse factory lifts the host's i64 to a
+//! the `$AverInt` carrier (the Http.Response factory lifts the host's i64 to a
 //! Small), so the wrapper must lower it back to i64 before the i64 local —
 //! exactly mirroring the factory. It didn't, so it stored a `(ref null $aint)`
 //! into an i64 local and the whole module failed wasm validation.
@@ -33,9 +33,9 @@ fn cloudflare_handler_with_bignum_status_validates() {
     intent = "Minimal Cloudflare handler exercising the aver_http_handle wrapper."
     exposes [handler]
 
-fn handler(req: HttpRequest) -> HttpResponse
-    ? "Always 200 with a tiny body. The status literal flips the bignum gate, so HttpResponse.status is the $AverInt carrier the wrapper must lower."
-    HttpResponse(
+fn handler(req: HttpRequest) -> Http.Response
+    ? "Always 200 with a tiny body. The status literal flips the bignum gate, so Http.Response.status is the $AverInt carrier the wrapper must lower."
+    Http.Response(
         status = 200,
         body = "hi",
         headers = { "content-type" => ["text/plain"] },
@@ -73,7 +73,7 @@ fn handler(req: HttpRequest) -> HttpResponse
         output.status.success() && wasm_written,
         "Cloudflare handler wrapper failed to compile/validate — likely a \
          `type mismatch: expected i64, found (ref null $type)` from reading the \
-         $AverInt-carrier HttpResponse.status into an i64 local without lowering.\n\
+         $AverInt-carrier Http.Response.status into an i64 local without lowering.\n\
          stdout:\n{stdout}\nstderr:\n{stderr}"
     );
 }

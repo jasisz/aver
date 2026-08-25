@@ -11,6 +11,23 @@ fn build_registry(
 ) -> Result<NativeProviderRegistry, String> {
     let mut registry = NativeProviderRegistry::new(vec![
         ProviderContractSpec::new(
+            "Args",
+            "sha256:8326d0f27169e1b73a9f45b8a2d2f3f0d89d6c6e4eb64dc646781082ee585265",
+            "sha256:c50c9f100b581e6d40a4559e6c1acd79e703098e123530e83fa1bf195aab003d",
+            vec!["Args.get".to_string()],
+        ),
+        ProviderContractSpec::new(
+            "Console",
+            "sha256:878f543df5342a616fddc83b61f1e035931cc24b89bfc523a52de5b0525a62b4",
+            "sha256:bd56971f80627262dd095709bd3c3a9e86eb79bd1afc3d131e640a5f7b9f65fd",
+            vec![
+                "Console.error".to_string(),
+                "Console.print".to_string(),
+                "Console.readLine".to_string(),
+                "Console.warn".to_string(),
+            ],
+        ),
+        ProviderContractSpec::new(
             "Disk",
             "sha256:21ba58983c2ba61c06153df36a9c205770994c36a61ae280c1f49da336e63e23",
             "sha256:cf55979e264c3a26a246bb77663422011efb71e6ce2ba973ad4b267195f25570",
@@ -28,6 +45,25 @@ fn build_registry(
                 "Disk.size".to_string(),
                 "Disk.writeBytes".to_string(),
                 "Disk.writeText".to_string(),
+            ],
+        ),
+        ProviderContractSpec::new(
+            "Env",
+            "sha256:ab75df52ca80c64a557ccfd3e7b7a1f9510f346ae7d08ffcb0f9138a7caa9d5b",
+            "sha256:20f5c3c834fe829c80c88b4b1dd2696ba7c4627992f905b400e13bdcd4ee2171",
+            vec!["Env.get".to_string(), "Env.set".to_string()],
+        ),
+        ProviderContractSpec::new(
+            "Http",
+            "sha256:5d61418e444a4a9ec5fcacbb18134b566ef811525462cfb57a549338adc73b51",
+            "sha256:b8a6d1028ce713390d47c2baf72cbeef75127328ee24b19cf23401342a3116f1",
+            vec![
+                "Http.delete".to_string(),
+                "Http.get".to_string(),
+                "Http.head".to_string(),
+                "Http.patch".to_string(),
+                "Http.post".to_string(),
+                "Http.put".to_string(),
             ],
         ),
         ProviderContractSpec::new(
@@ -62,6 +98,25 @@ fn build_registry(
             ],
         ),
         ProviderContractSpec::new(
+            "Terminal",
+            "sha256:3cb1bc67569388135723ecad0346164a5ce277f09109fa647eba057dc91de9c6",
+            "sha256:c7c181b2bb3fd57e121a5128ead2eff523d63f1a8e2ba70b4eab9889b629e703",
+            vec![
+                "Terminal.clear".to_string(),
+                "Terminal.disableRawMode".to_string(),
+                "Terminal.enableRawMode".to_string(),
+                "Terminal.flush".to_string(),
+                "Terminal.hideCursor".to_string(),
+                "Terminal.moveTo".to_string(),
+                "Terminal.print".to_string(),
+                "Terminal.readKey".to_string(),
+                "Terminal.resetColor".to_string(),
+                "Terminal.setColor".to_string(),
+                "Terminal.showCursor".to_string(),
+                "Terminal.size".to_string(),
+            ],
+        ),
+        ProviderContractSpec::new(
             "Time",
             "sha256:e80d264b61f2808b4db4d765ded0d3db1a9a019c814d27686ef7e71bc4c208af",
             "sha256:07ad032ad093e63f61e39f59f9452b4787936c18f97953a955c998e6593ac294",
@@ -73,6 +128,27 @@ fn build_registry(
         ),
     ])?;
     let standard_tcp_settings = crate::aver_replay::tcp_provider_settings_from_env()?;
+    if include_defaults {
+        registry.bind(ProviderBinding::new(
+            "Args",
+            "sha256:8326d0f27169e1b73a9f45b8a2d2f3f0d89d6c6e4eb64dc646781082ee585265",
+            vec!["Args.get".to_string()],
+            std::sync::Arc::new(aver_rt::provider::StandardArgsProvider::default()),
+        ))?;
+    }
+    if include_defaults {
+        registry.bind(ProviderBinding::new(
+            "Console",
+            "sha256:878f543df5342a616fddc83b61f1e035931cc24b89bfc523a52de5b0525a62b4",
+            vec![
+                "Console.error".to_string(),
+                "Console.print".to_string(),
+                "Console.readLine".to_string(),
+                "Console.warn".to_string(),
+            ],
+            std::sync::Arc::new(aver_rt::provider::StandardConsoleProvider),
+        ))?;
+    }
     if include_defaults {
         registry.bind(ProviderBinding::new(
             "Disk",
@@ -93,6 +169,29 @@ fn build_registry(
                 "Disk.writeText".to_string(),
             ],
             std::sync::Arc::new(aver_rt::provider::StandardDiskProvider),
+        ))?;
+    }
+    if include_defaults {
+        registry.bind(ProviderBinding::new(
+            "Env",
+            "sha256:ab75df52ca80c64a557ccfd3e7b7a1f9510f346ae7d08ffcb0f9138a7caa9d5b",
+            vec!["Env.get".to_string(), "Env.set".to_string()],
+            std::sync::Arc::new(aver_rt::provider::StandardEnvProvider),
+        ))?;
+    }
+    if include_defaults {
+        registry.bind(ProviderBinding::new(
+            "Http",
+            "sha256:5d61418e444a4a9ec5fcacbb18134b566ef811525462cfb57a549338adc73b51",
+            vec![
+                "Http.delete".to_string(),
+                "Http.get".to_string(),
+                "Http.head".to_string(),
+                "Http.patch".to_string(),
+                "Http.post".to_string(),
+                "Http.put".to_string(),
+            ],
+            std::sync::Arc::new(aver_rt::provider::StandardHttpProvider),
         ))?;
     }
     if include_defaults {
@@ -130,6 +229,27 @@ fn build_registry(
             std::sync::Arc::new(aver_rt::provider::StandardTcpProvider::new(
                 standard_tcp_settings,
             )),
+        ))?;
+    }
+    if include_defaults {
+        registry.bind(ProviderBinding::new(
+            "Terminal",
+            "sha256:3cb1bc67569388135723ecad0346164a5ce277f09109fa647eba057dc91de9c6",
+            vec![
+                "Terminal.clear".to_string(),
+                "Terminal.disableRawMode".to_string(),
+                "Terminal.enableRawMode".to_string(),
+                "Terminal.flush".to_string(),
+                "Terminal.hideCursor".to_string(),
+                "Terminal.moveTo".to_string(),
+                "Terminal.print".to_string(),
+                "Terminal.readKey".to_string(),
+                "Terminal.resetColor".to_string(),
+                "Terminal.setColor".to_string(),
+                "Terminal.showCursor".to_string(),
+                "Terminal.size".to_string(),
+            ],
+            std::sync::Arc::new(aver_rt::provider::StandardTerminalProvider),
         ))?;
     }
     if include_defaults {
@@ -190,6 +310,11 @@ pub fn registry() -> &'static NativeProviderRegistry {
 
 pub fn preflight_required_providers() -> Result<(), String> {
     registry().preflight([
+        "Args.get",
+        "Console.error",
+        "Console.print",
+        "Console.readLine",
+        "Console.warn",
         "Disk.appendText",
         "Disk.delete",
         "Disk.deleteDir",
@@ -198,6 +323,14 @@ pub fn preflight_required_providers() -> Result<(), String> {
         "Disk.makeDir",
         "Disk.readText",
         "Disk.writeText",
+        "Env.get",
+        "Env.set",
+        "Http.delete",
+        "Http.get",
+        "Http.head",
+        "Http.patch",
+        "Http.post",
+        "Http.put",
         "Random.int",
         "Tcp.accept",
         "Tcp.beginConnect",
@@ -213,6 +346,18 @@ pub fn preflight_required_providers() -> Result<(), String> {
         "Tcp.readLine",
         "Tcp.send",
         "Tcp.writeLine",
+        "Terminal.clear",
+        "Terminal.disableRawMode",
+        "Terminal.enableRawMode",
+        "Terminal.flush",
+        "Terminal.hideCursor",
+        "Terminal.moveTo",
+        "Terminal.print",
+        "Terminal.readKey",
+        "Terminal.resetColor",
+        "Terminal.setColor",
+        "Terminal.showCursor",
+        "Terminal.size",
         "Time.now",
         "Time.sleep",
         "Time.unixMs",

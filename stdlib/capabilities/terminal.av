@@ -1,0 +1,128 @@
+module Terminal
+    kind = capability
+    semantics = effectful
+    exposes [Size, enableRawMode, disableRawMode, clear, moveTo, print, setColor, resetColor, readKey, size, hideCursor, showCursor, flush]
+
+record Size
+    width: Int
+    height: Int
+
+operation enableRawMode() -> Result<Unit, String>
+    ? "Enables terminal raw mode."
+    oracle = generativeOutput
+    replay = recorded
+    hostile = [unitNormal, unitAlwaysErr]
+
+operation disableRawMode() -> Result<Unit, String>
+    ? "Disables terminal raw mode."
+    oracle = generativeOutput
+    replay = recorded
+    hostile = [unitNormal, unitAlwaysErr]
+
+operation clear() -> Result<Unit, String>
+    ? "Clears the terminal display."
+    oracle = generativeOutput
+    replay = recorded
+    hostile = [unitNormal, unitAlwaysErr]
+
+operation moveTo(x: Int, y: Int) -> Result<Unit, String>
+    ? "Moves the terminal cursor to a zero-based coordinate."
+    oracle = generativeOutput
+    replay = recorded
+    hostile = [moveNormal, moveAlwaysErr]
+
+operation print(text: String) -> Result<Unit, String>
+    ? "Writes text at the current cursor position without adding a newline."
+    oracle = generativeOutput
+    replay = recorded
+    hostile = [valueNormal, valueAlwaysErr]
+
+operation setColor(color: String) -> Result<Unit, String>
+    ? "Sets the terminal foreground color by portable color name."
+    oracle = generativeOutput
+    replay = recorded
+    hostile = [valueNormal, valueAlwaysErr]
+
+operation resetColor() -> Result<Unit, String>
+    ? "Restores the terminal's default colors."
+    oracle = generativeOutput
+    replay = recorded
+    hostile = [unitNormal, unitAlwaysErr]
+
+operation readKey() -> Result<Option<String>, String>
+    ? "Polls for one key without blocking; None means no key is ready."
+    oracle = generative
+    replay = recorded
+    hostile = [keyNormal, keyIdle, keyAlwaysErr]
+
+operation size() -> Result<Terminal.Size, String>
+    ? "Reads the current terminal width and height."
+    oracle = snapshot
+    replay = recorded
+    hostile = [sizeNormal, sizeMinimal, sizeAlwaysErr]
+
+operation hideCursor() -> Result<Unit, String>
+    ? "Hides the terminal cursor."
+    oracle = generativeOutput
+    replay = recorded
+    hostile = [unitNormal, unitAlwaysErr]
+
+operation showCursor() -> Result<Unit, String>
+    ? "Shows the terminal cursor."
+    oracle = generativeOutput
+    replay = recorded
+    hostile = [unitNormal, unitAlwaysErr]
+
+operation flush() -> Result<Unit, String>
+    ? "Flushes buffered terminal output."
+    oracle = generativeOutput
+    replay = recorded
+    hostile = [unitNormal, unitAlwaysErr]
+
+fn unitNormal(path: BranchPath, call: Int) -> Result<Unit, String>
+    ? "Honest profile: a terminal operation succeeds."
+    Result.Ok(Unit)
+
+fn unitAlwaysErr(path: BranchPath, call: Int) -> Result<Unit, String>
+    ? "Hostile profile: a terminal operation is unavailable."
+    Result.Err("hostile: terminal operation unavailable")
+
+fn moveNormal(path: BranchPath, call: Int, x: Int, y: Int) -> Result<Unit, String>
+    ? "Honest profile: the terminal accepts the cursor position."
+    Result.Ok(Unit)
+
+fn moveAlwaysErr(path: BranchPath, call: Int, x: Int, y: Int) -> Result<Unit, String>
+    ? "Hostile profile: the terminal rejects every cursor movement."
+    Result.Err("hostile: cursor movement rejected")
+
+fn valueNormal(path: BranchPath, call: Int, value: String) -> Result<Unit, String>
+    ? "Honest profile: the terminal accepts the supplied value."
+    Result.Ok(Unit)
+
+fn valueAlwaysErr(path: BranchPath, call: Int, value: String) -> Result<Unit, String>
+    ? "Hostile profile: terminal output is unavailable."
+    Result.Err("hostile: terminal output unavailable")
+
+fn keyNormal(path: BranchPath, call: Int) -> Result<Option<String>, String>
+    ? "Honest profile: the user presses a normal key."
+    Result.Ok(Option.Some("a"))
+
+fn keyIdle(path: BranchPath, call: Int) -> Result<Option<String>, String>
+    ? "Hostile boundary: no key is ready."
+    Result.Ok(Option.None)
+
+fn keyAlwaysErr(path: BranchPath, call: Int) -> Result<Option<String>, String>
+    ? "Hostile profile: terminal input is unavailable."
+    Result.Err("hostile: terminal input unavailable")
+
+fn sizeNormal() -> Result<Terminal.Size, String>
+    ? "Honest profile: a typical 80 by 24 terminal."
+    Result.Ok(Terminal.Size(width = 80, height = 24))
+
+fn sizeMinimal() -> Result<Terminal.Size, String>
+    ? "Hostile boundary: a one-cell terminal."
+    Result.Ok(Terminal.Size(width = 1, height = 1))
+
+fn sizeAlwaysErr() -> Result<Terminal.Size, String>
+    ? "Hostile profile: terminal dimensions are unavailable."
+    Result.Err("hostile: terminal size unavailable")

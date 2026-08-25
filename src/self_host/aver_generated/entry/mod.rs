@@ -1,4 +1,8 @@
 #[allow(unused_imports)]
+use crate::aver_generated::args::*;
+#[allow(unused_imports)]
+use crate::aver_generated::console::*;
+#[allow(unused_imports)]
 use crate::aver_generated::disk::*;
 #[allow(unused_imports)]
 use crate::aver_generated::domain::ast::*;
@@ -812,7 +816,7 @@ pub fn loadProgramFromFile(
 > {
     crate::cancel_checkpoint();
     let source = {
-        let __provider_arg0 = path;
+        let __provider_arg0: AverStr = path;
         crate::cancel_checkpoint();
         crate::aver_replay::invoke_capability_effect(
             "Disk.readText",
@@ -904,22 +908,44 @@ pub fn printIfNotUnit(s: AverStr) -> () {
     crate::cancel_checkpoint();
     if (&*s == "()") {
         {
-            let __effect_arg0 = AverStr::from("");
+            let __provider_arg0: AverStr = AverStr::from("");
             crate::cancel_checkpoint();
-            aver_replay::invoke_effect(
+            crate::aver_replay::invoke_capability_effect(
                 "Console.print",
-                vec![serde_json::Value::String(format!("{}", __effect_arg0))],
-                || aver_rt::console_print(&__effect_arg0),
+                "reissued",
+                vec![crate::aver_replay::ReplayValue::to_replay_json(
+                    &__provider_arg0,
+                )],
+                || {
+                    crate::provider_support::invoke::<()>(
+                        "Console",
+                        "Console.print",
+                        vec![crate::provider_support::encode(__provider_arg0, "Console")],
+                        None,
+                        "Unit",
+                    )
+                },
             )
         }
     } else {
         {
-            let __effect_arg0 = s;
+            let __provider_arg0: AverStr = s;
             crate::cancel_checkpoint();
-            aver_replay::invoke_effect(
+            crate::aver_replay::invoke_capability_effect(
                 "Console.print",
-                vec![serde_json::Value::String(format!("{}", __effect_arg0))],
-                || aver_rt::console_print(&__effect_arg0),
+                "reissued",
+                vec![crate::aver_replay::ReplayValue::to_replay_json(
+                    &__provider_arg0,
+                )],
+                || {
+                    crate::provider_support::invoke::<()>(
+                        "Console",
+                        "Console.print",
+                        vec![crate::provider_support::encode(__provider_arg0, "Console")],
+                        None,
+                        "Unit",
+                    )
+                },
             )
         }
     }
@@ -934,54 +960,109 @@ pub fn runDemo() -> Result<(), AverStr> {
         "fn fib(n)\n    match n\n        0 -> 0\n        1 -> 1\n        _ -> fib(n - 1) + fib(n - 2)\n\nfib(10)",
     ));
     {
-        let __effect_arg0 = AverStr::from("=== Self-Hosted Mini Aver ===");
+        let __provider_arg0: AverStr = AverStr::from("=== Self-Hosted Mini Aver ===");
         crate::cancel_checkpoint();
-        aver_replay::invoke_effect(
+        crate::aver_replay::invoke_capability_effect(
             "Console.print",
-            vec![serde_json::Value::String(format!("{}", __effect_arg0))],
-            || aver_rt::console_print(&__effect_arg0),
+            "reissued",
+            vec![crate::aver_replay::ReplayValue::to_replay_json(
+                &__provider_arg0,
+            )],
+            || {
+                crate::provider_support::invoke::<()>(
+                    "Console",
+                    "Console.print",
+                    vec![crate::provider_support::encode(__provider_arg0, "Console")],
+                    None,
+                    "Unit",
+                )
+            },
         )
     };
     {
-        let __effect_arg0 = AverStr::from("");
+        let __provider_arg0: AverStr = AverStr::from("");
         crate::cancel_checkpoint();
-        aver_replay::invoke_effect(
+        crate::aver_replay::invoke_capability_effect(
             "Console.print",
-            vec![serde_json::Value::String(format!("{}", __effect_arg0))],
-            || aver_rt::console_print(&__effect_arg0),
+            "reissued",
+            vec![crate::aver_replay::ReplayValue::to_replay_json(
+                &__provider_arg0,
+            )],
+            || {
+                crate::provider_support::invoke::<()>(
+                    "Console",
+                    "Console.print",
+                    vec![crate::provider_support::encode(__provider_arg0, "Console")],
+                    None,
+                    "Unit",
+                )
+            },
         )
     };
     {
-        let __effect_arg0 = AverStr::from(
+        let __provider_arg0: AverStr = AverStr::from(
             "Usage: aver run self_hosted/main.av --module-root self_hosted -- <file.av> <module-root> [guest args...]",
         );
         crate::cancel_checkpoint();
-        aver_replay::invoke_effect(
+        crate::aver_replay::invoke_capability_effect(
             "Console.print",
-            vec![serde_json::Value::String(format!("{}", __effect_arg0))],
-            || aver_rt::console_print(&__effect_arg0),
+            "reissued",
+            vec![crate::aver_replay::ReplayValue::to_replay_json(
+                &__provider_arg0,
+            )],
+            || {
+                crate::provider_support::invoke::<()>(
+                    "Console",
+                    "Console.print",
+                    vec![crate::provider_support::encode(__provider_arg0, "Console")],
+                    None,
+                    "Unit",
+                )
+            },
         )
     };
     {
-        let __effect_arg0 = AverStr::from("");
+        let __provider_arg0: AverStr = AverStr::from("");
         crate::cancel_checkpoint();
-        aver_replay::invoke_effect(
+        crate::aver_replay::invoke_capability_effect(
             "Console.print",
-            vec![serde_json::Value::String(format!("{}", __effect_arg0))],
-            || aver_rt::console_print(&__effect_arg0),
+            "reissued",
+            vec![crate::aver_replay::ReplayValue::to_replay_json(
+                &__provider_arg0,
+            )],
+            || {
+                crate::provider_support::invoke::<()>(
+                    "Console",
+                    "Console.print",
+                    vec![crate::provider_support::encode(__provider_arg0, "Console")],
+                    None,
+                    "Unit",
+                )
+            },
         )
     };
     {
-        let __effect_arg0 = AverStr::from("Built-in demos:");
+        let __provider_arg0: AverStr = AverStr::from("Built-in demos:");
         crate::cancel_checkpoint();
-        aver_replay::invoke_effect(
+        crate::aver_replay::invoke_capability_effect(
             "Console.print",
-            vec![serde_json::Value::String(format!("{}", __effect_arg0))],
-            || aver_rt::console_print(&__effect_arg0),
+            "reissued",
+            vec![crate::aver_replay::ReplayValue::to_replay_json(
+                &__provider_arg0,
+            )],
+            || {
+                crate::provider_support::invoke::<()>(
+                    "Console",
+                    "Console.print",
+                    vec![crate::provider_support::encode(__provider_arg0, "Console")],
+                    None,
+                    "Unit",
+                )
+            },
         )
     };
     {
-        let __effect_arg0 = aver_rt::AverStr::from({
+        let __provider_arg0: AverStr = aver_rt::AverStr::from({
             let mut __b = {
                 let mut __b = aver_rt::Buffer::with_capacity(
                     (aver_rt::AverInt::from_i64(31)).to_usize().unwrap_or(0),
@@ -995,14 +1076,25 @@ pub fn runDemo() -> Result<(), AverStr> {
             __b
         });
         crate::cancel_checkpoint();
-        aver_replay::invoke_effect(
+        crate::aver_replay::invoke_capability_effect(
             "Console.print",
-            vec![serde_json::Value::String(format!("{}", __effect_arg0))],
-            || aver_rt::console_print(&__effect_arg0),
+            "reissued",
+            vec![crate::aver_replay::ReplayValue::to_replay_json(
+                &__provider_arg0,
+            )],
+            || {
+                crate::provider_support::invoke::<()>(
+                    "Console",
+                    "Console.print",
+                    vec![crate::provider_support::encode(__provider_arg0, "Console")],
+                    None,
+                    "Unit",
+                )
+            },
         )
     };
     {
-        let __effect_arg0 = aver_rt::AverStr::from({
+        let __provider_arg0: AverStr = aver_rt::AverStr::from({
             let mut __b = {
                 let mut __b = aver_rt::Buffer::with_capacity(
                     (aver_rt::AverInt::from_i64(31)).to_usize().unwrap_or(0),
@@ -1016,14 +1108,25 @@ pub fn runDemo() -> Result<(), AverStr> {
             __b
         });
         crate::cancel_checkpoint();
-        aver_replay::invoke_effect(
+        crate::aver_replay::invoke_capability_effect(
             "Console.print",
-            vec![serde_json::Value::String(format!("{}", __effect_arg0))],
-            || aver_rt::console_print(&__effect_arg0),
+            "reissued",
+            vec![crate::aver_replay::ReplayValue::to_replay_json(
+                &__provider_arg0,
+            )],
+            || {
+                crate::provider_support::invoke::<()>(
+                    "Console",
+                    "Console.print",
+                    vec![crate::provider_support::encode(__provider_arg0, "Console")],
+                    None,
+                    "Unit",
+                )
+            },
         )
     };
     {
-        let __effect_arg0 = aver_rt::AverStr::from({
+        let __provider_arg0: AverStr = aver_rt::AverStr::from({
             let mut __b = {
                 let mut __b = aver_rt::Buffer::with_capacity(
                     (aver_rt::AverInt::from_i64(28)).to_usize().unwrap_or(0),
@@ -1035,10 +1138,21 @@ pub fn runDemo() -> Result<(), AverStr> {
             __b
         });
         crate::cancel_checkpoint();
-        aver_replay::invoke_effect(
+        crate::aver_replay::invoke_capability_effect(
             "Console.print",
-            vec![serde_json::Value::String(format!("{}", __effect_arg0))],
-            || aver_rt::console_print(&__effect_arg0),
+            "reissued",
+            vec![crate::aver_replay::ReplayValue::to_replay_json(
+                &__provider_arg0,
+            )],
+            || {
+                crate::provider_support::invoke::<()>(
+                    "Console",
+                    "Console.print",
+                    vec![crate::provider_support::encode(__provider_arg0, "Console")],
+                    None,
+                    "Unit",
+                )
+            },
         )
     };
     Ok(())
@@ -1067,7 +1181,7 @@ pub fn loadOneModule__indexed(
         __str_index.clone(),
     );
     let source = {
-        let __provider_arg0 = path;
+        let __provider_arg0: AverStr = path;
         crate::cancel_checkpoint();
         crate::aver_replay::invoke_capability_effect(
             "Disk.readText",
@@ -1123,7 +1237,7 @@ pub fn findModulePath__indexed(
         crate::cancel_checkpoint();
         let path = modulePathFromName__indexed(dep.clone(), root.clone(), &*__str_index);
         if {
-            let __provider_arg0 = path.clone();
+            let __provider_arg0: AverStr = path.clone();
             crate::cancel_checkpoint();
             crate::aver_replay::invoke_capability_effect(
                 "Disk.exists",
@@ -1335,7 +1449,15 @@ pub fn main() -> Result<(), AverStr> {
     crate::cancel_checkpoint();
     let args = {
         crate::cancel_checkpoint();
-        aver_replay::invoke_effect("Args.get", vec![], || aver_replay::current_cli_args())
+        crate::aver_replay::invoke_capability_effect("Args.get", "recorded", vec![], || {
+            crate::provider_support::invoke::<aver_rt::AverList<AverStr>>(
+                "Args",
+                "Args.get",
+                vec![],
+                None,
+                "List<String>",
+            )
+        })
     };
     aver_list_match!(args, [] => runDemo(), [path, rest] => match runFromFileWithRest(path, &rest) { Ok(_) => { Ok(()) }, Err(e @ _) => { Err(e) } })
 }

@@ -592,7 +592,7 @@ pub(super) fn compile_mir_expr(
             let rc = &spanned_rc.node;
             // Resolve to the arena type id + field order. User records
             // carry a `TypeId` → canonical name; built-in records
-            // (`HttpResponse`, …) carry no `TypeId` and ride their
+            // (`Http.Response`, …) carry no `TypeId` and ride their
             // canonical `type_name` directly (the arena registers
             // built-in record types by that name). The arena's field
             // order is declaration order, which is what RECORD_NEW

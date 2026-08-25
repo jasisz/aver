@@ -206,7 +206,7 @@ Arguments after `--` are available as `List<String>`. Without `--`, the list is 
 fn add(a: Int, b: Int) -> Int
     a + b
 
-fn fetchUser(id: String) -> Result<HttpResponse, String>
+fn fetchUser(id: String) -> Result<Http.Response, String>
     ? "Fetches a user record from an API."
     ! [Http.get]
     Http.get("https://api.example.com/users/{id}")
@@ -463,7 +463,7 @@ can accept a provider but has no live binding. Artifact targets without an
 adapter report `error[capability-target-unsupported]` instead, including the
 target, capability, required operations, contract/model hashes, and reason.
 
-The registry is shared by the main VM and every `!` / `?!` child, so all branches see the same provider instance and resource store. Recording adds a sorted capability provenance table with `contract_hash`, `model_hash`, provider identity, and implementation fingerprint. `recorded` and `suppressed` replay consume without calling a provider; `reissued` consumes the event and calls live; pure operations call live without emitting an event. Live pure/reissued replay requires the same identity and fingerprint. Provider fingerprints are audit metadata supplied by the host, not theorem hashes; the runtime can expose drift, but it cannot stop a dishonest host from reusing an old fingerprint for changed code.
+The registry is shared by the main VM and every `!` / `?!` child, so all branches see the same provider instance and resource store. Recording adds a sorted capability provenance table with `contract_hash`, `model_hash`, provider identity, and implementation fingerprint. `recorded` and `suppressed` replay consume without calling a provider; `reissued` consumes the event and calls live; pure operations call live without emitting an event. Live pure/reissued replay requires the same identity and fingerprint. The compiler-shipped native, wasm-gc, and wasip2 adapters for one standard capability form one explicit replay-compatibility family: their target-specific identities may differ, but the fingerprint must still match, so a standard trace remains portable between backends. Custom providers remain identity-exact. Provider fingerprints are audit metadata supplied by the host, not theorem hashes; the runtime can expose drift, but it cannot stop a dishonest host from reusing an old fingerprint for changed code.
 
 Custom bindings have two host-bound routes. A Rust embedder can install one typed
 in-process provider binding unchanged in the VM or a generated Rust artifact. A

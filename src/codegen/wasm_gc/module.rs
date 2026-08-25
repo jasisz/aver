@@ -2139,10 +2139,10 @@ pub(super) fn emit_module_with(
     };
 
     // Phase 2.0 — `__rt_http_get(url: ref string) -> ref Result<
-    // HttpResponse, String>`. Owns the entire wasi:http pipeline
+    // Http.Response, String>`. Owns the entire wasi:http pipeline
     // (URL parse + fields/request constructors + setters + handle
     // + poll + future.get + status + consume + body.stream + drain
-    // + per-call drops + HttpResponse build). All 16 new wasi:http
+    // + per-call drops + Http.Response build). All 16 new wasi:http
     // slots and 4 reused (poll/drop-pollable/blocking-read/drop-
     // input-stream) must be present, plus String / Result / Http
     // Response / Map<String, List<String>> type slots.
@@ -2244,8 +2244,8 @@ pub(super) fn emit_module_with(
             .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::IoStreamsResourceDropOutputStream)
             .is_some()
         && let Some(string_idx) = registry.string_array_type_idx
-        && let Some(result_idx) = registry.result_type_idx("Result<HttpResponse,String>")
-        && let Some(resp_idx) = registry.record_type_idx("HttpResponse")
+        && let Some(result_idx) = registry.result_type_idx("Result<Http.Response,String>")
+        && let Some(resp_idx) = registry.record_type_idx("Http.Response")
         && let Some(map_slots) = registry.map_slots("Map<String,List<String>>")
         && let Some(list_string_idx) = registry.list_type_idx("List<String>")
         && let Some(opt_list_string_idx) = registry.option_type_idx("Option<List<String>>")
@@ -3443,8 +3443,8 @@ pub(super) fn emit_module_with(
         let http_request_idx = registry.record_type_idx("HttpRequest").ok_or_else(|| {
             WasmGcError::Validation("proxy mode requires HttpRequest record slot".into())
         })?;
-        let http_response_idx = registry.record_type_idx("HttpResponse").ok_or_else(|| {
-            WasmGcError::Validation("proxy mode requires HttpResponse record slot".into())
+        let http_response_idx = registry.record_type_idx("Http.Response").ok_or_else(|| {
+            WasmGcError::Validation("proxy mode requires Http.Response record slot".into())
         })?;
         let map_slots = registry
             .map_slots("Map<String,List<String>>")
@@ -6145,11 +6145,10 @@ fn emit_user_types(
             super::types::aver_to_wasm(element, Some(registry))?.ok_or(WasmGcError::Validation(
                 format!("Vector element type `{element}` has no wasm representation"),
             ))?;
-        let idx = registry
-            .vector_type_idx(canonical)
-            .ok_or(WasmGcError::Validation(format!(
-                "vector `{canonical}` not registered"
-            )))?;
+        let idx = *registry
+            .vector_types
+            .get(canonical)
+            .expect("vector order entry missing its allocated slot");
         entries.push((
             idx,
             mk_array(wasm_encoder::FieldType {
@@ -6171,11 +6170,10 @@ fn emit_user_types(
             )))?;
         let t_val = super::types::aver_to_wasm(t_aver, Some(registry))?.unwrap_or(ValType::I32);
         let e_val = super::types::aver_to_wasm(e_aver, Some(registry))?.unwrap_or(ValType::I32);
-        let idx = registry
-            .result_type_idx(canonical)
-            .ok_or(WasmGcError::Validation(format!(
-                "result `{canonical}` not registered"
-            )))?;
+        let idx = *registry
+            .result_types
+            .get(canonical)
+            .expect("result order entry missing its allocated slot");
         entries.push((
             idx,
             mk_struct(vec![
@@ -6204,9 +6202,10 @@ fn emit_user_types(
             super::types::aver_to_wasm(element, Some(registry))?.ok_or(WasmGcError::Validation(
                 format!("List element type `{element}` has no wasm representation"),
             ))?;
-        let own_idx = registry
-            .list_type_idx(canonical)
-            .expect("just-registered list slot");
+        let own_idx = *registry
+            .list_types
+            .get(canonical)
+            .expect("list order entry missing its allocated slot");
         let tail_ref = wasm_encoder::ValType::Ref(wasm_encoder::RefType {
             nullable: true,
             heap_type: wasm_encoder::HeapType::Concrete(own_idx),
@@ -6236,11 +6235,10 @@ fn emit_user_types(
             super::types::aver_to_wasm(element, Some(registry))?.ok_or(WasmGcError::Validation(
                 format!("Option element type `{element}` has no wasm representation"),
             ))?;
-        let idx = registry
-            .option_type_idx(canonical)
-            .ok_or(WasmGcError::Validation(format!(
-                "option `{canonical}` not registered"
-            )))?;
+        let idx = *registry
+            .option_types
+            .get(canonical)
+            .expect("option order entry missing its allocated slot");
         entries.push((
             idx,
             mk_struct(vec![
@@ -6279,9 +6277,10 @@ fn emit_user_types(
                 format!("Map key type `{k_aver}` has no wasm representation"),
             ))?
         };
-        let slots = registry
-            .map_slots(canonical)
-            .expect("just-registered map slots");
+        let slots = *registry
+            .map_types
+            .get(canonical)
+            .expect("map order entry missing its allocated slots");
         entries.push((
             slots.keys_array,
             mk_array(wasm_encoder::FieldType {
@@ -6345,11 +6344,10 @@ fn emit_user_types(
             super::types::aver_to_wasm(k_aver, Some(registry))?.ok_or(WasmGcError::Validation(
                 format!("primitive key box: K=`{k_aver}` has no wasm representation"),
             ))?;
-        let idx = registry
-            .primitive_key_box_idx(k_aver)
-            .ok_or(WasmGcError::Validation(format!(
-                "primitive key box for `{k_aver}` not registered"
-            )))?;
+        let idx = *registry
+            .primitive_key_box
+            .get(k_aver)
+            .expect("primitive-key-box order entry missing its allocated slot");
         entries.push((
             idx,
             mk_struct(vec![wasm_encoder::FieldType {
@@ -6379,16 +6377,15 @@ fn emit_user_types(
                 mutable: true,
             });
         }
-        let idx = registry
-            .tuple_type_idx(canonical)
-            .ok_or(WasmGcError::Validation(format!(
-                "tuple `{canonical}` not registered"
-            )))?;
+        let idx = *registry
+            .tuple_types
+            .get(canonical)
+            .expect("tuple order entry missing its allocated slot");
         entries.push((idx, mk_struct(fields)));
     }
 
-    // Built-in records (HttpRequest / HttpResponse / Tcp.Connection /
-    // Terminal.Size) — registered with their own deferred idx.
+    // Compiler-owned carrier records (HttpRequest / Tcp.Connection /
+    // Tcp.Dial / Tcp.Listener) — registered with their own deferred idx.
     //
     // Skip names the user already redeclared with `record <Name>` —
     // the items pass above pushed their entry with the same registry
@@ -7556,7 +7553,7 @@ struct FactoryExports {
     result_http_response_string_ok: Option<FactorySlot>,
     result_http_response_string_err: Option<FactorySlot>,
     /// `__rt_map_string_list_string_empty()` — empty headers map for
-    /// the host to attach to its synthesised HttpResponse refs.
+    /// the host to attach to its synthesised Http.Response refs.
     map_string_list_string_empty: Option<FactorySlot>,
 }
 
@@ -8084,14 +8081,14 @@ fn allocate_factory_exports(
     });
     if needs_http_response {
         let res_idx = registry
-            .result_type_idx("Result<HttpResponse,String>")
+            .result_type_idx("Result<Http.Response,String>")
             .ok_or(WasmGcError::Validation(
-                "Http.* requires Result<HttpResponse,String> slot".into(),
+                "Http.* requires Result<Http.Response,String> slot".into(),
             ))?;
         let rec_idx = registry
-            .record_type_idx("HttpResponse")
+            .record_type_idx("Http.Response")
             .ok_or(WasmGcError::Validation(
-                "Http.* requires HttpResponse record slot".into(),
+                "Http.* requires Http.Response record slot".into(),
             ))?;
         let s_idx = registry
             .string_array_type_idx
@@ -9448,23 +9445,23 @@ fn emit_factory_result_tcp_connection_string_err(
     Ok(f)
 }
 
-/// `HttpResponse { status, body, headers }` factory.
+/// `Http.Response { status, body, headers }` factory.
 fn emit_factory_http_response_make(
     registry: &TypeRegistry,
 ) -> Result<wasm_encoder::Function, WasmGcError> {
     let rec_idx = registry
-        .record_type_idx("HttpResponse")
+        .record_type_idx("Http.Response")
         .expect("checked at allocation");
     let mut f = Function::new([]);
     // `Int = ℤ`: the host passes the HTTP `status` as i64 (the ABI stays
-    // i64), but the `HttpResponse.status` field is the `$AverInt` carrier
+    // i64), but the `Http.Response.status` field is the `$AverInt` carrier
     // under bignum — lift it to a Small before `struct.new`.
     f.instruction(&Instruction::LocalGet(0));
     if registry.bignum {
         let from_i64 = registry
             .aint_from_i64_fn_idx
             .ok_or(WasmGcError::Validation(
-                "bignum HttpResponse factory needs the __aint_from_i64 fn idx".into(),
+                "bignum Http.Response factory needs the __aint_from_i64 fn idx".into(),
             ))?;
         f.instruction(&Instruction::Call(from_i64));
     }
@@ -9479,7 +9476,7 @@ fn emit_factory_result_http_response_string_ok(
     registry: &TypeRegistry,
 ) -> Result<wasm_encoder::Function, WasmGcError> {
     let res_idx = registry
-        .result_type_idx("Result<HttpResponse,String>")
+        .result_type_idx("Result<Http.Response,String>")
         .expect("checked at allocation");
     let s_idx = registry
         .string_array_type_idx
@@ -9499,10 +9496,10 @@ fn emit_factory_result_http_response_string_err(
     registry: &TypeRegistry,
 ) -> Result<wasm_encoder::Function, WasmGcError> {
     let res_idx = registry
-        .result_type_idx("Result<HttpResponse,String>")
+        .result_type_idx("Result<Http.Response,String>")
         .expect("checked at allocation");
     let rec_idx = registry
-        .record_type_idx("HttpResponse")
+        .record_type_idx("Http.Response")
         .expect("checked at allocation");
     let mut f = Function::new([]);
     f.instruction(&Instruction::I32Const(0));
@@ -9540,7 +9537,7 @@ fn emit_factory_map_string_list_string_empty(
 
 /// Slots reserved for the synthesised `aver_http_handle` wrapper.
 struct HandlerWrapper {
-    /// Position of the user's `(HttpRequest) -> HttpResponse` fn in
+    /// Position of the user's `(HttpRequest) -> Http.Response` fn in
     /// `fn_defs`.
     user_handler_idx: usize,
     wrapper_type: u32,
@@ -9554,7 +9551,7 @@ struct HandlerWrapper {
 
 /// Synthesise the body of `aver_http_handle()`. Reads the request
 /// fields via `Request.*` imports, allocates an `HttpRequest`,
-/// invokes the user handler, walks the resulting `HttpResponse`'s
+/// invokes the user handler, walks the resulting `Http.Response`'s
 /// headers Map and dispatches one `Response.setHeader(name, value)`
 /// per (key, value) pair before finalising via `Response.text(status,
 /// body)`. Mirrors the `--bridge fetch` shape from the legacy
@@ -9579,13 +9576,14 @@ fn emit_handler_wrapper(
         .ok_or(WasmGcError::Validation(
             "aver_http_handle wrapper requires HttpRequest record slot".into(),
         ))?;
-    let resp_idx = registry
-        .records
-        .get("HttpResponse")
-        .copied()
-        .ok_or(WasmGcError::Validation(
-            "aver_http_handle wrapper requires HttpResponse record slot".into(),
-        ))?;
+    let resp_idx =
+        registry
+            .records
+            .get("Http.Response")
+            .copied()
+            .ok_or(WasmGcError::Validation(
+                "aver_http_handle wrapper requires Http.Response record slot".into(),
+            ))?;
     let map_slots =
         registry
             .map_slots("Map<String,List<String>>")
@@ -9745,7 +9743,7 @@ fn emit_handler_wrapper(
     f.instruction(&Instruction::Call(user_handler_wasm_idx));
     f.instruction(&Instruction::LocalSet(6));
 
-    // status = resp.status — under `Int = ℤ` the `HttpResponse.status` field is
+    // status = resp.status — under `Int = ℤ` the `Http.Response.status` field is
     // the `$AverInt` carrier (the factory lifts the host's i64 to a Small via
     // `__aint_from_i64`), so lower it back to i64 before storing into the i64
     // local the `Response.text` host import consumes. Mirror of

@@ -1,9 +1,8 @@
 //! Typed error for the wasip2 codegen path.
 //!
 //! Kept separate so the surface is small and easy to extend as
-//! Phase 1 fills in effect mappings (Phase 1.2-1.4) and Phase 1.6
-//! adds the `target-effect-unsupported` reject path for `Terminal`,
-//! `Http` and `Tcp` under `--target wasip2`.
+//! the Component Model wrapper evolves. Standard capability target
+//! availability is decided before this layer is entered.
 
 use std::fmt;
 
@@ -20,9 +19,8 @@ pub enum Wasip2Error {
     /// when it does.
     Validation(String),
     /// A surface feature is not yet wired by the current Phase 1
-    /// increment. Distinct from `target-effect-unsupported` (which
-    /// is a permanent rejection because the target cannot ever
-    /// support the effect — see Phase 1.6 / `Terminal.*`).
+    /// increment. Distinct from a capability target-manifest rejection,
+    /// which describes an operation the selected target cannot bind.
     NotImplemented(String),
 }
 

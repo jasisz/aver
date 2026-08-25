@@ -88,6 +88,12 @@ pub enum UnsupportedReason {
         target: CapabilityTarget,
         detail: &'static str,
     },
+    StandardOperationsUnavailable {
+        capability: String,
+        target: CapabilityTarget,
+        operations: Vec<String>,
+        detail: &'static str,
+    },
     WitBoundaryTypeUnsupported(crate::codegen::wasip2::CapabilityWitUnsupported),
 }
 
@@ -96,6 +102,7 @@ impl UnsupportedReason {
         match self {
             Self::HostImportAdapterNotGenerated => "host-import-adapter-not-generated",
             Self::StandardBindingUnavailable { .. } => "standard-binding-unavailable",
+            Self::StandardOperationsUnavailable { .. } => "standard-operations-unavailable",
             Self::WitBoundaryTypeUnsupported(_) => "wit-boundary-type-unsupported",
         }
     }
@@ -111,6 +118,15 @@ impl UnsupportedReason {
                 target,
                 detail,
             } => format!("standard capability `{capability}` has no `{target}` binding: {detail}"),
+            Self::StandardOperationsUnavailable {
+                capability,
+                target,
+                operations,
+                detail,
+            } => format!(
+                "standard capability `{capability}` cannot bind operation(s) {} on `{target}`: {detail}",
+                operations.join(", ")
+            ),
             Self::WitBoundaryTypeUnsupported(detail) => detail.description(),
         }
     }
@@ -198,7 +214,7 @@ impl CapabilityTargetManifest {
                     model_hash: contract.model_hash.clone(),
                     declared_operations: declared_operations.clone(),
                     required_operations: required_operations.clone(),
-                    status: binding_status(target, contract, contracts),
+                    status: binding_status(target, contract, contracts, &required_operations),
                 });
             }
         }
@@ -230,13 +246,39 @@ fn binding_status(
     target: CapabilityTarget,
     contract: &CapabilityContract,
     contracts: &CapabilityRegistry,
+    required_operations: &BTreeSet<String>,
 ) -> TargetBindingStatus {
     if let Some(binding) = exact_standard_binding(contract) {
         return match binding.target_identity(target) {
-            Some(identity) => TargetBindingStatus::Provided(TargetProvider {
-                identity: identity.to_string(),
-                fingerprint: binding.fingerprint().to_string(),
-            }),
+            Some(identity) => {
+                let unsupported = required_operations
+                    .iter()
+                    .filter(|operation| {
+                        binding
+                            .unsupported_operation_detail(target, operation)
+                            .is_some()
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>();
+                if let Some(first) = unsupported.first() {
+                    let detail = binding
+                        .unsupported_operation_detail(target, first)
+                        .expect("the first operation was classified unsupported");
+                    TargetBindingStatus::Unsupported {
+                        reason: UnsupportedReason::StandardOperationsUnavailable {
+                            capability: contract.module.clone(),
+                            target,
+                            operations: unsupported,
+                            detail,
+                        },
+                    }
+                } else {
+                    TargetBindingStatus::Provided(TargetProvider {
+                        identity: identity.to_string(),
+                        fingerprint: binding.fingerprint().to_string(),
+                    })
+                }
+            }
             None => TargetBindingStatus::Unsupported {
                 reason: UnsupportedReason::StandardBindingUnavailable {
                     capability: contract.module.clone(),

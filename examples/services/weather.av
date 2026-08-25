@@ -139,25 +139,25 @@ fn fetchWeather(config: WeatherConfig, city: String) -> Result<String, String>
 
 // Oracle stubs for fetchWeather: pin Http.get without hitting the network.
 // Each stub is deterministic in its arguments and matches the
-// `Http.get` Oracle signature `(path, n, url) -> Result<HttpResponse, String>`.
+// `Http.get` Oracle signature `(path, n, url) -> Result<Http.Response, String>`.
 
-fn fakeHttp200(path: BranchPath, n: Int, url: String) -> Result<HttpResponse, String>
+fn fakeHttp200(path: BranchPath, n: Int, url: String) -> Result<Http.Response, String>
     ? "Deterministic Http.get stub returning a 200 with a fixed body."
-    Result.Ok(HttpResponse(status = 200, body = "\"sunny\"", headers = {}))
+    Result.Ok(Http.Response(status = 200, body = "\"sunny\"", headers = {}))
 
-fn fakeHttp500(path: BranchPath, n: Int, url: String) -> Result<HttpResponse, String>
+fn fakeHttp500(path: BranchPath, n: Int, url: String) -> Result<Http.Response, String>
     ? "Deterministic Http.get stub returning a 500 — exercises the non-200 branch."
-    Result.Ok(HttpResponse(status = 500, body = "boom", headers = {}))
+    Result.Ok(Http.Response(status = 500, body = "boom", headers = {}))
 
-fn fakeHttpDown(path: BranchPath, n: Int, url: String) -> Result<HttpResponse, String>
+fn fakeHttpDown(path: BranchPath, n: Int, url: String) -> Result<Http.Response, String>
     ? "Deterministic Http.get stub returning a transport error — exercises the Err branch."
     Result.Err("connection refused")
 
 verify fakeHttp200
-    fakeHttp200(BranchPath.Root, 0, "https://api.weather.com/v1/current?city=Warsaw&key=demo-key") => Result.Ok(HttpResponse(status = 200, body = "\"sunny\"", headers = {}))
+    fakeHttp200(BranchPath.Root, 0, "https://api.weather.com/v1/current?city=Warsaw&key=demo-key") => Result.Ok(Http.Response(status = 200, body = "\"sunny\"", headers = {}))
 
 verify fakeHttp500
-    fakeHttp500(BranchPath.Root, 0, "https://api.weather.com/v1/current?city=Warsaw&key=demo-key") => Result.Ok(HttpResponse(status = 500, body = "boom", headers = {}))
+    fakeHttp500(BranchPath.Root, 0, "https://api.weather.com/v1/current?city=Warsaw&key=demo-key") => Result.Ok(Http.Response(status = 500, body = "boom", headers = {}))
 
 verify fakeHttpDown
     fakeHttpDown(BranchPath.Root, 0, "https://api.weather.com/v1/current?city=Warsaw&key=demo-key") => Result.Err("connection refused")
@@ -185,16 +185,16 @@ fn getWeather(config: WeatherConfig, conn: Tcp.Connection, city: String) -> Resu
 
 // HTTP handler
 
-fn handleWeather(context: WeatherContext, req: HttpRequest) -> HttpResponse
+fn handleWeather(context: WeatherContext, req: HttpRequest) -> Http.Response
     ? "Routes incoming HTTP request. GET /weather/<city> returns weather JSON."
     ! [Http.get, Tcp.readLine, Tcp.writeLine]
     match req.method == "GET"
-        false -> HttpResponse(status = 405, body = jsonErr("Method not allowed"), headers = {})
+        false -> Http.Response(status = 405, body = jsonErr("Method not allowed"), headers = {})
         true  -> match extractCity(req.path)
-            Result.Err(msg) -> HttpResponse(status = 400, body = jsonErr(msg), headers = {})
+            Result.Err(msg) -> Http.Response(status = 400, body = jsonErr(msg), headers = {})
             Result.Ok(city) -> match getWeather(context.config, context.conn, city)
-                Result.Ok(data)  -> HttpResponse(status = 200, body = jsonOk(city, data), headers = {})
-                Result.Err(msg)  -> HttpResponse(status = 502, body = jsonErr(msg), headers = {})
+                Result.Ok(data)  -> Http.Response(status = 200, body = jsonOk(city, data), headers = {})
+                Result.Err(msg)  -> Http.Response(status = 502, body = jsonErr(msg), headers = {})
 
 fn defaultConfig() -> WeatherConfig
     ? "Keeps the demo deployment settings explicit and shared by main and its request handler."
@@ -203,15 +203,15 @@ fn defaultConfig() -> WeatherConfig
 verify defaultConfig
     defaultConfig() => WeatherConfig(apiHost = "api.weather.com", apiKey = "demo-key", redisHost = "127.0.0.1", redisPort = 6379, serverPort = 8080)
 
-fn handleRequest(req: HttpRequest) -> HttpResponse
+fn handleRequest(req: HttpRequest) -> Http.Response
     ? "Opens the request-scoped Redis dependency, routes the request, and closes it before returning the response."
     ! [Http.get, Tcp.connect, Tcp.readLine, Tcp.writeLine, Tcp.close]
     config = defaultConfig()
     match Services.Redis.connect(RedisConfig(host = config.redisHost, port = config.redisPort))
-        Result.Err(msg) -> HttpResponse(status = 502, body = jsonErr(msg), headers = {})
+        Result.Err(msg) -> Http.Response(status = 502, body = jsonErr(msg), headers = {})
         Result.Ok(conn) -> closeAfter(handleWeather(WeatherContext(config = config, conn = conn), req), conn)
 
-fn closeAfter(response: HttpResponse, conn: Tcp.Connection) -> HttpResponse
+fn closeAfter(response: Http.Response, conn: Tcp.Connection) -> Http.Response
     ? "Connection cleanup is attempted even though an HTTP response can no longer report its failure as a typed Result."
     ! [Tcp.close]
     match Services.Redis.disconnect(conn)

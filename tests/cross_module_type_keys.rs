@@ -398,17 +398,17 @@ fn backend_named_type_key_routes_id_stamped_named_to_canonical() {
 }
 
 #[test]
-/// User-source nominal types must have a typed identity; builtin and host types
-/// such as `HttpResponse` are deliberately id-less and retain the name fallback.
+/// User-source nominal types must have a typed identity; compiler-owned host types
+/// such as `HttpRequest` are deliberately id-less and retain the name fallback.
 fn backend_named_type_key_falls_back_to_name_for_types_with_no_typed_identity() {
     let ctx = build_three_module_ctx();
     let unresolved = Type::Named {
         id: None,
-        name: "HttpResponse".to_string(),
+        name: "HttpRequest".to_string(),
     };
     let key = backend_named_type_key(&ctx, &unresolved).expect("Named is Some");
     assert_eq!(
-        key, "HttpResponse",
+        key, "HttpRequest",
         "types with no typed identity should fall back to the source-faithful name"
     );
 }

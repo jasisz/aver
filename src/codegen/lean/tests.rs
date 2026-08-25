@@ -3985,8 +3985,8 @@ fn firstOrMissing(xs: Vector<String>) -> Result<String, String>
 fn defaultHeaders() -> Map<String, List<String>>
     {"content-type" => ["application/json"]}
 
-fn mkResponse(body: String) -> HttpResponse
-    HttpResponse(status = 200, body = body, headers = defaultHeaders())
+fn mkResponse(body: String) -> Http.Response
+    Http.Response(status = 200, body = body, headers = defaultHeaders())
 
 fn requestPath(req: HttpRequest) -> String
     req.path
@@ -3999,7 +3999,7 @@ fn echoConn(conn: Tcp.Connection) -> Tcp.Connection
     let out = transpile(&mut ctx);
     let lean = generated_lean_file(&out);
 
-    assert!(lean.contains("structure HttpResponse where"));
+    assert!(lean.contains("structure Http.Response where"));
     assert!(lean.contains("structure HttpRequest where"));
     // `Tcp.Connection` is a provider-owned resource. Lean models only its
     // identity inside the capability namespace; the old represented carrier

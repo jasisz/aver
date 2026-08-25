@@ -1,4 +1,8 @@
 #[allow(unused_imports)]
+use crate::aver_generated::args::*;
+#[allow(unused_imports)]
+use crate::aver_generated::console::*;
+#[allow(unused_imports)]
 use crate::aver_generated::disk::*;
 #[allow(unused_imports)]
 use crate::aver_generated::domain::ast::*;
@@ -15,9 +19,15 @@ use crate::aver_generated::domain::builtins::wrappers::*;
 #[allow(unused_imports)]
 use crate::aver_generated::domain::value::*;
 #[allow(unused_imports)]
+use crate::aver_generated::env::*;
+#[allow(unused_imports)]
+use crate::aver_generated::http::*;
+#[allow(unused_imports)]
 use crate::aver_generated::random::*;
 #[allow(unused_imports)]
 use crate::aver_generated::tcp::*;
+#[allow(unused_imports)]
+use crate::aver_generated::terminal::*;
 #[allow(unused_imports)]
 use crate::aver_generated::time::*;
 #[allow(unused_imports)]
@@ -236,12 +246,23 @@ pub fn builtinConsolePrint(
     crate::cancel_checkpoint();
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     {
-        let __effect_arg0 = crate::aver_generated::domain::value::valRepr(&v);
+        let __provider_arg0: AverStr = crate::aver_generated::domain::value::valRepr(&v);
         crate::cancel_checkpoint();
-        aver_replay::invoke_effect(
+        crate::aver_replay::invoke_capability_effect(
             "Console.print",
-            vec![serde_json::Value::String(format!("{}", __effect_arg0))],
-            || aver_rt::console_print(&__effect_arg0),
+            "reissued",
+            vec![crate::aver_replay::ReplayValue::to_replay_json(
+                &__provider_arg0,
+            )],
+            || {
+                crate::provider_support::invoke::<()>(
+                    "Console",
+                    "Console.print",
+                    vec![crate::provider_support::encode(__provider_arg0, "Console")],
+                    None,
+                    "Unit",
+                )
+            },
         )
     };
     Ok(crate::aver_generated::domain::value::Val::ValUnit)
@@ -254,12 +275,23 @@ pub fn builtinConsoleError(
     crate::cancel_checkpoint();
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     {
-        let __effect_arg0 = crate::aver_generated::domain::value::valRepr(&v);
+        let __provider_arg0: AverStr = crate::aver_generated::domain::value::valRepr(&v);
         crate::cancel_checkpoint();
-        aver_replay::invoke_effect(
+        crate::aver_replay::invoke_capability_effect(
             "Console.error",
-            vec![serde_json::Value::String(format!("{}", __effect_arg0))],
-            || aver_rt::console_error(&__effect_arg0),
+            "reissued",
+            vec![crate::aver_replay::ReplayValue::to_replay_json(
+                &__provider_arg0,
+            )],
+            || {
+                crate::provider_support::invoke::<()>(
+                    "Console",
+                    "Console.error",
+                    vec![crate::provider_support::encode(__provider_arg0, "Console")],
+                    None,
+                    "Unit",
+                )
+            },
         )
     };
     Ok(crate::aver_generated::domain::value::Val::ValUnit)
@@ -272,12 +304,23 @@ pub fn builtinConsoleWarn(
     crate::cancel_checkpoint();
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     {
-        let __effect_arg0 = crate::aver_generated::domain::value::valRepr(&v);
+        let __provider_arg0: AverStr = crate::aver_generated::domain::value::valRepr(&v);
         crate::cancel_checkpoint();
-        aver_replay::invoke_effect(
+        crate::aver_replay::invoke_capability_effect(
             "Console.warn",
-            vec![serde_json::Value::String(format!("{}", __effect_arg0))],
-            || aver_rt::console_warn(&__effect_arg0),
+            "reissued",
+            vec![crate::aver_replay::ReplayValue::to_replay_json(
+                &__provider_arg0,
+            )],
+            || {
+                crate::provider_support::invoke::<()>(
+                    "Console",
+                    "Console.warn",
+                    vec![crate::provider_support::encode(__provider_arg0, "Console")],
+                    None,
+                    "Unit",
+                )
+            },
         )
     };
     Ok(crate::aver_generated::domain::value::Val::ValUnit)
@@ -290,8 +333,14 @@ pub fn builtinConsoleReadLine(
     crate::cancel_checkpoint();
     match {
         crate::cancel_checkpoint();
-        aver_replay::invoke_effect("Console.readLine", vec![], || {
-            (aver_rt::read_line()).into_aver()
+        crate::aver_replay::invoke_capability_effect("Console.readLine", "recorded", vec![], || {
+            crate::provider_support::invoke::<Result<AverStr, AverStr>>(
+                "Console",
+                "Console.readLine",
+                vec![],
+                None,
+                "Result<String, String>",
+            )
         })
     } {
         Ok(line @ _) => Ok(crate::aver_generated::domain::value::Val::ValOk(
@@ -311,7 +360,7 @@ pub fn builtinDiskReadText(
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let path = crate::aver_generated::domain::builtins::helpers::expectStr(&v)?;
     match {
-        let __provider_arg0 = path;
+        let __provider_arg0: AverStr = path;
         crate::cancel_checkpoint();
         crate::aver_replay::invoke_capability_effect(
             "Disk.readText",
@@ -346,7 +395,15 @@ pub fn builtinArgsGet(
     crate::cancel_checkpoint();
     let rawArgs = {
         crate::cancel_checkpoint();
-        aver_replay::invoke_effect("Args.get", vec![], || aver_replay::current_cli_args())
+        crate::aver_replay::invoke_capability_effect("Args.get", "recorded", vec![], || {
+            crate::provider_support::invoke::<aver_rt::AverList<AverStr>>(
+                "Args",
+                "Args.get",
+                vec![],
+                None,
+                "List<String>",
+            )
+        })
     };
     Ok(crate::aver_generated::domain::value::Val::ValList(
         crate::aver_generated::domain::builtins::stringsToVals__collected(
@@ -364,12 +421,23 @@ pub fn builtinEnvGet(
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let key = crate::aver_generated::domain::builtins::helpers::expectStr(&v)?;
     match {
-        let __effect_arg0 = key;
+        let __provider_arg0: AverStr = key;
         crate::cancel_checkpoint();
-        aver_replay::invoke_effect(
+        crate::aver_replay::invoke_capability_effect(
             "Env.get",
-            vec![aver_replay::ReplayValue::to_replay_json(&__effect_arg0)],
-            || (aver_rt::env_get(&__effect_arg0)).into_aver(),
+            "recorded",
+            vec![crate::aver_replay::ReplayValue::to_replay_json(
+                &__provider_arg0,
+            )],
+            || {
+                crate::provider_support::invoke::<Option<AverStr>>(
+                    "Env",
+                    "Env.get",
+                    vec![crate::provider_support::encode(__provider_arg0, "Env")],
+                    None,
+                    "Option<String>",
+                )
+            },
         )
     } {
         Some(value @ _) => Ok(crate::aver_generated::domain::value::Val::ValSome(
@@ -400,16 +468,28 @@ pub fn builtinEnvSetInner(
     let key = crate::aver_generated::domain::builtins::helpers::expectStr(keyV)?;
     let value = crate::aver_generated::domain::builtins::helpers::expectStr(valueV)?;
     match {
-        let __effect_arg0 = key;
-        let __effect_arg1 = value;
+        let __provider_arg0: AverStr = key;
+        let __provider_arg1: AverStr = value;
         crate::cancel_checkpoint();
-        aver_replay::invoke_effect(
+        crate::aver_replay::invoke_capability_effect(
             "Env.set",
+            "recorded",
             vec![
-                aver_replay::ReplayValue::to_replay_json(&__effect_arg0),
-                aver_replay::ReplayValue::to_replay_json(&__effect_arg1),
+                crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg0),
+                crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg1),
             ],
-            || aver_rt::env_set(&__effect_arg0, &__effect_arg1).map_err(aver_rt::AverStr::from),
+            || {
+                crate::provider_support::invoke::<Result<(), AverStr>>(
+                    "Env",
+                    "Env.set",
+                    vec![
+                        crate::provider_support::encode(__provider_arg0, "Env"),
+                        crate::provider_support::encode(__provider_arg1, "Env"),
+                    ],
+                    None,
+                    "Result<Unit, String>",
+                )
+            },
         )
     } {
         Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
@@ -616,8 +696,8 @@ pub fn builtinRandomIntInner(
     let minN = crate::aver_generated::domain::builtins::helpers::expectInt(minV)?;
     let maxN = crate::aver_generated::domain::builtins::helpers::expectInt(maxV)?;
     match {
-        let __provider_arg0 = minN;
-        let __provider_arg1 = maxN;
+        let __provider_arg0: aver_rt::AverInt = minN;
+        let __provider_arg1: aver_rt::AverInt = maxN;
         crate::cancel_checkpoint();
         crate::aver_replay::invoke_capability_effect(
             "Random.int",
@@ -657,7 +737,7 @@ pub fn builtinTimeSleep(
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let ms = crate::aver_generated::domain::builtins::helpers::expectInt(&v)?;
     match {
-        let __provider_arg0 = ms;
+        let __provider_arg0: aver_rt::AverInt = ms;
         crate::cancel_checkpoint();
         crate::aver_replay::invoke_capability_effect(
             "Time.sleep",
@@ -722,8 +802,14 @@ pub fn termClear() -> Result<crate::aver_generated::domain::value::Val, AverStr>
     crate::cancel_checkpoint();
     match {
         crate::cancel_checkpoint();
-        aver_replay::invoke_effect("Terminal.clear", vec![], || {
-            aver_rt::terminal_clear().map_err(aver_rt::AverStr::from)
+        crate::aver_replay::invoke_capability_effect("Terminal.clear", "recorded", vec![], || {
+            crate::provider_support::invoke::<Result<(), AverStr>>(
+                "Terminal",
+                "Terminal.clear",
+                vec![],
+                None,
+                "Result<Unit, String>",
+            )
         })
     } {
         Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
@@ -740,8 +826,14 @@ pub fn termFlush() -> Result<crate::aver_generated::domain::value::Val, AverStr>
     crate::cancel_checkpoint();
     match {
         crate::cancel_checkpoint();
-        aver_replay::invoke_effect("Terminal.flush", vec![], || {
-            aver_rt::terminal_flush().map_err(aver_rt::AverStr::from)
+        crate::aver_replay::invoke_capability_effect("Terminal.flush", "recorded", vec![], || {
+            crate::provider_support::invoke::<Result<(), AverStr>>(
+                "Terminal",
+                "Terminal.flush",
+                vec![],
+                None,
+                "Result<Unit, String>",
+            )
         })
     } {
         Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
@@ -758,9 +850,20 @@ pub fn termEnableRawMode() -> Result<crate::aver_generated::domain::value::Val, 
     crate::cancel_checkpoint();
     match {
         crate::cancel_checkpoint();
-        aver_replay::invoke_effect("Terminal.enableRawMode", vec![], || {
-            aver_rt::terminal_enable_raw_mode().map_err(aver_rt::AverStr::from)
-        })
+        crate::aver_replay::invoke_capability_effect(
+            "Terminal.enableRawMode",
+            "recorded",
+            vec![],
+            || {
+                crate::provider_support::invoke::<Result<(), AverStr>>(
+                    "Terminal",
+                    "Terminal.enableRawMode",
+                    vec![],
+                    None,
+                    "Result<Unit, String>",
+                )
+            },
+        )
     } {
         Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
             std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValUnit),
@@ -776,9 +879,20 @@ pub fn termDisableRawMode() -> Result<crate::aver_generated::domain::value::Val,
     crate::cancel_checkpoint();
     match {
         crate::cancel_checkpoint();
-        aver_replay::invoke_effect("Terminal.disableRawMode", vec![], || {
-            aver_rt::terminal_disable_raw_mode().map_err(aver_rt::AverStr::from)
-        })
+        crate::aver_replay::invoke_capability_effect(
+            "Terminal.disableRawMode",
+            "recorded",
+            vec![],
+            || {
+                crate::provider_support::invoke::<Result<(), AverStr>>(
+                    "Terminal",
+                    "Terminal.disableRawMode",
+                    vec![],
+                    None,
+                    "Result<Unit, String>",
+                )
+            },
+        )
     } {
         Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
             std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValUnit),
@@ -794,9 +908,20 @@ pub fn termHideCursor() -> Result<crate::aver_generated::domain::value::Val, Ave
     crate::cancel_checkpoint();
     match {
         crate::cancel_checkpoint();
-        aver_replay::invoke_effect("Terminal.hideCursor", vec![], || {
-            aver_rt::terminal_hide_cursor().map_err(aver_rt::AverStr::from)
-        })
+        crate::aver_replay::invoke_capability_effect(
+            "Terminal.hideCursor",
+            "recorded",
+            vec![],
+            || {
+                crate::provider_support::invoke::<Result<(), AverStr>>(
+                    "Terminal",
+                    "Terminal.hideCursor",
+                    vec![],
+                    None,
+                    "Result<Unit, String>",
+                )
+            },
+        )
     } {
         Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
             std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValUnit),
@@ -812,9 +937,20 @@ pub fn termShowCursor() -> Result<crate::aver_generated::domain::value::Val, Ave
     crate::cancel_checkpoint();
     match {
         crate::cancel_checkpoint();
-        aver_replay::invoke_effect("Terminal.showCursor", vec![], || {
-            aver_rt::terminal_show_cursor().map_err(aver_rt::AverStr::from)
-        })
+        crate::aver_replay::invoke_capability_effect(
+            "Terminal.showCursor",
+            "recorded",
+            vec![],
+            || {
+                crate::provider_support::invoke::<Result<(), AverStr>>(
+                    "Terminal",
+                    "Terminal.showCursor",
+                    vec![],
+                    None,
+                    "Result<Unit, String>",
+                )
+            },
+        )
     } {
         Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
             std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValUnit),
@@ -830,9 +966,20 @@ pub fn termResetColor() -> Result<crate::aver_generated::domain::value::Val, Ave
     crate::cancel_checkpoint();
     match {
         crate::cancel_checkpoint();
-        aver_replay::invoke_effect("Terminal.resetColor", vec![], || {
-            aver_rt::terminal_reset_color().map_err(aver_rt::AverStr::from)
-        })
+        crate::aver_replay::invoke_capability_effect(
+            "Terminal.resetColor",
+            "recorded",
+            vec![],
+            || {
+                crate::provider_support::invoke::<Result<(), AverStr>>(
+                    "Terminal",
+                    "Terminal.resetColor",
+                    vec![],
+                    None,
+                    "Result<Unit, String>",
+                )
+            },
+        )
     } {
         Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
             std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValUnit),
@@ -850,8 +997,14 @@ pub fn builtinTerminalReadKey(
     crate::cancel_checkpoint();
     match {
         crate::cancel_checkpoint();
-        aver_replay::invoke_effect("Terminal.readKey", vec![], || {
-            (aver_rt::terminal_read_key()).into_aver()
+        crate::aver_replay::invoke_capability_effect("Terminal.readKey", "recorded", vec![], || {
+            crate::provider_support::invoke::<Result<Option<AverStr>, AverStr>>(
+                "Terminal",
+                "Terminal.readKey",
+                vec![],
+                None,
+                "Result<Option<String>, String>",
+            )
         })
     } {
         Ok(key @ _) => match key {
@@ -877,13 +1030,14 @@ pub fn builtinTerminalSize(
     crate::cancel_checkpoint();
     match {
         crate::cancel_checkpoint();
-        aver_replay::invoke_effect("Terminal.size", vec![], || {
-            aver_rt::terminal_size()
-                .map(|(w, h)| crate::Terminal_Size {
-                    width: aver_rt::AverInt::from_i64(w),
-                    height: aver_rt::AverInt::from_i64(h),
-                })
-                .map_err(aver_rt::AverStr::from)
+        crate::aver_replay::invoke_capability_effect("Terminal.size", "recorded", vec![], || {
+            crate::provider_support::invoke::<Result<crate::aver_generated::terminal::Size, AverStr>>(
+                "Terminal",
+                "Terminal.size",
+                vec![],
+                None,
+                "Result<Terminal.Size, String>",
+            )
         })
     } {
         Ok(sz @ _) => Ok(crate::aver_generated::domain::value::Val::ValOk(
@@ -927,14 +1081,22 @@ pub fn builtinTerminalPrint(
 pub fn termPrintStr(s: AverStr) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     match {
-        let __effect_arg0 = s;
+        let __provider_arg0: AverStr = s;
         crate::cancel_checkpoint();
-        aver_replay::invoke_effect(
+        crate::aver_replay::invoke_capability_effect(
             "Terminal.print",
-            vec![serde_json::Value::String(format!("{}", __effect_arg0))],
+            "recorded",
+            vec![crate::aver_replay::ReplayValue::to_replay_json(
+                &__provider_arg0,
+            )],
             || {
-                let __s = format!("{}", __effect_arg0);
-                aver_rt::terminal_print(&__s).map_err(aver_rt::AverStr::from)
+                crate::provider_support::invoke::<Result<(), AverStr>>(
+                    "Terminal",
+                    "Terminal.print",
+                    vec![crate::provider_support::encode(__provider_arg0, "Terminal")],
+                    None,
+                    "Result<Unit, String>",
+                )
             },
         )
     } {
@@ -955,12 +1117,23 @@ pub fn builtinTerminalSetColor(
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let s = crate::aver_generated::domain::builtins::helpers::expectStr(&v)?;
     match {
-        let __effect_arg0 = s;
+        let __provider_arg0: AverStr = s;
         crate::cancel_checkpoint();
-        aver_replay::invoke_effect(
+        crate::aver_replay::invoke_capability_effect(
             "Terminal.setColor",
-            vec![aver_replay::ReplayValue::to_replay_json(&__effect_arg0)],
-            || aver_rt::terminal_set_color(&__effect_arg0).map_err(aver_rt::AverStr::from),
+            "recorded",
+            vec![crate::aver_replay::ReplayValue::to_replay_json(
+                &__provider_arg0,
+            )],
+            || {
+                crate::provider_support::invoke::<Result<(), AverStr>>(
+                    "Terminal",
+                    "Terminal.setColor",
+                    vec![crate::provider_support::encode(__provider_arg0, "Terminal")],
+                    None,
+                    "Result<Unit, String>",
+                )
+            },
         )
     } {
         Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
@@ -993,26 +1166,27 @@ pub fn builtinTerminalMoveToInner(
     let x = crate::aver_generated::domain::builtins::helpers::expectInt(xV)?;
     let y = crate::aver_generated::domain::builtins::helpers::expectInt(yV)?;
     match {
-        let __effect_arg0 = x;
-        let __effect_arg1 = y;
+        let __provider_arg0: aver_rt::AverInt = x;
+        let __provider_arg1: aver_rt::AverInt = y;
         crate::cancel_checkpoint();
-        aver_replay::invoke_effect(
+        crate::aver_replay::invoke_capability_effect(
             "Terminal.moveTo",
+            "recorded",
             vec![
-                aver_replay::ReplayValue::to_replay_json(&__effect_arg0),
-                aver_replay::ReplayValue::to_replay_json(&__effect_arg1),
+                crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg0),
+                crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg1),
             ],
             || {
-                let __x = __effect_arg0;
-                let __y = __effect_arg1;
-                match (__x.to_i64(), __y.to_i64()) {
-                    (Some(x), Some(y)) => {
-                        aver_rt::terminal_move_to(x, y).map_err(aver_rt::AverStr::from)
-                    }
-                    _ => Err(aver_rt::AverStr::from(
-                        "Terminal.moveTo: coordinates must fit a 64-bit integer",
-                    )),
-                }
+                crate::provider_support::invoke::<Result<(), AverStr>>(
+                    "Terminal",
+                    "Terminal.moveTo",
+                    vec![
+                        crate::provider_support::encode(__provider_arg0, "Terminal"),
+                        crate::provider_support::encode(__provider_arg1, "Terminal"),
+                    ],
+                    None,
+                    "Result<Unit, String>",
+                )
             },
         )
     } {
@@ -1046,8 +1220,8 @@ pub fn builtinDiskWriteTextInner(
     let path = crate::aver_generated::domain::builtins::helpers::expectStr(pathV)?;
     let content = crate::aver_generated::domain::builtins::helpers::expectStr(contentV)?;
     match {
-        let __provider_arg0 = path;
-        let __provider_arg1 = content;
+        let __provider_arg0: AverStr = path;
+        let __provider_arg1: AverStr = content;
         crate::cancel_checkpoint();
         crate::aver_replay::invoke_capability_effect(
             "Disk.writeText",
@@ -1100,8 +1274,8 @@ pub fn builtinDiskAppendTextInner(
     let path = crate::aver_generated::domain::builtins::helpers::expectStr(pathV)?;
     let content = crate::aver_generated::domain::builtins::helpers::expectStr(contentV)?;
     match {
-        let __provider_arg0 = path;
-        let __provider_arg1 = content;
+        let __provider_arg0: AverStr = path;
+        let __provider_arg1: AverStr = content;
         crate::cancel_checkpoint();
         crate::aver_replay::invoke_capability_effect(
             "Disk.appendText",
@@ -1141,7 +1315,7 @@ pub fn builtinDiskDelete(
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let path = crate::aver_generated::domain::builtins::helpers::expectStr(&v)?;
     match {
-        let __provider_arg0 = path;
+        let __provider_arg0: AverStr = path;
         crate::cancel_checkpoint();
         crate::aver_replay::invoke_capability_effect(
             "Disk.delete",
@@ -1177,7 +1351,7 @@ pub fn builtinDiskDeleteDir(
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let path = crate::aver_generated::domain::builtins::helpers::expectStr(&v)?;
     match {
-        let __provider_arg0 = path;
+        let __provider_arg0: AverStr = path;
         crate::cancel_checkpoint();
         crate::aver_replay::invoke_capability_effect(
             "Disk.deleteDir",
@@ -1213,7 +1387,7 @@ pub fn builtinDiskMakeDir(
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let path = crate::aver_generated::domain::builtins::helpers::expectStr(&v)?;
     match {
-        let __provider_arg0 = path;
+        let __provider_arg0: AverStr = path;
         crate::cancel_checkpoint();
         crate::aver_replay::invoke_capability_effect(
             "Disk.makeDir",
@@ -1249,7 +1423,7 @@ pub fn builtinDiskExists(
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let path = crate::aver_generated::domain::builtins::helpers::expectStr(&v)?;
     Ok(crate::aver_generated::domain::value::Val::ValBool({
-        let __provider_arg0 = path;
+        let __provider_arg0: AverStr = path;
         crate::cancel_checkpoint();
         crate::aver_replay::invoke_capability_effect(
             "Disk.exists",
@@ -1278,7 +1452,7 @@ pub fn builtinDiskListDir(
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let path = crate::aver_generated::domain::builtins::helpers::expectStr(&v)?;
     match {
-        let __provider_arg0 = path;
+        let __provider_arg0: AverStr = path;
         crate::cancel_checkpoint();
         crate::aver_replay::invoke_capability_effect(
             "Disk.listDir",
@@ -1561,7 +1735,7 @@ pub fn builtinTimeNow(
     }))
 }
 
-/// Http.get/head/delete(url) -> Result<HttpResponse, String> forwarded to host.
+/// Http.get/head/delete(url) -> Result<Http.Response, String> forwarded to host.
 pub fn builtinHttpSimple(
     args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
     method: AverStr,
@@ -1574,12 +1748,25 @@ pub fn builtinHttpSimple(
         if &*__dispatch_subject == "get" {
             Ok(crate::aver_generated::domain::builtins::httpResponseToVal(
                 &{
-                    let __effect_arg0 = url;
+                    let __provider_arg0: AverStr = url;
                     crate::cancel_checkpoint();
-                    aver_replay::invoke_effect(
+                    crate::aver_replay::invoke_capability_effect(
                         "Http.get",
-                        vec![aver_replay::ReplayValue::to_replay_json(&__effect_arg0)],
-                        || (aver_rt::http::get(&__effect_arg0)).into_aver(),
+                        "recorded",
+                        vec![crate::aver_replay::ReplayValue::to_replay_json(
+                            &__provider_arg0,
+                        )],
+                        || {
+                            crate::provider_support::invoke::<
+                                Result<crate::aver_generated::http::Response, AverStr>,
+                            >(
+                                "Http",
+                                "Http.get",
+                                vec![crate::provider_support::encode(__provider_arg0, "Http")],
+                                None,
+                                "Result<Http.Response, String>",
+                            )
+                        },
                     )
                 },
             ))
@@ -1587,24 +1774,50 @@ pub fn builtinHttpSimple(
             if &*__dispatch_subject == "head" {
                 Ok(crate::aver_generated::domain::builtins::httpResponseToVal(
                     &{
-                        let __effect_arg0 = url;
+                        let __provider_arg0: AverStr = url;
                         crate::cancel_checkpoint();
-                        aver_replay::invoke_effect(
+                        crate::aver_replay::invoke_capability_effect(
                             "Http.head",
-                            vec![aver_replay::ReplayValue::to_replay_json(&__effect_arg0)],
-                            || (aver_rt::http::head(&__effect_arg0)).into_aver(),
+                            "recorded",
+                            vec![crate::aver_replay::ReplayValue::to_replay_json(
+                                &__provider_arg0,
+                            )],
+                            || {
+                                crate::provider_support::invoke::<
+                                    Result<crate::aver_generated::http::Response, AverStr>,
+                                >(
+                                    "Http",
+                                    "Http.head",
+                                    vec![crate::provider_support::encode(__provider_arg0, "Http")],
+                                    None,
+                                    "Result<Http.Response, String>",
+                                )
+                            },
                         )
                     },
                 ))
             } else {
                 Ok(crate::aver_generated::domain::builtins::httpResponseToVal(
                     &{
-                        let __effect_arg0 = url;
+                        let __provider_arg0: AverStr = url;
                         crate::cancel_checkpoint();
-                        aver_replay::invoke_effect(
+                        crate::aver_replay::invoke_capability_effect(
                             "Http.delete",
-                            vec![aver_replay::ReplayValue::to_replay_json(&__effect_arg0)],
-                            || (aver_rt::http::delete(&__effect_arg0)).into_aver(),
+                            "recorded",
+                            vec![crate::aver_replay::ReplayValue::to_replay_json(
+                                &__provider_arg0,
+                            )],
+                            || {
+                                crate::provider_support::invoke::<
+                                    Result<crate::aver_generated::http::Response, AverStr>,
+                                >(
+                                    "Http",
+                                    "Http.delete",
+                                    vec![crate::provider_support::encode(__provider_arg0, "Http")],
+                                    None,
+                                    "Result<Http.Response, String>",
+                                )
+                            },
                         )
                     },
                 ))
@@ -1671,27 +1884,36 @@ pub fn builtinHttpBodyInner(
         if &*__dispatch_subject == "post" {
             Ok(crate::aver_generated::domain::builtins::httpResponseToVal(
                 &{
-                    let __effect_arg0 = url;
-                    let __effect_arg1 = body;
-                    let __effect_arg2 = ct;
-                    let __effect_arg3 = HashMap::new();
+                    let __provider_arg0: AverStr = url;
+                    let __provider_arg1: AverStr = body;
+                    let __provider_arg2: AverStr = ct;
+                    let __provider_arg3: aver_rt::AverMap<AverStr, aver_rt::AverList<AverStr>> =
+                        HashMap::new();
                     crate::cancel_checkpoint();
-                    aver_replay::invoke_effect(
+                    crate::aver_replay::invoke_capability_effect(
                         "Http.post",
+                        "recorded",
                         vec![
-                            aver_replay::ReplayValue::to_replay_json(&__effect_arg0),
-                            aver_replay::ReplayValue::to_replay_json(&__effect_arg1),
-                            aver_replay::ReplayValue::to_replay_json(&__effect_arg2),
-                            aver_replay::ReplayValue::to_replay_json(&__effect_arg3),
+                            crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg0),
+                            crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg1),
+                            crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg2),
+                            crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg3),
                         ],
                         || {
-                            (aver_rt::http::post(
-                                &__effect_arg0,
-                                &__effect_arg1,
-                                &__effect_arg2,
-                                &__effect_arg3,
-                            ))
-                            .into_aver()
+                            crate::provider_support::invoke::<
+                                Result<crate::aver_generated::http::Response, AverStr>,
+                            >(
+                                "Http",
+                                "Http.post",
+                                vec![
+                                    crate::provider_support::encode(__provider_arg0, "Http"),
+                                    crate::provider_support::encode(__provider_arg1, "Http"),
+                                    crate::provider_support::encode(__provider_arg2, "Http"),
+                                    crate::provider_support::encode(__provider_arg3, "Http"),
+                                ],
+                                None,
+                                "Result<Http.Response, String>",
+                            )
                         },
                     )
                 },
@@ -1700,27 +1922,36 @@ pub fn builtinHttpBodyInner(
             if &*__dispatch_subject == "put" {
                 Ok(crate::aver_generated::domain::builtins::httpResponseToVal(
                     &{
-                        let __effect_arg0 = url;
-                        let __effect_arg1 = body;
-                        let __effect_arg2 = ct;
-                        let __effect_arg3 = HashMap::new();
+                        let __provider_arg0: AverStr = url;
+                        let __provider_arg1: AverStr = body;
+                        let __provider_arg2: AverStr = ct;
+                        let __provider_arg3: aver_rt::AverMap<AverStr, aver_rt::AverList<AverStr>> =
+                            HashMap::new();
                         crate::cancel_checkpoint();
-                        aver_replay::invoke_effect(
+                        crate::aver_replay::invoke_capability_effect(
                             "Http.put",
+                            "recorded",
                             vec![
-                                aver_replay::ReplayValue::to_replay_json(&__effect_arg0),
-                                aver_replay::ReplayValue::to_replay_json(&__effect_arg1),
-                                aver_replay::ReplayValue::to_replay_json(&__effect_arg2),
-                                aver_replay::ReplayValue::to_replay_json(&__effect_arg3),
+                                crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg0),
+                                crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg1),
+                                crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg2),
+                                crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg3),
                             ],
                             || {
-                                (aver_rt::http::put(
-                                    &__effect_arg0,
-                                    &__effect_arg1,
-                                    &__effect_arg2,
-                                    &__effect_arg3,
-                                ))
-                                .into_aver()
+                                crate::provider_support::invoke::<
+                                    Result<crate::aver_generated::http::Response, AverStr>,
+                                >(
+                                    "Http",
+                                    "Http.put",
+                                    vec![
+                                        crate::provider_support::encode(__provider_arg0, "Http"),
+                                        crate::provider_support::encode(__provider_arg1, "Http"),
+                                        crate::provider_support::encode(__provider_arg2, "Http"),
+                                        crate::provider_support::encode(__provider_arg3, "Http"),
+                                    ],
+                                    None,
+                                    "Result<Http.Response, String>",
+                                )
                             },
                         )
                     },
@@ -1728,27 +1959,36 @@ pub fn builtinHttpBodyInner(
             } else {
                 Ok(crate::aver_generated::domain::builtins::httpResponseToVal(
                     &{
-                        let __effect_arg0 = url;
-                        let __effect_arg1 = body;
-                        let __effect_arg2 = ct;
-                        let __effect_arg3 = HashMap::new();
+                        let __provider_arg0: AverStr = url;
+                        let __provider_arg1: AverStr = body;
+                        let __provider_arg2: AverStr = ct;
+                        let __provider_arg3: aver_rt::AverMap<AverStr, aver_rt::AverList<AverStr>> =
+                            HashMap::new();
                         crate::cancel_checkpoint();
-                        aver_replay::invoke_effect(
+                        crate::aver_replay::invoke_capability_effect(
                             "Http.patch",
+                            "recorded",
                             vec![
-                                aver_replay::ReplayValue::to_replay_json(&__effect_arg0),
-                                aver_replay::ReplayValue::to_replay_json(&__effect_arg1),
-                                aver_replay::ReplayValue::to_replay_json(&__effect_arg2),
-                                aver_replay::ReplayValue::to_replay_json(&__effect_arg3),
+                                crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg0),
+                                crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg1),
+                                crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg2),
+                                crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg3),
                             ],
                             || {
-                                (aver_rt::http::patch(
-                                    &__effect_arg0,
-                                    &__effect_arg1,
-                                    &__effect_arg2,
-                                    &__effect_arg3,
-                                ))
-                                .into_aver()
+                                crate::provider_support::invoke::<
+                                    Result<crate::aver_generated::http::Response, AverStr>,
+                                >(
+                                    "Http",
+                                    "Http.patch",
+                                    vec![
+                                        crate::provider_support::encode(__provider_arg0, "Http"),
+                                        crate::provider_support::encode(__provider_arg1, "Http"),
+                                        crate::provider_support::encode(__provider_arg2, "Http"),
+                                        crate::provider_support::encode(__provider_arg3, "Http"),
+                                    ],
+                                    None,
+                                    "Result<Http.Response, String>",
+                                )
                             },
                         )
                     },
@@ -1758,16 +1998,16 @@ pub fn builtinHttpBodyInner(
     }
 }
 
-/// Convert host HttpResponse to Val.
+/// Convert host Http.Response to Val.
 #[inline(always)]
 pub fn httpResponseToVal(
-    result: &Result<HttpResponse, AverStr>,
+    result: &Result<crate::aver_generated::http::Response, AverStr>,
 ) -> crate::aver_generated::domain::value::Val {
     crate::cancel_checkpoint();
     match result.clone() {
         Ok(resp @ _) => crate::aver_generated::domain::value::Val::ValOk(std::sync::Arc::new(
             crate::aver_generated::domain::value::Val::ValRecord(
-                AverStr::from("HttpResponse"),
+                AverStr::from("Http.Response"),
                 aver_rt::AverList::from_vec(vec![
                     (
                         AverStr::from("status"),
@@ -1894,9 +2134,9 @@ pub fn builtinTcpSendInner(
     let port = crate::aver_generated::domain::builtins::helpers::expectInt(portV)?;
     let msg = crate::aver_generated::domain::builtins::helpers::expectStr(msgV)?;
     match {
-        let __provider_arg0 = host;
-        let __provider_arg1 = port;
-        let __provider_arg2 = msg;
+        let __provider_arg0: AverStr = host;
+        let __provider_arg1: aver_rt::AverInt = port;
+        let __provider_arg2: AverStr = msg;
         crate::cancel_checkpoint();
         crate::aver_replay::invoke_capability_effect(
             "Tcp.send",
@@ -1951,8 +2191,8 @@ pub fn builtinTcpPingInner(
     let host = crate::aver_generated::domain::builtins::helpers::expectStr(hostV)?;
     let port = crate::aver_generated::domain::builtins::helpers::expectInt(portV)?;
     match {
-        let __provider_arg0 = host;
-        let __provider_arg1 = port;
+        let __provider_arg0: AverStr = host;
+        let __provider_arg1: aver_rt::AverInt = port;
         crate::cancel_checkpoint();
         crate::aver_replay::invoke_capability_effect(
             "Tcp.ping",
@@ -2005,8 +2245,8 @@ pub fn builtinTcpConnectInner(
     let host = crate::aver_generated::domain::builtins::helpers::expectStr(hostV)?;
     let port = crate::aver_generated::domain::builtins::helpers::expectInt(portV)?;
     match {
-        let __provider_arg0 = host;
-        let __provider_arg1 = port;
+        let __provider_arg0: AverStr = host;
+        let __provider_arg1: aver_rt::AverInt = port;
         crate::cancel_checkpoint();
         crate::aver_replay::invoke_capability_effect(
             "Tcp.connect",
@@ -2080,8 +2320,8 @@ pub fn builtinTcpBeginConnectInner(
     let host = crate::aver_generated::domain::builtins::helpers::expectStr(hostV)?;
     let port = crate::aver_generated::domain::builtins::helpers::expectInt(portV)?;
     match {
-        let __provider_arg0 = host;
-        let __provider_arg1 = port;
+        let __provider_arg0: AverStr = host;
+        let __provider_arg1: aver_rt::AverInt = port;
         crate::cancel_checkpoint();
         crate::aver_replay::invoke_capability_effect(
             "Tcp.beginConnect",
@@ -2132,7 +2372,7 @@ pub fn builtinTcpDialled(
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let dial = crate::aver_generated::domain::builtins::valToTcpDial(&v)?;
     match {
-        let __provider_arg0 = dial;
+        let __provider_arg0: crate::aver_generated::tcp::Dial = dial;
         crate::cancel_checkpoint();
         crate::aver_replay::invoke_capability_effect(
             "Tcp.dialled",
@@ -2192,8 +2432,8 @@ pub fn builtinTcpListenInner(
     let port = crate::aver_generated::domain::builtins::helpers::expectInt(portV)?;
     let backlog = crate::aver_generated::domain::builtins::helpers::expectInt(backlogV)?;
     match {
-        let __provider_arg0 = port;
-        let __provider_arg1 = backlog;
+        let __provider_arg0: aver_rt::AverInt = port;
+        let __provider_arg1: aver_rt::AverInt = backlog;
         crate::cancel_checkpoint();
         crate::aver_replay::invoke_capability_effect(
             "Tcp.listen",
@@ -2248,7 +2488,7 @@ pub fn builtinTcpAccept(
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let listener = crate::aver_generated::domain::builtins::valToTcpListener(&v)?;
     match {
-        let __provider_arg0 = listener;
+        let __provider_arg0: crate::aver_generated::tcp::Listener = listener;
         crate::cancel_checkpoint();
         crate::aver_replay::invoke_capability_effect(
             "Tcp.accept",
@@ -2295,7 +2535,7 @@ pub fn builtinTcpPeerAddress(
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let connection = crate::aver_generated::domain::builtins::valToTcpConn(&v)?;
     match {
-        let __provider_arg0 = connection;
+        let __provider_arg0: crate::aver_generated::tcp::Connection = connection;
         crate::cancel_checkpoint();
         crate::aver_replay::invoke_capability_effect(
             "Tcp.peerAddress",
@@ -2450,8 +2690,11 @@ pub fn builtinTcpPollInner(
         HashMap::new(),
     )?;
     match {
-        let __provider_arg0 = typedSockets;
-        let __provider_arg1 = timeoutMs;
+        let __provider_arg0: aver_rt::AverMap<
+            aver_rt::AverInt,
+            crate::aver_generated::tcp::Socket,
+        > = typedSockets;
+        let __provider_arg1: aver_rt::AverInt = timeoutMs;
         crate::cancel_checkpoint();
         crate::aver_replay::invoke_capability_effect(
             "Tcp.poll",
@@ -2498,7 +2741,7 @@ pub fn builtinTcpCloseDial(
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let dial = crate::aver_generated::domain::builtins::valToTcpDial(&v)?;
     match {
-        let __provider_arg0 = dial;
+        let __provider_arg0: crate::aver_generated::tcp::Dial = dial;
         crate::cancel_checkpoint();
         crate::aver_replay::invoke_capability_effect(
             "Tcp.closeDial",
@@ -2534,7 +2777,7 @@ pub fn builtinTcpCloseListener(
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let listener = crate::aver_generated::domain::builtins::valToTcpListener(&v)?;
     match {
-        let __provider_arg0 = listener;
+        let __provider_arg0: crate::aver_generated::tcp::Listener = listener;
         crate::cancel_checkpoint();
         crate::aver_replay::invoke_capability_effect(
             "Tcp.closeListener",
@@ -2583,8 +2826,8 @@ pub fn builtinTcpWriteLineInner(
     let tc = crate::aver_generated::domain::builtins::valToTcpConn(connV)?;
     let line = crate::aver_generated::domain::builtins::helpers::expectStr(lineV)?;
     match {
-        let __provider_arg0 = tc;
-        let __provider_arg1 = line;
+        let __provider_arg0: crate::aver_generated::tcp::Connection = tc;
+        let __provider_arg1: AverStr = line;
         crate::cancel_checkpoint();
         crate::aver_replay::invoke_capability_effect(
             "Tcp.writeLine",
@@ -2624,7 +2867,7 @@ pub fn builtinTcpReadLine(
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let tc = crate::aver_generated::domain::builtins::valToTcpConn(&v)?;
     match {
-        let __provider_arg0 = tc;
+        let __provider_arg0: crate::aver_generated::tcp::Connection = tc;
         crate::cancel_checkpoint();
         crate::aver_replay::invoke_capability_effect(
             "Tcp.readLine",
@@ -2660,7 +2903,7 @@ pub fn builtinTcpClose(
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let tc = crate::aver_generated::domain::builtins::valToTcpConn(&v)?;
     match {
-        let __provider_arg0 = tc;
+        let __provider_arg0: crate::aver_generated::tcp::Connection = tc;
         crate::cancel_checkpoint();
         crate::aver_replay::invoke_capability_effect(
             "Tcp.close",

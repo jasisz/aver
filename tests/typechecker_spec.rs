@@ -1025,7 +1025,7 @@ fn removed_effect_aliases_fail_before_typecheck() {
 #[test]
 fn error_network_get_without_effect() {
     let src = concat!(
-        "fn fetch(url: String) -> Result<HttpResponse, String>\n",
+        "fn fetch(url: String) -> Result<Http.Response, String>\n",
         "    Http.get(url)\n",
     );
     assert_error_containing(src, "has effect 'Http.get'");
@@ -1034,7 +1034,7 @@ fn error_network_get_without_effect() {
 #[test]
 fn error_network_post_without_effect() {
     let src = concat!(
-        "fn send(url: String, body: String) -> Result<HttpResponse, String>\n",
+        "fn send(url: String, body: String) -> Result<Http.Response, String>\n",
         "    Http.post(url, body, \"application/json\", [])\n",
     );
     assert_error_containing(src, "has effect 'Http.post'");
@@ -1043,7 +1043,7 @@ fn error_network_post_without_effect() {
 #[test]
 fn valid_network_get_with_effect() {
     let src = concat!(
-        "fn fetch(url: String) -> Result<HttpResponse, String>\n",
+        "fn fetch(url: String) -> Result<Http.Response, String>\n",
         "    ! [Http.get]\n",
         "    Http.get(url)\n",
     );
@@ -1053,7 +1053,7 @@ fn valid_network_get_with_effect() {
 #[test]
 fn valid_network_post_with_effect() {
     let src = concat!(
-        "fn send(url: String) -> Result<HttpResponse, String>\n",
+        "fn send(url: String) -> Result<Http.Response, String>\n",
         "    ! [Http.post]\n",
         "    Http.post(url, \"{}\", \"application/json\", {})\n",
     );
@@ -1063,7 +1063,7 @@ fn valid_network_post_with_effect() {
 #[test]
 fn valid_network_post_with_typed_headers() {
     let src = concat!(
-        "fn send(url: String) -> Result<HttpResponse, String>\n",
+        "fn send(url: String) -> Result<Http.Response, String>\n",
         "    ! [Http.post]\n",
         "    headers = {\"authorization\" => [\"Bearer token\"]}\n",
         "    Http.post(url, \"{}\", \"application/json\", headers)\n",
@@ -1074,7 +1074,7 @@ fn valid_network_post_with_typed_headers() {
 #[test]
 fn error_network_post_headers_wrong_type() {
     let src = concat!(
-        "fn send(url: String) -> Result<HttpResponse, String>\n",
+        "fn send(url: String) -> Result<Http.Response, String>\n",
         "    ! [Http.post]\n",
         "    Http.post(url, \"{}\", \"application/json\", [\"bad\"])\n",
     );
@@ -1087,7 +1087,7 @@ fn error_network_post_headers_wrong_type() {
 #[test]
 fn valid_network_all_methods_with_effect() {
     let src = concat!(
-        "fn callAll(url: String) -> Result<HttpResponse, String>\n",
+        "fn callAll(url: String) -> Result<Http.Response, String>\n",
         "    ! [Http.delete]\n",
         "    Http.delete(url)\n",
     );
@@ -1277,7 +1277,7 @@ fn env_get_only_does_not_allow_env_set() {
 fn valid_network_response_field_access() {
     // resp.status is Int — comparison with Int should pass
     let src = concat!(
-        "fn isOk(resp: HttpResponse) -> Bool\n",
+        "fn isOk(resp: Http.Response) -> Bool\n",
         "    resp.status < 400\n",
     );
     assert_no_errors(src);
@@ -1285,7 +1285,10 @@ fn valid_network_response_field_access() {
 
 #[test]
 fn valid_network_response_body_field() {
-    let src = concat!("fn body(resp: HttpResponse) -> String\n", "    resp.body\n",);
+    let src = concat!(
+        "fn body(resp: Http.Response) -> String\n",
+        "    resp.body\n",
+    );
     assert_no_errors(src);
 }
 
@@ -1315,7 +1318,7 @@ fn valid_user_record_field_access() {
 
 #[test]
 fn error_network_response_unknown_field() {
-    let src = concat!("fn bad(resp: HttpResponse) -> String\n", "    resp.fooo\n",);
+    let src = concat!("fn bad(resp: Http.Response) -> String\n", "    resp.fooo\n",);
     assert_error_containing(src, "has no field 'fooo'");
 }
 
@@ -2673,7 +2676,7 @@ fn error_non_exhaustive_tuple_with_literal_only() {
 fn valid_granular_effect_http_get() {
     // ! [Http.get] allows Http.get
     let src = concat!(
-        "fn fetch(url: String) -> Result<HttpResponse, String>\n",
+        "fn fetch(url: String) -> Result<Http.Response, String>\n",
         "    ! [Http.get]\n",
         "    Http.get(url)\n",
     );
@@ -2684,7 +2687,7 @@ fn valid_granular_effect_http_get() {
 fn parent_effect_covers_child() {
     // Namespace shorthand: ! [Http] covers Http.get
     let src = concat!(
-        "fn fetch(url: String) -> Result<HttpResponse, String>\n",
+        "fn fetch(url: String) -> Result<Http.Response, String>\n",
         "    ! [Http]\n",
         "    Http.get(url)\n",
     );
@@ -2695,7 +2698,7 @@ fn parent_effect_covers_child() {
 fn error_granular_effect_blocks_other_method() {
     // ! [Http.get] does NOT allow Http.post
     let src = concat!(
-        "fn send(url: String) -> Result<HttpResponse, String>\n",
+        "fn send(url: String) -> Result<Http.Response, String>\n",
         "    ! [Http.get]\n",
         "    Http.post(url, \"{}\", \"application/json\", [])\n",
     );
@@ -3279,8 +3282,8 @@ fn trace_law_on_recursive_pure_function_is_accepted() {
 
 #[test]
 fn verify_law_on_newly_classified_effects_is_accepted() {
-    // Env.set is a fallible GenerativeOutput effect; Terminal.setColor stays
-    // Output. Effect stubs do not imply state — `Env.set` does NOT affect
+    // Env.set and Terminal.setColor are fallible GenerativeOutput effects.
+    // Effect stubs do not imply state — `Env.set` does NOT affect
     // a later `Env.get`, `Terminal.setColor` does NOT model modal state
     // across calls. The trace records the call; that's all. Laws over
     // these now type-check; cross-call consistency, if needed, belongs
@@ -3307,7 +3310,7 @@ fn verify_law_on_newly_classified_effects_is_accepted() {
     );
 
     let src = concat!(
-        "fn paint(c: String) -> Unit\n",
+        "fn paint(c: String) -> Result<Unit, String>\n",
         "    ! [Terminal.setColor]\n",
         "    Terminal.setColor(c)\n",
         "verify paint law paintSpec\n",
@@ -4907,7 +4910,7 @@ fn undeclared_type_name_is_reported_in_every_annotation_position() {
 #[test]
 fn compiler_declared_type_names_stay_writable_in_annotations() {
     assert_no_errors(
-        "fn takeResp(r: HttpResponse) -> Int\n\
+        "fn takeResp(r: Http.Response) -> Int\n\
          \x20   r.status\n\
          \n\
          fn takeReq(r: HttpRequest) -> String\n\

@@ -1,11 +1,4 @@
-#[cfg(not(feature = "terminal"))]
-use crate::nan_value::NanValueConvert;
 use crate::nan_value::{Arena, NanValue};
-#[cfg(feature = "runtime-net")]
-use crate::services::http;
-#[cfg(feature = "terminal")]
-use crate::services::terminal;
-use crate::services::{args, console, env};
 use crate::types::{
     bits, bool, branch_path, crypto, float, int, list, map, option, result, string,
 };
@@ -34,36 +27,6 @@ macro_rules! vm_builtins {
 }
 
 vm_builtins! {
-    ArgsGet => "Args.get",
-
-    ConsolePrint => "Console.print",
-    ConsoleError => "Console.error",
-    ConsoleWarn => "Console.warn",
-    ConsoleReadLine => "Console.readLine",
-
-    HttpGet => "Http.get",
-    HttpHead => "Http.head",
-    HttpDelete => "Http.delete",
-    HttpPost => "Http.post",
-    HttpPut => "Http.put",
-    HttpPatch => "Http.patch",
-
-    EnvGet => "Env.get",
-    EnvSet => "Env.set",
-
-    TerminalEnableRawMode => "Terminal.enableRawMode",
-    TerminalDisableRawMode => "Terminal.disableRawMode",
-    TerminalClear => "Terminal.clear",
-    TerminalMoveTo => "Terminal.moveTo",
-    TerminalPrint => "Terminal.print",
-    TerminalSetColor => "Terminal.setColor",
-    TerminalResetColor => "Terminal.resetColor",
-    TerminalReadKey => "Terminal.readKey",
-    TerminalSize => "Terminal.size",
-    TerminalHideCursor => "Terminal.hideCursor",
-    TerminalShowCursor => "Terminal.showCursor",
-    TerminalFlush => "Terminal.flush",
-
     BoolOr => "Bool.or",
     BoolAnd => "Bool.and",
     BoolNot => "Bool.not",
@@ -209,136 +172,17 @@ impl VmBuiltin {
     }
 
     pub(crate) fn effects(self) -> &'static [&'static str] {
-        match self {
-            Self::ConsolePrint | Self::ConsoleError | Self::ConsoleWarn | Self::ConsoleReadLine => {
-                console::effects(self.name())
-            }
-
-            // Same reasoning as the Terminal arms below: the effect list is
-            // structural metadata, identical whether or not the networking
-            // implementation ships in this build. `Http.get` is registered
-            // with the typechecker unconditionally, so gating it here made
-            // the VM treat a network call as pure — no effect check, no
-            // verify-trace entry, and Record/Replay silently bypassed.
-            Self::HttpGet => &["Http.get"],
-            Self::HttpHead => &["Http.head"],
-            Self::HttpDelete => &["Http.delete"],
-            Self::HttpPost => &["Http.post"],
-            Self::HttpPut => &["Http.put"],
-            Self::HttpPatch => &["Http.patch"],
-
-            Self::ArgsGet => args::effects(self.name()),
-
-            Self::EnvGet | Self::EnvSet => env::effects(self.name()),
-            // Effects list is structural metadata — same regardless of
-            // whether the runtime impl ships (crossterm doesn't build
-            // on wasm32). If we gated this, Replay mode in the
-            // playground would mis-classify Terminal.* as non-effectful
-            // and route them through invoke_nv → "not available".
-            Self::TerminalEnableRawMode => &["Terminal.enableRawMode"],
-            Self::TerminalDisableRawMode => &["Terminal.disableRawMode"],
-            Self::TerminalClear => &["Terminal.clear"],
-            Self::TerminalMoveTo => &["Terminal.moveTo"],
-            Self::TerminalPrint => &["Terminal.print"],
-            Self::TerminalSetColor => &["Terminal.setColor"],
-            Self::TerminalResetColor => &["Terminal.resetColor"],
-            Self::TerminalReadKey => &["Terminal.readKey"],
-            Self::TerminalSize => &["Terminal.size"],
-            Self::TerminalHideCursor => &["Terminal.hideCursor"],
-            Self::TerminalShowCursor => &["Terminal.showCursor"],
-            Self::TerminalFlush => &["Terminal.flush"],
-
-            _ => &[],
-        }
+        &[]
     }
 
     pub(crate) fn invoke_nv(
         self,
         args: &[NanValue],
         arena: &mut Arena,
-        cli_args: &[String],
-        silent_console: bool,
+        _cli_args: &[String],
+        _silent_console: bool,
     ) -> Result<NanValue, RuntimeError> {
-        if silent_console
-            && matches!(
-                self,
-                Self::ConsolePrint | Self::ConsoleError | Self::ConsoleWarn
-            )
-        {
-            return Ok(NanValue::UNIT);
-        }
-
         let result = match self {
-            Self::ArgsGet => crate::services::args::call_nv(self.name(), args, cli_args, arena),
-
-            Self::ConsolePrint | Self::ConsoleError | Self::ConsoleWarn | Self::ConsoleReadLine => {
-                console::call_nv(self.name(), args, arena)
-            }
-
-            #[cfg(feature = "runtime-net")]
-            Self::HttpGet
-            | Self::HttpHead
-            | Self::HttpDelete
-            | Self::HttpPost
-            | Self::HttpPut
-            | Self::HttpPatch => http::call_nv(self.name(), args, arena),
-            #[cfg(not(feature = "runtime-net"))]
-            Self::HttpGet
-            | Self::HttpHead
-            | Self::HttpDelete
-            | Self::HttpPost
-            | Self::HttpPut
-            | Self::HttpPatch => Some(Err(RuntimeError::Error(format!(
-                "{}: HTTP effects not available in this build",
-                self.name()
-            )))),
-
-            Self::EnvGet | Self::EnvSet => env::call_nv(self.name(), args, arena),
-            #[cfg(feature = "terminal")]
-            Self::TerminalEnableRawMode
-            | Self::TerminalDisableRawMode
-            | Self::TerminalClear
-            | Self::TerminalMoveTo
-            | Self::TerminalPrint
-            | Self::TerminalSetColor
-            | Self::TerminalResetColor
-            | Self::TerminalReadKey
-            | Self::TerminalSize
-            | Self::TerminalHideCursor
-            | Self::TerminalShowCursor
-            | Self::TerminalFlush => terminal::call_nv(self.name(), args, arena),
-            // Stub Terminal runtime when `terminal` feature is off
-            // (playground wasm32 build — crossterm doesn't compile).
-            // Record mode still gets a value to log; Replay never
-            // reaches this branch because effects() keeps Terminal.*
-            // classified as effectful → replay_builtin short-circuits.
-            #[cfg(not(feature = "terminal"))]
-            Self::TerminalEnableRawMode
-            | Self::TerminalDisableRawMode
-            | Self::TerminalClear
-            | Self::TerminalMoveTo
-            | Self::TerminalPrint
-            | Self::TerminalSetColor
-            | Self::TerminalResetColor
-            | Self::TerminalHideCursor
-            | Self::TerminalShowCursor
-            | Self::TerminalFlush => Some(Ok(NanValue::UNIT)),
-            #[cfg(not(feature = "terminal"))]
-            Self::TerminalReadKey => Some(Ok(NanValue::NONE)),
-            #[cfg(not(feature = "terminal"))]
-            Self::TerminalSize => {
-                use crate::value::Value;
-                use std::sync::Arc;
-                let rec = Value::Record {
-                    type_name: "Terminal.Size".to_string(),
-                    fields: Arc::from(vec![
-                        ("width".to_string(), Value::int(80)),
-                        ("height".to_string(), Value::int(24)),
-                    ]),
-                };
-                Some(Ok(NanValue::from_value(&rec, arena)))
-            }
-
             Self::BoolOr | Self::BoolAnd | Self::BoolNot => bool::call_nv(self.name(), args, arena),
 
             Self::IntFromString
@@ -531,8 +375,6 @@ mod tests {
     fn builtin_names_are_unique() {
         let mut seen = std::collections::HashSet::new();
         for builtin in [
-            VmBuiltin::ConsolePrint,
-            VmBuiltin::HttpPatch,
             VmBuiltin::StringReplace,
             VmBuiltin::ResultFromOption,
             VmBuiltin::MapFromList,
@@ -541,6 +383,21 @@ mod tests {
                 seen.insert(builtin.name()),
                 "duplicate builtin name {}",
                 builtin.name()
+            );
+        }
+    }
+
+    #[test]
+    fn standard_capability_operations_never_reenter_the_builtin_table() {
+        let builtin_names = VmBuiltin::ALL
+            .iter()
+            .map(|builtin| builtin.name())
+            .collect::<std::collections::HashSet<_>>();
+        for operation in crate::stdlib::standard_capability_registry_ref().operations() {
+            assert!(
+                !builtin_names.contains(operation.canonical_name.as_str()),
+                "standard capability operation {} leaked back into VmBuiltin",
+                operation.canonical_name
             );
         }
     }

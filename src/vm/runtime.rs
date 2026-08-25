@@ -32,6 +32,16 @@ fn configure_tcp_provider(
         .expect("validated Tcp settings must fit the standard provider contract");
 }
 
+fn configure_args_provider(
+    providers: &mut std::sync::Arc<crate::provider::ProviderRegistry>,
+    args: &[String],
+) {
+    let registry = std::sync::Arc::make_mut(providers);
+    registry
+        .configure_standard_args(args.to_vec())
+        .expect("compiler-installed Args provider must match the embedded contract");
+}
+
 /// Host/runtime bridge for builtin dispatch, effects, and record/replay.
 ///
 /// This is intentionally separate from the core execute loop so the VM stays
@@ -142,6 +152,7 @@ impl VmRuntime {
         &mut self,
         mut providers: std::sync::Arc<crate::provider::ProviderRegistry>,
     ) {
+        configure_args_provider(&mut providers, &self.cli_args);
         if let Some(config) = &self.runtime_policy {
             configure_tcp_provider(&mut providers, config);
         }
@@ -322,6 +333,7 @@ impl VmRuntime {
 
     pub(super) fn set_cli_args(&mut self, args: Vec<String>) {
         self.cli_args = args;
+        configure_args_provider(&mut self.providers, &self.cli_args);
     }
 
     pub(super) fn cli_args(&self) -> &[String] {
@@ -809,7 +821,7 @@ impl VmRuntime {
 /// name, so they come out of the file in name order. Decoding walks that
 /// object back in the same order, and `NanValue::from_value` then fills the
 /// registered type's slots BY POSITION, discarding the names it was handed.
-/// `HttpResponse` is declared `status, body, headers` but sorts `body,
+/// `Http.Response` is declared `status, body, headers` but sorts `body,
 /// headers, status`, so every replayed read of `.status` returned the body.
 ///
 /// It is worse than a wrong value: the slot types move with the values, so

@@ -454,11 +454,9 @@ fn accumulator_kind(worker: &FnRecord) -> AccKind {
 fn is_user_defined_named(ty: &Type) -> bool {
     match ty {
         Type::Named { id: Some(_), name } => {
-            // Exclude built-in record types the resolver sometimes
-            // stamps with an id (HttpResponse, Header, Tcp.Connection,
-            // Buffer, etc. — the comment on Type::Named in
-            // src/ast/types.rs notes these). They are not user domain
-            // types.
+            // Exclude standard-library and compiler boundary types the resolver
+            // stamps with an id (Http.Response, Header, Tcp.Connection, Buffer,
+            // etc.). They are not user domain types.
             !is_builtin_named(name)
         }
         // Result/Option wrapping a user type still counts as semantic
@@ -473,7 +471,7 @@ fn is_user_defined_named(ty: &Type) -> bool {
 fn is_builtin_named(name: &str) -> bool {
     matches!(
         name,
-        "HttpResponse"
+        "Http.Response"
             | "HttpRequest"
             | "Header"
             | "Tcp.Connection"

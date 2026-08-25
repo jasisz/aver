@@ -253,75 +253,8 @@ pub fn generate_branch_path_types() -> String {
     "pub use aver_rt::BranchPath;".to_string()
 }
 
-/// Bring shared HTTP record types into the generated program.
-///
-/// The Aver typechecker types `HttpResponse.status` as `Int` (→
-/// `aver_rt::AverInt`), while the host `aver_rt::HttpResponse` keeps an `i64`
-/// `status`. Like `Tcp.Connection` / `Terminal.Size`, we emit a SURFACE
-/// record (`AverInt` status) and convert at the effect boundary: `Http.*`
-/// lands the host struct as the surface (`convert_http_response`). Keeping the
-/// surface type distinct is what lets `resp.status.add(&…)` typecheck.
-pub fn generate_http_types() -> String {
-    r#"#[derive(Clone, Debug, PartialEq)]
-pub struct HttpResponse {
-    pub status: aver_rt::AverInt,
-    pub body: aver_rt::AverStr,
-    pub headers: aver_rt::HttpHeaders,
-}
-impl aver_rt::AverDisplay for HttpResponse {
-    fn aver_display(&self) -> String {
-        format!(
-            "HttpResponse(status: {}, body: {}, headers: {})",
-            self.status.aver_display_inner(),
-            self.body.aver_display_inner(),
-            self.headers.aver_display_inner()
-        )
-    }
-    fn aver_display_inner(&self) -> String {
-        self.aver_display()
-    }
-}
-/// Host `aver_rt::HttpResponse` (`i64` status) → surface (`AverInt` status),
-/// applied at the `Http.*` effect boundary via `.into_aver()`.
-fn convert_http_response(r: aver_rt::HttpResponse) -> HttpResponse {
-    HttpResponse {
-        status: aver_rt::AverInt::from_i64(r.status),
-        body: r.body,
-        headers: r.headers,
-    }
-}
-impl IntoAverStr for Result<aver_rt::HttpResponse, String> {
-    type Output = Result<HttpResponse, AverStr>;
-    fn into_aver(self) -> Result<HttpResponse, AverStr> {
-        self.map(convert_http_response).map_err(AverStr::from)
-    }
-}"#
-    .to_string()
-}
-
 /// Bring the shared HTTP request type into the generated program.
 /// Native `HttpServer` constructs it in Aver; edge hosts use it at `--handler`.
 pub fn generate_http_request_types() -> String {
     "pub use aver_rt::HttpRequest;".to_string()
-}
-
-/// Emit the surface `Terminal.Size` record for the generated program.
-///
-/// Like `Tcp.Connection`, the Aver typechecker types `width`/`height` as
-/// `Int` (→ `aver_rt::AverInt`), while the host `aver_rt::TerminalSize` has
-/// `i64` fields. We emit a SURFACE record with `AverInt` fields and convert
-/// from the host struct at the `Terminal.size` effect boundary, so
-/// `size.width.add(&…)` typechecks.
-pub fn generate_terminal_types() -> String {
-    r#"#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct Terminal_Size {
-    pub width: aver_rt::AverInt,
-    pub height: aver_rt::AverInt,
-}
-impl aver_rt::AverDisplay for Terminal_Size {
-    fn aver_display(&self) -> String {
-        format!("Terminal.Size {{ width: {}, height: {} }}", self.width, self.height)
-    }
-}"#
-    .to_string()
 }

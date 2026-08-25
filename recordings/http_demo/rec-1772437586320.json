@@ -78,7 +78,7 @@
                 ],
                 "status": 200
               },
-              "type": "HttpResponse"
+              "type": "Http.Response"
             }
           }
         }
@@ -175,7 +175,7 @@
                 ],
                 "status": 404
               },
-              "type": "HttpResponse"
+              "type": "Http.Response"
             }
           }
         }
@@ -285,7 +285,7 @@
                 ],
                 "status": 200
               },
-              "type": "HttpResponse"
+              "type": "Http.Response"
             }
           }
         }

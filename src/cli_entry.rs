@@ -389,7 +389,7 @@ fn main_impl(
                 eprintln!(
                     "{}",
                     "--preset cloudflare requires --handler <fn> (the Aver fn with signature \
-                     `Fn(HttpRequest) -> HttpResponse` to expose as the request handler)"
+                     `Fn(HttpRequest) -> Http.Response` to expose as the request handler)"
                         .red()
                 );
                 std::process::exit(1);

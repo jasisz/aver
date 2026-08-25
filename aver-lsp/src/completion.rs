@@ -332,27 +332,27 @@ pub fn namespace_completions(namespace: &str) -> Vec<CompletionItem> {
         "Http" => &[
             Member {
                 name: "get",
-                detail: "fn(String) -> Result<HttpResponse, String> ! [Http.get]",
+                detail: "fn(String) -> Result<Http.Response, String> ! [Http.get]",
             },
             Member {
                 name: "head",
-                detail: "fn(String) -> Result<HttpResponse, String> ! [Http.head]",
+                detail: "fn(String) -> Result<Http.Response, String> ! [Http.head]",
             },
             Member {
                 name: "delete",
-                detail: "fn(String) -> Result<HttpResponse, String> ! [Http.delete]",
+                detail: "fn(String) -> Result<Http.Response, String> ! [Http.delete]",
             },
             Member {
                 name: "post",
-                detail: "fn(String, String, String, List<Header>) -> Result<HttpResponse, String> ! [Http.post]",
+                detail: "fn(String, String, String, List<Header>) -> Result<Http.Response, String> ! [Http.post]",
             },
             Member {
                 name: "put",
-                detail: "fn(String, String, String, List<Header>) -> Result<HttpResponse, String> ! [Http.put]",
+                detail: "fn(String, String, String, List<Header>) -> Result<Http.Response, String> ! [Http.put]",
             },
             Member {
                 name: "patch",
-                detail: "fn(String, String, String, List<Header>) -> Result<HttpResponse, String> ! [Http.patch]",
+                detail: "fn(String, String, String, List<Header>) -> Result<Http.Response, String> ! [Http.patch]",
             },
         ],
         "Disk" => &[
@@ -477,20 +477,20 @@ pub fn effect_completions() -> Vec<CompletionItem> {
         ("Disk.writeText", "(String, String) -> Result<Unit, String>"),
         ("Env.get", "(String) -> Option<String>"),
         ("Env.set", "(String, String) -> Unit"),
-        ("Http.delete", "(String) -> Result<HttpResponse, String>"),
-        ("Http.get", "(String) -> Result<HttpResponse, String>"),
-        ("Http.head", "(String) -> Result<HttpResponse, String>"),
+        ("Http.delete", "(String) -> Result<Http.Response, String>"),
+        ("Http.get", "(String) -> Result<Http.Response, String>"),
+        ("Http.head", "(String) -> Result<Http.Response, String>"),
         (
             "Http.patch",
-            "(String, String, String, List<Header>) -> Result<HttpResponse, String>",
+            "(String, String, String, List<Header>) -> Result<Http.Response, String>",
         ),
         (
             "Http.post",
-            "(String, String, String, List<Header>) -> Result<HttpResponse, String>",
+            "(String, String, String, List<Header>) -> Result<Http.Response, String>",
         ),
         (
             "Http.put",
-            "(String, String, String, List<Header>) -> Result<HttpResponse, String>",
+            "(String, String, String, List<Header>) -> Result<Http.Response, String>",
         ),
         ("Tcp.close", "(Tcp.Connection) -> Result<Unit, String>"),
         (

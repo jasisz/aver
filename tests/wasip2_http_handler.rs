@@ -6,7 +6,7 @@
 //! the bound port out of wasmtime's stderr (`Serving HTTP on
 //! http://127.0.0.1:N/`), then runs a handful of HTTP requests
 //! against it and asserts the responses match the handler's
-//! returned `HttpResponse`.
+//! returned `Http.Response`.
 //!
 //! Skipped automatically when `wasmtime` is not on PATH or when
 //! `wasmtime serve` is missing (older wasmtime builds without the
@@ -51,7 +51,7 @@ fn wasmtime_serve_supported() -> bool {
 
 /// Compile the Aver source at `src_path` into a `.component.wasm`
 /// under `dir`. `handler` names the user fn (signature `(HttpRequest)
-/// -> HttpResponse`) the proxy export wraps — passed via the
+/// -> Http.Response`) the proxy export wraps — passed via the
 /// `--handler` flag, same way the wasm-gc + Cloudflare path takes
 /// its fetch handler.
 fn compile_proxy(dir: &Path, src_path: &Path, stem: &str, handler: &str) -> PathBuf {
@@ -150,8 +150,8 @@ fn http_handler_echoes_request_body() {
     // Proxy deployment has no synthetic listener call: the handler
     // identity comes only from `--handler echo_handler`.
     let src = r#"
-fn echo_handler(req: HttpRequest) -> HttpResponse
-    HttpResponse(status = 200, body = "echo: {req.body}", headers = {})
+fn echo_handler(req: HttpRequest) -> Http.Response
+    Http.Response(status = 200, body = "echo: {req.body}", headers = {})
 "#;
     let fixture = write_fixture(&dir, "echo.av", src);
     let component = compile_proxy(&dir, &fixture, "echo", "echo_handler");
@@ -204,8 +204,8 @@ fn http_handler_surfaces_method_path_and_query() {
     // Handler dumps method + path + query into the body so the
     // assertions can compare against the request shape end-to-end.
     let src = r#"
-fn intro_handler(req: HttpRequest) -> HttpResponse
-    HttpResponse(
+fn intro_handler(req: HttpRequest) -> Http.Response
+    Http.Response(
         status = 201,
         body = "m={req.method} p={req.path} q={req.query}",
         headers = {}
@@ -281,11 +281,11 @@ fn first_or(items: List<String>, dflt: String) -> String
         [] -> dflt
         [head, ..rest] -> head
 
-fn hdr_handler(req: HttpRequest) -> HttpResponse
+fn hdr_handler(req: HttpRequest) -> Http.Response
     foo: String = match Map.get(req.headers, "x-foo")
         Option.Some(values) -> first_or(values, "missing")
         Option.None -> "absent"
-    HttpResponse(
+    Http.Response(
         status = 200,
         body = "ok",
         headers = {"x-echo" => [foo], "x-flavor" => ["aver"]}

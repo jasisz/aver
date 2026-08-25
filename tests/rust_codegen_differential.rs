@@ -3554,7 +3554,7 @@ fn policy_checked_argument_keeps_its_ownership() {
         // argument is the capability call's own `__provider_arg0` temp —
         // same clone-before-bind shape the builtin seam's `__policy_arg`
         // always had.
-        if !emitted.contains("let __provider_arg0 = path.clone();") {
+        if !emitted.contains("let __provider_arg0: AverStr = path.clone();") {
             return Err(format!(
                 "the provider arg temp takes `path` instead of owning a copy of it — \
                  every later read of `path` is E0382:\n{emitted}"
@@ -3562,7 +3562,7 @@ fn policy_checked_argument_keeps_its_ownership() {
         }
         // A field read through a `&Location` param: the temp has to own a
         // copy, not move out of the borrow.
-        if !emitted.contains("let __provider_arg0 = place.segment.clone();") {
+        if !emitted.contains("let __provider_arg0: AverStr = place.segment.clone();") {
             return Err(format!(
                 "the provider arg temp moves `place.segment` out of a shared \
                  reference — E0507 on the first and only use:\n{emitted}"

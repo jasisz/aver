@@ -180,7 +180,7 @@ fn large_response_body_32k_round_trips() {
 fn dbl(s: String) -> String
     "{s}{s}"
 
-fn big_handler(req: HttpRequest) -> HttpResponse
+fn big_handler(req: HttpRequest) -> Http.Response
     s0: String = "0123456789ABCDEF0123456789ABCDEF"
     s1: String = dbl(s0)
     s2: String = dbl(s1)
@@ -192,7 +192,7 @@ fn big_handler(req: HttpRequest) -> HttpResponse
     s8: String = dbl(s7)
     s9: String = dbl(s8)
     s10: String = dbl(s9)
-    HttpResponse(status = 200, body = s10, headers = {})
+    Http.Response(status = 200, body = s10, headers = {})
 "#;
     let Some((mut server, port, dir)) = setup("large-resp", src, "bigresp", "big_handler") else {
         return;
@@ -232,8 +232,8 @@ fn big_handler(req: HttpRequest) -> HttpResponse
 #[test]
 fn large_request_body_64k_drained() {
     let src = r#"
-fn echo_handler(req: HttpRequest) -> HttpResponse
-    HttpResponse(
+fn echo_handler(req: HttpRequest) -> Http.Response
+    Http.Response(
         status = 200,
         body = "len={String.len(req.body)}",
         headers = {}
@@ -279,8 +279,8 @@ fn echo_handler(req: HttpRequest) -> HttpResponse
 #[test]
 fn many_sequential_requests_no_leak() {
     let src = r#"
-fn count_handler(req: HttpRequest) -> HttpResponse
-    HttpResponse(
+fn count_handler(req: HttpRequest) -> Http.Response
+    Http.Response(
         status = 200,
         body = "method={req.method} path={req.path}",
         headers = {"x-aver" => ["ok"]}
@@ -316,8 +316,8 @@ fn count_handler(req: HttpRequest) -> HttpResponse
 #[test]
 fn concurrent_requests_each_isolated() {
     let src = r#"
-fn id_handler(req: HttpRequest) -> HttpResponse
-    HttpResponse(status = 200, body = req.body, headers = {})
+fn id_handler(req: HttpRequest) -> Http.Response
+    Http.Response(status = 200, body = req.body, headers = {})
 "#;
     let Some((mut server, port, dir)) = setup("concurrent", src, "conc", "id_handler") else {
         return;
@@ -360,12 +360,12 @@ fn id_handler(req: HttpRequest) -> HttpResponse
 #[test]
 fn routing_on_path_dispatches_correctly() {
     let src = r#"
-fn route_handler(req: HttpRequest) -> HttpResponse
+fn route_handler(req: HttpRequest) -> Http.Response
     match req.path
-        "/ok" -> HttpResponse(status = 200, body = "ok", headers = {})
-        "/created" -> HttpResponse(status = 201, body = "created", headers = {})
-        "/teapot" -> HttpResponse(status = 418, body = "im a teapot", headers = {})
-        _ -> HttpResponse(status = 404, body = "nope", headers = {})
+        "/ok" -> Http.Response(status = 200, body = "ok", headers = {})
+        "/created" -> Http.Response(status = 201, body = "created", headers = {})
+        "/teapot" -> Http.Response(status = 418, body = "im a teapot", headers = {})
+        _ -> Http.Response(status = 404, body = "nope", headers = {})
 "#;
     let Some((mut server, port, dir)) = setup("routing", src, "rt", "route_handler") else {
         return;
@@ -409,8 +409,8 @@ fn route_handler(req: HttpRequest) -> HttpResponse
 #[test]
 fn method_dispatch_returns_method_name() {
     let src = r#"
-fn method_handler(req: HttpRequest) -> HttpResponse
-    HttpResponse(status = 200, body = req.method, headers = {})
+fn method_handler(req: HttpRequest) -> Http.Response
+    Http.Response(status = 200, body = req.method, headers = {})
 "#;
     let Some((mut server, port, dir)) = setup("methods", src, "mthd", "method_handler") else {
         return;
@@ -459,12 +459,12 @@ fn first_or(items: List<String>, dflt: String) -> String
         [] -> dflt
         [head, ..rest] -> head
 
-fn json_handler(req: HttpRequest) -> HttpResponse
+fn json_handler(req: HttpRequest) -> Http.Response
     name: String = match Map.get(req.headers, "x-name")
         Option.Some(values) -> first_or(values, "anonymous")
         Option.None -> "anonymous"
     body: String = "\{\"name\":\"{name}\",\"len\":{String.len(name)}\}"
-    HttpResponse(
+    Http.Response(
         status = 200,
         body = body,
         headers = {"content-type" => ["application/json"]}
@@ -503,8 +503,8 @@ fn json_handler(req: HttpRequest) -> HttpResponse
 #[test]
 fn many_request_headers_reach_handler() {
     let src = r#"
-fn count_handler(req: HttpRequest) -> HttpResponse
-    HttpResponse(
+fn count_handler(req: HttpRequest) -> Http.Response
+    Http.Response(
         status = 200,
         body = "headers={Map.len(req.headers)}",
         headers = {}

@@ -196,7 +196,7 @@ Generative stubs receive a leading `BranchPath` and per-branch call counter.
 fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Result<Int, String>
 
 fn fakeFetch(path: BranchPath, n: Int, url: String)
-    -> Result<HttpResponse, String>
+    -> Result<Http.Response, String>
 ```
 
 The original effect arguments are appended after `(path, n)`.

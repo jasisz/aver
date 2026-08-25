@@ -73,47 +73,47 @@ verify jsonHeaders
 
 // --- response builders ---
 
-fn ok(body: String) -> HttpResponse
+fn ok(body: String) -> Http.Response
     ? "Builds a 200 response with JSON headers."
-    HttpResponse(status = 200, body = body, headers = jsonHeaders())
+    Http.Response(status = 200, body = body, headers = jsonHeaders())
 
 verify ok
-    ok("x") => HttpResponse(status = 200, body = "x", headers = jsonHeaders())
+    ok("x") => Http.Response(status = 200, body = "x", headers = jsonHeaders())
 
-fn created(body: String) -> HttpResponse
+fn created(body: String) -> Http.Response
     ? "Builds a 201 response with JSON headers."
-    HttpResponse(status = 201, body = body, headers = jsonHeaders())
+    Http.Response(status = 201, body = body, headers = jsonHeaders())
 
 verify created
-    created("x") => HttpResponse(status = 201, body = "x", headers = jsonHeaders())
+    created("x") => Http.Response(status = 201, body = "x", headers = jsonHeaders())
 
-fn notFound(msg: String) -> HttpResponse
+fn notFound(msg: String) -> Http.Response
     ? "Builds a 404 JSON error response."
-    HttpResponse(status = 404, body = jsonErr(msg), headers = jsonHeaders())
+    Http.Response(status = 404, body = jsonErr(msg), headers = jsonHeaders())
 
 verify notFound
-    notFound("missing") => HttpResponse(status = 404, body = "{{\"error\":\"missing\"}}", headers = jsonHeaders())
+    notFound("missing") => Http.Response(status = 404, body = "{{\"error\":\"missing\"}}", headers = jsonHeaders())
 
-fn badRequest(msg: String) -> HttpResponse
+fn badRequest(msg: String) -> Http.Response
     ? "Builds a 400 JSON error response."
-    HttpResponse(status = 400, body = jsonErr(msg), headers = jsonHeaders())
+    Http.Response(status = 400, body = jsonErr(msg), headers = jsonHeaders())
 
 verify badRequest
-    badRequest("bad") => HttpResponse(status = 400, body = "{{\"error\":\"bad\"}}", headers = jsonHeaders())
+    badRequest("bad") => Http.Response(status = 400, body = "{{\"error\":\"bad\"}}", headers = jsonHeaders())
 
-fn serverError(msg: String) -> HttpResponse
+fn serverError(msg: String) -> Http.Response
     ? "Builds a 500 JSON error response."
-    HttpResponse(status = 500, body = jsonErr(msg), headers = jsonHeaders())
+    Http.Response(status = 500, body = jsonErr(msg), headers = jsonHeaders())
 
 verify serverError
-    serverError("boom") => HttpResponse(status = 500, body = "{{\"error\":\"boom\"}}", headers = jsonHeaders())
+    serverError("boom") => Http.Response(status = 500, body = "{{\"error\":\"boom\"}}", headers = jsonHeaders())
 
-fn methodNotAllowed() -> HttpResponse
+fn methodNotAllowed() -> Http.Response
     ? "Builds a 405 JSON error response."
-    HttpResponse(status = 405, body = jsonErr("Method not allowed"), headers = jsonHeaders())
+    Http.Response(status = 405, body = jsonErr("Method not allowed"), headers = jsonHeaders())
 
 verify methodNotAllowed
-    methodNotAllowed() => HttpResponse(status = 405, body = "{{\"error\":\"Method not allowed\"}}", headers = jsonHeaders())
+    methodNotAllowed() => Http.Response(status = 405, body = "{{\"error\":\"Method not allowed\"}}", headers = jsonHeaders())
 
 fn extractNoteId(path: String) -> Result<Int, String>
     ? "Extracts a numeric ID from a /notes/<id> path."
@@ -163,21 +163,21 @@ verify joinKnownLine
 
 // --- route handlers ---
 
-fn handleListNotes() -> HttpResponse
+fn handleListNotes() -> Http.Response
     ? "GET /notes — returns all notes as a JSON array."
     ! [Disk.readText]
     match Apps.Notepad.Store.loadAll()
         Result.Ok(notes) -> ok(jsonNoteList(notes))
         Result.Err(msg)  -> serverError(msg)
 
-fn handleGetNote(path: String) -> HttpResponse
+fn handleGetNote(path: String) -> Http.Response
     ? "GET /notes/:id — returns one note as JSON."
     ! [Disk.readText]
     match extractNoteId(path)
         Result.Err(msg) -> badRequest(msg)
         Result.Ok(id)   -> lookupNote(id)
 
-fn lookupNote(id: Int) -> HttpResponse
+fn lookupNote(id: Int) -> Http.Response
     ? "Loads all notes and finds the one matching the given ID."
     ! [Disk.readText]
     match Apps.Notepad.Store.loadAll()
@@ -186,28 +186,28 @@ fn lookupNote(id: Int) -> HttpResponse
             Option.None       -> notFound("note {id} not found")
             Option.Some(note) -> ok(jsonNote(note))
 
-fn handleCreateNote(body: String) -> HttpResponse
+fn handleCreateNote(body: String) -> Http.Response
     ? "POST /notes — creates a new note from the request body."
     ! [Disk.appendText, Disk.readText, Disk.writeText]
     match parseTitle(body)
         Result.Err(msg)  -> badRequest(msg)
         Result.Ok(title) -> createNote(title, extractBody(body))
 
-fn createNote(title: String, body: String) -> HttpResponse
+fn createNote(title: String, body: String) -> Http.Response
     ? "Persists a new note and returns the created JSON."
     ! [Disk.appendText, Disk.readText, Disk.writeText]
     match Apps.Notepad.Store.addNote(title, body)
         Result.Ok(note) -> created(jsonNote(note))
         Result.Err(msg) -> serverError(msg)
 
-fn handleDeleteNote(path: String) -> HttpResponse
+fn handleDeleteNote(path: String) -> Http.Response
     ? "DELETE /notes/:id — removes a note by ID."
     ! [Disk.readText, Disk.writeText]
     match extractNoteId(path)
         Result.Err(msg) -> badRequest(msg)
         Result.Ok(id)   -> deleteNote(id)
 
-fn deleteNote(id: Int) -> HttpResponse
+fn deleteNote(id: Int) -> Http.Response
     ? "Deletes a note and returns a success message."
     ! [Disk.readText, Disk.writeText]
     match Apps.Notepad.Store.removeNote(id)
@@ -216,7 +216,7 @@ fn deleteNote(id: Int) -> HttpResponse
 
 // --- main dispatcher ---
 
-fn handleRequest(req: HttpRequest) -> HttpResponse
+fn handleRequest(req: HttpRequest) -> Http.Response
     ? "Routes an incoming HTTP request to the correct handler."
     ! [Disk.appendText, Disk.readText, Disk.writeText]
     match req.method

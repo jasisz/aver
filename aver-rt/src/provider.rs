@@ -5,11 +5,16 @@
 //! resource payloads. A future IPC or Component Model adapter can therefore
 //! preserve this boundary without inheriting VM representation details.
 
+mod args;
 mod codec;
+mod console;
 mod disk;
+mod env;
+mod http;
 mod process;
 mod runtime;
 mod tcp;
+mod terminal;
 
 use std::any::Any;
 use std::collections::BTreeSet;
@@ -19,8 +24,14 @@ use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 use crate::AverInt;
 
+pub use args::{STANDARD_ARGS_FINGERPRINT, STANDARD_ARGS_NATIVE_IDENTITY, StandardArgsProvider};
 pub use codec::{ProviderCodec, provider_value_order_key};
+pub use console::{
+    STANDARD_CONSOLE_FINGERPRINT, STANDARD_CONSOLE_NATIVE_IDENTITY, StandardConsoleProvider,
+};
 pub use disk::{STANDARD_DISK_FINGERPRINT, STANDARD_DISK_NATIVE_IDENTITY, StandardDiskProvider};
+pub use env::{STANDARD_ENV_FINGERPRINT, STANDARD_ENV_NATIVE_IDENTITY, StandardEnvProvider};
+pub use http::{STANDARD_HTTP_FINGERPRINT, STANDARD_HTTP_NATIVE_IDENTITY, StandardHttpProvider};
 pub use process::{
     STANDARD_PROCESS_FINGERPRINT, STANDARD_PROCESS_NATIVE_IDENTITY, StandardProcessProvider,
     standard_process_stop_requested,
@@ -35,6 +46,35 @@ pub use runtime::{
     standard_random_float, standard_random_int,
 };
 pub use tcp::{STANDARD_TCP_FINGERPRINT, STANDARD_TCP_NATIVE_IDENTITY, StandardTcpProvider};
+pub use terminal::{
+    STANDARD_TERMINAL_FINGERPRINT, STANDARD_TERMINAL_NATIVE_IDENTITY, StandardTerminalProvider,
+};
+
+/// Whether two recorded/live identities name compiler-shipped adapters for
+/// the same standard capability. The adapter suffix is target-specific audit
+/// metadata; replay portability across native, wasm-gc, and wasip2 is pinned
+/// by the shared implementation fingerprint instead.
+///
+/// This deliberately recognizes only Aver's closed standard identity shape.
+/// Custom providers, including providers for standard contracts that use
+/// their own identity, remain identity-exact during live replay.
+pub fn standard_provider_adapters_replay_compatible(
+    capability: &str,
+    recorded: &str,
+    current: &str,
+) -> bool {
+    fn is_shipped_adapter(capability: &str, identity: &str) -> bool {
+        let Some(rest) = identity.strip_prefix("aver.standard.") else {
+            return false;
+        };
+        let Some((module, adapter)) = rest.split_once('/') else {
+            return false;
+        };
+        module == capability && matches!(adapter, "native" | "wasm-gc-imports" | "wasip2-wasi")
+    }
+
+    is_shipped_adapter(capability, recorded) && is_shipped_adapter(capability, current)
+}
 
 /// A host-owned payload carried by a capability resource.
 ///
@@ -344,5 +384,34 @@ impl ProviderResourceHandle {
             slot,
             generation,
         }
+    }
+}
+
+#[cfg(test)]
+mod replay_identity_tests {
+    use super::standard_provider_adapters_replay_compatible;
+
+    #[test]
+    fn only_same_standard_capability_adapters_share_a_replay_family() {
+        assert!(standard_provider_adapters_replay_compatible(
+            "Console",
+            "aver.standard.Console/wasm-gc-imports",
+            "aver.standard.Console/native",
+        ));
+        assert!(standard_provider_adapters_replay_compatible(
+            "Console",
+            "aver.standard.Console/wasip2-wasi",
+            "aver.standard.Console/wasm-gc-imports",
+        ));
+        assert!(!standard_provider_adapters_replay_compatible(
+            "Console",
+            "aver.standard.Time/wasm-gc-imports",
+            "aver.standard.Console/native",
+        ));
+        assert!(!standard_provider_adapters_replay_compatible(
+            "Console",
+            "example.console/wasm-gc-imports",
+            "aver.standard.Console/native",
+        ));
     }
 }

@@ -5,7 +5,7 @@
 //
 //   1. reads request fields via `Request.*` host imports,
 //   2. allocates an `HttpRequest` struct,
-//   3. calls the user's `<handler>(req: HttpRequest) -> HttpResponse`,
+//   3. calls the user's `<handler>(req: HttpRequest) -> Http.Response`,
 //   4. walks the response's `headers: Map<String, List<String>>`
 //      and dispatches one `Response.setHeader(name, value)` per
 //      (key, value) pair,

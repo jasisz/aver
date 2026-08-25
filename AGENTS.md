@@ -44,7 +44,7 @@ Below: implementation details relevant to development only.
 - **`check` command**: warns when module has no `intent =`, function with effects/Result return has no `?` description, file exceeds 250 lines. `fn main()` is exempt from `?` requirement.
 - **Entry-point effect enforcement**: `main`/top-level entry calls enforce declared effects at the entry boundary.
 - **Opaque types** (`exposes opaque [T]`): module-level access control for types. An opaque type is visible in signatures (can be passed, returned, stored) but cannot be constructed, have its fields accessed, or be pattern-matched from outside the defining module. Enforced at compile time in the typechecker; `load_module_sigs` registers a dummy sig (type resolves) but omits field types, constructors, and variant info. Parser recognizes `exposes opaque` after the `Exposes` token by checking for `Ident("opaque")`.
-- **Provider-backed standard capabilities** (`stdlib/capabilities/`): `Time`, `Random`, `Process`, `Disk`, and `Tcp` own their operation signatures, Oracle/replay declarations, and hostile profiles in Aver source. VM and generated Rust bind exact-contract native providers through `src/provider/standard.rs`; Process, Disk, and Tcp native adapters live in `aver-rt/src/provider/{process,disk,tcp}.rs`. `Process.stopRequested` is a monotonic cooperative SIGINT/SIGTERM flag; wasm-gc supplies it as a host import and wasip2 rejects it because WASI 0.2 has no signal binding. Disk includes byte-exact whole-file, positional, write, and append methods plus metadata `size`; `readBytesAt` returns at most the requested length and treats EOF as a successful short read. `Tcp.Connection` is a provider-owned capability resource, not a surface record or an `exposes opaque` type. wasm-gc and wasip2 register supported host/WASI lowerings as bindings of the same contracts. These operations are not legacy service builtins.
+- **Provider-backed standard capabilities** (`stdlib/capabilities/`): `Args`, `Console`, `Disk`, `Env`, `Http`, `Process`, `Random`, `Tcp`, `Terminal`, and `Time` own their operation signatures, Oracle/replay declarations, hostile profiles, and represented boundary types in Aver source. VM and generated Rust bind exact-contract native providers through `src/provider/standard.rs`; their native adapters live in `aver-rt/src/provider/`. `Process.stopRequested` is a monotonic cooperative SIGINT/SIGTERM flag; wasm-gc supplies it as a host import and wasip2 rejects it because WASI 0.2 has no signal binding. Disk includes byte-exact whole-file, positional, write, and append methods plus metadata `size`; `readBytesAt` returns at most the requested length and treats EOF as a successful short read. `Http.Response` and `Terminal.Size` are represented capability-owned records; `Tcp.Connection` is a provider-owned capability resource, not a surface record or an `exposes opaque` type. wasm-gc and wasip2 register supported host/WASI lowerings as bindings of the same contracts, with operation-level target availability where only part of a capability is supported. Standard capability operations are not legacy service builtins.
 - **WASM-GC backend** (`src/codegen/wasm_gc/`, feature-gated behind `--features wasm`): compiles Aver to wasm modules using the WebAssembly GC + tail-call proposals (typed structs/arrays, no linear-memory heap for first-class values). Two emission modes share the lowering pipeline: (a) `--target wasm-gc` for browsers / Workers / JS hosts via the `aver/*` host import ABI; (b) `--target wasip2` (and `aver run --wasip2`) for the WASI 0.2 / Component Model story — the same backend emits canonical-ABI WIT imports (`wasi:cli/stdout`, `wasi:filesystem/preopens`, `wasi:io/streams`, ...) and `src/codegen/wasip2/wrap.rs` wraps the core module via `wit-component`, no preview-1 adapter. Effect set on wasip2: Console, Time, Random, Args, Env (read), all Disk, all `Http.*` verbs, and `Tcp.*`; `Terminal.*`, `Env.set`, and `Process.*` are compile-rejected. Incoming HTTP is an explicit `--handler <fn>` export in fetch/proxy worlds, while native programs use the Aver `HttpServer` module over `Tcp` (see [docs/wasip2.md](docs/wasip2.md)). The legacy linear-memory `--target wasm` backend was deleted in 0.18 Phase 1.8, and its `abi.rs` import table with it. The host-import surface for `--target wasm-gc` is now the `EffectName` enum in `src/codegen/wasm_gc/effects.rs`, whose `import_pair()` gives the `(module, field)` pair; `aver-cert/src/format.rs` holds an independent copy in `WASM_GC_CAPABILITIES` and a test in `effects.rs` asserts the two lists agree.
 - **Artifact certificates** (`aver-cert/`): `aver-cert` 0.1.x is an independently versioned verifier/process; `aver cert` is an exact subprocess shortcut. Public package version is `1` (`FORMAT_VERSION`) and manifest schema version is `4` (`CERT_SCHEMA_VERSION`): schema 2 made the subject `hostRoleTable` optional — `null` for modules without the Int box helper, pinned against a byte-derived proof of the helper's absence; schema 3 added the required `toIndex` key to the object form; schema 4 added the required `cmp` and `eq` keys. `Plans.lean` is the sole authoritative plan data, while the verifier supplies the actual artifact bytes, Lean 4.32 wall, build, and witness. See [docs/certification.md](docs/certification.md) and [docs/certification-architecture.md](docs/certification-architecture.md).
 - **Independent products** (`?!` / `!`): a tuple followed by `!` is a product of independent computations; `?!` adds Result unwrapping. `Expr::IndependentProduct(Vec<Spanned<Expr>>, bool)` in AST. Parser detects `?` + `!` or bare `!` after tuple in `parse_postfix`. Typechecker: `?!` verifies all elements are `Result<T, E>` with compatible error types and that elements are function calls; `!` infers as regular tuple. Interpreter: sequential evaluation with replay groups. Codegen: `std::thread::scope` with real parallelism. VM: `CALL_PAR` dispatches callable values plus per-branch arity, so aliases like `f = foo; (f(x), f(y))!` work. Replay: effects within a product share `group_id`, matched by `branch_path + effect_occurrence + effect_type + effect_args`, not execution order. See [docs/independence.md](docs/independence.md).
@@ -158,17 +158,21 @@ src/
     context_format.rs — Markdown context formatting
     shared.rs         — shared helpers (type checking, runtime policy)
 
-  services/           — Effectful namespace adapters over shared `aver-rt` runtime:
-    console.rs        — Console.print/error/warn/readLine  ! [Console.print] / friends
-    http.rs           — Http.get/head/delete/post/put/patch via `aver_rt::http`
-    tcp.rs            — Tcp.send/ping + connect/writeLine/readLine/close via `aver_rt::tcp`
-    terminal.rs       — Terminal.* (raw mode, cursor, color, key input) via `aver_rt::terminal` [feature-gated]
+  services/           — Small runtime helpers that are not standard operation dispatch:
+    console.rs        — Captured-output plumbing used by tests and embedding
 
 stdlib/
   bytes.av            — Bytes refinement and total hexadecimal conversion
   capabilities/
+    args.av           — Args contract and replay model
+    console.av        — Console contract, replay model, and hostile profiles
     disk.av           — Disk contract, replay model, and hostile profiles
+    env.av            — Env contract, replay model, and hostile profiles
+    http.av           — Http contract, replay model, hostile profiles, and Response
+    process.av        — Process contract, law, replay model, and hostile profiles
     random.av         — Random contract, replay model, and hostile profiles
+    tcp.av            — Tcp contract, resources, socket sum, laws, and profiles
+    terminal.av       — Terminal contract, replay model, profiles, and Size
     time.av           — Time contract, replay model, and hostile profiles
   crypto/digest32.av  — exactly-32-byte Digest32 refinement
 ```
@@ -250,7 +254,9 @@ The `src/lib.rs` exports all modules as `pub mod` so integration tests can acces
 
 ### How to add a new namespace function
 
-All functions live in namespaces (e.g., `Int.abs`, `List.len`, `Console.print`). Each namespace has a single, `NanValue`-typed implementation: `call_nv()` plus the `<op>_nv` functions. To add a new function to an existing namespace:
+Pure builtins live in namespaces (for example `Int.abs` and `List.len`) and use one `NanValue`-typed implementation. Standard effectful namespaces (for example `Console.print`) are capability operations declared under `stdlib/capabilities/` and implemented by providers; do not add them to the builtin path.
+
+To add a pure function to an existing builtin namespace:
 
 1. Add the implementation in the namespace's file (e.g., `src/types/int.rs` for pure, `src/services/console.rs` for effectful) as `<op>_nv` and add its arm to `call_nv()`:
    ```rust
@@ -258,11 +264,11 @@ All functions live in namespaces (e.g., `Int.abs`, `List.len`, `Console.print`).
    ```
 2. Add the row to the `vm_builtins!` table in `src/vm/builtin.rs` and the matching arm in `VmBuiltin::invoke_nv`.
 3. Add the type signature in `src/types/checker/builtins.rs` in the corresponding sigs section.
-4. For a pure function, add the `codegen_builtins!` row in `src/codegen/builtins.rs`; the exhaustive matches then force the Lean (`src/codegen/lean/builtins.rs`) and Dafny (`src/codegen/dafny/expr.rs`) arms. Effectful operations have no row there (`recognize_builtin` returns `None` for services).
-5. For a pure function, add the Rust arm in `src/codegen/rust/from_mir.rs` and the wasm-gc lowering in `src/codegen/wasm_gc` (`builtins/mod.rs` plus `body/from_mir/builtins.rs`). An effectful operation instead gets its Rust emission in `src/codegen/rust/builtins.rs`, an `EffectName` row in `src/codegen/wasm_gc/effects.rs` (plus its wasip2 lowering when the target supports it), and the matching `(module, field)` entry in `WASM_GC_CAPABILITIES` in `aver-cert/src/format.rs` — a test in `effects.rs` fails until both lists agree.
+4. Add the `codegen_builtins!` row in `src/codegen/builtins.rs`; the exhaustive matches then force the Lean (`src/codegen/lean/builtins.rs`) and Dafny (`src/codegen/dafny/expr.rs`) arms.
+5. Add the Rust arm in `src/codegen/rust/from_mir.rs` and the wasm-gc lowering in `src/codegen/wasm_gc` (`builtins/mod.rs` plus `body/from_mir/builtins.rs`).
 6. Document the function in [docs/services.md](docs/services.md).
 
-To create a new pure namespace, follow the pattern in `src/types/char.rs` or `src/types/int.rs`: implement `call_nv()` (effectful services also declare `effects()` and `DECLARED_EFFECTS`), add `pub mod` in `src/types/mod.rs`, add the namespace name to `is_builtin_namespace` in `src/ir/calls.rs` (the HIR resolver reads that list; without it a dotted call never resolves as a builtin), and add the builtin rows above. For effectful namespaces, use `src/services/` instead.
+To create a new pure namespace, follow the pattern in `src/types/char.rs` or `src/types/int.rs`: implement `call_nv()`, add `pub mod` in `src/types/mod.rs`, add the namespace name to `is_builtin_namespace` in `src/ir/calls.rs` (the HIR resolver reads that list; without it a dotted call never resolves as a builtin), and add the builtin rows above. To add a standard effectful namespace, follow an existing `stdlib/capabilities/*.av` contract plus its exact native and target provider bindings instead.
 
 ### How to add a new expression type
 

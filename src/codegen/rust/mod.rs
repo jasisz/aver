@@ -168,24 +168,16 @@ fn transpile_project(
         .is_some_and(|config| config.independence_mode == crate::config::IndependenceMode::Cancel);
     let used_services = detect_used_services(ctx);
     let has_provider_runtime = !required_provider_operations.is_empty();
-    let needs_http_types =
-        needs_named_type(ctx, "HttpResponse") || needs_named_type(ctx, "HttpRequest");
     let needs_tcp_types = needs_named_type(ctx, "Tcp.Connection");
-    let needs_terminal_types = needs_named_type(ctx, "Terminal.Size");
     // Oracle-proof stub fns take a leading `BranchPath` param. They are
     // emitted as dead-at-runtime fns (module-level fns emit regardless of
     // reachability), so the type must be in scope to compile.
     let needs_branch_path = needs_named_type(ctx, "BranchPath");
 
     let has_tcp_runtime = used_services.contains("Tcp");
-    let has_http_runtime = used_services.contains("Http");
-    let has_terminal_runtime = used_services.contains("Terminal");
-
     let has_tcp_types =
         (has_tcp_runtime || needs_tcp_types) && ctx.capabilities.contract("Tcp").is_none();
-    let has_http_types = has_http_runtime || needs_http_types;
     let has_http_request_types = needs_named_type(ctx, "HttpRequest");
-    let has_terminal_types = has_terminal_runtime || needs_terminal_types;
 
     // Root dispatch consumes the canonical resolved declaration. Resolve
     // `main` once by entry-scope identity and keep the AST lookup only for the
@@ -252,9 +244,7 @@ fn transpile_project(
             "src/runtime_support.rs".to_string(),
             render_runtime_support(
                 has_tcp_types,
-                has_http_types,
                 has_http_request_types,
-                has_terminal_types,
                 needs_branch_path,
                 ctx.emit_replay_runtime,
                 embedded_independence_cancel,
@@ -302,9 +292,7 @@ fn transpile_project(
             replay::generate_replay_runtime(replay::ReplayRuntimeOptions {
                 has_embedded_policy,
                 has_runtime_policy,
-                has_terminal_types,
                 has_tcp_types,
-                has_http_types,
                 has_http_request_types,
                 embedded_independence_cancel,
                 standard_capabilities: ctx
@@ -606,9 +594,7 @@ fn render_root_main(
 
 fn render_runtime_support(
     has_tcp_types: bool,
-    has_http_types: bool,
     has_http_request_types: bool,
-    has_terminal_types: bool,
     needs_branch_path: bool,
     has_replay: bool,
     embedded_independence_cancel: bool,
@@ -620,14 +606,8 @@ fn render_runtime_support(
     if has_tcp_types {
         sections.push(runtime::generate_tcp_types());
     }
-    if has_http_types {
-        sections.push(runtime::generate_http_types());
-    }
     if has_http_request_types {
         sections.push(runtime::generate_http_request_types());
-    }
-    if has_terminal_types {
-        sections.push(runtime::generate_terminal_types());
     }
     if needs_branch_path {
         sections.push(runtime::generate_branch_path_types());
@@ -965,7 +945,7 @@ fn is_shared_runtime_type(td: &TypeDef) -> bool {
     matches!(
         td,
         TypeDef::Product { name, .. }
-            if matches!(name.as_str(), "HttpResponse" | "HttpRequest")
+            if name == "HttpRequest"
     )
 }
 
@@ -995,7 +975,7 @@ fn needs_named_type(ctx: &CodegenContext, wanted: &str) -> bool {
 // syntax-discovery-only: walks ALL fn signatures asking "does
 // any param / return type contain a Named ref with this exact
 // bare-string name?" Callers pass builtin record names
-// (`"HttpResponse"`, `"Tcp.Connection"`, `"Terminal.Size"`)
+// (`"Http.Response"`, `"Tcp.Connection"`, `"Terminal.Size"`)
 // whose typed registration carries no `id` — those refs are
 // matched by the name surface they were declared with. The
 // query is a discovery walk, not an identity decision.
