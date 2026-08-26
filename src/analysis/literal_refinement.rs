@@ -380,7 +380,10 @@ fn runtime_provenance_is_closed(
     entry_items: &[TopLevel],
     dep_modules: &[ModuleInfo],
 ) -> bool {
-    let scan_expr = |scope: Option<&str>, inside_gate: bool, expr: &Spanned<Expr>| {
+    let scan_expr = |scope: Option<&str>,
+                     inside_gate: bool,
+                     nominal_params: &HashSet<String>,
+                     expr: &Spanned<Expr>| {
         let mut closed = true;
         crate::codegen::proof_lower::carrier_walk_expr_with_byte_payloads(
             expr,
@@ -409,6 +412,10 @@ fn runtime_provenance_is_closed(
                         fields,
                         ctor.element_interval,
                         byte_payloads,
+                    ) || crate::codegen::proof_lower::construct_arg_preserves_list_refinement(
+                        fields,
+                        &ctor.carrier_field,
+                        nominal_params,
                     ));
                 if !independently_safe {
                     closed = false;
@@ -420,11 +427,21 @@ fn runtime_provenance_is_closed(
 
     let scan_fn = |scope: Option<&str>, fd: &FnDef| {
         let inside_gate = scope == ctor.scope.as_deref() && fd.name == ctor.constructor_fn;
+        let nominal_params: HashSet<String> = fd
+            .params
+            .iter()
+            .filter(|(_, ty)| {
+                crate::types::parse_type_str(ty)
+                    .named_name()
+                    .is_some_and(|name| name.rsplit('.').next() == Some(ctor.type_name.as_str()))
+            })
+            .map(|(name, _)| name.clone())
+            .collect();
         fd.body.stmts().iter().all(|stmt| {
             let expr = match stmt {
                 crate::ast::Stmt::Binding(_, _, value) | crate::ast::Stmt::Expr(value) => value,
             };
-            scan_expr(scope, inside_gate, expr)
+            scan_expr(scope, inside_gate, &nominal_params, expr)
         })
     };
 
@@ -432,7 +449,9 @@ fn runtime_provenance_is_closed(
         let closed = match item {
             TopLevel::FnDef(fd) => scan_fn(None, fd),
             TopLevel::Stmt(crate::ast::Stmt::Binding(_, _, value))
-            | TopLevel::Stmt(crate::ast::Stmt::Expr(value)) => scan_expr(None, false, value),
+            | TopLevel::Stmt(crate::ast::Stmt::Expr(value)) => {
+                scan_expr(None, false, &HashSet::new(), value)
+            }
             _ => true,
         };
         if !closed {

@@ -17,6 +17,7 @@ use crate::ast::Type;
 use super::CapabilityWasmGcPlan;
 use super::WasmGcError;
 use super::maps::MapKVHelpers;
+use super::packed_sequences::PackedSequenceOps;
 use super::types::{TypeRegistry, aver_to_wasm};
 
 #[derive(Debug, Clone)]
@@ -101,12 +102,17 @@ pub(super) struct IntAbiHelpers {
     pub(super) to_decimal: u32,
 }
 
+pub(super) struct CollectionAbiHelpers<'a> {
+    pub(super) maps: &'a dyn Fn(&str) -> Option<MapKVHelpers>,
+    pub(super) packed_sequences: &'a dyn Fn(&str) -> Option<PackedSequenceOps>,
+}
+
 impl CapabilityAbi {
     pub(super) fn allocate(
         plan: Option<&CapabilityWasmGcPlan>,
         registry: &TypeRegistry,
         int_helpers: Option<IntAbiHelpers>,
-        map_helpers: &impl Fn(&str) -> Option<MapKVHelpers>,
+        collection_helpers: &CollectionAbiHelpers<'_>,
         types: &mut TypeSection,
         next_type_idx: &mut u32,
         next_fn_idx: &mut u32,
@@ -135,7 +141,7 @@ impl CapabilityAbi {
                 ty,
                 registry,
                 int_helpers,
-                map_helpers,
+                collection_helpers,
                 types,
                 next_type_idx,
                 next_fn_idx,
@@ -150,7 +156,7 @@ impl CapabilityAbi {
         ty: &Type,
         registry: &TypeRegistry,
         int_helpers: Option<IntAbiHelpers>,
-        map_helpers: &impl Fn(&str) -> Option<MapKVHelpers>,
+        collection_helpers: &CollectionAbiHelpers<'_>,
         types: &mut TypeSection,
         next_type_idx: &mut u32,
         next_fn_idx: &mut u32,
@@ -399,7 +405,7 @@ impl CapabilityAbi {
                 // wasm-gc map monomorphisation registry uses its compact
                 // canonical spelling. Both denote the same boundary type.
                 let compact = canonical.replace(' ', "");
-                let helpers = map_helpers(&compact).ok_or_else(|| {
+                let helpers = (collection_helpers.maps)(&compact).ok_or_else(|| {
                     WasmGcError::Validation(format!("capability ABI lacks `{canonical}` helpers"))
                 })?;
                 for (suffix, fn_idx) in [
@@ -417,7 +423,43 @@ impl CapabilityAbi {
                 if registry.is_capability_resource(name) {
                     return Ok(());
                 }
-                if let Some(type_idx) = registry.record_type_idx(name) {
+                if registry.packed_sequence(name).is_some() {
+                    let helpers = (collection_helpers.packed_sequences)(name).ok_or_else(|| {
+                        WasmGcError::Validation(format!(
+                            "capability ABI lacks packed `{name}` helpers"
+                        ))
+                    })?;
+                    let fields = registry
+                        .record_fields
+                        .get(registry.canonical_type_name(name))
+                        .or_else(|| {
+                            name.rsplit_once('.')
+                                .and_then(|(_, bare)| registry.record_fields.get(bare))
+                        })
+                        .ok_or_else(|| {
+                            WasmGcError::Validation(format!(
+                                "capability ABI lacks packed `{name}` fields"
+                            ))
+                        })?;
+                    let [(field_name, field_type)] = fields.as_slice() else {
+                        return Err(WasmGcError::Validation(format!(
+                            "capability ABI packed `{name}` must have one carrier field"
+                        )));
+                    };
+                    if field_type.replace(' ', "") != "List<Int>" {
+                        return Err(WasmGcError::Validation(format!(
+                            "capability ABI packed `{name}` carrier must be List<Int>"
+                        )));
+                    }
+                    self.aliases.push((format!("{stem}_make"), helpers.pack));
+                    self.aliases.push((
+                        format!(
+                            "{stem}_field_{}",
+                            crate::codegen::wasip2::plan::encode_interface_identifier(field_name)
+                        ),
+                        helpers.unpack,
+                    ));
+                } else if let Some(type_idx) = registry.record_type_idx(name) {
                     let fields = registry
                         .record_fields
                         .get(name)

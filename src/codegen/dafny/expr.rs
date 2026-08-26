@@ -251,10 +251,13 @@ pub fn emit_expr(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
             // `X(value := carrier)` collapses to the carrier expression.
             // Dafny narrowing (via `if pred then ... else ...`) is
             // what closes the refinement obligation at the call site.
-            if crate::codegen::common::find_refined_type(ctx, type_name).is_some()
+            if let Some(decl) = crate::codegen::common::find_refined_type(ctx, type_name)
                 && fields.len() == 1
             {
                 let (_, value_expr) = &fields[0];
+                if let Some(value) = packed_refinement_value(value_expr, decl, ctx) {
+                    return value;
+                }
                 return emit_expr(value_expr, ctx);
             }
             let field_strs: Vec<String> = fields
@@ -306,6 +309,55 @@ pub fn emit_expr(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
             let arg_strs: Vec<String> = args.iter().map(|a| emit_expr(a, ctx)).collect();
             format!("{}({})", aver_name_to_dafny(name), arg_strs.join(", "))
         }
+    }
+}
+
+pub(super) fn packed_refinement_helper_stem(type_name: &str) -> String {
+    format!("AverPacked{}", aver_name_to_dafny(type_name))
+}
+
+/// Re-express structural carrier operations through subtype-preserving Dafny
+/// functions. The accepted grammar deliberately matches the fail-closed
+/// packed-layout scan: same-nominal carrier projections composed only by
+/// concat/take/drop, none of which can introduce a new element.
+fn packed_refinement_value(
+    expr: &Spanned<ResolvedExpr>,
+    decl: &crate::ir::RefinedTypeDecl,
+    ctx: &CodegenContext,
+) -> Option<String> {
+    if !ctx.packed_sequence_layouts.contains_key(&decl.name) {
+        return None;
+    }
+    if let ResolvedExpr::Attr(base, field) = &expr.node
+        && field == &decl.carrier_field
+        && base
+            .ty()
+            .and_then(|ty| crate::codegen::common::find_refined_type_for_named(ctx, ty))
+            .is_some_and(|base_decl| std::ptr::eq(base_decl, decl))
+    {
+        return Some(emit_expr(base, ctx));
+    }
+    let ResolvedExpr::Call(ResolvedCallee::Builtin(name), args) = &expr.node else {
+        return None;
+    };
+    let stem = packed_refinement_helper_stem(&decl.name);
+    match (name.as_str(), args.as_slice()) {
+        ("List.concat", [left, right]) => Some(format!(
+            "{stem}Append({}, {})",
+            packed_refinement_value(left, decl, ctx)?,
+            packed_refinement_value(right, decl, ctx)?
+        )),
+        ("List.take", [source, count]) => Some(format!(
+            "{stem}Take({}, {})",
+            packed_refinement_value(source, decl, ctx)?,
+            emit_expr(count, ctx)
+        )),
+        ("List.drop", [source, count]) => Some(format!(
+            "{stem}Drop({}, {})",
+            packed_refinement_value(source, decl, ctx)?,
+            emit_expr(count, ctx)
+        )),
+        _ => None,
     }
 }
 

@@ -6,7 +6,7 @@
 //! or from a recording.
 
 use super::super::RunWasmGcHost;
-use super::lm::{lm_string_from_host, lm_string_to_host};
+use super::lm::{lm_result_bytes_from_host, lm_string_from_host, lm_string_to_host};
 
 pub(crate) fn host_option_string_some(
     caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
@@ -645,14 +645,28 @@ pub(crate) fn host_result_err_list_int(
     })
 }
 
-/// Build a `Result<Bytes, String>::Ok(bytes)` ref. Each response byte
-/// is lifted through the module's canonical `$AverInt` constructor;
-/// the exported factory wraps the completed private list in `Bytes`.
+/// Build a `Result<Bytes, String>::Ok(bytes)` ref. Packed and boxed modules
+/// copy the whole payload through linear memory in one boundary crossing. The
+/// element-wise path is retained as a defensive fallback for older modules.
 pub(crate) fn host_result_ok_bytes(
     caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
     items: &[i64],
 ) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
     use wasmtime::Val;
+    let bytes = items
+        .iter()
+        .map(|item| {
+            u8::try_from(*item).map_err(|_| {
+                wasmtime::Error::msg(format!(
+                    "Bytes provider returned an octet outside 0..255: {item}"
+                ))
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if let Some(result) = lm_result_bytes_from_host(caller, &bytes)? {
+        return Ok(Some(result));
+    }
+
     let nil = caller
         .get_export("__rt_list_int_nil")
         .and_then(|e| e.into_func());

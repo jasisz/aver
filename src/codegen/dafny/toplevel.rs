@@ -216,9 +216,12 @@ pub fn emit_type_def_in_scope(
                 let bind = aver_name_to_dafny(&decl.predicate_param);
                 let carrier = emit_type_in_scope(&decl.carrier_type, scope);
                 let witness = decl.witness.clone().unwrap_or_else(|| "*".to_string());
-                return Some(format!(
-                    "type {name} = {bind}: {carrier} | {predicate} witness {witness}\n"
-                ));
+                let definition =
+                    format!("type {name} = {bind}: {carrier} | {predicate} witness {witness}\n");
+                let Some(support) = emit_packed_refinement_support(name, ctx) else {
+                    return Some(definition);
+                };
+                return Some(format!("{definition}\n{support}"));
             }
             let field_strs: Vec<String> = fields
                 .iter()
@@ -238,6 +241,38 @@ pub fn emit_type_def_in_scope(
             ))
         }
     }
+}
+
+/// The proof backend models packed `List<Int>` refinements as Dafny subset
+/// types. Recursive structural helpers preserve that subset by construction,
+/// so concat/take/drop need neither an axiom nor an impossible default value.
+fn emit_packed_refinement_support(name: &str, ctx: &CodegenContext) -> Option<String> {
+    if !ctx.packed_sequence_layouts.contains_key(name) {
+        return None;
+    }
+    let stem = super::expr::packed_refinement_helper_stem(name);
+    Some(format!(
+        r#"function {stem}Append(a: {name}, b: {name}): {name}
+  decreases |a|
+{{
+  if |a| == 0 then b else [a[0]] + {stem}Append(a[1..], b)
+}}
+
+function {stem}Take(a: {name}, n: int): {name}
+  decreases |a|
+{{
+  if |a| == 0 || n <= 0 then []
+  else [a[0]] + {stem}Take(a[1..], n - 1)
+}}
+
+function {stem}Drop(a: {name}, n: int): {name}
+  decreases |a|
+{{
+  if |a| == 0 || n <= 0 then a
+  else {stem}Drop(a[1..], n - 1)
+}}
+"#
+    ))
 }
 
 /// Emit a recursive fn whose shape is outside the proof subset

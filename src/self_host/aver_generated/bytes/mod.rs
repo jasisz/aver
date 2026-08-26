@@ -187,6 +187,58 @@ pub fn octets(bytes: &Bytes) -> aver_rt::AverIntList {
     (bytes.values).to_int_list().clone()
 }
 
+/// The empty byte sequence.
+pub fn empty() -> Bytes {
+    crate::cancel_checkpoint();
+    crate::aver_generated::bytes::Bytes {
+        values: aver_rt::into_packed_u8(aver_rt::AverIntList::empty())
+            .expect("proof-packed U8 construction escaped its refinement gate"),
+    }
+}
+
+/// The number of octets in a byte sequence.
+#[inline(always)]
+pub fn len(bytes: &Bytes) -> aver_rt::AverInt {
+    crate::cancel_checkpoint();
+    aver_rt::AverInt::from_i64((bytes.values).to_int_list().len() as i64)
+}
+
+/// The octets of left followed by the octets of right.
+pub fn concat(left: &Bytes, right: &Bytes) -> Bytes {
+    crate::cancel_checkpoint();
+    crate::aver_generated::bytes::Bytes {
+        values: aver_rt::into_packed_u8(aver_rt::AverIntList::concat(
+            &(left.values).to_int_list().clone(),
+            &(right.values).to_int_list().clone(),
+        ))
+        .expect("proof-packed U8 construction escaped its refinement gate"),
+    }
+}
+
+/// At most count octets from the front; non-positive counts give empty bytes.
+pub fn take(bytes: &Bytes, count: aver_rt::AverInt) -> Bytes {
+    crate::cancel_checkpoint();
+    crate::aver_generated::bytes::Bytes {
+        values: aver_rt::into_packed_u8({
+            let __n = aver_rt::clamp_list_count(&(count));
+            ((bytes.values).to_int_list()).take_first(__n)
+        })
+        .expect("proof-packed U8 construction escaped its refinement gate"),
+    }
+}
+
+/// The octets after count positions; non-positive counts preserve all bytes.
+pub fn drop(bytes: &Bytes, count: aver_rt::AverInt) -> Bytes {
+    crate::cancel_checkpoint();
+    crate::aver_generated::bytes::Bytes {
+        values: aver_rt::into_packed_u8({
+            let __n = aver_rt::clamp_list_count(&(count));
+            ((bytes.values).to_int_list()).drop_first(__n)
+        })
+        .expect("proof-packed U8 construction escaped its refinement gate"),
+    }
+}
+
 /// Parse hexadecimal pairs into octets from left to right.
 #[inline(always)]
 pub fn parseHexChars(

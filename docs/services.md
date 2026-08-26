@@ -41,6 +41,11 @@ computed element, or a literal outside `0..=255`. See
 |---|---|---|
 | `Bytes.fromList` | `List<Int> -> Result<Bytes, String>` | Validates every octet; `Result.Err` names the offending value and its index. An all-literal in-range list argument discharges to plain `Bytes` — see below |
 | `Bytes.octets` | `Bytes -> List<Int>` | Exposes validated values |
+| `Bytes.empty` | `() -> Bytes` | Empty byte sequence |
+| `Bytes.len` | `Bytes -> Int` | Number of octets |
+| `Bytes.concat` | `(Bytes, Bytes) -> Bytes` | Concatenates without revalidation |
+| `Bytes.take` | `(Bytes, Int) -> Bytes` | Prefix of at most `count` octets |
+| `Bytes.drop` | `(Bytes, Int) -> Bytes` | Octets after `count` positions |
 | `Bytes.fromHex` | `String -> Result<Bytes, String>` | Even length, case-insensitive, no `0x` prefix |
 | `Bytes.toHex` | `Bytes -> String` | Total, lowercase output |
 | `Crypto.Digest32.fromBytes` | `Bytes -> Result<Digest32, String>` | Requires exactly 32 bytes |

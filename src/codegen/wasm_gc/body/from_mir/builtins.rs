@@ -58,7 +58,7 @@ pub(crate) fn lift_i64_result_to_aint(
 /// receiving helper clamps out-of-range counts/indices (`List.take` /
 /// `List.drop` counts, `String.charAt` / `String.slice` indices). A no-op
 /// passthrough when `bignum` is off (the arg is already i64).
-fn emit_aint_arg_as_i64_sat(
+pub(crate) fn emit_aint_arg_as_i64_sat(
     func: &mut Function,
     arg: &Spanned<MirExpr>,
     slots: &SlotTable,
@@ -2138,6 +2138,22 @@ pub(crate) fn emit_mir_list_builtin(
             };
             if !arity_ok {
                 return Ok(MirBuiltinEmit::NotHandled);
+            }
+            // A carrier projection immediately consumed by `List.len` does
+            // not need to become a linked `List<Int>` first. The nominal is
+            // already an array, so read its length in O(1). This is generic
+            // over every proof-packed structural refinement; `Bytes` merely
+            // happens to be the first standard-library consumer.
+            if matches!(dotted, "List.len" | "List.length")
+                && let Some((base, _)) = mir_packed_carrier_projection(&args[0], ctx)
+            {
+                if emit_mir_expr(func, base, slots, ctx)?.is_none() {
+                    return Ok(MirBuiltinEmit::Fallback);
+                }
+                func.instruction(&Instruction::ArrayLen);
+                func.instruction(&Instruction::I64ExtendI32U);
+                lift_i64_result_to_aint(func, ctx)?;
+                return Ok(MirBuiltinEmit::Produced(true));
             }
             let list_aver = aver_type_str_of(&args[0]);
             let canonical = normalize_compound(&list_aver);

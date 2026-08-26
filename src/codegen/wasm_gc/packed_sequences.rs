@@ -2,8 +2,9 @@
 //!
 //! A packed nominal value is an array in wasm, while Aver code inside the
 //! defining module still constructs and projects its declared `List<Int>`
-//! carrier. Two small per-type helpers make that boundary explicit. They are
-//! generic over the proof-selected integer width and never key on `Bytes`.
+//! carrier. Per-type helpers make that boundary explicit and keep preserving
+//! `concat` / `take` / `drop` pipelines packed. They are generic over the
+//! proof-selected integer width and never key on `Bytes`.
 
 use std::collections::HashMap;
 
@@ -20,12 +21,15 @@ use crate::codegen::proof_lower::PackedIntElement;
 pub(super) struct PackedSequenceOps {
     pub(super) pack: u32,
     pub(super) unpack: u32,
+    pub(super) concat: u32,
+    pub(super) take: u32,
+    pub(super) drop: u32,
 }
 
 #[derive(Default)]
 pub(super) struct PackedSequenceHelperRegistry {
     ops: HashMap<String, PackedSequenceOps>,
-    type_indices: HashMap<String, (u32, u32)>,
+    type_indices: HashMap<String, (u32, u32, u32, u32)>,
     order: Vec<String>,
 }
 
@@ -41,14 +45,34 @@ impl PackedSequenceHelperRegistry {
             *next_type_idx += 1;
             let unpack_type = *next_type_idx;
             *next_type_idx += 1;
+            let concat_type = *next_type_idx;
+            *next_type_idx += 1;
+            let slice_type = *next_type_idx;
+            *next_type_idx += 1;
             let pack = *next_fn_idx;
             *next_fn_idx += 1;
             let unpack = *next_fn_idx;
             *next_fn_idx += 1;
-            self.ops
-                .insert(name.clone(), PackedSequenceOps { pack, unpack });
-            self.type_indices
-                .insert(name.clone(), (pack_type, unpack_type));
+            let concat = *next_fn_idx;
+            *next_fn_idx += 1;
+            let take = *next_fn_idx;
+            *next_fn_idx += 1;
+            let drop = *next_fn_idx;
+            *next_fn_idx += 1;
+            self.ops.insert(
+                name.clone(),
+                PackedSequenceOps {
+                    pack,
+                    unpack,
+                    concat,
+                    take,
+                    drop,
+                },
+            );
+            self.type_indices.insert(
+                name.clone(),
+                (pack_type, unpack_type, concat_type, slice_type),
+            );
             self.order.push(name.clone());
         }
         // Register the flatten-derived qualified aliases as extra lookup
@@ -98,15 +122,22 @@ impl PackedSequenceHelperRegistry {
             let packed_ref = ref_ty(packed.type_idx);
             types.ty().function([list_ref], [packed_ref]);
             types.ty().function([packed_ref], [list_ref]);
+            types.ty().function([packed_ref, packed_ref], [packed_ref]);
+            types
+                .ty()
+                .function([packed_ref, ValType::I64], [packed_ref]);
         }
         Ok(())
     }
 
     pub(super) fn emit_function_section(&self, funcs: &mut FunctionSection) {
         for name in &self.order {
-            let (pack, unpack) = self.type_indices[name];
+            let (pack, unpack, concat, slice) = self.type_indices[name];
             funcs.function(pack);
             funcs.function(unpack);
+            funcs.function(concat);
+            funcs.function(slice);
+            funcs.function(slice);
         }
     }
 
@@ -118,9 +149,147 @@ impl PackedSequenceHelperRegistry {
         for name in &self.order {
             codes.function(&emit_pack(name, registry)?);
             codes.function(&emit_unpack(name, registry)?);
+            codes.function(&emit_concat(name, registry)?);
+            codes.function(&emit_take(name, registry)?);
+            codes.function(&emit_drop(name, registry)?);
         }
         Ok(())
     }
+}
+
+fn emit_concat(name: &str, registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    let packed = registry
+        .packed_sequence(name)
+        .ok_or_else(|| WasmGcError::Validation(format!("packed type `{name}` missing")))?;
+    let packed_ref = ref_ty(packed.type_idx);
+    // params: 0=left, 1=right. locals: 2=left_len, 3=right_len, 4=out.
+    let mut f = Function::new([(2, ValType::I32), (1, packed_ref)]);
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::ArrayLen);
+    f.instruction(&Instruction::LocalSet(2));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::ArrayLen);
+    f.instruction(&Instruction::LocalSet(3));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::ArrayNewDefault(packed.type_idx));
+    f.instruction(&Instruction::LocalSet(4));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::ArrayCopy {
+        array_type_index_dst: packed.type_idx,
+        array_type_index_src: packed.type_idx,
+    });
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::ArrayCopy {
+        array_type_index_dst: packed.type_idx,
+        array_type_index_src: packed.type_idx,
+    });
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+fn emit_take(name: &str, registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    let packed = registry
+        .packed_sequence(name)
+        .ok_or_else(|| WasmGcError::Validation(format!("packed type `{name}` missing")))?;
+    let packed_ref = ref_ty(packed.type_idx);
+    // params: 0=input, 1=count. locals: 2=len, 3=out_len, 4=out.
+    let mut f = Function::new([(2, ValType::I32), (1, packed_ref)]);
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::ArrayLen);
+    f.instruction(&Instruction::LocalSet(2));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(3));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::I64Const(0));
+    f.instruction(&Instruction::I64GtS);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I64ExtendI32U);
+    f.instruction(&Instruction::I64LtU);
+    f.instruction(&Instruction::If(BlockType::Result(ValType::I32)));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::I32WrapI64);
+    f.instruction(&Instruction::Else);
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::LocalSet(3));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::ArrayNewDefault(packed.type_idx));
+    f.instruction(&Instruction::LocalSet(4));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::ArrayCopy {
+        array_type_index_dst: packed.type_idx,
+        array_type_index_src: packed.type_idx,
+    });
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+fn emit_drop(name: &str, registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    let packed = registry
+        .packed_sequence(name)
+        .ok_or_else(|| WasmGcError::Validation(format!("packed type `{name}` missing")))?;
+    let packed_ref = ref_ty(packed.type_idx);
+    // params: 0=input, 1=count. locals: 2=len, 3=offset, 4=out_len, 5=out.
+    let mut f = Function::new([(3, ValType::I32), (1, packed_ref)]);
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::ArrayLen);
+    f.instruction(&Instruction::LocalSet(2));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(3));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::I64Const(0));
+    f.instruction(&Instruction::I64GtS);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I64ExtendI32U);
+    f.instruction(&Instruction::I64LtU);
+    f.instruction(&Instruction::If(BlockType::Result(ValType::I32)));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::I32WrapI64);
+    f.instruction(&Instruction::Else);
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::LocalSet(3));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::I32Sub);
+    f.instruction(&Instruction::LocalSet(4));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::ArrayNewDefault(packed.type_idx));
+    f.instruction(&Instruction::LocalSet(5));
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::ArrayCopy {
+        array_type_index_dst: packed.type_idx,
+        array_type_index_src: packed.type_idx,
+    });
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::End);
+    Ok(f)
 }
 
 fn ref_ty(type_idx: u32) -> ValType {
