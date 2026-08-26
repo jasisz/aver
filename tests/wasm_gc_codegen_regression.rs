@@ -251,7 +251,37 @@ fn tcp_poll_and_read_some_import_host_functions_and_validate() {
     intent = "Compile readiness polling and bounded stream reads."
     depends [Bytes]
     exposes [ready, chunk]
-    effects [Tcp.poll, Tcp.readSome]
+    effects [Tcp.beginConnect, Tcp.dialled, Tcp.listen, Tcp.accept, Tcp.poll, Tcp.readSome, Tcp.closeDial, Tcp.closeListener]
+
+fn begin(host: String, port: Int) -> Result<Tcp.Dial, String>
+    ? "Begin one non-blocking connection attempt."
+    ! [Tcp.beginConnect]
+    Tcp.beginConnect(host, port)
+
+fn finish(dial: Tcp.Dial) -> Result<Option<Tcp.Connection>, String>
+    ? "Inspect one ready connection attempt."
+    ! [Tcp.dialled]
+    Tcp.dialled(dial)
+
+fn listen(port: Int) -> Result<Tcp.Listener, String>
+    ? "Open one readiness-polled listener."
+    ! [Tcp.listen]
+    Tcp.listen(port, 8)
+
+fn accept(listener: Tcp.Listener) -> Result<Option<Tcp.Connection>, String>
+    ? "Accept one connection after readiness."
+    ! [Tcp.accept]
+    Tcp.accept(listener)
+
+fn abandon(dial: Tcp.Dial) -> Result<Unit, String>
+    ? "Close an unfinished connection attempt."
+    ! [Tcp.closeDial]
+    Tcp.closeDial(dial)
+
+fn stop(listener: Tcp.Listener) -> Result<Unit, String>
+    ? "Close a readiness-polled listener."
+    ! [Tcp.closeListener]
+    Tcp.closeListener(listener)
 
 fn ready(sockets: Map<Int, Tcp.Socket>, timeoutMs: Int) -> Result<List<Int>, String>
     ? "Return caller IDs whose sockets can make progress without waiting."
@@ -274,19 +304,58 @@ fn chunk(conn: Tcp.Connection, maxBytes: Int) -> Result<Bytes, String>
 
     let mut poll_found = false;
     let mut read_some_found = false;
+    let mut poll_bridge = std::collections::BTreeSet::new();
     for payload in WasmParser::new(0).parse_all(&bytes) {
-        if let Payload::ImportSection(reader) = payload.expect("generated module must parse") {
-            for import in reader.into_imports().flatten() {
-                if import.module == "aver" && matches!(import.ty, wasmparser::TypeRef::Func(_)) {
-                    poll_found |= import.name == "tcp_poll";
-                    read_some_found |= import.name == "tcp_read_some";
+        match payload.expect("generated module must parse") {
+            Payload::ImportSection(reader) => {
+                for import in reader.into_imports().flatten() {
+                    if import.module == "aver" && matches!(import.ty, wasmparser::TypeRef::Func(_))
+                    {
+                        poll_found |= import.name == "tcp_poll";
+                        read_some_found |= import.name == "tcp_read_some";
+                    }
                 }
             }
+            Payload::ExportSection(reader) => {
+                for export in reader.into_iter().flatten() {
+                    if matches!(export.kind, wasmparser::ExternalKind::Func)
+                        && matches!(
+                            export.name,
+                            "__rt_tcp_poll_capacity"
+                                | "__rt_tcp_poll_key_at"
+                                | "__rt_tcp_poll_socket_at"
+                                | "__rt_tcp_socket_kind"
+                                | "__rt_tcp_socket_id"
+                                | "__rt_tcp_dial_id"
+                                | "__rt_tcp_listener_id"
+                        )
+                    {
+                        poll_bridge.insert(export.name.to_string());
+                    }
+                }
+            }
+            _ => {}
         }
     }
     assert!(
         poll_found && read_some_found,
         "Tcp.poll/Tcp.readSome must lower to aver.tcp_poll/aver.tcp_read_some host imports"
+    );
+    assert_eq!(
+        poll_bridge,
+        [
+            "__rt_tcp_poll_capacity",
+            "__rt_tcp_poll_key_at",
+            "__rt_tcp_poll_socket_at",
+            "__rt_tcp_dial_id",
+            "__rt_tcp_listener_id",
+            "__rt_tcp_socket_id",
+            "__rt_tcp_socket_kind",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect(),
+        "raw JavaScript hosts must be able to inspect every Tcp.poll map entry"
     );
 }
 
