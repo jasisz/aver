@@ -1622,7 +1622,7 @@ pub fn carrier_eligibility_demotions(
 /// `IntRange(value = -5)` (parsed as `Expr::Neg(Literal(Int))`). Any other
 /// shape (a parameter, a call, an arithmetic expression) is NOT a provable
 /// constant ⇒ returns `false` ⇒ the construct is treated as ungated.
-fn construct_arg_is_in_interval(
+pub(crate) fn construct_arg_is_in_interval(
     fields: &[(String, Spanned<Expr>)],
     iv: crate::ir::interval::Interval,
 ) -> bool {
@@ -1647,7 +1647,7 @@ fn construct_arg_is_in_interval(
 /// so wrapping that payload is another refinement gate rather than an escape.
 /// Keep this structural and interval-exact: a byte builder cannot establish a
 /// narrower refinement such as 0..=127.
-fn construct_arg_is_finalized_bytes(
+pub(crate) fn construct_arg_is_finalized_bytes(
     fields: &[(String, Spanned<Expr>)],
     iv: crate::ir::interval::Interval,
     byte_payloads: &HashSet<String>,
@@ -1668,7 +1668,7 @@ fn construct_arg_is_finalized_bytes(
 /// compiler-internal `__byt_finalize : ByteBuilder -> Result<List<Int>,
 /// String>` boundary. Facts are scoped to the matching `Result.Ok` arm and
 /// therefore cannot leak across an unrelated constructor site.
-fn carrier_walk_expr_with_byte_payloads(
+pub(crate) fn carrier_walk_expr_with_byte_payloads(
     expr: &Spanned<Expr>,
     byte_payloads: &HashSet<String>,
     visit: &mut impl FnMut(&Expr, &HashSet<String>),

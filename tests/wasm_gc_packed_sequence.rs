@@ -321,12 +321,20 @@ fn fromList(xs: List<Int>) -> Result<Octets, String>
 fn bypass(xs: List<Int>) -> Octets
     Octets(values = xs)
 
+fn toList(value: Octets) -> List<Int>
+    value.values
+
+fn roundTrip(value: Octets) -> Result<Octets, String>
+    fromList(toList(value))
+
 fn main() -> Unit
     ! [Console.print]
     value = bypass([256])
-    match value.values
-        [head, .._] -> Console.print("{head}")
-        [] -> Console.print("empty")
+    match roundTrip(value)
+        Result.Ok(_) -> Console.print("unexpected")
+        Result.Err(error) -> match value.values
+            [head, .._] -> Console.print("{head}:{error}")
+            [] -> Console.print("empty:{error}")
 "#;
 
 #[test]
@@ -537,7 +545,50 @@ fn ungated_constructor_demotes_instead_of_truncating() {
     assert!(vm_ok, "VM failed: {vm}");
     assert!(wasm_ok, "wasm failed: {wasm}");
     assert_eq!(wasm, vm);
-    assert_eq!(vm, "256");
+    assert_eq!(vm, "256:oob");
+}
+
+// The real standard-library Bytes refinement through every provenance-
+// preserving operation. The first construction is deliberately dynamic, so
+// it still executes the ordinary gate; only lists projected from the resulting
+// nominal may discharge. `prepend(999, ...)` is the invalidation trip-wire and
+// must retain Bytes.fromList's exact first-offender diagnostic.
+const BYTES_PROVENANCE: &str = r#"module M
+    intent = "exercise runtime byte-list provenance across VM and wasm-gc"
+    depends [Bytes]
+    effects [Console]
+
+fn scenario() -> Result<String, String>
+    left = Bytes.fromList(List.concat([0, 1], [2]))?
+    right = Bytes.fromList(List.concat([170], [187]))?
+    direct = Bytes.fromList(Bytes.octets(left))?
+    combined = Bytes.fromList(List.concat(Bytes.octets(direct), Bytes.octets(right)))?
+    sliced = Bytes.fromList(List.drop(List.take(Bytes.octets(combined), 4), 1))?
+    match Bytes.fromList(List.prepend(999, Bytes.octets(sliced)))
+        Result.Ok(_) -> Result.Err("prepend unexpectedly retained provenance")
+        Result.Err(error) -> Result.Ok("{Bytes.toHex(direct)}/{Bytes.toHex(combined)}/{Bytes.toHex(sliced)}/{error}")
+
+fn main() -> Unit
+    ! [Console.print]
+    match scenario()
+        Result.Ok(text) -> Console.print(text)
+        Result.Err(error) -> Console.print("failed:{error}")
+"#;
+
+#[test]
+fn byte_list_provenance_matches_vm_packed_and_boxed_wasm() {
+    let (vm_ok, vm) = run(BYTES_PROVENANCE, false, true);
+    let (packed_ok, packed) = run(BYTES_PROVENANCE, true, true);
+    let (boxed_ok, boxed) = run(BYTES_PROVENANCE, true, false);
+    assert!(vm_ok, "VM failed: {vm}");
+    assert!(packed_ok, "packed wasm failed: {packed}");
+    assert!(boxed_ok, "boxed wasm failed: {boxed}");
+    assert_eq!(
+        vm,
+        "000102/000102aabb/0102aa/byte 999 at index 0 is outside 0..=255"
+    );
+    assert_eq!(packed, vm, "packed wasm-gc diverged from the VM");
+    assert_eq!(boxed, vm, "boxed wasm-gc diverged from the VM");
 }
 
 // ─── Literal smart-constructor discharge ────────────────────────────────
