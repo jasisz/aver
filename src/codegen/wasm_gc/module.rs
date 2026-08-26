@@ -263,7 +263,10 @@ pub(super) fn emit_module_with(
             .cloned()
             .map(crate::ir::hir::ResolvedTopLevel::FnDef)
             .collect();
-        crate::ir::mir::optimize(crate::ir::mir::lower_program(&mir_items))
+        crate::ir::mir::optimize::optimize_with_list_refinements(
+            crate::ir::mir::lower_program(&mir_items),
+            symbol_table.literal_refinements(),
+        )
     };
 
     let eligible_carriers: std::collections::HashSet<String> =

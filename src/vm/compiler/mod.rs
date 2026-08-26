@@ -135,11 +135,14 @@ fn did_not_lower_message(rfd: &ResolvedFnDef, file: &str) -> String {
 /// (3) algebraic-simplify rewrites Int identities, (4) bool-match-to-if
 /// rewrites two-arm `Bool` matches into `IfThenElse`, (5) branch-collapse
 /// drops the dead branch of a folded `IfThenElse`, (6) DCE drops unread
-/// `let _ = <pure>` chains. Shared by the entry compile and per-dep-module
-/// MIR builds so both backends see identical lowered+optimized shapes.
+/// `let _ = <pure>` chains, (7) closed list-refinement provenance removes
+/// unreachable validation walks, and (8) ownership refinement runs on the
+/// final local graph. Shared by the entry compile and per-dep-module MIR
+/// builds so both paths see identical lowered+optimized shapes.
 fn build_optimized_mir(
     items: &[ResolvedTopLevel],
     external_callers_possible: bool,
+    refinements: &crate::analysis::literal_refinement::LiteralRefinementTable,
 ) -> crate::ir::mir::MirProgram {
     let mut lowered = crate::ir::mir::lower_program(items);
     // Mark dependency-module fragments so `own_param_refine` bails: the
@@ -148,7 +151,7 @@ fn build_optimized_mir(
     // param. The entry compile (and the flattened wasm-gc / Rust builds)
     // see all callers, so graduation stays enabled there.
     lowered.external_callers_possible = external_callers_possible;
-    crate::ir::mir::optimize(lowered)
+    crate::ir::mir::optimize::optimize_with_list_refinements(lowered, refinements)
 }
 
 /// Run the four fabricating traversal passes — buffer-build deforestation,
@@ -261,7 +264,7 @@ fn compile_program_inner(
     // Dep-module fns build their own MIR in `integrate_module` (same
     // `build_optimized_mir` pipeline); the per-fn loop there dispatches
     // through the MIR walker with the dep's module scope.
-    let mir_built = build_optimized_mir(items, false);
+    let mir_built = build_optimized_mir(items, false, symbols.literal_refinements());
     let mir_program = &mir_built;
 
     let mut compiler = ProgramCompiler::new();
@@ -700,7 +703,7 @@ impl ProgramCompiler {
         // bytecode with the dep's module scope — the same path the entry
         // module takes. MIR is the only VM codegen path; a rejection
         // surfaces as a hard CompileError (no HIR fallback).
-        let dep_mir = build_optimized_mir(&dep_resolved, true);
+        let dep_mir = build_optimized_mir(&dep_resolved, true, entry_symbols.literal_refinements());
         let mut fn_idx = 0;
         for item in &dep_resolved {
             if let ResolvedTopLevel::FnDef(rfd) = item {

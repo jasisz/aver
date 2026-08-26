@@ -53,6 +53,7 @@ pub mod branch_collapse;
 pub mod const_fold;
 pub mod dead_code;
 pub mod inline;
+pub mod list_refinement;
 pub mod own_param;
 
 #[cfg(test)]
@@ -65,6 +66,7 @@ pub use branch_collapse::branch_collapse;
 pub use const_fold::const_fold;
 pub use dead_code::dead_code;
 pub use inline::inline_nullary_literals;
+pub use list_refinement::discharge_proven_lists;
 pub use own_param::{own_param_refine, own_param_refine_for_rust};
 
 /// The canonical Core-MIR optimization pipeline: the passes applied
@@ -84,4 +86,20 @@ pub fn optimize(program: crate::ir::mir::MirProgram) -> crate::ir::mir::MirProgr
     own_param_refine(dead_code(branch_collapse(bool_match_to_if(
         algebraic_simplify(const_fold(inline_nullary_literals(program))),
     ))))
+}
+
+/// Runtime-backend pipeline with the identity-pinned `List<Int>` refinement
+/// discharge inserted before ownership refinement. Proof exporters keep the
+/// ordinary [`optimize`] shape; VM and wasm-gc opt into this semantics-
+/// preserving removal of an unreachable validation walk.
+pub fn optimize_with_list_refinements(
+    program: crate::ir::mir::MirProgram,
+    refinements: &crate::analysis::literal_refinement::LiteralRefinementTable,
+) -> crate::ir::mir::MirProgram {
+    own_param_refine(discharge_proven_lists(
+        dead_code(branch_collapse(bool_match_to_if(algebraic_simplify(
+            const_fold(inline_nullary_literals(program)),
+        )))),
+        refinements,
+    ))
 }

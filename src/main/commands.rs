@@ -4580,11 +4580,15 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
     }
 
     // `--emit-ir-after=mir` — lower the resolved HIR to MIR and run the
-    // optimize pipeline (the exact lowering the VM backend consumes),
-    // then print the textual `MirProgram` dump.
+    // optimize pipeline including identity-pinned list-refinement
+    // provenance (the exact lowering the VM backend consumes), then print
+    // the textual `MirProgram` dump.
     if want_mir {
         use aver::ir::mir;
-        let program = mir::optimize(mir::lower_program(&pipeline_result.resolved_items));
+        let program = mir::optimize::optimize_with_list_refinements(
+            mir::lower_program(&pipeline_result.resolved_items),
+            pipeline_result.symbol_table.literal_refinements(),
+        );
         print!("{program}");
         return;
     }

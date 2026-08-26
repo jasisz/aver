@@ -82,7 +82,7 @@ use crate::ast::{Expr, FnDef, Spanned, TopLevel};
 use crate::codegen::ModuleInfo;
 use crate::ir::SymbolTable;
 use crate::ir::hir::{ResolveCtx, ResolvedCallee};
-use crate::ir::identity::{FnId, FnKey};
+use crate::ir::identity::{FnId, FnKey, TypeId, TypeKey};
 use crate::ir::interval::Interval;
 
 /// One recognized smart constructor over a `List<Int>` carrier whose
@@ -92,6 +92,9 @@ pub struct ListRefinementCtor {
     /// Resolved identity of the smart constructor — the ONLY key a call
     /// site is matched against. See the module-level invariant.
     pub fn_id: FnId,
+    /// Resolved identity of the refined nominal record. Runtime provenance
+    /// is compared by this identity, never by the source spelling.
+    pub type_id: TypeId,
     /// Dependency-module prefix that owns the refinement (`"Bytes"`), or
     /// `None` when the refinement is declared in the entry file.
     pub scope: Option<String>,
@@ -102,8 +105,15 @@ pub struct ListRefinementCtor {
     /// Bare source name of the smart constructor (`"fromList"`). Carried
     /// for diagnostics only; it is never a lookup key.
     pub constructor_fn: String,
+    /// Exact carrier-projector functions in the refinement's owning module.
+    /// Each has the structural body `fn p(x: T) -> List<Int> = x.<field>`.
+    pub projector_fns: Vec<FnId>,
     /// Interval proven for EVERY element of the carrier list.
     pub element_interval: Interval,
+    /// Whether every executable construction of this nominal is gated by the
+    /// smart constructor (or is independently proven safe). Only closed
+    /// refinements may seed runtime list provenance.
+    pub runtime_provenance: bool,
 }
 
 /// Every literal-dischargeable smart constructor in one compilation,
@@ -139,13 +149,12 @@ impl LiteralRefinementTable {
             return Self::default();
         }
 
-        let entry_fns: Vec<&FnDef> = entry_items
+        let entry_all_fns: Vec<&FnDef> = entry_items
             .iter()
             .filter_map(|item| match item {
                 TopLevel::FnDef(fd) => Some(fd),
                 _ => None,
             })
-            .filter(|fd| crate::codegen::common::is_pure_fn(fd))
             .collect();
 
         // A bare record name declared in more than one scope would make the
@@ -169,15 +178,19 @@ impl LiteralRefinementTable {
             if !is_int_list(&carrier_type) {
                 continue;
             }
-            let scope_fns: Vec<&FnDef> = match scope.as_deref() {
-                None => entry_fns.clone(),
+            let scope_all_fns: Vec<&FnDef> = match scope.as_deref() {
+                None => entry_all_fns.clone(),
                 Some(prefix) => dep_modules
                     .iter()
                     .filter(|m| m.prefix == prefix)
                     .flat_map(|m| m.fn_defs.iter())
-                    .filter(|fd| crate::codegen::common::is_pure_fn(fd))
                     .collect(),
             };
+            let scope_fns: Vec<&FnDef> = scope_all_fns
+                .iter()
+                .copied()
+                .filter(|fd| crate::codegen::common::is_pure_fn(fd))
+                .collect();
             let resolve = |expr: &Spanned<Expr>| {
                 let mut rctx = crate::ir::hir::ResolveCtx::new(symbols);
                 rctx.current_module = scope.clone();
@@ -200,6 +213,21 @@ impl LiteralRefinementTable {
             if !seen.insert((scope.clone(), type_name.clone())) {
                 continue;
             }
+            // `FnKey` is name-based within one scope. If another definition
+            // shares the smart constructor's name, its call sites collapse to
+            // the same identity and neither literal nor runtime discharge is
+            // sound. Requiring the sole definition to be pure also prevents a
+            // discharge from erasing declared effects.
+            let constructor_defs = scope_all_fns
+                .iter()
+                .filter(|fd| fd.name == constructor_fn)
+                .copied()
+                .collect::<Vec<_>>();
+            if constructor_defs.len() != 1
+                || !crate::codegen::common::is_pure_fn(constructor_defs[0])
+            {
+                continue;
+            }
             // The one key a call site is ever matched against. A
             // constructor the symbol table doesn't index cannot be named
             // by any resolved callee, so it is dropped rather than kept
@@ -211,13 +239,43 @@ impl LiteralRefinementTable {
             let Some(fn_id) = symbols.fn_id_of(&key) else {
                 continue;
             };
+            let type_key = match scope.as_deref() {
+                Some(prefix) => TypeKey::in_module(prefix, &type_name),
+                None => TypeKey::entry(&type_name),
+            };
+            let Some(type_id) = symbols.type_id_of(&type_key) else {
+                continue;
+            };
+            let projector_fns = scope_fns
+                .iter()
+                .filter(|fd| is_exact_carrier_projector(fd, &type_name, &carrier_field))
+                // Duplicate names collapse to one `FnId`; even a structurally
+                // exact sibling cannot prove which body a call will execute.
+                .filter(|fd| {
+                    scope_all_fns
+                        .iter()
+                        .filter(|candidate| candidate.name == fd.name)
+                        .count()
+                        == 1
+                })
+                .filter_map(|fd| {
+                    let key = match scope.as_deref() {
+                        Some(prefix) => FnKey::in_module(prefix, &fd.name),
+                        None => FnKey::entry(&fd.name),
+                    };
+                    symbols.fn_id_of(&key)
+                })
+                .collect();
             ctors.push(ListRefinementCtor {
                 fn_id,
+                type_id,
                 scope,
                 type_name,
                 carrier_field,
                 constructor_fn,
+                projector_fns,
                 element_interval,
+                runtime_provenance: false,
             });
         }
 
@@ -231,6 +289,15 @@ impl LiteralRefinementTable {
         }
         ctors.retain(|ctor| per_identity[&ctor.fn_id] == 1);
 
+        // A projected carrier proves its element interval only when every
+        // inhabitant of the nominal passed an equivalent gate. Keep literal
+        // discharge independent: an in-range literal remains dischargeable
+        // even when the surrounding module also constructs the record
+        // unsafely, but runtime provenance must fail closed in that case.
+        for ctor in &mut ctors {
+            ctor.runtime_provenance = runtime_provenance_is_closed(ctor, entry_items, dep_modules);
+        }
+
         Self { ctors }
     }
 
@@ -238,6 +305,12 @@ impl LiteralRefinementTable {
     /// skip the per-call-site work entirely.
     pub fn is_empty(&self) -> bool {
         self.ctors.is_empty()
+    }
+
+    /// Recognized constructors, including the identity-pinned runtime
+    /// provenance metadata consumed by the MIR optimization pass.
+    pub fn iter(&self) -> impl Iterator<Item = &ListRefinementCtor> {
+        self.ctors.iter()
     }
 
     /// Decide the discharge for one call site.
@@ -259,6 +332,134 @@ impl LiteralRefinementTable {
             .iter()
             .all(|k| ctor.element_interval.contains_point(*k))
             .then_some(ctor)
+    }
+}
+
+/// Recognize the representation-independent carrier projection that can seed
+/// a runtime provenance fact. The function must live in the same scope as the
+/// refinement (the caller supplies that pool), accept the nominal itself, and
+/// return its sole `List<Int>` field without any computation.
+fn is_exact_carrier_projector(fd: &FnDef, type_name: &str, carrier_field: &str) -> bool {
+    if !crate::codegen::common::is_pure_fn(fd) || fd.params.len() != 1 {
+        return false;
+    }
+    let (param_name, param_ty) = &fd.params[0];
+    let param_matches = matches!(
+        crate::types::parse_type_str(param_ty),
+        crate::types::Type::Named { name, .. }
+            if name.rsplit('.').next() == Some(type_name)
+    );
+    if !param_matches
+        || !matches!(
+            crate::types::parse_type_str(&fd.return_type),
+            crate::types::Type::List(inner) if *inner == crate::types::Type::Int
+        )
+    {
+        return false;
+    }
+    let [crate::ast::Stmt::Expr(body)] = fd.body.stmts() else {
+        return false;
+    };
+    matches!(
+        &body.node,
+        Expr::Attr(base, field)
+            if field == carrier_field
+                && matches!(
+                    &base.node,
+                    Expr::Ident(name) | Expr::Resolved { name, .. } if name == param_name
+                )
+    )
+}
+
+/// Prove that a nominal's carrier invariant is closed over every source-level
+/// construction site. Opaque access prevents callers from constructing the
+/// record, but its own module may still bypass the smart constructor. One such
+/// site invalidates runtime provenance for the whole nominal.
+fn runtime_provenance_is_closed(
+    ctor: &ListRefinementCtor,
+    entry_items: &[TopLevel],
+    dep_modules: &[ModuleInfo],
+) -> bool {
+    let scan_expr = |scope: Option<&str>, inside_gate: bool, expr: &Spanned<Expr>| {
+        let mut closed = true;
+        crate::codegen::proof_lower::carrier_walk_expr_with_byte_payloads(
+            expr,
+            &HashSet::new(),
+            &mut |node, byte_payloads| {
+                if !closed {
+                    return;
+                }
+                let (spelling, fields, is_update) = match node {
+                    Expr::RecordCreate { type_name, fields } => {
+                        (type_name.as_str(), fields.as_slice(), false)
+                    }
+                    Expr::RecordUpdate {
+                        type_name, updates, ..
+                    } => (type_name.as_str(), updates.as_slice(), true),
+                    _ => return,
+                };
+                if !record_spelling_denotes_ctor(ctor, scope, spelling) || inside_gate {
+                    return;
+                }
+                let independently_safe = !is_update
+                    && (crate::codegen::proof_lower::construct_arg_is_in_interval(
+                        fields,
+                        ctor.element_interval,
+                    ) || crate::codegen::proof_lower::construct_arg_is_finalized_bytes(
+                        fields,
+                        ctor.element_interval,
+                        byte_payloads,
+                    ));
+                if !independently_safe {
+                    closed = false;
+                }
+            },
+        );
+        closed
+    };
+
+    let scan_fn = |scope: Option<&str>, fd: &FnDef| {
+        let inside_gate = scope == ctor.scope.as_deref() && fd.name == ctor.constructor_fn;
+        fd.body.stmts().iter().all(|stmt| {
+            let expr = match stmt {
+                crate::ast::Stmt::Binding(_, _, value) | crate::ast::Stmt::Expr(value) => value,
+            };
+            scan_expr(scope, inside_gate, expr)
+        })
+    };
+
+    for item in entry_items {
+        let closed = match item {
+            TopLevel::FnDef(fd) => scan_fn(None, fd),
+            TopLevel::Stmt(crate::ast::Stmt::Binding(_, _, value))
+            | TopLevel::Stmt(crate::ast::Stmt::Expr(value)) => scan_expr(None, false, value),
+            _ => true,
+        };
+        if !closed {
+            return false;
+        }
+    }
+    for module in dep_modules {
+        for fd in &module.fn_defs {
+            if !scan_fn(Some(module.prefix.as_str()), fd) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+fn record_spelling_denotes_ctor(
+    ctor: &ListRefinementCtor,
+    current_scope: Option<&str>,
+    spelling: &str,
+) -> bool {
+    if current_scope == ctor.scope.as_deref() && spelling == ctor.type_name {
+        return true;
+    }
+    match ctor.scope.as_deref() {
+        Some(prefix) => spelling == format!("{prefix}.{}", ctor.type_name),
+        None => false,
     }
 }
 
@@ -529,15 +730,21 @@ fn go() -> Int
         let fn_id = symbols
             .fn_id_of(&FnKey::in_module("Octets", "fromList"))
             .expect("Octets.fromList must be indexed");
+        let type_id = symbols
+            .type_id_of(&TypeKey::in_module("Octets", "Octets"))
+            .expect("Octets type must be indexed");
         assert_eq!(
             symbols.literal_refinements().ctors,
             vec![ListRefinementCtor {
                 fn_id,
+                type_id,
                 scope: Some("Octets".to_string()),
                 type_name: "Octets".to_string(),
                 carrier_field: "values".to_string(),
                 constructor_fn: "fromList".to_string(),
+                projector_fns: Vec::new(),
                 element_interval: Interval::between(0, 255),
+                runtime_provenance: true,
             }]
         );
     }
@@ -548,15 +755,68 @@ fn go() -> Int
             CONSUMER,
             &[("Bytes", include_str!("../../stdlib/bytes.av"))],
         );
+        let bytes = symbols
+            .literal_refinements()
+            .ctors
+            .iter()
+            .find(|c| c.type_name == "Bytes")
+            .expect("Bytes refinement");
+        assert_eq!(bytes.element_interval, Interval::between(0, 255));
+        assert!(bytes.runtime_provenance);
         assert_eq!(
-            symbols
-                .literal_refinements()
-                .ctors
-                .iter()
-                .find(|c| c.type_name == "Bytes")
-                .map(|c| c.element_interval),
-            Some(Interval::between(0, 255))
+            bytes.projector_fns,
+            vec![
+                symbols
+                    .fn_id_of(&FnKey::in_module("Bytes", "octets"))
+                    .expect("Bytes.octets identity")
+            ]
         );
+    }
+
+    #[test]
+    fn an_ungated_record_constructor_disables_runtime_provenance_only() {
+        let unsafe_octets = format!(
+            "{OCTETS}\n\nfn octets(value: Octets) -> List<Int>\n    value.values\n\nfn bypass(xs: List<Int>) -> Octets\n    Octets(values = xs)\n"
+        );
+        let symbols = symbols_for(CONSUMER, &[("Octets", &unsafe_octets)]);
+        let ctor = symbols
+            .literal_refinements()
+            .ctors
+            .iter()
+            .find(|ctor| ctor.type_name == "Octets")
+            .expect("literal refinement still exists");
+        assert!(!ctor.runtime_provenance);
+        assert_eq!(ctor.projector_fns.len(), 1);
+        assert!(discharges_from(&symbols, None, "Octets.fromList([1, 2])"));
+    }
+
+    #[test]
+    fn a_duplicate_projector_name_cannot_seed_runtime_provenance() {
+        let ambiguous_octets = format!(
+            "{OCTETS}\n\nfn octets(value: Octets) -> List<Int>\n    value.values\n\nfn octets(value: Octets) -> List<Int>\n    List.prepend(999, value.values)\n"
+        );
+        let symbols = symbols_for(CONSUMER, &[("Octets", &ambiguous_octets)]);
+        let ctor = symbols
+            .literal_refinements()
+            .ctors
+            .iter()
+            .find(|ctor| ctor.type_name == "Octets")
+            .expect("literal refinement still exists");
+        assert!(ctor.runtime_provenance);
+        assert!(ctor.projector_fns.is_empty());
+    }
+
+    #[test]
+    fn an_ungated_top_level_constructor_disables_runtime_provenance() {
+        let unsafe_octets = format!("{OCTETS}\n\nunsafe = Octets(values = [256])\n");
+        let symbols = symbols_for(&unsafe_octets, &[]);
+        let ctor = symbols
+            .literal_refinements()
+            .ctors
+            .iter()
+            .find(|ctor| ctor.type_name == "Octets")
+            .expect("literal refinement still exists");
+        assert!(!ctor.runtime_provenance);
     }
 
     #[test]
