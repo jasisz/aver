@@ -1462,7 +1462,9 @@ fn useTwice(audit: Audit) -> List<Audit>
         // `first` is consumed by `List.concat` so it stays live (an unused
         // binding is correctly dead-code-eliminated); both `[audit]` literals
         // then clone the borrowed `audit` because it is used more than once.
-        assert!(entry.contains("let first = aver_rt::AverList::from_vec(vec![audit.clone()]);"));
+        assert!(
+            entry.contains("let first @ _ = aver_rt::AverList::from_vec(vec![audit.clone()]);")
+        );
         // Borrowed param always needs .clone() when consumed
         assert!(entry.contains("aver_rt::AverList::from_vec(vec![audit.clone()])"));
     }
