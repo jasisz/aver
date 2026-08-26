@@ -163,9 +163,11 @@ linked into that artifact. A project without `[providers]` never invokes
 Cargo or executes provider package code, and its missing-provider diagnostic
 points at the `[[providers.bindings]]` entry to add. Backends are a separate
 axis: `--wasip2` adapts WIT-lowerable bindings through the same host, while
-`--wasm-gc` and `--self-host` have no provider host and refuse a program
-that reaches a bound capability with `error[capability-provider-unhosted]`,
-naming the binding and the backend, rather than running without it.
+`run --wasm-gc` and `replay --wasm-gc` adapt the same binding through the
+contract-derived raw wasm-gc ABI. `--self-host` (and currently
+`verify --wasm-gc`) has no provider host and refuses a program that reaches a
+bound capability with `error[capability-provider-unhosted]`, naming the
+binding and backend rather than running without it.
 
 `aver compile` validates the manifest, emits each reached Cargo dependency and its typed `clock_provider::binding()` bootstrap call, and stops. It does not run Cargo, download a package, or manage a lockfile; Cargo resolves the active dependencies when the generated project is built. The cached run/verify/audit host above is the only stock CLI path that builds provider code. The generated stock binary installs all active configured bindings exactly once, then runs required-provider preflight before benchmarks or Aver entry code. A missing factory or wrong return type is therefore a normal Rust compile error, while an incomplete operation set or wrong contract hash fails at bootstrap in the shared provider registry.
 

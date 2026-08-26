@@ -15,11 +15,12 @@ use sha2::{Digest, Sha256};
 use crate::codegen::rust::composition::{ProviderComposition, ProviderCompositionSource};
 use crate::toolchain_source::ToolchainSource;
 
-const HOST_SCHEMA: &str = "aver-provider-vm-host-v5";
+const HOST_SCHEMA: &str = "aver-provider-vm-host-v6";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ProviderHostBackend {
     Vm,
+    WasmGc,
     Wasip2,
 }
 
@@ -296,6 +297,7 @@ fn aver_dependency_line(backend: ProviderHostBackend) -> Result<String, String> 
     let version = format!("={}", env!("CARGO_PKG_VERSION"));
     let features: &[&str] = match backend {
         ProviderHostBackend::Vm => &[],
+        ProviderHostBackend::WasmGc => &["wasm"],
         ProviderHostBackend::Wasip2 => &["wasip2"],
     };
     Ok(ToolchainSource::current().aver_lang_dependency(&version, features))
@@ -453,6 +455,10 @@ mod tests {
                 .starts_with("aver = {")
         );
         assert!(
+            render_dependency_lines(&one, ProviderHostBackend::WasmGc).unwrap()[0]
+                .contains("features = [\"wasm\"]")
+        );
+        assert!(
             render_dependency_lines(&one, ProviderHostBackend::Wasip2).unwrap()[0]
                 .contains("features = [\"wasip2\"]")
         );
@@ -468,6 +474,19 @@ mod tests {
                 "rustc-test"
             ),
             "VM and wasip2 hosts must never alias one cached binary"
+        );
+        assert_ne!(
+            host_key(
+                &render_host_source(&one),
+                &render_dependency_lines(&one, ProviderHostBackend::WasmGc).unwrap(),
+                "rustc-test"
+            ),
+            host_key(
+                &render_host_source(&one),
+                &render_dependency_lines(&one, ProviderHostBackend::Wasip2).unwrap(),
+                "rustc-test"
+            ),
+            "wasm-gc and wasip2 hosts must never alias one cached binary"
         );
     }
 

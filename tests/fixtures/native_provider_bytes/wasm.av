@@ -1,0 +1,11 @@
+module NativeProviderBytesWasmGc
+    intent = "Exercise the bulk Bytes bridge used by custom wasm-gc providers."
+    depends [Bytes, Octets]
+
+fn main() -> Result<Unit, String>
+    ? "Send canonical octets through the provider without per-element host calls."
+    bytes = Bytes.fromList([0, 127, 255])
+    echoed = Octets.echo(bytes)
+    match Bytes.toHex(echoed)
+        "007fff" -> Result.Ok(Unit)
+        _ -> Result.Err("provider changed the byte payload")

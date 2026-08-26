@@ -75,7 +75,7 @@ pub(super) fn decode_entry_args(input: &JsonValue) -> Result<Vec<Value>, String>
     }
 }
 
-fn resolve_replay_module_root(path: &Path, recording: &SessionRecording) -> String {
+pub(super) fn resolve_replay_module_root(path: &Path, recording: &SessionRecording) -> String {
     let module_root = Path::new(&recording.module_root);
     if module_root.is_absolute() {
         return recording.module_root.clone();
@@ -186,6 +186,7 @@ fn replay_recording_file_wasm_gc(
     path: &Path,
     _diff: bool,
     check_args: bool,
+    provider_bindings: &[aver::provider::ProviderBinding],
 ) -> Result<ReplayResult, String> {
     let raw = fs::read_to_string(path)
         .map_err(|e| format!("Cannot read recording '{}': {}", path.display(), e))?;
@@ -207,6 +208,7 @@ fn replay_recording_file_wasm_gc(
             &replay_module_root,
             &replay_program_file,
             check_args,
+            provider_bindings,
         );
         Ok(build_replay_result(
             path,
@@ -219,7 +221,12 @@ fn replay_recording_file_wasm_gc(
     }
     #[cfg(not(feature = "wasm"))]
     {
-        let _ = (recording, check_args, replay_program_file);
+        let _ = (
+            recording,
+            check_args,
+            replay_program_file,
+            provider_bindings,
+        );
         Err("--wasm-gc replay requires building aver with --features wasm".to_string())
     }
 }
@@ -404,6 +411,7 @@ fn render_replay_result(result: &ReplayResult, _diff: bool, json: bool) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn cmd_replay(
     recording: &str,
     diff: bool,
@@ -412,6 +420,7 @@ pub(super) fn cmd_replay(
     self_host_mode: bool,
     wasm_gc_mode: bool,
     json: bool,
+    provider_bindings: &[aver::provider::ProviderBinding],
 ) {
     let files = match collect_recording_files(recording) {
         Ok(f) => f,
@@ -430,7 +439,7 @@ pub(super) fn cmd_replay(
         let result = if self_host_mode {
             replay_recording_file_self_host(file, diff, check_args)
         } else if wasm_gc_mode {
-            replay_recording_file_wasm_gc(file, diff, check_args)
+            replay_recording_file_wasm_gc(file, diff, check_args, provider_bindings)
         } else {
             replay_recording_file_vm(file, diff, check_args)
         };

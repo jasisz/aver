@@ -309,8 +309,10 @@ verify/audit installs only the bindings relevant to each module, so
 independent modules are still executed rather than mislabeled as type
 errors. For a WIT-lowerable contract, `aver run app.av --wasip2` uses that
 same host package and binding behind the generated Component Model import;
-`--wasm-gc` and `--self-host` have no provider host and refuse such a
-program outright. A project without `[providers]` never invokes Cargo: its
+`aver run app.av --wasm-gc` uses the same binding behind the contract-derived
+raw wasm-gc ABI, including compound values, packed `Bytes`, and opaque
+provider resources. `--self-host` still has no provider host and refuses such
+a program. A project without `[providers]` never invokes Cargo: its
 generated artifacts remain host-bound and embedders can install bindings
 through the library API.
 

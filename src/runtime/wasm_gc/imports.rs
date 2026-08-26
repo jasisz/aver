@@ -63,7 +63,7 @@ pub(super) use factories::{
     host_result_tcp_connection_ok, host_result_terminal_size_err, host_result_terminal_size_ok,
     host_tcp_connection_make, host_terminal_size_make,
 };
-pub(super) use lm::lm_string_from_host;
+pub(super) use lm::{lm_string_from_host, lm_string_to_host};
 
 use http::{HttpVerb, http_body_dispatch, http_simple_dispatch};
 

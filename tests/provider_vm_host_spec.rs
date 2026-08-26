@@ -4,8 +4,9 @@
 //! said what its programs mean: `run`, `verify` and `audit` build the host
 //! once and reuse it whenever a program reaches a bound capability, with no
 //! flag and no prompt. Programs that reach no bound capability run in
-//! process, and backends with no provider host refuse instead of running
-//! without the provider.
+//! process, wasm-gc reuses the same binding through its generated raw ABI,
+//! while backends with no provider adapter refuse instead of running without
+//! the configured implementation.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -15,6 +16,25 @@ const SHAPES_SOURCE: &str = include_str!("fixtures/native_provider_composed/Shap
 const MAIN_SOURCE: &str = include_str!("fixtures/native_provider_composed/main.av");
 const INDEPENDENT_SOURCE: &str = include_str!("fixtures/native_provider_composed/independent.av");
 const PROVIDER_SOURCE: &str = include_str!("fixtures/native_provider_host/src/lib.rs");
+const WASM_SOURCE: &str = include_str!("fixtures/native_provider_composed/wasm.av");
+const VAULT_SOURCE: &str = include_str!("fixtures/native_provider_vault/Vault.av");
+const VAULT_WASM_SOURCE: &str = include_str!("fixtures/native_provider_vault/wasm.av");
+const OCTETS_SOURCE: &str = include_str!("fixtures/native_provider_bytes/Octets.av");
+const OCTETS_WASM_SOURCE: &str = include_str!("fixtures/native_provider_bytes/wasm.av");
+const STANDARD_OVERRIDE_SOURCE: &str = r#"module StandardOverride
+    intent = "Prove wasm-gc never silently ignores an aver.toml override."
+    depends [Time]
+    effects [Time.now]
+
+fn main() -> Result<Unit, String>
+    ? "Demand the configured clock rather than the compiler-shipped clock."
+    ! [Time.now]
+    match Time.now()
+        "fixed-time" -> Result.Ok(Unit)
+        _ -> Result.Err("configured Time provider was ignored")
+"#;
+const MODES_SOURCE: &str = include_str!("fixtures/native_provider_replay/Modes.av");
+const REPLAY_WASM_SOURCE: &str = include_str!("fixtures/native_provider_replay/wasm.av");
 const PROBE_SOURCE: &str = "module Probe\n    intent = \"Exercise an entry program smaller than the project manifest.\"\n\nfn main() -> Unit\n    Unit\n";
 /// An entry with no provider call of its own, over a module that has them.
 const THIN_SOURCE: &str = "module Thin\n    intent = \"Audit a thin entry whose dependency reaches the bound capability.\"\n    depends [Composed]\n\nfn main() -> Result<Unit, String>\n    ? \"Delegate to the composed module.\"\n    Composed.main()\n";
@@ -59,9 +79,20 @@ fn run_without_cargo(cache: &Path, args: &[&str]) -> Output {
 }
 
 fn provider_manifest(provider_root: &Path, factory: &str) -> String {
+    binding_manifest(provider_root, "Shapes", factory)
+}
+
+fn binding_manifest(provider_root: &Path, capability: &str, factory: &str) -> String {
     format!(
-        "[providers]\nschema = 1\n\n[[providers.bindings]]\ncapability = \"Shapes\"\ncrate = \"native_provider_fixture\"\npackage = \"native-provider-fixture\"\npath = {:?}\nfactory = \"{factory}\"\n",
+        "[providers]\nschema = 1\n\n[[providers.bindings]]\ncapability = \"{capability}\"\ncrate = \"native_provider_fixture\"\npackage = \"native-provider-fixture\"\npath = {:?}\nfactory = \"{factory}\"\n",
         provider_root.to_string_lossy()
+    )
+}
+
+fn replay_manifest(provider_root: &Path) -> String {
+    format!(
+        "[providers]\nschema = 1\n\n[[providers.bindings]]\ncapability = \"Modes\"\ncrate = \"native_provider_fixture\"\npackage = \"native-provider-fixture\"\npath = {:?}\nfactory = \"replay_modes_binding\"\n",
+        provider_root.to_string_lossy(),
     )
 }
 
@@ -69,6 +100,7 @@ fn write_app(root: &Path, provider_root: &Path) {
     fs::create_dir_all(root).expect("create app root");
     fs::write(root.join("Shapes.av"), SHAPES_SOURCE).expect("write capability fixture");
     fs::write(root.join("main.av"), MAIN_SOURCE).expect("write entry fixture");
+    fs::write(root.join("wasm.av"), WASM_SOURCE).expect("write wasm-gc entry fixture");
     fs::write(root.join("independent.av"), INDEPENDENT_SOURCE)
         .expect("write independent verify fixture");
     fs::write(root.join("probe.av"), PROBE_SOURCE).expect("write independent run fixture");
@@ -94,7 +126,7 @@ fn run_owned_args(cache: &Path, args: &[String]) -> Output {
 }
 
 #[test]
-fn bound_providers_refuse_backends_without_a_host() {
+fn bound_providers_run_on_wasm_gc_and_refuse_backends_without_a_host() {
     let temp = tempfile::tempdir().expect("provider-host test root");
     let cache = temp.path().join("cache");
     let app = temp.path().join("app");
@@ -103,11 +135,164 @@ fn bound_providers_refuse_backends_without_a_host() {
     let main_path = app.join("main.av").to_string_lossy().into_owned();
     let module_root = app.to_string_lossy().into_owned();
 
+    let wasm_path = app.join("wasm.av").to_string_lossy().into_owned();
+    let wasm_gc = run_aver(
+        &cache,
+        &[
+            "run",
+            &wasm_path,
+            "--module-root",
+            &module_root,
+            "--wasm-gc",
+        ],
+    );
+    assert!(wasm_gc.status.success(), "{}", report(&wasm_gc));
+    let wasm_gc_report = report(&wasm_gc);
+    assert!(
+        wasm_gc_report.contains("Building provider host for Shapes:"),
+        "{wasm_gc_report}"
+    );
+    assert!(!wasm_gc_report.contains("provider-unhosted"));
+    assert!(!wasm_gc_report.contains("provider-missing"));
+
+    // The backend participates in the host cache identity, but a repeated
+    // wasm-gc run reuses its own already-linked binary.
+    let wasm_gc_cached = run_aver(
+        &cache,
+        &[
+            "run",
+            &wasm_path,
+            "--module-root",
+            &module_root,
+            "--wasm-gc",
+        ],
+    );
+    assert!(
+        wasm_gc_cached.status.success(),
+        "{}",
+        report(&wasm_gc_cached)
+    );
+    assert!(!report(&wasm_gc_cached).contains("provider host"));
+
+    // Resources stay opaque to Wasm and retain the provider's private Rust
+    // payload plus binding/type identity across two capability calls.
+    let vault = temp.path().join("vault");
+    fs::create_dir_all(&vault).expect("create vault app");
+    fs::write(vault.join("Vault.av"), VAULT_SOURCE).expect("write Vault contract");
+    fs::write(vault.join("wasm.av"), VAULT_WASM_SOURCE).expect("write Vault wasm entry");
+    fs::write(
+        vault.join("aver.toml"),
+        binding_manifest(&provider, "Vault", "vault_binding"),
+    )
+    .expect("write Vault provider manifest");
+    let vault_path = vault.join("wasm.av").to_string_lossy().into_owned();
+    let vault_root = vault.to_string_lossy().into_owned();
+    let vault_recordings = temp.path().join("vault-recordings");
+    let vault_recording_root = vault_recordings.to_string_lossy().into_owned();
+    let resource_run = run_aver(
+        &cache,
+        &[
+            "run",
+            &vault_path,
+            "--module-root",
+            &vault_root,
+            "--wasm-gc",
+            "--record",
+            &vault_recording_root,
+        ],
+    );
+    assert!(resource_run.status.success(), "{}", report(&resource_run));
+    let vault_recording = fs::read_dir(&vault_recordings)
+        .expect("read Vault recordings")
+        .map(|entry| entry.expect("Vault recording entry").path())
+        .find(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "json")
+        })
+        .expect("Vault wasm-gc recording");
+    let vault_json = fs::read_to_string(&vault_recording).expect("read Vault recording");
+    assert!(vault_json.contains("\"type\": \"Vault.Token\""));
+    let vault_recording_path = vault_recording.to_string_lossy().into_owned();
+    let resource_replay = run_aver(
+        &cache,
+        &["replay", &vault_recording_path, "--wasm-gc", "--test"],
+    );
+    assert!(
+        resource_replay.status.success(),
+        "{}",
+        report(&resource_replay)
+    );
+
+    // Bytes use the same bulk bridge as compiler-shipped capabilities: the
+    // host boundary does not box every octet as a separate Wasm GC value.
+    let octets = temp.path().join("octets");
+    fs::create_dir_all(&octets).expect("create octets app");
+    fs::write(octets.join("Octets.av"), OCTETS_SOURCE).expect("write Octets contract");
+    fs::write(octets.join("wasm.av"), OCTETS_WASM_SOURCE).expect("write Octets wasm entry");
+    fs::write(
+        octets.join("aver.toml"),
+        binding_manifest(&provider, "Octets", "octets_binding"),
+    )
+    .expect("write Octets provider manifest");
+    let octets_path = octets.join("wasm.av").to_string_lossy().into_owned();
+    let octets_root = octets.to_string_lossy().into_owned();
+    let bytes_run = run_aver(
+        &cache,
+        &[
+            "run",
+            &octets_path,
+            "--module-root",
+            &octets_root,
+            "--wasm-gc",
+        ],
+    );
+    assert!(bytes_run.status.success(), "{}", report(&bytes_run));
+
+    // Standard capabilities still have specialised `aver/*` imports. Until
+    // those adapters are replaceable too, refuse an explicit override as a
+    // runner limitation instead of either ignoring it or calling the target
+    // unsupported.
+    let standard = temp.path().join("standard");
+    fs::create_dir_all(&standard).expect("create standard override app");
+    fs::write(standard.join("main.av"), STANDARD_OVERRIDE_SOURCE)
+        .expect("write standard override entry");
+    fs::write(
+        standard.join("aver.toml"),
+        binding_manifest(&provider, "Time", "fixed_time_binding"),
+    )
+    .expect("write standard provider manifest");
+    let standard_path = standard.join("main.av").to_string_lossy().into_owned();
+    let standard_root = standard.to_string_lossy().into_owned();
+    let standard_override = run_without_cargo(
+        &cache,
+        &[
+            "run",
+            &standard_path,
+            "--module-root",
+            &standard_root,
+            "--wasm-gc",
+        ],
+    );
+    assert!(
+        !standard_override.status.success(),
+        "configured override ran"
+    );
+    let standard_report = report(&standard_override);
+    assert!(
+        standard_report.contains("error[capability-provider-runner-adapter-unavailable]"),
+        "{standard_report}"
+    );
+    assert!(
+        standard_report.contains("The wasm-gc target supports this capability"),
+        "{standard_report}"
+    );
+    assert!(!standard_report.contains("target unsupported"));
+    assert!(!standard_report.contains("failed to start Cargo"));
+
     // The Shapes contract carries `Bundle`, which the WIT boundary cannot
     // lower, so wasip2 refuses the binding before anything is built.
     for (command, backend, flag) in [
         ("verify", "wasm-gc", "--wasm-gc"),
-        ("run", "wasm-gc", "--wasm-gc"),
         ("run", "self-host", "--self-host"),
         ("run", "wasip2", "--wasip2"),
     ] {
@@ -184,6 +369,53 @@ fn bound_providers_refuse_backends_without_a_host() {
     let text = report(&probe);
     assert!(!text.contains("capability-provider-unhosted"), "{text}");
     assert!(!text.contains("failed to start Cargo"), "{text}");
+}
+
+#[test]
+fn custom_wasm_gc_provider_effects_record_and_replay() {
+    let temp = tempfile::tempdir().expect("provider replay test root");
+    let cache = temp.path().join("cache");
+    let app = temp.path().join("app");
+    let provider = repo_root().join("tests/fixtures/native_provider_host");
+    fs::create_dir_all(&app).expect("create replay app");
+    fs::write(app.join("Modes.av"), MODES_SOURCE).expect("write Modes contract");
+    fs::write(app.join("main.av"), REPLAY_WASM_SOURCE).expect("write replay entry");
+    fs::write(app.join("aver.toml"), replay_manifest(&provider))
+        .expect("write replay provider manifest");
+
+    let recordings = temp.path().join("recordings");
+    let main_path = app.join("main.av").to_string_lossy().into_owned();
+    let module_root = app.to_string_lossy().into_owned();
+    let recording_root = recordings.to_string_lossy().into_owned();
+    let recorded = run_aver(
+        &cache,
+        &[
+            "run",
+            &main_path,
+            "--module-root",
+            &module_root,
+            "--wasm-gc",
+            "--record",
+            &recording_root,
+        ],
+    );
+    assert!(recorded.status.success(), "{}", report(&recorded));
+    let recording = fs::read_dir(&recordings)
+        .expect("read recordings")
+        .map(|entry| entry.expect("recording entry").path())
+        .find(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "json")
+        })
+        .expect("wasm-gc recording");
+    let recording_json = fs::read_to_string(&recording).expect("read wasm-gc recording");
+    assert!(recording_json.contains("\"type\": \"Modes.recorded\""));
+    assert!(recording_json.contains("example.replay-matrix@1"));
+
+    let recording_path = recording.to_string_lossy().into_owned();
+    let replayed = run_aver(&cache, &["replay", &recording_path, "--wasm-gc", "--test"]);
+    assert!(replayed.status.success(), "{}", report(&replayed));
+    assert!(report(&replayed).contains("MATCH"), "{}", report(&replayed));
 }
 
 #[test]

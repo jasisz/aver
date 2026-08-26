@@ -253,6 +253,7 @@ pub(super) fn run_wasm_gc_replay(
     replay_module_root: &str,
     replay_program_file: &str,
     check_args: bool,
+    provider_bindings: &[aver::provider::ProviderBinding],
 ) -> Result<BackendReplayOutcome, String> {
     let entry_info: Option<(String, Vec<Value>)> =
         if recording.entry_fn == "main" && matches!(&recording.input, JsonValue::Null) {
@@ -271,6 +272,7 @@ pub(super) fn run_wasm_gc_replay(
         entry_info,
         None,
         true,
+        provider_bindings,
     )?;
     Ok(BackendReplayOutcome {
         actual: RecordedOutcome::Value(run.output),

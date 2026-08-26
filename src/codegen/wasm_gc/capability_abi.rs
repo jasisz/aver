@@ -413,6 +413,7 @@ impl CapabilityAbi {
                     ("set", helpers.set),
                     ("get", helpers.get),
                     ("len", helpers.len),
+                    ("keys", helpers.keys),
                 ] {
                     self.aliases.push((format!("{stem}_{suffix}"), fn_idx));
                 }
@@ -629,9 +630,19 @@ fn collect_type(
         return;
     }
     match ty {
-        Type::Result(left, right) | Type::Map(left, right) => {
+        Type::Result(left, right) => {
             collect_type(left, registry, out, visiting);
             collect_type(right, registry, out, visiting);
+        }
+        Type::Map(left, right) => {
+            collect_type(left, registry, out, visiting);
+            collect_type(right, registry, out, visiting);
+            // The in-process provider adapter enumerates a guest Map through
+            // its canonical `keys` helper, then looks each value up. Export
+            // the List<K> projectors and Map.get's Option<V> projectors even
+            // when neither carrier is itself named by the source contract.
+            collect_type(&Type::List(left.clone()), registry, out, visiting);
+            collect_type(&Type::Option(right.clone()), registry, out, visiting);
         }
         Type::Option(inner) | Type::List(inner) | Type::Vector(inner) => {
             collect_type(inner, registry, out, visiting)
@@ -646,6 +657,11 @@ fn collect_type(
         }
         // backend-link-stage: walk represented definitions in the linked
         // registry to allocate host factories for their transitive fields.
+        // Bytes crosses the host boundary through the dedicated bulk LM
+        // bridge. Its source-owned representation contains List<Int>, but
+        // that representation is deliberately not part of the host ABI and
+        // must not force per-octet Int factories.
+        Type::Named { name, .. } if matches!(name.as_str(), "Bytes" | "Bytes.Bytes") => {}
         Type::Named { name, .. } if visiting.insert(name.clone()) => {
             if let Some(fields) = registry.record_fields.get(name).or_else(|| {
                 name.rsplit_once('.')

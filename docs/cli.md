@@ -24,8 +24,10 @@ aver run file.av --module-root . --wasip2
   to a Rust package, `run` builds that provider host once (the first build
   says which packages it links and where they come from) and reuses it from
   the cache afterwards; with `--wasip2` it adapts the WIT-lowerable bindings
-  to Component Model imports. `--wasm-gc` and `--self-host` have no provider
-  host and refuse such a program with `error[capability-provider-unhosted]`.
+  to Component Model imports, while `--wasm-gc` adapts the complete provider
+  value vocabulary through the contract-derived raw ABI. `--self-host` has no
+  provider host and refuses such a program with
+  `error[capability-provider-unhosted]`.
   A project without `[providers]` never invokes Cargo
 
 ### Check
@@ -152,7 +154,9 @@ those capabilities, the cases run inside the cached provider host, so a
 configured pure provider executes in ordinary VM cases. An exact operation
 `given` remains a case-local override. Project bindings unrelated to a module
 are ignored for that module instead of causing a skip or a fake type error.
-`--wasm-gc` has no provider host and refuses such a program.
+`verify --wasm-gc` has no configured-provider adapter yet and refuses such a
+program; ordinary `run --wasm-gc` and `replay --wasm-gc` do use the cached
+provider host.
 
 `--wasm-gc` (0.17.3+) executes the same cases via the wasm-gc backend instead of the VM — cross-target check that catches divergence between VM and wasm-gc codegen on equality. The host decodes a single Bool per case (wasm-gc lowers `==` per-type via eq_helpers natively). Failure diagnostics show the actual runtime value for primitive return types (Int/Float/Bool/String). Trace projections (`.trace.*`), classified-effect Oracle stubs (`given X: Time = stub`), and case bodies mentioning `BranchPath` are rejected upfront with a pointer back to VM verify — those features depend on namespace-value dispatch and runtime override that the wasm-gc backend doesn't have yet.
 

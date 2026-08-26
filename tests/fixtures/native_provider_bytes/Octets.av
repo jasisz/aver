@@ -1,0 +1,8 @@
+module Octets
+    kind = capability
+    semantics = pure
+    depends [Bytes]
+    exposes [echo]
+
+operation echo(value: Bytes) -> Bytes
+    ? "Round-trip byte-exact payloads through a configured provider."
