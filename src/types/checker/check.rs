@@ -189,6 +189,7 @@ impl TypeChecker {
         modules: &[crate::source::LoadedModule],
         visible_modules: &[String],
     ) {
+        self.integrate_loaded_record_schemas(modules);
         self.visible_module_names
             .extend(visible_modules.iter().cloned());
         let pairs: Vec<_> = modules
@@ -205,6 +206,43 @@ impl TypeChecker {
         }
         self.canonicalize_source_typed_builtin_sigs();
         self.register_capability_sigs();
+    }
+
+    /// Register the public structural shape of every record in the loaded
+    /// graph without making its source name visible to the current module.
+    ///
+    /// A visible API may return `Rules`, whose public field is a `Policy`, to
+    /// a consumer that never directly imports `Policy`'s module. The value's
+    /// `TypeId` preserves that declaration identity, so chained projection
+    /// (`rules.policy.witnessPubKeyType`) must be able to consult Policy's
+    /// public fields. This is representation closure, not import closure:
+    /// constructors, functions, and bare type aliases remain gated by the
+    /// consumer's explicit `depends` surface.
+    fn integrate_loaded_record_schemas(&mut self, modules: &[crate::source::LoadedModule]) {
+        for module in modules {
+            for item in &module.items {
+                let TopLevel::TypeDef(TypeDef::Product { name, fields, .. }) = item else {
+                    continue;
+                };
+                let publicly_structural = self
+                    .module_type_exports
+                    .get(&module.dep_name)
+                    .and_then(|exports| exports.get(name))
+                    .is_some_and(|target| target.module == module.dep_name && !target.is_opaque);
+                if !publicly_structural {
+                    continue;
+                }
+                let canonical_type = crate::visibility::qualified_name(&module.dep_name, name);
+                for (field_name, field_type) in fields {
+                    let ty = self.canonicalize_named_in_module(
+                        parse_type_str_strict(field_type).unwrap_or(Type::Invalid),
+                        &module.dep_name,
+                    );
+                    self.record_field_types
+                        .insert(RecordFieldKey::new(&canonical_type, field_name), ty);
+                }
+            }
+        }
     }
 
     /// Re-stamp builtin signatures whose nominal types are owned by embedded

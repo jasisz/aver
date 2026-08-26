@@ -687,6 +687,184 @@ record Box
     );
 }
 
+#[test]
+fn dependency_bare_type_resolves_with_unrelated_same_named_type_in_graph() {
+    // `Worker` imports only `Left`, so bare `State` inside Worker has one
+    // unambiguous meaning. The whole linked graph also contains Right.State,
+    // however, which forces both declarations to keep qualified wasm-gc
+    // registry keys. Flattening must resolve Worker's bare spelling through
+    // its own dependency scope rather than through the set of every owner in
+    // the final artifact. btc-listener has this exact shape: modules using
+    // Domain.ScriptState.State share a final graph with Domain.SipHash.State.
+    let entry_src = r#"
+module Entry
+    intent = "loads two State owners through separate dependency branches"
+    depends [Worker, Right]
+
+fn main() -> Int
+    Worker.answer() + Right.answer()
+"#;
+    let left_src = r#"
+module Left
+    intent = "the State visible to Worker"
+    exposes [State]
+    depends []
+
+record State
+    value: Int
+"#;
+    let worker_src = r#"
+module Worker
+    intent = "uses its sole imported State through the bare spelling"
+    exposes [answer]
+    depends [Left]
+
+fn valueOf(state: State) -> Int
+    state.value
+
+fn answer() -> Int
+    valueOf(State(value = 40))
+"#;
+    let right_src = r#"
+module Right
+    intent = "an unrelated State owner elsewhere in the final graph"
+    exposes [State, answer]
+    depends []
+
+record State
+    code: Int
+
+fn answer() -> Int
+    State(code = 2).code
+"#;
+    let result = run_int_multi(
+        entry_src,
+        &[
+            ("Left", left_src),
+            ("Worker", worker_src),
+            ("Right", right_src),
+        ],
+    );
+    assert_eq!(result, 42);
+}
+
+#[test]
+fn nested_public_record_projection_keeps_indirect_type_identity() {
+    // Worker never names or directly imports Policy. It receives that nominal
+    // type by projecting a public field from Rules, then projects Policy's
+    // Bool field. The first projection's TypeId is the authority for the
+    // second lookup; resolving bare `Policy` again in Worker's source scope
+    // used to produce a silent Type::Invalid stamp and fail wasm-gc lowering.
+    let entry_src = r#"
+module Entry
+    intent = "runs the indirect record projection"
+    depends [Worker]
+
+fn main() -> Int
+    Worker.answer()
+"#;
+    let policy_src = r#"
+module Policy
+    intent = "owns the nested record"
+    exposes [Policy, enabled]
+    depends []
+
+record Policy
+    enabled: Bool
+
+fn enabled() -> Policy
+    Policy(enabled = true)
+"#;
+    let rules_src = r#"
+module Rules
+    intent = "carries a Policy without re-exporting its type name"
+    exposes [Rules, latest]
+    depends [Policy]
+
+record Rules
+    policy: Policy
+
+fn latest() -> Rules
+    Rules(policy = Policy.enabled())
+"#;
+    let context_src = r#"
+module Context
+    intent = "hands Rules through one more public function"
+    exposes [rulesOf]
+    depends [Rules]
+
+fn rulesOf() -> Rules
+    Rules.latest()
+"#;
+    let worker_src = r#"
+module Worker
+    intent = "projects a field whose type arrived through another record"
+    exposes [answer]
+    depends [Context]
+
+fn answer() -> Int
+    match Context.rulesOf().policy.enabled
+        true -> 42
+        false -> 0
+"#;
+    let result = run_int_multi(
+        entry_src,
+        &[
+            ("Policy", policy_src),
+            ("Rules", rules_src),
+            ("Context", context_src),
+            ("Worker", worker_src),
+        ],
+    );
+    assert_eq!(result, 42);
+}
+
+#[test]
+fn qualified_calls_keep_colliding_result_payload_identity_through_try() {
+    // The entry imports two `Built` declarations and therefore cannot resolve
+    // the bare name in its own source scope. Each qualified call's typed
+    // result already carries the correct declaration ID; flattening must use
+    // it when registering/emitting `Result<Built, String>` for `?`.
+    let entry_src = r#"
+module Entry
+    intent = "unwraps two qualified calls returning same-named records"
+    depends [Left, Right]
+
+fn main() -> Result<Int, String>
+    left = Left.build()?
+    right = Right.build()?
+    Result.Ok(left.value + right.code)
+"#;
+    let left_src = r#"
+module Left
+    intent = "owns one Built result"
+    exposes [Built, build]
+    depends []
+
+record Built
+    value: Int
+
+fn build() -> Result<Built, String>
+    Result.Ok(Built(value = 40))
+"#;
+    let right_src = r#"
+module Right
+    intent = "owns the other Built result"
+    exposes [Built, build]
+    depends []
+
+record Built
+    code: Int
+
+fn build() -> Result<Built, String>
+    Result.Ok(Built(code = 2))
+"#;
+    let bytes = compile_multi_module_bytes(entry_src, &[("Left", left_src), ("Right", right_src)]);
+    wasmparser::Validator::new_with_features(wasmparser::WasmFeatures::all())
+        .validate_all(&bytes)
+        .expect("qualified colliding Result payloads must validate");
+}
+
 // Cross-module same-bare-name `==`/`!=` dispatch — exercises the
 // canonical-key routing through `named_type_registry_key` at the three
 // eq-helper sites (`register_nominal_in_type`, the `BinOp Eq/Neq` arm of

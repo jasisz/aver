@@ -1596,32 +1596,29 @@ impl TypeChecker {
                     }
                 }
                 match obj_ty {
-                    Type::Named {
-                        name: ref type_name,
-                        ..
-                    } => {
+                    Type::Named { id, ref name } => {
                         // Phase B: `opaque_types` keys are canonical
                         // "Module.Type"; resolve the bare reference
                         // through the symbol table before checking.
-                        let canon = self.canonical_type_name(type_name);
+                        let canon = self.canonical_type_name_from_stamp(id, name);
                         if !self.self_host_mode && self.opaque_types.contains(&canon) {
-                            if self.is_capability_resource_type(type_name) {
+                            if self.is_capability_resource_type_named(id, name) {
                                 self.error(format!(
                                     "Cannot access field '{}' of capability resource '{}'",
-                                    field, type_name
+                                    field, name
                                 ));
                             } else {
                                 self.error(format!(
                                     "Cannot access field '{}' of opaque type '{}'",
-                                    field, type_name
+                                    field, name
                                 ));
                             }
                             return Type::Invalid;
                         }
-                        if let Some(field_ty) = self.find_record_field_type(type_name, field) {
+                        if let Some(field_ty) = self.find_record_field_type_named(id, name, field) {
                             field_ty.clone()
-                        } else if self.has_record_schema(type_name) {
-                            self.error(format!("Record '{}' has no field '{}'", type_name, field));
+                        } else if self.has_record_schema_named(id, name) {
+                            self.error(format!("Record '{}' has no field '{}'", name, field));
                             Type::Invalid
                         } else {
                             Type::Invalid
