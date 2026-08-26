@@ -83,7 +83,9 @@ The bridge also has one internal, non-effect import: `aver.provider_contract_vio
 Program-defined capabilities use a separate contract-derived
 `aver:user/cap-…` import namespace and native wasm-gc values, including
 `externref` resources and full `Int = ℤ`. The compiler exports the factories a
-JavaScript host needs to construct and inspect GC values. See
+host needs to construct and inspect GC values. An external JavaScript host may
+bind these imports directly; `aver run/replay --wasm-gc` instead adapts the
+project's target-neutral Rust `ProviderBinding` through the same ABI. See
 [`wasm-gc-custom-capabilities.md`](wasm-gc-custom-capabilities.md).
 
 `--handler <fn>` (and the bundled `--preset cloudflare --handler <fn>`) generates an `aver_http_handle()` synthesised wrapper that consumes Request fields via dedicated host imports (`request_method`, `request_url`, `request_query`, `request_body`, `request_headers_load`) and writes the response via `response_text` / `response_set_header`. Inside the handler body, `Http.*` calls still go through the standard effect surface (✅ JSPI-suspending `fetch()` on Workers, ✅ wasmtime if you ever ran the same handler under `aver run --wasm-gc`).

@@ -716,8 +716,8 @@ fn main() -> Int
         );
         assert!(
             report.contains("error[capability-provider-missing]")
-                && report.contains("`aver run --wasm-gc` has no in-process binding")
-                && report.contains("instantiate the module")
+                && report.contains("bind the capability under [providers] in aver.toml")
+                && report.contains("supply the generated imports from an external host")
                 && report.contains("required operations: Clock.now")
                 && report.contains("contract_hash: sha256:")
                 && report.contains("model_hash: sha256:"),

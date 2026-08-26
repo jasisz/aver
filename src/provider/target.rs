@@ -76,7 +76,7 @@ impl HostBindingReason {
                 "the native target accepts this contract through a host-installed ProviderRegistry binding"
             }
             Self::WasmGcImportRequired => {
-                "the wasm-gc module imports this contract through its generated ABI and requires the JavaScript host to supply it"
+                "the wasm-gc module imports this contract through its generated ABI; an external host supplies it directly, while `aver run --wasm-gc` can adapt a configured Rust provider"
             }
             Self::ComponentImportRequired => {
                 "the component imports this contract as WIT and requires the host to supply it"

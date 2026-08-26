@@ -21,6 +21,8 @@ pub const PURE_PROBE_CONTRACT_HASH: &str =
     "sha256:842c8dcaef4ca39100285d8866c78b2848fdc10d0819c4def11a5fb018320120";
 pub const TIME_CONTRACT_HASH: &str =
     "sha256:e80d264b61f2808b4db4d765ded0d3db1a9a019c814d27686ef7e71bc4c208af";
+pub const OCTETS_CONTRACT_HASH: &str =
+    "sha256:ef4cc91660402a117452dce1ceadec6e1b9de15fb9b3c66cdffdf3d15dc88d57";
 
 pub struct ClockProvider {
     calls: Arc<AtomicUsize>,
@@ -342,6 +344,40 @@ pub fn vault_binding() -> ProviderBinding {
     )
 }
 
+struct OctetsProvider;
+
+impl CapabilityProvider for OctetsProvider {
+    fn identity(&self) -> &str {
+        "example.octets@1"
+    }
+
+    fn fingerprint(&self) -> &str {
+        "octets-v1"
+    }
+
+    fn invoke(
+        &self,
+        context: &ProviderContext,
+        args: &[ProviderValue],
+    ) -> Result<ProviderValue, ProviderFault> {
+        match (context.operation.as_str(), args) {
+            ("Octets.echo", [ProviderValue::Bytes(bytes)]) => {
+                Ok(ProviderValue::Bytes(bytes.clone()))
+            }
+            (operation, _) => Err(ProviderFault::new("bad_call", operation)),
+        }
+    }
+}
+
+pub fn octets_binding() -> ProviderBinding {
+    ProviderBinding::new(
+        "Octets",
+        OCTETS_CONTRACT_HASH,
+        ["Octets.echo"],
+        Arc::new(OctetsProvider),
+    )
+}
+
 #[derive(Default)]
 pub struct ReplayCounts {
     pub pure: AtomicUsize,
@@ -423,4 +459,12 @@ pub fn replay_bindings_with_fingerprint(
         ],
         counts,
     )
+}
+
+pub fn replay_modes_binding() -> ProviderBinding {
+    replay_bindings()
+        .0
+        .into_iter()
+        .find(|binding| binding.capability() == "Modes")
+        .expect("Modes replay fixture binding")
 }

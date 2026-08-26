@@ -167,6 +167,7 @@ fn main_impl(
                         record.as_deref(),
                         None,
                         *test_boxed_sequences,
+                        provider_bindings,
                     );
                 } else {
                     // Batch: each --expr gets its own fresh wasmtime
@@ -180,6 +181,7 @@ fn main_impl(
                             record.as_deref(),
                             Some(expr_src.as_str()),
                             *test_boxed_sequences,
+                            provider_bindings,
                         );
                     }
                 }
@@ -285,6 +287,7 @@ fn main_impl(
                 *self_host,
                 *wasm_gc,
                 *json,
+                provider_bindings,
             );
         }
         Commands::Repl => {

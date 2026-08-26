@@ -54,6 +54,7 @@ pub(super) fn cmd_run_wasm_gc(
     record_dir: Option<&str>,
     entry_expr: Option<&str>,
     test_boxed_sequences: bool,
+    provider_bindings: &[aver::provider::ProviderBinding],
 ) {
     #[cfg(feature = "wasm")]
     {
@@ -79,6 +80,7 @@ pub(super) fn cmd_run_wasm_gc(
             entry_info,
             record_dir,
             !test_boxed_sequences,
+            provider_bindings,
         );
     }
     #[cfg(not(feature = "wasm"))]
@@ -90,6 +92,7 @@ pub(super) fn cmd_run_wasm_gc(
             record_dir,
             entry_expr,
             test_boxed_sequences,
+            provider_bindings,
         );
         eprintln!("{}", "WASM requires --features wasm".red());
         process::exit(1);
@@ -101,6 +104,7 @@ pub(super) fn cmd_run_wasm_gc(
 /// keep iterating (`aver replay <dir>`) should use
 /// [`try_run_wasm_gc`] directly and inspect the `Result`.
 #[cfg(feature = "wasm")]
+#[allow(clippy::too_many_arguments)]
 pub(super) fn cmd_run_wasm_gc_with_mode(
     file: &str,
     module_root_override: Option<&str>,
@@ -109,6 +113,7 @@ pub(super) fn cmd_run_wasm_gc_with_mode(
     entry_info: Option<(String, Vec<aver::value::Value>)>,
     record_dir: Option<&str>,
     packed_sequences_enabled: bool,
+    provider_bindings: &[aver::provider::ProviderBinding],
 ) {
     if let Err(e) = try_run_wasm_gc(
         file,
@@ -118,6 +123,7 @@ pub(super) fn cmd_run_wasm_gc_with_mode(
         entry_info,
         record_dir,
         packed_sequences_enabled,
+        provider_bindings,
     ) {
         eprintln!("{}", e.red());
         process::exit(1);
@@ -130,6 +136,7 @@ pub(super) fn cmd_run_wasm_gc_with_mode(
 /// pipeline stage (parse, typecheck, codegen, instantiate, trap,
 /// replay failure, file write) maps onto a single `Err(String)`.
 #[cfg(feature = "wasm")]
+#[allow(clippy::too_many_arguments)]
 pub(super) fn try_run_wasm_gc(
     file: &str,
     module_root_override: Option<&str>,
@@ -138,6 +145,7 @@ pub(super) fn try_run_wasm_gc(
     entry_info: Option<(String, Vec<aver::value::Value>)>,
     record_dir: Option<&str>,
     packed_sequences_enabled: bool,
+    provider_bindings: &[aver::provider::ProviderBinding],
 ) -> Result<rt::RunOutcome, String> {
     use aver::ir::{NeutralAllocPolicy, PipelineConfig, TypecheckMode};
 
@@ -195,38 +203,51 @@ pub(super) fn try_run_wasm_gc(
         .capabilities;
     let required =
         aver::provider::required_capability_operations(&items, &dep_modules, capabilities);
-    let manifest = aver::provider::CapabilityTargetManifest::build(capabilities, &required)?;
-    if let Some(row) = manifest
-        .for_target(aver::provider::CapabilityTarget::WasmGc)
-        .find(|row| {
-            row.is_required()
-                && matches!(
-                    &row.status,
-                    aver::provider::TargetBindingStatus::HostBound {
-                        reason: aver::provider::HostBindingReason::WasmGcImportRequired
-                    }
-                )
-        })
-    {
-        return Err(format!(
-            "error[capability-provider-missing]: `aver run --wasm-gc` has no in-process binding for custom capability `{}`\n  compile with `--target wasm-gc` and instantiate the module in a JavaScript/Workers/Node host that supplies its generated imports\n  required operations: {}\n  contract_hash: {}\n  model_hash: {}",
-            row.capability,
-            row.required_operations
+    let standard = aver::stdlib::standard_capability_registry_ref();
+    if let Some(binding) = provider_bindings.iter().find(|binding| {
+        standard.contract(binding.capability()).is_some()
+            && required
                 .iter()
-                .cloned()
-                .collect::<Vec<_>>()
-                .join(", "),
-            row.contract_hash,
-            row.model_hash,
+                .any(|operation| operation.starts_with(&format!("{}.", binding.capability())))
+    }) {
+        return Err(format!(
+            "error[capability-provider-runner-adapter-unavailable]: the embedded wasm-gc runner cannot yet replace standard capability '{}' with provider '{}'. The wasm-gc target supports this capability; this is an embedded-runner adapter limitation, not target incompatibility",
+            binding.capability(),
+            binding.provider_identity()
         ));
     }
+    let custom_plan = aver::codegen::wasm_gc::CapabilityWasmGcPlan::build(capabilities, &required)?;
+    let providers = aver::provider::ProviderRegistry::for_program_with_bindings(
+        capabilities.clone(),
+        provider_bindings.iter().cloned(),
+    )?;
+    if let Err(preflight) = providers.preflight(required.iter().map(String::as_str)) {
+        let mut error = preflight;
+        for interface in custom_plan.interfaces() {
+            error.push_str(&format!(
+                "\n  capability: {}\n  required operations: {}\n  contract_hash: {}\n  model_hash: {}",
+                interface.capability,
+                interface
+                    .operations
+                    .iter()
+                    .map(|operation| operation.operation.canonical_name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                interface.contract_hash,
+                interface.model_hash,
+            ));
+        }
+        error.push_str(
+            "\n  hint: bind the capability under [providers] in aver.toml so `aver run --wasm-gc` links it through the provider host, or compile with `--target wasm-gc` and supply the generated imports from an external host",
+        );
+        return Err(error);
+    }
     if let rt::EffectMode::Replay(recording, _) = &mode {
-        aver::provider::ProviderRegistry::for_program(capabilities.clone())?
-            .validate_replay_provenance_for_operations(
-                &recording.capabilities,
-                &recording.effects,
-                required.iter().map(String::as_str),
-            )?;
+        providers.validate_replay_provenance_for_operations(
+            &recording.capabilities,
+            &recording.effects,
+            required.iter().map(String::as_str),
+        )?;
     }
     let type_aliases = flatten_multimodule(
         &mut items,
@@ -258,6 +279,10 @@ pub(super) fn try_run_wasm_gc(
             tcp_settings,
             type_aliases,
             packed_sequences_enabled,
+            custom_providers: Some(rt::CustomProviderConfig {
+                plan: custom_plan.clone(),
+                providers: providers.clone(),
+            }),
         },
     )?;
 
@@ -296,14 +321,7 @@ pub(super) fn try_run_wasm_gc(
             module_root: record_module_root,
             entry_fn: entry_fn_label,
             input,
-            capabilities: aver::provider::shipped_target_provenance(
-                aver::provider::CapabilityTarget::WasmGc,
-                &result
-                    .typecheck
-                    .as_ref()
-                    .expect("wasm-gc run pipeline requested typechecking")
-                    .capabilities,
-            ),
+            capabilities: wasm_gc_provider_provenance(capabilities, &custom_plan, &providers),
             effects: effects.clone(),
             output: aver::replay::RecordedOutcome::Value(outcome.output.clone()),
         };
@@ -314,4 +332,32 @@ pub(super) fn try_run_wasm_gc(
     }
 
     Ok(outcome)
+}
+
+#[cfg(feature = "wasm")]
+fn wasm_gc_provider_provenance(
+    capabilities: &aver::capability::CapabilityRegistry,
+    custom_plan: &aver::codegen::wasm_gc::CapabilityWasmGcPlan,
+    providers: &aver::provider::ProviderRegistry,
+) -> Vec<aver::replay::CapabilityProvenance> {
+    let custom = custom_plan
+        .interfaces()
+        .iter()
+        .map(|interface| interface.capability.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut provenance = aver::provider::shipped_target_provenance(
+        aver::provider::CapabilityTarget::WasmGc,
+        capabilities,
+    )
+    .into_iter()
+    .filter(|entry| !custom.contains(entry.capability.as_str()))
+    .collect::<Vec<_>>();
+    provenance.extend(
+        providers
+            .provenance()
+            .into_iter()
+            .filter(|entry| custom.contains(entry.capability.as_str())),
+    );
+    provenance.sort_by(|left, right| left.capability.cmp(&right.capability));
+    provenance
 }

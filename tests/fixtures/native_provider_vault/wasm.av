@@ -1,0 +1,13 @@
+module NativeProviderVaultWasmGc
+    intent = "Prove provider-owned resources retain identity through embedded Wasmtime."
+    depends [Vault]
+    effects [Vault.open, Vault.read]
+
+fn main() -> Result<Unit, String>
+    ? "Mint a provider resource, return it through wasm-gc, then give it back to the same binding."
+    ! [Vault.open, Vault.read]
+    token = Vault.open()?
+    value = Vault.read(token)?
+    match value
+        41 -> Result.Ok(Unit)
+        _ -> Result.Err("provider resource identity was not preserved")

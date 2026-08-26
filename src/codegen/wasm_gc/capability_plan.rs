@@ -2,7 +2,8 @@
 //!
 //! This is ABI metadata, not a provider implementation. A selected complete
 //! contract becomes one hashed import namespace and one function import per
-//! operation. The JavaScript/Workers/Node host supplies those functions.
+//! operation. An external embedder supplies those functions directly; the
+//! stock CLI can also adapt a configured Rust provider through the same ABI.
 
 use std::collections::{BTreeSet, HashSet};
 

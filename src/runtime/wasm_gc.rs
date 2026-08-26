@@ -30,6 +30,14 @@ use aver::ir::AnalysisResult;
 use aver::replay::{EffectRecord, EffectReplayState, JsonValue, SessionRecording};
 use aver::value::Value;
 
+/// Contract plan plus the exact process-local Rust providers selected by the
+/// project's target-neutral `[providers]` composition.
+#[derive(Clone)]
+pub struct CustomProviderConfig {
+    pub plan: aver::codegen::wasm_gc::CapabilityWasmGcPlan,
+    pub providers: aver::provider::ProviderRegistry,
+}
+
 /// What the recorder/replayer should do for this run.
 ///
 /// `Replay` carries a heap-allocated `SessionRecording` (kilobytes
@@ -83,6 +91,9 @@ pub struct RunConfig {
     /// representation tests set it to `false` to exercise boxed sequences.
     #[doc(hidden)]
     pub packed_sequences_enabled: bool,
+    /// Program-defined capability imports served by the cached Rust provider
+    /// host. `None` is the ordinary no-custom-provider embedding path.
+    pub custom_providers: Option<CustomProviderConfig>,
 }
 
 impl Default for RunConfig {
@@ -94,6 +105,7 @@ impl Default for RunConfig {
             tcp_settings: aver_rt::tcp::TcpSettings::default(),
             type_aliases: std::collections::HashMap::new(),
             packed_sequences_enabled: true,
+            custom_providers: None,
         }
     }
 }
@@ -154,14 +166,26 @@ pub fn run_in_process(
     analysis: Option<&AnalysisResult>,
     config: RunConfig,
 ) -> Result<RunOutcome, String> {
-    let bytes = aver::codegen::wasm_gc::compile_to_wasm_gc_flattened_with_options(
-        items,
-        analysis,
-        None,
-        aver::codegen::wasm_gc::TargetMode::AverBridge,
-        &config.type_aliases,
-        config.packed_sequences_enabled,
-    )
+    let bytes = match config.custom_providers.as_ref() {
+        Some(custom) => {
+            aver::codegen::wasm_gc::compile_to_wasm_gc_flattened_with_custom_capabilities(
+                items,
+                analysis,
+                None,
+                &config.type_aliases,
+                &custom.plan,
+                config.packed_sequences_enabled,
+            )
+        }
+        None => aver::codegen::wasm_gc::compile_to_wasm_gc_flattened_with_options(
+            items,
+            analysis,
+            None,
+            aver::codegen::wasm_gc::TargetMode::AverBridge,
+            &config.type_aliases,
+            config.packed_sequences_enabled,
+        ),
+    }
     .map(|out| out.bytes)
     .map_err(|e| format!("{e}"))?;
 
@@ -178,6 +202,7 @@ pub fn run_in_process(
         config.tcp_settings,
         config.entry_info.as_ref(),
         &return_ty,
+        config.custom_providers.as_ref(),
     )
     .map_err(|e| format!("WASM execution error: {}", e))
 }
@@ -275,6 +300,7 @@ fn run_wasm_gc_with_host(
     tcp_settings: aver_rt::tcp::TcpSettings,
     entry_info: Option<&(String, Vec<Value>)>,
     return_ty: &Type,
+    custom_providers: Option<&CustomProviderConfig>,
 ) -> Result<RunOutcome, String> {
     use wasmtime::*;
 
@@ -320,6 +346,9 @@ fn run_wasm_gc_with_host(
         },
     );
     let mut linker: Linker<RunWasmGcHost> = Linker::new(&engine);
+    let custom_imports = custom_providers
+        .map(provider_host::operation_imports)
+        .transpose()?;
 
     // One walk over imports — for every `(module, name)` declared by
     // the wasm module, register a host fn that uses the import's own
@@ -338,6 +367,15 @@ fn run_wasm_gc_with_host(
         let func_ty = FuncType::new(&engine, ft.params(), ft.results());
         let module_name_for_closure = module_name.clone();
         let field_name_for_closure = field_name.clone();
+        let custom_operation = custom_imports
+            .as_ref()
+            .and_then(|imports| imports.get(&(module_name.clone(), field_name.clone())))
+            .cloned();
+        if module_name.starts_with("aver:user/") && custom_operation.is_none() {
+            return Err(format!(
+                "error[capability-provider-adapter]: wasm-gc module imports unknown custom provider operation `{module_name}.{field_name}`"
+            ));
+        }
         linker
             .func_new(
                 &module_name,
@@ -356,6 +394,9 @@ fn run_wasm_gc_with_host(
                         )?
                     {
                         return Ok(());
+                    }
+                    if let Some(operation) = custom_operation.as_ref() {
+                        return provider_host::invoke(operation, &mut caller, params, results);
                     }
                     for (slot, ty) in results.iter_mut().zip(result_tys.iter()) {
                         *slot = match ty {
@@ -481,3 +522,4 @@ fn run_wasm_gc_with_host(
 
 mod decode;
 mod imports;
+mod provider_host;

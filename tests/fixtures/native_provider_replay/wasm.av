@@ -1,0 +1,12 @@
+module NativeProviderReplayWasmGc
+    intent = "Exercise custom provider record/replay through embedded wasm-gc."
+    depends [Modes]
+    effects [Modes.recorded, Modes.suppressed, Modes.reissued]
+
+fn main() -> Unit
+    ? "Run all replay modes while keeping the entry result scalar."
+    ! [Modes.recorded, Modes.suppressed, Modes.reissued]
+    Modes.recorded()
+    Modes.suppressed()
+    Modes.reissued()
+    Unit

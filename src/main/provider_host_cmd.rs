@@ -1,10 +1,10 @@
 //! CLI-side planning and repair text for the cached provider VM host.
 //!
 //! A project that binds providers in `aver.toml` has said what its programs
-//! mean. `run`, `verify` and `audit` therefore build (once) and reuse the
-//! Rust host that links those packages whenever the program reaches a bound
-//! capability; a backend that cannot host a Rust provider refuses instead of
-//! running without it.
+//! mean. VM commands, embedded wasip2, and wasm-gc run/replay therefore build
+//! (once) and reuse the Rust host that links those packages whenever the
+//! program reaches a bound capability; a backend without an adapter refuses
+//! instead of running a different implementation.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::ffi::OsString;
@@ -31,6 +31,15 @@ pub(super) fn run_if_requested(
     command: &Commands,
     raw_args: &[OsString],
 ) -> Option<Result<ExitStatus, String>> {
+    if let Commands::Replay {
+        recording,
+        wasm_gc: true,
+        ..
+    } = command
+    {
+        return run_wasm_gc_replay_if_requested(recording, raw_args);
+    }
+
     let (input, inputs, module_root, backend, command_name) = match command {
         Commands::Run {
             file,
@@ -43,7 +52,7 @@ pub(super) fn run_if_requested(
             let backend = if *wasip2 {
                 HostBackend::Hosted(crate::provider_vm_host::ProviderHostBackend::Wasip2)
             } else if *wasm_gc {
-                HostBackend::Unhosted("wasm-gc")
+                HostBackend::Hosted(crate::provider_vm_host::ProviderHostBackend::WasmGc)
             } else if *self_host {
                 HostBackend::Unhosted("self-host")
             } else {
@@ -150,6 +159,16 @@ pub(super) fn run_if_requested(
                     )));
                 }
             }
+            if backend == crate::provider_vm_host::ProviderHostBackend::WasmGc
+                && let Some(error) = wasm_gc_standard_override_error(
+                    &plan.composition,
+                    command_name,
+                    &input,
+                    &module_root,
+                )
+            {
+                return Some(Err(error));
+            }
             crate::provider_vm_host::run_cached_host(
                 raw_args,
                 &plan.composition,
@@ -173,6 +192,87 @@ pub(super) fn run_if_requested(
             ))
         }
     })
+}
+
+/// Replay discovers its program and module root from the recording rather
+/// than from command-line arguments. All recordings handled by one cached
+/// host must therefore belong to the same project/provider composition.
+fn run_wasm_gc_replay_if_requested(
+    recording_path: &str,
+    raw_args: &[OsString],
+) -> Option<Result<ExitStatus, String>> {
+    let files = match super::replay_cmd::collect_recording_files(recording_path) {
+        Ok(files) => files,
+        Err(_) => return None,
+    };
+    let mut module_root = None::<String>;
+    let mut inputs = Vec::with_capacity(files.len());
+    for path in &files {
+        let raw = match std::fs::read_to_string(path) {
+            Ok(raw) => raw,
+            Err(_) => return None,
+        };
+        let recording = match aver::replay::parse_session_recording(&raw) {
+            Ok(recording) => recording,
+            Err(_) => return None,
+        };
+        let root = super::replay_cmd::resolve_replay_module_root(path, &recording);
+        if module_root.as_ref().is_some_and(|known| known != &root) {
+            return Some(Err(format!(
+                "error[capability-provider-replay-project]: `aver replay --wasm-gc` cannot link one cached Rust provider host for recordings from multiple module roots ('{}' and '{root}'); replay each project separately",
+                module_root.as_deref().unwrap_or_default()
+            )));
+        }
+        inputs.push(super::replay_cmd::resolve_replay_program_file(
+            &recording, &root,
+        ));
+        module_root = Some(root);
+    }
+    let module_root = module_root?;
+    let manifest = aver::config::ProjectConfig::load_from_dir(Path::new(&module_root))
+        .ok()
+        .flatten()?
+        .provider_manifest?;
+    let plan = match plan_for_programs(&inputs, &module_root, &manifest) {
+        Ok(plan) => plan,
+        Err(error) => return Some(Err(error)),
+    };
+    if plan.composition.bindings.is_empty() {
+        return None;
+    }
+    if let Some(error) =
+        wasm_gc_standard_override_error(&plan.composition, "replay", recording_path, &module_root)
+    {
+        return Some(Err(error));
+    }
+    Some(crate::provider_vm_host::run_cached_host(
+        raw_args,
+        &plan.composition,
+        crate::provider_vm_host::ProviderHostBackend::WasmGc,
+        Path::new(&module_root),
+    ))
+}
+
+/// Program-defined capabilities use the contract-derived `aver:user/*` ABI.
+/// Compiler-shipped standard capabilities still use their older specialised
+/// `aver/*` imports, so silently accepting an override here would run a
+/// different provider than aver.toml selected.
+fn wasm_gc_standard_override_error(
+    composition: &rust_codegen::composition::ProviderComposition,
+    command: &str,
+    input: &str,
+    module_root: &str,
+) -> Option<String> {
+    let standard = aver::stdlib::standard_capability_registry_ref();
+    let binding = composition
+        .bindings
+        .iter()
+        .find(|binding| standard.contract(&binding.capability).is_some())?;
+    Some(format!(
+        "error[capability-provider-runner-adapter-unavailable]: `aver {command} {input}` selected the configured Rust provider for standard capability '{}', but the embedded wasm-gc runner cannot yet replace that capability's compiler-shipped `aver/*` import adapter. The wasm-gc target supports this capability; this is an embedded-runner adapter limitation, not target incompatibility. Run the same project on the bytecode VM, compile with `--target rust`, or supply the wasm-gc imports from an external host. Provider configuration: {}",
+        binding.capability,
+        crate::provider_vm_host::describe_source(&binding.source, Path::new(module_root))
+    ))
 }
 
 /// What the provider host needs to know about the program(s) a command was

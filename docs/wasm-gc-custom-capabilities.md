@@ -6,10 +6,21 @@ not embed a provider implementation. A browser, Node, Deno, Bun, Worker, or
 other JavaScript host supplies the imports when it instantiates the module.
 
 `aver capabilities app.av` reports this as
-`host-bound[wasm-gc-import-required]`. The in-process shortcut
-`aver run --wasm-gc` supplies only compiler-shipped standard capabilities; for
-a custom contract it fails with `error[capability-provider-missing]` and points
-to the external-host workflow.
+`host-bound[wasm-gc-import-required]`: the target defines an ABI but never
+chooses an implementation. An external embedder supplies the imports itself.
+When `[providers]` in `aver.toml` selects a Rust `ProviderBinding`,
+`aver run --wasm-gc` builds the same cached host used by the VM and adapts that
+binding through the generated ABI. The binding remains target-neutral; there
+is no wasm-specific provider declaration.
+
+The embedded adapter covers the complete provider vocabulary, including
+compound values, arbitrary `Int`, bulk `Bytes`, represented records/sums,
+opaque provider resources, and record/replay. Compiler-shipped standard
+capabilities still use specialised `aver/*` imports; an explicit standard
+provider override is rejected as
+`capability-provider-runner-adapter-unavailable` until those older adapters
+are replaceable too. That diagnostic is a runner limitation, not a claim that
+the wasm-gc target lacks the capability.
 
 ## Import identity
 
@@ -41,7 +52,8 @@ value. A non-`Unit` return is the single function result.
 ## Value representation
 
 The custom boundary uses the same native wasm-gc representation as the guest;
-there is no JSON codec and no narrowing of Aver values:
+there is no JSON transport codec and no narrowing of Aver values. The embedded
+runner lifts these values directly into transport-neutral `ProviderValue`s:
 
 | Aver type | Raw wasm-gc boundary |
 |---|---|
@@ -80,7 +92,7 @@ Examples include:
 - `...Option..._{some,none,tag,value}`
 - `...List..._{cons,nil,is_empty,head,tail}`
 - `...Vector..._{new,len,get,set}`
-- `...Map..._{empty,set,get,len}`
+- `...Map..._{empty,set,get,len,keys}`
 - record `{make,field_n<field-name-hex>}`
 - sum `{kind,variant_n<variant-name-hex>_make,...}`
 
