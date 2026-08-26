@@ -32,7 +32,7 @@ pub const ARTIFACT_CERTIFICATE_ROOT: &str = "AverCert.Artifact.certificate";
 
 /// Identity of the exact checker-owned Lean wall shipped by this release.
 pub const CURRENT_WALL_ID: &str =
-    "sha256:dfcd1e6a3b39952df2d0386462ab0f0b9ea56cea3085884341f384c6fba71849";
+    "sha256:fc4bfb5d40f2638c7cb574093215cffed4e754729a78c0605aef229cc454659b";
 
 /// Complete host-import surface admitted by the wasm-gc certificate format.
 ///
@@ -123,6 +123,46 @@ pub const WASM_GC_CAPABILITIES: &[(&str, &str)] = &[
     ("aver", "record_exit_group"),
 ];
 
+/// Whether a raw wasm-gc import is part of the certificate's admitted host
+/// surface. Compiler-shipped effects use the finite table above. Program-
+/// defined capabilities use a deterministic contract-derived namespace:
+/// `aver:user/cap-n<module-utf8-hex>-c<sha256>` and
+/// `op-n<operation-utf8-hex>`.
+pub fn is_wasm_gc_capability_import(module: &str, field: &str) -> bool {
+    WASM_GC_CAPABILITIES.contains(&(module, field))
+        || is_custom_wasm_gc_capability_import(module, field)
+}
+
+fn is_custom_wasm_gc_capability_import(module: &str, field: &str) -> bool {
+    const MODULE_PREFIX: &str = "aver:user/cap-n";
+    const OP_PREFIX: &str = "op-n";
+
+    let Some(module_tail) = module.strip_prefix(MODULE_PREFIX) else {
+        return false;
+    };
+    let Some((module_hex, contract_hash)) = module_tail.split_once("-c") else {
+        return false;
+    };
+    let Some(operation_hex) = field.strip_prefix(OP_PREFIX) else {
+        return false;
+    };
+
+    is_nonempty_even_lower_hex(module_hex)
+        && contract_hash.len() == 64
+        && is_lower_hex(contract_hash)
+        && is_nonempty_even_lower_hex(operation_hex)
+}
+
+fn is_nonempty_even_lower_hex(value: &str) -> bool {
+    !value.is_empty() && value.len().is_multiple_of(2) && is_lower_hex(value)
+}
+
+fn is_lower_hex(value: &str) -> bool {
+    value
+        .bytes()
+        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -134,6 +174,24 @@ mod tests {
             .copied()
             .collect::<std::collections::BTreeSet<_>>();
         assert_eq!(unique.len(), WASM_GC_CAPABILITIES.len());
+    }
+
+    #[test]
+    fn custom_capability_import_syntax_is_exact() {
+        let hash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        assert!(is_wasm_gc_capability_import(
+            &format!("aver:user/cap-n436c6f636b-c{hash}"),
+            "op-n6e6f77"
+        ));
+        for (module, field) in [
+            (format!("aver:user/cap-n-c{hash}"), "op-n6e6f77"),
+            (format!("aver:user/cap-n436c6f636b-c{hash}0"), "op-n6e6f77"),
+            (format!("aver:user/cap-n436C6f636b-c{hash}"), "op-n6e6f77"),
+            (format!("aver:user/cap-n436c6f636b-c{hash}"), "op-n"),
+            (format!("aver:user/cap-n436c6f636b-c{hash}"), "op-nxyz"),
+        ] {
+            assert!(!is_wasm_gc_capability_import(&module, field));
+        }
     }
 
     /// The format specification (`docs/certificate-format.md`) prints the wall

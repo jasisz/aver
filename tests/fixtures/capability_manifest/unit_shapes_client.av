@@ -1,0 +1,6 @@
+module UnitShapesClient
+    depends [UnitShapes]
+    exposes [sample]
+
+fn sample() -> Option<Unit>
+    UnitShapes.makeMaybe()

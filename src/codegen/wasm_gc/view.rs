@@ -89,10 +89,14 @@ impl WasmGcLinkedView {
         items: &[TopLevel],
         fn_defs: &[&FnDef],
         capability_wit_plan: Option<&crate::codegen::wasip2::CapabilityWitPlan>,
+        capability_wasm_gc_plan: Option<&super::CapabilityWasmGcPlan>,
     ) -> Result<Self, WasmGcError> {
         let mut symbol_table = SymbolTable::build(items, &[]);
         if let Some(plan) = capability_wit_plan {
             symbol_table.merge_capability_wit_plan(plan);
+        }
+        if let Some(plan) = capability_wasm_gc_plan {
+            symbol_table.merge_capability_wasm_gc_plan(plan);
         }
         let mut resolve_ctx = crate::ir::hir::ResolveCtx::new(&symbol_table);
         // Same current-module context every other resolution site uses

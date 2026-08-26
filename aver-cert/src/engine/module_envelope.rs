@@ -72,10 +72,6 @@ pub fn collect_module_envelope_facts(
         .validate_all(wasm_bytes)
         .map_err(|e| format!("wasm module failed validation: {e}"))?;
 
-    let registry = crate::format::WASM_GC_CAPABILITIES
-        .iter()
-        .copied()
-        .collect::<BTreeSet<_>>();
     let mut exports = Vec::new();
     let mut capabilities = Vec::new();
     let mut start = None;
@@ -91,7 +87,10 @@ pub fn collect_module_envelope_facts(
                     for import in group {
                         let (_, import) = import.map_err(|e| format!("import read: {e}"))?;
                         let pair = (import.module.to_string(), import.name.to_string());
-                        if !registry.contains(&(import.module, import.name)) {
+                        if !crate::format::is_wasm_gc_capability_import(
+                            import.module,
+                            import.name,
+                        ) {
                             return Err(format!(
                                 "module import `{}.{}` is outside the wasm-gc effect capability registry",
                                 import.module, import.name

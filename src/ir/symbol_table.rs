@@ -590,6 +590,36 @@ impl SymbolTable {
         }
     }
 
+    /// Restore custom capability atoms in a raw wasm-gc post-flatten link
+    /// view. Unlike the phase-limited WIT plan, this preserves the complete
+    /// operation proof metadata while changing only the transport.
+    #[cfg(feature = "wasm-compile")]
+    pub(crate) fn merge_capability_wasm_gc_plan(
+        &mut self,
+        plan: &crate::codegen::wasm_gc::CapabilityWasmGcPlan,
+    ) {
+        for interface in plan.interfaces() {
+            self.capability_contract_hashes.insert(
+                interface.capability.clone(),
+                (
+                    interface.contract_hash.clone(),
+                    interface.model_hash.clone(),
+                ),
+            );
+            for operation in &interface.operations {
+                self.capability_operations.insert(
+                    operation.operation.canonical_name.clone(),
+                    CapabilityOperationInfo {
+                        effectful: operation.operation.is_effectful(),
+                        oracle: operation.operation.oracle,
+                        replay: operation.operation.replay,
+                        mints_resource: operation.operation.minted_resource.is_some(),
+                    },
+                );
+            }
+        }
+    }
+
     /// Derived gate for the literal smart-constructor discharge.
     ///
     /// Lives on the symbol table because that is the single place where

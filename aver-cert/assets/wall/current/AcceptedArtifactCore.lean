@@ -1994,6 +1994,34 @@ def manifestObligationExportsUnique (artifact : ArtifactData) : Bool :=
 def stringBytes (s : String) : AverCert.WasmSlice.ByteSeq :=
   s.toList.map Char.toNat
 
+def lowerHexByte (byte : Nat) : Bool :=
+  (decide (48 ≤ byte) && decide (byte ≤ 57)) ||
+  (decide (97 ≤ byte) && decide (byte ≤ 102))
+
+def customCapabilityModuleTail : Nat → AverCert.WasmSlice.ByteSeq → Bool
+  | count, 45 :: 99 :: hash =>
+      decide (0 < count) && count % 2 == 0 && hash.length == 64 &&
+        hash.all lowerHexByte
+  | count, byte :: rest =>
+      lowerHexByte byte && customCapabilityModuleTail (count + 1) rest
+  | _, [] => false
+
+/-- Contract-derived raw wasm-gc imports are opaque capabilities, admitted
+    only under the compiler's injective UTF-8-hex namespace. The complete
+    contract hash is transport identity; the manifest and import-section fold
+    still pin the exact pair byte-for-byte. -/
+def customCapabilityImport (capability : String × String) : Bool :=
+  let modulePrefix := stringBytes "aver:user/cap-n"
+  let operationPrefix := stringBytes "op-n"
+  let moduleBytes := stringBytes capability.1
+  let operationBytes := stringBytes capability.2
+  let operationTail := operationBytes.drop operationPrefix.length
+  modulePrefix.isPrefixOf moduleBytes &&
+  customCapabilityModuleTail 0 (moduleBytes.drop modulePrefix.length) &&
+  operationPrefix.isPrefixOf operationBytes &&
+  !operationTail.isEmpty && operationTail.length % 2 == 0 &&
+  operationTail.all lowerHexByte
+
 def byteSeqListNodup (xs : List AverCert.WasmSlice.ByteSeq) : Bool :=
   AverCert.WasmSlice.indexedNodup xs
 
@@ -2046,12 +2074,15 @@ def capabilityBytes (capability : String × String) :
   (stringBytes capability.1, stringBytes capability.2)
 
 /-- The manifest capability list is exact (including import order), contains no
-    duplicates, and is a subset of the kernel registry minted from the wasm-gc
-    effect import mapping. Non-effect and forged imports therefore fail here. -/
+    duplicates, and every import is either in the finite standard registry or
+    in the exact contract-derived custom-capability namespace. Non-capability
+    and malformed imports therefore fail here. -/
 def importsWithinCapabilities (artifact : ArtifactData) : Bool :=
   let declared := artifact.manifest.subject.capabilities
   stringListNodup (declared.map (fun capability => capability.1 ++ "." ++ capability.2)) &&
-  declared.all (fun capability => AverCert.Schema.CAPABILITY_REGISTRY.contains capability) &&
+  declared.all (fun capability =>
+    AverCert.Schema.CAPABILITY_REGISTRY.contains capability ||
+      customCapabilityImport capability) &&
   match AverCert.WasmSlice.enumImportNames artifact.modBytes artifact.modLen with
   | some actual => actual == declared.map capabilityBytes
   | none => false

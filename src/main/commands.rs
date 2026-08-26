@@ -6486,15 +6486,22 @@ fn cmd_compile_wasm_gc(
             .capabilities,
         aver::provider::CapabilityTarget::WasmGc,
     );
-    let type_aliases = flatten_multimodule(
-        &mut items,
-        &dep_modules,
-        &result
-            .typecheck
-            .as_ref()
-            .expect("wasm-gc pipeline requested typechecking")
-            .capabilities,
-    );
+    let capabilities = &result
+        .typecheck
+        .as_ref()
+        .expect("wasm-gc pipeline requested typechecking")
+        .capabilities;
+    let required =
+        aver::provider::required_capability_operations(&items, &dep_modules, capabilities);
+    let capability_wasm_gc_plan = wasm_gc::CapabilityWasmGcPlan::build(capabilities, &required)
+        .unwrap_or_else(|error| {
+            eprintln!(
+                "{}",
+                format!("error[wasm-gc-capability-abi]: {error}").red()
+            );
+            process::exit(1);
+        });
+    let type_aliases = flatten_multimodule(&mut items, &dep_modules, capabilities);
     // Re-run resolver after flatten so dep fns get a FnResolution
     // (slot_types). Entry items already had one from `pipeline::run`
     // above; this picks up the newly appended dep FnDefs. The
@@ -6503,12 +6510,12 @@ fn cmd_compile_wasm_gc(
     // container-held collections through extracted locals (#950).
     aver::ir::pipeline::resolve_and_reannotate(&mut items);
 
-    let wasm_gc_output = match wasm_gc::compile_to_wasm_gc_flattened_with_options(
+    let wasm_gc_output = match wasm_gc::compile_to_wasm_gc_flattened_with_custom_capabilities(
         &items,
         result.analysis.as_ref(),
         handler,
-        wasm_gc::TargetMode::AverBridge,
         &type_aliases,
+        &capability_wasm_gc_plan,
         packed_sequences_enabled,
     ) {
         Ok(output) => output,

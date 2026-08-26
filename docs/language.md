@@ -448,11 +448,11 @@ vm.run()?;
 Target support is explicit rather than inferred from a missing provider row.
 `aver capabilities app.av` emits one deterministic row per loaded capability
 and shipped target (`vm`, `rust`, `wasm-gc`, `wasip2`). A row is `provided`,
-`host-bound` when an embedder or Component Model host must install a provider, or
-`unsupported(reason)` with a stable architectural reason such as
-`host-import-adapter-not-generated` or
-`wit-boundary-type-unsupported`. A WIT-lowerable custom contract is
-`host-bound[component-import-required]` on wasip2. The manifest lists the full
+`host-bound` when an embedder, JavaScript host, or Component Model host must
+install a provider, or `unsupported(reason)` with a stable architectural reason
+such as `wit-boundary-type-unsupported`. A custom contract is
+`host-bound[wasm-gc-import-required]` on raw wasm-gc; a WIT-lowerable custom
+contract is `host-bound[component-import-required]` on wasip2. The manifest lists the full
 declared operation set separately from operations used by the program; unused
 contracts remain visible but never block compilation. `--json` emits the
 versioned machine-readable form, including the exact offending operation,
@@ -465,8 +465,13 @@ target, capability, required operations, contract/model hashes, and reason.
 
 The registry is shared by the main VM and every `!` / `?!` child, so all branches see the same provider instance and resource store. Recording adds a sorted capability provenance table with `contract_hash`, `model_hash`, provider identity, and implementation fingerprint. `recorded` and `suppressed` replay consume without calling a provider; `reissued` consumes the event and calls live; pure operations call live without emitting an event. Live pure/reissued replay requires the same identity and fingerprint. The compiler-shipped native, wasm-gc, and wasip2 adapters for one standard capability form one explicit replay-compatibility family: their target-specific identities may differ, but the fingerprint must still match, so a standard trace remains portable between backends. Custom providers remain identity-exact. Provider fingerprints are audit metadata supplied by the host, not theorem hashes; the runtime can expose drift, but it cannot stop a dishonest host from reusing an old fingerprint for changed code.
 
-Custom bindings have two host-bound routes. A Rust embedder can install one typed
+Custom bindings have three host-bound routes. A Rust embedder can install one typed
 in-process provider binding unchanged in the VM or a generated Rust artifact. A
+raw wasm-gc artifact imports the complete contract under a deterministic module
+name containing its `contract_hash`, using native GC values and `externref`
+resources; a JavaScript/Workers/Node host supplies it. See
+[`docs/wasm-gc-custom-capabilities.md`](wasm-gc-custom-capabilities.md) for the
+ABI and generated value factories. A
 wasip2 artifact can import a generated WIT interface when every parameter and
 result in the complete contract is `Unit`, `Bool`, `Float`, or `String`; pure
 and effectful operations use the same transport. The component import pins the
@@ -478,8 +483,7 @@ to the same WIT interface. Without a binding, `aver run --wasip2` fails
 preflight with `error[capability-provider-missing]`. The stock generated Rust binary
 likewise has no custom binding and fails preflight; a separate Rust host links
 the provider crate through Cargo and installs the binding explicitly.
-Bare wasm-gc still rejects arbitrary custom capabilities. Standard `Time` is a
-provided exception: its canonical source is shipped at
+Standard `Time` remains a provided binding: its canonical source is shipped at
 `stdlib/capabilities/time.av`, and VM, generated Rust, wasm-gc, and wasip2 each
 declare an exact shipped binding of that one contract. See
 [`docs/wasip2.md`](wasip2.md#custom-capability-imports-phase-3a) for the boundary

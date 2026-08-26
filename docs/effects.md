@@ -80,6 +80,12 @@ The recommended target. Same `aver/*` import surface across every host that runs
 
 The bridge also has one internal, non-effect import: `aver.provider_contract_violation(message, caller_fn_idx)`. The compiler includes it only when a literal call discharges a `Result` validation boundary. A conforming host reports the supplied provider `Err` text and returns; the guest immediately traps, so this diagnostic can never become a fallback value and is never part of record/replay.
 
+Program-defined capabilities use a separate contract-derived
+`aver:user/cap-…` import namespace and native wasm-gc values, including
+`externref` resources and full `Int = ℤ`. The compiler exports the factories a
+JavaScript host needs to construct and inspect GC values. See
+[`wasm-gc-custom-capabilities.md`](wasm-gc-custom-capabilities.md).
+
 `--handler <fn>` (and the bundled `--preset cloudflare --handler <fn>`) generates an `aver_http_handle()` synthesised wrapper that consumes Request fields via dedicated host imports (`request_method`, `request_url`, `request_query`, `request_body`, `request_headers_load`) and writes the response via `response_text` / `response_set_header`. Inside the handler body, `Http.*` calls still go through the standard effect surface (✅ JSPI-suspending `fetch()` on Workers, ✅ wasmtime if you ever ran the same handler under `aver run --wasm-gc`).
 
 In fetch-style deployment the host calls the selected `--handler <fn>`; there

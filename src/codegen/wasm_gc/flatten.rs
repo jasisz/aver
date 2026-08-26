@@ -126,10 +126,17 @@ pub fn flatten_multimodule(
     // and `Time.now` as qualified capability identities so the backend binding
     // table can lower them; rewriting one to a nonexistent flattened function
     // such as `Time_now` would produce a trap stub.
-    let prefixes: HashSet<String> = dep_modules
+    // Provider operations must keep their qualified names (`Shapes.echo`),
+    // but represented types declared by that same capability are ordinary
+    // nominal types after linking. Constructor rewriting therefore needs all
+    // dependency prefixes, not only dependencies that contribute functions.
+    let type_prefixes: HashSet<String> = dep_modules
         .iter()
-        .filter(|module| module.capability_semantics.is_none())
         .map(|module| module.prefix.clone())
+        .collect();
+    let capability_operations: HashSet<String> = capabilities
+        .operations()
+        .map(|operation| operation.canonical_name.clone())
         .collect();
 
     // Bare-name → owning dep prefix(es) across all dep modules. A bare
@@ -193,7 +200,8 @@ pub fn flatten_multimodule(
     let empty_set: HashSet<String> = HashSet::new();
 
     let entry_ctx = RewriteCtx {
-        prefixes: &prefixes,
+        type_prefixes: &type_prefixes,
+        capability_operations: &capability_operations,
         qualified_type_names: &qualified_type_names,
         same_module_prefix: None,
         same_module_fns: &empty_set,
@@ -259,7 +267,8 @@ pub fn flatten_multimodule(
             })
             .collect();
         let dep_ctx = RewriteCtx {
-            prefixes: &prefixes,
+            type_prefixes: &type_prefixes,
+            capability_operations: &capability_operations,
             qualified_type_names: &qualified_type_names,
             same_module_prefix: Some(&dep.prefix),
             same_module_fns: &same_module_fns,
@@ -476,8 +485,13 @@ fn attr_chain_to_dotted(expr: &Expr) -> Option<String> {
 /// `colliding_owner` is empty while the entry module's own items are
 /// walked, so the canonicalisation passes keyed on them are inert there.
 struct RewriteCtx<'a> {
-    /// Every dep module path, used to spot cross-module references.
-    prefixes: &'a HashSet<String>,
+    /// Every dependency module that may own a represented boundary type.
+    /// Unlike `prefixes`, this includes capability modules: their operations
+    /// stay host-bound while their records and sums link into this artifact.
+    type_prefixes: &'a HashSet<String>,
+    /// Exact provider atoms which deliberately retain their module-qualified
+    /// identity instead of becoming a flattened function/constructor name.
+    capability_operations: &'a HashSet<String>,
     /// Every dependency-qualified type spelling that the post-link program
     /// may need to rewrite in annotations and inferred type stamps.
     qualified_type_names: &'a HashSet<String>,
@@ -559,15 +573,11 @@ fn rewrite_expr(expr: &mut Expr, ctx: &RewriteCtx<'_>) {
     match expr {
         Expr::FnCall(callee, args) => {
             let mut new_callee: Option<Expr> = None;
-            if let Expr::Attr(parent, member) = &callee.node {
-                if let Expr::Ident(p) = &parent.node
-                    && ctx.prefixes.contains(p)
-                {
-                    new_callee = Some(Expr::Ident(prefixed(p, member)));
-                } else if let Some(dotted) = attr_chain_to_dotted(&callee.node) {
-                    new_callee =
-                        rewrite_dotted_module_ref(&dotted, ctx.prefixes, ctx.colliding_bare_names);
-                }
+            if let Some(dotted) = attr_chain_to_dotted(&callee.node)
+                && !ctx.capability_operations.contains(&dotted)
+            {
+                new_callee =
+                    rewrite_dotted_module_ref(&dotted, ctx.type_prefixes, ctx.colliding_bare_names);
             }
             if new_callee.is_none()
                 && let Expr::Ident(name) = &callee.node
@@ -615,7 +625,15 @@ fn rewrite_expr(expr: &mut Expr, ctx: &RewriteCtx<'_>) {
             // canonicalised form be mis-matched as a cross-module access
             // and unrewritten back to bare.
             let rewrite = attr_chain_to_dotted(expr).and_then(|dotted| {
-                rewrite_dotted_module_ref(&dotted, ctx.prefixes, ctx.colliding_bare_names)
+                (!ctx.capability_operations.contains(&dotted))
+                    .then(|| {
+                        rewrite_dotted_module_ref(
+                            &dotted,
+                            ctx.type_prefixes,
+                            ctx.colliding_bare_names,
+                        )
+                    })
+                    .flatten()
             });
             if let Some(new_node) = rewrite {
                 *expr = new_node;
@@ -748,7 +766,8 @@ fn rewrite_pattern(pat: &mut Pattern, ctx: &RewriteCtx<'_>) {
 /// Qualified references lose the module path first — a name that still
 /// carries one has nothing for the colliding-name pass to read.
 fn rewrite_constructor_name(name: &mut String, ctx: &RewriteCtx<'_>) {
-    if let Some(flattened) = flattened_qualified_ctor(name, ctx.prefixes, ctx.colliding_bare_names)
+    if let Some(flattened) =
+        flattened_qualified_ctor(name, ctx.type_prefixes, ctx.colliding_bare_names)
     {
         *name = flattened;
         return;

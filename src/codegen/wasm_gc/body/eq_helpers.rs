@@ -780,10 +780,8 @@ fn emit_inner_eq_dispatch(
             // The caller did two `struct.get` and pushed two dummy
             // i32s; comparing them with `I32Eq` always yields 1
             // since any two Unit values are equal by definition.
-            // `Option<Unit>` never reaches this path — Option's
-            // struct emitter rejects Unit element earlier
-            // ("Option element type `Unit` has no wasm
-            // representation").
+            // `Option<Unit>` uses the same private i32 placeholder, so this
+            // branch also gives its represented payload the right equality.
             f.instruction(&Instruction::I32Eq);
         }
         "Float" => {

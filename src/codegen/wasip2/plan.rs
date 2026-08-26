@@ -140,7 +140,7 @@ impl CapabilityWitInterfacePlan {
                 };
                 Ok(CapabilityWitOperationPlan {
                     canonical_name: operation.canonical_name.clone(),
-                    wit_name: format!("op-{}", encode_wit_identifier(&operation.name)),
+                    wit_name: format!("op-{}", encode_interface_identifier(&operation.name)),
                     effectful: operation.is_effectful(),
                     params,
                     result,
@@ -153,11 +153,7 @@ impl CapabilityWitInterfacePlan {
             capability: contract.module.clone(),
             contract_hash: contract.contract_hash.clone(),
             model_hash: contract.model_hash.clone(),
-            interface_name: format!(
-                "cap-{}-c{}",
-                encode_wit_identifier(&contract.module),
-                contract_hash_hex(contract)
-            ),
+            interface_name: capability_interface_name(contract),
             operations,
         })
     }
@@ -219,6 +215,14 @@ fn is_canonical_standard_capability(contract: &CapabilityContract) -> bool {
         })
 }
 
+pub(crate) fn capability_interface_name(contract: &CapabilityContract) -> String {
+    format!(
+        "cap-{}-c{}",
+        encode_interface_identifier(&contract.module),
+        contract_hash_hex(contract)
+    )
+}
+
 fn contract_hash_hex(contract: &CapabilityContract) -> &str {
     contract
         .contract_hash
@@ -230,7 +234,7 @@ fn contract_hash_hex(contract: &CapabilityContract) -> &str {
 /// identifiers. Hex-encoding the complete UTF-8 byte sequence avoids WIT's
 /// restrictions on consecutive/trailing hyphens and makes collision freedom
 /// obvious rather than dependent on the current Aver identifier grammar.
-fn encode_wit_identifier(source: &str) -> String {
+pub(crate) fn encode_interface_identifier(source: &str) -> String {
     let mut encoded = String::from("n");
     for byte in source.bytes() {
         encoded.push_str(&format!("{byte:02x}"));
