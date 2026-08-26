@@ -1,6 +1,6 @@
 use super::{
     VerifyEmitMode, generate_prelude, proof_mode_issues, recurrence, transpile,
-    transpile_for_proof_mode, transpile_with_verify_mode,
+    transpile_for_cert_model, transpile_for_proof_mode, transpile_with_verify_mode,
 };
 use crate::ast::{
     BinOp, Expr, FnBody, FnDef, Literal, MatchArm, Pattern, Spanned, Stmt, TailCallData, TopLevel,
@@ -208,6 +208,42 @@ fn nestedArg(n: Int, d: Int) -> Result<Int, String>
         lean.contains("| .ok q =>")
             && lean.contains("| .error __qm_err_0 => Except.error __qm_err_0"),
         "statement-level `?` lowering must retain its short-circuiting match:\n{lean}"
+    );
+}
+
+#[test]
+fn result_discharge_prelude_keeps_proof_simp_but_cert_data_attribute_free() {
+    let source = r#"
+module CertDischarge
+    effects []
+
+fn checkedHalf(n: Int) -> Result<Int, String>
+    Result.Ok(Int.div(n, 2))
+"#;
+    let mut proof_ctx = ctx_from_source(source, "CertDischarge");
+    let proof_out = transpile_for_proof_mode(&mut proof_ctx, VerifyEmitMode::NativeDecide);
+    let proof_common = proof_out
+        .files
+        .iter()
+        .find_map(|(name, content)| (name == "AverCommon.lean").then_some(content))
+        .expect("proof export should emit AverCommon.lean");
+    assert!(
+        proof_common.contains("@[simp] theorem proven_ok"),
+        "standalone proof reduction needs the simp attribute:\n{proof_common}"
+    );
+
+    let mut ctx = ctx_from_source(source, "CertDischarge");
+    let out = transpile_for_cert_model(&mut ctx);
+    let common = out
+        .files
+        .iter()
+        .find_map(|(name, content)| (name == "AverCommon.lean").then_some(content))
+        .expect("certificate model should emit AverCommon.lean");
+
+    assert!(common.contains("theorem proven_ok"), "{common}");
+    assert!(
+        !common.contains("@["),
+        "certificate DATA must stay free of elaboration-active attributes:\n{common}"
     );
 }
 
