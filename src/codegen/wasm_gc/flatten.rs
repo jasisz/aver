@@ -51,6 +51,8 @@ use std::collections::{HashMap, HashSet};
 use crate::ast::{Expr, FnBody, Pattern, Spanned, Stmt, TopLevel, TypeDef};
 use crate::codegen::ModuleInfo;
 use crate::codegen::common::type_def_name;
+use crate::ir::identity::{TypeId, TypeKey};
+use crate::visibility::{ModuleTypeExports, ModuleTypeSurface};
 
 /// Which capability function closure belongs in the flattened module.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -177,6 +179,50 @@ pub fn flatten_multimodule(
         .map(|(bare, _)| bare.clone())
         .collect();
 
+    // Resolve a bare colliding type in the scope where it was written, not
+    // against every declaration that happens to land in the final artifact.
+    // `Worker depends [Left]` gives bare `State` one meaning inside Worker
+    // even when an unrelated entry branch also loads `Right.State`. The
+    // typechecker already made this decision through module visibility; the
+    // flattener must preserve it when both declarations receive qualified
+    // registry keys.
+    let type_surfaces: Vec<ModuleTypeSurface<'_>> = dep_modules
+        .iter()
+        .map(|dep| ModuleTypeSurface {
+            name: &dep.prefix,
+            depends: &dep.depends,
+            exposes: crate::visibility::declared_exposes(&dep.exposes),
+            exposes_opaque: &dep.exposes_opaque,
+            declared_types: dep.type_defs.iter().map(type_def_name).collect(),
+        })
+        .collect();
+    let module_type_exports = crate::visibility::collect_type_exports(&type_surfaces);
+
+    // Expression stamps already carry the declaration identity selected by
+    // typechecking. Preserve that decision across the flatten boundary:
+    // `Left.build() : Result<Built, String>` still denotes Left.Built even in
+    // an entry that also imports Right.Built. The flattened symbol table uses
+    // fresh entry-scope IDs, so rewrite the spelling from the old stable ID
+    // and clear the ID for the post-link resolver to re-home.
+    let mut flattened_name_by_type_id: HashMap<TypeId, String> = HashMap::new();
+    for bare in &entry_bare_names {
+        flattened_name_by_type_id.insert(TypeId::for_key(&TypeKey::entry(bare)), bare.clone());
+    }
+    for dep in dep_modules {
+        for td in &dep.type_defs {
+            let bare = type_def_name(td);
+            let flattened = if colliding_bare_names.contains(bare) {
+                format!("{}.{}", dep.prefix, bare)
+            } else {
+                bare.to_string()
+            };
+            flattened_name_by_type_id.insert(
+                TypeId::for_key(&TypeKey::in_module(&dep.prefix, bare)),
+                flattened,
+            );
+        }
+    }
+
     let mut type_aliases: HashMap<String, String> = HashMap::new();
     for (bare, owners) in &bare_owners {
         if owners.len() == 1 && !entry_bare_names.contains(bare.as_str()) {
@@ -196,8 +242,17 @@ pub fn flatten_multimodule(
         })
         .collect();
 
-    let empty_owner: HashMap<String, String> = HashMap::new();
     let empty_set: HashSet<String> = HashSet::new();
+
+    let entry_decl = crate::visibility::module_decl(items);
+    let entry_depends = entry_decl.map(|m| m.depends.as_slice()).unwrap_or(&[]);
+    let entry_colliding_owner = colliding_owners_in_scope(
+        &entry_bare_names,
+        None,
+        entry_depends,
+        &module_type_exports,
+        &colliding_bare_names,
+    );
 
     let entry_ctx = RewriteCtx {
         type_prefixes: &type_prefixes,
@@ -205,22 +260,25 @@ pub fn flatten_multimodule(
         qualified_type_names: &qualified_type_names,
         same_module_prefix: None,
         same_module_fns: &empty_set,
-        // The entry keeps the bare spelling of every name it declares, so
-        // nothing in its own body needs canonicalising.
-        colliding_owner: &empty_owner,
-        dep_prefix: "",
+        // The entry keeps the bare spelling of every name it declares, while
+        // an imported colliding name is canonicalised to the one declaration
+        // visible through the entry's own `depends` surface.
+        colliding_owner: &entry_colliding_owner,
+        flattened_name_by_type_id: &flattened_name_by_type_id,
         colliding_bare_names: &colliding_bare_names,
     };
     for item in items.iter_mut() {
         match item {
             TopLevel::FnDef(fd) => {
                 rewrite_fn_signature(fd, &qualified_type_names, &colliding_bare_names);
+                canonicalise_fn_signature_for_own_colliding(fd, &entry_colliding_owner);
                 let body_arc = std::sync::Arc::make_mut(&mut fd.body);
                 let FnBody::Block(stmts) = body_arc;
                 rewrite_stmts(stmts, &entry_ctx);
             }
             TopLevel::TypeDef(td) => {
                 rewrite_type_def(td, &qualified_type_names, &colliding_bare_names);
+                canonicalise_type_def_for_colliding(td, &entry_colliding_owner);
             }
             _ => {}
         }
@@ -240,7 +298,11 @@ pub fn flatten_multimodule(
             .filter(|fd| !verification_only.contains(&fd.name))
             .map(|fd| fd.name.clone())
             .collect();
-        let own_types: HashSet<&str> = dep.type_defs.iter().map(type_def_name).collect();
+        let own_types: HashSet<String> = dep
+            .type_defs
+            .iter()
+            .map(|td| type_def_name(td).to_string())
+            .collect();
         // What each ambiguous bare name means INSIDE this module — the
         // canonicalisation passes rewrite its references to `Owner.Name`
         // (only ambiguous ones; a name only one module declares keeps
@@ -254,18 +316,13 @@ pub fn flatten_multimodule(
         // and letting the entry claim the name here is what made a
         // dependency's constructor resolve to a record it had never heard
         // of and lower to a trap stub.
-        let colliding_owner: HashMap<String, String> = colliding_bare_names
-            .iter()
-            .filter_map(|bare| {
-                if own_types.contains(bare.as_str()) {
-                    return Some((bare.clone(), dep.prefix.clone()));
-                }
-                match bare_owners.get(bare).map(Vec::as_slice) {
-                    Some([only]) => Some((bare.clone(), only.clone())),
-                    _ => None,
-                }
-            })
-            .collect();
+        let colliding_owner = colliding_owners_in_scope(
+            &own_types,
+            Some(&dep.prefix),
+            &dep.depends,
+            &module_type_exports,
+            &colliding_bare_names,
+        );
         let dep_ctx = RewriteCtx {
             type_prefixes: &type_prefixes,
             capability_operations: &capability_operations,
@@ -273,13 +330,14 @@ pub fn flatten_multimodule(
             same_module_prefix: Some(&dep.prefix),
             same_module_fns: &same_module_fns,
             colliding_owner: &colliding_owner,
-            dep_prefix: &dep.prefix,
+            flattened_name_by_type_id: &flattened_name_by_type_id,
             colliding_bare_names: &colliding_bare_names,
         };
 
         for td in &dep.type_defs {
             let mut new_td = td.clone();
             rewrite_type_def(&mut new_td, &qualified_type_names, &colliding_bare_names);
+            canonicalise_type_def_for_colliding(&mut new_td, &colliding_owner);
             // Rename the typedef itself to `Prefix.Name` if it collides
             // with another dep's bare name.
             rename_typedef_if_colliding(&mut new_td, &dep.prefix, &colliding_bare_names);
@@ -373,6 +431,76 @@ fn canonicalise_fn_signature_for_own_colliding(
         *ty = canonicalise_own_colliding(ty, colliding_owner);
     }
     fd.return_type = canonicalise_own_colliding(&fd.return_type, colliding_owner);
+}
+
+fn canonicalise_type_def_for_colliding(
+    td: &mut TypeDef,
+    colliding_owner: &HashMap<String, String>,
+) {
+    if colliding_owner.is_empty() {
+        return;
+    }
+    match td {
+        TypeDef::Sum { variants, .. } => {
+            for variant in variants {
+                for ty in &mut variant.fields {
+                    *ty = canonicalise_own_colliding(ty, colliding_owner);
+                }
+            }
+        }
+        TypeDef::Product { fields, .. } => {
+            for (_, ty) in fields {
+                *ty = canonicalise_own_colliding(ty, colliding_owner);
+            }
+        }
+    }
+}
+
+/// Map each ambiguous bare type to the declaration owner visible in one
+/// module. Local declarations win. Otherwise visibility is resolved through
+/// this module's direct dependencies, retaining the original owner across an
+/// explicit re-export.
+fn colliding_owners_in_scope(
+    own_types: &HashSet<String>,
+    own_prefix: Option<&str>,
+    depends: &[String],
+    type_exports: &ModuleTypeExports,
+    colliding_bare_names: &HashSet<String>,
+) -> HashMap<String, String> {
+    let mut resolved = HashMap::new();
+    for bare in colliding_bare_names {
+        if own_types.contains(bare) {
+            // Dependency typedefs are renamed to `Prefix.Name`. Entry-local
+            // typedefs keep the bare spelling, so they need no rewrite.
+            if let Some(prefix) = own_prefix {
+                resolved.insert(bare.clone(), prefix.to_string());
+            }
+            continue;
+        }
+
+        let mut owner: Option<&str> = None;
+        let mut ambiguous = false;
+        for dependency in depends {
+            let Some(target) = type_exports
+                .get(dependency)
+                .and_then(|exports| exports.get(bare))
+            else {
+                continue;
+            };
+            match owner {
+                None => owner = Some(&target.module),
+                Some(existing) if existing == target.module => {}
+                Some(_) => {
+                    ambiguous = true;
+                    break;
+                }
+            }
+        }
+        if !ambiguous && let Some(owner) = owner {
+            resolved.insert(bare.clone(), owner.to_string());
+        }
+    }
+    resolved
 }
 
 /// Strip module prefixes from qualified type references in `type_str`,
@@ -481,9 +609,10 @@ fn attr_chain_to_dotted(expr: &Expr) -> Option<String> {
     }
 }
 
-/// Invariants for one body-rewriting traversal. `dep_prefix` is empty and
-/// `colliding_owner` is empty while the entry module's own items are
-/// walked, so the canonicalisation passes keyed on them are inert there.
+/// Invariants for one body-rewriting traversal. `colliding_owner` contains
+/// only the ambiguous bare names that have one meaning in this module's own
+/// scope; entry-local declarations are deliberately absent because they keep
+/// their bare post-flatten spelling.
 struct RewriteCtx<'a> {
     /// Every dependency module that may own a represented boundary type.
     /// Unlike `prefixes`, this includes capability modules: their operations
@@ -505,8 +634,10 @@ struct RewriteCtx<'a> {
     /// elsewhere among the dependencies. The entry's declaration is never a
     /// candidate — a dependency does not import the entry.
     colliding_owner: &'a HashMap<String, String>,
-    /// The owning dep's path, or `""` for the entry module.
-    dep_prefix: &'a str,
+    /// Pre-flatten stable declaration identity → post-flatten type spelling.
+    /// This wins over source-scope name resolution for expression stamps,
+    /// because a value returned by another module already carries its owner.
+    flattened_name_by_type_id: &'a HashMap<TypeId, String>,
     /// Every ambiguous bare type name in the program — a reference to one
     /// of these through another module's path keeps the qualified spelling.
     colliding_bare_names: &'a HashSet<String>,
@@ -528,10 +659,13 @@ fn rewrite_stamped_type(ty: &mut crate::ast::Type, ctx: &RewriteCtx<'_>) {
     use crate::ast::Type;
     match ty {
         Type::Named { id, name } => {
-            *name = rewrite_type_spelling(name, ctx);
-            // TypeIds are table-local. `flatten_multimodule` changes the
-            // table, so carrying the old numeric id would misidentify a
-            // different declaration (or index past the new table).
+            *name = (*id)
+                .and_then(|incoming| ctx.flattened_name_by_type_id.get(&incoming))
+                .cloned()
+                .unwrap_or_else(|| rewrite_type_spelling(name, ctx));
+            // Flattened typedefs live in a fresh entry scope, so even stable
+            // declaration-derived IDs must be re-homed from the rewritten
+            // spelling by the post-link resolver.
             *id = None;
         }
         Type::List(inner) | Type::Vector(inner) | Type::Option(inner) => {
@@ -562,11 +696,7 @@ fn rewrite_type_spelling(type_name: &str, ctx: &RewriteCtx<'_>) -> String {
         ctx.qualified_type_names,
         ctx.colliding_bare_names,
     );
-    if ctx.dep_prefix.is_empty() {
-        stripped
-    } else {
-        canonicalise_own_colliding(&stripped, ctx.colliding_owner)
-    }
+    canonicalise_own_colliding(&stripped, ctx.colliding_owner)
 }
 
 fn rewrite_expr(expr: &mut Expr, ctx: &RewriteCtx<'_>) {
@@ -639,9 +769,7 @@ fn rewrite_expr(expr: &mut Expr, ctx: &RewriteCtx<'_>) {
                 *expr = new_node;
                 return;
             }
-            if !ctx.dep_prefix.is_empty() {
-                canonicalise_attr_head_for_own_colliding(expr, ctx.colliding_owner);
-            }
+            canonicalise_attr_head_for_own_colliding(expr, ctx.colliding_owner);
             if let Expr::Attr(obj, _) = expr {
                 rewrite_spanned_expr(obj, ctx);
             }
@@ -653,9 +781,7 @@ fn rewrite_expr(expr: &mut Expr, ctx: &RewriteCtx<'_>) {
             }
         }
         Expr::RecordCreate { type_name, fields } => {
-            if !ctx.dep_prefix.is_empty() {
-                canonicalise_bare_type_name(type_name, ctx.colliding_owner);
-            }
+            canonicalise_bare_type_name(type_name, ctx.colliding_owner);
             for (_, expr) in fields.iter_mut() {
                 rewrite_spanned_expr(expr, ctx);
             }
@@ -665,9 +791,7 @@ fn rewrite_expr(expr: &mut Expr, ctx: &RewriteCtx<'_>) {
             base,
             updates,
         } => {
-            if !ctx.dep_prefix.is_empty() {
-                canonicalise_bare_type_name(type_name, ctx.colliding_owner);
-            }
+            canonicalise_bare_type_name(type_name, ctx.colliding_owner);
             rewrite_spanned_expr(base, ctx);
             for (_, expr) in updates.iter_mut() {
                 rewrite_spanned_expr(expr, ctx);
@@ -772,9 +896,7 @@ fn rewrite_constructor_name(name: &mut String, ctx: &RewriteCtx<'_>) {
         *name = flattened;
         return;
     }
-    if !ctx.dep_prefix.is_empty() {
-        canonicalise_constructor_name(name, ctx.colliding_owner);
-    }
+    canonicalise_constructor_name(name, ctx.colliding_owner);
 }
 
 /// The post-flatten spelling of a constructor written with the module path

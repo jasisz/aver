@@ -1414,6 +1414,13 @@ impl TypeChecker {
             .any(|resource| resource == &canonical)
     }
 
+    fn is_capability_resource_type_named(&self, type_id: Option<TypeId>, name: &str) -> bool {
+        let canonical = self.canonical_type_name_from_stamp(type_id, name);
+        self.capabilities
+            .resource_types()
+            .any(|resource| resource == &canonical)
+    }
+
     /// Render the two types of a "expected X, got Y" diagnostic.
     ///
     /// Aver lets a module declare a type whose bare name a dependency
@@ -1533,6 +1540,25 @@ impl TypeChecker {
         None
     }
 
+    /// Field lookup for a type carried by an already-typed value. The value's
+    /// `TypeId` records the declaration that produced it even when the current
+    /// module never wrote or directly imported that type name — for example a
+    /// public `Rules.policy: Policy` field projected by a consumer that only
+    /// depends on `Rules`. Re-resolving bare `Policy` in the consumer's source
+    /// scope loses that identity and used to stamp the next projection
+    /// `Type::Invalid` without reporting an error.
+    fn find_record_field_type_named(
+        &self,
+        type_id: Option<TypeId>,
+        type_name: &str,
+        field_name: &str,
+    ) -> Option<&Type> {
+        let canonical = self.canonical_type_name_from_stamp(type_id, type_name);
+        self.record_field_types
+            .get(&RecordFieldKey::new(canonical, field_name))
+            .or_else(|| self.find_record_field_type(type_name, field_name))
+    }
+
     fn fields_for_type(&self, type_name: &str) -> Vec<(String, Type)> {
         let canonical = self.canonical_type_name(type_name);
         let canonical_ref: &str = canonical.as_str();
@@ -1549,6 +1575,27 @@ impl TypeChecker {
         self.record_field_types
             .keys()
             .any(|k| k.type_name == canonical_ref || k.type_name == type_name)
+    }
+
+    fn has_record_schema_named(&self, type_id: Option<TypeId>, type_name: &str) -> bool {
+        let canonical = self.canonical_type_name_from_stamp(type_id, type_name);
+        self.record_field_types
+            .keys()
+            .any(|key| key.type_name == canonical)
+            || self.has_record_schema(type_name)
+    }
+
+    fn canonical_type_name_from_stamp(&self, type_id: Option<TypeId>, name: &str) -> String {
+        let Some(entry) = type_id.and_then(|id| self.symbol_table.type_entry_if_present(id)) else {
+            return self.canonical_type_name(name);
+        };
+        if entry.module.is_entry()
+            && let Some(prefix) = self.current_module_prefix.as_deref()
+        {
+            crate::visibility::qualified_name(prefix, &entry.key.name)
+        } else {
+            entry.key.canonical()
+        }
     }
 
     /// Look up the variant list for a named sum type. Resolves
