@@ -62,6 +62,21 @@ impl AverIntList {
         Self::Packed(values)
     }
 
+    /// Borrow the compact carrier when this list already has one.
+    ///
+    /// A `Packed` value proves every element is in `0..=255` by
+    /// construction. Rust smart constructors can therefore clone the
+    /// immutable carrier in O(1) instead of walking it to establish the same
+    /// fact again. `Wide` deliberately returns `None`: its elements still
+    /// require ordinary validation.
+    #[inline]
+    pub fn as_packed(&self) -> Option<&AverPackedU8> {
+        match self {
+            Self::Packed(values) => Some(values),
+            Self::Wide(_) => None,
+        }
+    }
+
     pub fn len(&self) -> usize {
         match self {
             Self::Packed(values) => values.len(),
@@ -302,6 +317,21 @@ mod tests {
             values.drop_first(1).take_first(2).aver_display(),
             "[1, 127]"
         );
+    }
+
+    #[test]
+    fn packed_access_reuses_the_backing_storage() {
+        let values = AverIntList::from_vec(
+            [0, 1, 127, 255]
+                .into_iter()
+                .map(AverInt::from_i64)
+                .collect(),
+        );
+        let packed = values.as_packed().expect("byte values should be packed");
+        let reused = packed.clone();
+
+        assert_eq!(packed.as_slice().as_ptr(), reused.as_slice().as_ptr());
+        assert_eq!(packed.as_slice(), reused.as_slice());
     }
 
     #[test]

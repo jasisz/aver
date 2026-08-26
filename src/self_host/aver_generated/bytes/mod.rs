@@ -139,6 +139,11 @@ pub fn firstOutOfRangeIndex(xs: &aver_rt::AverIntList) -> aver_rt::AverInt {
 #[inline(always)]
 pub fn fromList(xs: &aver_rt::AverIntList) -> Result<Bytes, AverStr> {
     crate::cancel_checkpoint();
+    if let Some(__packed) = xs.as_packed() {
+        return Ok(Bytes {
+            values: __packed.clone(),
+        });
+    }
     if crate::aver_generated::bytes::allInRange(xs.clone()) {
         Ok(crate::aver_generated::bytes::Bytes {
             values: aver_rt::into_packed_u8(xs.clone())

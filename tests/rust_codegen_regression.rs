@@ -203,6 +203,16 @@ fn rust_codegen_builds_embedded_bytes_crypto_fixture() {
         bytes_module.contains("pub values: aver_rt::AverPackedU8"),
         "stdlib Bytes should earn proof-derived U8 storage"
     );
+    let packed_fast_path = bytes_module
+        .find("if let Some(__packed) = xs.as_packed()")
+        .expect("Bytes.fromList should recognize an already-packed Rust carrier");
+    let range_walk = bytes_module
+        .find("allInRange(xs.clone())")
+        .expect("Bytes.fromList should retain validation for a Wide carrier");
+    assert!(
+        packed_fast_path < range_walk,
+        "the O(1) packed return must precede the source-level validation walk"
+    );
     let entry_module = fs::read_to_string(project_dir.join("src/aver_generated/entry/mod.rs"))
         .expect("read generated crypto entry module");
     assert!(
@@ -270,6 +280,11 @@ fn rust_codegen_uses_proof_derived_u8_storage_for_generic_refinement() {
     assert!(
         generated.contains(".to_int_list()"),
         "the semantic List<Int> projection should remain a zero-copy hybrid view"
+    );
+    assert_eq!(
+        generated.matches(".as_packed()").count(),
+        1,
+        "the full 0..=255 refinement should reuse Packed, while the narrower seven-bit refinement must still validate:\n{generated}"
     );
 
     let tests = Command::new("cargo")

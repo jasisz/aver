@@ -865,6 +865,8 @@ fn emit_fn_def_with_visibility(
             "{}fn {}({}) -> {} {{",
             visibility, fn_name, params, ret_type
         ));
+        let packed_refinement_prologue =
+            packed_refinement_constructor_prologue(resolved_fd, ctx, scope);
         let body = mir_fn
             .and_then(|mir_fn| {
                 super::from_mir::emit_mir_fn_body_routed(
@@ -872,6 +874,7 @@ fn emit_fn_def_with_visibility(
                     resolved_fd,
                     scope,
                     /* borrow_by_default */ true,
+                    packed_refinement_prologue.as_deref(),
                     ctx,
                 )
             })
@@ -891,6 +894,64 @@ fn emit_fn_def_with_visibility(
     }
 
     lines.join("\n")
+}
+
+/// Emit the Rust-only O(1) arm of a full-octet refinement constructor.
+///
+/// `AverIntList::Packed` is a backend representation fact, not an Aver or MIR
+/// fact, so this optimization belongs here. A packed list proves exactly the
+/// interval `0..=255`: narrower U8 refinements must still validate. The
+/// `Wide` arm falls through to the unchanged MIR body and therefore keeps the
+/// smart constructor's exact first-offender diagnostics.
+fn packed_refinement_constructor_prologue(
+    resolved_fd: &crate::ir::hir::ResolvedFnDef,
+    ctx: &CodegenContext,
+    scope: Option<&str>,
+) -> Option<String> {
+    // backend-link-stage: `scope` is the linked owner paired with the typed
+    // `FnId`, so this selects only that module's candidate records.
+    let type_defs = if let Some(prefix) = scope {
+        &ctx.modules
+            .iter()
+            .find(|module| module.prefix == prefix)?
+            .type_defs
+    } else {
+        &ctx.type_defs
+    };
+    let inputs = crate::codegen::proof_lower::ProofLowerInputs::from_ctx(ctx);
+    let full_octet_interval = crate::ir::interval::Interval::between(0, 255);
+
+    for type_def in type_defs {
+        let type_name = crate::codegen::common::type_def_name(type_def);
+        let Some(layout) = ctx.packed_sequence_layouts.get(type_name) else {
+            continue;
+        };
+        if layout.element != crate::codegen::proof_lower::PackedIntElement::U8
+            || layout.element_interval != full_octet_interval
+        {
+            continue;
+        }
+        let Some(info) =
+            crate::codegen::common::refinement_info_for_in_scope(type_name, &inputs, scope)
+        else {
+            continue;
+        };
+        let constructor_key = match scope {
+            Some(prefix) => crate::ir::FnKey::in_module(prefix.to_string(), info.constructor_fn),
+            None => crate::ir::FnKey::entry(info.constructor_fn),
+        };
+        if ctx.symbol_table.fn_id_of(&constructor_key) != Some(resolved_fd.fn_id) {
+            continue;
+        }
+
+        let parameter = aver_name_to_rust(info.param_name);
+        let record = aver_name_to_rust(type_name);
+        let field = aver_name_to_rust(info.carrier_field);
+        return Some(format!(
+            "    if let Some(__packed) = {parameter}.as_packed() {{\n        return Ok({record} {{ {field}: __packed.clone() }});\n    }}"
+        ));
+    }
+    None
 }
 
 /// Emit the non-TCO param signature, graduating `own_param`-proven
