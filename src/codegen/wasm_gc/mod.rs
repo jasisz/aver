@@ -59,6 +59,7 @@ use crate::ir::AnalysisResult;
 
 mod body;
 mod builtins;
+mod bytes_bridge;
 mod capability_abi;
 mod capability_imports;
 mod capability_plan;

@@ -57,6 +57,8 @@ Aver 0.29 turns the host boundary into explicit, source-owned contracts. Standar
 
 ### Fixed
 
+- **`Bytes` cross raw wasm-gc host boundaries in bulk.** Generated modules expose linear-memory copy helpers for plain `Bytes` and `Result<Bytes, String>`, replacing one JavaScript-to-wasm call per octet with one copy and one call. The same ABI works whether proof lowering packed the value into a byte array or a custom-provider boundary kept its boxed representation, and the embedded wasm-gc runner selects it automatically.
+
 - **Raw wasm-gc hosts can drive the complete TCP reactor API.** Generated modules export typed probes for every occupied `Tcp.poll` waitset entry plus token getters for `Tcp.Dial`, `Tcp.Listener`, and `Tcp.Socket`, so JavaScript hosts can implement readiness without guessing GC layouts or hard-coding caller keys.
 
 - **Proof export is substantially harder to make green for the wrong reason.** Fixes cover nested effect evaluation order, refused-claim accounting, defaults introduced by `?`, opaque capability resources, mutual-recursion measures and fuel, method applications in argument position, map-order observations through callbacks/tail calls/interpolation, and symbolic provider calls hidden behind transparent wrappers.

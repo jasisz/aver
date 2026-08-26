@@ -143,12 +143,21 @@ fn compile_flattened(
     items: &[TopLevel],
     type_aliases: &std::collections::HashMap<String, String>,
 ) -> Result<Vec<u8>, aver::codegen::wasm_gc::WasmGcError> {
-    aver::codegen::wasm_gc::compile_to_wasm_gc_flattened(
+    compile_flattened_with_packing(items, type_aliases, true)
+}
+
+fn compile_flattened_with_packing(
+    items: &[TopLevel],
+    type_aliases: &std::collections::HashMap<String, String>,
+    packed_sequences_enabled: bool,
+) -> Result<Vec<u8>, aver::codegen::wasm_gc::WasmGcError> {
+    aver::codegen::wasm_gc::compile_to_wasm_gc_flattened_with_options(
         items,
         None,
         None,
         aver::codegen::wasm_gc::TargetMode::AverBridge,
         type_aliases,
+        packed_sequences_enabled,
     )
     .map(|out| out.bytes)
 }
@@ -305,6 +314,7 @@ fn chunk(conn: Tcp.Connection, maxBytes: Int) -> Result<Bytes, String>
     let mut poll_found = false;
     let mut read_some_found = false;
     let mut poll_bridge = std::collections::BTreeSet::new();
+    let mut bytes_bridge = std::collections::BTreeSet::new();
     for payload in WasmParser::new(0).parse_all(&bytes) {
         match payload.expect("generated module must parse") {
             Payload::ImportSection(reader) => {
@@ -332,6 +342,16 @@ fn chunk(conn: Tcp.Connection, maxBytes: Int) -> Result<Bytes, String>
                     {
                         poll_bridge.insert(export.name.to_string());
                     }
+                    if matches!(export.kind, wasmparser::ExternalKind::Func)
+                        && matches!(
+                            export.name,
+                            "__rt_bytes_from_lm"
+                                | "__rt_bytes_to_lm"
+                                | "__rt_result_bytes_string_ok_from_lm"
+                        )
+                    {
+                        bytes_bridge.insert(export.name.to_string());
+                    }
                 }
             }
             _ => {}
@@ -357,6 +377,144 @@ fn chunk(conn: Tcp.Connection, maxBytes: Int) -> Result<Bytes, String>
         .collect(),
         "raw JavaScript hosts must be able to inspect every Tcp.poll map entry"
     );
+    assert_eq!(
+        bytes_bridge,
+        [
+            "__rt_bytes_from_lm",
+            "__rt_bytes_to_lm",
+            "__rt_result_bytes_string_ok_from_lm",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect(),
+        "packed Bytes must cross a raw JavaScript host boundary in one bulk copy"
+    );
+}
+
+#[test]
+fn bytes_bulk_bridge_round_trips_more_than_one_page_in_both_representations() {
+    use wasmtime::Val;
+
+    let source = r#"module Probe
+    intent = "Keep packed Bytes live for the raw-host transport bridge."
+    depends [Bytes]
+    exposes [identity]
+
+fn identity(value: Bytes) -> Bytes
+    value
+"#;
+    let (items, type_aliases) =
+        parse_pipeline_with_module_root(source, Some(env!("CARGO_MANIFEST_DIR")))
+            .unwrap_or_else(|e| panic!("{e}\n--- source ---\n{source}"));
+    for packed_sequences_enabled in [true, false] {
+        let bytes = compile_flattened_with_packing(&items, &type_aliases, packed_sequences_enabled)
+            .unwrap_or_else(|e| panic!("wasm-gc compile: {e}\n--- source ---\n{source}"));
+
+        let mut config = wasmtime::Config::new();
+        config.wasm_gc(true);
+        config.wasm_tail_call(true);
+        config.wasm_function_references(true);
+        config.wasm_reference_types(true);
+        config.wasm_bulk_memory(true);
+        let engine = wasmtime::Engine::new(&config).expect("wasmtime engine");
+        let module = wasmtime::Module::new(&engine, bytes).expect("wasmtime accepts module");
+        assert_eq!(
+            module.imports().count(),
+            0,
+            "pure Bytes probe has no host imports"
+        );
+        let mut store = wasmtime::Store::new(&engine, ());
+        let instance =
+            wasmtime::Instance::new(&mut store, &module, &[]).expect("instantiate probe");
+        let memory = instance
+            .get_memory(&mut store, "memory")
+            .expect("bulk bridge exports memory");
+        let payload = (0..130_000)
+            .map(|index| ((index * 37 + 11) & 0xff) as u8)
+            .collect::<Vec<_>>();
+        let needed_pages = ((payload.len() as u64) + 65_535) >> 16;
+        let current_pages = memory.size(&store);
+        if needed_pages > current_pages {
+            memory
+                .grow(&mut store, needed_pages - current_pages)
+                .expect("grow bridge scratch memory");
+        }
+        memory
+            .write(&mut store, 0, &payload)
+            .expect("write host payload");
+
+        let from_lm = instance
+            .get_func(&mut store, "__rt_bytes_from_lm")
+            .expect("Bytes from-LM bridge");
+        let mut bytes_ref = [Val::AnyRef(None)];
+        from_lm
+            .call(
+                &mut store,
+                &[Val::I32(payload.len() as i32)],
+                &mut bytes_ref,
+            )
+            .expect("build Bytes payload");
+        memory
+            .write(&mut store, 0, &vec![0; payload.len()])
+            .expect("erase scratch memory before unpacking");
+
+        let to_lm = instance
+            .get_func(&mut store, "__rt_bytes_to_lm")
+            .expect("Bytes to-LM bridge");
+        let mut length = [Val::I32(0)];
+        to_lm
+            .call(&mut store, &bytes_ref, &mut length)
+            .expect("unpack payload");
+        assert_eq!(length[0].i32(), Some(payload.len() as i32));
+        let mut round_trip = vec![0; payload.len()];
+        memory
+            .read(&store, 0, &mut round_trip)
+            .expect("read unpacked payload");
+        assert_eq!(
+            round_trip, payload,
+            "bulk bridge must preserve both packed and boxed Bytes"
+        );
+
+        memory
+            .write(&mut store, 0, &payload)
+            .expect("rewrite payload for Result factory");
+        let result_ok = instance
+            .get_func(&mut store, "__rt_result_bytes_string_ok_from_lm")
+            .expect("Result<Bytes, String> bulk factory");
+        let mut result_value = [Val::AnyRef(None)];
+        result_ok
+            .call(
+                &mut store,
+                &[Val::I32(payload.len() as i32)],
+                &mut result_value,
+            )
+            .expect("build Result.Ok(Bytes)");
+        let result_ref = match result_value[0] {
+            Val::AnyRef(Some(value)) => value,
+            ref other => panic!("Result factory returned {other:?}"),
+        };
+        let result_struct = result_ref
+            .as_struct(&mut store)
+            .expect("inspect Result ref")
+            .expect("Result is a struct");
+        assert!(matches!(
+            result_struct.field(&mut store, 0).expect("Result tag"),
+            Val::I32(1)
+        ));
+        let ok_bytes = result_struct
+            .field(&mut store, 1)
+            .expect("Result Ok payload");
+        let mut ok_length = [Val::I32(0)];
+        to_lm
+            .call(&mut store, &[ok_bytes], &mut ok_length)
+            .expect("unpack Result Ok payload");
+        assert_eq!(ok_length[0].i32(), Some(payload.len() as i32));
+        let mut ok_round_trip = vec![0; payload.len()];
+        memory
+            .read(&store, 0, &mut ok_round_trip)
+            .expect("read Result Ok payload");
+        assert_eq!(ok_round_trip, payload);
+    }
 }
 
 #[test]

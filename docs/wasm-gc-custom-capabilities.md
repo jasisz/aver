@@ -91,6 +91,15 @@ filled internally, including inside `Option`, `List`, and `Vector`.
 ordinary `Result<Int, String>` on parse. Strings cross JavaScript through the
 existing `memory`, `__rt_string_from_lm`, and `__rt_string_to_lm` bridge.
 
+`Bytes` has the equivalent bulk bridge. A host writes octets at `memory[0..n]`
+and calls `__rt_bytes_from_lm(n)`; `__rt_bytes_to_lm(bytes)` copies the other
+direction and returns the written length. When `Result<Bytes, String>` is
+reachable, `__rt_result_bytes_string_ok_from_lm(n)` combines the inbound copy
+with its `Result.Ok` wrapper. These exports keep the same ABI whether the
+compiler proof-packed `Bytes` into a GC byte array or retained its boxed
+representation at a custom-provider boundary, so hosts never need a helper
+call per octet.
+
 An import function may close over an instance variable assigned immediately
 after `WebAssembly.instantiate`. Calls happen when an exported Aver entry point
 runs, so the provider can then call the instance's factories and return their

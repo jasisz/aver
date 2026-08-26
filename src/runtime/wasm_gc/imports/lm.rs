@@ -157,3 +157,38 @@ pub(crate) fn lm_string_from_host<T: 'static>(
     };
     Ok(r)
 }
+
+/// Build `Result<Bytes, String>::Ok` through the Bytes linear-memory bridge.
+/// Returns `None` defensively for a module produced without that export; both
+/// packed and boxed Bytes representations normally provide it.
+pub(crate) fn lm_result_bytes_from_host<T: 'static>(
+    caller: &mut wasmtime::Caller<'_, T>,
+    bytes: &[u8],
+) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
+    use wasmtime::Val;
+
+    let factory = caller
+        .get_export("__rt_result_bytes_string_ok_from_lm")
+        .and_then(|export| export.into_func());
+    let memory = caller
+        .get_export("memory")
+        .and_then(|export| export.into_memory());
+    let (Some(factory), Some(memory)) = (factory, memory) else {
+        return Ok(None);
+    };
+    let len = i32::try_from(bytes.len())
+        .map_err(|_| wasmtime::Error::msg("Bytes payload exceeds wasm32 linear memory"))?;
+    let needed_pages = ((bytes.len() as u64) + 65_535) >> 16;
+    let current_pages = memory.size(&*caller);
+    if needed_pages > current_pages {
+        memory.grow(&mut *caller, needed_pages - current_pages)?;
+    }
+    memory.write(&mut *caller, 0, bytes)?;
+
+    let mut result = [Val::AnyRef(None)];
+    factory.call(&mut *caller, &[Val::I32(len)], &mut result)?;
+    Ok(match &result[0] {
+        Val::AnyRef(value) => *value,
+        _ => None,
+    })
+}

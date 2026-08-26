@@ -1506,6 +1506,21 @@ pub(super) fn emit_module_with(
         None
     };
 
+    // 8a) `Bytes` transport for raw wasm-gc hosts. JavaScript cannot inspect
+    //     GC arrays or structs directly, so expose one LM bridge call instead
+    //     of forcing one exported helper call per octet. This also covers the
+    //     boxed representation retained at custom-provider boundaries.
+    let bytes_bridge = if matches!(target, super::TargetMode::AverBridge) {
+        super::bytes_bridge::BytesBridge::allocate(
+            &mut types,
+            &mut next_type_idx,
+            &mut next_builtin_fn_idx,
+            &registry,
+        )?
+    } else {
+        None
+    };
+
     // 8b) `cabi_realloc` — Phase 1.3.1. The Component Model
     //     canonical ABI requires a guest export named exactly
     //     `cabi_realloc(old_ptr i32, old_size i32, align i32,
@@ -2594,6 +2609,9 @@ pub(super) fn emit_module_with(
         funcs.function(b.pages_type);
         funcs.function(b.grow_type);
     }
+    if let Some(b) = &bytes_bridge {
+        b.emit_function_entries(&mut funcs);
+    }
     if let Some(c) = &cabi_realloc {
         funcs.function(c.fn_type);
     }
@@ -2716,7 +2734,7 @@ pub(super) fn emit_module_with(
     //   internal wasm-side glue at effect call sites.
     let need_memory_for_wasip2 =
         matches!(target, super::TargetMode::Wasip2) && wasip2_import_count > 0;
-    if bridge.is_some() || need_memory_for_wasip2 {
+    if bridge.is_some() || bytes_bridge.is_some() || need_memory_for_wasip2 {
         let mut memories = wasm_encoder::MemorySection::new();
         memories.memory(wasm_encoder::MemoryType {
             minimum: 1,
@@ -3431,6 +3449,9 @@ pub(super) fn emit_module_with(
             }
         }
         exports.export("memory", ExportKind::Memory, 0);
+    } else if let Some(b) = &bytes_bridge {
+        b.emit_exports(&mut exports);
+        exports.export("memory", ExportKind::Memory, 0);
     } else if cabi_realloc.is_some() {
         // wasip2 path with no bridge (theoretical — cabi_realloc
         // gates on `wasip2_imports.import_count() > 0` which only
@@ -3438,6 +3459,12 @@ pub(super) fn emit_module_with(
         // every such effect today implies a String). Defensive
         // export so the host can find memory regardless.
         exports.export("memory", ExportKind::Memory, 0);
+    }
+    if bridge.is_some()
+        && matches!(target, super::TargetMode::AverBridge)
+        && let Some(b) = &bytes_bridge
+    {
+        b.emit_exports(&mut exports);
     }
     if let Some(c) = &cabi_realloc {
         // Required by Component Model canonical ABI as the guest's
@@ -3981,6 +4008,9 @@ pub(super) fn emit_module_with(
 
     if bridge.is_some() {
         emit_bridge_bodies(&mut codes, &registry)?;
+    }
+    if let Some(b) = &bytes_bridge {
+        b.emit_bodies(&mut codes, &registry)?;
     }
 
     if cabi_realloc.is_some() {
