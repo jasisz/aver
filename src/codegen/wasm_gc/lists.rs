@@ -393,11 +393,11 @@ impl ListHelperRegistry {
             // idx and type idx tracks were both bumped in this exact
             // sequence.
             let elem = TypeRegistry::list_element_type(canonical).unwrap();
-            let elem_val = super::types::aver_to_wasm(elem.trim(), Some(registry))?.ok_or(
-                WasmGcError::Validation(format!(
-                    "list element type `{elem}` has no wasm representation"
-                )),
-            )?;
+            // `List<Unit>` stores a private i32 placeholder. Unit contributes
+            // no source/host argument, while the uniform cons-cell layout
+            // still needs a concrete first field.
+            let elem_val =
+                super::types::aver_to_wasm(elem.trim(), Some(registry))?.unwrap_or(ValType::I32);
             // cons : (T, List<T>) -> List<T> — single struct.new.
             // Emit always (every literal needs it; bodies and call sites
             // benefit from one shared helper instead of inline scratch).
@@ -1096,10 +1096,7 @@ fn vec_idx_of_pair(
         .ok_or(WasmGcError::Validation(format!(
             "vector `{vec_canonical}` not registered"
         )))?;
-    let elem_val =
-        super::types::aver_to_wasm(elem.trim(), Some(registry))?.ok_or(WasmGcError::Validation(
-            format!("list element type `{elem}` has no wasm representation"),
-        ))?;
+    let elem_val = super::types::aver_to_wasm(elem.trim(), Some(registry))?.unwrap_or(ValType::I32);
     Ok((vec_idx, elem_val))
 }
 
@@ -1149,10 +1146,7 @@ fn emit_list_reverse(canonical: &str, registry: &TypeRegistry) -> Result<Functio
         heap_type: HeapType::Concrete(list_idx),
     });
     let elem = TypeRegistry::list_element_type(canonical).unwrap();
-    let elem_val =
-        super::types::aver_to_wasm(elem.trim(), Some(registry))?.ok_or(WasmGcError::Validation(
-            format!("list element type `{elem}` has no wasm representation"),
-        ))?;
+    let elem_val = super::types::aver_to_wasm(elem.trim(), Some(registry))?.unwrap_or(ValType::I32);
     // params: 0=in. locals: 1=cur, 2=acc, 3=val
     let mut f = Function::new([(1, list_ref), (1, list_ref), (1, elem_val)]);
     f.instruction(&Instruction::LocalGet(0));

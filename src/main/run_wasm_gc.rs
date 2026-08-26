@@ -188,14 +188,39 @@ pub(super) fn try_run_wasm_gc(
     ) {
         return Err(error);
     }
+    let capabilities = &result
+        .typecheck
+        .as_ref()
+        .expect("wasm-gc run pipeline requested typechecking")
+        .capabilities;
+    let required =
+        aver::provider::required_capability_operations(&items, &dep_modules, capabilities);
+    let manifest = aver::provider::CapabilityTargetManifest::build(capabilities, &required)?;
+    if let Some(row) = manifest
+        .for_target(aver::provider::CapabilityTarget::WasmGc)
+        .find(|row| {
+            row.is_required()
+                && matches!(
+                    &row.status,
+                    aver::provider::TargetBindingStatus::HostBound {
+                        reason: aver::provider::HostBindingReason::WasmGcImportRequired
+                    }
+                )
+        })
+    {
+        return Err(format!(
+            "error[capability-provider-missing]: `aver run --wasm-gc` has no in-process binding for custom capability `{}`\n  compile with `--target wasm-gc` and instantiate the module in a JavaScript/Workers/Node host that supplies its generated imports\n  required operations: {}\n  contract_hash: {}\n  model_hash: {}",
+            row.capability,
+            row.required_operations
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", "),
+            row.contract_hash,
+            row.model_hash,
+        ));
+    }
     if let rt::EffectMode::Replay(recording, _) = &mode {
-        let capabilities = &result
-            .typecheck
-            .as_ref()
-            .expect("wasm-gc run pipeline requested typechecking")
-            .capabilities;
-        let required =
-            aver::provider::required_capability_operations(&items, &dep_modules, capabilities);
         aver::provider::ProviderRegistry::for_program(capabilities.clone())?
             .validate_replay_provenance_for_operations(
                 &recording.capabilities,

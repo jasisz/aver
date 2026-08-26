@@ -148,6 +148,7 @@ pub(super) fn emit_module_with(
     target: super::TargetMode,
     type_aliases: &HashMap<String, String>,
     capability_wit_plan: Option<&crate::codegen::wasip2::CapabilityWitPlan>,
+    capability_wasm_gc_plan: Option<&super::CapabilityWasmGcPlan>,
     packed_sequences_enabled: bool,
 ) -> Result<
     (
@@ -165,18 +166,37 @@ pub(super) fn emit_module_with(
         })
         .collect();
 
-    let view = super::view::WasmGcLinkedView::build(items, &fn_defs, capability_wit_plan)?;
+    let view = super::view::WasmGcLinkedView::build(
+        items,
+        &fn_defs,
+        capability_wit_plan,
+        capability_wasm_gc_plan,
+    )?;
     let symbol_table = view.symbol_table;
     let resolved_fn_defs = view.resolved_fn_defs;
 
-    let mut registry =
-        TypeRegistry::build_with_handler(items, &resolved_fn_defs, handler_name.is_some());
+    let capability_resources = capability_wasm_gc_plan
+        .map(|plan| plan.resource_types().iter().cloned().collect())
+        .unwrap_or_default();
+    let force_bignum = capability_wasm_gc_plan.is_some_and(|plan| plan.force_bignum());
+    let capability_boundary_types = capability_wasm_gc_plan
+        .map(|plan| plan.boundary_type_strings())
+        .unwrap_or_default();
+    let mut registry = TypeRegistry::build_with_handler_and_capabilities(
+        items,
+        &resolved_fn_defs,
+        handler_name.is_some(),
+        capability_resources,
+        force_bignum,
+        &capability_boundary_types,
+    );
     // Identity-preserving qualified spellings for sole-declarer dep types,
     // derived by `flatten_multimodule` from its collision info. Entry-side
     // qualified annotation stamps (`o: Dep.Octets`) survive into codegen,
     // so the name-keyed representation lookups resolve them through this
     // map. Empty for single-module programs.
     registry.set_type_name_aliases(type_aliases.clone());
+    registry.install_capability_resource_aliases();
 
     // Lower the post-link resolved fns to MIR and run the shared
     // `optimize` pipeline — the SAME six passes the VM consumes
@@ -330,6 +350,10 @@ pub(super) fn emit_module_with(
             bare_carrier_intervals.entry(alias.clone()).or_insert(iv);
         }
     }
+    let mut eligible_carriers = eligible_carriers;
+    if let Some(plan) = capability_wasm_gc_plan {
+        eligible_carriers.retain(|name| !plan.named_boundary_types().contains(name));
+    }
     registry.set_eligible_carriers(eligible_carriers);
 
     // ETAP-2 multi-field carrier-`i64`: the per-`(record, field)` eligible
@@ -365,12 +389,15 @@ pub(super) fn emit_module_with(
                 type_aliases,
             )
         };
-    let eligible_carrier_fields: std::collections::HashSet<(String, String)> =
+    let mut eligible_carrier_fields: std::collections::HashSet<(String, String)> =
         field_carrier_intervals
             .iter()
             .filter(|(_, (iv, known))| *known && iv.fits_i64())
             .map(|((rec, field), _)| (rec.clone(), field.clone()))
             .collect();
+    if let Some(plan) = capability_wasm_gc_plan {
+        eligible_carrier_fields.retain(|(record, _)| !plan.named_boundary_types().contains(record));
+    }
     registry.set_eligible_carrier_fields(eligible_carrier_fields);
     // Same alias mirroring as `bare_carrier_intervals` above, done AFTER
     // the registry's eligible set is derived so that set stays keyed by
@@ -421,10 +448,14 @@ pub(super) fn emit_module_with(
             &intervals,
             type_aliases,
         );
-        layouts
+        let mut layouts: std::collections::HashMap<_, _> = layouts
             .into_iter()
             .filter(|(name, _)| !demoted.contains(name))
-            .collect()
+            .collect();
+        if let Some(plan) = capability_wasm_gc_plan {
+            layouts.retain(|name, _| !plan.named_boundary_types().contains(name));
+        }
+        layouts
     } else {
         std::collections::HashMap::new()
     };
@@ -563,6 +594,13 @@ pub(super) fn emit_module_with(
         ] {
             builtin_registry.register(b);
         }
+    }
+    // A custom capability boundary carrying `Int` exposes the full ℤ value,
+    // not an i64 approximation. Give external hosts decimal bridges built
+    // from the same parser/formatter ordinary Aver code uses.
+    if capability_wasm_gc_plan.is_some_and(|plan| plan.force_bignum()) {
+        builtin_registry.register(BuiltinName::IntFromString);
+        builtin_registry.register(BuiltinName::StringFromInt);
     }
     // The `Bits` namespace's two primitives, registered ONLY when a `Bits`
     // call can reach them — unlike the arithmetic prelude above, whose fn
@@ -776,6 +814,14 @@ pub(super) fn emit_module_with(
                 None
             },
         );
+    let mut wasm_gc_capability_imports =
+        super::capability_imports::CapabilityImportRegistry::from_plan(
+            if matches!(target, super::TargetMode::AverBridge) {
+                capability_wasm_gc_plan
+            } else {
+                None
+            },
+        );
     match target {
         super::TargetMode::AverBridge => {
             effect_registry.assign_slots(&mut next_type_idx);
@@ -784,6 +830,12 @@ pub(super) fn emit_module_with(
                 let r = name.results(&registry)?;
                 types.ty().function(p, r);
             }
+            wasm_gc_capability_imports.assign_slots(
+                effect_registry.import_count(),
+                &mut next_type_idx,
+                &mut types,
+                &registry,
+            )?;
         }
         super::TargetMode::Wasip2 => {
             // Populate the wasip2 registry from each effect that
@@ -1178,6 +1230,8 @@ pub(super) fn emit_module_with(
     }
 
     let wasip2_import_count = wasip2_imports.import_count() + capability_imports.import_count();
+    let wasm_gc_import_count =
+        effect_registry.import_count() + wasm_gc_capability_imports.import_count();
 
     // 3) Entry-point type. Three shapes drive different exports:
     //    - AverBridge: `_start: () -> ()` — the JS host calls
@@ -1254,7 +1308,7 @@ pub(super) fn emit_module_with(
     //    function uses, so it must reflect whichever registry
     //    drove the import-type emission above (per `target`).
     let import_count: u32 = match target {
-        super::TargetMode::AverBridge => effect_registry.import_count(),
+        super::TargetMode::AverBridge => wasm_gc_import_count,
         super::TargetMode::Wasip2 => wasip2_import_count,
     };
 
@@ -2387,6 +2441,42 @@ pub(super) fn emit_module_with(
         &effect_registry,
         packed_sequence_helpers.ops_for("Bytes").map(|ops| ops.pack),
     )?;
+    let capability_int_abi = capability_wasm_gc_plan
+        .filter(|plan| plan.force_bignum())
+        .map(|_| {
+            Ok(super::capability_abi::IntAbiHelpers {
+                from_i64: registry.aint_from_i64_fn_idx.ok_or_else(|| {
+                    WasmGcError::Validation("capability Int ABI lacks from-i64 bridge".into())
+                })?,
+                to_i64_checked: registry.aint_to_i64_checked_fn_idx.ok_or_else(|| {
+                    WasmGcError::Validation("capability Int ABI lacks checked to-i64 bridge".into())
+                })?,
+                from_decimal: builtin_registry
+                    .lookup_wasm_fn_idx(BuiltinName::IntFromString)
+                    .ok_or_else(|| {
+                        WasmGcError::Validation(
+                            "capability Int ABI lacks decimal parser bridge".into(),
+                        )
+                    })?,
+                to_decimal: builtin_registry
+                    .lookup_wasm_fn_idx(BuiltinName::StringFromInt)
+                    .ok_or_else(|| {
+                        WasmGcError::Validation(
+                            "capability Int ABI lacks decimal formatter bridge".into(),
+                        )
+                    })?,
+            })
+        })
+        .transpose()?;
+    let capability_abi = super::capability_abi::CapabilityAbi::allocate(
+        capability_wasm_gc_plan,
+        &registry,
+        capability_int_abi,
+        &|canonical| map_helpers.kv_helpers(canonical),
+        &mut types,
+        &mut next_type_idx,
+        &mut next_builtin_fn_idx,
+    )?;
 
     // 10) Caller-fn name table exports. `__caller_fn_count() -> i32`
     //     and `__caller_fn_name(i32) -> ref null $string`. Host walks
@@ -2429,7 +2519,7 @@ pub(super) fn emit_module_with(
     // (`(import "wasi:cli/stdout@0.2.4" "get-stdout" ...)` etc.).
     match target {
         super::TargetMode::AverBridge => {
-            if effect_registry.import_count() > 0 {
+            if wasm_gc_import_count > 0 {
                 let mut imports = ImportSection::new();
                 for name in effect_registry.iter() {
                     let (module_, field) = name.import_pair();
@@ -2438,6 +2528,7 @@ pub(super) fn emit_module_with(
                         .expect("just-assigned effect type idx");
                     imports.import(module_, field, EntityType::Function(type_idx));
                 }
+                wasm_gc_capability_imports.emit_imports(&mut imports);
                 module.section(&imports);
             }
         }
@@ -2565,6 +2656,7 @@ pub(super) fn emit_module_with(
         funcs.function(fmt.fn_type);
     }
     factory_exports.emit_function_entries(&mut funcs);
+    capability_abi.emit_function_entries(&mut funcs);
     // Caller-fn name table fns — fixed-shape entries (count + name),
     // their bodies land at the very end of the code section once
     // `caller_fn_collector` has all names. Idxs are recorded so
@@ -2953,6 +3045,7 @@ pub(super) fn emit_module_with(
                 .expect("registered effect has wasm fn idx");
             effect_idx_lookup.insert(name.canonical().to_string(), idx);
         }
+        effect_idx_lookup.extend(wasm_gc_capability_imports.function_indices());
     }
     // On `TargetMode::Wasip2` the EffectRegistry is populated by
     // discovery but never `assign_slots`'d (the import section uses
@@ -3351,6 +3444,7 @@ pub(super) fn emit_module_with(
         exports.export("cabi_realloc", ExportKind::Func, c.fn_idx);
     }
     factory_exports.emit_exports(&mut exports);
+    capability_abi.emit_exports(&mut exports);
     if let Some(hw) = &handler_wrapper {
         exports.export("aver_http_handle", ExportKind::Func, hw.wrapper_fn);
         exports.export("__rt_list_string_cons", ExportKind::Func, hw.list_cons_fn);
@@ -5703,6 +5797,7 @@ pub(super) fn emit_module_with(
     }
 
     factory_exports.emit_bodies(&mut codes, &registry)?;
+    capability_abi.emit_bodies(&mut codes);
 
     // `__caller_fn_count` + `__caller_fn_name` bodies. Emitted after
     // every helper so their fn idxs land last in the code section,
@@ -6141,10 +6236,10 @@ fn emit_user_types(
             TypeRegistry::vector_element_type(canonical).ok_or(WasmGcError::Validation(
                 format!("registered vector `{canonical}` has no parsable element type"),
             ))?;
-        let elem_val =
-            super::types::aver_to_wasm(element, Some(registry))?.ok_or(WasmGcError::Validation(
-                format!("Vector element type `{element}` has no wasm representation"),
-            ))?;
+        // Unit has no stack value, but a mutable wasm array still needs a
+        // physical element slot. Match Result/record placeholders with i32;
+        // custom capability ABI helpers hide that slot from the host.
+        let elem_val = super::types::aver_to_wasm(element, Some(registry))?.unwrap_or(ValType::I32);
         let idx = *registry
             .vector_types
             .get(canonical)
@@ -6198,10 +6293,7 @@ fn emit_user_types(
         let element = TypeRegistry::list_element_type(canonical).ok_or(WasmGcError::Validation(
             format!("registered list `{canonical}` has no parsable element type"),
         ))?;
-        let elem_val =
-            super::types::aver_to_wasm(element, Some(registry))?.ok_or(WasmGcError::Validation(
-                format!("List element type `{element}` has no wasm representation"),
-            ))?;
+        let elem_val = super::types::aver_to_wasm(element, Some(registry))?.unwrap_or(ValType::I32);
         let own_idx = *registry
             .list_types
             .get(canonical)
@@ -6231,10 +6323,7 @@ fn emit_user_types(
             TypeRegistry::option_element_type(canonical).ok_or(WasmGcError::Validation(
                 format!("registered option `{canonical}` has no parsable element type"),
             ))?;
-        let elem_val =
-            super::types::aver_to_wasm(element, Some(registry))?.ok_or(WasmGcError::Validation(
-                format!("Option element type `{element}` has no wasm representation"),
-            ))?;
+        let elem_val = super::types::aver_to_wasm(element, Some(registry))?.unwrap_or(ValType::I32);
         let idx = *registry
             .option_types
             .get(canonical)

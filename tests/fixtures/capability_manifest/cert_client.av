@@ -1,0 +1,12 @@
+module CapabilityCertClient
+    depends [Clock]
+    exposes [plusOne, readClock]
+
+fn plusOne(value: Int) -> Int
+    ? "Keep a pure export certifiable beside an opaque custom host import."
+    value + 1
+
+fn readClock() -> String
+    ? "Reach the custom capability without making its implementation part of the certificate."
+    ! [Clock.now]
+    Clock.now()

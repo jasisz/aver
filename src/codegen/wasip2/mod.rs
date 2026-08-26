@@ -40,7 +40,7 @@
 
 #[cfg(feature = "wasip2")]
 mod error;
-mod plan;
+pub(crate) mod plan;
 #[cfg(feature = "wasip2")]
 mod wasi_bundle;
 #[cfg(feature = "wasip2")]

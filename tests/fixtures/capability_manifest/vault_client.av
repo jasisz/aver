@@ -1,0 +1,8 @@
+module VaultClient
+    depends [Vault]
+    exposes [main]
+
+fn main() -> Result<Int, String>
+    ! [Vault.open, Vault.read]
+    token = Vault.open()?
+    Vault.read(token)

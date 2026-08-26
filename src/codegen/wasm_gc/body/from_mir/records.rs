@@ -37,7 +37,11 @@ pub(crate) fn emit_mir_record_field_value(
             return Ok(Some(()));
         }
     }
-    Ok(emit_mir_expr(func, value, slots, ctx)?.map(|_| ()))
+    let emitted = emit_mir_expr(func, value, slots, ctx)?;
+    if emitted.is_some() && decl_ty.trim() == "Unit" {
+        func.instruction(&Instruction::I32Const(0));
+    }
+    Ok(emitted.map(|_| ()))
 }
 
 /// Mirror of `emit_record_create` (emit.rs): a newtype record emits its

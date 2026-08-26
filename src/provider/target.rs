@@ -57,6 +57,7 @@ impl FromStr for CapabilityTarget {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HostBindingReason {
     RuntimeProviderRequired,
+    WasmGcImportRequired,
     ComponentImportRequired,
 }
 
@@ -64,6 +65,7 @@ impl HostBindingReason {
     pub const fn code(self) -> &'static str {
         match self {
             Self::RuntimeProviderRequired => "runtime-provider-required",
+            Self::WasmGcImportRequired => "wasm-gc-import-required",
             Self::ComponentImportRequired => "component-import-required",
         }
     }
@@ -72,6 +74,9 @@ impl HostBindingReason {
         match self {
             Self::RuntimeProviderRequired => {
                 "the native target accepts this contract through a host-installed ProviderRegistry binding"
+            }
+            Self::WasmGcImportRequired => {
+                "the wasm-gc module imports this contract through its generated ABI and requires the JavaScript host to supply it"
             }
             Self::ComponentImportRequired => {
                 "the component imports this contract as WIT and requires the host to supply it"
@@ -82,7 +87,6 @@ impl HostBindingReason {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UnsupportedReason {
-    HostImportAdapterNotGenerated,
     StandardBindingUnavailable {
         capability: String,
         target: CapabilityTarget,
@@ -100,7 +104,6 @@ pub enum UnsupportedReason {
 impl UnsupportedReason {
     pub const fn code(&self) -> &'static str {
         match self {
-            Self::HostImportAdapterNotGenerated => "host-import-adapter-not-generated",
             Self::StandardBindingUnavailable { .. } => "standard-binding-unavailable",
             Self::StandardOperationsUnavailable { .. } => "standard-operations-unavailable",
             Self::WitBoundaryTypeUnsupported(_) => "wit-boundary-type-unsupported",
@@ -109,10 +112,6 @@ impl UnsupportedReason {
 
     pub fn description(&self) -> String {
         match self {
-            Self::HostImportAdapterNotGenerated => {
-                "wasm-gc has no generated host-import adapter for this capability contract"
-                    .to_string()
-            }
             Self::StandardBindingUnavailable {
                 capability,
                 target,
@@ -293,8 +292,8 @@ fn binding_status(
         CapabilityTarget::Vm | CapabilityTarget::Rust => TargetBindingStatus::HostBound {
             reason: HostBindingReason::RuntimeProviderRequired,
         },
-        CapabilityTarget::WasmGc => TargetBindingStatus::Unsupported {
-            reason: UnsupportedReason::HostImportAdapterNotGenerated,
+        CapabilityTarget::WasmGc => TargetBindingStatus::HostBound {
+            reason: HostBindingReason::WasmGcImportRequired,
         },
         CapabilityTarget::Wasip2 => {
             match crate::codegen::wasip2::CapabilityWitInterfacePlan::build(contracts, contract) {

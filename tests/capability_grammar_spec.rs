@@ -715,13 +715,13 @@ fn main() -> Int
             "run --wasm-gc emitted an artifact with an unbound provider:\n{report}"
         );
         assert!(
-            report.contains("error[capability-target-unsupported]")
-                && report.contains("target `wasm-gc`")
-                && report.contains("reason[host-import-adapter-not-generated]")
+            report.contains("error[capability-provider-missing]")
+                && report.contains("`aver run --wasm-gc` has no in-process binding")
+                && report.contains("instantiate the module")
                 && report.contains("required operations: Clock.now")
                 && report.contains("contract_hash: sha256:")
                 && report.contains("model_hash: sha256:"),
-            "the wasm-gc run shortcut must share the compile-time provider gate:\n{report}"
+            "the wasm-gc run shortcut must explain its missing external host:\n{report}"
         );
     }
 

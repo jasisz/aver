@@ -1192,7 +1192,7 @@ fn wasip2_env_set_is_rejected_by_the_provider_manifest_not_an_effect_table() {
 }
 
 #[test]
-fn custom_capability_is_host_bound_on_native_targets_and_reports_unavailable_wasm_adapters() {
+fn custom_capability_is_host_bound_on_native_and_wasm_gc_targets() {
     let registry = contracts("Probe", PURE);
     let manifest = CapabilityTargetManifest::build(&registry, &Default::default())
         .expect("unused custom capability manifest");
@@ -1208,27 +1208,32 @@ fn custom_capability_is_host_bound_on_native_targets_and_reports_unavailable_was
             }
         );
     }
-    for (target, expected) in [
-        (
-            CapabilityTarget::WasmGc,
-            UnsupportedReason::HostImportAdapterNotGenerated,
-        ),
-        (
-            CapabilityTarget::Wasip2,
-            UnsupportedReason::WitBoundaryTypeUnsupported(CapabilityWitUnsupported {
+    let wasm_gc = manifest
+        .for_target(CapabilityTarget::WasmGc)
+        .next()
+        .expect("wasm-gc row");
+    assert_eq!(
+        wasm_gc.status,
+        TargetBindingStatus::HostBound {
+            reason: HostBindingReason::WasmGcImportRequired
+        }
+    );
+
+    let wasip2 = manifest
+        .for_target(CapabilityTarget::Wasip2)
+        .next()
+        .expect("wasip2 row");
+    assert_eq!(
+        wasip2.status,
+        TargetBindingStatus::Unsupported {
+            reason: UnsupportedReason::WitBoundaryTypeUnsupported(CapabilityWitUnsupported {
                 capability: "Probe".to_string(),
                 operation: "Probe.read".to_string(),
                 position: CapabilityWitTypePosition::Result,
                 aver_type: "Result<Int, String>".to_string(),
-            }),
-        ),
-    ] {
-        let row = manifest.for_target(target).next().expect("target row");
-        assert_eq!(
-            row.status,
-            TargetBindingStatus::Unsupported { reason: expected }
-        );
-    }
+            })
+        }
+    );
 }
 
 #[test]

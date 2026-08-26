@@ -54,6 +54,10 @@ pub(super) struct PackedSequenceType {
 
 /// User-type lookup tables built once before any fn body emit.
 pub(super) struct TypeRegistry {
+    /// Provider-owned capability resources cross the raw wasm-gc boundary as
+    /// nullable `externref`. They have identity in the host but no guest
+    /// representation, constructors, fields, equality, or pattern surface.
+    pub(super) capability_resources: std::collections::HashSet<String>,
     /// `record_name → type_idx` for product (record) types.
     pub(super) records: HashMap<String, u32>,
     /// `sum_name → type_idx` for the empty, non-final nominal root
@@ -303,10 +307,29 @@ impl TypeRegistry {
     /// them up). Also intern the `"cf-ipcountry"` string literal so
     /// the synthesised `aver_http_handle` wrapper has a valid data
     /// segment to source it from.
+    #[allow(dead_code)]
     pub(super) fn build_with_handler(
         items: &[TopLevel],
         resolved_fn_defs: &[crate::ir::hir::ResolvedFnDef],
         _handler_active: bool,
+    ) -> Self {
+        Self::build_with_handler_and_capabilities(
+            items,
+            resolved_fn_defs,
+            _handler_active,
+            std::collections::HashSet::new(),
+            false,
+            &[],
+        )
+    }
+
+    pub(super) fn build_with_handler_and_capabilities(
+        items: &[TopLevel],
+        resolved_fn_defs: &[crate::ir::hir::ResolvedFnDef],
+        _handler_active: bool,
+        capability_resources: std::collections::HashSet<String>,
+        force_bignum: bool,
+        capability_boundary_types: &[String],
     ) -> Self {
         // _handler_active is consumed by `items_reference_name`
         // overrides below so the rest of the builder stays
@@ -493,7 +516,7 @@ impl TypeRegistry {
         // struct can reference it without a forward edge (a single rec
         // group makes this safe, but keeping the array lower mirrors the
         // other collection slots and reads cleaner).
-        let bignum = resolved_fn_defs.iter().any(fn_uses_int_arithmetic);
+        let bignum = force_bignum || resolved_fn_defs.iter().any(fn_uses_int_arithmetic);
         let (aint_mag_array_idx, aint_struct_idx) = if bignum {
             let mag_idx = next_idx;
             next_idx += 1;
@@ -529,6 +552,9 @@ impl TypeRegistry {
                 );
             }
             collect_vectors_from_fn_body(fd, &mut vector_types, &mut vector_order, &mut next_idx);
+        }
+        for ty in capability_boundary_types {
+            collect_vectors_from_str(ty, &mut vector_types, &mut vector_order, &mut next_idx);
         }
         // Record field walks — `record { nums: Vector<Int> }` only
         // shows up in the record's field list, not in any fn
@@ -592,6 +618,14 @@ impl TypeRegistry {
                 }
             }
         }
+        for ty in capability_boundary_types {
+            collect_results_from_str(ty, &mut result_types, &mut result_order, &mut next_idx);
+        }
+        for name in &record_names_sorted {
+            for (_, ty) in &record_fields[name] {
+                collect_results_from_str(ty, &mut result_types, &mut result_order, &mut next_idx);
+            }
+        }
         let mut list_types: HashMap<String, u32> = HashMap::new();
         let mut list_order: Vec<String> = Vec::new();
         for fd in resolved_fn_defs {
@@ -614,6 +648,9 @@ impl TypeRegistry {
             // mentions it. Mirrors the same body-walk options
             // and vectors already do.
             collect_lists_from_fn_body(fd, &mut list_types, &mut list_order, &mut next_idx);
+        }
+        for ty in capability_boundary_types {
+            collect_lists_from_str(ty, &mut list_types, &mut list_order, &mut next_idx);
         }
         for name in &record_names_sorted {
             let fields = &record_fields[name];
@@ -701,6 +738,9 @@ impl TypeRegistry {
                 );
             }
             collect_options_from_fn_body(fd, &mut option_types, &mut option_order, &mut next_idx);
+        }
+        for ty in capability_boundary_types {
+            collect_options_from_str(ty, &mut option_types, &mut option_order, &mut next_idx);
         }
         // The String-index pass is intentionally below typechecking, so its
         // freshly synthesized intrinsic node has no source type stamp for the
@@ -793,6 +833,9 @@ impl TypeRegistry {
                 collect_maps_from_str(&ty.display(), &mut pending_maps_for_options);
             }
         }
+        for ty in capability_boundary_types {
+            collect_maps_from_str(ty, &mut pending_maps_for_options);
+        }
         if handler_active
             && !pending_maps_for_options
                 .iter()
@@ -855,6 +898,9 @@ impl TypeRegistry {
                 };
                 collect_maps_from_expr(expr, &mut pending_maps);
             }
+        }
+        for ty in capability_boundary_types {
+            collect_maps_from_str(ty, &mut pending_maps);
         }
         // Dedup in encounter order.
         let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -962,6 +1008,9 @@ impl TypeRegistry {
             // built from the items' typed-AST element types and
             // never has to appear in any signature.
             collect_tuples_from_fn_body(fd, &mut tuple_types, &mut tuple_order, &mut next_idx);
+        }
+        for ty in capability_boundary_types {
+            collect_tuples_from_str(ty, &mut tuple_types, &mut tuple_order, &mut next_idx);
         }
         // Record fields can carry tuple types too.
         for name in &record_names_sorted {
@@ -1212,6 +1261,7 @@ impl TypeRegistry {
         }
 
         Self {
+            capability_resources,
             records,
             sum_roots,
             variants,
@@ -1572,6 +1622,40 @@ impl TypeRegistry {
     /// `"Left.IntRange"` for a collision-renamed dep type).
     pub(super) fn set_eligible_carriers(&mut self, names: std::collections::HashSet<String>) {
         self.eligible_carriers = names;
+    }
+
+    pub(super) fn is_capability_resource(&self, name: &str) -> bool {
+        self.capability_resources.contains(name)
+            || self
+                .type_name_aliases
+                .get(name)
+                .is_some_and(|canonical| self.capability_resources.contains(canonical))
+    }
+
+    /// Capability contracts spell their own resources locally (`Token`) while
+    /// the external ABI uses the canonical owner (`Vault.Token`). Preserve the
+    /// local spelling only when it cannot name a represented linked type and
+    /// exactly one selected capability owns it. Ambiguity stays fail-closed.
+    pub(super) fn install_capability_resource_aliases(&mut self) {
+        let mut by_bare = std::collections::BTreeMap::<String, Vec<String>>::new();
+        for canonical in &self.capability_resources {
+            if let Some((_, bare)) = canonical.rsplit_once('.') {
+                by_bare
+                    .entry(bare.to_string())
+                    .or_default()
+                    .push(canonical.clone());
+            }
+        }
+        for (bare, owners) in by_bare {
+            if let [canonical] = owners.as_slice()
+                && !self.records.contains_key(&bare)
+                && !self.sum_roots.contains_key(&bare)
+            {
+                self.type_name_aliases
+                    .entry(bare)
+                    .or_insert_with(|| canonical.clone());
+            }
+        }
     }
 
     /// Install proof-derived packed sequence layouts after the ordinary type
@@ -2339,6 +2423,15 @@ pub(super) fn aver_to_wasm(
         return Ok(None);
     }
     if let Some(reg) = registry {
+        if reg.is_capability_resource(trimmed) {
+            return Ok(Some(ValType::Ref(RefType {
+                nullable: true,
+                heap_type: HeapType::Abstract {
+                    shared: false,
+                    ty: wasm_encoder::AbstractHeapType::Extern,
+                },
+            })));
+        }
         // Structural refinement erasure — an eligible nominal
         // `record X { values: List<Int> }` is represented by its proven packed
         // array everywhere. Construction/projection bridge the source-level
@@ -2741,9 +2834,10 @@ pub(super) fn record_struct_type(
         let val_ty = if registry.is_eligible_carrier_field(record_name, fname) {
             ValType::I64
         } else {
-            aver_to_wasm(ty, Some(registry))?.ok_or(WasmGcError::Validation(format!(
-                "record field of type {ty} has no wasm representation"
-            )))?
+            // Unit has no stack value. Keep an unobservable i32 placeholder
+            // so represented capability records can carry the complete Aver
+            // value vocabulary without inventing a host-only exception.
+            aver_to_wasm(ty, Some(registry))?.unwrap_or(ValType::I32)
         };
         out.push(FieldType {
             element_type: StorageType::Val(val_ty),

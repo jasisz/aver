@@ -1,0 +1,13 @@
+module UnitShapes
+    kind = capability
+    semantics = pure
+    exposes [makeMaybe, makeItems, makeVector]
+
+operation makeMaybe() -> Option<Unit>
+    ? "Return an optional Unit."
+
+operation makeItems() -> List<Unit>
+    ? "Return a list of Unit values."
+
+operation makeVector() -> Vector<Unit>
+    ? "Return a vector of Unit values."

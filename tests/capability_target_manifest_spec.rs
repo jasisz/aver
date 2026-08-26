@@ -95,7 +95,7 @@ fn json_manifest_is_total_ordered_and_explicit() {
     assert_eq!(row("Clock", "rust")["status"]["kind"], "host-bound");
     assert_eq!(
         row("Clock", "wasm-gc")["status"]["reason"]["code"],
-        "host-import-adapter-not-generated"
+        "wasm-gc-import-required"
     );
     assert_eq!(
         row("Clock", "wasip2")["status"]["reason"]["code"],
@@ -132,7 +132,7 @@ fn json_manifest_is_total_ordered_and_explicit() {
         );
         assert_eq!(
             row(capability, "wasm-gc")["status"]["reason"]["code"],
-            "host-import-adapter-not-generated"
+            "wasm-gc-import-required"
         );
     }
     assert_eq!(row("Clock", "wasip2")["status"]["kind"], "host-bound");
@@ -169,7 +169,7 @@ fn human_manifest_names_every_binding_state() {
     assert!(text.contains("Clock"));
     assert!(text.contains("vm      host-bound[runtime-provider-required]"));
     assert!(text.contains("rust    host-bound[runtime-provider-required]"));
-    assert!(text.contains("wasm-gc unsupported[host-import-adapter-not-generated]"));
+    assert!(text.contains("wasm-gc host-bound[wasm-gc-import-required]"));
     assert!(text.contains("wasip2  host-bound[component-import-required]"));
     assert!(text.contains("Time"));
     assert!(text.contains("provided by aver.standard.Time/wasip2-wasi@"));
@@ -302,4 +302,205 @@ fn unused_custom_contracts_do_not_block_rust_compilation() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(cleanup.is_ok(), "generated output should be removable");
+}
+
+#[cfg(feature = "wasm")]
+fn compile_wasm_gc(root: &Path, file: &str, label: &str) -> (PathBuf, Output) {
+    let output_dir = temp_output(label);
+    let output = Command::new(aver_bin())
+        .arg("compile")
+        .arg(root.join(file))
+        .arg("--module-root")
+        .arg(root)
+        .args(["--target", "wasm-gc", "-o"])
+        .arg(&output_dir)
+        .output()
+        .expect("compile custom capability for wasm-gc");
+    (output_dir, output)
+}
+
+#[cfg(feature = "wasm")]
+fn wasm_imports(bytes: &[u8]) -> Vec<(String, String)> {
+    use wasmparser::{Parser, Payload};
+
+    let mut imports = Vec::new();
+    for payload in Parser::new(0).parse_all(bytes) {
+        if let Payload::ImportSection(reader) = payload.expect("parse emitted wasm") {
+            for group in reader {
+                let group = group.expect("read import group");
+                for import in group {
+                    let (_, import) = import.expect("read import");
+                    imports.push((import.module.to_string(), import.name.to_string()));
+                }
+            }
+        }
+    }
+    imports
+}
+
+#[test]
+#[cfg(feature = "wasm")]
+fn wasm_gc_custom_contract_is_one_hashed_namespace_with_every_operation() {
+    let root = fixture_root();
+    let (output_dir, output) = compile_wasm_gc(&root, "main.av", "custom-wasm-gc");
+    assert!(
+        output.status.success(),
+        "wasm-gc compile failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(report.contains("capability Clock: host-bound[wasm-gc-import-required]"));
+
+    let manifest = run_capabilities("main.av", true);
+    let json: serde_json::Value =
+        serde_json::from_slice(&manifest.stdout).expect("valid target manifest");
+    let clock = json["rows"]
+        .as_array()
+        .expect("rows")
+        .iter()
+        .find(|row| row["capability"] == "Clock" && row["target"] == "wasm-gc")
+        .expect("Clock wasm-gc row");
+    let hash = clock["contractHash"]
+        .as_str()
+        .expect("contract hash")
+        .strip_prefix("sha256:")
+        .expect("sha256 contract hash");
+    let namespace = format!("aver:user/cap-n436c6f636b-c{hash}");
+
+    let bytes = std::fs::read(output_dir.join("main.wasm")).expect("read wasm-gc artifact");
+    let custom = wasm_imports(&bytes)
+        .into_iter()
+        .filter(|(module, _)| module.starts_with("aver:user/"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        custom,
+        [
+            (namespace.clone(), "op-n6e6f77".to_string()),
+            (namespace, "op-n7469636b".to_string()),
+        ],
+        "using one operation must retain the complete sorted contract"
+    );
+    std::fs::remove_dir_all(output_dir).expect("remove wasm-gc output");
+}
+
+#[test]
+#[cfg(feature = "wasm")]
+fn wasm_gc_resource_and_complete_provider_value_boundaries_validate() {
+    let root = fixture_root();
+    let (vault_out, vault) = compile_wasm_gc(&root, "vault_client.av", "vault-wasm-gc");
+    assert!(
+        vault.status.success(),
+        "resource ABI failed:\n{}",
+        String::from_utf8_lossy(&vault.stderr)
+    );
+    let vault_bytes = std::fs::read(vault_out.join("vault_client.wasm")).expect("vault wasm");
+    let vault_wat = wasmprinter::print_bytes(&vault_bytes).expect("print vault wasm");
+    assert!(vault_wat.contains("aver:user/cap-n5661756c74-c"));
+    assert!(vault_wat.contains("externref"));
+    assert!(
+        vault_wat.contains("__cap_abi_n526573756c743c5661756c742e546f6b656e2c20537472696e673e_ok")
+    );
+    std::fs::remove_dir_all(vault_out).expect("remove vault output");
+
+    let shapes_root =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/native_provider_shapes");
+    let (shapes_out, shapes) = compile_wasm_gc(&shapes_root, "main.av", "shapes-wasm-gc");
+    assert!(
+        shapes.status.success(),
+        "complete ProviderValue ABI failed:\n{}",
+        String::from_utf8_lossy(&shapes.stderr)
+    );
+    let shapes_bytes = std::fs::read(shapes_out.join("main.wasm")).expect("shapes wasm");
+    let shapes_wat = wasmprinter::print_bytes(&shapes_bytes).expect("print shapes wasm");
+    for helper in [
+        "__cap_abi_n496e74_from_decimal",
+        "__cap_abi_n496e74_to_decimal",
+        "__cap_abi_n5368617065732e42756e646c65_make",
+        "__cap_abi_n4c6973743c496e743e_cons",
+        "__cap_abi_n4f7074696f6e3c426f6f6c3e_some",
+        "__cap_abi_n5374617465_kind",
+    ] {
+        assert!(shapes_wat.contains(helper), "missing ABI helper {helper}");
+    }
+    assert!(shapes_wat.contains("__cap_abi_n4d61703c537472696e672c20496e743e_set"));
+    std::fs::remove_dir_all(shapes_out).expect("remove shapes output");
+
+    let (units_out, units) = compile_wasm_gc(&root, "unit_shapes_client.av", "unit-shapes-wasm-gc");
+    assert!(
+        units.status.success(),
+        "Unit container ABI failed:\n{}",
+        String::from_utf8_lossy(&units.stderr)
+    );
+    let units_bytes =
+        std::fs::read(units_out.join("unit_shapes_client.wasm")).expect("Unit shapes wasm");
+    let units_wat = wasmprinter::print_bytes(&units_bytes).expect("print Unit shapes wasm");
+    for helper in [
+        "__cap_abi_n4f7074696f6e3c556e69743e_some",
+        "__cap_abi_n4c6973743c556e69743e_cons",
+        "__cap_abi_n566563746f723c556e69743e_get",
+        "__cap_abi_n566563746f723c556e69743e_set",
+    ] {
+        assert!(
+            units_wat.contains(helper),
+            "missing Unit ABI helper {helper}"
+        );
+    }
+    std::fs::remove_dir_all(units_out).expect("remove Unit shapes output");
+}
+
+#[test]
+#[cfg(feature = "wasm")]
+fn wasm_gc_certificate_keeps_custom_operations_opaque() {
+    let root = fixture_root();
+    let output_dir = temp_output("custom-capability-cert");
+    let output = Command::new(aver_bin())
+        .arg("compile")
+        .arg(root.join("cert_client.av"))
+        .arg("--module-root")
+        .arg(&root)
+        .args(["--target", "wasm-gc", "--certify", "-o"])
+        .arg(&output_dir)
+        .output()
+        .expect("certify custom capability artifact");
+    assert!(
+        output.status.success(),
+        "custom capability certification failed:\n{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let manifest: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(output_dir.join("cert/cert-manifest.json")).expect("certificate manifest"),
+    )
+    .expect("valid certificate manifest");
+    assert!(
+        manifest["certified"]
+            .as_array()
+            .expect("certified exports")
+            .iter()
+            .any(|entry| entry["name"] == "plusOne")
+    );
+    let capabilities = manifest["capabilities"]
+        .as_array()
+        .expect("capability imports");
+    assert_eq!(
+        capabilities.len(),
+        2,
+        "the complete Clock contract is opaque"
+    );
+    assert!(capabilities.iter().all(|pair| {
+        pair.as_object().is_some_and(|pair| {
+            pair["module"]
+                .as_str()
+                .is_some_and(|module| module.starts_with("aver:user/cap-n436c6f636b-c"))
+                && pair["name"]
+                    .as_str()
+                    .is_some_and(|field| field.starts_with("op-n"))
+        })
+    }));
+    std::fs::remove_dir_all(output_dir).expect("remove certificate output");
 }

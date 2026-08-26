@@ -213,12 +213,12 @@ fn model_changes_are_auditable_without_changing_transport_identity() {
 #[test]
 fn identifier_encoding_is_injective_for_lookalike_source_names() {
     assert_ne!(
-        encode_wit_identifier("A.B"),
-        encode_wit_identifier("A_2e_B")
+        encode_interface_identifier("A.B"),
+        encode_interface_identifier("A_2e_B")
     );
     assert_ne!(
-        encode_wit_identifier("fooBar"),
-        encode_wit_identifier("foo-bar")
+        encode_interface_identifier("fooBar"),
+        encode_interface_identifier("foo-bar")
     );
 }
 

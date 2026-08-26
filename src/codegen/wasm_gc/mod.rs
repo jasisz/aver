@@ -59,6 +59,9 @@ use crate::ir::AnalysisResult;
 
 mod body;
 mod builtins;
+mod capability_abi;
+mod capability_imports;
+mod capability_plan;
 pub(crate) mod effects;
 mod flatten;
 mod lists;
@@ -82,6 +85,9 @@ mod wasip2_tcp;
 mod wat_helper;
 
 pub use body::{CoverageReport, coverage_report};
+pub use capability_plan::{
+    CapabilityWasmGcInterfacePlan, CapabilityWasmGcOperationPlan, CapabilityWasmGcPlan,
+};
 pub use flatten::{CapabilityFunctionSurface, flatten_multimodule};
 
 /// Backend lowering mode — selects the host-bridge shape the wasm-gc
@@ -173,6 +179,7 @@ pub fn compile_to_wasm_gc(
         TargetMode::AverBridge,
         &HashMap::new(),
         None,
+        None,
         true,
     )
     .map(|(bytes, _, _)| bytes)
@@ -214,6 +221,7 @@ pub fn compile_to_wasm_gc_flattened_with_options(
         target,
         type_aliases,
         None,
+        None,
         packed_sequences_enabled,
     )
     .map(|(bytes, mir_count, fragment_plans)| WasmGcCompileOutput {
@@ -238,6 +246,7 @@ pub fn compile_to_wasm_gc_flattened_with_capabilities(
         TargetMode::Wasip2,
         type_aliases,
         Some(capabilities),
+        None,
         true,
     )
     .map(|(bytes, mir_count, fragment_plans)| WasmGcCompileOutput {
@@ -266,6 +275,7 @@ pub fn compile_to_wasm_gc_with_mir_count(
         TargetMode::AverBridge,
         &HashMap::new(),
         None,
+        None,
         true,
     )
     .map(|(bytes, mir_count, _)| (bytes, mir_count))
@@ -287,6 +297,7 @@ pub fn compile_to_wasm_gc_with_handler(
         TargetMode::AverBridge,
         &HashMap::new(),
         None,
+        None,
         true,
     )
     .map(|(bytes, _, _)| bytes)
@@ -304,6 +315,7 @@ pub fn compile_to_wasm_gc_with_handler_and_cert_plans(
         handler,
         TargetMode::AverBridge,
         &HashMap::new(),
+        None,
         None,
         true,
     )
@@ -330,8 +342,16 @@ pub fn compile_to_wasm_gc_for_wasip2(
     items: &[TopLevel],
     _analysis: Option<&AnalysisResult>,
 ) -> Result<Vec<u8>, WasmGcError> {
-    module::emit_module_with(items, None, TargetMode::Wasip2, &HashMap::new(), None, true)
-        .map(|(bytes, _, _)| bytes)
+    module::emit_module_with(
+        items,
+        None,
+        TargetMode::Wasip2,
+        &HashMap::new(),
+        None,
+        None,
+        true,
+    )
+    .map(|(bytes, _, _)| bytes)
 }
 
 /// `--target wasip2 --world wasi:http/proxy` entry — Phase 3 / 0.19.
@@ -358,9 +378,36 @@ pub fn compile_to_wasm_gc_for_wasip2_with_handler(
         TargetMode::Wasip2,
         &HashMap::new(),
         None,
+        None,
         true,
     )
     .map(|(bytes, _, _)| bytes)
+}
+
+/// Compile a flattened browser/Workers wasm-gc module whose custom
+/// capability imports are derived from complete source contracts.
+pub fn compile_to_wasm_gc_flattened_with_custom_capabilities(
+    items: &[TopLevel],
+    _analysis: Option<&AnalysisResult>,
+    handler: Option<&str>,
+    type_aliases: &HashMap<String, String>,
+    capabilities: &CapabilityWasmGcPlan,
+    packed_sequences_enabled: bool,
+) -> Result<WasmGcCompileOutput, WasmGcError> {
+    module::emit_module_with(
+        items,
+        handler,
+        TargetMode::AverBridge,
+        type_aliases,
+        None,
+        Some(capabilities),
+        packed_sequences_enabled,
+    )
+    .map(|(bytes, mir_count, fragment_plans)| WasmGcCompileOutput {
+        bytes,
+        mir_count,
+        fragment_plans,
+    })
 }
 
 /// True when `bytes` names its map insert helpers — the `name` section
