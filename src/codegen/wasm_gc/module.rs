@@ -7619,11 +7619,25 @@ struct FactoryExports {
     /// to recover the socket-pool key when dispatching writeLine /
     /// readLine / close.
     tcp_connection_id: Option<FactorySlot>,
+    /// Resource-token getters for the opaque reactor handles. JavaScript
+    /// cannot inspect WebAssembly GC records directly, so every consuming
+    /// host operation needs the same explicit bridge as Tcp.Connection.
+    tcp_dial_id: Option<FactorySlot>,
+    tcp_listener_id: Option<FactorySlot>,
     /// `__rt_tcp_socket_kind(socket) -> i32` — nominal discriminator
     /// for the three `Tcp.Socket` variants. The host cannot infer this
     /// from structural field shapes because `Tcp.Dial` and
     /// `Tcp.Listener` deliberately have the same opaque representation.
     tcp_socket_kind: Option<FactorySlot>,
+    /// JS-facing probes for the native `Map<Int, Tcp.Socket>` passed to
+    /// `Tcp.poll`. GC structs/arrays are opaque to JavaScript, so the raw
+    /// host ABI must expose the occupied table slots explicitly.
+    tcp_poll_capacity: Option<FactorySlot>,
+    tcp_poll_key_at: Option<FactorySlot>,
+    tcp_poll_socket_at: Option<FactorySlot>,
+    /// One stable host token for any `Tcp.Socket` variant. Listener and Dial
+    /// resources and Connection records all carry their token in field 0.
+    tcp_socket_id: Option<FactorySlot>,
     /// Resource/result builders for the reactor lifecycle operations.
     result_tcp_dial_string_ok: Option<FactorySlot>,
     result_tcp_dial_string_err: Option<FactorySlot>,
@@ -7653,6 +7667,32 @@ struct FactoryExports {
 struct FactorySlot {
     type_idx: u32,
     fn_idx: u32,
+}
+
+fn allocate_factory_resource_id(
+    types: &mut TypeSection,
+    next_type_idx: &mut u32,
+    next_fn_idx: &mut u32,
+    registry: &TypeRegistry,
+    resource: &str,
+    slot: &mut Option<FactorySlot>,
+) -> Result<(), WasmGcError> {
+    let resource_idx = registry
+        .record_type_idx(resource)
+        .ok_or_else(|| WasmGcError::Validation(format!("getter requires {resource}")))?;
+    let string_idx = registry
+        .string_array_type_idx
+        .ok_or_else(|| WasmGcError::Validation(format!("getter for {resource} requires String")))?;
+    types
+        .ty()
+        .function([ref_null(resource_idx)], [ref_null(string_idx)]);
+    *slot = Some(FactorySlot {
+        type_idx: *next_type_idx,
+        fn_idx: *next_fn_idx,
+    });
+    *next_type_idx += 1;
+    *next_fn_idx += 1;
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -8013,6 +8053,38 @@ fn allocate_factory_exports(
         *next_type_idx += 1;
         *next_fn_idx += 1;
     }
+    let needs_tcp_dial = effect_registry.iter().any(|e| {
+        matches!(
+            e,
+            EffectName::TcpBeginConnect | EffectName::TcpDialled | EffectName::TcpCloseDial
+        )
+    });
+    if needs_tcp_dial {
+        allocate_factory_resource_id(
+            types,
+            next_type_idx,
+            next_fn_idx,
+            registry,
+            "Tcp.Dial",
+            &mut fx.tcp_dial_id,
+        )?;
+    }
+    let needs_tcp_listener = effect_registry.iter().any(|e| {
+        matches!(
+            e,
+            EffectName::TcpListen | EffectName::TcpAccept | EffectName::TcpCloseListener
+        )
+    });
+    if needs_tcp_listener {
+        allocate_factory_resource_id(
+            types,
+            next_type_idx,
+            next_fn_idx,
+            registry,
+            "Tcp.Listener",
+            &mut fx.tcp_listener_id,
+        )?;
+    }
     if effect_registry.iter().any(|e| e == EffectName::TcpPoll) {
         let root_idx = registry
             .sum_root_type_idx("Tcp.Socket")
@@ -8036,6 +8108,65 @@ fn allocate_factory_exports(
         });
         *next_type_idx += 1;
         *next_fn_idx += 1;
+
+        let map = registry
+            .map_slots("Map<Int,Tcp.Socket>")
+            .ok_or(WasmGcError::Validation(
+                "Tcp.poll requires the Map<Int, Tcp.Socket> slots".into(),
+            ))?;
+        let key_box =
+            registry
+                .primitive_key_box
+                .get("Int")
+                .copied()
+                .ok_or(WasmGcError::Validation(
+                    "Tcp.poll requires the boxed Int map-key slot".into(),
+                ))?;
+        let map_ref = ref_null(map.map);
+        let socket_ref = ref_null(root_idx);
+        let int_ref = registry
+            .aint_struct_idx
+            .map(ref_null)
+            .unwrap_or(ValType::I64);
+
+        types.ty().function([map_ref], [ValType::I32]);
+        fx.tcp_poll_capacity = Some(FactorySlot {
+            type_idx: *next_type_idx,
+            fn_idx: *next_fn_idx,
+        });
+        *next_type_idx += 1;
+        *next_fn_idx += 1;
+
+        types.ty().function([map_ref, ValType::I32], [int_ref]);
+        fx.tcp_poll_key_at = Some(FactorySlot {
+            type_idx: *next_type_idx,
+            fn_idx: *next_fn_idx,
+        });
+        *next_type_idx += 1;
+        *next_fn_idx += 1;
+
+        types.ty().function([map_ref, ValType::I32], [socket_ref]);
+        fx.tcp_poll_socket_at = Some(FactorySlot {
+            type_idx: *next_type_idx,
+            fn_idx: *next_fn_idx,
+        });
+        *next_type_idx += 1;
+        *next_fn_idx += 1;
+
+        let string_idx = registry
+            .string_array_type_idx
+            .ok_or(WasmGcError::Validation(
+                "Tcp.poll socket IDs require the String slot".into(),
+            ))?;
+        types.ty().function([socket_ref], [ref_null(string_idx)]);
+        fx.tcp_socket_id = Some(FactorySlot {
+            type_idx: *next_type_idx,
+            fn_idx: *next_fn_idx,
+        });
+        *next_type_idx += 1;
+        *next_fn_idx += 1;
+
+        let _ = key_box;
     }
     if effect_registry
         .iter()
@@ -8558,8 +8689,26 @@ impl FactoryExports {
         if let Some(s) = self.tcp_connection_id {
             exports.export("__rt_tcp_connection_id", ExportKind::Func, s.fn_idx);
         }
+        if let Some(s) = self.tcp_dial_id {
+            exports.export("__rt_tcp_dial_id", ExportKind::Func, s.fn_idx);
+        }
+        if let Some(s) = self.tcp_listener_id {
+            exports.export("__rt_tcp_listener_id", ExportKind::Func, s.fn_idx);
+        }
         if let Some(s) = self.tcp_socket_kind {
             exports.export("__rt_tcp_socket_kind", ExportKind::Func, s.fn_idx);
+        }
+        if let Some(s) = self.tcp_poll_capacity {
+            exports.export("__rt_tcp_poll_capacity", ExportKind::Func, s.fn_idx);
+        }
+        if let Some(s) = self.tcp_poll_key_at {
+            exports.export("__rt_tcp_poll_key_at", ExportKind::Func, s.fn_idx);
+        }
+        if let Some(s) = self.tcp_poll_socket_at {
+            exports.export("__rt_tcp_poll_socket_at", ExportKind::Func, s.fn_idx);
+        }
+        if let Some(s) = self.tcp_socket_id {
+            exports.export("__rt_tcp_socket_id", ExportKind::Func, s.fn_idx);
         }
         if let Some(s) = self.result_tcp_dial_string_ok {
             exports.export("__rt_result_tcp_dial_string_ok", ExportKind::Func, s.fn_idx);
@@ -8696,8 +8845,26 @@ impl FactoryExports {
         if self.tcp_connection_id.is_some() {
             codes.function(&emit_factory_tcp_connection_id(registry)?);
         }
+        if self.tcp_dial_id.is_some() {
+            codes.function(&emit_factory_tcp_resource_id(registry, "Tcp.Dial")?);
+        }
+        if self.tcp_listener_id.is_some() {
+            codes.function(&emit_factory_tcp_resource_id(registry, "Tcp.Listener")?);
+        }
         if self.tcp_socket_kind.is_some() {
             codes.function(&emit_factory_tcp_socket_kind(registry)?);
+        }
+        if self.tcp_poll_capacity.is_some() {
+            codes.function(&emit_factory_tcp_poll_capacity(registry)?);
+        }
+        if self.tcp_poll_key_at.is_some() {
+            codes.function(&emit_factory_tcp_poll_key_at(registry)?);
+        }
+        if self.tcp_poll_socket_at.is_some() {
+            codes.function(&emit_factory_tcp_poll_socket_at(registry)?);
+        }
+        if self.tcp_socket_id.is_some() {
+            codes.function(&emit_factory_tcp_socket_id(registry)?);
         }
         if self.result_tcp_dial_string_ok.is_some() {
             codes.function(&emit_factory_result_resource_string_ok(
@@ -8813,7 +8980,13 @@ impl FactoryExports {
             self.result_unit_string_err,
             self.tcp_connection_make,
             self.tcp_connection_id,
+            self.tcp_dial_id,
+            self.tcp_listener_id,
             self.tcp_socket_kind,
+            self.tcp_poll_capacity,
+            self.tcp_poll_key_at,
+            self.tcp_poll_socket_at,
+            self.tcp_socket_id,
             self.result_tcp_dial_string_ok,
             self.result_tcp_dial_string_err,
             self.result_tcp_listener_string_ok,
@@ -9344,6 +9517,24 @@ fn emit_factory_tcp_connection_id(
     Ok(f)
 }
 
+/// Recover field 0, the stable provider token, from an opaque Tcp resource.
+fn emit_factory_tcp_resource_id(
+    registry: &TypeRegistry,
+    resource: &str,
+) -> Result<wasm_encoder::Function, WasmGcError> {
+    let rec_idx = registry
+        .record_type_idx(resource)
+        .expect("checked at allocation");
+    let mut f = Function::new([]);
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: rec_idx,
+        field_index: 0,
+    });
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
 /// Return the nominal `Tcp.Socket` variant tag used by the host boundary:
 /// Listening=0, Dialing=1, Connected=2, and -1 for null/invalid input.
 fn emit_factory_tcp_socket_kind(
@@ -9380,6 +9571,148 @@ fn emit_factory_tcp_socket_kind(
     f.instruction(&Instruction::Else);
     f.instruction(&Instruction::I32Const(-1));
     f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+/// Number of backing slots the JavaScript `Tcp.poll` host must inspect.
+/// Occupancy is determined by `__rt_tcp_poll_socket_at`: an empty bucket is
+/// null, while every live bucket carries a nominal `Tcp.Socket` reference.
+fn emit_factory_tcp_poll_capacity(
+    registry: &TypeRegistry,
+) -> Result<wasm_encoder::Function, WasmGcError> {
+    let map = registry
+        .map_slots("Map<Int,Tcp.Socket>")
+        .expect("checked at allocation");
+    let mut f = Function::new([]);
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: map.map,
+        field_index: 1,
+    });
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+/// Read one occupied `Int` key from the native poll map. The host calls this
+/// only after `__rt_tcp_poll_socket_at(map, index)` returned non-null.
+fn emit_factory_tcp_poll_key_at(
+    registry: &TypeRegistry,
+) -> Result<wasm_encoder::Function, WasmGcError> {
+    let map = registry
+        .map_slots("Map<Int,Tcp.Socket>")
+        .expect("checked at allocation");
+    let key_box = registry
+        .primitive_key_box
+        .get("Int")
+        .copied()
+        .expect("checked at allocation");
+    let mut f = Function::new([]);
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: map.map,
+        field_index: 2,
+    });
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::ArrayGet(map.keys_array));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: key_box,
+        field_index: 0,
+    });
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+/// Read the nullable socket value in one native poll-map bucket.
+fn emit_factory_tcp_poll_socket_at(
+    registry: &TypeRegistry,
+) -> Result<wasm_encoder::Function, WasmGcError> {
+    let map = registry
+        .map_slots("Map<Int,Tcp.Socket>")
+        .expect("checked at allocation");
+    let mut f = Function::new([]);
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: map.map,
+        field_index: 3,
+    });
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::ArrayGet(map.values_array));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+/// Recover the provider token carried by any `Tcp.Socket` variant.
+fn emit_factory_tcp_socket_id(
+    registry: &TypeRegistry,
+) -> Result<wasm_encoder::Function, WasmGcError> {
+    use wasm_encoder::{BlockType, HeapType};
+
+    let variant_idx = |name: &str| {
+        registry
+            .variant_in("Tcp.Socket", name)
+            .or_else(|| registry.variant_in("Socket", name))
+            .map(|info| info.type_idx)
+            .expect("checked at allocation")
+    };
+    let listening = variant_idx("Listening");
+    let dialing = variant_idx("Dialing");
+    let connected = variant_idx("Connected");
+    let listener = registry
+        .record_type_idx("Tcp.Listener")
+        .expect("checked at allocation");
+    let dial = registry
+        .record_type_idx("Tcp.Dial")
+        .expect("checked at allocation");
+    let connection = registry
+        .record_type_idx("Tcp.Connection")
+        .expect("checked at allocation");
+    let string_idx = registry
+        .string_array_type_idx
+        .expect("checked at allocation");
+    let string_result = BlockType::Result(ref_null(string_idx));
+
+    let mut f = Function::new([]);
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::RefTestNonNull(HeapType::Concrete(listening)));
+    f.instruction(&Instruction::If(string_result));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::RefCastNonNull(HeapType::Concrete(listening)));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: listening,
+        field_index: 0,
+    });
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: listener,
+        field_index: 0,
+    });
+    f.instruction(&Instruction::Else);
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::RefTestNonNull(HeapType::Concrete(dialing)));
+    f.instruction(&Instruction::If(string_result));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::RefCastNonNull(HeapType::Concrete(dialing)));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: dialing,
+        field_index: 0,
+    });
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: dial,
+        field_index: 0,
+    });
+    f.instruction(&Instruction::Else);
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::RefCastNonNull(HeapType::Concrete(connected)));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: connected,
+        field_index: 0,
+    });
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: connection,
+        field_index: 0,
+    });
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::End);
