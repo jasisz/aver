@@ -508,7 +508,7 @@ fn __mutual_tco_trampoline_1(
             }
             __MutualTco1::EvalBoolBranch(mut cond, mut thenExpr, mut elseExpr, mut env) => {
                 crate::cancel_checkpoint();
-                let condV =
+                let condV @ _ =
                     crate::aver_generated::domain::eval::core::evalExpr(&cond, &env, &*fns)?;
                 match condV.clone() {
                     crate::aver_generated::domain::value::Val::ValBool(flag) => {
@@ -691,11 +691,11 @@ fn __mutual_tco_trampoline_1(
                 mut env,
             ) => {
                 crate::cancel_checkpoint();
-                let vecV =
+                let vecV @ _ =
                     crate::aver_generated::domain::eval::core::evalExpr(&vecExpr, &env, &*fns)?;
-                let idxV =
+                let idxV @ _ =
                     crate::aver_generated::domain::eval::core::evalExpr(&idxExpr, &env, &*fns)?;
-                let valueV =
+                let valueV @ _ =
                     crate::aver_generated::domain::eval::core::evalExpr(&valueExpr, &env, &*fns)?;
                 __MutualTco1::EvalVectorSetWithDefaultExprResult(
                     vecV,
@@ -777,9 +777,9 @@ fn __mutual_tco_trampoline_1(
                 mut env,
             ) => {
                 crate::cancel_checkpoint();
-                let vecV =
+                let vecV @ _ =
                     crate::aver_generated::domain::eval::core::evalExpr(&vecExpr, &env, &*fns)?;
-                let idxV =
+                let idxV @ _ =
                     crate::aver_generated::domain::eval::core::evalExpr(&idxExpr, &env, &*fns)?;
                 __MutualTco1::EvalVectorGetWithDefaultExprResult(vecV, idxV, defaultExpr, env)
             }
@@ -1152,7 +1152,7 @@ fn __mutual_tco_trampoline_2(
                 mut env,
             ) => {
                 crate::cancel_checkpoint();
-                let condV = crate::aver_generated::domain::eval::core::evalExprSlot(
+                let condV @ _ = crate::aver_generated::domain::eval::core::evalExprSlot(
                     &cond, &env, &*slotMap, &*fns,
                 )?;
                 match condV.clone() {
@@ -1178,7 +1178,7 @@ fn __mutual_tco_trampoline_2(
                 mut env,
             ) => {
                 crate::cancel_checkpoint();
-                let v = crate::aver_generated::domain::eval::core::evalExprSlot(
+                let v @ _ = crate::aver_generated::domain::eval::core::evalExprSlot(
                     &scrutinee, &env, &*slotMap, &*fns,
                 )?;
                 __MutualTco2::EvalTailMatchSlot(selfId, v, arms, slotCount, env)
@@ -1655,7 +1655,7 @@ fn __mutual_tco_trampoline_3(
             }
             __MutualTco3::EvalBoolBranchSlot(mut cond, mut thenExpr, mut elseExpr, mut env) => {
                 crate::cancel_checkpoint();
-                let condV = crate::aver_generated::domain::eval::core::evalExprSlot(
+                let condV @ _ = crate::aver_generated::domain::eval::core::evalExprSlot(
                     &cond, &env, &*slotMap, &*fns,
                 )?;
                 match condV.clone() {
@@ -1824,13 +1824,13 @@ fn __mutual_tco_trampoline_3(
                 mut env,
             ) => {
                 crate::cancel_checkpoint();
-                let vecV = crate::aver_generated::domain::eval::core::evalExprSlot(
+                let vecV @ _ = crate::aver_generated::domain::eval::core::evalExprSlot(
                     &vecExpr, &env, &*slotMap, &*fns,
                 )?;
-                let idxV = crate::aver_generated::domain::eval::core::evalExprSlot(
+                let idxV @ _ = crate::aver_generated::domain::eval::core::evalExprSlot(
                     &idxExpr, &env, &*slotMap, &*fns,
                 )?;
-                let valueV = crate::aver_generated::domain::eval::core::evalExprSlot(
+                let valueV @ _ = crate::aver_generated::domain::eval::core::evalExprSlot(
                     &valueExpr, &env, &*slotMap, &*fns,
                 )?;
                 __MutualTco3::EvalVectorSetWithDefaultExprSlotResult(
@@ -1907,10 +1907,10 @@ fn __mutual_tco_trampoline_3(
                 mut env,
             ) => {
                 crate::cancel_checkpoint();
-                let vecV = crate::aver_generated::domain::eval::core::evalExprSlot(
+                let vecV @ _ = crate::aver_generated::domain::eval::core::evalExprSlot(
                     &vecExpr, &env, &*slotMap, &*fns,
                 )?;
-                let idxV = crate::aver_generated::domain::eval::core::evalExprSlot(
+                let idxV @ _ = crate::aver_generated::domain::eval::core::evalExprSlot(
                     &idxExpr, &env, &*slotMap, &*fns,
                 )?;
                 __MutualTco3::EvalVectorGetWithDefaultExprSlotResult(vecV, idxV, defaultExpr, env)
@@ -1934,7 +1934,7 @@ fn __mutual_tco_trampoline_3(
             }
             __MutualTco3::EvalMatchExprSlot(mut scrutinee, mut arms, mut env) => {
                 crate::cancel_checkpoint();
-                let v = crate::aver_generated::domain::eval::core::evalExprSlot(
+                let v @ _ = crate::aver_generated::domain::eval::core::evalExprSlot(
                     &scrutinee, &env, &*slotMap, &*fns,
                 )?;
                 __MutualTco3::EvalMatchSlot(v, arms, env)
@@ -2500,10 +2500,11 @@ fn __mutual_tco_trampoline_7(
         __state = match __state {
             __MutualTco7::EvalStmtBindSlotNext(mut slot, mut e, mut rest, mut env) => {
                 crate::cancel_checkpoint();
-                let v = crate::aver_generated::domain::eval::core::evalExprSlot(
+                let v @ _ = crate::aver_generated::domain::eval::core::evalExprSlot(
                     &e, &env, &*slotMap, &*fns,
                 )?;
-                let nextEnv = crate::aver_generated::domain::eval::slots::setSlot(&env, slot, &v);
+                let nextEnv @ _ =
+                    crate::aver_generated::domain::eval::slots::setSlot(&env, slot, &v);
                 {
                     let __list_subject = rest.clone();
                     if __list_subject.is_empty() {
@@ -2515,7 +2516,7 @@ fn __mutual_tco_trampoline_7(
             }
             __MutualTco7::EvalStmtExprSlotNext(mut e, mut rest, mut env) => {
                 crate::cancel_checkpoint();
-                let v = crate::aver_generated::domain::eval::core::evalExprSlot(
+                let v @ _ = crate::aver_generated::domain::eval::core::evalExprSlot(
                     &e, &env, &*slotMap, &*fns,
                 )?;
                 {
@@ -2529,7 +2530,7 @@ fn __mutual_tco_trampoline_7(
             }
             __MutualTco7::EvalStmtBindFallbackSlotNext(mut name, mut e, mut rest, mut env) => {
                 crate::cancel_checkpoint();
-                let v = crate::aver_generated::domain::eval::core::evalExprSlot(
+                let v @ _ = crate::aver_generated::domain::eval::core::evalExprSlot(
                     &e, &env, &*slotMap, &*fns,
                 )?;
                 {
@@ -2692,7 +2693,7 @@ fn __mutual_tco_trampoline_8(
                 mut env,
             ) => {
                 crate::cancel_checkpoint();
-                let v = crate::aver_generated::domain::eval::core::evalExprSlot(
+                let v @ _ = crate::aver_generated::domain::eval::core::evalExprSlot(
                     &e, &env, &*slotMap, &*fns,
                 )?;
                 __MutualTco8::EvalStmtsSlotTail(
@@ -2942,8 +2943,8 @@ pub fn evalVectorGetOrIntExpr(
     fns: &crate::aver_generated::domain::eval::store::FnStore,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let vecV = crate::aver_generated::domain::eval::core::evalExpr(vecExpr, env, fns)?;
-    let idxV = crate::aver_generated::domain::eval::core::evalExpr(idxExpr, env, fns)?;
+    let vecV @ _ = crate::aver_generated::domain::eval::core::evalExpr(vecExpr, env, fns)?;
+    let idxV @ _ = crate::aver_generated::domain::eval::core::evalExpr(idxExpr, env, fns)?;
     crate::aver_generated::domain::eval::ops::evalVectorGetOrIntVals(&vecV, &idxV, defaultValue)
 }
 
@@ -2956,8 +2957,8 @@ pub fn evalIntModOrIntExpr(
     fns: &crate::aver_generated::domain::eval::store::FnStore,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let aV = crate::aver_generated::domain::eval::core::evalExpr(a, env, fns)?;
-    let bV = crate::aver_generated::domain::eval::core::evalExpr(b, env, fns)?;
+    let aV @ _ = crate::aver_generated::domain::eval::core::evalExpr(a, env, fns)?;
+    let bV @ _ = crate::aver_generated::domain::eval::core::evalExpr(b, env, fns)?;
     crate::aver_generated::domain::eval::ops::evalIntModOrIntVals(&aV, &bV, defaultValue)
 }
 
@@ -2968,7 +2969,7 @@ pub fn evalPropagate(
     fns: &crate::aver_generated::domain::eval::store::FnStore,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let v = crate::aver_generated::domain::eval::core::evalExpr(inner, env, fns)?;
+    let v @ _ = crate::aver_generated::domain::eval::core::evalExpr(inner, env, fns)?;
     match v {
         crate::aver_generated::domain::value::Val::ValOk(x) => {
             let x = (*x).clone();
@@ -2999,7 +3000,8 @@ pub fn evalIndependentProduct(
     fns: &crate::aver_generated::domain::eval::store::FnStore,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let items = crate::aver_generated::domain::eval::core::evalIndependentItems(exprs, env, fns)?;
+    let items @ _ =
+        crate::aver_generated::domain::eval::core::evalIndependentItems(exprs, env, fns)?;
     if unwrap {
         crate::aver_generated::domain::eval::core::unwrapProductResults__collected(
             items,
@@ -3260,7 +3262,7 @@ pub fn evalTupleExpr(
     fns: &crate::aver_generated::domain::eval::store::FnStore,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let items = crate::aver_generated::domain::eval::core::evalListItems(exprs, env, fns)?;
+    let items @ _ = crate::aver_generated::domain::eval::core::evalListItems(exprs, env, fns)?;
     Ok(crate::aver_generated::domain::value::Val::ValTuple(items))
 }
 
@@ -3272,7 +3274,8 @@ pub fn evalRecordExpr(
     fns: &crate::aver_generated::domain::eval::store::FnStore,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let fields = crate::aver_generated::domain::eval::core::evalRecordFields(fieldExprs, env, fns)?;
+    let fields @ _ =
+        crate::aver_generated::domain::eval::core::evalRecordFields(fieldExprs, env, fns)?;
     Ok(crate::aver_generated::domain::value::Val::ValRecord(
         name, fields,
     ))
@@ -3297,8 +3300,9 @@ pub fn evalRecordFieldOne(
     fns: &crate::aver_generated::domain::eval::store::FnStore,
 ) -> Result<aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>, AverStr> {
     crate::cancel_checkpoint();
-    let v = crate::aver_generated::domain::eval::core::evalExpr(expr, env, fns)?;
-    let restFields = crate::aver_generated::domain::eval::core::evalRecordFields(rest, env, fns)?;
+    let v @ _ = crate::aver_generated::domain::eval::core::evalExpr(expr, env, fns)?;
+    let restFields @ _ =
+        crate::aver_generated::domain::eval::core::evalRecordFields(rest, env, fns)?;
     Ok(aver_rt::AverList::prepend((fname, v), &restFields))
 }
 
@@ -3310,7 +3314,7 @@ pub fn evalFieldAccess(
     fns: &crate::aver_generated::domain::eval::store::FnStore,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let v = crate::aver_generated::domain::eval::core::evalExpr(obj, env, fns)?;
+    let v @ _ = crate::aver_generated::domain::eval::core::evalExpr(obj, env, fns)?;
     match v {
         crate::aver_generated::domain::value::Val::ValRecord(_, fields) => {
             crate::aver_generated::domain::eval::common::lookupField(fields, field)
@@ -3438,7 +3442,7 @@ pub fn callResolved(
     fns: &crate::aver_generated::domain::eval::store::FnStore,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let fnId = crate::aver_generated::domain::eval::store::lookupFnId(fns, fd.name.clone())?;
+    let fnId @ _ = crate::aver_generated::domain::eval::store::lookupFnId(fns, fd.name.clone())?;
     crate::aver_generated::domain::eval::core::callResolvedById(fnId, fd, args, fns)
 }
 
@@ -3501,7 +3505,7 @@ pub fn evalResolvedSlotLoop(
     let fns = std::sync::Arc::new(fns);
     loop {
         crate::cancel_checkpoint();
-        let step = crate::aver_generated::domain::eval::core::evalResolvedSlotStep(
+        let step @ _ = crate::aver_generated::domain::eval::core::evalResolvedSlotStep(
             fnId.clone(),
             &*fd,
             &calleeEnv,
@@ -3527,7 +3531,7 @@ pub fn evalResolvedSlotDirect(
     fns: &crate::aver_generated::domain::eval::store::FnStore,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let result = match fd.fastPath.clone() {
+    let result @ _ = match fd.fastPath.clone() {
         crate::aver_generated::domain::ast::FnFastPath::FastLeaf(leaf) => {
             crate::aver_generated::domain::eval::fast::runFastLeafSlot(&leaf, calleeEnv)
         }
@@ -3728,7 +3732,7 @@ pub fn evalResolvedNamedFn(
     fns: &crate::aver_generated::domain::eval::store::FnStore,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let result = match fd.fastPath.clone() {
+    let result @ _ = match fd.fastPath.clone() {
         crate::aver_generated::domain::ast::FnFastPath::FastLeaf(leaf) => {
             crate::aver_generated::domain::eval::core::runFastLeafNamed(
                 &leaf, &fd.body, calleeEnv, fns,
@@ -3957,12 +3961,12 @@ pub fn fastForwardCall(
     fns: &crate::aver_generated::domain::eval::store::FnStore,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let args = crate::aver_generated::domain::eval::core::collectFastForwardArgs__collected(
+    let args @ _ = crate::aver_generated::domain::eval::core::collectFastForwardArgs__collected(
         slotArgs.clone(),
         calleeEnv.clone(),
         aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0)),
     )?;
-    let fd = crate::aver_generated::domain::eval::store::lookupFnById(fns, fnId.clone())?;
+    let fd @ _ = crate::aver_generated::domain::eval::store::lookupFnById(fns, fnId.clone())?;
     crate::aver_generated::domain::eval::core::callResolvedById(fnId, &fd, &args, fns)
 }
 
@@ -4008,7 +4012,7 @@ pub fn evalCallDirect(
     fns: &crate::aver_generated::domain::eval::store::FnStore,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let fd = crate::aver_generated::domain::eval::store::lookupFnById(fns, fnId.clone())?;
+    let fd @ _ = crate::aver_generated::domain::eval::store::lookupFnById(fns, fnId.clone())?;
     if (fd.slotCount > aver_rt::AverInt::from_i64(0)) {
         crate::aver_generated::domain::eval::core::evalCallDirectMapToSlot(
             fnId, &fd, argExprs, env, fns,
@@ -4027,7 +4031,7 @@ pub fn evalCallDirectMapToSlot(
     fns: &crate::aver_generated::domain::eval::store::FnStore,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let calleeEnv = crate::aver_generated::domain::eval::core::evalArgsMapToSlotEnv(
+    let calleeEnv @ _ = crate::aver_generated::domain::eval::core::evalArgsMapToSlotEnv(
         argExprs.clone(),
         env.clone(),
         fns.clone(),
@@ -4051,7 +4055,7 @@ pub fn evalCallDirectMapToNamed(
     fns: &crate::aver_generated::domain::eval::store::FnStore,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let calleeEnv = crate::aver_generated::domain::eval::core::evalArgsMapToNamedEnv(
+    let calleeEnv @ _ = crate::aver_generated::domain::eval::core::evalArgsMapToNamedEnv(
         argExprs,
         &fd.params,
         env,
@@ -4192,8 +4196,8 @@ pub fn evalProgram(
     prog: &crate::aver_generated::domain::ast::Program,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let fnsStore = crate::aver_generated::domain::eval::store::fnsToStore(&prog.fns);
-    let top = crate::aver_generated::domain::eval::core::evalTopLevelStmts(
+    let fnsStore @ _ = crate::aver_generated::domain::eval::store::fnsToStore(&prog.fns);
+    let top @ _ = crate::aver_generated::domain::eval::core::evalTopLevelStmts(
         prog.stmts.clone(),
         HashMap::new(),
         crate::aver_generated::domain::value::Val::ValUnit,
@@ -4214,10 +4218,10 @@ pub fn evalProgramWithFns(
     extraFns: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let allFns = crate::aver_generated::domain::eval::store::fnsToStore(
+    let allFns @ _ = crate::aver_generated::domain::eval::store::fnsToStore(
         &aver_rt::AverList::concat(&extraFns.clone(), &prog.fns.clone()),
     );
-    let top = crate::aver_generated::domain::eval::core::evalTopLevelStmts(
+    let top @ _ = crate::aver_generated::domain::eval::core::evalTopLevelStmts(
         prog.stmts.clone(),
         HashMap::new(),
         crate::aver_generated::domain::value::Val::ValUnit,
@@ -4303,7 +4307,7 @@ pub fn evalBinopSlotInt(
     env: &aver_rt::AverVector<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let left = crate::aver_generated::domain::eval::slots::lookupSlot(env, slot)?;
+    let left @ _ = crate::aver_generated::domain::eval::slots::lookupSlot(env, slot)?;
     crate::aver_generated::domain::eval::ops::evalBinopVals(
         &left,
         &crate::aver_generated::domain::value::Val::ValInt(rhs),
@@ -4319,8 +4323,8 @@ pub fn evalBinopSlots(
     env: &aver_rt::AverVector<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let left = crate::aver_generated::domain::eval::slots::lookupSlot(env, lhs)?;
-    let right = crate::aver_generated::domain::eval::slots::lookupSlot(env, rhs)?;
+    let left @ _ = crate::aver_generated::domain::eval::slots::lookupSlot(env, lhs)?;
+    let right @ _ = crate::aver_generated::domain::eval::slots::lookupSlot(env, rhs)?;
     crate::aver_generated::domain::eval::ops::evalBinopVals(&left, &right, op)
 }
 
@@ -4332,7 +4336,7 @@ pub fn evalCmpSlotInt(
     env: &aver_rt::AverVector<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let left = crate::aver_generated::domain::eval::slots::lookupSlot(env, slot)?;
+    let left @ _ = crate::aver_generated::domain::eval::slots::lookupSlot(env, slot)?;
     crate::aver_generated::domain::eval::ops::evalCmpVals(
         &left,
         &crate::aver_generated::domain::value::Val::ValInt(rhs),
@@ -4348,8 +4352,8 @@ pub fn evalCmpSlots(
     env: &aver_rt::AverVector<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let left = crate::aver_generated::domain::eval::slots::lookupSlot(env, lhs)?;
-    let right = crate::aver_generated::domain::eval::slots::lookupSlot(env, rhs)?;
+    let left @ _ = crate::aver_generated::domain::eval::slots::lookupSlot(env, lhs)?;
+    let right @ _ = crate::aver_generated::domain::eval::slots::lookupSlot(env, rhs)?;
     crate::aver_generated::domain::eval::ops::evalCmpVals(&left, &right, op)
 }
 
@@ -4363,8 +4367,10 @@ pub fn evalVectorGetOrIntExprSlot(
     fns: &crate::aver_generated::domain::eval::store::FnStore,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let vecV = crate::aver_generated::domain::eval::core::evalExprSlot(vecExpr, env, slotMap, fns)?;
-    let idxV = crate::aver_generated::domain::eval::core::evalExprSlot(idxExpr, env, slotMap, fns)?;
+    let vecV @ _ =
+        crate::aver_generated::domain::eval::core::evalExprSlot(vecExpr, env, slotMap, fns)?;
+    let idxV @ _ =
+        crate::aver_generated::domain::eval::core::evalExprSlot(idxExpr, env, slotMap, fns)?;
     crate::aver_generated::domain::eval::ops::evalVectorGetOrIntVals(&vecV, &idxV, defaultValue)
 }
 
@@ -4378,8 +4384,8 @@ pub fn evalIntModOrIntExprSlot(
     fns: &crate::aver_generated::domain::eval::store::FnStore,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let aV = crate::aver_generated::domain::eval::core::evalExprSlot(a, env, slotMap, fns)?;
-    let bV = crate::aver_generated::domain::eval::core::evalExprSlot(b, env, slotMap, fns)?;
+    let aV @ _ = crate::aver_generated::domain::eval::core::evalExprSlot(a, env, slotMap, fns)?;
+    let bV @ _ = crate::aver_generated::domain::eval::core::evalExprSlot(b, env, slotMap, fns)?;
     crate::aver_generated::domain::eval::ops::evalIntModOrIntVals(&aV, &bV, defaultValue)
 }
 
@@ -4393,8 +4399,8 @@ pub fn evalBinopSlot(
     op: &crate::aver_generated::domain::ast::BinOp,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let va = crate::aver_generated::domain::eval::core::evalExprSlot(a, env, slotMap, fns)?;
-    let vb = crate::aver_generated::domain::eval::core::evalExprSlot(b, env, slotMap, fns)?;
+    let va @ _ = crate::aver_generated::domain::eval::core::evalExprSlot(a, env, slotMap, fns)?;
+    let vb @ _ = crate::aver_generated::domain::eval::core::evalExprSlot(b, env, slotMap, fns)?;
     crate::aver_generated::domain::eval::ops::evalBinopVals(&va, &vb, op)
 }
 
@@ -4406,7 +4412,7 @@ pub fn evalNegSlot(
     fns: &crate::aver_generated::domain::eval::store::FnStore,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let v = crate::aver_generated::domain::eval::core::evalExprSlot(inner, env, slotMap, fns)?;
+    let v @ _ = crate::aver_generated::domain::eval::core::evalExprSlot(inner, env, slotMap, fns)?;
     crate::aver_generated::domain::eval::ops::evalNegVals(&v)
 }
 
@@ -4420,8 +4426,8 @@ pub fn evalCmpSlot(
     op: &crate::aver_generated::domain::ast::CmpOp,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let va = crate::aver_generated::domain::eval::core::evalExprSlot(a, env, slotMap, fns)?;
-    let vb = crate::aver_generated::domain::eval::core::evalExprSlot(b, env, slotMap, fns)?;
+    let va @ _ = crate::aver_generated::domain::eval::core::evalExprSlot(a, env, slotMap, fns)?;
+    let vb @ _ = crate::aver_generated::domain::eval::core::evalExprSlot(b, env, slotMap, fns)?;
     crate::aver_generated::domain::eval::ops::evalCmpVals(&va, &vb, op)
 }
 
@@ -4473,7 +4479,7 @@ pub fn evalTupleSlot(
     fns: &crate::aver_generated::domain::eval::store::FnStore,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let items =
+    let items @ _ =
         crate::aver_generated::domain::eval::core::evalListItemsSlot(exprs, env, slotMap, fns)?;
     Ok(crate::aver_generated::domain::value::Val::ValTuple(items))
 }
@@ -4486,7 +4492,7 @@ pub fn evalListSlot(
     fns: &crate::aver_generated::domain::eval::store::FnStore,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let items =
+    let items @ _ =
         crate::aver_generated::domain::eval::core::evalListItemsSlot(exprs, env, slotMap, fns)?;
     Ok(crate::aver_generated::domain::value::Val::ValList(items))
 }
@@ -4540,7 +4546,7 @@ pub fn evalRecordSlot(
     fns: &crate::aver_generated::domain::eval::store::FnStore,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let fields = crate::aver_generated::domain::eval::core::evalRecordFieldsSlot(
+    let fields @ _ = crate::aver_generated::domain::eval::core::evalRecordFieldsSlot(
         fieldExprs, env, slotMap, fns,
     )?;
     Ok(crate::aver_generated::domain::value::Val::ValRecord(
@@ -4569,8 +4575,8 @@ pub fn evalRecordFieldOneSlot(
     fns: &crate::aver_generated::domain::eval::store::FnStore,
 ) -> Result<aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>, AverStr> {
     crate::cancel_checkpoint();
-    let v = crate::aver_generated::domain::eval::core::evalExprSlot(expr, env, slotMap, fns)?;
-    let restFields =
+    let v @ _ = crate::aver_generated::domain::eval::core::evalExprSlot(expr, env, slotMap, fns)?;
+    let restFields @ _ =
         crate::aver_generated::domain::eval::core::evalRecordFieldsSlot(rest, env, slotMap, fns)?;
     Ok(aver_rt::AverList::prepend((fname, v), &restFields))
 }
@@ -4584,7 +4590,7 @@ pub fn evalFieldAccessSlot(
     fns: &crate::aver_generated::domain::eval::store::FnStore,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let v = crate::aver_generated::domain::eval::core::evalExprSlot(obj, env, slotMap, fns)?;
+    let v @ _ = crate::aver_generated::domain::eval::core::evalExprSlot(obj, env, slotMap, fns)?;
     match v {
         crate::aver_generated::domain::value::Val::ValRecord(_, fields) => {
             crate::aver_generated::domain::eval::common::lookupField(fields, field)
@@ -4602,7 +4608,7 @@ pub fn evalCallSlot(
     fns: &crate::aver_generated::domain::eval::store::FnStore,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let args =
+    let args @ _ =
         crate::aver_generated::domain::eval::core::evalArgsSlot(argExprs, env, slotMap, fns)?;
     crate::aver_generated::domain::eval::core::callWithArgs(&args, name, fns)
 }
@@ -4616,7 +4622,7 @@ pub fn evalCallDirectSlot(
     fns: &crate::aver_generated::domain::eval::store::FnStore,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let fd = crate::aver_generated::domain::eval::store::lookupFnById(fns, fnId.clone())?;
+    let fd @ _ = crate::aver_generated::domain::eval::store::lookupFnById(fns, fnId.clone())?;
     if (fd.slotCount > aver_rt::AverInt::from_i64(0)) {
         crate::aver_generated::domain::eval::core::evalCallDirectSlotToSlot(
             fnId, &fd, argExprs, env, slotMap, fns,
@@ -4638,7 +4644,7 @@ pub fn evalCallDirectSlotToSlot(
     fns: &crate::aver_generated::domain::eval::store::FnStore,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let calleeEnv = crate::aver_generated::domain::eval::core::evalArgsSlotToSlotEnv(
+    let calleeEnv @ _ = crate::aver_generated::domain::eval::core::evalArgsSlotToSlotEnv(
         argExprs.clone(),
         env.clone(),
         slotMap.clone(),
@@ -4664,7 +4670,7 @@ pub fn evalCallDirectSlotToNamed(
     fns: &crate::aver_generated::domain::eval::store::FnStore,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let calleeEnv = crate::aver_generated::domain::eval::core::evalArgsSlotToNamedEnv(
+    let calleeEnv @ _ = crate::aver_generated::domain::eval::core::evalArgsSlotToNamedEnv(
         argExprs,
         &fd.params,
         env,
@@ -4684,7 +4690,7 @@ pub fn evalCallBuiltinSlot(
     fns: &crate::aver_generated::domain::eval::store::FnStore,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let args =
+    let args @ _ =
         crate::aver_generated::domain::eval::core::evalArgsSlot(argExprs, env, slotMap, fns)?;
     crate::aver_generated::domain::builtins::callBuiltin(name, &args)
 }
@@ -4708,7 +4714,7 @@ pub fn evalArgsSlot1(
     fns: &crate::aver_generated::domain::eval::store::FnStore,
 ) -> Result<aver_rt::AverList<crate::aver_generated::domain::value::Val>, AverStr> {
     crate::cancel_checkpoint();
-    let v0 = crate::aver_generated::domain::eval::core::evalExprSlot(e0, env, slotMap, fns)?;
+    let v0 @ _ = crate::aver_generated::domain::eval::core::evalExprSlot(e0, env, slotMap, fns)?;
     Ok(aver_rt::AverList::from_vec(vec![v0]))
 }
 
@@ -4721,8 +4727,8 @@ pub fn evalArgsSlot2(
     fns: &crate::aver_generated::domain::eval::store::FnStore,
 ) -> Result<aver_rt::AverList<crate::aver_generated::domain::value::Val>, AverStr> {
     crate::cancel_checkpoint();
-    let v0 = crate::aver_generated::domain::eval::core::evalExprSlot(e0, env, slotMap, fns)?;
-    let v1 = crate::aver_generated::domain::eval::core::evalExprSlot(e1, env, slotMap, fns)?;
+    let v0 @ _ = crate::aver_generated::domain::eval::core::evalExprSlot(e0, env, slotMap, fns)?;
+    let v1 @ _ = crate::aver_generated::domain::eval::core::evalExprSlot(e1, env, slotMap, fns)?;
     Ok(aver_rt::AverList::from_vec(vec![v0, v1]))
 }
 
@@ -4736,9 +4742,9 @@ pub fn evalArgsSlot3(
     fns: &crate::aver_generated::domain::eval::store::FnStore,
 ) -> Result<aver_rt::AverList<crate::aver_generated::domain::value::Val>, AverStr> {
     crate::cancel_checkpoint();
-    let v0 = crate::aver_generated::domain::eval::core::evalExprSlot(e0, env, slotMap, fns)?;
-    let v1 = crate::aver_generated::domain::eval::core::evalExprSlot(e1, env, slotMap, fns)?;
-    let v2 = crate::aver_generated::domain::eval::core::evalExprSlot(e2, env, slotMap, fns)?;
+    let v0 @ _ = crate::aver_generated::domain::eval::core::evalExprSlot(e0, env, slotMap, fns)?;
+    let v1 @ _ = crate::aver_generated::domain::eval::core::evalExprSlot(e1, env, slotMap, fns)?;
+    let v2 @ _ = crate::aver_generated::domain::eval::core::evalExprSlot(e2, env, slotMap, fns)?;
     Ok(aver_rt::AverList::from_vec(vec![v0, v1, v2]))
 }
 
@@ -4823,7 +4829,7 @@ pub fn evalPropagateSlot(
     fns: &crate::aver_generated::domain::eval::store::FnStore,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let v = crate::aver_generated::domain::eval::core::evalExprSlot(inner, env, slotMap, fns)?;
+    let v @ _ = crate::aver_generated::domain::eval::core::evalExprSlot(inner, env, slotMap, fns)?;
     match v {
         crate::aver_generated::domain::value::Val::ValOk(x) => {
             let x = (*x).clone();
@@ -4855,7 +4861,7 @@ pub fn evalIndependentProductSlot(
     fns: &crate::aver_generated::domain::eval::store::FnStore,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let items = crate::aver_generated::domain::eval::core::evalIndependentItemsSlot(
+    let items @ _ = crate::aver_generated::domain::eval::core::evalIndependentItemsSlot(
         exprs, env, slotMap, fns,
     )?;
     if unwrap {

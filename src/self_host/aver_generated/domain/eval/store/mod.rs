@@ -239,7 +239,7 @@ pub fn mergeBindings(
 /// Build a function store with a name->id index and id->FnDef table.
 pub fn fnsToStore(fns: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>) -> FnStore {
     crate::cancel_checkpoint();
-    let nameToId = crate::aver_generated::domain::eval::store::fnsToIdMap(
+    let nameToId @ _ = crate::aver_generated::domain::eval::store::fnsToIdMap(
         fns.clone(),
         HashMap::new(),
         aver_rt::AverInt::from_i64(0),

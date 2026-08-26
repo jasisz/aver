@@ -85,7 +85,7 @@ pub fn fastBoolSlotBranch(
     elseLeaf: &crate::aver_generated::domain::ast::FastLeaf,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let slotV = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, slot)?;
+    let slotV @ _ = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, slot)?;
     match slotV {
         crate::aver_generated::domain::value::Val::ValBool(cond) => {
             crate::aver_generated::domain::eval::fast::selectFastLeaf(
@@ -105,7 +105,7 @@ pub fn fastEqIntBranch(
     elseLeaf: &crate::aver_generated::domain::ast::FastLeaf,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let slotV = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, slot)?;
+    let slotV @ _ = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, slot)?;
     match slotV {
         crate::aver_generated::domain::value::Val::ValInt(actual) => {
             crate::aver_generated::domain::eval::fast::selectFastLeaf(
@@ -128,7 +128,7 @@ pub fn fastEqStringBranch(
     elseLeaf: &crate::aver_generated::domain::ast::FastLeaf,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let slotV = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, slot)?;
+    let slotV @ _ = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, slot)?;
     match slotV {
         crate::aver_generated::domain::value::Val::ValStr(actual) => {
             crate::aver_generated::domain::eval::fast::selectFastLeaf(
@@ -151,8 +151,8 @@ pub fn fastLtIntSlotsBranch(
     elseLeaf: &crate::aver_generated::domain::ast::FastLeaf,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let lhsV = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, lhsSlot)?;
-    let rhsV = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, rhsSlot)?;
+    let lhsV @ _ = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, lhsSlot)?;
+    let rhsV @ _ = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, rhsSlot)?;
     match lhsV {
         crate::aver_generated::domain::value::Val::ValInt(lhs) => match rhsV {
             crate::aver_generated::domain::value::Val::ValInt(rhs) => {
@@ -195,7 +195,7 @@ pub fn fastListSlotBranch(
     consLeaf: &crate::aver_generated::domain::ast::FastLeaf,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let listV = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, slot)?;
+    let listV @ _ = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, slot)?;
     match listV {
         crate::aver_generated::domain::value::Val::ValList(items) => {
             crate::aver_generated::domain::eval::fast::fastListSlotBranchItems(
@@ -227,7 +227,7 @@ pub fn fastFieldAccessSlot(
     field: AverStr,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let recordV = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, slot)?;
+    let recordV @ _ = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, slot)?;
     match recordV {
         crate::aver_generated::domain::value::Val::ValRecord(_, fields) => {
             crate::aver_generated::domain::eval::common::lookupField(fields, field)
@@ -243,8 +243,8 @@ pub fn fastMapGetSlot(
     keySlot: aver_rt::AverInt,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let mapV = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, mapSlot)?;
-    let keyV = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, keySlot)?;
+    let mapV @ _ = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, mapSlot)?;
+    let keyV @ _ = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, keySlot)?;
     crate::aver_generated::domain::eval::fast::fastMapGetSlotInner(&mapV, &keyV)
 }
 
@@ -278,9 +278,9 @@ pub fn fastMapSetSlot(
     valueSlot: aver_rt::AverInt,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let mapV = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, mapSlot)?;
-    let keyV = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, keySlot)?;
-    let valueV = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, valueSlot)?;
+    let mapV @ _ = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, mapSlot)?;
+    let keyV @ _ = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, keySlot)?;
+    let valueV @ _ = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, valueSlot)?;
     crate::aver_generated::domain::eval::fast::fastMapSetSlotInner(&mapV, &keyV, &valueV)
 }
 
@@ -309,7 +309,7 @@ pub fn fastVectorNewSlot(
     fill: aver_rt::AverInt,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let sizeV = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, sizeSlot)?;
+    let sizeV @ _ = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, sizeSlot)?;
     crate::aver_generated::domain::eval::fast::fastVectorNewSlotInner(&sizeV, fill)
 }
 
@@ -343,8 +343,8 @@ pub fn fastVectorGetOrIntSlot(
     defaultValue: aver_rt::AverInt,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let vecV = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, vecSlot)?;
-    let idxV = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, idxSlot)?;
+    let vecV @ _ = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, vecSlot)?;
+    let idxV @ _ = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, idxSlot)?;
     crate::aver_generated::domain::eval::fast::fastVectorGetOrIntSlotInner(
         &vecV,
         &idxV,
@@ -382,8 +382,8 @@ pub fn fastMapHasSlot(
     keySlot: aver_rt::AverInt,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let mapV = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, mapSlot)?;
-    let keyV = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, keySlot)?;
+    let mapV @ _ = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, mapSlot)?;
+    let keyV @ _ = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, keySlot)?;
     match mapV {
         crate::aver_generated::domain::value::Val::ValMap(m) => {
             Ok(crate::aver_generated::domain::value::Val::ValBool(
@@ -401,8 +401,8 @@ pub fn fastMapRemoveSlot(
     keySlot: aver_rt::AverInt,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let mapV = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, mapSlot)?;
-    let keyV = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, keySlot)?;
+    let mapV @ _ = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, mapSlot)?;
+    let keyV @ _ = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, keySlot)?;
     match mapV {
         crate::aver_generated::domain::value::Val::ValMap(m) => {
             Ok(crate::aver_generated::domain::value::Val::ValMap(
@@ -419,7 +419,7 @@ pub fn fastVectorLenSlot(
     vecSlot: aver_rt::AverInt,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let vecV = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, vecSlot)?;
+    let vecV @ _ = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, vecSlot)?;
     match vecV {
         crate::aver_generated::domain::value::Val::ValVector(vec) => {
             Ok(crate::aver_generated::domain::value::Val::ValInt(
@@ -438,8 +438,8 @@ pub fn fastBinopSlots(
     slotB: aver_rt::AverInt,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let va = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, slotA)?;
-    let vb = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, slotB)?;
+    let va @ _ = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, slotA)?;
+    let vb @ _ = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, slotB)?;
     crate::aver_generated::domain::eval::ops::evalBinopVals(&va, &vb, op)
 }
 
@@ -451,7 +451,7 @@ pub fn fastCmpSlots(
     slotB: aver_rt::AverInt,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let va = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, slotA)?;
-    let vb = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, slotB)?;
+    let va @ _ = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, slotA)?;
+    let vb @ _ = crate::aver_generated::domain::eval::slots::lookupSlot(calleeEnv, slotB)?;
     crate::aver_generated::domain::eval::ops::evalCmpVals(&va, &vb, op)
 }

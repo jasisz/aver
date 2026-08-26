@@ -48,7 +48,7 @@ fn __mutual_tco_trampoline_1(
             }
             __MutualTco1::QualifyFnsOne__indexed(mut f, mut rest, mut prefix, mut acc) => {
                 crate::cancel_checkpoint();
-                let qualified = crate::aver_generated::domain::ast::FnDef {
+                let qualified @ _ = crate::aver_generated::domain::ast::FnDef {
                     name: ((prefix.clone() + &AverStr::from(".")) + &f.name),
                     params: f.params.clone(),
                     body: f.body.clone(),
@@ -97,9 +97,9 @@ pub fn qualifyFnsOne__indexed(
 /// Lex, parse, resolve, and evaluate an Aver source string (no module loading).
 pub fn run(source: AverStr) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let tokens = crate::aver_generated::domain::lexer::lex(source);
-    let prog = crate::aver_generated::domain::parser::parse(&tokens)?;
-    let resolved = crate::aver_generated::domain::resolver::resolveProgram(&prog);
+    let tokens @ _ = crate::aver_generated::domain::lexer::lex(source);
+    let prog @ _ = crate::aver_generated::domain::parser::parse(&tokens)?;
+    let resolved @ _ = crate::aver_generated::domain::resolver::resolveProgram(&prog);
     runGuestProgram(
         &resolved,
         &aver_rt::AverList::empty(),
@@ -113,7 +113,7 @@ pub fn runWithModules(
     moduleRoot: AverStr,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let prepared = prepareProgramWithModules(source, moduleRoot)?;
+    let prepared @ _ = prepareProgramWithModules(source, moduleRoot)?;
     {
         let (prog, moduleFns) = prepared;
         runGuestProgram(&prog, &moduleFns, &aver_rt::AverList::empty())
@@ -132,10 +132,10 @@ pub fn prepareProgramWithModules(
     AverStr,
 > {
     crate::cancel_checkpoint();
-    let tokens = crate::aver_generated::domain::lexer::lex(source);
-    let prog = crate::aver_generated::domain::parser::parse(&tokens)?;
-    let resolved = crate::aver_generated::domain::resolver::resolveProgram(&prog);
-    let r = loadModules(
+    let tokens @ _ = crate::aver_generated::domain::lexer::lex(source);
+    let prog @ _ = crate::aver_generated::domain::parser::parse(&tokens)?;
+    let resolved @ _ = crate::aver_generated::domain::resolver::resolveProgram(&prog);
+    let r @ _ = loadModules(
         resolved.deps.clone(),
         moduleRoot,
         aver_rt::AverList::empty(),
@@ -815,7 +815,7 @@ pub fn loadProgramFromFile(
     AverStr,
 > {
     crate::cancel_checkpoint();
-    let source = {
+    let source @ _ = {
         let __provider_arg0: AverStr = path;
         crate::cancel_checkpoint();
         crate::aver_replay::invoke_capability_effect(
@@ -854,7 +854,7 @@ pub fn runCliFile(
     guestArgs: &aver_rt::AverList<AverStr>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let prepared = loadProgramFromFile(path, moduleRoot)?;
+    let prepared @ _ = loadProgramFromFile(path, moduleRoot)?;
     {
         let (prog, moduleFns) = prepared;
         runGuestCliProgram(&prog, &moduleFns, &prog.fns, guestArgs)
@@ -954,9 +954,9 @@ pub fn printIfNotUnit(s: AverStr) -> () {
 /// Show built-in demo programs.
 pub fn runDemo() -> Result<(), AverStr> {
     crate::cancel_checkpoint();
-    let demoArithmetic = runRepr(AverStr::from("x = 3 + 4\nx * 2"));
-    let demoDouble = runRepr(AverStr::from("fn double(n)\n    n + n\n\ndouble(21)"));
-    let demoFib = runRepr(AverStr::from(
+    let demoArithmetic @ _ = runRepr(AverStr::from("x = 3 + 4\nx * 2"));
+    let demoDouble @ _ = runRepr(AverStr::from("fn double(n)\n    n + n\n\ndouble(21)"));
+    let demoFib @ _ = runRepr(AverStr::from(
         "fn fib(n)\n    match n\n        0 -> 0\n        1 -> 1\n        _ -> fib(n - 1) + fib(n - 2)\n\nfib(10)",
     ));
     {
@@ -1174,13 +1174,13 @@ pub fn loadOneModule__indexed(
     AverStr,
 > {
     crate::cancel_checkpoint();
-    let path = findModulePath__indexed(
+    let path @ _ = findModulePath__indexed(
         dep.clone(),
         moduleRoot.clone(),
         aver_rt::AverInt::from_i64(0),
         __str_index.clone(),
     );
-    let source = {
+    let source @ _ = {
         let __provider_arg0: AverStr = path;
         crate::cancel_checkpoint();
         crate::aver_replay::invoke_capability_effect(
@@ -1200,11 +1200,11 @@ pub fn loadOneModule__indexed(
             },
         )
     }?;
-    let tokens = crate::aver_generated::domain::lexer::lex(source);
-    let prog = crate::aver_generated::domain::parser::parse(&tokens)?;
-    let moduleFns = resolveQualifiedModuleFns__indexed(&prog, dep.clone(), __str_index);
-    let loaded2 = loaded.clone().insert_owned(dep, true);
-    let innerResult = loadModules(prog.deps.clone(), moduleRoot.clone(), acc.clone(), loaded2)?;
+    let tokens @ _ = crate::aver_generated::domain::lexer::lex(source);
+    let prog @ _ = crate::aver_generated::domain::parser::parse(&tokens)?;
+    let moduleFns @ _ = resolveQualifiedModuleFns__indexed(&prog, dep.clone(), __str_index);
+    let loaded2 @ _ = loaded.clone().insert_owned(dep, true);
+    let innerResult @ _ = loadModules(prog.deps.clone(), moduleRoot.clone(), acc.clone(), loaded2)?;
     {
         let (accWithInner, loaded3) = innerResult;
         loadModules(
@@ -1235,7 +1235,7 @@ pub fn findModulePath__indexed(
     let __str_index = std::sync::Arc::new(__str_index);
     loop {
         crate::cancel_checkpoint();
-        let path = modulePathFromName__indexed(dep.clone(), root.clone(), &*__str_index);
+        let path @ _ = modulePathFromName__indexed(dep.clone(), root.clone(), &*__str_index);
         if {
             let __provider_arg0: AverStr = path.clone();
             crate::cancel_checkpoint();
@@ -1303,7 +1303,7 @@ pub fn dotToSlash__indexed(
     let __str_index = std::sync::Arc::new(__str_index);
     loop {
         crate::cancel_checkpoint();
-        let nextPos = pos.add(&aver_rt::AverInt::from_i64(1));
+        let nextPos @ _ = pos.add(&aver_rt::AverInt::from_i64(1));
         if (pos < total) {
             match aver_rt::string_index_char_at(&name, &__str_index, &pos) {
                 Some(c @ _) => {
@@ -1342,7 +1342,7 @@ pub fn resolveQualifiedModuleFns__indexed(
     __str_index: &aver_rt::StringIndex,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> {
     crate::cancel_checkpoint();
-    let qualifiedProg = crate::aver_generated::domain::ast::Program {
+    let qualifiedProg @ _ = crate::aver_generated::domain::ast::Program {
         deps: prog.deps.clone(),
         fns: qualifyFns__indexed(&prog.fns, dep, &aver_rt::AverList::empty(), __str_index),
         stmts: prog.stmts.clone(),
@@ -1447,7 +1447,7 @@ pub fn shiftFnIdsInArms__collected(
 
 pub fn main() -> Result<(), AverStr> {
     crate::cancel_checkpoint();
-    let args = {
+    let args @ _ = {
         crate::cancel_checkpoint();
         crate::aver_replay::invoke_capability_effect("Args.get", "recorded", vec![], || {
             crate::provider_support::invoke::<aver_rt::AverList<AverStr>>(

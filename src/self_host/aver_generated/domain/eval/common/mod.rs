@@ -70,7 +70,7 @@ pub fn wrapPropagatedError(msg: AverStr) -> AverStr {
 #[inline(always)]
 pub fn unwrapPropagatedError(err: AverStr) -> Option<AverStr> {
     crate::cancel_checkpoint();
-    let prefix = AverStr::from("__aver_prop__:");
+    let prefix @ _ = AverStr::from("__aver_prop__:");
     if err.starts_with(&*prefix) {
         Some(
             (aver_rt::string_slice(

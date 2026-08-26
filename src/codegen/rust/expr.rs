@@ -22,12 +22,13 @@ pub(super) use super::syntax::{has_list_patterns, has_string_literal_patterns};
 
 /// Render an identifier in a Rust pattern as an explicit binding.
 ///
-/// A bare identifier in a pattern is also eligible for item resolution. When
-/// two dependency glob imports expose the same function name, rustc reports
-/// `Ok(name)` as ambiguous instead of treating `name` as the local binder that
-/// Aver declares. `name @ _` is semantically identical and syntactically
-/// unambiguous, while keeping all body references under the original name.
-fn explicit_binding_pattern(name: &str) -> String {
+/// A bare identifier in any pattern is also eligible for item resolution.
+/// When two dependency glob imports expose the same function name, rustc can
+/// report either `Ok(name)` or `let name = value` as ambiguous instead of
+/// treating `name` as the local binder that Aver declares. `name @ _` is
+/// semantically identical and syntactically unambiguous, while keeping all
+/// body references under the original name.
+pub(super) fn explicit_binding_pattern(name: &str) -> String {
     format!("{} @ _", aver_name_to_rust(name))
 }
 

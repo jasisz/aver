@@ -29,7 +29,7 @@ pub fn annotateFastFn(
     fnMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) -> crate::aver_generated::domain::ast::FnDef {
     crate::cancel_checkpoint();
-    let selfId = fnMap
+    let selfId @ _ = fnMap
         .get(&fd.name)
         .cloned()
         .unwrap_or(aver_rt::AverInt::from_i64(-1));
@@ -825,8 +825,8 @@ pub fn classifyFastListArmPair(
     arm2: &crate::aver_generated::domain::ast::MatchArm,
 ) -> crate::aver_generated::domain::ast::FnFastPath {
     crate::cancel_checkpoint();
-    let leaf1 = crate::aver_generated::domain::resolver::fast::classifyFastLeafExpr(&arm1.body);
-    let leaf2 = crate::aver_generated::domain::resolver::fast::classifyFastLeafExpr(&arm2.body);
+    let leaf1 @ _ = crate::aver_generated::domain::resolver::fast::classifyFastLeafExpr(&arm1.body);
+    let leaf2 @ _ = crate::aver_generated::domain::resolver::fast::classifyFastLeafExpr(&arm2.body);
     match leaf1 {
         Some(v1 @ _) => match leaf2 {
             Some(v2 @ _) => {
@@ -1044,8 +1044,8 @@ pub fn classifyBoolArmPair(
     crate::aver_generated::domain::ast::FastLeaf,
 )> {
     crate::cancel_checkpoint();
-    let leaf1 = crate::aver_generated::domain::resolver::fast::classifyFastLeafExpr(&arm1.body);
-    let leaf2 = crate::aver_generated::domain::resolver::fast::classifyFastLeafExpr(&arm2.body);
+    let leaf1 @ _ = crate::aver_generated::domain::resolver::fast::classifyFastLeafExpr(&arm1.body);
+    let leaf2 @ _ = crate::aver_generated::domain::resolver::fast::classifyFastLeafExpr(&arm2.body);
     match leaf1 {
         Some(v1 @ _) => match leaf2 {
             Some(v2 @ _) => crate::aver_generated::domain::resolver::fast::classifyBoolArmPatterns(

@@ -57,7 +57,7 @@ pub fn builtinResultOk(
     args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
+    let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     Ok(crate::aver_generated::domain::value::Val::ValOk(
         std::sync::Arc::new(v),
     ))
@@ -68,7 +68,7 @@ pub fn builtinResultErr(
     args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
+    let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     Ok(crate::aver_generated::domain::value::Val::ValErr(
         std::sync::Arc::new(v),
     ))
@@ -79,7 +79,7 @@ pub fn builtinResultWithDefault(
     args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let pair = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
+    let pair @ _ = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
     {
         let (resV, defV) = pair;
         match resV {
@@ -98,7 +98,7 @@ pub fn builtinOptionSome(
     args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
+    let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     Ok(crate::aver_generated::domain::value::Val::ValSome(
         std::sync::Arc::new(v),
     ))
@@ -109,7 +109,7 @@ pub fn builtinOptionWithDefault(
     args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let pair = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
+    let pair @ _ = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
     {
         let (optV, defV) = pair;
         match optV {
@@ -128,7 +128,7 @@ pub fn callResultFromOption(
     args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
-    let pair = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
+    let pair @ _ = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
     {
         let (optV, errV) = pair;
         match optV {

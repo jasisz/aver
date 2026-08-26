@@ -66,8 +66,8 @@ use super::emit_ctx::{is_copy_type, should_borrow_param};
 use super::expr::{
     callee_borrow_mask, constructor_boxed_positions, emit_dispatch_table_match, emit_list_match,
     emit_literal, emit_parallel_result_tuple_unwrap, emit_pattern_rebindings,
-    emit_ref_match_rebindings, emit_result_tuple_unwrap, emit_tuple_from_vars, has_list_patterns,
-    has_string_literal_patterns,
+    emit_ref_match_rebindings, emit_result_tuple_unwrap, emit_tuple_from_vars,
+    explicit_binding_pattern, has_list_patterns, has_string_literal_patterns,
 };
 use super::pattern::emit_pattern;
 use super::syntax::aver_name_to_rust;
@@ -1414,7 +1414,7 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
         }
         MirExpr::Let(spanned_let) => {
             // `let binding = value; body` →
-            // Rust block-expression `{ let x = value; body }`.
+            // Rust block-expression `{ let x @ _ = value; body }`.
             // A discarded intermediate (an effectful `Stmt::Expr` at
             // non-tail position, or a `_ = effect()` discard) carries
             // `binding_name.is_empty()` — there's no source ident to
@@ -1442,7 +1442,7 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             if let_node.binding_name.is_empty() {
                 Some(format!("{{ {}; {} }}", value, body))
             } else {
-                let name = aver_name_to_rust(&let_node.binding_name);
+                let name = explicit_binding_pattern(&let_node.binding_name);
                 Some(format!("{{ let {} = {}; {} }}", name, value, body))
             }
         }
@@ -2155,7 +2155,8 @@ pub(super) fn emit_mir_guest_entry_body(
 /// with `mir_expr_compilable`).
 ///
 /// Returns the rendered value strings in statement order on full success
-/// (the caller wraps each in the `let {name} = …;` / bare-expr-discard
+/// (the caller wraps each in the explicit `let {name} @ _ = …;` /
+/// bare-expr-discard
 /// `…;` templating), or `None` if there's no MIR program or ANY
 /// statement falls outside the lowerable / renderable subset — the
 /// signal for the caller to emit a hard codegen diagnostic for the block
@@ -3366,7 +3367,7 @@ fn emit_bare_return_tail(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Optio
 }
 
 /// Emit a top-level `Let` chain as flat Rust statement lines: each
-/// binding becomes `let {name} = {value};`, one per line, 4-space
+/// binding becomes `let {name} @ _ = {value};`, one per line, 4-space
 /// indented and `\n`-joined, terminated by the chain's final expression
 /// on its own line.
 ///
@@ -3380,7 +3381,7 @@ fn emit_bare_return_tail(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Optio
 /// The chain is the run of directly-nested `Let` nodes: each one emits
 /// its statement line and continues into its body until a body that
 /// isn't a `Let` becomes the final expression. A named binding emits
-/// `let {name} = {value};`; an empty-`binding_name` binding (a
+/// `let {name} @ _ = {value};`; an empty-`binding_name` binding (a
 /// discarded intermediate `Stmt::Expr` or a `_ = effect()` discard)
 /// emits a bare `{value};` statement (the value evaluated for its
 /// effects, result dropped). Returns `None` only when a binding value or
@@ -3402,7 +3403,7 @@ fn emit_mir_let_chain_flat(
             // (`Console.print(…)`) evaluated for its effect.
             lines.push(format!("{};", value));
         } else {
-            let name = aver_name_to_rust(&current.binding_name);
+            let name = explicit_binding_pattern(&current.binding_name);
             lines.push(format!("let {} = {};", name, value));
         }
 
@@ -3678,7 +3679,7 @@ fn bare_return_type(ret_type: &str, bare_facts: Option<&crate::ir::mir::FnBareFa
 
 /// Emit the self-TCO loop body (inside `loop { … }`). Leads with
 /// `cancel_checkpoint();`, then renders the MIR body in tail position. A
-/// top-level `Let` chain (leading bindings) emits flat `let x = v;` lines
+/// top-level `Let` chain (leading bindings) emits flat `let x @ _ = v;` lines
 /// then recurses into the chain's final expression as a tail expr.
 fn emit_mir_tco_body(
     body: &Spanned<MirExpr>,
@@ -3691,7 +3692,7 @@ fn emit_mir_tco_body(
     lines.push("        crate::cancel_checkpoint();".to_string());
 
     // Walk the leading `Let` chain as plain statements, then the final
-    // expression as a tail expr. A named binding emits `let x = v;`; an
+    // expression as a tail expr. A named binding emits `let x @ _ = v;`; an
     // empty-`binding_name` binding (a discarded intermediate `Stmt::Expr`
     // or a `_ = effect()` discard) emits a bare `v;` statement (the value
     // evaluated for its effect, result dropped) — the mirror of HIR's
@@ -3703,7 +3704,7 @@ fn emit_mir_tco_body(
         if let_node.binding_name.is_empty() {
             lines.push(format!("        {};", value));
         } else {
-            let name = aver_name_to_rust(&let_node.binding_name);
+            let name = explicit_binding_pattern(&let_node.binding_name);
             lines.push(format!("        let {} = {};", name, value));
         }
         current = &let_node.body;
@@ -4200,7 +4201,7 @@ fn emit_mir_trampoline_body(
             // — bare statement, result dropped.
             lines.push(format!("                {};", value));
         } else {
-            let name = aver_name_to_rust(&let_node.binding_name);
+            let name = explicit_binding_pattern(&let_node.binding_name);
             lines.push(format!("                let {} = {};", name, value));
         }
         current = &let_node.body;
@@ -6490,7 +6491,7 @@ mod tests {
 
     #[test]
     fn emits_let_as_block_expr() {
-        // `let x = 7; x` → `{ let x = aver_rt::AverInt::from_i64(7); x }`.
+        // `let x = 7; x` → `{ let x @ _ = aver_rt::AverInt::from_i64(7); x }`.
         let value = span(MirExpr::Literal(span(crate::ast::Literal::Int(7))));
         let body_local = MirLocal {
             slot: LocalId(0),
@@ -6506,7 +6507,7 @@ mod tests {
         };
         let expr = span(MirExpr::Let(span(let_node)));
         let emit = emit_mir_expr(&expr, &empty_ctx()).expect("let should emit");
-        assert_eq!(emit, "{ let x = aver_rt::AverInt::from_i64(7); x }");
+        assert_eq!(emit, "{ let x @ _ = aver_rt::AverInt::from_i64(7); x }");
     }
 
     #[test]
@@ -6721,7 +6722,7 @@ mod tests {
         let emit = emit_mir_fn_body(&body, &empty_ctx()).expect("let chain emits");
         assert_eq!(
             emit,
-            "    crate::cancel_checkpoint();\n    let a = aver_rt::AverInt::from_i64(1);\n    let b = aver_rt::AverInt::from_i64(2);\n    a"
+            "    crate::cancel_checkpoint();\n    let a @ _ = aver_rt::AverInt::from_i64(1);\n    let b @ _ = aver_rt::AverInt::from_i64(2);\n    a"
         );
     }
 
@@ -6748,7 +6749,7 @@ mod tests {
         let emit = emit_mir_fn_body(&body, &empty_ctx()).expect("discarded stmt emits");
         assert_eq!(
             emit,
-            "    crate::cancel_checkpoint();\n    let g = aver_rt::AverInt::from_i64(1);\n    aver_rt::AverInt::from_i64(2);\n    g"
+            "    crate::cancel_checkpoint();\n    let g @ _ = aver_rt::AverInt::from_i64(1);\n    aver_rt::AverInt::from_i64(2);\n    g"
         );
     }
 
@@ -6772,7 +6773,7 @@ mod tests {
         let emit = emit_mir_fn_body(&body, &empty_ctx()).expect("leading discard emits");
         assert_eq!(
             emit,
-            "    crate::cancel_checkpoint();\n    aver_rt::AverInt::from_i64(1);\n    let g = aver_rt::AverInt::from_i64(2);\n    g"
+            "    crate::cancel_checkpoint();\n    aver_rt::AverInt::from_i64(1);\n    let g @ _ = aver_rt::AverInt::from_i64(2);\n    g"
         );
     }
 
@@ -6952,7 +6953,7 @@ mod tests {
         );
         assert_eq!(
             emit_mir_fn_body(&body, &ctx).expect("binding chain emits"),
-            "    crate::cancel_checkpoint();\n    let kept = s.clone();\n    let k = s.piece.kind.clone();\n    kept"
+            "    crate::cancel_checkpoint();\n    let kept @ _ = s.clone();\n    let k @ _ = s.piece.kind.clone();\n    kept"
         );
     }
 
@@ -6971,7 +6972,7 @@ mod tests {
         );
         assert_eq!(
             emit_mir_fn_body(&body, &ctx).expect("binding chain emits"),
-            "    crate::cancel_checkpoint();\n    let kept = s;\n    let k = s.piece.kind;\n    s.tag"
+            "    crate::cancel_checkpoint();\n    let kept @ _ = s;\n    let k @ _ = s.piece.kind;\n    s.tag"
         );
     }
 
@@ -7015,7 +7016,7 @@ mod tests {
         };
         let expr = span(MirExpr::Let(span(let_node)));
         let emit = emit_mir_expr(&expr, &empty_ctx()).expect("inline let emits");
-        assert_eq!(emit, "{ let x = aver_rt::AverInt::from_i64(7); x }");
+        assert_eq!(emit, "{ let x @ _ = aver_rt::AverInt::from_i64(7); x }");
     }
 
     #[test]

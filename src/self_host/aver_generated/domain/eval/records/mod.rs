@@ -214,7 +214,7 @@ pub fn removeOverrideAcc(
 ) -> aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)> {
     loop {
         crate::cancel_checkpoint();
-        let reversed = acc.reverse();
+        let reversed @ _ = acc.reverse();
         aver_list_match!(overrides, [] => { return reversed; }, [pair, rest] => { { let (ok, ov) = pair; if (ok == k) { return aver_rt::AverList::concat(&reversed, &rest); } else { {
             let __tco1 = rest;
             let __tco2 = aver_rt::AverList::prepend((ok, ov), &acc);

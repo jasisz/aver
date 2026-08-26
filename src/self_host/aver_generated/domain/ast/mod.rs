@@ -3056,7 +3056,7 @@ pub fn userCtorTagOffsetLoop(
 /// Update the user constructor rolling hash and keep it in a bounded range.
 pub fn userCtorTagStep(acc: aver_rt::AverInt, code: aver_rt::AverInt) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
-    let next = acc.mul(&aver_rt::AverInt::from_i64(131)).add(&code);
+    let next @ _ = acc.mul(&aver_rt::AverInt::from_i64(131)).add(&code);
     (next)
         .rem_euclid(&(aver_rt::AverInt::from_i64(1000003)))
         .unwrap()
@@ -3294,7 +3294,7 @@ pub fn userCtorTagOffsetLoop__indexed(
     let __str_index = std::sync::Arc::new(__str_index);
     loop {
         crate::cancel_checkpoint();
-        let accPlusOne = acc.add(&aver_rt::AverInt::from_i64(1));
+        let accPlusOne @ _ = acc.add(&aver_rt::AverInt::from_i64(1));
         if (pos < aver_rt::AverInt::from_i64(name.chars().count() as i64)) {
             match aver_rt::string_index_char_at(&name, &__str_index, &pos) {
                 Some(ch @ _) => {
@@ -3324,7 +3324,7 @@ pub fn userCtorTagOffsetLoop__indexed(
 #[inline(always)]
 pub fn canonicalCtorName__indexed(name: AverStr, __str_index: &aver_rt::StringIndex) -> AverStr {
     crate::cancel_checkpoint();
-    let total = aver_rt::AverInt::from_i64(name.chars().count() as i64);
+    let total @ _ = aver_rt::AverInt::from_i64(name.chars().count() as i64);
     crate::aver_generated::domain::ast::canonicalCtorNameAtLastDot__indexed(
         name.clone(),
         total.clone(),

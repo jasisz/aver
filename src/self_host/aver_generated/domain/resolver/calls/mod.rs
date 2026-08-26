@@ -481,7 +481,7 @@ pub fn resolveOneCall(
     fnMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) -> crate::aver_generated::domain::ast::Expr {
     crate::cancel_checkpoint();
-    let resolvedArgs =
+    let resolvedArgs @ _ =
         crate::aver_generated::domain::resolver::calls::resolveCallsInExprs__collected(
             args.clone(),
             fnMap.clone(),

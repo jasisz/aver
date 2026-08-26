@@ -1,5 +1,5 @@
 use super::emit_ctx::{EmitCtx, should_borrow_param};
-use super::expr::{aver_name_to_rust, classify_thin_fn_def_for_rust};
+use super::expr::{aver_name_to_rust, classify_thin_fn_def_for_rust, explicit_binding_pattern};
 use super::types::type_annotation_to_rust_scoped;
 use crate::ast::*;
 use crate::codegen::CodegenContext;
@@ -1438,7 +1438,8 @@ fn emit_main_with_visibility(
     // W6/Stage-3): render every statement VALUE through the MIR walker
     // all-or-nothing (the VM #338 isolation: one cloned program,
     // pre-check every value renders before emitting any), then re-apply
-    // the `let {name} = …;` / bare-expr `…;` templating per statement.
+    // the explicit `let {name} @ _ = …;` / bare-expr `…;` templating per
+    // statement.
     // A `None` is a hard codegen error (the MIR walker could not render
     // a top-level statement) — never a silent drop.
     if !top_stmts.is_empty() {
@@ -1477,7 +1478,7 @@ fn emit_main_with_visibility(
             // named `let`, `Expr` → a discarded statement.
             let rendered = match stmt {
                 Stmt::Binding(name, _, _) => {
-                    format!("let {} = {};", aver_name_to_rust(name), value)
+                    format!("let {} = {};", explicit_binding_pattern(name), value)
                 }
                 Stmt::Expr(_) => format!("{};", value),
             };
