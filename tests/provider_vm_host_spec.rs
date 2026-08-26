@@ -550,7 +550,7 @@ fn configured_packages_run_and_verify_on_one_cached_vm_host() {
     assert!(project_audit.status.success(), "{}", report(&project_audit));
     let project_audit_report = report(&project_audit);
     assert!(
-        project_audit_report.contains("Audit: 4 modules"),
+        project_audit_report.contains("Audit: 5 modules"),
         "{project_audit_report}"
     );
     assert!(project_audit_report.contains("verify identity"));

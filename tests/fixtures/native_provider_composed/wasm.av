@@ -1,6 +1,7 @@
 module NativeProviderWasmGc
     intent = "Round-trip every custom provider boundary shape through embedded Wasmtime."
     depends [Shapes]
+    effects []
 
 fn main() -> Result<Unit, String>
     ? "Require the configured provider to decode and encode the complete Bundle."
