@@ -635,6 +635,17 @@ fn embedded_bytes_and_crypto_digest_preserve_refinements_in_both_proof_backends(
         "embedded standard refinements degraded in Lean:\n{bytes_lean}\n{digest_lean}"
     );
     assert!(
+        bytes_lean.contains("private theorem __averPackedBytesAppend")
+            && bytes_lean.contains("private theorem __averPackedBytesTake")
+            && bytes_lean.contains("private theorem __averPackedBytesDrop")
+            && bytes_lean.contains("by exact __averPackedBytesAppend")
+            && bytes_lean.contains("by exact __averPackedBytesTake")
+            && bytes_lean.contains("by exact __averPackedBytesDrop"),
+        "Lean must prove Bytes.concat/take/drop preserve the packed refinement \
+         from their operands instead of leaving the generated subtype obligation \
+         to a generic tactic ladder:\n{bytes_lean}"
+    );
+    assert!(
         crypto_lean.contains("def sha256 (bytes : Bytes.Bytes)")
             && crypto_lean.contains("def compress")
             && !crypto_lean.contains("axiom ")
@@ -682,6 +693,16 @@ fn embedded_bytes_and_crypto_digest_preserve_refinements_in_both_proof_backends(
             && digest_dafny
                 .contains("type Digest32 = payload: Bytes | hasLength32(payload) witness *"),
         "embedded standard refinements degraded in Dafny:\n{bytes_dafny}\n{digest_dafny}"
+    );
+    assert!(
+        bytes_dafny.contains("function AverPackedBytesAppend")
+            && bytes_dafny.contains("function AverPackedBytesTake")
+            && bytes_dafny.contains("function AverPackedBytesDrop")
+            && bytes_dafny.contains("AverPackedBytesAppend(left, right)")
+            && bytes_dafny.contains("AverPackedBytesTake(bytes, count)")
+            && bytes_dafny.contains("AverPackedBytesDrop(bytes, count)"),
+        "Dafny must route Bytes.concat/take/drop through structural functions \
+         whose result type carries the refinement:\n{bytes_dafny}"
     );
     assert!(
         crypto_dafny.contains("function sha256(bytes: Bytes): Digest32")

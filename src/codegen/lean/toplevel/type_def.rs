@@ -423,10 +423,14 @@ fn emit_product_type(
         let carrier_ty = type_annotation_to_lean(&decl.carrier_type);
         let param = aver_name_to_lean(&decl.predicate_param);
         let predicate = super::expr::emit_expr(&decl.invariant.expr, ctx);
-        return format!(
+        let definition = format!(
             "abbrev {} := {{ {param} : {carrier_ty} // {predicate} }}",
             aver_name_to_lean(name)
         );
+        let Some(support) = emit_packed_refinement_support(name, decl, ctx) else {
+            return definition;
+        };
+        return format!("{definition}\n\n{support}");
     }
 
     let mut lines = Vec::new();
@@ -446,6 +450,56 @@ fn emit_product_type(
         .all(|(_, field)| field_is_inhabitable(field, ctx, scope, &mut Vec::new()));
     lines.push(derives_line(inhabited, !is_recursive));
     lines.join("\n")
+}
+
+/// Proof-packed `List<Int>` refinements admit exactly three structural
+/// operations that cannot introduce a new element. Their runtime lowering is
+/// array-native; these lemmas establish the corresponding subtype obligations
+/// in Lean from the operands' existing `.property` proofs.
+fn emit_packed_refinement_support(
+    name: &str,
+    decl: &crate::ir::RefinedTypeDecl,
+    ctx: &CodegenContext,
+) -> Option<String> {
+    if !ctx.packed_sequence_layouts.contains_key(name) {
+        return None;
+    }
+    let predicate = super::expr::invariant_head_name(&decl.invariant.expr, ctx)?;
+    let stem = super::expr::packed_refinement_lemma_stem(name);
+    Some(format!(
+        r#"private theorem {stem}Append (a b : List Int)
+    (ha : {predicate} a = true) (hb : {predicate} b = true) :
+    {predicate} (a ++ b) = true := by
+  induction a with
+  | nil => simpa [{predicate}] using hb
+  | cons head tail ih =>
+      simp [{predicate}] at ha ⊢
+      exact ⟨ha.1, ih ha.2⟩
+
+private theorem {stem}Take (a : List Int) (n : Nat)
+    (ha : {predicate} a = true) : {predicate} (a.take n) = true := by
+  induction a generalizing n with
+  | nil => simp [{predicate}]
+  | cons head tail ih =>
+      cases n with
+      | zero => simp [{predicate}]
+      | succ n =>
+          simp [{predicate}] at ha ⊢
+          exact ⟨ha.1, ih n ha.2⟩
+
+private theorem {stem}Drop (a : List Int) (n : Nat)
+    (ha : {predicate} a = true) : {predicate} (a.drop n) = true := by
+  induction a generalizing n with
+  | nil => simp [{predicate}]
+  | cons head tail ih =>
+      cases n with
+      | zero => simpa using ha
+      | succ n =>
+          simp only [List.drop_succ_cons]
+          apply ih n
+          simp [{predicate}] at ha
+          exact ha.2"#
+    ))
 }
 
 fn measure_fn_name(type_name: &str) -> String {

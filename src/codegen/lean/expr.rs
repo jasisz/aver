@@ -284,6 +284,9 @@ pub fn emit_expr(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
                 && fields.len() == 1
             {
                 let (_, value_expr) = &fields[0];
+                if let Some((value, evidence)) = packed_refinement_evidence(value_expr, decl, ctx) {
+                    return format!("⟨{value}, by exact {evidence}⟩");
+                }
                 let value_str = emit_expr(value_expr, ctx);
                 let mut ladder =
                     "first | omega | decide | (simp_all; omega) | assumption".to_string();
@@ -431,7 +434,10 @@ fn escape_lean_string(s: &str) -> String {
 /// well-founded recursion. A non-call invariant (a bare comparison such
 /// as `n >= 0`) has no name to unfold and returns `None`; those goals
 /// are already closed by `omega` / `decide`.
-fn invariant_head_name(invariant: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> Option<String> {
+pub(super) fn invariant_head_name(
+    invariant: &Spanned<ResolvedExpr>,
+    ctx: &CodegenContext,
+) -> Option<String> {
     // Only a USER function has equation lemmas worth unfolding; a builtin
     // head (`Bool.and`, a comparison) is already in `simp`'s reach and
     // rendering one here would need its arguments anyway.
@@ -446,6 +452,68 @@ fn invariant_head_name(invariant: &Spanned<ResolvedExpr>, ctx: &CodegenContext) 
         }
         _ => bare,
     })
+}
+
+pub(super) fn packed_refinement_lemma_stem(type_name: &str) -> String {
+    format!("__averPacked{}", aver_name_to_lean(type_name))
+}
+
+/// Return the emitted carrier and a proof that it still satisfies the
+/// structural refinement. This is deliberately the same narrow grammar as
+/// the fail-closed layout scan: same-nominal carrier projections composed by
+/// `List.concat`, `List.take`, and `List.drop`. No element-producing operation
+/// can enter this path.
+fn packed_refinement_evidence(
+    expr: &Spanned<ResolvedExpr>,
+    decl: &crate::ir::RefinedTypeDecl,
+    ctx: &CodegenContext,
+) -> Option<(String, String)> {
+    if !ctx.packed_sequence_layouts.contains_key(&decl.name) {
+        return None;
+    }
+    if let ResolvedExpr::Attr(base, field) = &expr.node
+        && field == &decl.carrier_field
+        && base
+            .ty()
+            .and_then(|ty| crate::codegen::common::find_refined_type_for_named(ctx, ty))
+            .is_some_and(|base_decl| std::ptr::eq(base_decl, decl))
+    {
+        let base = emit_expr(base, ctx);
+        return Some((emit_expr(expr, ctx), format!("({base}).property")));
+    }
+    let ResolvedExpr::Call(ResolvedCallee::Builtin(name), args) = &expr.node else {
+        return None;
+    };
+    let stem = packed_refinement_lemma_stem(&decl.name);
+    match (name.as_str(), args.as_slice()) {
+        ("List.concat", [left, right]) => {
+            let (left_value, left_evidence) = packed_refinement_evidence(left, decl, ctx)?;
+            let (right_value, right_evidence) = packed_refinement_evidence(right, decl, ctx)?;
+            Some((
+                emit_expr(expr, ctx),
+                format!(
+                    "{stem}Append ({left_value}) ({right_value}) ({left_evidence}) ({right_evidence})"
+                ),
+            ))
+        }
+        ("List.take", [source, count]) => {
+            let (source_value, source_evidence) = packed_refinement_evidence(source, decl, ctx)?;
+            let count = emit_expr(count, ctx);
+            Some((
+                emit_expr(expr, ctx),
+                format!("{stem}Take ({source_value}) (Int.toNat ({count})) ({source_evidence})"),
+            ))
+        }
+        ("List.drop", [source, count]) => {
+            let (source_value, source_evidence) = packed_refinement_evidence(source, decl, ctx)?;
+            let count = emit_expr(count, ctx);
+            Some((
+                emit_expr(expr, ctx),
+                format!("{stem}Drop ({source_value}) (Int.toNat ({count})) ({source_evidence})"),
+            ))
+        }
+        _ => None,
+    }
 }
 
 fn emit_fn_call(
