@@ -411,6 +411,8 @@ impl CapabilityAbi {
                     self.aliases.push((format!("{stem}_{suffix}"), fn_idx));
                 }
             }
+            // backend-link-stage: ABI types are already contract-qualified and
+            // resolved against the post-flatten TypeRegistry by canonical name.
             Type::Named { name, .. } => {
                 if registry.is_capability_resource(name) {
                     return Ok(());
@@ -600,6 +602,8 @@ fn collect_type(
                 collect_type(result, registry, out, visiting);
             }
         }
+        // backend-link-stage: walk represented definitions in the linked
+        // registry to allocate host factories for their transitive fields.
         Type::Named { name, .. } if visiting.insert(name.clone()) => {
             if let Some(fields) = registry.record_fields.get(name).or_else(|| {
                 name.rsplit_once('.')

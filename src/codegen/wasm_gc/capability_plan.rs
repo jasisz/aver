@@ -238,6 +238,8 @@ fn qualify_boundary_type(ty: &Type, owner: &str, registry: &CapabilityRegistry) 
             Box::new(qualify_boundary_type(result, owner, registry)),
             effects.clone(),
         ),
+        // syntax-discovery-only: contract boundary annotations are parsed
+        // before backend identity stamping; this walk qualifies source names.
         Type::Named { name, .. } => {
             let canonical = if name.contains('.') {
                 name.clone()
@@ -294,6 +296,8 @@ fn type_contains_int(
                 .any(|param| type_contains_int(param, registry, owner, visiting))
                 || type_contains_int(result, registry, owner, visiting)
         }
+        // syntax-discovery-only: inspect the complete source contract shape to
+        // decide whether its raw wasm-gc ABI needs the full-Int prelude.
         Type::Named { name, .. } => {
             if !visiting.insert(name.clone()) {
                 return false;
@@ -376,6 +380,8 @@ fn collect_named_types(
             }
             collect_named_types(result, registry, owner, out, visiting);
         }
+        // syntax-discovery-only: collect nominal spellings from source-owned
+        // contract definitions before the wasm-gc backend link stage.
         Type::Named { name, .. } if visiting.insert(name.clone()) => {
             out.insert(name.clone());
             if let Some(definition) = boundary_definition(registry, owner, name) {
