@@ -16,21 +16,21 @@ pub fn resolveProgram(
     prog: &crate::aver_generated::domain::ast::Program,
 ) -> crate::aver_generated::domain::ast::Program {
     crate::cancel_checkpoint();
-    let resolvedFns = crate::aver_generated::domain::resolver::core::resolveFns(
+    let resolvedFns @ _ = crate::aver_generated::domain::resolver::core::resolveFns(
         prog.fns.clone(),
         aver_rt::AverList::empty(),
     );
-    let fnMap = crate::aver_generated::domain::resolver::calls::buildFnMap(
+    let fnMap @ _ = crate::aver_generated::domain::resolver::calls::buildFnMap(
         resolvedFns.clone(),
         HashMap::new(),
         aver_rt::AverInt::from_i64(0),
     );
-    let calledFns = crate::aver_generated::domain::resolver::calls::resolveCallsInFns(
+    let calledFns @ _ = crate::aver_generated::domain::resolver::calls::resolveCallsInFns(
         resolvedFns,
         fnMap.clone(),
         aver_rt::AverList::empty(),
     );
-    let annotatedFns = crate::aver_generated::domain::resolver::fast::annotateFastFns(
+    let annotatedFns @ _ = crate::aver_generated::domain::resolver::fast::annotateFastFns(
         calledFns,
         fnMap,
         aver_rt::AverList::empty(),

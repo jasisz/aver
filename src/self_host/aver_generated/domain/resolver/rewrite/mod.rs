@@ -475,8 +475,8 @@ pub fn rewritePatConstructor(
     bindings: &aver_rt::AverList<AverStr>,
 ) -> crate::aver_generated::domain::ast::Pattern {
     crate::cancel_checkpoint();
-    let canonical = crate::aver_generated::domain::ast::canonicalCtorName(name);
-    let tag = crate::aver_generated::domain::ast::ctorNameToTag(canonical.clone());
+    let canonical @ _ = crate::aver_generated::domain::ast::canonicalCtorName(name);
+    let tag @ _ = crate::aver_generated::domain::ast::ctorNameToTag(canonical.clone());
     crate::aver_generated::domain::ast::Pattern::PatConstructorId(tag, canonical, bindings.clone())
 }
 

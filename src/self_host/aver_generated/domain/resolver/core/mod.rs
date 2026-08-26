@@ -280,7 +280,7 @@ pub fn resolveFn(
     fd: &crate::aver_generated::domain::ast::FnDef,
 ) -> crate::aver_generated::domain::ast::FnDef {
     crate::cancel_checkpoint();
-    let paramResult = crate::aver_generated::domain::resolver::core::buildParamSlots(
+    let paramResult @ _ = crate::aver_generated::domain::resolver::core::buildParamSlots(
         fd.params.clone(),
         HashMap::new(),
         aver_rt::AverInt::from_i64(0),
@@ -322,7 +322,7 @@ pub fn resolveBody(
     nextSlot: aver_rt::AverInt,
 ) -> crate::aver_generated::domain::ast::FnDef {
     crate::cancel_checkpoint();
-    let resolved = crate::aver_generated::domain::resolver::core::resolveStmts__collected(
+    let resolved @ _ = crate::aver_generated::domain::resolver::core::resolveStmts__collected(
         fd.body.clone(),
         slots.clone(),
         nextSlot,
@@ -347,7 +347,7 @@ pub fn computeSlotCount(
     slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) -> crate::aver_generated::domain::ast::FnDef {
     crate::cancel_checkpoint();
-    let maxFromBody = crate::aver_generated::domain::resolver::core::maxSlotInStmts(
+    let maxFromBody @ _ = crate::aver_generated::domain::resolver::core::maxSlotInStmts(
         body.clone(),
         baseSlot.sub(&aver_rt::AverInt::from_i64(1)),
     );
@@ -621,7 +621,7 @@ pub fn resolveStmtBindFinish(
     aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) {
     crate::cancel_checkpoint();
-    let newSlots = slots.clone().insert_owned(name, next.clone());
+    let newSlots @ _ = slots.clone().insert_owned(name, next.clone());
     crate::aver_generated::domain::resolver::core::resolveStmts(
         rest.clone(),
         newSlots,
@@ -967,8 +967,8 @@ pub fn resolveBinExpr(
     aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) {
     crate::cancel_checkpoint();
-    let ra = crate::aver_generated::domain::resolver::core::resolveExprSimple(a, slots);
-    let rb = crate::aver_generated::domain::resolver::core::resolveExprSimple(b, slots);
+    let ra @ _ = crate::aver_generated::domain::resolver::core::resolveExprSimple(a, slots);
+    let rb @ _ = crate::aver_generated::domain::resolver::core::resolveExprSimple(b, slots);
     {
         let __dispatch_subject = op;
         if &*__dispatch_subject == "add" {
@@ -1114,8 +1114,8 @@ pub fn resolveMatchExpr(
     aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) {
     crate::cancel_checkpoint();
-    let rs = crate::aver_generated::domain::resolver::core::resolveExprSimple(subj, slots);
-    let armsResult = crate::aver_generated::domain::resolver::core::resolveArms__collected(
+    let rs @ _ = crate::aver_generated::domain::resolver::core::resolveExprSimple(subj, slots);
+    let armsResult @ _ = crate::aver_generated::domain::resolver::core::resolveArms__collected(
         arms.clone(),
         slots.clone(),
         aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0)),
@@ -1386,7 +1386,7 @@ pub fn resolveArm(
     aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) {
     crate::cancel_checkpoint();
-    let armSlotResult =
+    let armSlotResult @ _ =
         crate::aver_generated::domain::resolver::core::addPatternSlots(&arm.pattern, slots);
     {
         let (newSlots, _) = armSlotResult;
@@ -1431,7 +1431,7 @@ pub fn patternBindingSlots(
     slots: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) -> aver_rt::AverMap<AverStr, aver_rt::AverInt> {
     crate::cancel_checkpoint();
-    let nextSlot = crate::aver_generated::domain::resolver::core::mapMaxVal(slots)
+    let nextSlot @ _ = crate::aver_generated::domain::resolver::core::mapMaxVal(slots)
         .add(&aver_rt::AverInt::from_i64(1));
     {
         let (bindingSlots, _) =
@@ -1503,7 +1503,7 @@ pub fn patternBindingSlotsCons(
     aver_rt::AverInt,
 ) {
     crate::cancel_checkpoint();
-    let bindingSlots2 = bindingSlots.clone().insert_owned(h, next.clone());
+    let bindingSlots2 @ _ = bindingSlots.clone().insert_owned(h, next.clone());
     (
         bindingSlots2.insert_owned(t, next.add(&aver_rt::AverInt::from_i64(1))),
         next.add(&aver_rt::AverInt::from_i64(2)),
@@ -1567,7 +1567,7 @@ pub fn addPatternSlots(
     aver_rt::AverInt,
 ) {
     crate::cancel_checkpoint();
-    let nextSlot = crate::aver_generated::domain::resolver::core::mapMaxVal(slots)
+    let nextSlot @ _ = crate::aver_generated::domain::resolver::core::mapMaxVal(slots)
         .add(&aver_rt::AverInt::from_i64(1));
     crate::aver_generated::domain::resolver::core::addPatternSlotsInner(pat, slots, nextSlot)
 }
@@ -1576,7 +1576,7 @@ pub fn addPatternSlots(
 #[inline(always)]
 pub fn mapMaxVal(m: &aver_rt::AverMap<AverStr, aver_rt::AverInt>) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
-    let vals = {
+    let vals @ _ = {
         let mut es: Vec<_> = m.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
         es.sort_by(|a, b| a.0.cmp(&b.0));
         aver_rt::AverIntList::from_vec(es.into_iter().map(|(_, v)| v).collect::<Vec<_>>())
@@ -1657,7 +1657,7 @@ pub fn addConsSlots(
     aver_rt::AverInt,
 ) {
     crate::cancel_checkpoint();
-    let slots2 = slots.clone().insert_owned(h, next.clone());
+    let slots2 @ _ = slots.clone().insert_owned(h, next.clone());
     (
         slots2.insert_owned(t, next.add(&aver_rt::AverInt::from_i64(1))),
         next.add(&aver_rt::AverInt::from_i64(2)),

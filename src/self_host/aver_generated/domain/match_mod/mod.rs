@@ -38,7 +38,8 @@ fn __mutual_tco_trampoline_1(
                 mut acc,
             ) => {
                 crate::cancel_checkpoint();
-                let bindings = crate::aver_generated::domain::match_mod::matchPattern(&pat, &item)?;
+                let bindings @ _ =
+                    crate::aver_generated::domain::match_mod::matchPattern(&pat, &item)?;
                 __MutualTco1::MatchPatTupleItemsAcc(
                     restPats,
                     restItems,
@@ -544,7 +545,7 @@ pub fn zipBindingsAcc(
 ) -> aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)> {
     loop {
         crate::cancel_checkpoint();
-        let reversed = acc.reverse();
+        let reversed @ _ = acc.reverse();
         aver_list_match!(names, [] => { return reversed; }, [n, ns] => { aver_list_match!(vals, [] => { return reversed; }, [v, vs] => { {
             let __tco0 = ns;
             let __tco1 = vs;

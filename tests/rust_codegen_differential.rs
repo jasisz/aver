@@ -5237,6 +5237,106 @@ fn main() -> Unit
     result.unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// Regression for #1151: the same Rust item-resolution ambiguity applies to
+/// an ordinary `let` pattern. The source only calls qualified dependency
+/// functions, so the local `opened` binding must remain unambiguously local.
+#[test]
+fn colliding_dependency_function_names_do_not_conflict_with_let_binders() {
+    let ws = temp_dir("dependency_function_let_binder_collision");
+    for (module, value) in [("Alpha", 1), ("Beta", 2)] {
+        fs::write(
+            ws.join(format!("{module}.av")),
+            format!(
+                r#"module {module}
+    exposes [opened]
+    intent = "Expose one of two colliding short function names."
+    effects []
+
+fn opened() -> Int
+    ? "Return this module's value."
+    {value}
+"#
+            ),
+        )
+        .expect("write dependency module");
+    }
+
+    let entry = ws.join("main.av");
+    fs::write(
+        &entry,
+        r#"module Main
+    depends [Alpha, Beta]
+    intent = "Keep a local let binder distinct from colliding dependency functions."
+    effects [Console]
+
+fn total() -> Int
+    ? "Bind a qualified call under the dependencies' shared short name."
+    opened = Alpha.opened()
+    higher(opened, Beta.opened())
+
+fn higher(a: Int, b: Int) -> Int
+    ? "Return the larger dependency value."
+    match a >= b
+        true -> a
+        false -> b
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("total={total()}")
+"#,
+    )
+    .expect("write entry module");
+
+    let vm_stdout = run_vm(&entry, Some(&ws)).expect("VM run");
+    assert_eq!(vm_stdout, "total=2", "VM contract changed");
+
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let result = (|| -> Result<(), String> {
+        compile_rust(
+            &entry,
+            &project,
+            "dependency_function_let_binder_collision",
+            Some(&ws),
+            &[],
+        )?;
+        let emitted = fs::read_to_string(
+            project
+                .join("src")
+                .join("aver_generated")
+                .join("entry")
+                .join("mod.rs"),
+        )
+        .map_err(|e| format!("read emitted entry module: {e}"))?;
+        if !emitted.contains("let opened @ _ =") {
+            return Err(format!(
+                "local let binder was not made explicit:\n{emitted}"
+            ));
+        }
+
+        let bin = cargo_build(&project, "dependency_function_let_binder_collision")?;
+        let out = Command::new(&bin)
+            .output()
+            .map_err(|e| format!("run generated binary: {e}"))?;
+        if !out.status.success() {
+            return Err(format!(
+                "dependency-function-let-binder generated binary failed:\n{}",
+                format_output(&out)
+            ));
+        }
+        let rust_stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if rust_stdout != vm_stdout {
+            return Err(format!(
+                "dependency-function-let-binder stdout mismatch\n--- VM ---\n{vm_stdout}\n--- Rust ---\n{rust_stdout}"
+            ));
+        }
+        Ok(())
+    })();
+
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|e| panic!("{e}"));
+}
+
 // ─── Mode (h): Int.fromString / Float.fromString Err-message bytes ────────
 //
 // `Int.fromString` / `Float.fromString` return a `Result<_, String>`.

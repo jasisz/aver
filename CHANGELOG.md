@@ -59,7 +59,7 @@ Aver 0.29 turns the host boundary into explicit, source-owned contracts. Standar
 
 - **Proof export is substantially harder to make green for the wrong reason.** Fixes cover nested effect evaluation order, refused-claim accounting, defaults introduced by `?`, opaque capability resources, mutual-recursion measures and fuel, method applications in argument position, map-order observations through callbacks/tail calls/interpolation, and symbolic provider calls hidden behind transparent wrappers.
 
-- **Module and type identity no longer depends on load order or bare-name collisions.** Lean, Dafny, generated Rust, wasm-gc constructor patterns, equality/hash derivation, and diagnostics retain the declaration's owning module through resolution and rendering.
+- **Module and type identity no longer depends on load order or bare-name collisions.** Lean, Dafny, generated Rust, wasm-gc constructor patterns, equality/hash derivation, and diagnostics retain the declaration's owning module through resolution and rendering. Generated Rust also keeps local `let` bindings unambiguous when multiple dependencies expose functions with the same name.
 
 - **Cross-backend runtime behaviour is aligned.** wasm-gc maps grow and delete colliding keys correctly; generated Rust preserves borrows, evaluates policy-checked effect arguments once, and agrees on negative `List.take/drop`; `Http.head`, 204, and 304 responses accept an empty body; `Args.get` and browser `Http.*` calls appear in verify traces.
 
