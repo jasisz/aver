@@ -564,9 +564,11 @@ fn scenario() -> Result<String, String>
     direct = Bytes.fromList(Bytes.octets(left))?
     combined = Bytes.fromList(List.concat(Bytes.octets(direct), Bytes.octets(right)))?
     sliced = Bytes.fromList(List.drop(List.take(Bytes.octets(combined), 4), 1))?
+    packedCombined = Bytes.concat(direct, right)
+    packedSliced = Bytes.drop(Bytes.take(packedCombined, 4), 1)
     match Bytes.fromList(List.prepend(999, Bytes.octets(sliced)))
         Result.Ok(_) -> Result.Err("prepend unexpectedly retained provenance")
-        Result.Err(error) -> Result.Ok("{Bytes.toHex(direct)}/{Bytes.toHex(combined)}/{Bytes.toHex(sliced)}/{error}")
+        Result.Err(error) -> Result.Ok("{Bytes.toHex(direct)}/{Bytes.toHex(combined)}/{Bytes.toHex(sliced)}/{Bytes.len(Bytes.empty())}/{Bytes.toHex(packedCombined)}/{Bytes.toHex(packedSliced)}/{error}")
 
 fn main() -> Unit
     ! [Console.print]
@@ -585,10 +587,18 @@ fn byte_list_provenance_matches_vm_packed_and_boxed_wasm() {
     assert!(boxed_ok, "boxed wasm failed: {boxed}");
     assert_eq!(
         vm,
-        "000102/000102aabb/0102aa/byte 999 at index 0 is outside 0..=255"
+        "000102/000102aabb/0102aa/0/000102aabb/0102aa/byte 999 at index 0 is outside 0..=255"
     );
     assert_eq!(packed, vm, "packed wasm-gc diverged from the VM");
     assert_eq!(boxed, vm, "boxed wasm-gc diverged from the VM");
+
+    let packed_wasm = compile(BYTES_PROVENANCE, true);
+    let boxed_wasm = compile(BYTES_PROVENANCE, false);
+    assert_eq!(
+        i8_array_count(&packed_wasm),
+        i8_array_count(&boxed_wasm) + 1,
+        "total preserving Bytes operations must not demote the proof-packed layout"
+    );
 }
 
 // ─── Literal smart-constructor discharge ────────────────────────────────

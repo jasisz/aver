@@ -56,10 +56,13 @@ there is no JSON codec and no narrowing of Aver values:
 | `List` | nullable typed cons reference |
 | `Vector` | typed mutable GC array reference |
 | `Map` | Aver's typed deterministic map reference |
+| proof-packed `List<Int>` refinement | typed GC array reference; record factories/projectors bridge its declared carrier |
 
-Boundary records and sums keep their nominal representation even when an
-internal optimizer could normally erase a one-field wrapper. This pins the ABI
-to the contract rather than to a size optimization selected for one program.
+Boundary records and sums keep their nominal representation when scalar
+wrapper erasure would otherwise change their ABI. A proof-packed structural
+refinement is the deliberate exception: its `make` and field inspector aliases
+point at the generated pack/unpack helpers, so the declared record API stays
+stable while byte-heavy providers keep the array representation end to end.
 
 ## Host bridge exports
 
@@ -96,9 +99,8 @@ and calls `__rt_bytes_from_lm(n)`; `__rt_bytes_to_lm(bytes)` copies the other
 direction and returns the written length. When `Result<Bytes, String>` is
 reachable, `__rt_result_bytes_string_ok_from_lm(n)` combines the inbound copy
 with its `Result.Ok` wrapper. These exports keep the same ABI whether the
-compiler proof-packed `Bytes` into a GC byte array or retained its boxed
-representation at a custom-provider boundary, so hosts never need a helper
-call per octet.
+compiler proof-packed `Bytes` into a GC byte array or packing is disabled in an
+internal differential-test build, so hosts never need a helper call per octet.
 
 An import function may close over an instance variable assigned immediately
 after `WebAssembly.instantiate`. Calls happen when an exported Aver entry point

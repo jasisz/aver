@@ -1445,10 +1445,12 @@ pub fn carrier_ungated_construction_demotions(
     }
 
     let mut ctor_fn_of: HashMap<String, String> = HashMap::new();
+    let mut carrier_field_of: HashMap<String, String> = HashMap::new();
     for name in candidates {
         if let Some(info) = crate::codegen::common::refinement_info_for_in_scope(name, inputs, None)
         {
             ctor_fn_of.insert(name.clone(), info.constructor_fn.to_string());
+            carrier_field_of.insert(name.clone(), info.carrier_field.to_string());
         } else {
             for m in inputs.dep_modules {
                 if let Some(info) = crate::codegen::common::refinement_info_for_in_scope(
@@ -1457,6 +1459,7 @@ pub fn carrier_ungated_construction_demotions(
                     Some(m.prefix.as_str()),
                 ) {
                     ctor_fn_of.insert(name.clone(), info.constructor_fn.to_string());
+                    carrier_field_of.insert(name.clone(), info.carrier_field.to_string());
                     break;
                 }
             }
@@ -1500,7 +1503,20 @@ pub fn carrier_ungated_construction_demotions(
                         if construct_arg_is_in_interval(fields, *iv)
                             || construct_arg_is_finalized_bytes(fields, *iv, byte_payloads)
                 );
-                if !safe_literal {
+                let nominal_params: HashSet<String> = fd
+                    .params
+                    .iter()
+                    .filter(|(_, ty)| {
+                        crate::types::parse_type_str(ty)
+                            .named_name()
+                            .is_some_and(|name| canonical_spelling(name, type_aliases) == type_name)
+                    })
+                    .map(|(name, _)| name.clone())
+                    .collect();
+                let safe_preserving = carrier_field_of.get(type_name).is_some_and(|field| {
+                    construct_arg_preserves_list_refinement(fields, field, &nominal_params)
+                });
+                if !safe_literal && !safe_preserving {
                     demoted.insert(type_name.to_string());
                 }
             });
@@ -1662,6 +1678,61 @@ pub(crate) fn construct_arg_is_finalized_bytes(
         &value.node,
         Expr::Ident(name) | Expr::Resolved { name, .. } if byte_payloads.contains(name)
     )
+}
+
+/// A direct structural-refinement construction is independently safe when
+/// its `List<Int>` carrier contains no newly introduced element: either the
+/// empty list, a projection from a parameter of the same nominal type, or a
+/// tree of `List.concat` / `List.take` / `List.drop` over such projections.
+///
+/// This is the source-level twin of MIR runtime provenance. It lets a module
+/// expose total preserving operations (`Bytes.concat`, `Bytes.take`, …)
+/// without the fail-closed wasm layout scan mistaking them for invariant
+/// bypasses. `prepend`, literals, arbitrary locals and calls all decline.
+pub(crate) fn construct_arg_preserves_list_refinement(
+    fields: &[(String, Spanned<Expr>)],
+    carrier_field: &str,
+    nominal_params: &HashSet<String>,
+) -> bool {
+    let [(field, value)] = fields else {
+        return false;
+    };
+    field == carrier_field
+        && list_expr_preserves_refinement(&value.node, carrier_field, nominal_params)
+}
+
+fn list_expr_preserves_refinement(
+    expr: &Expr,
+    carrier_field: &str,
+    nominal_params: &HashSet<String>,
+) -> bool {
+    match expr {
+        Expr::List(items) => items.is_empty(),
+        Expr::Attr(base, field) if field == carrier_field => matches!(
+            &base.node,
+            Expr::Ident(name) | Expr::Resolved { name, .. } if nominal_params.contains(name)
+        ),
+        Expr::FnCall(callee, args) => {
+            let Some(dotted) = crate::codegen::common::expr_to_dotted_name(&callee.node) else {
+                return false;
+            };
+            match (dotted.as_str(), args.as_slice()) {
+                ("List.concat", [left, right]) => {
+                    list_expr_preserves_refinement(&left.node, carrier_field, nominal_params)
+                        && list_expr_preserves_refinement(
+                            &right.node,
+                            carrier_field,
+                            nominal_params,
+                        )
+                }
+                ("List.take" | "List.drop", [source, _]) => {
+                    list_expr_preserves_refinement(&source.node, carrier_field, nominal_params)
+                }
+                _ => false,
+            }
+        }
+        _ => false,
+    }
 }
 
 /// Carrier visitor that tracks values proven to be byte lists by the

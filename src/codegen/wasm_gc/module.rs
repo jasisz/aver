@@ -451,13 +451,17 @@ pub(super) fn emit_module_with(
             &intervals,
             type_aliases,
         );
-        let mut layouts: std::collections::HashMap<_, _> = layouts
+        let layouts: std::collections::HashMap<_, _> = layouts
             .into_iter()
             .filter(|(name, _)| !demoted.contains(name))
             .collect();
-        if let Some(plan) = capability_wasm_gc_plan {
-            layouts.retain(|name, _| !plan.named_boundary_types().contains(name));
-        }
+        // Unlike scalar/multi-field carrier erasure, proof-packed sequence
+        // refinements keep a representation-independent custom-capability
+        // ABI: the exported named-type make/field helpers alias the same
+        // pack/unpack functions. A JavaScript host therefore observes the
+        // declared List<Int> carrier API whether the guest stores the nominal
+        // as a struct or an array. Keeping the packed layout here is both
+        // contract-stable and essential for byte-heavy providers.
         layouts
     } else {
         std::collections::HashMap::new()
@@ -2490,7 +2494,10 @@ pub(super) fn emit_module_with(
         capability_wasm_gc_plan,
         &registry,
         capability_int_abi,
-        &|canonical| map_helpers.kv_helpers(canonical),
+        &super::capability_abi::CollectionAbiHelpers {
+            maps: &|canonical| map_helpers.kv_helpers(canonical),
+            packed_sequences: &|name| packed_sequence_helpers.ops_for(name),
+        },
         &mut types,
         &mut next_type_idx,
         &mut next_builtin_fn_idx,

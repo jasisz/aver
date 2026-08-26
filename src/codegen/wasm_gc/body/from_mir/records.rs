@@ -3,6 +3,120 @@
 
 use super::*;
 
+/// Recognise the source-level carrier projection of a proof-packed nominal.
+/// The returned base already has the packed array representation at runtime;
+/// emitting the ordinary projection would call `unpack` and allocate one cons
+/// cell per element.
+pub(crate) fn mir_packed_carrier_projection<'a>(
+    expr: &'a Spanned<MirExpr>,
+    ctx: &EmitCtx<'_>,
+) -> Option<(&'a Spanned<MirExpr>, String)> {
+    let MirExpr::Project(project) = &expr.node else {
+        return None;
+    };
+    let raw_name = aver_type_str_of(&project.node.base);
+    let type_name = ctx.registry.canonical_type_name(&raw_name);
+    ctx.registry.packed_sequence(type_name)?;
+    let carrier_field = ctx
+        .registry
+        .record_fields
+        .get(type_name)?
+        .first()
+        .map(|(name, _)| name)?;
+    (project.node.field == *carrier_field)
+        .then(|| (project.node.base.as_ref(), type_name.to_string()))
+}
+
+fn is_mir_packed_carrier_expr(expr: &Spanned<MirExpr>, type_name: &str, ctx: &EmitCtx<'_>) -> bool {
+    if let Some((_, projected_name)) = mir_packed_carrier_projection(expr, ctx) {
+        return projected_name == type_name;
+    }
+    let MirExpr::Call(call) = &expr.node else {
+        return false;
+    };
+    let MirCallee::Builtin(id) = call.node.callee else {
+        return false;
+    };
+    let Some(dotted) = ctx.mir_builtins.and_then(|names| names.get(id.0 as usize)) else {
+        return false;
+    };
+    match (dotted.as_str(), call.node.args.as_slice()) {
+        ("List.concat", [left, right]) => {
+            is_mir_packed_carrier_expr(left, type_name, ctx)
+                && is_mir_packed_carrier_expr(right, type_name, ctx)
+        }
+        ("List.take" | "List.drop", [source, _]) => {
+            is_mir_packed_carrier_expr(source, type_name, ctx)
+        }
+        _ => false,
+    }
+}
+
+fn emit_mir_packed_carrier_expr(
+    func: &mut Function,
+    expr: &Spanned<MirExpr>,
+    type_name: &str,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    if let Some((base, projected_name)) = mir_packed_carrier_projection(expr, ctx) {
+        debug_assert_eq!(projected_name, type_name);
+        emit_mir_expr(func, base, slots, ctx)?.ok_or_else(|| {
+            WasmGcError::Validation(format!(
+                "packed carrier `{type_name}` base could not be emitted"
+            ))
+        })?;
+        return Ok(());
+    }
+    let MirExpr::Call(call) = &expr.node else {
+        return Err(WasmGcError::Validation(format!(
+            "packed carrier `{type_name}` expression lost its recognised shape"
+        )));
+    };
+    let MirCallee::Builtin(id) = call.node.callee else {
+        unreachable!("packed carrier recogniser only accepts builtin calls");
+    };
+    let dotted = ctx
+        .mir_builtins
+        .and_then(|names| names.get(id.0 as usize))
+        .expect("packed carrier recogniser pinned the builtin identity");
+    let ops = ctx
+        .fn_map
+        .packed_sequence_ops_lookup(type_name)
+        .ok_or_else(|| {
+            WasmGcError::Validation(format!(
+                "packed record `{type_name}` has no preserving operation bridge"
+            ))
+        })?;
+    match (dotted.as_str(), call.node.args.as_slice()) {
+        ("List.concat", [left, right]) => {
+            emit_mir_packed_carrier_expr(func, left, type_name, slots, ctx)?;
+            emit_mir_packed_carrier_expr(func, right, type_name, slots, ctx)?;
+            func.instruction(&Instruction::Call(ops.concat));
+        }
+        ("List.take", [source, count]) => {
+            emit_mir_packed_carrier_expr(func, source, type_name, slots, ctx)?;
+            if !emit_aint_arg_as_i64_sat(func, count, slots, ctx)? {
+                return Err(WasmGcError::Validation(
+                    "packed take count could not be emitted".into(),
+                ));
+            }
+            func.instruction(&Instruction::Call(ops.take));
+        }
+        ("List.drop", [source, count]) => {
+            emit_mir_packed_carrier_expr(func, source, type_name, slots, ctx)?;
+            if !emit_aint_arg_as_i64_sat(func, count, slots, ctx)? {
+                return Err(WasmGcError::Validation(
+                    "packed drop count could not be emitted".into(),
+                ));
+            }
+            func.instruction(&Instruction::Call(ops.drop));
+        }
+        _ => unreachable!("packed carrier recogniser and emitter diverged"),
+    }
+    Ok(())
+}
+
 /// Emit a record field / update value, mirroring `emit_record_create`'s
 /// per-field special-cases: an `Option.None` value emits through the
 /// constructor with the field's declared `T` (the bare-literal value's
@@ -66,6 +180,10 @@ pub(crate) fn emit_mir_record_create(
         let field = fields.first().ok_or(WasmGcError::Validation(format!(
             "packed record `{type_name}` requires one List<Int> field"
         )))?;
+        if is_mir_packed_carrier_expr(&field.value, type_name, ctx) {
+            emit_mir_packed_carrier_expr(func, &field.value, type_name, slots, ctx)?;
+            return Ok(Some(()));
+        }
         let produced = emit_mir_record_field_value(func, &field.value, "List<Int>", slots, ctx)?;
         if produced.is_some() {
             let ops = ctx
