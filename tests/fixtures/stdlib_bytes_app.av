@@ -67,7 +67,9 @@ fn checkedChecksum(values: List<Int>) -> Result<Int, String>
 
 verify roundTrip
     roundTrip([0, 127, 255]) => Result.Ok([0, 127, 255])
+    roundTrip(List.drop(List.prepend(-1, [0, 127, 255]), 1)) => Result.Ok([0, 127, 255])
     roundTrip([0, 256]) => Result.Err("byte 256 at index 1 is outside 0..=255")
+    roundTrip([0, 300, 256]) => Result.Err("byte 300 at index 1 is outside 0..=255")
 
 verify hexRoundTrip
     hexRoundTrip("00aF") => Result.Ok("00af")

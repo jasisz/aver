@@ -3454,6 +3454,7 @@ pub(super) fn emit_mir_fn_body_routed(
     resolved: &crate::ir::hir::ResolvedFnDef,
     scope: Option<&str>,
     borrow_by_default: bool,
+    post_checkpoint_prologue: Option<&str>,
     ctx: &CodegenContext,
 ) -> Option<String> {
     let mut policy = MirFnEmitPolicy::from_resolved(resolved, scope, borrow_by_default);
@@ -3469,7 +3470,17 @@ pub(super) fn emit_mir_fn_body_routed(
     // return are bare.
     policy.apply_bare_i64(mir_fn.fn_id, ctx);
     let emit_ctx = MirEmitCtx::for_fn(ctx, &policy);
-    emit_mir_fn_body(&mir_fn.body, &emit_ctx)
+    let body = emit_mir_fn_body(&mir_fn.body, &emit_ctx)?;
+    let Some(prologue) = post_checkpoint_prologue else {
+        return Some(body);
+    };
+
+    // `emit_mir_fn_body` owns this prefix as part of its documented output
+    // contract. Keep backend-specific representation fast paths after the
+    // cooperative cancellation point but before any source-level work.
+    const CHECKPOINT: &str = "    crate::cancel_checkpoint();\n";
+    let tail = body.strip_prefix(CHECKPOINT)?;
+    Some(format!("{CHECKPOINT}{prologue}\n{tail}"))
 }
 
 /// Is the type stamp a primitive numeric?
