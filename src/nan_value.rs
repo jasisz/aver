@@ -90,13 +90,20 @@ pub type ArenaEntry = aver_memory::ArenaEntry<AverTypes>;
 pub type ArenaSymbol = aver_memory::ArenaSymbol<AverTypes>;
 
 /// Every arena slot is one of these, so the widest variant sets what a slot
-/// costs whatever it holds. The widest payload remains 40 bytes after adding
-/// the Map and flat-list lane receipts; segmented lists deliberately stay on
-/// their conservative scan path because adding a receipt there would grow the
-/// payload. A variant wider than 40 would increase every slot in the arena,
-/// which is why both boundaries are pinned.
+/// costs whatever it holds. On 64-bit targets the widest payload remains 40
+/// bytes after adding the Map and flat-list lane receipts; segmented lists
+/// deliberately stay on their conservative scan path because adding a receipt
+/// there would grow the payload. A variant wider than 40 would increase every
+/// slot in the arena. The wasm32 playground compiler has smaller pointer-sized
+/// fields, so its corresponding 24/32-byte boundaries are pinned separately.
+#[cfg(target_pointer_width = "64")]
 const _: () = assert!(core::mem::size_of::<ArenaList>() == 40);
+#[cfg(target_pointer_width = "64")]
 const _: () = assert!(core::mem::size_of::<ArenaEntry>() == 48);
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<ArenaList>() == 24);
+#[cfg(target_pointer_width = "32")]
+const _: () = assert!(core::mem::size_of::<ArenaEntry>() == 32);
 
 // ---------------------------------------------------------------------------
 // Extension trait for Value <-> NanValue conversion
