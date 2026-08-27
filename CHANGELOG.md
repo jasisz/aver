@@ -4,72 +4,42 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ## 0.29.0 "Peer" (unreleased)
 
-Aver 0.29 turns the host boundary into explicit, source-owned contracts. Standard effects, custom providers, TCP servers, HTTP handlers, replay, verification, and proof export now describe the same program instead of maintaining parallel backend-specific stories.
+Named for the network role Aver programs can finally sustain — and for the checked relationship between a program and its host. One source-owned contract now drives execution, replay, verification, wasm embedding, and proof export.
 
-### Added
+### Highlights
 
-- **All standard effects are capability contracts written in Aver.** `Args`, `Console`, `Disk`, `Env`, `Http`, `Process`, `Random`, `Tcp`, `Terminal`, and `Time` own their signatures, replay models, hostile profiles, represented boundary types, and fingerprints under `stdlib/capabilities/`. Native, wasm-gc, and wasip2 adapters bind those exact contracts; official target adapters can replay one another's traces only when the fingerprint matches, while custom providers remain identity-exact. Closes [#1123](https://github.com/jasisz/aver/issues/1123).
+- **Host boundaries live in Aver source.** Every standard capability owns its signatures, replay model, hostile profiles, represented types, and fingerprint; native, wasm-gc, and wasip2 adapters bind that exact contract. Closes [#1123](https://github.com/jasisz/aver/issues/1123).
 
-- **Custom Rust providers now have one checked workflow across VM, generated Rust, verify/audit, and embedded wasm-gc/wasip2.** A versioned `[providers]` manifest in `aver.toml` names packages or local paths and binding factories. Aver validates the complete contract before execution, caches native hosts by backend, toolchain, and source provenance, preserves provider identity in recordings, and adapts the complete wasm-gc value vocabulary without target-specific provider declarations.
+- **Custom Rust providers have one checked project workflow.** `[providers]` in `aver.toml` selects versioned packages or paths for VM, generated Rust, verify/audit, wasm-gc, and wasip2. Aver validates the whole contract, preserves provider provenance in recordings, and caches native hosts by backend, toolchain, and source. Raw wasm-gc exposes the same contract-derived ABI directly to external hosts. Closes [#1145](https://github.com/jasisz/aver/issues/1145).
 
-- **Custom capabilities compile directly to raw wasm-gc host imports.** Each complete contract gets one deterministic `contract_hash`-pinned namespace, one import per operation, native GC values, `externref` resources, full `Int = ℤ`, generated JavaScript-facing value factories, and opaque artifact-certificate accounting. Closes [#1145](https://github.com/jasisz/aver/issues/1145).
+- **Servers are ordinary typed Aver programs.** `HttpWire` and `HttpServer` implement HTTP/1.1 in the standard library, while native, Cloudflare, and `wasi:http/proxy` hosts call the same unary handler. TCP has distinct listener, dial, and connection resources, a single `Tcp.Socket` state sum, non-blocking connect, and one readiness poll; `Process.stopRequested` gives long-running programs cooperative cleanup. Closes [#1114](https://github.com/jasisz/aver/issues/1114), [#1124](https://github.com/jasisz/aver/issues/1124), [#1125](https://github.com/jasisz/aver/issues/1125), and [#1131](https://github.com/jasisz/aver/issues/1131).
 
-- **Incoming HTTP is ordinary Aver code.** `HttpWire` parses and renders bounded HTTP/1.1 messages, while the `HttpServer` standard module owns its native event loop, sessions, keep-alive, pipelining, failure isolation, and cooperative shutdown. Cloudflare and `wasi:http/proxy` invoke the same unary `Fn(HttpRequest) -> Http.Response` through `--handler`; there is no provider-owned request token or host-to-VM callback bridge. Closes [#1124](https://github.com/jasisz/aver/issues/1124).
+- **Raw wasm-gc can host real applications without per-value glue.** Contract-derived factories/projectors carry records, sums, arbitrary `Int`, and opaque resources; `Bytes` cross the boundary in one bulk copy; generated TCP probes expose the whole reactor; and embedded Wasmtime can run configured providers and cache reproducible modules as native code.
 
-- **TCP can listen, dial without blocking, and wait over every socket state at once.** Provider-owned `Tcp.Listener`, `Tcp.Dial`, and `Tcp.Connection` resources prevent illegal operations at typecheck time. `Tcp.Socket.{Listening,Dialing,Connected}` lets one `Map<Int, Tcp.Socket>` carry the complete state machine, and `Tcp.poll` returns sorted, duplicate-free ready keys. Closes [#1125](https://github.com/jasisz/aver/issues/1125) and [#1131](https://github.com/jasisz/aver/issues/1131).
+- **Verification and proof export see the whole program.** Project graphs are prepared once, cases run in a bounded pool, costly functions require explicit justified budgets, and exhausted claims decline rather than become false counterexamples. Lean and Dafny retain module identity, dependencies, examples, laws, and honest unsupported-shape accounting.
 
-- **Long-running programs can stop cooperatively and still clean up.** `Process.stopRequested()` is a recorded, monotonic standard capability backed by native SIGINT/SIGTERM and a wasm-gc host import. wasip2 rejects it explicitly because WASI 0.2 has no signal-delivery binding. Closes [#1114](https://github.com/jasisz/aver/issues/1114).
+- **Execution is more deterministic and avoids its worst quadratic cliffs.** Maps have one key order across execution and proof; collections preserve sharing and ownership through helpers and records; wasm byte buffers stay packed; generated Rust avoids name collisions; and every command resolves the same module graph. Closes [#1160](https://github.com/jasisz/aver/issues/1160) and [#1162](https://github.com/jasisz/aver/issues/1162).
 
-- **Verification is whole-program, bounded, and much faster.** `aver verify` prepares each project graph once and runs cases in a bounded `-j` pool; per-function `[[verify.costly]]` entries can raise step or case limits with a mandatory reason. Budget exhaustion is reported as a declined case rather than a false counterexample, and proof export charges declined claims separately from sorries. `verify-coverage` now measures reachable output shapes and supports exact, explained function-scoped suppressions.
+- **UTF-8, bit operations, and partiality are explicit.** `String.toUtf8` / `String.fromUtf8` validate nominal `Bytes`, and `Bits.*` models infinite two's complement with portable materialization limits. Syntactically proven calls shed `Result`; a violated provider promise faults instead of inventing a default.
 
-- **Proof export includes dependency modules and keeps their identities.** Lean and Dafny receive each module's declared examples and laws under its own namespace, including effectful dependency functions. Unsupported symbolic-provider or partial-recursion shapes decline explicitly instead of disappearing or becoming assertions about defaults.
+### Migration
 
-- **Aver gains explicit UTF-8 conversion and bit operations.** `String.toUtf8` and `String.fromUtf8` convert nominal `Bytes` losslessly and validate malformed input on every backend. `Bits.and/or/xor/not/shiftLeft/shiftRight/low` expose infinite two's-complement operations with portable materialization limits; rejected symbolic operators point to their named replacement.
-
-### Changed
-
-- **Several names and partiality contracts are source-breaking.** The compact migration map is:
+Several names and partiality contracts are source-breaking:
 
   | Before | Now |
   |---|---|
   | `HttpResponse` | `Http.Response` |
   | `HttpRequest { method, path, body, headers }` | add query-free `path` plus `query` without the leading `?` |
-  | `HttpServer` as a host effect | `depends [HttpServer]`; declare the concrete `Tcp.*` and `Process.stopRequested` effects |
-  | `HttpServer.listenWith(...)` | unary `HttpServer.listen(port, handler)` or an application-owned specialised loop |
-  | listener calls retained for proxy builds | select the unary handler with `--handler` |
+  | `HttpServer` host effect / `listenWith(...)` | `depends [HttpServer]`; use unary `listen(port, handler)` and declare its concrete effects |
+  | listener calls retained for proxy builds | select the same unary handler with `--handler` |
   | `Tcp.poll(Map<Int, Tcp.Connection>, timeoutMs)` | `Tcp.poll(Map<Int, Tcp.Socket>, timeoutMs)` |
   | blocking-only connection setup | `Tcp.beginConnect` + `Tcp.dialled`, or keep convenience `Tcp.connect` |
-  | `Char.toCode` / `Char.fromCode` | `String.firstCodePoint` / `String.fromCodePoint` |
-  | `Option.toResult` | `Result.fromOption` |
-  | `Bytes.toList` / `Crypto.Digest32.toBytes` | `Bytes.octets` / `Crypto.Digest32.bytes` |
+  | `Char.toCode`, `Char.fromCode`, `Option.toResult` | `String.firstCodePoint`, `String.fromCodePoint`, `Result.fromOption` |
+  | `Bytes.toList`, `Crypto.Digest32.toBytes` | `Bytes.octets`, `Crypto.Digest32.bytes` |
   | dynamic `Vector.new`, `Random.int`, `Time.sleep`, or `BranchPath.*` assumed total | `Result`; a syntactic argument proven valid still discharges without ceremony |
   | `Terminal.*` and `Env.set` host failures hidden behind `Unit`/`Option` | explicit `Result` |
 
-  Literal discharge is fail-closed: if a provider returns `Err` after the compiler proved the arguments valid, execution reports a provider-contract violation rather than substituting a plausible default. Recordings containing the old effect shapes are not replay-compatible.
-
-- **Every command now agrees on what the program is.** `check`, `verify`, `audit`, `proof`, `run`, `compile`, `context`, and related commands walk the entry module, its transitive `depends`, and the active project-provider projection. Diagnostics are attributed to the file and declaration that own them.
-
-- **Maps have one deterministic order on every backend.** Iteration is sorted by key, `keys[i]` pairs with `values[i]`, and equality uses the same canonical form in execution and proof. Map keys must have a modelled total order; `Float` keys are rejected instead of giving NaN or proof-model divergences.
-
-- **Execution and compilation avoid several formerly quadratic paths.** Collection, string, byte, map, and generated-Rust hot paths preserve sharing, ownership, or proven ranges instead of rebuilding live data, including maps threaded through record-returning helpers. Commands prepare each module graph once rather than recursively rechecking dependency cones. Embedded Wasmtime 48 uses its copying collector and caches reproducibly emitted wasm as native code across runs. Closes [#1160](https://github.com/jasisz/aver/issues/1160).
-
-- **Generated projects pin the compiler's actual source provenance.** Path builds emit path dependencies, git builds pin the repository and revision, and registry builds emit exact registry versions for both `aver-lang` and `aver-rt`.
-
-### Fixed
-
-- **`Bytes` cross raw wasm-gc host boundaries in bulk.** Generated modules expose linear-memory copy helpers for plain `Bytes` and `Result<Bytes, String>`, replacing one JavaScript-to-wasm call per octet with one copy and one call. Custom capability boundaries now retain proof-packed byte arrays behind representation-independent record factories/projectors; the boxed differential lane uses the same host ABI, and the embedded wasm-gc runner selects it automatically.
-
-- **Byte buffers stay packed while they are combined and sliced on wasm-gc.** `Bytes.empty`, `len`, `concat`, `take`, and `drop` make the preserving operations explicit and total. Their proof-packed lowering uses `array.len` / `array.copy` directly, so a provider-returned byte array no longer becomes millions of boxed `Int` cons cells merely to append it to an inbox or inspect a short header.
-
-- **Raw wasm-gc hosts can drive the complete TCP reactor API.** Generated modules export typed probes for every occupied `Tcp.poll` waitset entry plus token getters for `Tcp.Dial`, `Tcp.Listener`, and `Tcp.Socket`, so JavaScript hosts can implement readiness without guessing GC layouts or hard-coding caller keys.
-
-- **Proof export is substantially harder to make green for the wrong reason.** Fixes cover nested effect evaluation order, refused-claim accounting, defaults introduced by `?`, opaque capability resources, mutual-recursion measures and fuel, method applications in argument position, map-order observations through callbacks/tail calls/interpolation, and symbolic provider calls hidden behind transparent wrappers.
-
-- **Module and type identity no longer depends on load order or bare-name collisions.** Lean, Dafny, generated Rust, wasm-gc constructor patterns, equality/hash derivation, and diagnostics retain the declaration's owning module through resolution and rendering. Generated Rust keeps every local binder — including parameters and TCO-generated bindings — unambiguous when dependencies expose functions with the same name. Closes [#1162](https://github.com/jasisz/aver/issues/1162).
-
-- **Cross-backend runtime behaviour is aligned.** wasm-gc maps grow and delete colliding keys correctly; generated Rust preserves borrows, evaluates policy-checked effect arguments once, and agrees on negative `List.take/drop`; `Http.head`, 204, and 304 responses accept an empty body; `Args.get` and browser `Http.*` calls appear in verify traces.
-
-- **CI now guards generated and target-specific surfaces that previously drifted.** Checked-in self-host output is regenerated and compared, wasm literal-discharge failures retain provider diagnostics, nightly wasm fuzz callers compile against the production flattener, and capability target manifests are checked structurally.
+Literal discharge is fail-closed, and recordings containing the old effect shapes are not replay-compatible. Generated projects now pin the compiler and runtime to their actual path, git revision, or exact registry version.
 
 ## 0.28.1 — 2026-08-12
 
