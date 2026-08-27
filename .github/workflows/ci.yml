@@ -82,45 +82,57 @@ jobs:
           cargo check -p aver-lang --lib --target wasm32-unknown-unknown --no-default-features --features playground
           cargo check -p aver-lang --features certify
 
-      - name: Prefetch provider-host feature graph
-        # Some integration tests intentionally build generated provider hosts
-        # with Cargo offline. Those hosts enable wasm even though this job's
-        # root test build uses the default feature set, so a fresh runner must
-        # fetch every package pinned in Cargo.lock before entering that offline
-        # boundary. Never rely on a previous workflow's registry cache.
-        run: cargo fetch --locked
-
-      - name: Test
-        # Iron — Stage 4: CI exercises proptest sweeps at 2 000 cases
-        # per property instead of the 256-case default. The matcher
-        # invariants (`types::checker::tests`) and replay-codec
-        # round-trip (`tests/replay_proptest.rs`) each surfaced real
-        # bugs inside 256 cases; bumping the budget here lets CI sweep
-        # ~8× deeper input space than a developer's local cycle does,
-        # surfacing shapes that only fire at low probability. Local
-        # `cargo test` keeps the 256 default for fast iteration. 2 000
-        # is conservative — 10 000 was the first instinct but risked
-        # tipping the Check & Test runtime past the rest of the gates;
-        # the per-test runtime gap of 256 vs 2 000 is in the seconds,
-        # 2 000 vs 10 000 is in the minutes for the heavier codec
-        # roundtrip tests. Bump again if a class of bug slips at 2 000.
-        env:
-          PROPTEST_CASES: '2000'
-        run: cargo test --workspace
-
       - name: Check shipped examples
         # Gate the shipped example corpus: a merge that breaks an
         # example under `aver check` must fail CI, not ship silently.
-        # `cargo test --workspace` above already compiled the debug
-        # `aver` binary (the CLI integration tests run it via
-        # CARGO_BIN_EXE_aver), so `cargo run` here is a cache hit, not
-        # a rebuild. Only `examples/core` and `examples/data` are
-        # gated — `examples/diagnostics` contains deliberately broken
-        # files (lint/error demos) and stays ungated. Bare exit codes:
-        # each command's status fails the step directly, no pipes.
+        # The preceding check/clippy gates have already compiled most of the
+        # graph; this step links the debug CLI if needed. Only `examples/core`
+        # and `examples/data` are gated — `examples/diagnostics` contains
+        # deliberately broken files (lint/error demos) and stays ungated. Bare
+        # exit codes: each command's status fails the step directly, no pipes.
         run: |
           cargo run --bin aver -- check examples/core
           cargo run --bin aver -- check examples/data
+
+  native_tests:
+    name: Native tests (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule' || github.repository == 'jasisz/aver'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: aver-lang unit and docs
+            command: cargo test -p aver-lang --lib --bins && cargo test -p aver-lang --doc
+          - name: workspace crates
+            command: cargo test --workspace --exclude aver-lang
+          - name: integrations 1/4
+            command: python3 tools/ci_test_shard.py 0 4
+          - name: integrations 2/4
+            command: python3 tools/ci_test_shard.py 1 4
+          - name: integrations 3/4
+            command: python3 tools/ci_test_shard.py 2 4
+          - name: integrations 4/4
+            command: python3 tools/ci_test_shard.py 3 4
+    env:
+      # The 2,000-case broad sweep belongs to nightly/manual deep CI. Pull
+      # requests and pushes keep the ordinary 256-case proptest smoke while
+      # deterministic tests and every integration target still run each time.
+      PROPTEST_CASES: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '2000' || '256' }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Prefetch provider-host feature graph
+        # Some integration tests build generated provider hosts with Cargo
+        # offline, so every shard fetches the exact locked graph first.
+        run: cargo fetch --locked
+
+      - name: Test shard
+        run: ${{ matrix.command }}
 
   wasm:
     name: WASM
