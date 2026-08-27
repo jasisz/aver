@@ -8,8 +8,8 @@ use crate::*;
 /// Dispatch List.* builtins.
 #[inline(always)]
 pub fn call(
-    name: AverStr,
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    name @ _: AverStr,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     {
@@ -79,7 +79,7 @@ pub fn call(
 
 /// List.prepend(value, list) -> list with value at front.
 pub fn builtinListPrepend(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let pair @ _ = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
@@ -91,8 +91,8 @@ pub fn builtinListPrepend(
 
 /// Inner impl of List.prepend.
 pub fn builtinListPrependInner(
-    v: &crate::aver_generated::domain::value::Val,
-    lstV: &crate::aver_generated::domain::value::Val,
+    v @ _: &crate::aver_generated::domain::value::Val,
+    lstV @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let items @ _ = crate::aver_generated::domain::builtins::helpers::expectList(lstV)?;
@@ -103,7 +103,7 @@ pub fn builtinListPrependInner(
 
 /// List.len(list) -> length as Int.
 pub fn builtinListLen(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
@@ -115,7 +115,7 @@ pub fn builtinListLen(
 
 /// List.take(list, n) -> first n elements.
 pub fn builtinListTake(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let pair @ _ = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
@@ -127,8 +127,8 @@ pub fn builtinListTake(
 
 /// Inner impl of List.take.
 pub fn builtinListTakeInner(
-    lstV: &crate::aver_generated::domain::value::Val,
-    nV: &crate::aver_generated::domain::value::Val,
+    lstV @ _: &crate::aver_generated::domain::value::Val,
+    nV @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let items @ _ = crate::aver_generated::domain::builtins::helpers::expectList(lstV)?;
@@ -141,8 +141,8 @@ pub fn builtinListTakeInner(
 /// Keep the first count elements; negative counts produce empty lists.
 #[inline(always)]
 pub fn listTake(
-    items: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
-    count: aver_rt::AverInt,
+    items @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    count @ _: aver_rt::AverInt,
 ) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
     crate::cancel_checkpoint();
     if (count > aver_rt::AverInt::from_i64(0)) {
@@ -154,7 +154,7 @@ pub fn listTake(
 
 /// List.drop(list, n) -> all but the first n elements.
 pub fn builtinListDrop(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let pair @ _ = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
@@ -166,8 +166,8 @@ pub fn builtinListDrop(
 
 /// Inner impl of List.drop.
 pub fn builtinListDropInner(
-    lstV: &crate::aver_generated::domain::value::Val,
-    nV: &crate::aver_generated::domain::value::Val,
+    lstV @ _: &crate::aver_generated::domain::value::Val,
+    nV @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let items @ _ = crate::aver_generated::domain::builtins::helpers::expectList(lstV)?;
@@ -180,8 +180,8 @@ pub fn builtinListDropInner(
 /// Skip the first count elements; negative counts leave the list unchanged.
 #[inline(always)]
 pub fn listDrop(
-    mut items: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
-    mut count: aver_rt::AverInt,
+    mut items @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    mut count @ _: aver_rt::AverInt,
 ) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
     loop {
         crate::cancel_checkpoint();
@@ -201,7 +201,7 @@ pub fn listDrop(
 
 /// List.reverse(list) -> reversed list.
 pub fn builtinListReverse(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
@@ -213,7 +213,7 @@ pub fn builtinListReverse(
 
 /// List.concat(a, b) -> concatenated list.
 pub fn builtinListConcat(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let pair @ _ = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
@@ -225,8 +225,8 @@ pub fn builtinListConcat(
 
 /// Inner impl of List.concat.
 pub fn builtinListConcatInner(
-    aV: &crate::aver_generated::domain::value::Val,
-    bV: &crate::aver_generated::domain::value::Val,
+    aV @ _: &crate::aver_generated::domain::value::Val,
+    bV @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let aItems @ _ = crate::aver_generated::domain::builtins::helpers::expectList(aV)?;
@@ -238,7 +238,7 @@ pub fn builtinListConcatInner(
 
 /// List.contains(list, value) -> Bool.
 pub fn builtinListContains(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let pair @ _ = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
@@ -250,8 +250,8 @@ pub fn builtinListContains(
 
 /// Inner impl of List.contains.
 pub fn builtinListContainsInner(
-    lstV: &crate::aver_generated::domain::value::Val,
-    needle: &crate::aver_generated::domain::value::Val,
+    lstV @ _: &crate::aver_generated::domain::value::Val,
+    needle @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let items @ _ = crate::aver_generated::domain::builtins::helpers::expectList(lstV)?;
@@ -263,10 +263,10 @@ pub fn builtinListContainsInner(
 /// Check if a value is in a list by repr comparison.
 #[inline(always)]
 pub fn listContainsVal(
-    mut items: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
-    needle: crate::aver_generated::domain::value::Val,
+    mut items @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    needle @ _: crate::aver_generated::domain::value::Val,
 ) -> bool {
-    let needle = std::sync::Arc::new(needle);
+    let needle @ _ = std::sync::Arc::new(needle);
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(items, [] => { return false; }, [v, rest] => { if (crate::aver_generated::domain::value::valRepr(&v) == crate::aver_generated::domain::value::valRepr(&*needle)) { return true; } else { {
@@ -279,7 +279,7 @@ pub fn listContainsVal(
 
 /// List.zip(a, b) -> list of tuples.
 pub fn builtinListZip(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let pair @ _ = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
@@ -291,8 +291,8 @@ pub fn builtinListZip(
 
 /// Inner impl of List.zip.
 pub fn builtinListZipInner(
-    aV: &crate::aver_generated::domain::value::Val,
-    bV: &crate::aver_generated::domain::value::Val,
+    aV @ _: &crate::aver_generated::domain::value::Val,
+    bV @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let aItems @ _ = crate::aver_generated::domain::builtins::helpers::expectList(aV)?;
@@ -305,8 +305,8 @@ pub fn builtinListZipInner(
 /// Zip two lists into list of ValTuple.
 #[inline(always)]
 pub fn zipLists(
-    a: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
-    b: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    a @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    b @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::builtins::list::zipListsAcc(
@@ -319,9 +319,9 @@ pub fn zipLists(
 /// Accumulate zipped pairs in reverse, then reverse at end.
 #[inline(always)]
 pub fn zipListsAcc(
-    mut a: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
-    mut b: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
-    mut acc: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    mut a @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    mut b @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
     loop {
         crate::cancel_checkpoint();
@@ -340,7 +340,7 @@ pub fn zipListsAcc(
 
 /// List.head(list) -> Option of first element.
 pub fn builtinListHead(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
@@ -350,7 +350,7 @@ pub fn builtinListHead(
 
 /// List.tail(list) -> Option of rest.
 pub fn builtinListTail(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;

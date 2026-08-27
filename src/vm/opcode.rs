@@ -212,6 +212,11 @@ pub const RECORD_GET: u8 = 0x64; // field_idx:u8
 /// Pop record, lookup field by interned field symbol, push value.
 pub const RECORD_GET_NAMED: u8 = 0x67; // field_symbol_id:u32
 
+/// Pop record and push its named field. When the record has no stack or
+/// off-stack aliases, remove the field from the record and release that
+/// holder; otherwise behave exactly like `RECORD_GET_NAMED`.
+pub const RECORD_TAKE_NAMED: u8 = 0x6C; // field_symbol_id:u32
+
 /// Pop `count` field values, push a new variant.
 pub const VARIANT_NEW: u8 = 0x65; // type_id:u16, variant_id:u16, count:u8
 
@@ -245,7 +250,7 @@ pub const PROPAGATE_ERR: u8 = 0x6A;
 /// Pop list, push its length as Int.
 pub const LIST_LEN: u8 = 0x6B;
 
-// 0x6C and 0x6D were LIST_GET and LIST_APPEND — removed.
+// 0x6D was LIST_APPEND — removed.
 
 /// Pop list, pop value, push prepended list.
 pub const LIST_PREPEND: u8 = 0x6E;
@@ -638,6 +643,7 @@ pub fn opcode_name(op: u8) -> &'static str {
         STORE_GLOBAL => "STORE_GLOBAL",
         RECORD_GET => "RECORD_GET",
         RECORD_GET_NAMED => "RECORD_GET_NAMED",
+        RECORD_TAKE_NAMED => "RECORD_TAKE_NAMED",
         VARIANT_NEW => "VARIANT_NEW",
         WRAP => "WRAP",
         TUPLE_NEW => "TUPLE_NEW",
@@ -809,7 +815,7 @@ pub fn opcode_operand_width(op: u8, code: &[u8], ip: usize) -> usize {
         CALL_KNOWN_OWNED | TAIL_CALL_KNOWN => 4, // fn_id:u16 + argc:u8 + owned:u8
 
         // 4-byte
-        MATCH_VARIANT | RECORD_GET_NAMED | LIST_NEW | TUPLE_NEW => 4,
+        MATCH_VARIANT | RECORD_GET_NAMED | RECORD_TAKE_NAMED | LIST_NEW | TUPLE_NEW => 4,
 
         // 5-byte
         CALL_BUILTIN | VARIANT_NEW => 5,

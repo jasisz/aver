@@ -20,6 +20,25 @@ impl ArenaTypes for TestTypes {
 type TestArena = Arena<TestTypes>;
 
 #[test]
+fn taking_record_fields_releases_exactly_the_removed_holders() {
+    let mut arena = TestArena::new();
+    let map = NanValue::new_map(arena.push_map(PersistentMap::new()));
+    let record = NanValue::new_record(arena.push_record(1, vec![map, map]));
+
+    assert!(arena.map_slot(map).unwrap().held_elsewhere);
+    assert_eq!(arena.take_record_field(record, 0).bits(), map.bits());
+    assert!(
+        arena.map_slot(map).unwrap().held_elsewhere,
+        "the record's second field still holds the map"
+    );
+    assert_eq!(arena.take_record_field(record, 1).bits(), map.bits());
+    assert!(
+        !arena.map_slot(map).unwrap().held_elsewhere,
+        "removing both fields must release both registered holders"
+    );
+}
+
+#[test]
 fn lane_receipts_must_not_be_newer_than_the_frame_serial() {
     let mut arena = TestArena::new();
     let early_receipt = arena.lane_mark();
@@ -86,7 +105,7 @@ fn clone_static_preserves_the_clock_and_stable_receipts_by_value() {
     arena.stable_entries.push(ArenaEntry::Map {
         map: PersistentMap::new(),
         all_immediate: true,
-        held_elsewhere: false,
+        holder_count: 0,
         scan_receipt: entry_receipt,
         pending_scan_keys: Vec::new(),
     });

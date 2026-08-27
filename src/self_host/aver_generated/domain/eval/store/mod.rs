@@ -93,8 +93,8 @@ impl aver_replay::ReplayValue for FnStore {
 /// Look up a variable in the environment.
 #[inline(always)]
 pub fn lookupVar(
-    env: &aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val>,
-    name: AverStr,
+    env @ _: &aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val>,
+    name @ _: AverStr,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     match env.get(&name).cloned() {
@@ -115,8 +115,8 @@ pub fn emptyFnStore() -> FnStore {
 
 /// Attach evaluated top-level bindings so function bodies can read them.
 pub fn withGlobals(
-    fns: &FnStore,
-    globals: &aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val>,
+    fns @ _: &FnStore,
+    globals @ _: &aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val>,
 ) -> FnStore {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::eval::store::FnStore {
@@ -129,8 +129,8 @@ pub fn withGlobals(
 /// Look up a top-level binding value by name.
 #[inline(always)]
 pub fn lookupGlobal(
-    fns: &FnStore,
-    name: AverStr,
+    fns @ _: &FnStore,
+    name @ _: AverStr,
 ) -> Option<crate::aver_generated::domain::value::Val> {
     crate::cancel_checkpoint();
     fns.globals.get(&name).cloned()
@@ -138,7 +138,7 @@ pub fn lookupGlobal(
 
 /// Look up a function id by name.
 #[inline(always)]
-pub fn lookupFnId(fns: &FnStore, name: AverStr) -> Result<aver_rt::AverInt, AverStr> {
+pub fn lookupFnId(fns @ _: &FnStore, name @ _: AverStr) -> Result<aver_rt::AverInt, AverStr> {
     crate::cancel_checkpoint();
     match fns.nameToId.get(&name).cloned() {
         Some(id @ _) => Ok(id),
@@ -149,8 +149,8 @@ pub fn lookupFnId(fns: &FnStore, name: AverStr) -> Result<aver_rt::AverInt, Aver
 /// Look up a function definition by id.
 #[inline(always)]
 pub fn lookupFnById(
-    fns: &FnStore,
-    id: aver_rt::AverInt,
+    fns @ _: &FnStore,
+    id @ _: aver_rt::AverInt,
 ) -> Result<crate::aver_generated::domain::ast::FnDef, AverStr> {
     crate::cancel_checkpoint();
     match (id).to_usize().and_then(|__i| fns.byId.get(__i).cloned()) {
@@ -174,8 +174,8 @@ pub fn lookupFnById(
 /// Look up a function definition by name without wrapping success in Result.
 #[inline(always)]
 pub fn lookupFnOption(
-    fns: &FnStore,
-    name: AverStr,
+    fns @ _: &FnStore,
+    name @ _: AverStr,
 ) -> Option<crate::aver_generated::domain::ast::FnDef> {
     crate::cancel_checkpoint();
     match fns.nameToId.get(&name).cloned() {
@@ -187,8 +187,8 @@ pub fn lookupFnOption(
 /// Look up a function definition by name through the function store.
 #[inline(always)]
 pub fn lookupFn(
-    fns: &FnStore,
-    name: AverStr,
+    fns @ _: &FnStore,
+    name @ _: AverStr,
 ) -> Result<crate::aver_generated::domain::ast::FnDef, AverStr> {
     crate::cancel_checkpoint();
     match crate::aver_generated::domain::eval::store::lookupFnOption(fns, name.clone()) {
@@ -200,9 +200,9 @@ pub fn lookupFn(
 /// Build env map from parameter names and argument values.
 #[inline(always)]
 pub fn zipArgs(
-    mut params: aver_rt::AverList<AverStr>,
-    mut args: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
-    mut acc: aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val>,
+    mut params @ _: aver_rt::AverList<AverStr>,
+    mut args @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    mut acc @ _: aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val>,
 ) -> aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val> {
     loop {
         crate::cancel_checkpoint();
@@ -221,8 +221,8 @@ pub fn zipArgs(
 /// Add pattern match bindings to an env map.
 #[inline(always)]
 pub fn mergeBindings(
-    mut bindings: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
-    mut env: aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val>,
+    mut bindings @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
+    mut env @ _: aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val>,
 ) -> aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val> {
     loop {
         crate::cancel_checkpoint();
@@ -237,7 +237,9 @@ pub fn mergeBindings(
 }
 
 /// Build a function store with a name->id index and id->FnDef table.
-pub fn fnsToStore(fns: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>) -> FnStore {
+pub fn fnsToStore(
+    fns @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+) -> FnStore {
     crate::cancel_checkpoint();
     let nameToId @ _ = crate::aver_generated::domain::eval::store::fnsToIdMap(
         fns.clone(),
@@ -254,9 +256,9 @@ pub fn fnsToStore(fns: &aver_rt::AverList<crate::aver_generated::domain::ast::Fn
 /// Convert a list of FnDefs to a name->id map. Later defs shadow earlier ones.
 #[inline(always)]
 pub fn fnsToIdMap(
-    mut fns: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
-    mut acc: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
-    mut idx: aver_rt::AverInt,
+    mut fns @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+    mut acc @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    mut idx @ _: aver_rt::AverInt,
 ) -> aver_rt::AverMap<AverStr, aver_rt::AverInt> {
     loop {
         crate::cancel_checkpoint();

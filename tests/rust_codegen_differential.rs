@@ -2599,7 +2599,7 @@ fn rust_map_helper_result_preserves_the_owned_move() {
     let _ = fs::remove_dir_all(&ws);
 
     assert!(
-        emitted.contains("pub fn setOne(key: AverStr, mut into: aver_rt::AverMap"),
+        emitted.contains("pub fn setOne(key @ _: AverStr, mut into @ _: aver_rt::AverMap"),
         "setOne must take its Map by value after return-alias analysis:\n{emitted}"
     );
     assert!(
@@ -2611,7 +2611,7 @@ fn rust_map_helper_result_preserves_the_owned_move() {
         "the recursive fold must move its accumulator through setOne:\n{emitted}"
     );
     assert!(
-        emitted.contains("pub fn setOneResult(key: AverStr, mut into: aver_rt::AverMap"),
+        emitted.contains("pub fn setOneResult(key @ _: AverStr, mut into @ _: aver_rt::AverMap"),
         "the Rust-only pass must graduate a Map carried by Result:\n{emitted}"
     );
     assert!(
@@ -2623,7 +2623,7 @@ fn rust_map_helper_result_preserves_the_owned_move() {
         "Result `?` must preserve the owned accumulator move:\n{emitted}"
     );
     assert!(
-        emitted.contains("pub fn setStoreOne(key: AverStr, mut store: Store)"),
+        emitted.contains("pub fn setStoreOne(key @ _: AverStr, mut store @ _: Store)"),
         "a returned Store successor must take the record by value:\n{emitted}"
     );
     assert!(
@@ -2637,6 +2637,22 @@ fn rust_map_helper_result_preserves_the_owned_move() {
     assert!(
         emitted.contains("let __tco1 = setStoreOne(head, store)?;"),
         "the Store fold must move its accumulator through the helper:\n{emitted}"
+    );
+    assert!(
+        emitted.contains("pub fn setStoreOneCreate(key @ _: AverStr, mut store @ _: Store)"),
+        "a constructor-returned Store successor must take the record by value:\n{emitted}"
+    );
+    assert!(
+        emitted.contains("Store { values: store.values.insert_owned(key, AverStr::from(\"v\")) }"),
+        "the constructor must move the Map field out of Store without a forced clone:\n{emitted}"
+    );
+    assert!(
+        !emitted.contains("Store { values: store.values.clone().insert_owned"),
+        "the constructor-wrapped Map path must not force quadratic COW:\n{emitted}"
+    );
+    assert!(
+        emitted.contains("let __tco1 = setStoreOneCreate(head, store);"),
+        "the constructor Store fold must move its accumulator through the helper:\n{emitted}"
     );
 }
 
@@ -4488,7 +4504,7 @@ fn mir_first_class_fn_value_builds_and_matches_vm() {
         compile_rust(&src, &project, name, None, &[])?;
 
         // Structural tripwire: the emitted Rust must carry the fn-pointer
-        // param (`f: fn(aver_rt::AverInt) -> aver_rt::AverInt` — `Int` lowers
+        // param (`f @ _: fn(aver_rt::AverInt) -> aver_rt::AverInt` — `Int` lowers
         // to `AverInt` now), the FnValue passed by bare name
         // (`applyIt(dbl, v)`), and the call-through-slot (`f(v)`). A
         // dropped FnValue or a mis-emitted slot call would erase these.
@@ -4500,10 +4516,10 @@ fn mir_first_class_fn_value_builds_and_matches_vm() {
                 .join("mod.rs"),
         )
         .map_err(|e| format!("read emitted module: {e}"))?;
-        if !emitted.contains("f: fn(aver_rt::AverInt) -> aver_rt::AverInt") {
+        if !emitted.contains("f @ _: fn(aver_rt::AverInt) -> aver_rt::AverInt") {
             return Err(format!(
                 "emitted Rust is missing the fn-pointer param \
-                 `f: fn(aver_rt::AverInt) -> aver_rt::AverInt` — \
+                 `f @ _: fn(aver_rt::AverInt) -> aver_rt::AverInt` — \
                  the LocalSlot param lowering was dropped:\n{emitted}"
             ));
         }
@@ -5116,7 +5132,7 @@ fn main() -> Unit
                 .join("mod.rs"),
         )
         .map_err(|e| format!("read emitted entry module: {e}"))?;
-        if !emitted.contains("f: fn(crate::aver_generated::worker::Shape) -> aver_rt::AverInt")
+        if !emitted.contains("f @ _: fn(crate::aver_generated::worker::Shape) -> aver_rt::AverInt")
             || emitted.contains("Worker_Shape")
         {
             return Err(format!(
@@ -5328,6 +5344,133 @@ fn main() -> Unit
         if rust_stdout != vm_stdout {
             return Err(format!(
                 "dependency-function-let-binder stdout mismatch\n--- VM ---\n{vm_stdout}\n--- Rust ---\n{rust_stdout}"
+            ));
+        }
+        Ok(())
+    })();
+
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|e| panic!("{e}"));
+}
+
+/// Regression for #1162: a function parameter is a Rust pattern too. Two
+/// dependency glob imports exposing the parameter's name must not make the
+/// signature ambiguous, including signatures synthesized for TCO.
+#[test]
+fn colliding_dependency_function_names_do_not_conflict_with_parameters() {
+    let ws = temp_dir("dependency_function_parameter_collision");
+    for (module, suffix) in [("Alpha", ""), ("Beta", "!")] {
+        fs::write(
+            ws.join(format!("{module}.av")),
+            format!(
+                r#"module {module}
+    exposes [payload]
+    intent = "Expose one of two colliding short function names."
+    effects []
+
+fn payload(value: String) -> String
+    ? "Return this module's payload."
+    "{{value}}{suffix}"
+"#
+            ),
+        )
+        .expect("write dependency module");
+    }
+
+    fs::write(
+        ws.join("Gamma.av"),
+        r#"module Gamma
+    exposes [carried, bounce, ping, pong]
+    depends [Alpha, Beta]
+    intent = "Keep parameter binders distinct from colliding dependency functions."
+    effects []
+
+fn carried(payload: String) -> String
+    ? "Return an ordinary parameter with the colliding name."
+    payload
+
+fn bounce(n: Int, payload: List<Int>) -> List<Int>
+    ? "Carry the colliding parameter through a self tail call."
+    match n > 0
+        true -> bounce(n - 1, payload)
+        false -> payload
+
+fn ping(n: Int, payload: List<Int>) -> List<Int>
+    ? "Carry the colliding parameter through a mutual tail call."
+    match n > 0
+        true -> pong(n - 1, payload)
+        false -> payload
+
+fn pong(n: Int, payload: List<Int>) -> List<Int>
+    ? "Return to ping with the same colliding parameter."
+    match n > 0
+        true -> ping(n - 1, payload)
+        false -> payload
+"#,
+    )
+    .expect("write Gamma module");
+
+    let entry = ws.join("main.av");
+    fs::write(
+        &entry,
+        r#"module Main
+    depends [Gamma]
+    intent = "Reach every parameter-emission shape."
+    effects [Console]
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("{Gamma.carried("ok")}/{List.len(Gamma.bounce(1, [1]))}/{List.len(Gamma.ping(1, [1]))}")
+"#,
+    )
+    .expect("write entry module");
+
+    let vm_stdout = run_vm(&entry, Some(&ws)).expect("VM run");
+    assert_eq!(vm_stdout, "ok/1/1", "VM contract changed");
+
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let result = (|| -> Result<(), String> {
+        compile_rust(
+            &entry,
+            &project,
+            "dependency_function_parameter_collision",
+            Some(&ws),
+            &[],
+        )?;
+        let emitted = fs::read_to_string(
+            project
+                .join("src")
+                .join("aver_generated")
+                .join("gamma")
+                .join("mod.rs"),
+        )
+        .map_err(|e| format!("read emitted Gamma module: {e}"))?;
+        if !emitted.contains("carried(payload @ _: AverStr)") {
+            return Err(format!(
+                "ordinary parameter binder was not made explicit:\n{emitted}"
+            ));
+        }
+        if !emitted.contains("payload @ _: aver_rt::AverIntList") {
+            return Err(format!(
+                "TCO parameter binder was not made explicit:\n{emitted}"
+            ));
+        }
+
+        let bin = cargo_build(&project, "dependency_function_parameter_collision")?;
+        let out = Command::new(&bin)
+            .output()
+            .map_err(|e| format!("run generated binary: {e}"))?;
+        if !out.status.success() {
+            return Err(format!(
+                "dependency-function-parameter generated binary failed:\n{}",
+                format_output(&out)
+            ));
+        }
+        let rust_stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if rust_stdout != vm_stdout {
+            return Err(format!(
+                "dependency-function-parameter stdout mismatch\n--- VM ---\n{vm_stdout}\n--- Rust ---\n{rust_stdout}"
             ));
         }
         Ok(())

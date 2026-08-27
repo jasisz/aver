@@ -6,8 +6,8 @@ use crate::*;
 /// Check if this is a Type.update(record, _named(...)) call.
 #[inline(always)]
 pub fn isRecordUpdate(
-    name: AverStr,
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    name @ _: AverStr,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> bool {
     crate::cancel_checkpoint();
     if name.contains(".update") {
@@ -19,7 +19,9 @@ pub fn isRecordUpdate(
 
 /// Check if last arg is a _named record sentinel.
 #[inline(always)]
-pub fn hasNamedRecord(args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>) -> bool {
+pub fn hasNamedRecord(
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+) -> bool {
     crate::cancel_checkpoint();
     if (aver_rt::AverInt::from_i64(args.len() as i64) == aver_rt::AverInt::from_i64(2)) {
         crate::aver_generated::domain::eval::records::isNamedSentinel(args)
@@ -31,7 +33,7 @@ pub fn hasNamedRecord(args: &aver_rt::AverList<crate::aver_generated::domain::va
 /// Check second element is ValRecord with _named tag.
 #[inline(always)]
 pub fn isNamedSentinel(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> bool {
     crate::cancel_checkpoint();
     {
@@ -51,7 +53,7 @@ pub fn isNamedSentinel(
 /// Check first element of rest is a _named record.
 #[inline(always)]
 pub fn isNamedSentinelInner(
-    rest: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    rest @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> bool {
     crate::cancel_checkpoint();
     aver_list_match!(rest.clone(), [] => false, [v, ignored] => match v {
@@ -67,7 +69,7 @@ pub fn isNamedSentinelInner(
 /// Perform record update: merge named fields into base record.
 #[inline(always)]
 pub fn doRecordUpdate(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     aver_list_match!(args.clone(), [] => Err(AverStr::from("record update requires (record, named fields)")), [baseVal, rest] => crate::aver_generated::domain::eval::records::doRecordUpdateInner(&baseVal, &rest))
@@ -76,8 +78,8 @@ pub fn doRecordUpdate(
 /// Extract named fields from rest and apply update.
 #[inline(always)]
 pub fn doRecordUpdateInner(
-    baseVal: &crate::aver_generated::domain::value::Val,
-    rest: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    baseVal @ _: &crate::aver_generated::domain::value::Val,
+    rest @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     aver_list_match!(rest.clone(), [] => Err(AverStr::from("record update requires named fields")), [namedVal, ignored] => match namedVal {
@@ -92,8 +94,8 @@ pub fn doRecordUpdateInner(
 
 /// Override fields in a record value.
 pub fn applyRecordUpdate(
-    baseVal: &crate::aver_generated::domain::value::Val,
-    namedFields: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
+    baseVal @ _: &crate::aver_generated::domain::value::Val,
+    namedFields @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     match baseVal.clone() {
@@ -113,8 +115,8 @@ pub fn applyRecordUpdate(
 /// For each field in existing: use override if present, otherwise keep.
 #[inline(always)]
 pub fn mergeRecordFields(
-    existing: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
-    overrides: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
+    existing @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
+    overrides @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
 ) -> aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)> {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::eval::records::mergeRecordFieldsAcc__collected(
@@ -127,9 +129,9 @@ pub fn mergeRecordFields(
 /// Accumulate merged fields.
 #[inline(always)]
 pub fn mergeRecordFieldsAcc(
-    mut existing: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
-    mut overrides: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
-    mut acc: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
+    mut existing @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
+    mut overrides @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
+    mut acc @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
 ) -> aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)> {
     loop {
         crate::cancel_checkpoint();
@@ -154,11 +156,11 @@ pub fn mergeRecordFieldsAcc(
 /// Check if field k has an override.
 #[inline(always)]
 pub fn mergeOneField(
-    k: AverStr,
-    v: &crate::aver_generated::domain::value::Val,
-    rest: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
-    overrides: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
-    acc: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
+    k @ _: AverStr,
+    v @ _: &crate::aver_generated::domain::value::Val,
+    rest @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
+    overrides @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
+    acc @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
 ) -> aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)> {
     crate::cancel_checkpoint();
     match crate::aver_generated::domain::eval::records::findOverride(k.clone(), overrides.clone()) {
@@ -178,8 +180,8 @@ pub fn mergeOneField(
 /// Find a field value in the overrides list.
 #[inline(always)]
 pub fn findOverride(
-    mut k: AverStr,
-    mut overrides: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
+    mut k @ _: AverStr,
+    mut overrides @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
 ) -> Option<crate::aver_generated::domain::value::Val> {
     loop {
         crate::cancel_checkpoint();
@@ -194,8 +196,8 @@ pub fn findOverride(
 /// Remove a field from overrides list.
 #[inline(always)]
 pub fn removeOverride(
-    k: AverStr,
-    overrides: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
+    k @ _: AverStr,
+    overrides @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
 ) -> aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)> {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::eval::records::removeOverrideAcc(
@@ -208,9 +210,9 @@ pub fn removeOverride(
 /// Accumulate non-matching fields, then concat remainder when match found.
 #[inline(always)]
 pub fn removeOverrideAcc(
-    mut k: AverStr,
-    mut overrides: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
-    mut acc: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
+    mut k @ _: AverStr,
+    mut overrides @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
+    mut acc @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
 ) -> aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)> {
     loop {
         crate::cancel_checkpoint();
@@ -228,9 +230,9 @@ pub fn removeOverrideAcc(
 /// Synthesized collecting variant of `mergeRecordFieldsAcc`. Appends to a builder where `mergeRecordFieldsAcc` prepends to `acc` and reverses on the way out, which reaches the same list without the cons chain or the reversal. Call sites that start the accumulator at `[]` are moved here.
 #[inline(always)]
 pub fn mergeRecordFieldsAcc__collected(
-    mut existing: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
-    mut overrides: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
-    mut acc: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
+    mut existing @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
+    mut overrides @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
+    mut acc @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
 ) -> aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)> {
     loop {
         crate::cancel_checkpoint();

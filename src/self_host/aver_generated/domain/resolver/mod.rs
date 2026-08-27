@@ -13,7 +13,7 @@ use crate::*;
 
 /// Resolve all functions: slots, direct calls, then attach narrow fast-path tags.
 pub fn resolveProgram(
-    prog: &crate::aver_generated::domain::ast::Program,
+    mut prog @ _: crate::aver_generated::domain::ast::Program,
 ) -> crate::aver_generated::domain::ast::Program {
     crate::cancel_checkpoint();
     let resolvedFns @ _ = crate::aver_generated::domain::resolver::core::resolveFns(

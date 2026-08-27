@@ -516,7 +516,7 @@ impl aver_replay::ReplayValue for Token {
 }
 
 /// Debug representation of a token.
-pub fn tokenRepr(t: &Token) -> AverStr {
+pub fn tokenRepr(t @ _: &Token) -> AverStr {
     crate::cancel_checkpoint();
     match t.clone() {
         crate::aver_generated::domain::token::Token::TkInt(n) => aver_rt::AverStr::from({

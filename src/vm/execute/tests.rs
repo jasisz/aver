@@ -663,6 +663,96 @@ fn map_build_cost(
     }
 }
 
+/// The record-wrapped spelling from issue #1160. The map accumulator is still
+/// linear, but it crosses the helper boundary as one field of `Store` and the
+/// helper returns a fresh `Store` around its successor.
+fn record_map_build_cost(n: i64) -> MapBuildCost {
+    let src = format!(
+        "record Store\n    held: Map<String, String>\n\nfn put(store: Store, key: String) -> Store\n    Store(held = Map.set(store.held, key, \"value-{{key}}\"))\n\nfn build(n: Int, store: Store) -> Store\n    match n > 0\n        true -> build(n - 1, put(store, \"key-{{n}}\"))\n        false -> store\n\nfn main() -> Int\n    Map.len(build({n}, Store(held = {{}})).held)\n"
+    );
+    let mut vm = compile_vm_typechecked(&src);
+    let result = vm
+        .run()
+        .expect("record-wrapped map build program should run");
+    assert_eq!(result.as_int(&vm.arena), n);
+    MapBuildCost {
+        copied: vm.arena.map_entries_copied(),
+        scanned: vm.arena.map_entries_scanned(),
+    }
+}
+
+#[test]
+fn a_map_threaded_through_a_returned_record_is_not_copied_per_insert() {
+    let small = record_map_build_cost(200);
+    let large = record_map_build_cost(400);
+
+    assert_eq!(
+        (small.copied, large.copied),
+        (0, 0),
+        "a linear map hidden in a returned record was preserved rather than consumed: \
+         n=200 copied {}, n=400 copied {} entries",
+        small.copied,
+        large.copied,
+    );
+    assert!(
+        large.scanned <= 3 * small.scanned + 400,
+        "record-wrapped Map.set did not scale linearly: n=200 scanned {}, \
+         n=400 scanned {} entries",
+        small.scanned,
+        large.scanned,
+    );
+}
+
+fn run_record_alias_case(main_body: &str) -> i64 {
+    let src = format!(
+        "record Store\n    held: Map<String, Int>\n\nrecord Holder\n    store: Store\n\nfn put(store: Store, key: String, value: Int) -> Store\n    Store(held = Map.set(store.held, key, value))\n\nfn firstSize(stores: List<Store>) -> Int\n    match stores\n        [] -> 0\n        [head, .._] -> Map.len(head.held)\n\nfn main() -> Int\n{main_body}\n"
+    );
+    let mut vm = compile_vm_typechecked(&src);
+    let value = vm.run().expect("record alias case should run");
+    value.as_int(&vm.arena)
+}
+
+#[test]
+fn taking_a_record_field_preserves_a_separate_map_alias() {
+    let result = run_record_alias_case(
+        "    base = Map.set({}, \"old\", 1)\n    store = Store(held = base)\n    newer = put(store, \"new\", 2)\n    Map.len(base) * 10 + Map.len(newer.held)",
+    );
+    assert_eq!(result, 12, "Map.set mutated the map still named by `base`");
+}
+
+#[test]
+fn taking_a_record_field_preserves_a_separate_record_alias() {
+    let result = run_record_alias_case(
+        "    store = Store(held = Map.set({}, \"old\", 1))\n    alias = store\n    newer = put(store, \"new\", 2)\n    Map.len(alias.held) * 10 + Map.len(newer.held)",
+    );
+    assert_eq!(
+        result, 12,
+        "Map.set mutated the map reachable through `alias`"
+    );
+}
+
+#[test]
+fn taking_a_record_field_preserves_a_record_stored_in_an_aggregate() {
+    let result = run_record_alias_case(
+        "    store = Store(held = Map.set({}, \"old\", 1))\n    holder = Holder(store = store)\n    newer = put(store, \"new\", 2)\n    Map.len(holder.store.held) * 10 + Map.len(newer.held)",
+    );
+    assert_eq!(
+        result, 12,
+        "Map.set mutated the map reachable through an enclosing record"
+    );
+}
+
+#[test]
+fn taking_a_record_field_preserves_a_record_stored_in_a_list() {
+    let result = run_record_alias_case(
+        "    store = Store(held = Map.set({}, \"old\", 1))\n    aliases = [store]\n    newer = put(store, \"new\", 2)\n    firstSize(aliases) * 10 + Map.len(newer.held)",
+    );
+    assert_eq!(
+        result, 12,
+        "Map.set mutated the map reachable through a list-held record"
+    );
+}
+
 /// The string-keyed fold from issue #900 at size `n`, seeded from a `seed` that
 /// already holds `seed_entries` keys none of the fold's own keys collide with.
 fn map_build_copies(n: i64, seed: &str, seed_entries: i64) -> u64 {

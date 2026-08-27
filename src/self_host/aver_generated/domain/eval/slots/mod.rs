@@ -5,8 +5,8 @@ use crate::*;
 
 /// Create slot env: Vector<Val> of slotCount, args at 0..n-1.
 pub fn buildSlotEnv(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
-    slotCount: aver_rt::AverInt,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    slotCount @ _: aver_rt::AverInt,
 ) -> Result<aver_rt::AverVector<crate::aver_generated::domain::value::Val>, AverStr> {
     crate::cancel_checkpoint();
     Ok(
@@ -27,9 +27,9 @@ pub fn buildSlotEnv(
 /// Fill slot env from arg list.
 #[inline(always)]
 pub fn buildSlotEnvLoop(
-    mut args: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
-    mut acc: aver_rt::AverVector<crate::aver_generated::domain::value::Val>,
-    mut idx: aver_rt::AverInt,
+    mut args @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    mut acc @ _: aver_rt::AverVector<crate::aver_generated::domain::value::Val>,
+    mut idx @ _: aver_rt::AverInt,
 ) -> aver_rt::AverVector<crate::aver_generated::domain::value::Val> {
     loop {
         crate::cancel_checkpoint();
@@ -48,8 +48,8 @@ pub fn buildSlotEnvLoop(
 /// Look up a variable by slot index. O(1).
 #[inline(always)]
 pub fn lookupSlot(
-    env: &aver_rt::AverVector<crate::aver_generated::domain::value::Val>,
-    slot: aver_rt::AverInt,
+    env @ _: &aver_rt::AverVector<crate::aver_generated::domain::value::Val>,
+    slot @ _: aver_rt::AverInt,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     match (slot).to_usize().and_then(|__i| env.get(__i).cloned()) {
@@ -73,9 +73,9 @@ pub fn lookupSlot(
 /// Set slot value. O(1).
 #[inline(always)]
 pub fn setSlot(
-    env: &aver_rt::AverVector<crate::aver_generated::domain::value::Val>,
-    slot: aver_rt::AverInt,
-    v: &crate::aver_generated::domain::value::Val,
+    env @ _: &aver_rt::AverVector<crate::aver_generated::domain::value::Val>,
+    slot @ _: aver_rt::AverInt,
+    v @ _: &crate::aver_generated::domain::value::Val,
 ) -> aver_rt::AverVector<crate::aver_generated::domain::value::Val> {
     crate::cancel_checkpoint();
     {
