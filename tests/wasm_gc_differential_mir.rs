@@ -86,12 +86,12 @@ fn run_pipeline(
     let tokens = lexer.tokenize().map_err(|e| format!("lex: {:?}", e))?;
     let mut parser = Parser::new(tokens);
     let mut items = parser.parse().map_err(|e| format!("parse: {:?}", e))?;
+    let prepared_deps = aver::source::load_compile_deps(&items, module_root)?;
+    let dep_modules = prepared_deps.modules;
     let result = ir::pipeline::run(
         &mut items,
         ir::PipelineConfig {
-            typecheck: Some(ir::TypecheckMode::Full {
-                base_dir: Some(module_root),
-            }),
+            typecheck: Some(ir::TypecheckMode::WithCheckedLoaded(&prepared_deps.loaded)),
             run_interp_lower: false,
             run_buffer_build: false,
             run_chars_fusion: false,
@@ -108,7 +108,6 @@ fn run_pipeline(
             tc.errors.first()
         ));
     }
-    let dep_modules = aver::source::load_compile_deps(&items, module_root)?;
     let type_aliases = aver::codegen::wasm_gc::flatten_multimodule(
         &mut items,
         &dep_modules,

@@ -105,19 +105,18 @@ fn build_component(
     let source = super::shared::read_file(file).map_err(|e| e.to_string())?;
     let mut items =
         super::shared::parse_file(&source, &module_root, file).map_err(|e| e.to_string())?;
-    let dep_modules = super::commands::load_compile_deps(
+    let prepared_deps = super::commands::load_compile_deps_prepared(
         &items,
         &module_root,
         super::commands::DepLowering::STRING_INDEX_ONLY,
     );
+    let dep_modules = prepared_deps.modules;
 
     let neutral_policy = NeutralAllocPolicy;
     let result = aver::ir::pipeline::run(
         &mut items,
         PipelineConfig {
-            typecheck: Some(TypecheckMode::Full {
-                base_dir: Some(&module_root),
-            }),
+            typecheck: Some(TypecheckMode::WithCheckedLoaded(&prepared_deps.loaded)),
             alloc_policy: Some(&neutral_policy),
             dep_modules: &dep_modules,
             // Both traversal-lowering stages stay OFF for wasip2, and
@@ -236,11 +235,10 @@ fn run_component(
     providers: &aver::provider::ProviderRegistry,
 ) -> wasmtime::Result<()> {
     use wasmtime::component::{Component, Linker, ResourceTable};
-    use wasmtime::{Config, Engine, Store};
+    use wasmtime::{Cache, Config, Engine, Store};
     use wasmtime_wasi::p2::bindings::sync::Command;
-    use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
-    use wasmtime_wasi_http::WasiHttpCtx;
-    use wasmtime_wasi_http::p2::{WasiHttpCtxView, WasiHttpView};
+    use wasmtime_wasi::{FsPerms, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
+    use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpCtxView, WasiHttpView};
 
     // Engine config: GC + function-references + Component Model are
     // all needed for the wasm-gc-derived component to validate and
@@ -251,6 +249,13 @@ fn run_component(
     config.wasm_component_model(true);
     config.wasm_gc(true);
     config.wasm_function_references(true);
+    // Match the embedded wasm-gc runner: the component bytes and engine
+    // settings form Wasmtime's cache key, so repeat source runs skip Cranelift
+    // while changed programs and configurations miss safely.
+    // Cache availability is an optimisation, not part of WASI semantics.
+    if let Ok(cache) = Cache::from_file(None) {
+        config.cache(Some(cache));
+    }
     let engine = Engine::new(&config)?;
 
     let component = Component::from_binary(&engine, component_bytes)?;
@@ -284,12 +289,7 @@ fn run_component(
     // Surface the host error up front instead of letting it look
     // like a guest bug.
     ctx_builder
-        .preopened_dir(
-            ".",
-            ".",
-            wasmtime_wasi::DirPerms::all(),
-            wasmtime_wasi::FilePerms::all(),
-        )
+        .preopened_dir(".", ".", FsPerms::ReadWrite)
         .map_err(|e| wasmtime::Error::msg(format!("preopen `.`: {e}")))?;
     // Phase 4 (0.20) — wasi-sockets capabilities for `Tcp.*`.
     // `inherit_network` grants the guest access to the host's

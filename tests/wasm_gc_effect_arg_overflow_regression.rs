@@ -45,14 +45,13 @@ fn run_wasm_gc_with_mode(
     let tokens = lexer.tokenize().expect("lex");
     let mut parser = aver::parser::Parser::new(tokens);
     let mut items = parser.parse().expect("parse");
-    let dep_modules = aver::source::load_compile_deps(&items, env!("CARGO_MANIFEST_DIR"))?;
+    let prepared_deps = aver::source::load_compile_deps(&items, env!("CARGO_MANIFEST_DIR"))?;
+    let dep_modules = prepared_deps.modules;
     let neutral_policy = NeutralAllocPolicy;
     let result = aver::ir::pipeline::run(
         &mut items,
         PipelineConfig {
-            typecheck: Some(TypecheckMode::Full {
-                base_dir: Some(env!("CARGO_MANIFEST_DIR")),
-            }),
+            typecheck: Some(TypecheckMode::WithCheckedLoaded(&prepared_deps.loaded)),
             dep_modules: &dep_modules,
             alloc_policy: Some(&neutral_policy),
             run_interp_lower: false,

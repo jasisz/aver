@@ -76,8 +76,9 @@ fn stub_vm() -> (vm::VM, String) {
     let mut parser = aver::parser::Parser::new(tokens);
     let mut items = parser.parse().expect("parse stub program");
     aver::tco::transform_program(&mut items);
-    let dep_modules =
+    let prepared_deps =
         aver::source::load_compile_deps(&items, env!("CARGO_MANIFEST_DIR")).expect("load Bytes");
+    let dep_modules = prepared_deps.modules;
     aver::resolver::resolve_program(&mut items);
     let mut arena = Arena::new();
     vm::register_service_types(&mut arena);

@@ -253,6 +253,10 @@ impl HashHelperRegistry {
     }
 
     pub(crate) fn assign_slots(&mut self, next_fn_idx: &mut u32, next_type_idx: &mut u32) {
+        // Registration order may inherit a HashMap traversal from nominal
+        // discovery. Stable slots are required for reproducible artifacts and
+        // for Wasmtime to reuse the native-code cache across processes.
+        self.order.sort_unstable();
         for name in &self.order {
             self.slots
                 .insert(name.clone(), (*next_fn_idx, *next_type_idx));
@@ -333,6 +337,31 @@ impl HashHelperRegistry {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{HashHelperRegistry, HashKind};
+
+    #[test]
+    fn slot_assignment_is_independent_of_discovery_order() {
+        let mut left = HashHelperRegistry::new();
+        left.register("Zulu", HashKind::Record);
+        left.register("Alpha", HashKind::Record);
+        let mut right = HashHelperRegistry::new();
+        right.register("Alpha", HashKind::Record);
+        right.register("Zulu", HashKind::Record);
+
+        left.assign_slots(&mut 10, &mut 20);
+        right.assign_slots(&mut 10, &mut 20);
+        assert_eq!(left.lookup_fn_idx("Alpha"), right.lookup_fn_idx("Alpha"));
+        assert_eq!(left.lookup_fn_idx("Zulu"), right.lookup_fn_idx("Zulu"));
+        assert_eq!(
+            left.lookup_type_idx("Alpha"),
+            right.lookup_type_idx("Alpha")
+        );
+        assert_eq!(left.lookup_type_idx("Zulu"), right.lookup_type_idx("Zulu"));
     }
 }
 

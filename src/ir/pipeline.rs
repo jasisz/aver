@@ -44,8 +44,8 @@ use crate::ir::{AllocPolicy, AnalysisResult, CallLowerCtx};
 use crate::source::LoadedModule;
 use crate::types::checker::{
     TypeCheckResult, run_type_check_full, run_type_check_full_self_host,
-    run_type_check_with_checked_loaded, run_type_check_with_loaded,
-    run_type_check_with_loaded_self_host,
+    run_type_check_with_checked_loaded, run_type_check_with_checked_loaded_self_host,
+    run_type_check_with_loaded, run_type_check_with_loaded_self_host,
 };
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -172,6 +172,9 @@ pub enum TypecheckMode<'a> {
     FullSelfHost { base_dir: Option<&'a str> },
     /// Self-host variant of [`WithLoaded`].
     WithLoadedSelfHost(&'a [LoadedModule]),
+    /// Self-host variant of [`WithCheckedLoaded`]. Dependency bodies were
+    /// already checked leaves-first with the opaque-type bypass enabled.
+    WithCheckedLoadedSelfHost(&'a [LoadedModule]),
 }
 
 pub struct PipelineConfig<'a> {
@@ -705,6 +708,9 @@ pub fn typecheck(items: &[TopLevel], mode: &TypecheckMode<'_>) -> TypeCheckResul
         TypecheckMode::FullSelfHost { base_dir } => run_type_check_full_self_host(items, *base_dir),
         TypecheckMode::WithLoadedSelfHost(loaded) => {
             run_type_check_with_loaded_self_host(items, loaded)
+        }
+        TypecheckMode::WithCheckedLoadedSelfHost(loaded) => {
+            run_type_check_with_checked_loaded_self_host(items, loaded)
         }
     }
 }

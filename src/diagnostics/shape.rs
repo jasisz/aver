@@ -736,14 +736,13 @@ pub fn analyze_source_with(
         .map_err(|e| format!("parse: {}", e))?;
     let module_root = module_root.to_string();
 
-    let dep_modules = crate::source::load_compile_deps(&items, &module_root)
+    let prepared_deps = crate::source::load_compile_deps(&items, &module_root)
         .map_err(|e| format!("deps: {}", e))?;
+    let dep_modules = prepared_deps.modules;
     let pipeline_result = crate::ir::pipeline::run(
         &mut items,
         PipelineConfig {
-            typecheck: Some(TypecheckMode::Full {
-                base_dir: Some(&module_root),
-            }),
+            typecheck: Some(TypecheckMode::WithCheckedLoaded(&prepared_deps.loaded)),
             dep_modules: &dep_modules,
             ..Default::default()
         },

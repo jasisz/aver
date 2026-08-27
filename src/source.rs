@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -1032,25 +1032,26 @@ pub fn loaded_to_module_info(loaded: &[LoadedModule]) -> Vec<crate::codegen::Mod
         .collect()
 }
 
-/// Load every dependency of the program behind `items` — written
-/// `depends`, their transitive closure, and the standard modules implied by
-/// builtin calls — into `codegen::ModuleInfo` records ready to hand to
-/// `PipelineConfig.dep_modules`.
+/// Both views of a dependency graph prepared for one entry pipeline.
+/// `modules` is target-lowered codegen input; `loaded` is the pristine,
+/// already-checked closure the entry uses to rebuild import surfaces without
+/// walking dependency bodies again.
+pub struct PreparedCompileDeps {
+    pub modules: Vec<crate::codegen::ModuleInfo>,
+    pub loaded: Vec<LoadedModule>,
+}
+
+/// Prepare a codegen dependency graph once, leaves-first, and retain the
+/// pristine loaded closure for the entry module's `WithCheckedLoaded` pass.
 ///
-/// Each dependency goes through the same canonical pipeline as the entry —
-/// `pipeline::run` with `TypecheckMode::Full { base_dir: module_root }`,
-/// the mutable builder/cursor passes disabled, String indexing enabled,
-/// and the neutral alloc policy. Type errors in any dependency surface as
-/// `Err`, parent before child.
-///
-/// The CLI's `commands::load_compile_deps` is the sibling that applies a
-/// per-target lowering matrix and exits on failure; every other call site —
-/// `vm_verify`, `wasm_gc_verify`, `bench/runner`, the research test — goes
-/// through here so the dependency contract stays in one place.
+/// This is the library counterpart of the CLI's target-aware loader. The old
+/// implementation selected `Full` separately for every dependency, causing
+/// each importer to reload and recheck its complete transitive cone before
+/// callers checked the entry in full once more.
 pub fn load_compile_deps(
     items: &[TopLevel],
     module_root: &str,
-) -> Result<Vec<crate::codegen::ModuleInfo>, String> {
+) -> Result<PreparedCompileDeps, String> {
     let program = load_program(
         Path::new("<entry>"),
         "",
@@ -1064,8 +1065,6 @@ pub fn load_compile_deps(
         }
         other => other.to_string(),
     })?;
-    let neutral_policy = crate::ir::NeutralAllocPolicy;
-    let mut lowered = BTreeMap::new();
     for module in program.dependencies_in_discovery_order() {
         if let Some(fault) = &module.fault {
             return Err(match fault {
@@ -1075,13 +1074,19 @@ pub fn load_compile_deps(
                 other => other.to_string(),
             });
         }
+    }
+
+    let neutral_policy = crate::ir::NeutralAllocPolicy;
+    let mut modules = Vec::with_capacity(program.dependencies().len());
+    for module in program.dependencies() {
+        let loaded = program
+            .loaded_dependencies_for(module)
+            .map_err(|error| error.to_string())?;
         let mut module_items = module.items.clone();
         let pipeline_result = crate::ir::pipeline::run(
             &mut module_items,
             crate::ir::PipelineConfig {
-                typecheck: Some(crate::ir::TypecheckMode::Full {
-                    base_dir: Some(module_root),
-                }),
+                typecheck: Some(crate::ir::TypecheckMode::WithCheckedLoaded(&loaded)),
                 run_interp_lower: false,
                 run_buffer_build: false,
                 run_chars_fusion: false,
@@ -1104,29 +1109,92 @@ pub fn load_compile_deps(
                     .join("\n")
             ));
         }
-        lowered.insert(
-            module.discovery_index,
-            crate::codegen::ModuleInfo::from_items(
-                module.dep_name.clone(),
-                &module_items,
-                pipeline_result.analysis,
-            ),
-        );
+        modules.push(crate::codegen::ModuleInfo::from_items(
+            module.dep_name.clone(),
+            &module_items,
+            pipeline_result.analysis,
+        ));
     }
-    Ok(program
-        .dependencies()
-        .iter()
-        .filter_map(|module| lowered.remove(&module.discovery_index))
-        .collect())
+
+    let loaded = program
+        .loaded_dependencies_for(program.entry())
+        .map_err(|error| error.to_string())?;
+    Ok(PreparedCompileDeps { modules, loaded })
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
         LoadMode, ProgramLoadCache, collect_stdlib_shadowed, collect_stdlib_shadowed_in_map,
-        load_module_tree, load_module_tree_from_map, load_program_with_cache, parse_source,
-        require_module_declaration, resolve_module_source, stdlib_shadowed_project_file,
+        load_compile_deps, load_module_tree, load_module_tree_from_map, load_program_with_cache,
+        parse_source, require_module_declaration, resolve_module_source,
+        stdlib_shadowed_project_file,
     };
+
+    #[test]
+    fn compile_dependency_preparation_checks_bodies_once_leaves_first() {
+        let root = tempfile::tempdir().expect("module root");
+        std::fs::write(
+            root.path().join("B.av"),
+            "module B\n    exposes [value]\n\nfn value() -> Int\n    1\n",
+        )
+        .expect("write B");
+        std::fs::write(
+            root.path().join("A.av"),
+            "module A\n    depends [B]\n    exposes [value]\n\nfn value() -> Int\n    B.value()\n",
+        )
+        .expect("write A");
+        let entry =
+            parse_source("module Main\n    depends [A]\n\nfn main() -> Int\n    A.value()\n")
+                .expect("parse entry");
+        let root_str = root.path().to_string_lossy();
+
+        let mut prepared = load_compile_deps(&entry, &root_str).expect("prepare valid graph");
+        assert_eq!(
+            prepared
+                .modules
+                .iter()
+                .map(|module| module.prefix.as_str())
+                .collect::<Vec<_>>(),
+            vec!["B", "A"]
+        );
+
+        // The entry seam trusts only a graph returned by the preparation
+        // above: changing a dependency body afterwards does not recursively
+        // recheck it, but its signature remains visible to the importer.
+        let broken_b = parse_source(
+            "module B\n    exposes [value]\n\nfn value() -> Int\n    \"not an Int\"\n",
+        )
+        .expect("parse deliberately ill-typed B");
+        prepared
+            .loaded
+            .iter_mut()
+            .find(|module| module.dep_name == "B")
+            .expect("loaded B")
+            .items = broken_b;
+        let entry_check = crate::ir::pipeline::typecheck(
+            &entry,
+            &crate::ir::TypecheckMode::WithCheckedLoaded(&prepared.loaded),
+        );
+        assert!(entry_check.errors.is_empty(), "{:?}", entry_check.errors);
+
+        // The trust seam is not public input: preparing that same broken body
+        // from source rejects it before an importer can select
+        // `WithCheckedLoaded`.
+        std::fs::write(
+            root.path().join("B.av"),
+            "module B\n    exposes [value]\n\nfn value() -> Int\n    \"not an Int\"\n",
+        )
+        .expect("replace B");
+        let error = match load_compile_deps(&entry, &root_str) {
+            Ok(_) => panic!("preparation must check B's body"),
+            Err(error) => error,
+        };
+        assert!(
+            error.contains("Type errors in dependency module 'B'"),
+            "{error}"
+        );
+    }
 
     #[test]
     fn standard_bytes_module_resolves_without_a_filesystem_root() {

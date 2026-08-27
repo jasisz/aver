@@ -873,10 +873,10 @@ fn run_verify_for_items_vm_impl(
     // verify fails — exactly the bug #213 surfaced on the 0.22 release.
     // Mirrors what `aver run` / `aver compile` / `bench/runner` /
     // `wasm_gc_verify` all do.
-    let dep_modules = if let Some(root) = base_dir {
-        crate::source::load_compile_deps(&items, root)?
+    let prepared_deps = if let Some(root) = base_dir {
+        Some(crate::source::load_compile_deps(&items, root)?)
     } else {
-        Vec::new()
+        None
     };
 
     // `pipeline::typecheck_gate`, not the bare `pipeline::typecheck`:
@@ -888,14 +888,18 @@ fn run_verify_for_items_vm_impl(
     // the #951 program, whose three executors disagreed about a call
     // through a binder spelling a module fn's name, was still EXECUTED
     // by `aver verify` while `run` and `compile` refused it.
-    let tc_result = crate::ir::pipeline::typecheck_gate(
-        &items,
-        &crate::ir::TypecheckMode::Full { base_dir },
-        &items[..user_program_len],
-    );
+    let typecheck_mode = match prepared_deps.as_ref() {
+        Some(prepared) => crate::ir::TypecheckMode::WithCheckedLoaded(&prepared.loaded),
+        None => crate::ir::TypecheckMode::Full { base_dir },
+    };
+    let tc_result =
+        crate::ir::pipeline::typecheck_gate(&items, &typecheck_mode, &items[..user_program_len]);
     if !tc_result.errors.is_empty() {
         return Err(format_type_errors(&tc_result.errors));
     }
+    let dep_modules = prepared_deps
+        .map(|prepared| prepared.modules)
+        .unwrap_or_default();
 
     let mut verify_blocks = merge_verify_blocks(&items);
     if verify_blocks.is_empty() {

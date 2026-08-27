@@ -223,6 +223,20 @@ pub fn run_type_check_with_loaded_self_host(
     finalize_check_result(checker, items)
 }
 
+/// Self-host variant of [`run_type_check_with_checked_loaded`]. The caller
+/// has already checked every dependency body leaves-first under the same
+/// opaque-type bypass, so only importer-visible surfaces and `items` are
+/// rebuilt here.
+pub(crate) fn run_type_check_with_checked_loaded_self_host(
+    items: &[TopLevel],
+    loaded: &[crate::source::LoadedModule],
+) -> TypeCheckResult {
+    let mut checker = TypeChecker::new_with_symbols(build_symbols_with_loaded(items, loaded));
+    checker.self_host_mode = true;
+    checker.check_with_checked_loaded(items, loaded);
+    finalize_check_result(checker, items)
+}
+
 fn finalize_check_result(mut checker: TypeChecker, items: &[TopLevel]) -> TypeCheckResult {
     // Phase B (post peer-review #148): flatten the internal split
     // (`fn_sigs` keyed by `FnId`, `extra_sigs` keyed by canonical

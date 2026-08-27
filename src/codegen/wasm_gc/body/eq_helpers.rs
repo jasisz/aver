@@ -290,6 +290,13 @@ impl EqHelperRegistry {
     }
 
     pub(crate) fn assign_slots(&mut self, next_fn_idx: &mut u32, next_type_idx: &mut u32) {
+        // Discovery can reach otherwise independent nominal types through a
+        // HashMap-backed registry walk. Their relative order has no semantic
+        // meaning, but letting it choose function/type indices makes identical
+        // source emit different wasm bytes and defeats Wasmtime's content
+        // cache. Canonical names are the stable ordering key used by the rest
+        // of the wasm-gc registries.
+        self.order.sort_unstable();
         for name in &self.order {
             self.slots
                 .insert(name.clone(), (*next_fn_idx, *next_type_idx));
@@ -443,6 +450,31 @@ impl EqHelperRegistry {
             }
         }
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{EqHelperRegistry, EqKind};
+
+    #[test]
+    fn slot_assignment_is_independent_of_discovery_order() {
+        let mut left = EqHelperRegistry::new();
+        left.register("Zulu", EqKind::Record);
+        left.register("Alpha", EqKind::Record);
+        let mut right = EqHelperRegistry::new();
+        right.register("Alpha", EqKind::Record);
+        right.register("Zulu", EqKind::Record);
+
+        left.assign_slots(&mut 10, &mut 20);
+        right.assign_slots(&mut 10, &mut 20);
+        assert_eq!(left.lookup_fn_idx("Alpha"), right.lookup_fn_idx("Alpha"));
+        assert_eq!(left.lookup_fn_idx("Zulu"), right.lookup_fn_idx("Zulu"));
+        assert_eq!(
+            left.lookup_type_idx("Alpha"),
+            right.lookup_type_idx("Alpha")
+        );
+        assert_eq!(left.lookup_type_idx("Zulu"), right.lookup_type_idx("Zulu"));
     }
 }
 

@@ -1,7 +1,7 @@
 use aver::source::require_module_declaration;
 use colored::Colorize;
 
-use super::commands::{DepLowering, load_compile_deps};
+use super::commands::{DepLowering, load_compile_deps_prepared};
 use super::shared::{format_type_errors, parse_file, read_file, resolve_module_root};
 
 fn load_capability_target_manifest(
@@ -12,13 +12,14 @@ fn load_capability_target_manifest(
     let source = read_file(file)?;
     let mut items = parse_file(&source, &module_root, file)?;
     require_module_declaration(&items, file)?;
-    let modules = load_compile_deps(&items, &module_root, DepLowering::PRISTINE);
+    let prepared_deps = load_compile_deps_prepared(&items, &module_root, DepLowering::PRISTINE);
+    let modules = prepared_deps.modules;
     let result = aver::ir::pipeline::run(
         &mut items,
         aver::ir::PipelineConfig {
-            typecheck: Some(aver::ir::TypecheckMode::Full {
-                base_dir: Some(&module_root),
-            }),
+            typecheck: Some(aver::ir::TypecheckMode::WithCheckedLoaded(
+                &prepared_deps.loaded,
+            )),
             dep_modules: &modules,
             run_interp_lower: false,
             run_buffer_build: false,

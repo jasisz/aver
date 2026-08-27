@@ -320,6 +320,15 @@ fn run_wasm_gc_with_host(
     // async stack at 12 MiB to keep both paths happy. No-op when async
     // support is off (unrelated builds).
     config.async_stack_size(12 * 1024 * 1024);
+    // Wasm emission and Cranelift are separate compilation stages. Persist the
+    // latter in Wasmtime's content/config-addressed cache so repeated
+    // `aver run --wasm-gc` processes rehydrate native code instead of JITing
+    // the identical module again.
+    // A missing/unwritable user cache must not turn a valid program into a
+    // runtime failure; it only forfeits the warm-start optimisation.
+    if let Ok(cache) = Cache::from_file(None) {
+        config.cache(Some(cache));
+    }
     let engine = Engine::new(&config).map_err(|e| format!("engine: {e:#}"))?;
     let module = Module::new(&engine, wasm_bytes).map_err(|e| format!("module: {e:#}"))?;
 
