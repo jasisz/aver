@@ -39,6 +39,20 @@ fn taking_record_fields_releases_exactly_the_removed_holders() {
 }
 
 #[test]
+fn record_holder_count_matches_the_exhaustive_audit_after_a_field_take() {
+    let mut arena = TestArena::new();
+    let inner = NanValue::new_record(arena.push_record(1, Vec::new()));
+    let outer = NanValue::new_record(arena.push_record(2, vec![inner]));
+
+    assert!(arena.record_is_held_elsewhere(inner));
+    assert!(arena.any_entry_holds_slot(inner.arena_index()));
+
+    assert_eq!(arena.take_record_field(outer, 0).bits(), inner.bits());
+    assert!(!arena.record_is_held_elsewhere(inner));
+    assert!(!arena.any_entry_holds_slot(inner.arena_index()));
+}
+
+#[test]
 fn lane_receipts_must_not_be_newer_than_the_frame_serial() {
     let mut arena = TestArena::new();
     let early_receipt = arena.lane_mark();
