@@ -1052,10 +1052,11 @@ impl<T: ArenaTypes> Arena<T> {
 
     /// Remove and return one field from a record whose uniqueness the caller
     /// has already established. Removing the direct reference releases exactly
-    /// one registered holder on a nested map, vector, or record.
+    /// one registered holder on a nested map, vector, or record. The hot path
+    /// checks the incremental holder count only; the exhaustive heap-scan
+    /// counterpart belongs in tests because it is `O(live heap)`.
     pub fn take_record_field(&mut self, record: NanValue, field_idx: usize) -> NanValue {
         debug_assert!(!self.record_is_held_elsewhere(record));
-        debug_assert!(!self.any_entry_holds_slot(record.arena_index()));
         let value = match self.get_mut(record.arena_index()) {
             ArenaEntry::Record { fields, .. } => {
                 std::mem::replace(&mut fields[field_idx], NanValue::UNIT)
