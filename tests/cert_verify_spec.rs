@@ -2087,9 +2087,13 @@ fn cert_verify_declines_tampered_array_new_data_operands() {
     // The denominator counts every function in json.wasm that carries no
     // claim. It rose from 90 to 133 when the string-index pass started
     // synthesizing index workers for the parser's recursive `String.charAt`
-    // walks; those workers are compiler-made and have no source-level claim.
+    // walks. The Bytes API expansion then added five ordinary stdlib helpers
+    // (`empty`, `len`, `concat`, `take`, `drop`), while lowering the JSON
+    // parser's `String.firstCodePoint` calls added four `__code` workers. None
+    // of those nine functions carries an artifact claim, so the denominator is
+    // now 142 while the certified numerator remains 12.
     assert!(
-        compile_report.contains("(12 certified, 133 source-level-only)"),
+        compile_report.contains("(12 certified, 142 source-level-only)"),
         "json certificate KPI denominator changed:
 {compile_report}"
     );
