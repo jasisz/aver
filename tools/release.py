@@ -3,6 +3,8 @@
 Aver release script.
 
 Usage:
+    python3 tools/release.py 0.9.7 --prepare
+    # wait for exact-commit CI, Proof, and Certification
     python3 tools/release.py 0.9.7
     python3 tools/release.py 0.9.7 --dry-run
     python3 tools/release.py 0.9.7 --skip-publish
@@ -45,7 +47,8 @@ VERSION_FILES = {
 }
 
 RELEASE_PLAN_PATH = REPO_ROOT / "target" / ".aver-release-plan.json"
-RELEASE_PLAN_SCHEMA = 2
+RELEASE_PLAN_SCHEMA = 3
+RELEASE_CI_WORKFLOWS = {"CI", "Proof", "Certification"}
 
 
 class ReleaseError(RuntimeError):
@@ -95,6 +98,8 @@ class ReleasePlan:
     publish_states: dict[str, str]
     package_checksums: dict[str, str] = field(default_factory=dict)
     release_commit: str | None = None
+    base_commit: str | None = None
+    candidate_ref: str | None = None
 
 
 def run(
@@ -116,8 +121,59 @@ def run(
     return subprocess.run(cmd, cwd=cwd, check=check, env=env)
 
 
+def ci_verified_commit(commit: str) -> tuple[bool, str]:
+    """Whether every release workflow passed on exactly ``commit``."""
+    try:
+        raw = run(
+            [
+                "gh",
+                "run",
+                "list",
+                "--commit",
+                commit,
+                "--limit",
+                "50",
+                "--json",
+                "name,conclusion,status",
+            ],
+            capture=True,
+            check=True,
+        ).stdout
+        runs = json.loads(raw)
+    except (subprocess.CalledProcessError, FileNotFoundError, ValueError):
+        return False, "cannot read CI results for this commit"
+    if not isinstance(runs, list):
+        return False, "CI returned an invalid workflow list"
+
+    # `gh run list` is newest-first. A manual rerun may leave an older failed
+    # row for the same workflow and SHA; only the newest attempt decides the
+    # gate, while unrelated workflows cannot hold a release hostage.
+    latest: dict[str, dict[str, object]] = {}
+    for result in runs:
+        if not isinstance(result, dict):
+            continue
+        name = result.get("name")
+        if isinstance(name, str) and name in RELEASE_CI_WORKFLOWS:
+            latest.setdefault(name, result)
+
+    missing = RELEASE_CI_WORKFLOWS - set(latest)
+    if missing:
+        return False, f"no run of {', '.join(sorted(missing))} on {commit[:8]}"
+    running = sorted(
+        name for name, result in latest.items() if result.get("status") != "completed"
+    )
+    if running:
+        return False, f"CI still running on {commit[:8]}: {', '.join(running)}"
+    failed = sorted(
+        name for name, result in latest.items() if result.get("conclusion") != "success"
+    )
+    if failed:
+        return False, f"CI failed on {commit[:8]}: {', '.join(failed)}"
+    return True, f"release CI green on {commit[:8]}"
+
+
 def ci_verified_head() -> tuple[bool, str]:
-    """Whether CI already ran the test suite on exactly this commit.
+    """Whether release CI already passed on the settled main HEAD.
 
     Only the full `cargo test` run below is skippable this way, and only when
     every workflow that gates `main` reported success for this exact SHA. The
@@ -131,7 +187,6 @@ def ci_verified_head() -> tuple[bool, str]:
     rather than `success` and the tests run. Releasing from a settled `main`
     is what makes it fire.
     """
-    required = {"CI", "Proof", "Certification"}
     try:
         head = run(
             ["git", "rev-parse", "HEAD"], capture=True, check=True
@@ -143,34 +198,7 @@ def ci_verified_head() -> tuple[bool, str]:
         return False, "cannot read git refs"
     if head != upstream:
         return False, "HEAD is not origin/main"
-    try:
-        raw = run(
-            [
-                "gh",
-                "run",
-                "list",
-                "--commit",
-                head,
-                "--limit",
-                "50",
-                "--json",
-                "name,conclusion,status",
-            ],
-            capture=True,
-            check=True,
-        ).stdout
-        runs = json.loads(raw)
-    except (subprocess.CalledProcessError, FileNotFoundError, ValueError):
-        return False, "cannot read CI results for this commit"
-    if any(r.get("status") != "completed" for r in runs):
-        return False, "CI is still running on this commit"
-    if any(r.get("conclusion") == "failure" for r in runs):
-        return False, "CI failed on this commit"
-    succeeded = {r["name"] for r in runs if r.get("conclusion") == "success"}
-    missing = required - succeeded
-    if missing:
-        return False, f"no successful run of {', '.join(sorted(missing))}"
-    return True, f"CI green on {head[:8]}"
+    return ci_verified_commit(head)
 
 
 def current_version() -> str:
@@ -533,9 +561,7 @@ def compute_new_versions(
     published_baselines = dict(old_versions)
     for crate in CRATE_ORDER:
         if crate != "aver-lang":
-            published_baselines[crate] = published_baseline_for_dev(
-                old_versions[crate]
-            )
+            published_baselines[crate] = published_baseline_for_dev(old_versions[crate])
 
     new = dict(published_baselines)
     new["aver-lang"] = new_main
@@ -568,9 +594,7 @@ def compute_new_versions(
     # Pass 3: occupied targets are collisions, never an invitation to mutate the
     # planned version behind CHANGELOG/tag/GitHub release metadata.
     for crate in CRATE_ORDER:
-        if new[crate] != published_baselines[crate] and registry[crate].has(
-            new[crate]
-        ):
+        if new[crate] != published_baselines[crate] and registry[crate].has(new[crate]):
             raise ReleaseError(
                 f"planned {crate} {new[crate]} already exists on crates.io; "
                 "choose the version explicitly and rerun"
@@ -638,6 +662,8 @@ def save_release_plan(plan: ReleasePlan, path: Path | None = None) -> None:
         "publish_states": plan.publish_states,
         "package_checksums": plan.package_checksums,
         "release_commit": plan.release_commit,
+        "base_commit": plan.base_commit,
+        "candidate_ref": plan.candidate_ref,
     }
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
@@ -742,6 +768,20 @@ def load_release_plan(
         or re.fullmatch(r"[0-9a-f]{40,64}", release_commit) is None
     ):
         raise ReleaseError("saved release plan has an invalid release_commit")
+    base_commit = payload.get("base_commit")
+    if base_commit is not None and (
+        not isinstance(base_commit, str)
+        or re.fullmatch(r"[0-9a-f]{40,64}", base_commit) is None
+    ):
+        raise ReleaseError("saved release plan has an invalid base_commit")
+    candidate_ref = payload.get("candidate_ref")
+    if candidate_ref is not None and (
+        not isinstance(candidate_ref, str)
+        or re.fullmatch(r"release/[0-9A-Za-z._-]+", candidate_ref) is None
+    ):
+        raise ReleaseError("saved release plan has an invalid candidate_ref")
+    if release_commit is not None and (base_commit is None or candidate_ref is None):
+        raise ReleaseError("saved release candidate is missing its base commit or ref")
 
     return ReleasePlan(
         requested_main=requested_main,
@@ -752,6 +792,8 @@ def load_release_plan(
         publish_states=dict(states),
         package_checksums=dict(package_checksums),
         release_commit=release_commit,
+        base_commit=base_commit,
+        candidate_ref=candidate_ref,
     )
 
 
@@ -842,9 +884,7 @@ def refresh_unsealed_release_plan(
     current_fingerprints = {crate: fingerprint(crate) for crate in CRATE_ORDER}
 
     def changed(crate: str, _version: str, _baseline: str | None) -> bool:
-        published_baseline = published_baseline_for_dev(
-            plan.base_versions[crate]
-        )
+        published_baseline = published_baseline_for_dev(plan.base_versions[crate])
         return (
             plan.target_versions[crate] != published_baseline
             or current_fingerprints[crate] != plan.planning_fingerprints[crate]
@@ -1033,9 +1073,7 @@ def bump_website_version(new_version: str, dry_run: bool) -> None:
 def regenerate_self_host(dry_run: bool) -> None:
     print("Regenerating self-host...")
     if dry_run:
-        print(
-            "  [dry-run] would run: python3 tools/regenerate_self_host.py"
-        )
+        print("  [dry-run] would run: python3 tools/regenerate_self_host.py")
         return
     run([sys.executable, str(REPO_ROOT / "tools" / "regenerate_self_host.py")])
 
@@ -1070,7 +1108,18 @@ def verify(dry_run: bool) -> None:
         return
 
     print("  verify: release tooling unit tests", flush=True)
-    run([sys.executable, "tools/tests/test_release.py"])
+    run(
+        [
+            sys.executable,
+            "-m",
+            "unittest",
+            "discover",
+            "-s",
+            "tools/tests",
+            "-p",
+            "test_*.py",
+        ]
+    )
     print("  verify: cargo package -p aver-cert --all-features", flush=True)
     run(["cargo", "package", "-p", "aver-cert", "--all-features", "--allow-dirty"])
     print("  verify: cargo fmt", flush=True)
@@ -1502,6 +1551,173 @@ def git_commit_release(
     seal_release_plan(plan)
 
 
+def release_candidate_ref(version: str) -> str:
+    if re.fullmatch(r"[0-9A-Za-z][0-9A-Za-z._-]*", version) is None:
+        raise ReleaseError(f"version {version!r} cannot form a release branch name")
+    return f"release/{version}"
+
+
+def initialize_release_candidate(plan: ReleasePlan, version: str) -> None:
+    """Pin the candidate to the settled main commit it is based on."""
+    expected_ref = release_candidate_ref(version)
+    if plan.base_commit is not None or plan.candidate_ref is not None:
+        if plan.base_commit is None or plan.candidate_ref != expected_ref:
+            raise ReleaseError("saved release candidate identity is incomplete")
+        return
+
+    head = run(["git", "rev-parse", "HEAD"], capture=True).stdout.strip()
+    upstream = run(["git", "rev-parse", "origin/main"], capture=True).stdout.strip()
+    if head != upstream:
+        raise ReleaseError(
+            "release preparation must start from origin/main; "
+            f"HEAD is {head[:8]}, origin/main is {upstream[:8]}"
+        )
+    plan.base_commit = head
+    plan.candidate_ref = expected_ref
+    save_release_plan(plan)
+
+
+def candidate_has_local_changes(plan: ReleasePlan) -> bool:
+    if plan.release_commit is None:
+        return False
+    head = run(["git", "rev-parse", "HEAD"], capture=True).stdout.strip()
+    dirty = bool(run(["git", "status", "--porcelain"], capture=True).stdout.strip())
+    return head != plan.release_commit or dirty
+
+
+def reopen_release_candidate(
+    plan: ReleasePlan,
+    registry: Mapping[str, RegistryState],
+) -> None:
+    """Replan a changed candidate before any irreversible publication."""
+    if plan.release_commit is None or not plan.fingerprints:
+        raise ReleaseError("release candidate is not sealed")
+    if plan.package_checksums or any(
+        state in {"publishing", "published"} for state in plan.publish_states.values()
+    ):
+        raise ReleaseError("cannot repair a release candidate after publication began")
+    head = run(["git", "rev-parse", "HEAD"], capture=True).stdout.strip()
+    ancestor = run(
+        ["git", "merge-base", "--is-ancestor", plan.release_commit, head],
+        check=False,
+        capture=True,
+    )
+    if ancestor.returncode != 0:
+        raise ReleaseError(
+            "current HEAD does not descend from the prepared release candidate"
+        )
+    upstream = run(["git", "rev-parse", "origin/main"], capture=True).stdout.strip()
+    if plan.base_commit is None or upstream != plan.base_commit:
+        raise ReleaseError("origin/main moved; this candidate must be prepared anew")
+
+    current_fingerprints = {
+        crate: publish_inputs_fingerprint(crate) for crate in CRATE_ORDER
+    }
+
+    def changed(crate: str, _version: str, _baseline: str | None) -> bool:
+        published_baseline = published_baseline_for_dev(plan.base_versions[crate])
+        return (
+            plan.target_versions[crate] != published_baseline
+            or current_fingerprints[crate] != plan.fingerprints[crate]
+        )
+
+    plan.target_versions = compute_new_versions(
+        plan.base_versions,
+        plan.requested_main,
+        registry,
+        changed=changed,
+    )
+    plan.planning_fingerprints = {
+        crate: planning_inputs_fingerprint(crate) for crate in CRATE_ORDER
+    }
+    plan.publish_states = {
+        crate: (
+            "existing"
+            if registry[crate].has(plan.target_versions[crate])
+            else "pending"
+        )
+        for crate in CRATE_ORDER
+    }
+    plan.fingerprints = {}
+    plan.release_commit = None
+    save_release_plan(plan)
+
+
+def push_release_candidate(plan: ReleasePlan, dry_run: bool) -> None:
+    """Publish the exact release tree on a non-main branch for CI."""
+    if dry_run:
+        print(f"  [dry-run] git push origin HEAD:refs/heads/{plan.candidate_ref}")
+        return
+    if plan.release_commit is None or plan.base_commit is None:
+        raise ReleaseError("release candidate is not committed")
+    if plan.candidate_ref is None:
+        raise ReleaseError("release candidate has no remote ref")
+    require_clean_release_tree(plan)
+    upstream = run(["git", "rev-parse", "origin/main"], capture=True).stdout.strip()
+    if upstream != plan.base_commit:
+        raise ReleaseError(
+            "origin/main moved while preparing the release candidate: "
+            f"expected {plan.base_commit[:8]}, got {upstream[:8]}"
+        )
+    run(
+        [
+            "git",
+            "push",
+            "origin",
+            f"HEAD:refs/heads/{plan.candidate_ref}",
+        ]
+    )
+
+
+def require_prepared_release(plan: ReleasePlan) -> None:
+    """Require an unchanged candidate, unchanged main, and exact green CI."""
+    if (
+        plan.release_commit is None
+        or plan.base_commit is None
+        or plan.candidate_ref is None
+    ):
+        raise ReleaseError("release candidate has not been fully prepared")
+    run(["git", "fetch", "origin"])
+    require_clean_release_tree(plan)
+    upstream = run(["git", "rev-parse", "origin/main"], capture=True).stdout.strip()
+    if upstream not in {plan.base_commit, plan.release_commit}:
+        raise ReleaseError(
+            "origin/main moved after release preparation; prepare a new candidate "
+            f"on the new tip (expected {plan.base_commit[:8]} or the release "
+            f"commit {plan.release_commit[:8]}, got {upstream[:8]})"
+        )
+    remote_candidate = run(
+        ["git", "rev-parse", f"origin/{plan.candidate_ref}"],
+        capture=True,
+        check=False,
+    ).stdout.strip()
+    if remote_candidate != plan.release_commit:
+        raise ReleaseError(
+            f"origin/{plan.candidate_ref} is {remote_candidate or 'missing'}, "
+            f"expected {plan.release_commit}"
+        )
+    green, detail = ci_verified_commit(plan.release_commit)
+    if not green:
+        raise ReleaseError(detail)
+    print(f"  {detail}")
+
+
+def delete_release_candidate(plan: ReleasePlan) -> None:
+    """Best-effort cleanup after the tag and dev-version commit are durable."""
+    if plan.candidate_ref is None:
+        return
+    result = run(
+        ["git", "push", "origin", "--delete", plan.candidate_ref],
+        check=False,
+        capture=True,
+    )
+    if result.returncode != 0:
+        print(
+            f"  warning: could not delete {plan.candidate_ref}: "
+            f"{(result.stderr or result.stdout).strip()}"
+        )
+
+
 def git_commit_tag_push(
     version: str,
     dry_run: bool,
@@ -1590,6 +1806,12 @@ def parse_args() -> argparse.Namespace:
         help="Show what would be done without executing",
     )
     parser.add_argument(
+        "--prepare",
+        action="store_true",
+        help="Build and push an exact release candidate branch, then stop for CI. "
+        "Rerun without --prepare after CI is green to publish/tag/deploy.",
+    )
+    parser.add_argument(
         "--skip-publish", action="store_true", help="Skip crates.io publish"
     )
     parser.add_argument(
@@ -1668,53 +1890,103 @@ def main() -> int:
             )
             save_release_plan(plan)
             print(f"  saved release plan to {RELEASE_PLAN_PATH}")
+    if not dry_run:
+        if plan is None:
+            raise ReleaseError("real release lost its saved plan")
+        initialize_release_candidate(plan, new_version)
+        if (
+            args.prepare
+            and plan.release_commit is not None
+            and candidate_has_local_changes(plan)
+        ):
+            print("  reopening changed release candidate for a new CI pass")
+            reopen_release_candidate(plan, registry)
+            new_versions = plan.target_versions
     print("\nTarget versions:")
     for crate, ver in new_versions.items():
         changed = " (changed)" if ver != old_versions[crate] else ""
         print(f"  {crate}: {ver}{changed}")
-    print("\nBumping versions...")
-    bump_all_versions(old_versions, new_versions, dry_run)
-    print()
-
-    # 2.5 Bump landing-page version badge
-    print("Bumping website badge...")
-    bump_website_version(new_version, dry_run)
-    print()
-
-    # 3. Regenerate self-host
-    if not args.skip_self_host:
-        regenerate_self_host(dry_run)
+    prepared_resume = plan is not None and plan.release_commit is not None
+    if prepared_resume:
+        if args.prepare:
+            green, detail = ci_verified_commit(plan.release_commit or "")
+            print(f"\nRelease candidate already prepared: {detail}")
+            print(
+                f"Rerun without --prepare after CI is green: "
+                f"python3 tools/release.py {new_version}"
+            )
+            return 0 if green else 1
+        print("\nChecking the exact prepared release candidate...")
+        if dry_run:
+            print("  [dry-run] would require candidate ref + CI/Proof/Certification")
+        else:
+            require_prepared_release(plan)
+        print()
+    else:
+        print("\nBumping versions...")
+        bump_all_versions(old_versions, new_versions, dry_run)
         print()
 
-    # 4. Regenerate playground
-    if not args.skip_playground:
-        regenerate_playground(dry_run)
+        # 2.5 Bump landing-page version badge
+        print("Bumping website badge...")
+        bump_website_version(new_version, dry_run)
         print()
 
-    # 5. Verify
-    verify(dry_run)
-    print()
+        # 3. Regenerate self-host
+        if not args.skip_self_host:
+            regenerate_self_host(dry_run)
+            print()
 
-    # 5.5 Stamp the CHANGELOG header for this release with today's date.
-    #     Done after verify so a failed verification doesn't dirty the
-    #     working tree with a half-finished release commit.
-    print("Stamping CHANGELOG release date...")
-    stamp_changelog_release_date(new_version, dry_run)
-    print()
+        # 4. Regenerate playground
+        if not args.skip_playground:
+            regenerate_playground(dry_run)
+            print()
 
-    if not dry_run:
-        if plan is None:
-            raise ReleaseError("real release lost its saved plan")
-        print("Sealing release input fingerprints...")
-        seal_release_plan(plan)
+        # In the two-phase path, CI verifies the exact committed tree. The
+        # one-shot compatibility path keeps the local release gates.
+        if not args.prepare:
+            verify(dry_run)
+            print()
+
+        # Stamp before committing the candidate so CI and the eventual tag see
+        # byte-for-byte identical release notes.
+        print("Stamping CHANGELOG release date...")
+        stamp_changelog_release_date(new_version, dry_run)
         print()
 
-    # 6. Commit the exact tree Cargo will package. This makes
-    # `.cargo_vcs_info.json` point at the eventual release tag instead of a
-    # stale dirty parent commit.
-    print("Committing release tree...")
-    git_commit_release(new_version, dry_run, plan)
-    print()
+        if not dry_run:
+            if plan is None:
+                raise ReleaseError("real release lost its saved plan")
+            print("Sealing release input fingerprints...")
+            seal_release_plan(plan)
+            print()
+
+        # Commit the exact tree Cargo will package. This makes
+        # `.cargo_vcs_info.json` point at the eventual release tag instead of a
+        # stale dirty parent commit.
+        print("Committing release tree...")
+        git_commit_release(new_version, dry_run, plan)
+        print()
+
+        if args.prepare:
+            print("Pushing release candidate for exact-commit CI...")
+            if dry_run:
+                print(
+                    "  [dry-run] git push origin "
+                    f"HEAD:refs/heads/{release_candidate_ref(new_version)}"
+                )
+            else:
+                if plan is None:
+                    raise ReleaseError("real release lost its saved plan")
+                push_release_candidate(plan, False)
+            print()
+            print(f"Prepared {new_version}. CI now owns the expensive gates.")
+            print(
+                "After CI, resume without --prepare: "
+                f"python3 tools/release.py {new_version}"
+                + (" --deploy-edge" if args.deploy_edge else "")
+            )
+            return 0
 
     # 7. Publish
     if not args.skip_publish:
@@ -1731,16 +2003,17 @@ def main() -> int:
     )
     print()
 
-    # 9. Move main off the versions just published. A released number is
-    #    immutable on the registry; main must not keep claiming it.
-    carry_dev_versions(new_versions, dry_run)
-    print()
-
-    # 9. Optional: rebuild + deploy `tools/edge` (Cloudflare Workers
-    #    Mandelbrot demo). Live deploy of a public endpoint, so opt-in.
+    # 9. Optional deployment still runs on the committed release tree. If the
+    # public smoke fails, the saved plan remains resumable at target versions;
+    # carrying dev versions first would strand a retry between two version sets.
     if args.deploy_edge:
         deploy_edge(dry_run)
         print()
+
+    # 10. Move main off the versions just published. A released number is
+    #     immutable on the registry; main must not keep claiming it.
+    carry_dev_versions(new_versions, dry_run)
+    print()
 
     if not dry_run:
         if plan is None or any(
@@ -1748,6 +2021,8 @@ def main() -> int:
             for state in plan.publish_states.values()
         ):
             raise ReleaseError("refusing to clear an incomplete release plan")
+        if prepared_resume:
+            delete_release_candidate(plan)
         clear_release_plan()
 
     print(f"{'[dry-run] ' if dry_run else ''}Done! Released {new_version}")
@@ -1830,55 +2105,66 @@ def deploy_edge(dry_run: bool) -> None:
 
     aver_bin = REPO_ROOT / "target" / "release" / "aver"
     edge_dir = REPO_ROOT / "tools" / "edge"
-    dist_dir = edge_dir / "dist"
+    shipped_dist = edge_dir / "dist"
+    dist_dir = REPO_ROOT / "target" / "release-edge-deploy"
+    if dist_dir.exists():
+        shutil.rmtree(dist_dir)
+    # Compile beside the repository tree. The existing production Wrangler
+    # configuration is the template, but a successful deploy must not leave a
+    # newly encoded app.wasm dirty after the release and carry-dev commits.
+    shutil.copytree(shipped_dist, dist_dir)
 
     print("  rebuild dist/ from app.av...")
-    run(
-        [
-            str(aver_bin),
-            "compile",
-            str(edge_dir / "app.av"),
-            "--preset",
-            "cloudflare",
-            "--handler",
-            "handler",
-            "--module-root",
-            str(edge_dir),
-            "-o",
-            str(dist_dir),
-        ]
-    )
+    try:
+        run(
+            [
+                str(aver_bin),
+                "compile",
+                str(edge_dir / "app.av"),
+                "--preset",
+                "cloudflare",
+                "--handler",
+                "handler",
+                "--module-root",
+                str(edge_dir),
+                "-o",
+                str(dist_dir),
+            ]
+        )
 
-    print("  wrangler deploy...")
-    # wrangler 4.x needs Node >=22; if the default node is too old, prefer
-    # `~/.nvm/versions/node/v22.*/bin` if present. Fall back to PATH `wrangler`.
-    env_path = os.environ.get("PATH", "")
-    nvm_dir = Path.home() / ".nvm" / "versions" / "node"
-    if nvm_dir.exists():
-        v22 = sorted([p for p in nvm_dir.iterdir() if p.name.startswith("v22.")])
-        if v22:
-            env_path = f"{v22[-1] / 'bin'}:{env_path}"
-    deploy_env = {**os.environ, "PATH": env_path}
-    subprocess.run(
-        ["npx", "wrangler@latest", "deploy"],
-        cwd=dist_dir,
-        env=deploy_env,
-        check=True,
-    )
+        print("  wrangler deploy...")
+        # wrangler 4.x needs Node >=22; if the default node is too old, prefer
+        # `~/.nvm/versions/node/v22.*/bin` if present. Fall back to PATH `wrangler`.
+        env_path = os.environ.get("PATH", "")
+        nvm_dir = Path.home() / ".nvm" / "versions" / "node"
+        if nvm_dir.exists():
+            v22 = sorted([p for p in nvm_dir.iterdir() if p.name.startswith("v22.")])
+            if v22:
+                env_path = f"{v22[-1] / 'bin'}:{env_path}"
+        deploy_env = {**os.environ, "PATH": env_path}
+        subprocess.run(
+            ["npx", "wrangler@latest", "deploy"],
+            cwd=dist_dir,
+            env=deploy_env,
+            check=True,
+        )
 
-    # Smoke the public production domain declared by the shipped Wrangler
-    # configuration. The workers.dev and preview routes stay disabled.
-    base = "https://edge.averlang.dev"
-    for path in ("/", "/api", "/fractal"):
-        url = base + path
-        with urllib.request.urlopen(url, timeout=10) as resp:
-            if resp.status != 200:
-                raise SystemExit(
-                    f"edge smoke: {url} returned HTTP {resp.status} (expected 200)"
+        # Smoke the public production domain declared by the shipped Wrangler
+        # configuration. The workers.dev and preview routes stay disabled.
+        base = "https://edge.averlang.dev"
+        for path in ("/", "/api", "/fractal"):
+            url = base + path
+            with urllib.request.urlopen(url, timeout=10) as resp:
+                if resp.status != 200:
+                    raise SystemExit(
+                        f"edge smoke: {url} returned HTTP {resp.status} (expected 200)"
+                    )
+                print(
+                    f"  {url} HTTP {resp.status} "
+                    f"({resp.headers.get('content-length', '?')} bytes)"
                 )
-            print(
-                f"  {url} HTTP {resp.status} ({resp.headers.get('content-length', '?')} bytes)"
-            )
+    finally:
+        shutil.rmtree(dist_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":

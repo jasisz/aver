@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "source": {
+    "workflow_run": "https://github.com/jasisz/aver/actions/runs/33095728752",
+    "measured_at": "2026-08-27",
+    "default_weight_seconds": 1.0
+  },
+  "split_targets": [
+    "provider_vm_host_spec",
+    "verify_step_budget_spec"
+  ],
+  "weights_seconds": {
+    "compile_spec": 13.93,
+    "eval_spec": 1.97,
+    "map_iteration_order": 2.95,
+    "map_key_order": 5.97,
+    "native_provider_rust_spec": 53.53,
+    "proof_spec": 2.08,
+    "provider_package_workflow_spec": 33.88,
+    "provider_vm_host_spec": 998.43,
+    "rust_codegen_differential": 64.01,
+    "rust_codegen_regression": 12.14,
+    "rust_self_host_regen": 9.08,
+    "typechecker_spec": 1.53,
+    "verify_runner_regressions": 1.08,
+    "verify_step_budget_spec": 826.34,
+    "vm_pattern_shadow_matrix": 8.58
+  }
+}

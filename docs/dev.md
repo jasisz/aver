@@ -69,8 +69,10 @@ replacement for strict `verify`.
 
 ## Releases
 
-Release `aver-cert` through `python3 tools/release.py X.Y.Z`, never with a
-separate manual `cargo publish`. The verifier keeps its own `0.1.x` version
+Release `aver-cert` through `python3 tools/release.py X.Y.Z --prepare`, wait for
+the exact candidate's CI/Proof/Certification runs, then resume with
+`python3 tools/release.py X.Y.Z`; never use a separate manual `cargo publish`.
+The verifier keeps its own `0.1.x` version
 line, but the release tool coordinates it with Aver: it publishes the first
 `0.1.0`, patch-bumps it only when its source changes, updates `aver-lang`'s
 exact producer dependency pin, and publishes `aver-cert` before `aver-lang`.
