@@ -5,7 +5,7 @@ use crate::*;
 
 /// Extract single argument from args list.
 pub fn oneArg(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     {
@@ -27,7 +27,7 @@ pub fn oneArg(
 
 /// Extract two arguments from args list.
 pub fn twoArgs(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<
     (
         crate::aver_generated::domain::value::Val,
@@ -62,7 +62,7 @@ pub fn twoArgs(
 
 /// Extract list from Val or error.
 pub fn expectList(
-    v: &crate::aver_generated::domain::value::Val,
+    v @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<aver_rt::AverList<crate::aver_generated::domain::value::Val>, AverStr> {
     crate::cancel_checkpoint();
     match v.clone() {
@@ -73,7 +73,7 @@ pub fn expectList(
 
 /// Extract int from Val or error.
 pub fn expectInt(
-    v: &crate::aver_generated::domain::value::Val,
+    v @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<aver_rt::AverInt, AverStr> {
     crate::cancel_checkpoint();
     match v.clone() {
@@ -83,7 +83,7 @@ pub fn expectInt(
 }
 
 /// Extract string from Val or error.
-pub fn expectStr(v: &crate::aver_generated::domain::value::Val) -> Result<AverStr, AverStr> {
+pub fn expectStr(v @ _: &crate::aver_generated::domain::value::Val) -> Result<AverStr, AverStr> {
     crate::cancel_checkpoint();
     match v.clone() {
         crate::aver_generated::domain::value::Val::ValStr(s) => Ok(s),

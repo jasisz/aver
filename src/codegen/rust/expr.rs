@@ -32,6 +32,21 @@ pub(super) fn explicit_binding_pattern(name: &str) -> String {
     format!("{} @ _", aver_name_to_rust(name))
 }
 
+/// Render a function parameter as an explicit Rust binding pattern.
+///
+/// Parameters occupy pattern position just like `let` and match binders, so a
+/// bare name can be ambiguous with identically named items from dependency
+/// glob imports (#1162). Keep the source name available to the body while
+/// making item resolution impossible at the binding site.
+pub(super) fn explicit_parameter_pattern(name: &str, mutable: bool) -> String {
+    let binding = explicit_binding_pattern(name);
+    if mutable {
+        format!("mut {binding}")
+    } else {
+        binding
+    }
+}
+
 /// Predicate adapter shared by every resolved-shape classifier — the
 /// shared classifiers don't know about [`CodegenContext`] (it lives in
 /// the codegen crate, classifiers live in the IR), so they take a

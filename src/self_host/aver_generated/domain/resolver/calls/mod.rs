@@ -6,9 +6,9 @@ use crate::*;
 /// Build name→fnId map from resolved function list.
 #[inline(always)]
 pub fn buildFnMap(
-    mut fns: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
-    mut acc: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
-    mut idx: aver_rt::AverInt,
+    mut fns @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+    mut acc @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    mut idx @ _: aver_rt::AverInt,
 ) -> aver_rt::AverMap<AverStr, aver_rt::AverInt> {
     loop {
         crate::cancel_checkpoint();
@@ -27,11 +27,11 @@ pub fn buildFnMap(
 /// Transform ExprCall→ExprCallDirect for known functions in all fn bodies.
 #[inline(always)]
 pub fn resolveCallsInFns(
-    mut fns: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
-    fnMap: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
-    mut acc: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+    mut fns @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+    fnMap @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> {
-    let fnMap = std::sync::Arc::new(fnMap);
+    let fnMap @ _ = std::sync::Arc::new(fnMap);
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(fns, [] => { return acc.reverse(); }, [f, rest] => { {
@@ -46,8 +46,8 @@ pub fn resolveCallsInFns(
 
 /// Transform calls in one function body.
 pub fn resolveCallsInFn(
-    fd: &crate::aver_generated::domain::ast::FnDef,
-    fnMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    fd @ _: &crate::aver_generated::domain::ast::FnDef,
+    fnMap @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) -> crate::aver_generated::domain::ast::FnDef {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::ast::FnDef {
@@ -68,11 +68,11 @@ pub fn resolveCallsInFn(
 /// Resolve calls in a list of statements.
 #[inline(always)]
 pub fn resolveCallsInStmts(
-    mut stmts: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
-    fnMap: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
-    mut acc: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
+    mut stmts @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
+    fnMap @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::Stmt> {
-    let fnMap = std::sync::Arc::new(fnMap);
+    let fnMap @ _ = std::sync::Arc::new(fnMap);
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(stmts, [] => { return acc.reverse(); }, [s, rest] => { {
@@ -87,8 +87,8 @@ pub fn resolveCallsInStmts(
 
 /// Resolve calls in a single statement.
 pub fn resolveCallsInStmt(
-    s: &crate::aver_generated::domain::ast::Stmt,
-    fnMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    s @ _: &crate::aver_generated::domain::ast::Stmt,
+    fnMap @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) -> crate::aver_generated::domain::ast::Stmt {
     crate::cancel_checkpoint();
     match s.clone() {
@@ -114,8 +114,8 @@ pub fn resolveCallsInStmt(
 
 /// Replace ExprCall with ExprCallDirect for known user functions.
 pub fn resolveCallsInExpr(
-    expr: &crate::aver_generated::domain::ast::Expr,
-    fnMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    expr @ _: &crate::aver_generated::domain::ast::Expr,
+    fnMap @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) -> crate::aver_generated::domain::ast::Expr {
     crate::cancel_checkpoint();
     match expr.clone() {
@@ -200,8 +200,8 @@ pub fn resolveCallsInExpr(
 
 /// Continue direct-call linking for specialized internal and arithmetic forms.
 pub fn resolveCallsInExprInternal(
-    expr: &crate::aver_generated::domain::ast::Expr,
-    fnMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    expr @ _: &crate::aver_generated::domain::ast::Expr,
+    fnMap @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) -> crate::aver_generated::domain::ast::Expr {
     crate::cancel_checkpoint();
     match expr.clone() {
@@ -303,8 +303,8 @@ pub fn resolveCallsInExprInternal(
 
 /// Finish direct-call linking for comparisons, aggregates, and product forms.
 pub fn resolveCallsInExprTail(
-    expr: &crate::aver_generated::domain::ast::Expr,
-    fnMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    expr @ _: &crate::aver_generated::domain::ast::Expr,
+    fnMap @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) -> crate::aver_generated::domain::ast::Expr {
     crate::cancel_checkpoint();
     match expr.clone() {
@@ -476,9 +476,9 @@ pub fn resolveCallsInExprTail(
 /// User fn → ExprCallDirect, builtin → ExprCallBuiltin, record update → ExprCall.
 #[inline(always)]
 pub fn resolveOneCall(
-    name: AverStr,
-    args: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
-    fnMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    name @ _: AverStr,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    fnMap @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) -> crate::aver_generated::domain::ast::Expr {
     crate::cancel_checkpoint();
     let resolvedArgs @ _ =
@@ -511,8 +511,8 @@ pub fn resolveOneCall(
 /// Link a builtin call, discharging a literal-divisor Int.div/Int.mod to a plain Int.
 #[inline(always)]
 pub fn resolveBuiltinCall(
-    name: AverStr,
-    resolvedArgs: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    name @ _: AverStr,
+    resolvedArgs @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
 ) -> crate::aver_generated::domain::ast::Expr {
     crate::cancel_checkpoint();
     if crate::aver_generated::domain::resolver::calls::isLiteralDivisorCall(
@@ -537,8 +537,8 @@ pub fn resolveBuiltinCall(
 /// Whether this is Int.div/Int.mod over a syntactic nonzero integer literal divisor.
 #[inline(always)]
 pub fn isLiteralDivisorCall(
-    name: AverStr,
-    args: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    name @ _: AverStr,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
 ) -> bool {
     crate::cancel_checkpoint();
     if (((&*name == "Int.div") || (&*name == "Int.mod"))
@@ -552,7 +552,7 @@ pub fn isLiteralDivisorCall(
 
 /// Whether the second of exactly two arguments is a nonzero integer literal.
 pub fn isNonzeroIntLiteralDivisor(
-    args: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
 ) -> bool {
     crate::cancel_checkpoint();
     {
@@ -573,7 +573,7 @@ pub fn isNonzeroIntLiteralDivisor(
 }
 
 /// Whether an expression is a nonzero integer literal under at most one unary minus.
-pub fn isNonzeroIntLiteral(expr: &crate::aver_generated::domain::ast::Expr) -> bool {
+pub fn isNonzeroIntLiteral(expr @ _: &crate::aver_generated::domain::ast::Expr) -> bool {
     crate::cancel_checkpoint();
     match expr.clone() {
         crate::aver_generated::domain::ast::Expr::ExprInt(k) => {
@@ -588,7 +588,7 @@ pub fn isNonzeroIntLiteral(expr: &crate::aver_generated::domain::ast::Expr) -> b
 }
 
 /// Whether an expression is a bare nonzero integer literal, with no unary minus of its own.
-pub fn isBareNonzeroIntLiteral(expr: &crate::aver_generated::domain::ast::Expr) -> bool {
+pub fn isBareNonzeroIntLiteral(expr @ _: &crate::aver_generated::domain::ast::Expr) -> bool {
     crate::cancel_checkpoint();
     match expr.clone() {
         crate::aver_generated::domain::ast::Expr::ExprInt(k) => {
@@ -600,7 +600,7 @@ pub fn isBareNonzeroIntLiteral(expr: &crate::aver_generated::domain::ast::Expr) 
 
 /// Return whether a call name is one of the exact builtin/service entrypoints.
 #[inline(always)]
-pub fn isBuiltinCallName(name: AverStr) -> bool {
+pub fn isBuiltinCallName(name @ _: AverStr) -> bool {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::resolver::calls::isBuiltinCallNameFrom(
         name,
@@ -740,8 +740,8 @@ pub fn isBuiltinCallName(name: AverStr) -> bool {
 /// Check builtin/service call names recursively by exact match.
 #[inline(always)]
 pub fn isBuiltinCallNameFrom(
-    mut name: AverStr,
-    mut knownNames: aver_rt::AverList<AverStr>,
+    mut name @ _: AverStr,
+    mut knownNames @ _: aver_rt::AverList<AverStr>,
 ) -> bool {
     loop {
         crate::cancel_checkpoint();
@@ -756,11 +756,11 @@ pub fn isBuiltinCallNameFrom(
 /// Resolve calls in a list of expressions.
 #[inline(always)]
 pub fn resolveCallsInExprs(
-    mut exprs: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
-    fnMap: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
-    mut acc: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    mut exprs @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    fnMap @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::Expr> {
-    let fnMap = std::sync::Arc::new(fnMap);
+    let fnMap @ _ = std::sync::Arc::new(fnMap);
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(exprs, [] => { return acc.reverse(); }, [e, rest] => { {
@@ -776,11 +776,11 @@ pub fn resolveCallsInExprs(
 /// Resolve calls in match arm bodies.
 #[inline(always)]
 pub fn resolveCallsInArms(
-    mut arms: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
-    fnMap: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
-    mut acc: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
+    mut arms @ _: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
+    fnMap @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm> {
-    let fnMap = std::sync::Arc::new(fnMap);
+    let fnMap @ _ = std::sync::Arc::new(fnMap);
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(arms, [] => { return acc.reverse(); }, [arm, rest] => { {
@@ -796,11 +796,11 @@ pub fn resolveCallsInArms(
 /// Resolve calls in record field expressions.
 #[inline(always)]
 pub fn resolveCallsInFields(
-    mut fields: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
-    fnMap: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
-    mut acc: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
+    mut fields @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
+    fnMap @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    mut acc @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
 ) -> aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)> {
-    let fnMap = std::sync::Arc::new(fnMap);
+    let fnMap @ _ = std::sync::Arc::new(fnMap);
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(fields, [] => { return acc.reverse(); }, [pair, rest] => { { let (name, expr) = pair; {
@@ -816,11 +816,11 @@ pub fn resolveCallsInFields(
 /// Synthesized collecting variant of `resolveCallsInStmts`. Appends to a builder where `resolveCallsInStmts` prepends to `acc` and reverses on the way out, which reaches the same list without the cons chain or the reversal. Call sites that start the accumulator at `[]` are moved here.
 #[inline(always)]
 pub fn resolveCallsInStmts__collected(
-    mut stmts: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
-    fnMap: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
-    mut acc: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
+    mut stmts @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
+    fnMap @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::Stmt> {
-    let fnMap = std::sync::Arc::new(fnMap);
+    let fnMap @ _ = std::sync::Arc::new(fnMap);
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(stmts, [] => { return aver_rt::list_builder_finalize(acc); }, [s, rest] => { {
@@ -836,11 +836,11 @@ pub fn resolveCallsInStmts__collected(
 /// Synthesized collecting variant of `resolveCallsInExprs`. Appends to a builder where `resolveCallsInExprs` prepends to `acc` and reverses on the way out, which reaches the same list without the cons chain or the reversal. Call sites that start the accumulator at `[]` are moved here.
 #[inline(always)]
 pub fn resolveCallsInExprs__collected(
-    mut exprs: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
-    fnMap: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
-    mut acc: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    mut exprs @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    fnMap @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::Expr> {
-    let fnMap = std::sync::Arc::new(fnMap);
+    let fnMap @ _ = std::sync::Arc::new(fnMap);
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(exprs, [] => { return aver_rt::list_builder_finalize(acc); }, [e, rest] => { {
@@ -856,11 +856,11 @@ pub fn resolveCallsInExprs__collected(
 /// Synthesized collecting variant of `resolveCallsInArms`. Appends to a builder where `resolveCallsInArms` prepends to `acc` and reverses on the way out, which reaches the same list without the cons chain or the reversal. Call sites that start the accumulator at `[]` are moved here.
 #[inline(always)]
 pub fn resolveCallsInArms__collected(
-    mut arms: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
-    fnMap: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
-    mut acc: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
+    mut arms @ _: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
+    fnMap @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm> {
-    let fnMap = std::sync::Arc::new(fnMap);
+    let fnMap @ _ = std::sync::Arc::new(fnMap);
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(arms, [] => { return aver_rt::list_builder_finalize(acc); }, [arm, rest] => { {
@@ -876,11 +876,11 @@ pub fn resolveCallsInArms__collected(
 /// Synthesized collecting variant of `resolveCallsInFields`. Appends to a builder where `resolveCallsInFields` prepends to `acc` and reverses on the way out, which reaches the same list without the cons chain or the reversal. Call sites that start the accumulator at `[]` are moved here.
 #[inline(always)]
 pub fn resolveCallsInFields__collected(
-    mut fields: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
-    fnMap: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
-    mut acc: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
+    mut fields @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
+    fnMap @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    mut acc @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
 ) -> aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)> {
-    let fnMap = std::sync::Arc::new(fnMap);
+    let fnMap @ _ = std::sync::Arc::new(fnMap);
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(fields, [] => { return aver_rt::list_builder_finalize(acc); }, [pair, rest] => { { let (name, expr) = pair; {

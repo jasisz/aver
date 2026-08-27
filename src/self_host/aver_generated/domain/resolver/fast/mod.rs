@@ -6,11 +6,11 @@ use crate::*;
 /// Tag simple single-expression functions so eval can skip the stmt walker.
 #[inline(always)]
 pub fn annotateFastFns(
-    mut fns: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
-    fnMap: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
-    mut acc: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+    mut fns @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+    fnMap @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> {
-    let fnMap = std::sync::Arc::new(fnMap);
+    let fnMap @ _ = std::sync::Arc::new(fnMap);
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(fns, [] => { return acc.reverse(); }, [f, rest] => { {
@@ -25,8 +25,8 @@ pub fn annotateFastFns(
 
 /// Attach a narrow fast-path tag to a function definition.
 pub fn annotateFastFn(
-    fd: &crate::aver_generated::domain::ast::FnDef,
-    fnMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    fd @ _: &crate::aver_generated::domain::ast::FnDef,
+    fnMap @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) -> crate::aver_generated::domain::ast::FnDef {
     crate::cancel_checkpoint();
     let selfId @ _ = fnMap
@@ -50,8 +50,8 @@ pub fn annotateFastFn(
 /// Precompute whether the final expression position can self-tail-call directly.
 #[inline(always)]
 pub fn classifyTailLoop(
-    mut selfId: aver_rt::AverInt,
-    mut body: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
+    mut selfId @ _: aver_rt::AverInt,
+    mut body @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
 ) -> bool {
     loop {
         crate::cancel_checkpoint();
@@ -65,8 +65,8 @@ pub fn classifyTailLoop(
 
 /// Only the final expression statement can trigger the tail-loop slot evaluator.
 pub fn stmtNeedsTailLoop(
-    selfId: aver_rt::AverInt,
-    stmt: &crate::aver_generated::domain::ast::Stmt,
+    selfId @ _: aver_rt::AverInt,
+    stmt @ _: &crate::aver_generated::domain::ast::Stmt,
 ) -> bool {
     crate::cancel_checkpoint();
     match stmt.clone() {
@@ -79,8 +79,8 @@ pub fn stmtNeedsTailLoop(
 
 /// Recognize direct self-calls in tail position, including bool branches and matches.
 pub fn exprNeedsTailLoop(
-    mut selfId: aver_rt::AverInt,
-    mut expr: crate::aver_generated::domain::ast::Expr,
+    mut selfId @ _: aver_rt::AverInt,
+    mut expr @ _: crate::aver_generated::domain::ast::Expr,
 ) -> bool {
     loop {
         crate::cancel_checkpoint();
@@ -119,8 +119,8 @@ pub fn exprNeedsTailLoop(
 /// Return true when any match arm ends in a direct self-tail-call.
 #[inline(always)]
 pub fn armsNeedTailLoop(
-    mut selfId: aver_rt::AverInt,
-    mut arms: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
+    mut selfId @ _: aver_rt::AverInt,
+    mut arms @ _: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
 ) -> bool {
     loop {
         crate::cancel_checkpoint();
@@ -134,7 +134,7 @@ pub fn armsNeedTailLoop(
 
 /// Single expression bodies can bypass evalStmts* and evaluate the expr directly.
 pub fn classifyFastPath(
-    body: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
+    body @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
 ) -> crate::aver_generated::domain::ast::FnFastPath {
     crate::cancel_checkpoint();
     {
@@ -153,7 +153,7 @@ pub fn classifyFastPath(
 
 /// Only plain expression bodies get a fast expr tag.
 pub fn classifyFastStmt(
-    stmt: &crate::aver_generated::domain::ast::Stmt,
+    stmt @ _: &crate::aver_generated::domain::ast::Stmt,
 ) -> crate::aver_generated::domain::ast::FnFastPath {
     crate::cancel_checkpoint();
     match stmt.clone() {
@@ -167,7 +167,7 @@ pub fn classifyFastStmt(
 /// Recognize a few leaf-like and branch-like expr shapes worth running without the full stmt walker.
 #[inline(always)]
 pub fn classifyFastExpr(
-    expr: &crate::aver_generated::domain::ast::Expr,
+    expr @ _: &crate::aver_generated::domain::ast::Expr,
 ) -> crate::aver_generated::domain::ast::FnFastPath {
     crate::cancel_checkpoint();
     match crate::aver_generated::domain::resolver::fast::classifyFastLeafExpr(expr) {
@@ -187,7 +187,7 @@ pub fn classifyFastExpr(
 
 /// Recognize a leaf-like expr that can be executed without descending the AST.
 pub fn classifyFastLeafExpr(
-    expr: &crate::aver_generated::domain::ast::Expr,
+    expr @ _: &crate::aver_generated::domain::ast::Expr,
 ) -> Option<crate::aver_generated::domain::ast::FastLeaf> {
     crate::cancel_checkpoint();
     match expr.clone() {
@@ -237,7 +237,7 @@ pub fn classifyFastLeafExpr(
 
 /// Finish fast-leaf classification for arithmetic and comparison forms.
 pub fn classifyFastLeafExprTail(
-    expr: &crate::aver_generated::domain::ast::Expr,
+    expr @ _: &crate::aver_generated::domain::ast::Expr,
 ) -> Option<crate::aver_generated::domain::ast::FastLeaf> {
     crate::cancel_checkpoint();
     match expr.clone() {
@@ -319,8 +319,8 @@ pub fn classifyFastLeafExprTail(
 
 /// Recognize obj.field when obj is already a resolved slot.
 pub fn classifyFastFieldAccess(
-    obj: &crate::aver_generated::domain::ast::Expr,
-    field: AverStr,
+    obj @ _: &crate::aver_generated::domain::ast::Expr,
+    field @ _: AverStr,
 ) -> Option<crate::aver_generated::domain::ast::FastLeaf> {
     crate::cancel_checkpoint();
     match obj.clone() {
@@ -333,9 +333,9 @@ pub fn classifyFastFieldAccess(
 
 /// Recognize slot op slot for arithmetic.
 pub fn classifyFastBinopSlots(
-    op: &crate::aver_generated::domain::ast::BinOp,
-    a: &crate::aver_generated::domain::ast::Expr,
-    b: &crate::aver_generated::domain::ast::Expr,
+    op @ _: &crate::aver_generated::domain::ast::BinOp,
+    a @ _: &crate::aver_generated::domain::ast::Expr,
+    b @ _: &crate::aver_generated::domain::ast::Expr,
 ) -> Option<crate::aver_generated::domain::ast::FastLeaf> {
     crate::cancel_checkpoint();
     match a.clone() {
@@ -351,9 +351,9 @@ pub fn classifyFastBinopSlots(
 
 /// Recognize slot cmp slot for comparisons.
 pub fn classifyFastCmpSlots(
-    op: &crate::aver_generated::domain::ast::CmpOp,
-    a: &crate::aver_generated::domain::ast::Expr,
-    b: &crate::aver_generated::domain::ast::Expr,
+    op @ _: &crate::aver_generated::domain::ast::CmpOp,
+    a @ _: &crate::aver_generated::domain::ast::Expr,
+    b @ _: &crate::aver_generated::domain::ast::Expr,
 ) -> Option<crate::aver_generated::domain::ast::FastLeaf> {
     crate::cancel_checkpoint();
     match a.clone() {
@@ -370,8 +370,8 @@ pub fn classifyFastCmpSlots(
 /// Recognize tiny builtin wrappers that only shuffle slots and integer constants.
 #[inline(always)]
 pub fn classifyFastBuiltinLeaf(
-    name: AverStr,
-    args: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    name @ _: AverStr,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
 ) -> Option<crate::aver_generated::domain::ast::FastLeaf> {
     crate::cancel_checkpoint();
     {
@@ -414,7 +414,7 @@ pub fn classifyFastBuiltinLeaf(
 
 /// Recognize Map.get(slotMap, slotKey).
 pub fn classifyFastMapGet(
-    args: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
 ) -> Option<crate::aver_generated::domain::ast::FastLeaf> {
     crate::cancel_checkpoint();
     {
@@ -438,8 +438,8 @@ pub fn classifyFastMapGet(
 
 /// Encode a direct map lookup when both operands are resolved slots.
 pub fn classifyFastMapGetArgs(
-    mapExpr: &crate::aver_generated::domain::ast::Expr,
-    keyExpr: &crate::aver_generated::domain::ast::Expr,
+    mapExpr @ _: &crate::aver_generated::domain::ast::Expr,
+    keyExpr @ _: &crate::aver_generated::domain::ast::Expr,
 ) -> Option<crate::aver_generated::domain::ast::FastLeaf> {
     crate::cancel_checkpoint();
     match mapExpr.clone() {
@@ -455,7 +455,7 @@ pub fn classifyFastMapGetArgs(
 
 /// Recognize Map.set(slotMap, slotKey, slotValue).
 pub fn classifyFastMapSet(
-    args: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
 ) -> Option<crate::aver_generated::domain::ast::FastLeaf> {
     crate::cancel_checkpoint();
     {
@@ -488,9 +488,9 @@ pub fn classifyFastMapSet(
 
 /// Encode a direct map update when all operands are resolved slots.
 pub fn classifyFastMapSetArgs(
-    mapExpr: &crate::aver_generated::domain::ast::Expr,
-    keyExpr: &crate::aver_generated::domain::ast::Expr,
-    valueExpr: &crate::aver_generated::domain::ast::Expr,
+    mapExpr @ _: &crate::aver_generated::domain::ast::Expr,
+    keyExpr @ _: &crate::aver_generated::domain::ast::Expr,
+    valueExpr @ _: &crate::aver_generated::domain::ast::Expr,
 ) -> Option<crate::aver_generated::domain::ast::FastLeaf> {
     crate::cancel_checkpoint();
     match mapExpr.clone() {
@@ -513,7 +513,7 @@ pub fn classifyFastMapSetArgs(
 
 /// Recognize Map.has(slotMap, slotKey).
 pub fn classifyFastMapHas(
-    args: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
 ) -> Option<crate::aver_generated::domain::ast::FastLeaf> {
     crate::cancel_checkpoint();
     {
@@ -537,8 +537,8 @@ pub fn classifyFastMapHas(
 
 /// Encode a direct map membership test when both operands are resolved slots.
 pub fn classifyFastMapHasArgs(
-    mapExpr: &crate::aver_generated::domain::ast::Expr,
-    keyExpr: &crate::aver_generated::domain::ast::Expr,
+    mapExpr @ _: &crate::aver_generated::domain::ast::Expr,
+    keyExpr @ _: &crate::aver_generated::domain::ast::Expr,
 ) -> Option<crate::aver_generated::domain::ast::FastLeaf> {
     crate::cancel_checkpoint();
     match mapExpr.clone() {
@@ -554,7 +554,7 @@ pub fn classifyFastMapHasArgs(
 
 /// Recognize Map.remove(slotMap, slotKey).
 pub fn classifyFastMapRemove(
-    args: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
 ) -> Option<crate::aver_generated::domain::ast::FastLeaf> {
     crate::cancel_checkpoint();
     {
@@ -578,8 +578,8 @@ pub fn classifyFastMapRemove(
 
 /// Encode a direct map key removal when both operands are resolved slots.
 pub fn classifyFastMapRemoveArgs(
-    mapExpr: &crate::aver_generated::domain::ast::Expr,
-    keyExpr: &crate::aver_generated::domain::ast::Expr,
+    mapExpr @ _: &crate::aver_generated::domain::ast::Expr,
+    keyExpr @ _: &crate::aver_generated::domain::ast::Expr,
 ) -> Option<crate::aver_generated::domain::ast::FastLeaf> {
     crate::cancel_checkpoint();
     match mapExpr.clone() {
@@ -595,7 +595,7 @@ pub fn classifyFastMapRemoveArgs(
 
 /// Recognize Vector.len(slotVec).
 pub fn classifyFastVectorLen(
-    args: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
 ) -> Option<crate::aver_generated::domain::ast::FastLeaf> {
     crate::cancel_checkpoint();
     {
@@ -615,7 +615,7 @@ pub fn classifyFastVectorLen(
 
 /// Recognize Vector.new(slot, int) wrappers.
 pub fn classifyFastVectorNew(
-    args: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
 ) -> Option<crate::aver_generated::domain::ast::FastLeaf> {
     crate::cancel_checkpoint();
     {
@@ -639,8 +639,8 @@ pub fn classifyFastVectorNew(
 
 /// Encode Vector.new(slot, int) without keeping the whole AST around.
 pub fn classifyFastVectorNewArgs(
-    sizeExpr: &crate::aver_generated::domain::ast::Expr,
-    fillExpr: &crate::aver_generated::domain::ast::Expr,
+    sizeExpr @ _: &crate::aver_generated::domain::ast::Expr,
+    fillExpr @ _: &crate::aver_generated::domain::ast::Expr,
 ) -> Option<crate::aver_generated::domain::ast::FastLeaf> {
     crate::cancel_checkpoint();
     match sizeExpr.clone() {
@@ -656,7 +656,7 @@ pub fn classifyFastVectorNewArgs(
 
 /// Recognize Option.withDefault(Vector.get(slot, slot), int).
 pub fn classifyFastOptionWithDefault(
-    args: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
 ) -> Option<crate::aver_generated::domain::ast::FastLeaf> {
     crate::cancel_checkpoint();
     {
@@ -681,8 +681,8 @@ pub fn classifyFastOptionWithDefault(
 
 /// Encode the common Vector.get-with-default wrapper used in tiny helpers like cellAt.
 pub fn classifyFastOptionWithDefaultArgs(
-    optionExpr: &crate::aver_generated::domain::ast::Expr,
-    defaultExpr: &crate::aver_generated::domain::ast::Expr,
+    optionExpr @ _: &crate::aver_generated::domain::ast::Expr,
+    defaultExpr @ _: &crate::aver_generated::domain::ast::Expr,
 ) -> Option<crate::aver_generated::domain::ast::FastLeaf> {
     crate::cancel_checkpoint();
     match optionExpr.clone() {
@@ -702,8 +702,8 @@ pub fn classifyFastOptionWithDefaultArgs(
 
 /// Recognize Vector.get(slotVec, slotIdx) with an integer default.
 pub fn classifyFastVectorGet(
-    args: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
-    defaultExpr: &crate::aver_generated::domain::ast::Expr,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    defaultExpr @ _: &crate::aver_generated::domain::ast::Expr,
 ) -> Option<crate::aver_generated::domain::ast::FastLeaf> {
     crate::cancel_checkpoint();
     {
@@ -729,9 +729,9 @@ pub fn classifyFastVectorGet(
 
 /// Encode Vector.get(slotVec, slotIdx) with an integer fallback.
 pub fn classifyFastVectorGetArgs(
-    vecExpr: &crate::aver_generated::domain::ast::Expr,
-    idxExpr: &crate::aver_generated::domain::ast::Expr,
-    defaultExpr: &crate::aver_generated::domain::ast::Expr,
+    vecExpr @ _: &crate::aver_generated::domain::ast::Expr,
+    idxExpr @ _: &crate::aver_generated::domain::ast::Expr,
+    defaultExpr @ _: &crate::aver_generated::domain::ast::Expr,
 ) -> Option<crate::aver_generated::domain::ast::FastLeaf> {
     crate::cancel_checkpoint();
     match vecExpr.clone() {
@@ -757,8 +757,8 @@ pub fn classifyFastVectorGetArgs(
 /// Recognize a small fixed-shape branch over bools or slot-based comparisons.
 #[inline(always)]
 pub fn classifyFastMatch(
-    scrutinee: &crate::aver_generated::domain::ast::Expr,
-    arms: &aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
+    scrutinee @ _: &crate::aver_generated::domain::ast::Expr,
+    arms @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
 ) -> crate::aver_generated::domain::ast::FnFastPath {
     crate::cancel_checkpoint();
     match crate::aver_generated::domain::resolver::fast::classifyBoolArms(arms) {
@@ -776,8 +776,8 @@ pub fn classifyFastMatch(
 
 /// Recognize a two-arm list match with [] and [h, ..t] leaf bodies.
 pub fn classifyFastListMatch(
-    scrutinee: &crate::aver_generated::domain::ast::Expr,
-    arms: &aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
+    scrutinee @ _: &crate::aver_generated::domain::ast::Expr,
+    arms @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
 ) -> crate::aver_generated::domain::ast::FnFastPath {
     crate::cancel_checkpoint();
     match scrutinee.clone() {
@@ -790,8 +790,8 @@ pub fn classifyFastListMatch(
 
 /// Extract fixed empty/cons list arms regardless of order.
 pub fn classifyFastListArms(
-    slot: aver_rt::AverInt,
-    arms: &aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
+    slot @ _: aver_rt::AverInt,
+    arms @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
 ) -> crate::aver_generated::domain::ast::FnFastPath {
     crate::cancel_checkpoint();
     {
@@ -820,9 +820,9 @@ pub fn classifyFastListArms(
 /// Convert two list-pattern arms into a direct slot branch.
 #[inline(always)]
 pub fn classifyFastListArmPair(
-    slot: aver_rt::AverInt,
-    arm1: &crate::aver_generated::domain::ast::MatchArm,
-    arm2: &crate::aver_generated::domain::ast::MatchArm,
+    slot @ _: aver_rt::AverInt,
+    arm1 @ _: &crate::aver_generated::domain::ast::MatchArm,
+    arm2 @ _: &crate::aver_generated::domain::ast::MatchArm,
 ) -> crate::aver_generated::domain::ast::FnFastPath {
     crate::cancel_checkpoint();
     let leaf1 @ _ = crate::aver_generated::domain::resolver::fast::classifyFastLeafExpr(&arm1.body);
@@ -848,13 +848,13 @@ pub fn classifyFastListArmPair(
 
 /// Order empty/cons arms into a direct list branch.
 pub fn classifyFastListPatterns(
-    slot: aver_rt::AverInt,
-    p1: &crate::aver_generated::domain::ast::Pattern,
-    bindingSlots1: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
-    leaf1: &crate::aver_generated::domain::ast::FastLeaf,
-    p2: &crate::aver_generated::domain::ast::Pattern,
-    bindingSlots2: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
-    leaf2: &crate::aver_generated::domain::ast::FastLeaf,
+    slot @ _: aver_rt::AverInt,
+    p1 @ _: &crate::aver_generated::domain::ast::Pattern,
+    bindingSlots1 @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    leaf1 @ _: &crate::aver_generated::domain::ast::FastLeaf,
+    p2 @ _: &crate::aver_generated::domain::ast::Pattern,
+    bindingSlots2 @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    leaf2 @ _: &crate::aver_generated::domain::ast::FastLeaf,
 ) -> crate::aver_generated::domain::ast::FnFastPath {
     crate::cancel_checkpoint();
     match p1.clone() {
@@ -884,11 +884,11 @@ pub fn classifyFastListPatterns(
 
 /// Finish list fast-path classification when the empty arm is known.
 pub fn classifyFastListOther(
-    slot: aver_rt::AverInt,
-    emptyLeaf: &crate::aver_generated::domain::ast::FastLeaf,
-    other: &crate::aver_generated::domain::ast::Pattern,
-    bindingSlots: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
-    otherLeaf: &crate::aver_generated::domain::ast::FastLeaf,
+    slot @ _: aver_rt::AverInt,
+    emptyLeaf @ _: &crate::aver_generated::domain::ast::FastLeaf,
+    other @ _: &crate::aver_generated::domain::ast::Pattern,
+    bindingSlots @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    otherLeaf @ _: &crate::aver_generated::domain::ast::FastLeaf,
 ) -> crate::aver_generated::domain::ast::FnFastPath {
     crate::cancel_checkpoint();
     match other.clone() {
@@ -908,13 +908,13 @@ pub fn classifyFastListOther(
 
 /// Handle reversed list arms where the cons case appears first.
 pub fn classifyFastListConsFirst(
-    slot: aver_rt::AverInt,
-    head: AverStr,
-    tail: AverStr,
-    bindingSlots: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
-    consLeaf: &crate::aver_generated::domain::ast::FastLeaf,
-    other: &crate::aver_generated::domain::ast::Pattern,
-    otherLeaf: &crate::aver_generated::domain::ast::FastLeaf,
+    slot @ _: aver_rt::AverInt,
+    head @ _: AverStr,
+    tail @ _: AverStr,
+    bindingSlots @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    consLeaf @ _: &crate::aver_generated::domain::ast::FastLeaf,
+    other @ _: &crate::aver_generated::domain::ast::Pattern,
+    otherLeaf @ _: &crate::aver_generated::domain::ast::FastLeaf,
 ) -> crate::aver_generated::domain::ast::FnFastPath {
     crate::cancel_checkpoint();
     match other {
@@ -935,12 +935,12 @@ pub fn classifyFastListConsFirst(
 /// Build the list-slot branch once head/tail binding slots are known.
 #[inline(always)]
 pub fn classifyFastListCons(
-    slot: aver_rt::AverInt,
-    emptyLeaf: &crate::aver_generated::domain::ast::FastLeaf,
-    head: AverStr,
-    tail: AverStr,
-    bindingSlots: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
-    consLeaf: &crate::aver_generated::domain::ast::FastLeaf,
+    slot @ _: aver_rt::AverInt,
+    emptyLeaf @ _: &crate::aver_generated::domain::ast::FastLeaf,
+    head @ _: AverStr,
+    tail @ _: AverStr,
+    bindingSlots @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    consLeaf @ _: &crate::aver_generated::domain::ast::FastLeaf,
 ) -> crate::aver_generated::domain::ast::FnFastPath {
     crate::cancel_checkpoint();
     match bindingSlots.get(&head).cloned() {
@@ -963,8 +963,8 @@ pub fn classifyFastListCons(
 /// Recognize tiny direct-call wrappers that only forward slot arguments.
 #[inline(always)]
 pub fn classifyFastForwardCall(
-    fnId: aver_rt::AverInt,
-    args: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    fnId @ _: aver_rt::AverInt,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
 ) -> crate::aver_generated::domain::ast::FnFastPath {
     crate::cancel_checkpoint();
     match crate::aver_generated::domain::resolver::fast::classifyFastForwardSlots__collected(
@@ -981,8 +981,8 @@ pub fn classifyFastForwardCall(
 /// Extract slot numbers from a direct call argument list.
 #[inline(always)]
 pub fn classifyFastForwardSlots(
-    mut args: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
-    mut acc: aver_rt::AverIntList,
+    mut args @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    mut acc @ _: aver_rt::AverIntList,
 ) -> Option<aver_rt::AverIntList> {
     loop {
         crate::cancel_checkpoint();
@@ -1005,7 +1005,7 @@ pub fn classifyFastForwardSlots(
 
 /// Extract (then, else) leaves from a two-arm bool match, regardless of arm order.
 pub fn classifyBoolArms(
-    arms: &aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
+    arms @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
 ) -> Option<(
     crate::aver_generated::domain::ast::FastLeaf,
     crate::aver_generated::domain::ast::FastLeaf,
@@ -1037,8 +1037,8 @@ pub fn classifyBoolArms(
 /// Convert two bool-pattern arms into ordered leaves.
 #[inline(always)]
 pub fn classifyBoolArmPair(
-    arm1: &crate::aver_generated::domain::ast::MatchArm,
-    arm2: &crate::aver_generated::domain::ast::MatchArm,
+    arm1 @ _: &crate::aver_generated::domain::ast::MatchArm,
+    arm2 @ _: &crate::aver_generated::domain::ast::MatchArm,
 ) -> Option<(
     crate::aver_generated::domain::ast::FastLeaf,
     crate::aver_generated::domain::ast::FastLeaf,
@@ -1062,10 +1062,10 @@ pub fn classifyBoolArmPair(
 
 /// Order bool match arms into (trueLeaf, falseLeaf).
 pub fn classifyBoolArmPatterns(
-    p1: &crate::aver_generated::domain::ast::Pattern,
-    leaf1: &crate::aver_generated::domain::ast::FastLeaf,
-    p2: &crate::aver_generated::domain::ast::Pattern,
-    leaf2: &crate::aver_generated::domain::ast::FastLeaf,
+    p1 @ _: &crate::aver_generated::domain::ast::Pattern,
+    leaf1 @ _: &crate::aver_generated::domain::ast::FastLeaf,
+    p2 @ _: &crate::aver_generated::domain::ast::Pattern,
+    leaf2 @ _: &crate::aver_generated::domain::ast::FastLeaf,
 ) -> Option<(
     crate::aver_generated::domain::ast::FastLeaf,
     crate::aver_generated::domain::ast::FastLeaf,
@@ -1083,10 +1083,10 @@ pub fn classifyBoolArmPatterns(
 
 /// Finish ordering bool match arms once the first arm bool is extracted.
 pub fn classifyBoolArmPatternsInner(
-    b1: bool,
-    leaf1: &crate::aver_generated::domain::ast::FastLeaf,
-    p2: &crate::aver_generated::domain::ast::Pattern,
-    leaf2: &crate::aver_generated::domain::ast::FastLeaf,
+    b1 @ _: bool,
+    leaf1 @ _: &crate::aver_generated::domain::ast::FastLeaf,
+    p2 @ _: &crate::aver_generated::domain::ast::Pattern,
+    leaf2 @ _: &crate::aver_generated::domain::ast::FastLeaf,
 ) -> Option<(
     crate::aver_generated::domain::ast::FastLeaf,
     crate::aver_generated::domain::ast::FastLeaf,
@@ -1104,10 +1104,10 @@ pub fn classifyBoolArmPatternsInner(
 
 /// Return (trueLeaf, falseLeaf) when the two bool arms are complementary.
 pub fn classifyBoolArmPatternsPair(
-    b1: bool,
-    leaf1: &crate::aver_generated::domain::ast::FastLeaf,
-    b2: bool,
-    leaf2: &crate::aver_generated::domain::ast::FastLeaf,
+    b1 @ _: bool,
+    leaf1 @ _: &crate::aver_generated::domain::ast::FastLeaf,
+    b2 @ _: bool,
+    leaf2 @ _: &crate::aver_generated::domain::ast::FastLeaf,
 ) -> Option<(
     crate::aver_generated::domain::ast::FastLeaf,
     crate::aver_generated::domain::ast::FastLeaf,
@@ -1122,9 +1122,9 @@ pub fn classifyBoolArmPatternsPair(
 
 /// Encode a recognized branch scrutinee with preclassified leaves.
 pub fn classifyFastMatchScrutinee(
-    scrutinee: &crate::aver_generated::domain::ast::Expr,
-    thenLeaf: &crate::aver_generated::domain::ast::FastLeaf,
-    elseLeaf: &crate::aver_generated::domain::ast::FastLeaf,
+    scrutinee @ _: &crate::aver_generated::domain::ast::Expr,
+    thenLeaf @ _: &crate::aver_generated::domain::ast::FastLeaf,
+    elseLeaf @ _: &crate::aver_generated::domain::ast::FastLeaf,
 ) -> crate::aver_generated::domain::ast::FnFastPath {
     crate::cancel_checkpoint();
     match scrutinee.clone() {
@@ -1162,10 +1162,10 @@ pub fn classifyFastMatchScrutinee(
 
 /// Recognize slot == int/string in either operand order.
 pub fn classifyFastEqScrutinee(
-    a: &crate::aver_generated::domain::ast::Expr,
-    b: &crate::aver_generated::domain::ast::Expr,
-    thenLeaf: &crate::aver_generated::domain::ast::FastLeaf,
-    elseLeaf: &crate::aver_generated::domain::ast::FastLeaf,
+    a @ _: &crate::aver_generated::domain::ast::Expr,
+    b @ _: &crate::aver_generated::domain::ast::Expr,
+    thenLeaf @ _: &crate::aver_generated::domain::ast::FastLeaf,
+    elseLeaf @ _: &crate::aver_generated::domain::ast::FastLeaf,
 ) -> crate::aver_generated::domain::ast::FnFastPath {
     crate::cancel_checkpoint();
     match a.clone() {
@@ -1187,10 +1187,10 @@ pub fn classifyFastEqScrutinee(
 
 /// Encode equality against a constant once the slot side is known.
 pub fn classifyFastEqOther(
-    slot: aver_rt::AverInt,
-    other: &crate::aver_generated::domain::ast::Expr,
-    thenLeaf: &crate::aver_generated::domain::ast::FastLeaf,
-    elseLeaf: &crate::aver_generated::domain::ast::FastLeaf,
+    slot @ _: aver_rt::AverInt,
+    other @ _: &crate::aver_generated::domain::ast::Expr,
+    thenLeaf @ _: &crate::aver_generated::domain::ast::FastLeaf,
+    elseLeaf @ _: &crate::aver_generated::domain::ast::FastLeaf,
 ) -> crate::aver_generated::domain::ast::FnFastPath {
     crate::cancel_checkpoint();
     match other.clone() {
@@ -1216,10 +1216,10 @@ pub fn classifyFastEqOther(
 
 /// Recognize slot < slot branches like minInt.
 pub fn classifyFastLtScrutinee(
-    a: &crate::aver_generated::domain::ast::Expr,
-    b: &crate::aver_generated::domain::ast::Expr,
-    thenLeaf: &crate::aver_generated::domain::ast::FastLeaf,
-    elseLeaf: &crate::aver_generated::domain::ast::FastLeaf,
+    a @ _: &crate::aver_generated::domain::ast::Expr,
+    b @ _: &crate::aver_generated::domain::ast::Expr,
+    thenLeaf @ _: &crate::aver_generated::domain::ast::FastLeaf,
+    elseLeaf @ _: &crate::aver_generated::domain::ast::FastLeaf,
 ) -> crate::aver_generated::domain::ast::FnFastPath {
     crate::cancel_checkpoint();
     match a.clone() {
@@ -1241,8 +1241,8 @@ pub fn classifyFastLtScrutinee(
 /// Synthesized collecting variant of `classifyFastForwardSlots`. Appends to a builder where `classifyFastForwardSlots` prepends to `acc` and reverses on the way out, which reaches the same list without the cons chain or the reversal. Call sites that start the accumulator at `[]` are moved here.
 #[inline(always)]
 pub fn classifyFastForwardSlots__collected(
-    mut args: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
-    mut acc: aver_rt::AverIntList,
+    mut args @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    mut acc @ _: aver_rt::AverIntList,
 ) -> Option<aver_rt::AverIntList> {
     loop {
         crate::cancel_checkpoint();

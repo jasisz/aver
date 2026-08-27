@@ -500,14 +500,21 @@ pub(super) fn compile_mir_expr(
         // ── Phase 4c: record field access ───────────────────────
         MirExpr::Project(spanned_proj) => {
             let p = &spanned_proj.node;
-            // RECORD_GET_NAMED is the universal path — VM resolves
-            // the field by symbol id at runtime. The HIR walker
-            // sometimes specializes to RECORD_GET when it can
-            // infer field index statically; that's a Phase 6
-            // optimization we skip here.
+            // A direct last read moves the record local onto the operand stack.
+            // RECORD_TAKE_NAMED can then remove the field when runtime alias
+            // checks confirm that the moved handle was unique. Every other
+            // projection stays non-destructive.
+            let take_last_field = matches!(
+                p.base.node,
+                MirExpr::Local(ref local) if local.node.last_use
+            );
             compile_mir_expr(fc, &p.base)?;
             let field_symbol_id = fc.symbols.intern_name(&p.field);
-            fc.emit_op(RECORD_GET_NAMED);
+            fc.emit_op(if take_last_field {
+                RECORD_TAKE_NAMED
+            } else {
+                RECORD_GET_NAMED
+            });
             fc.emit_u32(field_symbol_id);
             Ok(())
         }

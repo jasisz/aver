@@ -5,7 +5,7 @@ use crate::*;
 
 /// Check if a single character is a digit.
 #[inline(always)]
-pub fn isDigit(c: AverStr) -> bool {
+pub fn isDigit(c @ _: AverStr) -> bool {
     crate::cancel_checkpoint();
     {
         let __dispatch_subject = aver_rt::AverInt::from_i64(aver_rt::str_code1(&c));
@@ -56,7 +56,7 @@ pub fn isDigit(c: AverStr) -> bool {
 
 /// Check if a character is a lowercase letter.
 #[inline(always)]
-pub fn isLower(c: AverStr) -> bool {
+pub fn isLower(c @ _: AverStr) -> bool {
     crate::cancel_checkpoint();
     if (c < AverStr::from("a")) {
         false
@@ -67,7 +67,7 @@ pub fn isLower(c: AverStr) -> bool {
 
 /// Check if a character is an uppercase letter.
 #[inline(always)]
-pub fn isUpper(c: AverStr) -> bool {
+pub fn isUpper(c @ _: AverStr) -> bool {
     crate::cancel_checkpoint();
     if (c < AverStr::from("A")) {
         false
@@ -78,7 +78,7 @@ pub fn isUpper(c: AverStr) -> bool {
 
 /// Check if a character is a letter or underscore.
 #[inline(always)]
-pub fn isLetterOrUnderscore(c: AverStr) -> bool {
+pub fn isLetterOrUnderscore(c @ _: AverStr) -> bool {
     crate::cancel_checkpoint();
     if crate::aver_generated::domain::lexer::chars::isLower(c.clone()) {
         true
@@ -93,7 +93,7 @@ pub fn isLetterOrUnderscore(c: AverStr) -> bool {
 
 /// Check if a single character is a letter or underscore.
 #[inline(always)]
-pub fn isAlpha(c: AverStr) -> bool {
+pub fn isAlpha(c @ _: AverStr) -> bool {
     crate::cancel_checkpoint();
     if (aver_rt::AverInt::from_i64(c.chars().count() as i64) == aver_rt::AverInt::from_i64(1)) {
         crate::aver_generated::domain::lexer::chars::isLetterOrUnderscore(c)
@@ -104,7 +104,7 @@ pub fn isAlpha(c: AverStr) -> bool {
 
 /// Check if a character is alphanumeric or underscore.
 #[inline(always)]
-pub fn isAlphaNum(c: AverStr) -> bool {
+pub fn isAlphaNum(c @ _: AverStr) -> bool {
     crate::cancel_checkpoint();
     if crate::aver_generated::domain::lexer::chars::isAlpha(c.clone()) {
         true
@@ -115,7 +115,7 @@ pub fn isAlphaNum(c: AverStr) -> bool {
 
 /// Convert a digit character to its integer value.
 #[inline(always)]
-pub fn digitVal(c: AverStr) -> aver_rt::AverInt {
+pub fn digitVal(c @ _: AverStr) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
     {
         let __dispatch_subject = aver_rt::AverInt::from_i64(aver_rt::str_code1(&c));
@@ -167,9 +167,9 @@ pub fn digitVal(c: AverStr) -> aver_rt::AverInt {
 /// Read consecutive digits from pos, return (number, newPos).
 #[inline(always)]
 pub fn readNumberLoop(
-    src: AverStr,
-    pos: aver_rt::AverInt,
-    acc: aver_rt::AverInt,
+    src @ _: AverStr,
+    pos @ _: aver_rt::AverInt,
+    acc @ _: aver_rt::AverInt,
 ) -> (aver_rt::AverInt, aver_rt::AverInt) {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::lexer::chars::readNumberLoop__indexed(
@@ -183,9 +183,9 @@ pub fn readNumberLoop(
 /// Read consecutive digits from pos, return (number, newPos).
 #[inline(always)]
 pub fn readNumber(
-    src: AverStr,
-    pos: aver_rt::AverInt,
-    acc: aver_rt::AverInt,
+    src @ _: AverStr,
+    pos @ _: aver_rt::AverInt,
+    acc @ _: aver_rt::AverInt,
 ) -> (aver_rt::AverInt, aver_rt::AverInt) {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::lexer::chars::readNumber__indexed(
@@ -198,7 +198,7 @@ pub fn readNumber(
 
 /// Check if character can continue a dotted identifier (alphanumeric, underscore, or dot).
 #[inline(always)]
-pub fn isIdentCharDotted(c: AverStr) -> bool {
+pub fn isIdentCharDotted(c @ _: AverStr) -> bool {
     crate::cancel_checkpoint();
     if crate::aver_generated::domain::lexer::chars::isAlphaNum(c.clone()) {
         true
@@ -209,7 +209,7 @@ pub fn isIdentCharDotted(c: AverStr) -> bool {
 
 /// Check if character can continue a plain identifier (alphanumeric, underscore only).
 #[inline(always)]
-pub fn isIdentCharPlain(c: AverStr) -> bool {
+pub fn isIdentCharPlain(c @ _: AverStr) -> bool {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::lexer::chars::isAlphaNum(c)
 }
@@ -217,9 +217,9 @@ pub fn isIdentCharPlain(c: AverStr) -> bool {
 /// Read identifier including dots (for qualified names like List.prepend).
 #[inline(always)]
 pub fn readIdentLoopDotted(
-    src: AverStr,
-    pos: aver_rt::AverInt,
-    acc: AverStr,
+    src @ _: AverStr,
+    pos @ _: aver_rt::AverInt,
+    acc @ _: AverStr,
 ) -> (AverStr, aver_rt::AverInt) {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::lexer::chars::readIdentLoopDotted__indexed(
@@ -233,9 +233,9 @@ pub fn readIdentLoopDotted(
 /// Read identifier without dots (for local variables).
 #[inline(always)]
 pub fn readIdentLoopPlain(
-    src: AverStr,
-    pos: aver_rt::AverInt,
-    acc: AverStr,
+    src @ _: AverStr,
+    pos @ _: aver_rt::AverInt,
+    acc @ _: AverStr,
 ) -> (AverStr, aver_rt::AverInt) {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::lexer::chars::readIdentLoopPlain__indexed(
@@ -249,10 +249,10 @@ pub fn readIdentLoopPlain(
 /// Read identifier, dotted if starts with uppercase.
 #[inline(always)]
 pub fn readIdent(
-    src: AverStr,
-    pos: aver_rt::AverInt,
-    acc: AverStr,
-    dotted: bool,
+    src @ _: AverStr,
+    pos @ _: aver_rt::AverInt,
+    acc @ _: AverStr,
+    dotted @ _: bool,
 ) -> (AverStr, aver_rt::AverInt) {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::lexer::chars::readIdent__indexed(
@@ -266,7 +266,7 @@ pub fn readIdent(
 
 /// Classify an identifier as keyword or plain ident.
 #[inline(always)]
-pub fn keywordOrIdent(s: AverStr) -> crate::aver_generated::domain::token::Token {
+pub fn keywordOrIdent(s @ _: AverStr) -> crate::aver_generated::domain::token::Token {
     crate::cancel_checkpoint();
     {
         let __dispatch_subject = s.clone();
@@ -337,12 +337,12 @@ pub fn keywordOrIdent(s: AverStr) -> crate::aver_generated::domain::token::Token
 /// Synthesized indexed worker of `readNumberLoop`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 #[inline(always)]
 pub fn readNumberLoop__indexed(
-    mut src: AverStr,
-    mut pos: aver_rt::AverInt,
-    mut acc: aver_rt::AverInt,
-    __str_index: aver_rt::StringIndex,
+    mut src @ _: AverStr,
+    mut pos @ _: aver_rt::AverInt,
+    mut acc @ _: aver_rt::AverInt,
+    __str_index @ _: aver_rt::StringIndex,
 ) -> (aver_rt::AverInt, aver_rt::AverInt) {
-    let __str_index = std::sync::Arc::new(__str_index);
+    let __str_index @ _ = std::sync::Arc::new(__str_index);
     loop {
         crate::cancel_checkpoint();
         if (pos < aver_rt::AverInt::from_i64(src.chars().count() as i64)) {
@@ -378,10 +378,10 @@ pub fn readNumberLoop__indexed(
 /// Synthesized indexed worker of `readNumber`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 #[inline(always)]
 pub fn readNumber__indexed(
-    src: AverStr,
-    pos: aver_rt::AverInt,
-    acc: aver_rt::AverInt,
-    __str_index: &aver_rt::StringIndex,
+    src @ _: AverStr,
+    pos @ _: aver_rt::AverInt,
+    acc @ _: aver_rt::AverInt,
+    __str_index @ _: &aver_rt::StringIndex,
 ) -> (aver_rt::AverInt, aver_rt::AverInt) {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::lexer::chars::readNumberLoop__indexed(
@@ -395,12 +395,12 @@ pub fn readNumber__indexed(
 /// Synthesized indexed worker of `readIdentLoopDotted`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 #[inline(always)]
 pub fn readIdentLoopDotted__indexed(
-    mut src: AverStr,
-    mut pos: aver_rt::AverInt,
-    mut acc: AverStr,
-    __str_index: aver_rt::StringIndex,
+    mut src @ _: AverStr,
+    mut pos @ _: aver_rt::AverInt,
+    mut acc @ _: AverStr,
+    __str_index @ _: aver_rt::StringIndex,
 ) -> (AverStr, aver_rt::AverInt) {
-    let __str_index = std::sync::Arc::new(__str_index);
+    let __str_index @ _ = std::sync::Arc::new(__str_index);
     loop {
         crate::cancel_checkpoint();
         if (pos < aver_rt::AverInt::from_i64(src.chars().count() as i64)) {
@@ -431,12 +431,12 @@ pub fn readIdentLoopDotted__indexed(
 /// Synthesized indexed worker of `readIdentLoopPlain`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 #[inline(always)]
 pub fn readIdentLoopPlain__indexed(
-    mut src: AverStr,
-    mut pos: aver_rt::AverInt,
-    mut acc: AverStr,
-    __str_index: aver_rt::StringIndex,
+    mut src @ _: AverStr,
+    mut pos @ _: aver_rt::AverInt,
+    mut acc @ _: AverStr,
+    __str_index @ _: aver_rt::StringIndex,
 ) -> (AverStr, aver_rt::AverInt) {
-    let __str_index = std::sync::Arc::new(__str_index);
+    let __str_index @ _ = std::sync::Arc::new(__str_index);
     loop {
         crate::cancel_checkpoint();
         if (pos < aver_rt::AverInt::from_i64(src.chars().count() as i64)) {
@@ -467,11 +467,11 @@ pub fn readIdentLoopPlain__indexed(
 /// Synthesized indexed worker of `readIdent`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 #[inline(always)]
 pub fn readIdent__indexed(
-    src: AverStr,
-    pos: aver_rt::AverInt,
-    acc: AverStr,
-    dotted: bool,
-    __str_index: &aver_rt::StringIndex,
+    src @ _: AverStr,
+    pos @ _: aver_rt::AverInt,
+    acc @ _: AverStr,
+    dotted @ _: bool,
+    __str_index @ _: &aver_rt::StringIndex,
 ) -> (AverStr, aver_rt::AverInt) {
     crate::cancel_checkpoint();
     if dotted {
@@ -493,7 +493,7 @@ pub fn readIdent__indexed(
 
 /// Synthesized codepoint variant of `digitVal` for indexed character dispatch. Parameter `c` is the Unicode scalar of the one-character String accepted by the source function.
 #[inline(always)]
-pub fn digitVal__code(__str_index_code: i64) -> aver_rt::AverInt {
+pub fn digitVal__code(__str_index_code @ _: i64) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
     {
         let __dispatch_subject = __str_index_code;
@@ -543,7 +543,7 @@ pub fn digitVal__code(__str_index_code: i64) -> aver_rt::AverInt {
 
 /// Synthesized codepoint variant of `isDigit` for indexed character dispatch. Parameter `c` is the Unicode scalar of the one-character String accepted by the source function.
 #[inline(always)]
-pub fn isDigit__code(__str_index_code: i64) -> bool {
+pub fn isDigit__code(__str_index_code @ _: i64) -> bool {
     crate::cancel_checkpoint();
     {
         let __dispatch_subject = __str_index_code;

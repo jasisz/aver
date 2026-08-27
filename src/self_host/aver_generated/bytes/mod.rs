@@ -104,7 +104,7 @@ impl aver_replay::ReplayValue for Bytes {
 
 /// Return true when every integer in the list is an octet.
 #[inline(always)]
-pub fn allInRange(mut xs: aver_rt::AverIntList) -> bool {
+pub fn allInRange(mut xs @ _: aver_rt::AverIntList) -> bool {
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(xs, [] => { return true; }, [head, tail] => { if ((head >= aver_rt::AverInt::from_i64(0)) && (head <= aver_rt::AverInt::from_i64(255))) { {
@@ -117,7 +117,7 @@ pub fn allInRange(mut xs: aver_rt::AverIntList) -> bool {
 
 /// Return the first non-octet value; -1 when every value is an octet.
 #[inline(always)]
-pub fn firstOutOfRange(mut xs: aver_rt::AverIntList) -> aver_rt::AverInt {
+pub fn firstOutOfRange(mut xs @ _: aver_rt::AverIntList) -> aver_rt::AverInt {
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(xs, [] => { return aver_rt::AverInt::from_i64(-1); }, [head, tail] => { if ((head >= aver_rt::AverInt::from_i64(0)) && (head <= aver_rt::AverInt::from_i64(255))) { {
@@ -130,14 +130,14 @@ pub fn firstOutOfRange(mut xs: aver_rt::AverIntList) -> aver_rt::AverInt {
 
 /// Return the index of the first non-octet value; the length when every value is an octet.
 #[inline(always)]
-pub fn firstOutOfRangeIndex(xs: &aver_rt::AverIntList) -> aver_rt::AverInt {
+pub fn firstOutOfRangeIndex(xs @ _: &aver_rt::AverIntList) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
     aver_list_match!(xs.clone(), [] => aver_rt::AverInt::from_i64(0), [head, tail] => if ((head >= aver_rt::AverInt::from_i64(0)) && (head <= aver_rt::AverInt::from_i64(255))) { aver_rt::AverInt::from_i64(1).add(&crate::aver_generated::bytes::firstOutOfRangeIndex(&tail)) } else { aver_rt::AverInt::from_i64(0) })
 }
 
 /// Validate raw integers and construct a byte sequence.
 #[inline(always)]
-pub fn fromList(xs: &aver_rt::AverIntList) -> Result<Bytes, AverStr> {
+pub fn fromList(xs @ _: &aver_rt::AverIntList) -> Result<Bytes, AverStr> {
     crate::cancel_checkpoint();
     if let Some(__packed) = xs.as_packed() {
         return Ok(Bytes {
@@ -182,7 +182,7 @@ pub fn fromList(xs: &aver_rt::AverIntList) -> Result<Bytes, AverStr> {
 
 /// Expose the validated octets for ordinary List operations.
 #[inline(always)]
-pub fn octets(bytes: &Bytes) -> aver_rt::AverIntList {
+pub fn octets(bytes @ _: &Bytes) -> aver_rt::AverIntList {
     crate::cancel_checkpoint();
     (bytes.values).to_int_list().clone()
 }
@@ -198,13 +198,13 @@ pub fn empty() -> Bytes {
 
 /// The number of octets in a byte sequence.
 #[inline(always)]
-pub fn len(bytes: &Bytes) -> aver_rt::AverInt {
+pub fn len(bytes @ _: &Bytes) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
     aver_rt::AverInt::from_i64((bytes.values).to_int_list().len() as i64)
 }
 
 /// The octets of left followed by the octets of right.
-pub fn concat(left: &Bytes, right: &Bytes) -> Bytes {
+pub fn concat(mut left @ _: Bytes, right @ _: &Bytes) -> Bytes {
     crate::cancel_checkpoint();
     crate::aver_generated::bytes::Bytes {
         values: aver_rt::into_packed_u8(aver_rt::AverIntList::concat(
@@ -216,7 +216,7 @@ pub fn concat(left: &Bytes, right: &Bytes) -> Bytes {
 }
 
 /// At most count octets from the front; non-positive counts give empty bytes.
-pub fn take(bytes: &Bytes, count: aver_rt::AverInt) -> Bytes {
+pub fn take(mut bytes @ _: Bytes, count @ _: aver_rt::AverInt) -> Bytes {
     crate::cancel_checkpoint();
     crate::aver_generated::bytes::Bytes {
         values: aver_rt::into_packed_u8({
@@ -228,7 +228,7 @@ pub fn take(bytes: &Bytes, count: aver_rt::AverInt) -> Bytes {
 }
 
 /// The octets after count positions; non-positive counts preserve all bytes.
-pub fn drop(bytes: &Bytes, count: aver_rt::AverInt) -> Bytes {
+pub fn drop(mut bytes @ _: Bytes, count @ _: aver_rt::AverInt) -> Bytes {
     crate::cancel_checkpoint();
     crate::aver_generated::bytes::Bytes {
         values: aver_rt::into_packed_u8({
@@ -242,8 +242,8 @@ pub fn drop(bytes: &Bytes, count: aver_rt::AverInt) -> Bytes {
 /// Parse hexadecimal pairs into octets from left to right.
 #[inline(always)]
 pub fn parseHexChars(
-    mut chars: aver_rt::AverList<AverStr>,
-    mut acc: aver_rt::AverIntList,
+    mut chars @ _: aver_rt::AverList<AverStr>,
+    mut acc @ _: aver_rt::AverIntList,
 ) -> Result<aver_rt::AverIntList, AverStr> {
     loop {
         crate::cancel_checkpoint();
@@ -259,7 +259,7 @@ pub fn parseHexChars(
 
 /// Decode one case-insensitive hexadecimal digit.
 #[inline(always)]
-pub fn hexDigitValue(digit: AverStr) -> Option<aver_rt::AverInt> {
+pub fn hexDigitValue(digit @ _: AverStr) -> Option<aver_rt::AverInt> {
     crate::cancel_checkpoint();
     {
         let __dispatch_subject = aver_rt::AverInt::from_i64(aver_rt::str_code1_lower(&digit));
@@ -346,7 +346,7 @@ pub fn hexDigitValue(digit: AverStr) -> Option<aver_rt::AverInt> {
 
 /// Decode an even-length hexadecimal string into validated bytes.
 #[inline(always)]
-pub fn fromHex(text: AverStr) -> Result<Bytes, AverStr> {
+pub fn fromHex(text @ _: AverStr) -> Result<Bytes, AverStr> {
     crate::cancel_checkpoint();
     crate::aver_generated::bytes::parseHexChars__cursor__collected(
         text,
@@ -357,7 +357,7 @@ pub fn fromHex(text: AverStr) -> Result<Bytes, AverStr> {
 
 /// Encode one integer in 0..=15 as lowercase hexadecimal.
 #[inline(always)]
-pub fn hexDigit(value: aver_rt::AverInt) -> AverStr {
+pub fn hexDigit(value @ _: aver_rt::AverInt) -> AverStr {
     crate::cancel_checkpoint();
     {
         let __dispatch_subject = value;
@@ -439,7 +439,7 @@ pub fn hexDigit(value: aver_rt::AverInt) -> AverStr {
 
 /// Compute a validated octet's high nibble by total division on a literal divisor.
 #[inline(always)]
-pub fn highNibble(value: aver_rt::AverInt) -> aver_rt::AverInt {
+pub fn highNibble(value @ _: aver_rt::AverInt) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
     (value)
         .div_euclid(&(aver_rt::AverInt::from_i64(16)))
@@ -448,7 +448,7 @@ pub fn highNibble(value: aver_rt::AverInt) -> aver_rt::AverInt {
 
 /// Compute a validated octet's low nibble by total modulo on a literal divisor.
 #[inline(always)]
-pub fn lowNibble(value: aver_rt::AverInt) -> aver_rt::AverInt {
+pub fn lowNibble(value @ _: aver_rt::AverInt) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
     (value)
         .rem_euclid(&(aver_rt::AverInt::from_i64(16)))
@@ -456,7 +456,7 @@ pub fn lowNibble(value: aver_rt::AverInt) -> aver_rt::AverInt {
 }
 
 /// Encode one validated octet as two lowercase hexadecimal characters.
-pub fn byteToHex(value: aver_rt::AverInt) -> AverStr {
+pub fn byteToHex(value @ _: aver_rt::AverInt) -> AverStr {
     crate::cancel_checkpoint();
     (crate::aver_generated::bytes::hexDigit(crate::aver_generated::bytes::highNibble(
         value.clone(),
@@ -466,8 +466,8 @@ pub fn byteToHex(value: aver_rt::AverInt) -> AverStr {
 /// Encode validated octets into lowercase two-character pieces.
 #[inline(always)]
 pub fn hexParts(
-    mut values: aver_rt::AverIntList,
-    mut acc: aver_rt::AverList<AverStr>,
+    mut values @ _: aver_rt::AverIntList,
+    mut acc @ _: aver_rt::AverList<AverStr>,
 ) -> aver_rt::AverList<AverStr> {
     loop {
         crate::cancel_checkpoint();
@@ -483,7 +483,7 @@ pub fn hexParts(
 
 /// Encode bytes as lowercase hexadecimal; total because Bytes contains only octets.
 #[inline(always)]
-pub fn toHex(bytes: &Bytes) -> AverStr {
+pub fn toHex(bytes @ _: &Bytes) -> AverStr {
     crate::cancel_checkpoint();
     aver_rt::AverStr::from(crate::aver_generated::bytes::hexParts__buffered(
         crate::aver_generated::bytes::octets(bytes),
@@ -495,9 +495,9 @@ pub fn toHex(bytes: &Bytes) -> AverStr {
 /// Synthesized buffered variant of `hexParts` for deforestation lowering. Call sites that match `String.join(hexParts(...), sep)` are rewritten to alloc a buffer + call this variant + finalize, skipping the intermediate List.
 #[inline(always)]
 pub fn hexParts__buffered(
-    mut values: aver_rt::AverIntList,
-    mut __buf: Buffer,
-    mut __sep: AverStr,
+    mut values @ _: aver_rt::AverIntList,
+    mut __buf @ _: Buffer,
+    mut __sep @ _: AverStr,
 ) -> Buffer {
     loop {
         crate::cancel_checkpoint();
@@ -514,9 +514,9 @@ pub fn hexParts__buffered(
 /// Synthesized cursor variant of `parseHexChars`. Call sites that hand it `String.chars(s)` walk `s` directly — a byte offset stepped one codepoint at a time — instead of materialising the list of one-character strings.
 #[inline(always)]
 pub fn parseHexChars__cursor(
-    mut __cur_s: AverStr,
-    mut __cur_i: aver_rt::AverInt,
-    mut acc: aver_rt::AverIntList,
+    mut __cur_s @ _: AverStr,
+    mut __cur_i @ _: aver_rt::AverInt,
+    mut acc @ _: aver_rt::AverIntList,
 ) -> Result<aver_rt::AverIntList, AverStr> {
     loop {
         crate::cancel_checkpoint();
@@ -644,7 +644,7 @@ pub fn parseHexChars__cursor(
 
 /// Synthesized codepoint variant of `hexDigitValue`. A cursor loop whose head only ever reaches this classifier hands over the character's code instead of materialising a one-character string.
 #[inline(always)]
-pub fn hexDigitValue__code(__str_code: i64) -> Option<aver_rt::AverInt> {
+pub fn hexDigitValue__code(__str_code @ _: i64) -> Option<aver_rt::AverInt> {
     crate::cancel_checkpoint();
     {
         let __dispatch_subject = aver_rt::str_fold_lower(__str_code);
@@ -724,9 +724,9 @@ pub fn hexDigitValue__code(__str_code: i64) -> Option<aver_rt::AverInt> {
 /// Synthesized collecting variant of `parseHexChars__cursor`. Appends to a builder where `parseHexChars__cursor` prepends to `acc` and reverses on the way out, which reaches the same list without the cons chain or the reversal. Call sites that start the accumulator at `[]` are moved here. Its only reader handed the collected list straight to the standard library's `fromList`, so the builder collects bytes: the range check rides every push, and the exits answer the `Result<Bytes, String>` the pair used to compute.
 #[inline(always)]
 pub fn parseHexChars__cursor__collected(
-    mut __cur_s: AverStr,
-    mut __cur_i: aver_rt::AverInt,
-    mut acc: ByteBuilder,
+    mut __cur_s @ _: AverStr,
+    mut __cur_i @ _: aver_rt::AverInt,
+    mut acc @ _: ByteBuilder,
 ) -> Result<Bytes, AverStr> {
     loop {
         crate::cancel_checkpoint();

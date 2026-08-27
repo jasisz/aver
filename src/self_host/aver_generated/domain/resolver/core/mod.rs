@@ -18,7 +18,7 @@ enum __MutualTco1 {
 fn __mutual_tco_trampoline_1(mut __state: __MutualTco1) -> aver_rt::AverInt {
     loop {
         __state = match __state {
-            __MutualTco1::MaxSlotInExpr(mut expr, mut acc) => {
+            __MutualTco1::MaxSlotInExpr(mut expr @ _, mut acc @ _) => {
                 crate::cancel_checkpoint();
                 match expr.clone() {
                     crate::aver_generated::domain::ast::Expr::ExprBoolBranch(
@@ -63,7 +63,7 @@ fn __mutual_tco_trampoline_1(mut __state: __MutualTco1) -> aver_rt::AverInt {
                     _ => __MutualTco1::MaxSlotInExprComposite(expr, acc),
                 }
             }
-            __MutualTco1::MaxSlotInExprComposite(mut expr, mut acc) => {
+            __MutualTco1::MaxSlotInExprComposite(mut expr @ _, mut acc @ _) => {
                 crate::cancel_checkpoint();
                 match expr.clone() {
                     crate::aver_generated::domain::ast::Expr::ExprVectorGetOrInt(
@@ -135,7 +135,7 @@ fn __mutual_tco_trampoline_1(mut __state: __MutualTco1) -> aver_rt::AverInt {
                     _ => __MutualTco1::MaxSlotInExprAggregate(expr, acc),
                 }
             }
-            __MutualTco1::MaxSlotInExprAggregate(mut expr, mut acc) => {
+            __MutualTco1::MaxSlotInExprAggregate(mut expr @ _, mut acc @ _) => {
                 crate::cancel_checkpoint();
                 match expr {
                     crate::aver_generated::domain::ast::Expr::ExprLte(a, b) => {
@@ -213,7 +213,7 @@ fn __mutual_tco_trampoline_1(mut __state: __MutualTco1) -> aver_rt::AverInt {
                     _ => return acc,
                 }
             }
-            __MutualTco1::MaxSlotInExprPair(mut a, mut b, mut acc) => {
+            __MutualTco1::MaxSlotInExprPair(mut a @ _, mut b @ _, mut acc @ _) => {
                 crate::cancel_checkpoint();
                 __MutualTco1::MaxSlotInExpr(
                     b,
@@ -226,33 +226,33 @@ fn __mutual_tco_trampoline_1(mut __state: __MutualTco1) -> aver_rt::AverInt {
 
 /// Find highest slot index in an expression tree.
 pub fn maxSlotInExpr(
-    expr: &crate::aver_generated::domain::ast::Expr,
-    acc: aver_rt::AverInt,
+    expr @ _: &crate::aver_generated::domain::ast::Expr,
+    acc @ _: aver_rt::AverInt,
 ) -> aver_rt::AverInt {
     __mutual_tco_trampoline_1(__MutualTco1::MaxSlotInExpr(expr.clone(), acc))
 }
 
 /// Continue max-slot traversal for composite expression forms.
 pub fn maxSlotInExprComposite(
-    expr: &crate::aver_generated::domain::ast::Expr,
-    acc: aver_rt::AverInt,
+    expr @ _: &crate::aver_generated::domain::ast::Expr,
+    acc @ _: aver_rt::AverInt,
 ) -> aver_rt::AverInt {
     __mutual_tco_trampoline_1(__MutualTco1::MaxSlotInExprComposite(expr.clone(), acc))
 }
 
 /// Finish max-slot traversal for aggregate and call expression forms.
 pub fn maxSlotInExprAggregate(
-    expr: &crate::aver_generated::domain::ast::Expr,
-    acc: aver_rt::AverInt,
+    expr @ _: &crate::aver_generated::domain::ast::Expr,
+    acc @ _: aver_rt::AverInt,
 ) -> aver_rt::AverInt {
     __mutual_tco_trampoline_1(__MutualTco1::MaxSlotInExprAggregate(expr.clone(), acc))
 }
 
 /// Visit both sides of a binary expression.
 pub fn maxSlotInExprPair(
-    a: &crate::aver_generated::domain::ast::Expr,
-    b: &crate::aver_generated::domain::ast::Expr,
-    acc: aver_rt::AverInt,
+    a @ _: &crate::aver_generated::domain::ast::Expr,
+    b @ _: &crate::aver_generated::domain::ast::Expr,
+    acc @ _: aver_rt::AverInt,
 ) -> aver_rt::AverInt {
     __mutual_tco_trampoline_1(__MutualTco1::MaxSlotInExprPair(a.clone(), b.clone(), acc))
 }
@@ -260,8 +260,8 @@ pub fn maxSlotInExprPair(
 /// Resolve each function definition.
 #[inline(always)]
 pub fn resolveFns(
-    mut fns: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
-    mut acc: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+    mut fns @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+    mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> {
     loop {
         crate::cancel_checkpoint();
@@ -277,7 +277,7 @@ pub fn resolveFns(
 
 /// Resolve one function: assign slots to params and locals.
 pub fn resolveFn(
-    fd: &crate::aver_generated::domain::ast::FnDef,
+    fd @ _: &crate::aver_generated::domain::ast::FnDef,
 ) -> crate::aver_generated::domain::ast::FnDef {
     crate::cancel_checkpoint();
     let paramResult @ _ = crate::aver_generated::domain::resolver::core::buildParamSlots(
@@ -294,9 +294,9 @@ pub fn resolveFn(
 /// Assign slot indices 0..n-1 to parameters.
 #[inline(always)]
 pub fn buildParamSlots(
-    mut params: aver_rt::AverList<AverStr>,
-    mut slots: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
-    mut next: aver_rt::AverInt,
+    mut params @ _: aver_rt::AverList<AverStr>,
+    mut slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    mut next @ _: aver_rt::AverInt,
 ) -> (
     aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     aver_rt::AverInt,
@@ -317,9 +317,9 @@ pub fn buildParamSlots(
 
 /// Walk body stmts, resolve vars, track new bindings. slotCount = max slot + 1 from body scan.
 pub fn resolveBody(
-    fd: &crate::aver_generated::domain::ast::FnDef,
-    slots: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
-    nextSlot: aver_rt::AverInt,
+    fd @ _: &crate::aver_generated::domain::ast::FnDef,
+    slots @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    nextSlot @ _: aver_rt::AverInt,
 ) -> crate::aver_generated::domain::ast::FnDef {
     crate::cancel_checkpoint();
     let resolved @ _ = crate::aver_generated::domain::resolver::core::resolveStmts__collected(
@@ -341,10 +341,10 @@ pub fn resolveBody(
 
 /// Compute slotCount as max slot index found in body + 1.
 pub fn computeSlotCount(
-    fd: &crate::aver_generated::domain::ast::FnDef,
-    body: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
-    baseSlot: aver_rt::AverInt,
-    slotMap: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    fd @ _: &crate::aver_generated::domain::ast::FnDef,
+    body @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
+    baseSlot @ _: aver_rt::AverInt,
+    slotMap @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) -> crate::aver_generated::domain::ast::FnDef {
     crate::cancel_checkpoint();
     let maxFromBody @ _ = crate::aver_generated::domain::resolver::core::maxSlotInStmts(
@@ -365,8 +365,8 @@ pub fn computeSlotCount(
 /// Find highest slot index in a list of statements.
 #[inline(always)]
 pub fn maxSlotInStmts(
-    mut stmts: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
-    mut acc: aver_rt::AverInt,
+    mut stmts @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
+    mut acc @ _: aver_rt::AverInt,
 ) -> aver_rt::AverInt {
     loop {
         crate::cancel_checkpoint();
@@ -382,8 +382,8 @@ pub fn maxSlotInStmts(
 
 /// Find highest slot index in a statement.
 pub fn maxSlotInStmt(
-    s: &crate::aver_generated::domain::ast::Stmt,
-    acc: aver_rt::AverInt,
+    s @ _: &crate::aver_generated::domain::ast::Stmt,
+    acc @ _: aver_rt::AverInt,
 ) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
     match s.clone() {
@@ -405,8 +405,8 @@ pub fn maxSlotInStmt(
 /// Find highest slot index in a list of expressions.
 #[inline(always)]
 pub fn maxSlotInExprs(
-    mut exprs: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
-    mut acc: aver_rt::AverInt,
+    mut exprs @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    mut acc @ _: aver_rt::AverInt,
 ) -> aver_rt::AverInt {
     loop {
         crate::cancel_checkpoint();
@@ -423,8 +423,8 @@ pub fn maxSlotInExprs(
 /// Find highest slot index in record fields.
 #[inline(always)]
 pub fn maxSlotInFields(
-    mut fields: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
-    mut acc: aver_rt::AverInt,
+    mut fields @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
+    mut acc @ _: aver_rt::AverInt,
 ) -> aver_rt::AverInt {
     loop {
         crate::cancel_checkpoint();
@@ -441,8 +441,8 @@ pub fn maxSlotInFields(
 /// Find highest slot index in match arms.
 #[inline(always)]
 pub fn maxSlotInArms(
-    mut arms: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
-    mut acc: aver_rt::AverInt,
+    mut arms @ _: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
+    mut acc @ _: aver_rt::AverInt,
 ) -> aver_rt::AverInt {
     loop {
         crate::cancel_checkpoint();
@@ -458,7 +458,7 @@ pub fn maxSlotInArms(
 
 /// Return the larger of two integers.
 #[inline(always)]
-pub fn maxInt(a: aver_rt::AverInt, b: aver_rt::AverInt) -> aver_rt::AverInt {
+pub fn maxInt(a @ _: aver_rt::AverInt, b @ _: aver_rt::AverInt) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
     if (a > b) { a } else { b }
 }
@@ -466,10 +466,10 @@ pub fn maxInt(a: aver_rt::AverInt, b: aver_rt::AverInt) -> aver_rt::AverInt {
 /// Resolve statements, threading slot assignments.
 #[inline(always)]
 pub fn resolveStmts(
-    mut stmts: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
-    mut slots: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
-    mut next: aver_rt::AverInt,
-    mut acc: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
+    mut stmts @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
+    mut slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    mut next @ _: aver_rt::AverInt,
+    mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
 ) -> (
     aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
     aver_rt::AverInt,
@@ -519,11 +519,11 @@ pub fn resolveStmts(
 
 /// Resolve a single statement and continue.
 pub fn resolveOneStmt(
-    s: &crate::aver_generated::domain::ast::Stmt,
-    rest: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
-    slots: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
-    next: aver_rt::AverInt,
-    acc: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
+    s @ _: &crate::aver_generated::domain::ast::Stmt,
+    rest @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
+    slots @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    next @ _: aver_rt::AverInt,
+    acc @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
 ) -> (
     aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
     aver_rt::AverInt,
@@ -554,11 +554,11 @@ pub fn resolveOneStmt(
 
 /// Resolve an expression statement, collecting pattern slots.
 pub fn resolveStmtExpr(
-    expr: &crate::aver_generated::domain::ast::Expr,
-    rest: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
-    slots: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
-    next: aver_rt::AverInt,
-    acc: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
+    expr @ _: &crate::aver_generated::domain::ast::Expr,
+    rest @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
+    slots @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    next @ _: aver_rt::AverInt,
+    acc @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
 ) -> (
     aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
     aver_rt::AverInt,
@@ -586,12 +586,12 @@ pub fn resolveStmtExpr(
 
 /// Resolve a binding: assign a new slot, replace with StmtBindSlot.
 pub fn resolveStmtBind(
-    name: AverStr,
-    expr: &crate::aver_generated::domain::ast::Expr,
-    rest: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
-    slots: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
-    next: aver_rt::AverInt,
-    acc: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
+    name @ _: AverStr,
+    expr @ _: &crate::aver_generated::domain::ast::Expr,
+    rest @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
+    slots @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    next @ _: aver_rt::AverInt,
+    acc @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
 ) -> (
     aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
     aver_rt::AverInt,
@@ -609,12 +609,12 @@ pub fn resolveStmtBind(
 
 /// Finish resolving a binding after expr is resolved.
 pub fn resolveStmtBindFinish(
-    name: AverStr,
-    newExpr: &crate::aver_generated::domain::ast::Expr,
-    rest: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
-    slots: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
-    next: aver_rt::AverInt,
-    acc: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
+    name @ _: AverStr,
+    newExpr @ _: &crate::aver_generated::domain::ast::Expr,
+    rest @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
+    slots @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    next @ _: aver_rt::AverInt,
+    acc @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
 ) -> (
     aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
     aver_rt::AverInt,
@@ -635,8 +635,8 @@ pub fn resolveStmtBindFinish(
 
 /// Resolve an expression. Returns (resolved expr, slots with any new pattern bindings).
 pub fn resolveExpr(
-    expr: &crate::aver_generated::domain::ast::Expr,
-    slots: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    expr @ _: &crate::aver_generated::domain::ast::Expr,
+    slots @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) -> (
     crate::aver_generated::domain::ast::Expr,
     aver_rt::AverMap<AverStr, aver_rt::AverInt>,
@@ -683,8 +683,8 @@ pub fn resolveExpr(
 
 /// Continue expression resolution after simple leaf forms.
 pub fn resolveExprAfterLeaf(
-    expr: &crate::aver_generated::domain::ast::Expr,
-    slots: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    expr @ _: &crate::aver_generated::domain::ast::Expr,
+    slots @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) -> (
     crate::aver_generated::domain::ast::Expr,
     aver_rt::AverMap<AverStr, aver_rt::AverInt>,
@@ -818,8 +818,8 @@ pub fn resolveExprAfterLeaf(
 
 /// Continue expression resolution after arithmetic forms.
 pub fn resolveExprAfterArith(
-    expr: &crate::aver_generated::domain::ast::Expr,
-    slots: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    expr @ _: &crate::aver_generated::domain::ast::Expr,
+    slots @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) -> (
     crate::aver_generated::domain::ast::Expr,
     aver_rt::AverMap<AverStr, aver_rt::AverInt>,
@@ -928,8 +928,8 @@ pub fn resolveExprAfterArith(
 
 /// Finish expression resolution for aggregate forms.
 pub fn resolveExprAfterAggregate(
-    expr: &crate::aver_generated::domain::ast::Expr,
-    slots: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    expr @ _: &crate::aver_generated::domain::ast::Expr,
+    slots @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) -> (
     crate::aver_generated::domain::ast::Expr,
     aver_rt::AverMap<AverStr, aver_rt::AverInt>,
@@ -958,10 +958,10 @@ pub fn resolveExprAfterAggregate(
 /// Resolve binary expression and rebuild.
 #[inline(always)]
 pub fn resolveBinExpr(
-    a: &crate::aver_generated::domain::ast::Expr,
-    b: &crate::aver_generated::domain::ast::Expr,
-    slots: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
-    op: AverStr,
+    a @ _: &crate::aver_generated::domain::ast::Expr,
+    b @ _: &crate::aver_generated::domain::ast::Expr,
+    slots @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    op @ _: AverStr,
 ) -> (
     crate::aver_generated::domain::ast::Expr,
     aver_rt::AverMap<AverStr, aver_rt::AverInt>,
@@ -1071,8 +1071,8 @@ pub fn resolveBinExpr(
 
 /// Resolve expression, discarding slots update (for non-match contexts).
 pub fn resolveExprSimple(
-    expr: &crate::aver_generated::domain::ast::Expr,
-    slots: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    expr @ _: &crate::aver_generated::domain::ast::Expr,
+    slots @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) -> crate::aver_generated::domain::ast::Expr {
     crate::cancel_checkpoint();
     {
@@ -1083,9 +1083,9 @@ pub fn resolveExprSimple(
 
 /// Resolve function call arguments.
 pub fn resolveCallExpr(
-    name: AverStr,
-    args: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
-    slots: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    name @ _: AverStr,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    slots @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) -> (
     crate::aver_generated::domain::ast::Expr,
     aver_rt::AverMap<AverStr, aver_rt::AverInt>,
@@ -1106,9 +1106,9 @@ pub fn resolveCallExpr(
 
 /// Resolve match expression, collecting pattern slots.
 pub fn resolveMatchExpr(
-    subj: &crate::aver_generated::domain::ast::Expr,
-    arms: &aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
-    slots: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    subj @ _: &crate::aver_generated::domain::ast::Expr,
+    arms @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
+    slots @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) -> (
     crate::aver_generated::domain::ast::Expr,
     aver_rt::AverMap<AverStr, aver_rt::AverInt>,
@@ -1134,8 +1134,8 @@ pub fn resolveMatchExpr(
 
 /// Resolve ? propagation.
 pub fn resolvePropExpr(
-    inner: &crate::aver_generated::domain::ast::Expr,
-    slots: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    inner @ _: &crate::aver_generated::domain::ast::Expr,
+    slots @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) -> (
     crate::aver_generated::domain::ast::Expr,
     aver_rt::AverMap<AverStr, aver_rt::AverInt>,
@@ -1151,8 +1151,8 @@ pub fn resolvePropExpr(
 
 /// Resolve string concatenation parts.
 pub fn resolveConcatExpr(
-    parts: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
-    slots: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    parts @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    slots @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) -> (
     crate::aver_generated::domain::ast::Expr,
     aver_rt::AverMap<AverStr, aver_rt::AverInt>,
@@ -1172,8 +1172,8 @@ pub fn resolveConcatExpr(
 
 /// Resolve tuple expressions.
 pub fn resolveTupleExpr(
-    exprs: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
-    slots: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    exprs @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    slots @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) -> (
     crate::aver_generated::domain::ast::Expr,
     aver_rt::AverMap<AverStr, aver_rt::AverInt>,
@@ -1193,9 +1193,9 @@ pub fn resolveTupleExpr(
 
 /// Resolve independent product expressions.
 pub fn resolveIndependentProductExpr(
-    exprs: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
-    unwrap: bool,
-    slots: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    exprs @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    unwrap @ _: bool,
+    slots @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) -> (
     crate::aver_generated::domain::ast::Expr,
     aver_rt::AverMap<AverStr, aver_rt::AverInt>,
@@ -1216,8 +1216,8 @@ pub fn resolveIndependentProductExpr(
 
 /// Resolve list expressions.
 pub fn resolveListExpr(
-    exprs: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
-    slots: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    exprs @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    slots @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) -> (
     crate::aver_generated::domain::ast::Expr,
     aver_rt::AverMap<AverStr, aver_rt::AverInt>,
@@ -1237,9 +1237,9 @@ pub fn resolveListExpr(
 
 /// Resolve record expressions.
 pub fn resolveRecordExpr(
-    name: AverStr,
-    fields: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
-    slots: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    name @ _: AverStr,
+    fields @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
+    slots @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) -> (
     crate::aver_generated::domain::ast::Expr,
     aver_rt::AverMap<AverStr, aver_rt::AverInt>,
@@ -1260,9 +1260,9 @@ pub fn resolveRecordExpr(
 
 /// Resolve field access.
 pub fn resolveFieldExpr(
-    obj: &crate::aver_generated::domain::ast::Expr,
-    field: AverStr,
-    slots: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    obj @ _: &crate::aver_generated::domain::ast::Expr,
+    field @ _: AverStr,
+    slots @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) -> (
     crate::aver_generated::domain::ast::Expr,
     aver_rt::AverMap<AverStr, aver_rt::AverInt>,
@@ -1282,8 +1282,8 @@ pub fn resolveFieldExpr(
 /// Resolve a variable: local vars become ExprSlot, others stay ExprVar.
 #[inline(always)]
 pub fn resolveVar(
-    name: AverStr,
-    slots: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    name @ _: AverStr,
+    slots @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) -> crate::aver_generated::domain::ast::Expr {
     crate::cancel_checkpoint();
     match slots.get(&name).cloned() {
@@ -1295,11 +1295,11 @@ pub fn resolveVar(
 /// Resolve a list of expressions.
 #[inline(always)]
 pub fn resolveExprs(
-    mut exprs: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
-    slots: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
-    mut acc: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    mut exprs @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::Expr> {
-    let slots = std::sync::Arc::new(slots);
+    let slots @ _ = std::sync::Arc::new(slots);
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(exprs, [] => { return acc.reverse(); }, [e, rest] => { {
@@ -1315,11 +1315,11 @@ pub fn resolveExprs(
 /// Resolve record field expressions.
 #[inline(always)]
 pub fn resolveFields(
-    mut fields: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
-    slots: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
-    mut acc: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
+    mut fields @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
+    slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    mut acc @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
 ) -> aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)> {
-    let slots = std::sync::Arc::new(slots);
+    let slots @ _ = std::sync::Arc::new(slots);
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(fields, [] => { return acc.reverse(); }, [pair, rest] => { { let (name, expr) = pair; {
@@ -1335,14 +1335,14 @@ pub fn resolveFields(
 /// Resolve match arms, collecting all pattern slots.
 #[inline(always)]
 pub fn resolveArms(
-    mut arms: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
-    slots: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
-    mut acc: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
+    mut arms @ _: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
+    slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
 ) -> (
     aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
     aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) {
-    let slots = std::sync::Arc::new(slots);
+    let slots @ _ = std::sync::Arc::new(slots);
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(arms, [] => { return (acc.reverse(), (*slots).clone()); }, [arm, rest] => { { let (__stp0, _) = crate::aver_generated::domain::resolver::core::resolveArm(&arm, &*slots); {
@@ -1357,10 +1357,10 @@ pub fn resolveArms(
 
 /// Resolve one match arm; continue with the ORIGINAL slots, since an arm's pattern binders are scoped to its own body. Threading the arm-extended map onward leaked binder slots into later arms and past the match, where a wrapping binding aliased them and shadowed names resolved wrong.
 pub fn resolveOneArm(
-    arm: &crate::aver_generated::domain::ast::MatchArm,
-    rest: &aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
-    slots: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
-    acc: &aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
+    arm @ _: &crate::aver_generated::domain::ast::MatchArm,
+    rest @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
+    slots @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    acc @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
 ) -> (
     aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
     aver_rt::AverMap<AverStr, aver_rt::AverInt>,
@@ -1379,8 +1379,8 @@ pub fn resolveOneArm(
 
 /// Resolve a match arm: extend slots with pattern bindings, then resolve body.
 pub fn resolveArm(
-    arm: &crate::aver_generated::domain::ast::MatchArm,
-    slots: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    arm @ _: &crate::aver_generated::domain::ast::MatchArm,
+    slots @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) -> (
     crate::aver_generated::domain::ast::MatchArm,
     aver_rt::AverMap<AverStr, aver_rt::AverInt>,
@@ -1403,9 +1403,9 @@ pub fn resolveArm(
 
 /// Resolve arm body with extended slots.
 pub fn resolveArmBody(
-    arm: &crate::aver_generated::domain::ast::MatchArm,
-    newSlots: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
-    bindingSlots: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    arm @ _: &crate::aver_generated::domain::ast::MatchArm,
+    newSlots @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    bindingSlots @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) -> (
     crate::aver_generated::domain::ast::MatchArm,
     aver_rt::AverMap<AverStr, aver_rt::AverInt>,
@@ -1427,8 +1427,8 @@ pub fn resolveArmBody(
 
 /// Compute only the slots introduced by one pattern, using the same numbering as addPatternSlots.
 pub fn patternBindingSlots(
-    pat: &crate::aver_generated::domain::ast::Pattern,
-    slots: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    pat @ _: &crate::aver_generated::domain::ast::Pattern,
+    slots @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) -> aver_rt::AverMap<AverStr, aver_rt::AverInt> {
     crate::cancel_checkpoint();
     let nextSlot @ _ = crate::aver_generated::domain::resolver::core::mapMaxVal(slots)
@@ -1446,9 +1446,9 @@ pub fn patternBindingSlots(
 
 /// Assign slots to pattern binders without carrying the outer slot map.
 pub fn patternBindingSlotsInner(
-    pat: &crate::aver_generated::domain::ast::Pattern,
-    bindingSlots: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
-    next: aver_rt::AverInt,
+    pat @ _: &crate::aver_generated::domain::ast::Pattern,
+    bindingSlots @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    next @ _: aver_rt::AverInt,
 ) -> (
     aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     aver_rt::AverInt,
@@ -1494,10 +1494,10 @@ pub fn patternBindingSlotsInner(
 
 /// Assign slots for cons-pattern binders.
 pub fn patternBindingSlotsCons(
-    h: AverStr,
-    t: AverStr,
-    bindingSlots: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
-    next: aver_rt::AverInt,
+    h @ _: AverStr,
+    t @ _: AverStr,
+    bindingSlots @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    next @ _: aver_rt::AverInt,
 ) -> (
     aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     aver_rt::AverInt,
@@ -1513,9 +1513,9 @@ pub fn patternBindingSlotsCons(
 /// Assign slots for constructor-pattern binders.
 #[inline(always)]
 pub fn patternBindingSlotsConstructor(
-    mut bindings: aver_rt::AverList<AverStr>,
-    mut bindingSlots: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
-    mut next: aver_rt::AverInt,
+    mut bindings @ _: aver_rt::AverList<AverStr>,
+    mut bindingSlots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    mut next @ _: aver_rt::AverInt,
 ) -> (
     aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     aver_rt::AverInt,
@@ -1537,9 +1537,9 @@ pub fn patternBindingSlotsConstructor(
 /// Assign slots for tuple sub-patterns.
 #[inline(always)]
 pub fn patternBindingSlotsTuple(
-    mut pats: aver_rt::AverList<crate::aver_generated::domain::ast::Pattern>,
-    mut bindingSlots: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
-    mut next: aver_rt::AverInt,
+    mut pats @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Pattern>,
+    mut bindingSlots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    mut next @ _: aver_rt::AverInt,
 ) -> (
     aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     aver_rt::AverInt,
@@ -1560,8 +1560,8 @@ pub fn patternBindingSlotsTuple(
 
 /// Find the next available slot and add pattern bindings.
 pub fn addPatternSlots(
-    pat: &crate::aver_generated::domain::ast::Pattern,
-    slots: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    pat @ _: &crate::aver_generated::domain::ast::Pattern,
+    slots @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) -> (
     aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     aver_rt::AverInt,
@@ -1574,7 +1574,7 @@ pub fn addPatternSlots(
 
 /// Get maximum value in a map, or -1 if empty.
 #[inline(always)]
-pub fn mapMaxVal(m: &aver_rt::AverMap<AverStr, aver_rt::AverInt>) -> aver_rt::AverInt {
+pub fn mapMaxVal(m @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
     let vals @ _ = {
         let mut es: Vec<_> = m.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
@@ -1586,7 +1586,10 @@ pub fn mapMaxVal(m: &aver_rt::AverMap<AverStr, aver_rt::AverInt>) -> aver_rt::Av
 
 /// Find maximum value in a list.
 #[inline(always)]
-pub fn maxInList(mut vals: aver_rt::AverIntList, mut acc: aver_rt::AverInt) -> aver_rt::AverInt {
+pub fn maxInList(
+    mut vals @ _: aver_rt::AverIntList,
+    mut acc @ _: aver_rt::AverInt,
+) -> aver_rt::AverInt {
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(vals, [] => { return acc; }, [v, rest] => { if (v > acc) { {
@@ -1605,9 +1608,9 @@ pub fn maxInList(mut vals: aver_rt::AverIntList, mut acc: aver_rt::AverInt) -> a
 
 /// Add slots for pattern bindings.
 pub fn addPatternSlotsInner(
-    pat: &crate::aver_generated::domain::ast::Pattern,
-    slots: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
-    next: aver_rt::AverInt,
+    pat @ _: &crate::aver_generated::domain::ast::Pattern,
+    slots @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    next @ _: aver_rt::AverInt,
 ) -> (
     aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     aver_rt::AverInt,
@@ -1648,10 +1651,10 @@ pub fn addPatternSlotsInner(
 
 /// Add slots for cons pattern [h, ..t].
 pub fn addConsSlots(
-    h: AverStr,
-    t: AverStr,
-    slots: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
-    next: aver_rt::AverInt,
+    h @ _: AverStr,
+    t @ _: AverStr,
+    slots @ _: &aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    next @ _: aver_rt::AverInt,
 ) -> (
     aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     aver_rt::AverInt,
@@ -1667,9 +1670,9 @@ pub fn addConsSlots(
 /// Add slots for constructor pattern bindings.
 #[inline(always)]
 pub fn addConstructorSlots(
-    mut bindings: aver_rt::AverList<AverStr>,
-    mut slots: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
-    mut next: aver_rt::AverInt,
+    mut bindings @ _: aver_rt::AverList<AverStr>,
+    mut slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    mut next @ _: aver_rt::AverInt,
 ) -> (
     aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     aver_rt::AverInt,
@@ -1691,9 +1694,9 @@ pub fn addConstructorSlots(
 /// Add slots for tuple sub-patterns.
 #[inline(always)]
 pub fn addTuplePatternSlots(
-    mut pats: aver_rt::AverList<crate::aver_generated::domain::ast::Pattern>,
-    mut slots: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
-    mut next: aver_rt::AverInt,
+    mut pats @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Pattern>,
+    mut slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    mut next @ _: aver_rt::AverInt,
 ) -> (
     aver_rt::AverMap<AverStr, aver_rt::AverInt>,
     aver_rt::AverInt,
@@ -1715,10 +1718,10 @@ pub fn addTuplePatternSlots(
 /// Synthesized collecting variant of `resolveStmts`. Appends to a builder where `resolveStmts` prepends to `acc` and reverses on the way out, which reaches the same list without the cons chain or the reversal. Call sites that start the accumulator at `[]` are moved here.
 #[inline(always)]
 pub fn resolveStmts__collected(
-    mut stmts: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
-    mut slots: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
-    mut next: aver_rt::AverInt,
-    mut acc: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
+    mut stmts @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
+    mut slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    mut next @ _: aver_rt::AverInt,
+    mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
 ) -> (
     aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
     aver_rt::AverInt,
@@ -1769,11 +1772,11 @@ pub fn resolveStmts__collected(
 /// Synthesized collecting variant of `resolveExprs`. Appends to a builder where `resolveExprs` prepends to `acc` and reverses on the way out, which reaches the same list without the cons chain or the reversal. Call sites that start the accumulator at `[]` are moved here.
 #[inline(always)]
 pub fn resolveExprs__collected(
-    mut exprs: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
-    slots: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
-    mut acc: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    mut exprs @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::Expr> {
-    let slots = std::sync::Arc::new(slots);
+    let slots @ _ = std::sync::Arc::new(slots);
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(exprs, [] => { return aver_rt::list_builder_finalize(acc); }, [e, rest] => { {
@@ -1789,11 +1792,11 @@ pub fn resolveExprs__collected(
 /// Synthesized collecting variant of `resolveFields`. Appends to a builder where `resolveFields` prepends to `acc` and reverses on the way out, which reaches the same list without the cons chain or the reversal. Call sites that start the accumulator at `[]` are moved here.
 #[inline(always)]
 pub fn resolveFields__collected(
-    mut fields: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
-    slots: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
-    mut acc: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
+    mut fields @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
+    slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    mut acc @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
 ) -> aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)> {
-    let slots = std::sync::Arc::new(slots);
+    let slots @ _ = std::sync::Arc::new(slots);
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(fields, [] => { return aver_rt::list_builder_finalize(acc); }, [pair, rest] => { { let (name, expr) = pair; {
@@ -1809,14 +1812,14 @@ pub fn resolveFields__collected(
 /// Synthesized collecting variant of `resolveArms`. Appends to a builder where `resolveArms` prepends to `acc` and reverses on the way out, which reaches the same list without the cons chain or the reversal. Call sites that start the accumulator at `[]` are moved here.
 #[inline(always)]
 pub fn resolveArms__collected(
-    mut arms: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
-    slots: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
-    mut acc: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
+    mut arms @ _: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
+    slots @ _: aver_rt::AverMap<AverStr, aver_rt::AverInt>,
+    mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
 ) -> (
     aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
     aver_rt::AverMap<AverStr, aver_rt::AverInt>,
 ) {
-    let slots = std::sync::Arc::new(slots);
+    let slots @ _ = std::sync::Arc::new(slots);
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(arms, [] => { return (aver_rt::list_builder_finalize(acc), (*slots).clone()); }, [arm, rest] => { { let (__stp0, _) = crate::aver_generated::domain::resolver::core::resolveArm(&arm, &*slots); {

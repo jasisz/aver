@@ -370,9 +370,9 @@ impl<T: ArenaTypes> Arena<T> {
             }
             ArenaEntry::Vector {
                 mut items,
-                held_elsewhere,
+                holder_count,
             } => {
-                // `held_elsewhere` travels with the entry untouched — same
+                // `holder_count` travels with the entry untouched — same
                 // argument as the map arm: a rewrite renames indices, it
                 // neither creates a reference nor discharges one.
                 for value in &mut items {
@@ -380,7 +380,7 @@ impl<T: ArenaTypes> Arena<T> {
                 }
                 ArenaEntry::Vector {
                     items,
-                    held_elsewhere,
+                    holder_count,
                 }
             }
             ArenaEntry::Map {
@@ -388,23 +388,28 @@ impl<T: ArenaTypes> Arena<T> {
                 all_immediate,
                 scan_receipt,
                 pending_scan_keys,
-                held_elsewhere,
+                holder_count,
             } => self.rewrite_map_with(
                 map,
                 all_immediate,
                 scan_receipt,
                 pending_scan_keys,
-                held_elsewhere,
+                holder_count,
                 rewrite,
             ),
             ArenaEntry::Record {
                 type_id,
                 mut fields,
+                holder_count,
             } => {
                 for value in &mut fields {
                     *value = rewrite(self, *value);
                 }
-                ArenaEntry::Record { type_id, fields }
+                ArenaEntry::Record {
+                    type_id,
+                    fields,
+                    holder_count,
+                }
             }
             ArenaEntry::Variant {
                 type_id,
@@ -460,7 +465,7 @@ impl<T: ArenaTypes> Arena<T> {
     /// code layout in the collector's hot loop, which is the cost of admission
     /// for taking a `Map<Int, Int>` fold from 12.2 s to 0.03 s at 64,000 keys.
     ///
-    /// `held_elsewhere` travels with the entry untouched. A rewrite renames
+    /// `holder_count` travels with the entry untouched. A rewrite renames
     /// indices; it neither creates a reference nor discharges one, so whoever
     /// held this slot before holds it after.
     fn rewrite_map_with<F>(
@@ -469,7 +474,7 @@ impl<T: ArenaTypes> Arena<T> {
         all_immediate: bool,
         scan_receipt: LaneMark,
         mut pending_scan_keys: Vec<u64>,
-        held_elsewhere: bool,
+        holder_count: u32,
         rewrite: &mut F,
     ) -> ArenaEntry<T>
     where
@@ -490,7 +495,7 @@ impl<T: ArenaTypes> Arena<T> {
                 all_immediate: true,
                 scan_receipt,
                 pending_scan_keys,
-                held_elsewhere,
+                holder_count,
             };
         }
         if self.lane_receipt_can_skip(scan_receipt) {
@@ -507,7 +512,7 @@ impl<T: ArenaTypes> Arena<T> {
                     all_immediate: false,
                     scan_receipt: self.renewed_lane_receipt(),
                     pending_scan_keys,
-                    held_elsewhere,
+                    holder_count,
                 };
             }
             return ArenaEntry::Map {
@@ -515,7 +520,7 @@ impl<T: ArenaTypes> Arena<T> {
                 all_immediate: false,
                 scan_receipt,
                 pending_scan_keys,
-                held_elsewhere,
+                holder_count,
             };
         }
         self.note_map_entries_scanned(map.len());
@@ -531,7 +536,7 @@ impl<T: ArenaTypes> Arena<T> {
             all_immediate: false,
             scan_receipt: self.renewed_lane_receipt(),
             pending_scan_keys: Vec::new(),
-            held_elsewhere,
+            holder_count,
         }
     }
 

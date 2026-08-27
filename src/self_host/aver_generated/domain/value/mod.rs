@@ -446,7 +446,7 @@ impl aver_replay::ReplayValue for Val {
 }
 
 /// Render a string key or nested string value with quotes.
-pub fn quoteString(s: AverStr) -> AverStr {
+pub fn quoteString(s @ _: AverStr) -> AverStr {
     crate::cancel_checkpoint();
     ((AverStr::from("\"") + &s) + &AverStr::from("\""))
 }
@@ -454,9 +454,9 @@ pub fn quoteString(s: AverStr) -> AverStr {
 /// Build list repr recursively.
 #[inline(always)]
 pub fn valListRepr(
-    mut items: aver_rt::AverList<Val>,
-    mut acc: AverStr,
-    mut first: bool,
+    mut items @ _: aver_rt::AverList<Val>,
+    mut acc @ _: AverStr,
+    mut first @ _: bool,
 ) -> AverStr {
     loop {
         crate::cancel_checkpoint();
@@ -481,7 +481,7 @@ pub fn valListRepr(
 }
 
 /// Display representation of a runtime value.
-pub fn valRepr(v: &Val) -> AverStr {
+pub fn valRepr(v @ _: &Val) -> AverStr {
     crate::cancel_checkpoint();
     match v.clone() {
         crate::aver_generated::domain::value::Val::ValInt(n) => (n.to_string()).into_aver(),
@@ -635,7 +635,7 @@ pub fn valRepr(v: &Val) -> AverStr {
 }
 
 /// Display representation for nested values. Strings are quoted inside containers and wrappers.
-pub fn valReprInner(v: &Val) -> AverStr {
+pub fn valReprInner(v @ _: &Val) -> AverStr {
     crate::cancel_checkpoint();
     match v.clone() {
         crate::aver_generated::domain::value::Val::ValStr(s) => {
@@ -695,9 +695,9 @@ pub fn valReprInner(v: &Val) -> AverStr {
 /// Build a stable map repr close to the host interpreter output.
 #[inline(always)]
 pub fn valMapRepr(
-    mut entries: aver_rt::AverList<(AverStr, Val)>,
-    mut acc: AverStr,
-    mut first: bool,
+    mut entries @ _: aver_rt::AverList<(AverStr, Val)>,
+    mut acc @ _: AverStr,
+    mut first @ _: bool,
 ) -> AverStr {
     loop {
         crate::cancel_checkpoint();
@@ -722,7 +722,7 @@ pub fn valMapRepr(
 }
 
 /// Stable repr for map keys. Keeps common scalar keys off the general valRepr path.
-pub fn mapKeyRepr(v: &Val) -> AverStr {
+pub fn mapKeyRepr(v @ _: &Val) -> AverStr {
     crate::cancel_checkpoint();
     match v.clone() {
         crate::aver_generated::domain::value::Val::ValInt(n) => (n.to_string()).into_aver(),
@@ -734,7 +734,7 @@ pub fn mapKeyRepr(v: &Val) -> AverStr {
 }
 
 /// Display a variant value using its full name.
-pub fn valVariantReprTagged(fullName: AverStr, fields: &aver_rt::AverList<Val>) -> AverStr {
+pub fn valVariantReprTagged(fullName @ _: AverStr, fields @ _: &aver_rt::AverList<Val>) -> AverStr {
     crate::cancel_checkpoint();
     {
         let __list_subject = fields;
@@ -775,9 +775,9 @@ pub fn valVariantReprTagged(fullName: AverStr, fields: &aver_rt::AverList<Val>) 
 /// Build comma-separated repr of variant fields.
 #[inline(always)]
 pub fn valFieldsRepr(
-    mut items: aver_rt::AverList<Val>,
-    mut acc: AverStr,
-    mut first: bool,
+    mut items @ _: aver_rt::AverList<Val>,
+    mut acc @ _: AverStr,
+    mut first @ _: bool,
 ) -> AverStr {
     loop {
         crate::cancel_checkpoint();

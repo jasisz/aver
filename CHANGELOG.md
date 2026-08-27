@@ -51,7 +51,7 @@ Aver 0.29 turns the host boundary into explicit, source-owned contracts. Standar
 
 - **Maps have one deterministic order on every backend.** Iteration is sorted by key, `keys[i]` pairs with `values[i]`, and equality uses the same canonical form in execution and proof. Map keys must have a modelled total order; `Float` keys are rejected instead of giving NaN or proof-model divergences.
 
-- **Execution and compilation avoid several formerly quadratic paths.** Collection, string, byte, map, and generated-Rust hot paths preserve sharing, ownership, or proven ranges instead of rebuilding live data. Commands prepare each module graph once rather than recursively rechecking dependency cones. Embedded Wasmtime 48 uses its copying collector and caches reproducibly emitted wasm as native code across runs.
+- **Execution and compilation avoid several formerly quadratic paths.** Collection, string, byte, map, and generated-Rust hot paths preserve sharing, ownership, or proven ranges instead of rebuilding live data, including maps threaded through record-returning helpers. Commands prepare each module graph once rather than recursively rechecking dependency cones. Embedded Wasmtime 48 uses its copying collector and caches reproducibly emitted wasm as native code across runs. Closes [#1160](https://github.com/jasisz/aver/issues/1160).
 
 - **Generated projects pin the compiler's actual source provenance.** Path builds emit path dependencies, git builds pin the repository and revision, and registry builds emit exact registry versions for both `aver-lang` and `aver-rt`.
 
@@ -65,7 +65,7 @@ Aver 0.29 turns the host boundary into explicit, source-owned contracts. Standar
 
 - **Proof export is substantially harder to make green for the wrong reason.** Fixes cover nested effect evaluation order, refused-claim accounting, defaults introduced by `?`, opaque capability resources, mutual-recursion measures and fuel, method applications in argument position, map-order observations through callbacks/tail calls/interpolation, and symbolic provider calls hidden behind transparent wrappers.
 
-- **Module and type identity no longer depends on load order or bare-name collisions.** Lean, Dafny, generated Rust, wasm-gc constructor patterns, equality/hash derivation, and diagnostics retain the declaration's owning module through resolution and rendering. Generated Rust also keeps local `let` bindings unambiguous when multiple dependencies expose functions with the same name.
+- **Module and type identity no longer depends on load order or bare-name collisions.** Lean, Dafny, generated Rust, wasm-gc constructor patterns, equality/hash derivation, and diagnostics retain the declaration's owning module through resolution and rendering. Generated Rust keeps every local binder — including parameters and TCO-generated bindings — unambiguous when dependencies expose functions with the same name. Closes [#1162](https://github.com/jasisz/aver/issues/1162).
 
 - **Cross-backend runtime behaviour is aligned.** wasm-gc maps grow and delete colliding keys correctly; generated Rust preserves borrows, evaluates policy-checked effect arguments once, and agrees on negative `List.take/drop`; `Http.head`, 204, and 304 responses accept an empty body; `Args.get` and browser `Http.*` calls appear in verify traces.
 

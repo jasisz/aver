@@ -23,6 +23,7 @@ impl<T: ArenaTypes> Arena<T> {
             rewrite_out_of_region_roots: false,
             holds_any_map: false,
             holds_any_vector: false,
+            holds_any_record: false,
             inplace_visit_stamps: [Vec::new(), Vec::new(), Vec::new(), Vec::new()],
             inplace_visit_epoch: 0,
             type_keys: Vec::new(),
@@ -76,6 +77,7 @@ impl<T: ArenaTypes> Arena<T> {
             // still a map here.
             holds_any_map: self.holds_any_map,
             holds_any_vector: self.holds_any_vector,
+            holds_any_record: self.holds_any_record,
             inplace_visit_stamps: [Vec::new(), Vec::new(), Vec::new(), Vec::new()],
             inplace_visit_epoch: 0,
             type_keys: self.type_keys.clone(),
@@ -248,7 +250,9 @@ impl<T: ArenaTypes> Arena<T> {
                 let idx = self.push_vector(imported);
                 NanValue::new_vector(idx)
             }
-            ArenaEntry::Record { type_id, fields } => {
+            ArenaEntry::Record {
+                type_id, fields, ..
+            } => {
                 let imported: Vec<NanValue> = fields
                     .iter()
                     .map(|v| self.deep_import(*v, source))
@@ -256,6 +260,7 @@ impl<T: ArenaTypes> Arena<T> {
                 let idx = self.push(ArenaEntry::Record {
                     type_id,
                     fields: imported,
+                    holder_count: 0,
                 });
                 NanValue::new_record(idx)
             }
@@ -288,17 +293,18 @@ impl<T: ArenaTypes> Arena<T> {
     /// Record that something other than the caller's own handle now holds
     /// `value`'s slot.
     ///
-    /// A no-op for anything but a heap-backed map or vector — the two entries
-    /// that carry the flag, because they are the two anything ever empties in
-    /// place (`take_map_value` / `take_vector_value`). The consumer calls this
+    /// A no-op for anything but a heap-backed map, vector, or record — the
+    /// entries the runtime may empty in place. The consumer calls this
     /// for the roots the arena cannot see for itself — a global it stores
     /// into, a constant table it hands the program, a value it writes into an
-    /// entry that already exists. `ArenaEntry::Map`'s `held_elsewhere` carries
-    /// the full list of marking sites; the vector flag rides the same choke
-    /// points.
+    /// entry that already exists. The `holder_count` fields carry the full list
+    /// of marking sites for maps, vectors, and records.
     #[inline(always)]
     pub fn note_held_elsewhere(&mut self, value: NanValue) {
-        if value.is_heap_map() || (value.is_vector() && !value.is_empty_vector_immediate()) {
+        if value.is_heap_map()
+            || (value.is_vector() && !value.is_empty_vector_immediate())
+            || value.is_record()
+        {
             self.mark_held_elsewhere(value.arena_index());
         }
     }
@@ -312,30 +318,65 @@ impl<T: ArenaTypes> Arena<T> {
     #[inline(never)]
     fn mark_held_elsewhere(&mut self, index: u32) {
         match self.get_mut(index) {
-            ArenaEntry::Map { held_elsewhere, .. } | ArenaEntry::Vector { held_elsewhere, .. } => {
-                *held_elsewhere = true
+            ArenaEntry::Map { holder_count, .. }
+            | ArenaEntry::Vector { holder_count, .. }
+            | ArenaEntry::Record { holder_count, .. } => {
+                *holder_count = holder_count.saturating_add(1);
             }
             _ => {}
         }
     }
 
-    /// Mark every map or vector `entry` holds DIRECTLY, so the entry counts as
-    /// a holder of those slots from here on.
+    /// Remove one registered holder after a uniquely-owned aggregate has
+    /// physically stopped holding `value`.
+    #[inline(always)]
+    fn release_held_elsewhere(&mut self, value: NanValue) {
+        if value.is_heap_map()
+            || (value.is_vector() && !value.is_empty_vector_immediate())
+            || value.is_record()
+        {
+            self.release_holder(value.arena_index());
+        }
+    }
+
+    #[inline(never)]
+    fn release_holder(&mut self, index: u32) {
+        match self.get_mut(index) {
+            ArenaEntry::Map { holder_count, .. }
+            | ArenaEntry::Vector { holder_count, .. }
+            | ArenaEntry::Record { holder_count, .. } => {
+                // Saturation is sticky. Once exact cardinality is lost, the
+                // safe answer is "held" forever rather than a future false 0.
+                if *holder_count == u32::MAX {
+                    return;
+                }
+                debug_assert!(
+                    *holder_count > 0,
+                    "removed aggregate field had no registered holder"
+                );
+                *holder_count = holder_count.saturating_sub(1);
+            }
+            _ => {}
+        }
+    }
+
+    /// Mark every map, vector, or record `entry` holds DIRECTLY, so the entry
+    /// counts as a holder of those slots from here on.
     ///
-    /// Direct is enough: a map or vector reachable from the arena at all is a
-    /// direct child of SOME entry, and that entry came through here. What it
+    /// Direct is enough: a takeable value reachable from the arena at all is a
+    /// direct child of SOME entry, and that entry came through here. What this
     /// does not do is walk a map's own table or a vector entry's own elements —
     /// that would put an `O(size)` pass in front of the one insert that is
     /// `O(1)`. The builders mark their own children instead: [`Arena::push_map`]
     /// and the owned map insert for tables, [`Arena::push_vector`] and the
     /// owned `Vector.set` (which marks the one element it stores) for vectors.
     ///
-    /// Reached only when the arena has stored a map or vector at all —
+    /// Reached only when the arena has stored a map, vector, or record at all —
     /// [`Arena::push`] reads that off the same discriminant it was already
     /// reading — and deliberately not inlined into it, so a program that never
     /// builds a collection carries none of this in its allocation path.
     #[inline(never)]
-    fn note_entry_holds_collections(&mut self, entry: &ArenaEntry<T>) {
+    fn note_entry_holds_takeable(&mut self, entry: &ArenaEntry<T>) {
         match entry {
             ArenaEntry::Boxed(value) => self.note_held_elsewhere(*value),
             ArenaEntry::Tuple(items) => {
@@ -350,7 +391,7 @@ impl<T: ArenaTypes> Arena<T> {
             }
             ArenaEntry::List(list) => match list {
                 ArenaList::Flat { items, start, .. } => {
-                    if items.holds_collection() {
+                    if items.holds_takeable() {
                         for value in &items[(*start).min(items.len())..] {
                             self.note_held_elsewhere(*value);
                         }
@@ -371,7 +412,7 @@ impl<T: ArenaTypes> Arena<T> {
                     ..
                 } => {
                     self.note_held_elsewhere(*current);
-                    if rest.holds_collection() {
+                    if rest.holds_takeable() {
                         for value in &rest[(*start).min(rest.len())..] {
                             self.note_held_elsewhere(*value);
                         }
@@ -398,14 +439,14 @@ impl<T: ArenaTypes> Arena<T> {
 
     #[inline]
     pub fn push(&mut self, entry: ArenaEntry<T>) -> u32 {
-        // The collection bookkeeping rides on the discriminant read this match
-        // was already doing, so an allocation that has nothing to do with maps
-        // or vectors pays one bool for it.
+        // The ownership bookkeeping rides on the discriminant read this match
+        // was already doing, so an allocation that has nothing to do with a
+        // takeable map, vector, or record pays one guard check for it.
         //
-        // A map or vector entry is where its flag comes from: nothing else in
-        // this arena can carry such an index until one exists, and the only
-        // way one comes to exist is its arm. Everything else asks the flags
-        // first and walks its children only if the answer could be yes.
+        // A takeable entry is where its arena-wide guard comes from: nothing
+        // can carry such an index before the value itself exists. Everything
+        // else asks the guards first and walks its children only if the answer
+        // could be yes.
         match &entry {
             ArenaEntry::Fn(_) | ArenaEntry::Builtin(_) | ArenaEntry::Namespace { .. } => {}
             ArenaEntry::Map { .. } => {
@@ -428,6 +469,13 @@ impl<T: ArenaTypes> Arena<T> {
                 }
                 return self.push_heap(entry);
             }
+            ArenaEntry::Record { .. } => {
+                if self.holds_any_map || self.holds_any_vector || self.holds_any_record {
+                    self.note_entry_holds_takeable(&entry);
+                }
+                self.holds_any_record = true;
+                return self.push_heap(entry);
+            }
             // Nothing here holds a `NanValue`, so there is nothing to mark and
             // no reason to leave the match to find that out. A map fold
             // allocates one of these per step for its keys.
@@ -435,8 +483,8 @@ impl<T: ArenaTypes> Arena<T> {
                 return self.push_heap(entry);
             }
             _ => {
-                if self.holds_any_map || self.holds_any_vector {
-                    self.note_entry_holds_collections(&entry);
+                if self.holds_any_map || self.holds_any_vector || self.holds_any_record {
+                    self.note_entry_holds_takeable(&entry);
                 }
                 return self.push_heap(entry);
             }
@@ -840,7 +888,11 @@ impl<T: ArenaTypes> Arena<T> {
         self.push(ArenaEntry::Boxed(val))
     }
     pub fn push_record(&mut self, type_id: u32, fields: Vec<NanValue>) -> u32 {
-        self.push(ArenaEntry::Record { type_id, fields })
+        self.push(ArenaEntry::Record {
+            type_id,
+            fields,
+            holder_count: 0,
+        })
     }
     pub fn push_variant(&mut self, type_id: u32, variant_id: u16, fields: Vec<NanValue>) -> u32 {
         self.push(ArenaEntry::Variant {
@@ -873,7 +925,9 @@ impl<T: ArenaTypes> Arena<T> {
         for (key, value) in map.values() {
             all_immediate &= key.is_immediate() && value.is_immediate();
             for child in [*key, *value] {
-                if child.is_heap_map() || (child.is_vector() && !child.is_empty_vector_immediate())
+                if child.is_heap_map()
+                    || (child.is_vector() && !child.is_empty_vector_immediate())
+                    || child.is_record()
                 {
                     held.get_or_insert_default().push(child);
                 }
@@ -888,7 +942,7 @@ impl<T: ArenaTypes> Arena<T> {
             all_immediate,
             scan_receipt,
             pending_scan_keys: Vec::new(),
-            held_elsewhere: false,
+            holder_count: 0,
         })
     }
     pub fn push_tuple(&mut self, items: Vec<NanValue>) -> u32 {
@@ -901,10 +955,12 @@ impl<T: ArenaTypes> Arena<T> {
     /// here is the owned `Vector.set`, which is `O(1)` per write and marks the
     /// single element it stores itself (see `vec_set_nv_owned`).
     pub fn push_vector(&mut self, items: Vec<NanValue>) -> u32 {
-        if self.holds_any_map || self.holds_any_vector {
+        if self.holds_any_map || self.holds_any_vector || self.holds_any_record {
             let mut held: Option<Vec<NanValue>> = None;
             for child in &items {
-                if child.is_heap_map() || (child.is_vector() && !child.is_empty_vector_immediate())
+                if child.is_heap_map()
+                    || (child.is_vector() && !child.is_empty_vector_immediate())
+                    || child.is_record()
                 {
                     held.get_or_insert_default().push(*child);
                 }
@@ -915,7 +971,7 @@ impl<T: ArenaTypes> Arena<T> {
         }
         self.push(ArenaEntry::Vector {
             items,
-            held_elsewhere: false,
+            holder_count: 0,
         })
     }
     pub fn push_fn(&mut self, f: Rc<T::Fn>) -> u32 {
@@ -977,9 +1033,37 @@ impl<T: ArenaTypes> Arena<T> {
     }
     pub fn get_record(&self, index: u32) -> (u32, &[NanValue]) {
         match self.get(index) {
-            ArenaEntry::Record { type_id, fields } => (*type_id, fields),
+            ArenaEntry::Record {
+                type_id, fields, ..
+            } => (*type_id, fields),
             _ => panic!("Arena: expected Record at {}", index),
         }
+    }
+
+    /// Whether a root or another arena entry has registered a reference to
+    /// this record. Operand-stack aliases are deliberately not represented
+    /// here; the VM can inspect those directly after popping its operand.
+    pub fn record_is_held_elsewhere(&self, record: NanValue) -> bool {
+        match self.get(record.arena_index()) {
+            ArenaEntry::Record { holder_count, .. } => *holder_count != 0,
+            _ => false,
+        }
+    }
+
+    /// Remove and return one field from a record whose uniqueness the caller
+    /// has already established. Removing the direct reference releases exactly
+    /// one registered holder on a nested map, vector, or record.
+    pub fn take_record_field(&mut self, record: NanValue, field_idx: usize) -> NanValue {
+        debug_assert!(!self.record_is_held_elsewhere(record));
+        debug_assert!(!self.any_entry_holds_slot(record.arena_index()));
+        let value = match self.get_mut(record.arena_index()) {
+            ArenaEntry::Record { fields, .. } => {
+                std::mem::replace(&mut fields[field_idx], NanValue::UNIT)
+            }
+            _ => panic!("Arena: expected Record at {}", record.arena_index()),
+        };
+        self.release_held_elsewhere(value);
+        value
     }
     pub fn get_variant(&self, index: u32) -> (u32, u16, &[NanValue]) {
         match self.get(index) {
@@ -1027,9 +1111,9 @@ impl<T: ArenaTypes> Arena<T> {
         match self.get(value.arena_index()) {
             ArenaEntry::Vector {
                 items,
-                held_elsewhere,
+                holder_count,
             } => Some(VectorSlot {
-                held_elsewhere: *held_elsewhere,
+                held_elsewhere: *holder_count != 0,
                 len: items.len(),
             }),
             _ => panic!("Arena: expected Vector at {}", value.arena_index()),
@@ -1050,7 +1134,7 @@ impl<T: ArenaTypes> Arena<T> {
     }
     /// Take ownership of a vector, replacing the arena slot with an empty vec.
     ///
-    /// `held_elsewhere` is deliberately left alone, for the same reason
+    /// `holder_count` is deliberately left alone, for the same reason
     /// [`Arena::take_map_value`] leaves the map's: emptying the slot does not
     /// discharge a holder, and a second take over the same slot must be
     /// refused for the same reason the first one should have been.
@@ -1188,11 +1272,9 @@ impl<T: ArenaTypes> Arena<T> {
         }
         match self.get(map.arena_index()) {
             ArenaEntry::Map {
-                map,
-                held_elsewhere,
-                ..
+                map, holder_count, ..
             } => Some(MapSlot {
-                held_elsewhere: *held_elsewhere,
+                held_elsewhere: *holder_count != 0,
                 entries: map.len(),
             }),
             _ => panic!("Arena: expected Map at {}", map.arena_index()),

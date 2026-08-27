@@ -1453,6 +1453,11 @@ pub struct Arena<T: ArenaTypes> {
     /// job: no vector entry means no value here can carry a vector's index,
     /// so the per-push marking pass has nothing to find.
     holds_any_vector: bool,
+    /// Whether this arena has ever stored a record. Records can be consumed by
+    /// the VM's last-use field projection, so an aggregate that stores one has
+    /// to register itself as an off-stack holder just like it does for maps and
+    /// vectors.
+    holds_any_record: bool,
     /// Which out-of-region slots the descent above has already rewritten, one
     /// stamp array per heap space, indexed by raw arena index.
     ///
@@ -1534,15 +1539,15 @@ pub enum ArenaEntry<T: ArenaTypes> {
         /// pairs, clears the set, and renews the bulk receipt. A full rewrite
         /// also clears it. The set is empty for every from-scratch builder.
         pending_scan_keys: Vec<u64>,
-        /// Whether anything OTHER than a handle in the consumer's own working
-        /// set holds this slot: another arena entry, or a root the consumer
-        /// registered through [`Arena::note_held_elsewhere`] — a global, a
-        /// chunk constant.
+        /// How many registered holders outside the consumer's own working set
+        /// hold this slot: arena entries and roots registered through
+        /// [`Arena::note_held_elsewhere`]. The count lets a destructively
+        /// consumed record release exactly the field reference it removed.
         ///
         /// It exists for one caller, [`Arena::take_map_value`], which empties
         /// the slot it takes from. That is only safe when nobody is left to
         /// read it, and a consumer that can enumerate its own handles still
-        /// cannot see a holder that lives INSIDE the arena. This flag is that
+        /// cannot see a holder that lives INSIDE the arena. This count is that
         /// half of the answer, and it is maintained where the reference is
         /// MADE. A site that forgets to mark is the way this goes wrong, so the
         /// list is here in full and nothing else may add one silently:
@@ -1581,28 +1586,29 @@ pub enum ArenaEntry<T: ArenaTypes> {
         /// one against the other at every grant under debug assertions, for as
         /// long as it can afford to.
         ///
-        /// `true` is always safe: it only costs the in-place path. `false` when
-        /// something does hold the slot is not, and does not fail loudly on its
-        /// own — the other holder reads an empty map. So the direction that
-        /// needs proof is `false`, which is why nothing sets it back to `false`
-        /// once set and why entries born `false` are exactly the ones this
-        /// arena has just built and not yet handed to anybody.
-        held_elsewhere: bool,
+        /// An over-count is always safe: it only costs the in-place path. An
+        /// under-count is not, so ordinary holders only increment it. The sole
+        /// decrement is paired with removing a field from a uniquely-owned
+        /// record.
+        holder_count: u32,
     },
     Vector {
         items: Vec<NanValue>,
-        /// The vector spelling of [`ArenaEntry::Map::held_elsewhere`] — see
+        /// The vector spelling of [`ArenaEntry::Map`]'s `holder_count` — see
         /// that field for the full contract; the marking choke points
         /// ([`Arena::note_held_elsewhere`] and everything that funnels into
         /// it) cover heap vectors and heap maps alike. It exists for the
         /// interpreter's runtime fence on the owned `Vector.set`, which
         /// empties the slot it takes from (`Arena::take_vector_value`) and
         /// may only do so when no off-stack holder is left to read it.
-        held_elsewhere: bool,
+        holder_count: u32,
     },
     Record {
         type_id: u32,
         fields: Vec<NanValue>,
+        /// Registered off-stack holders of this record. Stack aliases are
+        /// checked by the VM immediately before a destructive field take.
+        holder_count: u32,
     },
     Variant {
         type_id: u32,
@@ -1652,21 +1658,22 @@ pub enum ArenaSymbol<T: ArenaTypes> {
 pub struct ListBody {
     items: Vec<NanValue>,
     all_immediate: bool,
-    holds_collection: bool,
+    holds_takeable: bool,
 }
 
 impl ListBody {
     pub fn new(items: Vec<NanValue>) -> Self {
         let mut all_immediate = true;
-        let mut holds_collection = false;
+        let mut holds_takeable = false;
         for value in &items {
             all_immediate &= value.is_immediate();
-            holds_collection |= (value.is_map() || value.is_vector()) && !value.is_immediate();
+            holds_takeable |=
+                (value.is_map() || value.is_vector() || value.is_record()) && !value.is_immediate();
         }
         Self {
             items,
             all_immediate,
-            holds_collection,
+            holds_takeable,
         }
     }
 
@@ -1677,9 +1684,9 @@ impl ListBody {
         self.all_immediate
     }
 
-    /// Whether any element is a heap-backed map or vector, so pushing an entry
-    /// over this body puts a second holder on a slot the owned in-place write
-    /// path could otherwise empty.
+    /// Whether any element is a heap-backed map, vector, or record, so pushing
+    /// an entry over this body puts a second holder on a slot an owned
+    /// in-place path could otherwise empty.
     ///
     /// Decided in the same pass as `all_immediate` and for the same reason: a
     /// body is immutable once built, and a body a collection views at an
@@ -1688,8 +1695,8 @@ impl ListBody {
     /// of a walk over elements that are never collections. Was `holds_map`
     /// until the vector fence needed the same record for vector slots.
     #[inline]
-    pub fn holds_collection(&self) -> bool {
-        self.holds_collection
+    pub fn holds_takeable(&self) -> bool {
+        self.holds_takeable
     }
 }
 

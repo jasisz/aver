@@ -35,11 +35,21 @@ fn setStoreOne(key: String, store: Store) -> Result<Store, String>
     ? "Insert one value into the Map carried by Store."
     Result.Ok(Store.update(store, values = Map.set(store.values, key, "v")))
 
+fn setStoreOneCreate(key: String, store: Store) -> Store
+    ? "Insert one value and rebuild Store with its record constructor."
+    Store(values = Map.set(store.values, key, "v"))
+
 fn viaStore(keys: List<String>, store: Store) -> Result<Store, String>
     ? "Build a Store through a Result-returning helper."
     match keys
         [] -> Result.Ok(store)
         [head, ..tail] -> viaStore(tail, setStoreOne(head, store)?)
+
+fn viaStoreCreate(keys: List<String>, store: Store) -> Store
+    ? "Build a Store through a record-constructing helper."
+    match keys
+        [] -> store
+        [head, ..tail] -> viaStoreCreate(tail, setStoreOneCreate(head, store))
 
 fn storeCount() -> Result<Int, String>
     ? "Count the Map built through the Store wrapper."
@@ -51,4 +61,13 @@ fn main() -> Unit
     bare = Map.len(viaHelper(["a", "b", "c"], {}))
     wrapped = Result.withDefault(resultCount(), 0)
     stored = Result.withDefault(storeCount(), 0)
-    Console.print("{bare}/{wrapped}/{stored}")
+    created = Map.len(viaStoreCreate(["a", "b", "c"], Store(values = {})).values)
+    base = Map.set({}, "old", "v")
+    fromMapAlias = setStoreOneCreate("new", Store(values = base))
+    mapAlias = Map.len(base) * 10 + Map.len(fromMapAlias.values)
+    shared = Map.set({}, "old", "v")
+    storeAlias = Store(values = shared)
+    originalStore = Store(values = shared)
+    fromStoreAlias = setStoreOneCreate("new", originalStore)
+    recordAlias = Map.len(storeAlias.values) * 10 + Map.len(fromStoreAlias.values)
+    Console.print("{bare}/{wrapped}/{stored}/{created}/{mapAlias}/{recordAlias}")

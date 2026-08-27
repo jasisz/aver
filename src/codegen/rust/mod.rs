@@ -2250,7 +2250,7 @@ fn getName(user: User) -> String
         let out = transpile(&mut ctx);
         let entry = generated_rust_entry_file(&out);
 
-        assert!(entry.contains("pub fn getName(user: &User) -> AverStr"));
+        assert!(entry.contains("pub fn getName(user @ _: &User) -> AverStr"));
         assert!(
             entry.contains("user.name.clone()"),
             "missing owned clone:\n{}",

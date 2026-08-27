@@ -12,8 +12,8 @@ use crate::*;
 /// If variable not in env, try a top-level binding, then a named function reference, then a nullary variant.
 #[inline(always)]
 pub fn evalVarFallback(
-    name: AverStr,
-    fns: &crate::aver_generated::domain::eval::store::FnStore,
+    name @ _: AverStr,
+    fns @ _: &crate::aver_generated::domain::eval::store::FnStore,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     match crate::aver_generated::domain::eval::store::lookupGlobal(fns, name.clone()) {
@@ -25,8 +25,8 @@ pub fn evalVarFallback(
 /// Resolve a name that is neither a local nor a top-level binding: function reference, then nullary variant.
 #[inline(always)]
 pub fn evalVarFallbackNamed(
-    name: AverStr,
-    fns: &crate::aver_generated::domain::eval::store::FnStore,
+    name @ _: AverStr,
+    fns @ _: &crate::aver_generated::domain::eval::store::FnStore,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     match crate::aver_generated::domain::eval::store::lookupFnOption(fns, name.clone()) {
@@ -61,14 +61,14 @@ pub fn propagationPrefix() -> AverStr {
 }
 
 /// Mark a language-level Result.Err so function boundaries can convert it back into a value.
-pub fn wrapPropagatedError(msg: AverStr) -> AverStr {
+pub fn wrapPropagatedError(msg @ _: AverStr) -> AverStr {
     crate::cancel_checkpoint();
     (AverStr::from("__aver_prop__:") + &msg)
 }
 
 /// Return the propagated payload when the evaluator error is an internal ? marker.
 #[inline(always)]
-pub fn unwrapPropagatedError(err: AverStr) -> Option<AverStr> {
+pub fn unwrapPropagatedError(err @ _: AverStr) -> Option<AverStr> {
     crate::cancel_checkpoint();
     let prefix @ _ = AverStr::from("__aver_prop__:");
     if err.starts_with(&*prefix) {
@@ -90,7 +90,7 @@ pub fn unwrapPropagatedError(err: AverStr) -> Option<AverStr> {
 /// Catch internal ? propagation at a function boundary and turn it back into Result.Err(value).
 #[inline(always)]
 pub fn normalizeFnReturn(
-    result: &Result<crate::aver_generated::domain::value::Val, AverStr>,
+    result @ _: &Result<crate::aver_generated::domain::value::Val, AverStr>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     match result.clone() {
@@ -109,8 +109,8 @@ pub fn normalizeFnReturn(
 /// Look up a record field by name.
 #[inline(always)]
 pub fn lookupField(
-    mut fields: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
-    mut name: AverStr,
+    mut fields @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
+    mut name @ _: AverStr,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     loop {
         crate::cancel_checkpoint();

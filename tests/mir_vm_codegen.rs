@@ -371,12 +371,23 @@ fn builtin_ctor_emits_wrap() {
 }
 
 #[test]
-fn record_field_access_emits_record_get_named() {
-    // `MirExpr::Project` → RECORD_GET_NAMED. (Field access on a param,
-    // so no RecordCreate in the body.)
+fn last_use_record_field_access_emits_record_take_named() {
+    // A final projection can transfer the field out of the record. Runtime
+    // ownership checks make the opcode fall back to a non-destructive read
+    // when another alias still exists.
     assert_emits(
         "record P\n  x: Int\n  y: Int\n\nfn px(p: P) -> Int\n    p.x\n",
         "px",
+        opcode::RECORD_TAKE_NAMED,
+        "RECORD_TAKE_NAMED",
+    );
+}
+
+#[test]
+fn nonfinal_record_field_access_keeps_record_get_named() {
+    assert_emits(
+        "record P\n  x: Int\n  y: Int\n\nfn sum(p: P) -> Int\n    p.x + p.y\n",
+        "sum",
         opcode::RECORD_GET_NAMED,
         "RECORD_GET_NAMED",
     );

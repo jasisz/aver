@@ -51,7 +51,7 @@ fn __mutual_tco_trampoline_1(
 ) -> aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val> {
     loop {
         __state = match __state {
-            __MutualTco1::TuplesToMap(mut items, mut acc) => {
+            __MutualTco1::TuplesToMap(mut items @ _, mut acc @ _) => {
                 crate::cancel_checkpoint();
                 aver_list_match!(items, [] => { return acc }, [item, rest] => match item {
                     crate::aver_generated::domain::value::Val::ValTuple(parts) => {
@@ -62,7 +62,7 @@ fn __mutual_tco_trampoline_1(
                     }
                 })
             }
-            __MutualTco1::TuplesToMapOne(mut parts, mut rest, mut acc) => {
+            __MutualTco1::TuplesToMapOne(mut parts @ _, mut rest @ _, mut acc @ _) => {
                 crate::cancel_checkpoint();
                 aver_list_match!(parts, [] => __MutualTco1::TuplesToMap(rest, acc), [kV, tail] => aver_list_match!(tail, [] => __MutualTco1::TuplesToMap(rest, acc), [vV, ignored] => __MutualTco1::TuplesToMap(rest, acc.insert_owned(crate::aver_generated::domain::value::mapKeyRepr(&kV), vV))))
             }
@@ -72,17 +72,17 @@ fn __mutual_tco_trampoline_1(
 
 /// Convert list of (key, value) tuples to a Map.
 pub fn tuplesToMap(
-    items: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
-    acc: &aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val>,
+    items @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    acc @ _: &aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val>,
 ) -> aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val> {
     __mutual_tco_trampoline_1(__MutualTco1::TuplesToMap(items.clone(), acc.clone()))
 }
 
 /// Extract key-value from tuple parts.
 pub fn tuplesToMapOne(
-    parts: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
-    rest: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
-    acc: &aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val>,
+    parts @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    rest @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    acc @ _: &aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val>,
 ) -> aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val> {
     __mutual_tco_trampoline_1(__MutualTco1::TuplesToMapOne(
         parts.clone(),
@@ -93,8 +93,8 @@ pub fn tuplesToMapOne(
 
 /// Dispatch qualified builtin calls to sub-module implementations.
 pub fn callBuiltin(
-    name: AverStr,
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    name @ _: AverStr,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::builtins::callBuiltin__indexed(
@@ -107,8 +107,8 @@ pub fn callBuiltin(
 /// Fast exact-match dispatch for the hottest builtins.
 #[inline(always)]
 pub fn callBuiltinFast(
-    name: AverStr,
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    name @ _: AverStr,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Option<Result<crate::aver_generated::domain::value::Val, AverStr>> {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::builtins::callBuiltinFast__indexed(
@@ -121,8 +121,8 @@ pub fn callBuiltinFast(
 /// Dispatch pre-evaluated args by integer builtin ID. IDs assigned in Ast.builtinNameToId.
 #[inline(always)]
 pub fn callBuiltinByIdValues(
-    id: aver_rt::AverInt,
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    id @ _: aver_rt::AverInt,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     {
@@ -215,8 +215,8 @@ pub fn callBuiltinByIdValues(
 
 /// Continue dispatch after List.
 pub fn callBuiltinAfterList(
-    name: AverStr,
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    name @ _: AverStr,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::builtins::callBuiltinAfterList__indexed(
@@ -228,8 +228,8 @@ pub fn callBuiltinAfterList(
 
 /// Handle non-prefixed builtins: Result.*, Option.*, Bool.*, Map.*, services, and variant constructors.
 pub fn callBuiltinOther(
-    name: AverStr,
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    name @ _: AverStr,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::builtins::callBuiltinOther__indexed(
@@ -241,7 +241,7 @@ pub fn callBuiltinOther(
 
 /// Console.print(v) -> print any value and return Unit.
 pub fn builtinConsolePrint(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
@@ -270,7 +270,7 @@ pub fn builtinConsolePrint(
 
 /// Console.error(v) -> print to stderr.
 pub fn builtinConsoleError(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
@@ -299,7 +299,7 @@ pub fn builtinConsoleError(
 
 /// Console.warn(v) -> print warning.
 pub fn builtinConsoleWarn(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
@@ -328,7 +328,7 @@ pub fn builtinConsoleWarn(
 
 /// Console.readLine() -> Result<String, String>.
 pub fn builtinConsoleReadLine(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     match {
@@ -354,7 +354,7 @@ pub fn builtinConsoleReadLine(
 
 /// Disk.readText(path) -> Result string.
 pub fn builtinDiskReadText(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
@@ -390,7 +390,7 @@ pub fn builtinDiskReadText(
 
 /// Args.get() -> list of string args.
 pub fn builtinArgsGet(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let rawArgs @ _ = {
@@ -415,7 +415,7 @@ pub fn builtinArgsGet(
 
 /// Env.get(key) -> Option<String>.
 pub fn builtinEnvGet(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
@@ -449,7 +449,7 @@ pub fn builtinEnvGet(
 
 /// Env.set(key, value) -> Result<Unit, String>.
 pub fn builtinEnvSet(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let pair @ _ = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
@@ -461,8 +461,8 @@ pub fn builtinEnvSet(
 
 /// Inner Env.set.
 pub fn builtinEnvSetInner(
-    keyV: &crate::aver_generated::domain::value::Val,
-    valueV: &crate::aver_generated::domain::value::Val,
+    keyV @ _: &crate::aver_generated::domain::value::Val,
+    valueV @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let key @ _ = crate::aver_generated::domain::builtins::helpers::expectStr(keyV)?;
@@ -504,8 +504,8 @@ pub fn builtinEnvSetInner(
 /// Convert list of strings to list of ValStr.
 #[inline(always)]
 pub fn stringsToVals(
-    mut strs: aver_rt::AverList<AverStr>,
-    mut acc: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    mut strs @ _: aver_rt::AverList<AverStr>,
+    mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
     loop {
         crate::cancel_checkpoint();
@@ -521,7 +521,7 @@ pub fn stringsToVals(
 
 /// Map.entries(map) -> List of tuples.
 pub fn builtinMapEntries(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
@@ -548,8 +548,8 @@ pub fn builtinMapEntries(
 /// Convert entries to list of (key, value) tuples.
 #[inline(always)]
 pub fn mapEntriesToTuples(
-    mut entries: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
-    mut acc: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    mut entries @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
+    mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
     loop {
         crate::cancel_checkpoint();
@@ -565,7 +565,7 @@ pub fn mapEntriesToTuples(
 
 /// Map.keys(map) -> List of keys.
 pub fn builtinMapKeys(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
@@ -590,7 +590,7 @@ pub fn builtinMapKeys(
 
 /// Map.values(map) -> List of values.
 pub fn builtinMapValues(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
@@ -608,7 +608,7 @@ pub fn builtinMapValues(
 
 /// Map.fromList(entries) -> Map.
 pub fn builtinMapFromList(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
@@ -620,7 +620,7 @@ pub fn builtinMapFromList(
 
 /// Map.size(map) -> Int.
 pub fn builtinMapSize(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
@@ -636,7 +636,7 @@ pub fn builtinMapSize(
 
 /// Map.remove(map, key) -> Map.
 pub fn builtinMapRemove(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let pair @ _ = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
@@ -648,8 +648,8 @@ pub fn builtinMapRemove(
 
 /// Inner Map.remove.
 pub fn builtinMapRemoveInner(
-    mapV: &crate::aver_generated::domain::value::Val,
-    keyV: &crate::aver_generated::domain::value::Val,
+    mapV @ _: &crate::aver_generated::domain::value::Val,
+    keyV @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     match mapV.clone() {
@@ -664,8 +664,8 @@ pub fn builtinMapRemoveInner(
 
 /// Dispatch Terminal.*, Time.*, Random.*, Http.*, Tcp.* service builtins.
 pub fn callBuiltinServices(
-    name: AverStr,
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    name @ _: AverStr,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::builtins::callBuiltinServices__indexed(
@@ -677,7 +677,7 @@ pub fn callBuiltinServices(
 
 /// Random.int(min, max) -> random integer.
 pub fn builtinRandomInt(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let pair @ _ = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
@@ -689,8 +689,8 @@ pub fn builtinRandomInt(
 
 /// Inner Random.int.
 pub fn builtinRandomIntInner(
-    minV: &crate::aver_generated::domain::value::Val,
-    maxV: &crate::aver_generated::domain::value::Val,
+    minV @ _: &crate::aver_generated::domain::value::Val,
+    maxV @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let minN @ _ = crate::aver_generated::domain::builtins::helpers::expectInt(minV)?;
@@ -731,7 +731,7 @@ pub fn builtinRandomIntInner(
 
 /// Time.sleep(ms) -> Result<Unit, String>.
 pub fn builtinTimeSleep(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
@@ -767,7 +767,7 @@ pub fn builtinTimeSleep(
 
 /// Time.unixMs() -> Int.
 pub fn builtinTimeUnixMs(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     Ok(crate::aver_generated::domain::value::Val::ValInt({
@@ -786,8 +786,8 @@ pub fn builtinTimeUnixMs(
 
 /// Terminal no-arg commands: clear, flush, enableRawMode, etc.
 pub fn builtinTerminalNoArg(
-    name: AverStr,
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    name @ _: AverStr,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::builtins::builtinTerminalNoArg__indexed(
@@ -992,7 +992,7 @@ pub fn termResetColor() -> Result<crate::aver_generated::domain::value::Val, Ave
 
 /// Terminal.readKey() -> Result<Option<String>, String>.
 pub fn builtinTerminalReadKey(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     match {
@@ -1025,7 +1025,7 @@ pub fn builtinTerminalReadKey(
 
 /// Terminal.size() -> Result record with width and height.
 pub fn builtinTerminalSize(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     match {
@@ -1063,7 +1063,7 @@ pub fn builtinTerminalSize(
 
 /// Terminal.print(s) -> Result<Unit, String>.
 pub fn builtinTerminalPrint(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
@@ -1078,7 +1078,7 @@ pub fn builtinTerminalPrint(
 }
 
 /// Print string to terminal.
-pub fn termPrintStr(s: AverStr) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
+pub fn termPrintStr(s @ _: AverStr) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     match {
         let __provider_arg0: AverStr = s;
@@ -1111,7 +1111,7 @@ pub fn termPrintStr(s: AverStr) -> Result<crate::aver_generated::domain::value::
 
 /// Terminal.setColor(color) -> Result<Unit, String>.
 pub fn builtinTerminalSetColor(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
@@ -1147,7 +1147,7 @@ pub fn builtinTerminalSetColor(
 
 /// Terminal.moveTo(x, y) -> Result<Unit, String>.
 pub fn builtinTerminalMoveTo(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let pair @ _ = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
@@ -1159,8 +1159,8 @@ pub fn builtinTerminalMoveTo(
 
 /// Inner Terminal.moveTo.
 pub fn builtinTerminalMoveToInner(
-    xV: &crate::aver_generated::domain::value::Val,
-    yV: &crate::aver_generated::domain::value::Val,
+    xV @ _: &crate::aver_generated::domain::value::Val,
+    yV @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let x @ _ = crate::aver_generated::domain::builtins::helpers::expectInt(xV)?;
@@ -1201,7 +1201,7 @@ pub fn builtinTerminalMoveToInner(
 
 /// Disk.writeText(path, content) -> Result.
 pub fn builtinDiskWriteText(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let pair @ _ = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
@@ -1213,8 +1213,8 @@ pub fn builtinDiskWriteText(
 
 /// Inner Disk.writeText.
 pub fn builtinDiskWriteTextInner(
-    pathV: &crate::aver_generated::domain::value::Val,
-    contentV: &crate::aver_generated::domain::value::Val,
+    pathV @ _: &crate::aver_generated::domain::value::Val,
+    contentV @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let path @ _ = crate::aver_generated::domain::builtins::helpers::expectStr(pathV)?;
@@ -1255,7 +1255,7 @@ pub fn builtinDiskWriteTextInner(
 
 /// Disk.appendText(path, content) -> Result.
 pub fn builtinDiskAppendText(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let pair @ _ = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
@@ -1267,8 +1267,8 @@ pub fn builtinDiskAppendText(
 
 /// Inner Disk.appendText.
 pub fn builtinDiskAppendTextInner(
-    pathV: &crate::aver_generated::domain::value::Val,
-    contentV: &crate::aver_generated::domain::value::Val,
+    pathV @ _: &crate::aver_generated::domain::value::Val,
+    contentV @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let path @ _ = crate::aver_generated::domain::builtins::helpers::expectStr(pathV)?;
@@ -1309,7 +1309,7 @@ pub fn builtinDiskAppendTextInner(
 
 /// Disk.delete(path) -> Result.
 pub fn builtinDiskDelete(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
@@ -1345,7 +1345,7 @@ pub fn builtinDiskDelete(
 
 /// Disk.deleteDir(path) -> Result.
 pub fn builtinDiskDeleteDir(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
@@ -1381,7 +1381,7 @@ pub fn builtinDiskDeleteDir(
 
 /// Disk.makeDir(path) -> Result.
 pub fn builtinDiskMakeDir(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
@@ -1417,7 +1417,7 @@ pub fn builtinDiskMakeDir(
 
 /// Disk.exists(path) -> Bool.
 pub fn builtinDiskExists(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
@@ -1446,7 +1446,7 @@ pub fn builtinDiskExists(
 
 /// Disk.listDir(path) -> Result<List<String>, String>.
 pub fn builtinDiskListDir(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
@@ -1490,8 +1490,8 @@ pub fn builtinDiskListDir(
 /// Try to construct a variant value from a dotted name like Type.Ctor. Uses stable tags for both builtin and user constructors.
 #[inline(always)]
 pub fn tryVariantConstructor(
-    name: AverStr,
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    name @ _: AverStr,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::builtins::tryVariantConstructor__indexed(
@@ -1503,7 +1503,7 @@ pub fn tryVariantConstructor(
 
 /// Split 'Type.Ctor' into (Type, Ctor). Returns None if no dot.
 #[inline(always)]
-pub fn splitDotted(name: AverStr) -> Option<(AverStr, AverStr)> {
+pub fn splitDotted(name @ _: AverStr) -> Option<(AverStr, AverStr)> {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::builtins::splitDotted__indexed(
         name.clone(),
@@ -1514,9 +1514,9 @@ pub fn splitDotted(name: AverStr) -> Option<(AverStr, AverStr)> {
 /// Find first dot and split.
 #[inline(always)]
 pub fn splitDottedLoop(
-    name: AverStr,
-    pos: aver_rt::AverInt,
-    total: aver_rt::AverInt,
+    name @ _: AverStr,
+    pos @ _: aver_rt::AverInt,
+    total @ _: aver_rt::AverInt,
 ) -> Option<(AverStr, AverStr)> {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::builtins::splitDottedLoop__indexed(
@@ -1529,7 +1529,7 @@ pub fn splitDottedLoop(
 
 /// Bool.or(a, b) -> a || b.
 pub fn builtinBoolOr(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let pair @ _ = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
@@ -1541,8 +1541,8 @@ pub fn builtinBoolOr(
 
 /// Inner Bool.or.
 pub fn builtinBoolOrInner(
-    aV: &crate::aver_generated::domain::value::Val,
-    bV: &crate::aver_generated::domain::value::Val,
+    aV @ _: &crate::aver_generated::domain::value::Val,
+    bV @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     match aV.clone() {
@@ -1562,7 +1562,7 @@ pub fn builtinBoolOrInner(
 
 /// Bool.and(a, b) -> a && b.
 pub fn builtinBoolAnd(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let pair @ _ = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
@@ -1574,8 +1574,8 @@ pub fn builtinBoolAnd(
 
 /// Inner Bool.and.
 pub fn builtinBoolAndInner(
-    aV: &crate::aver_generated::domain::value::Val,
-    bV: &crate::aver_generated::domain::value::Val,
+    aV @ _: &crate::aver_generated::domain::value::Val,
+    bV @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     match aV.clone() {
@@ -1595,7 +1595,7 @@ pub fn builtinBoolAndInner(
 
 /// Bool.not(a) -> negation.
 pub fn builtinBoolNot(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
@@ -1613,7 +1613,7 @@ pub fn builtinBoolNot(
 
 /// Map.set(map, key, value) -> updated map.
 pub fn builtinMapSet(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     {
@@ -1644,9 +1644,9 @@ pub fn builtinMapSet(
 
 /// Set a key in the map. O(1).
 pub fn builtinMapSetInner(
-    mapV: &crate::aver_generated::domain::value::Val,
-    keyV: &crate::aver_generated::domain::value::Val,
-    valV: &crate::aver_generated::domain::value::Val,
+    mapV @ _: &crate::aver_generated::domain::value::Val,
+    keyV @ _: &crate::aver_generated::domain::value::Val,
+    valV @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     match mapV.clone() {
@@ -1662,7 +1662,7 @@ pub fn builtinMapSetInner(
 
 /// Map.get(map, key) -> Option<Val>. O(1).
 pub fn builtinMapGet(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let pair @ _ = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
@@ -1674,8 +1674,8 @@ pub fn builtinMapGet(
 
 /// Look up key in map. O(1).
 pub fn builtinMapGetInner(
-    mapV: &crate::aver_generated::domain::value::Val,
-    keyV: &crate::aver_generated::domain::value::Val,
+    mapV @ _: &crate::aver_generated::domain::value::Val,
+    keyV @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     match mapV.clone() {
@@ -1696,7 +1696,7 @@ pub fn builtinMapGetInner(
 
 /// Map.has(map, key) -> Bool. O(1).
 pub fn builtinMapHas(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let pair @ _ = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
@@ -1708,8 +1708,8 @@ pub fn builtinMapHas(
 
 /// Check if key exists in map. O(1).
 pub fn builtinMapHasInner(
-    mapV: &crate::aver_generated::domain::value::Val,
-    keyV: &crate::aver_generated::domain::value::Val,
+    mapV @ _: &crate::aver_generated::domain::value::Val,
+    keyV @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     match mapV.clone() {
@@ -1724,7 +1724,7 @@ pub fn builtinMapHasInner(
 
 /// Time.now() -> ISO timestamp string.
 pub fn builtinTimeNow(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     Ok(crate::aver_generated::domain::value::Val::ValStr({
@@ -1737,8 +1737,8 @@ pub fn builtinTimeNow(
 
 /// Http.get/head/delete(url) -> Result<Http.Response, String> forwarded to host.
 pub fn builtinHttpSimple(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
-    method: AverStr,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    method @ _: AverStr,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
@@ -1828,8 +1828,8 @@ pub fn builtinHttpSimple(
 
 /// Http.post/put/patch(url, body, contentType, headers) forwarded to host.
 pub fn builtinHttpBody(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
-    method: AverStr,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    method @ _: AverStr,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     {
@@ -1869,11 +1869,11 @@ pub fn builtinHttpBody(
 
 /// Inner Http body method.
 pub fn builtinHttpBodyInner(
-    urlV: &crate::aver_generated::domain::value::Val,
-    bodyV: &crate::aver_generated::domain::value::Val,
-    ctV: &crate::aver_generated::domain::value::Val,
-    hdrsV: &crate::aver_generated::domain::value::Val,
-    method: AverStr,
+    urlV @ _: &crate::aver_generated::domain::value::Val,
+    bodyV @ _: &crate::aver_generated::domain::value::Val,
+    ctV @ _: &crate::aver_generated::domain::value::Val,
+    hdrsV @ _: &crate::aver_generated::domain::value::Val,
+    method @ _: AverStr,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let url @ _ = crate::aver_generated::domain::builtins::helpers::expectStr(urlV)?;
@@ -2001,7 +2001,7 @@ pub fn builtinHttpBodyInner(
 /// Convert host Http.Response to Val.
 #[inline(always)]
 pub fn httpResponseToVal(
-    result: &Result<crate::aver_generated::http::Response, AverStr>,
+    result @ _: &Result<crate::aver_generated::http::Response, AverStr>,
 ) -> crate::aver_generated::domain::value::Val {
     crate::cancel_checkpoint();
     match result.clone() {
@@ -2032,7 +2032,7 @@ pub fn httpResponseToVal(
 
 /// Convert host headers Map<String, List<String>> to a Val.ValMap whose values are Val.ValList of Val.ValStr.
 pub fn headersToVal(
-    headers: &aver_rt::AverMap<AverStr, aver_rt::AverList<AverStr>>,
+    headers @ _: &aver_rt::AverMap<AverStr, aver_rt::AverList<AverStr>>,
 ) -> crate::aver_generated::domain::value::Val {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::value::Val::ValMap(
@@ -2051,11 +2051,11 @@ pub fn headersToVal(
 /// Walk header keys, converting each value list to a Val.ValList.
 #[inline(always)]
 pub fn headersToValMap(
-    headers: aver_rt::AverMap<AverStr, aver_rt::AverList<AverStr>>,
-    mut names: aver_rt::AverList<AverStr>,
-    mut acc: aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val>,
+    headers @ _: aver_rt::AverMap<AverStr, aver_rt::AverList<AverStr>>,
+    mut names @ _: aver_rt::AverList<AverStr>,
+    mut acc @ _: aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val>,
 ) -> aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val> {
-    let headers = std::sync::Arc::new(headers);
+    let headers @ _ = std::sync::Arc::new(headers);
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(names, [] => { return acc; }, [name, rest] => { match headers.get(&name).cloned() { Some(values @ _) => { {
@@ -2077,8 +2077,8 @@ pub fn headersToValMap(
 /// Convert a list of strings into a list of Val.ValStr (tail-recursive).
 #[inline(always)]
 pub fn stringsToValStrs(
-    mut values: aver_rt::AverList<AverStr>,
-    mut acc: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    mut values @ _: aver_rt::AverList<AverStr>,
+    mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
     loop {
         crate::cancel_checkpoint();
@@ -2094,7 +2094,7 @@ pub fn stringsToValStrs(
 
 /// Tcp.send(host, port, message) -> Result<String, String>.
 pub fn builtinTcpSend(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     {
@@ -2125,9 +2125,9 @@ pub fn builtinTcpSend(
 
 /// Inner Tcp.send.
 pub fn builtinTcpSendInner(
-    hostV: &crate::aver_generated::domain::value::Val,
-    portV: &crate::aver_generated::domain::value::Val,
-    msgV: &crate::aver_generated::domain::value::Val,
+    hostV @ _: &crate::aver_generated::domain::value::Val,
+    portV @ _: &crate::aver_generated::domain::value::Val,
+    msgV @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let host @ _ = crate::aver_generated::domain::builtins::helpers::expectStr(hostV)?;
@@ -2172,7 +2172,7 @@ pub fn builtinTcpSendInner(
 
 /// Tcp.ping(host, port) -> Result<Unit, String>.
 pub fn builtinTcpPing(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let pair @ _ = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
@@ -2184,8 +2184,8 @@ pub fn builtinTcpPing(
 
 /// Inner Tcp.ping.
 pub fn builtinTcpPingInner(
-    hostV: &crate::aver_generated::domain::value::Val,
-    portV: &crate::aver_generated::domain::value::Val,
+    hostV @ _: &crate::aver_generated::domain::value::Val,
+    portV @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let host @ _ = crate::aver_generated::domain::builtins::helpers::expectStr(hostV)?;
@@ -2226,7 +2226,7 @@ pub fn builtinTcpPingInner(
 
 /// Tcp.connect(host, port) -> Result<Tcp.Connection, String>.
 pub fn builtinTcpConnect(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let pair @ _ = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
@@ -2238,8 +2238,8 @@ pub fn builtinTcpConnect(
 
 /// Inner Tcp.connect.
 pub fn builtinTcpConnectInner(
-    hostV: &crate::aver_generated::domain::value::Val,
-    portV: &crate::aver_generated::domain::value::Val,
+    hostV @ _: &crate::aver_generated::domain::value::Val,
+    portV @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let host @ _ = crate::aver_generated::domain::builtins::helpers::expectStr(hostV)?;
@@ -2282,7 +2282,7 @@ pub fn builtinTcpConnectInner(
 
 /// Preserve an opaque host Tcp.Connection resource inside Val.
 pub fn tcpConnToVal(
-    conn: &crate::aver_generated::tcp::Connection,
+    conn @ _: &crate::aver_generated::tcp::Connection,
 ) -> crate::aver_generated::domain::value::Val {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::value::Val::ValTcpConnection(conn.clone())
@@ -2290,7 +2290,7 @@ pub fn tcpConnToVal(
 
 /// Recover an opaque host Tcp.Connection resource from Val.
 pub fn valToTcpConn(
-    v: &crate::aver_generated::domain::value::Val,
+    v @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::tcp::Connection, AverStr> {
     crate::cancel_checkpoint();
     match v.clone() {
@@ -2301,7 +2301,7 @@ pub fn valToTcpConn(
 
 /// Tcp.beginConnect(host, port) -> Result<Tcp.Dial, String>.
 pub fn builtinTcpBeginConnect(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let pair @ _ = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
@@ -2313,8 +2313,8 @@ pub fn builtinTcpBeginConnect(
 
 /// Inner Tcp.beginConnect.
 pub fn builtinTcpBeginConnectInner(
-    hostV: &crate::aver_generated::domain::value::Val,
-    portV: &crate::aver_generated::domain::value::Val,
+    hostV @ _: &crate::aver_generated::domain::value::Val,
+    portV @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let host @ _ = crate::aver_generated::domain::builtins::helpers::expectStr(hostV)?;
@@ -2355,7 +2355,7 @@ pub fn builtinTcpBeginConnectInner(
 
 /// Recover an opaque host Tcp.Dial resource from Val.
 pub fn valToTcpDial(
-    v: &crate::aver_generated::domain::value::Val,
+    v @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::tcp::Dial, AverStr> {
     crate::cancel_checkpoint();
     match v.clone() {
@@ -2366,7 +2366,7 @@ pub fn valToTcpDial(
 
 /// Tcp.dialled(dial) -> Result<Option<Tcp.Connection>, String>.
 pub fn builtinTcpDialled(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
@@ -2413,7 +2413,7 @@ pub fn builtinTcpDialled(
 
 /// Tcp.listen(port, backlog) -> Result<Tcp.Listener, String>.
 pub fn builtinTcpListen(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let pair @ _ = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
@@ -2425,8 +2425,8 @@ pub fn builtinTcpListen(
 
 /// Inner Tcp.listen.
 pub fn builtinTcpListenInner(
-    portV: &crate::aver_generated::domain::value::Val,
-    backlogV: &crate::aver_generated::domain::value::Val,
+    portV @ _: &crate::aver_generated::domain::value::Val,
+    backlogV @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let port @ _ = crate::aver_generated::domain::builtins::helpers::expectInt(portV)?;
@@ -2471,7 +2471,7 @@ pub fn builtinTcpListenInner(
 
 /// Recover an opaque host Tcp.Listener resource from Val.
 pub fn valToTcpListener(
-    v: &crate::aver_generated::domain::value::Val,
+    v @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::tcp::Listener, AverStr> {
     crate::cancel_checkpoint();
     match v.clone() {
@@ -2482,7 +2482,7 @@ pub fn valToTcpListener(
 
 /// Tcp.accept(listener) -> Result<Option<Tcp.Connection>, String>.
 pub fn builtinTcpAccept(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
@@ -2529,7 +2529,7 @@ pub fn builtinTcpAccept(
 
 /// Tcp.peerAddress(connection) -> Result<String, String>.
 pub fn builtinTcpPeerAddress(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
@@ -2565,7 +2565,7 @@ pub fn builtinTcpPeerAddress(
 
 /// Decode the self-host's nominal variant carrier into Tcp.Socket.
 pub fn valToTcpSocket(
-    v: &crate::aver_generated::domain::value::Val,
+    v @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::tcp::Socket, AverStr> {
     crate::cancel_checkpoint();
     match v.clone() {
@@ -2579,8 +2579,8 @@ pub fn valToTcpSocket(
 /// Decode one named Tcp.Socket variant.
 #[inline(always)]
 pub fn valVariantToTcpSocket(
-    name: AverStr,
-    fields: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    name @ _: AverStr,
+    fields @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::tcp::Socket, AverStr> {
     crate::cancel_checkpoint();
     {
@@ -2619,8 +2619,8 @@ pub fn valVariantToTcpSocket(
 /// Recover integer caller keys and typed socket states from a self-host Val map.
 #[inline(always)]
 pub fn tcpSocketEntriesToMap(
-    mut entries: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
-    mut acc: aver_rt::AverMap<aver_rt::AverInt, crate::aver_generated::tcp::Socket>,
+    mut entries @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
+    mut acc @ _: aver_rt::AverMap<aver_rt::AverInt, crate::aver_generated::tcp::Socket>,
 ) -> Result<aver_rt::AverMap<aver_rt::AverInt, crate::aver_generated::tcp::Socket>, AverStr> {
     loop {
         crate::cancel_checkpoint();
@@ -2637,8 +2637,8 @@ pub fn tcpSocketEntriesToMap(
 /// Convert ready caller keys back into self-host values.
 #[inline(always)]
 pub fn tcpReadyKeysToVals(
-    mut keys: aver_rt::AverIntList,
-    mut acc: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    mut keys @ _: aver_rt::AverIntList,
+    mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
     loop {
         crate::cancel_checkpoint();
@@ -2654,7 +2654,7 @@ pub fn tcpReadyKeysToVals(
 
 /// Tcp.poll(sockets, timeoutMs) over the single caller-owned socket map.
 pub fn builtinTcpPoll(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let pair @ _ = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
@@ -2673,8 +2673,8 @@ pub fn builtinTcpPoll(
 
 /// Inner Tcp.poll.
 pub fn builtinTcpPollInner(
-    sockets: &aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val>,
-    timeoutV: &crate::aver_generated::domain::value::Val,
+    sockets @ _: &aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val>,
+    timeoutV @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let timeoutMs @ _ = crate::aver_generated::domain::builtins::helpers::expectInt(timeoutV)?;
@@ -2735,7 +2735,7 @@ pub fn builtinTcpPollInner(
 
 /// Tcp.closeDial(dial) -> Result<Unit, String>.
 pub fn builtinTcpCloseDial(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
@@ -2771,7 +2771,7 @@ pub fn builtinTcpCloseDial(
 
 /// Tcp.closeListener(listener) -> Result<Unit, String>.
 pub fn builtinTcpCloseListener(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
@@ -2807,7 +2807,7 @@ pub fn builtinTcpCloseListener(
 
 /// Tcp.writeLine(conn, line) -> Result<Unit, String>.
 pub fn builtinTcpWriteLine(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let pair @ _ = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
@@ -2819,8 +2819,8 @@ pub fn builtinTcpWriteLine(
 
 /// Inner Tcp.writeLine.
 pub fn builtinTcpWriteLineInner(
-    connV: &crate::aver_generated::domain::value::Val,
-    lineV: &crate::aver_generated::domain::value::Val,
+    connV @ _: &crate::aver_generated::domain::value::Val,
+    lineV @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let tc @ _ = crate::aver_generated::domain::builtins::valToTcpConn(connV)?;
@@ -2861,7 +2861,7 @@ pub fn builtinTcpWriteLineInner(
 
 /// Tcp.readLine(conn) -> Result<String, String>.
 pub fn builtinTcpReadLine(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
@@ -2897,7 +2897,7 @@ pub fn builtinTcpReadLine(
 
 /// Tcp.close(conn) -> Result<Unit, String>.
 pub fn builtinTcpClose(
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
@@ -2933,9 +2933,9 @@ pub fn builtinTcpClose(
 
 /// Synthesized indexed worker of `callBuiltin`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 pub fn callBuiltin__indexed(
-    name: AverStr,
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
-    __str_index: &aver_rt::StringIndex,
+    name @ _: AverStr,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    __str_index @ _: &aver_rt::StringIndex,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     match crate::aver_generated::domain::builtins::callBuiltinFast__indexed(
@@ -2961,9 +2961,9 @@ pub fn callBuiltin__indexed(
 /// Synthesized indexed worker of `callBuiltinFast`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 #[inline(always)]
 pub fn callBuiltinFast__indexed(
-    name: AverStr,
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
-    __str_index: &aver_rt::StringIndex,
+    name @ _: AverStr,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    __str_index @ _: &aver_rt::StringIndex,
 ) -> Option<Result<crate::aver_generated::domain::value::Val, AverStr>> {
     crate::cancel_checkpoint();
     {
@@ -3065,9 +3065,9 @@ pub fn callBuiltinFast__indexed(
 
 /// Synthesized indexed worker of `callBuiltinAfterList`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 pub fn callBuiltinAfterList__indexed(
-    name: AverStr,
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
-    __str_index: &aver_rt::StringIndex,
+    name @ _: AverStr,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    __str_index @ _: &aver_rt::StringIndex,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     if name.starts_with("Vector.") {
@@ -3095,9 +3095,9 @@ pub fn callBuiltinAfterList__indexed(
 
 /// Synthesized indexed worker of `callBuiltinOther`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 pub fn callBuiltinOther__indexed(
-    name: AverStr,
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
-    __str_index: &aver_rt::StringIndex,
+    name @ _: AverStr,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    __str_index @ _: &aver_rt::StringIndex,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     {
@@ -3190,9 +3190,9 @@ pub fn callBuiltinOther__indexed(
 
 /// Synthesized indexed worker of `callBuiltinServices`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 pub fn callBuiltinServices__indexed(
-    name: AverStr,
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
-    __str_index: &aver_rt::StringIndex,
+    name @ _: AverStr,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    __str_index @ _: &aver_rt::StringIndex,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     {
@@ -3300,9 +3300,9 @@ pub fn callBuiltinServices__indexed(
 
 /// Synthesized indexed worker of `builtinTerminalNoArg`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 pub fn builtinTerminalNoArg__indexed(
-    name: AverStr,
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
-    __str_index: &aver_rt::StringIndex,
+    name @ _: AverStr,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    __str_index @ _: &aver_rt::StringIndex,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     {
@@ -3358,9 +3358,9 @@ pub fn builtinTerminalNoArg__indexed(
 /// Synthesized indexed worker of `tryVariantConstructor`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 #[inline(always)]
 pub fn tryVariantConstructor__indexed(
-    name: AverStr,
-    args: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
-    __str_index: &aver_rt::StringIndex,
+    name @ _: AverStr,
+    args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    __str_index @ _: &aver_rt::StringIndex,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     match crate::aver_generated::domain::builtins::splitDotted__indexed(name.clone(), __str_index) {
@@ -3386,8 +3386,8 @@ pub fn tryVariantConstructor__indexed(
 /// Synthesized indexed worker of `splitDotted`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 #[inline(always)]
 pub fn splitDotted__indexed(
-    name: AverStr,
-    __str_index: &aver_rt::StringIndex,
+    name @ _: AverStr,
+    __str_index @ _: &aver_rt::StringIndex,
 ) -> Option<(AverStr, AverStr)> {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::builtins::splitDottedLoop__indexed(
@@ -3401,12 +3401,12 @@ pub fn splitDotted__indexed(
 /// Synthesized indexed worker of `splitDottedLoop`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 #[inline(always)]
 pub fn splitDottedLoop__indexed(
-    mut name: AverStr,
-    mut pos: aver_rt::AverInt,
-    mut total: aver_rt::AverInt,
-    __str_index: aver_rt::StringIndex,
+    mut name @ _: AverStr,
+    mut pos @ _: aver_rt::AverInt,
+    mut total @ _: aver_rt::AverInt,
+    __str_index @ _: aver_rt::StringIndex,
 ) -> Option<(AverStr, AverStr)> {
-    let __str_index = std::sync::Arc::new(__str_index);
+    let __str_index @ _ = std::sync::Arc::new(__str_index);
     loop {
         crate::cancel_checkpoint();
         if (pos < total) {
@@ -3448,8 +3448,8 @@ pub fn splitDottedLoop__indexed(
 /// Synthesized collecting variant of `stringsToVals`. Appends to a builder where `stringsToVals` prepends to `acc` and reverses on the way out, which reaches the same list without the cons chain or the reversal. Call sites that start the accumulator at `[]` are moved here.
 #[inline(always)]
 pub fn stringsToVals__collected(
-    mut strs: aver_rt::AverList<AverStr>,
-    mut acc: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    mut strs @ _: aver_rt::AverList<AverStr>,
+    mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
     loop {
         crate::cancel_checkpoint();
@@ -3466,8 +3466,8 @@ pub fn stringsToVals__collected(
 /// Synthesized collecting variant of `mapEntriesToTuples`. Appends to a builder where `mapEntriesToTuples` prepends to `acc` and reverses on the way out, which reaches the same list without the cons chain or the reversal. Call sites that start the accumulator at `[]` are moved here.
 #[inline(always)]
 pub fn mapEntriesToTuples__collected(
-    mut entries: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
-    mut acc: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    mut entries @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
+    mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
     loop {
         crate::cancel_checkpoint();
@@ -3484,8 +3484,8 @@ pub fn mapEntriesToTuples__collected(
 /// Synthesized collecting variant of `stringsToValStrs`. Appends to a builder where `stringsToValStrs` prepends to `acc` and reverses on the way out, which reaches the same list without the cons chain or the reversal. Call sites that start the accumulator at `[]` are moved here.
 #[inline(always)]
 pub fn stringsToValStrs__collected(
-    mut values: aver_rt::AverList<AverStr>,
-    mut acc: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    mut values @ _: aver_rt::AverList<AverStr>,
+    mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
     loop {
         crate::cancel_checkpoint();
@@ -3502,8 +3502,8 @@ pub fn stringsToValStrs__collected(
 /// Synthesized collecting variant of `tcpReadyKeysToVals`. Appends to a builder where `tcpReadyKeysToVals` prepends to `acc` and reverses on the way out, which reaches the same list without the cons chain or the reversal. Call sites that start the accumulator at `[]` are moved here.
 #[inline(always)]
 pub fn tcpReadyKeysToVals__collected(
-    mut keys: aver_rt::AverIntList,
-    mut acc: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    mut keys @ _: aver_rt::AverIntList,
+    mut acc @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
 ) -> aver_rt::AverList<crate::aver_generated::domain::value::Val> {
     loop {
         crate::cancel_checkpoint();

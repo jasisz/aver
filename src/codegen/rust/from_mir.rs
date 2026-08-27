@@ -67,7 +67,8 @@ use super::expr::{
     callee_borrow_mask, constructor_boxed_positions, emit_dispatch_table_match, emit_list_match,
     emit_literal, emit_parallel_result_tuple_unwrap, emit_pattern_rebindings,
     emit_ref_match_rebindings, emit_result_tuple_unwrap, emit_tuple_from_vars,
-    explicit_binding_pattern, has_list_patterns, has_string_literal_patterns,
+    explicit_binding_pattern, explicit_parameter_pattern, has_list_patterns,
+    has_string_literal_patterns,
 };
 use super::pattern::emit_pattern;
 use super::syntax::aver_name_to_rust;
@@ -510,7 +511,7 @@ impl MirFnEmitPolicy {
                 continue;
             };
             let returned_record_successor = matches!(ty, Type::Named { .. })
-                && result_contains_record_update_of(&mir_fn.body.node, param.local);
+                && result_contains_record_successor_of(&mir_fn.body.node, param.local);
             // `own_param`'s `prone`/clearing both index `aliased_slots`
             // by PARAM POSITION `i` (its `(0..nparams).filter(|&i| …)`),
             // matching `MirParam.local = LocalId(i)`; match that exactly.
@@ -549,34 +550,50 @@ fn is_owned_collection_candidate(ty: &Type) -> bool {
 /// call argument does not qualify because moving its base could invalidate a
 /// later read in the same function. `Construct` covers `Result.Ok(update)`;
 /// branches and the body side of `Let` preserve result position.
-fn result_contains_record_update_of(expr: &MirExpr, slot: LocalId) -> bool {
+fn result_contains_record_successor_of(expr: &MirExpr, slot: LocalId) -> bool {
     match expr {
         MirExpr::RecordUpdate(update) => {
             local_of(&update.node.base.node).is_some_and(|base| base.slot == slot)
         }
-        MirExpr::Let(let_expr) => result_contains_record_update_of(&let_expr.node.body.node, slot),
+        MirExpr::RecordCreate(record) => record.node.fields.iter().any(|field| {
+            let MirExpr::Call(call) = &field.value.node else {
+                return false;
+            };
+            let Some(target) = call.node.args.first() else {
+                return false;
+            };
+            let MirExpr::Project(project) = &target.node else {
+                return false;
+            };
+            local_of(&project.node.base.node).is_some_and(|base| {
+                base.slot == slot && base.last_use && project.node.field == field.name
+            })
+        }),
+        MirExpr::Let(let_expr) => {
+            result_contains_record_successor_of(&let_expr.node.body.node, slot)
+        }
         MirExpr::Match(match_expr) => match_expr
             .node
             .arms
             .iter()
-            .any(|arm| result_contains_record_update_of(&arm.body.node, slot)),
+            .any(|arm| result_contains_record_successor_of(&arm.body.node, slot)),
         MirExpr::IfThenElse(branches) => {
-            result_contains_record_update_of(&branches.node.then_branch.node, slot)
-                || result_contains_record_update_of(&branches.node.else_branch.node, slot)
+            result_contains_record_successor_of(&branches.node.then_branch.node, slot)
+                || result_contains_record_successor_of(&branches.node.else_branch.node, slot)
         }
         MirExpr::Return(inner)
         | MirExpr::Try(inner)
         | MirExpr::Box(inner)
         | MirExpr::Unbox(inner)
-        | MirExpr::Neg(inner) => result_contains_record_update_of(&inner.node, slot),
+        | MirExpr::Neg(inner) => result_contains_record_successor_of(&inner.node, slot),
         MirExpr::Construct(construct) => construct
             .node
             .args
             .iter()
-            .any(|arg| result_contains_record_update_of(&arg.node, slot)),
+            .any(|arg| result_contains_record_successor_of(&arg.node, slot)),
         MirExpr::Tuple(items) => items
             .iter()
-            .any(|item| result_contains_record_update_of(&item.node, slot)),
+            .any(|item| result_contains_record_successor_of(&item.node, slot)),
         _ => false,
     }
 }
@@ -598,7 +615,7 @@ pub(super) fn owned_collection_param_names(
     for (i, (name, ty)) in param_types.iter().enumerate() {
         let returned_record_successor = matches!(ty, Type::Named { .. })
             && mir_fn.params.get(i).is_some_and(|param| {
-                result_contains_record_update_of(&mir_fn.body.node, param.local)
+                result_contains_record_successor_of(&mir_fn.body.node, param.local)
             });
         let collection_graduated = is_owned_collection_candidate(ty)
             && !mir_fn.aliased_slots.get(i).copied().unwrap_or(true);
@@ -1499,8 +1516,12 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             };
             let mut parts = Vec::with_capacity(rec.fields.len());
             for f in &rec.fields {
-                let mut val =
-                    mir_clone_arg(emit_mir_expr(&f.value, emit_ctx)?, &f.value.node, emit_ctx);
+                let mut val = match emit_owned_record_field_successor(None, f, emit_ctx) {
+                    Some(val) => val,
+                    None => {
+                        mir_clone_arg(emit_mir_expr(&f.value, emit_ctx)?, &f.value.node, emit_ctx)
+                    }
+                };
                 if packed_u8 {
                     val = pack_u8_list(val);
                 }
@@ -1522,7 +1543,8 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             let mut parts = Vec::with_capacity(upd.updates.len());
             let mut moved_replaced_field = false;
             for f in &upd.updates {
-                let val = match emit_owned_record_field_successor(upd, f, emit_ctx) {
+                let update_base = local_of(&upd.base.node).map(|base| base.slot);
+                let val = match emit_owned_record_field_successor(update_base, f, emit_ctx) {
                     Some(val) => {
                         moved_replaced_field = true;
                         val
@@ -1682,15 +1704,10 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
 /// moving `store.values` to initialize a *different* field would leave
 /// `..store` needing an already-moved field.
 fn emit_owned_record_field_successor(
-    update: &crate::ir::mir::MirRecordUpdate,
+    required_base: Option<LocalId>,
     field: &crate::ir::mir::MirRecordField,
     ctx: &MirEmitCtx<'_>,
 ) -> Option<String> {
-    let update_base = local_of(&update.base.node)?;
-    if !ctx.is_owned_param(&update_base.name) {
-        return None;
-    }
-
     let MirExpr::Call(call) = &field.value.node else {
         return None;
     };
@@ -1710,7 +1727,8 @@ fn emit_owned_record_field_successor(
         return None;
     };
     let target_base = local_of(&project.node.base.node)?;
-    if target_base.slot != update_base.slot
+    if required_base.is_some_and(|base| target_base.slot != base)
+        || !ctx.is_owned_param(&target_base.name)
         || !target_base.last_use
         || project.node.field != field.name
     {
@@ -3625,10 +3643,8 @@ fn emit_self_tco_rc_wraps(params: &[(String, String)], rc_indices: &HashSet<usiz
         .filter(|(i, _)| rc_indices.contains(i))
         .map(|(_, (name, _))| {
             let rust_name = aver_name_to_rust(name);
-            format!(
-                "    let {} = std::sync::Arc::new({});",
-                rust_name, rust_name
-            )
+            let binding = explicit_binding_pattern(name);
+            format!("    let {} = std::sync::Arc::new({});", binding, rust_name)
         })
         .collect()
 }
@@ -3655,11 +3671,10 @@ fn emit_tco_params_mir(
             } else {
                 super::types::type_annotation_to_rust_scoped(type_ann, ctx, scope)
             };
-            let rust_name = aver_name_to_rust(name);
             if rc_indices.contains(&i) {
-                format!("{}: {}", rust_name, rust_type)
+                format!("{}: {}", explicit_parameter_pattern(name, false), rust_type)
             } else {
-                format!("mut {}: {}", rust_name, rust_type)
+                format!("{}: {}", explicit_parameter_pattern(name, true), rust_type)
             }
         })
         .collect::<Vec<_>>()
@@ -4051,7 +4066,7 @@ pub(super) fn emit_mir_mutual_tco_block(
             .params
             .iter()
             .filter(|(name, _)| !rc_names.contains(name))
-            .map(|(name, _)| format!("mut {}", aver_name_to_rust(name)))
+            .map(|(name, _)| explicit_parameter_pattern(name, true))
             .collect();
         let binding = if param_bindings.is_empty() {
             format!("{}::{}", enum_name, variant)
@@ -4146,7 +4161,7 @@ fn mutual_rc_param_sig(
         .map(|(name, ty)| {
             format!(
                 "{}: &{}",
-                aver_name_to_rust(name),
+                explicit_parameter_pattern(name, false),
                 super::types::type_to_rust_scoped(ty, ctx, scope)
             )
         })
@@ -4166,12 +4181,11 @@ fn emit_resolved_fn_params(
     params
         .iter()
         .map(|(name, ty)| {
-            let rust_name = aver_name_to_rust(name);
             let rust_type = super::types::type_to_rust_scoped(ty, ctx, scope);
             if should_borrow_param(ty) {
-                format!("{rust_name}: &{rust_type}")
+                format!("{}: &{rust_type}", explicit_parameter_pattern(name, false))
             } else {
-                format!("{rust_name}: {rust_type}")
+                format!("{}: {rust_type}", explicit_parameter_pattern(name, false))
             }
         })
         .collect::<Vec<_>>()
@@ -5726,9 +5740,9 @@ mod tests {
         assert_eq!(
             emit_self_tco_rc_wraps(&params, &rc_indices),
             [
-                "    let first = std::sync::Arc::new(first);",
-                "    let second = std::sync::Arc::new(second);",
-                "    let third = std::sync::Arc::new(third);",
+                "    let first @ _ = std::sync::Arc::new(first);",
+                "    let second @ _ = std::sync::Arc::new(second);",
+                "    let third @ _ = std::sync::Arc::new(third);",
             ]
         );
     }

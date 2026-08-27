@@ -320,7 +320,7 @@ pub(crate) fn set_nv_owned(
             // A fresh entry nobody has been handed. The table it carries came
             // out of a slot the caller proved nothing else reaches, so nothing
             // reaches this one either until somebody stores it.
-            held_elsewhere: false,
+            holder_count: 0,
         },
         source,
     );
@@ -366,7 +366,7 @@ pub fn remove_nv_owned(args: &[NanValue], arena: &mut Arena) -> Result<NanValue,
             all_immediate,
             scan_receipt,
             pending_scan_keys,
-            held_elsewhere: false,
+            holder_count: 0,
         },
         source,
     );
@@ -723,7 +723,7 @@ mod tests {
             all_immediate: false,
             scan_receipt: 0,
             pending_scan_keys: Vec::new(),
-            held_elsewhere: false,
+            holder_count: 0,
         }));
         let proof = frame_proof(&arena);
         assert_eq!(

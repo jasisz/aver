@@ -1,5 +1,8 @@
 use super::emit_ctx::{EmitCtx, should_borrow_param};
-use super::expr::{aver_name_to_rust, classify_thin_fn_def_for_rust, explicit_binding_pattern};
+use super::expr::{
+    aver_name_to_rust, classify_thin_fn_def_for_rust, explicit_binding_pattern,
+    explicit_parameter_pattern,
+};
 use super::types::type_annotation_to_rust_scoped;
 use crate::ast::*;
 use crate::codegen::CodegenContext;
@@ -987,7 +990,7 @@ fn emit_fn_params_with_bare(
         .enumerate()
         .map(|(i, (name, type_ann))| {
             if bare_facts.is_some_and(|f| f.param_is_bare(i)) {
-                return format!("{}: i64", aver_name_to_rust(name));
+                return format!("{}: i64", explicit_parameter_pattern(name, false));
             }
             // Fall back to the single-param shape the inner emitter would
             // produce for a non-bare, non-rc param.
@@ -1020,23 +1023,31 @@ fn emit_fn_params_inner(
             let rust_name = aver_name_to_rust(name);
             if rc_indices.contains(&i) {
                 // Borrowed pass-through param: &T instead of owned T
-                format!("{}: &{}", rust_name, rust_type)
+                format!(
+                    "{}: &{}",
+                    explicit_parameter_pattern(name, false),
+                    rust_type
+                )
             } else if mutable {
-                format!("mut {}: {}", rust_name, rust_type)
+                format!("{}: {}", explicit_parameter_pattern(name, true), rust_type)
             } else if owned_params.contains(&rust_name) {
                 // own_param proved this collection param uniquely owned:
                 // take it by value (`mut p: T`) so the body's in-place
                 // mutate runs on a refcount-1 backing. `mut` because the
                 // owned-mutate builtins (`Vector.set` → `set_owned`,
                 // `Map.set` → `insert_owned`) consume `self` by value.
-                format!("mut {}: {}", rust_name, rust_type)
+                format!("{}: {}", explicit_parameter_pattern(name, true), rust_type)
             } else {
                 // Borrow-by-default: non-Copy, non-Str params are `&T`
                 let ty = parse_type_str(type_ann);
                 if should_borrow_param(&ty) {
-                    format!("{}: &{}", rust_name, rust_type)
+                    format!(
+                        "{}: &{}",
+                        explicit_parameter_pattern(name, false),
+                        rust_type
+                    )
                 } else {
-                    format!("{}: {}", rust_name, rust_type)
+                    format!("{}: {}", explicit_parameter_pattern(name, false), rust_type)
                 }
             }
         })

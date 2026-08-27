@@ -1722,18 +1722,26 @@ impl VM {
                     }
                 }
 
-                RECORD_GET_NAMED => {
+                RECORD_GET_NAMED | RECORD_TAKE_NAMED => {
                     let field_symbol_id = read_u32!(code, ip);
 
                     let record = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     if record.is_record() {
-                        let (type_id, fields) = self.arena.get_record(record.arena_index());
+                        let (type_id, _) = self.arena.get_record(record.arena_index());
                         if let Some(&field_idx) = self
                             .code
                             .record_field_slots
                             .get(&(type_id, field_symbol_id))
                         {
-                            self.stack.push(fields[field_idx as usize]);
+                            let can_take = op == RECORD_TAKE_NAMED
+                                && !self.arena.record_is_held_elsewhere(record)
+                                && self.slot_is_unheld(record);
+                            let value = if can_take {
+                                self.arena.take_record_field(record, field_idx as usize)
+                            } else {
+                                self.arena.get_record(record.arena_index()).1[field_idx as usize]
+                            };
+                            self.stack.push(value);
                         } else {
                             let field_name = self
                                 .code
