@@ -131,7 +131,7 @@ checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
 name = "aver-cert"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "clap",
  "colored",
@@ -144,7 +144,7 @@ dependencies = [
 
 [[package]]
 name = "aver-lang"
-version = "0.29.0-dev"
+version = "0.29.0"
 dependencies = [
  "aver-cert",
  "aver-memory",
@@ -180,7 +180,7 @@ dependencies = [
 
 [[package]]
 name = "aver-lsp"
-version = "0.6.19"
+version = "0.6.20"
 dependencies = [
  "aver-lang",
  "serde_json",
@@ -190,7 +190,7 @@ dependencies = [
 
 [[package]]
 name = "aver-memory"
-version = "0.2.15-dev"
+version = "0.2.15"
 dependencies = [
  "aver-rt",
  "num-bigint",
@@ -198,7 +198,7 @@ dependencies = [
 
 [[package]]
 name = "aver-rt"
-version = "0.4.11-dev"
+version = "0.4.11"
 dependencies = [
  "criterion",
  "crossterm",

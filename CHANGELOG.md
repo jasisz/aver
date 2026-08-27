@@ -2,7 +2,7 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
-## 0.29.0 "Peer" (unreleased)
+## 0.29.0 "Peer" — 2026-08-27
 
 Named for the network role Aver programs can finally sustain — and for the checked relationship between a program and its host. One source-owned contract now drives execution, replay, verification, wasm embedding, and proof export.
 
