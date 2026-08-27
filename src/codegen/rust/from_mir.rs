@@ -4847,7 +4847,14 @@ fn try_emit_mir_fusion(
                         let b_str = emit_literal(&crate::ast::Literal::Int(*n));
                         Some(format!("({}).rem_euclid(&({})).unwrap()", a_str, b_str))
                     } else {
-                        let b_str = emit_mir_expr(b, ctx)?;
+                        // `__b` owns the divisor so the zero and remainder
+                        // branches can share it. Preserve an outer local that
+                        // remains live after this fused expression (notably a
+                        // loop-carried TCO parameter) instead of moving it
+                        // into the temporary. The unfused `Int.mod` path only
+                        // borrows its divisor, so the fusion owes the source
+                        // program the same ownership behaviour.
+                        let b_str = mir_clone_arg(emit_mir_expr(b, ctx)?, &b.node, ctx);
                         Some(format!(
                             "{{ let __b = {}; if __b.is_zero() {{ {} }} else {{ ({}).rem_euclid(&__b).unwrap() }} }}",
                             b_str, default, a_str
@@ -5959,6 +5966,36 @@ mod tests {
         assert_eq!(
             emit,
             "(match (aver_rt::AverInt::from_i64(7)).rem_euclid(&(aver_rt::AverInt::from_i64(3))) { Some(__r) => Ok(__r), None => Err(\"division by zero\".to_string()) }).into_aver()"
+        );
+    }
+
+    #[test]
+    fn fused_int_mod_with_default_preserves_live_divisor() {
+        let divisor = span_ty(
+            MirExpr::Local(span(MirLocal {
+                slot: LocalId(0),
+                last_use: false,
+                name: "divisor".to_string(),
+            })),
+            Type::Int,
+        );
+        let inner = span(MirExpr::Call(span(MirCall {
+            callee: MirCallee::Builtin(crate::ir::BuiltinId(1)),
+            args: vec![int_lit(7), divisor],
+        })));
+        let outer = span(MirExpr::Call(span(MirCall {
+            callee: MirCallee::Builtin(crate::ir::BuiltinId(0)),
+            args: vec![inner, int_lit(0)],
+        })));
+        let mut ctx = ctx_with_builtin("Result.withDefault");
+        ctx.mir_builtins = Box::leak(
+            vec!["Result.withDefault".to_string(), "Int.mod".to_string()].into_boxed_slice(),
+        );
+
+        let emit = emit_mir_expr(&outer, &ctx).expect("fused Int.mod should emit");
+        assert!(
+            emit.contains("let __b = divisor.clone()"),
+            "a live divisor must survive the owning fusion temporary: {emit}"
         );
     }
 

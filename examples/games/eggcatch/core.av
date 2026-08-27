@@ -890,6 +890,10 @@ fn bodyGap(l: String, mid: String, r: String, gap: Int) -> String
       "evenly (left half rounded down) around the middle segment."
     "║" + l + spaces(Int.div(gap, 2)) + mid + spaces(gap - Int.div(gap, 2)) + r + "║"
 
+verify bodyGap
+    bodyGap("L", "M", "R", 4) => "║L  M  R║"
+    bodyGap("", "x", "", 3) => "║ x  ║"
+
 fn basketMark(fox: Chute, c: Chute) -> String
     ? "The basket sits under exactly one chute lip: a cup at the fox's"
       "position, a space elsewhere. Always one column wide."
@@ -924,11 +928,19 @@ fn beamL(egg: Option<Int>, i: Int) -> String
         "●" -> "●"
         _ -> "\\"
 
+verify beamL
+    beamL(Option.Some(2), 2) => "●"
+    beamL(Option.None, 2) => "\\"
+
 fn beamR(egg: Option<Int>, i: Int) -> String
     ? "Right ramp beam for row i, mirrored."
     match cell(egg, i)
         "●" -> "●"
         _ -> "/"
+
+verify beamR
+    beamR(Option.Some(2), 2) => "●"
+    beamR(Option.None, 2) => "/"
 
 fn upL(egg: Option<Int>, i: Int) -> String
     ? "Upper-left ramp segment for row i: indent, then the beam (or the egg"
@@ -942,6 +954,10 @@ verify upL
 fn upR(egg: Option<Int>, i: Int) -> String
     ? "Upper-right ramp segment for row i, mirrored."
     beamR(egg, i) + spaces(4 + 2 * i)
+
+verify upR
+    upR(Option.Some(0), 0) => "●    "
+    upR(Option.None, 2) => "/        "
 
 fn rowHeader(b: Board) -> String
     ? "Header row: title, mode tag, score and miss pips."

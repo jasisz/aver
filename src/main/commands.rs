@@ -1866,7 +1866,7 @@ pub(super) fn cmd_audit(
         .map(|file| {
             (
                 file,
-                collect_program_units_with_cache(
+                collect_verify_program_units_with_cache(
                     file,
                     &module_root,
                     &mut reported,
@@ -1883,7 +1883,7 @@ pub(super) fn cmd_audit(
         .iter()
         .filter_map(|(_, units)| units.as_ref().ok())
         .flatten()
-        .map(|(path, _, _)| canonical_path_key(path))
+        .map(|unit| canonical_path_key(&unit.path))
         .collect::<HashSet<_>>();
     let context = AuditContext {
         module_root: &module_root,
@@ -1898,6 +1898,11 @@ pub(super) fn cmd_audit(
     let mut audited_modules = 0usize;
     let mut totals = AuditTotals::default();
     let mut printed_any = false;
+    // A checked-loaded typecheck is sound only after every project dependency
+    // passed its own leaves-first preparation. Remember failures across
+    // overlapping directory programs so an importer never compiles through a
+    // dependency that an earlier unit already rejected.
+    let mut failed_preparations = HashSet::new();
 
     for (file, units) in programs {
         // An input whose every module was audited under an earlier input
@@ -1935,11 +1940,16 @@ pub(super) fn cmd_audit(
                 continue;
             }
         };
-        for (idx, (unit_path, source, _items)) in units.iter().enumerate() {
+        for (idx, unit) in units.iter().enumerate() {
             if !json && idx > 0 {
                 println!();
             }
-            totals.add(audit_unit(unit_path, source, &context, &mut tracker));
+            totals.add(audit_unit(
+                unit,
+                &context,
+                &mut tracker,
+                &mut failed_preparations,
+            ));
             audited_modules += 1;
         }
     }
@@ -2035,16 +2045,20 @@ impl AuditTotals {
 /// Audit one module: its static diagnostics (minus those another audited
 /// module owns), its verify run, and its format check, rendered in place.
 fn audit_unit(
-    path: &str,
-    source: &str,
+    unit: &VerifyReportUnit,
     context: &AuditContext<'_>,
     tracker: &mut SuppressionTracker,
+    failed_preparations: &mut HashSet<PathBuf>,
 ) -> AuditTotals {
     use super::format_cmd::try_format_project_source;
     use aver::diagnostics::{
-        AnalyzeOptions, analyze_source_with_verify_provider_bindings, needs_format_diagnostic,
+        AnalyzeOptions, analyze_prechecked_items, analyze_source, needs_format_diagnostic,
+        verify_engine_error_diagnostic, verify_provider_setup_diagnostic,
     };
+    use aver::verify_law::expand::ExpansionMode;
 
+    let path = &unit.path;
+    let source = &unit.source;
     let module_root = context.module_root;
     let shown_path = display_check_path(path, module_root);
     let own_key = canonical_path_key(path);
@@ -2052,10 +2066,94 @@ fn audit_unit(
     let mut opts = AnalyzeOptions::new(shown_path.clone());
     opts.module_base_dir = Some(module_root.to_string());
     opts.source_path = Some(path.to_string());
-    opts.include_verify_run = true;
-    opts.verify_run_hostile = context.hostile;
-    let mut report =
-        analyze_source_with_verify_provider_bindings(source, &opts, context.provider_bindings);
+    opts.include_verify_run = false;
+
+    let dependency_failed = unit.project_dependencies.iter().any(|(dep_path, _)| {
+        failed_preparations.contains(&aver::source::canonicalize_path(dep_path))
+    });
+    let mut preparation_failed = dependency_failed || unit.fault.is_some();
+
+    // Tolerant program loading keeps malformed modules as report units. Let
+    // canonical source analysis recreate their parse/module diagnostic. Clean
+    // units take the prepared seam: one TCO + one checked-loaded typecheck feed
+    // both static collectors and the declared verify VM.
+    let mut report = if unit.fault.is_some() || unit.items.is_empty() {
+        analyze_source(source, &opts)
+    } else {
+        let mut transformed = unit.items.clone();
+        aver::ir::pipeline::tco(&mut transformed);
+        let tc_result = aver::ir::pipeline::typecheck_gate(
+            &transformed,
+            &aver::ir::TypecheckMode::WithCheckedLoaded(&unit.loaded),
+            &unit.items,
+        );
+        preparation_failed |= !tc_result.errors.is_empty();
+        let mut report =
+            analyze_prechecked_items(source, &opts, &unit.items, &transformed, &tc_result);
+
+        if !preparation_failed && tc_result.errors.is_empty() {
+            let verify_result = if context.hostile {
+                // Hostile verification is a genuinely different checked
+                // program: it appends adversarial provider stubs. Recheck this
+                // module once after injection, but trust the already-audited
+                // dependency bodies.
+                aver::diagnostics::vm_verify::run_verify_for_items_vm_with_checked_loaded_and_mode_and_bindings(
+                    unit.items.clone(),
+                    unit.loaded.clone(),
+                    context.config.cloned(),
+                    path,
+                    ExpansionMode::Hostile,
+                    context.provider_bindings,
+                )
+            } else {
+                aver::diagnostics::vm_verify::prepare_verify_for_prechecked_items_vm_with_loaded(
+                    transformed,
+                    unit.loaded.clone(),
+                    path,
+                    tc_result.capabilities.clone(),
+                )
+                .and_then(|prepared| {
+                    aver::diagnostics::vm_verify::run_prepared_verify_vm_with_bindings(
+                        prepared,
+                        context.config.cloned(),
+                        Some(module_root),
+                        path,
+                        context.provider_bindings,
+                        false,
+                    )
+                })
+            };
+
+            match verify_result {
+                Ok(results) => {
+                    let (verify_diagnostics, verify_summary) =
+                        aver::diagnostics::verify_run::map_results_to_diagnostics(
+                            results,
+                            &shown_path,
+                            source,
+                        );
+                    report.diagnostics.extend(verify_diagnostics);
+                    report.verify_summary = Some(verify_summary);
+                }
+                Err(error) => {
+                    preparation_failed = true;
+                    let diagnostic = if aver::provider::is_provider_setup_error(&error) {
+                        verify_provider_setup_diagnostic(&shown_path, &error)
+                    } else {
+                        verify_engine_error_diagnostic(&shown_path, &error)
+                    };
+                    report.diagnostics.push(diagnostic);
+                    report.verify_summary =
+                        Some(aver::diagnostics::model::VerifySummary { blocks: Vec::new() });
+                }
+            }
+        }
+        report
+    };
+
+    if preparation_failed {
+        failed_preparations.insert(aver::source::canonicalize_path(Path::new(path)));
+    }
     report.diagnostics.retain(|d| {
         let key = span_file_key(&d.span.file, module_root);
         key == own_key || !context.unit_keys.contains(&key)
@@ -2078,7 +2176,7 @@ fn audit_unit(
     // per-rule violations (capped at the factory's MAX_VIOLATION_REGIONS).
     let (needs_format, format_violations) =
         match try_format_project_source(source, module_root, path) {
-            Ok((formatted, violations)) if formatted != source => (true, violations),
+            Ok((formatted, violations)) if formatted != *source => (true, violations),
             _ => (false, Vec::new()),
         };
     if needs_format {
@@ -2107,7 +2205,7 @@ fn audit_unit(
     let verify_setup_failures = report
         .diagnostics
         .iter()
-        .filter(|diagnostic| diagnostic.slug == "verify-provider-setup")
+        .filter(|diagnostic| matches!(diagnostic.slug, "verify-provider-setup" | "verify-engine"))
         .count();
     let verify_failures = verify_setup_failures
         + report

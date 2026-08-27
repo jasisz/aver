@@ -170,7 +170,9 @@ fn load_project_config(base_dir: &str) -> Option<crate::config::ProjectConfig> {
         .flatten()
 }
 
-fn map_results_to_diagnostics(
+/// Convert backend-neutral verify case results into the canonical diagnostic
+/// bundle used by audit, the playground, and editor integrations.
+pub fn map_results_to_diagnostics(
     results: Vec<VerifyResult>,
     file_label: &str,
     source: &str,
