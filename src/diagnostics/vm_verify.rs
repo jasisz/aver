@@ -745,13 +745,35 @@ fn prepare_verify_for_items_vm_with_loaded(
         return Err(format_type_errors(&typecheck.errors));
     }
 
+    prepare_verify_for_prechecked_items_vm_with_loaded(
+        items,
+        loaded,
+        source_file,
+        typecheck.capabilities,
+    )
+}
+
+/// Build the immutable verify VM from TCO-transformed items whose typecheck
+/// gate has already passed.
+///
+/// `aver audit` uses this after its static collectors have consumed the same
+/// typecheck result. The ordinary verify front door remains wrapped by
+/// [`prepare_verify_for_items_vm_with_checked_loaded`], so callers cannot
+/// accidentally skip checking unless they explicitly hold the checked state.
+#[cfg(feature = "runtime")]
+pub fn prepare_verify_for_prechecked_items_vm_with_loaded(
+    mut items: Vec<TopLevel>,
+    loaded: Vec<crate::source::LoadedModule>,
+    source_file: &str,
+    capabilities: crate::capability::CapabilityRegistry,
+) -> Result<PreparedVmVerify, String> {
     let verify_blocks = merge_verify_blocks(&items);
     let plans = build_verify_vm_plans(&mut items, &verify_blocks);
     crate::ir::pipeline::resolve(&mut items);
     if plans.is_empty() {
         return Ok(PreparedVmVerify {
             machine: None,
-            capabilities: typecheck.capabilities,
+            capabilities,
             plans,
         });
     }
@@ -767,7 +789,7 @@ fn prepare_verify_for_items_vm_with_loaded(
     let mut arena = Arena::new();
     vm::register_service_types(&mut arena);
     let mut symbol_table = crate::ir::SymbolTable::build(&items, &dep_modules);
-    symbol_table.merge_capability_registry(&typecheck.capabilities);
+    symbol_table.merge_capability_registry(&capabilities);
     let resolved_items = crate::ir::hir::resolve_program(&symbol_table, &items);
     let (code, globals) = vm::compile_program_with_loaded_modules(
         &resolved_items,
@@ -780,7 +802,7 @@ fn prepare_verify_for_items_vm_with_loaded(
     .map_err(|error| format!("VM compile error: {error}"))?;
     Ok(PreparedVmVerify {
         machine: Some(vm::VM::new(code, globals, arena)),
-        capabilities: typecheck.capabilities,
+        capabilities,
         plans,
     })
 }
@@ -1178,12 +1200,56 @@ pub fn run_verify_for_items_vm_with_loaded_and_mode(
 }
 
 pub fn run_verify_for_items_vm_with_loaded_and_mode_and_bindings(
+    items: Vec<TopLevel>,
+    loaded: Vec<crate::source::LoadedModule>,
+    config: Option<ProjectConfig>,
+    source_file: &str,
+    mode: ExpansionMode,
+    provider_bindings: &[crate::provider::ProviderBinding],
+) -> Result<Vec<VerifyResult>, String> {
+    run_verify_for_items_vm_with_loaded_impl(
+        items,
+        loaded,
+        config,
+        source_file,
+        mode,
+        provider_bindings,
+        false,
+    )
+}
+
+/// Verify against dependency surfaces whose bodies already passed their own
+/// leaves-first typecheck. Hostile mode still checks the current module after
+/// injecting its adversarial stubs; it only avoids walking every dependency
+/// body again.
+pub fn run_verify_for_items_vm_with_checked_loaded_and_mode_and_bindings(
+    items: Vec<TopLevel>,
+    loaded: Vec<crate::source::LoadedModule>,
+    config: Option<ProjectConfig>,
+    source_file: &str,
+    mode: ExpansionMode,
+    provider_bindings: &[crate::provider::ProviderBinding],
+) -> Result<Vec<VerifyResult>, String> {
+    run_verify_for_items_vm_with_loaded_impl(
+        items,
+        loaded,
+        config,
+        source_file,
+        mode,
+        provider_bindings,
+        true,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_verify_for_items_vm_with_loaded_impl(
     mut items: Vec<TopLevel>,
     loaded: Vec<crate::source::LoadedModule>,
     config: Option<ProjectConfig>,
     source_file: &str,
     mode: ExpansionMode,
     provider_bindings: &[crate::provider::ProviderBinding],
+    dependencies_checked: bool,
 ) -> Result<Vec<VerifyResult>, String> {
     crate::ir::pipeline::tco(&mut items);
 
@@ -1197,11 +1263,13 @@ pub fn run_verify_for_items_vm_with_loaded_and_mode_and_bindings(
 
     // Same gate as the disk-loader path above, so the playground and
     // the LSP refuse a shadowing program exactly as the CLI does.
-    let tc_result = crate::ir::pipeline::typecheck_gate(
-        &items,
-        &crate::ir::TypecheckMode::WithLoaded(&loaded),
-        &items[..user_program_len],
-    );
+    let typecheck_mode = if dependencies_checked {
+        crate::ir::TypecheckMode::WithCheckedLoaded(&loaded)
+    } else {
+        crate::ir::TypecheckMode::WithLoaded(&loaded)
+    };
+    let tc_result =
+        crate::ir::pipeline::typecheck_gate(&items, &typecheck_mode, &items[..user_program_len]);
     if !tc_result.errors.is_empty() {
         return Err(format_type_errors(&tc_result.errors));
     }

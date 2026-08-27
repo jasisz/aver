@@ -15,6 +15,7 @@ use super::factories::{
     from_check_finding_with_index, from_type_error_with_index, unused_binding_diagnostic_with_index,
 };
 use super::model::{AnalysisReport, Diagnostic, Severity, Span};
+use crate::ast::TopLevel;
 use crate::checker::{
     CheckFinding, check_module_intent_with_sigs_in, collect_cse_warnings_in,
     collect_independence_warnings_in, collect_module_effects_warnings_in,
@@ -26,6 +27,7 @@ use crate::checker::{FindingSpan, collect_verify_law_dependency_warnings_in};
 use crate::source::{LoadedModule, parse_source_with_verify_ceiling};
 #[cfg(feature = "runtime")]
 use crate::tail_check::collect_non_tail_recursion_warnings_with_sigs;
+use crate::types::checker::TypeCheckResult;
 
 /// Options for `analyze_source`. Defaults enable every available collector.
 #[derive(Clone, Debug)]
@@ -196,6 +198,55 @@ fn analyze_source_impl(
     // program.
     let tc_result = crate::ir::pipeline::typecheck_gate(&items, &mode, &items);
 
+    analyze_prechecked_items_impl(
+        source,
+        options,
+        &items,
+        &transformed,
+        &tc_result,
+        #[cfg(feature = "runtime")]
+        provider_bindings,
+    )
+}
+
+/// Render canonical diagnostics from a program the caller has already parsed,
+/// TCO-transformed, and type-checked.
+///
+/// Whole-program commands use this seam when the same checked module is also
+/// going to verification or code generation. Keeping execution out of this
+/// function is deliberate: the caller can feed the same typecheck result into
+/// a prepared backend instead of making analysis silently check the program a
+/// second time.
+pub fn analyze_prechecked_items(
+    source: &str,
+    options: &AnalyzeOptions,
+    items: &[TopLevel],
+    transformed: &[TopLevel],
+    tc_result: &TypeCheckResult,
+) -> AnalysisReport {
+    assert!(
+        !options.include_verify_run,
+        "prechecked analysis leaves verify execution to the prepared caller"
+    );
+    analyze_prechecked_items_impl(
+        source,
+        options,
+        items,
+        transformed,
+        tc_result,
+        #[cfg(feature = "runtime")]
+        &[],
+    )
+}
+
+fn analyze_prechecked_items_impl(
+    source: &str,
+    options: &AnalyzeOptions,
+    items: &[TopLevel],
+    transformed: &[TopLevel],
+    tc_result: &TypeCheckResult,
+    #[cfg(feature = "runtime")] provider_bindings: &[crate::provider::ProviderBinding],
+) -> AnalysisReport {
     let mut diagnostics: Vec<Diagnostic> = Vec::new();
     let source_index = SourceIndex::new(source);
 
@@ -210,7 +261,7 @@ fn analyze_source_impl(
 
     let findings = if options.include_intent_warnings {
         Some(check_module_intent_with_sigs_in(
-            &items,
+            items,
             Some(&tc_result.fn_sigs),
             None,
         ))
@@ -253,7 +304,7 @@ fn analyze_source_impl(
     }
 
     if options.include_coverage_warnings {
-        for w in collect_verify_coverage_warnings_in(&items, None) {
+        for w in collect_verify_coverage_warnings_in(items, None) {
             diagnostics.push(from_check_finding_with_index(
                 Severity::Warning,
                 &w,
@@ -269,7 +320,7 @@ fn analyze_source_impl(
     // the project file says. Anchored on the module declaration line (the
     // `depends [...]` list lives in its indented block).
     if !options.stdlib_shadowed.is_empty() {
-        let (module_name, module_line) = crate::visibility::module_decl(&items)
+        let (module_name, module_line) = crate::visibility::module_decl(items)
             .map(|m| (Some(m.name.clone()), m.line))
             .unwrap_or((None, 1));
         for (dep_name, shadowed_path) in &options.stdlib_shadowed {
@@ -295,7 +346,7 @@ fn analyze_source_impl(
     // surfaced via `tc_result.errors`. Overdeclared (boundary lists
     // effects no fn uses) is a softer hint — still worth surfacing so
     // the module header documents what the code actually does.
-    for w in collect_module_effects_warnings_in(&items, None) {
+    for w in collect_module_effects_warnings_in(items, None) {
         diagnostics.push(from_check_finding_with_index(
             Severity::Warning,
             &w,
@@ -306,7 +357,7 @@ fn analyze_source_impl(
 
     #[cfg(feature = "runtime")]
     if options.include_law_dependency_warnings {
-        for w in collect_verify_law_dependency_warnings_in(&items, &tc_result.fn_sigs, None) {
+        for w in collect_verify_law_dependency_warnings_in(items, &tc_result.fn_sigs, None) {
             diagnostics.push(from_check_finding_with_index(
                 Severity::Warning,
                 &w,
@@ -317,7 +368,7 @@ fn analyze_source_impl(
     }
 
     if options.include_cse_warnings {
-        for w in collect_cse_warnings_in(&transformed, None) {
+        for w in collect_cse_warnings_in(transformed, None) {
             diagnostics.push(from_check_finding_with_index(
                 Severity::Warning,
                 &w,
@@ -328,7 +379,7 @@ fn analyze_source_impl(
     }
 
     if options.include_perf_warnings {
-        for w in collect_perf_warnings_in(&transformed, None) {
+        for w in collect_perf_warnings_in(transformed, None) {
             diagnostics.push(from_check_finding_with_index(
                 Severity::Warning,
                 &w,
@@ -339,7 +390,7 @@ fn analyze_source_impl(
     }
 
     if options.include_traversal_warnings {
-        for w in collect_traversal_warnings_in(&transformed, None) {
+        for w in collect_traversal_warnings_in(transformed, None) {
             diagnostics.push(from_check_finding_with_index(
                 Severity::Warning,
                 &w,
@@ -350,7 +401,7 @@ fn analyze_source_impl(
     }
 
     if options.include_independence_warnings {
-        for w in collect_independence_warnings_in(&transformed, &tc_result.fn_sigs, None) {
+        for w in collect_independence_warnings_in(transformed, &tc_result.fn_sigs, None) {
             diagnostics.push(from_check_finding_with_index(
                 Severity::Warning,
                 &w,
@@ -361,7 +412,7 @@ fn analyze_source_impl(
     }
 
     if options.include_naming_warnings {
-        for w in collect_naming_warnings_in(&items, None) {
+        for w in collect_naming_warnings_in(items, None) {
             diagnostics.push(from_check_finding_with_index(
                 Severity::Warning,
                 &w,
@@ -377,7 +428,7 @@ fn analyze_source_impl(
         // the compiled VM would crash on missing symbols. Multi-file
         // now works through the same VM path via loaded_modules →
         // compile_program_with_loaded_modules.
-        let runnable_items = items.clone();
+        let runnable_items = items.to_vec();
         let mode = if options.verify_run_hostile {
             crate::verify_law::expand::ExpansionMode::Hostile
         } else {
@@ -426,7 +477,7 @@ fn analyze_source_impl(
     #[cfg(feature = "runtime")]
     if options.include_non_tail_warnings {
         let non_tail =
-            collect_non_tail_recursion_warnings_with_sigs(&transformed, &tc_result.fn_sigs);
+            collect_non_tail_recursion_warnings_with_sigs(transformed, &tc_result.fn_sigs);
         for w in &non_tail {
             let mut line_counts: Vec<(usize, usize)> = Vec::new();
             for &ln in &w.callsite_lines {
@@ -476,7 +527,7 @@ fn analyze_source_impl(
 
     if options.include_why_summary {
         report.why_summary = Some(super::why::summarize(
-            &items,
+            items,
             source,
             options.file_label.clone(),
         ));
@@ -484,7 +535,7 @@ fn analyze_source_impl(
 
     if options.include_context_summary {
         let ctx = super::context::build_context_for_items(
-            &items,
+            items,
             source,
             options.file_label.clone(),
             options.module_base_dir.as_deref(),
