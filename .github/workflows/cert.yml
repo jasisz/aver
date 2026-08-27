@@ -1,6 +1,11 @@
 name: Certification
 
 on:
+  # Release candidates get the complete matrix on their exact commit. Ordinary
+  # pushes to main remain on the six-hour cadence below, avoiding 330 lane-min
+  # for every merge while making the release gate explicit and reproducible.
+  push:
+    branches: ['release/**']
   pull_request:
     branches: [main]
   # The full matrix runs on a timer rather than on every push to main. It is

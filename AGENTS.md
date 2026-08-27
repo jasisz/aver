@@ -324,19 +324,31 @@ To create a new pure namespace, follow the pattern in `src/types/char.rs` or `sr
 
 ## Releases: `tools/release.py` is the only path
 
-Run `python3 tools/release.py X.Y.Z` (add `--dry-run` first for a sanity pass). The script is the single source of truth for the full release flow — it covers everything below in the right order, idempotently:
+Use the two-phase path (add `--dry-run` first for a sanity pass):
+
+```bash
+python3 tools/release.py X.Y.Z --prepare
+# wait for CI, Proof, and Certification on release/X.Y.Z
+python3 tools/release.py X.Y.Z --deploy-edge
+```
+
+The prepare phase commits the exact release tree and pushes only `release/X.Y.Z`. Expensive gates run in parallel on that exact SHA. The resume phase refuses to publish unless the candidate is byte-identical, all three workflows are green, and `origin/main` still equals the candidate's recorded base; it then fast-forwards main, publishes, tags, deploys if requested, carries dev versions, and removes the candidate branch. The saved plan makes both phases idempotent.
+
+If candidate CI fails, fix the candidate locally and rerun `python3 tools/release.py X.Y.Z --prepare`. Before any publication the script may reopen the sealed plan, recompute crate bumps/cascades from the changed publish inputs, and push a fast-forward repair commit for a fresh exact-SHA CI pass.
+
+The script is the single source of truth for the full release flow — it covers everything below in the right order:
 
 0. Editor grammar sync check (`editors/sync.py --check`)
 1. Cascade-bump `aver-rt` / `aver-memory` / `aver-cert` / `aver-lang` / `aver-lsp` Cargo.toml + cross-crate dep pins; `aver-cert` keeps its independent 0.1.x line (first public release `0.1.0`, later source changes patch-bump it), and the cascade logic honours `PUBLISH_BLOCKERS` so `cargo publish` doesn't hit a resolution conflict
 2. Bump the `tools/website/index.html` hero version badge
 3. Regenerate self-host (`self_hosted/main.av` → `src/self_host/`)
 4. Regenerate playground WASM artifacts (`tools/website/rebuild_playground.py`)
-5. Verify (fmt + workspace clippy + aver-lang+wasm clippy + cargo test + bench scenarios + edge `--preset cloudflare` compile + `wasm-tools validate`)
-5.5. Stamp the CHANGELOG header (`## X.Y.Z "Codename" (unreleased)` → `## X.Y.Z "Codename" — YYYY-MM-DD`)
-6. `cargo publish` each changed crate in CRATE_ORDER
-7. Git add + commit + tag + push + `gh release create` with notes from the CHANGELOG section
+5. Stamp the CHANGELOG header (`## X.Y.Z "Codename" (unreleased)` → `## X.Y.Z "Codename" — YYYY-MM-DD`) and commit the candidate
+6. Push `release/X.Y.Z`; CI runs fmt, clippy, package, every native/wasm/wasip2 test, bench scenarios, release wasm build, edge `--preset cloudflare` + `wasm-tools validate`; Proof and the complete Certification matrix run beside it
+7. On resume, require the exact green SHA and unchanged main, then `cargo publish` each changed crate in `CRATE_ORDER`
+8. Fast-forward main, tag, push, and `gh release create` with notes from the CHANGELOG section; optionally deploy edge, then carry dev versions
 
-Flags worth knowing: `--dry-run`, `--skip-publish`, `--skip-playground`, `--skip-self-host`, `--deploy-edge` (the last one rebuilds + deploys `tools/edge` to Cloudflare and curl-smokes `/`, `/api`, `/fractal`).
+Flags worth knowing: `--prepare`, `--dry-run`, `--skip-publish`, `--skip-playground`, `--skip-self-host`, `--deploy-edge` (the last one rebuilds + deploys `tools/edge` from a temporary tree, then curl-smokes `/`, `/api`, `/fractal` without dirtying the repository).
 
 **Don't bump versions or tag by hand.** The 0.19.0 "Echo" release was attempted manually first, which skipped the cascade bump, website badge, self-host regen, playground regen, the verify gates beyond unit tests, `cargo publish`, and `gh release create`. The lesson: even when individual steps feel obvious in isolation, the script's idempotent design + correct ordering is the only thing that catches the dependency chain at the right place.
 

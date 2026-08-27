@@ -20,7 +20,7 @@ on:
   # Per-PR + main-push so a proof-codegen / proof-metric drift is
   # caught at PR time, same convention as `ci.yml`.
   push:
-    branches: [main]
+    branches: [main, 'release/**']
   pull_request:
     branches: [main]
   schedule:

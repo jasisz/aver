@@ -6,6 +6,7 @@ from __future__ import annotations
 import contextlib
 import importlib.util
 import io
+import json
 import subprocess
 import sys
 import tempfile
@@ -769,6 +770,204 @@ class RetryTests(unittest.TestCase):
         self.assertIn("--registry", commands[0])
         self.assertIn("crates-io", commands[0])
         self.assertNotIn("--allow-dirty", commands[0])
+
+
+class ReleaseCiTests(unittest.TestCase):
+    def test_exact_commit_requires_all_three_release_workflows(self) -> None:
+        rows = [
+            {"name": name, "status": "completed", "conclusion": "success"}
+            for name in ("CI", "Proof", "Certification")
+        ]
+        result = subprocess.CompletedProcess(
+            ["gh", "run", "list"], 0, stdout=json.dumps(rows), stderr=""
+        )
+        with mock.patch.object(release, "run", return_value=result):
+            green, detail = release.ci_verified_commit("a" * 40)
+
+        self.assertTrue(green)
+        self.assertIn("release CI green", detail)
+
+        rows.pop()
+        result.stdout = json.dumps(rows)
+        with mock.patch.object(release, "run", return_value=result):
+            green, detail = release.ci_verified_commit("a" * 40)
+        self.assertFalse(green)
+        self.assertIn("Certification", detail)
+
+    def test_newest_workflow_attempt_decides_the_gate(self) -> None:
+        rows = [
+            {"name": "CI", "status": "completed", "conclusion": "success"},
+            {"name": "CI", "status": "completed", "conclusion": "failure"},
+            {"name": "Proof", "status": "completed", "conclusion": "success"},
+            {
+                "name": "Certification",
+                "status": "completed",
+                "conclusion": "success",
+            },
+            {"name": "Fuzz", "status": "in_progress", "conclusion": None},
+        ]
+        result = subprocess.CompletedProcess(
+            ["gh", "run", "list"], 0, stdout=json.dumps(rows), stderr=""
+        )
+        with mock.patch.object(release, "run", return_value=result):
+            green, _detail = release.ci_verified_commit("b" * 40)
+        self.assertTrue(green)
+
+    def test_candidate_records_the_exact_main_base(self) -> None:
+        plan = release.create_release_plan(
+            "0.27.0", versions(), versions(main="0.27.0"), registry()
+        )
+        head = "c" * 40
+        results = [
+            subprocess.CompletedProcess(["git"], 0, stdout=head + "\n", stderr=""),
+            subprocess.CompletedProcess(["git"], 0, stdout=head + "\n", stderr=""),
+        ]
+        with (
+            mock.patch.object(release, "run", side_effect=results),
+            mock.patch.object(release, "save_release_plan") as saver,
+        ):
+            release.initialize_release_candidate(plan, "0.27.0")
+
+        self.assertEqual(plan.base_commit, head)
+        self.assertEqual(plan.candidate_ref, "release/0.27.0")
+        saver.assert_called_once_with(plan)
+
+    def test_finalize_refuses_when_main_moved_after_preparation(self) -> None:
+        plan = release.create_release_plan(
+            "0.27.0", versions(), versions(main="0.27.0"), registry()
+        )
+        plan.base_commit = "d" * 40
+        plan.release_commit = "e" * 40
+        plan.candidate_ref = "release/0.27.0"
+        results = [
+            subprocess.CompletedProcess(["git", "fetch"], 0, stdout="", stderr=""),
+            subprocess.CompletedProcess(
+                ["git", "rev-parse"], 0, stdout="f" * 40 + "\n", stderr=""
+            ),
+        ]
+        with (
+            mock.patch.object(release, "run", side_effect=results),
+            mock.patch.object(release, "require_clean_release_tree"),
+            mock.patch.object(release, "ci_verified_commit") as ci,
+        ):
+            with self.assertRaisesRegex(release.ReleaseError, "origin/main moved"):
+                release.require_prepared_release(plan)
+        ci.assert_not_called()
+
+    def test_saved_release_commit_requires_candidate_identity(self) -> None:
+        plan = release.create_release_plan(
+            "0.27.0", versions(), versions(main="0.27.0"), registry()
+        )
+        plan.release_commit = "a" * 40
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "plan.json"
+            release.save_release_plan(plan, path)
+            with self.assertRaisesRegex(release.ReleaseError, "missing its base"):
+                release.load_release_plan("0.27.0", versions(main="0.27.0"), path)
+
+    def test_repair_pass_replans_a_newly_changed_runtime_crate(self) -> None:
+        base = versions()
+        target = versions(main="0.27.0")
+        target["aver-lsp"] = "0.6.16"
+        state = registry(
+            aver_rt={"0.4.9"},
+            aver_memory={"0.2.11"},
+            aver_cert={"0.1.0"},
+            aver_lang={"0.26.0"},
+            aver_lsp={"0.6.15"},
+        )
+        plan = release.create_release_plan(
+            "0.27.0",
+            base,
+            target,
+            state,
+            fingerprint=lambda crate: f"planning-{crate}",
+        )
+        plan.fingerprints = {crate: f"sealed-{crate}" for crate in release.CRATE_ORDER}
+        plan.release_commit = "a" * 40
+        plan.base_commit = "b" * 40
+        plan.candidate_ref = "release/0.27.0"
+        results = [
+            subprocess.CompletedProcess(
+                ["git", "rev-parse", "HEAD"],
+                0,
+                stdout=plan.release_commit + "\n",
+                stderr="",
+            ),
+            subprocess.CompletedProcess(["git", "merge-base"], 0, stdout="", stderr=""),
+            subprocess.CompletedProcess(
+                ["git", "rev-parse", "origin/main"],
+                0,
+                stdout=plan.base_commit + "\n",
+                stderr="",
+            ),
+        ]
+
+        with (
+            mock.patch.object(release, "run", side_effect=results),
+            mock.patch.object(
+                release,
+                "publish_inputs_fingerprint",
+                side_effect=lambda crate: (
+                    "changed-aver-rt" if crate == "aver-rt" else f"sealed-{crate}"
+                ),
+            ),
+            mock.patch.object(
+                release,
+                "planning_inputs_fingerprint",
+                side_effect=lambda crate: f"replanned-{crate}",
+            ),
+            mock.patch.object(release, "save_release_plan"),
+        ):
+            release.reopen_release_candidate(plan, state)
+
+        self.assertEqual(plan.target_versions["aver-rt"], "0.4.10")
+        self.assertEqual(plan.target_versions["aver-memory"], "0.2.12")
+        self.assertEqual(plan.publish_states["aver-rt"], "pending")
+        self.assertEqual(plan.fingerprints, {})
+        self.assertIsNone(plan.release_commit)
+
+
+class DeploymentTests(unittest.TestCase):
+    def test_edge_deploy_builds_in_target_without_dirtying_shipped_dist(self) -> None:
+        class Response:
+            status = 200
+            headers = {"content-length": "2"}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            shipped = root / "tools" / "edge" / "dist"
+            shipped.mkdir(parents=True)
+            (shipped / "app.wasm").write_bytes(b"committed")
+            (shipped / "wrangler.toml").write_text('name = "demo"\n')
+            (root / "tools" / "edge" / "app.av").write_text("fn main() = 0\n")
+            aver_bin = root / "target" / "release" / "aver"
+            aver_bin.parent.mkdir(parents=True)
+            aver_bin.write_text("")
+
+            def runner(command, **_kwargs):
+                output = Path(command[-1])
+                (output / "app.wasm").write_bytes(b"deployed")
+                return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+            with (
+                mock.patch.object(release, "REPO_ROOT", root),
+                mock.patch.object(release, "run", side_effect=runner),
+                mock.patch.object(release.subprocess, "run"),
+                mock.patch.object(
+                    release.urllib.request, "urlopen", return_value=Response()
+                ),
+            ):
+                release.deploy_edge(False)
+
+            self.assertEqual((shipped / "app.wasm").read_bytes(), b"committed")
+            self.assertFalse((root / "target" / "release-edge-deploy").exists())
 
 
 class FinalizationTests(unittest.TestCase):

@@ -123,7 +123,7 @@ aver bench bench/scenarios/ \
 
 `--baseline-dir DIR` auto-picks `<host.os>-<host.arch>-<backend.name>.json` from `DIR` based on the current machine. When no matching file exists, the gate is silently skipped — one CI workflow gates wherever a baseline is pinned, runs cleanly on hosts without one. Repo currently ships `bench/baselines/macos-aarch64-vm.json`; Linux baseline gets captured automatically on first CI run, commit `bench/baselines/linux-x86_64-vm.json` from that artifact to enable gating there.
 
-The CI `Bench Gate` job in `.github/workflows/ci.yml` runs `aver bench bench/scenarios/ --target=vm --baseline-dir bench/baselines/ --fail-on-regression --json` on every PR; results upload as a 30-day-retention artifact.
+The CI `Bench Gate` job in `.github/workflows/ci.yml` runs `aver bench bench/scenarios/ --target=vm --baseline-dir bench/baselines/ --fail-on-regression --json` on pushes to main and exact release-candidate branches; results upload as a 30-day-retention artifact.
 
 ### NDJSON output for streaming
 
@@ -135,7 +135,7 @@ Directory mode emits one report per line when `--json` is set. Trivially streama
 
 ### Release script integration
 
-`tools/release.py verify()` runs the full scenario suite in directory mode as a smoke gate before publishing:
+The two-phase release requires this CI gate on the exact `release/X.Y.Z` commit before publishing. The one-shot compatibility path in `tools/release.py verify()` runs the same scenario suite locally:
 
 ```python
 run([str(REPO_ROOT / "target" / "release" / "aver"), "bench",
