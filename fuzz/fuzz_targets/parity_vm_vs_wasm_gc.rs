@@ -259,7 +259,7 @@ fn run_wasm_gc(
             if let Ok(dep_modules) = aver::source::load_compile_deps(items, root) {
                 type_aliases = aver::codegen::wasm_gc::flatten_multimodule(
                     &mut items_flat,
-                    &dep_modules,
+                    &dep_modules.modules,
                     capabilities,
                     aver::codegen::wasm_gc::CapabilityFunctionSurface::Runtime,
                 );
@@ -275,6 +275,7 @@ fn run_wasm_gc(
                     entry_info: None,
                     mode: aver::runtime::wasm_gc::EffectMode::Normal,
                     type_aliases: type_aliases.clone(),
+                    ..Default::default()
                 },
             )
         });
