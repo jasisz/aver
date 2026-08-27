@@ -86,7 +86,7 @@ fn main() {
             if let Ok(dep_modules) = aver::source::load_compile_deps(&items, root) {
                 type_aliases = aver::codegen::wasm_gc::flatten_multimodule(
                     &mut items,
-                    &dep_modules,
+                    &dep_modules.modules,
                     &result
                         .typecheck
                         .as_ref()
