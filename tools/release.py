@@ -262,10 +262,41 @@ def set_dep_pin(path: Path, package_name: str, version: str) -> None:
 
 
 def bump_patch(version: str) -> str:
-    """Increment patch version: 0.4.1 -> 0.4.2"""
-    parts = version.split(".")
+    """Return the next publishable patch version.
+
+    Main carries the next reserved runtime version as ``X.Y.Z-dev`` after a
+    release. Publishing changed sources consumes that reservation as
+    ``X.Y.Z``; an already-published stable version advances to the next patch.
+    """
+    core, separator, prerelease = version.partition("-")
+    parts = core.split(".")
+    if len(parts) != 3 or not all(part.isdigit() for part in parts):
+        raise ReleaseError(f"cannot patch-bump invalid version {version!r}")
+    if separator:
+        if prerelease != "dev":
+            raise ReleaseError(f"cannot patch-bump prerelease version {version!r}")
+        return core
     parts[-1] = str(int(parts[-1]) + 1)
     return ".".join(parts)
+
+
+def published_baseline_for_dev(version: str) -> str:
+    """Return the stable version immediately before a carried ``-dev`` one.
+
+    Runtime products carry ``patch + 1`` after each release. If a product did
+    not change in the next release window, planning must restore its already
+    published stable version instead of trying to publish the ``-dev`` marker.
+    """
+    if not version.endswith("-dev"):
+        return version
+    core = version.removesuffix("-dev")
+    parts = core.split(".")
+    if len(parts) != 3 or not all(part.isdigit() for part in parts):
+        raise ReleaseError(f"cannot derive published baseline from {version!r}")
+    major, minor, patch = (int(part) for part in parts)
+    if patch == 0:
+        raise ReleaseError(f"cannot derive published baseline from {version!r}")
+    return f"{major}.{minor}.{patch - 1}"
 
 
 # Cascade cases where a downstream MUST bump because it carries an exact pin.
@@ -451,15 +482,19 @@ def require_registry_snapshot(
     return snapshot
 
 
-def _cascade(new: dict[str, str], old_versions: dict[str, str]) -> bool:
+def _cascade(
+    new: dict[str, str],
+    published_baselines: dict[str, str],
+    manifest_versions: dict[str, str],
+) -> bool:
     """One pass of the publish-blocker cascade. Returns whether anything bumped."""
     changed = False
     for upstream, blockers in PUBLISH_BLOCKERS.items():
-        if new[upstream] == old_versions[upstream]:
+        if new[upstream] == published_baselines[upstream]:
             continue
         for ds in blockers:
-            if new[ds] == old_versions[ds]:
-                new[ds] = bump_patch(old_versions[ds])
+            if new[ds] == published_baselines[ds]:
+                new[ds] = bump_patch(manifest_versions[ds])
                 changed = True
     return changed
 
@@ -491,7 +526,18 @@ def compute_new_versions(
             "refusing to invent a different release version"
         )
 
-    new = dict(old_versions)
+    # A carried runtime ``-dev`` version is not itself a release target. Its
+    # public baseline is the previous patch; changed inputs consume the
+    # reserved number below. The language version is supplied explicitly and
+    # need not be reverse-derived from (for example) 0.29.0-dev to 0.28.1.
+    published_baselines = dict(old_versions)
+    for crate in CRATE_ORDER:
+        if crate != "aver-lang":
+            published_baselines[crate] = published_baseline_for_dev(
+                old_versions[crate]
+            )
+
+    new = dict(published_baselines)
     new["aver-lang"] = new_main
 
     # Pass 1: bump any non-main crate whose publish inputs changed since its
@@ -516,13 +562,15 @@ def compute_new_versions(
 
     # Pass 2: forced cascade for publish-blockers (fixpoint).
     for _ in range(len(CRATE_ORDER)):
-        if not _cascade(new, old_versions):
+        if not _cascade(new, published_baselines, old_versions):
             break
 
     # Pass 3: occupied targets are collisions, never an invitation to mutate the
     # planned version behind CHANGELOG/tag/GitHub release metadata.
     for crate in CRATE_ORDER:
-        if new[crate] != old_versions[crate] and registry[crate].has(new[crate]):
+        if new[crate] != published_baselines[crate] and registry[crate].has(
+            new[crate]
+        ):
             raise ReleaseError(
                 f"planned {crate} {new[crate]} already exists on crates.io; "
                 "choose the version explicitly and rerun"
@@ -794,8 +842,11 @@ def refresh_unsealed_release_plan(
     current_fingerprints = {crate: fingerprint(crate) for crate in CRATE_ORDER}
 
     def changed(crate: str, _version: str, _baseline: str | None) -> bool:
+        published_baseline = published_baseline_for_dev(
+            plan.base_versions[crate]
+        )
         return (
-            plan.target_versions[crate] != plan.base_versions[crate]
+            plan.target_versions[crate] != published_baseline
             or current_fingerprints[crate] != plan.planning_fingerprints[crate]
         )
 

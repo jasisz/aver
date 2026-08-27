@@ -97,6 +97,70 @@ class RegistryQueryTests(unittest.TestCase):
 
 
 class VersionPlanningTests(unittest.TestCase):
+    def test_patch_bump_consumes_a_carried_dev_reservation(self) -> None:
+        self.assertEqual(release.bump_patch("0.4.11-dev"), "0.4.11")
+        self.assertEqual(release.bump_patch("0.4.11"), "0.4.12")
+
+    def test_unchanged_dev_crates_restore_their_published_baseline(self) -> None:
+        old = versions(main="0.29.0-dev")
+        old.update(
+            {
+                "aver-rt": "0.4.11-dev",
+                "aver-memory": "0.2.15-dev",
+                "aver-cert": "0.1.4-dev",
+                "aver-lsp": "0.6.20-dev",
+            }
+        )
+        state = registry(
+            aver_rt={"0.4.10"},
+            aver_memory={"0.2.14"},
+            aver_cert={"0.1.3"},
+            aver_lang={"0.28.1"},
+            aver_lsp={"0.6.19"},
+        )
+
+        target = release.compute_new_versions(
+            old,
+            "0.29.0",
+            state,
+            changed=lambda *_args: False,
+        )
+
+        self.assertEqual(target["aver-rt"], "0.4.10")
+        self.assertEqual(target["aver-memory"], "0.2.14")
+        self.assertEqual(target["aver-cert"], "0.1.3")
+        # aver-lsp must consume its reservation because the new language
+        # release changes its exact aver-lang pin even when its own code did not.
+        self.assertEqual(target["aver-lsp"], "0.6.20")
+
+    def test_changed_dev_upstream_consumes_its_reserved_cascade(self) -> None:
+        old = versions(main="0.29.0-dev")
+        old.update(
+            {
+                "aver-rt": "0.4.11-dev",
+                "aver-memory": "0.2.15-dev",
+                "aver-cert": "0.1.4-dev",
+                "aver-lsp": "0.6.20-dev",
+            }
+        )
+        state = registry(
+            aver_rt={"0.4.10"},
+            aver_memory={"0.2.14"},
+            aver_cert={"0.1.3"},
+            aver_lang={"0.28.1"},
+            aver_lsp={"0.6.19"},
+        )
+
+        target = release.compute_new_versions(
+            old,
+            "0.29.0",
+            state,
+            changed=lambda crate, *_args: crate == "aver-rt",
+        )
+
+        self.assertEqual(target["aver-rt"], "0.4.11")
+        self.assertEqual(target["aver-memory"], "0.2.15")
+
     def test_first_public_cert_keeps_010_and_changed_memory_bumps(self) -> None:
         state = registry(
             aver_rt={"0.4.9"},
