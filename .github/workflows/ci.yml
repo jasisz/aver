@@ -81,6 +81,14 @@ jobs:
           cargo check -p aver-lang --lib --no-default-features --features playground
           cargo check -p aver-lang --features certify
 
+      - name: Prefetch provider-host feature graph
+        # Some integration tests intentionally build generated provider hosts
+        # with Cargo offline. Those hosts enable wasm even though this job's
+        # root test build uses the default feature set, so a fresh runner must
+        # fetch every package pinned in Cargo.lock before entering that offline
+        # boundary. Never rely on a previous workflow's registry cache.
+        run: cargo fetch --locked
+
       - name: Test
         # Iron — Stage 4: CI exercises proptest sweeps at 2 000 cases
         # per property instead of the 256-case default. The matcher

@@ -16,7 +16,7 @@ fn detect_in_file(path: &str) -> Vec<ModulePattern> {
         .unwrap_or(".");
     let deps = aver::source::load_compile_deps(&items, module_root)
         .unwrap_or_else(|e| panic!("deps: {e}"));
-    detect_module_patterns(&items, &deps)
+    detect_module_patterns(&items, &deps.modules)
 }
 
 #[test]
@@ -140,7 +140,9 @@ fn detection_payload_matches_refinement_info_for() {
     let source = std::fs::read_to_string(path).unwrap();
     let items = aver::source::parse_source(&source).unwrap();
     let module_root = std::path::Path::new(path).parent().unwrap();
-    let deps = aver::source::load_compile_deps(&items, module_root.to_str().unwrap()).unwrap();
+    let deps = aver::source::load_compile_deps(&items, module_root.to_str().unwrap())
+        .unwrap()
+        .modules;
     let module_prefixes: std::collections::HashSet<String> =
         deps.iter().map(|m| m.prefix.clone()).collect();
     let recursive_fns: std::collections::HashSet<aver::ir::FnId> = std::collections::HashSet::new();
@@ -421,7 +423,7 @@ fn inductable_in_file(path: &str) -> std::collections::HashSet<String> {
         .unwrap_or(".");
     let deps = aver::source::load_compile_deps(&items, module_root)
         .unwrap_or_else(|e| panic!("deps: {e}"));
-    collect_inductable_sum_types(&items, &deps)
+    collect_inductable_sum_types(&items, &deps.modules)
 }
 
 #[test]

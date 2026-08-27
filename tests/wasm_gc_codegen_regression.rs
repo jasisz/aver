@@ -92,6 +92,9 @@ fn parse_pipeline_with_module_root(
     let tokens = lexer.tokenize().map_err(|e| format!("lex: {:?}", e))?;
     let mut parser = Parser::new(tokens);
     let mut items = parser.parse().map_err(|e| format!("parse: {:?}", e))?;
+    let prepared_deps = module_root
+        .map(|root| aver::source::load_compile_deps(&items, root))
+        .transpose()?;
     // Mirror what `aver compile --target wasm-gc` does internally:
     // skip the VM-specific `run_interp_lower` + `run_buffer_build`
     // passes (they emit `__buf_*` / `__interp_*` calls the wasm-gc
@@ -100,8 +103,11 @@ fn parse_pipeline_with_module_root(
     let result = ir::pipeline::run(
         &mut items,
         ir::PipelineConfig {
-            typecheck: Some(ir::TypecheckMode::Full {
-                base_dir: module_root,
+            typecheck: Some(match prepared_deps.as_ref() {
+                Some(prepared) => ir::TypecheckMode::WithCheckedLoaded(&prepared.loaded),
+                None => ir::TypecheckMode::Full {
+                    base_dir: module_root,
+                },
             }),
             run_interp_lower: false,
             run_buffer_build: false,
@@ -120,8 +126,8 @@ fn parse_pipeline_with_module_root(
         ));
     }
     let mut type_aliases = std::collections::HashMap::new();
-    if let Some(root) = module_root {
-        let dep_modules = aver::source::load_compile_deps(&items, root)?;
+    if let Some(prepared) = prepared_deps {
+        let dep_modules = prepared.modules;
         type_aliases = aver::codegen::wasm_gc::flatten_multimodule(
             &mut items,
             &dep_modules,

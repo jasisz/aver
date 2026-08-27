@@ -476,6 +476,13 @@ impl MapHelperRegistry {
             }
         }
 
+        // `variants` is HashMap-backed, so the transitive field walk above can
+        // discover otherwise independent pseudo-keys in a process-random
+        // order. Their relative order is not semantic. Canonicalise it before
+        // assigning function/type slots so identical source produces identical
+        // wasm bytes and can reuse Wasmtime's content-addressed code cache.
+        k_names.sort_unstable();
+
         // First pass: assign K-keyed helpers (hash, eq) per unique K.
         for k_aver in &k_names {
             if !self.key.contains_key(k_aver) {

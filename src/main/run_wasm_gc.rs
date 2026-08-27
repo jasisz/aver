@@ -18,7 +18,7 @@ use super::shared;
 use super::shared::{parse_file, read_file, resolve_module_root};
 
 #[cfg(feature = "wasm")]
-use super::commands::{flatten_multimodule, load_compile_deps};
+use super::commands::flatten_multimodule;
 
 #[cfg(feature = "wasm")]
 pub(super) use rt::EffectMode;
@@ -157,18 +157,17 @@ pub(super) fn try_run_wasm_gc(
             });
     let source = read_file(file)?;
     let mut items = parse_file(&source, &module_root, file)?;
-    let dep_modules = load_compile_deps(
+    let prepared_deps = super::commands::load_compile_deps_prepared(
         &items,
         &module_root,
         super::commands::DepLowering::STRING_INDEX_ONLY,
     );
+    let dep_modules = prepared_deps.modules;
     let neutral_policy = NeutralAllocPolicy;
     let result = aver::ir::pipeline::run(
         &mut items,
         PipelineConfig {
-            typecheck: Some(TypecheckMode::Full {
-                base_dir: Some(&module_root),
-            }),
+            typecheck: Some(TypecheckMode::WithCheckedLoaded(&prepared_deps.loaded)),
             alloc_policy: Some(&neutral_policy),
             dep_modules: &dep_modules,
             run_interp_lower: false,

@@ -26,14 +26,13 @@ use aver::vm;
 fn run_mir(src: &str, entry: &str) -> Value {
     let module_root = env!("CARGO_MANIFEST_DIR");
     let mut items = parse_source(src).expect("parse failed");
-    let dep_modules =
+    let prepared_deps =
         aver::source::load_compile_deps(&items, module_root).expect("load implicit dependencies");
+    let dep_modules = prepared_deps.modules;
     let result = pipeline::run(
         &mut items,
         PipelineConfig {
-            typecheck: Some(TypecheckMode::Full {
-                base_dir: Some(module_root),
-            }),
+            typecheck: Some(TypecheckMode::WithCheckedLoaded(&prepared_deps.loaded)),
             dep_modules: &dep_modules,
             ..Default::default()
         },
@@ -68,14 +67,13 @@ fn run_mir_with_modules(
     let source_file = source_file.to_string_lossy().into_owned();
     let module_root = module_root.to_string_lossy().into_owned();
     let mut items = parse_source(src).expect("parse failed");
-    let dep_modules =
+    let prepared_deps =
         aver::source::load_compile_deps(&items, &module_root).expect("load benchmark dependencies");
+    let dep_modules = prepared_deps.modules;
     let result = pipeline::run(
         &mut items,
         PipelineConfig {
-            typecheck: Some(TypecheckMode::Full {
-                base_dir: Some(&module_root),
-            }),
+            typecheck: Some(TypecheckMode::WithCheckedLoaded(&prepared_deps.loaded)),
             dep_modules: &dep_modules,
             ..Default::default()
         },

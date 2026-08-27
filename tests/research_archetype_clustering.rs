@@ -70,14 +70,13 @@ fn analyze_file(path: &Path) -> Result<FileResult, String> {
         format!("deps: cannot locate module root for {:?}", dep_names)
     })?;
 
-    let dep_modules = aver::source::load_compile_deps(&items, &module_root)
+    let prepared_deps = aver::source::load_compile_deps(&items, &module_root)
         .map_err(|e| format!("deps: {}", e))?;
+    let dep_modules = prepared_deps.modules;
     let pipeline_result = aver::ir::pipeline::run(
         &mut items,
         PipelineConfig {
-            typecheck: Some(TypecheckMode::Full {
-                base_dir: Some(&module_root),
-            }),
+            typecheck: Some(TypecheckMode::WithCheckedLoaded(&prepared_deps.loaded)),
             dep_modules: &dep_modules,
             ..Default::default()
         },

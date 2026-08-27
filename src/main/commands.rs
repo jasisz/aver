@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process;
@@ -13,7 +13,9 @@ use aver::codegen::ModuleInfo;
 use aver::codegen::lean as lean_codegen;
 use aver::codegen::rust as rust_codegen;
 use aver::nan_value::{Arena, NanValueConvert};
-use aver::source::{LoadError, LoadMode, require_module_declaration, resolve_module_source};
+use aver::source::{
+    LoadError, LoadMode, LoadedModule, require_module_declaration, resolve_module_source,
+};
 use aver::types::{Type, parse_type_str};
 use aver::verify_law::{
     collect_contextual_helper_law_hints, collect_missing_helper_law_hints,
@@ -1129,14 +1131,15 @@ pub(super) fn cmd_run_vm(
     //
     // `run_interp_lower` stays off here: it is a separate stage with its
     // own history and no reported inconsistency.
-    let dep_modules =
-        load_compile_deps(&items, &module_root, DepLowering::deforesting(true, false));
+    let prepared_deps =
+        load_compile_deps_prepared(&items, &module_root, DepLowering::deforesting(true, false));
+    let dep_modules = prepared_deps.modules;
     let pipeline_result = aver::ir::pipeline::run(
         &mut items,
         aver::ir::PipelineConfig {
-            typecheck: Some(aver::ir::TypecheckMode::Full {
-                base_dir: Some(&module_root),
-            }),
+            typecheck: Some(aver::ir::TypecheckMode::WithCheckedLoaded(
+                &prepared_deps.loaded,
+            )),
             dep_modules: &dep_modules,
             ..Default::default()
         },
@@ -3795,15 +3798,6 @@ fn build_codegen_context(
     // future opaque host type) through the replay `Val` shape. User
     // code outside the self-host always goes through the regular
     // `Full` variant.
-    let typecheck_mode = if with_self_host_support {
-        aver::ir::TypecheckMode::FullSelfHost {
-            base_dir: Some(&module_root),
-        }
-    } else {
-        aver::ir::TypecheckMode::Full {
-            base_dir: Some(&module_root),
-        }
-    };
     // A context that carries ProofIR is one the proof exporters read,
     // so its dep modules keep the fabricating passes off whatever the
     // caller asked for at `apply_traversal_lowering`. The entry
@@ -3824,11 +3818,17 @@ fn build_codegen_context(
     // module-spanning call graphs). load_compile_deps only reads
     // `TopLevel::Module(m).depends`, which TCO never touches, so it's
     // safe to run pre-pipeline.
-    let modules = load_compile_deps(
+    let prepared_deps = load_compile_deps_prepared(
         &items,
         &module_root,
         DepLowering::fully_lowered(dep_lowering, with_self_host_support),
     );
+    let modules = prepared_deps.modules;
+    let typecheck_mode = if with_self_host_support {
+        aver::ir::TypecheckMode::WithCheckedLoadedSelfHost(&prepared_deps.loaded)
+    } else {
+        aver::ir::TypecheckMode::WithCheckedLoaded(&prepared_deps.loaded)
+    };
 
     let mut pipeline_result = aver::ir::pipeline::run(
         &mut items,
@@ -4548,13 +4548,12 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
     // `--emit-ir-after=name_resolve` show stale `<unresolved:…>`
     // markers that the production run path never emits.
     let _ = proof_target; // kept for future per-target diagnostic shape switches
-    let dep_modules = load_compile_deps(&items, &module_root, DepLowering::PRISTINE);
+    let prepared_deps = load_compile_deps_prepared(&items, &module_root, DepLowering::PRISTINE);
+    let dep_modules = prepared_deps.modules;
     let pipeline_result = aver::ir::pipeline::run(
         &mut items,
         PipelineConfig {
-            typecheck: Some(TypecheckMode::Full {
-                base_dir: Some(&module_root),
-            }),
+            typecheck: Some(TypecheckMode::WithCheckedLoaded(&prepared_deps.loaded)),
             // `--emit-ir` is a diagnostic, so attach the neutral policy
             // — the dump's `[no_alloc]` annotation matches the shared
             // VM/WASM baseline. Codegen pipelines should pass their
@@ -4892,14 +4891,13 @@ pub(super) fn cmd_explain_passes(file: &str, module_root_override: Option<&str>,
     // including stages a runtime backend would skip (proof_lower).
     // Pre-load dep modules so proof_lower has the data to walk; without
     // them the stage would only see entry-file refinement records.
-    let dep_modules = load_compile_deps(&items, &module_root, DepLowering::PRISTINE);
+    let prepared_deps = load_compile_deps_prepared(&items, &module_root, DepLowering::PRISTINE);
+    let dep_modules = prepared_deps.modules;
     let dep_fusion = dep_fusion_reports(&items, &module_root);
     let mut result = aver::ir::pipeline::run(
         &mut items,
         PipelineConfig {
-            typecheck: Some(TypecheckMode::Full {
-                base_dir: Some(&module_root),
-            }),
+            typecheck: Some(TypecheckMode::WithCheckedLoaded(&prepared_deps.loaded)),
             alloc_policy: Some(&neutral_policy),
             dep_modules: &dep_modules,
             run_refinement_lower: true,
@@ -5243,13 +5241,12 @@ pub(super) fn cmd_explain_mir_coverage(
         }
     };
 
-    let dep_modules = load_compile_deps(&items, &module_root, DepLowering::PRISTINE);
+    let prepared_deps = load_compile_deps_prepared(&items, &module_root, DepLowering::PRISTINE);
+    let dep_modules = prepared_deps.modules;
     let result = aver::ir::pipeline::run(
         &mut items,
         PipelineConfig {
-            typecheck: Some(TypecheckMode::Full {
-                base_dir: Some(&module_root),
-            }),
+            typecheck: Some(TypecheckMode::WithCheckedLoaded(&prepared_deps.loaded)),
             // Rust coverage needs the symbol table to resolve `FnId` /
             // `TypeId` / `CtorId` through `MirEmitCtx`. Cheap to build;
             // the VM/wasm-gc paths read it too once a ctx is assembled.
@@ -6436,15 +6433,15 @@ fn cmd_compile_wasm_gc(
     // calls remain implicitly visible. Preload them before symbol/MIR building
     // so the target sees a real capability callee rather than an unresolved
     // call that lowers to a trap.
-    let dep_modules = load_compile_deps(&items, &module_root, DepLowering::STRING_INDEX_ONLY);
+    let prepared_deps =
+        load_compile_deps_prepared(&items, &module_root, DepLowering::STRING_INDEX_ONLY);
+    let dep_modules = prepared_deps.modules;
     use aver::ir::{PipelineConfig, TypecheckMode};
     let neutral_policy = aver::ir::NeutralAllocPolicy;
     let result = aver::ir::pipeline::run(
         &mut items,
         PipelineConfig {
-            typecheck: Some(TypecheckMode::Full {
-                base_dir: Some(&module_root),
-            }),
+            typecheck: Some(TypecheckMode::WithCheckedLoaded(&prepared_deps.loaded)),
             alloc_policy: Some(&neutral_policy),
             dep_modules: &dep_modules,
             // wasm-gc backend lowers `Expr::InterpolatedStr` natively
@@ -6743,15 +6740,15 @@ fn cmd_compile_wasip2(
             }
         };
 
-        let dep_modules = load_compile_deps(&items, &module_root, DepLowering::STRING_INDEX_ONLY);
+        let prepared_deps =
+            load_compile_deps_prepared(&items, &module_root, DepLowering::STRING_INDEX_ONLY);
+        let dep_modules = prepared_deps.modules;
         use aver::ir::{PipelineConfig, TypecheckMode};
         let neutral_policy = aver::ir::NeutralAllocPolicy;
         let result = aver::ir::pipeline::run(
             &mut items,
             PipelineConfig {
-                typecheck: Some(TypecheckMode::Full {
-                    base_dir: Some(&module_root),
-                }),
+                typecheck: Some(TypecheckMode::WithCheckedLoaded(&prepared_deps.loaded)),
                 alloc_policy: Some(&neutral_policy),
                 dep_modules: &dep_modules,
                 run_interp_lower: false,
@@ -11507,6 +11504,17 @@ pub(super) struct DepLowering {
     pub self_host: bool,
 }
 
+/// A dependency graph prepared once for an entry pipeline.
+///
+/// `modules` carries the target-lowered codegen view. `loaded` carries the
+/// pristine source view used by [`aver::ir::TypecheckMode::WithCheckedLoaded`]
+/// (or its self-host variant) to rebuild importer-visible surfaces without
+/// recursively checking dependency bodies again.
+pub(super) struct PreparedCompileDeps {
+    pub(super) modules: Vec<ModuleInfo>,
+    pub(super) loaded: Vec<LoadedModule>,
+}
+
 impl DepLowering {
     /// Source-level dependencies: nothing that invents code.
     pub(super) const PRISTINE: Self = Self {
@@ -11550,11 +11558,20 @@ impl DepLowering {
 /// Load dependent modules for codegen: every module of the program behind
 /// `items`, typechecked and lowered with the target's matrix. Any problem is
 /// fatal here — printed in red, exit 1 — exactly as it always was.
-pub(super) fn load_compile_deps(
+/// Load, type-check, and target-lower the dependency graph exactly once.
+///
+/// The source loader stores modules leaves-first. That makes the same
+/// whole-program preparation used by `verify` available to every runtime and
+/// codegen front door: check a dependency body once, then let its importers
+/// rebuild only signatures, capabilities, and visibility from the already
+/// checked source closure. The previous parent-first loop selected `Full` for
+/// every module, so each importer rediscovered and rechecked its entire
+/// transitive cone before the entry did the same work yet again.
+pub(super) fn load_compile_deps_prepared(
     items: &[TopLevel],
     module_root: &str,
     lowering: DepLowering,
-) -> Vec<ModuleInfo> {
+) -> PreparedCompileDeps {
     fn fail(message: String) -> ! {
         eprintln!("{}", message.red());
         process::exit(1);
@@ -11572,28 +11589,29 @@ pub(super) fn load_compile_deps(
         )),
         Err(error) => fail(error.to_string()),
     };
-    let mut lowered = BTreeMap::new();
-
-    // Parent before child, the order the walk met the modules in: the first
-    // fault on the way down is the one reported. The returned list stays
-    // leaves-first.
+    // Keep loader faults in discovery order: the first broken edge a user
+    // wrote remains the first diagnostic even though successful body checks
+    // below run leaves-first.
     for module in program.dependencies_in_discovery_order() {
         match &module.fault {
             Some(LoadError::Parse { error, .. }) => fail(error.clone()),
             Some(fault) => fail(fault.to_string()),
             None => {}
         }
+    }
+
+    let mut modules = Vec::with_capacity(program.dependencies().len());
+    for module in program.dependencies() {
+        let loaded = program
+            .loaded_dependencies_for(module)
+            .unwrap_or_else(|error| fail(error.to_string()));
         let mut module_items = module.items.clone();
 
         let neutral_policy = aver::ir::NeutralAllocPolicy;
         let dep_typecheck_mode = if lowering.self_host {
-            aver::ir::TypecheckMode::FullSelfHost {
-                base_dir: Some(module_root),
-            }
+            aver::ir::TypecheckMode::WithCheckedLoadedSelfHost(&loaded)
         } else {
-            aver::ir::TypecheckMode::Full {
-                base_dir: Some(module_root),
-            }
+            aver::ir::TypecheckMode::WithCheckedLoaded(&loaded)
         };
         let pipeline_result = aver::ir::pipeline::run(
             &mut module_items,
@@ -11626,21 +11644,17 @@ pub(super) fn load_compile_deps(
             );
             process::exit(1);
         }
-        lowered.insert(
-            module.discovery_index,
-            ModuleInfo::from_items(
-                module.dep_name.clone(),
-                &module_items,
-                pipeline_result.analysis,
-            ),
-        );
+        modules.push(ModuleInfo::from_items(
+            module.dep_name.clone(),
+            &module_items,
+            pipeline_result.analysis,
+        ));
     }
 
-    program
-        .dependencies()
-        .iter()
-        .filter_map(|module| lowered.remove(&module.discovery_index))
-        .collect()
+    let loaded = program
+        .loaded_dependencies_for(program.entry())
+        .unwrap_or_else(|error| fail(error.to_string()));
+    PreparedCompileDeps { modules, loaded }
 }
 
 #[cfg(test)]

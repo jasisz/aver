@@ -153,6 +153,12 @@ pub fn run_verify_for_items_wasm_gc_with_mode(
 
     let plans = build_verify_wasm_gc_plans(&mut items, &blocks);
 
+    let prepared_deps = if let Some(root) = base_dir {
+        Some(crate::source::load_compile_deps(&items, root)?)
+    } else {
+        None
+    };
+
     // After helper synthesis, run the full wasm-gc-compatible pipeline:
     // typecheck stamps `ty` on the freshly synthesized `BinOp(Eq, ...)`
     // and `Result.Ok(...)` Spanneds (wasm-gc codegen panics on un-typed
@@ -163,7 +169,10 @@ pub fn run_verify_for_items_wasm_gc_with_mode(
     let result = crate::ir::pipeline::run(
         &mut items,
         crate::ir::PipelineConfig {
-            typecheck: Some(crate::ir::TypecheckMode::Full { base_dir }),
+            typecheck: Some(match prepared_deps.as_ref() {
+                Some(prepared) => crate::ir::TypecheckMode::WithCheckedLoaded(&prepared.loaded),
+                None => crate::ir::TypecheckMode::Full { base_dir },
+            }),
             alloc_policy: Some(&neutral_policy),
             run_interp_lower: false,
             run_buffer_build: false,
@@ -184,11 +193,9 @@ pub fn run_verify_for_items_wasm_gc_with_mode(
     // flatten into the entry items so `compile_to_wasm_gc` sees one
     // self-contained AST. Mirrors the `try_run_wasm_gc` setup in
     // `src/main/run_wasm_gc.rs`.
-    let dep_modules = if let Some(root) = base_dir {
-        crate::source::load_compile_deps(&items, root)?
-    } else {
-        Vec::new()
-    };
+    let dep_modules = prepared_deps
+        .map(|prepared| prepared.modules)
+        .unwrap_or_default();
     let mut type_aliases = std::collections::HashMap::new();
     if !dep_modules.is_empty() {
         type_aliases = crate::codegen::wasm_gc::flatten_multimodule(

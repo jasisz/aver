@@ -76,16 +76,15 @@ fn run_vm(manifest: &Manifest) -> Result<BenchReport, RunError> {
     // compile` already do — without it the resolver classifies
     // `Module.fn(...)` callsites as `Passthrough` and the VM compiler
     // later errors out with "missing VM symbol for exposed function".
-    let dep_modules = crate::source::load_compile_deps(&items, &module_root)
+    let prepared_deps = crate::source::load_compile_deps(&items, &module_root)
         .map_err(|e| RunError::Setup(format!("load deps: {}", e)))?;
+    let dep_modules = prepared_deps.modules;
 
     let passes_applied = std::cell::RefCell::new(Vec::<String>::new());
     let pipeline_result = crate::ir::pipeline::run(
         &mut items,
         PipelineConfig {
-            typecheck: Some(TypecheckMode::Full {
-                base_dir: Some(&module_root),
-            }),
+            typecheck: Some(TypecheckMode::WithCheckedLoaded(&prepared_deps.loaded)),
             dep_modules: &dep_modules,
             on_after_pass: Some(Box::new(|stage: PipelineStage, _| {
                 passes_applied.borrow_mut().push(stage.name().to_string());
