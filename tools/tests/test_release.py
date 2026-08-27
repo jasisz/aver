@@ -872,10 +872,13 @@ class ReleaseCiTests(unittest.TestCase):
         state = registry(
             aver_rt={"0.4.9"},
             aver_memory={"0.2.11"},
-            aver_cert={"0.1.0"},
             aver_lang={"0.26.0"},
             aver_lsp={"0.6.15"},
         )
+        # This test exercises candidate repair, not recovery of aver-cert's
+        # independently versioned baseline from the repository's tag history.
+        # Keep it hermetic under CI's deliberately shallow checkout.
+        state["aver-cert"] = release.RegistryState(release.RegistryKind.MISSING)
         plan = release.create_release_plan(
             "0.27.0",
             base,
