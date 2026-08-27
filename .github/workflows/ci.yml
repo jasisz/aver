@@ -32,6 +32,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
+          targets: wasm32-unknown-unknown
 
       - uses: Swatinem/rust-cache@v2
 
@@ -69,16 +70,16 @@ jobs:
       - name: Compile gate — isolated certificate feature sets
         # The certificate-producer split leaves feature combinations that no
         # test step compiles on its own: the slim aver-cert plan surface
-        # (what non-certify compiler builds link), the playground build
-        # (library target only — the aver_self_host_cli bin has never built
-        # under playground features, a pre-existing gap outside this gate's
-        # scope), and a bare `certify` build. Cheap `cargo check`s keep every
-        # nameable combination compiling without adding test time. The
-        # remaining combination, wasip2-only, is checked in the WASM job,
-        # whose cache already holds the heavy component-model dependencies.
+        # (what non-certify compiler builds link), the actual wasm32 playground
+        # library (the aver_self_host_cli bin has never built under playground
+        # features, a pre-existing gap outside this gate's scope), and a bare
+        # `certify` build. Cheap `cargo check`s keep every nameable combination
+        # compiling without adding test time. The remaining combination,
+        # wasip2-only, is checked in the WASM job, whose cache already holds the
+        # heavy component-model dependencies.
         run: |
           cargo check -p aver-cert --no-default-features --features plans
-          cargo check -p aver-lang --lib --no-default-features --features playground
+          cargo check -p aver-lang --lib --target wasm32-unknown-unknown --no-default-features --features playground
           cargo check -p aver-lang --features certify
 
       - name: Prefetch provider-host feature graph
