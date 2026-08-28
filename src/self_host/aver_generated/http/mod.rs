@@ -1,7 +1,7 @@
 #[allow(unused_imports)]
 use crate::*;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Response {
     pub status: aver_rt::AverInt,
     pub body: AverStr,
