@@ -1,6 +1,4 @@
 #[allow(unused_imports)]
-use crate::aver_generated::domain::ast::*;
-#[allow(unused_imports)]
 use crate::*;
 
 /// Tag simple single-expression functions so eval can skip the stmt walker.

@@ -4,11 +4,7 @@ impl Parser {
     pub(super) fn parse_sum_type_def(&mut self) -> Result<TypeDef, ParseError> {
         let line = self.current().line;
         self.expect_exact(&TokenKind::Type)?;
-        let name_tok = self.expect_kind(&TokenKind::Ident(String::new()), "Expected type name")?;
-        let type_name = match name_tok.kind {
-            TokenKind::Ident(s) => s,
-            _ => unreachable!(),
-        };
+        let type_name = self.expect_user_identifier("Expected type name", "type names")?;
         self.skip_newlines();
 
         let mut variants = Vec::new();
@@ -23,12 +19,8 @@ impl Parser {
                     continue;
                 }
 
-                let variant_tok =
-                    self.expect_kind(&TokenKind::Ident(String::new()), "Expected variant name")?;
-                let variant_name = match variant_tok.kind {
-                    TokenKind::Ident(s) => s,
-                    _ => unreachable!(),
-                };
+                let variant_name =
+                    self.expect_user_identifier("Expected variant name", "variant names")?;
 
                 let mut fields = Vec::new();
                 if self.check_exact(&TokenKind::LParen) {
@@ -66,12 +58,7 @@ impl Parser {
     pub(super) fn parse_record_def(&mut self) -> Result<TypeDef, ParseError> {
         let line = self.current().line;
         self.expect_exact(&TokenKind::Record)?;
-        let name_tok =
-            self.expect_kind(&TokenKind::Ident(String::new()), "Expected record name")?;
-        let type_name = match name_tok.kind {
-            TokenKind::Ident(s) => s,
-            _ => unreachable!(),
-        };
+        let type_name = self.expect_user_identifier("Expected record name", "record names")?;
         self.skip_newlines();
 
         let mut fields = Vec::new();
@@ -86,12 +73,8 @@ impl Parser {
                     continue;
                 }
 
-                let field_tok =
-                    self.expect_kind(&TokenKind::Ident(String::new()), "Expected field name")?;
-                let field_name = match field_tok.kind {
-                    TokenKind::Ident(s) => s,
-                    _ => unreachable!(),
-                };
+                let field_name =
+                    self.expect_user_identifier("Expected field name", "field names")?;
                 self.expect_exact(&TokenKind::Colon)?;
                 let field_type = self.parse_type()?;
                 fields.push((field_name, field_type));

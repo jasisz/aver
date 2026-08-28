@@ -18,26 +18,23 @@ use crate::types::{self, Type};
 use std::collections::HashSet;
 
 pub use super::syntax::aver_name_to_rust;
-pub(super) use super::syntax::{has_list_patterns, has_string_literal_patterns};
+pub(super) use super::syntax::{generated_ident, has_list_patterns, has_string_literal_patterns};
 
 /// Render an identifier in a Rust pattern as an explicit binding.
 ///
 /// A bare identifier in any pattern is also eligible for item resolution.
-/// When two dependency glob imports expose the same function name, rustc can
-/// report either `Ok(name)` or `let name = value` as ambiguous instead of
-/// treating `name` as the local binder that Aver declares. `name @ _` is
-/// semantically identical and syntactically unambiguous, while keeping all
-/// body references under the original name.
+/// `name @ _` makes the binding intent explicit and prevents an in-scope Rust
+/// item from changing how the pattern is resolved, while keeping all body
+/// references under the original name.
 pub(super) fn explicit_binding_pattern(name: &str) -> String {
     format!("{} @ _", aver_name_to_rust(name))
 }
 
 /// Render a function parameter as an explicit Rust binding pattern.
 ///
-/// Parameters occupy pattern position just like `let` and match binders, so a
-/// bare name can be ambiguous with identically named items from dependency
-/// glob imports (#1162). Keep the source name available to the body while
-/// making item resolution impossible at the binding site.
+/// Parameters occupy pattern position just like `let` and match binders. Keep
+/// the source name available to the body while making item resolution
+/// impossible at the binding site (#1162).
 pub(super) fn explicit_parameter_pattern(name: &str, mutable: bool) -> String {
     let binding = explicit_binding_pattern(name);
     if mutable {
@@ -82,6 +79,7 @@ pub(super) fn emit_result_tuple_unwrap(
     value_prefix: &str,
     count: usize,
 ) -> String {
+    let error = generated_ident("err");
     let matched_results = emit_tuple_from_vars(result_prefix, count);
     let ok_pattern = match count {
         0 => "()".to_string(),
@@ -102,7 +100,7 @@ pub(super) fn emit_result_tuple_unwrap(
     );
     for i in 0..count {
         out.push_str(&format!(
-            "if let Err(__err) = {result_prefix}{i} {{ Err(__err) }} else "
+            "if let Err({error}) = {result_prefix}{i} {{ Err({error}) }} else "
         ));
     }
     out.push_str("{ unreachable!(\"independent product unwrap requires Result branches\") } } }");
@@ -115,6 +113,7 @@ pub(super) fn emit_parallel_result_tuple_unwrap(
     value_prefix: &str,
     count: usize,
 ) -> String {
+    let error = generated_ident("err");
     let matched_branches = emit_tuple_from_vars(branch_prefix, count);
     let completed_pattern = match count {
         0 => "()".to_string(),
@@ -137,7 +136,7 @@ pub(super) fn emit_parallel_result_tuple_unwrap(
     );
     for i in 0..count {
         out.push_str(&format!(
-            "if let crate::ParallelBranch::Completed(Err(__err)) = {branch_prefix}{i} {{ Err(__err) }} else "
+            "if let crate::ParallelBranch::Completed(Err({error})) = {branch_prefix}{i} {{ Err({error}) }} else "
         ));
     }
     out.push_str("{ panic!(\"independent product branch cancelled by sibling branch\") } } }");
@@ -316,10 +315,10 @@ where
         return code;
     }
 
-    let subject_name = "__dispatch_subject";
+    let subject_name = generated_ident("dispatch_subject");
     let fallback = match &shape.default_arm {
         Some(default_arm) => emit_default_dispatch_arm(
-            subject_name,
+            &subject_name,
             &arms[default_arm.arm_index],
             default_arm,
             &body_for_arm,
@@ -333,8 +332,8 @@ where
         .rev()
         .fold(fallback, |else_branch, entry| {
             let arm = &arms[entry.arm_index];
-            let cond = emit_dispatch_condition(subject_name, &entry.pattern, subject_is_bare);
-            let body = emit_dispatch_arm_body(subject_name, arm, entry, &body_for_arm);
+            let cond = emit_dispatch_condition(&subject_name, &entry.pattern, subject_is_bare);
+            let body = emit_dispatch_arm_body(&subject_name, arm, entry, &body_for_arm);
             format!("if {} {{ {} }} else {{ {} }}", cond, body, else_branch)
         });
 
@@ -510,8 +509,8 @@ where
     {
         return code;
     }
-    let subject_name = "__list_subject";
-    let arms_code = emit_list_match_arms(subject_name, arms, ctx, &body_for_arm);
+    let subject_name = generated_ident("list_subject");
+    let arms_code = emit_list_match_arms(&subject_name, arms, ctx, &body_for_arm);
     format!("{{ let {} = {}; {} }}", subject_name, subject, arms_code)
 }
 

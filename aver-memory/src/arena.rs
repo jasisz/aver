@@ -18,6 +18,7 @@ impl<T: ArenaTypes> Arena<T> {
             active_lane_source_mark: INVALID_LANE_MARK,
             list_elements_copied: 0,
             list_elements_scanned: 0,
+            list_elements_flattened: SharedCount::default(),
             map_entries_copied: 0,
             map_entries_scanned: 0,
             rewrite_out_of_region_roots: false,
@@ -42,7 +43,7 @@ impl<T: ArenaTypes> Arena<T> {
     /// Used for independent product threads: each gets a clean Arena with just the
     /// compile-time context needed to execute functions and builtins.
     ///
-    /// The four copy / scan counters start at zero in the child, so a child
+    /// The copy / scan / flatten counters start at zero in the child, so a child
     /// counts its own work and nothing of its parent's. Nothing is lost by that:
     /// a child arena that runs an independent-product branch is handed back to
     /// the parent at the join, and [`Arena::absorb_copy_counters`] folds its
@@ -70,6 +71,7 @@ impl<T: ArenaTypes> Arena<T> {
             active_lane_source_mark: INVALID_LANE_MARK,
             list_elements_copied: 0,
             list_elements_scanned: 0,
+            list_elements_flattened: SharedCount::default(),
             map_entries_copied: 0,
             map_entries_scanned: 0,
             rewrite_out_of_region_roots: false,
@@ -674,6 +676,31 @@ impl<T: ArenaTypes> Arena<T> {
         self.list_elements_scanned
     }
 
+    /// List elements flattened out of a shared body into a fresh vector by
+    /// [`Arena::list_to_vec`], the whole-list walk behind every builtin that
+    /// needs all the elements at once.
+    ///
+    /// Read it as "no builtin walked a whole list here". A builtin that answers
+    /// about a bounded prefix — `List.take`, `List.drop` — adds nothing to it,
+    /// so a program stepping through a list with those builtins keeps this at
+    /// zero however long the list is; one that flattens the list on every step
+    /// makes it quadratic, which is the shape of a walk that used to cost the
+    /// whole list per step.
+    ///
+    /// It measures work done for a builtin, not by the collector: the two
+    /// counters above are the collector's, and nothing here is in them.
+    #[inline]
+    pub fn list_elements_flattened(&self) -> u64 {
+        self.list_elements_flattened.get()
+    }
+
+    /// Record that `elements` were flattened out of a shared body into a fresh
+    /// vector.
+    #[inline]
+    pub(crate) fn note_list_elements_flattened(&self, elements: usize) {
+        self.list_elements_flattened.add(elements as u64);
+    }
+
     /// Map entries duplicated while a map table was rebuilt rather than written
     /// into, the map counterpart of [`Arena::list_elements_copied`].
     ///
@@ -715,6 +742,8 @@ impl<T: ArenaTypes> Arena<T> {
     pub fn absorb_copy_counters(&mut self, child: &Arena<T>) {
         self.list_elements_copied += child.list_elements_copied;
         self.list_elements_scanned += child.list_elements_scanned;
+        self.list_elements_flattened
+            .add(child.list_elements_flattened.get());
         self.map_entries_copied += child.map_entries_copied;
         self.map_entries_scanned += child.map_entries_scanned;
     }

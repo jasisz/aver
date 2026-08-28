@@ -1,14 +1,4 @@
 #[allow(unused_imports)]
-use crate::aver_generated::domain::ast::*;
-#[allow(unused_imports)]
-use crate::aver_generated::domain::resolver::calls::*;
-#[allow(unused_imports)]
-use crate::aver_generated::domain::resolver::core::*;
-#[allow(unused_imports)]
-use crate::aver_generated::domain::resolver::fast::*;
-#[allow(unused_imports)]
-use crate::aver_generated::domain::resolver::rewrite::*;
-#[allow(unused_imports)]
 use crate::*;
 
 /// Resolve all functions: slots, direct calls, then attach narrow fast-path tags.

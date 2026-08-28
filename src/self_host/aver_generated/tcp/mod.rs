@@ -1,6 +1,4 @@
 #[allow(unused_imports)]
-use crate::aver_generated::bytes::*;
-#[allow(unused_imports)]
 use crate::*;
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -446,21 +444,19 @@ impl aver_replay::ReplayValue for Socket {
         )?;
         match variant_name {
             "Listening" => Ok(Socket::Listening(
-                <Tcp_Listener as ReplayValue>::from_replay_json(
+                <Listener as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
                         .ok_or_else(|| format!("$variant Listening missing field #{}", 0))?,
                 )?,
             )),
-            "Dialing" => Ok(Socket::Dialing(
-                <Tcp_Dial as ReplayValue>::from_replay_json(
-                    fields
-                        .get(0)
-                        .ok_or_else(|| format!("$variant Dialing missing field #{}", 0))?,
-                )?,
-            )),
+            "Dialing" => Ok(Socket::Dialing(<Dial as ReplayValue>::from_replay_json(
+                fields
+                    .get(0)
+                    .ok_or_else(|| format!("$variant Dialing missing field #{}", 0))?,
+            )?)),
             "Connected" => Ok(Socket::Connected(
-                <Tcp_Connection as ReplayValue>::from_replay_json(
+                <Connection as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
                         .ok_or_else(|| format!("$variant Connected missing field #{}", 0))?,

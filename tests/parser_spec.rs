@@ -215,6 +215,26 @@ fn leading_double_underscore_is_reserved_for_compiler_identifiers() {
             "string-index constructor pattern",
             "fn value(x: Option<Int>) -> Int\n    match x\n        Option.None -> 0\n        Option.Some(__str_index) -> __str_index\n",
         ),
+        ("compiler-shaped module", "module __Private\n"),
+        (
+            "compiler-shaped record",
+            "record __Private\n    value: Int\n",
+        ),
+        ("compiler-shaped sum type", "type __Private\n    Visible\n"),
+        ("compiler-shaped variant", "type Visible\n    __Private\n"),
+        (
+            "compiler-shaped field",
+            "record Visible\n    __private: Int\n",
+        ),
+        (
+            "compiler-shaped operation",
+            "module Cap\n    kind = capability\n\noperation __private() -> Unit\n",
+        ),
+        (
+            "compiler-shaped resource",
+            "module Cap\n    kind = capability\n\nresource __Private\n",
+        ),
+        ("compiler-shaped decision", "decision __Private\n"),
     ];
 
     for (role, source) in cases {

@@ -101,6 +101,27 @@ pub(crate) fn capitalise_first(name: &str) -> String {
 /// about exactly the thing they said to ignore.
 pub(crate) const MANGLE_PREFIX: &str = "_avr_";
 
+/// Allocate a compiler-owned Rust identifier in Aver's reserved `__`
+/// namespace.
+///
+/// The parser rejects user-written functions, parameters, bindings, and match
+/// binders that begin with `__`. Keeping every synthesized Rust identifier
+/// behind this function therefore makes source/generated collisions
+/// impossible without maintaining a second list of special spellings.
+/// Callers supply a stable ASCII stem; indices belong in the stem when several
+/// names share one scope.
+pub(crate) fn generated_ident(stem: &str) -> String {
+    debug_assert!(
+        !stem.is_empty()
+            && stem
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+            && !stem.as_bytes()[0].is_ascii_digit(),
+        "compiler-owned Rust identifier stem must already be valid: {stem:?}"
+    );
+    format!("__{stem}")
+}
+
 /// Convert an Aver identifier to a valid Rust identifier that stands
 /// ALONE.
 ///

@@ -1,12 +1,4 @@
 #[allow(unused_imports)]
-use crate::aver_generated::domain::ast::*;
-#[allow(unused_imports)]
-use crate::aver_generated::domain::eval::core::*;
-#[allow(unused_imports)]
-use crate::aver_generated::domain::eval::store::*;
-#[allow(unused_imports)]
-use crate::aver_generated::domain::value::*;
-#[allow(unused_imports)]
 use crate::*;
 
 /// Evaluate a complete program through the self-hosted evaluator.

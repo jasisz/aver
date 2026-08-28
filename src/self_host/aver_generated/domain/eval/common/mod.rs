@@ -1,12 +1,4 @@
 #[allow(unused_imports)]
-use crate::aver_generated::domain::ast::*;
-#[allow(unused_imports)]
-use crate::aver_generated::domain::builtins::*;
-#[allow(unused_imports)]
-use crate::aver_generated::domain::eval::store::*;
-#[allow(unused_imports)]
-use crate::aver_generated::domain::value::*;
-#[allow(unused_imports)]
 use crate::*;
 
 /// If variable not in env, try a top-level binding, then a named function reference, then a nullary variant.
