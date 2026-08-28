@@ -7,6 +7,7 @@ pub mod emit_ctx;
 mod expr;
 mod from_mir;
 pub use from_mir::{CoverageReport, MirEmitCtx, coverage_report, coverage_report_with_blockers};
+mod ownership;
 mod pattern;
 mod policy;
 mod project;
@@ -971,8 +972,14 @@ fn type_contains_named(ty: &Type, wanted: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::from_mir::{MirEmitCtx, MirFnEmitPolicy};
+    use super::ownership::{
+        PROVIDER_RESOURCE_POLICY, ProviderResourcePolicy, RustValueMode, value_facts,
+    };
     use super::{render_generated_module, synthesize_rust_module_cascade, transpile};
+    use crate::ast::Spanned;
     use crate::codegen::build_context;
+    use crate::ir::mir::{LocalId, MirExpr, MirLocal};
     use crate::source::parse_source;
 
     fn ctx_from_source(source: &str, project_name: &str) -> crate::codegen::CodegenContext {
@@ -2217,6 +2224,51 @@ fn getName(user: User) -> String
             entry.contains("user.name.clone()"),
             "missing owned clone:\n{}",
             entry
+        );
+    }
+
+    #[test]
+    fn provider_resource_return_clones_the_opaque_handle() {
+        let mut ctx = ctx_from_source(
+            r#"
+module Demo
+
+fn keep(connection: Tcp.Connection) -> Tcp.Connection
+    connection
+"#,
+            "demo",
+        );
+
+        let out = transpile(&mut ctx);
+        let entry = generated_rust_entry_file(&out);
+
+        assert!(
+            entry.contains("pub fn keep(connection @ _: &Tcp_Connection) -> Tcp_Connection"),
+            "provider resource parameter was not borrowed:\n{entry}"
+        );
+        assert!(
+            entry.contains("connection.clone()"),
+            "returning a provider resource must clone its handle token:\n{entry}"
+        );
+
+        let keep = ctx
+            .resolved_program
+            .entry_fns()
+            .find(|function| function.name == "keep")
+            .expect("resolved keep function");
+        let policy = MirFnEmitPolicy::from_resolved(keep, None, true);
+        let emit_ctx = MirEmitCtx::for_fn(&ctx, &policy);
+        let local = MirExpr::Local(Spanned::bare(MirLocal {
+            slot: LocalId(0),
+            last_use: true,
+            name: "connection".to_string(),
+        }));
+        let facts = value_facts(&local, &emit_ctx);
+        assert_eq!(facts.mode, RustValueMode::Borrowed);
+        assert!(facts.provider_resource);
+        assert_eq!(
+            PROVIDER_RESOURCE_POLICY,
+            ProviderResourcePolicy::CloneHandle
         );
     }
 
