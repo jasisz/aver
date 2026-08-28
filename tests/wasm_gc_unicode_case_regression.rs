@@ -17,7 +17,7 @@
 //! answer — so a pass on both runners is a cross-backend parity proof
 //! for these inputs.
 
-use aver::checker::VerifyResult;
+use aver::checker::{VerifyCaseOutcome, VerifyResult};
 use aver::diagnostics::vm_verify::run_verify_for_items_vm;
 use aver::diagnostics::wasm_gc_verify::run_verify_for_items_wasm_gc;
 use aver::source::parse_source;
@@ -38,29 +38,89 @@ fn run_both_backends(source: &str) -> [(&'static str, Vec<VerifyResult>); 2] {
     [("vm", vm), ("wasm-gc", gc)]
 }
 
-/// Assert every case passed on both backends. Also reports the first
-/// few mismatching cases, which is what makes a red run readable when
-/// the corpus is generated rather than hand-written.
+/// Assert every case passed on both backends, and name the cases that
+/// did not. The report reads `case_results`, which both runners fill
+/// in; the older `failures` field is left empty by the wasm-gc runner,
+/// so a red run on that lane would otherwise print only a count.
 fn assert_all_pass_on_both(source: &str, expected_passed: usize) {
     for (backend, results) in run_both_backends(source) {
         let passed: usize = results.iter().map(|r| r.passed).sum();
         let failed: usize = results.iter().map(|r| r.failed).sum();
         let skipped: usize = results.iter().map(|r| r.skipped).sum();
         let declined: usize = results.iter().map(|r| r.declined).sum();
-        if (passed, failed, skipped, declined) != (expected_passed, 0, 0, 0) {
-            let mut detail = String::new();
-            for r in &results {
-                for (expr, expected, actual) in r.failures.iter().take(8) {
-                    detail.push_str(&format!(
-                        "\n  {expr}\n    expected {expected:?}\n    actual   {actual:?}"
-                    ));
-                }
-            }
-            panic!(
-                "[{backend}] expected {expected_passed}/0/0/0 passed/failed/skipped/declined, \
-                 got {passed}/{failed}/{skipped}/{declined}{detail}"
-            );
+        if (passed, failed, skipped, declined) == (expected_passed, 0, 0, 0) {
+            continue;
         }
+        let mut detail = String::new();
+        let mut shown = 0usize;
+        for r in &results {
+            for case in &r.case_results {
+                if shown == 8 {
+                    break;
+                }
+                let note = match &case.outcome {
+                    VerifyCaseOutcome::Pass => continue,
+                    VerifyCaseOutcome::Mismatch { expected, actual } => format!(
+                        "expected {}\n    actual   {}\n    {}",
+                        clip(expected),
+                        clip(actual),
+                        first_difference(expected, actual)
+                    ),
+                    VerifyCaseOutcome::Declined {
+                        reason,
+                        steps,
+                        limit,
+                        ..
+                    } => format!("declined after {steps} steps of {limit}: {reason}"),
+                    VerifyCaseOutcome::RuntimeError { error } => format!("runtime error: {error}"),
+                    VerifyCaseOutcome::UnexpectedErr { err_repr } => {
+                        format!("unexpected error: {err_repr}")
+                    }
+                    VerifyCaseOutcome::Skipped | VerifyCaseOutcome::SkippedAfterBaseFail => {
+                        "skipped".to_string()
+                    }
+                };
+                detail.push_str(&format!("\n  {}\n    {note}", clip(&case.case_expr)));
+                shown += 1;
+            }
+        }
+        panic!(
+            "[{backend}] expected {expected_passed}/0/0/0 passed/failed/skipped/declined, \
+             got {passed}/{failed}/{skipped}/{declined}{detail}"
+        );
+    }
+}
+
+/// One case here can carry hundreds of scalars; a panic that dumped
+/// them whole would bury the divergence it is reporting.
+fn clip(s: &str) -> String {
+    const MAX: usize = 120;
+    let total = s.chars().count();
+    if total <= MAX {
+        return format!("{s:?}");
+    }
+    let head: String = s.chars().take(MAX).collect();
+    format!("{head:?}… ({total} scalars)")
+}
+
+/// Where two answers part. This is what turns a failure inside a
+/// several-hundred-scalar chunk back into a single code point.
+fn first_difference(expected: &str, actual: &str) -> String {
+    match expected
+        .chars()
+        .zip(actual.chars())
+        .position(|(x, y)| x != y)
+    {
+        Some(i) => {
+            let want = expected.chars().nth(i);
+            let got = actual.chars().nth(i);
+            format!("first difference at scalar {i}: expected {want:?}, got {got:?}")
+        }
+        None => format!(
+            "same prefix, lengths {} and {}",
+            expected.chars().count(),
+            actual.chars().count()
+        ),
     }
 }
 
@@ -167,6 +227,14 @@ verify lowerOf
     lowerOf("Σ") => "σ"
     lowerOf("ΑΣ") => "ας"
     lowerOf("ΑΣΒ") => "ασβ"
+    lowerOf("aΣ") => "aς"
+    lowerOf("aΣb") => "aσb"
+    lowerOf("ABΣCD") => "abσcd"
+    lowerOf("ΑΣ'Β") => "ασ'β"
+    lowerOf("ΑΣ'") => "ας'"
+    lowerOf("ΑΣ̈Β") => "ασ̈β"
+    lowerOf("aΣʰ") => "aςʰ"
+    lowerOf("aΣʰb") => "aσʰb"
     lowerOf("Α'Σ") => "α'ς"
     lowerOf("ΆΣ") => "άς"
     lowerOf("ΣΣ") => "σς"
@@ -205,7 +273,7 @@ verify upperOf
     upperOf("ა") => "Ა"
     upperOf("Ꮈ") => "Ꮈ"
 "#,
-        40,
+        48,
     );
 }
 

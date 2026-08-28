@@ -261,6 +261,7 @@ jobs:
             wasm_gc_record_replay_spec \
             wasm_gc_spec \
             wasm_gc_string_scalar_semantics_regression \
+            wasm_gc_unicode_case_regression \
             wasm_gc_verify_bool_case_regression \
             wasm_gc_verify_option_case_regression \
             wasm_gc_verify_result_record_eq_regression
@@ -284,7 +285,8 @@ jobs:
             wasip2_poc \
             wasip2_stress \
             wasip2_tcp \
-            wasip2_tcp_stress
+            wasip2_tcp_stress \
+            wasip2_unicode_case
           do
             cargo test -p aver-lang --features wasm,wasip2 --test "$test"
           done

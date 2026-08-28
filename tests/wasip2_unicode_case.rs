@@ -18,9 +18,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Text that exercises every shape the ASCII helper could not express:
 /// non-ASCII letters, a one-to-many expansion (`ß`), a mapping that
-/// changes UTF-8 length (`ı`, `İ`), a final sigma and a medial one, and
-/// an astral pair (Deseret).
-const SAMPLE: &str = "ĄĆĘ ŁÓŚ ß ÀÉÎ ΩΔ ΑΣ ΑΣΒ ΣΣ İ ı ﬀ 𐐀𐐨 abcXYZ";
+/// changes UTF-8 length (`ı`, `İ`), a final sigma and a medial one, a
+/// sigma after an ASCII letter, a sigma whose neighbours are
+/// case-ignorable, and an astral pair (Deseret).
+const SAMPLE: &str = "ĄĆĘ ŁÓŚ ß ÀÉÎ ΩΔ ΑΣ ΑΣΒ ΣΣ aΣ aΣb ΑΣ'Β ΑΣ' aΣ\u{02B0}b İ ı ﬀ 𐐀𐐨 abcXYZ";
 
 fn tempdir(prefix: &str) -> PathBuf {
     let nanos = SystemTime::now()
