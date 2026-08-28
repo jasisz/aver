@@ -343,32 +343,19 @@ fn transpile_project(
     let mut rust_modules: Vec<(Vec<String>, String)> = Vec::new();
     rust_modules.push((
         vec!["entry".to_string()],
-        render_generated_module(
-            codegen_depends(root_module_depends(&ctx.items), &ctx.items, None),
-            entry_module_sections(ctx, resolved_main_fn, &top_level_stmts),
-        ),
+        render_generated_module(entry_module_sections(
+            ctx,
+            resolved_main_fn,
+            &top_level_stmts,
+        )),
     ));
 
     for i in 0..ctx.modules.len() {
         let module = &ctx.modules[i];
         let segments = module_prefix_to_rust_segments(&module.prefix);
-        let discovery_items = module
-            .fn_defs
-            .iter()
-            .cloned()
-            .map(TopLevel::FnDef)
-            .chain(module.type_defs.iter().cloned().map(TopLevel::TypeDef))
-            .collect::<Vec<_>>();
         rust_modules.push((
             segments,
-            render_generated_module(
-                codegen_depends(
-                    module.depends.clone(),
-                    &discovery_items,
-                    Some(&module.prefix),
-                ),
-                module_sections(module, ctx),
-            ),
+            render_generated_module(module_sections(module, ctx)),
         ));
     }
     files.extend(synthesize_rust_module_cascade(
@@ -525,6 +512,7 @@ fn render_root_main(
     };
     if returns_result {
         if result_unit_string {
+            let result = syntax::generated_ident("result");
             sections.push("fn main() {".to_string());
             if has_provider_runtime {
                 sections.push("    if let Err(error) = bootstrap_provider_bindings() { eprintln!(\"{}\", error); std::process::exit(1); }".to_string());
@@ -534,14 +522,15 @@ fn render_root_main(
             sections.push("        .stack_size(256 * 1024 * 1024)".to_string());
             if has_replay && guest_entry.is_none() {
                 sections.push("        .spawn(|| {".to_string());
-                sections.push("            let __result = aver_replay::with_guest_scope(\"main\", serde_json::Value::Null, aver_generated::entry::main);".to_string());
-                sections.push("            __result.map_err(|e| e.to_string())".to_string());
+                sections.push(format!("            let {result} = aver_replay::with_guest_scope(\"main\", serde_json::Value::Null, aver_generated::entry::main);"));
+                sections.push(format!("            {result}.map_err(|e| e.to_string())"));
                 sections.push("        })".to_string());
             } else {
                 sections.push("        .spawn(|| {".to_string());
-                sections
-                    .push("            let __result = aver_generated::entry::main();".to_string());
-                sections.push("            __result.map_err(|e| e.to_string())".to_string());
+                sections.push(format!(
+                    "            let {result} = aver_generated::entry::main();"
+                ));
+                sections.push(format!("            {result}.map_err(|e| e.to_string())"));
                 sections.push("        })".to_string());
             }
             sections.push("        .expect(\"thread spawn\");".to_string());
@@ -631,7 +620,13 @@ fn render_verify_module(
     .join("\n")
 }
 
-fn render_generated_module(depends: Vec<String>, sections: Vec<String>) -> String {
+/// Render one generated Aver module.
+///
+/// Dependency symbols are deliberately absent from this module's lexical
+/// scope. Calls and types cross a module boundary only through paths rendered
+/// from `FnId` / `TypeId`; importing dependency contents here would recreate a
+/// second, bare-name lookup mechanism beside the resolved symbol table.
+fn render_generated_module(sections: Vec<String>) -> String {
     if sections.is_empty() {
         String::new()
     } else {
@@ -639,33 +634,11 @@ fn render_generated_module(depends: Vec<String>, sections: Vec<String>) -> Strin
             "#[allow(unused_imports)]".to_string(),
             "use crate::*;".to_string(),
         ];
-        for dep in depends {
-            let path = module_prefix_to_rust_segments(&dep).join("::");
-            lines.push("#[allow(unused_imports)]".to_string());
-            lines.push(format!("use crate::aver_generated::{}::*;", path));
-        }
         lines.push(String::new());
         lines.push(sections.join("\n\n"));
         lines.push(String::new());
         lines.join("\n")
     }
-}
-
-fn codegen_depends(
-    mut depends: Vec<String>,
-    items: &[TopLevel],
-    current_module: Option<&str>,
-) -> Vec<String> {
-    depends.retain(|dependency| Some(dependency.as_str()) != current_module);
-    for dependency in crate::stdlib::implicit_stdlib_deps(items) {
-        if crate::stdlib::is_standard_capability(&dependency)
-            && Some(dependency.as_str()) != current_module
-            && !depends.iter().any(|existing| existing == &dependency)
-        {
-            depends.push(dependency);
-        }
-    }
-    depends
 }
 
 /// Emit one mutual-TCO block (enum + trampoline + wrappers) via the MIR
@@ -713,9 +686,10 @@ fn emit_mutual_tco_block_routed(
         ctx.substituted_compile_errors
             .borrow_mut()
             .push(message.clone());
+        let helper = syntax::generated_ident(&format!("mutual_tco_block_{group_id}_render_error"));
         format!(
-            "{}fn __mutual_tco_block_{}_render_error() {{ compile_error!({:?}); }}",
-            visibility, group_id, message
+            "{}fn {}() {{ compile_error!({:?}); }}",
+            visibility, helper, message
         )
     })
 }
@@ -750,6 +724,8 @@ fn entry_module_sections(
             sections.push(replay::emit_replay_value_impl(
                 td,
                 uses_packed_u8(ctx, crate::codegen::common::type_def_name(td)),
+                ctx,
+                None,
             ));
         }
     }
@@ -844,6 +820,8 @@ fn module_sections(module: &crate::codegen::ModuleInfo, ctx: &CodegenContext) ->
             sections.push(replay::emit_replay_value_impl(
                 td,
                 uses_packed_u8(ctx, crate::codegen::common::type_def_name(td)),
+                ctx,
+                Some(&module.prefix),
             ));
         }
     }
@@ -900,19 +878,6 @@ fn module_sections(module: &crate::codegen::ModuleInfo, ctx: &CodegenContext) ->
     }
 
     sections
-}
-
-fn root_module_depends(items: &[TopLevel]) -> Vec<String> {
-    items
-        .iter()
-        .find_map(|item| {
-            if let TopLevel::Module(module) = item {
-                Some(module.depends.clone())
-            } else {
-                None
-            }
-        })
-        .unwrap_or_default()
 }
 
 /// Detect which effectful services are used in the program (including modules).
@@ -1223,8 +1188,8 @@ fn visible() -> Int
         //   1. emit BOTH fn defs (one per module file)
         //   2. emit `Worker.walk` body as a fully-qualified call to
         //      `crate::aver_generated::worker::helper` — NOT a bare
-        //      `helper(n)` that the entry's `use worker::*` wildcard
-        //      shadow would silently mis-resolve.
+        //      `helper(n)` that an in-scope item could silently
+        //      mis-resolve.
         //   3. emit `main`'s `Worker.walk(20)` as a fully-qualified
         //      call too — same anti-shadow rule.
         let mut ctx = ctx_from_multi(
@@ -1271,8 +1236,7 @@ fn walk(n: Int) -> Int
         );
         // Critical anti-shadow check: Worker.walk calls Worker.helper
         // through the canonical crate path, never bare `helper(n)`
-        // (which would resolve to whoever's in scope after
-        // `use worker::*`).
+        // (which could resolve to another item in scope).
         assert!(
             worker.contains("crate::aver_generated::worker::helper"),
             "Worker.walk must call its own helper via the canonical \
@@ -1369,14 +1333,10 @@ fn main() -> Int
     }
 
     #[test]
-    fn generated_module_imports_direct_depends() {
-        let rendered = render_generated_module(
-            vec!["Domain.Types".to_string(), "App.Commands".to_string()],
-            vec!["pub fn demo() {}".to_string()],
-        );
+    fn generated_module_does_not_open_dependency_namespaces() {
+        let rendered = render_generated_module(vec!["pub fn demo() {}".to_string()]);
 
-        assert!(rendered.contains("use crate::aver_generated::domain::types::*;"));
-        assert!(rendered.contains("use crate::aver_generated::app::commands::*;"));
+        assert!(!rendered.contains("use crate::aver_generated::"));
         assert!(rendered.contains("pub fn demo() {}"));
     }
 
@@ -1759,7 +1719,7 @@ fn await(n: Int) -> Int
     /// apart — and a program holding both builds and keeps them apart.
     #[test]
     fn the_mangle_prefix_is_doubled_so_the_rename_stays_injective() {
-        use crate::codegen::rust::syntax::aver_name_to_rust;
+        use crate::codegen::rust::syntax::{aver_name_to_rust, generated_ident};
 
         assert_eq!(aver_name_to_rust("self"), "_avr_self");
         assert_eq!(aver_name_to_rust("_avr_self"), "_avr__avr_self");
@@ -1775,6 +1735,8 @@ fn await(n: Int) -> Int
             assert_eq!(aver_name_to_rust(name), name);
         }
         assert_eq!(aver_name_to_rust("await"), "r#await");
+
+        assert_eq!(generated_ident("mutual_tco_1"), "__mutual_tco_1");
     }
 
     /// A binding written at module level, outside any function, is a
@@ -2820,8 +2782,8 @@ fn main() -> Result<Tuple<Int, Int>, Int>
 
         assert!(!entry.contains("Ok::<_, aver_rt::AverStr>"));
         assert!(entry.contains("crate::aver_replay::exit_effect_group();"));
-        assert!(entry.contains("match (_r0, _r1)"));
-        assert!(!entry.contains("let _r0 = left()?;"));
+        assert!(entry.contains("match (__r0, __r1)"));
+        assert!(!entry.contains("let __r0 = left()?;"));
     }
 
     #[test]
@@ -2862,7 +2824,7 @@ fn main() -> Result<Tuple<Int, Int>, String>
 
         assert!(entry.contains("crate::run_cancelable_branch"));
         assert!(entry.contains("capture_parallel_scope_context"));
-        assert!(entry.contains("_s.spawn(move ||"));
+        assert!(entry.contains("__s.spawn(move ||"));
         assert!(runtime_support.contains("pub fn run_cancelable_branch"));
         assert!(runtime_support.contains("panic_any(AverCancelled)"));
         assert!(replay_support.contains("pub fn capture_parallel_scope_context"));

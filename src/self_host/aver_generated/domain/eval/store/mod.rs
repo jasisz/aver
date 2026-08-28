@@ -1,8 +1,4 @@
 #[allow(unused_imports)]
-use crate::aver_generated::domain::ast::*;
-#[allow(unused_imports)]
-use crate::aver_generated::domain::value::*;
-#[allow(unused_imports)]
 use crate::*;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -70,22 +66,9 @@ impl aver_replay::ReplayValue for FnStore {
             "$record.fields",
         )?;
         Ok(Self {
-            nameToId:
-                <aver_rt::AverMap<AverStr, aver_rt::AverInt> as ReplayValue>::from_replay_json(
-                    fields
-                        .get("nameToId")
-                        .ok_or_else(|| "$record FnStore missing field 'nameToId'".to_string())?,
-                )?,
-            byId: <aver_rt::AverVector<FnDef> as ReplayValue>::from_replay_json(
-                fields
-                    .get("byId")
-                    .ok_or_else(|| "$record FnStore missing field 'byId'".to_string())?,
-            )?,
-            globals: <aver_rt::AverMap<AverStr, Val> as ReplayValue>::from_replay_json(
-                fields
-                    .get("globals")
-                    .ok_or_else(|| "$record FnStore missing field 'globals'".to_string())?,
-            )?,
+                nameToId: <aver_rt::AverMap<AverStr, aver_rt::AverInt> as ReplayValue>::from_replay_json(fields.get("nameToId").ok_or_else(|| "$record FnStore missing field 'nameToId'".to_string())?)?,
+                byId: <aver_rt::AverVector<crate::aver_generated::domain::ast::FnDef> as ReplayValue>::from_replay_json(fields.get("byId").ok_or_else(|| "$record FnStore missing field 'byId'".to_string())?)?,
+                globals: <aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val> as ReplayValue>::from_replay_json(fields.get("globals").ok_or_else(|| "$record FnStore missing field 'globals'".to_string())?)?,
         })
     }
 }

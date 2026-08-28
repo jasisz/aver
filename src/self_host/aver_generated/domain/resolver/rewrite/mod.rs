@@ -1,6 +1,4 @@
 #[allow(unused_imports)]
-use crate::aver_generated::domain::ast::*;
-#[allow(unused_imports)]
 use crate::*;
 
 /// Rewrite resolved AST into lighter internal expression shapes without changing semantics.

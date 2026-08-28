@@ -18,7 +18,7 @@
     "proof_spec": 2.08,
     "provider_package_workflow_spec": 33.88,
     "provider_vm_host_spec": 998.43,
-    "rust_codegen_differential": 72.55,
+    "rust_codegen_differential": 94.72,
     "rust_codegen_regression": 12.14,
     "rust_self_host_regen": 9.08,
     "typechecker_spec": 1.53,

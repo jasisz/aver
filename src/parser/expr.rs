@@ -375,12 +375,8 @@ impl Parser {
                 self.skip_formatting();
                 continue;
             }
-            let name_tok =
-                self.expect_kind(&TokenKind::Ident(String::new()), "Expected field name")?;
-            let field_name = match name_tok.kind {
-                TokenKind::Ident(s) => s,
-                _ => unreachable!(),
-            };
+            let field_name =
+                self.expect_user_identifier("Expected field name", "record field names")?;
             self.expect_exact(&TokenKind::Assign)?;
             let value = self.parse_expr()?;
             fields.push((field_name, value));
