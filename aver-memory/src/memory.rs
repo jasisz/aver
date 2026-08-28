@@ -1555,6 +1555,17 @@ impl<T: ArenaTypes> Arena<T> {
         self.rewrite_entry_with(entry, &mut rewrite)
     }
 
+    /// Move `value` into `target` if this promotion is allowed to move it, and
+    /// otherwise descend into it where it stands.
+    ///
+    /// The descent is deliberately unconditional here, unlike the one inside
+    /// the cons-cell walk below, and the difference is which values arrive. A
+    /// ROOT may be a slot this frame built outside the young region and filled
+    /// with young values — an ordinary helper return builds its result directly
+    /// in handoff — so a root that this promotion cannot move can still hold
+    /// everything it must. `vm_real_json_repeated_from_string_calls_keep_error_strings_alive`
+    /// is the shape that says so: skipping the descent here drops the young
+    /// entries reachable only through such a result.
     fn promote_region_root_to_target(
         &mut self,
         value: NanValue,
@@ -1576,16 +1587,34 @@ impl<T: ArenaTypes> Arena<T> {
         value
     }
 
+    /// Move every root, and everything it reaches, out of the young region and
+    /// into the yard.
+    ///
+    /// `rewrite_out_of_region_roots` means the same here as in
+    /// [`Arena::evacuate_frame_to_yard`]: the caller is reporting an owned
+    /// in-place write that landed outside the frame's regions, so a slot this
+    /// call cannot move may nonetheless hold something it must. Without one,
+    /// the walk stops when a chain of cons cells leaves the young region rather
+    /// than reading the rest of it — see `take_promote_tail_value`.
+    ///
+    /// What the caller owes for that, beyond the flag: the frame this promotion
+    /// belongs to must have no yard entries of its own, and at most one handoff
+    /// entry, which must be among `roots`. Every caller here is a branch that
+    /// has just established exactly that. A frame-local cons cell in the MIDDLE
+    /// of a chain could hold young values while sitting outside the young
+    /// region, and stopping above it would drop them.
     pub fn promote_young_roots_to_yard(
         &mut self,
         mark: u32,
         lane_mark: LaneMark,
         roots: &mut [NanValue],
+        rewrite_out_of_region_roots: bool,
     ) {
         if self.young_entries.len() <= mark as usize {
             return;
         }
         self.begin_lane_rewrite(lane_mark);
+        self.rewrite_out_of_region_roots = rewrite_out_of_region_roots;
 
         let mut relocated =
             Self::take_u32_scratch(&mut self.scratch_young, self.young_entries.len());
@@ -1595,20 +1624,25 @@ impl<T: ArenaTypes> Arena<T> {
         }
 
         self.young_entries.truncate(mark as usize);
+        self.rewrite_out_of_region_roots = false;
         Self::recycle_u32_scratch(&mut self.scratch_young, relocated);
         self.finish_lane_rewrite();
     }
 
+    /// The handoff spelling of [`Arena::promote_young_roots_to_yard`], including
+    /// what `rewrite_out_of_region_roots` promises.
     pub fn promote_young_roots_to_handoff(
         &mut self,
         mark: u32,
         lane_mark: LaneMark,
         roots: &mut [NanValue],
+        rewrite_out_of_region_roots: bool,
     ) {
         if self.young_entries.len() <= mark as usize {
             return;
         }
         self.begin_lane_rewrite(lane_mark);
+        self.rewrite_out_of_region_roots = rewrite_out_of_region_roots;
 
         let mut relocated =
             Self::take_u32_scratch(&mut self.scratch_young, self.young_entries.len());
@@ -1618,6 +1652,7 @@ impl<T: ArenaTypes> Arena<T> {
         }
 
         self.young_entries.truncate(mark as usize);
+        self.rewrite_out_of_region_roots = false;
         Self::recycle_u32_scratch(&mut self.scratch_young, relocated);
         self.finish_lane_rewrite();
     }
@@ -1796,6 +1831,32 @@ impl<T: ArenaTypes> Arena<T> {
             });
         }
 
+        // A cons cell the promotion cannot move, reached as the TAIL of one it
+        // can. Its handle does not change, and neither can anything it holds:
+        // a cell's tail is older than the cell, so a chain that has left the
+        // young region has left it for good. Following it further only re-reads
+        // what has already settled, and a loop that prepends re-read all of it
+        // on every step — linear reads per step, a quadratic program, nothing
+        // copied and no other counter moving.
+        //
+        // The evacuating walk (`take_local_tail_value`) draws the same line and
+        // names the same exception: an owned in-place vector write further down
+        // the chain can leave a settled slot pointing at a value this boundary
+        // is about to move, and the caller reports that through
+        // `rewrite_out_of_region_roots`.
+        //
+        // It matters that this is the TAIL and not the root. A root may be a
+        // slot the frame built outside the young region and filled with young
+        // values — the handoff result of an ordinary helper return — and
+        // `promote_region_root_to_target` descends into those unconditionally
+        // for exactly that reason. A tail cannot be one: every caller of
+        // `promote_young_roots_to_yard` / `_to_handoff` reaches it from a frame
+        // with no yard entries of its own and at most one handoff entry, and
+        // that one is the root being walked, never something below it.
+        if !self.rewrite_out_of_region_roots {
+            return PromoteTailStep::Done(value);
+        }
+
         let raw_index = raw_index as usize;
         let entry = match space {
             HeapSpace::Young => {
@@ -1823,6 +1884,7 @@ impl<T: ArenaTypes> Arena<T> {
                 core::mem::replace(&mut self.stable_entries[raw_index], ArenaEntry::Int(0))
             }
         };
+        self.out_of_region_entries_read += 1;
 
         PromoteTailStep::Taken(PromoteTailEntry {
             value,
@@ -1927,6 +1989,7 @@ impl<T: ArenaTypes> Arena<T> {
                 if raw_index >= self.young_entries.len() || raw_index >= mark as usize {
                     return;
                 }
+                self.out_of_region_entries_read += 1;
                 let entry =
                     core::mem::replace(&mut self.young_entries[raw_index], ArenaEntry::Int(0));
                 let new_entry = self.rewrite_promoted_young_entry(entry, mark, relocated, target);
@@ -1936,6 +1999,7 @@ impl<T: ArenaTypes> Arena<T> {
                 if raw_index >= self.yard_entries.len() {
                     return;
                 }
+                self.out_of_region_entries_read += 1;
                 let entry =
                     core::mem::replace(&mut self.yard_entries[raw_index], ArenaEntry::Int(0));
                 let new_entry = self.rewrite_promoted_young_entry(entry, mark, relocated, target);
@@ -1945,6 +2009,7 @@ impl<T: ArenaTypes> Arena<T> {
                 if raw_index >= self.handoff_entries.len() {
                     return;
                 }
+                self.out_of_region_entries_read += 1;
                 let entry =
                     core::mem::replace(&mut self.handoff_entries[raw_index], ArenaEntry::Int(0));
                 let new_entry = self.rewrite_promoted_young_entry(entry, mark, relocated, target);
@@ -1954,6 +2019,7 @@ impl<T: ArenaTypes> Arena<T> {
                 if raw_index >= self.stable_entries.len() {
                     return;
                 }
+                self.out_of_region_entries_read += 1;
                 let entry =
                     core::mem::replace(&mut self.stable_entries[raw_index], ArenaEntry::Int(0));
                 let new_entry = self.rewrite_promoted_young_entry(entry, mark, relocated, target);

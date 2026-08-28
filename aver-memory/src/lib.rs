@@ -1439,7 +1439,22 @@ pub struct Arena<T: ArenaTypes> {
     /// of byte offsets carried across every step of an indexed loop, so this is
     /// the counter an indexed string walk's residual time follows.
     vector_elements_scanned: u64,
-    /// Whether the evacuation currently in progress has to descend into roots
+    /// Total arena entries a promotion has *read* although they lie outside the
+    /// region it is allowed to move — memory that had already settled.
+    ///
+    /// Reading one can never relocate anything: an older slot cannot hold a
+    /// younger index. The one operation that breaks that rule is the runtime's
+    /// owned in-place vector write, and a caller that made one says so through
+    /// `rewrite_out_of_region_roots`, which is the only thing this number is
+    /// allowed to grow under.
+    ///
+    /// It is the counter a loop that carries a growing structure follows: a
+    /// list built by prepending is a chain of cells, and a promotion that walks
+    /// it from the top on every step reads the whole chain every time. That is
+    /// linear reads per step and a quadratic program, with nothing copied and
+    /// no other counter moving.
+    out_of_region_entries_read: u64,
+    /// Whether the collection currently in progress has to descend into roots
     /// that live OUTSIDE the frame's regions.
     ///
     /// Normally an older slot cannot hold a younger index, so those roots need
@@ -1447,8 +1462,11 @@ pub struct Arena<T: ArenaTypes> {
     /// a long list of strings it is a quadratic one. The runtime's owned
     /// in-place vector write is the single exception, and the caller says so by
     /// passing `true` to [`Arena::evacuate_frame_to_yard`] /
-    /// [`Arena::evacuate_frame_to_handoff`]. Set only for the span of one
-    /// `evacuate_frame_locals` call and cleared when it returns.
+    /// [`Arena::evacuate_frame_to_handoff`],
+    /// [`Arena::promote_young_roots_to_yard`] /
+    /// [`Arena::promote_young_roots_to_handoff`], or
+    /// [`Arena::promote_roots_to_stable`]. Set only for the span of one such
+    /// call and cleared when it returns.
     rewrite_out_of_region_roots: bool,
     /// Whether this arena has ever stored a map.
     ///

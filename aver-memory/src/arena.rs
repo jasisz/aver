@@ -21,6 +21,7 @@ impl<T: ArenaTypes> Arena<T> {
             map_entries_copied: 0,
             map_entries_scanned: 0,
             vector_elements_scanned: 0,
+            out_of_region_entries_read: 0,
             rewrite_out_of_region_roots: false,
             holds_any_map: false,
             holds_any_vector: false,
@@ -74,6 +75,7 @@ impl<T: ArenaTypes> Arena<T> {
             map_entries_copied: 0,
             map_entries_scanned: 0,
             vector_elements_scanned: 0,
+            out_of_region_entries_read: 0,
             rewrite_out_of_region_roots: false,
             // The stable entries come across whole, and a map among them is
             // still a map here.
@@ -720,6 +722,7 @@ impl<T: ArenaTypes> Arena<T> {
         self.map_entries_copied += child.map_entries_copied;
         self.map_entries_scanned += child.map_entries_scanned;
         self.vector_elements_scanned += child.vector_elements_scanned;
+        self.out_of_region_entries_read += child.out_of_region_entries_read;
     }
 
     /// Map entries the collector has read while deciding whether a live map
@@ -777,6 +780,29 @@ impl<T: ArenaTypes> Arena<T> {
     #[inline]
     pub fn note_vector_elements_scanned(&mut self, elements: usize) {
         self.vector_elements_scanned += elements as u64;
+    }
+
+    /// Arena entries a promotion has *read* although they lie outside the
+    /// region it is allowed to move — memory that had already settled.
+    ///
+    /// The three counters above ask what one entry costs to read. This one asks
+    /// a different question: how many entries were read that could not possibly
+    /// need it. An older slot cannot hold a younger index, so a promotion owes
+    /// nothing to anything already settled, and the only thing that changes
+    /// that is the runtime's owned in-place vector write — which the caller
+    /// reports, and which is the only condition under which this number is
+    /// allowed to grow.
+    ///
+    /// The reason it exists: a list built by prepending is a chain of cells,
+    /// one arena entry each. A promotion that follows that chain from the top
+    /// reads all of it, and a loop that both reads characters and prepends
+    /// collects every few steps, so the whole chain was re-read a linear number
+    /// of times for a quadratic program. Nothing was copied and no other
+    /// counter moved, which is why the earlier collection-cost guards could not
+    /// see it.
+    #[inline]
+    pub fn out_of_region_entries_read(&self) -> u64 {
+        self.out_of_region_entries_read
     }
 
     #[inline]

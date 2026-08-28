@@ -274,7 +274,7 @@ fn the_collector_reads_a_mixed_vector_and_skips_an_immediate_one() {
     ];
     let immediate = NanValue::new_vector(arena.push_vector(elements));
     let mut roots = [immediate];
-    arena.promote_young_roots_to_yard(mark, lane, &mut roots);
+    arena.promote_young_roots_to_yard(mark, lane, &mut roots, false);
     assert_eq!(
         arena.vector_elements_scanned(),
         0,
@@ -292,10 +292,76 @@ fn the_collector_reads_a_mixed_vector_and_skips_an_immediate_one() {
     ];
     let mixed = NanValue::new_vector(arena.push_vector(elements));
     let mut roots = [mixed];
-    arena.promote_young_roots_to_yard(mark, lane, &mut roots);
+    arena.promote_young_roots_to_yard(mark, lane, &mut roots, false);
     assert!(
         arena.vector_elements_scanned() >= 3,
         "a table holding an arena index is read in full, got {}",
         arena.vector_elements_scanned()
+    );
+}
+
+/// Build a chain of `cells` prepend cells over an empty list, promoting after
+/// every cell the way a tail-recursive loop's boundary does.
+///
+/// Returns the head of the finished chain, the arena it lives in, and how many
+/// settled entries the promotions read between them. One promotion per cell is
+/// what the runtime actually does: a loop that reads a character and prepends
+/// allocates enough to trip a collection every few steps.
+fn prepend_chain_promoting_each_cell(cells: usize, escaped: bool) -> (TestArena, NanValue, u64) {
+    let mut arena = TestArena::new();
+    let mut list = NanValue::EMPTY_LIST;
+    let before = arena.out_of_region_entries_read();
+    for value in 0..cells {
+        let mark = arena.young_len() as u32;
+        let lane = arena.lane_mark();
+        let head = NanValue::new_int(value as i64, &mut arena);
+        list = NanValue::new_list(arena.push_list_prepend(head, list));
+        let mut roots = [list];
+        arena.promote_young_roots_to_yard(mark, lane, &mut roots, escaped);
+        list = roots[0];
+    }
+    let read = arena.out_of_region_entries_read() - before;
+    (arena, list, read)
+}
+
+/// A promotion stops where the chain of cells leaves the region it can move.
+///
+/// This is the second half of what an indexed string walk was paying. The
+/// hidden index above is a single entry the collector read in full; an
+/// accumulator built by prepending is a chain of entries, and the walk followed
+/// all of it from the top every time it ran. Both are "the collector reads what
+/// the loop has already settled", and neither moves a copy counter, which is
+/// why the earlier guards saw neither.
+///
+/// The two halves are the same chain under the two answers to "did something
+/// write into a slot outside the frame's regions". Without one, a cell that has
+/// left the young region cannot hold anything a later promotion could move, so
+/// the walk is entitled to stop at it. With one it must read the rest, and does
+/// — which is what keeps the first half from passing because the walk stopped
+/// somewhere it should not have.
+#[test]
+fn a_promotion_does_not_walk_the_prepend_chain_it_has_already_promoted() {
+    const CELLS: usize = 64;
+
+    let (arena, list, read) = prepend_chain_promoting_each_cell(CELLS, false);
+    assert_eq!(
+        arena.list_len_value(list),
+        CELLS,
+        "the chain has to survive the promotions for its cost to say anything"
+    );
+    assert!(
+        read <= CELLS as u64,
+        "promoting {CELLS} cells one at a time read {read} settled entries; \
+         a walk that stops at the chain's first settled cell reads at most one \
+         per promotion, and one that does not reads the whole chain every time"
+    );
+
+    let (escaped_arena, escaped_list, escaped_read) =
+        prepend_chain_promoting_each_cell(CELLS, true);
+    assert_eq!(escaped_arena.list_len_value(escaped_list), CELLS);
+    assert!(
+        escaped_read > 4 * CELLS as u64,
+        "a reported in-place write has to put the full walk back, and it read \
+         only {escaped_read} settled entries over {CELLS} cells"
     );
 }

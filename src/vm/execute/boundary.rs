@@ -119,8 +119,12 @@ impl VM {
             // arena_mark.  The next return boundary will evacuate them.
             let young_growth = self.arena.young_len() - arena_mark as usize;
             if young_growth > 4 {
-                self.arena
-                    .promote_young_roots_to_yard(arena_mark, lane_mark, frame_roots);
+                self.arena.promote_young_roots_to_yard(
+                    arena_mark,
+                    lane_mark,
+                    frame_roots,
+                    inplace_write_escaped,
+                );
                 return true;
             }
         }
@@ -168,15 +172,23 @@ impl VM {
         }
 
         if !has_local_yard && !has_local_handoff {
-            self.arena
-                .promote_young_roots_to_handoff(arena_mark, lane_mark, frame_roots);
+            self.arena.promote_young_roots_to_handoff(
+                arena_mark,
+                lane_mark,
+                frame_roots,
+                inplace_write_escaped,
+            );
             self.arena.truncate_yard_to(yard_base);
             return (false, self.arena.handoff_len() > handoff_mark as usize);
         }
 
         if !has_local_yard && has_local_young && result_is_single_local_handoff {
-            self.arena
-                .promote_young_roots_to_handoff(arena_mark, lane_mark, frame_roots);
+            self.arena.promote_young_roots_to_handoff(
+                arena_mark,
+                lane_mark,
+                frame_roots,
+                inplace_write_escaped,
+            );
             self.arena.truncate_yard_to(yard_base);
             return (false, self.arena.handoff_len() > handoff_mark as usize);
         }

@@ -42,18 +42,29 @@
 //! 65,536 / 262,144 characters, cost 576 / 2,533 / 9,892 ms before the fix and
 //! 81 / 85 / 98 ms after.
 //!
-//! What these tests do NOT claim: that the whole program is linear. Each one
-//! claims only that carrying the hidden index costs nothing, which is what the
-//! counter measures and what changed.
+//! The third shape turned out to be paying twice, for two different reasons,
+//! and the second instrument here is the one that sees the other half. Its
+//! `List.prepend` accumulator is a chain of cells, one arena entry each, and
+//! the promotion followed that chain from the top every time it ran instead of
+//! stopping where the chain leaves the region it can move. Same shape of cost
+//! as the table — linear reads per step, quadratic program — and the same
+//! invisibility: nothing is copied, so no copy counter moves, and the shape has
+//! neither a map nor a flat list, so neither scan counter moves either.
 //!
-//! The third shape is in fact still super-linear, and deliberately so: its cost
-//! is somewhere else entirely. Its `List.prepend` accumulator builds a chain of
-//! cons cells that the collector follows from the top on every promotion, and
-//! that walk does not stop when it leaves the young region, so it is as long as
-//! the list. A profile of the 32,768-character run spends 5,740 of 5,797
-//! samples in `promote_prepend_tail_iterative` and none in the hidden index —
-//! which is exactly what the counter below reports for it. That is issue #1187;
-//! a wall-clock assertion here would measure it instead of this.
+//! `Arena::out_of_region_entries_read` counts it: entries a promotion read
+//! although it was never allowed to move them. Before the fix this shape read
+//! 2,795,520 of them over 4,096 characters and 11,180,715 over 8,192 — the same
+//! quadrupling per doubling. After it, 2,730 and 5,460, which is flat per
+//! character. Wall clock on the standalone reproducer, walking 16,384 / 32,768
+//! / 65,536 characters and keeping each one: 3,236 / 13,079 / 50,169 ms before,
+//! 37 / 76 / 147 ms after.
+//!
+//! Both instruments are applied to all four shapes, so a shape that stops
+//! paying one way and starts paying the other cannot go green.
+//!
+//! What these tests do NOT claim: that any whole program is linear. They claim
+//! that a step of an indexed walk pays only for itself, and not for everything
+//! the walk has already put behind it — the two ways it used to.
 
 use aver::ir::pipeline::{PipelineConfig, TypecheckMode};
 use aver::nan_value::Arena;
@@ -73,6 +84,10 @@ struct Walk {
     /// is the other way the cost assertion could go green without the cost
     /// being fixed.
     reads: u64,
+    /// Arena entries the collector read that it was never allowed to move —
+    /// everything the loop had already put behind it. The hidden table is one
+    /// of them; so is every cell of a list the loop is building.
+    revisited: u64,
 }
 
 /// Which read through the hidden table a shape is supposed to be making, and
@@ -138,6 +153,7 @@ fn walk(src: &str, read: &IndexedRead) -> Walk {
         scanned: machine.arena.vector_elements_scanned(),
         answer: value.as_int(&machine.arena),
         reads,
+        revisited: machine.arena.out_of_region_entries_read(),
     }
 }
 
@@ -286,6 +302,17 @@ const SLICE_AT_EVERY_POSITION: IndexedRead = IndexedRead {
 /// collection, which is what n/5 reads of an n-element table looks like.
 const SCAN_BUDGET_PER_CHARACTER: u64 = 4;
 
+/// Settled entries the collector is allowed to read per character visited.
+///
+/// A collection that touches only what the step itself allocated reads none of
+/// them, so the honest budget is zero. It is not zero here because a boundary
+/// still reaches the one entry directly below the values it promoted, and a
+/// walk of n characters crosses a boundary a bounded number of times per
+/// character. Anything proportional to what the loop has ALREADY built —
+/// re-reading the table, or walking the accumulator from the top — lands orders
+/// of magnitude above this.
+const REVISIT_BUDGET_PER_CHARACTER: u64 = 4;
+
 /// Run one shape at n and 2n characters and hold both to the same three
 /// claims: the reads stay inside the per-character budget, doubling the input
 /// does not more than triple them, and the program still walked what it said
@@ -330,6 +357,24 @@ fn assert_the_hidden_index_is_not_reread(
          {small_chars} characters scanned {} elements, {large_chars} scanned {}",
         small.scanned,
         large.scanned,
+    );
+
+    assert!(
+        small.revisited <= small_chars * REVISIT_BUDGET_PER_CHARACTER
+            && large.revisited <= large_chars * REVISIT_BUDGET_PER_CHARACTER,
+        "{name}: the collector re-reads memory the loop has already settled. \
+         {small_chars} characters read {} settled entries and {large_chars} characters \
+         read {}, against a budget of {REVISIT_BUDGET_PER_CHARACTER} per character",
+        small.revisited,
+        large.revisited,
+    );
+    assert!(
+        large.revisited <= 3 * small.revisited + large_chars,
+        "{name}: doubling the input more than tripled the settled entries the \
+         collector read, so the walk still pays for everything behind it. \
+         {small_chars} characters read {}, {large_chars} read {}",
+        small.revisited,
+        large.revisited,
     );
 }
 
