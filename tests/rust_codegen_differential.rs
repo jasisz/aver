@@ -2846,7 +2846,8 @@ fn main() -> Unit
 /// The tail was the one owning position that never asked for it, so
 /// `passthrough(x) = x` emitted `&T` where `T` was expected and the generated
 /// project would not build at all (`Result`, `Option`, a sum type, a record, a
-/// tuple and a `List` all failed; `String`, `Int`, `Float`, `Bool` and the
+/// tuple, a `List` and a provider resource all failed; `String`, `Int`,
+/// `Float`, `Bool` and the
 /// `own_param`-graduated `Vector` / `Map` built because they are already
 /// owned). Every shape sits in one program, so a backend that materialises too
 /// little fails the build and one that materialises the wrong value diverges
@@ -2914,6 +2915,16 @@ fn passBool(v: Bool) -> Bool
     ? "Hand back exactly what was given."
     v
 
+fn passConnection(v: Tcp.Connection) -> Tcp.Connection
+    ? "Clone the opaque provider handle when an owned resource is returned."
+    v
+
+fn keepOwnedAndAlias(items: List<Int>) -> Int
+    ? "A named alias must not move an owned local that is read again."
+    reversed = List.reverse(items)
+    alias = reversed
+    List.len(reversed) + List.len(alias)
+
 fn showResult(v: Result<Int, String>) -> String
     ? "Render it."
     match v
@@ -2967,8 +2978,9 @@ fn main() -> Unit
     Console.print(String.fromInt(passInt(10)))
     Console.print("{passFloat(1.5)}")
     Console.print("{passBool(true)}")
+    Console.print(String.fromInt(keepOwnedAndAlias([1, 2])))
 "#;
-    let expected = "1\n2\ngreen 3\n5\n6t\n2\n3\n1\ns\n10\n1.5\ntrue";
+    let expected = "1\n2\ngreen 3\n5\n6t\n2\n3\n1\ns\n10\n1.5\ntrue\n4";
     let vm = run_vm_inline("passthrough_param", src).expect("vm run");
     let rust =
         build_run_rust_inline("passthrough_param", src).expect("rust compile + cargo build + run");

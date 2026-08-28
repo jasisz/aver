@@ -70,6 +70,9 @@ use super::expr::{
     explicit_binding_pattern, explicit_parameter_pattern, has_list_patterns,
     has_string_literal_patterns,
 };
+use super::ownership::{
+    align_equality_operands, emits_direct_borrow, local_of, materialize_borrowed, materialize_owned,
+};
 use super::pattern::emit_pattern;
 use super::syntax::{aver_name_to_rust, generated_ident};
 
@@ -1175,7 +1178,7 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                         && mir_expr_contains_last_use_of_slot(&bop.rhs.node, lhs.slot)
                 });
                 let l = if lhs_rhs_move_overlap {
-                    mir_maybe_clone(l, &bop.lhs.node, emit_ctx)
+                    materialize_owned(l, &bop.lhs.node, emit_ctx)
                 } else {
                     l
                 };
@@ -1250,7 +1253,7 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                 && !ty_is_numeric(bop.lhs.ty())
                 && !ty_is_numeric(bop.rhs.ty())
             {
-                let l = mir_maybe_clone(l, &bop.lhs.node, emit_ctx);
+                let l = materialize_owned(l, &bop.lhs.node, emit_ctx);
                 Some(format!("({} + &{})", l, r))
             } else if matches!(bop.op, BinOp::Eq | BinOp::Neq) {
                 // HIR derefs `AverStr` (Rc<str>) to `&str` when one
@@ -1326,7 +1329,13 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                 }
             }
         }
-        MirExpr::Return(inner) => Some(format!("return {}", emit_mir_expr(inner, emit_ctx)?)),
+        MirExpr::Return(inner) => {
+            let code = emit_mir_expr(inner, emit_ctx)?;
+            Some(format!(
+                "return {}",
+                materialize_owned(code, &inner.node, emit_ctx)
+            ))
+        }
         MirExpr::TailCall(spanned_tc) => {
             // Tail call outside a self-TCO loop
             // emits as a regular function call — mirror of HIR's
@@ -2525,7 +2534,7 @@ fn mir_free_locals(item: &MirExpr) -> BTreeMap<LocalId, MirLocal> {
 ///    renders `if (code < 48) { else } else { then }`. Re-apply HIR's
 ///    rewrite so the two match.
 /// 2. **Branch clone.** HIR runs each branch through `maybe_clone`
-///    (owning position). Mirror with `mir_maybe_clone` (a no-op for the
+///    (owning position). Mirror with `materialize_owned` (a no-op for the
 ///    already-graduated cases, exact for the rest).
 fn emit_mir_if_then_else(
     ite: &crate::ir::mir::MirIfThenElse,
@@ -2546,8 +2555,10 @@ fn emit_mir_if_then_else(
     // deref-applying `BinOp` arm.
     let (cond, then_src, else_src) = mir_if_cond_and_branches(ite, emit_ctx)?;
 
-    let then_branch = mir_maybe_clone(emit_mir_expr(then_src, emit_ctx)?, &then_src.node, emit_ctx);
-    let else_branch = mir_maybe_clone(emit_mir_expr(else_src, emit_ctx)?, &else_src.node, emit_ctx);
+    let then_branch =
+        materialize_owned(emit_mir_expr(then_src, emit_ctx)?, &then_src.node, emit_ctx);
+    let else_branch =
+        materialize_owned(emit_mir_expr(else_src, emit_ctx)?, &else_src.node, emit_ctx);
     Some(format!(
         "if {} {{ {} }} else {{ {} }}",
         cond, then_branch, else_branch
@@ -2565,7 +2576,7 @@ fn emit_mir_if_then_else(
 //      stamped it). Build synthetic `ResolvedMatchArm`s carrying those
 //      patterns + neutral bodies.
 //   2. Pre-render every arm body via the MIR walker (`emit_mir_expr` +
-//      `mir_maybe_clone`). If any arm body can't render, the whole
+//      `materialize_owned`). If any arm body can't render, the whole
 //      match falls back to HIR. The dispatch/list emitters take a
 //      `body_for_arm` closure; we map each synthetic arm back to its
 //      pre-rendered MIR body by pointer offset into the synthetic slice.
@@ -2673,7 +2684,7 @@ fn emit_mir_match(m: &MirMatch, emit_ctx: &MirEmitCtx<'_>) -> Option<String> {
     // `maybe_clone(emit_expr(&arm.body.node, …), &arm.body.node, …)`.
     emit_mir_match_with(m, emit_ctx, &|arm_body, ctx| {
         let body = emit_mir_expr(arm_body, ctx)?;
-        Some(mir_maybe_clone(body, &arm_body.node, ctx))
+        Some(materialize_owned(body, &arm_body.node, ctx))
     })
 }
 
@@ -3164,19 +3175,11 @@ fn mir_emit_equality(
     {
         return format!("({:?} {} &*{})", s, op_str, r);
     }
-    // Borrow-by-default and mutual-TCO invariant hoisting make collection /
-    // wrapper / named-type parameters `&T`, while calls and constructors still
-    // produce an owned `T`. Rust does not provide `PartialEq<&T> for T`, so
-    // compare two references whenever exactly one side is a borrowed
-    // parameter. Borrowing the owned expression is temporary, allocation-free,
-    // and preserves evaluation order.
-    let lhs_borrowed = mir_expr_is_borrowed_param_read(&bop.lhs.node, emit_ctx);
-    let rhs_borrowed = mir_expr_is_borrowed_param_read(&bop.rhs.node, emit_ctx);
-    match (lhs_borrowed, rhs_borrowed) {
-        (false, true) => format!("(&({}) {} {})", l, op_str, r),
-        (true, false) => format!("({} {} &({}))", l, op_str, r),
-        _ => format!("({} {} {})", l, op_str, r),
-    }
+    // All non-string equality sites align through the same explicit value
+    // modes as calls and returns. When either side emits `&T`, compare two
+    // borrows; otherwise retain `T op T`.
+    let (left, right) = align_equality_operands(l, &bop.lhs.node, r, &bop.rhs.node, emit_ctx);
+    format!("({left} {op_str} {right})")
 }
 
 /// Is this expression a direct read whose emitted Rust representation is `&T`?
@@ -3186,10 +3189,7 @@ fn mir_emit_equality(
 /// whose Rust type is `&T`. Projections and compound expressions have their own
 /// ownership rules and deliberately do not count as borrowed-param reads here.
 fn mir_expr_is_borrowed_param_read(expr: &MirExpr, emit_ctx: &MirEmitCtx<'_>) -> bool {
-    local_of(expr).is_some_and(|local| {
-        emit_ctx.is_borrowed_param(&local.name)
-            || (emit_ctx.rc_wrapped_are_borrowed_refs && emit_ctx.is_rc_wrapped(&local.name))
-    })
+    emits_direct_borrow(expr, emit_ctx)
 }
 
 /// Emit the FULL function body the MIR walker produces, in the
@@ -3250,34 +3250,20 @@ pub(super) fn emit_mir_fn_body(
 /// Emit a fn body's tail expression as an OWNED value.
 ///
 /// The tail is a return position, so whatever lands there has to own what
-/// it hands back — the same rule [`mir_maybe_clone`] already applies to a
+/// it hands back — the same rule [`materialize_owned`] already applies to a
 /// call argument, a match arm and a TCO base-case return. Two shapes reach
 /// it needing the wrapper, because `emit_mir_expr` renders both bare: a
 /// read of a borrowed param (`&T` against a by-value return type) and a
 /// field read through one at any depth (a move out of a shared reference).
 ///
-/// The tail applies a WIDER rule than [`emit_mir_binding_value`] does, and
-/// the difference is deliberate rather than incidental: a bare `Local` tail
-/// goes through the full [`mir_maybe_clone`] policy, which also covers an
-/// `rc_wrapped` local (`(*x).clone()`) and a non-last-use owned local
-/// (`x.clone()`) — neither of which is a borrowed-param read. Only the
-/// non-`Local` shapes fall back to the narrow root-of-a-projection rule.
-/// The extra reach is inert today (`rc_wrapped` is populated only on the
-/// TCO paths, and a top-level tail read is by definition a last use), which
-/// is why the binding position was not widened to match: it would change no
-/// emitted byte and would cost a second policy to keep honest. A future
-/// merge of the TCO and non-TCO policies would make the difference live, so
-/// widen the binding rule at the same time if that ever happens.
+/// Tail values, `let` bindings, call arguments, constructor fields and match
+/// arms all cross this boundary through the same explicit value-mode model.
 fn emit_mir_tail_value(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Option<String> {
     let code = emit_mir_expr(expr, ctx)?;
-    if local_of(&expr.node).is_some() {
-        return Some(mir_maybe_clone(code, &expr.node, ctx));
-    }
-    Some(mir_own_borrowed_read(code, &expr.node, ctx))
+    Some(materialize_owned(code, &expr.node, ctx))
 }
 
-/// Emit a `let` binding's value as an OWNED value when it reads a BORROWED
-/// PARAM — and only then.
+/// Emit a `let` binding's value as an OWNED value.
 ///
 /// Naming a read of a borrowed param does not change what a function may do
 /// with it: `p.y` in return position and `y = p.y` then `y` are the same
@@ -3287,11 +3273,9 @@ fn emit_mir_tail_value(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Option<
 /// the same reason the tail is — the name outlives the expression that
 /// produced it — so it goes through the same materialisation step.
 ///
-/// KNOWN GAP (pre-existing, not closed here): the rule fires only when
-/// [`mir_projection_root_local`] bottoms out in a borrowed param. A binding
-/// whose value is an OWNED local — a plain `let`, or an `own_param`-
-/// graduated by-value collection param — is still emitted as a raw move, so
-/// naming it and then reading the original does change what the fn may do:
+/// Owned locals use the same last-use facts as calls and returns: a value that
+/// remains live is cloned and a final read moves. Projections remain
+/// conservative and clone unless their field is directly Copy. Thus:
 ///
 /// ```text
 /// fn twice(n: Int) -> Int
@@ -3300,45 +3284,11 @@ fn emit_mir_tail_value(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Option<
 ///     Vector.len(a) + Vector.len(b)
 /// ```
 ///
-/// emits `let a = b;` and rustc rejects `b.len()` after it (E0382). The wide
-/// rule would close it for free — [`mir_maybe_clone`] emits `.clone()` for a
-/// local read that is not `last_use`, which is exactly this shape, and
-/// [`emit_mir_tail_value`] already uses it for a bare `Local` tail. It is
-/// left alone because widening here changes emitted bytes for every fn that
-/// names a live local, and the corpus has no instance of the shape
-/// (`examples/` and `self_hosted/` contain no bare `name = name` binding).
-/// Close it together with the tail/binding rule merge, not on its own.
+/// emits `let a = b.clone();`, preserving Aver value semantics and leaving
+/// the final `b` read valid.
 fn emit_mir_binding_value(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Option<String> {
     let code = emit_mir_expr(expr, ctx)?;
-    Some(mir_own_borrowed_read(code, &expr.node, ctx))
-}
-
-/// Materialise an owned value from a read that bottoms out in a borrowed
-/// param, leaving every other expression untouched.
-///
-/// The base chain is walked to its ROOT local rather than checked one level
-/// down: `s.piece.kind` is behind the same shared reference `s.piece` is, so
-/// a depth-1 rule leaves every nested read raw. Anything whose root is not a
-/// borrowed param — a call result, a constructor, an owned local — already
-/// owns what it produces and is returned verbatim, which is also what keeps
-/// this from double-cloning an argument (`mir_clone_arg` runs inside
-/// `emit_mir_expr`, on the arguments, never on the whole call).
-fn mir_own_borrowed_read(code: String, expr: &MirExpr, ctx: &MirEmitCtx<'_>) -> String {
-    match mir_projection_root_local(expr) {
-        Some(local) if ctx.is_borrowed_param(&local.name) => mir_maybe_clone(code, expr, ctx),
-        _ => code,
-    }
-}
-
-/// The local a chain of field reads bottoms out in: `p` for `p`, and `s` for
-/// both `s.piece` and `s.piece.kind`. `None` for anything else — a call, a
-/// constructor, an index, a literal — which owns its result already.
-fn mir_projection_root_local(expr: &MirExpr) -> Option<&MirLocal> {
-    match expr {
-        MirExpr::Local(_) => local_of(expr),
-        MirExpr::Project(p) => mir_projection_root_local(&p.node.base.node),
-        _ => None,
-    }
+    Some(materialize_owned(code, &expr.node, ctx))
 }
 
 /// Emit a non-TCO body's tail value as a bare `i64` expression. The tail
@@ -3809,7 +3759,7 @@ fn emit_mir_value_return(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Optio
     // those `Box` nodes, so the default path renders the boxed return
     // correctly without a codegen-side boxing pass.
     let code = emit_mir_expr(expr, ctx)?;
-    Some(mir_maybe_clone(code, &expr.node, ctx))
+    Some(materialize_owned(code, &expr.node, ctx))
 }
 
 /// Emit the self-TCO `{ rebind; continue }` block from the tail-call
@@ -4298,16 +4248,6 @@ fn emit_mir_trampoline_tail_expr(
 // conservative `last_use ? move : clone` shape — which is fine
 // because the coverage walk only inspects `Some` vs `None`.
 
-/// `&MirExpr` reference to a source-named local, if any. Synthetic
-/// locals (empty name) are excluded — the walker already bails on
-/// them upstream.
-fn local_of(expr: &MirExpr) -> Option<&MirLocal> {
-    match expr {
-        MirExpr::Local(l) if !l.node.name.is_empty() => Some(&l.node),
-        _ => None,
-    }
-}
-
 /// Whether a nested expression contains a final read of `slot`. Such reads
 /// may be emitted in an owning position, so a method receiver using the same
 /// local must be detached before evaluating that expression.
@@ -4421,106 +4361,11 @@ fn mir_call_borrow_overlaps_later_move(
         })
 }
 
-/// Should `.clone()` be skipped for this MIR expr? Mirror of HIR's
-/// `expr_skip_clone`. A local read skips clone on its last use or
-/// when Copy; `rc_wrapped` / `borrowed_params` never skip (they
-/// need the special clone paths in `mir_maybe_clone`). A name that
-/// isn't a known local is treated as a global / namespace and
-/// always skips. Non-locals (literals, nested exprs) never need a
-/// clone wrapper here.
-fn mir_expr_skip_clone(expr: &MirExpr, ctx: &MirEmitCtx<'_>) -> bool {
-    match local_of(expr) {
-        Some(local) => {
-            let name = local.name.as_str();
-            if ctx.is_rc_wrapped(name) || ctx.is_borrowed_param(name) {
-                return false;
-            }
-            // A self-TCO identity arg is absent from the emitted Rust, so
-            // MIR's syntactic `last_use` does not include the next loop
-            // iteration. Preserve that hidden use only at owning positions;
-            // bare i64 and genuinely Copy params still need no clone.
-            if ctx.is_loop_carried_param(name)
-                && !ctx.is_copy(name)
-                && !ctx.bare.is_bare(local.slot)
-            {
-                return false;
-            }
-            local.last_use || ctx.is_copy(name)
-        }
-        None => true,
-    }
-}
-
-/// Mirror of HIR's `maybe_clone`: wrap a local read in the right
-/// clone shape for an owning position (arg, return, ctor field,
-/// tuple / list / map element). `code` is the already-emitted
-/// expression text for `expr`.
-fn mir_maybe_clone(code: String, expr: &MirExpr, ctx: &MirEmitCtx<'_>) -> String {
-    if let Some(local) = local_of(expr) {
-        let name = local.name.as_str();
-        return if mir_expr_skip_clone(expr, ctx) {
-            code
-        } else if ctx.is_rc_wrapped(name) {
-            // Pass-through param (Rc<T> / &T): deref then clone.
-            format!("(*{}).clone()", code)
-        } else {
-            // Borrowed param or plain owned local: clone to own.
-            format!("{}.clone()", code)
-        };
-    }
-    // Field access (`Project`): emit_mir_expr produces `base.field`
-    // without clone; clone here for ownership. Matches HIR's
-    // `maybe_clone` `Attr` arm — builtin namespace access never
-    // reaches the MIR walker (it lowers to a `Call`), so no
-    // namespace special-case is needed.
-    if matches!(expr, MirExpr::Project(_)) {
-        return format!("{}.clone()", code);
-    }
-    code
-}
-
-/// Mirror of HIR's `clone_arg` (`clone_arg_with_options`): emit an
-/// expression as an owning argument. HIR elides the `.clone()` on a
-/// record field access whose field type is Copy
-/// (`attr_result_is_copy`); Wave 4 ports that elision here via
-/// [`mir_attr_result_is_copy`], reading the base local's stamped type.
-/// For the common case (non-`Project` args) this delegates to
-/// `mir_maybe_clone`, matching HIR exactly.
+/// Compatibility name for an owning call/aggregate argument. Copy-field
+/// elision, last-use moves and borrowed-value clones are all decided by the
+/// shared ownership model.
 fn mir_clone_arg(code: String, expr: &MirExpr, ctx: &MirEmitCtx<'_>) -> String {
-    if let MirExpr::Project(p) = expr
-        && mir_attr_result_is_copy(&p.node, ctx)
-    {
-        // Copy-typed record field: HIR returns the bare field access
-        // (no `.clone()`). Mirror that.
-        return code;
-    }
-    mir_maybe_clone(code, expr, ctx)
-}
-
-/// Mirror of HIR's `attr_result_is_copy` over a `MirProject`: the
-/// field access result is Copy iff the projection base is a
-/// `Type::Named` local and the projected field's declared type is a
-/// Copy type. Reads the base's type from `local_types` (params + let
-/// bindings — the MIR walker has richer coverage than HIR here, but the
-/// guard `obj is a Named local` is the same), then defers to the shared
-/// `record_field_is_copy` for the field-type lookup. Returns `false`
-/// (HIR's conservative "needs a clone") when there's no `CodegenContext`
-/// (coverage path) or the base isn't a Named local.
-fn mir_attr_result_is_copy(proj: &crate::ir::mir::MirProject, ctx: &MirEmitCtx<'_>) -> bool {
-    let Some(cg) = ctx.codegen else {
-        return false;
-    };
-    let Some(local) = local_of(&proj.base.node) else {
-        return false;
-    };
-    let Some(named_ty) = ctx
-        .local_types
-        .get(&local.name)
-        .filter(|t| matches!(t, Type::Named { .. }))
-    else {
-        return false;
-    };
-    super::expr::record_field_is_copy(named_ty, &proj.field, cg)
+    materialize_owned(code, expr, ctx)
 }
 
 /// Emit a named user-function call (`Call(Fn)` /
@@ -4581,7 +4426,7 @@ fn emit_named_call_to(
             // local (for example `f(x, g(x))` where `f` borrows and `g` owns),
             // otherwise rustc rejects the valid Aver program with E0505.
             let code = if mir_call_borrow_overlaps_later_move(i, args, &borrow_mask, ctx) {
-                mir_maybe_clone(code, &a.node, ctx)
+                materialize_owned(code, &a.node, ctx)
             } else {
                 code
             };
@@ -4611,34 +4456,7 @@ fn emit_named_call_to(
 /// a user fn whose param is `&T`. `code` is the already-emitted
 /// text for `expr`.
 fn mir_borrow_arg(code: String, expr: &MirExpr, ctx: &MirEmitCtx<'_>) -> String {
-    let Some(local) = local_of(expr) else {
-        // Complex expression: borrow the temporary.
-        return format!("&{}", code);
-    };
-    let name = local.name.as_str();
-    if ctx.is_copy(name) {
-        // Copy type: by value.
-        code
-    } else if matches!(ctx.local_types.get(name), Some(Type::Str)) {
-        // AverStr (Rc<str>): by value; last-use moves, else clone.
-        if local.last_use {
-            code
-        } else if ctx.is_rc_wrapped(name) {
-            format!("(*{}).clone()", code)
-        } else {
-            format!("{}.clone()", code)
-        }
-    } else if ctx.is_borrowed_param(name) {
-        // Already `&T` — pass directly.
-        code
-    } else if ctx.is_rc_wrapped(name) {
-        // Pass-through TCO param: deref to `&T`.
-        format!("&*{}", code)
-    } else {
-        // Owned local: borrow it (last-use and non-last-use both
-        // emit `&code` in the HIR walker).
-        format!("&{}", code)
-    }
+    materialize_borrowed(code, expr, ctx)
 }
 
 // ── Wave 3a: PURE builtin calls + deforestation intrinsics ──────────────
@@ -6843,21 +6661,10 @@ mod tests {
     // these are the same rules at walker resolution, cheap enough to run
     // on every `cargo test`.
     //
-    // WHAT THESE CAN AND CANNOT PIN. They run against `ctx_over`, which
-    // is NOT the ctx production uses: production always goes through
-    // `MirEmitCtx::for_fn` with `codegen: Some(ctx)` and the fn's params
-    // in `local_types`, while `ctx_over` leaves `codegen` `None` and
-    // takes `local_types` from an empty policy. That is sound today
-    // because the three rules under test — `mir_projection_root_local`,
-    // `mir_own_borrowed_read` and the `mir_maybe_clone` path they reach
-    // — read neither field. It stops being sound the moment either
-    // owning position starts consulting a rule that does: the nearest
-    // one is `mir_clone_arg`'s Copy-field elision, whose
-    // `mir_attr_result_is_copy` returns `false` whenever `codegen` is
-    // `None` or the base type is missing from `local_types`. Route the
-    // binding or the tail through that and these tests stay green while
-    // the emitted bytes change. The net that would see it is the
-    // build-and-run differential, not this module.
+    // `ctx_over` deliberately lacks a full `CodegenContext`, so these unit
+    // cases cannot prove Copy-field discovery or capability-resource
+    // identity. The build-and-run differential tests cover those production
+    // facts; here we pin the central borrowed→owned transition cheaply.
 
     /// A read of the named local (`last_use`, so nothing but the borrow
     /// policy can ask for a clone).
@@ -7016,11 +6823,10 @@ mod tests {
     }
 
     #[test]
-    fn owning_positions_leave_a_non_borrowed_read_alone() {
-        // The rule keys on the ROOT local being a borrowed param. A read
-        // rooted anywhere else — here a param the policy does not borrow —
-        // already owns its result and must stay verbatim, which is what
-        // keeps the emitted bytes of every other fn unchanged.
+    fn owning_positions_move_final_locals_and_clone_projections_conservatively() {
+        // A final owned local moves directly. Non-Copy projections clone even
+        // when their root is final-use; eliminating those clones needs a
+        // separate proof that partially moving the aggregate is safe.
         let policy = borrowed_param_policy("other");
         let ctx = ctx_over(&policy);
         let body = let_chain(
@@ -7030,7 +6836,7 @@ mod tests {
         );
         assert_eq!(
             emit_mir_fn_body(&body, &ctx).expect("binding chain emits"),
-            "    crate::cancel_checkpoint();\n    let kept @ _ = s;\n    let k @ _ = s.piece.kind;\n    s.tag"
+            "    crate::cancel_checkpoint();\n    let kept @ _ = s;\n    let k @ _ = s.piece.kind.clone();\n    s.tag.clone()"
         );
     }
 
