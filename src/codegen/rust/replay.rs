@@ -1,7 +1,8 @@
 use crate::ast::{TypeDef, TypeVariant};
+use crate::codegen::CodegenContext;
 
 use super::syntax::aver_name_to_rust;
-use super::types::type_annotation_to_rust;
+use super::types::type_annotation_to_rust_scoped;
 
 #[derive(Default)]
 pub(super) struct ReplayRuntimeOptions {
@@ -171,14 +172,27 @@ pub fn generate_replay_runtime(options: ReplayRuntimeOptions) -> String {
     format!("{}\n", sections.join("\n\n"))
 }
 
-pub fn emit_replay_value_impl(td: &TypeDef, packed_u8: bool) -> String {
+pub fn emit_replay_value_impl(
+    td: &TypeDef,
+    packed_u8: bool,
+    ctx: &CodegenContext,
+    scope: Option<&str>,
+) -> String {
     match td {
-        TypeDef::Product { name, fields, .. } => emit_record_impl(name, fields, packed_u8),
-        TypeDef::Sum { name, variants, .. } => emit_variant_impl(name, variants),
+        TypeDef::Product { name, fields, .. } => {
+            emit_record_impl(name, fields, packed_u8, ctx, scope)
+        }
+        TypeDef::Sum { name, variants, .. } => emit_variant_impl(name, variants, ctx, scope),
     }
 }
 
-fn emit_record_impl(name: &str, fields: &[(String, String)], packed_u8: bool) -> String {
+fn emit_record_impl(
+    name: &str,
+    fields: &[(String, String)],
+    packed_u8: bool,
+    ctx: &CodegenContext,
+    scope: Option<&str>,
+) -> String {
     let to_fields = fields
         .iter()
         .map(|(field_name, _)| {
@@ -203,7 +217,7 @@ fn emit_record_impl(name: &str, fields: &[(String, String)], packed_u8: bool) ->
         .map(|(field_name, field_type)| {
             let decoded = format!(
                 "<{} as ReplayValue>::from_replay_json(fields.get({:?}).ok_or_else(|| {:?}.to_string())?)?",
-                type_annotation_to_rust(field_type),
+                type_annotation_to_rust_scoped(field_type, ctx, scope),
                 field_name,
                 format!("$record {name} missing field '{field_name}'")
             );
@@ -252,7 +266,12 @@ fn emit_record_impl(name: &str, fields: &[(String, String)], packed_u8: bool) ->
     )
 }
 
-fn emit_variant_impl(name: &str, variants: &[TypeVariant]) -> String {
+fn emit_variant_impl(
+    name: &str,
+    variants: &[TypeVariant],
+    ctx: &CodegenContext,
+    scope: Option<&str>,
+) -> String {
     let to_arms = variants
         .iter()
         .map(|variant| emit_variant_to_arm(name, variant))
@@ -261,7 +280,7 @@ fn emit_variant_impl(name: &str, variants: &[TypeVariant]) -> String {
 
     let from_arms = variants
         .iter()
-        .map(|variant| emit_variant_from_arm(name, variant))
+        .map(|variant| emit_variant_from_arm(name, variant, ctx, scope))
         .collect::<Vec<_>>()
         .join("\n");
 
@@ -326,7 +345,12 @@ fn emit_variant_to_arm(type_name: &str, variant: &TypeVariant) -> String {
     )
 }
 
-fn emit_variant_from_arm(type_name: &str, variant: &TypeVariant) -> String {
+fn emit_variant_from_arm(
+    type_name: &str,
+    variant: &TypeVariant,
+    ctx: &CodegenContext,
+    scope: Option<&str>,
+) -> String {
     if variant.fields.is_empty() {
         return format!(
             "            {variant_name:?} => Ok({type_name}::{variant_name}),",
@@ -341,7 +365,7 @@ fn emit_variant_from_arm(type_name: &str, variant: &TypeVariant) -> String {
         .map(|(idx, field_type)| {
             format!(
                 "<{} as ReplayValue>::from_replay_json(fields.get({}).ok_or_else(|| format!(\"$variant {} missing field #{{}}\", {}))?)?",
-                replay_variant_field_type(type_name, field_type),
+                replay_variant_field_type(type_name, field_type, ctx, scope),
                 idx,
                 variant.name,
                 idx
@@ -356,8 +380,13 @@ fn emit_variant_from_arm(type_name: &str, variant: &TypeVariant) -> String {
     )
 }
 
-fn replay_variant_field_type(type_name: &str, field_type: &str) -> String {
-    let rust_ty = type_annotation_to_rust(field_type);
+fn replay_variant_field_type(
+    type_name: &str,
+    field_type: &str,
+    ctx: &CodegenContext,
+    scope: Option<&str>,
+) -> String {
+    let rust_ty = type_annotation_to_rust_scoped(field_type, ctx, scope);
     if field_type == type_name {
         format!("std::sync::Arc<{rust_ty}>")
     } else {

@@ -1,6 +1,4 @@
 #[allow(unused_imports)]
-use crate::aver_generated::domain::ast::*;
-#[allow(unused_imports)]
 use crate::*;
 
 /// Build name→fnId map from resolved function list.

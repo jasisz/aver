@@ -24,12 +24,7 @@ impl Parser {
         let line = self.current().line;
         self.advance(); // consume the contextual `operation`
 
-        let name_tok =
-            self.expect_kind(&TokenKind::Ident(String::new()), "Expected operation name")?;
-        let name = match name_tok.kind {
-            TokenKind::Ident(s) => s,
-            _ => unreachable!(),
-        };
+        let name = self.expect_user_identifier("Expected operation name", "operation names")?;
 
         self.expect_exact(&TokenKind::LParen)?;
         let params = self.parse_params()?;
@@ -145,14 +140,8 @@ impl Parser {
         let line = self.current().line;
         self.advance(); // consume the contextual `resource`
 
-        let name_tok = self.expect_kind(
-            &TokenKind::Ident(String::new()),
-            "Expected a type name after 'resource'",
-        )?;
-        let name = match name_tok.kind {
-            TokenKind::Ident(s) => s,
-            _ => unreachable!(),
-        };
+        let name =
+            self.expect_user_identifier("Expected a type name after 'resource'", "resource names")?;
 
         self.skip_newlines();
 

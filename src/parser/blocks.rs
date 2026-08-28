@@ -402,12 +402,10 @@ impl Parser {
                     if !self.looks_like_binding() {
                         break;
                     }
-                    let name_tok = self
-                        .expect_kind(&TokenKind::Ident(String::new()), "Expected binding name")?;
-                    let name = match name_tok.kind {
-                        TokenKind::Ident(s) => s,
-                        _ => unreachable!(),
-                    };
+                    let name = self.expect_user_identifier(
+                        "Expected binding name",
+                        "law-local binding names",
+                    )?;
                     self.expect_exact(&TokenKind::Assign)?;
                     let expr = self.parse_expr()?;
                     law_locals.push((name, expr));
@@ -779,12 +777,7 @@ impl Parser {
     pub(super) fn parse_decision(&mut self) -> Result<DecisionBlock, ParseError> {
         let line = self.current().line;
         self.expect_exact(&TokenKind::Decision)?;
-        let name_tok =
-            self.expect_kind(&TokenKind::Ident(String::new()), "Expected decision name")?;
-        let name = match name_tok.kind {
-            TokenKind::Ident(s) => s,
-            _ => unreachable!(),
-        };
+        let name = self.expect_user_identifier("Expected decision name", "decision names")?;
         self.skip_newlines();
 
         let mut date = String::new();

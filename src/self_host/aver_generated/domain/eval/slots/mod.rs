@@ -1,6 +1,4 @@
 #[allow(unused_imports)]
-use crate::aver_generated::domain::value::*;
-#[allow(unused_imports)]
 use crate::*;
 
 /// Create slot env: Vector<Val> of slotCount, args at 0..n-1.

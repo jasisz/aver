@@ -4,12 +4,7 @@ impl Parser {
     pub(super) fn parse_module(&mut self) -> Result<Module, ParseError> {
         let line = self.current().line;
         self.expect_exact(&TokenKind::Module)?;
-        let name_tok =
-            self.expect_kind(&TokenKind::Ident(String::new()), "Expected module name")?;
-        let name = match name_tok.kind {
-            TokenKind::Ident(s) => s,
-            _ => unreachable!(),
-        };
+        let name = self.expect_user_identifier("Expected module name", "module names")?;
         self.skip_newlines();
 
         let mut depends = Vec::new();
