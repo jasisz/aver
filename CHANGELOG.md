@@ -2,9 +2,11 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
-## 0.30.0 (unreleased)
+## Unreleased
 
 ### Fixed
+
+- **`List.take` and `Bytes.take` no longer read the whole list to hand back a few elements.** Taking the first few elements of a long list used to cost the length of the list, so a program that stepped through a buffer with `take` and `drop` took four times as long every time the buffer doubled. It now costs what it takes, and such a walk is linear: over 98,304 bytes it went from 42.5 s to 0.9 s, and 393,216 bytes — which used to need more than ten minutes — now takes 3.7 s. Taking at least the whole list hands back the same list instead of rebuilding it, unless that list is the remainder `drop` left behind — those elements are copied out, so holding the answer no longer holds the whole buffer it was read from. Closes [#1181](https://github.com/jasisz/aver/issues/1181).
 
 - **A loop that reads characters with `String.charAt` and then uses them no longer slows down as the string grows.** On the VM, reading a character and using it — adding `String.len(c)` to a total, handing it to another function — got about four times slower for every doubling of the string, while the same loop that ignores the character it read stayed flat. What a read costs is now decided by how many characters you read, not by how long the string is: 20,000 `String.charAt` calls over a 262,144-character string used to cost seventeen times what the same 20,000 calls cost over a 16,384-character one, and now cost the same. `String.slice` inside such a loop is fixed the same way. Generated Rust and wasm-gc were never affected. Closes [#1180](https://github.com/jasisz/aver/issues/1180).
 

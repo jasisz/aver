@@ -175,10 +175,10 @@ impl Parser {
         }
     }
 
-    /// Read a user-defined name that introduces a callable or local.
+    /// Read a user-defined declaration or binder name.
     ///
     /// The compiler owns the leading-double-underscore namespace for
-    /// intrinsics and synthesized binders. Rejecting it at the source
+    /// intrinsics, synthesized binders, and backend-generated items. Rejecting it at the source
     /// boundary makes those names hygienic by construction; compiler passes
     /// operate on the AST after parsing and may still introduce them.
     pub(super) fn expect_user_identifier(

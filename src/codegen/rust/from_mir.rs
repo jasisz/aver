@@ -70,8 +70,11 @@ use super::expr::{
     explicit_binding_pattern, explicit_parameter_pattern, has_list_patterns,
     has_string_literal_patterns,
 };
+use super::ownership::{
+    align_equality_operands, emits_direct_borrow, local_of, materialize_borrowed, materialize_owned,
+};
 use super::pattern::emit_pattern;
-use super::syntax::aver_name_to_rust;
+use super::syntax::{aver_name_to_rust, generated_ident};
 
 /// Walker-side emit context. Holds the slice of the
 /// `CodegenContext` the MIR-to-Rust walker reads — kept explicit
@@ -1129,9 +1132,9 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                             // zero-divisor trap (the `AverInt::div_trunc`
                             // parity). Bind the divisor once so it is
                             // evaluated a single time.
+                            let divisor = generated_ident("d");
                             return Some(format!(
-                                "{{ let __d = {}; if __d == 0i64 {{ panic!(\"divide by zero\") }} else {{ ({}) / __d }} }}",
-                                rb, lb
+                                "{{ let {divisor} = {rb}; if {divisor} == 0i64 {{ panic!(\"divide by zero\") }} else {{ ({lb}) / {divisor} }} }}"
                             ));
                         }
                         _ => {}
@@ -1175,7 +1178,7 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                         && mir_expr_contains_last_use_of_slot(&bop.rhs.node, lhs.slot)
                 });
                 let l = if lhs_rhs_move_overlap {
-                    mir_maybe_clone(l, &bop.lhs.node, emit_ctx)
+                    materialize_owned(l, &bop.lhs.node, emit_ctx)
                 } else {
                     l
                 };
@@ -1250,7 +1253,7 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                 && !ty_is_numeric(bop.lhs.ty())
                 && !ty_is_numeric(bop.rhs.ty())
             {
-                let l = mir_maybe_clone(l, &bop.lhs.node, emit_ctx);
+                let l = materialize_owned(l, &bop.lhs.node, emit_ctx);
                 Some(format!("({} + &{})", l, r))
             } else if matches!(bop.op, BinOp::Eq | BinOp::Neq) {
                 // HIR derefs `AverStr` (Rc<str>) to `&str` when one
@@ -1326,7 +1329,13 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                 }
             }
         }
-        MirExpr::Return(inner) => Some(format!("return {}", emit_mir_expr(inner, emit_ctx)?)),
+        MirExpr::Return(inner) => {
+            let code = emit_mir_expr(inner, emit_ctx)?;
+            Some(format!(
+                "return {}",
+                materialize_owned(code, &inner.node, emit_ctx)
+            ))
+        }
         MirExpr::TailCall(spanned_tc) => {
             // Tail call outside a self-TCO loop
             // emits as a regular function call — mirror of HIR's
@@ -1833,8 +1842,9 @@ fn emit_mir_capability_call(
         // temp. It skips `encode` on the invoke because it is already
         // a `ProviderValue`.
         let names = (0..owned_args.len())
-            .map(|index| format!("__provider_arg{index}"))
+            .map(|index| generated_ident(&format!("provider_arg{index}")))
             .collect::<Vec<_>>();
+        let policy_path = generated_ident("policy_path");
         let mut lines = vec!["{".to_string()];
         lines.push("    crate::cancel_checkpoint();".to_string());
         for ((name, value), ty) in names.iter().zip(&owned_args).zip(&owned_arg_types) {
@@ -1845,8 +1855,8 @@ fn emit_mir_capability_call(
             names[0], names[0], operation.module
         ));
         lines.push(format!(
-            "    if let aver_rt::provider::ProviderValue::String(__policy_path) = &{} {{ {}({:?}, __policy_path).expect(\"aver.toml policy violation\"); }}",
-            names[0], helper, operation.canonical_name
+            "    if let aver_rt::provider::ProviderValue::String({policy_path}) = &{} {{ {}({:?}, {policy_path}).expect(\"aver.toml policy violation\"); }}",
+            names[0], helper, operation.canonical_name,
         ));
         let mut invoke_args = vec![names[0].clone()];
         invoke_args.extend(names[1..].iter().map(|name| {
@@ -1874,7 +1884,7 @@ fn emit_mir_capability_call(
             .is_some_and(|codegen| codegen.emit_replay_runtime)
     {
         let names = (0..owned_args.len())
-            .map(|index| format!("__provider_arg{index}"))
+            .map(|index| generated_ident(&format!("provider_arg{index}")))
             .collect::<Vec<_>>();
         let mut lines = vec!["{".to_string()];
         // Effectful provider calls cross a host boundary, so they take
@@ -1894,7 +1904,7 @@ fn emit_mir_capability_call(
 
     let replay = operation.replay?.as_str();
     let names = (0..owned_args.len())
-        .map(|index| format!("__provider_arg{index}"))
+        .map(|index| generated_ident(&format!("provider_arg{index}")))
         .collect::<Vec<_>>();
     let json_args = names
         .iter()
@@ -2045,7 +2055,7 @@ fn adapt_first_class_fn_ref(name: &str, static_ref: String, ctx: &MirEmitCtx<'_>
     }
 
     let params: Vec<String> = (0..resolved.params.len())
-        .map(|i| format!("__aver_fn_arg{i}"))
+        .map(|i| generated_ident(&format!("aver_fn_arg{i}")))
         .collect();
     let args: Vec<String> = params
         .iter()
@@ -2253,6 +2263,14 @@ fn emit_mir_independent_product(
     }
 
     let n = parts.len();
+    let result_prefix = generated_ident("r");
+    let value_prefix = generated_ident("v");
+    let branch_prefix = generated_ident("b");
+    let handle_prefix = generated_ident("h");
+    let parallel_scope = generated_ident("parallel_scope");
+    let cancel_flag = generated_ident("cancel_flag");
+    let thread_scope = generated_ident("s");
+    let branch_result = generated_ident("result");
     // The replay flag lives on the full `CodegenContext`; the coverage /
     // test path has none → treat as no replay (mirror of HIR's
     // `ctx.emit_replay_runtime`, conservative on the coverage walk).
@@ -2267,15 +2285,15 @@ fn emit_mir_independent_product(
         code.push_str("crate::aver_replay::enter_effect_group(); ");
         for (i, part) in parts.iter().enumerate() {
             code.push_str(&format!(
-                "crate::aver_replay::set_effect_branch({i}); let _r{i} = {part}; "
+                "crate::aver_replay::set_effect_branch({i}); let {result_prefix}{i} = {part}; "
             ));
         }
         code.push_str("crate::aver_replay::exit_effect_group(); ");
         if unwrap {
-            code.push_str(&emit_result_tuple_unwrap("_r", "__v", n));
+            code.push_str(&emit_result_tuple_unwrap(&result_prefix, &value_prefix, n));
             code.push('?');
         } else {
-            code.push_str(&emit_tuple_from_vars("_r", n));
+            code.push_str(&emit_tuple_from_vars(&result_prefix, n));
         }
         code.push_str(" } else { ");
     }
@@ -2283,60 +2301,66 @@ fn emit_mir_independent_product(
     if unwrap {
         code.push_str("{ ");
         if has_replay {
-            code.push_str(
-                "let __parallel_scope = crate::aver_replay::capture_parallel_scope_context(); ",
-            );
+            code.push_str(&format!(
+                "let {parallel_scope} = crate::aver_replay::capture_parallel_scope_context(); "
+            ));
         }
-        code.push_str(
-            "let __cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)); ",
-        );
-        code.push_str("std::thread::scope(|_s| { ");
+        code.push_str(&format!(
+            "let {cancel_flag} = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)); "
+        ));
+        code.push_str(&format!("std::thread::scope(|{thread_scope}| {{ "));
         for (i, (item, part)) in ip.items.iter().zip(parts.iter()).enumerate() {
+            let branch_scope = generated_ident(&format!("parallel_scope{i}"));
+            let branch_cancel = generated_ident(&format!("cancel_flag{i}"));
             if has_replay {
-                code.push_str(&format!(
-                    "let __parallel_scope{i} = __parallel_scope.clone(); "
-                ));
+                code.push_str(&format!("let {branch_scope} = {parallel_scope}.clone(); "));
             }
-            code.push_str(&format!("let __cancel_flag{i} = __cancel_flag.clone(); "));
+            code.push_str(&format!("let {branch_cancel} = {cancel_flag}.clone(); "));
             let has_captures = emit_parallel_capture_bindings(&mut code, i, &item.node, emit_ctx);
             if has_replay {
                 code.push_str(&format!(
-                    "crate::aver_replay::with_parallel_scope_context(__parallel_scope{i}.clone(), move || "
+                    "crate::aver_replay::with_parallel_scope_context({branch_scope}.clone(), move || "
                 ));
             }
-            code.push_str("{ crate::run_cancelable_branch(__cancel_flag");
-            code.push_str(&i.to_string());
-            code.push_str(".clone(), move || { let __result = ");
+            code.push_str(&format!(
+                "{{ crate::run_cancelable_branch({branch_cancel}.clone(), move || {{ let {branch_result} = "
+            ));
             code.push_str(part);
-            code.push_str("; if let Err(_) = &__result { __cancel_flag");
-            code.push_str(&i.to_string());
-            code.push_str(".store(true, std::sync::atomic::Ordering::Relaxed); } __result }) }");
+            code.push_str(&format!(
+                "; if let Err(_) = &{branch_result} {{ {branch_cancel}.store(true, std::sync::atomic::Ordering::Relaxed); }} {branch_result} }}) }}"
+            ));
             if has_replay {
                 code.push(')');
             }
             code.push_str(if has_captures { ") }; " } else { "); " });
         }
         for i in 0..n {
-            code.push_str(&format!("let _b{i} = _h{i}.join().unwrap(); "));
+            code.push_str(&format!(
+                "let {branch_prefix}{i} = {handle_prefix}{i}.join().unwrap(); "
+            ));
         }
-        code.push_str(&emit_parallel_result_tuple_unwrap("_b", "_r", "__v", n));
+        code.push_str(&emit_parallel_result_tuple_unwrap(
+            &branch_prefix,
+            &result_prefix,
+            &value_prefix,
+            n,
+        ));
         code.push_str(" })? }");
     } else {
         if has_replay {
-            code.push_str(
-                "let __parallel_scope = crate::aver_replay::capture_parallel_scope_context(); ",
-            );
+            code.push_str(&format!(
+                "let {parallel_scope} = crate::aver_replay::capture_parallel_scope_context(); "
+            ));
         }
-        code.push_str("std::thread::scope(|_s| { ");
+        code.push_str(&format!("std::thread::scope(|{thread_scope}| {{ "));
         for (i, (item, part)) in ip.items.iter().zip(parts.iter()).enumerate() {
             if has_replay {
-                code.push_str(&format!(
-                    "let __parallel_scope{i} = __parallel_scope.clone(); "
-                ));
+                let branch_scope = generated_ident(&format!("parallel_scope{i}"));
+                code.push_str(&format!("let {branch_scope} = {parallel_scope}.clone(); "));
                 let has_captures =
                     emit_parallel_capture_bindings(&mut code, i, &item.node, emit_ctx);
                 code.push_str(&format!(
-                    "crate::aver_replay::with_parallel_scope_context(__parallel_scope{i}.clone(), move || {part}))"
+                    "crate::aver_replay::with_parallel_scope_context({branch_scope}.clone(), move || {part}))"
                 ));
                 code.push_str(if has_captures { " }; " } else { "; " });
             } else {
@@ -2347,9 +2371,11 @@ fn emit_mir_independent_product(
             }
         }
         for i in 0..n {
-            code.push_str(&format!("let _r{i} = _h{i}.join().unwrap(); "));
+            code.push_str(&format!(
+                "let {result_prefix}{i} = {handle_prefix}{i}.join().unwrap(); "
+            ));
         }
-        code.push_str(&emit_tuple_from_vars("_r", n));
+        code.push_str(&emit_tuple_from_vars(&result_prefix, n));
         code.push_str(" }) ");
     }
 
@@ -2371,7 +2397,7 @@ fn emit_mir_independent_product(
 /// sibling captures.
 ///
 /// Returns whether a capture block was opened; the caller closes either
-/// `_s.spawn(…) };` or the capture-free `_s.spawn(…);` shape. Keeping the old
+/// `scope.spawn(…) };` or the capture-free `scope.spawn(…);` shape. Keeping the old
 /// shape for capture-free branches avoids churn in generated Rust.
 fn emit_parallel_capture_bindings(
     code: &mut String,
@@ -2380,9 +2406,11 @@ fn emit_parallel_capture_bindings(
     ctx: &MirEmitCtx<'_>,
 ) -> bool {
     let captures = mir_free_locals(item);
-    code.push_str(&format!("let _h{branch} = "));
+    let handle = generated_ident(&format!("h{branch}"));
+    let thread_scope = generated_ident("s");
+    code.push_str(&format!("let {handle} = "));
     if captures.is_empty() {
-        code.push_str("_s.spawn(move || ");
+        code.push_str(&format!("{thread_scope}.spawn(move || "));
         return false;
     }
 
@@ -2400,7 +2428,7 @@ fn emit_parallel_capture_bindings(
         };
         code.push_str(&format!("let {rust_name} = {capture}; "));
     }
-    code.push_str("_s.spawn(move || ");
+    code.push_str(&format!("{thread_scope}.spawn(move || "));
     true
 }
 
@@ -2506,7 +2534,7 @@ fn mir_free_locals(item: &MirExpr) -> BTreeMap<LocalId, MirLocal> {
 ///    renders `if (code < 48) { else } else { then }`. Re-apply HIR's
 ///    rewrite so the two match.
 /// 2. **Branch clone.** HIR runs each branch through `maybe_clone`
-///    (owning position). Mirror with `mir_maybe_clone` (a no-op for the
+///    (owning position). Mirror with `materialize_owned` (a no-op for the
 ///    already-graduated cases, exact for the rest).
 fn emit_mir_if_then_else(
     ite: &crate::ir::mir::MirIfThenElse,
@@ -2527,8 +2555,10 @@ fn emit_mir_if_then_else(
     // deref-applying `BinOp` arm.
     let (cond, then_src, else_src) = mir_if_cond_and_branches(ite, emit_ctx)?;
 
-    let then_branch = mir_maybe_clone(emit_mir_expr(then_src, emit_ctx)?, &then_src.node, emit_ctx);
-    let else_branch = mir_maybe_clone(emit_mir_expr(else_src, emit_ctx)?, &else_src.node, emit_ctx);
+    let then_branch =
+        materialize_owned(emit_mir_expr(then_src, emit_ctx)?, &then_src.node, emit_ctx);
+    let else_branch =
+        materialize_owned(emit_mir_expr(else_src, emit_ctx)?, &else_src.node, emit_ctx);
     Some(format!(
         "if {} {{ {} }} else {{ {} }}",
         cond, then_branch, else_branch
@@ -2546,7 +2576,7 @@ fn emit_mir_if_then_else(
 //      stamped it). Build synthetic `ResolvedMatchArm`s carrying those
 //      patterns + neutral bodies.
 //   2. Pre-render every arm body via the MIR walker (`emit_mir_expr` +
-//      `mir_maybe_clone`). If any arm body can't render, the whole
+//      `materialize_owned`). If any arm body can't render, the whole
 //      match falls back to HIR. The dispatch/list emitters take a
 //      `body_for_arm` closure; we map each synthetic arm back to its
 //      pre-rendered MIR body by pointer offset into the synthetic slice.
@@ -2654,7 +2684,7 @@ fn emit_mir_match(m: &MirMatch, emit_ctx: &MirEmitCtx<'_>) -> Option<String> {
     // `maybe_clone(emit_expr(&arm.body.node, …), &arm.body.node, …)`.
     emit_mir_match_with(m, emit_ctx, &|arm_body, ctx| {
         let body = emit_mir_expr(arm_body, ctx)?;
-        Some(mir_maybe_clone(body, &arm_body.node, ctx))
+        Some(materialize_owned(body, &arm_body.node, ctx))
     })
 }
 
@@ -2900,18 +2930,7 @@ fn try_emit_int_literal_match(
 ) -> Option<String> {
     // Bind the subject once so a non-trivial expr is evaluated a single time
     // and the guards / bindings reference the temp.
-    let subject_name = "__int_match_subject";
-
-    // Collect every binding name used anywhere in the match, so the fresh
-    // tuple-element temporaries (`__litN`) can be chosen to never collide
-    // with a real pattern binding (hygiene — fix #4).
-    let mut used_names: HashSet<String> = HashSet::new();
-    for arm in arms {
-        for b in crate::ir::vars::resolved_pattern_bindings(&arm.pattern) {
-            used_names.insert(aver_name_to_rust(&b));
-        }
-    }
-    used_names.insert(subject_name.to_string());
+    let subject_name = generated_ident("int_match_subject");
 
     // Pre-render the per-element tuple temp names, fresh + non-colliding.
     // The same N temps serve every tuple arm (the subject is one tuple), so
@@ -2921,22 +2940,9 @@ fn try_emit_int_literal_match(
         _ => None,
     });
     let tuple_temps: Vec<String> = match tuple_arity {
-        Some(n) => {
-            let mut temps = Vec::with_capacity(n);
-            let mut counter = 0usize;
-            for _ in 0..n {
-                let name = loop {
-                    let candidate = format!("__lit{}", counter);
-                    counter += 1;
-                    if !used_names.contains(&candidate) {
-                        break candidate;
-                    }
-                };
-                used_names.insert(name.clone());
-                temps.push(name);
-            }
-            temps
-        }
+        Some(n) => (0..n)
+            .map(|index| generated_ident(&format!("lit{index}")))
+            .collect(),
         None => Vec::new(),
     };
 
@@ -3020,7 +3026,7 @@ fn try_emit_int_literal_match(
                 let mut conds: Vec<String> = Vec::new();
                 let mut prelude = String::new();
                 for (pat, temp) in pats.iter().zip(tuple_temps.iter()) {
-                    // Each top-level temp `__litN` is a reference to the
+                    // Each top-level generated temp is a reference to the
                     // tuple element (`&Elem`), so its value place is `*temp`.
                     // Recurse into the element, destructuring nested tuples
                     // to arbitrary depth via field-index access expressions.
@@ -3169,19 +3175,11 @@ fn mir_emit_equality(
     {
         return format!("({:?} {} &*{})", s, op_str, r);
     }
-    // Borrow-by-default and mutual-TCO invariant hoisting make collection /
-    // wrapper / named-type parameters `&T`, while calls and constructors still
-    // produce an owned `T`. Rust does not provide `PartialEq<&T> for T`, so
-    // compare two references whenever exactly one side is a borrowed
-    // parameter. Borrowing the owned expression is temporary, allocation-free,
-    // and preserves evaluation order.
-    let lhs_borrowed = mir_expr_is_borrowed_param_read(&bop.lhs.node, emit_ctx);
-    let rhs_borrowed = mir_expr_is_borrowed_param_read(&bop.rhs.node, emit_ctx);
-    match (lhs_borrowed, rhs_borrowed) {
-        (false, true) => format!("(&({}) {} {})", l, op_str, r),
-        (true, false) => format!("({} {} &({}))", l, op_str, r),
-        _ => format!("({} {} {})", l, op_str, r),
-    }
+    // All non-string equality sites align through the same explicit value
+    // modes as calls and returns. When either side emits `&T`, compare two
+    // borrows; otherwise retain `T op T`.
+    let (left, right) = align_equality_operands(l, &bop.lhs.node, r, &bop.rhs.node, emit_ctx);
+    format!("({left} {op_str} {right})")
 }
 
 /// Is this expression a direct read whose emitted Rust representation is `&T`?
@@ -3191,10 +3189,7 @@ fn mir_emit_equality(
 /// whose Rust type is `&T`. Projections and compound expressions have their own
 /// ownership rules and deliberately do not count as borrowed-param reads here.
 fn mir_expr_is_borrowed_param_read(expr: &MirExpr, emit_ctx: &MirEmitCtx<'_>) -> bool {
-    local_of(expr).is_some_and(|local| {
-        emit_ctx.is_borrowed_param(&local.name)
-            || (emit_ctx.rc_wrapped_are_borrowed_refs && emit_ctx.is_rc_wrapped(&local.name))
-    })
+    emits_direct_borrow(expr, emit_ctx)
 }
 
 /// Emit the FULL function body the MIR walker produces, in the
@@ -3255,34 +3250,20 @@ pub(super) fn emit_mir_fn_body(
 /// Emit a fn body's tail expression as an OWNED value.
 ///
 /// The tail is a return position, so whatever lands there has to own what
-/// it hands back — the same rule [`mir_maybe_clone`] already applies to a
+/// it hands back — the same rule [`materialize_owned`] already applies to a
 /// call argument, a match arm and a TCO base-case return. Two shapes reach
 /// it needing the wrapper, because `emit_mir_expr` renders both bare: a
 /// read of a borrowed param (`&T` against a by-value return type) and a
 /// field read through one at any depth (a move out of a shared reference).
 ///
-/// The tail applies a WIDER rule than [`emit_mir_binding_value`] does, and
-/// the difference is deliberate rather than incidental: a bare `Local` tail
-/// goes through the full [`mir_maybe_clone`] policy, which also covers an
-/// `rc_wrapped` local (`(*x).clone()`) and a non-last-use owned local
-/// (`x.clone()`) — neither of which is a borrowed-param read. Only the
-/// non-`Local` shapes fall back to the narrow root-of-a-projection rule.
-/// The extra reach is inert today (`rc_wrapped` is populated only on the
-/// TCO paths, and a top-level tail read is by definition a last use), which
-/// is why the binding position was not widened to match: it would change no
-/// emitted byte and would cost a second policy to keep honest. A future
-/// merge of the TCO and non-TCO policies would make the difference live, so
-/// widen the binding rule at the same time if that ever happens.
+/// Tail values, `let` bindings, call arguments, constructor fields and match
+/// arms all cross this boundary through the same explicit value-mode model.
 fn emit_mir_tail_value(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Option<String> {
     let code = emit_mir_expr(expr, ctx)?;
-    if local_of(&expr.node).is_some() {
-        return Some(mir_maybe_clone(code, &expr.node, ctx));
-    }
-    Some(mir_own_borrowed_read(code, &expr.node, ctx))
+    Some(materialize_owned(code, &expr.node, ctx))
 }
 
-/// Emit a `let` binding's value as an OWNED value when it reads a BORROWED
-/// PARAM — and only then.
+/// Emit a `let` binding's value as an OWNED value.
 ///
 /// Naming a read of a borrowed param does not change what a function may do
 /// with it: `p.y` in return position and `y = p.y` then `y` are the same
@@ -3292,11 +3273,9 @@ fn emit_mir_tail_value(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Option<
 /// the same reason the tail is — the name outlives the expression that
 /// produced it — so it goes through the same materialisation step.
 ///
-/// KNOWN GAP (pre-existing, not closed here): the rule fires only when
-/// [`mir_projection_root_local`] bottoms out in a borrowed param. A binding
-/// whose value is an OWNED local — a plain `let`, or an `own_param`-
-/// graduated by-value collection param — is still emitted as a raw move, so
-/// naming it and then reading the original does change what the fn may do:
+/// Owned locals use the same last-use facts as calls and returns: a value that
+/// remains live is cloned and a final read moves. Projections remain
+/// conservative and clone unless their field is directly Copy. Thus:
 ///
 /// ```text
 /// fn twice(n: Int) -> Int
@@ -3305,45 +3284,11 @@ fn emit_mir_tail_value(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Option<
 ///     Vector.len(a) + Vector.len(b)
 /// ```
 ///
-/// emits `let a = b;` and rustc rejects `b.len()` after it (E0382). The wide
-/// rule would close it for free — [`mir_maybe_clone`] emits `.clone()` for a
-/// local read that is not `last_use`, which is exactly this shape, and
-/// [`emit_mir_tail_value`] already uses it for a bare `Local` tail. It is
-/// left alone because widening here changes emitted bytes for every fn that
-/// names a live local, and the corpus has no instance of the shape
-/// (`examples/` and `self_hosted/` contain no bare `name = name` binding).
-/// Close it together with the tail/binding rule merge, not on its own.
+/// emits `let a = b.clone();`, preserving Aver value semantics and leaving
+/// the final `b` read valid.
 fn emit_mir_binding_value(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Option<String> {
     let code = emit_mir_expr(expr, ctx)?;
-    Some(mir_own_borrowed_read(code, &expr.node, ctx))
-}
-
-/// Materialise an owned value from a read that bottoms out in a borrowed
-/// param, leaving every other expression untouched.
-///
-/// The base chain is walked to its ROOT local rather than checked one level
-/// down: `s.piece.kind` is behind the same shared reference `s.piece` is, so
-/// a depth-1 rule leaves every nested read raw. Anything whose root is not a
-/// borrowed param — a call result, a constructor, an owned local — already
-/// owns what it produces and is returned verbatim, which is also what keeps
-/// this from double-cloning an argument (`mir_clone_arg` runs inside
-/// `emit_mir_expr`, on the arguments, never on the whole call).
-fn mir_own_borrowed_read(code: String, expr: &MirExpr, ctx: &MirEmitCtx<'_>) -> String {
-    match mir_projection_root_local(expr) {
-        Some(local) if ctx.is_borrowed_param(&local.name) => mir_maybe_clone(code, expr, ctx),
-        _ => code,
-    }
-}
-
-/// The local a chain of field reads bottoms out in: `p` for `p`, and `s` for
-/// both `s.piece` and `s.piece.kind`. `None` for anything else — a call, a
-/// constructor, an index, a literal — which owns its result already.
-fn mir_projection_root_local(expr: &MirExpr) -> Option<&MirLocal> {
-    match expr {
-        MirExpr::Local(_) => local_of(expr),
-        MirExpr::Project(p) => mir_projection_root_local(&p.node.base.node),
-        _ => None,
-    }
+    Some(materialize_owned(code, &expr.node, ctx))
 }
 
 /// Emit a non-TCO body's tail value as a bare `i64` expression. The tail
@@ -3814,7 +3759,7 @@ fn emit_mir_value_return(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Optio
     // those `Box` nodes, so the default path renders the boxed return
     // correctly without a codegen-side boxing pass.
     let code = emit_mir_expr(expr, ctx)?;
-    Some(mir_maybe_clone(code, &expr.node, ctx))
+    Some(materialize_owned(code, &expr.node, ctx))
 }
 
 /// Emit the self-TCO `{ rebind; continue }` block from the tail-call
@@ -3880,17 +3825,15 @@ fn emit_mir_self_tco_continue(
     // Phase 1: snapshot ALL rebound args into temps (always-snapshot).
     for (i, arg_str) in arg_strs.iter().enumerate() {
         if let Some(arg_str) = arg_str {
-            lines.push(format!("            let __tco{} = {};", i, arg_str));
+            let temp = generated_ident(&format!("tco{i}"));
+            lines.push(format!("            let {temp} = {arg_str};"));
         }
     }
     // Phase 2: assign temps back to params, in order.
     for (i, (name, _)) in params.iter().enumerate() {
         if arg_strs[i].is_some() {
-            lines.push(format!(
-                "            {} = __tco{};",
-                aver_name_to_rust(name),
-                i
-            ));
+            let temp = generated_ident(&format!("tco{i}"));
+            lines.push(format!("            {} = {temp};", aver_name_to_rust(name),));
         }
     }
     lines.push("            continue;".to_string());
@@ -3981,8 +3924,10 @@ pub(super) fn emit_mir_mutual_tco_block(
     if group_fns.is_empty() {
         return None;
     }
-    let enum_name = format!("__MutualTco{}", group_id);
-    let trampoline_name = format!("__mutual_tco_trampoline_{}", group_id);
+    let enum_name = super::syntax::generated_ident(&format!("MutualTco{group_id}"));
+    let trampoline_name =
+        super::syntax::generated_ident(&format!("mutual_tco_trampoline_{group_id}"));
+    let state_name = super::syntax::generated_ident("state");
     let ret_type = super::types::type_to_rust_scoped(&group_fns[0].return_type, ctx, scope);
 
     let member_fn_ids: HashSet<crate::ir::FnId> = mir_fns.iter().map(|m| m.fn_id).collect();
@@ -4055,11 +4000,11 @@ pub(super) fn emit_mir_mutual_tco_block(
     let rc_extra_params: String = mutual_rc_param_sig(group_fns[0], &rc_names, ctx, scope);
     let mut tramp_lines = Vec::new();
     tramp_lines.push(format!(
-        "fn {}(mut __state: {}{}) -> {} {{",
-        trampoline_name, enum_name, rc_extra_params, ret_type
+        "fn {}(mut {}: {}{}) -> {} {{",
+        trampoline_name, state_name, enum_name, rc_extra_params, ret_type
     ));
     tramp_lines.push("    loop {".to_string());
-    tramp_lines.push("        __state = match __state {".to_string());
+    tramp_lines.push(format!("        {state_name} = match {state_name} {{"));
     for (fd, arm_body) in group_fns.iter().zip(&arm_bodies) {
         let variant = fn_name_to_variant(&fd.name);
         let param_bindings: Vec<String> = fd
@@ -4303,16 +4248,6 @@ fn emit_mir_trampoline_tail_expr(
 // conservative `last_use ? move : clone` shape — which is fine
 // because the coverage walk only inspects `Some` vs `None`.
 
-/// `&MirExpr` reference to a source-named local, if any. Synthetic
-/// locals (empty name) are excluded — the walker already bails on
-/// them upstream.
-fn local_of(expr: &MirExpr) -> Option<&MirLocal> {
-    match expr {
-        MirExpr::Local(l) if !l.node.name.is_empty() => Some(&l.node),
-        _ => None,
-    }
-}
-
 /// Whether a nested expression contains a final read of `slot`. Such reads
 /// may be emitted in an owning position, so a method receiver using the same
 /// local must be detached before evaluating that expression.
@@ -4426,106 +4361,11 @@ fn mir_call_borrow_overlaps_later_move(
         })
 }
 
-/// Should `.clone()` be skipped for this MIR expr? Mirror of HIR's
-/// `expr_skip_clone`. A local read skips clone on its last use or
-/// when Copy; `rc_wrapped` / `borrowed_params` never skip (they
-/// need the special clone paths in `mir_maybe_clone`). A name that
-/// isn't a known local is treated as a global / namespace and
-/// always skips. Non-locals (literals, nested exprs) never need a
-/// clone wrapper here.
-fn mir_expr_skip_clone(expr: &MirExpr, ctx: &MirEmitCtx<'_>) -> bool {
-    match local_of(expr) {
-        Some(local) => {
-            let name = local.name.as_str();
-            if ctx.is_rc_wrapped(name) || ctx.is_borrowed_param(name) {
-                return false;
-            }
-            // A self-TCO identity arg is absent from the emitted Rust, so
-            // MIR's syntactic `last_use` does not include the next loop
-            // iteration. Preserve that hidden use only at owning positions;
-            // bare i64 and genuinely Copy params still need no clone.
-            if ctx.is_loop_carried_param(name)
-                && !ctx.is_copy(name)
-                && !ctx.bare.is_bare(local.slot)
-            {
-                return false;
-            }
-            local.last_use || ctx.is_copy(name)
-        }
-        None => true,
-    }
-}
-
-/// Mirror of HIR's `maybe_clone`: wrap a local read in the right
-/// clone shape for an owning position (arg, return, ctor field,
-/// tuple / list / map element). `code` is the already-emitted
-/// expression text for `expr`.
-fn mir_maybe_clone(code: String, expr: &MirExpr, ctx: &MirEmitCtx<'_>) -> String {
-    if let Some(local) = local_of(expr) {
-        let name = local.name.as_str();
-        return if mir_expr_skip_clone(expr, ctx) {
-            code
-        } else if ctx.is_rc_wrapped(name) {
-            // Pass-through param (Rc<T> / &T): deref then clone.
-            format!("(*{}).clone()", code)
-        } else {
-            // Borrowed param or plain owned local: clone to own.
-            format!("{}.clone()", code)
-        };
-    }
-    // Field access (`Project`): emit_mir_expr produces `base.field`
-    // without clone; clone here for ownership. Matches HIR's
-    // `maybe_clone` `Attr` arm — builtin namespace access never
-    // reaches the MIR walker (it lowers to a `Call`), so no
-    // namespace special-case is needed.
-    if matches!(expr, MirExpr::Project(_)) {
-        return format!("{}.clone()", code);
-    }
-    code
-}
-
-/// Mirror of HIR's `clone_arg` (`clone_arg_with_options`): emit an
-/// expression as an owning argument. HIR elides the `.clone()` on a
-/// record field access whose field type is Copy
-/// (`attr_result_is_copy`); Wave 4 ports that elision here via
-/// [`mir_attr_result_is_copy`], reading the base local's stamped type.
-/// For the common case (non-`Project` args) this delegates to
-/// `mir_maybe_clone`, matching HIR exactly.
+/// Compatibility name for an owning call/aggregate argument. Copy-field
+/// elision, last-use moves and borrowed-value clones are all decided by the
+/// shared ownership model.
 fn mir_clone_arg(code: String, expr: &MirExpr, ctx: &MirEmitCtx<'_>) -> String {
-    if let MirExpr::Project(p) = expr
-        && mir_attr_result_is_copy(&p.node, ctx)
-    {
-        // Copy-typed record field: HIR returns the bare field access
-        // (no `.clone()`). Mirror that.
-        return code;
-    }
-    mir_maybe_clone(code, expr, ctx)
-}
-
-/// Mirror of HIR's `attr_result_is_copy` over a `MirProject`: the
-/// field access result is Copy iff the projection base is a
-/// `Type::Named` local and the projected field's declared type is a
-/// Copy type. Reads the base's type from `local_types` (params + let
-/// bindings — the MIR walker has richer coverage than HIR here, but the
-/// guard `obj is a Named local` is the same), then defers to the shared
-/// `record_field_is_copy` for the field-type lookup. Returns `false`
-/// (HIR's conservative "needs a clone") when there's no `CodegenContext`
-/// (coverage path) or the base isn't a Named local.
-fn mir_attr_result_is_copy(proj: &crate::ir::mir::MirProject, ctx: &MirEmitCtx<'_>) -> bool {
-    let Some(cg) = ctx.codegen else {
-        return false;
-    };
-    let Some(local) = local_of(&proj.base.node) else {
-        return false;
-    };
-    let Some(named_ty) = ctx
-        .local_types
-        .get(&local.name)
-        .filter(|t| matches!(t, Type::Named { .. }))
-    else {
-        return false;
-    };
-    super::expr::record_field_is_copy(named_ty, &proj.field, cg)
+    materialize_owned(code, expr, ctx)
 }
 
 /// Emit a named user-function call (`Call(Fn)` /
@@ -4586,7 +4426,7 @@ fn emit_named_call_to(
             // local (for example `f(x, g(x))` where `f` borrows and `g` owns),
             // otherwise rustc rejects the valid Aver program with E0505.
             let code = if mir_call_borrow_overlaps_later_move(i, args, &borrow_mask, ctx) {
-                mir_maybe_clone(code, &a.node, ctx)
+                materialize_owned(code, &a.node, ctx)
             } else {
                 code
             };
@@ -4616,34 +4456,7 @@ fn emit_named_call_to(
 /// a user fn whose param is `&T`. `code` is the already-emitted
 /// text for `expr`.
 fn mir_borrow_arg(code: String, expr: &MirExpr, ctx: &MirEmitCtx<'_>) -> String {
-    let Some(local) = local_of(expr) else {
-        // Complex expression: borrow the temporary.
-        return format!("&{}", code);
-    };
-    let name = local.name.as_str();
-    if ctx.is_copy(name) {
-        // Copy type: by value.
-        code
-    } else if matches!(ctx.local_types.get(name), Some(Type::Str)) {
-        // AverStr (Rc<str>): by value; last-use moves, else clone.
-        if local.last_use {
-            code
-        } else if ctx.is_rc_wrapped(name) {
-            format!("(*{}).clone()", code)
-        } else {
-            format!("{}.clone()", code)
-        }
-    } else if ctx.is_borrowed_param(name) {
-        // Already `&T` — pass directly.
-        code
-    } else if ctx.is_rc_wrapped(name) {
-        // Pass-through TCO param: deref to `&T`.
-        format!("&*{}", code)
-    } else {
-        // Owned local: borrow it (last-use and non-last-use both
-        // emit `&code` in the HIR walker).
-        format!("&{}", code)
-    }
+    materialize_borrowed(code, expr, ctx)
 }
 
 // ── Wave 3a: PURE builtin calls + deforestation intrinsics ──────────────
@@ -4792,9 +4605,10 @@ fn try_emit_mir_fusion(
                 &inner_args[2].node,
                 ctx,
             );
+            let vector_temp = generated_ident("vec");
+            let index_temp = generated_ident("idx");
             Some(format!(
-                "{{ let __vec = {}; match ({}).to_usize() {{ Some(__idx) if __idx < __vec.len() => __vec.set_unchecked(__idx, {}), _ => __vec }} }}",
-                vector, index, value
+                "{{ let {vector_temp} = {vector}; match ({index}).to_usize() {{ Some({index_temp}) if {index_temp} < {vector_temp}.len() => {vector_temp}.set_unchecked({index_temp}, {value}), _ => {vector_temp} }} }}"
             ))
         }
         // Fusion #2: `Result.withDefault(Int.mod(a, b), default)` and the
@@ -4847,7 +4661,7 @@ fn try_emit_mir_fusion(
                         let b_str = emit_literal(&crate::ast::Literal::Int(*n));
                         Some(format!("({}).rem_euclid(&({})).unwrap()", a_str, b_str))
                     } else {
-                        // `__b` owns the divisor so the zero and remainder
+                        // The generated temporary owns the divisor so the zero and remainder
                         // branches can share it. Preserve an outer local that
                         // remains live after this fused expression (notably a
                         // loop-carried TCO parameter) instead of moving it
@@ -4855,9 +4669,9 @@ fn try_emit_mir_fusion(
                         // borrows its divisor, so the fusion owes the source
                         // program the same ownership behaviour.
                         let b_str = mir_clone_arg(emit_mir_expr(b, ctx)?, &b.node, ctx);
+                        let divisor = generated_ident("b");
                         Some(format!(
-                            "{{ let __b = {}; if __b.is_zero() {{ {} }} else {{ ({}).rem_euclid(&__b).unwrap() }} }}",
-                            b_str, default, a_str
+                            "{{ let {divisor} = {b_str}; if {divisor}.is_zero() {{ {default} }} else {{ ({a_str}).rem_euclid(&{divisor}).unwrap() }} }}"
                         ))
                     }
                 }
@@ -4874,11 +4688,11 @@ fn try_emit_mir_fusion(
             }
             let list = emit_mir_expr(&inner_args[0], ctx)?;
             let index = emit_mir_expr(&args[1], ctx)?;
+            let index_temp = generated_ident("i");
             // Index lookup: out-of-`usize` index → `None` (matches the
             // unfused `Vector.get`).
             Some(format!(
-                "({}).to_usize().and_then(|__i| {}.to_vec().get(__i).cloned())",
-                index, list
+                "({index}).to_usize().and_then(|{index_temp}| {list}.to_vec().get({index_temp}).cloned())"
             ))
         }
         _ => None,
@@ -4949,8 +4763,9 @@ fn emit_mir_builtin_call(
             // available to surrounding code. `AverInt::from_str` parses
             // arbitrary-length integers (the no-wrap guarantee).
             let s = arg!(0);
+            let input = generated_ident("s");
             format!(
-                "{{ let __s = &({s}); __s.parse::<aver_rt::AverInt>().map_err(|_| format!(\"Cannot parse '{{}}' as Int\", __s)) }}"
+                "{{ let {input} = &({s}); {input}.parse::<aver_rt::AverInt>().map_err(|_| format!(\"Cannot parse '{{}}' as Int\", {input})) }}"
             )
         }
         // `AverInt` has no by-value `Ord::min`/`max`; use the borrowing
@@ -4960,17 +4775,19 @@ fn emit_mir_builtin_call(
         "Int.mod" => {
             let a = arg!(0);
             let b = arg!(1);
+            let result = generated_ident("r");
             // Euclidean remainder over ℤ. `rem_euclid` returns `None` only
             // on a zero divisor; the error string is verbatim from the VM
             // (`src/types/int.rs`) so the boxed `Result.Err` is
             // byte-identical across backends.
             format!(
-                "match ({a}).rem_euclid(&({b})) {{ Some(__r) => Ok(__r), None => Err(\"division by zero\".to_string()) }}"
+                "match ({a}).rem_euclid(&({b})) {{ Some({result}) => Ok({result}), None => Err(\"division by zero\".to_string()) }}"
             )
         }
         "Int.div" => {
             let a = arg!(0);
             let b = arg!(1);
+            let result = generated_ident("q");
             // Euclidean division over ℤ (partner of Euclidean `Int.mod`).
             // `div_euclid` is `None` ONLY for a zero divisor — the
             // `i64::MIN / -1` "overflow" edge promotes to `Big` (it is just
@@ -4978,7 +4795,7 @@ fn emit_mir_builtin_call(
             // DEAD here (VM agrees: both are ℤ now). Keep the
             // "division by zero" string byte-identical to the VM.
             format!(
-                "match ({a}).div_euclid(&({b})) {{ Some(__q) => Ok(__q), None => Err(\"division by zero\".to_string()) }}"
+                "match ({a}).div_euclid(&({b})) {{ Some({result}) => Ok({result}), None => Err(\"division by zero\".to_string()) }}"
             )
         }
 
@@ -4995,8 +4812,9 @@ fn emit_mir_builtin_call(
             // in `src/types/float.rs` returns `Cannot parse '{input}' as
             // Float`, not rustc's native `parse` error.
             let s = arg!(0);
+            let input = generated_ident("s");
             format!(
-                "{{ let __s = &({s}); __s.parse::<f64>().map_err(|_| format!(\"Cannot parse '{{}}' as Float\", __s)) }}"
+                "{{ let {input} = &({s}); {input}.parse::<f64>().map_err(|_| format!(\"Cannot parse '{{}}' as Float\", {input})) }}"
             )
         }
         "Float.sqrt" => format!("{}.sqrt()", arg!(0)),
@@ -5020,12 +4838,12 @@ fn emit_mir_builtin_call(
         "String.charAt" => {
             let s = arg!(0);
             let idx = arg!(1);
+            let index = generated_ident("i");
             // Index lookup: an out-of-`usize` index is out of range → `None`
             // (charAt already returns `Option<String>`), never a wrapped
             // index. `to_usize()` is the checked conversion.
             format!(
-                "({}).to_usize().and_then(|__i| {}.chars().nth(__i).map(|c| c.to_string()))",
-                idx, s
+                "({idx}).to_usize().and_then(|{index}| {s}.chars().nth({index}).map(|c| c.to_string()))"
             )
         }
         // Producer: wrap the `usize` length in `AverInt`.
@@ -5124,8 +4942,9 @@ fn emit_mir_builtin_call(
                     "std::str::from_utf8(({bytes}).values.as_slice()).map(aver_rt::AverStr::from).map_err(|_| aver_rt::AverStr::from(\"invalid UTF-8\"))"
                 )
             } else {
+                let bytes_temp = generated_ident("bytes");
                 format!(
-                    "{{ let __bytes = ({bytes}).values.clone().into_packed().expect(\"Bytes invariant violated\"); std::str::from_utf8(__bytes.as_slice()).map(aver_rt::AverStr::from).map_err(|_| aver_rt::AverStr::from(\"invalid UTF-8\")) }}"
+                    "{{ let {bytes_temp} = ({bytes}).values.clone().into_packed().expect(\"Bytes invariant violated\"); std::str::from_utf8({bytes_temp}.as_slice()).map(aver_rt::AverStr::from).map_err(|_| aver_rt::AverStr::from(\"invalid UTF-8\")) }}"
                 )
             }
         }
@@ -5152,6 +4971,7 @@ fn emit_mir_builtin_call(
         "List.take" => {
             let list = arg!(0);
             let count = arg!(1);
+            let count_temp = generated_ident("n");
             // `clamp_list_count` is the same clamp the VM and the interpreter
             // apply: a negative count takes nothing, a count past `usize`
             // takes everything. Reading `to_usize().unwrap_or(usize::MAX)`
@@ -5159,21 +4979,22 @@ fn emit_mir_builtin_call(
             // whole list here and nothing everywhere else.
             if type_is_int_list(args[0].ty()) {
                 format!(
-                    "{{ let __n = aver_rt::clamp_list_count(&({count})); ({list}).take_first(__n) }}"
+                    "{{ let {count_temp} = aver_rt::clamp_list_count(&({count})); ({list}).take_first({count_temp}) }}"
                 )
             } else {
                 format!(
-                    "{{ let __n = aver_rt::clamp_list_count(&({count})); aver_rt::AverList::from_vec(({list}).iter().take(__n).cloned().collect::<Vec<_>>()) }}"
+                    "{{ let {count_temp} = aver_rt::clamp_list_count(&({count})); aver_rt::AverList::from_vec(({list}).iter().take({count_temp}).cloned().collect::<Vec<_>>()) }}"
                 )
             }
         }
         "List.drop" => {
             let list = arg!(0);
             let count = arg!(1);
+            let count_temp = generated_ident("n");
             // `drop_first` shares the body and advances the offset, so the
             // step costs what it steps over rather than what is left behind.
             format!(
-                "{{ let __n = aver_rt::clamp_list_count(&({count})); ({list}).drop_first(__n) }}"
+                "{{ let {count_temp} = aver_rt::clamp_list_count(&({count})); ({list}).drop_first({count_temp}) }}"
             )
         }
         "List.concat" => {
@@ -5214,10 +5035,15 @@ fn emit_mir_builtin_call(
         }
 
         // ---- Map ----
-        "Map.fromList" => format!(
-            "{{ let mut m = HashMap::new(); for (k, v) in {}.iter().cloned() {{ m = m.insert_owned(k, v); }} m }}",
-            clone!(0)
-        ),
+        "Map.fromList" => {
+            let map = generated_ident("map");
+            let key = generated_ident("key");
+            let value = generated_ident("value");
+            let entries = clone!(0);
+            format!(
+                "{{ let mut {map} = HashMap::new(); for ({key}, {value}) in {entries}.iter().cloned() {{ {map} = {map}.insert_owned({key}, {value}); }} {map} }}"
+            )
+        }
         "Map.entries" => format!(
             "{{ let mut es: Vec<_> = {}.iter().map(|(k, v)| (k.clone(), v.clone())).collect(); es.sort_by(|a, b| a.0.cmp(&b.0)); aver_rt::AverList::from_vec(es) }}",
             arg!(0)
@@ -5278,16 +5104,19 @@ fn emit_mir_builtin_call(
         // silently truncate into a wrong digest.
         "Crypto.sha256" => {
             let bytes = arg!(0);
+            let digest = generated_ident("digest");
             if ctx
                 .codegen
                 .is_some_and(|codegen| super::uses_packed_u8(codegen, "Bytes"))
             {
                 format!(
-                    "{{ let __digest = aver_rt::crypto::sha256(({bytes}).values.as_slice()); crate::aver_generated::crypto::digest32::Digest32 {{ bytes: crate::aver_generated::bytes::Bytes {{ values: aver_rt::AverPackedU8::from_vec(__digest.to_vec()) }} }} }}"
+                    "{{ let {digest} = aver_rt::crypto::sha256(({bytes}).values.as_slice()); crate::aver_generated::crypto::digest32::Digest32 {{ bytes: crate::aver_generated::bytes::Bytes {{ values: aver_rt::AverPackedU8::from_vec({digest}.to_vec()) }} }} }}"
                 )
             } else {
+                let input = generated_ident("input");
+                let byte = generated_ident("b");
                 format!(
-                    "{{ let __input: Vec<u8> = ({bytes}).values.iter_cloned().map(|__b| __b.to_u32().and_then(|__b| u8::try_from(__b).ok()).expect(\"Bytes invariant violated\")).collect(); let __digest = aver_rt::crypto::sha256(&__input); crate::aver_generated::crypto::digest32::Digest32 {{ bytes: crate::aver_generated::bytes::Bytes {{ values: aver_rt::AverIntList::from_vec(__digest.into_iter().map(|__b| aver_rt::AverInt::from_i64(__b as i64)).collect()) }} }} }}"
+                    "{{ let {input}: Vec<u8> = ({bytes}).values.iter_cloned().map(|{byte}| {byte}.to_u32().and_then(|{byte}| u8::try_from({byte}).ok()).expect(\"Bytes invariant violated\")).collect(); let {digest} = aver_rt::crypto::sha256(&{input}); crate::aver_generated::crypto::digest32::Digest32 {{ bytes: crate::aver_generated::bytes::Bytes {{ values: aver_rt::AverIntList::from_vec({digest}.into_iter().map(|{byte}| aver_rt::AverInt::from_i64({byte} as i64)).collect()) }} }} }}"
                 )
             }
         }
@@ -5346,32 +5175,28 @@ fn emit_mir_builtin_call(
         "Vector.new" => {
             let size = arg!(0);
             let default = clone!(1);
+            let checked_size = generated_ident("n");
             format!(
-                "match aver_rt::checked_vector_size(&({})) {{ Some(__n) => Ok(aver_rt::AverVector::new(__n, {})), None => Err(aver_rt::AverStr::from(aver_rt::vector_size_error_message())) }}",
-                size, default
+                "match aver_rt::checked_vector_size(&({size})) {{ Some({checked_size}) => Ok(aver_rt::AverVector::new({checked_size}, {default})), None => Err(aver_rt::AverStr::from(aver_rt::vector_size_error_message())) }}"
             )
         }
         "Vector.get" => {
             let vec = arg!(0);
             let idx = arg!(1);
+            let index = generated_ident("i");
             // Index lookup: an out-of-`usize` index → `None` (Vector.get
             // already returns `Option`).
-            format!(
-                "({}).to_usize().and_then(|__i| {}.get(__i).cloned())",
-                idx, vec
-            )
+            format!("({idx}).to_usize().and_then(|{index}| {vec}.get({index}).cloned())")
         }
         "Vector.set" => {
             let vec = clone!(0);
             let idx = arg!(1);
             let val = clone!(2);
+            let index = generated_ident("i");
             // `set_owned` returns `Option<Vector>` (None on out-of-range),
             // mirroring the VM. An out-of-`usize` index is likewise `None`,
             // via the checked conversion — never a wrapped index.
-            format!(
-                "({}).to_usize().and_then(|__i| {}.set_owned(__i, {}))",
-                idx, vec, val
-            )
+            format!("({idx}).to_usize().and_then(|{index}| {vec}.set_owned({index}, {val}))")
         }
         "Vector.len" => format!("aver_rt::AverInt::from_i64({}.len() as i64)", arg!(0)),
         "Vector.fromList" => format!("aver_rt::AverVector::from_vec({}.to_vec())", arg!(0)),
@@ -5444,17 +5269,17 @@ fn emit_mir_intrinsic_call(
         BuiltinIntrinsic::BufAppend => {
             let buf = emit_mir_expr(&args[0], ctx)?;
             let s = emit_mir_expr(&args[1], ctx)?;
+            let buffer = generated_ident("b");
             Some(format!(
-                "{{ let mut __b = {}; __b.push_str(&{}); __b }}",
-                buf, s
+                "{{ let mut {buffer} = {buf}; {buffer}.push_str(&{s}); {buffer} }}"
             ))
         }
         BuiltinIntrinsic::BufAppendSepUnlessFirst => {
             let buf = emit_mir_expr(&args[0], ctx)?;
             let sep = emit_mir_expr(&args[1], ctx)?;
+            let buffer = generated_ident("b");
             Some(format!(
-                "{{ let mut __b = {}; if !__b.is_empty() {{ __b.push_str(&{}); }} __b }}",
-                buf, sep
+                "{{ let mut {buffer} = {buf}; if !{buffer}.is_empty() {{ {buffer}.push_str(&{sep}); }} {buffer} }}"
             ))
         }
         BuiltinIntrinsic::BufFinalize => {
@@ -5521,9 +5346,9 @@ fn emit_mir_intrinsic_call(
         }
         BuiltinIntrinsic::ResultProven => {
             let result = emit_mir_expr(&args[0], ctx)?;
+            let error = generated_ident("error");
             Some(format!(
-                "({}).unwrap_or_else(|__error| panic!(\"provider contract violated: discharged Result returned Err({{}})\", __error))",
-                result
+                "({result}).unwrap_or_else(|{error}| panic!(\"provider contract violated: discharged Result returned Err({{}})\", {error}))"
             ))
         }
         // Codepoint cursor (chars fusion). Each one is a call into
@@ -6394,9 +6219,9 @@ mod tests {
         let emit = emit_mir_expr(&expr, &empty_ctx()).expect("bare product should emit");
         assert_eq!(
             emit,
-            "std::thread::scope(|_s| { let _h0 = _s.spawn(move || aver_rt::AverInt::from_i64(7)); \
-             let _h1 = _s.spawn(move || aver_rt::AverInt::from_i64(9)); let _r0 = _h0.join().unwrap(); \
-             let _r1 = _h1.join().unwrap(); (_r0, _r1) }) "
+            "std::thread::scope(|__s| { let __h0 = __s.spawn(move || aver_rt::AverInt::from_i64(7)); \
+             let __h1 = __s.spawn(move || aver_rt::AverInt::from_i64(9)); let __r0 = __h0.join().unwrap(); \
+             let __r1 = __h1.join().unwrap(); (__r0, __r1) }) "
         );
     }
 
@@ -6420,7 +6245,7 @@ mod tests {
         assert!(
             emit.starts_with(
                 "{ let __cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)); \
-                 std::thread::scope(|_s| { "
+                 std::thread::scope(|__s| { "
             ),
             "got: {emit}"
         );
@@ -6465,11 +6290,11 @@ mod tests {
             "every move closure needs a capture cloned outside the closure: {emit}"
         );
         assert!(
-            emit.contains("let _h0 = { let height = height.clone(); _s.spawn(move ||"),
+            emit.contains("let __h0 = { let height = height.clone(); __s.spawn(move ||"),
             "branch 0 capture must be scoped to its spawn: {emit}"
         );
         assert!(
-            emit.contains("let _h1 = { let height = height.clone(); _s.spawn(move ||"),
+            emit.contains("let __h1 = { let height = height.clone(); __s.spawn(move ||"),
             "branch 1 capture must be scoped to its spawn: {emit}"
         );
     }
@@ -6836,21 +6661,10 @@ mod tests {
     // these are the same rules at walker resolution, cheap enough to run
     // on every `cargo test`.
     //
-    // WHAT THESE CAN AND CANNOT PIN. They run against `ctx_over`, which
-    // is NOT the ctx production uses: production always goes through
-    // `MirEmitCtx::for_fn` with `codegen: Some(ctx)` and the fn's params
-    // in `local_types`, while `ctx_over` leaves `codegen` `None` and
-    // takes `local_types` from an empty policy. That is sound today
-    // because the three rules under test — `mir_projection_root_local`,
-    // `mir_own_borrowed_read` and the `mir_maybe_clone` path they reach
-    // — read neither field. It stops being sound the moment either
-    // owning position starts consulting a rule that does: the nearest
-    // one is `mir_clone_arg`'s Copy-field elision, whose
-    // `mir_attr_result_is_copy` returns `false` whenever `codegen` is
-    // `None` or the base type is missing from `local_types`. Route the
-    // binding or the tail through that and these tests stay green while
-    // the emitted bytes change. The net that would see it is the
-    // build-and-run differential, not this module.
+    // `ctx_over` deliberately lacks a full `CodegenContext`, so these unit
+    // cases cannot prove Copy-field discovery or capability-resource
+    // identity. The build-and-run differential tests cover those production
+    // facts; here we pin the central borrowed→owned transition cheaply.
 
     /// A read of the named local (`last_use`, so nothing but the borrow
     /// policy can ask for a clone).
@@ -7009,11 +6823,10 @@ mod tests {
     }
 
     #[test]
-    fn owning_positions_leave_a_non_borrowed_read_alone() {
-        // The rule keys on the ROOT local being a borrowed param. A read
-        // rooted anywhere else — here a param the policy does not borrow —
-        // already owns its result and must stay verbatim, which is what
-        // keeps the emitted bytes of every other fn unchanged.
+    fn owning_positions_move_final_locals_and_clone_projections_conservatively() {
+        // A final owned local moves directly. Non-Copy projections clone even
+        // when their root is final-use; eliminating those clones needs a
+        // separate proof that partially moving the aggregate is safe.
         let policy = borrowed_param_policy("other");
         let ctx = ctx_over(&policy);
         let body = let_chain(
@@ -7023,7 +6836,7 @@ mod tests {
         );
         assert_eq!(
             emit_mir_fn_body(&body, &ctx).expect("binding chain emits"),
-            "    crate::cancel_checkpoint();\n    let kept @ _ = s;\n    let k @ _ = s.piece.kind;\n    s.tag"
+            "    crate::cancel_checkpoint();\n    let kept @ _ = s;\n    let k @ _ = s.piece.kind.clone();\n    s.tag.clone()"
         );
     }
 

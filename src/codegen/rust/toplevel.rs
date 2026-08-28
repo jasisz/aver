@@ -753,6 +753,7 @@ fn emit_fn_def_with_visibility(
             );
         }
         if ctx.emit_replay_runtime {
+            let replay_input = super::syntax::generated_ident("replay_input");
             match &guest_args_name {
                 Some(guest_args) => {
                     // If the guest_args param is borrowed (&T), it's already a reference
@@ -765,17 +766,17 @@ fn emit_fn_def_with_visibility(
                     );
                     let ref_prefix = if is_borrowed { "" } else { "&" };
                     lines.push(format!(
-                        "    let __replay_input = aver_replay::ReplayValue::to_replay_json({}{});",
+                        "    let {replay_input} = aver_replay::ReplayValue::to_replay_json({}{});",
                         ref_prefix, guest_args
                     ));
                     if fd.return_type.starts_with("Result<") {
                         lines.push(format!(
-                            "    aver_replay::with_guest_scope_args_result({:?}, __replay_input, {}.clone(), || {{",
+                            "    aver_replay::with_guest_scope_args_result({:?}, {replay_input}, {}.clone(), || {{",
                             fd.name, guest_args
                         ));
                     } else {
                         lines.push(format!(
-                            "    aver_replay::with_guest_scope_args({:?}, __replay_input, {}.clone(), || {{",
+                            "    aver_replay::with_guest_scope_args({:?}, {replay_input}, {}.clone(), || {{",
                             fd.name, guest_args
                         ));
                     }
@@ -796,17 +797,17 @@ fn emit_fn_def_with_visibility(
                         .collect::<Vec<_>>()
                         .join(", ");
                     lines.push(format!(
-                        "    let __replay_input = aver_replay::entry_input(vec![{}]);",
+                        "    let {replay_input} = aver_replay::entry_input(vec![{}]);",
                         input_args
                     ));
                     if fd.return_type.starts_with("Result<") {
                         lines.push(format!(
-                            "    aver_replay::with_guest_scope_result({:?}, __replay_input, || {{",
+                            "    aver_replay::with_guest_scope_result({:?}, {replay_input}, || {{",
                             fd.name
                         ));
                     } else {
                         lines.push(format!(
-                            "    aver_replay::with_guest_scope({:?}, __replay_input, || {{",
+                            "    aver_replay::with_guest_scope({:?}, {replay_input}, || {{",
                             fd.name
                         ));
                     }
@@ -950,8 +951,9 @@ fn packed_refinement_constructor_prologue(
         let parameter = aver_name_to_rust(info.param_name);
         let record = aver_name_to_rust(type_name);
         let field = aver_name_to_rust(info.carrier_field);
+        let packed = super::syntax::generated_ident("packed");
         return Some(format!(
-            "    if let Some(__packed) = {parameter}.as_packed() {{\n        return Ok({record} {{ {field}: __packed.clone() }});\n    }}"
+            "    if let Some({packed}) = {parameter}.as_packed() {{\n        return Ok({record} {{ {field}: {packed}.clone() }});\n    }}"
         ));
     }
     None

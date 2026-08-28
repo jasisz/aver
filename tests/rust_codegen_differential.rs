@@ -2846,7 +2846,8 @@ fn main() -> Unit
 /// The tail was the one owning position that never asked for it, so
 /// `passthrough(x) = x` emitted `&T` where `T` was expected and the generated
 /// project would not build at all (`Result`, `Option`, a sum type, a record, a
-/// tuple and a `List` all failed; `String`, `Int`, `Float`, `Bool` and the
+/// tuple, a `List` and a provider resource all failed; `String`, `Int`,
+/// `Float`, `Bool` and the
 /// `own_param`-graduated `Vector` / `Map` built because they are already
 /// owned). Every shape sits in one program, so a backend that materialises too
 /// little fails the build and one that materialises the wrong value diverges
@@ -2914,6 +2915,16 @@ fn passBool(v: Bool) -> Bool
     ? "Hand back exactly what was given."
     v
 
+fn passConnection(v: Tcp.Connection) -> Tcp.Connection
+    ? "Clone the opaque provider handle when an owned resource is returned."
+    v
+
+fn keepOwnedAndAlias(items: List<Int>) -> Int
+    ? "A named alias must not move an owned local that is read again."
+    reversed = List.reverse(items)
+    alias = reversed
+    List.len(reversed) + List.len(alias)
+
 fn showResult(v: Result<Int, String>) -> String
     ? "Render it."
     match v
@@ -2967,8 +2978,9 @@ fn main() -> Unit
     Console.print(String.fromInt(passInt(10)))
     Console.print("{passFloat(1.5)}")
     Console.print("{passBool(true)}")
+    Console.print(String.fromInt(keepOwnedAndAlias([1, 2])))
 "#;
-    let expected = "1\n2\ngreen 3\n5\n6t\n2\n3\n1\ns\n10\n1.5\ntrue";
+    let expected = "1\n2\ngreen 3\n5\n6t\n2\n3\n1\ns\n10\n1.5\ntrue\n4";
     let vm = run_vm_inline("passthrough_param", src).expect("vm run");
     let rust =
         build_run_rust_inline("passthrough_param", src).expect("rust compile + cargo build + run");
@@ -5163,9 +5175,10 @@ fn main() -> Unit
     result.unwrap_or_else(|e| panic!("{e}"));
 }
 
-/// Regression for #1042: dependency glob imports must not turn an Aver match
-/// binder into an ambiguous Rust name. Both dependencies expose `message`, but
-/// the entry calls only `Legacy.message`; `Result.Ok(message)` is purely local.
+/// Regression for #1042: colliding dependency exports must not turn an Aver
+/// match binder into an ambiguous Rust name. Both dependencies expose
+/// `message`, but the entry calls only `Legacy.message`;
+/// `Result.Ok(message)` is purely local.
 #[test]
 fn colliding_dependency_function_names_do_not_conflict_with_match_binders() {
     let ws = temp_dir("dependency_function_binder_collision");
@@ -5354,8 +5367,8 @@ fn main() -> Unit
 }
 
 /// Regression for #1162: a function parameter is a Rust pattern too. Two
-/// dependency glob imports exposing the parameter's name must not make the
-/// signature ambiguous, including signatures synthesized for TCO.
+/// dependencies exporting the parameter's name must not make the signature
+/// ambiguous, including signatures synthesized for TCO.
 #[test]
 fn colliding_dependency_function_names_do_not_conflict_with_parameters() {
     let ws = temp_dir("dependency_function_parameter_collision");
@@ -5478,6 +5491,256 @@ fn main() -> Unit
 
     let _ = fs::remove_dir_all(&ws);
     result.unwrap_or_else(|e| panic!("{e}"));
+}
+
+/// Class-level regression for #1174. Two dependency namespaces deliberately
+/// reuse both a function name and a type name, while the consumer reuses the
+/// function name in every local binding position. The generated module must
+/// contain no dependency glob imports: identity-bearing calls and types are
+/// qualified, and local hygiene remains a separate concern.
+#[test]
+fn rust_symbol_collision_matrix_compiles_without_dependency_globs() {
+    let ws = temp_dir("rust_symbol_collision_matrix");
+    fs::write(
+        ws.join("Alpha.av"),
+        r#"module Alpha
+    exposes [clash, Packet, read]
+    intent = "First namespace in the collision matrix."
+    effects []
+
+record Packet
+    value: Int
+
+fn clash() -> String
+    "alpha"
+
+fn read(packet: Packet) -> Int
+    packet.value
+"#,
+    )
+    .expect("write Alpha module");
+    fs::write(
+        ws.join("Beta.av"),
+        r#"module Beta
+    depends [Alpha]
+    exposes [clash, Packet, Envelope, read, unpack]
+    intent = "Second namespace in the collision matrix."
+    effects []
+
+record Packet
+    label: String
+
+record Envelope
+    packet: Alpha.Packet
+
+fn clash() -> String
+    "beta"
+
+fn read(packet: Packet) -> Int
+    String.len(packet.label)
+
+fn unpack(envelope: Envelope) -> Int
+    Alpha.read(envelope.packet)
+"#,
+    )
+    .expect("write Beta module");
+
+    let entry = ws.join("main.av");
+    fs::write(
+        &entry,
+        r#"module Main
+    depends [Alpha, Beta]
+    intent = "Exercise namespace identity and every local binder shape."
+    effects []
+
+fn fromParameter(clash: String) -> Int
+    String.len(clash)
+
+fn fromLet() -> Int
+    clash = Alpha.clash()
+    String.len(clash)
+
+fn fromMatch() -> Int
+    match Result.Ok(Beta.clash())
+        Result.Ok(clash) -> String.len(clash)
+        Result.Err(_) -> 0
+
+fn add(left: Int, right: Int) -> Int
+    left + right
+
+fn localHygiene(_s: Int, _h0: Int, _r0: Int, _b0: Int) -> Tuple<Int, Int>
+    (add(_s, _h0), add(_r0, _b0))!
+
+fn mapHygiene(m: List<Tuple<String, Int>>) -> Map<String, Int>
+    Map.fromList(m)
+
+fn main() -> Int
+    local = localHygiene(1, 10, 100, 1000)
+    fromParameter("xx") + fromLet() + fromMatch() + Alpha.read(Alpha.Packet(value = 3)) + Beta.read(Beta.Packet(label = "four")) + Beta.unpack(Beta.Envelope(packet = Alpha.Packet(value = 5)))
+"#,
+    )
+    .expect("write entry module");
+
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let shared_target = shared_target_dir();
+    let shared_target = shared_target
+        .to_str()
+        .expect("shared Cargo target path should be UTF-8");
+    let result = (|| -> Result<(), String> {
+        compile_rust_env(
+            &entry,
+            &project,
+            "rust_symbol_collision_matrix",
+            Some(&ws),
+            &["--with-replay", "--check"],
+            &[
+                ("CARGO_TARGET_DIR", shared_target),
+                ("CARGO_NET_OFFLINE", "true"),
+            ],
+        )?;
+        let emitted = fs::read_to_string(
+            project
+                .join("src")
+                .join("aver_generated")
+                .join("entry")
+                .join("mod.rs"),
+        )
+        .map_err(|error| format!("read emitted entry module: {error}"))?;
+        if emitted.contains("use crate::aver_generated::") {
+            return Err(format!(
+                "entry module still opens a dependency namespace:\n{emitted}"
+            ));
+        }
+        for dependency in ["alpha", "beta"] {
+            let module = fs::read_to_string(
+                project
+                    .join("src")
+                    .join("aver_generated")
+                    .join(dependency)
+                    .join("mod.rs"),
+            )
+            .map_err(|error| format!("read emitted {dependency} module: {error}"))?;
+            if !module.contains("pub fn clash") {
+                return Err(format!(
+                    "same-named function was not retained in {dependency}:\n{module}"
+                ));
+            }
+            if dependency == "beta"
+                && !module.contains(
+                    "<crate::aver_generated::alpha::Packet as ReplayValue>::from_replay_json",
+                )
+            {
+                return Err(format!(
+                    "replay field type did not retain Alpha.Packet identity:\n{module}"
+                ));
+            }
+        }
+        for qualified in [
+            "crate::aver_generated::alpha::read",
+            "crate::aver_generated::beta::read",
+            "crate::aver_generated::alpha::Packet",
+            "crate::aver_generated::beta::Packet",
+            "crate::aver_generated::beta::Envelope",
+        ] {
+            if !emitted.contains(qualified) {
+                return Err(format!(
+                    "missing identity-qualified symbol `{qualified}`:\n{emitted}"
+                ));
+            }
+        }
+        if !emitted.contains("std::thread::scope(|__s|")
+            || !emitted.contains("_s @ _")
+            || !emitted.contains("let mut __map = HashMap::new()")
+        {
+            return Err(format!(
+                "compiler temporaries did not stay in the reserved `__` namespace:\n{emitted}"
+            ));
+        }
+        Ok(())
+    })();
+
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// Regression for #1134: derive requirements belong to a declaration, not
+/// its bare type name. `Snapshot.Progress` can carry Eq + Hash, while the
+/// same-named `Bodies.Progress` contains a Float and cannot. The emitter unit
+/// test pins the chosen derive text; this test asks rustc about the complete
+/// multi-module project through the public `compile --check` gate.
+#[test]
+fn same_named_records_keep_declaration_scoped_derives_under_compile_check() {
+    let ws = temp_dir("same_named_record_derives");
+    fs::write(
+        ws.join("Snapshot.av"),
+        r#"module Snapshot
+    exposes [Progress, done]
+    intent = "Own the equality-safe progress record."
+    effects []
+
+record Progress
+    done: Int
+
+fn done(progress: Progress) -> Int
+    ? "Read the completed count."
+    progress.done
+"#,
+    )
+    .expect("write Snapshot module");
+    fs::write(
+        ws.join("Bodies.av"),
+        r#"module Bodies
+    exposes [Progress, Walk, count]
+    intent = "Own a same-named progress record that cannot be Eq."
+    effects []
+
+record Progress
+    ratio: Float
+
+record Walk
+    step: Progress
+
+fn count(walk: Walk) -> Int
+    ? "Ignore the floating-point walk state."
+    0
+"#,
+    )
+    .expect("write Bodies module");
+    let entry = ws.join("main.av");
+    fs::write(
+        &entry,
+        r#"module Main
+    depends [Snapshot, Bodies]
+    intent = "Reach both same-named records in one generated Rust crate."
+    effects []
+
+fn main() -> Int
+    Snapshot.done(Snapshot.Progress(done = 1)) + Bodies.count(Bodies.Walk(step = Bodies.Progress(ratio = 0.5)))
+"#,
+    )
+    .expect("write entry module");
+
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let shared_target = shared_target_dir();
+    let shared_target = shared_target
+        .to_str()
+        .expect("shared Cargo target path should be UTF-8");
+    let result = compile_rust_env(
+        &entry,
+        &project,
+        "same_named_record_derives",
+        Some(&ws),
+        &["--check"],
+        &[
+            ("CARGO_TARGET_DIR", shared_target),
+            ("CARGO_NET_OFFLINE", "true"),
+        ],
+    );
+
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|error| panic!("{error}"));
 }
 
 // ─── Mode (h): Int.fromString / Float.fromString Err-message bytes ────────

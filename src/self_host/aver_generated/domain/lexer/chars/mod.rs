@@ -1,6 +1,4 @@
 #[allow(unused_imports)]
-use crate::aver_generated::domain::token::*;
-#[allow(unused_imports)]
 use crate::*;
 
 /// Check if a single character is a digit.

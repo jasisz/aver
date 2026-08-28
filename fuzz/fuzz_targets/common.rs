@@ -183,11 +183,7 @@ fn expr_metrics(root: &aver::ast::Spanned<aver::ast::Expr>, base_depth: u64) -> 
                     stack.push((a, d + 1));
                 }
             }
-            Expr::Constructor(_, payload) => {
-                if let Some(arg) = payload {
-                    stack.push((arg, d + 1));
-                }
-            }
+            Expr::Constructor(_, Some(arg)) => stack.push((arg, d + 1)),
             Expr::Match { subject, arms } => {
                 stack.push((subject, d + 1));
                 for arm in arms {
@@ -274,8 +270,9 @@ pub fn counters() -> &'static Counters {
 //   <entry_idx: u8 in 0..n_files>
 //
 // Anything malformed → `None`, target falls back to single-file.
-// Names are lowercased and rendered as `<name>.av` files under a
-// deterministically-named directory keyed on `hash(data)`. Same input
+// Names are lowercased and rendered with the production module mapping
+// (`Domain.User` -> `domain/user.av`) under a deterministically-named
+// directory keyed on `hash(data)`. Same input
 // → same directory path → AFL's coverage map stays stable. A fresh
 // random tempdir would mean every exec sees different paths inside
 // `LoadedModule.path` / Aver error messages, which AFL reads as
@@ -288,8 +285,7 @@ pub struct MultiModuleSetup {
     /// Path to the entry .av file inside the deterministic dir.
     pub entry_path: std::path::PathBuf,
     /// Module root for `--module-root` / `find_module_file` lookups
-    /// — same directory as the entry, since all synthetic files
-    /// land flat at the dir root.
+    /// — the common ancestor of every synthetic module path.
     pub module_root: std::path::PathBuf,
     /// Raw entry source — handed to targets that only need the
     /// bytes (e.g. `parse_bytes`, `replay_codec`).
@@ -357,7 +353,23 @@ pub fn try_multimodule_input(data: &[u8]) -> Option<MultiModuleSetup> {
         let body = std::str::from_utf8(&data[pos..pos + body_len]).ok()?;
         pos += body_len;
 
-        let file_path = dir.join(format!("{name}.av"));
+        // Dotted module identities map to directories in the real loader:
+        // `Domain.User` lives at `domain/user.av`, not
+        // `domain.user.av`. Keeping that mapping here matters because a
+        // synthetic input that only works in the fuzz filesystem never
+        // exercises the production cross-module path it claims to cover.
+        let mut file_path = dir.clone();
+        let mut parts = name.split('.').peekable();
+        while let Some(part) = parts.next() {
+            if parts.peek().is_some() {
+                file_path.push(part);
+            } else {
+                file_path.push(format!("{part}.av"));
+            }
+        }
+        if let Some(parent) = file_path.parent() {
+            std::fs::create_dir_all(parent).ok()?;
+        }
         std::fs::write(&file_path, body).ok()?;
         file_paths.push(file_path);
     }

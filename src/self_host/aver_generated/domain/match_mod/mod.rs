@@ -1,8 +1,4 @@
 #[allow(unused_imports)]
-use crate::aver_generated::domain::ast::*;
-#[allow(unused_imports)]
-use crate::aver_generated::domain::value::*;
-#[allow(unused_imports)]
 use crate::*;
 
 #[allow(non_camel_case_types)]

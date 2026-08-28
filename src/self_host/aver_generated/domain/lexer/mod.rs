@@ -1,8 +1,4 @@
 #[allow(unused_imports)]
-use crate::aver_generated::domain::lexer::chars::*;
-#[allow(unused_imports)]
-use crate::aver_generated::domain::token::*;
-#[allow(unused_imports)]
 use crate::*;
 
 #[allow(non_camel_case_types)]

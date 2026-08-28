@@ -1,6 +1,4 @@
 #[allow(unused_imports)]
-use crate::aver_generated::tcp::*;
-#[allow(unused_imports)]
 use crate::*;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -394,22 +392,22 @@ impl aver_replay::ReplayValue for Val {
                         .ok_or_else(|| format!("$variant ValRecord missing field #{}", 1))?,
                 )?,
             )),
-            "ValTcpConnection" => {
-                Ok(Val::ValTcpConnection(
-                    <Tcp_Connection as ReplayValue>::from_replay_json(fields.get(0).ok_or_else(
-                        || format!("$variant ValTcpConnection missing field #{}", 0),
-                    )?)?,
-                ))
-            }
+            "ValTcpConnection" => Ok(Val::ValTcpConnection(
+                <crate::aver_generated::tcp::Connection as ReplayValue>::from_replay_json(
+                    fields
+                        .get(0)
+                        .ok_or_else(|| format!("$variant ValTcpConnection missing field #{}", 0))?,
+                )?,
+            )),
             "ValTcpDial" => Ok(Val::ValTcpDial(
-                <Tcp_Dial as ReplayValue>::from_replay_json(
+                <crate::aver_generated::tcp::Dial as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
                         .ok_or_else(|| format!("$variant ValTcpDial missing field #{}", 0))?,
                 )?,
             )),
             "ValTcpListener" => Ok(Val::ValTcpListener(
-                <Tcp_Listener as ReplayValue>::from_replay_json(
+                <crate::aver_generated::tcp::Listener as ReplayValue>::from_replay_json(
                     fields
                         .get(0)
                         .ok_or_else(|| format!("$variant ValTcpListener missing field #{}", 0))?,
