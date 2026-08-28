@@ -93,16 +93,10 @@ fn take_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeErro
             "List.take() second argument must be an Int".to_string(),
         ));
     };
-    let items: Vec<NanValue> = arena
-        .list_to_vec_value(args[0])
-        .into_iter()
-        .take(count)
-        .collect();
-    if items.is_empty() {
-        return Ok(NanValue::EMPTY_LIST);
-    }
-    let list_idx = arena.push_list(items);
-    Ok(NanValue::new_list(list_idx))
+    // Walks the prefix it keeps instead of the list it was handed: reading the
+    // whole list to answer about its first `count` elements made a walk that
+    // steps with `take` cost the list once per step (issue #1181).
+    Ok(arena.list_take(args[0], count))
 }
 
 fn drop_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {

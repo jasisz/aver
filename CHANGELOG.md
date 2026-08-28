@@ -2,6 +2,12 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
+## Unreleased
+
+### Fixed
+
+- **`List.take` and `Bytes.take` no longer read the whole list to hand back a few elements.** Taking the first few elements of a long list used to cost the length of the list, so a program that stepped through a buffer with `take` and `drop` took four times as long every time the buffer doubled. It now costs what it takes, and such a walk is linear: over 98,304 bytes it went from 42.5 s to 0.9 s, and 393,216 bytes — which used to need more than ten minutes — now takes 3.7 s. Taking at least the whole list hands back the same list instead of rebuilding it, unless that list is the remainder `drop` left behind — those elements are copied out, so holding the answer no longer holds the whole buffer it was read from. Closes [#1181](https://github.com/jasisz/aver/issues/1181).
+
 ## 0.29.0 "Peer" — 2026-08-27
 
 Named for the network role Aver programs can finally sustain — and for the checked relationship between a program and its host. One source-owned contract now drives execution, replay, verification, wasm embedding, and proof export.
