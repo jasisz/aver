@@ -365,3 +365,110 @@ fn a_promotion_does_not_walk_the_prepend_chain_it_has_already_promoted() {
          only {escaped_read} settled entries over {CELLS} cells"
     );
 }
+
+/// Read the flag off the body the collector will meet, not off a helper.
+fn body_flag(arena: &TestArena, value: NanValue) -> bool {
+    let ArenaEntry::List(ArenaList::Flat { items, .. }) = arena.get(value.arena_index()) else {
+        panic!("expected a flat list");
+    };
+    items.all_immediate()
+}
+
+/// A from-scratch walk of the elements — the answer the flag stands in for.
+fn body_really_all_immediate(arena: &TestArena, value: NanValue) -> bool {
+    let ArenaEntry::List(ArenaList::Flat { items, .. }) = arena.get(value.arena_index()) else {
+        panic!("expected a flat list");
+    };
+    items.iter().all(|element| element.heap_index().is_none())
+}
+
+/// The one producer of a list body's all-immediate flag, checked against a walk.
+///
+/// This is where that promise is proved, and it is the whole list of places it
+/// can be: `ListBody::new` decides the flag while it has the elements in hand,
+/// `items` is private, the body is immutable, and the only borrow it hands out
+/// is a shared slice. Nothing else can set the flag and nothing at all can
+/// falsify it afterwards.
+///
+/// The collector's escape deliberately does NOT re-prove it, for the reason the
+/// vector escape gives above: the walk that would prove it is the walk being
+/// skipped. Re-proving it there cost `Bytes.fromList` over 65,536 integers 6.9 s
+/// in a debug build against 116 ms without it, because a list carried across a
+/// frame boundary was read in full on every step of the loop that carried it.
+#[test]
+fn a_body_agrees_with_a_from_scratch_walk() {
+    let mut arena = TestArena::new();
+
+    let zero = NanValue::new_int(0, &mut arena);
+    let seven = NanValue::new_int(7, &mut arena);
+    let octets = NanValue::new_list(arena.push_list(vec![zero, seven]));
+    assert!(body_flag(&arena, octets));
+    assert_eq!(
+        body_flag(&arena, octets),
+        body_really_all_immediate(&arena, octets)
+    );
+
+    let heap_backed = NanValue::new_map(arena.push_map(PersistentMap::new()));
+    assert!(
+        heap_backed.heap_index().is_some(),
+        "a heap map has an index"
+    );
+    let mixed = NanValue::new_list(arena.push_list(vec![zero, heap_backed]));
+    assert!(!body_flag(&arena, mixed));
+    assert_eq!(
+        body_flag(&arena, mixed),
+        body_really_all_immediate(&arena, mixed)
+    );
+}
+
+/// A list of integers costs the collector nothing per step of a walk over it.
+///
+/// The shape is `Bytes.fromList`: a finished list of octets, walked one cell at
+/// a time, with a promotion between steps because the walk allocates. Every step
+/// meets the same shared body at a later offset. Reading it once per step is
+/// n^2/2 element reads for one traversal, which is what the flag exists to
+/// prevent and what `Arena::list_elements_scanned` reports.
+///
+/// What it catches is a read the collector counts, which is every read on the
+/// scanning path. A read inside a `debug_assert!` is not counted and this test
+/// cannot see one — that is how the re-proof this escape used to do survived
+/// both this counter and the collection-cost guards in `aver-lang` while costing
+/// a debug build everything the flag was supposed to save. The guard against
+/// THAT is `a_body_agrees_with_a_from_scratch_walk` plus the rule it states:
+/// the flag is proved where it is set, so the escape has nothing left to check.
+#[test]
+fn walking_a_list_of_integers_never_reads_its_body() {
+    const ELEMENTS: usize = 64;
+
+    let mut arena = TestArena::new();
+    let items = (0..ELEMENTS)
+        .map(|value| NanValue::new_int(value as i64, &mut arena))
+        .collect::<Vec<_>>();
+    let mut list = NanValue::new_list(arena.push_list(items));
+
+    let mut steps = 0;
+    loop {
+        // The watermark has to be taken BEFORE the step allocates, or the
+        // promotion finds nothing above it and returns without looking at the
+        // list at all — which is a green test that measures nothing.
+        let mark = arena.young_len() as u32;
+        let lane = arena.lane_mark();
+        let Some((_, tail)) = arena.list_uncons(list) else {
+            break;
+        };
+        let mut roots = [tail];
+        arena.promote_young_roots_to_yard(mark, lane, &mut roots, false);
+        list = roots[0];
+        steps += 1;
+    }
+
+    assert_eq!(
+        steps, ELEMENTS,
+        "the walk has to reach the end for its cost to say anything"
+    );
+    assert_eq!(
+        arena.list_elements_scanned(),
+        0,
+        "a body of integers must not be read to promote the view over it"
+    );
+}

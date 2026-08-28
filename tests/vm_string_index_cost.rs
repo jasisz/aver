@@ -59,8 +59,27 @@
 //! / 65,536 characters and keeping each one: 3,236 / 13,079 / 50,169 ms before,
 //! 37 / 76 / 147 ms after.
 //!
-//! Both instruments are applied to all four shapes, so a shape that stops
-//! paying one way and starts paying the other cannot go green.
+//! Both instruments are applied to every shape here, so a shape that stops
+//! paying one of these two ways and starts paying the other cannot go green.
+//!
+//! That is the whole of what they cover, and it is worth saying what falls
+//! outside it, because something did. Both counters are incremented by the
+//! collector where it READS, so they see only reads the collector admits to.
+//! Work done inside a `debug_assert!` is not one: re-proving an all-immediate
+//! flag on the escape that exists to skip the read costs exactly what the flag
+//! saves, moves no counter, and is invisible in a release build — so every
+//! guard here stayed green while `Bytes.fromList` over a list of 65,536
+//! integers took 6.9 s in a debug build against 116 ms once the re-proof was
+//! gone. The rule that came out of it lives at the escapes themselves: a flag
+//! is proved where it is SET, never where it is read, and `aver-memory`'s
+//! `the_vector_all_immediate_flag_is_exact_at_every_producer` and
+//! `a_body_agrees_with_a_from_scratch_walk` are where that proof happens.
+//!
+//! The last shape here is the one that found it: a list built by prepending,
+//! reversed, and then walked to the end — `Bytes.fromList` over anything a
+//! parser produced. It carries no hidden index at all, so it is here for the
+//! second instrument and for the plain claim that walking a finished list of
+//! integers costs the collector nothing per step.
 //!
 //! What these tests do NOT claim: that any whole program is linear. They claim
 //! that a step of an indexed walk pays only for itself, and not for everything
@@ -415,5 +434,150 @@ fn an_indexed_walk_that_slices_does_not_reread_the_index() {
         &a_slice_taken_at_every_position,
         10,
         &SLICE_AT_EVERY_POSITION,
+    );
+}
+
+/// What the collector read while a finished list of integers was walked.
+struct Validation {
+    /// List elements read to decide whether a shared body had to be rebuilt.
+    /// A body of integers is skipped without being read, so the honest number
+    /// is zero however long the list is and however often it is promoted.
+    scanned: u64,
+    /// Settled arena entries read — the counter the prepend chain moves.
+    revisited: u64,
+    /// How many octets the walk actually validated. A walk that stopped early
+    /// would make any cost assertion pass for the wrong reason.
+    answer: i64,
+}
+
+/// `Bytes.fromList`, written out: build a list by prepending, reverse it, and
+/// walk it to the end checking every element.
+///
+/// The walk is a mutually recursive pair rather than one self-recursive
+/// function, because that is what the real one is once the check sits in its own
+/// arm, and it is what puts a frame boundary between the steps. A single
+/// self-recursive function reuses its frame thinly and never asks the collector
+/// anything, so it would measure nothing.
+fn a_list_of_octets_validated_to_the_end(n: i64) -> String {
+    format!(
+        r#"module Validate
+    intent = "build a list by prepending, reverse it, and validate every octet"
+    depends []
+    effects []
+
+fn build(remaining: Int, acc: List<Int>) -> List<Int>
+    ? "prepend one octet per step, the way a parser accumulates"
+    match remaining
+        0 -> acc
+        _ -> build(remaining - 1, List.prepend(Int.mod(remaining, 256), acc))
+
+fn allInRange(xs: List<Int>) -> Bool
+    ? "walk the finished list one cell at a time"
+    match xs
+        [] -> true
+        [head, ..tail] -> checkRest(head, tail)
+
+fn checkRest(head: Int, tail: List<Int>) -> Bool
+    ? "check one octet and hand the rest back"
+    match Bool.and(head >= 0, head <= 255)
+        true -> allInRange(tail)
+        false -> false
+
+fn main() -> Int
+    ? "octets validated, or -1"
+    xs = List.reverse(build({n}, []))
+    match allInRange(xs)
+        true -> List.len(xs)
+        false -> 0 - 1
+"#
+    )
+}
+
+/// Run one size of that shape and read the collector's two counters off it.
+fn validate(n: i64) -> Validation {
+    let src = a_list_of_octets_validated_to_the_end(n);
+    let mut items = aver::source::parse_source(&src).expect("parse failed");
+    let result = aver::ir::pipeline::run(
+        &mut items,
+        PipelineConfig {
+            typecheck: Some(TypecheckMode::Full { base_dir: None }),
+            ..Default::default()
+        },
+    );
+    let tc = result.typecheck.as_ref().expect("typecheck requested");
+    assert!(tc.errors.is_empty(), "typecheck failed: {:?}", tc.errors);
+
+    let mut arena = Arena::new();
+    let (code, globals) = vm::compile_program_with_mir_fallback(
+        &result.resolved_items,
+        &result.symbol_table,
+        &mut arena,
+        None,
+    )
+    .expect("compile failed");
+    let mut machine = VM::new(code, globals, arena);
+    let value = machine.run().expect("program should run");
+    Validation {
+        scanned: machine.arena.list_elements_scanned(),
+        revisited: machine.arena.out_of_region_entries_read(),
+        answer: value.as_int(&machine.arena),
+    }
+}
+
+/// Walking a finished list of integers costs the collector nothing per step.
+///
+/// This is the shape `Bytes.fromList` has, and the one every parsed byte string
+/// in a program reaches: prepend into an accumulator, reverse once, then walk
+/// the result to the end. Every step promotes across a frame boundary and meets
+/// the same shared body at a later offset, so anything the collector reads there
+/// it reads once per element per step.
+///
+/// Both budgets are per element and both are met by zero after the fix. They are
+/// not zero here because a boundary still reaches the entry directly below what
+/// it promoted, and the reverse flattens the list once.
+#[test]
+fn validating_a_list_of_octets_does_not_reread_it() {
+    const SMALL: i64 = 1_024;
+    const LARGE: i64 = 2_048;
+    const READS_PER_OCTET: u64 = 4;
+
+    let small = validate(SMALL);
+    let large = validate(LARGE);
+
+    assert_eq!(
+        (small.answer, large.answer),
+        (SMALL, LARGE),
+        "the walk did not validate every octet, so its cost says nothing"
+    );
+
+    assert!(
+        small.scanned <= SMALL as u64 * READS_PER_OCTET
+            && large.scanned <= LARGE as u64 * READS_PER_OCTET,
+        "the collector re-reads the list body the walk is stepping through. \
+         {SMALL} octets read {} elements and {LARGE} octets read {}, against a \
+         budget of {READS_PER_OCTET} per octet",
+        small.scanned,
+        large.scanned,
+    );
+    assert!(
+        small.revisited <= SMALL as u64 * READS_PER_OCTET
+            && large.revisited <= LARGE as u64 * READS_PER_OCTET,
+        "the collector re-reads memory the walk has already settled. \
+         {SMALL} octets read {} settled entries and {LARGE} octets read {}, \
+         against a budget of {READS_PER_OCTET} per octet",
+        small.revisited,
+        large.revisited,
+    );
+    assert!(
+        large.scanned <= 3 * small.scanned + LARGE as u64
+            && large.revisited <= 3 * small.revisited + LARGE as u64,
+        "doubling the list more than tripled what the collector read, so the \
+         walk still pays for the part of the list it has already passed. \
+         {SMALL} octets: {} elements and {} settled entries; {LARGE} octets: \
+         {} and {}",
+        small.scanned,
+        small.revisited,
+        large.scanned,
+        large.revisited,
     );
 }

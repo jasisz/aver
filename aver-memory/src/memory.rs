@@ -630,7 +630,9 @@ impl<T: ArenaTypes> Arena<T> {
     ///
     /// Three outcomes, cheapest first. A body built entirely out of immediates
     /// cannot hold anything the collector could relocate, so it is returned
-    /// without being read. A valid lane receipt proves the body predates the
+    /// without being read — literally, in every build, which is what makes
+    /// [`Arena::list_elements_scanned`] tell the truth about what a walk over a
+    /// list of integers costs. A valid lane receipt proves the body predates the
     /// frame-local suffix and likewise skips the walk, renewing the receipt into
     /// the post-boundary epoch. Otherwise the elements are rewritten, and the
     /// original body is still returned when every rewrite is the identity —
@@ -669,12 +671,23 @@ impl<T: ArenaTypes> Arena<T> {
         F: FnMut(&mut Arena<T>, NanValue) -> NanValue,
     {
         debug_assert!(start <= body.len());
+        // The escape does NOT re-prove the flag here, under debug assertions or
+        // otherwise — the same rule the vector escape in `rewrite_entry_with`
+        // states, and for the same reason. The walk that would prove it is the
+        // walk being skipped, so proving it here costs exactly what the flag
+        // saves, and a debug build keeps the quadratic in full: a loop that
+        // carries a list past a frame boundary reads the whole body on every
+        // step. `Bytes.fromList` over a list of 65,536 integers spent 6.9 s in
+        // that re-proof and 116 ms without it.
+        //
+        // The promise is proved where it is MADE instead, and for a body there
+        // is exactly one place: `ListBody::new` decides the flag from the very
+        // predicate this line would re-test, over the items it is about to
+        // store, and nothing afterwards can change the answer — `items` is
+        // private, the body is immutable, and the only borrow it hands out is a
+        // shared slice. `a_body_agrees_with_a_from_scratch_walk` checks that
+        // single producer against a from-scratch walk.
         if body.all_immediate() {
-            debug_assert!(
-                body.iter().all(|value| value.heap_index().is_none()),
-                "list body marked all-immediate holds a heap-backed element; \
-                 skipping it would leave a stale arena index behind"
-            );
             return (body, start, scan_receipt);
         }
 

@@ -557,8 +557,14 @@ impl<T: ArenaTypes> Arena<T> {
         }
     }
 
+    /// Crate-private on purpose: an `&mut ArenaEntry` can replace a `Vector`,
+    /// `Map`, or `ListBody` element with a heap reference, which is exactly the
+    /// promise `all_immediate` makes and the collector's escapes trust without
+    /// re-reading. Only this crate's own mutators may do that, because only they
+    /// also maintain the promise — `get_vector_mut` gives it up, and
+    /// `vector_store_in_place` narrows it to the element it writes.
     #[inline]
-    pub fn get_mut(&mut self, index: u32) -> &mut ArenaEntry<T> {
+    pub(crate) fn get_mut(&mut self, index: u32) -> &mut ArenaEntry<T> {
         let (space, raw_index) = Self::decode_index(index);
         match space {
             HeapSpace::Young => &mut self.young_entries[raw_index as usize],

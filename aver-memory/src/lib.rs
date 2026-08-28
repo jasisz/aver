@@ -1743,6 +1743,11 @@ pub enum ArenaSymbol<T: ArenaTypes> {
 /// index, which makes relocating the elements provably the identity and lets
 /// the collector skip the body without reading it. `false` is always safe: it
 /// only costs the scan.
+///
+/// Decided at construction is also where it is CHECKED. The collector's escape
+/// does not re-prove the flag, because the walk that would prove it is the walk
+/// being skipped; `ListBody::new` is the single producer, and
+/// `a_body_agrees_with_a_from_scratch_walk` holds it to a from-scratch walk.
 #[derive(Debug)]
 pub struct ListBody {
     items: Vec<NanValue>,
