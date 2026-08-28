@@ -1550,7 +1550,10 @@ fn stepping_a_list_with_take_and_drop_stays_linear() {
 }
 
 /// Taking at least the whole list must hand it straight back rather than
-/// rebuild it — the counterpart of `List.drop(xs, 0)` returning `xs`.
+/// rebuild it — the counterpart of `List.drop(xs, 0)` returning `xs`. The list
+/// here is a body of exactly its own elements, so handing it back keeps nothing
+/// alive that the answer does not already hold; the test below is the other
+/// half of that condition.
 #[test]
 fn taking_the_whole_list_returns_the_list_it_was_given() {
     let mut arena = Arena::new();
@@ -1565,6 +1568,49 @@ fn taking_the_whole_list_returns_the_list_it_was_given() {
             "List.take({count}) rebuilt a list it was asked to keep whole",
         );
     }
+}
+
+/// Handing the list back must not hand back a view into a body far longer than
+/// the list is.
+///
+/// `List.drop` answers with a view over the body it stepped into — the same
+/// allocation at an advanced offset — and a body of plain numbers survives
+/// collection whole, offset and all. So a four-element view onto a
+/// 100,000-element buffer keeps all 100,000 alive. Handing that view back as
+/// the answer to a whole-list take leaves the caller holding the buffer for as
+/// long as it holds the four elements, which is what
+/// `Bytes.take(Bytes.drop(buffer, header), announced)` does on every message
+/// read out of a connection. Rebuilding the four elements costs four and lets
+/// the buffer go.
+#[test]
+fn taking_the_whole_of_a_view_does_not_keep_the_body_it_looks_into() {
+    let mut arena = Arena::new();
+    let items: Vec<NanValue> = (0..100_000).map(NanValue::new_int_inline).collect();
+    let list = NanValue::new_list(arena.push_list(items));
+    let buffer = flat_body!(arena, list);
+
+    let tail = drop_builtin(&mut arena, list, 99_996);
+    let taken = take_builtin(&mut arena, tail, 4_000);
+
+    assert_eq!(
+        list_contents(&arena, taken),
+        (99_996..100_000).collect::<Vec<i64>>(),
+        "the four elements at the end of the buffer are the answer",
+    );
+    let kept = flat_body!(arena, taken);
+    assert!(
+        !std::sync::Arc::ptr_eq(&buffer, &kept),
+        "List.take handed back the view it was given, so the four elements it \
+         answers with still hold the 100,000-element buffer they were read out \
+         of",
+    );
+    assert_eq!(
+        kept.len(),
+        arena.list_len_value(taken),
+        "the answer holds a body of {} elements to have {}",
+        kept.len(),
+        arena.list_len_value(taken),
+    );
 }
 
 /// Taking nothing — and taking a negative count, which clamps to nothing —

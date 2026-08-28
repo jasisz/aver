@@ -275,19 +275,77 @@ impl<T: ArenaTypes> Arena<T> {
         }
     }
 
+    /// Whether this list keeps nothing alive beyond the elements it has.
+    ///
+    /// A list can be a window onto a longer allocation: [`Arena::list_drop`]
+    /// answers with the body it stepped into and an advanced `start`, and a
+    /// segment list that has stepped past some of its parts still carries them.
+    /// Such a window holds every element of the body, not just the ones it
+    /// shows — a body of plain numbers is deliberately never rebuilt by a
+    /// collection, offset and all — so nothing may hand one out as an answer
+    /// that is supposed to be small.
+    ///
+    /// The walk visits the spine and stops at the first window it finds. It is
+    /// only ever asked in place of copying the whole list, and it visits no
+    /// more nodes than that copy would visit elements, so asking costs less
+    /// than the copy it can save.
+    fn list_holds_only_its_own_elements(&self, list: NanValue) -> bool {
+        let mut pending: Vec<NanValue> = Vec::new();
+        let mut current = list;
+
+        loop {
+            if !current.is_empty_list_immediate() {
+                match self.get_list(current.arena_index()) {
+                    ArenaList::Flat { start, .. } => {
+                        if *start != 0 {
+                            return false;
+                        }
+                    }
+                    ArenaList::Prepend { tail, .. } => pending.push(*tail),
+                    ArenaList::Concat { left, right, .. } => {
+                        pending.push(*left);
+                        pending.push(*right);
+                    }
+                    ArenaList::Segments {
+                        current: head,
+                        rest,
+                        start,
+                        ..
+                    } => {
+                        if *start != 0 {
+                            return false;
+                        }
+                        pending.push(*head);
+                        pending.extend(rest.iter().copied());
+                    }
+                }
+            }
+            match pending.pop() {
+                Some(next) => current = next,
+                None => return true,
+            }
+        }
+    }
+
     /// Keep the first `count` elements, reading no more of the list than that.
     ///
     /// The cost is what is kept, not what is left behind — the mirror of what
-    /// [`Arena::list_drop`] does at the other end. A list shorter than the count
-    /// is handed straight back rather than rebuilt, and a count of nothing is
-    /// the canonical empty list, so the two edges cost nothing at all.
+    /// [`Arena::list_drop`] does at the other end. A count of nothing is the
+    /// canonical empty list, so that edge costs nothing at all.
+    ///
+    /// Taking at least the whole list hands the list straight back, but only
+    /// when it is made of nothing but its own elements. A list that is a window
+    /// onto a longer allocation is rebuilt instead, because handing the window
+    /// back would leave the answer holding everything the window looks past —
+    /// see [`Arena::list_holds_only_its_own_elements`]. Rebuilding costs the
+    /// length of the answer, which is what taking a whole list has always cost.
     pub fn list_take(&mut self, list: NanValue, count: usize) -> NanValue {
         debug_assert!(list.is_list());
         let len = self.list_len_value(list);
         if count == 0 || len == 0 {
             return NanValue::EMPTY_LIST;
         }
-        if count >= len {
+        if count >= len && self.list_holds_only_its_own_elements(list) {
             return list;
         }
         let items = self.list_prefix(list, count);
