@@ -1472,7 +1472,32 @@ pub struct Arena<T: ArenaTypes> {
     /// heap-backed grows this on every collection that sees it. It is the
     /// counter the residual time of a map-building program follows.
     map_entries_scanned: u64,
-    /// Whether the evacuation currently in progress has to descend into roots
+    /// Total vector and tuple elements the collector has *read* while deciding
+    /// whether a bulk entry needs rewriting, the vector counterpart of
+    /// [`Arena::list_elements_scanned`]. A vector whose `all_immediate` flag is
+    /// set is returned unread and adds nothing here; one holding anything
+    /// heap-backed is walked in full on every collection that sees it.
+    ///
+    /// The compiler-internal `String.Index` behind `String.charAt` is a vector
+    /// of byte offsets carried across every step of an indexed loop, so this is
+    /// the counter an indexed string walk's residual time follows.
+    vector_elements_scanned: u64,
+    /// Total arena entries a promotion has *read* although they lie outside the
+    /// region it is allowed to move — memory that had already settled.
+    ///
+    /// Reading one can never relocate anything: an older slot cannot hold a
+    /// younger index. The one operation that breaks that rule is the runtime's
+    /// owned in-place vector write, and a caller that made one says so through
+    /// `rewrite_out_of_region_roots`, which is the only thing this number is
+    /// allowed to grow under.
+    ///
+    /// It is the counter a loop that carries a growing structure follows: a
+    /// list built by prepending is a chain of cells, and a promotion that walks
+    /// it from the top on every step reads the whole chain every time. That is
+    /// linear reads per step and a quadratic program, with nothing copied and
+    /// no other counter moving.
+    out_of_region_entries_read: u64,
+    /// Whether the collection currently in progress has to descend into roots
     /// that live OUTSIDE the frame's regions.
     ///
     /// Normally an older slot cannot hold a younger index, so those roots need
@@ -1480,8 +1505,11 @@ pub struct Arena<T: ArenaTypes> {
     /// a long list of strings it is a quadratic one. The runtime's owned
     /// in-place vector write is the single exception, and the caller says so by
     /// passing `true` to [`Arena::evacuate_frame_to_yard`] /
-    /// [`Arena::evacuate_frame_to_handoff`]. Set only for the span of one
-    /// `evacuate_frame_locals` call and cleared when it returns.
+    /// [`Arena::evacuate_frame_to_handoff`],
+    /// [`Arena::promote_young_roots_to_yard`] /
+    /// [`Arena::promote_young_roots_to_handoff`], or
+    /// [`Arena::promote_roots_to_stable`]. Set only for the span of one such
+    /// call and cleared when it returns.
     rewrite_out_of_region_roots: bool,
     /// Whether this arena has ever stored a map.
     ///
@@ -1637,6 +1665,24 @@ pub enum ArenaEntry<T: ArenaTypes> {
     },
     Vector {
         items: Vec<NanValue>,
+        /// The vector spelling of [`ArenaEntry::Map`]'s `all_immediate` and of
+        /// `ListBody`'s: true promises that no element carries an arena index,
+        /// which lets the collector return the whole entry without reading it.
+        ///
+        /// `false` is always safe — it only costs the walk. `true` when
+        /// something does carry an index is not safe and does not fail loudly:
+        /// the element would keep a stale index after a promotion renamed it.
+        /// So it is set at the two builders that see every element
+        /// ([`Arena::push_vector`] and the owned `Vector.set`, which inherits
+        /// it and clears it for the one element it stores) and cleared by the
+        /// mutable escape hatch [`Arena::get_vector_mut`], which cannot know
+        /// what its caller will write.
+        ///
+        /// It exists because the compiler-internal `String.Index` behind
+        /// `String.charAt` is a vector of byte offsets — all immediates —
+        /// threaded through every step of an indexed loop. Re-reading it on
+        /// every collection is what made such a loop quadratic.
+        all_immediate: bool,
         /// The vector spelling of [`ArenaEntry::Map`]'s `holder_count` — see
         /// that field for the full contract; the marking choke points
         /// ([`Arena::note_held_elsewhere`] and everything that funnels into
@@ -1697,6 +1743,11 @@ pub enum ArenaSymbol<T: ArenaTypes> {
 /// index, which makes relocating the elements provably the identity and lets
 /// the collector skip the body without reading it. `false` is always safe: it
 /// only costs the scan.
+///
+/// Decided at construction is also where it is CHECKED. The collector's escape
+/// does not re-prove the flag, because the walk that would prove it is the walk
+/// being skipped; `ListBody::new` is the single producer, and
+/// `a_body_agrees_with_a_from_scratch_walk` holds it to a from-scratch walk.
 #[derive(Debug)]
 pub struct ListBody {
     items: Vec<NanValue>,

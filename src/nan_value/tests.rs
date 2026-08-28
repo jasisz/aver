@@ -201,6 +201,7 @@ fn the_cheap_heap_reference_filter_turns_nothing_heap_backed_away() {
     ));
     cases.push(NanValue::new_vector(arena.push(ArenaEntry::Vector {
         items: vec![NanValue::UNIT],
+        all_immediate: true,
         holder_count: 0,
     })));
     cases.push(NanValue::new_list(arena.push(ArenaEntry::List(
@@ -917,6 +918,11 @@ fn evacuation_rewrites_a_slot_written_in_place_behind_an_out_of_region_list_tail
 /// promoted index can never collide with a live slot and a repeated descent
 /// rewrites nothing. That is why the memo the evacuation needs has no sibling
 /// on this path — not because the promotion walk remembers where it has been.
+///
+/// The descent itself is reported, not assumed: the vector written into lives
+/// below the mark, so the caller passes `true` the way the runtime does after
+/// an owned in-place write. With `false` the promotion would be entitled to
+/// leave every settled slot unread, which is what makes an ordinary loop cheap.
 #[test]
 fn promotion_survives_a_twice_reached_out_of_region_slot() {
     let mut arena = Arena::new();
@@ -929,7 +935,7 @@ fn promotion_survives_a_twice_reached_out_of_region_slot() {
     arena.get_vector_mut(vector.arena_index())[0] = payload;
 
     let mut roots = [vector, vector, bystander];
-    arena.promote_young_roots_to_yard(mark, 0, &mut roots);
+    arena.promote_young_roots_to_yard(mark, 0, &mut roots, true);
 
     let element = arena.vector_ref_value(roots[0])[0];
     assert_eq!(

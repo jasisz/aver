@@ -106,6 +106,10 @@ pub fn vec_set_nv_owned(args: &[NanValue], arena: &mut Arena) -> Result<NanValue
         return Ok(NanValue::NONE);
     };
     let source = args[0];
+    // Read before taking: the take empties the entry, and the promise the
+    // collector reads has to be carried across to the entry pushed below.
+    let source_all_immediate =
+        !source.is_empty_vector_immediate() && arena.vector_all_immediate(source.arena_index());
     let mut items = arena.take_vector_value(source);
     if uidx >= items.len() {
         return Ok(NanValue::NONE);
@@ -120,6 +124,10 @@ pub fn vec_set_nv_owned(args: &[NanValue], arena: &mut Arena) -> Result<NanValue
     let new_vec_idx = arena.push_inheriting_source_space(
         aver_memory::ArenaEntry::Vector {
             items,
+            // Every other element was already immediate or already not; the one
+            // element this write stores is the only one that can change the
+            // answer, and it is right here.
+            all_immediate: source_all_immediate && args[2].heap_index().is_none(),
             holder_count: 0,
         },
         source,
@@ -216,5 +224,83 @@ fn vec_to_list_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Runt
     } else {
         let list_idx = arena.push_list(items);
         Ok(NanValue::new_list(list_idx))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The answer the flag stands in for, walked from scratch.
+    fn really_all_immediate(arena: &Arena, vector: NanValue) -> bool {
+        arena
+            .vector_ref_value(vector)
+            .iter()
+            .all(|element| element.heap_index().is_none())
+    }
+
+    /// Run the owned write and unwrap the vector it hands back.
+    fn owned_set(arena: &mut Arena, vector: NanValue, at: i64, value: NanValue) -> NanValue {
+        let index = NanValue::new_int(at, arena);
+        let result =
+            vec_set_nv_owned(&[vector, index, value], arena).expect("owned Vector.set succeeds");
+        assert!(
+            result.is_some(),
+            "the index was in range, so this is a Some"
+        );
+        result.wrapper_inner(arena)
+    }
+
+    /// The owned `Vector.set` promises the collector exactly what it holds.
+    ///
+    /// It is the fourth producer of that promise and the only one outside
+    /// `aver-memory` — that crate's own exactness test covers the builder, the
+    /// in-place write and the mutable escape hatch, and cannot reach across the
+    /// crate boundary to this one.
+    ///
+    /// It needs its own test because the promise is not re-proved where it is
+    /// read: the collector returns a vector marked all-immediate without looking
+    /// at it, so a wrong `true` here is silent. An element would keep an arena
+    /// index that promotion has already renamed, and the program would go on to
+    /// read whatever moved into that slot.
+    #[test]
+    fn the_owned_vector_set_reports_the_all_immediate_flag_exactly() {
+        let mut arena = Arena::new();
+        let zero = NanValue::new_int(0, &mut arena);
+        let seven = NanValue::new_int(7, &mut arena);
+        let five = NanValue::new_int(5, &mut arena);
+        let heap_backed =
+            NanValue::new_string_value("long enough that it has to live in the arena", &mut arena);
+        assert!(
+            heap_backed.heap_index().is_some(),
+            "the test needs a value the collector could actually move"
+        );
+
+        // An immediate written over immediates keeps the promise.
+        let offsets = NanValue::new_vector(arena.push_vector(vec![zero, seven]));
+        let updated = owned_set(&mut arena, offsets, 1, five);
+        assert!(arena.vector_all_immediate(updated.arena_index()));
+        assert_eq!(
+            arena.vector_all_immediate(updated.arena_index()),
+            really_all_immediate(&arena, updated)
+        );
+
+        // The one heap value it stores gives the promise up.
+        let mixed = owned_set(&mut arena, updated, 0, heap_backed);
+        assert!(!arena.vector_all_immediate(mixed.arena_index()));
+        assert_eq!(
+            arena.vector_all_immediate(mixed.arena_index()),
+            really_all_immediate(&arena, mixed)
+        );
+
+        // Writing an immediate over the OTHER element does not win the promise
+        // back: the heap value is still in there, and the write only knows about
+        // the element it wrote.
+        let still_mixed = owned_set(&mut arena, mixed, 1, seven);
+        assert!(!arena.vector_all_immediate(still_mixed.arena_index()));
+        assert_eq!(
+            arena.vector_all_immediate(still_mixed.arena_index()),
+            really_all_immediate(&arena, still_mixed)
+        );
     }
 }

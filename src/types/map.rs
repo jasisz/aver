@@ -749,7 +749,7 @@ mod tests {
             .expect("owned insert should remember its fresh pair");
 
         let mut roots = [result];
-        arena.promote_young_roots_to_yard(proof.arena_mark, proof.lane_mark, &mut roots);
+        arena.promote_young_roots_to_yard(proof.arena_mark, proof.lane_mark, &mut roots, false);
 
         assert_eq!(arena.map_entries_scanned(), 1);
         let map = arena.map_ref_value(roots[0]);

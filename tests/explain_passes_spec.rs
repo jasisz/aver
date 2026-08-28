@@ -601,6 +601,61 @@ fn main() -> Int
 }
 
 #[test]
+fn a_character_that_escapes_its_match_arm_keeps_the_indexed_character_read() {
+    // The sibling of the test above, and the shape the whole integration suite
+    // was missing: every other string-index program here discards the character
+    // and therefore lowers to the codepoint read, which allocates nothing. The
+    // moment the character is USED the pass has to keep `__str_index_char_at`,
+    // which materialises a one-character String — a different intrinsic with a
+    // different cost, pinned nowhere until now. Its cost lives in
+    // `tests/vm_string_index_cost.rs`; this is the lowering half.
+    let source = r#"
+module IndexedUsed
+    intent = "walk Unicode and use each character"
+    effects []
+
+fn count(text: String, position: Int, total: Int) -> Int
+    match String.charAt(text, position)
+        Option.None -> total
+        Option.Some(c) -> count(text, position + 1, total + String.len(c))
+
+fn main() -> Int
+    count("aą😀z", 0, 0)
+"#;
+
+    let after = run_emit_ir_after(source, "string_index");
+    assert!(
+        after.contains("count__indexed")
+            && after.contains("__str_index_build")
+            && after.contains("__str_index_char_at")
+            && !after.contains("__str_index_code_at"),
+        "a character that escapes its arm must keep the indexed character read:\n{after}"
+    );
+
+    let json = run_explain_passes(source);
+    let data = &json["passes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["stage"] == "string_index")
+        .expect("string_index pass present")["data"];
+    assert_eq!(data["components"], 1, "{data}");
+    assert_eq!(data["indexed_accesses"], 1, "{data}");
+    assert_eq!(
+        data["codepoint_accesses"], 0,
+        "the character is used, so nothing may be read as a bare codepoint: {data}"
+    );
+    assert_eq!(
+        data["code_variants"].as_array().unwrap(),
+        &Vec::<serde_json::Value>::new()
+    );
+    assert_eq!(
+        data["synthesized"].as_array().unwrap(),
+        &vec![serde_json::json!("count__indexed")]
+    );
+}
+
+#[test]
 fn string_index_report_includes_workers_living_in_dependencies() {
     let dir = tempfile::tempdir().expect("tempdir");
     std::fs::write(
