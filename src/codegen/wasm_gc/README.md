@@ -218,7 +218,7 @@ Audited 2026-05-02 against `src/codegen/wasm/abi.rs` + `src/types/checker/builti
 | Bool      | and/or/not ✅ |
 | Int       | toString/toFloat/abs/min/max/mod ✅, fromString ✅ |
 | Float     | toString/floor/ceil/round/abs/sqrt/min/max/pi/fromInt ✅, fromString ✅ |
-| String    | len/length/byteLength/startsWith/endsWith/contains/slice/toUpper/toLower/trim/split/join/fromInt/fromFloat/fromBool/charAt/chars/replace ✅ (`toUpper`/`toLower` are full Unicode — expansions such as `ß` → `SS` and the final-sigma rule included — from the tables in `builtins/case_tables.rs`; `trim` and `startsWith` stay byte-oriented, matching the VM) |
+| String    | len/length/byteLength/startsWith/endsWith/contains/slice/toUpper/toLower/split/join/fromInt/fromFloat/fromBool/charAt/chars/replace ✅ (`toUpper`/`toLower` are full Unicode — expansions such as `ß` → `SS` and the final-sigma rule included — from the tables in `builtins/case_tables.rs`; `startsWith` compares bytes, which is what the VM's `str::starts_with` does too). **`trim` ⚠️ diverges from the VM**: it strips only space, tab, CR and LF, while the VM calls Rust `str::trim`, which strips every Unicode whitespace character — measured, `String.trim("\u{00A0}x\u{00A0}")` keeps both no-break spaces here and drops them on the VM, and the same holds for U+3000 and for ASCII vertical tab and form feed |
 | Char      | toCode/fromCode ✅ |
 | Option    | Some/None/withDefault/toResult ✅ |
 | Result    | Ok/Err/withDefault ✅ |

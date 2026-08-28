@@ -156,6 +156,97 @@ fn upperOf(s: String) -> String
     String.toUpper(s)
 "#;
 
+/// Build one Aver program that calls exactly one of the two case
+/// builtins, with Rust std's own answers as the expected values.
+///
+/// The table blob is packed per module, so which builtins a program
+/// calls decides the layout the helper reads. A module that calls only
+/// `String.toUpper` carries the uppercase tables at offset zero and no
+/// cased / case-ignorable ranges at all; one that calls only
+/// `String.toLower` carries no uppercase tables. Neither layout is
+/// reachable from a program that calls both.
+fn single_builtin_program(to_upper: bool, chunks: &[String]) -> (String, usize) {
+    let (name, builtin) = if to_upper {
+        ("upperOf", "String.toUpper")
+    } else {
+        ("lowerOf", "String.toLower")
+    };
+    let mut src = format!(
+        "\nfn {name}(s: String) -> String\n    ? \"Case mapping of the string\"\n    {builtin}(s)\n"
+    );
+    src.push_str(&format!("\nverify {name}\n"));
+    for chunk in chunks {
+        let want = if to_upper {
+            chunk.to_uppercase()
+        } else {
+            chunk.to_lowercase()
+        };
+        src.push_str(&format!(
+            "    {name}(\"{}\") => \"{}\"\n",
+            escape_aver(chunk),
+            escape_aver(&want)
+        ));
+    }
+    (src, chunks.len())
+}
+
+/// Every scalar whose case mapping in `direction` is not the identity,
+/// so the sweep actually reads the simple-run and expansion tables
+/// rather than walking past them.
+fn mapped_scalars(to_upper: bool) -> Vec<char> {
+    scalars_in(0..=0x10FFFF)
+        .filter(|c| {
+            let mut mapped = if to_upper {
+                c.to_uppercase().collect::<Vec<_>>()
+            } else {
+                c.to_lowercase().collect::<Vec<_>>()
+            };
+            mapped.len() != 1 || mapped.pop() != Some(*c)
+        })
+        .collect()
+}
+
+/// A module whose only case call is `String.toUpper` — the shape most
+/// real programs have. Its blob starts with `UPPER_SIMPLE` at offset
+/// zero and carries no cased / case-ignorable ranges, so a table
+/// offset that is only right when the lowercase tables precede it
+/// fails here and passes everywhere else.
+#[test]
+fn upper_only_module_matches_vm() {
+    let mut chunks = chunks_of(mapped_scalars(true).into_iter(), 256);
+    // Expansions, length-changing mappings and a sigma pair, as text
+    // rather than as lone scalars.
+    chunks.push("ß ŉ ﬀ ﬆ ǰ ΐ ΰ և ﬓ ĳ ı İ σ ς ΣΣ straße".to_string());
+    chunks.push("abcXYZ".to_string());
+    let (source, cases) = single_builtin_program(true, &chunks);
+    assert!(cases > 4, "corpus collapsed to {cases} cases");
+    assert_all_pass_on_both(&source, cases);
+}
+
+/// A module whose only case call is `String.toLower`. Its blob has no
+/// uppercase tables, which moves the cased and case-ignorable ranges
+/// the final-sigma rule reads — so the sigma cases below are the ones
+/// that catch a span computed for the both-builtins layout.
+#[test]
+fn lower_only_module_matches_vm() {
+    let mut chunks = chunks_of(mapped_scalars(false).into_iter(), 256);
+    // Every kind of neighbour the final-sigma rule looks at, on both
+    // sides: ASCII upper, ASCII lower, Greek, an accented letter, a
+    // case-ignorable, an uncased character, and the ends of the
+    // string. The ASCII-uppercase ones matter twice over — `A`-`Z` is
+    // the first entry of the cased table, so a span that starts one
+    // record late still answers every other context correctly.
+    for context in [
+        "Σ", "ΑΣ", "ΑΣΒ", "AΣ", "ABΣ", "ABΣCD", "AΣ'", "AΣʰ", "AΣʰZ", "aΣ", "aΣb", "ΑΣ'Β", "ΑΣ'",
+        "aΣʰ", "aΣʰb", "ΆΣ", "ΣΣ", "ΑΣ̈Β", "Σa", "ΣA", ".Σ.", "İ", "K", "abcXYZ",
+    ] {
+        chunks.push(context.to_string());
+    }
+    let (source, cases) = single_builtin_program(false, &chunks);
+    assert!(cases > 4, "corpus collapsed to {cases} cases");
+    assert_all_pass_on_both(&source, cases);
+}
+
 /// Build one Aver program whose expected values are Rust std's own
 /// answers for each chunk. Returns the source and the case count.
 fn generated_program(chunks: &[String]) -> (String, usize) {
