@@ -3,6 +3,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
 fn temp_output_dir(prefix: &str) -> PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -41,6 +44,162 @@ fn marker_count(path: &Path) -> usize {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => 0,
         Err(err) => panic!("failed to read {}: {}", path.display(), err),
     }
+}
+
+#[cfg(unix)]
+fn write_fake_cargo(dir: &Path) -> PathBuf {
+    let cargo = dir.join("cargo");
+    fs::write(
+        &cargo,
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$AVER_TEST_CARGO_ARGS\"\nexit \"$AVER_TEST_CARGO_STATUS\"\n",
+    )
+    .expect("write fake cargo");
+    let mut permissions = fs::metadata(&cargo).expect("stat fake cargo").permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&cargo, permissions).expect("make fake cargo executable");
+    cargo
+}
+
+#[cfg(unix)]
+fn write_compile_check_probe(workspace: &Path) -> PathBuf {
+    fs::create_dir_all(workspace).expect("create compile-check workspace");
+    let source = workspace.join("main.av");
+    fs::write(
+        &source,
+        r#"module Main
+    intent = "Exercise the Rust compile check boundary."
+    exposes [main]
+
+fn main() -> Int
+    1
+"#,
+    )
+    .expect("write compile-check source");
+    source
+}
+
+#[cfg(unix)]
+#[test]
+fn compile_check_runs_cargo_and_reports_success_only_after_it_passes() {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace = temp_output_dir("aver-compile-check-success");
+    let fake_bin = workspace.join("bin");
+    let output_dir = workspace.join("out");
+    let args_log = workspace.join("cargo-args.txt");
+    let source = write_compile_check_probe(&workspace);
+    fs::create_dir_all(&fake_bin).expect("create fake bin dir");
+    write_fake_cargo(&fake_bin);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_aver"))
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg(&source)
+        .arg("--target")
+        .arg("rust")
+        .arg("--check")
+        .arg("-o")
+        .arg(&output_dir)
+        .env("PATH", &fake_bin)
+        .env("AVER_TEST_CARGO_ARGS", &args_log)
+        .env("AVER_TEST_CARGO_STATUS", "0")
+        .output()
+        .expect("run aver compile --check");
+
+    assert!(
+        output.status.success(),
+        "compile --check should pass when Cargo passes:\n{}",
+        format_output(&output)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Compiled"),
+        "missing compile success:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("cargo check passed"),
+        "missing Cargo success:\n{stdout}"
+    );
+    let cargo_args = fs::read_to_string(&args_log).expect("read fake Cargo args");
+    assert_eq!(
+        cargo_args.lines().collect::<Vec<_>>(),
+        vec![
+            "check",
+            "--manifest-path",
+            output_dir.join("Cargo.toml").to_string_lossy().as_ref()
+        ]
+    );
+
+    let _ = fs::remove_dir_all(&workspace);
+}
+
+#[cfg(unix)]
+#[test]
+fn compile_check_propagates_cargo_failure_and_keeps_generated_project() {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace = temp_output_dir("aver-compile-check-failure");
+    let fake_bin = workspace.join("bin");
+    let output_dir = workspace.join("out");
+    let args_log = workspace.join("cargo-args.txt");
+    let source = write_compile_check_probe(&workspace);
+    fs::create_dir_all(&fake_bin).expect("create fake bin dir");
+    write_fake_cargo(&fake_bin);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_aver"))
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg(&source)
+        .arg("--check")
+        .arg("-o")
+        .arg(&output_dir)
+        .env("PATH", &fake_bin)
+        .env("AVER_TEST_CARGO_ARGS", &args_log)
+        .env("AVER_TEST_CARGO_STATUS", "37")
+        .output()
+        .expect("run failing aver compile --check");
+
+    assert_eq!(
+        output.status.code(),
+        Some(37),
+        "compile --check should preserve Cargo's exit code:\n{}",
+        format_output(&output)
+    );
+    assert!(
+        output_dir.join("Cargo.toml").is_file(),
+        "generated project should remain after Cargo failure"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("Compiled"),
+        "compile success must wait for Cargo:\n{stdout}"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("`cargo check` failed"),
+        "missing Cargo failure context:\n{stderr}"
+    );
+
+    let _ = fs::remove_dir_all(&workspace);
+}
+
+#[test]
+fn compile_check_rejects_non_rust_target_before_codegen() {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let output = Command::new(env!("CARGO_BIN_EXE_aver"))
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("examples/core/hello.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--check")
+        .output()
+        .expect("run aver compile --target wasm-gc --check");
+
+    assert_eq!(output.status.code(), Some(1), "{}", format_output(&output));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("--check requires --target rust"),
+        "{}",
+        format_output(&output)
+    );
 }
 
 #[test]

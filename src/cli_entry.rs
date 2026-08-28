@@ -29,6 +29,8 @@ mod replay_cmd;
 mod run_wasip2;
 #[path = "main/run_wasm_gc.rs"]
 mod run_wasm_gc;
+#[path = "main/rust_check.rs"]
+mod rust_check;
 #[path = "main/shape_cmd.rs"]
 mod shape_cmd;
 #[path = "main/shared.rs"]
@@ -329,6 +331,7 @@ fn main_impl(
             name,
             module_root,
             target,
+            check,
             with_replay,
             policy,
             guest_entry,
@@ -367,6 +370,11 @@ fn main_impl(
                 ),
                 None => (*target, *pack),
             };
+            if let Some(error) = cli::compile_check_target_rejection(*check, effective_target) {
+                use colored::Colorize;
+                eprintln!("{}", error.red());
+                std::process::exit(1);
+            }
             if let Some(error) =
                 cli::boxed_sequences_target_rejection(*test_boxed_sequences, effective_target)
             {
@@ -433,6 +441,7 @@ fn main_impl(
                 project_name: name.as_deref(),
                 module_root_override: module_root.as_deref(),
                 target: effective_target,
+                check: *check,
                 with_replay: *with_replay,
                 policy_mode: &policy_mode,
                 guest_entry: guest_entry.as_deref(),

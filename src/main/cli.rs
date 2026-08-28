@@ -119,6 +119,15 @@ pub(super) fn boxed_sequences_target_rejection(
     )
 }
 
+pub(super) fn compile_check_target_rejection(
+    enabled: bool,
+    target: CompileTarget,
+) -> Option<&'static str> {
+    (enabled && !matches!(target, CompileTarget::Rust)).then_some(
+        "--check requires --target rust (it validates the generated Cargo project with `cargo check`)",
+    )
+}
+
 /// WASI 0.2 world the component targets. Used only by
 /// `--target wasip2`; ignored by every other target. Defaults to
 /// `wasi:cli/command` (a long-lived process exporting `wasi:cli/run`).
@@ -424,6 +433,15 @@ pub(super) enum Commands {
         /// Compile target: rust (default), wasm-gc, wasip2
         #[arg(long, default_value = "rust")]
         target: CompileTarget,
+        /// After emitting a Rust project, run `cargo check` against its
+        /// manifest and propagate Cargo's exit status and diagnostics.
+        /// The generated project remains in place when validation fails.
+        #[arg(
+            long,
+            default_value_t = false,
+            conflicts_with_all = ["emit_ir_after", "explain_passes", "explain_mir_coverage"]
+        )]
+        check: bool,
         /// Emit optional record/replay runtime support into the generated project
         #[arg(long)]
         with_replay: bool,
@@ -951,6 +969,26 @@ mod tests {
             }
             _ => panic!("expected compile command"),
         }
+    }
+
+    #[test]
+    fn compile_accepts_check_for_default_rust_target() {
+        let cli = Cli::parse_from(["aver", "compile", "examples/core/hello.av", "--check"]);
+        match cli.command {
+            Commands::Compile { target, check, .. } => {
+                assert_eq!(target, CompileTarget::Rust);
+                assert!(check);
+            }
+            _ => panic!("expected compile command"),
+        }
+    }
+
+    #[test]
+    fn compile_check_rejects_non_rust_targets() {
+        assert!(compile_check_target_rejection(true, CompileTarget::Rust).is_none());
+        assert!(compile_check_target_rejection(true, CompileTarget::WasmGc).is_some());
+        assert!(compile_check_target_rejection(true, CompileTarget::Wasip2).is_some());
+        assert!(compile_check_target_rejection(false, CompileTarget::WasmGc).is_none());
     }
 
     #[test]

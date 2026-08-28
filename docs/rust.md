@@ -20,6 +20,18 @@ Compiled examples/core/hello.av → /tmp/hello-rs/ [Rust]
   cd /tmp/hello-rs && cargo build && cargo run
 ```
 
+To validate the generated crate immediately, add `--check`:
+
+```bash
+aver compile examples/core/hello.av -o /tmp/hello-rs --check
+```
+
+For the Rust target, `--check` runs `cargo check` against the generated
+manifest, forwards Cargo's diagnostics, and exits non-zero when Cargo or rustc
+rejects the project. The generated files remain available for inspection after
+a failure. Without the flag, `aver compile` only emits the project and does not
+invoke Cargo.
+
 ## What it generates
 
 Generates a complete Cargo project:

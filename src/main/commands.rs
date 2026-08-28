@@ -4029,11 +4029,10 @@ fn build_codegen_context(
     (ctx, module_root)
 }
 
-fn write_codegen_output(
+fn prepare_codegen_output(
     file: &str,
     output_dir: &str,
     target_label: &str,
-    build_hint: &str,
     output: &codegen::ProjectOutput,
 ) {
     let out_path = Path::new(output_dir);
@@ -4071,11 +4070,23 @@ fn write_codegen_output(
         );
         process::exit(1);
     }
+}
 
+fn report_codegen_output(
+    file: &str,
+    output_dir: &str,
+    target_label: &str,
+    build_hint: &str,
+    output: &codegen::ProjectOutput,
+    cargo_checked: bool,
+) {
     println!(
         "{}",
         format!("Compiled {} → {}/ [{}]", file, output_dir, target_label).green()
     );
+    if cargo_checked {
+        println!("  {}", "cargo check passed".green());
+    }
     // A verify case the backend could not render is left out of the
     // generated test module. That is not a build failure, but it is a case
     // the crate does not run, so it is named here rather than vanishing.
@@ -4089,6 +4100,17 @@ fn write_codegen_output(
         }
     }
     println!("  {}", build_hint.cyan());
+}
+
+fn write_codegen_output(
+    file: &str,
+    output_dir: &str,
+    target_label: &str,
+    build_hint: &str,
+    output: &codegen::ProjectOutput,
+) {
+    prepare_codegen_output(file, output_dir, target_label, output);
+    report_codegen_output(file, output_dir, target_label, build_hint, output, false);
 }
 
 pub(super) struct BenchOptions<'a> {
@@ -6330,6 +6352,7 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
         project_name,
         module_root_override,
         target,
+        check,
         with_replay,
         policy_mode,
         guest_entry,
@@ -6482,7 +6505,13 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
         }
     };
     let build_hint = format!("cd {} && cargo build && cargo run", output_dir);
-    write_codegen_output(file, output_dir, "Rust", &build_hint, &output);
+    prepare_codegen_output(file, output_dir, "Rust", &output);
+    if check && let Err(error) = super::rust_check::run(Path::new(output_dir)) {
+        let exit_code = error.exit_code();
+        eprintln!("{}", error.to_string().red());
+        process::exit(exit_code);
+    }
+    report_codegen_output(file, output_dir, "Rust", &build_hint, &output, check);
     print_capability_target_accounting(
         &ctx.items,
         &ctx.modules,
@@ -7301,6 +7330,7 @@ pub(super) struct CompileOptions<'a> {
     pub(super) project_name: Option<&'a str>,
     pub(super) module_root_override: Option<&'a str>,
     pub(super) target: super::cli::CompileTarget,
+    pub(super) check: bool,
     pub(super) with_replay: bool,
     pub(super) policy_mode: &'a super::cli::CompilePolicyMode,
     pub(super) guest_entry: Option<&'a str>,
