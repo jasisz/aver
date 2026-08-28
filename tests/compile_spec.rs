@@ -1,7 +1,8 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -44,6 +45,30 @@ fn marker_count(path: &Path) -> usize {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => 0,
         Err(err) => panic!("failed to read {}: {}", path.display(), err),
     }
+}
+
+fn generated_file_mtimes(root: &Path) -> BTreeMap<PathBuf, SystemTime> {
+    fn visit(root: &Path, directory: &Path, files: &mut BTreeMap<PathBuf, SystemTime>) {
+        for entry in fs::read_dir(directory).expect("read generated directory") {
+            let entry = entry.expect("read generated entry");
+            let path = entry.path();
+            let metadata = entry.metadata().expect("stat generated entry");
+            if metadata.is_dir() {
+                visit(root, &path, files);
+            } else if metadata.is_file() {
+                files.insert(
+                    path.strip_prefix(root)
+                        .expect("generated path below output root")
+                        .to_path_buf(),
+                    metadata.modified().expect("generated file mtime"),
+                );
+            }
+        }
+    }
+
+    let mut files = BTreeMap::new();
+    visit(root, root, &mut files);
+    files
 }
 
 #[cfg(unix)]
@@ -200,6 +225,54 @@ fn compile_check_rejects_non_rust_target_before_codegen() {
         "{}",
         format_output(&output)
     );
+}
+
+#[test]
+fn repeated_compile_preserves_byte_identical_generated_file_mtimes() {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace = temp_output_dir("aver-compile-noop-mtimes");
+    let output_dir = workspace.join("out");
+    fs::create_dir_all(&workspace).expect("create compile workspace");
+
+    let compile = || {
+        Command::new(env!("CARGO_BIN_EXE_aver"))
+            .current_dir(&repo_root)
+            .arg("compile")
+            .arg("examples/core/hello.av")
+            .arg("--target")
+            .arg("rust")
+            .arg("-o")
+            .arg(&output_dir)
+            .output()
+            .expect("run aver compile")
+    };
+
+    let first = compile();
+    assert!(
+        first.status.success(),
+        "initial compile failed:\n{}",
+        format_output(&first)
+    );
+    let before = generated_file_mtimes(&output_dir);
+    assert!(!before.is_empty(), "compile emitted no files");
+
+    // Put the second materialisation beyond the coarse one-second timestamp
+    // resolution still used by some filesystems. A rewriting implementation
+    // must then produce a different snapshot.
+    std::thread::sleep(Duration::from_millis(1_100));
+    let second = compile();
+    assert!(
+        second.status.success(),
+        "repeated compile failed:\n{}",
+        format_output(&second)
+    );
+    assert_eq!(
+        generated_file_mtimes(&output_dir),
+        before,
+        "byte-identical generated files must retain their mtimes"
+    );
+
+    let _ = fs::remove_dir_all(&workspace);
 }
 
 #[test]

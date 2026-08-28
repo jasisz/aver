@@ -362,16 +362,7 @@ fn cache_root() -> Result<PathBuf, String> {
 }
 
 fn write_if_changed(path: &Path, contents: &str) -> Result<(), String> {
-    if std::fs::read_to_string(path).ok().as_deref() == Some(contents) {
-        return Ok(());
-    }
-    let parent = path
-        .parent()
-        .ok_or_else(|| format!("path '{}' has no parent", path.display()))?;
-    std::fs::create_dir_all(parent)
-        .map_err(|error| format!("cannot create '{}': {error}", parent.display()))?;
-    std::fs::write(path, contents)
-        .map_err(|error| format!("cannot write '{}': {error}", path.display()))
+    crate::file_materialization::write_if_changed(path, contents.as_bytes()).map(|_| ())
 }
 
 fn toml_string(value: &str) -> String {
