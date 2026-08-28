@@ -2,6 +2,12 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
+## Unreleased
+
+### Fixed
+
+- **`String.toLower` and `String.toUpper` now handle non-ASCII text on wasm-gc and wasip2.** Those two backends previously changed only the letters A-Z and a-z, so `String.toLower("ĄĆĘ ŁÓŚ ΩΔ")` came back unchanged while the VM and generated Rust returned `"ąćę łóś ωδ"`. All backends now agree, including letters whose case changes their length (`String.toUpper("ß")` is `"SS"`) and a final Greek sigma at the end of a word (`ς`, not `σ`). Programs that never call either builtin compile to exactly the same bytes as before. Closes [#1185](https://github.com/jasisz/aver/issues/1185).
+
 ## 0.29.0 "Peer" — 2026-08-27
 
 Named for the network role Aver programs can finally sustain — and for the checked relationship between a program and its host. One source-owned contract now drives execution, replay, verification, wasm embedding, and proof export.

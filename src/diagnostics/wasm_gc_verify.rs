@@ -585,6 +585,14 @@ fn run_verify_cases_in_wasmtime(
             })?;
     }
 
+    // Instantiation is not a verify case, but it is not free either:
+    // a module with a global section evaluates that global's
+    // initializer under the same fuel meter. Give the store one
+    // default case budget to get through it; every case below then
+    // resets the meter to its own budget.
+    store
+        .set_fuel(case_fuel(CaseBudget::compiled_default().limit))
+        .map_err(|e| format!("wasm-gc verify: set_fuel: {}", e))?;
     let instance = linker
         .instantiate(&mut store, &module)
         .map_err(|e| format!("wasm-gc instantiate: {}", e))?;
