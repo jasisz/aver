@@ -64,6 +64,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "fuzz_codegen_rust"
+path = "fuzz_targets/codegen_rust.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "fuzz_verify_runner"
 path = "fuzz_targets/verify_runner.rs"
 test = false

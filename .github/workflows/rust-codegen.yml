@@ -1,11 +1,11 @@
 name: Rust codegen
 
-# Nightly Rust codegen regression. For a hand-picked corpus of
-# single-file `examples/core/*.av` programs, run
-# `aver compile <file> --target rust -o <tmp>` then
-# `cargo check --manifest-path <tmp>/Cargo.toml`. Asserts the
-# emitted Rust project actually type-checks under the real
-# compiler.
+# Nightly Rust codegen regression. The first job checks a hand-picked corpus
+# of single-file `examples/core/*.av` programs; the second checks the pinned
+# btc-listener revision from #1172 with current Aver. The corpus job
+# materialises each project and invokes Cargo explicitly; the downstream job
+# exercises the public `aver compile --target rust --check` gate. Both assert
+# that emitted Rust type-checks under the real compiler.
 #
 # Catches the bug class where `compile_to_rust` emits syntactically
 # valid but semantically broken source: missing imports, mistyped
@@ -71,3 +71,58 @@ jobs:
         # named example + the cargo check output in the failure
         # message.
         run: cargo test --test rust_codegen_regression -- --nocapture
+
+  btc-listener-canary:
+    name: Rust codegen downstream (btc-listener)
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule' || github.repository == 'jasisz/aver'
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+
+      # Pin the public project at the exact revision that reported #1172.
+      # Upstream application changes must not turn an Aver regression canary
+      # red; update this SHA deliberately when adopting a newer corpus.
+      - uses: actions/checkout@v5
+        with:
+          repository: n1bor/btc-listener
+          ref: a28f19de1d85d506cc75b0a52a9466b2e9607af8
+          path: btc-listener
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install libclang for the pinned RocksDB provider
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libclang-dev
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: rust-codegen-btc-listener
+
+      - name: Place current Aver at btc-listener's pinned dev path
+        # Both downstream provider crates intentionally depend on aver-rt at
+        # this absolute path; btc-listener's own CI checks out its pinned Aver
+        # revision there. Clone this workflow's exact checkout locally so the
+        # canary tests current Aver under the same source identity without
+        # rewriting the downstream manifests.
+        run: |
+          sudo mkdir -p /home/owensr/aver
+          sudo chown "$USER" /home/owensr/aver
+          git clone --quiet --local "$GITHUB_WORKSPACE" /home/owensr/aver/aver
+          git -C /home/owensr/aver/aver checkout --quiet "$GITHUB_SHA"
+
+      - name: Build current Aver
+        working-directory: /home/owensr/aver/aver
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target/btc-listener-aver
+        run: cargo build --locked --bin aver
+
+      - name: Check the emitted downstream project
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target/btc-listener-canary
+        run: |
+          target/btc-listener-aver/debug/aver compile \
+            btc-listener/main.av \
+            --module-root btc-listener \
+            --target rust \
+            --check \
+            -o "$RUNNER_TEMP/btc-listener-generated"
