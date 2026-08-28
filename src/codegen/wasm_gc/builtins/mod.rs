@@ -64,12 +64,15 @@ use std::collections::HashMap;
 
 use wasm_encoder::{CodeSection, Function, Instruction, ValType};
 
+use self::case_tables::CaseWiring;
 use super::WasmGcError;
 use super::types::{OPTION_NONE_TAG, OPTION_SOME_TAG, TypeRegistry};
 use super::wat_helper;
 
 mod bignum;
+pub(in crate::codegen::wasm_gc) mod case_tables;
 mod crypto;
+mod string_case;
 mod utf8;
 
 /// Curated set of pure-side builtins phase 3c+ implements. Adding a
@@ -505,7 +508,15 @@ impl BuiltinName {
     /// Emit the full helper body (including trailing `End`) into a
     /// fresh `Function`. Called once per registered builtin during
     /// `emit_helper_bodies`.
-    pub(super) fn emit_helper_body(self, registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    ///
+    /// `case` carries the Unicode case tables' data-segment index and
+    /// cache global; only `String.toUpper` / `String.toLower` read it,
+    /// and the module only builds it when one of them is registered.
+    pub(super) fn emit_helper_body(
+        self,
+        registry: &TypeRegistry,
+        case: Option<&CaseWiring<'_>>,
+    ) -> Result<Function, WasmGcError> {
         match self {
             Self::StringFromInt if registry.bignum => bignum::emit_string_from_aint(registry),
             Self::StringFromInt => emit_string_from_int(registry),
@@ -521,8 +532,8 @@ impl BuiltinName {
             Self::StringStartsWith => emit_string_starts_with(registry),
             Self::StringContains => emit_string_contains(registry),
             Self::StringSlice => emit_string_slice(registry),
-            Self::StringToUpper => emit_string_case(registry, true),
-            Self::StringToLower => emit_string_case(registry, false),
+            Self::StringToUpper => string_case::emit(registry, true, case),
+            Self::StringToLower => string_case::emit(registry, false, case),
             Self::StringTrim => emit_string_trim(registry),
             Self::IntFromString if registry.bignum => bignum::emit_aint_from_string(registry),
             Self::IntFromString => emit_int_from_string(registry),
@@ -614,9 +625,10 @@ impl BuiltinRegistry {
         &self,
         codes: &mut CodeSection,
         registry: &TypeRegistry,
+        case: Option<&CaseWiring<'_>>,
     ) -> Result<(), WasmGcError> {
         for name in self.iter() {
-            let func = name.emit_helper_body(registry)?;
+            let func = name.emit_helper_body(registry, case)?;
             codes.function(&func);
         }
         Ok(())
@@ -1410,73 +1422,6 @@ fn emit_string_slice(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
             local.get $len
             array.copy $string $string
 
-            local.get $out)
-        )
-    "#
-    );
-    wat_helper::compile_wat_helper(&wat)
-}
-
-/// `String.toUpper` / `String.toLower`. ASCII-only. `to_upper=true`
-/// shifts `'a'..'z'` down by 32; otherwise shifts `'A'..'Z'` up.
-fn emit_string_case(registry: &TypeRegistry, to_upper: bool) -> Result<Function, WasmGcError> {
-    let (_, preamble) = string_module_preamble(registry)?;
-    let (lo, hi, delta) = if to_upper {
-        ("0x61", "0x7A", "i32.const 32 i32.sub")
-    } else {
-        ("0x41", "0x5A", "i32.const 32 i32.add")
-    };
-    let wat = format!(
-        r#"
-        (module
-          {preamble}
-          (func (export "helper")
-                (param $s (ref null $string))
-                (result (ref null $string))
-            (local $len i32)
-            (local $i i32)
-            (local $ch i32)
-            (local $out (ref null $string))
-
-            local.get $s array.len local.set $len
-            local.get $len array.new_default $string local.set $out
-
-            i32.const 0 local.set $i
-            (block $done
-              (loop $cp
-                local.get $i
-                local.get $len
-                i32.ge_u
-                br_if $done
-
-                local.get $s
-                local.get $i
-                array.get_u $string
-                local.set $ch
-
-                local.get $ch
-                i32.const {lo}
-                i32.ge_u
-                local.get $ch
-                i32.const {hi}
-                i32.le_u
-                i32.and
-                (if
-                  (then
-                    local.get $ch
-                    {delta}
-                    local.set $ch))
-
-                local.get $out
-                local.get $i
-                local.get $ch
-                array.set $string
-
-                local.get $i
-                i32.const 1
-                i32.add
-                local.set $i
-                br $cp))
             local.get $out)
         )
     "#

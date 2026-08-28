@@ -1,0 +1,445 @@
+#![cfg(feature = "wasm")]
+
+//! Regression — `String.toLower` / `String.toUpper` on wasm-gc must
+//! produce exactly what the VM and the generated Rust produce, i.e.
+//! Rust `str::to_lowercase` / `str::to_uppercase`: full Unicode
+//! mappings, the one-to-many expansions (`ß` uppercases to `SS`), and
+//! the final-sigma rule (a Greek capital sigma at the end of a word
+//! lowercases to `ς`, elsewhere to `σ`).
+//!
+//! The wasm-gc helpers used to shift only `A`-`Z` and `a`-`z`, so
+//! `String.toLower("ĄĆĘ ŁÓŚ ΩΔ")` came back unchanged while the VM
+//! answered `"ąćę łóś ωδ"`. `docs/services.md` has always promised
+//! "Unicode-aware" case for both.
+//!
+//! Every block here runs through BOTH the VM verify runner and the
+//! wasm-gc verify runner, and every expected value is Rust std's
+//! answer — so a pass on both runners is a cross-backend parity proof
+//! for these inputs.
+
+use aver::checker::{VerifyCaseOutcome, VerifyResult};
+use aver::diagnostics::vm_verify::run_verify_for_items_vm;
+use aver::diagnostics::wasm_gc_verify::run_verify_for_items_wasm_gc;
+use aver::source::parse_source;
+
+fn run_both_backends(source: &str) -> [(&'static str, Vec<VerifyResult>); 2] {
+    let items = parse_source(source).unwrap_or_else(|e| {
+        panic!("parse failed: {e}");
+    });
+    let vm = run_verify_for_items_vm(
+        items.clone(),
+        None,
+        None,
+        "wasm_gc_unicode_case_regression.av",
+    )
+    .unwrap_or_else(|e| panic!("VM verify failed: {e}"));
+    let gc = run_verify_for_items_wasm_gc(items, None, None, "wasm_gc_unicode_case_regression.av")
+        .unwrap_or_else(|e| panic!("wasm-gc verify failed: {e}"));
+    [("vm", vm), ("wasm-gc", gc)]
+}
+
+/// Assert every case passed on both backends, and name the cases that
+/// did not. The report reads `case_results`, which both runners fill
+/// in; the older `failures` field is left empty by the wasm-gc runner,
+/// so a red run on that lane would otherwise print only a count.
+fn assert_all_pass_on_both(source: &str, expected_passed: usize) {
+    for (backend, results) in run_both_backends(source) {
+        let passed: usize = results.iter().map(|r| r.passed).sum();
+        let failed: usize = results.iter().map(|r| r.failed).sum();
+        let skipped: usize = results.iter().map(|r| r.skipped).sum();
+        let declined: usize = results.iter().map(|r| r.declined).sum();
+        if (passed, failed, skipped, declined) == (expected_passed, 0, 0, 0) {
+            continue;
+        }
+        let mut detail = String::new();
+        let mut shown = 0usize;
+        for r in &results {
+            for case in &r.case_results {
+                if shown == 8 {
+                    break;
+                }
+                let note = match &case.outcome {
+                    VerifyCaseOutcome::Pass => continue,
+                    VerifyCaseOutcome::Mismatch { expected, actual } => format!(
+                        "expected {}\n    actual   {}\n    {}",
+                        clip(expected),
+                        clip(actual),
+                        first_difference(expected, actual)
+                    ),
+                    VerifyCaseOutcome::Declined {
+                        reason,
+                        steps,
+                        limit,
+                        ..
+                    } => format!("declined after {steps} steps of {limit}: {reason}"),
+                    VerifyCaseOutcome::RuntimeError { error } => format!("runtime error: {error}"),
+                    VerifyCaseOutcome::UnexpectedErr { err_repr } => {
+                        format!("unexpected error: {err_repr}")
+                    }
+                    VerifyCaseOutcome::Skipped | VerifyCaseOutcome::SkippedAfterBaseFail => {
+                        "skipped".to_string()
+                    }
+                };
+                detail.push_str(&format!("\n  {}\n    {note}", clip(&case.case_expr)));
+                shown += 1;
+            }
+        }
+        panic!(
+            "[{backend}] expected {expected_passed}/0/0/0 passed/failed/skipped/declined, \
+             got {passed}/{failed}/{skipped}/{declined}{detail}"
+        );
+    }
+}
+
+/// One case here can carry hundreds of scalars; a panic that dumped
+/// them whole would bury the divergence it is reporting.
+fn clip(s: &str) -> String {
+    const MAX: usize = 120;
+    let total = s.chars().count();
+    if total <= MAX {
+        return format!("{s:?}");
+    }
+    let head: String = s.chars().take(MAX).collect();
+    format!("{head:?}… ({total} scalars)")
+}
+
+/// Where two answers part. This is what turns a failure inside a
+/// several-hundred-scalar chunk back into a single code point.
+fn first_difference(expected: &str, actual: &str) -> String {
+    match expected
+        .chars()
+        .zip(actual.chars())
+        .position(|(x, y)| x != y)
+    {
+        Some(i) => {
+            let want = expected.chars().nth(i);
+            let got = actual.chars().nth(i);
+            format!("first difference at scalar {i}: expected {want:?}, got {got:?}")
+        }
+        None => format!(
+            "same prefix, lengths {} and {}",
+            expected.chars().count(),
+            actual.chars().count()
+        ),
+    }
+}
+
+/// Escape one arbitrary Unicode scalar sequence into an Aver string
+/// literal. Aver has no `\u` escape, so scalars go in as raw UTF-8;
+/// only the five characters the lexer reads specially need escaping
+/// (`{` opens interpolation, a doubled `}` collapses to one, and a raw
+/// newline ends the literal).
+fn escape_aver(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 8);
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '{' => out.push_str("\\{"),
+            '}' => out.push_str("\\}"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+const PROGRAM_HEAD: &str = r#"
+fn lowerOf(s: String) -> String
+    ? "Lowercase of the string"
+    String.toLower(s)
+
+fn upperOf(s: String) -> String
+    ? "Uppercase of the string"
+    String.toUpper(s)
+"#;
+
+/// Build one Aver program that calls exactly one of the two case
+/// builtins, with Rust std's own answers as the expected values.
+///
+/// The table blob is packed per module, so which builtins a program
+/// calls decides the layout the helper reads. A module that calls only
+/// `String.toUpper` carries the uppercase tables at offset zero and no
+/// cased / case-ignorable ranges at all; one that calls only
+/// `String.toLower` carries no uppercase tables. Neither layout is
+/// reachable from a program that calls both.
+fn single_builtin_program(to_upper: bool, chunks: &[String]) -> (String, usize) {
+    let (name, builtin) = if to_upper {
+        ("upperOf", "String.toUpper")
+    } else {
+        ("lowerOf", "String.toLower")
+    };
+    let mut src = format!(
+        "\nfn {name}(s: String) -> String\n    ? \"Case mapping of the string\"\n    {builtin}(s)\n"
+    );
+    src.push_str(&format!("\nverify {name}\n"));
+    for chunk in chunks {
+        let want = if to_upper {
+            chunk.to_uppercase()
+        } else {
+            chunk.to_lowercase()
+        };
+        src.push_str(&format!(
+            "    {name}(\"{}\") => \"{}\"\n",
+            escape_aver(chunk),
+            escape_aver(&want)
+        ));
+    }
+    (src, chunks.len())
+}
+
+/// Every scalar whose case mapping in `direction` is not the identity,
+/// so the sweep actually reads the simple-run and expansion tables
+/// rather than walking past them.
+fn mapped_scalars(to_upper: bool) -> Vec<char> {
+    scalars_in(0..=0x10FFFF)
+        .filter(|c| {
+            let mut mapped = if to_upper {
+                c.to_uppercase().collect::<Vec<_>>()
+            } else {
+                c.to_lowercase().collect::<Vec<_>>()
+            };
+            mapped.len() != 1 || mapped.pop() != Some(*c)
+        })
+        .collect()
+}
+
+/// A module whose only case call is `String.toUpper` — the shape most
+/// real programs have. Its blob starts with `UPPER_SIMPLE` at offset
+/// zero and carries no cased / case-ignorable ranges, so a table
+/// offset that is only right when the lowercase tables precede it
+/// fails here and passes everywhere else.
+#[test]
+fn upper_only_module_matches_vm() {
+    let mut chunks = chunks_of(mapped_scalars(true).into_iter(), 256);
+    // Expansions, length-changing mappings and a sigma pair, as text
+    // rather than as lone scalars.
+    chunks.push("ß ŉ ﬀ ﬆ ǰ ΐ ΰ և ﬓ ĳ ı İ σ ς ΣΣ straße".to_string());
+    chunks.push("abcXYZ".to_string());
+    let (source, cases) = single_builtin_program(true, &chunks);
+    assert!(cases > 4, "corpus collapsed to {cases} cases");
+    assert_all_pass_on_both(&source, cases);
+}
+
+/// A module whose only case call is `String.toLower`. Its blob has no
+/// uppercase tables, which moves the cased and case-ignorable ranges
+/// the final-sigma rule reads — so the sigma cases below are the ones
+/// that catch a span computed for the both-builtins layout.
+#[test]
+fn lower_only_module_matches_vm() {
+    let mut chunks = chunks_of(mapped_scalars(false).into_iter(), 256);
+    // Every kind of neighbour the final-sigma rule looks at, on both
+    // sides: ASCII upper, ASCII lower, Greek, an accented letter, a
+    // case-ignorable, an uncased character, and the ends of the
+    // string. The ASCII-uppercase ones matter twice over — `A`-`Z` is
+    // the first entry of the cased table, so a span that starts one
+    // record late still answers every other context correctly.
+    for context in [
+        "Σ", "ΑΣ", "ΑΣΒ", "AΣ", "ABΣ", "ABΣCD", "AΣ'", "AΣʰ", "AΣʰZ", "aΣ", "aΣb", "ΑΣ'Β", "ΑΣ'",
+        "aΣʰ", "aΣʰb", "ΆΣ", "ΣΣ", "ΑΣ̈Β", "Σa", "ΣA", ".Σ.", "İ", "K", "abcXYZ",
+    ] {
+        chunks.push(context.to_string());
+    }
+    let (source, cases) = single_builtin_program(false, &chunks);
+    assert!(cases > 4, "corpus collapsed to {cases} cases");
+    assert_all_pass_on_both(&source, cases);
+}
+
+/// Build one Aver program whose expected values are Rust std's own
+/// answers for each chunk. Returns the source and the case count.
+fn generated_program(chunks: &[String]) -> (String, usize) {
+    let mut src = String::from(PROGRAM_HEAD);
+    src.push_str("\nverify lowerOf\n");
+    for chunk in chunks {
+        src.push_str("    lowerOf(\"");
+        src.push_str(&escape_aver(chunk));
+        src.push_str("\") => \"");
+        src.push_str(&escape_aver(&chunk.to_lowercase()));
+        src.push_str("\"\n");
+    }
+    src.push_str("\nverify upperOf\n");
+    for chunk in chunks {
+        src.push_str("    upperOf(\"");
+        src.push_str(&escape_aver(chunk));
+        src.push_str("\") => \"");
+        src.push_str(&escape_aver(&chunk.to_uppercase()));
+        src.push_str("\"\n");
+    }
+    let cases = chunks.len() * 2;
+    (src, cases)
+}
+
+/// Group scalars into chunks. One chunk is one verify case; the
+/// per-case fuel budget of the wasm-gc verify runner is what caps the
+/// size (a case that runs out of fuel is *declined*, not failed).
+fn chunks_of(scalars: impl Iterator<Item = char>, per_chunk: usize) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut current = String::new();
+    let mut n = 0usize;
+    for c in scalars {
+        current.push(c);
+        n += 1;
+        if n == per_chunk {
+            out.push(std::mem::take(&mut current));
+            n = 0;
+        }
+    }
+    if !current.is_empty() {
+        out.push(current);
+    }
+    out
+}
+
+fn scalars_in(range: std::ops::RangeInclusive<u32>) -> impl Iterator<Item = char> {
+    range.filter_map(char::from_u32)
+}
+
+/// The contexts a byte-wise ASCII shift cannot express: the final-sigma
+/// rule, the one-to-many expansions, the mappings that change a
+/// character's UTF-8 length, and non-Latin scripts inside and outside
+/// the BMP. Every expected value here is Rust std's answer.
+#[test]
+fn explicit_unicode_case_contexts() {
+    assert_all_pass_on_both(
+        r#"
+fn lowerOf(s: String) -> String
+    ? "Lowercase of the string"
+    String.toLower(s)
+
+fn upperOf(s: String) -> String
+    ? "Uppercase of the string"
+    String.toUpper(s)
+
+verify lowerOf
+    lowerOf("") => ""
+    lowerOf("ABC") => "abc"
+    lowerOf("Σ") => "σ"
+    lowerOf("ΑΣ") => "ας"
+    lowerOf("ΑΣΒ") => "ασβ"
+    lowerOf("aΣ") => "aς"
+    lowerOf("aΣb") => "aσb"
+    lowerOf("ABΣCD") => "abσcd"
+    lowerOf("ΑΣ'Β") => "ασ'β"
+    lowerOf("ΑΣ'") => "ας'"
+    lowerOf("ΑΣ̈Β") => "ασ̈β"
+    lowerOf("aΣʰ") => "aςʰ"
+    lowerOf("aΣʰb") => "aσʰb"
+    lowerOf("Α'Σ") => "α'ς"
+    lowerOf("ΆΣ") => "άς"
+    lowerOf("ΣΣ") => "σς"
+    lowerOf("ΑΒΓ") => "αβγ"
+    lowerOf("😀AΣ") => "😀aς"
+    lowerOf("İ") => "i̇"
+    lowerOf("K") => "k"
+    lowerOf("I") => "i"
+    lowerOf("ĄĆĘ ŁÓŚ ß ÀÉÎ ΩΔ") => "ąćę łóś ß àéî ωδ"
+    lowerOf("𐐀") => "𐐨"
+    lowerOf("𐐨") => "𐐨"
+    lowerOf("𞤀") => "𞤢"
+    lowerOf("Ꮈ") => "ꮈ"
+    lowerOf("Ა") => "ა"
+
+verify upperOf
+    upperOf("") => ""
+    upperOf("abc") => "ABC"
+    upperOf("ß") => "SS"
+    upperOf("ŉ") => "ʼN"
+    upperOf("ﬀ") => "FF"
+    upperOf("ﬆ") => "ST"
+    upperOf("ǰ") => "J̌"
+    upperOf("ΐ") => "Ϊ́"
+    upperOf("ΰ") => "Ϋ́"
+    upperOf("և") => "ԵՒ"
+    upperOf("ﬓ") => "ՄՆ"
+    upperOf("ĳ") => "Ĳ"
+    upperOf("ı") => "I"
+    upperOf("İ") => "İ"
+    upperOf("σ") => "Σ"
+    upperOf("ς") => "Σ"
+    upperOf("zażółć gęślą jaźń") => "ZAŻÓŁĆ GĘŚLĄ JAŹŃ"
+    upperOf("𐐨") => "𐐀"
+    upperOf("𞤢") => "𞤀"
+    upperOf("ა") => "Ა"
+    upperOf("Ꮈ") => "Ꮈ"
+"#,
+        48,
+    );
+}
+
+/// Every scalar of the Basic Multilingual Plane except the surrogate
+/// block, in chunks, lowercased and uppercased. The expectation is
+/// `str::to_lowercase` / `str::to_uppercase` of the same chunk, so the
+/// VM lane proves the expectation and the wasm-gc lane proves parity.
+#[test]
+fn bmp_case_matches_vm() {
+    let scalars = scalars_in(0..=0xFFFF);
+    let chunks = chunks_of(scalars, 512);
+    let (source, cases) = generated_program(&chunks);
+    assert_all_pass_on_both(&source, cases);
+}
+
+/// Every scalar outside the BMP that has a non-identity case mapping,
+/// plus a slice of unmapped astral text around them.
+#[test]
+fn astral_case_matches_vm() {
+    let mapped: Vec<char> = scalars_in(0x10000..=0x10FFFF)
+        .filter(|c| c.to_lowercase().next() != Some(*c) || c.to_uppercase().next() != Some(*c))
+        .collect();
+    let mut scalars = mapped;
+    scalars.extend(scalars_in(0x1F600..=0x1F64F));
+    let chunks = chunks_of(scalars.into_iter(), 256);
+    let (source, cases) = generated_program(&chunks);
+    assert_all_pass_on_both(&source, cases);
+}
+
+/// The boundaries of every compressed mapping run: a run that is one
+/// scalar too wide or too narrow shows up here and nowhere else.
+#[test]
+fn mapping_run_boundaries_match_vm() {
+    let mut interesting: Vec<char> = Vec::new();
+    let mut prev_lower_delta: Option<i64> = None;
+    let mut prev_upper_delta: Option<i64> = None;
+    for cp in 0u32..=0x10FFFF {
+        let Some(c) = char::from_u32(cp) else {
+            prev_lower_delta = None;
+            prev_upper_delta = None;
+            continue;
+        };
+        let lower_delta = simple_delta(c.to_lowercase().collect::<Vec<_>>(), cp);
+        let upper_delta = simple_delta(c.to_uppercase().collect::<Vec<_>>(), cp);
+        if lower_delta != prev_lower_delta || upper_delta != prev_upper_delta {
+            for probe in [cp.saturating_sub(1), cp, cp + 1] {
+                if let Some(p) = char::from_u32(probe) {
+                    interesting.push(p);
+                }
+            }
+        }
+        prev_lower_delta = lower_delta;
+        prev_upper_delta = upper_delta;
+    }
+    interesting.sort_unstable();
+    interesting.dedup();
+    let chunks = chunks_of(interesting.into_iter(), 256);
+    let (source, cases) = generated_program(&chunks);
+    assert_all_pass_on_both(&source, cases);
+}
+
+fn simple_delta(mapped: Vec<char>, cp: u32) -> Option<i64> {
+    match mapped.as_slice() {
+        [one] => Some(*one as i64 - cp as i64),
+        _ => None,
+    }
+}
+
+/// The whole scalar space, both directions. Ignored by default — the
+/// three tests above already cover every mapped scalar; this one also
+/// walks the ~1.05M unmapped ones and takes minutes.
+#[test]
+#[ignore]
+fn every_scalar_case_matches_vm() {
+    let chunks = chunks_of(scalars_in(0..=0x10FFFF), 512);
+    let (source, cases) = generated_program(&chunks);
+    assert_all_pass_on_both(&source, cases);
+}

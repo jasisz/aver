@@ -6,6 +6,7 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Fixed
 
+- **`String.toLower` and `String.toUpper` now handle non-ASCII text on wasm-gc and wasip2.** Those two backends previously changed only the letters A-Z and a-z, so `String.toLower("ĄĆĘ ŁÓŚ ΩΔ")` came back unchanged while the VM and generated Rust returned `"ąćę łóś ωδ"`. All backends now agree, including letters whose case changes their length (`String.toUpper("ß")` is `"SS"`) and a final Greek sigma at the end of a word (`ς`, not `σ`). Programs that never call either builtin compile to exactly the same bytes as before. Closes [#1185](https://github.com/jasisz/aver/issues/1185).
 - **`List.take` and `Bytes.take` no longer read the whole list to hand back a few elements.** Taking the first few elements of a long list used to cost the length of the list, so a program that stepped through a buffer with `take` and `drop` took four times as long every time the buffer doubled. It now costs what it takes, and such a walk is linear: over 98,304 bytes it went from 42.5 s to 0.9 s, and 393,216 bytes — which used to need more than ten minutes — now takes 3.7 s. Taking at least the whole list hands back the same list instead of rebuilding it, unless that list is the remainder `drop` left behind — those elements are copied out, so holding the answer no longer holds the whole buffer it was read from. Closes [#1181](https://github.com/jasisz/aver/issues/1181).
 
 ## 0.29.0 "Peer" — 2026-08-27

@@ -94,6 +94,7 @@ struct Wasip2Globals {
 }
 use super::body::hash_helpers::{HashHelperRegistry, HashKind};
 use super::body::{FnEntry, FnMap, emit_fn_body_via_mir};
+use super::builtins::case_tables::{CaseBlob, CaseWiring};
 use super::builtins::{BuiltinName, BuiltinRegistry};
 use super::effects::{EffectName, EffectRegistry};
 use super::maps::MapHelperRegistry;
@@ -2753,6 +2754,22 @@ pub(super) fn emit_module_with(
         module.section(&memories);
     }
 
+    // ── Unicode case tables ────────────────────────────────────────
+    //
+    // `String.toLower` / `String.toUpper` map the whole Unicode range,
+    // expansions and the final-sigma rule included, out of tables the
+    // helper reads from one passive data segment. Built only when a
+    // program actually calls one of the two, so every other module's
+    // bytes are exactly what they were.
+    let need_lower = builtin_registry
+        .iter()
+        .any(|b| matches!(b, BuiltinName::StringToLower));
+    let need_upper = builtin_registry
+        .iter()
+        .any(|b| matches!(b, BuiltinName::StringToUpper));
+    let case_blob: Option<CaseBlob> = (need_lower || need_upper)
+        .then(|| super::builtins::case_tables::build_blob(need_lower, need_upper));
+
     // ── Globals section (wasip2 resource-handle caches) ────────────
     //
     // On `TargetMode::Wasip2`, when `Console.print` / `error` / `warn`
@@ -2768,11 +2785,14 @@ pub(super) fn emit_module_with(
     // implies at least one of `CliGetStdout` / `CliGetStderr` does
     // too). Empty Aver programs hit neither and skip the section
     // entirely — no semantic change vs. Phase 1.2b1.3.
+    //
+    // The section itself is written once, below, so the Unicode case
+    // table's cache global can join it on the plain wasm-gc target too.
+    let mut globals = wasm_encoder::GlobalSection::new();
+    let mut next_global_idx: u32 = 0;
     let wasip2_globals: Option<Wasip2Globals> = if matches!(target, super::TargetMode::Wasip2)
         && wasip2_import_count > 0
     {
-        let mut globals = wasm_encoder::GlobalSection::new();
-        let mut next_global_idx: u32 = 0;
         // Global 0 — bump-alloc cursor for `cabi_realloc`. Initial
         // value `65536` (= page 2 base). Page 1 stays reserved for
         // the `__rt_string_to_lm` transient buffer that
@@ -2935,8 +2955,6 @@ pub(super) fn emit_module_with(
         } else {
             None
         };
-        let _ = next_global_idx;
-        module.section(&globals);
         Some(Wasip2Globals {
             bump_alloc_ptr,
             stdout_handle,
@@ -2950,6 +2968,39 @@ pub(super) fn emit_module_with(
     } else {
         None
     };
+
+    // Cache for the decoded Unicode case tables — a `(ref null
+    // $string)` the case helper fills on its first non-ASCII call.
+    // Appended after every wasip2 global, so those keep their indices,
+    // and a module that never calls the two builtins still emits no
+    // globals section at all.
+    let case_table_global: Option<u32> = match &case_blob {
+        Some(_) => {
+            let string_idx = registry.string_array_type_idx.ok_or_else(|| {
+                WasmGcError::Validation(
+                    "String case helpers require the String slot to be allocated".into(),
+                )
+            })?;
+            globals.global(
+                wasm_encoder::GlobalType {
+                    val_type: ValType::Ref(wasm_encoder::RefType {
+                        nullable: true,
+                        heap_type: wasm_encoder::HeapType::Concrete(string_idx),
+                    }),
+                    mutable: true,
+                    shared: false,
+                },
+                &wasm_encoder::ConstExpr::ref_null(wasm_encoder::HeapType::Concrete(string_idx)),
+            );
+            let idx = next_global_idx;
+            next_global_idx += 1;
+            Some(idx)
+        }
+        None => None,
+    };
+    if next_global_idx > 0 {
+        module.section(&globals);
+    }
 
     // Phase 1.2b1.5 — `Wasip2Lowering` collects every fn / global /
     // helper idx the call-site lowering for `Console.print` /
@@ -3534,7 +3585,14 @@ pub(super) fn emit_module_with(
 
     // ── Data count section (must precede code when using passive
     //     segments via array.new_data / data.drop).
-    let total_segment_count = registry.string_literals.len() as u32 + caller_fn_segment_count;
+    // The case table goes LAST, so every string literal's and every
+    // `__caller_fn_name`'s segment index is what it always was.
+    let case_segment_count = u32::from(case_blob.is_some());
+    let case_segment_idx = case_blob
+        .as_ref()
+        .map(|_| registry.string_literals.len() as u32 + caller_fn_segment_count);
+    let total_segment_count =
+        registry.string_literals.len() as u32 + caller_fn_segment_count + case_segment_count;
     if total_segment_count > 0 {
         let count = DataCountSection {
             count: total_segment_count,
@@ -3862,7 +3920,15 @@ pub(super) fn emit_module_with(
     // Builtin helper bodies — emitted after user fns so their own
     // wasm fn indices come last. Bodies are stubs today (Unreachable);
     // real impls land in `builtins/` per phase 3c roadmap.
-    builtin_registry.emit_helper_bodies(&mut codes, &registry)?;
+    let case_wiring = match (&case_blob, case_segment_idx, case_table_global) {
+        (Some(blob), Some(data_segment_idx), Some(global_idx)) => Some(CaseWiring {
+            blob,
+            data_segment_idx,
+            global_idx,
+        }),
+        _ => None,
+    };
+    builtin_registry.emit_helper_bodies(&mut codes, &registry, case_wiring.as_ref())?;
 
     capability_imports.emit_helper_bodies(
         &mut codes,
@@ -5909,7 +5975,9 @@ pub(super) fn emit_module_with(
     // Passive segments holding String literal byte sequences. Emitted
     // last; `array.new_data $string $segment_idx` reads from these.
     // Order: pre-walked program literals first, caller_fn names
-    // second. `__caller_fn_name`'s body uses
+    // second, the Unicode case table (when the program calls
+    // `String.toLower` / `String.toUpper`) last.
+    // `__caller_fn_name`'s body uses
     // `segment_base = registry.string_literals.len()` so its arms
     // hit the right slots regardless of how many literals the
     // program has.
@@ -5921,6 +5989,9 @@ pub(super) fn emit_module_with(
         let names = caller_fn_collector.borrow();
         for fn_name in &names.names {
             data.passive(fn_name.as_bytes().iter().copied());
+        }
+        if let Some(blob) = &case_blob {
+            data.passive(blob.bytes.iter().copied());
         }
         module.section(&data);
     }
