@@ -66,34 +66,7 @@ pub(super) fn local_of(expr: &MirExpr) -> Option<&MirLocal> {
 /// or borrows the value.
 pub(super) fn value_facts(expr: &MirExpr, ctx: &MirEmitCtx<'_>) -> RustValueFacts {
     if let Some(local) = local_of(expr) {
-        let name = local.name.as_str();
-        let copy =
-            ctx.bare.is_bare(local.slot) || ctx.local_types.get(name).is_some_and(is_copy_type);
-        let wrapped = ctx.rc_wrapped.contains(name);
-        let borrowed = ctx.borrowed_params.contains(name) || wrapped;
-        let mode = if copy {
-            RustValueMode::Copy
-        } else if borrowed {
-            RustValueMode::Borrowed
-        } else {
-            RustValueMode::Owned
-        };
-        return RustValueFacts {
-            mode,
-            borrow_shape: if wrapped {
-                BorrowShape::DerefWrapper
-            } else {
-                BorrowShape::Direct
-            },
-            can_move: mode == RustValueMode::Copy
-                || (mode == RustValueMode::Owned
-                    && local.last_use
-                    && !ctx.loop_carried_params.contains(name)),
-            provider_resource: ctx
-                .local_types
-                .get(name)
-                .is_some_and(|ty| is_provider_resource_type(ty, ctx)),
-        };
+        return local_value_facts(local, ctx);
     }
 
     if let MirExpr::Project(project) = expr {
@@ -124,6 +97,36 @@ pub(super) fn value_facts(expr: &MirExpr, ctx: &MirEmitCtx<'_>) -> RustValueFact
     }
 }
 
+fn local_value_facts(local: &MirLocal, ctx: &MirEmitCtx<'_>) -> RustValueFacts {
+    let name = local.name.as_str();
+    let copy = ctx.bare.is_bare(local.slot) || ctx.local_types.get(name).is_some_and(is_copy_type);
+    let wrapped = ctx.rc_wrapped.contains(name);
+    let borrowed = ctx.borrowed_params.contains(name) || wrapped;
+    let mode = if copy {
+        RustValueMode::Copy
+    } else if borrowed {
+        RustValueMode::Borrowed
+    } else {
+        RustValueMode::Owned
+    };
+    RustValueFacts {
+        mode,
+        borrow_shape: if wrapped {
+            BorrowShape::DerefWrapper
+        } else {
+            BorrowShape::Direct
+        },
+        can_move: mode == RustValueMode::Copy
+            || (mode == RustValueMode::Owned
+                && local.last_use
+                && !ctx.loop_carried_params.contains(name)),
+        provider_resource: ctx
+            .local_types
+            .get(name)
+            .is_some_and(|ty| is_provider_resource_type(ty, ctx)),
+    }
+}
+
 /// Materialise `expr` for a Rust position that consumes an owned `T`.
 pub(super) fn materialize_owned(code: String, expr: &MirExpr, ctx: &MirEmitCtx<'_>) -> String {
     let facts = value_facts(expr, ctx);
@@ -151,6 +154,29 @@ pub(super) fn materialize_borrowed(code: String, expr: &MirExpr, ctx: &MirEmitCt
         RustValueMode::Borrowed if facts.borrow_shape == BorrowShape::Direct => code,
         RustValueMode::Borrowed => format!("&*{}", code),
         RustValueMode::Owned => format!("&{}", code),
+    }
+}
+
+/// Materialise a source local before moving it into one scoped-thread branch.
+/// Every branch needs an independent carrier, but that carrier is not always
+/// an owned `T`: ordinary borrowed params and mutual-TCO invariants are `&T`
+/// and can be copied, while self-TCO invariants are `Arc<T>` and must clone the
+/// wrapper. Owned values are cloned because sibling branches may capture the
+/// same local regardless of this occurrence's `last_use` annotation.
+pub(super) fn materialize_scoped_thread_capture(
+    code: String,
+    local: &MirLocal,
+    ctx: &MirEmitCtx<'_>,
+) -> String {
+    let facts = local_value_facts(local, ctx);
+    match facts.mode {
+        RustValueMode::Copy => code,
+        RustValueMode::Borrowed
+            if facts.borrow_shape == BorrowShape::Direct || ctx.rc_wrapped_are_borrowed_refs =>
+        {
+            code
+        }
+        RustValueMode::Borrowed | RustValueMode::Owned => format!("{code}.clone()"),
     }
 }
 
