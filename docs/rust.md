@@ -11,13 +11,13 @@ Use it when you want:
 
 ```bash
 aver compile examples/core/hello.av -o /tmp/hello-rs
-cd /tmp/hello-rs && cargo build && cargo run
+cd /tmp/hello-rs && cargo run --profile iteration
 ```
 
 Output:
 ```
 Compiled examples/core/hello.av → /tmp/hello-rs/ [Rust]
-  cd /tmp/hello-rs && cargo build && cargo run
+  cd /tmp/hello-rs && cargo run --profile iteration  # final: cargo build --release
 ```
 
 To validate the generated crate immediately, add `--check`:
@@ -32,6 +32,26 @@ rejects the project. The generated files remain available for inspection after
 a failure. Without the flag, `aver compile` only emits the project and does not
 invoke Cargo.
 
+## Check, iterate, release
+
+Generated projects keep three workflows separate:
+
+| Goal | Command | What it optimises for |
+|---|---|---|
+| validate emitted Rust | `cargo check` | fastest type and borrow checking; no executable |
+| edit and run | `cargo run --profile iteration` | incremental codegen, no LTO, 256 codegen units, `opt-level = 1` |
+| deploy | `cargo build --release` | whole-program LTO and one codegen unit |
+
+`aver compile` writes a generated `README.md` with these commands. Repeating
+the compile against the same output directory compares every generated file by
+bytes and leaves an unchanged file's mtime alone. Cargo can therefore retain a
+true no-op and reuse incremental state when only one Aver module changes.
+
+The iteration profile inherits release semantics but deliberately does not
+weaken the final release profile. Measurements and the current decision to keep
+one generated crate are recorded in
+[Rust iteration build measurements](rust-iteration-builds.md).
+
 ## What it generates
 
 Generates a complete Cargo project:
@@ -39,6 +59,7 @@ Generates a complete Cargo project:
 ```
 out/
   Cargo.toml
+  README.md
   src/
     main.rs
     runtime_support.rs

@@ -230,6 +230,10 @@ fn transpile_project(
             ),
         ),
         (
+            "README.md".to_string(),
+            project::generate_readme(&ctx.project_name),
+        ),
+        (
             "src/main.rs".to_string(),
             render_root_main(
                 resolved_main_fn,

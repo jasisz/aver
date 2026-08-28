@@ -176,12 +176,7 @@ fn materialize_codegen_output(
 ) -> Result<(), String> {
     for (rel_path, content) in &output.files {
         let full_path = output_dir.join(rel_path);
-        if let Some(parent) = full_path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|e| format!("Cannot create dir '{}': {}", parent.display(), e))?;
-        }
-        fs::write(&full_path, content)
-            .map_err(|e| format!("Cannot write '{}': {}", full_path.display(), e))?;
+        crate::file_materialization::write_if_changed(&full_path, content.as_bytes())?;
     }
     Ok(())
 }
@@ -6504,7 +6499,10 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
             process::exit(1);
         }
     };
-    let build_hint = format!("cd {} && cargo build && cargo run", output_dir);
+    let build_hint = format!(
+        "cd {} && cargo run --profile iteration  # final: cargo build --release",
+        output_dir
+    );
     prepare_codegen_output(file, output_dir, "Rust", &output);
     if check && let Err(error) = super::rust_check::run(Path::new(output_dir)) {
         let exit_code = error.exit_code();
