@@ -187,14 +187,20 @@ fn vector_really_all_immediate(arena: &TestArena, value: NanValue) -> bool {
     items.iter().all(|element| element.heap_index().is_none())
 }
 
-/// Every producer of the all-immediate flag, checked against a walk.
+/// This crate's producers of the all-immediate flag, checked against a walk.
 ///
 /// This is where the promise is proved. The collector's two escapes deliberately
 /// do NOT re-prove it — the walk that would prove it is the walk they exist to
 /// skip, and the table they skip is threaded through every step of every indexed
 /// string loop, so re-proving it under debug assertions would put the quadratic
 /// straight back into every debug build. Everything that can set the flag to
-/// true is here instead, and each one decides from values it has in hand.
+/// true is proved where it is set instead, and each one decides from values it
+/// has in hand: the builder here, the in-place write here, the mutable escape
+/// hatch here — and the owned `Vector.set`, which lives in `aver-lang` and takes
+/// the elements out and pushes them back as a fresh entry, so it has to carry
+/// the promise across by hand. That fourth one is out of this crate's reach and
+/// is checked the same way in its own file, by
+/// `the_owned_vector_set_reports_the_all_immediate_flag_exactly`.
 #[test]
 fn the_vector_all_immediate_flag_is_exact_at_every_producer() {
     let mut arena = TestArena::new();

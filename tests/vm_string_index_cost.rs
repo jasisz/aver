@@ -32,18 +32,28 @@
 //! because a table of immediates carries a flag saying it holds nothing the
 //! collector could rewrite.
 //!
-//! Three shapes, because they are the three ways a character escapes its match
-//! arm — used in an expression, passed to another function, stored in a
-//! collection — and each one independently defeats the "discard the character"
-//! spelling that the existing tests all use.
+//! Four shapes. Three are the three ways a character escapes its match arm —
+//! used in an expression, passed to another function, stored in a collection —
+//! and each one independently defeats the "discard the character" spelling that
+//! the existing tests all use. The fourth reads a fixed-width `String.slice`
+//! rather than a character: it is the other read that materialises a new
+//! String, it allocates for the same reason, and it followed the same curve.
+//! Its own fixed-count control, 20,000 eight-character slices over 16,384 /
+//! 65,536 / 262,144 characters, cost 576 / 2,533 / 9,892 ms before the fix and
+//! 81 / 85 / 98 ms after.
 //!
 //! What these tests do NOT claim: that the whole program is linear. Each one
 //! claims only that carrying the hidden index costs nothing, which is what the
-//! counter measures and what changed. The third shape is still super-linear for
-//! an unrelated reason — a `List.prepend` accumulator that the list-build
-//! fusion declines has its chain re-walked by the collector, which reproduces
-//! with no string index in sight — so a wall-clock assertion there would be
-//! measuring something else entirely.
+//! counter measures and what changed.
+//!
+//! The third shape is in fact still super-linear, and deliberately so: its cost
+//! is somewhere else entirely. Its `List.prepend` accumulator builds a chain of
+//! cons cells that the collector follows from the top on every promotion, and
+//! that walk does not stop when it leaves the young region, so it is as long as
+//! the list. A profile of the 32,768-character run spends 5,740 of 5,797
+//! samples in `promote_prepend_tail_iterative` and none in the hidden index —
+//! which is exactly what the counter below reports for it. That is issue #1187;
+//! a wall-clock assertion here would measure it instead of this.
 
 use aver::ir::pipeline::{PipelineConfig, TypecheckMode};
 use aver::nan_value::Arena;
@@ -58,19 +68,43 @@ struct Walk {
     /// What the program answered. A walk that stopped early would make any
     /// cost assertion pass for the wrong reason.
     answer: i64,
-    /// How many times the table's character read ran. Zero would mean the pass
-    /// stopped lowering this shape to the allocating intrinsic, which is the
-    /// other way the cost assertion could go green without the cost being
-    /// fixed.
-    char_at_ops: u64,
+    /// How many times the shape's own read through the table ran. Zero would
+    /// mean the pass stopped lowering this shape to the allocating read, which
+    /// is the other way the cost assertion could go green without the cost
+    /// being fixed.
+    reads: u64,
 }
+
+/// Which read through the hidden table a shape is supposed to be making, and
+/// what a walk of `chars` characters owes for it.
+///
+/// Both allocating reads get a guard. `__str_index_char_at` materialises a
+/// one-character String and `__str_index_slice` materialises a longer one; they
+/// allocate for the same reason and were quadratic on the same curve, and the
+/// suite named neither.
+struct IndexedRead {
+    /// The opcode the shape must lower to. Named rather than inferred, because
+    /// the whole point is to catch a shape that quietly stops using it.
+    opcode: &'static str,
+    /// Times that opcode must run for a walk of `chars` characters.
+    reads: fn(u64) -> u64,
+    /// The answer the program must give for a walk of `chars` characters.
+    answer: fn(u64) -> i64,
+}
+
+/// Reading one character per position, plus the read that finds the end.
+const CHARACTER_AT_EVERY_POSITION: IndexedRead = IndexedRead {
+    opcode: "STR_INDEX_CHAR_AT",
+    reads: |chars| chars + 1,
+    answer: |chars| chars as i64,
+};
 
 /// Compile through the real pipeline, typecheck included.
 ///
 /// The typecheck is load-bearing: the hidden-index pass runs as part of
 /// `ir::pipeline::run`, so a helper that only resolves — the one the VM's own
 /// unit tests use — would never build a table at all and would measure nothing.
-fn walk(src: &str) -> Walk {
+fn walk(src: &str, read: &IndexedRead) -> Walk {
     let mut items = aver::source::parse_source(src).expect("parse failed");
     let result = aver::ir::pipeline::run(
         &mut items,
@@ -94,16 +128,16 @@ fn walk(src: &str) -> Walk {
     machine.start_profiling();
     let value = machine.run().expect("program should run");
     let report = machine.profile_report().expect("profiling was started");
-    let char_at_ops = report
+    let reads = report
         .opcodes
         .iter()
-        .find(|entry| entry.name == "STR_INDEX_CHAR_AT")
+        .find(|entry| entry.name == read.opcode)
         .map(|entry| entry.count)
         .unwrap_or(0);
     Walk {
         scanned: machine.arena.vector_elements_scanned(),
         answer: value.as_int(&machine.arena),
-        char_at_ops,
+        reads,
     }
 }
 
@@ -202,6 +236,48 @@ fn main() -> Int
     )
 }
 
+/// A fixed-width SLICE is taken at every position — the other read that has to
+/// build a new String, so the other read that allocates once per step.
+///
+/// The loop is driven by a counter rather than by the end of the string,
+/// because that is what makes the slice the only read through the table.
+fn a_slice_taken_at_every_position(rounds: i64) -> String {
+    let chars = SEED_CHARS << rounds;
+    format!(
+        r#"module Walk
+    intent = "take a fixed-width slice at every position"
+    depends []
+    effects []
+
+fn grow(rounds: Int, text: String) -> String
+    ? "double a mixed-width seed"
+    match rounds
+        0 -> text
+        _ -> grow(rounds - 1, text + text)
+
+fn walk(text: String, position: Int, remaining: Int, total: Int) -> Int
+    ? "walk by index, adding the length of an eight-character slice"
+    match remaining
+        0 -> total
+        _ -> walk(text, position + 1, remaining - 1, total + String.len(String.slice(text, position, position + 8)))
+
+fn main() -> Int
+    ? "characters the slices covered"
+    walk(grow({rounds}, "aą😀z"), 0, {chars}, 0)
+"#
+    )
+}
+
+/// One slice per position, and no read to find the end — the counter does that.
+///
+/// Every position but the last seven yields eight characters; the last seven
+/// yield seven down to one as the slice runs off the end, which is 28 more.
+const SLICE_AT_EVERY_POSITION: IndexedRead = IndexedRead {
+    opcode: "STR_INDEX_SLICE",
+    reads: |chars| chars,
+    answer: |chars| (8 * chars - 28) as i64,
+};
+
 /// Reads the collector is allowed per character visited.
 ///
 /// A fixed table read once per character would sit at 1. The claim is stronger
@@ -214,22 +290,28 @@ const SCAN_BUDGET_PER_CHARACTER: u64 = 4;
 /// claims: the reads stay inside the per-character budget, doubling the input
 /// does not more than triple them, and the program still walked what it said
 /// it walked.
-fn assert_the_hidden_index_is_not_reread(name: &str, program: &dyn Fn(i64) -> String, rounds: i64) {
+fn assert_the_hidden_index_is_not_reread(
+    name: &str,
+    program: &dyn Fn(i64) -> String,
+    rounds: i64,
+    read: &IndexedRead,
+) {
     let small_chars = (SEED_CHARS << rounds) as u64;
     let large_chars = small_chars * 2;
-    let small = walk(&program(rounds));
-    let large = walk(&program(rounds + 1));
+    let small = walk(&program(rounds), read);
+    let large = walk(&program(rounds + 1), read);
 
     assert_eq!(
         (small.answer, large.answer),
-        (small_chars as i64, large_chars as i64),
+        ((read.answer)(small_chars), (read.answer)(large_chars)),
         "{name}: the walk did not visit every character, so its cost says nothing"
     );
     assert_eq!(
-        (small.char_at_ops, large.char_at_ops),
-        (small_chars + 1, large_chars + 1),
-        "{name}: this shape no longer reads characters through the hidden index, \
-         so it is not the shape this guard was written for"
+        (small.reads, large.reads),
+        ((read.reads)(small_chars), (read.reads)(large_chars)),
+        "{name}: this shape no longer reads through the hidden index with {}, \
+         so it is not the shape this guard was written for",
+        read.opcode
     );
 
     assert!(
@@ -257,6 +339,7 @@ fn an_indexed_walk_that_uses_the_character_does_not_reread_the_index() {
         "character used in an expression",
         &character_used_in_an_expression,
         10,
+        &CHARACTER_AT_EVERY_POSITION,
     );
 }
 
@@ -266,6 +349,7 @@ fn an_indexed_walk_that_passes_the_character_on_does_not_reread_the_index() {
         "character passed to another function",
         &character_passed_to_another_function,
         10,
+        &CHARACTER_AT_EVERY_POSITION,
     );
 }
 
@@ -275,5 +359,16 @@ fn an_indexed_walk_that_stores_the_character_does_not_reread_the_index() {
         "character stored in a list",
         &character_stored_in_a_list,
         10,
+        &CHARACTER_AT_EVERY_POSITION,
+    );
+}
+
+#[test]
+fn an_indexed_walk_that_slices_does_not_reread_the_index() {
+    assert_the_hidden_index_is_not_reread(
+        "fixed-width slice at every position",
+        &a_slice_taken_at_every_position,
+        10,
+        &SLICE_AT_EVERY_POSITION,
     );
 }

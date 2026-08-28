@@ -396,8 +396,9 @@ impl<T: ArenaTypes> Arena<T> {
                 // and the owned `Vector.set` inherit a proven flag and clear it
                 // for the single element they write, and
                 // `Arena::get_vector_mut` clears it because it cannot know.
-                // `arena::tests` checks the three producers against a
-                // from-scratch walk.
+                // `arena::tests` checks this crate's three producers against a
+                // from-scratch walk, and the owned `Vector.set` is checked the
+                // same way in the crate it lives in.
                 if all_immediate {
                     return ArenaEntry::Vector {
                         items,
