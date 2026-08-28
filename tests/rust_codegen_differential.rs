@@ -4431,6 +4431,106 @@ fn recursive_independent_product_owns_each_shared_capture() {
     result.unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// Regression for #1191: a mutual-TCO invariant is represented as `&T` in
+/// the trampoline. Capturing it for a `?!` branch must copy that reference;
+/// calling `.clone()` at the capture boundary clones the enum referent into
+/// an owned `T`, while call emission still treats the local as the invariant
+/// wrapper and produces `&*network` (E0614).
+#[test]
+fn mutual_tco_enum_invariant_builds_inside_independent_product() {
+    let ws = temp_dir("mutual_tco_ip_enum_capture");
+    let source = ws.join("main.av");
+    fs::write(
+        &source,
+        r#"module Repro
+    intent = "A mutual-TCO invariant is captured by two independent-product branches."
+    effects [Console]
+
+type Network
+    Mainnet
+    Signet
+
+fn observed(network: Network) -> Result<Int, String>
+    ? "Turn the selected network into a small result."
+    match network
+        Network.Mainnet -> Result.Ok(1)
+        Network.Signet -> Result.Ok(2)
+
+fn first(network: Network, remaining: Int) -> Result<Int, String>
+    ? "Stop at zero or hand the invariant network to the partner."
+    match remaining == 0
+        true -> Result.Ok(0)
+        false -> second(network, remaining)
+
+fn second(network: Network, remaining: Int) -> Result<Int, String>
+    ? "Read the invariant in both branches before returning to first."
+    both = (observed(network), observed(network))?!
+    match both
+        (left, right) -> first(network, remaining - left - right)
+
+fn main() -> Unit
+    ! [Console.print]
+    match first(Network.Mainnet, 4)
+        Result.Ok(value) -> Console.print("{value}")
+        Result.Err(error) -> Console.print(error)
+"#,
+    )
+    .expect("write #1191 regression source");
+
+    let vm_stdout = run_vm(&source, None).unwrap_or_else(|e| panic!("VM run failed: {e}"));
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+
+    let result = (|| -> Result<(), String> {
+        compile_rust(&source, &project, "mutual_tco_ip_enum_capture", None, &[])?;
+        let emitted = fs::read_to_string(
+            project
+                .join("src")
+                .join("aver_generated")
+                .join("entry")
+                .join("mod.rs"),
+        )
+        .map_err(|e| format!("read emitted entry module: {e}"))?;
+        if !emitted.contains("enum __MutualTco")
+            || !emitted.contains("fn __mutual_tco_trampoline_")
+            || !emitted.contains("std::thread::scope")
+        {
+            return Err(format!(
+                "probe did not exercise mutual TCO plus independent-product emission:\n{emitted}"
+            ));
+        }
+        if emitted.matches("let network = network;").count() < 2
+            || emitted.contains("let network = network.clone();")
+        {
+            return Err(format!(
+                "mutual-TCO &Network was not copied into every branch:\n{emitted}"
+            ));
+        }
+
+        // Load-bearing gate: before the fix rustc reports two E0614 errors.
+        let bin = cargo_build(&project, "mutual_tco_ip_enum_capture")?;
+        let out = Command::new(&bin)
+            .output()
+            .map_err(|e| format!("failed to run #1191 regression binary: {e}"))?;
+        if !out.status.success() {
+            return Err(format!(
+                "#1191 regression binary exited non-zero:\n{}",
+                format_output(&out)
+            ));
+        }
+        let rust_stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if rust_stdout != vm_stdout {
+            return Err(format!(
+                "#1191 output mismatch\n--- VM ---\n{vm_stdout}\n--- Rust ---\n{rust_stdout}"
+            ));
+        }
+        Ok(())
+    })();
+
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|e| panic!("{e}"));
+}
+
 // ─── Mode (g): MIR-emitted first-class fn values ──────────────────────────
 //
 // W6/Stage-0 (the final construct gap): the MIR walker now emits

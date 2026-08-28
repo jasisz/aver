@@ -71,7 +71,8 @@ use super::expr::{
     has_string_literal_patterns,
 };
 use super::ownership::{
-    align_equality_operands, emits_direct_borrow, local_of, materialize_borrowed, materialize_owned,
+    align_equality_operands, emits_direct_borrow, local_of, materialize_borrowed,
+    materialize_owned, materialize_scoped_thread_capture,
 };
 use super::pattern::emit_pattern;
 use super::syntax::{aver_name_to_rust, generated_ident};
@@ -2418,14 +2419,7 @@ fn emit_parallel_capture_bindings(
     for local in captures.values() {
         let source_name = local.name.as_str();
         let rust_name = aver_name_to_rust(source_name);
-        let capture = if ctx.is_borrowed_param(source_name)
-            || ctx.is_copy(source_name)
-            || ctx.bare.is_bare(local.slot)
-        {
-            rust_name.clone()
-        } else {
-            format!("{rust_name}.clone()")
-        };
+        let capture = materialize_scoped_thread_capture(rust_name.clone(), local, ctx);
         code.push_str(&format!("let {rust_name} = {capture}; "));
     }
     code.push_str(&format!("{thread_scope}.spawn(move || "));
@@ -6296,6 +6290,48 @@ mod tests {
         assert!(
             emit.contains("let __h1 = { let height = height.clone(); __s.spawn(move ||"),
             "branch 1 capture must be scoped to its spawn: {emit}"
+        );
+    }
+
+    #[test]
+    fn scoped_thread_capture_uses_the_actual_tco_carrier() {
+        let local = MirLocal {
+            slot: LocalId(0),
+            last_use: false,
+            name: "network".to_string(),
+        };
+        let local_types = HashMap::from([("network".to_string(), Type::named("Network"))]);
+        let borrowed = HashSet::from(["network".to_string()]);
+        let wrapped = HashSet::from(["network".to_string()]);
+
+        let mut ctx = empty_ctx();
+        ctx.local_types = &local_types;
+        assert_eq!(
+            materialize_scoped_thread_capture("network".to_string(), &local, &ctx),
+            "network.clone()",
+            "an owned value needs one clone per branch"
+        );
+
+        ctx.borrowed_params = &borrowed;
+        assert_eq!(
+            materialize_scoped_thread_capture("network".to_string(), &local, &ctx),
+            "network",
+            "an ordinary &T parameter is copied into the branch"
+        );
+
+        ctx.borrowed_params = empty_string_set();
+        ctx.rc_wrapped = &wrapped;
+        assert_eq!(
+            materialize_scoped_thread_capture("network".to_string(), &local, &ctx),
+            "network.clone()",
+            "a self-TCO Arc<T> carrier is cloned"
+        );
+
+        ctx.rc_wrapped_are_borrowed_refs = true;
+        assert_eq!(
+            materialize_scoped_thread_capture("network".to_string(), &local, &ctx),
+            "network",
+            "a mutual-TCO &T invariant is copied, not cloned into an owned T"
         );
     }
 
