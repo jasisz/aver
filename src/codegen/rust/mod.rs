@@ -13,6 +13,7 @@ mod policy;
 mod project;
 mod provider;
 mod replay;
+mod representation;
 mod runtime;
 mod self_host;
 mod syntax;

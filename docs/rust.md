@@ -94,6 +94,29 @@ The generated Rust keeps:
 
 Generated Cargo projects now target Rust edition 2024.
 
+## Representation capabilities
+
+The Rust backend derives representation traits from an explicit capability
+contract for each fully qualified Aver type. Two modules may therefore expose
+types with the same bare name without sharing `Clone`, equality, hashing, or
+display decisions. Composite types receive each trait independently, and only
+when every field's selected Rust representation supports it.
+
+| Aver representation | Generated capabilities |
+|---|---|
+| `Int`, `Bool`, `Unit`, `String` | `Clone`, `PartialEq`, `Eq`, `Hash`, Aver display |
+| `Float` | `Clone`, `PartialEq`, Aver display |
+| `List<T>`, `Vector<T>`, `Map<K, V>` | inherited from the selected runtime carrier and its element/key/value types |
+| packed byte refinement | the same equality, hashing, and display contract as ordinary `List<Int>` |
+| capability resource | cloneable opaque handle and opaque Aver display; no Aver equality or hashing |
+
+`Hash` and ordering are separate capabilities: a representation may be
+hashable without being an admissible ordered map key. Provider resource
+carriers retain the host-side comparison needed to move and clone composites,
+but that implementation detail does not make resource identity observable in
+Aver; source equality, hashing, and resource-containing operations that would
+expose it are rejected before Rust emission.
+
 ## Runtime dependency
 
 `Cargo.toml` is generated around the shared `aver-rt` runtime crate. Service-specific runtime features are enabled only when needed:
