@@ -5480,6 +5480,85 @@ fn main() -> Unit
     result.unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// Regression for #1134: derive requirements belong to a declaration, not
+/// its bare type name. `Snapshot.Progress` can carry Eq + Hash, while the
+/// same-named `Bodies.Progress` contains a Float and cannot. The emitter unit
+/// test pins the chosen derive text; this test asks rustc about the complete
+/// multi-module project through the public `compile --check` gate.
+#[test]
+fn same_named_records_keep_declaration_scoped_derives_under_compile_check() {
+    let ws = temp_dir("same_named_record_derives");
+    fs::write(
+        ws.join("Snapshot.av"),
+        r#"module Snapshot
+    exposes [Progress, done]
+    intent = "Own the equality-safe progress record."
+    effects []
+
+record Progress
+    done: Int
+
+fn done(progress: Progress) -> Int
+    ? "Read the completed count."
+    progress.done
+"#,
+    )
+    .expect("write Snapshot module");
+    fs::write(
+        ws.join("Bodies.av"),
+        r#"module Bodies
+    exposes [Progress, Walk, count]
+    intent = "Own a same-named progress record that cannot be Eq."
+    effects []
+
+record Progress
+    ratio: Float
+
+record Walk
+    step: Progress
+
+fn count(walk: Walk) -> Int
+    ? "Ignore the floating-point walk state."
+    0
+"#,
+    )
+    .expect("write Bodies module");
+    let entry = ws.join("main.av");
+    fs::write(
+        &entry,
+        r#"module Main
+    depends [Snapshot, Bodies]
+    intent = "Reach both same-named records in one generated Rust crate."
+    effects []
+
+fn main() -> Int
+    Snapshot.done(Snapshot.Progress(done = 1)) + Bodies.count(Bodies.Walk(step = Bodies.Progress(ratio = 0.5)))
+"#,
+    )
+    .expect("write entry module");
+
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let shared_target = shared_target_dir();
+    let shared_target = shared_target
+        .to_str()
+        .expect("shared Cargo target path should be UTF-8");
+    let result = compile_rust_env(
+        &entry,
+        &project,
+        "same_named_record_derives",
+        Some(&ws),
+        &["--check"],
+        &[
+            ("CARGO_TARGET_DIR", shared_target),
+            ("CARGO_NET_OFFLINE", "true"),
+        ],
+    );
+
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|error| panic!("{error}"));
+}
+
 // ─── Mode (h): Int.fromString / Float.fromString Err-message bytes ────────
 //
 // `Int.fromString` / `Float.fromString` return a `Result<_, String>`.

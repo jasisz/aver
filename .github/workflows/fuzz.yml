@@ -15,6 +15,9 @@ name: Fuzz
 #     resolve. Catches panics in any post-parse pass — the surface a
 #     real user touches every time they run `aver check`.
 #   * `fuzz_replay_codec`       — JSON record codec roundtrip.
+#   * `fuzz_codegen_rust`       — source → resolved Rust ProjectOutput;
+#     a bounded post-campaign sample goes through real `rustc` via
+#     `aver compile --check`.
 #   * `fuzz_codegen_wasm_gc`    — source → compile → wasmparser validate.
 #   * `fuzz_codegen_wasip2`     — source → wasip2 core + component → component-model validate.
 #   * `fuzz_verify_runner`      — source → run_verify_for_items_vm.
@@ -115,6 +118,9 @@ jobs:
             corpus: corpus/replay
             dict: dicts/replay_json.dict
           - target: fuzz_codegen_wasm_gc
+            corpus: corpus/parser
+            dict: dicts/aver.dict
+          - target: fuzz_codegen_rust
             corpus: corpus/parser
             dict: dicts/aver.dict
           - target: fuzz_verify_runner
@@ -366,6 +372,24 @@ jobs:
             echo "no metrics snapshot (target ran < 10k execs)"
           fi
           echo "::endgroup::"
+
+      - name: Rust codegen oracle (bounded real rustc)
+        if: matrix.target == 'fuzz_codegen_rust'
+        # AFL's hot loop emits projects in-process. Spawning Cargo for every
+        # mutation would collapse throughput, so ask the public `--check`
+        # gate about a deterministic sample of accepted queue entries after
+        # the campaign. The committed corpus is a fallback that guarantees
+        # the oracle still has valid seeds if AFL exits before writing a
+        # usable queue. One shared target amortises aver-rt and dependencies.
+        run: |
+          cargo build --locked --bin aver
+          python3 tools/validate_rust_fuzz_corpus.py \
+            --aver target/debug/aver \
+            --corpus fuzz/corpus/parser \
+            --corpus fuzz/out/fuzz_codegen_rust/default/queue \
+            --limit 24 \
+            --max-candidates 256 \
+            --target-dir target/rust-fuzz-oracle
 
       - name: Summarise findings
         working-directory: fuzz
