@@ -196,7 +196,105 @@ impl<T: ArenaTypes> Arena<T> {
             }
         }
 
+        self.note_list_elements_flattened(out.len());
         out
+    }
+
+    /// The first `count` elements, reading no more of the list than that.
+    ///
+    /// The bounded counterpart of [`Arena::list_to_vec`]: a prefix is answered
+    /// by walking the prefix, so asking for a few elements of a long list costs
+    /// what was asked for and not what the list holds. Flattening the list and
+    /// throwing most of it away is what made `List.take` cost the whole list on
+    /// every call, and a walk that steps with it quadratic.
+    ///
+    /// Only the spine down to the prefix is walked past it: a left-deep concat
+    /// spine is descended to its leftmost element the way [`Arena::list_drop`]
+    /// and [`Arena::list_get`] descend it.
+    pub fn list_prefix(&self, list: NanValue, count: usize) -> Vec<NanValue> {
+        debug_assert!(list.is_list());
+        if count == 0 {
+            return Vec::new();
+        }
+        let mut out = Vec::with_capacity(count.min(self.list_len_value(list)));
+        let mut pending: Vec<NanValue> = Vec::new();
+        let mut current = list;
+
+        loop {
+            if out.len() == count {
+                return out;
+            }
+            if self.list_len_value(current) == 0 {
+                match pending.pop() {
+                    Some(next) => current = next,
+                    None => return out,
+                }
+                continue;
+            }
+            match self.get_list(current.arena_index()) {
+                ArenaList::Flat { items, start, .. } => {
+                    let slice = &items[*start..];
+                    let wanted = (count - out.len()).min(slice.len());
+                    out.extend(slice[..wanted].iter().copied());
+                    current = NanValue::EMPTY_LIST;
+                }
+                ArenaList::Prepend { head, tail, .. } => {
+                    out.push(*head);
+                    current = *tail;
+                }
+                ArenaList::Concat { left, right, .. } => {
+                    pending.push(*right);
+                    current = *left;
+                }
+                ArenaList::Segments {
+                    current: head,
+                    rest,
+                    start,
+                    ..
+                } => {
+                    // Only the segments the prefix can reach are queued: each
+                    // one it does queue carries at least one element towards
+                    // `count`, so a node holding many segments is not walked in
+                    // full for a short prefix.
+                    let mut reachable = 0usize;
+                    let mut queued: Vec<NanValue> = Vec::new();
+                    let wanted = count - out.len();
+                    for part in &rest[*start..] {
+                        if reachable >= wanted {
+                            break;
+                        }
+                        reachable += self.list_len_value(*part);
+                        queued.push(*part);
+                    }
+                    for part in queued.iter().rev() {
+                        pending.push(*part);
+                    }
+                    current = *head;
+                }
+            }
+        }
+    }
+
+    /// Keep the first `count` elements, reading no more of the list than that.
+    ///
+    /// The cost is what is kept, not what is left behind — the mirror of what
+    /// [`Arena::list_drop`] does at the other end. A list shorter than the count
+    /// is handed straight back rather than rebuilt, and a count of nothing is
+    /// the canonical empty list, so the two edges cost nothing at all.
+    pub fn list_take(&mut self, list: NanValue, count: usize) -> NanValue {
+        debug_assert!(list.is_list());
+        let len = self.list_len_value(list);
+        if count == 0 || len == 0 {
+            return NanValue::EMPTY_LIST;
+        }
+        if count >= len {
+            return list;
+        }
+        let items = self.list_prefix(list, count);
+        if items.is_empty() {
+            return NanValue::EMPTY_LIST;
+        }
+        NanValue::new_list(self.push_list(items))
     }
 
     pub fn list_uncons(&mut self, list: NanValue) -> Option<(NanValue, NanValue)> {

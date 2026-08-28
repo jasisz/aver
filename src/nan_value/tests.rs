@@ -1466,3 +1466,158 @@ fn walking_by_drop_agrees_with_walking_by_uncons() {
         }
     }
 }
+
+// ─── `List.take` costs what it takes (issue #1181) ───────────────────────────
+//
+// `List.take(xs, n)` should cost `n`, not the length of `xs`. It used to
+// flatten the whole list into a fresh vector and then throw all but the first
+// `n` elements away, so taking one element off a 98,304-element list cost the
+// same as reading all of it — and a parser that steps through a buffer with
+// `take` and `drop` was quadratic in the buffer, while the same walk by
+// destructuring was linear.
+//
+// The evidence is the arena's flatten count, not a stopwatch: a bounded walk
+// adds nothing to it however long the list is, and a whole-list walk adds the
+// entire length on every call.
+//
+// Every test below drives the real builtin (`List.take` through `call_nv`),
+// not the arena helper underneath it, so a builtin that stops using the helper
+// is still caught.
+
+/// Drive the `List.take` builtin the way the VM does.
+fn take_builtin(arena: &mut Arena, list: NanValue, count: i64) -> NanValue {
+    let count = NanValue::new_int(count, arena);
+    crate::types::list::call_nv("List.take", &[list, count], arena)
+        .expect("List.take is owned by the list namespace")
+        .expect("List.take over a list and an int")
+}
+
+/// The load-bearing one: taking a prefix reads the prefix and nothing else.
+#[test]
+fn taking_a_prefix_does_not_flatten_the_list() {
+    let mut arena = Arena::new();
+    let items: Vec<NanValue> = (0..65_536).map(NanValue::new_int_inline).collect();
+    let list = NanValue::new_list(arena.push_list(items));
+
+    let flattened_before = arena.list_elements_flattened();
+    let taken = take_builtin(&mut arena, list, 1);
+    let flattened = arena.list_elements_flattened() - flattened_before;
+
+    assert_eq!(
+        flattened, 0,
+        "List.take(xs, 1) read {flattened} elements of a 65,536-element list; \
+         taking a prefix must cost the prefix",
+    );
+    assert_eq!(list_contents(&arena, taken), vec![0]);
+}
+
+/// Stepping through a list with `take` and `drop` — the shape a parser that
+/// peeks a header and advances past it has — must cost the list once, not once
+/// per step. Doubling the list used to quadruple the elements read.
+#[test]
+fn stepping_a_list_with_take_and_drop_stays_linear() {
+    fn walk_cost(n: i64) -> u64 {
+        let mut arena = Arena::new();
+        let items: Vec<NanValue> = (0..n).map(NanValue::new_int_inline).collect();
+        let mut list = NanValue::new_list(arena.push_list(items));
+
+        let flattened_before = arena.list_elements_flattened();
+        let mut seen = 0i64;
+        while arena.list_len_value(list) > 0 {
+            let head = take_builtin(&mut arena, list, 4);
+            seen += arena.list_len_value(head) as i64;
+            list = crate::types::list::call_nv(
+                "List.drop",
+                &[list, NanValue::new_int(4, &mut arena)],
+                &mut arena,
+            )
+            .expect("List.drop is owned by the list namespace")
+            .expect("List.drop over a list and an int");
+        }
+        assert_eq!(seen, n, "the walk did not see every element exactly once");
+        arena.list_elements_flattened() - flattened_before
+    }
+
+    let small = walk_cost(2_000);
+    let large = walk_cost(4_000);
+
+    assert_eq!(
+        (small, large),
+        (0, 0),
+        "a take/drop walk still flattens the list it steps through: 2,000 \
+         elements read {small}, 4,000 read {large}",
+    );
+}
+
+/// Taking at least the whole list must hand it straight back rather than
+/// rebuild it — the counterpart of `List.drop(xs, 0)` returning `xs`.
+#[test]
+fn taking_the_whole_list_returns_the_list_it_was_given() {
+    let mut arena = Arena::new();
+    let items: Vec<NanValue> = (0..8).map(NanValue::new_int_inline).collect();
+    let list = NanValue::new_list(arena.push_list(items));
+
+    for count in [8, 9, 8_000] {
+        let taken = take_builtin(&mut arena, list, count);
+        assert_eq!(
+            taken.bits(),
+            list.bits(),
+            "List.take({count}) rebuilt a list it was asked to keep whole",
+        );
+    }
+}
+
+/// Taking nothing — and taking a negative count, which clamps to nothing —
+/// yields the canonical empty list.
+#[test]
+fn taking_nothing_yields_the_canonical_empty_list() {
+    let mut arena = Arena::new();
+    let items: Vec<NanValue> = (0..3).map(NanValue::new_int_inline).collect();
+    let list = NanValue::new_list(arena.push_list(items));
+
+    for count in [0, -1, -4_000] {
+        let taken = take_builtin(&mut arena, list, count);
+        assert_eq!(
+            taken.bits(),
+            NanValue::EMPTY_LIST.bits(),
+            "List.take({count}) is not the canonical empty list",
+        );
+    }
+}
+
+/// The meaning held still: on every shape the arena can hold, `List.take(xs, n)`
+/// is the first `n` elements of `xs`, count by count.
+#[test]
+fn taking_a_prefix_agrees_with_the_elements_it_names() {
+    let mut arena = Arena::new();
+    let flat_items: Vec<NanValue> = (0..40).map(NanValue::new_int_inline).collect();
+    let flat = NanValue::new_list(arena.push_list(flat_items));
+    let mut prepended = flat;
+    for value in (100..110).rev() {
+        let next = arena.push_list_prepend(NanValue::new_int_inline(value), prepended);
+        prepended = NanValue::new_list(next);
+    }
+    let mut appended = NanValue::new_list(arena.push_list(vec![NanValue::new_int_inline(0)]));
+    for value in 1..300 {
+        let next = arena.push_list_append(appended, NanValue::new_int_inline(value));
+        appended = NanValue::new_list(next);
+    }
+    let concat = NanValue::new_list(arena.push_list_concat(prepended, appended));
+    let stepped = drop_builtin(&mut arena, concat, 45);
+
+    for list in [flat, prepended, appended, concat, stepped] {
+        let all = list_contents(&arena, list);
+        for count in [-3i64, 0, 1, 2, 7, 39, 40, 41, 349, 350, 5_000] {
+            let wanted = count.max(0) as usize;
+            let expected: Vec<i64> = all.iter().take(wanted).copied().collect();
+            let taken = take_builtin(&mut arena, list, count);
+            assert_eq!(
+                list_contents(&arena, taken),
+                expected,
+                "List.take(xs, {count}) over a {}-element list is not its first \
+                 {wanted} elements",
+                all.len(),
+            );
+        }
+    }
+}

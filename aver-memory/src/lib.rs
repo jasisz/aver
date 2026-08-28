@@ -45,6 +45,7 @@ use alloc::vec::Vec;
 use core::cmp::Ordering;
 use core::hash::{Hash, Hasher};
 use core::ops::Deref;
+use core::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 // ---------------------------------------------------------------------------
 // ArenaTypes trait — parameterises the arena over consumer-specific types
@@ -1368,6 +1369,33 @@ impl Hasher for DefaultHasher {
 // Arena
 // ---------------------------------------------------------------------------
 
+/// A count the arena can add to through a shared reference.
+///
+/// Reading a list does not change it, so `list_to_vec` takes `&self` and the
+/// tally of what it read cannot live in an ordinary field. The relaxed atomic
+/// keeps `Arena` `Send` and `Sync`, which a plain `Cell` would take away; the
+/// number is only ever read when nothing else is writing it.
+#[derive(Debug, Default)]
+struct SharedCount(AtomicU64);
+
+impl SharedCount {
+    #[inline]
+    fn get(&self) -> u64 {
+        self.0.load(AtomicOrdering::Relaxed)
+    }
+
+    #[inline]
+    fn add(&self, amount: u64) {
+        self.0.fetch_add(amount, AtomicOrdering::Relaxed);
+    }
+}
+
+impl Clone for SharedCount {
+    fn clone(&self) -> Self {
+        SharedCount(AtomicU64::new(self.get()))
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Arena<T: ArenaTypes> {
     young_entries: Vec<ArenaEntry<T>>,
@@ -1407,6 +1435,21 @@ pub struct Arena<T: ArenaTypes> {
     /// immediates escapes the read, so this is the counter that says which
     /// element types the traversal cost is actually linear in.
     list_elements_scanned: u64,
+    /// Total list elements flattened out of a shared body into a fresh vector
+    /// by [`Arena::list_to_vec`] — the whole-list walk a builtin does when it
+    /// needs every element at once.
+    ///
+    /// It is the number a builtin that reads a whole list to answer about part
+    /// of it is made of: `List.take(xs, 1)` over a long list belongs to the
+    /// bounded walks and must leave this alone, while a whole-list walk adds
+    /// the entire length to it on every call. Stepping through a list with such
+    /// a builtin therefore shows its quadratic here as a number rather than as
+    /// a wall-clock reading.
+    ///
+    /// Bounded walks are deliberately outside it. `Arena::list_prefix` and
+    /// `Arena::list_drop` read only what they step over, and counting them here
+    /// would blur exactly the distinction the counter exists to draw.
+    list_elements_flattened: SharedCount,
     /// Total map entries duplicated because a table was rebuilt instead of
     /// written into — `Map.set` and `Map.remove` on a target the ownership
     /// analysis could not prove unshared, any map builder that rebuilds its
