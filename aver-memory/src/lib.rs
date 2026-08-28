@@ -1429,6 +1429,16 @@ pub struct Arena<T: ArenaTypes> {
     /// heap-backed grows this on every collection that sees it. It is the
     /// counter the residual time of a map-building program follows.
     map_entries_scanned: u64,
+    /// Total vector and tuple elements the collector has *read* while deciding
+    /// whether a bulk entry needs rewriting, the vector counterpart of
+    /// [`Arena::list_elements_scanned`]. A vector whose `all_immediate` flag is
+    /// set is returned unread and adds nothing here; one holding anything
+    /// heap-backed is walked in full on every collection that sees it.
+    ///
+    /// The compiler-internal `String.Index` behind `String.charAt` is a vector
+    /// of byte offsets carried across every step of an indexed loop, so this is
+    /// the counter an indexed string walk's residual time follows.
+    vector_elements_scanned: u64,
     /// Whether the evacuation currently in progress has to descend into roots
     /// that live OUTSIDE the frame's regions.
     ///
@@ -1594,6 +1604,24 @@ pub enum ArenaEntry<T: ArenaTypes> {
     },
     Vector {
         items: Vec<NanValue>,
+        /// The vector spelling of [`ArenaEntry::Map`]'s `all_immediate` and of
+        /// `ListBody`'s: true promises that no element carries an arena index,
+        /// which lets the collector return the whole entry without reading it.
+        ///
+        /// `false` is always safe — it only costs the walk. `true` when
+        /// something does carry an index is not safe and does not fail loudly:
+        /// the element would keep a stale index after a promotion renamed it.
+        /// So it is set at the two builders that see every element
+        /// ([`Arena::push_vector`] and the owned `Vector.set`, which inherits
+        /// it and clears it for the one element it stores) and cleared by the
+        /// mutable escape hatch [`Arena::get_vector_mut`], which cannot know
+        /// what its caller will write.
+        ///
+        /// It exists because the compiler-internal `String.Index` behind
+        /// `String.charAt` is a vector of byte offsets — all immediates —
+        /// threaded through every step of an indexed loop. Re-reading it on
+        /// every collection is what made such a loop quadratic.
+        all_immediate: bool,
         /// The vector spelling of [`ArenaEntry::Map`]'s `holder_count` — see
         /// that field for the full contract; the marking choke points
         /// ([`Arena::note_held_elsewhere`] and everything that funnels into

@@ -168,3 +168,128 @@ fn deep_import_writes_a_fresh_target_receipt() {
     assert_ne!(*target_receipt, source_receipt);
     assert_eq!(*target_receipt + 1, target.lane_mark());
 }
+
+/// Read the flag straight off the entry, so the test asserts what the
+/// collector will read rather than what a helper reports.
+fn vector_flag(arena: &TestArena, value: NanValue) -> bool {
+    let ArenaEntry::Vector { all_immediate, .. } = arena.get(value.arena_index()) else {
+        panic!("expected a vector");
+    };
+    *all_immediate
+}
+
+/// A from-scratch walk of the elements — the answer the flag is supposed to
+/// stand in for.
+fn vector_really_all_immediate(arena: &TestArena, value: NanValue) -> bool {
+    let ArenaEntry::Vector { items, .. } = arena.get(value.arena_index()) else {
+        panic!("expected a vector");
+    };
+    items.iter().all(|element| element.heap_index().is_none())
+}
+
+/// Every producer of the all-immediate flag, checked against a walk.
+///
+/// This is where the promise is proved. The collector's two escapes deliberately
+/// do NOT re-prove it — the walk that would prove it is the walk they exist to
+/// skip, and the table they skip is threaded through every step of every indexed
+/// string loop, so re-proving it under debug assertions would put the quadratic
+/// straight back into every debug build. Everything that can set the flag to
+/// true is here instead, and each one decides from values it has in hand.
+#[test]
+fn the_vector_all_immediate_flag_is_exact_at_every_producer() {
+    let mut arena = TestArena::new();
+
+    // The builder that sees every element, both ways.
+    let zero = NanValue::new_int(0, &mut arena);
+    let seven = NanValue::new_int(7, &mut arena);
+    let offsets = NanValue::new_vector(arena.push_vector(vec![zero, seven]));
+    assert!(vector_flag(&arena, offsets));
+    assert_eq!(
+        vector_flag(&arena, offsets),
+        vector_really_all_immediate(&arena, offsets)
+    );
+
+    let heap_backed = NanValue::new_map(arena.push_map(PersistentMap::new()));
+    assert!(
+        heap_backed.heap_index().is_some(),
+        "a heap map has an index"
+    );
+    let mixed = NanValue::new_vector(arena.push_vector(vec![zero, heap_backed]));
+    assert!(!vector_flag(&arena, mixed));
+    assert_eq!(
+        vector_flag(&arena, mixed),
+        vector_really_all_immediate(&arena, mixed)
+    );
+
+    // The in-place write keeps an immediate table immediate...
+    let five = NanValue::new_int(5, &mut arena);
+    assert!(arena.vector_store_in_place(offsets.arena_index(), 1, five));
+    assert!(vector_flag(&arena, offsets));
+    assert_eq!(
+        vector_flag(&arena, offsets),
+        vector_really_all_immediate(&arena, offsets)
+    );
+
+    // ...and gives the promise up at the first heap value it stores.
+    assert!(arena.vector_store_in_place(offsets.arena_index(), 0, heap_backed));
+    assert!(!vector_flag(&arena, offsets));
+    assert_eq!(
+        vector_flag(&arena, offsets),
+        vector_really_all_immediate(&arena, offsets)
+    );
+
+    // The mutable escape hatch cannot know what its caller writes, so it gives
+    // the promise up unconditionally.
+    let one = NanValue::new_int(1, &mut arena);
+    let plain = NanValue::new_vector(arena.push_vector(vec![one]));
+    assert!(vector_flag(&arena, plain));
+    let _ = arena.get_vector_mut(plain.arena_index());
+    assert!(
+        !vector_flag(&arena, plain),
+        "handing out the elements has to give up the promise"
+    );
+}
+
+/// The counter that made the cost legible, and the escape it reports.
+///
+/// A vector of immediates is returned by the collector unread; one holding an
+/// arena index is read in full. The difference is what an indexed string walk's
+/// residual time follows.
+#[test]
+fn the_collector_reads_a_mixed_vector_and_skips_an_immediate_one() {
+    let mut arena = TestArena::new();
+    let mark = arena.young_len() as u32;
+    let lane = arena.lane_mark();
+
+    let elements = vec![
+        NanValue::new_int(0, &mut arena),
+        NanValue::new_int(1, &mut arena),
+        NanValue::new_int(2, &mut arena),
+    ];
+    let immediate = NanValue::new_vector(arena.push_vector(elements));
+    let mut roots = [immediate];
+    arena.promote_young_roots_to_yard(mark, lane, &mut roots);
+    assert_eq!(
+        arena.vector_elements_scanned(),
+        0,
+        "a table of immediates must not be read to promote it"
+    );
+
+    let mut arena = TestArena::new();
+    let mark = arena.young_len() as u32;
+    let lane = arena.lane_mark();
+    let inner = NanValue::new_map(arena.push_map(PersistentMap::new()));
+    let elements = vec![
+        NanValue::new_int(0, &mut arena),
+        inner,
+        NanValue::new_int(2, &mut arena),
+    ];
+    let mixed = NanValue::new_vector(arena.push_vector(elements));
+    let mut roots = [mixed];
+    arena.promote_young_roots_to_yard(mark, lane, &mut roots);
+    assert!(
+        arena.vector_elements_scanned() >= 3,
+        "a table holding an arena index is read in full, got {}",
+        arena.vector_elements_scanned()
+    );
+}

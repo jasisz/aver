@@ -106,6 +106,10 @@ pub fn vec_set_nv_owned(args: &[NanValue], arena: &mut Arena) -> Result<NanValue
         return Ok(NanValue::NONE);
     };
     let source = args[0];
+    // Read before taking: the take empties the entry, and the promise the
+    // collector reads has to be carried across to the entry pushed below.
+    let source_all_immediate =
+        !source.is_empty_vector_immediate() && arena.vector_all_immediate(source.arena_index());
     let mut items = arena.take_vector_value(source);
     if uidx >= items.len() {
         return Ok(NanValue::NONE);
@@ -120,6 +124,10 @@ pub fn vec_set_nv_owned(args: &[NanValue], arena: &mut Arena) -> Result<NanValue
     let new_vec_idx = arena.push_inheriting_source_space(
         aver_memory::ArenaEntry::Vector {
             items,
+            // Every other element was already immediate or already not; the one
+            // element this write stores is the only one that can change the
+            // answer, and it is right here.
+            all_immediate: source_all_immediate && args[2].heap_index().is_none(),
             holder_count: 0,
         },
         source,

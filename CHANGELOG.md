@@ -2,6 +2,12 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
+## 0.30.0 (unreleased)
+
+### Fixed
+
+- **A loop that reads characters with `String.charAt` and then uses them no longer slows down as the string grows.** On the VM, reading a character and passing it on — adding `String.len(c)` to a total, handing it to another function, keeping it in a list — got about four times slower for every doubling of the string, while the same loop that ignores the character it read stayed flat. What a read costs is now decided by how many characters you read, not by how long the string is: 20,000 `String.charAt` calls over a 262,144-character string used to cost seventeen times what the same 20,000 calls cost over a 16,384-character one, and now cost the same. `String.slice` inside such a loop is fixed the same way. Generated Rust and wasm-gc were never affected. Closes [#1180](https://github.com/jasisz/aver/issues/1180).
+
 ## 0.29.0 "Peer" — 2026-08-27
 
 Named for the network role Aver programs can finally sustain — and for the checked relationship between a program and its host. One source-owned contract now drives execution, replay, verification, wasm embedding, and proof export.

@@ -370,16 +370,48 @@ impl<T: ArenaTypes> Arena<T> {
             }
             ArenaEntry::Vector {
                 mut items,
+                all_immediate,
                 holder_count,
             } => {
                 // `holder_count` travels with the entry untouched — same
                 // argument as the map arm: a rewrite renames indices, it
                 // neither creates a reference nor discharges one.
+                //
+                // The all-immediate escape is the vector spelling of the ones
+                // `rewrite_list_body_with` and `rewrite_map_with` already have.
+                // A rewrite renames arena indices; an entry that holds none has
+                // nothing to rename, and reading it in full to find that out is
+                // the entire cost of carrying a table of offsets through a
+                // loop.
+                //
+                // Unlike the map and list escapes, this one does NOT re-prove
+                // the flag here under debug assertions. It cannot: the walk
+                // that would prove it is the walk being skipped, so a debug
+                // build would keep the quadratic the flag removes — and this
+                // table is threaded through every step of every indexed string
+                // loop, so that is the whole test suite. The promise is proved
+                // where it is MADE instead, and every place that makes it
+                // decides from the values in hand: `Arena::push_vector` reads
+                // each element as it stores it, `Arena::vector_store_in_place`
+                // and the owned `Vector.set` inherit a proven flag and clear it
+                // for the single element they write, and
+                // `Arena::get_vector_mut` clears it because it cannot know.
+                // `arena::tests` checks the three producers against a
+                // from-scratch walk.
+                if all_immediate {
+                    return ArenaEntry::Vector {
+                        items,
+                        all_immediate,
+                        holder_count,
+                    };
+                }
+                self.vector_elements_scanned += items.len() as u64;
                 for value in &mut items {
                     *value = rewrite(self, *value);
                 }
                 ArenaEntry::Vector {
                     items,
+                    all_immediate,
                     holder_count,
                 }
             }
@@ -2031,12 +2063,27 @@ impl<T: ArenaTypes> Arena<T> {
         // to young >= mark, skip the rewrite — move the entry as-is.
         // Only check types where the scan is cheap relative to the rewrite cost.
         match &entry {
+            // Nothing in an all-immediate vector can point at young space, so
+            // the arm below would reach the same answer — after reading every
+            // element to get there. Same trade as the all-immediate map arm
+            // further down, and not redundant with the escape in
+            // `rewrite_entry_with`: a vector promoted to the long-lived heap
+            // comes through here instead. No re-proof here either, for the
+            // reason given at that escape.
+            ArenaEntry::Vector {
+                all_immediate: true,
+                ..
+            } => {
+                return entry;
+            }
             ArenaEntry::Vector { items, .. } | ArenaEntry::Tuple(items)
                 if !items.is_empty()
                     && !items
                         .iter()
                         .any(|v| Self::value_needs_young_promotion(*v, mark)) =>
             {
+                let read = items.len();
+                self.note_vector_elements_scanned(read);
                 return entry;
             }
             // Nothing in an all-immediate table can point at young space, so the

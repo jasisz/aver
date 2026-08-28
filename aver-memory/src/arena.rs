@@ -20,6 +20,7 @@ impl<T: ArenaTypes> Arena<T> {
             list_elements_scanned: 0,
             map_entries_copied: 0,
             map_entries_scanned: 0,
+            vector_elements_scanned: 0,
             rewrite_out_of_region_roots: false,
             holds_any_map: false,
             holds_any_vector: false,
@@ -72,6 +73,7 @@ impl<T: ArenaTypes> Arena<T> {
             list_elements_scanned: 0,
             map_entries_copied: 0,
             map_entries_scanned: 0,
+            vector_elements_scanned: 0,
             rewrite_out_of_region_roots: false,
             // The stable entries come across whole, and a map among them is
             // still a map here.
@@ -717,6 +719,7 @@ impl<T: ArenaTypes> Arena<T> {
         self.list_elements_scanned += child.list_elements_scanned;
         self.map_entries_copied += child.map_entries_copied;
         self.map_entries_scanned += child.map_entries_scanned;
+        self.vector_elements_scanned += child.vector_elements_scanned;
     }
 
     /// Map entries the collector has read while deciding whether a live map
@@ -746,6 +749,34 @@ impl<T: ArenaTypes> Arena<T> {
     #[inline]
     pub fn note_map_entries_scanned(&mut self, entries: usize) {
         self.map_entries_scanned += entries as u64;
+    }
+
+    /// Vector and tuple elements the collector has *read* while deciding
+    /// whether a bulk entry needs rewriting, the vector counterpart of
+    /// [`Arena::list_elements_scanned`] and [`Arena::map_entries_scanned`].
+    ///
+    /// This is the counter that tracks *time* for bulk entries. A vector built
+    /// entirely out of immediate values carries the `all_immediate` flag, is
+    /// returned unread, and adds nothing here; one holding a heap index is
+    /// walked in full on every collection that sees it. So a `Vector<Int>`
+    /// carried through a loop reads as 0, while a vector of strings grows this
+    /// with every collection.
+    ///
+    /// The reason it exists: the hidden `String.Index` behind `String.charAt`
+    /// is a vector of byte offsets threaded through every step of an indexed
+    /// loop. Reading it once per step is what made an indexed string walk
+    /// quadratic while the number of characters read stayed linear, and no
+    /// opcode or allocation count could see that.
+    #[inline]
+    pub fn vector_elements_scanned(&self) -> u64 {
+        self.vector_elements_scanned
+    }
+
+    /// Record that `elements` vector or tuple elements were read by a
+    /// collection.
+    #[inline]
+    pub fn note_vector_elements_scanned(&mut self, elements: usize) {
+        self.vector_elements_scanned += elements as u64;
     }
 
     #[inline]
@@ -955,22 +986,32 @@ impl<T: ArenaTypes> Arena<T> {
     /// here is the owned `Vector.set`, which is `O(1)` per write and marks the
     /// single element it stores itself (see `vec_set_nv_owned`).
     pub fn push_vector(&mut self, items: Vec<NanValue>) -> u32 {
-        if self.holds_any_map || self.holds_any_vector || self.holds_any_record {
-            let mut held: Option<Vec<NanValue>> = None;
-            for child in &items {
-                if child.is_heap_map()
+        // One pass answers both questions the entry is built with: which
+        // children this vector now holds, and whether the collector will ever
+        // have anything to rewrite in it. The second is free here, so the
+        // builder proves it once instead of the collector re-deciding it on
+        // every pass over the entry.
+        let marking = self.holds_any_map || self.holds_any_vector || self.holds_any_record;
+        let mut all_immediate = true;
+        let mut held: Option<Vec<NanValue>> = None;
+        for child in &items {
+            if child.heap_index().is_some() {
+                all_immediate = false;
+            }
+            if marking
+                && (child.is_heap_map()
                     || (child.is_vector() && !child.is_empty_vector_immediate())
-                    || child.is_record()
-                {
-                    held.get_or_insert_default().push(*child);
-                }
+                    || child.is_record())
+            {
+                held.get_or_insert_default().push(*child);
             }
-            for child in held.into_iter().flatten() {
-                self.note_held_elsewhere(child);
-            }
+        }
+        for child in held.into_iter().flatten() {
+            self.note_held_elsewhere(child);
         }
         self.push(ArenaEntry::Vector {
             items,
+            all_immediate,
             holder_count: 0,
         })
     }
@@ -1094,9 +1135,62 @@ impl<T: ArenaTypes> Arena<T> {
             _ => panic!("Arena: expected Vector at {}", index),
         }
     }
+    /// Hand out the elements for arbitrary mutation.
+    ///
+    /// The caller can store anything, so the all-immediate promise cannot
+    /// survive this: it is cleared here rather than at every call site, because
+    /// `false` costs a walk and a wrong `true` costs a stale arena index. A
+    /// caller that does know what it writes should use
+    /// [`Arena::vector_store_in_place`] instead and keep the promise.
     pub fn get_vector_mut(&mut self, index: u32) -> &mut Vec<NanValue> {
         match self.get_mut(index) {
-            ArenaEntry::Vector { items, .. } => items,
+            ArenaEntry::Vector {
+                items,
+                all_immediate,
+                ..
+            } => {
+                *all_immediate = false;
+                items
+            }
+            _ => panic!("Arena: expected Vector at {}", index),
+        }
+    }
+
+    /// Write one element in place, keeping the all-immediate promise exact.
+    ///
+    /// The in-place `Vector.set`'s write, and the reason
+    /// [`Arena::get_vector_mut`] can afford to be conservative: a loop writing
+    /// integers into a vector it owns keeps the collector's escape, and one
+    /// writing a heap value gives it up at the first such write.
+    ///
+    /// Returns whether `position` was in range.
+    pub fn vector_store_in_place(&mut self, index: u32, position: usize, value: NanValue) -> bool {
+        match self.get_mut(index) {
+            ArenaEntry::Vector {
+                items,
+                all_immediate,
+                ..
+            } => {
+                if position >= items.len() {
+                    return false;
+                }
+                items[position] = value;
+                if value.heap_index().is_some() {
+                    *all_immediate = false;
+                }
+                true
+            }
+            _ => panic!("Arena: expected Vector at {}", index),
+        }
+    }
+
+    /// Whether the vector at `index` still promises to hold no arena index.
+    ///
+    /// Read by the owned `Vector.set`, which takes the elements out and pushes
+    /// them back as a new entry and so has to carry the promise across by hand.
+    pub fn vector_all_immediate(&self, index: u32) -> bool {
+        match self.get(index) {
+            ArenaEntry::Vector { all_immediate, .. } => *all_immediate,
             _ => panic!("Arena: expected Vector at {}", index),
         }
     }
@@ -1113,6 +1207,7 @@ impl<T: ArenaTypes> Arena<T> {
             ArenaEntry::Vector {
                 items,
                 holder_count,
+                ..
             } => Some(VectorSlot {
                 held_elsewhere: *holder_count != 0,
                 len: items.len(),

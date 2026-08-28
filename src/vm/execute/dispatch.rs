@@ -2025,12 +2025,17 @@ impl VM {
                         // this store the vector holds `value`, and if that is a
                         // map, the vector is a holder of its slot.
                         self.arena.note_held_elsewhere(value);
-                        let items = self.arena.get_vector_mut(vec.arena_index());
-                        if i < items.len() {
-                            items[i] = value;
-                            if target_outside_frame && let Some(frame) = self.frames.last_mut() {
-                                frame.inplace_write_escaped = true;
-                            }
+                        // Through the arena's own write rather than the raw
+                        // element slice: it knows what `value` is, so a loop
+                        // writing integers keeps the collector's escape.
+                        let stored = self
+                            .arena
+                            .vector_store_in_place(vec.arena_index(), i, value);
+                        if stored
+                            && target_outside_frame
+                            && let Some(frame) = self.frames.last_mut()
+                        {
+                            frame.inplace_write_escaped = true;
                         }
                         // Return the same NanValue — same slot, same space.
                         self.stack.push(vec);
