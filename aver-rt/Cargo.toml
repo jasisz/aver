@@ -26,6 +26,7 @@ terminal = ["dep:crossterm"]
 all-features = true
 
 [dependencies]
+ahash = { version = "0.8", default-features = false, features = ["std", "runtime-rng"] }
 crossterm = { version = "0.28", optional = true }
 num-bigint = "0.4"
 num-integer = "0.1"

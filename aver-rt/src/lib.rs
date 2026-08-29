@@ -62,7 +62,8 @@ pub use terminal::{
     show_cursor as terminal_show_cursor, size as terminal_size,
 };
 
-use std::collections::HashMap as StdHashMap;
+use ahash::RandomState as AHashRandomState;
+use std::collections::HashMap;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::iter::FusedIterator;
@@ -216,8 +217,15 @@ pub fn par_execute_with_cancel<T: Send, E: Send>(
 // owner we mutate in place — turning O(log n) persistent-set into O(1)
 // amortized insert.
 
+/// Native backing table for an Aver `Map`.
+///
+/// Generated programs can put network-derived values into a map, so retain a
+/// per-table random key while avoiding SipHash13's cost on structural and byte
+/// keys. The hash is internal only: every observable map walk is sorted.
+type AverHashMap<K, V> = HashMap<K, V, AHashRandomState>;
+
 pub struct AverMap<K, V> {
-    inner: Rc<StdHashMap<K, V>>,
+    inner: Rc<AverHashMap<K, V>>,
 }
 
 impl<K, V> Clone for AverMap<K, V> {
@@ -235,7 +243,7 @@ where
 {
     pub fn new() -> Self {
         Self {
-            inner: Rc::new(StdHashMap::new()),
+            inner: Rc::new(AverHashMap::with_hasher(AHashRandomState::new())),
         }
     }
 
@@ -1505,8 +1513,19 @@ pub fn string_join<S: AsRef<str>>(parts: &AverList<S>, sep: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        AverList, AverListInner, LIST_APPEND_CHUNK_LIMIT, aver_display, env_set, string_slice,
+        AverList, AverListInner, AverMap, LIST_APPEND_CHUNK_LIMIT, aver_display, env_set,
+        string_slice,
     };
+
+    /// `AverMap` is exposed to generated programs, including programs that put
+    /// network-derived values into a map. Keep the fast hasher keyed per map
+    /// instead of silently falling back to deterministic `FxHash` or Rust's
+    /// slower default SipHash13.
+    #[test]
+    fn aver_map_uses_keyed_ahash_state() {
+        let map = AverMap::<u64, u64>::new();
+        let _: &ahash::RandomState = map.inner.hasher();
+    }
 
     /// One step off a flat list allocates nothing: the tail is the node it was
     /// taken from, read from one element further in. A fresh node per step is
