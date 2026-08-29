@@ -5148,7 +5148,8 @@ pub(super) fn cmd_explain_passes(file: &str, module_root_override: Option<&str>,
 /// asked for.
 const DEFORESTING_TARGETS_JSON: &str = "[\"rust\",\"vm\"]";
 const DEFORESTING_TARGETS_NOTE: &str = "counted for the rust and VM pipelines — --target wasm-gc and --target wasip2 build without this pass, so their artifacts carry none of these rewrites";
-const STRING_INDEX_TARGETS_JSON: &str = "[\"rust\",\"vm\",\"wasm-gc\",\"wasip2\"]";
+const RUNTIME_STRING_TARGETS_JSON: &str = "[\"rust\",\"vm\",\"wasm-gc\",\"wasip2\"]";
+const CHARS_FUSION_TARGETS_NOTE: &str = "counted for every runtime pipeline — rust, VM, ordinary wasm-gc, and wasip2; certified wasm-gc retains source traversal until its byte-level wall classifies the cursor helpers";
 const STRING_INDEX_TARGETS_NOTE: &str =
     "counted for every runtime pipeline — rust, VM, wasm-gc, and wasip2";
 
@@ -5785,7 +5786,7 @@ fn render_pass_diagnostics(diags: &[aver::ir::pipeline::PassDiagnostic]) -> Stri
                             r.codepoint_calls
                         ));
                     }
-                    out.push_str(&format!("  • {DEFORESTING_TARGETS_NOTE}\n"));
+                    out.push_str(&format!("  • {CHARS_FUSION_TARGETS_NOTE}\n"));
                 }
                 // Declines are reported whether or not anything fired:
                 // a loop the recogniser stopped seeing is exactly the
@@ -6133,7 +6134,7 @@ fn render_pass_diagnostics_json(diags: &[aver::ir::pipeline::PassDiagnostic]) ->
                     by_fn,
                     r.codepoint_calls,
                     declined,
-                    DEFORESTING_TARGETS_JSON
+                    RUNTIME_STRING_TARGETS_JSON
                 ));
             }
             PassReport::StringIndex(r) => {
@@ -6156,7 +6157,7 @@ fn render_pass_diagnostics_json(diags: &[aver::ir::pipeline::PassDiagnostic]) ->
                     json_str_array(&r.synthesized),
                     json_str_array(&r.code_variants),
                     declined,
-                    STRING_INDEX_TARGETS_JSON
+                    RUNTIME_STRING_TARGETS_JSON
                 ));
             }
             PassReport::ListBuild(r) => {
@@ -6652,8 +6653,16 @@ fn cmd_compile_wasm_gc(
     // calls remain implicitly visible. Preload them before symbol/MIR building
     // so the target sees a real capability callee rather than an unresolved
     // call that lowers to a trap.
-    let prepared_deps =
-        load_compile_deps_prepared(&items, &module_root, DepLowering::STRING_TRAVERSAL);
+    // Artifact certification has its own byte-level wall for handwritten wasm
+    // helpers. Until that wall classifies the cursor family, keep certified
+    // artifacts on the already-covered String-index-only shape; ordinary
+    // wasm-gc compilation and execution use the cursor lowering below.
+    let wasm_lowering = if certify {
+        DepLowering::STRING_INDEX_ONLY
+    } else {
+        DepLowering::STRING_TRAVERSAL
+    };
+    let prepared_deps = load_compile_deps_prepared(&items, &module_root, wasm_lowering);
     let dep_modules = prepared_deps.modules;
     use aver::ir::{PipelineConfig, TypecheckMode};
     let neutral_policy = aver::ir::NeutralAllocPolicy;
@@ -6674,7 +6683,7 @@ fn cmd_compile_wasm_gc(
             // traversal itself lowers directly over the UTF-8 String array.
             run_interp_lower: false,
             run_buffer_build: false,
-            run_chars_fusion: true,
+            run_chars_fusion: !certify,
             run_string_index: true,
             run_list_build: false,
             ..Default::default()
@@ -6694,9 +6703,10 @@ fn cmd_compile_wasm_gc(
     // `call $fn` after rewriting `Attr(Ident("Fractal"), "render")`
     // call sites to `Ident("Fractal_render")`. Component Model is a
     // future separate mode (see `project_wasm_gc_multimodule.md`).
-    // The wasm-gc compile path lowers the immutable String index, but
-    // neither the buffers nor the cursors/builders introduced by the
-    // older passes. It does not use the self-host typecheck driver.
+    // The wasm-gc compile path lowers immutable String traversal (the cursor
+    // stays off only for the separately pinned certificate wall), but not the
+    // mutable buffer/list builders. It does not use the self-host typecheck
+    // driver.
     reject_unsupported_capability_targets(
         &items,
         &dep_modules,
@@ -11745,6 +11755,14 @@ impl DepLowering {
         string_index: false,
         list_build: false,
         self_host: false,
+    };
+
+    /// Certificate-wall shape: immutable indexed access is covered, while the
+    /// handwritten cursor helper family still awaits byte-level wall roles.
+    #[cfg(feature = "wasm")]
+    pub(super) const STRING_INDEX_ONLY: Self = Self {
+        string_index: true,
+        ..Self::PRISTINE
     };
 
     /// Runtime wasm-gc / wasip2 shape: character traversal uses the native
