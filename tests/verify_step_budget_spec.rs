@@ -240,6 +240,47 @@ fn a_costly_entry_without_fn_reason_or_a_dial_is_a_config_error() {
     }
 }
 
+// ── d′. an entry for a file this run did not verify is not stale ────────
+
+/// `aver verify main.av` verifies one program graph, and an entry scoped to
+/// a file outside it raises nothing in that run — which says nothing about
+/// whether the path is stale. A path the project has on disk is not scolded;
+/// only one it has not got is (the case above).
+#[test]
+fn a_costly_entry_for_a_file_outside_this_run_is_not_reported_stale() {
+    let dir = project(
+        "budget-elsewhere",
+        "costly.av",
+        r#"
+[[verify.costly]]
+fn         = "countdown"
+step-limit = 50000000
+reason     = "the case counts down from 400,000; that is the case, not a runaway"
+
+[[verify.costly]]
+fn         = "case"
+files      = ["corpus/elsewhere*.av"]
+step-limit = 50000000
+reason     = "a corpus verified as its own job, not from main.av"
+"#,
+    );
+    std::fs::create_dir_all(dir.join("corpus")).expect("make the corpus directory");
+    std::fs::write(
+        dir.join("corpus/elsewhere1.av"),
+        "module Elsewhere1\n\nfn case() -> Int\n    ? \"Not reached from main.av.\"\n    1\n\nverify case\n    case() => 1\n",
+    )
+    .expect("stage the file outside the graph");
+    let out = verify(&dir, &[]);
+    let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+
+    assert!(
+        !stderr.contains("[[verify.costly]]"),
+        "an entry whose files exist but were not in this run is not stale:\n{}",
+        format_output(&out)
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", format_output(&out));
+}
+
 // ── d. an entry that raised nothing is reported ─────────────────────────
 
 #[test]
