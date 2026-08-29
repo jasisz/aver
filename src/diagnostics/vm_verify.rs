@@ -1072,24 +1072,31 @@ pub fn max_cases_for(config: Option<&ProjectConfig>, fn_name: &str, file_key: &s
 /// given. Same anchored form `[[check.suppress]].files` matches against, so
 /// one project writes one kind of glob.
 ///
-/// Both sides are resolved on the filesystem before they are compared, so one
-/// file has one key however the command line spelled it. Stripping the base
-/// off the file as text alone meant an absolute file under a relative module
-/// root — `aver verify "$PWD/main.av" --module-root .` — kept the whole
-/// absolute path as its key, `files = ["main.av"]` matched nothing, and the
-/// budget the project had granted in writing silently did not apply. A path
-/// the filesystem cannot answer for (a source that is not on disk) still falls
-/// back to comparing the two spellings as text.
+/// The key names the file the way the project wrote it. The base is stripped
+/// off the file as text first; a relative file that does not start with the
+/// base is kept as written, which is what a glob like `main.av` was matched
+/// against all along. Only an absolute file that does not start with the
+/// base as text is resolved on the filesystem — `aver verify "$PWD/main.av"
+/// --module-root .` — and even then only its DIRECTORY is resolved, never the
+/// file name: a symlinked source keeps the name its glob names, while `..`,
+/// a symlinked directory or `/tmp` versus `/private/tmp` no longer split one
+/// file into two keys. Text alone kept the whole absolute path there,
+/// `files = ["main.av"]` matched nothing, and the budget the project had
+/// granted in writing silently did not apply. A path the filesystem cannot
+/// answer for (a source that is not on disk) is compared as text and nothing
+/// else.
 pub fn costly_glob_key(source_file: &str, base_dir: Option<&str>) -> String {
     let path = std::path::Path::new(source_file);
     if let Some(base) = base_dir {
-        if let Ok(file) = std::fs::canonicalize(path)
-            && let Ok(root) = std::fs::canonicalize(base)
-            && let Ok(rel) = file.strip_prefix(&root)
-        {
+        if let Ok(rel) = path.strip_prefix(base) {
             return rel.to_string_lossy().replace('\\', "/");
         }
-        if let Ok(rel) = path.strip_prefix(base) {
+        if path.is_absolute()
+            && let (Some(parent), Some(name)) = (path.parent(), path.file_name())
+            && let Ok(dir) = std::fs::canonicalize(parent)
+            && let Ok(root) = std::fs::canonicalize(base)
+            && let Ok(rel) = dir.join(name).strip_prefix(&root)
+        {
             return rel.to_string_lossy().replace('\\', "/");
         }
     }
@@ -3166,5 +3173,73 @@ verify currentYear trace
             0,
             &crate::capability::CapabilityRegistry::default(),
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn costly_glob_key_keeps_the_written_name_of_a_symlinked_file() {
+        let dir = std::env::temp_dir().join(format!(
+            "aver_costly_key_symlink_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(dir.join("src")).expect("create src");
+        std::fs::write(dir.join("src/real.av"), "module Real\n").expect("write real.av");
+        std::os::unix::fs::symlink(dir.join("src/real.av"), dir.join("main.av")).expect("link");
+        std::os::unix::fs::symlink(&dir, dir.join("alias")).expect("link dir");
+        let file = dir.join("main.av").to_string_lossy().to_string();
+        // Spelled under the root as text: the written name, no filesystem.
+        assert_eq!(
+            costly_glob_key(&file, Some(&dir.to_string_lossy())),
+            "main.av"
+        );
+        // Spelled under an alias of the root: the directory is resolved, the
+        // file name is not, so the symlinked source keeps the name its glob names.
+        let alias = dir.join("alias").to_string_lossy().to_string();
+        assert_eq!(costly_glob_key(&file, Some(&alias)), "main.av");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn costly_glob_key_keeps_a_relative_file_as_written() {
+        assert_eq!(costly_glob_key("main.av", Some(".")), "main.av");
+        assert_eq!(costly_glob_key("./main.av", Some(".")), "main.av");
+        assert_eq!(costly_glob_key("corpus/a.av", Some(".")), "corpus/a.av");
+        assert_eq!(
+            costly_glob_key("main.av", Some("/somewhere/else")),
+            "main.av"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn costly_glob_key_anchors_two_spellings_of_one_directory() {
+        let dir = std::env::temp_dir().join(format!(
+            "aver_costly_key_alias_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(dir.join("real")).expect("create real");
+        std::fs::write(dir.join("real/main.av"), "module Main\n").expect("write main.av");
+        std::os::unix::fs::symlink(dir.join("real"), dir.join("alias")).expect("link dir");
+        let base = dir.join("alias").to_string_lossy().to_string();
+        let file = dir.join("real/main.av").to_string_lossy().to_string();
+        // The spellings do not line up as text; the filesystem says they are one place.
+        assert_eq!(costly_glob_key(&file, Some(&base)), "main.av");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn costly_glob_key_compares_a_path_that_is_not_on_disk_as_text() {
+        assert_eq!(costly_glob_key("/nowhere/x.av", Some("/nowhere")), "x.av");
+        assert_eq!(
+            costly_glob_key("/elsewhere/x.av", Some("/nowhere")),
+            "/elsewhere/x.av"
+        );
+        assert_eq!(costly_glob_key("x.av", None), "x.av");
     }
 }

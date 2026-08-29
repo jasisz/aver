@@ -91,8 +91,8 @@ fn is_av_file(path: &Path) -> bool {
 /// ordinary aliased directory — and which of the two spellings survived would
 /// be decided by the order the parent happened to be read in, so a file on
 /// disk could go missing from `aver check` on one machine and not another. A
-/// directory whose canonical path cannot be read is skipped rather than
-/// guessed at.
+/// directory whose canonical path cannot be read is an error, like every
+/// other failure of the walk — never a subtree that quietly goes missing.
 fn collect_av_input_files(
     path: &Path,
     out: &mut Vec<PathBuf>,
@@ -110,9 +110,8 @@ fn collect_av_input_files(
         return Err(format!("'{}' is not an .av file", path.display()));
     }
 
-    let Ok(canonical) = fs::canonicalize(path) else {
-        return Ok(());
-    };
+    let canonical = fs::canonicalize(path)
+        .map_err(|e| format!("Cannot resolve directory '{}': {}", path.display(), e))?;
     if !ancestors.insert(canonical.clone()) {
         return Ok(());
     }
@@ -145,21 +144,28 @@ fn collect_av_files_in_directory(
     Ok(())
 }
 
-pub(super) fn resolve_av_inputs(path: &str) -> Result<Vec<String>, String> {
-    let root = Path::new(path);
+/// Every `.av` file under `path`, sorted. A root with none is an empty list,
+/// not an error: only a walk that could not be completed is one.
+fn list_av_files(path: &str) -> Result<Vec<String>, String> {
     let mut files = Vec::new();
     let mut ancestors = HashSet::new();
-    collect_av_input_files(root, &mut files, &mut ancestors)?;
+    collect_av_input_files(Path::new(path), &mut files, &mut ancestors)?;
     files.sort();
-
-    if files.is_empty() {
-        return Err(format!("No .av files found under '{}'", root.display()));
-    }
-
     Ok(files
         .into_iter()
         .map(|path| path_to_string(&path))
         .collect())
+}
+
+pub(super) fn resolve_av_inputs(path: &str) -> Result<Vec<String>, String> {
+    let files = list_av_files(path)?;
+    if files.is_empty() {
+        return Err(format!(
+            "No .av files found under '{}'",
+            Path::new(path).display()
+        ));
+    }
+    Ok(files)
 }
 
 fn relativize_to(base: &Path, path: &Path) -> Option<String> {
@@ -2558,7 +2564,7 @@ fn report_stale_verify_costly(
     // the project has on disk, in one listing, and the listing is what decides
     // both shapes of the complaint: a path the project has not got, and a fn
     // the files it does have no longer declare.
-    let on_disk: Vec<String> = match resolve_av_inputs(module_root) {
+    let on_disk: Vec<String> = match list_av_files(module_root) {
         Ok(files) => files
             .iter()
             .map(|file| aver::diagnostics::vm_verify::costly_glob_key(file, Some(module_root)))
