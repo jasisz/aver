@@ -91,12 +91,13 @@ pub(super) struct ServerHandlerIndices {
     pub http_request_type_idx: u32,
     /// `Http.Response` struct type idx (status, body, headers).
     pub http_response_type_idx: u32,
-    /// `Map<String, List<String>>` slot triple — used for both the
+    /// `Map<String, List<String>>` slots — used for both the
     /// request-headers in (built bottom-up from fields.entries) and
     /// the response-headers iteration (read field-by-field, append
     /// to outgoing fields).
     pub headers_keys_array_type_idx: u32,
     pub headers_values_array_type_idx: u32,
+    pub headers_hashes_array_type_idx: u32,
     pub headers_map_type_idx: u32,
     /// `List<String>` cons-cell type idx — head = String ref, tail
     /// = list ref.
@@ -193,6 +194,7 @@ pub(super) fn emit_aver_http_handle(
     let resp_idx = indices.http_response_type_idx;
     let keys_arr_idx = indices.headers_keys_array_type_idx;
     let values_arr_idx = indices.headers_values_array_type_idx;
+    let hashes_arr_idx = indices.headers_hashes_array_type_idx;
     let map_idx = indices.headers_map_type_idx;
     let list_str_idx = indices.list_string_type_idx;
     let opt_list_str_idx = indices.option_list_string_type_idx;
@@ -695,6 +697,8 @@ pub(super) fn emit_aver_http_handle(
     f.instruction(&Instruction::ArrayNewDefault(keys_arr_idx));
     f.instruction(&Instruction::I32Const(INITIAL_CAP));
     f.instruction(&Instruction::ArrayNewDefault(values_arr_idx));
+    f.instruction(&Instruction::I32Const(INITIAL_CAP));
+    f.instruction(&Instruction::ArrayNewDefault(hashes_arr_idx));
     f.instruction(&Instruction::StructNew(map_idx));
     f.instruction(&Instruction::LocalSet(l_req_headers_map));
 

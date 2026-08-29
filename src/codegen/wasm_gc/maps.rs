@@ -15,6 +15,7 @@
 //!   mut i32 cap;
 //!   mut (ref null $keys_array)   keys;
 //!   mut (ref null $values_array) values;
+//!   mut (ref null $hashes_array) hashes;
 //! }
 //! ```
 //!
@@ -25,8 +26,9 @@
 //! The table grows. Both insert helpers check, before they probe,
 //! whether the entry they are about to add would push occupancy past
 //! three quarters of capacity (see [`LOAD_SHIFT`]); when it would,
-//! they allocate keys/values arrays at twice the capacity, rehash every
-//! live entry into the wider mask, and probe there instead. `Map.set`
+//! they allocate keys/values/hashes arrays at twice the capacity, rehash every
+//! live entry into the wider mask using its cached hash, and probe there
+//! instead. `Map.set`
 //! is therefore total up to memory exhaustion, the same promise the
 //! VM and the Rust backend make. Capacity is per-map state in the
 //! struct, so every other helper reads it from the map it was handed
@@ -122,11 +124,11 @@ pub(super) struct KeyHelpers {
 #[derive(Debug, Clone, Copy)]
 pub(super) struct MapKVHelpers {
     pub(super) empty: u32,
-    /// Clone-on-write `set` — allocates fresh keys/values arrays,
+    /// Clone-on-write `set` — allocates fresh keys/values/hashes arrays,
     /// `array.copy`s them, mutates the copies. Used when `ir::alias`
     /// flags the call site's map slot as alias-prone.
     pub(super) set: u32,
-    /// In-place `set` — probes the source map's keys/values arrays
+    /// In-place `set` — probes the source map's keys/values/hashes arrays
     /// directly, `array.set`s into them, returns a struct.new wrapping
     /// the same arrays with the updated size. Sound only when the IR
     /// alias pass + last-use proves the map slot is uniquely owned.
@@ -1481,18 +1483,20 @@ fn slots_for(canonical: &str, registry: &TypeRegistry) -> Result<MapSlots, WasmG
         )))
 }
 
-/// `empty() -> Map<K, V>`. Allocates fresh keys/values arrays at
+/// `empty() -> Map<K, V>`. Allocates fresh keys/values/hashes arrays at
 /// `INITIAL_CAP` and a struct wrapping them.
 fn emit_map_empty(canonical: &str, registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     let slots = slots_for(canonical, registry)?;
     let mut f = Function::new([]);
-    // size = 0; cap = INITIAL_CAP; keys = array.new_default; values = array.new_default
+    // size = 0; cap = INITIAL_CAP; keys/values/hashes = array.new_default
     f.instruction(&Instruction::I32Const(0)); // size
     f.instruction(&Instruction::I32Const(INITIAL_CAP)); // cap
     f.instruction(&Instruction::I32Const(INITIAL_CAP));
     f.instruction(&Instruction::ArrayNewDefault(slots.keys_array));
     f.instruction(&Instruction::I32Const(INITIAL_CAP));
     f.instruction(&Instruction::ArrayNewDefault(slots.values_array));
+    f.instruction(&Instruction::I32Const(INITIAL_CAP));
+    f.instruction(&Instruction::ArrayNewDefault(slots.hashes_array));
     f.instruction(&Instruction::StructNew(slots.map));
     f.instruction(&Instruction::End);
     Ok(f)
@@ -1502,7 +1506,7 @@ fn emit_map_empty(canonical: &str, registry: &TypeRegistry) -> Result<Function, 
 /// map's arrays, or into the map's own.
 #[derive(Debug, Clone, Copy)]
 enum TableSource {
-    /// Clone-on-write. The helper allocates fresh keys/values arrays,
+    /// Clone-on-write. The helper allocates fresh keys/values/hashes arrays,
     /// copies the map's contents in, and probes the copies, so nobody
     /// holding an alias of the input map ever observes it mutated.
     /// Without this, `Vector.new(n, m)` produced N aliases of `m` and a
@@ -1511,7 +1515,7 @@ enum TableSource {
     Clone,
     /// In place. `ir::alias` plus last-use proved the caller's map slot
     /// is uniquely owned, so the helper probes the map's own arrays and
-    /// writes into them — two `array.new_default` and two `array.copy`
+    /// writes into them — three `array.new_default` and three `array.copy`
     /// per call saved.
     Owned,
 }
@@ -1528,7 +1532,7 @@ fn emit_map_set(
 }
 
 /// `set_in_place(map, k, v) -> map`. Same insert as [`emit_map_set`]
-/// without the entry-time copy of `keys` / `values` — the caller has
+/// without the entry-time copy of `keys` / `values` / `hashes` — the caller has
 /// proven the map's arrays are uniquely owned. The returned struct
 /// still re-wraps the arrays with the updated size; callers expect a
 /// fresh map handle either way, which is also what lets a grow swap
@@ -1567,14 +1571,21 @@ fn emit_map_insert(
         nullable: true,
         heap_type: HeapType::Concrete(slots.values_array),
     });
+    let hashes_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(slots.hashes_array),
+    });
     // params: 0=map, 1=k, 2=v
     // locals: 3=cap, 4=mask, 5=idx, 6=keys, 7=values, 8=cur_key,
-    //         9=home, 10=src_keys, 11=src_values, 12=i
+    //         9=home, 10=src_keys, 11=src_values, 12=i,
+    //         13=hashes, 14=src_hashes, 15=query_hash
     //
     // 6/7 are the arrays the probe writes to — a clone, the map's own,
-    // or a wider pair a grow just filled. 10/11 are the map's arrays as
+    // or a wider set a grow just filled. 10/11 are the map's arrays as
     // handed in, which the grow rehashes out of and the clone copies
-    // from. 12 walks them. 5/8/9 are reused by both probe loops.
+    // from. 13/14 are their parallel cached-hash arrays. 12 walks them;
+    // 15 carries a stored hash during growth, then the query hash.
+    // 5/8/9 are reused by both probe loops.
     let mut f = Function::new([
         (1, ValType::I32),                            // 3: cap
         (1, ValType::I32),                            // 4: mask
@@ -1586,13 +1597,18 @@ fn emit_map_insert(
         (1, keys_ref),                                // 10: src_keys (the map's own)
         (1, values_ref),                              // 11: src_values (the map's own)
         (1, ValType::I32),                            // 12: i (rehash / copy cursor)
+        (1, hashes_ref),                              // 13: hashes (probe target)
+        (1, hashes_ref),                              // 14: src_hashes (the map's own)
+        (1, ValType::I32),                            // 15: stored/query hash
     ]);
 
-    emit_insert_prologue(&mut f, slots, k_aver, registry, keyh, source);
+    emit_insert_prologue(&mut f, slots, source);
 
-    // idx = hash(k) & mask; home = idx
+    // query_hash = hash(k); idx = query_hash & mask; home = idx
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::Call(keyh.hash));
+    f.instruction(&Instruction::LocalSet(15));
+    f.instruction(&Instruction::LocalGet(15));
     f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::I32And);
     f.instruction(&Instruction::LocalSet(5));
@@ -1625,7 +1641,12 @@ fn emit_map_insert(
     f.instruction(&Instruction::LocalGet(5));
     f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::ArraySet(slots.values_array));
-    // return struct.new $map (map.size + 1, cap, keys, values)
+    // hashes[idx] = query_hash
+    f.instruction(&Instruction::LocalGet(13));
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::LocalGet(15));
+    f.instruction(&Instruction::ArraySet(slots.hashes_array));
+    // return struct.new $map (map.size + 1, cap, keys, values, hashes)
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::StructGet {
         struct_type_index: slots.map,
@@ -1636,11 +1657,20 @@ fn emit_map_insert(
     f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::LocalGet(6));
     f.instruction(&Instruction::LocalGet(7));
+    f.instruction(&Instruction::LocalGet(13));
     f.instruction(&Instruction::StructNew(slots.map));
     f.instruction(&Instruction::Return);
     f.instruction(&Instruction::End);
 
-    // else if eq(unbox(cur_key), k): update value at idx, size unchanged.
+    // else if cached_hash == query_hash && eq(unbox(cur_key), k): update
+    // value at idx, size unchanged. The integer filter keeps a displaced
+    // bucket from starting a structural key walk unless the hashes agree.
+    f.instruction(&Instruction::LocalGet(13));
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::ArrayGet(slots.hashes_array));
+    f.instruction(&Instruction::LocalGet(15));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::If(BlockType::Empty));
     f.instruction(&Instruction::LocalGet(8));
     emit_unbox_key(&mut f, k_aver, registry);
     f.instruction(&Instruction::LocalGet(1));
@@ -1650,7 +1680,7 @@ fn emit_map_insert(
     f.instruction(&Instruction::LocalGet(5));
     f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::ArraySet(slots.values_array));
-    // return struct.new $map (map.size, cap, keys, values)
+    // return struct.new $map (map.size, cap, keys, values, hashes)
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::StructGet {
         struct_type_index: slots.map,
@@ -1659,8 +1689,10 @@ fn emit_map_insert(
     f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::LocalGet(6));
     f.instruction(&Instruction::LocalGet(7));
+    f.instruction(&Instruction::LocalGet(13));
     f.instruction(&Instruction::StructNew(slots.map));
     f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
     f.instruction(&Instruction::End);
 
     // else: idx = (idx + 1) & mask; continue
@@ -1680,7 +1712,7 @@ fn emit_map_insert(
 }
 
 /// Settle `cap` (3), `mask` (4) and the arrays the probe will write to
-/// (6, 7) for one insert, growing the table first when the entry about
+/// (6, 7, 13) for one insert, growing the table first when the entry about
 /// to be added would push occupancy past three quarters of capacity.
 ///
 /// Growing and copying are the same act, so they are one branch each
@@ -1695,18 +1727,11 @@ fn emit_map_insert(
 /// every displacement a collision run built up, which is why a probe
 /// on a grown table is no longer than on a fresh one.
 ///
-/// The map's own arrays are read out first (10, 11) because both
+/// The map's own arrays are read out first (10, 11, 14) because both
 /// branches need them, and because reading them before the branch
 /// keeps the grow path from re-reading struct fields per entry.
-fn emit_insert_prologue(
-    f: &mut Function,
-    slots: MapSlots,
-    k_aver: &str,
-    registry: &TypeRegistry,
-    keyh: KeyHelpers,
-    source: TableSource,
-) {
-    // cap = map.cap; src_keys = map.keys; src_values = map.values
+fn emit_insert_prologue(f: &mut Function, slots: MapSlots, source: TableSource) {
+    // cap = map.cap; src_keys/src_values/src_hashes = map arrays
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::StructGet {
         struct_type_index: slots.map,
@@ -1725,6 +1750,12 @@ fn emit_insert_prologue(
         field_index: 3,
     });
     f.instruction(&Instruction::LocalSet(11));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: slots.map,
+        field_index: 4,
+    });
+    f.instruction(&Instruction::LocalSet(14));
 
     // Grow when map.size + 1 > cap - (cap >> LOAD_SHIFT).
     //
@@ -1759,13 +1790,16 @@ fn emit_insert_prologue(
     f.instruction(&Instruction::I32Const(1));
     f.instruction(&Instruction::I32Sub);
     f.instruction(&Instruction::LocalSet(4));
-    // keys = array.new_default cap; values = array.new_default cap
+    // keys/values/hashes = array.new_default cap
     f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::ArrayNewDefault(slots.keys_array));
     f.instruction(&Instruction::LocalSet(6));
     f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::ArrayNewDefault(slots.values_array));
     f.instruction(&Instruction::LocalSet(7));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::ArrayNewDefault(slots.hashes_array));
+    f.instruction(&Instruction::LocalSet(13));
     // for i in 0 .. len(src_keys): rehash src[i] into the new arrays
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::LocalSet(12));
@@ -1788,10 +1822,12 @@ fn emit_insert_prologue(
     f.instruction(&Instruction::RefIsNull);
     f.instruction(&Instruction::I32Eqz);
     f.instruction(&Instruction::If(BlockType::Empty));
-    // idx = hash(unbox(cur_key)) & mask; home = idx
-    f.instruction(&Instruction::LocalGet(8));
-    emit_unbox_key(f, k_aver, registry);
-    f.instruction(&Instruction::Call(keyh.hash));
+    // stored_hash = src_hashes[i]; idx = stored_hash & mask; home = idx
+    f.instruction(&Instruction::LocalGet(14));
+    f.instruction(&Instruction::LocalGet(12));
+    f.instruction(&Instruction::ArrayGet(slots.hashes_array));
+    f.instruction(&Instruction::LocalSet(15));
+    f.instruction(&Instruction::LocalGet(15));
     f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::I32And);
     f.instruction(&Instruction::LocalSet(5));
@@ -1817,6 +1853,10 @@ fn emit_insert_prologue(
     f.instruction(&Instruction::LocalGet(12));
     f.instruction(&Instruction::ArrayGet(slots.values_array));
     f.instruction(&Instruction::ArraySet(slots.values_array));
+    f.instruction(&Instruction::LocalGet(13));
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::LocalGet(15));
+    f.instruction(&Instruction::ArraySet(slots.hashes_array));
     f.instruction(&Instruction::Br(2)); // placed → leave the probe
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::LocalGet(5));
@@ -1877,12 +1917,27 @@ fn emit_insert_prologue(
                 array_type_index_dst: slots.values_array,
                 array_type_index_src: slots.values_array,
             });
+            // hashes = array.new_default cap; array.copy hashes 0 src_hashes 0 cap
+            f.instruction(&Instruction::LocalGet(3));
+            f.instruction(&Instruction::ArrayNewDefault(slots.hashes_array));
+            f.instruction(&Instruction::LocalSet(13));
+            f.instruction(&Instruction::LocalGet(13));
+            f.instruction(&Instruction::I32Const(0));
+            f.instruction(&Instruction::LocalGet(14));
+            f.instruction(&Instruction::I32Const(0));
+            f.instruction(&Instruction::LocalGet(3));
+            f.instruction(&Instruction::ArrayCopy {
+                array_type_index_dst: slots.hashes_array,
+                array_type_index_src: slots.hashes_array,
+            });
         }
         TableSource::Owned => {
             f.instruction(&Instruction::LocalGet(10));
             f.instruction(&Instruction::LocalSet(6));
             f.instruction(&Instruction::LocalGet(11));
             f.instruction(&Instruction::LocalSet(7));
+            f.instruction(&Instruction::LocalGet(14));
+            f.instruction(&Instruction::LocalSet(13));
         }
     }
     f.instruction(&Instruction::End); // grow if/else
@@ -1984,6 +2039,14 @@ fn emit_map_get(
         ), // 6: values
         (1, key_storage_val_type(k_aver, registry)?), // 7: cur_key (boxed for prim)
         (1, ValType::I32), // 8: home (probe start bucket)
+        (
+            1,
+            ValType::Ref(RefType {
+                nullable: true,
+                heap_type: HeapType::Concrete(slots.hashes_array),
+            }),
+        ), // 9: hashes
+        (1, ValType::I32), // 10: query_hash
     ]);
     let _ = k_val;
     // cap, mask, keys, values
@@ -2009,9 +2072,17 @@ fn emit_map_get(
         field_index: 3,
     });
     f.instruction(&Instruction::LocalSet(6));
-    // idx = hash(k) & mask; home = idx
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: slots.map,
+        field_index: 4,
+    });
+    f.instruction(&Instruction::LocalSet(9));
+    // query_hash = hash(k); idx = query_hash & mask; home = idx
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::Call(keyh.hash));
+    f.instruction(&Instruction::LocalSet(10));
+    f.instruction(&Instruction::LocalGet(10));
     f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::I32And);
     f.instruction(&Instruction::LocalSet(4));
@@ -2033,7 +2104,13 @@ fn emit_map_get(
     f.instruction(&Instruction::StructNew(opt_idx));
     f.instruction(&Instruction::Return);
     f.instruction(&Instruction::End);
-    // if eq(unbox(cur_key), k) → return Some(values[idx])
+    // if cached_hash == query_hash && eq(unbox(cur_key), k) → Some(value)
+    f.instruction(&Instruction::LocalGet(9));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::ArrayGet(slots.hashes_array));
+    f.instruction(&Instruction::LocalGet(10));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::If(BlockType::Empty));
     f.instruction(&Instruction::LocalGet(7));
     emit_unbox_key(&mut f, k_aver, registry);
     f.instruction(&Instruction::LocalGet(1));
@@ -2045,6 +2122,7 @@ fn emit_map_get(
     f.instruction(&Instruction::ArrayGet(slots.values_array));
     f.instruction(&Instruction::StructNew(opt_idx));
     f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
     f.instruction(&Instruction::End);
     // else: idx = (idx + 1) & mask
     f.instruction(&Instruction::LocalGet(4));
@@ -2083,7 +2161,8 @@ fn emit_map_get_or_default(
     let v_val = super::types::aver_to_wasm(v_aver, Some(registry))?.unwrap();
     let _ = (k_val, v_val);
     // params: 0=map, 1=k, 2=default
-    // locals: 3=cap, 4=mask, 5=idx, 6=keys, 7=values, 8=cur_key, 9=home
+    // locals: 3=cap, 4=mask, 5=idx, 6=keys, 7=values, 8=cur_key,
+    //         9=home, 10=hashes, 11=query_hash
     let mut f = Function::new([
         (1, ValType::I32), // 3: cap
         (1, ValType::I32), // 4: mask
@@ -2104,6 +2183,14 @@ fn emit_map_get_or_default(
         ),
         (1, key_storage_val_type(k_aver, registry)?), // 8: cur_key
         (1, ValType::I32),                            // 9: home (probe start bucket)
+        (
+            1,
+            ValType::Ref(RefType {
+                nullable: true,
+                heap_type: HeapType::Concrete(slots.hashes_array),
+            }),
+        ),
+        (1, ValType::I32), // 11: query_hash
     ]);
 
     // cap = map.cap; mask = cap - 1; keys = map.keys; values = map.values
@@ -2129,10 +2216,18 @@ fn emit_map_get_or_default(
         field_index: 3,
     });
     f.instruction(&Instruction::LocalSet(7));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: slots.map,
+        field_index: 4,
+    });
+    f.instruction(&Instruction::LocalSet(10));
 
-    // idx = hash(k) & mask; home = idx
+    // query_hash = hash(k); idx = query_hash & mask; home = idx
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::Call(keyh.hash));
+    f.instruction(&Instruction::LocalSet(11));
+    f.instruction(&Instruction::LocalGet(11));
     f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::I32And);
     f.instruction(&Instruction::LocalSet(5));
@@ -2153,7 +2248,13 @@ fn emit_map_get_or_default(
     f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::Return);
     f.instruction(&Instruction::End);
-    // key match → return values[idx]
+    // cached hash + key match → return values[idx]
+    f.instruction(&Instruction::LocalGet(10));
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::ArrayGet(slots.hashes_array));
+    f.instruction(&Instruction::LocalGet(11));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::If(BlockType::Empty));
     f.instruction(&Instruction::LocalGet(8));
     emit_unbox_key(&mut f, k_aver, registry);
     f.instruction(&Instruction::LocalGet(1));
@@ -2163,6 +2264,7 @@ fn emit_map_get_or_default(
     f.instruction(&Instruction::LocalGet(5));
     f.instruction(&Instruction::ArrayGet(slots.values_array));
     f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
     f.instruction(&Instruction::End);
     // probe forward
     f.instruction(&Instruction::LocalGet(5));
@@ -2201,7 +2303,8 @@ fn emit_map_get_pair(
     let v_val = super::types::aver_to_wasm(v_aver, Some(registry))?.unwrap();
     let _ = k_val;
     // params: 0=map, 1=k
-    // locals: 2=cap, 3=mask, 4=idx, 5=keys, 6=values, 7=cur_key, 8=home
+    // locals: 2=cap, 3=mask, 4=idx, 5=keys, 6=values, 7=cur_key,
+    //         8=home, 9=hashes, 10=query_hash
     let mut f = Function::new([
         (1, ValType::I32), // 2: cap
         (1, ValType::I32), // 3: mask
@@ -2222,6 +2325,14 @@ fn emit_map_get_pair(
         ),
         (1, key_storage_val_type(k_aver, registry)?), // 7: cur_key
         (1, ValType::I32),                            // 8: home (probe start bucket)
+        (
+            1,
+            ValType::Ref(RefType {
+                nullable: true,
+                heap_type: HeapType::Concrete(slots.hashes_array),
+            }),
+        ),
+        (1, ValType::I32), // 10: query_hash
     ]);
 
     f.instruction(&Instruction::LocalGet(0));
@@ -2246,9 +2357,17 @@ fn emit_map_get_pair(
         field_index: 3,
     });
     f.instruction(&Instruction::LocalSet(6));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: slots.map,
+        field_index: 4,
+    });
+    f.instruction(&Instruction::LocalSet(9));
 
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::Call(keyh.hash));
+    f.instruction(&Instruction::LocalSet(10));
+    f.instruction(&Instruction::LocalGet(10));
     f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::I32And);
     f.instruction(&Instruction::LocalSet(4));
@@ -2271,7 +2390,13 @@ fn emit_map_get_pair(
     f.instruction(&Instruction::Return);
     f.instruction(&Instruction::End);
 
-    // key match → return (1, values[idx])
+    // cached hash + key match → return (1, values[idx])
+    f.instruction(&Instruction::LocalGet(9));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::ArrayGet(slots.hashes_array));
+    f.instruction(&Instruction::LocalGet(10));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::If(BlockType::Empty));
     f.instruction(&Instruction::LocalGet(7));
     emit_unbox_key(&mut f, k_aver, registry);
     f.instruction(&Instruction::LocalGet(1));
@@ -2282,6 +2407,7 @@ fn emit_map_get_pair(
     f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::ArrayGet(slots.values_array));
     f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
     f.instruction(&Instruction::End);
 
     // probe forward
@@ -3378,7 +3504,8 @@ fn emit_map_remove(
     let _ = v_val; // values array uses its own slot type
     // params: 0=map, 1=k.
     // locals: 2=cap, 3=mask, 4=keys, 5=values, 6=h, 7=i, 8=j,
-    //         9=cur_key, 10=natural, 11=gap, 12=disp, 13=hole.
+    //         9=cur_key, 10=natural, 11=gap, 12=disp, 13=hole,
+    //         14=hashes, 15=query_hash.
     // `7=i` is the probe index while the entry is being located, then
     // the hole the shift is filling — which travels as entries move.
     // `13=hole` keeps the slot the removed key vacated, unchanged, as
@@ -3408,6 +3535,14 @@ fn emit_map_remove(
         (1, ValType::I32), // 11: gap
         (1, ValType::I32), // 12: disp
         (1, ValType::I32), // 13: hole (slot the removed key vacated)
+        (
+            1,
+            ValType::Ref(RefType {
+                nullable: true,
+                heap_type: HeapType::Concrete(slots.hashes_array),
+            }),
+        ), // 14: hashes
+        (1, ValType::I32), // 15: query_hash
     ]);
 
     // cap = map.cap; mask = cap - 1; keys = map.keys; values = map.values
@@ -3433,10 +3568,18 @@ fn emit_map_remove(
         field_index: 3,
     });
     f.instruction(&Instruction::LocalSet(5));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: slots.map,
+        field_index: 4,
+    });
+    f.instruction(&Instruction::LocalSet(14));
 
-    // h = hash(k) & mask
+    // query_hash = hash(k); h = query_hash & mask
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::Call(keyh.hash));
+    f.instruction(&Instruction::LocalSet(15));
+    f.instruction(&Instruction::LocalGet(15));
     f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::I32And);
     f.instruction(&Instruction::LocalSet(6));
@@ -3457,12 +3600,19 @@ fn emit_map_remove(
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::Return);
     f.instruction(&Instruction::End);
-    // if eq(unbox(cur_key), k) → break (found at i)
+    // if cached_hash == query_hash && eq(unbox(cur_key), k) → found
+    f.instruction(&Instruction::LocalGet(14));
+    f.instruction(&Instruction::LocalGet(7));
+    f.instruction(&Instruction::ArrayGet(slots.hashes_array));
+    f.instruction(&Instruction::LocalGet(15));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::If(BlockType::Empty));
     f.instruction(&Instruction::LocalGet(9));
     emit_unbox_key(&mut f, k_aver, registry);
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::Call(keyh.eq));
-    f.instruction(&Instruction::BrIf(1));
+    f.instruction(&Instruction::BrIf(2));
+    f.instruction(&Instruction::End);
     // i = (i+1) & mask
     f.instruction(&Instruction::LocalGet(7));
     f.instruction(&Instruction::I32Const(1));
@@ -3534,10 +3684,10 @@ fn emit_map_remove(
     f.instruction(&Instruction::LocalGet(9));
     f.instruction(&Instruction::RefIsNull);
     f.instruction(&Instruction::BrIf(1));
-    // natural = hash(unbox(next)) & mask
-    f.instruction(&Instruction::LocalGet(9));
-    emit_unbox_key(&mut f, k_aver, registry);
-    f.instruction(&Instruction::Call(keyh.hash));
+    // natural = cached_hash[j] & mask
+    f.instruction(&Instruction::LocalGet(14));
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::ArrayGet(slots.hashes_array));
     f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::I32And);
     f.instruction(&Instruction::LocalSet(10));
@@ -3561,7 +3711,7 @@ fn emit_map_remove(
     f.instruction(&Instruction::LocalGet(11));
     f.instruction(&Instruction::I32GeU);
     f.instruction(&Instruction::If(BlockType::Empty));
-    // shift: keys[i] = next; values[i] = values[j]
+    // shift: keys[i] = next; values[i] = values[j]; hashes[i] = hashes[j]
     f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::LocalGet(7));
     f.instruction(&Instruction::LocalGet(9));
@@ -3572,6 +3722,12 @@ fn emit_map_remove(
     f.instruction(&Instruction::LocalGet(8));
     f.instruction(&Instruction::ArrayGet(slots.values_array));
     f.instruction(&Instruction::ArraySet(slots.values_array));
+    f.instruction(&Instruction::LocalGet(14));
+    f.instruction(&Instruction::LocalGet(7));
+    f.instruction(&Instruction::LocalGet(14));
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::ArrayGet(slots.hashes_array));
+    f.instruction(&Instruction::ArraySet(slots.hashes_array));
     // i = j — the slot just vacated is the new hole. Its stale key stays
     // in the array until the next move overwrites it or the `keys[i] =
     // null` below clears it, and no lookup can reach it in between.
@@ -3598,6 +3754,10 @@ fn emit_map_remove(
     f.instruction(&Instruction::LocalGet(7));
     f.instruction(&Instruction::RefNull(null_heap));
     f.instruction(&Instruction::ArraySet(slots.keys_array));
+    f.instruction(&Instruction::LocalGet(14));
+    f.instruction(&Instruction::LocalGet(7));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::ArraySet(slots.hashes_array));
 
     // map.size = map.size - 1
     f.instruction(&Instruction::LocalGet(0));
@@ -3787,6 +3947,8 @@ fn emit_map_from_list(
     f.instruction(&Instruction::ArrayNewDefault(slots.keys_array));
     f.instruction(&Instruction::I32Const(INITIAL_CAP));
     f.instruction(&Instruction::ArrayNewDefault(slots.values_array));
+    f.instruction(&Instruction::I32Const(INITIAL_CAP));
+    f.instruction(&Instruction::ArrayNewDefault(slots.hashes_array));
     f.instruction(&Instruction::StructNew(slots.map));
     f.instruction(&Instruction::LocalSet(2));
     // cur = l

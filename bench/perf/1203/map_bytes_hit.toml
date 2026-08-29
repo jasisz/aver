@@ -1,0 +1,5 @@
+name       = "map_bytes_hit"
+entry      = "map_bytes_hit.av"
+iterations = 7
+warmup     = 2
+args       = []

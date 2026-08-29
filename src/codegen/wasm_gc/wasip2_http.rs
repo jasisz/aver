@@ -64,12 +64,13 @@ pub(super) struct HttpGetIndices {
     /// `Http.Response` struct type idx (status: i64, body: ref
     /// string, headers: ref map).
     pub http_response_type_idx: u32,
-    /// `Map<String, List<String>>` slot triple — initialised empty
+    /// `Map<String, List<String>>` slots — initialised empty
     /// via the inline `array.new_default + struct.new` sequence
     /// (matches `emit_map_empty`), then populated entry-by-entry
     /// via `Map.set` (`map_set_fn` in `HttpGetHelperFns`).
     pub headers_keys_array_type_idx: u32,
     pub headers_values_array_type_idx: u32,
+    pub headers_hashes_array_type_idx: u32,
     pub headers_map_type_idx: u32,
     /// `List<String>` cons-cell type idx. Each header value lands
     /// either in a singleton `[value]` list or prepended onto the
@@ -475,6 +476,7 @@ pub(super) fn emit_http_get(indices: &HttpGetIndices, h: &HttpGetHelperFns) -> F
     let resp_idx = indices.http_response_type_idx;
     let keys_arr_idx = indices.headers_keys_array_type_idx;
     let values_arr_idx = indices.headers_values_array_type_idx;
+    let hashes_arr_idx = indices.headers_hashes_array_type_idx;
     let map_idx = indices.headers_map_type_idx;
 
     // Allocate a fresh (array i8) holding `msg` bytes, store it
@@ -1519,6 +1521,8 @@ pub(super) fn emit_http_get(indices: &HttpGetIndices, h: &HttpGetHelperFns) -> F
     f.instruction(&Instruction::ArrayNewDefault(keys_arr_idx));
     f.instruction(&Instruction::I32Const(INITIAL_CAP));
     f.instruction(&Instruction::ArrayNewDefault(values_arr_idx));
+    f.instruction(&Instruction::I32Const(INITIAL_CAP));
+    f.instruction(&Instruction::ArrayNewDefault(hashes_arr_idx));
     f.instruction(&Instruction::StructNew(map_idx));
     f.instruction(&Instruction::LocalSet(l_h_map));
 

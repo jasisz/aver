@@ -1,0 +1,7 @@
+module MapBytesBuild
+    intent = "Bench — build btc-listener's 200,000-entry byte-keyed UTXO window."
+    depends [Bytes, MapBytesWorkload]
+    effects []
+
+fn main() -> Int
+    Map.len(MapBytesWorkload.build(200000))

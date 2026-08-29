@@ -1,0 +1,66 @@
+module MapBytesWorkload
+    intent =
+        "The byte-keyed map workload behind the wasm-gc bucket-hash benchmark."
+        "Its keys have the same 37-byte shape and four-outputs-per-Transaction"
+        "distribution as btc-listener's UTXO window."
+    exposes [build, hits, misses]
+    depends [Bytes]
+    effects []
+
+fn encoded(value: Int, width: Int) -> Bytes
+    ? "A fixed-width word whose bounds are guaranteed by this benchmark."
+    match Int.toBigEndian(value, width)
+        Result.Ok(bytes) -> bytes
+        Result.Err(_) -> Bytes.empty()
+
+fn key(index: Int) -> Bytes
+    ? "u || txid[32] || output-index[4], with four outputs per Transaction."
+    transaction = Int.div(index, 4)
+    output = Int.mod(index, 4)
+    Bytes.concat(Bytes.fromList([117]), Bytes.concat(encoded(transaction, 32), encoded(output, 4)))
+
+verify key
+    Bytes.len(key(1)) => 37
+    key(1) == key(1) => true
+    key(1) == key(2) => false
+
+fn build(count: Int) -> Map<Bytes, Int>
+    ? "A uniquely-owned map filled through the last-use in-place set path."
+    buildFrom(count, Map.fromList([]))
+
+fn buildFrom(remaining: Int, map: Map<Bytes, Int>) -> Map<Bytes, Int>
+    match remaining
+        0 -> map
+        _ -> buildFrom(remaining - 1, Map.set(map, key(remaining), remaining))
+
+verify build
+    Map.len(build(0)) => 0
+    Map.len(build(5)) => 5
+
+fn hits(count: Int, map: Map<Bytes, Int>) -> Int
+    ? "Repeated successful probes across the complete resident key set."
+    hitsFrom(count, 0, map, 0)
+
+fn hitsFrom(remaining: Int, cursor: Int, map: Map<Bytes, Int>, total: Int) -> Int
+    match remaining
+        0 -> total
+        _ -> hitOne(remaining, cursor, map, total)
+
+fn hitOne(remaining: Int, cursor: Int, map: Map<Bytes, Int>, total: Int) -> Int
+    resident = Int.mod(cursor, 200000) + 1
+    value = Option.withDefault(Map.get(map, key(resident)), 0)
+    hitsFrom(remaining - 1, cursor + 1, map, total + value)
+
+fn misses(count: Int, map: Map<Bytes, Int>) -> Int
+    ? "Repeated unsuccessful probes using keys just above the resident range."
+    missesFrom(count, 0, map, 0)
+
+fn missesFrom(remaining: Int, cursor: Int, map: Map<Bytes, Int>, total: Int) -> Int
+    match remaining
+        0 -> total
+        _ -> missOne(remaining, cursor, map, total)
+
+fn missOne(remaining: Int, cursor: Int, map: Map<Bytes, Int>, total: Int) -> Int
+    absent = 200001 + Int.mod(cursor, 200000)
+    value = Option.withDefault(Map.get(map, key(absent)), 1)
+    missesFrom(remaining - 1, cursor + 1, map, total + value)
