@@ -54,6 +54,17 @@ enum PromoteTailStep<T: ArenaTypes> {
     Taken(PromoteTailEntry<T>),
 }
 
+struct StableListEntry<T: ArenaTypes> {
+    value: NanValue,
+    entry: ArenaEntry<T>,
+    stable_index: usize,
+}
+
+enum StableListStep<T: ArenaTypes> {
+    Done(NanValue),
+    Taken(StableListEntry<T>),
+}
+
 impl<T: ArenaTypes> Arena<T> {
     pub fn truncate_to(&mut self, mark: u32) {
         if self.young_entries.len() <= mark as usize {
@@ -370,6 +381,7 @@ impl<T: ArenaTypes> Arena<T> {
             }
             ArenaEntry::Vector {
                 mut items,
+                scan_receipt,
                 all_immediate,
                 holder_count,
             } => {
@@ -382,7 +394,9 @@ impl<T: ArenaTypes> Arena<T> {
                 // A rewrite renames arena indices; an entry that holds none has
                 // nothing to rename, and reading it in full to find that out is
                 // the entire cost of carrying a table of offsets through a
-                // loop.
+                // loop. A heap-backed vector cannot take that escape, so its
+                // lane receipt records the full scan once and lets later frame
+                // boundaries skip it until a heap write invalidates the proof.
                 //
                 // Unlike the map and list escapes, this one does NOT re-prove
                 // the flag here under debug assertions. It cannot: the walk
@@ -399,9 +413,10 @@ impl<T: ArenaTypes> Arena<T> {
                 // `arena::tests` checks this crate's three producers against a
                 // from-scratch walk, and the owned `Vector.set` is checked the
                 // same way in the crate it lives in.
-                if all_immediate {
+                if all_immediate || self.lane_receipt_can_skip(scan_receipt) {
                     return ArenaEntry::Vector {
                         items,
+                        scan_receipt,
                         all_immediate,
                         holder_count,
                     };
@@ -412,6 +427,7 @@ impl<T: ArenaTypes> Arena<T> {
                 }
                 ArenaEntry::Vector {
                     items,
+                    scan_receipt: self.renewed_lane_receipt(),
                     all_immediate,
                     holder_count,
                 }
@@ -518,11 +534,6 @@ impl<T: ArenaTypes> Arena<T> {
             "an all-immediate map cannot need remembered heap rewrites"
         );
         if all_immediate && pending_scan_keys.is_empty() {
-            debug_assert!(
-                crate::map_all_immediate(&map),
-                "map marked all-immediate holds a heap-backed key or value; \
-                 skipping it would leave a stale arena index behind"
-            );
             return ArenaEntry::Map {
                 map,
                 all_immediate: true,
@@ -1259,6 +1270,33 @@ impl<T: ArenaTypes> Arena<T> {
                 ),
                 len,
             },
+            ArenaList::Concat { left, right, len } => ArenaList::Concat {
+                left: self.evacuate_local_prepend_tail_iterative(
+                    left,
+                    young_mark,
+                    yard_mark,
+                    handoff_mark,
+                    young_target,
+                    relocated_young,
+                    relocated_yard,
+                    relocated_handoff,
+                    compacted_yard,
+                    compacted_handoff,
+                ),
+                right: self.evacuate_local_prepend_tail_iterative(
+                    right,
+                    young_mark,
+                    yard_mark,
+                    handoff_mark,
+                    young_target,
+                    relocated_young,
+                    relocated_yard,
+                    relocated_handoff,
+                    compacted_yard,
+                    compacted_handoff,
+                ),
+                len,
+            },
             other => {
                 let mut rewrite = |arena: &mut Arena<T>, value: NanValue| {
                     arena.evacuate_local_root(
@@ -1293,7 +1331,7 @@ impl<T: ArenaTypes> Arena<T> {
         compacted_yard: &mut Vec<ArenaEntry<T>>,
         compacted_handoff: &mut Vec<ArenaEntry<T>>,
     ) -> NanValue {
-        let mut current = match self.take_local_tail_value(
+        let first = match self.take_local_tail_value(
             tail,
             young_mark,
             yard_mark,
@@ -1308,12 +1346,13 @@ impl<T: ArenaTypes> Arena<T> {
             LocalTailStep::Done(value) => return value,
             LocalTailStep::Taken(taken) => taken,
         };
-        let first_value = current.value;
+        let first_value = first.value;
+        let mut pending = vec![first];
 
-        loop {
-            match current.entry {
+        while let Some(current) = pending.pop() {
+            let new_entry = match current.entry {
                 ArenaEntry::List(ArenaList::Prepend { head, tail, len }) => {
-                    let rewritten_head = self.evacuate_local_root(
+                    let head = self.evacuate_local_root(
                         head,
                         young_mark,
                         yard_mark,
@@ -1325,7 +1364,7 @@ impl<T: ArenaTypes> Arena<T> {
                         compacted_yard,
                         compacted_handoff,
                     );
-                    let next = self.take_local_tail_value(
+                    let tail = match self.take_local_tail_value(
                         tail,
                         young_mark,
                         yard_mark,
@@ -1336,39 +1375,19 @@ impl<T: ArenaTypes> Arena<T> {
                         relocated_handoff,
                         compacted_yard,
                         compacted_handoff,
-                    );
-                    match next {
-                        LocalTailStep::Done(rewritten_tail) => {
-                            self.store_local_rewrite_slot(
-                                current.slot,
-                                ArenaEntry::List(ArenaList::Prepend {
-                                    head: rewritten_head,
-                                    tail: rewritten_tail,
-                                    len,
-                                }),
-                                compacted_yard,
-                                compacted_handoff,
-                            );
-                            return first_value;
+                    ) {
+                        LocalTailStep::Done(value) => value,
+                        LocalTailStep::Taken(taken) => {
+                            let value = taken.value;
+                            pending.push(taken);
+                            value
                         }
-                        LocalTailStep::Taken(next_entry) => {
-                            self.store_local_rewrite_slot(
-                                current.slot,
-                                ArenaEntry::List(ArenaList::Prepend {
-                                    head: rewritten_head,
-                                    tail: next_entry.value,
-                                    len,
-                                }),
-                                compacted_yard,
-                                compacted_handoff,
-                            );
-                            current = next_entry;
-                        }
-                    }
+                    };
+                    ArenaEntry::List(ArenaList::Prepend { head, tail, len })
                 }
-                other => {
-                    let new_entry = self.evacuate_local_entry(
-                        other,
+                ArenaEntry::List(ArenaList::Concat { left, right, len }) => {
+                    let left = match self.take_local_tail_value(
+                        left,
                         young_mark,
                         yard_mark,
                         handoff_mark,
@@ -1378,17 +1397,57 @@ impl<T: ArenaTypes> Arena<T> {
                         relocated_handoff,
                         compacted_yard,
                         compacted_handoff,
-                    );
-                    self.store_local_rewrite_slot(
-                        current.slot,
-                        new_entry,
+                    ) {
+                        LocalTailStep::Done(value) => value,
+                        LocalTailStep::Taken(taken) => {
+                            let value = taken.value;
+                            pending.push(taken);
+                            value
+                        }
+                    };
+                    let right = match self.take_local_tail_value(
+                        right,
+                        young_mark,
+                        yard_mark,
+                        handoff_mark,
+                        young_target,
+                        relocated_young,
+                        relocated_yard,
+                        relocated_handoff,
                         compacted_yard,
                         compacted_handoff,
-                    );
-                    return first_value;
+                    ) {
+                        LocalTailStep::Done(value) => value,
+                        LocalTailStep::Taken(taken) => {
+                            let value = taken.value;
+                            pending.push(taken);
+                            value
+                        }
+                    };
+                    ArenaEntry::List(ArenaList::Concat { left, right, len })
                 }
-            }
+                other => self.evacuate_local_entry(
+                    other,
+                    young_mark,
+                    yard_mark,
+                    handoff_mark,
+                    young_target,
+                    relocated_young,
+                    relocated_yard,
+                    relocated_handoff,
+                    compacted_yard,
+                    compacted_handoff,
+                ),
+            };
+            self.store_local_rewrite_slot(
+                current.slot,
+                new_entry,
+                compacted_yard,
+                compacted_handoff,
+            );
         }
+
+        first_value
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1906,6 +1965,80 @@ impl<T: ArenaTypes> Arena<T> {
         })
     }
 
+    /// Queue one list child for iterative promotion, returning the handle its
+    /// parent should store. An out-of-region child stops the walk unless the
+    /// caller reported an in-place escape; an in-region child is claimed in
+    /// the relocation table before it is queued, so sharing and cycles still
+    /// terminate exactly as on the recursive path.
+    fn queue_promote_list_child(
+        &mut self,
+        value: NanValue,
+        mark: u32,
+        relocated: &mut [u32],
+        target: AllocSpace,
+        pending: &mut Vec<PromoteTailEntry<T>>,
+    ) -> NanValue {
+        match self.take_promote_tail_value(value, mark, relocated, target) {
+            PromoteTailStep::Done(value) => value,
+            PromoteTailStep::Taken(taken) => {
+                let value = taken.value;
+                pending.push(taken);
+                value
+            }
+        }
+    }
+
+    /// Rewrite a Concat spine without consuming the Rust call stack.
+    ///
+    /// Concat children, like Prepend tails, necessarily predate their parent.
+    /// Once a child lies outside the region this boundary may move, following
+    /// it further only re-reads an already settled spine. The exception is the
+    /// same owned in-place write reported by `rewrite_out_of_region_roots`, and
+    /// `take_promote_tail_value` already encodes both answers.
+    fn promote_concat_iterative(
+        &mut self,
+        left: NanValue,
+        right: NanValue,
+        len: usize,
+        mark: u32,
+        relocated: &mut [u32],
+        target: AllocSpace,
+    ) -> ArenaList {
+        let mut pending = Vec::new();
+        let left = self.queue_promote_list_child(left, mark, relocated, target, &mut pending);
+        let right = self.queue_promote_list_child(right, mark, relocated, target, &mut pending);
+        let root = ArenaList::Concat { left, right, len };
+
+        while let Some(current) = pending.pop() {
+            let new_entry = match current.entry {
+                ArenaEntry::List(ArenaList::Concat { left, right, len }) => {
+                    let left =
+                        self.queue_promote_list_child(left, mark, relocated, target, &mut pending);
+                    let right =
+                        self.queue_promote_list_child(right, mark, relocated, target, &mut pending);
+                    ArenaEntry::List(ArenaList::Concat { left, right, len })
+                }
+                ArenaEntry::List(ArenaList::Prepend { head, tail, len }) => {
+                    let head = self.promote_region_root_to_target(head, mark, relocated, target);
+                    let tail =
+                        self.queue_promote_list_child(tail, mark, relocated, target, &mut pending);
+                    ArenaEntry::List(ArenaList::Prepend { head, tail, len })
+                }
+                other => match current.slot {
+                    PromoteRewriteSlot::Promoted { .. } => {
+                        self.promote_entry_to_target(other, mark, relocated, target)
+                    }
+                    PromoteRewriteSlot::InPlace { .. } => {
+                        self.rewrite_promoted_young_entry(other, mark, relocated, target)
+                    }
+                },
+            };
+            self.store_promote_rewrite_slot(current.slot, new_entry);
+        }
+
+        root
+    }
+
     fn promote_list_young_refs_to_target(
         &mut self,
         list: ArenaList,
@@ -1919,6 +2052,9 @@ impl<T: ArenaTypes> Arena<T> {
                 tail: self.promote_prepend_tail_iterative(tail, mark, relocated, target),
                 len,
             },
+            ArenaList::Concat { left, right, len } => {
+                self.promote_concat_iterative(left, right, len, mark, relocated, target)
+            }
             other => {
                 let mut rewrite = |arena: &mut Arena<T>, value: NanValue| {
                     arena.promote_region_root_to_target(value, mark, relocated, target)
@@ -1935,57 +2071,41 @@ impl<T: ArenaTypes> Arena<T> {
         relocated: &mut [u32],
         target: AllocSpace,
     ) -> NanValue {
-        let mut current = match self.take_promote_tail_value(tail, mark, relocated, target) {
+        let first = match self.take_promote_tail_value(tail, mark, relocated, target) {
             PromoteTailStep::Done(value) => return value,
             PromoteTailStep::Taken(taken) => taken,
         };
-        let first_value = current.value;
+        let first_value = first.value;
+        let mut pending = vec![first];
 
-        loop {
-            match current.entry {
+        while let Some(current) = pending.pop() {
+            let new_entry = match current.entry {
                 ArenaEntry::List(ArenaList::Prepend { head, tail, len }) => {
-                    let rewritten_head =
-                        self.promote_region_root_to_target(head, mark, relocated, target);
-                    let next = self.take_promote_tail_value(tail, mark, relocated, target);
-                    match next {
-                        PromoteTailStep::Done(rewritten_tail) => {
-                            self.store_promote_rewrite_slot(
-                                current.slot,
-                                ArenaEntry::List(ArenaList::Prepend {
-                                    head: rewritten_head,
-                                    tail: rewritten_tail,
-                                    len,
-                                }),
-                            );
-                            return first_value;
-                        }
-                        PromoteTailStep::Taken(next_entry) => {
-                            self.store_promote_rewrite_slot(
-                                current.slot,
-                                ArenaEntry::List(ArenaList::Prepend {
-                                    head: rewritten_head,
-                                    tail: next_entry.value,
-                                    len,
-                                }),
-                            );
-                            current = next_entry;
-                        }
+                    let head = self.promote_region_root_to_target(head, mark, relocated, target);
+                    let tail =
+                        self.queue_promote_list_child(tail, mark, relocated, target, &mut pending);
+                    ArenaEntry::List(ArenaList::Prepend { head, tail, len })
+                }
+                ArenaEntry::List(ArenaList::Concat { left, right, len }) => {
+                    let left =
+                        self.queue_promote_list_child(left, mark, relocated, target, &mut pending);
+                    let right =
+                        self.queue_promote_list_child(right, mark, relocated, target, &mut pending);
+                    ArenaEntry::List(ArenaList::Concat { left, right, len })
+                }
+                other => match current.slot {
+                    PromoteRewriteSlot::Promoted { .. } => {
+                        self.promote_entry_to_target(other, mark, relocated, target)
                     }
-                }
-                other => {
-                    let new_entry = match current.slot {
-                        PromoteRewriteSlot::Promoted { .. } => {
-                            self.promote_entry_to_target(other, mark, relocated, target)
-                        }
-                        PromoteRewriteSlot::InPlace { .. } => {
-                            self.rewrite_promoted_young_entry(other, mark, relocated, target)
-                        }
-                    };
-                    self.store_promote_rewrite_slot(current.slot, new_entry);
-                    return first_value;
-                }
-            }
+                    PromoteRewriteSlot::InPlace { .. } => {
+                        self.rewrite_promoted_young_entry(other, mark, relocated, target)
+                    }
+                },
+            };
+            self.store_promote_rewrite_slot(current.slot, new_entry);
         }
+
+        first_value
     }
 
     fn rewrite_promoted_young_refs_in_place(
@@ -2139,6 +2259,11 @@ impl<T: ArenaTypes> Arena<T> {
         {
             return entry;
         }
+        if let ArenaEntry::Vector { scan_receipt, .. } = &entry
+            && self.lane_receipt_can_skip(*scan_receipt)
+        {
+            return entry;
+        }
         // Fast path for bulk-data types: if no NanValue in this entry points
         // to young >= mark, skip the rewrite — move the entry as-is.
         // Only check types where the scan is cheap relative to the rewrite cost.
@@ -2164,6 +2289,9 @@ impl<T: ArenaTypes> Arena<T> {
             {
                 let read = items.len();
                 self.note_vector_elements_scanned(read);
+                if let ArenaEntry::Vector { scan_receipt, .. } = &mut entry {
+                    *scan_receipt = self.renewed_lane_receipt();
+                }
                 return entry;
             }
             // Nothing in an all-immediate table can point at young space, so the
@@ -2173,16 +2301,10 @@ impl<T: ArenaTypes> Arena<T> {
             // the long-lived heap comes through here instead, and without this
             // arm a `Map<Int, Int>` is still read once in full on the way.
             ArenaEntry::Map {
-                map,
                 all_immediate: true,
                 pending_scan_keys,
                 ..
             } if pending_scan_keys.is_empty() => {
-                debug_assert!(
-                    crate::map_all_immediate(map),
-                    "map marked all-immediate holds a heap-backed key or value; \
-                     skipping it would leave a stale arena index behind"
-                );
                 return entry;
             }
             ArenaEntry::Map {
@@ -2337,6 +2459,216 @@ impl<T: ArenaTypes> Arena<T> {
         }
     }
 
+    fn take_stable_list_value(
+        &mut self,
+        value: NanValue,
+        relocated_young: &mut [u32],
+        relocated_yard: &mut [u32],
+        relocated_handoff: &mut [u32],
+    ) -> StableListStep<T> {
+        let Some(index) = value.heap_index() else {
+            return StableListStep::Done(value);
+        };
+        let (space, raw_index) = Self::decode_index(index);
+        let raw_index = raw_index as usize;
+
+        let (entry, stable_index, rewritten_value) = match space {
+            HeapSpace::Young => {
+                let relocated_index = relocated_young[raw_index];
+                if relocated_index != u32::MAX {
+                    return StableListStep::Done(value.with_heap_index(relocated_index));
+                }
+                let stable_index = self.stable_entries.len();
+                let new_index = Self::encode_stable_index(stable_index as u32);
+                relocated_young[raw_index] = new_index;
+                let entry = self.young_entries[raw_index].clone();
+                (entry, stable_index, value.with_heap_index(new_index))
+            }
+            HeapSpace::Yard => {
+                let relocated_index = relocated_yard[raw_index];
+                if relocated_index != u32::MAX {
+                    return StableListStep::Done(value.with_heap_index(relocated_index));
+                }
+                let stable_index = self.stable_entries.len();
+                let new_index = Self::encode_stable_index(stable_index as u32);
+                relocated_yard[raw_index] = new_index;
+                let entry = self.yard_entries[raw_index].clone();
+                (entry, stable_index, value.with_heap_index(new_index))
+            }
+            HeapSpace::Handoff => {
+                let relocated_index = relocated_handoff[raw_index];
+                if relocated_index != u32::MAX {
+                    return StableListStep::Done(value.with_heap_index(relocated_index));
+                }
+                let stable_index = self.stable_entries.len();
+                let new_index = Self::encode_stable_index(stable_index as u32);
+                relocated_handoff[raw_index] = new_index;
+                let entry = self.handoff_entries[raw_index].clone();
+                (entry, stable_index, value.with_heap_index(new_index))
+            }
+            HeapSpace::Stable if self.rewrite_out_of_region_roots => {
+                if raw_index >= self.stable_entries.len()
+                    || !self.claim_inplace_visit(HeapSpace::Stable, raw_index)
+                {
+                    return StableListStep::Done(value);
+                }
+                let entry =
+                    core::mem::replace(&mut self.stable_entries[raw_index], ArenaEntry::Int(0));
+                return StableListStep::Taken(StableListEntry {
+                    value,
+                    entry,
+                    stable_index: raw_index,
+                });
+            }
+            HeapSpace::Stable => return StableListStep::Done(value),
+        };
+
+        self.stable_entries.push(ArenaEntry::Int(0));
+        self.note_peak_usage();
+        StableListStep::Taken(StableListEntry {
+            value: rewritten_value,
+            entry,
+            stable_index,
+        })
+    }
+
+    fn promote_stable_list_child_iterative(
+        &mut self,
+        value: NanValue,
+        relocated_young: &mut [u32],
+        relocated_yard: &mut [u32],
+        relocated_handoff: &mut [u32],
+    ) -> NanValue {
+        let first = match self.take_stable_list_value(
+            value,
+            relocated_young,
+            relocated_yard,
+            relocated_handoff,
+        ) {
+            StableListStep::Done(value) => return value,
+            StableListStep::Taken(taken) => taken,
+        };
+        let first_value = first.value;
+        let mut pending = vec![first];
+
+        while let Some(current) = pending.pop() {
+            let new_entry = match current.entry {
+                ArenaEntry::List(ArenaList::Prepend { head, tail, len }) => {
+                    let head = self.promote_value_to_stable(
+                        head,
+                        relocated_young,
+                        relocated_yard,
+                        relocated_handoff,
+                    );
+                    let tail = match self.take_stable_list_value(
+                        tail,
+                        relocated_young,
+                        relocated_yard,
+                        relocated_handoff,
+                    ) {
+                        StableListStep::Done(value) => value,
+                        StableListStep::Taken(taken) => {
+                            let value = taken.value;
+                            pending.push(taken);
+                            value
+                        }
+                    };
+                    ArenaEntry::List(ArenaList::Prepend { head, tail, len })
+                }
+                ArenaEntry::List(ArenaList::Concat { left, right, len }) => {
+                    let left = match self.take_stable_list_value(
+                        left,
+                        relocated_young,
+                        relocated_yard,
+                        relocated_handoff,
+                    ) {
+                        StableListStep::Done(value) => value,
+                        StableListStep::Taken(taken) => {
+                            let value = taken.value;
+                            pending.push(taken);
+                            value
+                        }
+                    };
+                    let right = match self.take_stable_list_value(
+                        right,
+                        relocated_young,
+                        relocated_yard,
+                        relocated_handoff,
+                    ) {
+                        StableListStep::Done(value) => value,
+                        StableListStep::Taken(taken) => {
+                            let value = taken.value;
+                            pending.push(taken);
+                            value
+                        }
+                    };
+                    ArenaEntry::List(ArenaList::Concat { left, right, len })
+                }
+                other => self.promote_entry_to_stable(
+                    other,
+                    relocated_young,
+                    relocated_yard,
+                    relocated_handoff,
+                ),
+            };
+            self.stable_entries[current.stable_index] = new_entry;
+        }
+
+        first_value
+    }
+
+    fn promote_list_to_stable(
+        &mut self,
+        list: ArenaList,
+        relocated_young: &mut [u32],
+        relocated_yard: &mut [u32],
+        relocated_handoff: &mut [u32],
+    ) -> ArenaList {
+        match list {
+            ArenaList::Prepend { head, tail, len } => ArenaList::Prepend {
+                head: self.promote_value_to_stable(
+                    head,
+                    relocated_young,
+                    relocated_yard,
+                    relocated_handoff,
+                ),
+                tail: self.promote_stable_list_child_iterative(
+                    tail,
+                    relocated_young,
+                    relocated_yard,
+                    relocated_handoff,
+                ),
+                len,
+            },
+            ArenaList::Concat { left, right, len } => ArenaList::Concat {
+                left: self.promote_stable_list_child_iterative(
+                    left,
+                    relocated_young,
+                    relocated_yard,
+                    relocated_handoff,
+                ),
+                right: self.promote_stable_list_child_iterative(
+                    right,
+                    relocated_young,
+                    relocated_yard,
+                    relocated_handoff,
+                ),
+                len,
+            },
+            other => {
+                let mut rewrite = |arena: &mut Arena<T>, value: NanValue| {
+                    arena.promote_value_to_stable(
+                        value,
+                        relocated_young,
+                        relocated_yard,
+                        relocated_handoff,
+                    )
+                };
+                self.rewrite_list_with(other, &mut rewrite)
+            }
+        }
+    }
+
     fn promote_entry_to_stable(
         &mut self,
         entry: ArenaEntry<T>,
@@ -2344,6 +2676,15 @@ impl<T: ArenaTypes> Arena<T> {
         relocated_yard: &mut [u32],
         relocated_handoff: &mut [u32],
     ) -> ArenaEntry<T> {
+        if let ArenaEntry::List(list) = entry {
+            return ArenaEntry::List(self.promote_list_to_stable(
+                list,
+                relocated_young,
+                relocated_yard,
+                relocated_handoff,
+            ));
+        }
+
         let mut rewrite = |arena: &mut Arena<T>, value: NanValue| {
             arena.promote_value_to_stable(value, relocated_young, relocated_yard, relocated_handoff)
         };

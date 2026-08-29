@@ -1475,12 +1475,13 @@ pub struct Arena<T: ArenaTypes> {
     /// Total vector and tuple elements the collector has *read* while deciding
     /// whether a bulk entry needs rewriting, the vector counterpart of
     /// [`Arena::list_elements_scanned`]. A vector whose `all_immediate` flag is
-    /// set is returned unread and adds nothing here; one holding anything
-    /// heap-backed is walked in full on every collection that sees it.
+    /// set is returned unread forever; a heap-backed vector is scanned once and
+    /// then protected by its lane receipt until a point mutation invalidates
+    /// that proof.
     ///
     /// The compiler-internal `String.Index` behind `String.charAt` is a vector
-    /// of byte offsets carried across every step of an indexed loop, so this is
-    /// the counter an indexed string walk's residual time follows.
+    /// of byte offsets carried across every step of an indexed loop. User
+    /// `Vector<String>` values exercise the receipt half of the same counter.
     vector_elements_scanned: u64,
     /// Total arena entries a promotion has *read* although they lie outside the
     /// region it is allowed to move — memory that had already settled.
@@ -1665,6 +1666,11 @@ pub enum ArenaEntry<T: ArenaTypes> {
     },
     Vector {
         items: Vec<NanValue>,
+        /// Snapshot of the owning arena's lane clock after every element was
+        /// allocated or rewritten. A carried vector whose elements all predate
+        /// a frame boundary can then cross that boundary without being read
+        /// again, even when those elements are heap-backed.
+        scan_receipt: LaneMark,
         /// The vector spelling of [`ArenaEntry::Map`]'s `all_immediate` and of
         /// `ListBody`'s: true promises that no element carries an arena index,
         /// which lets the collector return the whole entry without reading it.

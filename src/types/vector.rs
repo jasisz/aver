@@ -124,6 +124,10 @@ pub fn vec_set_nv_owned(args: &[NanValue], arena: &mut Arena) -> Result<NanValue
     let new_vec_idx = arena.push_inheriting_source_space(
         aver_memory::ArenaEntry::Vector {
             items,
+            // Taking the source invalidates its bulk proof. This fresh receipt
+            // covers the rebuilt vector; if it is newer than the current frame
+            // watermark, that boundary scans it once and renews the proof.
+            scan_receipt: arena.lane_mark(),
             // Every other element was already immediate or already not; the one
             // element this write stores is the only one that can change the
             // answer, and it is right here.
@@ -302,5 +306,30 @@ mod tests {
             arena.vector_all_immediate(still_mixed.arena_index()),
             really_all_immediate(&arena, still_mixed)
         );
+    }
+
+    #[test]
+    fn owned_vector_set_scans_a_post_frame_write_once_then_carries_its_receipt() {
+        let mut arena = Arena::new();
+        let old = NanValue::new_string_value("old-owned-vector-value", &mut arena);
+        let vector = NanValue::new_vector(arena.push_vector(vec![old]));
+        let mark = arena.young_len() as u32;
+        let lane = arena.lane_mark();
+        let fresh = NanValue::new_string_value("fresh-owned-vector-value", &mut arena);
+        let updated = owned_set(&mut arena, vector, 0, fresh);
+        let scanned = arena.vector_elements_scanned();
+
+        let mut roots = [updated];
+        arena.promote_young_roots_to_yard(mark, lane, &mut roots, false);
+        assert_eq!(arena.vector_elements_scanned() - scanned, 1);
+        let stored = arena.vector_ref_value(roots[0])[0];
+        assert_eq!(arena.get_string_value(stored), "fresh-owned-vector-value");
+
+        let next_mark = arena.young_len() as u32;
+        let next_lane = arena.lane_mark();
+        let _garbage = arena.push_string("next-owned-vector-boundary");
+        let scanned = arena.vector_elements_scanned();
+        arena.promote_young_roots_to_yard(next_mark, next_lane, &mut roots, false);
+        assert_eq!(arena.vector_elements_scanned(), scanned);
     }
 }

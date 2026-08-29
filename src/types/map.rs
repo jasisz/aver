@@ -632,6 +632,44 @@ mod tests {
         )
     }
 
+    fn map_flag_and_actual(arena: &Arena, value: NanValue) -> (bool, bool) {
+        let aver_memory::ArenaEntry::Map {
+            map, all_immediate, ..
+        } = arena.get(value.arena_index())
+        else {
+            panic!("expected heap map");
+        };
+        (*all_immediate, aver_memory::map_all_immediate(map))
+    }
+
+    /// The collector trusts `all_immediate` without re-reading the table, so
+    /// every owned producer that can preserve `true` proves it here instead.
+    #[test]
+    fn owned_map_producers_never_claim_immediate_for_a_heap_backed_table() {
+        let mut arena = Arena::new();
+        let one = NanValue::new_int(1, &mut arena);
+        let two = NanValue::new_int(2, &mut arena);
+        let three = NanValue::new_int(3, &mut arena);
+        let four = NanValue::new_int(4, &mut arena);
+
+        let first = set_nv_owned(&[NanValue::EMPTY_MAP, one, two], &mut arena, None)
+            .expect("owned immediate insert succeeds");
+        assert_eq!(map_flag_and_actual(&arena, first), (true, true));
+
+        let second = set_nv_owned(&[first, three, four], &mut arena, None)
+            .expect("second owned immediate insert succeeds");
+        assert_eq!(map_flag_and_actual(&arena, second), (true, true));
+
+        let removed = remove_nv_owned(&[second, one], &mut arena)
+            .expect("owned removal keeps the other immediate pair");
+        assert_eq!(map_flag_and_actual(&arena, removed), (true, true));
+
+        let heap_value = NanValue::new_string_value("owned-map-heap-value", &mut arena);
+        let mixed = set_nv_owned(&[removed, one, heap_value], &mut arena, None)
+            .expect("owned heap insert succeeds");
+        assert_eq!(map_flag_and_actual(&arena, mixed), (false, false));
+    }
+
     #[test]
     fn owned_set_inherits_the_exact_pre_frame_receipt() {
         let mut arena = Arena::new();
