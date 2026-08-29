@@ -2404,11 +2404,6 @@ fn certify_verbatim_variant_dispatch_lake_builds_kernel_clean() {
 
 #[test]
 fn certify_string_eq_host_contract_lake_builds_kernel_clean() {
-    if Command::new("lake").arg("--version").output().is_err() {
-        eprintln!("skipping certify String.eq host-contract test: `lake` not available");
-        return;
-    }
-
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let out_dir = temp_dir("certify-stringeq");
 
@@ -2548,6 +2543,13 @@ fn certify_string_eq_host_contract_lake_builds_kernel_clean() {
             && !certificate.contains("quoteOrSelf_simulates"),
         "String.eq must not emit bespoke proofs:\n{certificate}"
     );
+
+    // Classification and plan-shape regressions must remain visible on CI
+    // workers without Lean. Only the final kernel build needs `lake`.
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping String.eq certificate kernel build: `lake` not available");
+        return;
+    }
 
     materialize_wall(&cert_dir);
     let combined = lake_build_package(&cert_dir, "emitted String.eq host-contract cert");
