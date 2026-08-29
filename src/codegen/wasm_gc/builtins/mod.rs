@@ -1462,121 +1462,10 @@ fn emit_string_slice(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
 /// both ends; allocates a fresh string sized to the inner byte slice.
 fn emit_string_trim(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     let (_, preamble) = string_module_preamble(registry)?;
-    let decode_at_start = r#"
-                ;; Decode the UTF-8 scalar at byte offset `$start` into `$cp`
-                ;; and its byte width into `$step`. String arrays are always
-                ;; valid UTF-8, so this helper can decode without a fallback
-                ;; validation path.
-                local.get $s
-                local.get $start
-                array.get_u $string
-                local.set $ch
-
-                local.get $ch
-                i32.const 0x80
-                i32.lt_u
-                (if
-                  (then
-                    local.get $ch
-                    local.set $cp
-                    i32.const 1
-                    local.set $step)
-                  (else
-                    local.get $ch
-                    i32.const 0xE0
-                    i32.lt_u
-                    (if
-                      (then
-                        local.get $ch
-                        i32.const 0x1F
-                        i32.and
-                        i32.const 6
-                        i32.shl
-                        local.get $s
-                        local.get $start
-                        i32.const 1
-                        i32.add
-                        array.get_u $string
-                        i32.const 0x3F
-                        i32.and
-                        i32.or
-                        local.set $cp
-                        i32.const 2
-                        local.set $step)
-                      (else
-                        local.get $ch
-                        i32.const 0xF0
-                        i32.lt_u
-                        (if
-                          (then
-                            local.get $ch
-                            i32.const 0x0F
-                            i32.and
-                            i32.const 12
-                            i32.shl
-                            local.get $s
-                            local.get $start
-                            i32.const 1
-                            i32.add
-                            array.get_u $string
-                            i32.const 0x3F
-                            i32.and
-                            i32.const 6
-                            i32.shl
-                            i32.or
-                            local.get $s
-                            local.get $start
-                            i32.const 2
-                            i32.add
-                            array.get_u $string
-                            i32.const 0x3F
-                            i32.and
-                            i32.or
-                            local.set $cp
-                            i32.const 3
-                            local.set $step)
-                          (else
-                            local.get $ch
-                            i32.const 0x07
-                            i32.and
-                            i32.const 18
-                            i32.shl
-                            local.get $s
-                            local.get $start
-                            i32.const 1
-                            i32.add
-                            array.get_u $string
-                            i32.const 0x3F
-                            i32.and
-                            i32.const 12
-                            i32.shl
-                            i32.or
-                            local.get $s
-                            local.get $start
-                            i32.const 2
-                            i32.add
-                            array.get_u $string
-                            i32.const 0x3F
-                            i32.and
-                            i32.const 6
-                            i32.shl
-                            i32.or
-                            local.get $s
-                            local.get $start
-                            i32.const 3
-                            i32.add
-                            array.get_u $string
-                            i32.const 0x3F
-                            i32.and
-                            i32.or
-                            local.set $cp
-                            i32.const 4
-                            local.set $step))))))
-    "#;
-    let decode_at_prev = r#"
+    let decode_at_start = string_case::decode("$start", "$ch", "$cp", "$step");
+    let find_prev = r#"
                 ;; `$end` is the first byte after the candidate scalar. Walk
-                ;; back over UTF-8 continuation bytes to find that scalar's
-                ;; start byte, then decode it into `$cp`.
+                ;; back over UTF-8 continuation bytes to find its start.
                 local.get $end
                 i32.const 1
                 i32.sub
@@ -1602,105 +1491,8 @@ fn emit_string_trim(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
                     i32.sub
                     local.set $prev
                     br $bt))
-
-                local.get $s
-                local.get $prev
-                array.get_u $string
-                local.set $ch
-
-                local.get $ch
-                i32.const 0x80
-                i32.lt_u
-                (if
-                  (then
-                    local.get $ch
-                    local.set $cp)
-                  (else
-                    local.get $ch
-                    i32.const 0xE0
-                    i32.lt_u
-                    (if
-                      (then
-                        local.get $ch
-                        i32.const 0x1F
-                        i32.and
-                        i32.const 6
-                        i32.shl
-                        local.get $s
-                        local.get $prev
-                        i32.const 1
-                        i32.add
-                        array.get_u $string
-                        i32.const 0x3F
-                        i32.and
-                        i32.or
-                        local.set $cp)
-                      (else
-                        local.get $ch
-                        i32.const 0xF0
-                        i32.lt_u
-                        (if
-                          (then
-                            local.get $ch
-                            i32.const 0x0F
-                            i32.and
-                            i32.const 12
-                            i32.shl
-                            local.get $s
-                            local.get $prev
-                            i32.const 1
-                            i32.add
-                            array.get_u $string
-                            i32.const 0x3F
-                            i32.and
-                            i32.const 6
-                            i32.shl
-                            i32.or
-                            local.get $s
-                            local.get $prev
-                            i32.const 2
-                            i32.add
-                            array.get_u $string
-                            i32.const 0x3F
-                            i32.and
-                            i32.or
-                            local.set $cp)
-                          (else
-                            local.get $ch
-                            i32.const 0x07
-                            i32.and
-                            i32.const 18
-                            i32.shl
-                            local.get $s
-                            local.get $prev
-                            i32.const 1
-                            i32.add
-                            array.get_u $string
-                            i32.const 0x3F
-                            i32.and
-                            i32.const 12
-                            i32.shl
-                            i32.or
-                            local.get $s
-                            local.get $prev
-                            i32.const 2
-                            i32.add
-                            array.get_u $string
-                            i32.const 0x3F
-                            i32.and
-                            i32.const 6
-                            i32.shl
-                            i32.or
-                            local.get $s
-                            local.get $prev
-                            i32.const 3
-                            i32.add
-                            array.get_u $string
-                            i32.const 0x3F
-                            i32.and
-                            i32.or
-                            local.set $cp))))))
     "#;
+    let decode_at_prev = string_case::decode("$prev", "$ch", "$cp", "$step");
     let unicode_whitespace_predicate = r#"
                 ;; Unicode White_Space, matching Rust `char::is_whitespace`
                 ;; and therefore `str::trim`: U+0009..U+000D, U+0020,
@@ -1805,6 +1597,7 @@ fn emit_string_trim(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
                 i32.le_u
                 br_if $ed
 
+                {find_prev}
                 {decode_at_prev}
 
                 {unicode_whitespace_predicate}

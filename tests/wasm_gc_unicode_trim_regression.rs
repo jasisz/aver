@@ -102,6 +102,9 @@ fn trim_strips_the_full_unicode_white_space_set() {
     // scalars (U+200B ZERO WIDTH SPACE) are not stripped.
     inputs.push(format!("a{}b", '\u{3000}'));
     inputs.push("\u{200B}x\u{200B}".to_string());
+    // Exercise the four-byte UTF-8 decode path when trimming stops at a
+    // non-whitespace scalar.
+    inputs.push("\u{3000}😀\u{3000}".to_string());
     inputs.push("plain".to_string());
 
     let source = trim_program(&inputs);
