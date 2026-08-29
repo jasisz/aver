@@ -182,10 +182,9 @@ pub struct PipelineConfig<'a> {
     /// `Some(mode)` runs the type checker with that driver; `None` skips it.
     pub typecheck: Option<TypecheckMode<'a>>,
     pub run_interp_lower: bool,
-    /// Whether to run the buffer-build deforestation pass. Runtime
-    /// backends that own a growable buffer (VM, Rust) turn it on; the
-    /// wasm-gc family cannot lower the `Buffer` it introduces and leaves
-    /// it off.
+    /// Whether to run the buffer-build deforestation pass. Every runtime
+    /// backend owns the closed growable `Buffer` carrier; wasm-gc/wasip2 use
+    /// a hidden GC struct over a geometrically grown byte array.
     ///
     /// It used to double as the seam that keeps deforestation invisible
     /// to the proof exporters, and that seam was a CONVENTION: every
@@ -199,8 +198,8 @@ pub struct PipelineConfig<'a> {
     pub run_buffer_build: bool,
     /// Whether to run the chars-fusion pass. Its closed `__str_*`
     /// intrinsic contract is lowered by the VM, Rust, wasm-gc, and wasip2;
-    /// unlike mutable buffer/list builders it needs no backend-owned carrier,
-    /// only a UTF-8 byte offset into the existing String representation.
+    /// it needs only a UTF-8 byte offset into the existing String
+    /// representation.
     ///
     /// Also below the proof line, so — like `run_buffer_build` — what
     /// you pass here cannot change what gets proven (see [`AstView`]).
@@ -209,10 +208,9 @@ pub struct PipelineConfig<'a> {
     /// recursive call components. Unlike the older cursor/builder passes,
     /// every runtime backend lowers this pass's `String.Index` contract.
     pub run_string_index: bool,
-    /// Whether to run the list-build pass. Same target matrix as
-    /// `run_buffer_build` and `run_chars_fusion`, and for the same
-    /// reason: the `__lst_*` intrinsics are lowered by the VM and by the
-    /// Rust backend, and by nothing else.
+    /// Whether to run the list-build pass. Unlike the String-specific buffer
+    /// and cursor contracts, generic `__lst_*` and packed `__byt_*` sinks are
+    /// lowered only by the VM and Rust backend.
     ///
     /// Also below the proof line, so what you pass here cannot change
     /// what gets proven (see [`AstView`]).

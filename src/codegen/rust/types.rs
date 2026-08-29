@@ -44,6 +44,9 @@ pub fn type_to_rust(ty: &Type) -> String {
         // information. Identity-sensitive routing happens at the
         // call layer (see `backend_named_type_key`).
         Type::Named { name, .. } => {
+            if name == crate::ir::INTERNAL_BUFFER_TYPE {
+                return "aver_rt::Buffer".to_string();
+            }
             if name == "String.Index" {
                 return "aver_rt::StringIndex".to_string();
             }
@@ -125,6 +128,9 @@ pub fn type_to_rust_scoped(ty: &Type, ctx: &CodegenContext, current_scope: Optio
             )
         }
         Type::Named { id, name } => {
+            if name == crate::ir::INTERNAL_BUFFER_TYPE {
+                return "aver_rt::Buffer".to_string();
+            }
             if name == "String.Index" {
                 return "aver_rt::StringIndex".to_string();
             }

@@ -2066,10 +2066,16 @@ impl VM {
                     };
                     let idx = if let Some(slot) = self.buffer_pool.iter().position(Option::is_none)
                     {
-                        self.buffer_pool[slot] = Some(String::with_capacity(cap));
+                        self.buffer_pool[slot] = Some(super::StringBuffer {
+                            bytes: String::with_capacity(cap),
+                            has_parts: false,
+                        });
                         slot
                     } else {
-                        self.buffer_pool.push(Some(String::with_capacity(cap)));
+                        self.buffer_pool.push(Some(super::StringBuffer {
+                            bytes: String::with_capacity(cap),
+                            has_parts: false,
+                        }));
                         self.buffer_pool.len() - 1
                     };
                     self.stack
@@ -2095,7 +2101,8 @@ impl VM {
                         .ok_or_else(|| {
                             VmError::runtime("BUFFER_APPEND_STR: invalid buffer handle")
                         })?;
-                    slot.push_str(&owned);
+                    slot.bytes.push_str(&owned);
+                    slot.has_parts = true;
                     self.stack.push(buf);
                 }
 
@@ -2116,8 +2123,8 @@ impl VM {
                                 "BUFFER_APPEND_SEP_UNLESS_FIRST: invalid buffer handle",
                             )
                         })?;
-                    if !slot.is_empty() {
-                        slot.push_str(&sep_bytes);
+                    if slot.has_parts {
+                        slot.bytes.push_str(&sep_bytes);
                     }
                     self.stack.push(buf);
                 }
@@ -2135,7 +2142,7 @@ impl VM {
                         .ok_or_else(|| {
                             VmError::runtime("BUFFER_FINALIZE: invalid buffer handle")
                         })?;
-                    let str_value = NanValue::new_string_value(&s, &mut self.arena);
+                    let str_value = NanValue::new_string_value(&s.bytes, &mut self.arena);
                     self.stack.push(str_value);
                 }
 

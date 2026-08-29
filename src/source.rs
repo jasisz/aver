@@ -1052,6 +1052,28 @@ pub fn load_compile_deps(
     items: &[TopLevel],
     module_root: &str,
 ) -> Result<PreparedCompileDeps, String> {
+    load_compile_deps_with_runtime_strings(items, module_root, false)
+}
+
+/// Prepare dependencies for an ordinary wasm-gc/wasip2 runtime artifact.
+///
+/// The generic loader above intentionally preserves its historical neutral
+/// shape for analysis and proof callers. Runtime wasm verification needs the
+/// same closed String builder/cursor contracts as `aver run`, including inside
+/// dependencies such as `Bytes.toHex`.
+#[cfg(feature = "wasm")]
+pub(crate) fn load_compile_deps_for_wasm_runtime(
+    items: &[TopLevel],
+    module_root: &str,
+) -> Result<PreparedCompileDeps, String> {
+    load_compile_deps_with_runtime_strings(items, module_root, true)
+}
+
+fn load_compile_deps_with_runtime_strings(
+    items: &[TopLevel],
+    module_root: &str,
+    runtime_strings: bool,
+) -> Result<PreparedCompileDeps, String> {
     let program = load_program(
         Path::new("<entry>"),
         "",
@@ -1088,8 +1110,8 @@ pub fn load_compile_deps(
             crate::ir::PipelineConfig {
                 typecheck: Some(crate::ir::TypecheckMode::WithCheckedLoaded(&loaded)),
                 run_interp_lower: false,
-                run_buffer_build: false,
-                run_chars_fusion: false,
+                run_buffer_build: runtime_strings,
+                run_chars_fusion: runtime_strings,
                 run_string_index: true,
                 run_list_build: false,
                 alloc_policy: Some(&neutral_policy),

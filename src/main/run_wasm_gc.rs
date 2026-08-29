@@ -170,8 +170,10 @@ pub(super) fn try_run_wasm_gc(
             typecheck: Some(TypecheckMode::WithCheckedLoaded(&prepared_deps.loaded)),
             alloc_policy: Some(&neutral_policy),
             dep_modules: &dep_modules,
+            // Native concat remains the better interpolation shape; joined
+            // collecting loops use the backend's growable String builder.
             run_interp_lower: false,
-            run_buffer_build: false,
+            run_buffer_build: true,
             run_chars_fusion: true,
             run_string_index: true,
             run_list_build: false,

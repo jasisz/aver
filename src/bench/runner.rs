@@ -679,15 +679,15 @@ fn run_rust(manifest: &Manifest) -> Result<BenchReport, RunError> {
 fn canonical_passes(target: BenchTarget) -> Vec<String> {
     let mut passes = vec!["tco", "typecheck"];
     if target == BenchTarget::Rust {
-        passes.extend(["interp_lower", "buffer_build"]);
+        passes.push("interp_lower");
     }
-    // Character cursors and the immutable codepoint-boundary index are
-    // lowered by every runtime target. Mutable builders remain Rust/VM-only.
+    // String builders, character cursors, and the immutable codepoint-boundary
+    // index are lowered by every benchmark runtime target.
     if matches!(
         target,
         BenchTarget::Rust | BenchTarget::WasmGc | BenchTarget::WasmGcV8
     ) {
-        passes.push("chars_fusion");
+        passes.extend(["buffer_build", "chars_fusion"]);
     }
     passes.push("string_index");
     if target == BenchTarget::Rust {

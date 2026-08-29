@@ -249,22 +249,19 @@ fn main() -> String
     let sinks = data["sinks"].as_array().unwrap();
     assert!(sinks.iter().any(|s| s == "build"));
     assert_eq!(data["rewrites_by_sink"]["build"], 1);
-    // The pass runs for the rust and VM pipelines only; `--explain-passes`
-    // runs one pipeline whatever `--target` says, so the report has to
-    // name the targets its count is about.
+    // Every runtime backend now lowers the closed String builder contract;
+    // the report has to name all artifacts its count is about.
     let targets: Vec<&str> = data["targets"]
         .as_array()
         .expect("targets field present")
         .iter()
         .map(|t| t.as_str().unwrap())
         .collect();
-    assert_eq!(targets, vec!["rust", "vm"]);
+    assert_eq!(targets, vec!["rust", "vm", "wasm-gc", "wasip2"]);
 }
 
-/// The pass is off for `--target wasm-gc` / `--target wasip2`, so a
-/// report of rewritten sites would be describing an artifact the reader
-/// did not ask to build. The human report says which pipelines the
-/// count belongs to; the reader should not have to know the toggle.
+/// The human report names every runtime artifact that now carries the
+/// String builder and also calls out the certified-wasm exception.
 #[test]
 fn buffer_build_report_names_the_targets_its_count_belongs_to() {
     let aver_bin = env!("CARGO_BIN_EXE_aver");
@@ -296,8 +293,9 @@ fn main() -> String
     assert!(output.status.success());
     let report = String::from_utf8_lossy(&output.stdout);
     assert!(
-        report.contains("--target wasm-gc and --target wasip2 build without this pass"),
-        "the buffer_build section must scope its count to the deforesting targets:\n{report}"
+        report.contains("ordinary wasm-gc, and wasip2")
+            && report.contains("certified wasm-gc retains source traversal"),
+        "the buffer_build section must scope its count to the runtime targets:\n{report}"
     );
 }
 

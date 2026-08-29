@@ -496,9 +496,9 @@ pub fn toHex(bytes @ _: &Bytes) -> AverStr {
 #[inline(always)]
 pub fn hexParts__buffered(
     mut values @ _: aver_rt::AverIntList,
-    mut __buf @ _: Buffer,
+    mut __buf @ _: aver_rt::Buffer,
     mut __sep @ _: AverStr,
-) -> Buffer {
+) -> aver_rt::Buffer {
     loop {
         crate::cancel_checkpoint();
         aver_list_match!(values, [] => { return __buf; }, [head, tail] => { {

@@ -1213,11 +1213,11 @@ fn codegen_ctx_fn_sig(ctx: &CodegenContext, name: &str) -> Option<crate::verify_
     // a reference if a user's law body sketches the buffer pipeline.
     match name {
         "__buf_new" => Some(FnSigInfo {
-            return_type: crate::types::Type::named("Buffer"),
+            return_type: crate::types::Type::named(crate::ir::INTERNAL_BUFFER_TYPE),
             is_pure: true,
         }),
         "__buf_append" | "__buf_append_sep_unless_first" => Some(FnSigInfo {
-            return_type: crate::types::Type::named("Buffer"),
+            return_type: crate::types::Type::named(crate::ir::INTERNAL_BUFFER_TYPE),
             is_pure: true,
         }),
         "__buf_finalize" | "__str_cursor_head" => Some(FnSigInfo {

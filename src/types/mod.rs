@@ -139,6 +139,9 @@ pub fn parse_type_str(s: &str) -> Type {
         "String" => Type::Str,
         "Bool" => Type::Bool,
         "Unit" => Type::Unit,
+        // Compiler-only post-typecheck carrier. The strict parser deliberately
+        // rejects this leading-underscore spelling in user annotations.
+        "__Buffer" => Type::named("__Buffer"),
         "" => Type::Invalid,
         _ => {
             // Try generic forms: Result<A, B>, Option<A>, List<A>

@@ -30,7 +30,7 @@ pub enum Type {
     /// types the compiler declares itself rather than registering in
     /// the user-program symbol table (`HttpRequest`, `Trace`,
     /// `BranchPath`, …), for names
-    /// synthesised after typecheck (`Buffer`, from the accumulator
+    /// synthesised after typecheck (`__Buffer`, from the accumulator
     /// rewrite in `crate::ir::buffer_build`), and for stamps the
     /// checker couldn't resolve.
     ///

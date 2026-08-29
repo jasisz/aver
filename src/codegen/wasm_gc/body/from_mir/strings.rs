@@ -4,6 +4,56 @@
 
 use super::*;
 
+/// Emit one value through the primitive-only String coercion shared by native
+/// interpolation and the compiler-fabricated `__to_str` intrinsic.
+///
+/// The checker sanctions exactly Int, Float, Bool, and String interpolation
+/// embeds. Keeping both lowerings on this function makes widening one without
+/// the other impossible. `None` is the ordinary whole-function MIR fallback
+/// when the argument itself cannot be emitted.
+pub(crate) fn emit_mir_primitive_to_string(
+    func: &mut Function,
+    inner: &Spanned<MirExpr>,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<Option<()>, WasmGcError> {
+    let aver_ty = aver_type_str_of(inner);
+    if aver_ty.trim() == "Int" {
+        return emit_mir_int_stringify(func, inner, slots, ctx);
+    }
+    if emit_mir_expr(func, inner, slots, ctx)?.is_none() {
+        return Ok(None);
+    }
+    match aver_ty.trim() {
+        "String" => { /* identity */ }
+        "Float" => {
+            let to_string_idx = ctx.fn_map.builtins.get("String.fromFloat").copied().ok_or(
+                WasmGcError::Validation(
+                    "primitive String coercion of Float requires String.fromFloat builtin".into(),
+                ),
+            )?;
+            func.instruction(&Instruction::Call(to_string_idx));
+        }
+        "Bool" => {
+            let to_string_idx = ctx.fn_map.builtins.get("String.fromBool").copied().ok_or(
+                WasmGcError::Validation(
+                    "primitive String coercion of Bool requires String.fromBool builtin".into(),
+                ),
+            )?;
+            func.instruction(&Instruction::Call(to_string_idx));
+        }
+        other => {
+            return Err(WasmGcError::Validation(format!(
+                "fn `{}`: string interpolation has no stringifier for an embed of type \
+                 `{other}` — interpolation renders primitives only (Int, Float, Bool, String). \
+                 Convert the value with a named function returning String and interpolate that.",
+                ctx.self_fn_name
+            )));
+        }
+    }
+    Ok(Some(()))
+}
+
 /// Interpolation lowering: build a `Vector<String>` of the parts and
 /// concat it with `__wasmgc_concat_n`.
 /// Each `Literal` part becomes an `array.new_data` over its segment;
@@ -98,55 +148,8 @@ pub(crate) fn emit_mir_interpolated_str(
                 });
             }
             MirStrPart::Expr(inner) => {
-                let aver_ty = aver_type_str_of(inner);
-                // `Int = ℤ` size lever: an `Int` embed emits its own value AND
-                // the matching decimal formatter via `emit_mir_int_stringify`,
-                // which routes a raw-i64 (bare/carrier) embed to the LEAN i64
-                // formatter (no box, no ~536 B bignum formatter) and a genuine
-                // `$AverInt` embed to the bignum `String.fromInt`. Handled
-                // BEFORE the generic emit below so the value is emitted exactly
-                // once in the representation its chosen formatter consumes.
-                if aver_ty.trim() == "Int" {
-                    match emit_mir_int_stringify(func, inner, slots, ctx)? {
-                        Some(()) => continue,
-                        None => return Ok(None),
-                    }
-                }
-                if emit_mir_expr(func, inner, slots, ctx)?.is_none() {
+                if emit_mir_primitive_to_string(func, inner, slots, ctx)?.is_none() {
                     return Ok(None);
-                }
-                match aver_ty.trim() {
-                    "String" => { /* identity */ }
-                    "Float" => {
-                        let to_string_idx =
-                            ctx.fn_map.builtins.get("String.fromFloat").copied().ok_or(
-                                WasmGcError::Validation(
-                                    "interpolation of Float requires String.fromFloat builtin"
-                                        .into(),
-                                ),
-                            )?;
-                        func.instruction(&Instruction::Call(to_string_idx));
-                    }
-                    "Bool" => {
-                        let to_string_idx =
-                            ctx.fn_map.builtins.get("String.fromBool").copied().ok_or(
-                                WasmGcError::Validation(
-                                    "interpolation of Bool requires String.fromBool builtin".into(),
-                                ),
-                            )?;
-                        func.instruction(&Instruction::Call(to_string_idx));
-                    }
-                    // No stringifier for this embed. Loud, not silent —
-                    // see the fn doc comment.
-                    other => {
-                        return Err(WasmGcError::Validation(format!(
-                            "fn `{}`: string interpolation has no stringifier for an \
-                             embed of type `{other}` — interpolation renders primitives \
-                             only (Int, Float, Bool, String). Convert the value with a \
-                             named function returning String and interpolate that.",
-                            ctx.self_fn_name
-                        )));
-                    }
                 }
             }
         }

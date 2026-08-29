@@ -1,11 +1,11 @@
 #![cfg(feature = "wasm")]
 
 //! Compile-and-run smoke tests for the wasm-gc backend. Each test
-//! compiles a small Aver program through the same pipeline shape as
-//! `aver compile --target=wasm-gc` (typecheck=Full, neutral alloc
-//! policy, interp_lower / buffer_build OFF), drives the produced
-//! module under wasmtime with the GC + tail-call config, and asserts
-//! on the `Int` returned from `main`.
+//! compiles a small Aver program with the wasm-gc typecheck and neutral
+//! allocation policy, drives the produced module under wasmtime with the GC +
+//! tail-call config, and asserts on the `Int` returned from `main`. Baseline
+//! tests leave optional fabricating passes off; focused regressions opt into
+//! the production String builder/cursor matrix explicitly.
 //!
 //! Coverage targets the parity matrix added in 0.16: `List<T>`,
 //! `Map<K, V>` for K ∈ {String, Int, user record, user sum}, `Vector<T>`,
@@ -20,10 +20,22 @@ use aver::ir::{PipelineConfig, TypecheckMode, pipeline};
 use aver::source::parse_source;
 
 fn compile_bytes(source: &str) -> Vec<u8> {
-    compile_bytes_with_chars_fusion(source, false)
+    compile_bytes_with_fusions(source, false, false)
 }
 
 fn compile_bytes_with_chars_fusion(source: &str, run_chars_fusion: bool) -> Vec<u8> {
+    compile_bytes_with_fusions(source, false, run_chars_fusion)
+}
+
+fn compile_bytes_with_buffer_build(source: &str, run_buffer_build: bool) -> Vec<u8> {
+    compile_bytes_with_fusions(source, run_buffer_build, false)
+}
+
+fn compile_bytes_with_fusions(
+    source: &str,
+    run_buffer_build: bool,
+    run_chars_fusion: bool,
+) -> Vec<u8> {
     let mut items = parse_source(source).unwrap_or_else(|e| {
         panic!("parse failed: {e}\n--- source ---\n{source}");
     });
@@ -34,7 +46,7 @@ fn compile_bytes_with_chars_fusion(source: &str, run_chars_fusion: bool) -> Vec<
             typecheck: Some(TypecheckMode::Full { base_dir: None }),
             alloc_policy: Some(&neutral_policy),
             run_interp_lower: false,
-            run_buffer_build: false,
+            run_buffer_build,
             run_chars_fusion,
             run_list_build: false,
             ..Default::default()
@@ -3266,6 +3278,21 @@ fn main() -> Int
     );
 }
 
+/// Builder types and helpers are reachability-driven: enabling the supported
+/// pass without a matching collector must not perturb unrelated artifacts.
+#[test]
+fn buffer_build_is_byte_identical_when_no_shape_matches() {
+    let source = r#"
+fn main() -> Int
+    42
+"#;
+    assert_eq!(
+        compile_bytes_with_buffer_build(source, false),
+        compile_bytes_with_buffer_build(source, true),
+        "an unfired buffer pass must not add the hidden carrier or helpers"
+    );
+}
+
 /// The cursor-to-classifier rewrite takes the codepoint across the call
 /// boundary. Both one-to-one Unicode mappings and length-changing mappings
 /// must agree with the String route: Kelvin/long-s hit their ASCII arm while
@@ -3303,8 +3330,49 @@ fn main() -> Int
 }
 
 #[test]
-fn unsupported_builder_fabrications_are_still_refused_by_name() {
+fn interpolation_builder_stringifies_every_sanctioned_primitive() {
     let source = r#"
+fn render(s: String) -> String
+    "n={9223372036854775808};f={1.5};b={true};s={s}"
+
+fn main() -> Int
+    match render("é") == "n=9223372036854775808;f=1.5;b=true;s=é"
+        true -> 1
+        false -> 0
+"#;
+    let mut items = parse_source(source).expect("interpolation fixture parses");
+    let neutral_policy = aver::ir::NeutralAllocPolicy;
+    let result = pipeline::run(
+        &mut items,
+        PipelineConfig {
+            typecheck: Some(TypecheckMode::Full { base_dir: None }),
+            alloc_policy: Some(&neutral_policy),
+            run_interp_lower: true,
+            run_buffer_build: true,
+            run_chars_fusion: false,
+            run_list_build: false,
+            ..Default::default()
+        },
+    );
+    let bytes = compile_to_wasm_gc(&items, result.analysis.as_ref())
+        .expect("wasm-gc lowers interpolation's complete String builder contract");
+    assert_eq!(
+        run_int_bytes(&bytes).expect("interpolation builder runs"),
+        1
+    );
+    #[cfg(feature = "runtime")]
+    assert_eq!(run_int_on_vm(source), 1);
+}
+
+#[test]
+fn string_builder_runs_while_unsupported_collectors_are_still_refused_by_name() {
+    let source = r#"
+record Buffer
+    value: Int
+
+fn marker() -> Buffer
+    Buffer(value = 7)
+
 fn parts(values: List<String>, acc: List<String>) -> List<String>
     match values
         [] -> List.reverse(acc)
@@ -3313,8 +3381,15 @@ fn parts(values: List<String>, acc: List<String>) -> List<String>
 fn render(values: List<String>) -> String
     String.join(parts(values, []), ",")
 
-fn main() -> String
-    render(["a", "b"])
+fn main() -> Int
+    userBuffer = marker()
+    stringsOk = Bool.and(
+        Bool.and(render(["a", "b"]) == "a,b", render(["", "b"]) == ",b"),
+        String.byteLength(render(["é🙂", "é🙂", "é🙂", "é🙂", "é🙂", "é🙂", "é🙂", "é🙂"])) == 55
+    )
+    match Bool.and(stringsOk, userBuffer.value == 7)
+        true -> 1
+        false -> 0
 "#;
     let mut items = parse_source(source).expect("fixture parses");
     let neutral_policy = aver::ir::NeutralAllocPolicy;
@@ -3337,14 +3412,11 @@ fn main() -> String
             .is_some_and(|report| report.rewrites > 0),
         "the fixture must reach the fabricated buffer contract"
     );
-    let err = compile_to_wasm_gc(&items, result.analysis.as_ref())
-        .expect_err("wasm-gc must keep refusing unsupported builders")
-        .to_string();
-    assert!(err.contains("fabricated intrinsic `__buf_"), "{err}");
-    assert!(
-        err.contains("does not lower fabricated intrinsics"),
-        "{err}"
-    );
+    let bytes = compile_to_wasm_gc(&items, result.analysis.as_ref())
+        .expect("wasm-gc lowers the complete String builder contract");
+    assert_eq!(run_int_bytes(&bytes).expect("buffered String.join runs"), 1);
+    #[cfg(feature = "runtime")]
+    assert_eq!(run_int_on_vm(source), 1);
 
     // The list collector is independently disabled on wasm-gc. Exercise its
     // real pass rather than spelling compiler-reserved names in source, and

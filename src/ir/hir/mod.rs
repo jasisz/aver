@@ -420,7 +420,7 @@ pub enum ResolvedExpr {
     /// `Shape(name = "...", count = 0)` record-create form. The
     /// `type_id` is `Some` for records resolved through the local symbol
     /// table, `None` for imported capability-owned and compiler-owned
-    /// records (`Http.Response`, `Header`, `Tcp.Connection`, `Buffer`, …)
+    /// records (`Http.Response`, `Header`, `Tcp.Connection`, `__Buffer`, …)
     /// which don't carry a local `TypeId`.
     RecordCreate {
         type_id: Option<TypeId>,

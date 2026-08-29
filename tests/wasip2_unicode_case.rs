@@ -134,6 +134,36 @@ fn main() -> Unit
 }
 
 #[test]
+fn wasip2_string_join_uses_the_growable_builder() {
+    let dir = tempdir("builder");
+    let src = r#"
+fn parts(values: List<String>, acc: List<String>) -> List<String>
+    match values
+        [] -> List.reverse(acc)
+        [head, ..tail] -> parts(tail, List.prepend(head, acc))
+
+fn main() -> Unit
+    ! [Console.print]
+    joined = String.join(parts(["", "é🙂", "x", "y", "z", "long-fragment"], []), "|")
+    Console.print(joined)
+"#;
+    let fixture = write_fixture(&dir, "builder.av", src);
+    let out = run_wasip2(&dir, &fixture);
+    assert!(
+        out.status.success(),
+        "builder.av failed (exit {:?})\nstdout:\n{}\nstderr:\n{}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "|é🙂|x|y|z|long-fragment\n"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn wasip2_trim_matches_rust_unicode_whitespace() {
     let dir = tempdir("trim");
     let sample = format!("{TRIM_WHITE_SPACE}x{TRIM_WHITE_SPACE}");

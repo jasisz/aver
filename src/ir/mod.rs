@@ -26,6 +26,7 @@ pub mod symbol_table;
 pub mod vars;
 
 pub use analyze::{AnalysisResult, BodyShape, FnAnalysis, NeutralAllocPolicy, analyze};
+pub(crate) use buffer_build::INTERNAL_BUFFER_TYPE;
 pub use identity::{BuiltinId, CtorId, FnId, FnKey, LawKey, ModuleId, TypeId, TypeKey};
 pub use interval::{
     Bound, Interval, IntervalAnalysisResult, OpClass, RefinedTypeInterval,

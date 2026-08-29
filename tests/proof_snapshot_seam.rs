@@ -72,7 +72,7 @@ const BYTES: &str = include_str!("fixtures/proof_seam_bytes.av");
 struct Flags {
     /// The passes that introduce entities the source does not contain:
     /// `interp_lower` (`__buf_*`, `__to_str`), `buffer_build`
-    /// (`<sink>__buffered`, `Buffer`), `chars_fusion`
+    /// (`<sink>__buffered`, `__Buffer`), `chars_fusion`
     /// (`<loop>__cursor`, `__str_*`), `string_index`
     /// (`<fn>__indexed`, `String.Index`) and `list_build`
     /// (`<loop>__collected`, `__lst_*`). Below the proof line.

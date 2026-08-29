@@ -163,7 +163,7 @@ fn build_buffer_pipeline(line: usize, parts: &[StrPart]) -> Spanned<Expr> {
     // populated by the synthesiser itself for downstream backends (Rust
     // codegen reads `expr.ty()` to gate hoists on owned-mutable
     // `Buffer`s, see `src/codegen/rust/toplevel.rs`).
-    let buffer_ty = Type::named("Buffer");
+    let buffer_ty = Type::named(crate::ir::INTERNAL_BUFFER_TYPE);
     let mut buf = intrinsic_call(
         line,
         "__buf_new",
