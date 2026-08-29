@@ -74,6 +74,7 @@ pub(in crate::codegen::wasm_gc) mod case_tables;
 mod crypto;
 mod endian;
 mod string_case;
+mod string_cursor;
 mod utf8;
 
 /// Curated set of pure-side builtins phase 3c+ implements. Adding a
@@ -158,6 +159,16 @@ pub(super) enum BuiltinName {
     StringFirstCodePoint,
     StringFromCodePoint,
     StringChars,
+    /// Compiler-internal UTF-8 cursor helpers fabricated by `chars_fusion`.
+    StrCursorEnd,
+    StrCursorHead,
+    StrCursorNext,
+    StrCode1,
+    StrCode1Lower,
+    StrCode1Upper,
+    StrCursorCode,
+    StrFoldLower,
+    StrFoldUpper,
     /// `String.replace(s, needle, repl) -> String`. Two-pass naive
     /// scan: count occurrences, allocate output of exact size, fill.
     /// Empty needle returns `s` unchanged.
@@ -291,6 +302,15 @@ impl BuiltinName {
             "String.firstCodePoint" => Some(Self::StringFirstCodePoint),
             "String.fromCodePoint" => Some(Self::StringFromCodePoint),
             "String.chars" => Some(Self::StringChars),
+            "__str_cursor_end" => Some(Self::StrCursorEnd),
+            "__str_cursor_head" => Some(Self::StrCursorHead),
+            "__str_cursor_next" => Some(Self::StrCursorNext),
+            "__str_code1" => Some(Self::StrCode1),
+            "__str_code1_lower" => Some(Self::StrCode1Lower),
+            "__str_code1_upper" => Some(Self::StrCode1Upper),
+            "__str_cursor_code" => Some(Self::StrCursorCode),
+            "__str_fold_lower" => Some(Self::StrFoldLower),
+            "__str_fold_upper" => Some(Self::StrFoldUpper),
             "String.replace" => Some(Self::StringReplace),
             "Crypto.sha256" => Some(Self::CryptoSha256),
             _ => None,
@@ -331,6 +351,15 @@ impl BuiltinName {
             Self::StringFirstCodePoint => "String.firstCodePoint",
             Self::StringFromCodePoint => "String.fromCodePoint",
             Self::StringChars => "String.chars",
+            Self::StrCursorEnd => "__str_cursor_end",
+            Self::StrCursorHead => "__str_cursor_head",
+            Self::StrCursorNext => "__str_cursor_next",
+            Self::StrCode1 => "__str_code1",
+            Self::StrCode1Lower => "__str_code1_lower",
+            Self::StrCode1Upper => "__str_code1_upper",
+            Self::StrCursorCode => "__str_cursor_code",
+            Self::StrFoldLower => "__str_fold_lower",
+            Self::StrFoldUpper => "__str_fold_upper",
             Self::StringReplace => "String.replace",
             Self::CryptoSha256 => "Crypto.sha256",
             Self::IntModEuclid => "__int_mod_euclid",
@@ -421,6 +450,14 @@ impl BuiltinName {
             Self::StringFirstCodePoint => Ok(vec![string_ref_ty(registry)?]),
             Self::StringFromCodePoint => Ok(vec![ValType::I64]),
             Self::StringChars => Ok(vec![string_ref_ty(registry)?]),
+            Self::StrCursorEnd
+            | Self::StrCursorHead
+            | Self::StrCursorNext
+            | Self::StrCursorCode => Ok(vec![string_ref_ty(registry)?, ValType::I64]),
+            Self::StrCode1 | Self::StrCode1Lower | Self::StrCode1Upper => {
+                Ok(vec![string_ref_ty(registry)?])
+            }
+            Self::StrFoldLower | Self::StrFoldUpper => Ok(vec![ValType::I64]),
             Self::StringReplace => Ok(vec![
                 string_ref_ty(registry)?,
                 string_ref_ty(registry)?,
@@ -504,6 +541,15 @@ impl BuiltinName {
             Self::StringIndexCodeAt => Ok(vec![ValType::I64]),
             Self::StringIndexSlice => Ok(vec![string_ref_ty(registry)?]),
             Self::StringChars => Ok(vec![list_ref_ty(registry, "List<String>")?]),
+            Self::StrCursorEnd => Ok(vec![ValType::I32]),
+            Self::StrCursorHead => Ok(vec![string_ref_ty(registry)?]),
+            Self::StrCursorNext
+            | Self::StrCode1
+            | Self::StrCode1Lower
+            | Self::StrCode1Upper
+            | Self::StrCursorCode
+            | Self::StrFoldLower
+            | Self::StrFoldUpper => Ok(vec![ValType::I64]),
             Self::StringReplace => Ok(vec![string_ref_ty(registry)?]),
             Self::CryptoSha256 => Ok(vec![record_ref_ty(registry, "Digest32")?]),
             Self::IntModEuclid | Self::IntDivEuclid => Ok(vec![ValType::I64]),
@@ -580,6 +626,15 @@ impl BuiltinName {
             Self::StringFirstCodePoint => emit_string_first_code_point(registry),
             Self::StringFromCodePoint => emit_string_from_code_point(registry),
             Self::StringChars => emit_string_chars(registry),
+            Self::StrCursorEnd => string_cursor::emit_cursor_end(registry),
+            Self::StrCursorHead => string_cursor::emit_cursor_head(registry),
+            Self::StrCursorNext => string_cursor::emit_cursor_next(registry),
+            Self::StrCode1 => string_cursor::emit_code1(registry),
+            Self::StrCode1Lower => string_cursor::emit_code1_fold(registry, false, case),
+            Self::StrCode1Upper => string_cursor::emit_code1_fold(registry, true, case),
+            Self::StrCursorCode => string_cursor::emit_cursor_code(registry),
+            Self::StrFoldLower => string_cursor::emit_fold(registry, false, case),
+            Self::StrFoldUpper => string_cursor::emit_fold(registry, true, case),
             Self::StringReplace => emit_string_replace(registry),
             Self::CryptoSha256 => crypto::emit_sha256(registry),
             Self::IntModEuclid => emit_int_mod_euclid(),
@@ -1144,7 +1199,9 @@ fn emit_string_byte_length(registry: &TypeRegistry) -> Result<Function, WasmGcEr
 
 /// Helper preamble: declare `$string` at the user module's index by
 /// padding the WAT type section with empty struct types.
-fn string_module_preamble(registry: &TypeRegistry) -> Result<(u32, String), WasmGcError> {
+pub(super) fn string_module_preamble(
+    registry: &TypeRegistry,
+) -> Result<(u32, String), WasmGcError> {
     let string_idx = registry
         .string_array_type_idx
         .ok_or(WasmGcError::Validation(

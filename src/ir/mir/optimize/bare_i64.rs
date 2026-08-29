@@ -2459,6 +2459,47 @@ fn main() -> Int
     }
 
     #[test]
+    fn cursor_character_dispatch_stays_raw_across_the_classifier_boundary() {
+        let source = r#"
+fn value(ch: String) -> Int
+    match String.toLower(ch)
+        "a" -> 1
+        _ -> 0
+
+fn walk(chars: List<String>, n: Int) -> Int
+    match chars
+        [] -> n
+        [head, ..tail] -> walk(tail, n + value(head))
+
+fn main() -> Int
+    walk(String.chars("aA"), 0)
+"#;
+        let (program, facts) = facts_for(source);
+
+        let code_id = fn_id_by_name(&program, "value__code");
+        assert!(
+            facts
+                .for_fn(code_id)
+                .expect("code classifier facts")
+                .param_is_bare(0),
+            "the compiler-owned scalar parameter crosses as raw i64"
+        );
+
+        let cursor_id = fn_id_by_name(&program, "walk__cursor");
+        let cursor = program.fn_by_id(cursor_id).expect("cursor MIR");
+        let cursor_facts = facts.for_fn(cursor_id).expect("cursor facts");
+        let code_binders: Vec<LocalId> = (0..64)
+            .map(LocalId)
+            .filter(|slot| local_is_code_carrier_binder(&cursor.body.node, *slot))
+            .collect();
+        assert_eq!(code_binders.len(), 1, "one cursor-code binder: {cursor:?}");
+        assert!(
+            cursor_facts.is_bare(code_binders[0]),
+            "the StrCursorCode result stays raw in its local slot"
+        );
+    }
+
+    #[test]
     fn bare_named_type_extracts_name_from_debug() {
         // The lowerer fills `MirParam.ty` with `format!("{:?}", Type)`, so a
         // named carrier renders as the Debug form. Pin the extractor.

@@ -451,8 +451,13 @@ fn main() -> Int
     );
     assert_eq!(
         data["targets"].as_array().unwrap(),
-        &vec![serde_json::json!("rust"), serde_json::json!("vm")],
-        "the count belongs to the rust and VM artifacts and to no other: {data}"
+        &vec![
+            serde_json::json!("rust"),
+            serde_json::json!("vm"),
+            serde_json::json!("wasm-gc"),
+            serde_json::json!("wasip2"),
+        ],
+        "the count belongs to every runtime artifact: {data}"
     );
 }
 

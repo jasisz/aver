@@ -1,13 +1,15 @@
 module StringEq
     intent =
-        "A string match over one literal. The int helper makes the box carrier"
-        "exist while the certified target exercises String.eq as a host contract."
+        "A string match with a multi-character control arm. That arm deliberately"
+        "keeps the match on String.eq when single-ASCII arms fuse to codepoints;"
+        "the int helper makes the box carrier exist for the host-contract fixture."
     exposes [quoteOrSelf, bump]
 
 fn quoteOrSelf(c: String) -> String
   ? "Escape a quote byte, otherwise return the input string verbatim."
   match c
     "\"" -> "\\\""
+    "verbatim" -> "verbatim"
     _ -> c
 
 fn bump(n: Int) -> Int
@@ -16,4 +18,5 @@ fn bump(n: Int) -> Int
 
 verify quoteOrSelf
     quoteOrSelf("\"") => "\\\""
+    quoteOrSelf("verbatim") => "verbatim"
     quoteOrSelf("x") => "x"

@@ -51,10 +51,18 @@ fn assert_all_pass_on_both(source: &str, expected_passed: usize) {
         let passed: usize = results.iter().map(|r| r.passed).sum();
         let failed: usize = results.iter().map(|r| r.failed).sum();
         let skipped: usize = results.iter().map(|r| r.skipped).sum();
+        let failures: Vec<_> = results
+            .iter()
+            .flat_map(|result| result.failures.iter())
+            .collect();
+        let outcomes: Vec<_> = results
+            .iter()
+            .flat_map(|result| result.case_results.iter().map(|case| &case.outcome))
+            .collect();
         assert_eq!(
             (passed, failed, skipped),
             (expected_passed, 0, 0),
-            "[{backend}] expected {expected_passed}/0/0 passed/failed/skipped, got {passed}/{failed}/{skipped}\n--- source ---\n{source}"
+            "[{backend}] expected {expected_passed}/0/0 passed/failed/skipped, got {passed}/{failed}/{skipped}; failures={failures:?}; outcomes={outcomes:?}\n--- source ---\n{source}"
         );
     }
 }

@@ -176,7 +176,7 @@ pub fn run_verify_for_items_wasm_gc_with_mode(
             alloc_policy: Some(&neutral_policy),
             run_interp_lower: false,
             run_buffer_build: false,
-            run_chars_fusion: false,
+            run_chars_fusion: true,
             run_string_index: true,
             run_list_build: false,
             ..Default::default()

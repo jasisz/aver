@@ -153,10 +153,9 @@ fn wasm_gc_boxed_int_div_mod_err_messages_match_vm() {
     let tokens = lexer.tokenize().expect("lex");
     let mut parser = aver::parser::Parser::new(tokens);
     let mut items = parser.parse().expect("parse");
-    // Match the `aver run --wasm-gc` pipeline shape: interp_lower /
-    // buffer_build are OFF (those fuse string interpolation into buffer
-    // intrinsics the wasm-gc backend doesn't lower, which would trap),
-    // neutral alloc policy, full typecheck.
+    // Match the `aver run --wasm-gc` pipeline shape: mutable interpolation /
+    // buffer builders stay OFF, while the carrier-free UTF-8 cursor pass is
+    // ON; neutral alloc policy, full typecheck.
     let neutral_policy = aver::ir::NeutralAllocPolicy;
     let result = aver::ir::pipeline::run(
         &mut items,
@@ -165,7 +164,7 @@ fn wasm_gc_boxed_int_div_mod_err_messages_match_vm() {
             alloc_policy: Some(&neutral_policy),
             run_interp_lower: false,
             run_buffer_build: false,
-            run_chars_fusion: false,
+            run_chars_fusion: true,
             run_list_build: false,
             ..Default::default()
         },
@@ -262,7 +261,7 @@ fn wasm_gc_bits_namespace_matches_vm() {
             alloc_policy: Some(&neutral_policy),
             run_interp_lower: false,
             run_buffer_build: false,
-            run_chars_fusion: false,
+            run_chars_fusion: true,
             run_list_build: false,
             ..Default::default()
         },
@@ -311,7 +310,7 @@ fn vm_and_wasm_gc_stdout(src: &str) -> (String, String) {
                 alloc_policy: Some(&aver::ir::NeutralAllocPolicy),
                 run_interp_lower: false,
                 run_buffer_build: false,
-                run_chars_fusion: false,
+                run_chars_fusion: true,
                 run_list_build: false,
                 ..Default::default()
             },

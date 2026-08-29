@@ -28,10 +28,11 @@ pub fn compile_to_wasm(source: &str) -> Result<Vec<u8>, String> {
             // a mutable buffer over `(struct len array)` with
             // grow-on-append, while `array.copy` x2 is the idiomatic
             // shape. Keep those mutable lowerings off, but enable the
-            // immutable String boundary index that wasm-gc lowers natively.
+            // UTF-8 character cursor and immutable String boundary index that
+            // wasm-gc lowers natively.
             run_interp_lower: false,
             run_buffer_build: false,
-            run_chars_fusion: false,
+            run_chars_fusion: true,
             run_string_index: true,
             run_list_build: false,
             ..Default::default()
@@ -79,7 +80,7 @@ pub fn compile_project_to_wasm(
             typecheck: Some(TypecheckMode::WithLoaded(&loaded)),
             run_interp_lower: false,
             run_buffer_build: false,
-            run_chars_fusion: false,
+            run_chars_fusion: true,
             run_string_index: true,
             run_list_build: false,
             ..Default::default()
@@ -152,7 +153,7 @@ pub fn compile_project_to_wasm_with_entry(
             typecheck: Some(TypecheckMode::WithLoaded(&loaded)),
             run_interp_lower: false,
             run_buffer_build: false,
-            run_chars_fusion: false,
+            run_chars_fusion: true,
             run_string_index: true,
             run_list_build: false,
             ..Default::default()
@@ -522,8 +523,8 @@ fn load_roots(items: &[TopLevel]) -> Vec<String> {
 }
 
 /// Lower one virtual-fs dependency with the entry target's matrix. Mutable
-/// cursor/builder deforestation and the immutable String index are separate:
-/// wasm requests only the latter, Rust requests both, and proofs request none.
+/// builders and immutable String traversal are separate: wasm requests cursor
+/// fusion + indexing, Rust requests all passes, and proofs request none.
 fn loaded_to_module_info(
     m: LoadedModule,
     apply_traversal_lowering: bool,
@@ -539,7 +540,7 @@ fn loaded_to_module_info(
         PipelineConfig {
             run_interp_lower: apply_traversal_lowering,
             run_buffer_build: apply_traversal_lowering,
-            run_chars_fusion: apply_traversal_lowering,
+            run_chars_fusion: apply_string_index,
             run_string_index: apply_string_index,
             run_list_build: apply_traversal_lowering,
             alloc_policy: Some(&neutral_policy),

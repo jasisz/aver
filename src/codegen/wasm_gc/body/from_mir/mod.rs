@@ -260,17 +260,32 @@ fn emit_mir_int_stringify(
 fn registered_builtin_returns_raw_int(dotted: &str) -> bool {
     matches!(
         dotted,
-        "String.len" | "String.byteLength" | "__str_index_code_at"
+        "String.len"
+            | "String.byteLength"
+            | "__str_index_code_at"
+            | "__str_cursor_next"
+            | "__str_code1"
+            | "__str_code1_lower"
+            | "__str_code1_upper"
+            | "__str_cursor_code"
+            | "__str_fold_lower"
+            | "__str_fold_upper"
     )
 }
 
-fn mir_is_index_code_call(e: &MirExpr) -> bool {
+fn mir_is_raw_code_call(e: &MirExpr) -> bool {
+    use crate::ir::hir::BuiltinIntrinsic;
     matches!(
         e,
         MirExpr::Call(c)
             if matches!(
                 c.node.callee,
-                MirCallee::Intrinsic(crate::ir::hir::BuiltinIntrinsic::StrIndexCodeAt)
+                MirCallee::Intrinsic(
+                    BuiltinIntrinsic::StrIndexCodeAt
+                        | BuiltinIntrinsic::StrCursorCode
+                        | BuiltinIntrinsic::StrFoldLower
+                        | BuiltinIntrinsic::StrFoldUpper
+                )
             )
     )
 }
@@ -290,6 +305,10 @@ fn registered_builtin_int_arg_positions(dotted: &str) -> &'static [usize] {
         "__str_index_char_at" => &[2],
         "__str_index_code_at" => &[2],
         "__str_index_slice" => &[2, 3],
+        "__str_cursor_end" | "__str_cursor_head" | "__str_cursor_next" | "__str_cursor_code" => {
+            &[1]
+        }
+        "__str_fold_lower" | "__str_fold_upper" => &[0],
         _ => &[],
     }
 }
@@ -580,7 +599,14 @@ pub(crate) fn emit_mir_expr(
             // The MIR `LocalId` is the resolver slot index = wasm local
             // index 1:1 (mirror of `ResolvedExpr::Resolved { slot }`).
             func.instruction(&Instruction::LocalGet(local.node.slot.0));
-            Ok(Some(aver_type_str_of(expr).trim() != "Unit"))
+            // Post-typecheck fabricating passes introduce cursor parameters and
+            // their Local reads without expression stamps. The resolver's
+            // slot table still owns their machine type, and every such cursor
+            // slot is value-producing. Preserve the strict Unit check for
+            // ordinary stamped locals while accepting that closed shape.
+            Ok(Some(
+                expr.ty().is_none() || aver_type_str_of(expr).trim() != "Unit",
+            ))
         }
         MirExpr::BinOp(spanned_binop) => {
             let bop = &spanned_binop.node;
@@ -1164,7 +1190,12 @@ pub(crate) fn emit_mir_expr(
                             {
                                 lift_i64_result_to_aint(func, ctx)?;
                             }
-                            Ok(Some(aver_type_str_of(expr).trim() != "Unit"))
+                            // Every intrinsic routed through this registry arm has a
+                            // value result. Fabricating passes run after typecheck, so
+                            // their freshly synthesized call node is intentionally not
+                            // stamped; consulting `aver_type_str_of(expr)` here would
+                            // turn a supported lowering into an internal panic.
+                            Ok(Some(true))
                         }
                         None => Err(WasmGcError::Validation(format!(
                             "the fabricated intrinsic `{}` reached the wasm-gc emitter; \
@@ -1615,7 +1646,7 @@ pub(crate) fn mir_renders_raw_i64(e: &MirExpr, ctx: &EmitCtx<'_>) -> bool {
         MirExpr::Project(_) => mir_is_bare_carrier_project(e, ctx),
         // The helper ABI itself returns a native i64; the MIR rewrite wraps
         // it in `Box` whenever a general `Int` sink needs `$AverInt`.
-        MirExpr::Call(_) => mir_is_index_code_call(e),
+        MirExpr::Call(_) => mir_is_raw_code_call(e),
         MirExpr::Box(_) => false,
         // A standalone `Int` literal is raw-COMPATIBLE (it can lower to an
         // `i64.const`), but on its own it is NOT proof of a raw context — its
@@ -1659,7 +1690,7 @@ fn mir_arith_leaves_raw_compatible(e: &MirExpr, ctx: &EmitCtx<'_>) -> bool {
         MirExpr::Unbox(_) => true,
         // ETAP-2 carrier-`i64`: a bare carrier's `.value` is a raw i64 leaf.
         MirExpr::Project(_) => mir_is_bare_carrier_project(e, ctx),
-        MirExpr::Call(_) => mir_is_index_code_call(e),
+        MirExpr::Call(_) => mir_is_raw_code_call(e),
         MirExpr::Literal(l) => matches!(l.node, Literal::Int(_)),
         MirExpr::Neg(inner) => mir_arith_leaves_raw_compatible(&inner.node, ctx),
         MirExpr::BinOp(b) => {
@@ -1787,7 +1818,7 @@ fn mir_has_raw_anchor(e: &MirExpr, ctx: &EmitCtx<'_>) -> bool {
         // ETAP-2 carrier-`i64`: a bare carrier's `.value` read is a genuine
         // raw anchor (a real i64 value, not a literal).
         MirExpr::Project(_) => mir_is_bare_carrier_project(e, ctx),
-        MirExpr::Call(_) => mir_is_index_code_call(e),
+        MirExpr::Call(_) => mir_is_raw_code_call(e),
         MirExpr::Neg(inner) => mir_has_raw_anchor(&inner.node, ctx),
         MirExpr::BinOp(b) => {
             mir_has_raw_anchor(&b.node.lhs.node, ctx) || mir_has_raw_anchor(&b.node.rhs.node, ctx)
@@ -1981,19 +2012,28 @@ pub(crate) fn emit_mir_args_then_call_lowering_int(
     int_arg_positions: &[usize],
 ) -> Result<Option<()>, WasmGcError> {
     for (i, arg) in args.iter().enumerate() {
-        if emit_mir_expr(func, arg, slots, ctx)?.is_none() {
-            return Ok(None);
-        }
-        if ctx.registry.bignum && int_arg_positions.contains(&i) {
-            let to_sat = ctx
-                .fn_map
-                .builtins
-                .get("__aint_to_i64_sat")
-                .copied()
-                .ok_or(WasmGcError::Validation(
-                    "bignum active but __aint_to_i64_sat helper not registered".into(),
-                ))?;
-            func.instruction(&Instruction::Call(to_sat));
+        let raw_int_arg = ctx.registry.bignum
+            && int_arg_positions.contains(&i)
+            && mir_renders_raw_i64(&arg.node, ctx);
+        if raw_int_arg {
+            if emit_mir_int_raw(func, arg, slots, ctx)?.is_none() {
+                return Ok(None);
+            }
+        } else {
+            if emit_mir_expr(func, arg, slots, ctx)?.is_none() {
+                return Ok(None);
+            }
+            if ctx.registry.bignum && int_arg_positions.contains(&i) {
+                let to_sat = ctx
+                    .fn_map
+                    .builtins
+                    .get("__aint_to_i64_sat")
+                    .copied()
+                    .ok_or(WasmGcError::Validation(
+                        "bignum active but __aint_to_i64_sat helper not registered".into(),
+                    ))?;
+                func.instruction(&Instruction::Call(to_sat));
+            }
         }
     }
     func.instruction(&Instruction::Call(wasm_idx));

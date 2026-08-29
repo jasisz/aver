@@ -222,7 +222,7 @@ fn ascii_pass(to_upper: bool) -> String {
 /// Missing wiring means the module registered the helper but never
 /// emitted its table — fail loudly rather than silently shipping the
 /// ASCII-only mapping again.
-fn missing(what: &str) -> WasmGcError {
+pub(super) fn missing(what: &str) -> WasmGcError {
     WasmGcError::Validation(format!(
         "String case helper requires the Unicode case table wiring ({what})"
     ))
@@ -441,7 +441,7 @@ pub(super) fn emit(
 
 /// Expansion first (a scalar is in at most one of the two tables), then
 /// the compressed one-to-one runs; a scalar in neither maps to itself.
-fn generic_map(simple: TableSpan, expand: TableSpan) -> String {
+pub(super) fn generic_map(simple: TableSpan, expand: TableSpan) -> String {
     format!(
         r#"
             {ex}

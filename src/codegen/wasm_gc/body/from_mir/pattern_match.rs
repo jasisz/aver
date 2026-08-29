@@ -3,6 +3,7 @@
 //! `emit_match` and its per-shape helpers in `super::super::emit`.
 
 use super::*;
+use crate::ir::mir::LocalId;
 
 /// ETAP-2 SLICE 2b: the raw-result colour an arm body must carry, derived
 /// from the match's already-computed `block_ty`. A bare-`i64` match (a
@@ -22,6 +23,34 @@ use super::*;
 /// harmless no-op.)
 fn block_ty_is_raw_i64(block_ty: wasm_encoder::BlockType) -> bool {
     matches!(block_ty, wasm_encoder::BlockType::Result(ValType::I64))
+}
+
+/// Fabricating passes run after typecheck, so their new call nodes do not carry
+/// a `Spanned::ty` stamp. Their intrinsic contract is nevertheless closed and
+/// explicit; use it only at the match-dispatch seam that otherwise reads the
+/// subject stamp. Ordinary source expressions remain fail-closed through
+/// `aver_type_str_of`.
+fn fabricated_subject_type(subject: &Spanned<MirExpr>) -> Option<&'static str> {
+    use crate::ir::hir::BuiltinIntrinsic;
+    let MirExpr::Call(call) = &subject.node else {
+        return None;
+    };
+    let MirCallee::Intrinsic(intrinsic) = call.node.callee else {
+        return None;
+    };
+    match intrinsic {
+        BuiltinIntrinsic::StrCursorEnd => Some("Bool"),
+        BuiltinIntrinsic::StrCursorHead => Some("String"),
+        BuiltinIntrinsic::StrCursorNext
+        | BuiltinIntrinsic::StrCode1
+        | BuiltinIntrinsic::StrCode1Lower
+        | BuiltinIntrinsic::StrCode1Upper
+        | BuiltinIntrinsic::StrCursorCode
+        | BuiltinIntrinsic::StrFoldLower
+        | BuiltinIntrinsic::StrFoldUpper
+        | BuiltinIntrinsic::StrIndexCodeAt => Some("Int"),
+        _ => None,
+    }
 }
 
 /// Mirror of `emit_match` (emit.rs) for the primitive-subject shapes:
@@ -67,6 +96,39 @@ pub(crate) fn emit_mir_match(
         }
     };
     let produces = !matches!(block_ty, wasm_encoder::BlockType::Empty);
+    let fabricated_type = fabricated_subject_type(&m.subject);
+    let subject_type = fabricated_type
+        .map(str::to_owned)
+        .unwrap_or_else(|| aver_type_str_of(&m.subject));
+
+    // Fusion passes express a compiler-local binding as an irrefutable
+    // one-arm match because the expression AST has no `let`. Lower only that
+    // fabricated shape as a store followed by the body, leaving source-level
+    // matches on their byte-stable established path. Cursor peeling synthesises
+    // both a String head binding and an Int next-offset binding. The latter
+    // follows the MIR bare-i64 decision for its slot; every other representation
+    // is emitted normally.
+    if fabricated_type.is_some()
+        && subject_type.trim() != "Unit"
+        && m.arms.len() == 1
+        && let MirPattern::Bind(slot, _) = &m.arms[0].pattern
+    {
+        let emitted = if subject_type.trim() == "Int" && ctx.slot_is_bare(slot.0) {
+            emit_mir_int_raw(func, &m.subject, slots, ctx)?
+        } else {
+            emit_mir_expr(func, &m.subject, slots, ctx)?
+        };
+        if emitted.is_none() {
+            return Ok(None);
+        }
+        if slot.0 == u32::from(u16::MAX) {
+            func.instruction(&Instruction::Drop);
+        } else {
+            func.instruction(&Instruction::LocalSet(slot.0));
+        }
+        ctx.int_result_raw.set(result_raw);
+        return emit_mir_expr(func, &m.arms[0].body, slots, ctx);
+    }
 
     // Tuple arms. The single-arm flat destructure `(a, b, …) -> body`
     // (every component a `Bind` or `Wildcard`) goes to `emit_mir_tuple_match`
@@ -140,7 +202,7 @@ pub(crate) fn emit_mir_match(
         return Ok(emit_mir_variant_dispatch(func, m, block_ty, slots, ctx)?.map(|()| produces));
     }
 
-    match aver_type_str_of(&m.subject).trim() {
+    match subject_type.trim() {
         "Bool" => {
             // Mirror of `emit_match`'s Bool special-case: a single
             // `if subject { true_body } else { false_body }`.
@@ -187,28 +249,33 @@ pub(crate) fn emit_mir_match(
         "Int" => {
             // Mirror of `emit_match`'s Int path + `emit_int_match_cascade`:
             // first-applicable wins, wildcard required.
-            let mut wildcard_body: Option<&Spanned<MirExpr>> = None;
+            let mut fallback: Option<(&Spanned<MirExpr>, Option<LocalId>)> = None;
             let mut typed_arms: Vec<(i64, &Spanned<MirExpr>)> = Vec::new();
             for arm in &m.arms {
                 match &arm.pattern {
-                    MirPattern::Literal(Literal::Int(n)) => typed_arms.push((*n, &arm.body)),
-                    MirPattern::Wildcard => {
-                        // First wildcard wins (source-order semantics).
-                        if wildcard_body.is_none() {
-                            wildcard_body = Some(&arm.body);
-                        }
+                    MirPattern::Literal(Literal::Int(n)) if fallback.is_none() => {
+                        typed_arms.push((*n, &arm.body));
                     }
+                    MirPattern::Wildcard if fallback.is_none() => {
+                        fallback = Some((&arm.body, None));
+                    }
+                    MirPattern::Bind(slot, _) if fallback.is_none() => {
+                        fallback = Some((&arm.body, Some(*slot)));
+                    }
+                    // First catch-all wins; later arms are unreachable.
+                    _ if fallback.is_some() => break,
                     _ => return Ok(None),
                 }
             }
-            let Some(wildcard) = wildcard_body else {
+            let Some((fallback_body, fallback_slot)) = fallback else {
                 return Ok(None);
             };
             if emit_mir_int_cascade(
                 func,
                 &m.subject,
                 &typed_arms,
-                wildcard,
+                fallback_body,
+                fallback_slot,
                 block_ty,
                 result_raw,
                 slots,
@@ -803,16 +870,35 @@ pub(crate) fn emit_mir_int_cascade(
     func: &mut Function,
     subject: &Spanned<MirExpr>,
     typed_arms: &[(i64, &Spanned<MirExpr>)],
-    wildcard: &Spanned<MirExpr>,
+    fallback: &Spanned<MirExpr>,
+    fallback_slot: Option<LocalId>,
     block_ty: wasm_encoder::BlockType,
     result_raw: bool,
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<Option<()>, WasmGcError> {
     let Some(((pat_lit, body), rest)) = typed_arms.split_first() else {
-        // No typed arms left — emit the wildcard body (a result tail).
+        // No literal arms left — emit the catch-all body. An identifier
+        // catch-all also captures the subject. String-index fusion uses this
+        // exact shape to bind the raw codepoint after its -1 sentinel arm.
+        if let Some(slot) = fallback_slot {
+            let emitted = if ctx.slot_is_bare(slot.0) {
+                emit_mir_int_raw(func, subject, slots, ctx)?
+            } else {
+                ctx.int_result_raw.set(false);
+                emit_mir_expr(func, subject, slots, ctx)?
+            };
+            if emitted.is_none() {
+                return Ok(None);
+            }
+            if slot.0 == u32::from(u16::MAX) {
+                func.instruction(&Instruction::Drop);
+            } else {
+                func.instruction(&Instruction::LocalSet(slot.0));
+            }
+        }
         ctx.int_result_raw.set(result_raw);
-        if emit_mir_expr(func, wildcard, slots, ctx)?.is_none() {
+        if emit_mir_expr(func, fallback, slots, ctx)?.is_none() {
             return Ok(None);
         }
         return Ok(Some(()));
@@ -867,7 +953,15 @@ pub(crate) fn emit_mir_int_cascade(
     }
     func.instruction(&Instruction::Else);
     if emit_mir_int_cascade(
-        func, subject, rest, wildcard, block_ty, result_raw, slots, ctx,
+        func,
+        subject,
+        rest,
+        fallback,
+        fallback_slot,
+        block_ty,
+        result_raw,
+        slots,
+        ctx,
     )?
     .is_none()
     {

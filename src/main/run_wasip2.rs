@@ -108,7 +108,7 @@ fn build_component(
     let prepared_deps = super::commands::load_compile_deps_prepared(
         &items,
         &module_root,
-        super::commands::DepLowering::STRING_INDEX_ONLY,
+        super::commands::DepLowering::STRING_TRAVERSAL,
     );
     let dep_modules = prepared_deps.modules;
 
@@ -119,17 +119,12 @@ fn build_component(
             typecheck: Some(TypecheckMode::WithCheckedLoaded(&prepared_deps.loaded)),
             alloc_policy: Some(&neutral_policy),
             dep_modules: &dep_modules,
-            // Both traversal-lowering stages stay OFF for wasip2, and
-            // that is a backend limit, not an oversight: this path
-            // lowers through wasm-gc, which has no representation for
-            // the `Buffer` the pass introduces. Turning the flag on and
-            // running a fusable program answers with
-            // `aver_to_wasm: cannot lower type 'Buffer' to a wasm
-            // representation`. The VM and Rust targets, which do own a
-            // buffer, run the pass — see `cmd_run_vm`.
+            // Mutable buffer/list lowering stays off: wasm-gc has no Buffer
+            // carrier yet. Character fusion is independent of that carrier and
+            // lowers directly over the shared UTF-8 String array.
             run_interp_lower: false,
             run_buffer_build: false,
-            run_chars_fusion: false,
+            run_chars_fusion: true,
             run_string_index: true,
             run_list_build: false,
             ..Default::default()
