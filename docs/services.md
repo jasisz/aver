@@ -223,7 +223,7 @@ Source: `src/types/string.rs`
 | `String.endsWith` | `(String, String) -> Bool` | |
 | `String.contains` | `(String, String) -> Bool` | |
 | `String.slice` | `(String, Int, Int) -> String` | Character indices; out-of-range ends clamp |
-| `String.trim` | `String -> String` | |
+| `String.trim` | `String -> String` | Trims Unicode `White_Space` from both ends (same set as Rust `str::trim`) |
 | `String.split` | `(String, String) -> List<String>` | |
 | `String.replace` | `(String, String, String) -> String` | |
 | `String.join` | `(List<String>, String) -> String` | |

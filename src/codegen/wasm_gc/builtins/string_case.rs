@@ -92,7 +92,7 @@ fn search(span: TableSpan, record: u32, point: bool, key: &str, id: &str) -> Str
 /// Input is always well-formed UTF-8 — String values come from
 /// literals, concatenation, scalar-boundary slicing, or the validating
 /// `String.fromUtf8` — so there is no error arm.
-fn decode(idx: &str, byte: &str, code: &str, clen: &str) -> String {
+pub(super) fn decode(idx: &str, byte: &str, code: &str, clen: &str) -> String {
     format!(
         r#"
             local.get $s local.get {idx} array.get_u $string local.set {byte}
