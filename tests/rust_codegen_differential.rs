@@ -2241,6 +2241,50 @@ fn main() -> Unit
     assert_eq!(rust, vm, "Rust UTF-8 conversion diverged from VM");
 }
 
+/// This is the btc-listener path from #1195: exact-width integer encoding
+/// must build a packed `Bytes` carrier directly, keep arbitrary-precision
+/// values intact, and work without a handwritten `depends [Bytes]` edge.
+#[test]
+fn rust_int_endian_codecs_match_vm_and_build_implicit_bytes() {
+    let src = r#"module EndianImplicitBytes
+    intent = "Fixed-width integer encoding owns its Bytes dependency implicitly."
+    effects [Console.print]
+
+fn encodeBig(value: Int, width: Int) -> Result<Bytes, String>
+    ? "Keep both arguments dynamic to exercise the fallible path."
+    Int.toBigEndian(value, width)
+
+fn encodeLittle(value: Int, width: Int) -> Result<Bytes, String>
+    ? "Keep both arguments dynamic to exercise the fallible path."
+    Int.toLittleEndian(value, width)
+
+fn showBig(result: Result<Bytes, String>) -> String
+    match result
+        Result.Ok(bytes) -> String.fromInt(Int.fromBigEndian(bytes))
+        Result.Err(error) -> error
+
+fn showLittleAsBig(result: Result<Bytes, String>) -> String
+    match result
+        Result.Ok(bytes) -> String.fromInt(Int.fromBigEndian(bytes))
+        Result.Err(error) -> error
+
+fn showLittle(result: Result<Bytes, String>) -> String
+    match result
+        Result.Ok(bytes) -> String.fromInt(Int.fromLittleEndian(bytes))
+        Result.Err(error) -> error
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("{showBig(encodeBig(258, 2))}/{showLittleAsBig(encodeLittle(258, 2))}/{showLittle(encodeLittle(258, 2))}/{Int.fromBigEndian(Int.toBigEndian(18446744073709551616, 9))}/{Int.fromLittleEndian(Int.toLittleEndian(18446744073709551616, 9))}")
+"#;
+
+    let vm = run_vm_inline("int_endian_implicit_bytes", src).expect("vm run");
+    let rust = build_run_rust_inline("int_endian_implicit_bytes", src)
+        .expect("rust compile + cargo build + run");
+    assert_eq!(vm, "258/513/258/18446744073709551616/18446744073709551616");
+    assert_eq!(rust, vm, "Rust Int endian codecs diverged from VM");
+}
+
 /// `List.drop` on the compiled backend: stepping through a list must see
 /// exactly what stepping by destructuring sees, and the two answers are
 /// printed side by side so a skipped or duplicated element shows up in the

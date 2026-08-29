@@ -1,7 +1,7 @@
 module Helpers
     depends [Domain.Value]
     intent = "Shared argument extraction helpers for builtin implementations."
-    exposes [oneArg, twoArgs, expectList, expectInt, expectStr]
+    exposes [oneArg, twoArgs, expectList, expectInt, expectStr, expectBytes]
     effects []
 
 fn oneArg(args: List<Val>) -> Result<Val, String>
@@ -60,3 +60,42 @@ fn expectStr(v: Val) -> Result<String, String>
 verify expectStr
     expectStr(Val.ValStr("hi")) => Result.Ok("hi")
     expectStr(Val.ValInt(1)) => Result.Err("expected string argument")
+
+fn expectBytes(v: Val) -> Result<List<Int>, String>
+    ? "Extract the validated octets from the self-hosted Bytes record."
+    match v
+        Val.ValRecord(name, fields) -> match name == "Bytes"
+            true -> expectBytesFields(fields)
+            false -> Result.Err("expected Bytes argument")
+        _ -> Result.Err("expected Bytes argument")
+
+fn expectBytesFields(fields: List<Tuple<String, Val>>) -> Result<List<Int>, String>
+    ? "Find the opaque Bytes values field in its interpreter representation."
+    match fields
+        [] -> Result.Err("expected Bytes argument")
+        [field, ..rest] -> match field
+            (name, value) -> match name == "values"
+                true -> match value
+                    Val.ValList(items) -> expectByteItems(items, [])
+                    _ -> Result.Err("expected Bytes argument")
+                false -> expectBytesFields(rest)
+
+verify expectBytesFields
+    expectBytesFields([("values", Val.ValList([Val.ValInt(1)]))]) => Result.Ok([1])
+    expectBytesFields([]) => Result.Err("expected Bytes argument")
+
+fn expectByteItems(items: List<Val>, acc: List<Int>) -> Result<List<Int>, String>
+    ? "Project byte values while preserving their source order."
+    match items
+        [] -> Result.Ok(List.reverse(acc))
+        [item, ..rest] -> match item
+            Val.ValInt(value) -> expectByteItems(rest, List.prepend(value, acc))
+            _ -> Result.Err("expected Bytes argument")
+
+verify expectByteItems
+    expectByteItems([Val.ValInt(1), Val.ValInt(2)], []) => Result.Ok([1, 2])
+    expectByteItems([Val.ValStr("x")], []) => Result.Err("expected Bytes argument")
+
+verify expectBytes
+    expectBytes(Val.ValRecord("Bytes", [("values", Val.ValList([Val.ValInt(1), Val.ValInt(2)]))])) => Result.Ok([1, 2])
+    expectBytes(Val.ValInt(1)) => Result.Err("expected Bytes argument")

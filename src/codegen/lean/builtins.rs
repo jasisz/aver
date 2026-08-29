@@ -113,6 +113,12 @@ pub fn emit_builtin_call(
             b = p(&a[1])
         ),
         IntFromString => format!("Int.fromString {}", p(&a[0])),
+        IntToBigEndian => format!("Bytes.intToBigEndian {} {}", p(&a[0]), p(&a[1])),
+        IntToLittleEndian => {
+            format!("Bytes.intToLittleEndian {} {}", p(&a[0]), p(&a[1]))
+        }
+        IntFromBigEndian => format!("Bytes.intFromBigEndian {}", p(&a[0])),
+        IntFromLittleEndian => format!("Bytes.intFromLittleEndian {}", p(&a[0])),
 
         // ---- Float ----
         FloatAbs => format!("Float.abs {}", p(&a[0])),

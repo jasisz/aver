@@ -96,6 +96,10 @@ pub(crate) const SOURCE_TYPED_BUILTINS: &[(&str, &[&str])] = &[
     ("Crypto.sha256", &["Bytes", "Crypto.Digest32"]),
     ("String.toUtf8", &["Bytes"]),
     ("String.fromUtf8", &["Bytes"]),
+    ("Int.toBigEndian", &["Bytes"]),
+    ("Int.toLittleEndian", &["Bytes"]),
+    ("Int.fromBigEndian", &["Bytes"]),
+    ("Int.fromLittleEndian", &["Bytes"]),
 ];
 
 /// Standard modules `items` implicitly depends on because a type annotation,

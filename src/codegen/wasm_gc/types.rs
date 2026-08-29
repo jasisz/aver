@@ -2158,6 +2158,10 @@ fn builtin_touches_int(name: &str) -> bool {
             | "Int.div"
             | "Int.mod"
             | "Int.toFloat"
+            | "Int.toBigEndian"
+            | "Int.toLittleEndian"
+            | "Int.fromBigEndian"
+            | "Int.fromLittleEndian"
             // `Bits` is a bit-level VIEW of `Int`: every parameter and every
             // payload is an `Int`, so any call must flip the gate. Missing
             // one here would lower a `ℤ` value through the wrapping-i64

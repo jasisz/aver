@@ -124,17 +124,29 @@ Source: `src/types/option.rs` + constructors in `src/vm/runtime.rs`.
 
 Source: `src/types/int.rs`
 
-| Function | Signature |
-|---|---|
-| `Int.fromString` | `String -> Result<Int, String>` |
-| `Int.fromFloat` | `Float -> Int` |
-| `String.fromInt` | `Int -> String` |
-| `Float.fromInt` | `Int -> Float` |
-| `Int.abs` | `Int -> Int` |
-| `Int.min` | `(Int, Int) -> Int` |
-| `Int.max` | `(Int, Int) -> Int` |
+| Function | Signature | Notes |
+|---|---|---|
+| `Int.fromString` | `String -> Result<Int, String>` | |
+| `Int.fromFloat` | `Float -> Int` | |
+| `String.fromInt` | `Int -> String` | |
+| `Float.fromInt` | `Int -> Float` | |
+| `Int.abs` | `Int -> Int` | |
+| `Int.min` | `(Int, Int) -> Int` | |
+| `Int.max` | `(Int, Int) -> Int` | |
 | `Int.mod` | `(Int, Int) -> Result<Int, String>` | A syntactic nonzero literal divisor discharges to plain `Int` |
 | `Int.div` | `(Int, Int) -> Result<Int, String>` | A syntactic nonzero literal divisor discharges to plain `Int` |
+| `Int.toBigEndian` | `(Int, Int) -> Result<Bytes, String>` | Unsigned `(value, width)` encoding |
+| `Int.toLittleEndian` | `(Int, Int) -> Result<Bytes, String>` | Unsigned `(value, width)` encoding |
+| `Int.fromBigEndian` | `Bytes -> Int` | Total unsigned decoding |
+| `Int.fromLittleEndian` | `Bytes -> Int` | Total unsigned decoding |
+
+The endian encoders produce exactly `width` octets, padding with zeroes on the
+most-significant side. They reject a negative value, a value that does not fit,
+and a width outside `0..=1048576`. Both literal arguments discharge the
+`Result` to plain `Bytes` only when the compiler can prove those conditions;
+dynamic calls keep `Result<Bytes, String>`. Width zero encodes only zero, as
+`Bytes.empty()`, and both decoders read `Bytes.empty()` as zero. Signed
+fixed-width intent stays explicit: encode `Bits.low(value, 8 * width)`.
 
 ### `Bits` namespace
 

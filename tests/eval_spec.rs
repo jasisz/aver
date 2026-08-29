@@ -345,6 +345,53 @@ fn int_from_float() {
 }
 
 #[test]
+fn int_endian_codecs_cover_exact_width_errors_and_unbounded_roundtrips() {
+    let src = r#"module EndianVm
+    intent = "Exercise exact-width integer byte codecs."
+    depends [Bytes]
+    effects []
+
+fn showBig(value: Int, width: Int) -> String
+    match Int.toBigEndian(value, width)
+        Result.Ok(bytes) -> Bytes.toHex(bytes)
+        Result.Err(error) -> error
+
+fn showLittle(value: Int, width: Int) -> String
+    match Int.toLittleEndian(value, width)
+        Result.Ok(bytes) -> Bytes.toHex(bytes)
+        Result.Err(error) -> error
+"#;
+    assert_eq!(
+        call_fn_with_effects(src, "showBig", vec![Value::int(258), Value::int(2)]),
+        Ok(Value::Str("0102".to_string()))
+    );
+    assert_eq!(
+        call_fn_with_effects(src, "showLittle", vec![Value::int(258), Value::int(2)]),
+        Ok(Value::Str("0201".to_string()))
+    );
+    assert_eq!(
+        call_fn_with_effects(src, "showBig", vec![Value::int(0), Value::int(0)]),
+        Ok(Value::Str(String::new()))
+    );
+    assert_eq!(
+        call_fn_with_effects(src, "showBig", vec![Value::int(256), Value::int(1)]),
+        Ok(Value::Str(
+            "Int.toBigEndian: value does not fit in the requested width".to_string()
+        ))
+    );
+
+    let beyond_u64 = aver_rt::AverInt::from_str("18446744073709551616").unwrap();
+    assert_eq!(
+        eval("Int.fromBigEndian(Int.toBigEndian(18446744073709551616, 9))"),
+        Value::Int(beyond_u64.clone())
+    );
+    assert_eq!(
+        eval("Int.fromLittleEndian(Int.toLittleEndian(18446744073709551616, 9))"),
+        Value::Int(beyond_u64)
+    );
+}
+
+#[test]
 fn int_abs() {
     assert_eq!(eval("Int.abs(5)"), Value::int(5));
 }

@@ -191,6 +191,35 @@ pub fn is_literal_nonneg_int_count(expr: &Spanned<Expr>) -> bool {
     }
 }
 
+/// Whether `Int.to{Big,Little}Endian(value, width)` is statically total from
+/// source syntax alone. Both operands must be literals: a valid width removes
+/// only the allocation-bound error, while the unsigned value must separately
+/// be proven to fit in exactly that many octets.
+pub fn is_literal_total_int_endian_call(value: &Spanned<Expr>, width: &Spanned<Expr>) -> bool {
+    let Expr::Literal(Literal::Int(width)) = &width.node else {
+        return false;
+    };
+    if *width < 0 || (*width as u64) > aver_rt::MAX_MATERIALIZED_SEQUENCE_ELEMENTS as u64 {
+        return false;
+    }
+    let available_bits = (*width as u64) * 8;
+    match &value.node {
+        Expr::Literal(Literal::Int(value)) if *value >= 0 => {
+            let required_bits = if *value == 0 {
+                0
+            } else {
+                64 - (*value as u64).leading_zeros() as u64
+            };
+            required_bits <= available_bits
+        }
+        Expr::Literal(Literal::BigInt(value)) => {
+            num_bigint::BigUint::parse_bytes(value.as_bytes(), 10)
+                .is_some_and(|value| value.bits() <= available_bits)
+        }
+        _ => false,
+    }
+}
+
 /// Literal discharge for `Bits.shiftRight(x, N)`. Right shift never grows its
 /// result, so every syntactic non-negative integer literal is total — including
 /// a `BigInt` count, which immediately returns the infinite sign tail.

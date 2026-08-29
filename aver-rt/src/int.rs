@@ -23,7 +23,7 @@ use core::cmp::Ordering;
 use core::fmt;
 use core::str::FromStr;
 
-use num_bigint::BigInt;
+use num_bigint::{BigInt, Sign};
 use num_integer::Integer;
 use num_traits::{FromPrimitive, ToPrimitive, Zero};
 
@@ -50,6 +50,85 @@ pub enum ShiftCountError {
 /// language constant, not a host `usize` limit, so VM, generated Rust, wasm,
 /// and proof models share one refusal boundary.
 pub const MAX_MATERIALIZED_BITS: usize = 16 * 1024 * 1024;
+
+/// Public fixed-width Int encoder refusal text, derived from the shared
+/// portable sequence budget rather than repeated in compiler backends.
+pub fn int_endian_width_error_message(operation: &str) -> String {
+    format!(
+        "{operation}: width must be between 0 and {}",
+        crate::MAX_MATERIALIZED_SEQUENCE_ELEMENTS
+    )
+}
+
+/// Public unsigned fixed-width Int encoder overflow text.
+pub fn int_endian_value_error_message(operation: &str) -> String {
+    format!("{operation}: value does not fit in the requested width")
+}
+
+#[derive(Clone, Copy)]
+enum EndianOrder {
+    Big,
+    Little,
+}
+
+fn fixed_width_octets(
+    value: &AverInt,
+    width: &AverInt,
+    operation: &str,
+    order: EndianOrder,
+) -> Result<Vec<u8>, String> {
+    let Some(width) = width.to_usize() else {
+        return Err(int_endian_width_error_message(operation));
+    };
+    if width > crate::MAX_MATERIALIZED_SEQUENCE_ELEMENTS {
+        return Err(int_endian_width_error_message(operation));
+    }
+    if value < &AverInt::zero() {
+        return Err(int_endian_value_error_message(operation));
+    }
+
+    let (_, mut magnitude) = match order {
+        EndianOrder::Big => value.to_bigint().to_bytes_be(),
+        EndianOrder::Little => value.to_bigint().to_bytes_le(),
+    };
+    // num-bigint serializes zero as one zero octet; the fixed-width language
+    // contract gives zero the empty minimal magnitude so `(0, 0) -> []`.
+    if value.is_zero() {
+        magnitude.clear();
+    }
+    if magnitude.len() > width {
+        return Err(int_endian_value_error_message(operation));
+    }
+
+    let mut out = vec![0; width];
+    match order {
+        EndianOrder::Big => out[width - magnitude.len()..].copy_from_slice(&magnitude),
+        EndianOrder::Little => out[..magnitude.len()].copy_from_slice(&magnitude),
+    }
+    Ok(out)
+}
+
+/// Encode a non-negative mathematical Int into exactly `width` big-endian
+/// octets. Zero has the unique zero-width representation `[]`.
+pub fn int_to_big_endian(value: &AverInt, width: &AverInt) -> Result<Vec<u8>, String> {
+    fixed_width_octets(value, width, "Int.toBigEndian", EndianOrder::Big)
+}
+
+/// Encode a non-negative mathematical Int into exactly `width` little-endian
+/// octets. Zero has the unique zero-width representation `[]`.
+pub fn int_to_little_endian(value: &AverInt, width: &AverInt) -> Result<Vec<u8>, String> {
+    fixed_width_octets(value, width, "Int.toLittleEndian", EndianOrder::Little)
+}
+
+/// Decode unsigned big-endian magnitude bytes into mathematical Int.
+pub fn int_from_big_endian(bytes: &[u8]) -> AverInt {
+    AverInt::from_bigint(BigInt::from_bytes_be(Sign::Plus, bytes))
+}
+
+/// Decode unsigned little-endian magnitude bytes into mathematical Int.
+pub fn int_from_little_endian(bytes: &[u8]) -> AverInt {
+    AverInt::from_bigint(BigInt::from_bytes_le(Sign::Plus, bytes))
+}
 
 /// Public `Bits.shiftLeft` refusal text, derived from the same language
 /// constant that guards the allocation. Compiler backends call this while
@@ -647,6 +726,52 @@ mod tests {
 
     fn big(s: &str) -> AverInt {
         AverInt::from_str(s).unwrap()
+    }
+
+    #[test]
+    fn fixed_width_endian_codecs_cover_zero_padding_and_bigints() {
+        let zero = AverInt::zero();
+        let four = AverInt::from_i64(4);
+        assert_eq!(int_to_big_endian(&zero, &four).unwrap(), [0, 0, 0, 0]);
+        assert_eq!(
+            int_to_big_endian(&AverInt::from_i64(258), &AverInt::from_i64(2)).unwrap(),
+            [1, 2]
+        );
+        assert_eq!(
+            int_to_little_endian(&AverInt::from_i64(258), &AverInt::from_i64(2)).unwrap(),
+            [2, 1]
+        );
+
+        let past_u64 = big("18446744073709551616");
+        let encoded = int_to_big_endian(&past_u64, &AverInt::from_i64(9)).unwrap();
+        assert_eq!(encoded, [1, 0, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(int_from_big_endian(&encoded), past_u64);
+    }
+
+    #[test]
+    fn fixed_width_endian_codecs_define_empty_and_refuse_bad_inputs() {
+        assert_eq!(
+            int_to_big_endian(&AverInt::zero(), &AverInt::zero()).unwrap(),
+            Vec::<u8>::new()
+        );
+        assert_eq!(int_from_big_endian(&[]), AverInt::zero());
+        assert_eq!(int_from_little_endian(&[]), AverInt::zero());
+
+        assert_eq!(
+            int_to_big_endian(&AverInt::from_i64(1), &AverInt::zero()).unwrap_err(),
+            "Int.toBigEndian: value does not fit in the requested width"
+        );
+        assert_eq!(
+            int_to_big_endian(&AverInt::from_i64(-1), &AverInt::from_i64(4)).unwrap_err(),
+            "Int.toBigEndian: value does not fit in the requested width"
+        );
+        assert_eq!(
+            int_to_little_endian(&AverInt::zero(), &AverInt::from_i64(-1)).unwrap_err(),
+            format!(
+                "Int.toLittleEndian: width must be between 0 and {}",
+                crate::MAX_MATERIALIZED_SEQUENCE_ELEMENTS
+            )
+        );
     }
 
     #[test]

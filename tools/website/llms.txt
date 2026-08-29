@@ -26,6 +26,7 @@ If you only remember one section, make it this one:
 - Pure functions get colocated `verify` blocks
 - Classified effectful fns (Random, Disk, Http, Tcp one-shot, Time, Console.readLine, Terminal non-modal, all output) get `verify fn trace` with `given` stubs; unclassified ambient / session / modal flows go through record/replay
 - Parse integers with `Int.fromString`, which returns `Result<Int, String>`
+- Convert unsigned integers to fixed-width protocol bytes with `Int.toBigEndian(value, width)` or `Int.toLittleEndian(value, width)`; both return `Result<Bytes, String>` unless both literal arguments prove the call cannot fail. Decode total `Bytes` values with `Int.fromBigEndian` / `Int.fromLittleEndian`
 - `Console.readLine()` returns `Result<String, String>`, not plain `String`
 
 ## Minimal correct file
@@ -327,6 +328,7 @@ Key `String` API:
 - `String.toUpper`, `String.toLower`, `String.trim`, `String.replace : (String, String, String) -> String`
 - `String.join`, `String.split`, `String.chars` — concat is the `+` operator
 - `Int.fromString : String -> Result<Int, String>`, `String.fromInt : Int -> String`
+- `Int.toBigEndian`, `Int.toLittleEndian : (Int, Int) -> Result<Bytes, String>`; `Int.fromBigEndian`, `Int.fromLittleEndian : Bytes -> Int`
 - `Float.fromString`, `String.fromFloat`, `String.fromBool` — convention: `<targetTyp>.from<source>`
 - string interpolation: `"Hello, {name}!"` is the idiomatic way to render PRIMITIVES into text; reserve `String.fromInt` etc. for explicit data conversion (e.g. building keys: `"user:" + String.fromInt(id)`). Compound values have no built-in rendering — write your own `fn show(x: T) -> String`.
 
@@ -338,6 +340,7 @@ Key `Int` API:
 - `Int.abs : Int -> Int`, `Int.min`, `Int.max` — `(Int, Int) -> Int`
 - `Int.div`, `Int.mod` — `(Int, Int) -> Result<Int, String>`, Euclidean, see the operators section above
 - `Int.fromString : String -> Result<Int, String>`, `Int.fromFloat : Float -> Int`
+- `Int.toBigEndian`, `Int.toLittleEndian : (Int, Int) -> Result<Bytes, String>`; `Int.fromBigEndian`, `Int.fromLittleEndian : Bytes -> Int`
 
 Key `Float` API:
 - `Float.abs`, `Float.sqrt`, `Float.sin`, `Float.cos` — `Float -> Float`; the trig functions take radians

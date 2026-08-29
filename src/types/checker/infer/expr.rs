@@ -909,6 +909,17 @@ impl TypeChecker {
                             }
                             return Type::Int;
                         }
+                        "Int.toBigEndian" | "Int.toLittleEndian"
+                            if args.len() == 2
+                                && crate::ast::is_literal_total_int_endian_call(
+                                    &args[0], &args[1],
+                                ) =>
+                        {
+                            if let Some(sig) = self.find_fn_sig(&display_name).cloned() {
+                                check_call(self, &display_name, sig);
+                            }
+                            return Type::named("Bytes");
+                        }
                         // Literal-count discharge for operations that may
                         // materialize `n` bits. A negative, oversized, or
                         // non-literal count keeps the registered `Result`.

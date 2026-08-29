@@ -598,6 +598,28 @@ pub(super) fn emit_dafny_builtin(b: crate::codegen::builtins::Builtin, a: &[Stri
             a = a[0],
             b = a[1]
         ),
+        IntToBigEndian | IntToLittleEndian => {
+            let operation = if matches!(b, IntToBigEndian) {
+                "Int.toBigEndian"
+            } else {
+                "Int.toLittleEndian"
+            };
+            let bytes = if matches!(b, IntToBigEndian) {
+                "IntBigEndianBytes"
+            } else {
+                "IntLittleEndianBytes"
+            };
+            let limit = aver_rt::MAX_MATERIALIZED_SEQUENCE_ELEMENTS;
+            let width_error = aver_rt::int_endian_width_error_message(operation);
+            let value_error = aver_rt::int_endian_value_error_message(operation);
+            format!(
+                "(if {width} < 0 || {width} > {limit} then Result<seq<int>, string>.Err(\"{width_error}\") else if {value} < 0 || !IntFitsUnsignedWidth({value}, {width}) then Result<seq<int>, string>.Err(\"{value_error}\") else Result<seq<int>, string>.Ok({bytes}({value}, {width})))",
+                value = a[0],
+                width = a[1],
+            )
+        }
+        IntFromBigEndian => format!("IntFromBigEndianBytes({})", a[0]),
+        IntFromLittleEndian => format!("IntFromLittleEndianBytes({})", a[0]),
 
         // Float
         FloatAbs => format!("(if {} >= 0.0 then {} else -{})", a[0], a[0], a[0]),

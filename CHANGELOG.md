@@ -4,6 +4,10 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ## Unreleased
 
+### Added
+
+- **Unsigned integers can be encoded to exact-width big- or little-endian bytes without building an Aver list one octet at a time.** `Int.toBigEndian(value, width)` and `Int.toLittleEndian(value, width)` return `Result<Bytes, String>` for dynamic inputs, while calls whose literal value and width prove they fit discharge to plain `Bytes`; `Int.fromBigEndian` and `Int.fromLittleEndian` decode total `Bytes` values back to arbitrary-precision `Int`. Generated Rust and wasm-gc write the packed byte carrier directly. Closes [#1195](https://github.com/jasisz/aver/issues/1195).
+
 ### Fixed
 
 - **`String.toLower` and `String.toUpper` now handle non-ASCII text on wasm-gc and wasip2.** Those two backends previously changed only the letters A-Z and a-z, so `String.toLower("ĄĆĘ ŁÓŚ ΩΔ")` came back unchanged while the VM and generated Rust returned `"ąćę łóś ωδ"`. All backends now agree, including letters whose case changes their length (`String.toUpper("ß")` is `"SS"`) and a final Greek sigma at the end of a word (`ς`, not `σ`). Programs that never call either builtin compile to exactly the same bytes as before. Closes [#1185](https://github.com/jasisz/aver/issues/1185).
