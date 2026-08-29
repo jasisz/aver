@@ -1070,8 +1070,10 @@ impl<T: ArenaTypes> Arena<T> {
         for child in held.into_iter().flatten() {
             self.note_held_elsewhere(child);
         }
+        let scan_receipt = self.lane_mark();
         self.push(ArenaEntry::Vector {
             items,
+            scan_receipt,
             all_immediate,
             holder_count: 0,
         })
@@ -1198,18 +1200,21 @@ impl<T: ArenaTypes> Arena<T> {
     }
     /// Hand out the elements for arbitrary mutation.
     ///
-    /// The caller can store anything, so the all-immediate promise cannot
-    /// survive this: it is cleared here rather than at every call site, because
-    /// `false` costs a walk and a wrong `true` costs a stale arena index. A
-    /// caller that does know what it writes should use
+    /// The caller can store anything, so neither the all-immediate promise nor
+    /// the bulk scan receipt can survive this: both are invalidated here rather
+    /// than at every call site, because a conservative value costs a walk and a
+    /// false proof costs a stale arena index. A caller that does know what it
+    /// writes should use
     /// [`Arena::vector_store_in_place`] instead and keep the promise.
     pub fn get_vector_mut(&mut self, index: u32) -> &mut Vec<NanValue> {
         match self.get_mut(index) {
             ArenaEntry::Vector {
                 items,
+                scan_receipt,
                 all_immediate,
                 ..
             } => {
+                *scan_receipt = INVALID_LANE_MARK;
                 *all_immediate = false;
                 items
             }
@@ -1229,6 +1234,7 @@ impl<T: ArenaTypes> Arena<T> {
         match self.get_mut(index) {
             ArenaEntry::Vector {
                 items,
+                scan_receipt,
                 all_immediate,
                 ..
             } => {
@@ -1237,6 +1243,10 @@ impl<T: ArenaTypes> Arena<T> {
                 }
                 items[position] = value;
                 if value.heap_index().is_some() {
+                    // A point write can introduce a value newer than the bulk
+                    // proof. This mutator does not retain the changed index, so
+                    // fail closed and let the next boundary scan once.
+                    *scan_receipt = INVALID_LANE_MARK;
                     *all_immediate = false;
                 }
                 true
@@ -1645,5 +1655,7 @@ impl<T: ArenaTypes> Default for Arena<T> {
     }
 }
 
+#[cfg(test)]
+mod collector_regression_tests;
 #[cfg(test)]
 mod tests;

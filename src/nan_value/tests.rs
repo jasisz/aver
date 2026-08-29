@@ -201,6 +201,7 @@ fn the_cheap_heap_reference_filter_turns_nothing_heap_backed_away() {
     ));
     cases.push(NanValue::new_vector(arena.push(ArenaEntry::Vector {
         items: vec![NanValue::UNIT],
+        scan_receipt: 0,
         all_immediate: true,
         holder_count: 0,
     })));
