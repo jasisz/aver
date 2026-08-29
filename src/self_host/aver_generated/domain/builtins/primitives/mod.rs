@@ -36,23 +36,39 @@ pub fn callInt(
                                     if &*__dispatch_subject == "Int.min" {
                                         crate::aver_generated::domain::builtins::primitives::builtinIntMin(args)
                                     } else {
-                                        Err(aver_rt::AverStr::from({
-                                            let mut __b = {
-                                                let mut __b = aver_rt::Buffer::with_capacity(
-                                                    (aver_rt::AverInt::from_i64(37))
-                                                        .to_usize()
-                                                        .unwrap_or(0),
-                                                );
-                                                __b.push_str(&AverStr::from(
-                                                    "unknown int builtin: ",
-                                                ));
-                                                __b
-                                            };
-                                            __b.push_str(&aver_rt::AverStr::from(
-                                                aver_rt::aver_display(&(name)),
-                                            ));
-                                            __b
-                                        }))
+                                        if &*__dispatch_subject == "Int.toBigEndian" {
+                                            crate::aver_generated::domain::builtins::endian::call(
+                                                name, args,
+                                            )
+                                        } else {
+                                            if &*__dispatch_subject == "Int.toLittleEndian" {
+                                                crate::aver_generated::domain::builtins::endian::call(name, args)
+                                            } else {
+                                                if &*__dispatch_subject == "Int.fromBigEndian" {
+                                                    crate::aver_generated::domain::builtins::endian::call(name, args)
+                                                } else {
+                                                    if &*__dispatch_subject
+                                                        == "Int.fromLittleEndian"
+                                                    {
+                                                        crate::aver_generated::domain::builtins::endian::call(name, args)
+                                                    } else {
+                                                        Err(aver_rt::AverStr::from({
+                                                            let mut __b = {
+                                                                let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(37)).to_usize().unwrap_or(0));
+                                                                __b.push_str(&AverStr::from(
+                                                                    "unknown int builtin: ",
+                                                                ));
+                                                                __b
+                                                            };
+                                                            __b.push_str(&aver_rt::AverStr::from(
+                                                                aver_rt::aver_display(&(name)),
+                                                            ));
+                                                            __b
+                                                        }))
+                                                    }
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }

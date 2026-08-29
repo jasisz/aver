@@ -76,6 +76,7 @@ impl TypeChecker {
 
         // Int namespace
         let int_result = || Type::Result(Box::new(Type::Int), Box::new(Type::Str));
+        let bytes_result = || Type::Result(Box::new(Type::named("Bytes")), Box::new(Type::Str));
         let int_sigs: &[(&str, &[Type], Type, &[&str])] = &[
             ("Int.fromString", &[Type::Str], int_result(), &[]),
             ("Int.fromFloat", &[Type::Float], Type::Int, &[]),
@@ -88,6 +89,25 @@ impl TypeChecker {
             // rule in `infer/expr.rs` (`is_literal_nonzero_int_divisor`).
             ("Int.mod", &[Type::Int, Type::Int], int_result(), &[]),
             ("Int.div", &[Type::Int, Type::Int], int_result(), &[]),
+            (
+                "Int.toBigEndian",
+                &[Type::Int, Type::Int],
+                bytes_result(),
+                &[],
+            ),
+            (
+                "Int.toLittleEndian",
+                &[Type::Int, Type::Int],
+                bytes_result(),
+                &[],
+            ),
+            ("Int.fromBigEndian", &[Type::named("Bytes")], Type::Int, &[]),
+            (
+                "Int.fromLittleEndian",
+                &[Type::named("Bytes")],
+                Type::Int,
+                &[],
+            ),
         ];
         for (name, params, ret, effects) in int_sigs {
             self.insert_sig(name, params, ret.clone(), effects);

@@ -67,6 +67,10 @@ codegen_builtins! {
     IntMax => "Int.max",
     IntMod => "Int.mod",
     IntDiv => "Int.div",
+    IntToBigEndian => "Int.toBigEndian",
+    IntToLittleEndian => "Int.toLittleEndian",
+    IntFromBigEndian => "Int.fromBigEndian",
+    IntFromLittleEndian => "Int.fromLittleEndian",
 
     // --- Bits (a bit-level view of Int, not a type) ---
     BitsAnd => "Bits.and",

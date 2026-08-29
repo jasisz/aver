@@ -38,6 +38,10 @@ vm_builtins! {
     IntMax => "Int.max",
     IntMod => "Int.mod",
     IntDiv => "Int.div",
+    IntToBigEndian => "Int.toBigEndian",
+    IntToLittleEndian => "Int.toLittleEndian",
+    IntFromBigEndian => "Int.fromBigEndian",
+    IntFromLittleEndian => "Int.fromLittleEndian",
 
     BitsAnd => "Bits.and",
     BitsOr => "Bits.or",
@@ -191,7 +195,11 @@ impl VmBuiltin {
             | Self::IntMin
             | Self::IntMax
             | Self::IntMod
-            | Self::IntDiv => int::call_nv(self.name(), args, arena),
+            | Self::IntDiv
+            | Self::IntToBigEndian
+            | Self::IntToLittleEndian
+            | Self::IntFromBigEndian
+            | Self::IntFromLittleEndian => int::call_nv(self.name(), args, arena),
 
             Self::FloatFromString
             | Self::FloatFromInt

@@ -15,6 +15,10 @@
 ///                                                  the unique q with a == q*b +
 ///                                                  r, 0 <= r < |b| (div(-7,2) ==
 ///                                                  Ok(-4)). Errors on b == 0.
+///   Int.toBigEndian(value, width) / Int.toLittleEndian(value, width)
+///                       → Result<Bytes, String> — unsigned fixed-width codec
+///   Int.fromBigEndian(bytes) / Int.fromLittleEndian(bytes)
+///                       → Int                  — total unsigned decode
 ///
 /// When the divisor is a syntactic nonzero integer literal, the typechecker
 /// discharges `Int.div` / `Int.mod` to plain `Int` and the compiler emits the
@@ -71,6 +75,10 @@ pub fn call_nv(
         "Int.max" => Some(max_nv(args, arena)),
         "Int.mod" => Some(modulo_nv(args, arena)),
         "Int.div" => Some(divide_nv(args, arena)),
+        "Int.toBigEndian" => Some(to_endian_nv(args, arena, true)),
+        "Int.toLittleEndian" => Some(to_endian_nv(args, arena, false)),
+        "Int.fromBigEndian" => Some(from_endian_nv(args, arena, true)),
+        "Int.fromLittleEndian" => Some(from_endian_nv(args, arena, false)),
         _ => None,
     }
 }
@@ -95,6 +103,61 @@ fn nv_check2(name: &str, args: &[NanValue]) -> Result<(NanValue, NanValue), Runt
         )));
     }
     Ok((args[0], args[1]))
+}
+
+fn to_endian_nv(
+    args: &[NanValue],
+    arena: &mut Arena,
+    big_endian: bool,
+) -> Result<NanValue, RuntimeError> {
+    let name = if big_endian {
+        "Int.toBigEndian"
+    } else {
+        "Int.toLittleEndian"
+    };
+    let (value, width) = nv_check2(name, args)?;
+    if !value.is_int() || !width.is_int() {
+        return Err(RuntimeError::Error(format!(
+            "{name}: both arguments must be Int"
+        )));
+    }
+    let value = value.as_aver_int(arena);
+    let width = width.as_aver_int(arena);
+    let encoded = if big_endian {
+        aver_rt::int_to_big_endian(&value, &width)
+    } else {
+        aver_rt::int_to_little_endian(&value, &width)
+    };
+    match encoded {
+        Ok(octets) => {
+            let bytes = crate::types::bytes::from_host_nv(octets, arena, name)?;
+            Ok(NanValue::new_ok_value(bytes, arena))
+        }
+        Err(message) => {
+            let error = NanValue::new_string_value(&message, arena);
+            Ok(NanValue::new_err_value(error, arena))
+        }
+    }
+}
+
+fn from_endian_nv(
+    args: &[NanValue],
+    arena: &mut Arena,
+    big_endian: bool,
+) -> Result<NanValue, RuntimeError> {
+    let name = if big_endian {
+        "Int.fromBigEndian"
+    } else {
+        "Int.fromLittleEndian"
+    };
+    let bytes = nv_check1(name, args)?;
+    let octets = crate::types::bytes::project_nv(bytes, arena, name)?;
+    let value = if big_endian {
+        aver_rt::int_from_big_endian(&octets)
+    } else {
+        aver_rt::int_from_little_endian(&octets)
+    };
+    Ok(NanValue::from_aver_int(value, arena))
 }
 
 fn from_string_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {

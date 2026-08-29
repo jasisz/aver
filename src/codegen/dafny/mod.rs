@@ -1021,6 +1021,39 @@ function ListReverseStr(xs: seq<string>): seq<string>
 const DAFNY_HELPER_NUMERIC_PARSE: &str = r#"
 function IntToString(n: int): string
 function IntFromString(s: string): Result<int, string>
+function IntFitsUnsignedWidth(value: int, width: int): bool
+  requires width >= 0
+  decreases width
+{
+  if width == 0 then value == 0
+  else value >= 0 && IntFitsUnsignedWidth(value / 256, width - 1)
+}
+function IntLittleEndianBytes(value: int, width: int): seq<int>
+  requires value >= 0 && width >= 0
+  decreases width
+{
+  if width == 0 then []
+  else [value % 256] + IntLittleEndianBytes(value / 256, width - 1)
+}
+function IntBigEndianBytes(value: int, width: int): seq<int>
+  requires value >= 0 && width >= 0
+  decreases width
+{
+  if width == 0 then []
+  else IntBigEndianBytes(value / 256, width - 1) + [value % 256]
+}
+function IntFromBigEndianBytes(bytes: seq<int>): int
+  decreases |bytes|
+{
+  if |bytes| == 0 then 0
+  else IntFromBigEndianBytes(bytes[..|bytes|-1]) * 256 + bytes[|bytes|-1]
+}
+function IntFromLittleEndianBytes(bytes: seq<int>): int
+  decreases |bytes|
+{
+  if |bytes| == 0 then 0
+  else bytes[0] + 256 * IntFromLittleEndianBytes(bytes[1..])
+}
 function FloatToString(r: real): string
 function FloatFromString(s: string): Result<real, string>
 function FloatPi(): real

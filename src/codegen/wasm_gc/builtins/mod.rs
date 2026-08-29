@@ -72,6 +72,7 @@ use super::wat_helper;
 mod bignum;
 pub(in crate::codegen::wasm_gc) mod case_tables;
 mod crypto;
+mod endian;
 mod string_case;
 mod utf8;
 
@@ -126,6 +127,10 @@ pub(super) enum BuiltinName {
     StringToLower,
     StringTrim,
     IntFromString,
+    IntToBigEndian,
+    IntToLittleEndian,
+    IntFromBigEndian,
+    IntFromLittleEndian,
     FloatFromString,
     StringFromFloat,
     /// Internal byte-equal compare over two `(ref null $string)`.
@@ -271,6 +276,10 @@ impl BuiltinName {
             "String.toLower" => Some(Self::StringToLower),
             "String.trim" => Some(Self::StringTrim),
             "Int.fromString" => Some(Self::IntFromString),
+            "Int.toBigEndian" => Some(Self::IntToBigEndian),
+            "Int.toLittleEndian" => Some(Self::IntToLittleEndian),
+            "Int.fromBigEndian" => Some(Self::IntFromBigEndian),
+            "Int.fromLittleEndian" => Some(Self::IntFromLittleEndian),
             "Float.fromString" => Some(Self::FloatFromString),
             "String.endsWith" => Some(Self::StringEndsWith),
             "String.fromBool" => Some(Self::StringFromBool),
@@ -304,6 +313,10 @@ impl BuiltinName {
             Self::StringToLower => "String.toLower",
             Self::StringTrim => "String.trim",
             Self::IntFromString => "Int.fromString",
+            Self::IntToBigEndian => "Int.toBigEndian",
+            Self::IntToLittleEndian => "Int.toLittleEndian",
+            Self::IntFromBigEndian => "Int.fromBigEndian",
+            Self::IntFromLittleEndian => "Int.fromLittleEndian",
             Self::FloatFromString => "Float.fromString",
             Self::StringFromFloat => "String.fromFloat",
             Self::StringEq => "__wasmgc_string_eq",
@@ -373,6 +386,14 @@ impl BuiltinName {
                 Ok(vec![string_ref_ty(registry)?])
             }
             Self::IntFromString => Ok(vec![string_ref_ty(registry)?]),
+            Self::IntToBigEndian | Self::IntToLittleEndian => {
+                Ok(vec![aint_ref_ty(registry)?, aint_ref_ty(registry)?])
+            }
+            Self::IntFromBigEndian | Self::IntFromLittleEndian => Ok(vec![
+                super::types::aver_to_wasm("Bytes", Some(registry))?.ok_or_else(|| {
+                    WasmGcError::Validation("Int endian decoder requires Bytes".into())
+                })?,
+            ]),
             Self::FloatFromString => Ok(vec![string_ref_ty(registry)?]),
             Self::StringFromFloat => Ok(vec![ValType::F64]),
             Self::StringEq => Ok(vec![string_ref_ty(registry)?, string_ref_ty(registry)?]),
@@ -465,6 +486,10 @@ impl BuiltinName {
             | Self::StringTrim
             | Self::StringFromFloat => Ok(vec![string_ref_ty(registry)?]),
             Self::IntFromString => Ok(vec![result_ref_ty(registry, "Result<Int,String>")?]),
+            Self::IntToBigEndian | Self::IntToLittleEndian => {
+                Ok(vec![result_ref_ty(registry, "Result<Bytes,String>")?])
+            }
+            Self::IntFromBigEndian | Self::IntFromLittleEndian => Ok(vec![aint_ref_ty(registry)?]),
             Self::FloatFromString => Ok(vec![result_ref_ty(registry, "Result<Float,String>")?]),
             Self::StringEq => Ok(vec![ValType::I32]),
             Self::StringCompare => Ok(vec![ValType::I32]),
@@ -537,6 +562,10 @@ impl BuiltinName {
             Self::StringTrim => emit_string_trim(registry),
             Self::IntFromString if registry.bignum => bignum::emit_aint_from_string(registry),
             Self::IntFromString => emit_int_from_string(registry),
+            Self::IntToBigEndian => endian::emit_to_endian(registry, true),
+            Self::IntToLittleEndian => endian::emit_to_endian(registry, false),
+            Self::IntFromBigEndian => endian::emit_from_endian(registry, true),
+            Self::IntFromLittleEndian => endian::emit_from_endian(registry, false),
             Self::FloatFromString => emit_float_from_string(registry),
             Self::StringFromFloat => emit_string_from_float(registry),
             Self::StringEq => emit_string_eq(registry),

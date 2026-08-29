@@ -564,6 +564,43 @@ def stringFromUtf8 (bytes : Bytes) : Except String String :=
     })
 }
 
+/// The endian codecs call the source-defined `Bytes.fromList`, so Lean must
+/// see them after the Bytes module's ordinary declarations (Lean has no
+/// forward references). Keeping this postlude in the owning namespace also
+/// leaves every emitted builtin spelling as `Bytes.int…`.
+fn emit_bytes_endian_builtins() -> String {
+    let limit = aver_rt::MAX_MATERIALIZED_SEQUENCE_ELEMENTS;
+    let big_width = aver_rt::int_endian_width_error_message("Int.toBigEndian");
+    let little_width = aver_rt::int_endian_width_error_message("Int.toLittleEndian");
+    let big_value = aver_rt::int_endian_value_error_message("Int.toBigEndian");
+    let little_value = aver_rt::int_endian_value_error_message("Int.toLittleEndian");
+    format!(
+        r#"private def endianOctetsLittle : Int → Nat → List Int
+  | _, 0 => []
+  | value, width + 1 => value % 256 :: endianOctetsLittle (value / 256) width
+
+private def endianFits : Int → Nat → Bool
+  | value, 0 => value == 0
+  | value, width + 1 => value >= 0 && endianFits (value / 256) width
+
+def intToBigEndian (value width : Int) : Except String Bytes :=
+  if width < 0 || width > {limit} then Except.error "{big_width}"
+  else if value < 0 || !endianFits value width.toNat then Except.error "{big_value}"
+  else fromList (endianOctetsLittle value width.toNat).reverse
+
+def intToLittleEndian (value width : Int) : Except String Bytes :=
+  if width < 0 || width > {limit} then Except.error "{little_width}"
+  else if value < 0 || !endianFits value width.toNat then Except.error "{little_value}"
+  else fromList (endianOctetsLittle value width.toNat)
+
+def intFromBigEndian (bytes : Bytes) : Int :=
+  bytes.val.foldl (fun value byte => value * 256 + byte) 0
+
+def intFromLittleEndian (bytes : Bytes) : Int :=
+  bytes.val.reverse.foldl (fun value byte => value * 256 + byte) 0"#
+    )
+}
+
 fn emit_capability_resource_types(ctx: &CodegenContext, scope: Option<&str>) -> Vec<String> {
     let entry_module = ctx.entry_module_name();
     ctx.capabilities
@@ -1016,6 +1053,10 @@ pub(super) fn transpile_unified(
                     ));
                 }
             }
+        }
+        if module.prefix == "Bytes" {
+            body_sections.push(emit_bytes_endian_builtins());
+            body_sections.push(String::new());
         }
         // This module's effectful fns, lifted with the same oracle threading
         // the entry's get, after its pure declarations (a lifted body may call

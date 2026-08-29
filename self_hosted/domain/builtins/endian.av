@@ -1,0 +1,92 @@
+module Endian
+    depends [Domain.Value, Domain.Builtins.Helpers, Bytes]
+    intent = "Fixed-width integer and byte conversions for the self-hosted evaluator."
+    exposes [call]
+    effects []
+
+fn call(name: String, args: List<Val>) -> Result<Val, String>
+    ? "Dispatch the four Int endian conversion builtins."
+    match name
+        "Int.toBigEndian" -> encodeBig(args)
+        "Int.toLittleEndian" -> encodeLittle(args)
+        "Int.fromBigEndian" -> decodeBig(args)
+        "Int.fromLittleEndian" -> decodeLittle(args)
+        _ -> Result.Err("unknown endian builtin: {name}")
+
+verify call
+    call("Int.toBigEndian", [Val.ValInt(1)]) => Result.Err("expected 2 arguments")
+    call("Int.unknownEndian", []) => Result.Err("unknown endian builtin: Int.unknownEndian")
+
+fn byteVals(octets: List<Int>, acc: List<Val>) -> List<Val>
+    ? "Wrap native octets for the self-hosted Bytes record."
+    match octets
+        [] -> List.reverse(acc)
+        [octet, ..rest] -> byteVals(rest, List.prepend(Val.ValInt(octet), acc))
+
+verify byteVals
+    byteVals([], []) => []
+    byteVals([1, 2], []) => [Val.ValInt(1), Val.ValInt(2)]
+
+fn bytesVal(bytes: Bytes) -> Val
+    ? "Mirror the opaque Bytes value in the interpreter's nominal record form."
+    Val.ValRecord("Bytes", [("values", Val.ValList(byteVals(Bytes.octets(bytes), [])))])
+
+fn encodeBig(args: List<Val>) -> Result<Val, String>
+    ? "Int.toBigEndian(value, width) -> semantic Result value."
+    pair = Domain.Builtins.Helpers.twoArgs(args)?
+    match pair
+        (valueV, widthV) -> encodeBigInner(valueV, widthV)
+
+verify encodeBig
+    encodeBig([Val.ValInt(1)]) => Result.Err("expected 2 arguments")
+
+fn encodeBigInner(valueV: Val, widthV: Val) -> Result<Val, String>
+    ? "Encode one unsigned integer in exact-width big-endian order."
+    value = Domain.Builtins.Helpers.expectInt(valueV)?
+    width = Domain.Builtins.Helpers.expectInt(widthV)?
+    match Int.toBigEndian(value, width)
+        Result.Ok(bytes) -> Result.Ok(Val.ValOk(bytesVal(bytes)))
+        Result.Err(error) -> Result.Ok(Val.ValErr(Val.ValStr(error)))
+
+verify encodeBigInner
+    encodeBigInner(Val.ValInt(258), Val.ValInt(2)) => Result.Ok(Val.ValOk(Val.ValRecord("Bytes", [("values", Val.ValList([Val.ValInt(1), Val.ValInt(2)]))])))
+
+fn encodeLittle(args: List<Val>) -> Result<Val, String>
+    ? "Int.toLittleEndian(value, width) -> semantic Result value."
+    pair = Domain.Builtins.Helpers.twoArgs(args)?
+    match pair
+        (valueV, widthV) -> encodeLittleInner(valueV, widthV)
+
+verify encodeLittle
+    encodeLittle([Val.ValInt(1)]) => Result.Err("expected 2 arguments")
+
+fn encodeLittleInner(valueV: Val, widthV: Val) -> Result<Val, String>
+    ? "Encode one unsigned integer in exact-width little-endian order."
+    value = Domain.Builtins.Helpers.expectInt(valueV)?
+    width = Domain.Builtins.Helpers.expectInt(widthV)?
+    match Int.toLittleEndian(value, width)
+        Result.Ok(bytes) -> Result.Ok(Val.ValOk(bytesVal(bytes)))
+        Result.Err(error) -> Result.Ok(Val.ValErr(Val.ValStr(error)))
+
+verify encodeLittleInner
+    encodeLittleInner(Val.ValInt(258), Val.ValInt(2)) => Result.Ok(Val.ValOk(Val.ValRecord("Bytes", [("values", Val.ValList([Val.ValInt(2), Val.ValInt(1)]))])))
+
+fn decodeBig(args: List<Val>) -> Result<Val, String>
+    ? "Int.fromBigEndian(bytes) -> unsigned integer value."
+    value = Domain.Builtins.Helpers.oneArg(args)?
+    octets = Domain.Builtins.Helpers.expectBytes(value)?
+    bytes = Bytes.fromList(octets)?
+    Result.Ok(Val.ValInt(Int.fromBigEndian(bytes)))
+
+verify decodeBig
+    decodeBig([Val.ValRecord("Bytes", [("values", Val.ValList([Val.ValInt(1), Val.ValInt(2)]))])]) => Result.Ok(Val.ValInt(258))
+
+fn decodeLittle(args: List<Val>) -> Result<Val, String>
+    ? "Int.fromLittleEndian(bytes) -> unsigned integer value."
+    value = Domain.Builtins.Helpers.oneArg(args)?
+    octets = Domain.Builtins.Helpers.expectBytes(value)?
+    bytes = Bytes.fromList(octets)?
+    Result.Ok(Val.ValInt(Int.fromLittleEndian(bytes)))
+
+verify decodeLittle
+    decodeLittle([Val.ValRecord("Bytes", [("values", Val.ValList([Val.ValInt(2), Val.ValInt(1)]))])]) => Result.Ok(Val.ValInt(258))

@@ -2106,6 +2106,58 @@ fn literal_bytes_discharge_boundary_needs_a_recognized_smart_constructor() {
     assert_no_errors(src);
 }
 
+#[test]
+fn literal_int_endian_discharge_requires_value_and_width_to_prove_totality() {
+    for body in [
+        "    Int.toBigEndian(0, 0)",
+        "    Int.toBigEndian(258, 2)",
+        "    Int.toLittleEndian(258, 2)",
+        "    Int.toBigEndian(18446744073709551616, 9)",
+    ] {
+        assert_bytes_program_clean("fn f() -> Bytes", body);
+    }
+    assert_bytes_program_clean(
+        "fn f() -> Bytes",
+        &format!(
+            "    Int.toBigEndian(0, {})",
+            aver_rt::MAX_MATERIALIZED_SEQUENCE_ELEMENTS
+        ),
+    );
+
+    for body in [
+        "    Int.toBigEndian(256, 1)",
+        "    Int.toBigEndian(-1, 4)",
+        "    Int.toBigEndian(1, 0)",
+        "    Int.toLittleEndian(258, -1)",
+    ] {
+        assert_bytes_program_clean("fn f() -> Result<Bytes, String>", body);
+    }
+    assert_bytes_program_clean(
+        "fn f() -> Result<Bytes, String>",
+        &format!(
+            "    Int.toBigEndian(0, {})",
+            aver_rt::MAX_MATERIALIZED_SEQUENCE_ELEMENTS + 1
+        ),
+    );
+}
+
+#[test]
+fn dynamic_int_endian_calls_keep_result_while_decoders_are_total() {
+    assert_bytes_program_clean(
+        "fn encode(value: Int, width: Int) -> Result<Bytes, String>",
+        "    Int.toBigEndian(value, width)",
+    );
+    assert_bytes_program_clean(
+        "fn decode(bytes: Bytes) -> Int",
+        "    Int.fromLittleEndian(bytes)",
+    );
+    assert_bytes_program_error(
+        "fn encode(value: Int, width: Int) -> Bytes",
+        "    Int.toBigEndian(value, width)",
+        "body returns Result<Bytes, String> but declared return type is Bytes",
+    );
+}
+
 // ─── The discharge is keyed on RESOLVED IDENTITY, not on the spelling ───
 //
 // Aver's shadowing rule is pinned above by

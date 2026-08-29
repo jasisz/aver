@@ -750,7 +750,8 @@ fn builtin_panic_capability(builtin: Builtin) -> PanicCapability {
         // `Int.natAbs`, `min`/`max`, the zero-guarded `Except`-returning
         // `%`/`/`, and `Int.fromString` (total, `Except`-returning, over the
         // total `AverDigits.parseNatChars`).
-        IntAbs | IntMin | IntMax | IntMod | IntDiv | IntFromString => Total,
+        IntAbs | IntMin | IntMax | IntMod | IntDiv | IntFromString | IntToBigEndian
+        | IntToLittleEndian | IntFromBigEndian | IntFromLittleEndian => Total,
         // `AverFloat.toInt` saturates at both ends and maps NaN to `0` —
         // total. (Declined by the kernel table below regardless: Float.)
         IntFromFloat => Total,
@@ -814,6 +815,9 @@ fn builtin_reduces_in_kernel(builtin: Builtin) -> bool {
 
         // Int — literals and arithmetic have kernel GMP acceleration.
         IntAbs | IntFromString | IntMin | IntMax | IntMod | IntDiv => true,
+        // Recursive only in the literal byte width/input length; the generated
+        // definitions reduce completely under Lean's kernel evaluator.
+        IntToBigEndian | IntToLittleEndian | IntFromBigEndian | IntFromLittleEndian => true,
         // Lowers through `AverFloat.toInt`.
         IntFromFloat => false,
 

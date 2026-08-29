@@ -397,6 +397,31 @@ fn resolve_expr(ctx: &ResolveCtx<'_>, expr: &Spanned<Expr>) -> ResolvedExpr {
                     return ResolvedExpr::Call(ResolvedCallee::Intrinsic(intrinsic), resolved_args);
                 }
             }
+            // Both literal operands prove the unsigned fixed-width encoder
+            // cannot reach either Err arm. Keep the ordinary builtin call —
+            // it owns the one native byte-building implementation — and
+            // unwrap it through the existing fail-closed proof destructor.
+            // In particular, do not expand a large literal width into a
+            // million-element AST list.
+            if let ResolvedCallee::Builtin(name) = &resolved_callee
+                && matches!(name.as_str(), "Int.toBigEndian" | "Int.toLittleEndian")
+                && args.len() == 2
+                && resolved_args.len() == 2
+                && crate::ast::is_literal_total_int_endian_call(&args[0], &args[1])
+            {
+                let builtin_call = Spanned::new(
+                    ResolvedExpr::Call(resolved_callee.clone(), resolved_args),
+                    expr.line,
+                );
+                builtin_call.set_ty(crate::types::Type::Result(
+                    Box::new(crate::types::Type::named("Bytes")),
+                    Box::new(crate::types::Type::Str),
+                ));
+                return ResolvedExpr::Call(
+                    ResolvedCallee::Intrinsic(BuiltinIntrinsic::ResultProven),
+                    vec![builtin_call],
+                );
+            }
             if let ResolvedCallee::Builtin(name) = &resolved_callee
                 && name == "BranchPath.parse"
                 && resolved_args.len() == 1

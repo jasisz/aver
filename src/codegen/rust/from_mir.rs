@@ -4788,6 +4788,48 @@ fn emit_mir_builtin_call(
                 "match ({a}).div_euclid(&({b})) {{ Some({result}) => Ok({result}), None => Err(\"division by zero\".to_string()) }}"
             )
         }
+        "Int.toBigEndian" | "Int.toLittleEndian" => {
+            let value = arg!(0);
+            let width = arg!(1);
+            let helper = if name == "Int.toBigEndian" {
+                "int_to_big_endian"
+            } else {
+                "int_to_little_endian"
+            };
+            let encoded = generated_ident("bytes");
+            let carrier = if ctx
+                .codegen
+                .is_some_and(|codegen| super::uses_packed_u8(codegen, "Bytes"))
+            {
+                format!("aver_rt::AverPackedU8::from_vec({encoded})")
+            } else {
+                format!(
+                    "aver_rt::AverIntList::from_packed(aver_rt::AverPackedU8::from_vec({encoded}))"
+                )
+            };
+            format!(
+                "aver_rt::{helper}(&({value}), &({width})).map(|{encoded}| crate::aver_generated::bytes::Bytes {{ values: {carrier} }}).map_err(aver_rt::AverStr::from)"
+            )
+        }
+        "Int.fromBigEndian" | "Int.fromLittleEndian" => {
+            let bytes = arg!(0);
+            let helper = if name == "Int.fromBigEndian" {
+                "int_from_big_endian"
+            } else {
+                "int_from_little_endian"
+            };
+            if ctx
+                .codegen
+                .is_some_and(|codegen| super::uses_packed_u8(codegen, "Bytes"))
+            {
+                format!("aver_rt::{helper}(({bytes}).values.as_slice())")
+            } else {
+                let bytes_temp = generated_ident("bytes");
+                format!(
+                    "{{ let {bytes_temp} = ({bytes}).values.clone().into_packed().expect(\"Bytes invariant violated\"); aver_rt::{helper}({bytes_temp}.as_slice()) }}"
+                )
+            }
+        }
 
         // ---- Float ----
         "Float.abs" => format!("{}.abs()", arg!(0)),

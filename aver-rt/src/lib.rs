@@ -25,7 +25,8 @@ pub use bytebuilder::{ByteBuilder, byte_builder_finalize, byte_builder_new, byte
 pub use display::{AverDisplay, aver_display};
 pub use int::{
     AverInt, MAX_MATERIALIZED_BITS, ShiftCountError, bit_width_too_large_message,
-    shift_count_too_large_message,
+    int_endian_value_error_message, int_endian_width_error_message, int_from_big_endian,
+    int_from_little_endian, int_to_big_endian, int_to_little_endian, shift_count_too_large_message,
 };
 pub use int_list::{
     AverIntList, AverIntListIter, int_list_builder_finalize, int_list_builder_new,
@@ -393,7 +394,12 @@ where
 /// One mebielement still gives every backend one exact semantic boundary and
 /// caps the operation at a finite number of clones/slots. On the VM it is
 /// roughly 8 MiB of `NanValue` slots before arena overhead.
-pub const MAX_MATERIALIZED_VECTOR_ELEMENTS: usize = 1024 * 1024;
+/// Portable element budget for a single operation that can expand a compact
+/// input into a sequence. `Vector.new` and the fixed-width Int encoders share
+/// the number, while retaining operation-specific diagnostics.
+pub const MAX_MATERIALIZED_SEQUENCE_ELEMENTS: usize = 1024 * 1024;
+
+pub const MAX_MATERIALIZED_VECTOR_ELEMENTS: usize = MAX_MATERIALIZED_SEQUENCE_ELEMENTS;
 
 /// Convert an Aver integer to a materializable vector length.
 ///

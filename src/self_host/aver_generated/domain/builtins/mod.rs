@@ -3485,6 +3485,8 @@ pub fn tcpReadyKeysToVals__collected(
     }
 }
 
+pub mod endian;
+
 pub mod helpers;
 
 pub mod list;

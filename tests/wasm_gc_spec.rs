@@ -3305,3 +3305,40 @@ fn a_fabricated_intrinsic_reaching_the_emitter_is_refused() {
     // compiles and answers as it always did.
     assert_eq!(run_int(FUSIBLE_DIGITS), 3);
 }
+
+#[test]
+#[cfg(feature = "runtime")]
+fn int_endian_codecs_preserve_unbounded_values_on_wasm_gc() {
+    let source = r#"module EndianWasm
+    intent = "Exercise fixed-width integer byte codecs on wasm-gc."
+    depends [Bytes]
+    effects []
+
+fn bigMatches(value: Int, width: Int, expected: String) -> Bool
+    match Int.toBigEndian(value, width)
+        Result.Ok(bytes) -> Bytes.toHex(bytes) == expected
+        Result.Err(_) -> false
+
+fn littleMatches(value: Int, width: Int, expected: String) -> Bool
+    match Int.toLittleEndian(value, width)
+        Result.Ok(bytes) -> Bytes.toHex(bytes) == expected
+        Result.Err(_) -> false
+
+fn rejectsOverflow() -> Bool
+    match Int.toBigEndian(256, 1)
+        Result.Ok(_) -> false
+        Result.Err(_) -> true
+
+fn main() -> Int
+    encodes = Bool.and(bigMatches(258, 2, "0102"), littleMatches(258, 2, "0201"))
+    decodes = Bool.and(Int.fromBigEndian(Int.toBigEndian(18446744073709551616, 9)) == 18446744073709551616, Int.fromLittleEndian(Int.toLittleEndian(18446744073709551616, 9)) == 18446744073709551616)
+    match Bool.and(Bool.and(encodes, decodes), rejectsOverflow())
+        true -> 1
+        false -> 0
+"#;
+
+    assert_eq!(
+        run_int_multi(source, &[("Bytes", include_str!("../stdlib/bytes.av"))]),
+        1
+    );
+}
