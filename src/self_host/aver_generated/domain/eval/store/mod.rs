@@ -99,13 +99,13 @@ pub fn emptyFnStore() -> FnStore {
 /// Attach evaluated top-level bindings so function bodies can read them.
 pub fn withGlobals(
     fns @ _: &FnStore,
-    globals @ _: &aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val>,
+    mut globals @ _: aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val>,
 ) -> FnStore {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::eval::store::FnStore {
         nameToId: fns.nameToId.clone(),
         byId: fns.byId.clone(),
-        globals: globals.clone(),
+        globals: globals,
     }
 }
 

@@ -187,6 +187,68 @@ fn main() -> Result<Int, String>
     );
 }
 
+/// Regression for #1196: a mutually-tail-recursive dispatcher owns its
+/// accumulator at the point where it hands that accumulator to a normal
+/// helper. The helper returns the successor inside `Result<Tuple<...>>`.
+/// Generated Rust consumes the wrapper and tuple, so the normal helper may
+/// take the last-use Map by value; borrowing it here makes the helper's first
+/// `Map.set` copy the complete backing table once per dispatcher round.
+#[test]
+fn map_crossing_from_mutual_tco_into_result_tuple_helper_graduates_for_rust() {
+    let src = r#"module CrossCallMap
+    intent = "move a Map from a mutual-TCO dispatcher through a normal helper"
+    depends []
+    effects []
+
+fn changed(into: Map<String, Int>) -> Result<Tuple<Map<String, Int>, Int>, String>
+    ? "return the map successor in the aggregate consumed by the dispatcher"
+    Result.Ok((Map.set(into, "key", 1), 1))
+
+fn kept(into: Map<String, Int>) -> Map<String, Int>
+    ? "model a read helper whose conservative result may alias its input"
+    into
+
+fn absorbing(left: Int, into: Map<String, Int>) -> Result<Map<String, Int>, String>
+    ? "hand the last-use map to changed before tail-calling continued"
+    snapshot = kept(into)
+    observedLen = Map.len(snapshot)
+    match changed(into)
+        Result.Err(why) -> Result.Err(why)
+        Result.Ok(parts) -> match parts
+            (next, _) -> continued(left, next)
+
+fn continued(left: Int, into: Map<String, Int>) -> Result<Map<String, Int>, String>
+    ? "mutually tail-call absorbing until the requested rounds are complete"
+    match left
+        0 -> Result.Ok(into)
+        _ -> absorbing(left - 1, into)
+
+fn main() -> Result<Int, String>
+    built = absorbing(3, {})?
+    Result.Ok(Map.len(built))
+"#;
+
+    let shared = refine(src);
+    assert!(
+        param_flagged(&shared, "changed", 0),
+        "arena backends must not infer ownership through destructured wrapper entries"
+    );
+
+    let rust = own_param_refine_for_rust(shared);
+    assert!(
+        !param_flagged(&rust, "changed", 0),
+        "the normal helper must own the dispatcher's last-use Map argument"
+    );
+    assert!(
+        !param_flagged(&rust, "absorbing", 1),
+        "the first mutual-TCO state must preserve ownership through the helper result"
+    );
+    assert!(
+        !param_flagged(&rust, "continued", 1),
+        "the next mutual-TCO state must receive the destructured Map by value"
+    );
+}
+
 /// Precision dual of the escape soundness suite: the aliased params from
 /// the three corruption classes must STAY flagged after the refinement.
 /// (Their observable correctness is covered in `own_param_soundness`;

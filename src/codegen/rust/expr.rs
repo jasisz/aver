@@ -192,7 +192,7 @@ pub(super) fn callee_borrow_mask(name: &str, arg_count: usize, ctx: &CodegenCont
     };
 
     // own_param graduation: a NON-TCO collection param the `own_param`
-    // pass PROVED uniquely owned is emitted owned-by-value (`mut p: T`,
+    // pass proved can use the owned Rust ABI is emitted by value (`mut p: T`,
     // see `MirFnEmitPolicy::apply_own_param` / `emit_fn_params_with_owned`),
     // so the CALLER must pass it BY VALUE, not `&T`. Clear the borrow bit
     // at every graduated param position so the call site matches the

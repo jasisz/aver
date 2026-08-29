@@ -128,14 +128,13 @@ pub struct MirEmitCtx<'a> {
     /// argument is not a real move point. Owning positions clone these
     /// params; non-owning reads remain allocation-free.
     pub loop_carried_params: &'a HashSet<String>,
-    /// Collection (`Vector`/`Map`) params that the `own_param` MIR pass
-    /// PROVED uniquely owned (cleared their `aliased_slots` bit). These
-    /// are emitted owned-by-value (`mut p: T`, NOT `&T`) and, at a
-    /// last-use read, skip the `.clone()` so an in-place `Rc::make_mut`
-    /// runs on a refcount-1 backing (native O(n) mutate instead of the
-    /// O(n²) borrow+clone COW). SOUNDNESS: a name is in this set only
-    /// when `own_param` cleared its bit — never broadened past what the
-    /// pass proved. Disjoint from `borrowed_params` by construction.
+    /// Collection (`Vector`/`Map`) params whose `own_param` MIR fact proves
+    /// every visible caller can provide an owned carrier (cleared
+    /// `aliased_slots` bit). These emit owned-by-value (`mut p: T`, not `&T`)
+    /// and move at a last-use read. A genuinely shared backing remains safe
+    /// through the runtime COW gate; the linear case reaches it with one fewer
+    /// handle and avoids the borrow+clone full-table copy. Disjoint from
+    /// `borrowed_params` by construction.
     pub owned_params: &'a HashSet<String>,
     /// Owning module prefix for the fn whose body this ctx emits.
     pub current_module_scope: Option<&'a str>,
@@ -386,7 +385,7 @@ pub(super) struct MirFnEmitPolicy {
     pub local_types: HashMap<String, Type>,
     pub rc_wrapped: HashSet<String>,
     pub borrowed_params: HashSet<String>,
-    /// Collection params `own_param` proved uniquely owned — see the
+    /// Collection params `own_param` proved can use the owned Rust ABI — see the
     /// `MirEmitCtx::owned_params` doc. Default empty (no own_param facts
     /// applied); populated by [`Self::apply_own_param`].
     pub owned_params: HashSet<String>,
@@ -491,16 +490,12 @@ impl MirFnEmitPolicy {
     /// that param: Rust can move the record and its replaced field while the
     /// caller still clones at a non-last-use call site.
     ///
-    /// SOUNDNESS (the #383 corruption class): a collection param is
-    /// graduated ONLY when `own_param` cleared its bit. `own_param`'s
-    /// RULE 1 flags EVERY `Vector`/`Map` param `true` up front and only
-    /// clears the bit on a whole-program proof of unique ownership
-    /// (every visible call site passes a fresh / linearly-threaded
-    /// value, captured-into-aggregate slots stay flagged, multi-module
-    /// returns early leaving every bit set). So a cleared bit on a
-    /// collection param is exactly the pass's proof — never a heuristic.
-    /// A missing bit defaults to flagged (`true`) → not graduated
-    /// (conservative). Params still flagged keep borrow-by-default.
+    /// SOUNDNESS (the #383 corruption class): a collection param graduates
+    /// only when `own_param` clears its bit after seeing every call site.
+    /// Shared-arena backends require unique backing. This Rust-only second
+    /// refinement requires an owned carrier instead: non-final uses clone,
+    /// final uses move, and Map/Vector mutators preserve retained aliases via
+    /// COW. Missing facts remain flagged and keep borrow-by-default.
     pub(super) fn apply_own_param(&mut self, mir_fn: &crate::ir::mir::MirFn) {
         for (i, param) in mir_fn.params.iter().enumerate() {
             // Only collection params are candidates (the only thing
@@ -520,7 +515,8 @@ impl MirFnEmitPolicy {
             // by PARAM POSITION `i` (its `(0..nparams).filter(|&i| …)`),
             // matching `MirParam.local = LocalId(i)`; match that exactly.
             //
-            // Cleared bit ⟺ own_param proved unique ownership. Missing →
+            // Cleared bit ⟺ own_param proved the selected model's ownership
+            // condition (unique arena backing or owned Rust carrier). Missing →
             // treat as flagged (conservative). Still-flagged → keep the
             // existing borrow-by-default decision (do not graduate).
             let collection_graduated = is_owned_collection_candidate(ty)
@@ -603,7 +599,7 @@ fn result_contains_record_successor_of(expr: &MirExpr, slot: LocalId) -> bool {
 }
 
 /// The Rust-mangled names of a fn's `Vector`/`Map` params that
-/// `own_param` PROVED uniquely owned (cleared `aliased_slots` bit) — the
+/// `own_param` proved can use the owned Rust ABI (cleared `aliased_slots` bit) — the
 /// set the non-TCO SIGNATURE emits owned-by-value (`mut p: T`). The
 /// `param_types` are the `ResolvedFnDef` param `(name, Type)` pairs (real
 /// `Type`, not the `MirParam.ty` Debug string); the `mir_fn` supplies the

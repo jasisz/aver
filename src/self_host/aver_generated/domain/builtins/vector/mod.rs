@@ -142,7 +142,7 @@ pub fn builtinVectorSetInner(
                         Ok(crate::aver_generated::domain::value::Val::ValNone)
                     } else {
                         if (idx < aver_rt::AverInt::from_i64(vec.len() as i64)) {
-                            crate::aver_generated::domain::builtins::vector::builtinVectorSetInBounds(&vec, idx, valV)
+                            crate::aver_generated::domain::builtins::vector::builtinVectorSetInBounds(vec, idx, valV)
                         } else {
                             Ok(crate::aver_generated::domain::value::Val::ValNone)
                         }
@@ -158,14 +158,14 @@ pub fn builtinVectorSetInner(
 /// Set a vector element when bounds have already been checked.
 #[inline(always)]
 pub fn builtinVectorSetInBounds(
-    vec @ _: &aver_rt::AverVector<crate::aver_generated::domain::value::Val>,
+    mut vec @ _: aver_rt::AverVector<crate::aver_generated::domain::value::Val>,
     idx @ _: aver_rt::AverInt,
     valV @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     match (idx)
         .to_usize()
-        .and_then(|__i| vec.clone().set_owned(__i, valV.clone()))
+        .and_then(|__i| vec.set_owned(__i, valV.clone()))
     {
         Some(newVec @ _) => Ok(crate::aver_generated::domain::value::Val::ValSome(
             std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValVector(newVec)),

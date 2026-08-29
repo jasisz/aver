@@ -869,9 +869,9 @@ fn emit_fn_params_inner(
             } else if mutable {
                 format!("{}: {}", explicit_parameter_pattern(name, true), rust_type)
             } else if owned_params.contains(&rust_name) {
-                // own_param proved this collection param uniquely owned:
-                // take it by value (`mut p: T`) so the body's in-place
-                // mutate runs on a refcount-1 backing. `mut` because the
+                // own_param proved every caller can provide an owned carrier:
+                // take it by value (`mut p: T`) so a linear caller reaches the
+                // COW gate without an extra handle. `mut` because the
                 // owned-mutate builtins (`Vector.set` → `set_owned`,
                 // `Map.set` → `insert_owned`) consume `self` by value.
                 format!("{}: {}", explicit_parameter_pattern(name, true), rust_type)

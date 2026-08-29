@@ -1825,8 +1825,8 @@ fn deep(n: Int, _: Int) -> Int
 ";
         // Not recursive at all — but the parameter is a COLLECTION, and
         // that is the other thing that can put a `mut` in front of it.
-        // `own_param` proves a `Vector` parameter uniquely owned when every
-        // call site passes a fresh value, and the owned spelling is `mut p:
+        // `own_param` proves a `Vector` parameter can use the owned Rust ABI
+        // when every call site passes a fresh value, and the spelling is `mut p:
         // T`. The proof is by parameter POSITION and never reads the name,
         // so it reaches the wildcard too.
         const OWNED_COLLECTION_WILDCARD_PARAM: &str = "\

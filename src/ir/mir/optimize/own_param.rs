@@ -23,11 +23,11 @@
 //! escape sites is unsound by omission: any unforeseen site is a silent
 //! corruption (a backend mutates shared data in place).
 //!
-//! So the polarity is flipped. The default for every collection param is
-//! **flagged** (kept aliased — never mutated in place). The bit is
-//! cleared only when a *positive proof* succeeds, i.e. when **every**
-//! occurrence of the param `P` — and of every let-local that may share
-//! `P`'s backing (its alias closure) — is one of these RECOGNIZED
+//! For shared-arena backends the polarity is flipped. The default for every
+//! collection param is **flagged** (kept aliased — never mutated in place).
+//! The bit is cleared only when a *positive proof* succeeds, i.e. when
+//! **every** occurrence of the param `P` — and of every let-local that may
+//! share `P`'s backing (its alias closure) — is one of these RECOGNIZED
 //! non-retaining-linear uses:
 //!
 //! - `P` (or an alias) as the TARGET/receiver arg (arg 0) of a
@@ -52,13 +52,14 @@
 //! scan defaults every *unrecognized* position to retaining, so it
 //! cannot miss an escape — the audits converge.
 //!
-//! The body-local proof above is one half; the other is the
-//! interprocedural call-site proof: even a body-locally-linear param
-//! graduates only when **every** visible call site of its fn passes it a
-//! uniquely-owned argument (a fresh constructor, an owned set-chain, a
-//! `last_use` non-aliased local with no live caller-side alias),
-//! computed as a monotone-descending fixpoint. Default is keep-flagged;
-//! un-flagging is the gated exception.
+//! The body-local proof above is one half; the other is the interprocedural
+//! call-site proof, computed as a monotone-descending fixpoint. An arena param
+//! graduates only when every visible call site passes uniquely-owned storage.
+//! The Rust refinement asks the narrower ABI question instead: can every call
+//! site provide an owned `T`? Rust's emitter clones a non-final owning use,
+//! moves a final one, and its collection mutators enforce COW, so a retained
+//! sibling handle may cost a real copy but cannot make the move incorrect.
+//! Default is keep-flagged; un-flagging is the gated exception in both models.
 //!
 //! ## Soundness gates
 //!
@@ -71,10 +72,18 @@
 //! - A call site reached through `MirCallee::LocalSlot` (a fn value) has
 //!   no statically-known target, so it never counts as a visible caller;
 //!   such fns are already pinned via the address-taken set.
-//! - An argument is uniquely-owned only when proven so. A named user-fn
+//! - An arena argument is uniquely-owned only when proven so. A named user-fn
 //!   result qualifies only through a return-alias summary that identifies
-//!   every parameter backing it may carry; a fn-value result stays unknown,
-//!   and a local with a live caller-side alias is never owned.
+//!   every parameter backing it may carry; a fn-value result stays unknown.
+//!   Arena backends also reject a local with a live caller-side alias. Rust
+//!   may still move that local: its owned mutators enforce COW at runtime, so
+//!   an actual sibling handle remains correct without the borrowed ABI adding
+//!   yet another handle.
+//! - On generated Rust, a last-use pattern binding is movable by construction:
+//!   matches with bindings materialize their subject by value, and the binding
+//!   owns the extracted value. Its collection backing may still be shared,
+//!   but the Rust runtime preserves COW semantics; moving the binding avoids
+//!   adding the extra owner that a borrowed callee parameter would create.
 //! - Two alias-prone params receiving the same slot at one call site are
 //!   both rejected (the value is shared between them inside the callee).
 //!
@@ -90,7 +99,7 @@ use crate::ast::Spanned;
 use crate::ir::FnId;
 use crate::ir::hir::BuiltinIntrinsic;
 
-use super::super::expr::{MirCallee, MirExpr, walk_children};
+use super::super::expr::{MirCallee, MirExpr, MirPattern, walk_children};
 use super::super::program::MirProgram;
 
 mod return_alias;
@@ -147,6 +156,10 @@ enum OwnershipModel {
 
 impl OwnershipModel {
     fn returned_aggregates_are_consumed(self) -> bool {
+        self == Self::RustDropAware
+    }
+
+    fn owned_carriers_are_cow_protected(self) -> bool {
         self == Self::RustDropAware
     }
 }
@@ -210,6 +223,24 @@ fn own_param_refine_for_model(mut program: MirProgram, model: OwnershipModel) ->
         provenance.insert(*id, m);
     }
 
+    // Rust match emission materializes every subject that has bindings by
+    // value (`mir_clone_arg`) before destructuring it. Consequently each
+    // pattern local is an owned Rust value, even when its `Rc` backing still
+    // aliases another aggregate component. A last-use read of such a local is
+    // movable into an owned callee parameter without manufacturing the extra
+    // handle that today's borrowed ABI creates. Arena backends cannot use this
+    // fact: their destructured wrapper/tuple entries remain observable holders.
+    let mut rust_owned_pattern_slots: HashMap<FnId, HashSet<u32>> = HashMap::new();
+    if model.owned_carriers_are_cow_protected() {
+        for (id, f) in program.iter() {
+            let mut slots = HashSet::new();
+            collect_pattern_bound_slots(&f.body.node, &mut slots);
+            if !slots.is_empty() {
+                rust_owned_pattern_slots.insert(*id, slots);
+            }
+        }
+    }
+
     // Interprocedural capture summary: `captures_param[f] = { i | param
     // i of f is NOT proven non-retaining in f's body — i.e. some
     // occurrence of param i is not a recognized linear use, OR it is
@@ -222,11 +253,15 @@ fn own_param_refine_for_model(mut program: MirProgram, model: OwnershipModel) ->
     // capturing callee param escapes in the caller too).
     let builtins = program.builtins.clone();
     let return_aliases = compute_return_alias_summary(&program, &provenance, &builtins, model);
-    let captures_param = compute_capture_summary(&program, &provenance, &builtins, model);
+    let captures_param = if model.owned_carriers_are_cow_protected() {
+        HashMap::new()
+    } else {
+        compute_capture_summary(&program, &provenance, &builtins, model)
+    };
 
     // --- BODY-LOCAL PROOF -------------------------------------------------
     //
-    // For each fn, compute the set of slots that LEAK in its body: slots
+    // For each arena-backend fn, compute the set of slots that LEAK in its body: slots
     // that appear (directly or through an alias chain) in any position
     // the whitelist does NOT recognize as non-retaining-linear. The scan
     // is positive — it walks every operand position, marks the
@@ -234,7 +269,7 @@ fn own_param_refine_for_model(mut program: MirProgram, model: OwnershipModel) ->
     // it does not explicitly recognize) as retaining. A bare `Local` in
     // a retaining position contributes its alias roots to the leak set.
     //
-    // A param slot in the leak set MUST stay flagged: some occurrence of
+    // An arena param slot in the leak set MUST stay flagged: some occurrence of
     // it (or of a value sharing its backing) is retained beyond a linear
     // consume, so an in-place mutation would corrupt the retained handle.
     // This single scan subsumes the old `collect_escaping_slots`
@@ -245,22 +280,32 @@ fn own_param_refine_for_model(mut program: MirProgram, model: OwnershipModel) ->
     // distinct shape: the param appears only in recognized-safe
     // positions, yet a still-live RENAME alias observes the pre-mutation
     // backing. `collect_live_aliased_params` pins those separately.
+    //
+    // Generated Rust deliberately skips both pins. Graduation there means
+    // "every call site can provide an owned `T`", not "the backing has no
+    // other handle". MIR liveness makes non-final owning uses clone, final
+    // uses move, and Map/Vector mutation crosses a COW gate. A retained alias
+    // can therefore force a real copy but cannot observe in-place corruption;
+    // keeping the borrowed ABI would only add another handle and can never
+    // improve that outcome. This distinction is the core of issue #1196.
     let mut leaking: HashMap<FnId, HashSet<u32>> = HashMap::new();
-    for (id, f) in program.iter() {
-        let prov = provenance.get(id).cloned().unwrap_or_default();
-        let mut leak: HashSet<u32> = HashSet::new();
-        scan_body_leaks(
-            model,
-            &f.body.node,
-            &prov,
-            &captures_param,
-            &builtins,
-            &mut leak,
-        );
-        let nparams = f.params.len();
-        collect_live_aliased_params(&f.body.node, &prov, &builtins, nparams, &mut leak);
-        if !leak.is_empty() {
-            leaking.insert(*id, leak);
+    if !model.owned_carriers_are_cow_protected() {
+        for (id, f) in program.iter() {
+            let prov = provenance.get(id).cloned().unwrap_or_default();
+            let mut leak: HashSet<u32> = HashSet::new();
+            scan_body_leaks(
+                model,
+                &f.body.node,
+                &prov,
+                &captures_param,
+                &builtins,
+                &mut leak,
+            );
+            let nparams = f.params.len();
+            collect_live_aliased_params(&f.body.node, &prov, &builtins, nparams, &mut leak);
+            if !leak.is_empty() {
+                leaking.insert(*id, leak);
+            }
         }
     }
 
@@ -384,26 +429,29 @@ fn own_param_refine_for_model(mut program: MirProgram, model: OwnershipModel) ->
                     }
                 };
                 let dup = matches!(&arg.node, MirExpr::Local(l) if slot_counts.get(&l.node.slot.0).copied().unwrap_or(0) > 1);
-                // Live-alias-at-callsite: an owned local passed here is
-                // NOT uniquely owned if the CALLER still observes its
-                // slot through a live rename alias (`alias = base;
-                // mutate(base); read alias`). The callee graduates and
-                // mutates in place, corrupting the caller's alias.
-                let caller_aliased = matches!(&arg.node, MirExpr::Local(l)
-                    if caller_live_aliased.is_some_and(|s| s.contains(&l.node.slot.0)));
-                let ok = !dup
-                    && !caller_aliased
-                    && uniquely_owned(
-                        &arg.node,
-                        cs.caller,
-                        &program,
-                        &owned,
-                        &provenance,
-                        &return_aliases,
-                        model,
-                        &builtins,
-                        0,
-                    );
+                // Live-alias-at-callsite: arena backends must reject an owned
+                // local if the caller still observes it through a rename
+                // alias (`alias = base; mutate(base); read alias`) because
+                // their fast path mutates shared storage directly. Generated
+                // Rust may move the last-use handle: `Rc::make_mut` / the
+                // collection's equivalent COW gate preserves the caller's
+                // alias and the move avoids adding one gratuitous handle.
+                let caller_aliased = !model.owned_carriers_are_cow_protected()
+                    && matches!(&arg.node, MirExpr::Local(l)
+                        if caller_live_aliased.is_some_and(|s| s.contains(&l.node.slot.0)));
+                let argument_owned = uniquely_owned(
+                    &arg.node,
+                    cs.caller,
+                    &program,
+                    &owned,
+                    &provenance,
+                    &rust_owned_pattern_slots,
+                    &return_aliases,
+                    model,
+                    &builtins,
+                    0,
+                );
+                let ok = !dup && !caller_aliased && argument_owned;
                 if !ok && owned.insert(key, false) != Some(false) {
                     changed = true;
                 }
@@ -432,8 +480,9 @@ fn own_param_refine_for_model(mut program: MirProgram, model: OwnershipModel) ->
     program
 }
 
-/// Is `e`, evaluated in `caller`, a uniquely-owned value (does not
-/// create / carry an alias of a still-live binding)? Default false.
+/// Can `e`, evaluated in `caller`, supply the model's owned argument?
+/// Arena storage must be unique; generated Rust needs a movable owned carrier
+/// because its mutators retain COW protection. Default false.
 #[allow(clippy::too_many_arguments)]
 fn uniquely_owned(
     e: &MirExpr,
@@ -441,6 +490,7 @@ fn uniquely_owned(
     program: &MirProgram,
     owned: &HashMap<(FnId, usize), bool>,
     provenance: &HashMap<FnId, HashMap<u32, Spanned<MirExpr>>>,
+    rust_owned_pattern_slots: &HashMap<FnId, HashSet<u32>>,
     return_aliases: &ReturnAliasSummary,
     model: OwnershipModel,
     builtins: &[String],
@@ -493,6 +543,7 @@ fn uniquely_owned(
                                 program,
                                 owned,
                                 provenance,
+                                rust_owned_pattern_slots,
                                 return_aliases,
                                 model,
                                 builtins,
@@ -531,6 +582,7 @@ fn uniquely_owned(
                                     program,
                                     owned,
                                     provenance,
+                                    rust_owned_pattern_slots,
                                     return_aliases,
                                     model,
                                     builtins,
@@ -545,6 +597,7 @@ fn uniquely_owned(
                             program,
                             owned,
                             provenance,
+                            rust_owned_pattern_slots,
                             return_aliases,
                             model,
                             builtins,
@@ -555,6 +608,7 @@ fn uniquely_owned(
                             program,
                             owned,
                             provenance,
+                            rust_owned_pattern_slots,
                             return_aliases,
                             model,
                             builtins,
@@ -580,6 +634,7 @@ fn uniquely_owned(
                             program,
                             owned,
                             provenance,
+                            rust_owned_pattern_slots,
                             return_aliases,
                             model,
                             builtins,
@@ -610,6 +665,7 @@ fn uniquely_owned(
                     program,
                     owned,
                     provenance,
+                    rust_owned_pattern_slots,
                     return_aliases,
                     model,
                     builtins,
@@ -622,6 +678,7 @@ fn uniquely_owned(
             program,
             owned,
             provenance,
+            rust_owned_pattern_slots,
             return_aliases,
             model,
             builtins,
@@ -631,7 +688,7 @@ fn uniquely_owned(
     }
 }
 
-/// Is slot `s` (in `caller`) a uniquely-owned binding, IGNORING the
+/// Can slot `s` (in `caller`) supply the model's owned binding, IGNORING the
 /// per-occurrence `last_use` flag? Factored out of the `Local` arm so
 /// the self-keep shape can decide liveness by OR-ing its two
 /// occurrences' last-use bits while sharing the same ownership logic.
@@ -642,6 +699,7 @@ fn slot_owned(
     program: &MirProgram,
     owned: &HashMap<(FnId, usize), bool>,
     provenance: &HashMap<FnId, HashMap<u32, Spanned<MirExpr>>>,
+    rust_owned_pattern_slots: &HashMap<FnId, HashSet<u32>>,
     return_aliases: &ReturnAliasSummary,
     model: OwnershipModel,
     builtins: &[String],
@@ -655,6 +713,14 @@ fn slot_owned(
         None => return false,
     };
     let is_param = (slot as usize) < caller_fn.params.len();
+    if !is_param
+        && model.owned_carriers_are_cow_protected()
+        && rust_owned_pattern_slots
+            .get(&caller)
+            .is_some_and(|slots| slots.contains(&slot))
+    {
+        return true;
+    }
     // Flagged in the caller's table (RULE 1 param or RULE 2 intra-proc
     // alias such as a Vector.get handle).
     if caller_fn
@@ -686,6 +752,7 @@ fn slot_owned(
             program,
             owned,
             provenance,
+            rust_owned_pattern_slots,
             return_aliases,
             model,
             builtins,
@@ -700,6 +767,40 @@ fn collect_fn_values(e: &MirExpr, out: &mut HashSet<String>) {
     walk_children(e, &mut |c| collect_fn_values(c, out));
     if let MirExpr::FnValue(name) = e {
         out.insert(name.clone());
+    }
+}
+
+/// Collect every local introduced by a match pattern. Generated Rust matches
+/// by value whenever a pattern binds, so these slots contain owned values.
+/// Nested tuple patterns and constructor payloads are flattened recursively;
+/// list patterns expose both their owned head and owned tail locals.
+fn collect_pattern_bound_slots(e: &MirExpr, out: &mut HashSet<u32>) {
+    if let MirExpr::Match(m) = e {
+        for arm in &m.node.arms {
+            collect_pattern_slots(&arm.pattern, out);
+        }
+    }
+    walk_children(e, &mut |child| collect_pattern_bound_slots(child, out));
+}
+
+fn collect_pattern_slots(pattern: &MirPattern, out: &mut HashSet<u32>) {
+    match pattern {
+        MirPattern::Bind(local, _) => {
+            out.insert(local.0);
+        }
+        MirPattern::Cons { head, tail, .. } => {
+            out.insert(head.0);
+            out.insert(tail.0);
+        }
+        MirPattern::Tuple(items) => {
+            for item in items {
+                collect_pattern_slots(item, out);
+            }
+        }
+        MirPattern::Ctor { bindings, .. } => {
+            out.extend(bindings.iter().map(|local| local.0));
+        }
+        MirPattern::Wildcard | MirPattern::Literal(_) | MirPattern::EmptyList => {}
     }
 }
 
@@ -1411,7 +1512,9 @@ fn compute_capture_summary(
             // live-alias pins. A param leaking ⇒ it captures its arg.
             let mut leak: HashSet<u32> = HashSet::new();
             scan_body_leaks(model, &f.body.node, &prov, &captures, builtins, &mut leak);
-            collect_live_aliased_params(&f.body.node, &prov, builtins, nparams, &mut leak);
+            if !model.owned_carriers_are_cow_protected() {
+                collect_live_aliased_params(&f.body.node, &prov, builtins, nparams, &mut leak);
+            }
             let idx_map = &param_slot_to_idx[id];
             let entry = captures.entry(*id).or_default();
             for &s in &leak {
