@@ -73,7 +73,31 @@ fn is_av_file(path: &Path) -> bool {
     path.extension().and_then(|ext| ext.to_str()) == Some("av")
 }
 
-fn collect_av_input_files(path: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
+/// Walk `path` for `.av` files, following symlinks but never re-entering a
+/// directory it is already inside.
+///
+/// A source directory reached through a symlink is legitimate — a corpus
+/// linked in from elsewhere is still a corpus — so the walk keeps following
+/// them, and two routes to one directory are two places the caller asked it
+/// to look. What ends the walk is a directory reached from inside itself: a
+/// link back up its own tree (`nested/loop -> ..`) is a cycle, and the walk
+/// branched through it until the operating system refused the path, listing
+/// every file dozens of times on the way.
+///
+/// So `ancestors` is a chain, not a history: it holds the canonical path of
+/// each directory the walk is currently inside, and a directory is dropped
+/// off it again on the way out. Remembering every directory ever entered
+/// would end the cycle too, but it would also drop the second route to an
+/// ordinary aliased directory — and which of the two spellings survived would
+/// be decided by the order the parent happened to be read in, so a file on
+/// disk could go missing from `aver check` on one machine and not another. A
+/// directory whose canonical path cannot be read is an error, like every
+/// other failure of the walk — never a subtree that quietly goes missing.
+fn collect_av_input_files(
+    path: &Path,
+    out: &mut Vec<PathBuf>,
+    ancestors: &mut HashSet<PathBuf>,
+) -> Result<(), String> {
     if !path.exists() {
         return Err(format!("Path '{}' does not exist", path.display()));
     }
@@ -86,6 +110,24 @@ fn collect_av_input_files(path: &Path, out: &mut Vec<PathBuf>) -> Result<(), Str
         return Err(format!("'{}' is not an .av file", path.display()));
     }
 
+    let canonical = fs::canonicalize(path)
+        .map_err(|e| format!("Cannot resolve directory '{}': {}", path.display(), e))?;
+    if !ancestors.insert(canonical.clone()) {
+        return Ok(());
+    }
+    let walked = collect_av_files_in_directory(path, out, ancestors);
+    ancestors.remove(&canonical);
+    walked
+}
+
+/// The children half of [`collect_av_input_files`], split out so the
+/// directory leaves the ancestor chain by one path on the way out, however
+/// the walk of its children ended.
+fn collect_av_files_in_directory(
+    path: &Path,
+    out: &mut Vec<PathBuf>,
+    ancestors: &mut HashSet<PathBuf>,
+) -> Result<(), String> {
     let entries = fs::read_dir(path)
         .map_err(|e| format!("Cannot read directory '{}': {}", path.display(), e))?;
     for entry in entries {
@@ -93,7 +135,7 @@ fn collect_av_input_files(path: &Path, out: &mut Vec<PathBuf>) -> Result<(), Str
             .map_err(|e| format!("Cannot read directory entry in '{}': {}", path.display(), e))?;
         let child = entry.path();
         if child.is_dir() {
-            collect_av_input_files(&child, out)?;
+            collect_av_input_files(&child, out, ancestors)?;
         } else if is_av_file(&child) {
             out.push(child);
         }
@@ -102,20 +144,28 @@ fn collect_av_input_files(path: &Path, out: &mut Vec<PathBuf>) -> Result<(), Str
     Ok(())
 }
 
-pub(super) fn resolve_av_inputs(path: &str) -> Result<Vec<String>, String> {
-    let root = Path::new(path);
+/// Every `.av` file under `path`, sorted. A root with none is an empty list,
+/// not an error: only a walk that could not be completed is one.
+fn list_av_files(path: &str) -> Result<Vec<String>, String> {
     let mut files = Vec::new();
-    collect_av_input_files(root, &mut files)?;
+    let mut ancestors = HashSet::new();
+    collect_av_input_files(Path::new(path), &mut files, &mut ancestors)?;
     files.sort();
-
-    if files.is_empty() {
-        return Err(format!("No .av files found under '{}'", root.display()));
-    }
-
     Ok(files
         .into_iter()
         .map(|path| path_to_string(&path))
         .collect())
+}
+
+pub(super) fn resolve_av_inputs(path: &str) -> Result<Vec<String>, String> {
+    let files = list_av_files(path)?;
+    if files.is_empty() {
+        return Err(format!(
+            "No .av files found under '{}'",
+            Path::new(path).display()
+        ));
+    }
+    Ok(files)
 }
 
 fn relativize_to(base: &Path, path: &Path) -> Option<String> {
@@ -2488,6 +2538,7 @@ fn report_stale_verify_costly(
     }
     let mut covered = vec![false; cfg.verify.costly.len()];
     let mut matched = vec![false; cfg.verify.costly.len()];
+    let mut verified: HashSet<String> = HashSet::new();
     for fr in file_results {
         let key = aver::diagnostics::vm_verify::costly_glob_key(&fr.path, Some(module_root));
         for idx in 0..cfg.verify.costly.len() {
@@ -2502,31 +2553,51 @@ fn report_stale_verify_costly(
                 matched[idx] = true;
             }
         }
+        verified.insert(key);
+    }
+    if matched.iter().all(|m| *m) {
+        return;
     }
     // A run over one file, or one program graph, legitimately leaves entries
     // for other paths untouched — the same rule `[[check.suppress]]` follows.
-    // "The path may be stale" is only true of a path the project has not
-    // got, so an entry no verified file matched is settled against the disk
-    // before it is scolded: if its globs cover an .av file under the module
-    // root, this run simply did not reach it. Listed once, and only when an
-    // entry needs it.
-    let on_disk: Vec<String> = if covered.iter().all(|c| *c) {
-        Vec::new()
-    } else {
-        resolve_av_inputs(module_root)
-            .unwrap_or_default()
+    // So every entry this run did not match is settled against the .av files
+    // the project has on disk, in one listing, and the listing is what decides
+    // both shapes of the complaint: a path the project has not got, and a fn
+    // the files it does have no longer declare.
+    let on_disk: Vec<String> = match list_av_files(module_root) {
+        Ok(files) => files
             .iter()
             .map(|file| aver::diagnostics::vm_verify::costly_glob_key(file, Some(module_root)))
-            .collect()
+            .collect(),
+        // Without the listing there is no evidence either way, and reading the
+        // failure as an empty project called every live entry stale. Say so
+        // once, scold nothing, and leave the verdict alone.
+        Err(e) => {
+            eprintln!(
+                "{}",
+                format!("note: staleness of [[verify.costly]] entries was not assessed: {e}")
+                    .dimmed()
+            );
+            return;
+        }
     };
     for (idx, entry) in cfg.verify.costly.iter().enumerate() {
         if matched[idx] {
             continue;
         }
-        if !covered[idx]
-            && on_disk
-                .iter()
-                .any(|key| cfg.verify_costly_covers_file(idx, key))
+        // The entry covers a file on disk that this run did not verify. That
+        // file may be the whole point of the entry — the path this run was
+        // never going to reach, or the one where the fn it names lives — and
+        // the run that does reach it is the one entitled to call it stale.
+        //
+        // An entry with no `files` covers every module, so in a project of
+        // several this leaves the verdict to a run over the project. That is
+        // the intended reading and not an oversight: the alternative is to
+        // tell a reader that a fn is gone on the evidence of the one module
+        // they happened to verify, which sends them to delete a live entry.
+        if on_disk
+            .iter()
+            .any(|key| cfg.verify_costly_covers_file(idx, key) && !verified.contains(key))
         {
             continue;
         }
@@ -12763,6 +12834,61 @@ Dafny program verifier finished with 158 verified, 2 errors, 12 time outs";
             vec![
                 dir.join("b.av").to_string_lossy().to_string(),
                 nested.join("a.av").to_string_lossy().to_string(),
+            ]
+        );
+
+        fs::remove_dir_all(&dir).expect("cleanup temp dir");
+    }
+
+    /// A directory symlink pointing back up its own tree is a cycle, and the
+    /// walk follows symlinks on purpose — a corpus linked in from elsewhere is
+    /// still a corpus. What it must not do is treat one directory reached
+    /// twice as two directories: that branches until the operating system
+    /// refuses the path.
+    #[cfg(unix)]
+    #[test]
+    fn resolve_av_inputs_does_not_loop_through_a_directory_symlink_cycle() {
+        let dir = temp_case_dir("symlink_loop");
+        let nested = dir.join("nested");
+        fs::create_dir_all(&nested).expect("create nested dir");
+        fs::write(dir.join("b.av"), "module B\n").expect("write b.av");
+        fs::write(nested.join("a.av"), "module A\n").expect("write a.av");
+        std::os::unix::fs::symlink("..", nested.join("loop")).expect("create the cycle");
+
+        let inputs = resolve_av_inputs(dir.to_str().expect("utf8 path")).expect("collect inputs");
+        assert_eq!(
+            inputs,
+            vec![
+                dir.join("b.av").to_string_lossy().to_string(),
+                nested.join("a.av").to_string_lossy().to_string(),
+            ]
+        );
+
+        fs::remove_dir_all(&dir).expect("cleanup temp dir");
+    }
+
+    /// Two routes to one directory are not always a cycle. A source tree and
+    /// a link beside it — the ordinary way a corpus is vendored in — are two
+    /// places the walk was asked to look, and it must list the files under
+    /// both. A cycle is a directory the walk is *currently inside*; one it
+    /// has already finished with is not, and dropping it silently loses a
+    /// file that is on disk, which of the two spellings depending on the
+    /// order the directory happened to be read in.
+    #[cfg(unix)]
+    #[test]
+    fn resolve_av_inputs_lists_a_directory_reached_by_two_routes() {
+        let dir = temp_case_dir("symlink_alias");
+        let src = dir.join("src");
+        fs::create_dir_all(&src).expect("create source dir");
+        fs::write(src.join("a.av"), "module A\n").expect("write a.av");
+        std::os::unix::fs::symlink("src", dir.join("link")).expect("create the alias");
+
+        let inputs = resolve_av_inputs(dir.to_str().expect("utf8 path")).expect("collect inputs");
+        assert_eq!(
+            inputs,
+            vec![
+                dir.join("link/a.av").to_string_lossy().to_string(),
+                src.join("a.av").to_string_lossy().to_string(),
             ]
         );
 

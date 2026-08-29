@@ -329,6 +329,217 @@ reason     = "points at a fn this project no longer has"
     assert_eq!(out.status.code(), Some(0), "{}", format_output(&out));
 }
 
+// ── d″. how the path is spelled does not decide which entry applies ─────
+
+/// `[[verify.costly]].files` globs are anchored at the module root, so the
+/// file the run was handed is anchored there too — whichever of the four
+/// ways a shell spells it was used. Anchoring it by text alone made an
+/// absolute file under a relative `--module-root` keep its absolute path as
+/// the key, `files = ["main.av"]` matched nothing, and the budget the
+/// project had granted in writing quietly did not apply.
+#[test]
+fn a_raised_budget_applies_however_the_path_is_spelled() {
+    let dir = project(
+        "budget-spelling",
+        "costly.av",
+        r#"
+[[verify.costly]]
+fn         = "countdown"
+files      = ["main.av"]
+step-limit = 50000000
+reason     = "the case counts down from 400,000; that is the case, not a runaway"
+"#,
+    );
+    let absolute_file = dir.join("main.av").to_string_lossy().to_string();
+    let absolute_root = dir.to_string_lossy().to_string();
+    let spellings: [(&str, &str); 4] = [
+        ("main.av", "."),
+        (absolute_file.as_str(), "."),
+        ("./main.av", "."),
+        ("main.av", absolute_root.as_str()),
+    ];
+
+    for (file, root) in spellings {
+        let out = run_aver_in(&dir, &["verify", file, "--module-root", root]);
+        let text = stdout_of(&out);
+        assert!(
+            text.contains("✓ countdown      2/2"),
+            "`aver verify {file} --module-root {root}` must apply the raised budget:\n{}",
+            format_output(&out)
+        );
+        assert!(
+            !String::from_utf8_lossy(&out.stderr).contains("may be stale"),
+            "`aver verify {file} --module-root {root}` matched the entry, so nothing is stale:\n{}",
+            format_output(&out)
+        );
+        assert_eq!(out.status.code(), Some(0), "{}", format_output(&out));
+    }
+}
+
+// ── d‴. a glob that also covers a file this run did not reach ───────────
+
+/// The fn an entry names lives in one of the files its glob covers, and this
+/// run reached another one. That is the same "not in this run" the case above
+/// settles for a path — one file further in. Scolding it sends the reader to
+/// delete a live entry.
+#[test]
+fn a_costly_entry_whose_fn_lives_in_an_unreached_file_is_not_reported_stale() {
+    let dir = project(
+        "budget-partial",
+        "costly.av",
+        r#"
+[[verify.costly]]
+fn         = "heavyCase"
+files      = ["corpus/*.av"]
+step-limit = 50000000
+reason     = "one corpus file is expensive on purpose"
+"#,
+    );
+    std::fs::create_dir_all(dir.join("corpus")).expect("make the corpus directory");
+    std::fs::write(
+        dir.join("corpus/a.av"),
+        "module A\n\nfn light() -> Int\n    ? \"Cheap, and the only file this run reaches.\"\n    1\n\nverify light\n    light() => 1\n",
+    )
+    .expect("stage the file this run verifies");
+    std::fs::write(
+        dir.join("corpus/b.av"),
+        "module B\n\nfn heavyCase() -> Int\n    ? \"Where the fn the entry names lives.\"\n    2\n\nverify heavyCase\n    heavyCase() => 2\n",
+    )
+    .expect("stage the file the entry is really about");
+
+    let out = run_aver_in(&dir, &["verify", "corpus/a.av", "--module-root", "."]);
+    let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+
+    assert!(
+        !stderr.contains("may be stale"),
+        "the glob also covers corpus/b.av, which this run did not verify:\n{}",
+        format_output(&out)
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", format_output(&out));
+}
+
+/// An entry with no `files` key covers every module in the project, so the
+/// same rule reaches it, and this is where it is felt most: a run over one
+/// module of several has not seen where the fn could still be. It is the run
+/// that reaches every file the entry covers that is entitled to call the fn
+/// stale — every run in a project of one module, the run over the project in
+/// a project of several. Both directions are pinned, because the silence is
+/// the deliberate half.
+fn two_module_project_with_a_stale_global_entry(prefix: &str) -> ScratchDir {
+    let dir = project(
+        prefix,
+        "costly.av",
+        r#"
+[[verify.costly]]
+fn         = "countdown"
+files      = ["main.av"]
+step-limit = 50000000
+reason     = "the case counts down from 400,000"
+
+[[verify.costly]]
+fn         = "noSuchFunction"
+step-limit = 50000000
+reason     = "no file in this project declares that fn"
+"#,
+    );
+    std::fs::create_dir_all(dir.join("corpus")).expect("make the corpus directory");
+    std::fs::write(
+        dir.join("corpus/a.av"),
+        "module A\n\nfn light() -> Int\n    ? \"The module a run over main.av does not reach.\"\n    1\n\nverify light\n    light() => 1\n",
+    )
+    .expect("stage the second module");
+    dir
+}
+
+#[test]
+fn an_entry_without_files_is_not_called_stale_by_a_run_over_one_module_of_several() {
+    let dir = two_module_project_with_a_stale_global_entry("budget-global-partial");
+    let out = verify(&dir, &[]);
+    let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+
+    assert!(
+        !stderr.contains("may be stale"),
+        "an entry with no files covers corpus/a.av too, and this run did not verify it:\n{}",
+        format_output(&out)
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", format_output(&out));
+}
+
+#[test]
+fn an_entry_without_files_is_called_stale_by_a_run_over_the_whole_project() {
+    let dir = two_module_project_with_a_stale_global_entry("budget-global-whole");
+    let out = run_aver_in(&dir, &["verify", ".", "--module-root", "."]);
+    let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+
+    assert!(
+        stderr.contains(r#"fn = "noSuchFunction""#) && stderr.contains("the fn may be stale"),
+        "this run verified every file the entry covers, so it can say:\n{}",
+        format_output(&out)
+    );
+    assert!(
+        !stderr.contains(r#"fn = "countdown""#),
+        "the entry that did its job is not scolded:\n{}",
+        format_output(&out)
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", format_output(&out));
+}
+
+// ── d⁗. an inventory the run could not read is not evidence ─────────────
+
+/// Staleness is settled against the .av files under the module root. When
+/// that list cannot be built, the run knows nothing about any entry outside
+/// it — and saying nothing is the only honest report. Reading the failure as
+/// an empty project called every live entry stale.
+#[cfg(unix)]
+#[test]
+fn an_unreadable_module_root_suspends_staleness_instead_of_reporting_it() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = project(
+        "budget-unreadable",
+        "costly.av",
+        r#"
+[[verify.costly]]
+fn         = "countdown"
+step-limit = 50000000
+reason     = "the case counts down from 400,000"
+
+[[verify.costly]]
+fn         = "checkScript"
+files      = ["domain/other*.av"]
+step-limit = 50000000
+reason     = "only the inventory could say whether this path is still there"
+"#,
+    );
+    let locked = dir.join("locked");
+    std::fs::create_dir_all(&locked).expect("make the directory the walk cannot read");
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000))
+        .expect("lock the directory");
+    if std::fs::read_dir(&locked).is_ok() {
+        // Running as root: nothing is unreadable, so there is no case here.
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).ok();
+        return;
+    }
+
+    let out = verify(&dir, &[]);
+    // Before any assertion, so a failing one still leaves a removable tree.
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755))
+        .expect("unlock the directory so the scratch tree can be removed");
+    let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+
+    assert!(
+        stderr.contains("staleness of [[verify.costly]] entries was not assessed"),
+        "an inventory that could not be read must be reported as unread:\n{}",
+        format_output(&out)
+    );
+    assert!(
+        !stderr.contains("may be stale"),
+        "nothing was read, so nothing is stale:\n{}",
+        format_output(&out)
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", format_output(&out));
+}
+
 // ── e. a decline is its own count, and it fails the run ─────────────────
 
 #[test]
