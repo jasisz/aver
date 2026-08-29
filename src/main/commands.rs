@@ -2503,8 +2503,31 @@ fn report_stale_verify_costly(
             }
         }
     }
+    // A run over one file, or one program graph, legitimately leaves entries
+    // for other paths untouched — the same rule `[[check.suppress]]` follows.
+    // "The path may be stale" is only true of a path the project has not
+    // got, so an entry no verified file matched is settled against the disk
+    // before it is scolded: if its globs cover an .av file under the module
+    // root, this run simply did not reach it. Listed once, and only when an
+    // entry needs it.
+    let on_disk: Vec<String> = if covered.iter().all(|c| *c) {
+        Vec::new()
+    } else {
+        resolve_av_inputs(module_root)
+            .unwrap_or_default()
+            .iter()
+            .map(|file| aver::diagnostics::vm_verify::costly_glob_key(file, Some(module_root)))
+            .collect()
+    };
     for (idx, entry) in cfg.verify.costly.iter().enumerate() {
         if matched[idx] {
+            continue;
+        }
+        if !covered[idx]
+            && on_disk
+                .iter()
+                .any(|key| cfg.verify_costly_covers_file(idx, key))
+        {
             continue;
         }
         let scope = if entry.files.is_empty() {
