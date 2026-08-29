@@ -20,6 +20,10 @@ use aver::ir::{PipelineConfig, TypecheckMode, pipeline};
 use aver::source::parse_source;
 
 fn compile_bytes(source: &str) -> Vec<u8> {
+    compile_bytes_with_chars_fusion(source, false)
+}
+
+fn compile_bytes_with_chars_fusion(source: &str, run_chars_fusion: bool) -> Vec<u8> {
     let mut items = parse_source(source).unwrap_or_else(|e| {
         panic!("parse failed: {e}\n--- source ---\n{source}");
     });
@@ -31,7 +35,7 @@ fn compile_bytes(source: &str) -> Vec<u8> {
             alloc_policy: Some(&neutral_policy),
             run_interp_lower: false,
             run_buffer_build: false,
-            run_chars_fusion: false,
+            run_chars_fusion,
             run_list_build: false,
             ..Default::default()
         },
@@ -56,7 +60,15 @@ fn run_int(source: &str) -> i64 {
 /// Same drive as [`run_int`], but hands back the wasmtime trap instead
 /// of panicking on it — for the tests that assert on a trap's message.
 fn run_int_result(source: &str) -> Result<i64, String> {
-    let bytes = compile_bytes(source);
+    run_int_bytes(&compile_bytes(source))
+}
+
+fn run_int_with_chars_fusion(source: &str) -> i64 {
+    run_int_bytes(&compile_bytes_with_chars_fusion(source, true))
+        .unwrap_or_else(|e| panic!("main trapped: {e}"))
+}
+
+fn run_int_bytes(bytes: &[u8]) -> Result<i64, String> {
     let mut config = wasmtime::Config::new();
     config.wasm_gc(true);
     config.wasm_tail_call(true);
@@ -70,7 +82,7 @@ fn run_int_result(source: &str) -> Result<i64, String> {
     // enforces `max_wasm_stack <= async_stack_size` at Engine::new.
     config.async_stack_size(12 * 1024 * 1024);
     let engine = wasmtime::Engine::new(&config).expect("wasmtime engine");
-    let module = wasmtime::Module::new(&engine, &bytes).unwrap_or_else(|e| {
+    let module = wasmtime::Module::new(&engine, bytes).unwrap_or_else(|e| {
         panic!("wasmtime rejected wasm-gc bytes: {e}");
     });
     let mut store = wasmtime::Store::new(&engine, ());
@@ -3221,48 +3233,90 @@ fn coord(x: Int, y: Int) -> Result<Coord, String>
     );
 }
 
-/// A program shaped so the chars-fusion pass fires: a linear loop over
-/// `String.chars` that the pass rewrites into a `__cursor` variant full
-/// of `__str_*` intrinsics, with the call site moved onto the variant.
-const FUSIBLE_DIGITS: &str = r#"
-module Digits
-    intent = "counts the decimal digits in a string, shaped so chars fusion fires"
-    exposes [count]
-    effects []
-
-fn digitCount(chars: List<String>, acc: Int) -> Int
+/// Cursor fusion must advance by UTF-8 scalar boundaries and feed an ASCII
+/// classifier by codepoint without rebuilding one-character strings.
+#[test]
+fn chars_fusion_cursor_runs_with_unicode_and_codepoint_classification() {
+    let source = r#"
+fn consume(chars: List<String>, n: Int) -> Int
     match chars
-        [] -> acc
+        [] -> n
         [head, ..tail] -> match head
-            "0" -> digitCount(tail, acc + 1)
-            "1" -> digitCount(tail, acc + 1)
-            _ -> digitCount(tail, acc)
-
-fn count(text: String) -> Int
-    digitCount(String.chars(text), 0)
+            "a" -> consume(tail, n * 10 + 1)
+            _ -> consume(tail, n * 10 + 9)
 
 fn main() -> Int
-    count("a1b0c1")
+    consume(String.chars("aé😀x"), 0)
 "#;
+    assert_eq!(run_int_with_chars_fusion(source), 1999);
+}
 
-/// The fusion passes synthesize intrinsic calls (`__str_*`, `__buf_*`,
-/// `__lst_*`) that only the VM and the Rust codegen can lower; the
-/// wasm-gc family excludes those passes via pipeline flags. If that
-/// exclusion ever regresses, the intrinsics reach this backend's
-/// emitter — and the emitter must REFUSE with a named compile error,
-/// not fall back to a trap stub that ships a module whose rewritten
-/// call sites trap at runtime (the silent-miscompile hole recorded in
-/// the change that added the list-build pass). Before the refusal
-/// existed, this fixture did not even reach that fall-through: the
-/// emitter's type reader panicked on a synthesized `__str_code1` node
-/// carrying no type stamp — an internal panic either way, never a
-/// compile error.
+/// Merely enabling the supported pass must not change certificate-bound
+/// output when the source contains no traversal shape it can rewrite.
 #[test]
-fn a_fabricated_intrinsic_reaching_the_emitter_is_refused() {
-    // Drive the hazard for real: the exclusion flag deliberately wrong
-    // (chars fusion ON on the wasm-gc path), everything else as
-    // `compile_bytes` sets it.
-    let mut items = parse_source(FUSIBLE_DIGITS).expect("fixture parses");
+fn chars_fusion_is_byte_identical_when_no_shape_matches() {
+    let source = r#"
+fn main() -> Int
+    42
+"#;
+    assert_eq!(
+        compile_bytes_with_chars_fusion(source, false),
+        compile_bytes_with_chars_fusion(source, true),
+        "enabling the pass alone must not perturb certificate-bound bytes"
+    );
+}
+
+/// The cursor-to-classifier rewrite takes the codepoint across the call
+/// boundary. Both one-to-one Unicode mappings and length-changing mappings
+/// must agree with the String route: Kelvin/long-s hit their ASCII arm while
+/// dotted-I/sharp-s take the wildcard because their fold expands.
+#[test]
+fn chars_fusion_codepoint_case_folds_match_unicode_string_semantics() {
+    let source = r#"
+fn lowerValue(ch: String) -> Int
+    match String.toLower(ch)
+        "k" -> 1
+        _ -> 9
+
+fn upperValue(ch: String) -> Int
+    match String.toUpper(ch)
+        "A" -> 1
+        "S" -> 2
+        _ -> 9
+
+fn lowerWalk(chars: List<String>, n: Int) -> Int
+    match chars
+        [] -> n
+        [head, ..tail] -> lowerWalk(tail, n * 10 + lowerValue(head))
+
+fn upperWalk(chars: List<String>, n: Int) -> Int
+    match chars
+        [] -> n
+        [head, ..tail] -> upperWalk(tail, n * 10 + upperValue(head))
+
+fn main() -> Int
+    lowerWalk(String.chars("KKİ"), 0) * 1000 + upperWalk(String.chars("aſß"), 0)
+"#;
+    assert_eq!(run_int_with_chars_fusion(source), 119_129);
+    #[cfg(feature = "runtime")]
+    assert_eq!(run_int_on_vm(source), 119_129);
+}
+
+#[test]
+fn unsupported_builder_fabrications_are_still_refused_by_name() {
+    let source = r#"
+fn parts(values: List<String>, acc: List<String>) -> List<String>
+    match values
+        [] -> List.reverse(acc)
+        [head, ..tail] -> parts(tail, List.prepend(head, acc))
+
+fn render(values: List<String>) -> String
+    String.join(parts(values, []), ",")
+
+fn main() -> String
+    render(["a", "b"])
+"#;
+    let mut items = parse_source(source).expect("fixture parses");
     let neutral_policy = aver::ir::NeutralAllocPolicy;
     let result = pipeline::run(
         &mut items,
@@ -3270,40 +3324,143 @@ fn a_fabricated_intrinsic_reaching_the_emitter_is_refused() {
             typecheck: Some(TypecheckMode::Full { base_dir: None }),
             alloc_policy: Some(&neutral_policy),
             run_interp_lower: false,
-            run_buffer_build: false,
-            run_chars_fusion: true,
+            run_buffer_build: true,
+            run_chars_fusion: false,
             run_list_build: false,
             ..Default::default()
         },
     );
-    if let Some(tc) = &result.typecheck
-        && !tc.errors.is_empty()
-    {
-        panic!("typecheck failed: {:?}", tc.errors);
-    }
-    let err = match compile_to_wasm_gc(&items, result.analysis.as_ref()) {
-        Err(e) => e,
-        Ok(bytes) => panic!(
-            "a fused cursor variant slipped through the wasm-gc emitter: the module \
-             compiled to {} bytes — the fabricated intrinsics fell back to a trap \
-             stub instead of being refused",
-            bytes.len()
-        ),
-    };
-    let msg = err.to_string();
     assert!(
-        msg.contains("fabricated intrinsic `__str_"),
-        "the refusal names the intrinsic it cannot lower: {msg}"
+        result
+            .buffer_build
+            .as_ref()
+            .is_some_and(|report| report.rewrites > 0),
+        "the fixture must reach the fabricated buffer contract"
     );
+    let err = compile_to_wasm_gc(&items, result.analysis.as_ref())
+        .expect_err("wasm-gc must keep refusing unsupported builders")
+        .to_string();
+    assert!(err.contains("fabricated intrinsic `__buf_"), "{err}");
     assert!(
-        msg.contains("does not lower fabricated intrinsics"),
-        "the refusal states the wasm-gc family's contract: {msg}"
+        err.contains("does not lower fabricated intrinsics"),
+        "{err}"
     );
 
-    // The properly-excluded path is untouched: the same program, with
-    // the fusion flags off as every wasm-gc call site sets them,
-    // compiles and answers as it always did.
-    assert_eq!(run_int(FUSIBLE_DIGITS), 3);
+    // The list collector is independently disabled on wasm-gc. Exercise its
+    // real pass rather than spelling compiler-reserved names in source, and
+    // keep the emitted `__lst_*` family visible in the refusal diagnostic.
+    let list_source = r#"
+fn collect(n: Int, acc: List<Int>) -> List<Int>
+    match n <= 0
+        true -> List.reverse(acc)
+        false -> collect(n - 1, List.prepend(n, acc))
+
+fn main() -> List<Int>
+    collect(5, [])
+"#;
+    let mut list_items = parse_source(list_source).expect("list collector fixture parses");
+    let list_result = pipeline::run(
+        &mut list_items,
+        PipelineConfig {
+            typecheck: Some(TypecheckMode::Full { base_dir: None }),
+            alloc_policy: Some(&neutral_policy),
+            run_interp_lower: false,
+            run_buffer_build: false,
+            run_chars_fusion: false,
+            run_list_build: true,
+            ..Default::default()
+        },
+    );
+    assert!(
+        list_result
+            .list_build
+            .as_ref()
+            .is_some_and(|report| report.rewrites > 0),
+        "the fixture must reach the fabricated list-builder contract"
+    );
+    let err = compile_to_wasm_gc(&list_items, list_result.analysis.as_ref())
+        .expect_err("wasm-gc must keep refusing unsupported list builders")
+        .to_string();
+    assert!(err.contains("fabricated intrinsic `__lst_"), "{err}");
+    assert!(
+        err.contains("does not lower fabricated intrinsics"),
+        "{err}"
+    );
+
+    // Byte builders are retargeted from that same disabled collector pass.
+    // The consumer is the canonical `Bytes.fromList` implementation shape;
+    // keep this family named too even though byte sinks remain a follow-up.
+    let byte_source = r#"
+record Bytes
+    values: List<Int>
+
+fn allInRange(xs: List<Int>) -> Bool
+    ? "Return true when every integer in the list is an octet."
+    match xs
+        [] -> true
+        [head, ..tail] -> match Bool.and(head >= 0, head <= 255)
+            true -> allInRange(tail)
+            false -> false
+
+fn firstOutOfRange(xs: List<Int>) -> Int
+    ? "Return the first non-octet value; -1 when every value is an octet."
+    match xs
+        [] -> -1
+        [head, ..tail] -> match Bool.and(head >= 0, head <= 255)
+            true -> firstOutOfRange(tail)
+            false -> head
+
+fn firstOutOfRangeIndex(xs: List<Int>) -> Int
+    ? "Return the index of the first non-octet value; the length when every value is an octet."
+    match xs
+        [] -> 0
+        [head, ..tail] -> match Bool.and(head >= 0, head <= 255)
+            true -> 1 + firstOutOfRangeIndex(tail)
+            false -> 0
+
+fn fromList(xs: List<Int>) -> Result<Bytes, String>
+    ? "Validate raw integers and construct a byte sequence."
+    match allInRange(xs)
+        true -> Result.Ok(Bytes(values = xs))
+        false -> Result.Err("byte {firstOutOfRange(xs)} at index {firstOutOfRangeIndex(xs)} is outside 0..=255")
+
+fn collect(n: Int, acc: List<Int>) -> List<Int>
+    match n <= 0
+        true -> List.reverse(acc)
+        false -> collect(n - 1, List.prepend(n, acc))
+
+fn main() -> Result<Bytes, String>
+    fromList(collect(5, []))
+"#;
+    let mut byte_items = parse_source(byte_source).expect("byte collector fixture parses");
+    let byte_result = pipeline::run(
+        &mut byte_items,
+        PipelineConfig {
+            typecheck: Some(TypecheckMode::Full { base_dir: None }),
+            alloc_policy: Some(&neutral_policy),
+            run_interp_lower: false,
+            run_buffer_build: false,
+            run_chars_fusion: false,
+            run_list_build: true,
+            ..Default::default()
+        },
+    );
+    assert!(
+        byte_result
+            .list_build
+            .as_ref()
+            .is_some_and(|report| report.byte_retargets > 0),
+        "the fixture must reach the fabricated byte-builder contract: {:?}",
+        byte_result.list_build
+    );
+    let err = compile_to_wasm_gc(&byte_items, byte_result.analysis.as_ref())
+        .expect_err("wasm-gc must keep refusing unsupported byte builders")
+        .to_string();
+    assert!(err.contains("fabricated intrinsic `__byt_"), "{err}");
+    assert!(
+        err.contains("does not lower fabricated intrinsics"),
+        "{err}"
+    );
 }
 
 #[test]

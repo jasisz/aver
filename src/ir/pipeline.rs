@@ -197,11 +197,10 @@ pub struct PipelineConfig<'a> {
     /// contain belongs here, below the line, and is proof-invisible for
     /// free.
     pub run_buffer_build: bool,
-    /// Whether to run the chars-fusion pass. Same target matrix as
-    /// `run_buffer_build`, and for the same reason: the intrinsics it
-    /// introduces are lowered by the VM and by the Rust backend, and by
-    /// nothing else — the wasm-gc family has no representation for them
-    /// and leaves this off.
+    /// Whether to run the chars-fusion pass. Its closed `__str_*`
+    /// intrinsic contract is lowered by the VM, Rust, wasm-gc, and wasip2;
+    /// unlike mutable buffer/list builders it needs no backend-owned carrier,
+    /// only a UTF-8 byte offset into the existing String representation.
     ///
     /// Also below the proof line, so — like `run_buffer_build` — what
     /// you pass here cannot change what gets proven (see [`AstView`]).

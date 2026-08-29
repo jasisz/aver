@@ -616,15 +616,25 @@ struct Cursorer<'a> {
 
 /// `__str_<name>(__cur_s, <idx>)`.
 fn cursor_call(name: &str, idx: &str, line: crate::ast::SourceLine) -> Spanned<Expr> {
-    sp(
+    let s = sp_typed(
+        Expr::Ident(CURSOR_STR_PARAM.to_string()),
+        line,
+        crate::types::Type::Str,
+    );
+    let i = sp_typed(Expr::Ident(idx.to_string()), line, crate::types::Type::Int);
+    let result_ty = match name {
+        "__str_cursor_end" => crate::types::Type::Bool,
+        "__str_cursor_head" => crate::types::Type::Str,
+        "__str_cursor_next" | "__str_cursor_code" => crate::types::Type::Int,
+        _ => unreachable!("unknown cursor intrinsic `{name}`"),
+    };
+    sp_typed(
         Expr::FnCall(
             Box::new(sp(Expr::Ident(name.to_string()), line)),
-            vec![
-                sp(Expr::Ident(CURSOR_STR_PARAM.to_string()), line),
-                sp(Expr::Ident(idx.to_string()), line),
-            ],
+            vec![s, i],
         ),
         line,
+        result_ty,
     )
 }
 
@@ -643,7 +653,8 @@ fn bind(
     } else {
         Pattern::Ident(name.to_string())
     };
-    sp(
+    let ty = body.ty().cloned();
+    let out = sp(
         Expr::Match {
             subject: Box::new(value),
             arms: vec![MatchArm {
@@ -653,11 +664,21 @@ fn bind(
             }],
         },
         line,
-    )
+    );
+    if let Some(ty) = ty {
+        out.set_ty(ty);
+    }
+    out
 }
 
 fn sp(node: Expr, line: crate::ast::SourceLine) -> Spanned<Expr> {
     Spanned::new(node, line)
+}
+
+fn sp_typed(node: Expr, line: crate::ast::SourceLine, ty: crate::types::Type) -> Spanned<Expr> {
+    let out = Spanned::new(node, line);
+    out.set_ty(ty);
+    out
 }
 
 impl Cursorer<'_> {
@@ -667,6 +688,18 @@ impl Cursorer<'_> {
     }
 
     fn transform(
+        &mut self,
+        expr: &Spanned<Expr>,
+        cursors: &Cursors,
+    ) -> Result<Spanned<Expr>, CharsFusionDecline> {
+        let out = self.transform_unstamped(expr, cursors)?;
+        if let Some(ty) = expr.ty() {
+            out.set_ty(ty.clone());
+        }
+        Ok(out)
+    }
+
+    fn transform_unstamped(
         &mut self,
         expr: &Spanned<Expr>,
         cursors: &Cursors,
@@ -989,12 +1022,13 @@ fn rewrite_codepoint_matches(expr: &mut Spanned<Expr>) -> usize {
         _ => ("__str_code1", (**subject).clone()),
     };
 
-    let new_subject = Spanned::new(
+    let new_subject = sp_typed(
         Expr::FnCall(
             Box::new(Spanned::new(Expr::Ident(intrinsic.to_string()), line)),
             vec![inner],
         ),
         line,
+        crate::types::Type::Int,
     );
     for (arm, code) in arms.iter_mut().zip(codes) {
         if let Some(code) = code {
@@ -1221,7 +1255,11 @@ fn build_code_variant(fd: &FnDef, fold: CodeFold, new_name: &str) -> FnDef {
         unreachable!("qualified as exactly one match")
     };
     let line = subject.line;
-    let code_read = sp(Expr::Ident(CODE_PARAM.to_string()), line);
+    let code_read = sp_typed(
+        Expr::Ident(CODE_PARAM.to_string()),
+        line,
+        crate::types::Type::Int,
+    );
     let new_subject = match fold {
         CodeFold::Bare => code_read,
         CodeFold::Lower | CodeFold::Upper => {
@@ -1230,12 +1268,13 @@ fn build_code_variant(fd: &FnDef, fold: CodeFold, new_name: &str) -> FnDef {
             } else {
                 "__str_fold_upper"
             };
-            sp(
+            sp_typed(
                 Expr::FnCall(
                     Box::new(sp(Expr::Ident(intrinsic.to_string()), line)),
                     vec![code_read],
                 ),
                 line,
+                crate::types::Type::Int,
             )
         }
     };
@@ -1253,6 +1292,9 @@ fn build_code_variant(fd: &FnDef, fold: CodeFold, new_name: &str) -> FnDef {
         },
         expr.line,
     );
+    if let Some(ty) = expr.ty() {
+        new_match.set_ty(ty.clone());
+    }
     FnDef {
         name: new_name.to_string(),
         line: fd.line,

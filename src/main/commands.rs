@@ -6653,7 +6653,7 @@ fn cmd_compile_wasm_gc(
     // so the target sees a real capability callee rather than an unresolved
     // call that lowers to a trap.
     let prepared_deps =
-        load_compile_deps_prepared(&items, &module_root, DepLowering::STRING_INDEX_ONLY);
+        load_compile_deps_prepared(&items, &module_root, DepLowering::STRING_TRAVERSAL);
     let dep_modules = prepared_deps.modules;
     use aver::ir::{PipelineConfig, TypecheckMode};
     let neutral_policy = aver::ir::NeutralAllocPolicy;
@@ -6670,10 +6670,11 @@ fn cmd_compile_wasm_gc(
             // (legacy wasm, VM); for wasm-gc it would force us to
             // emulate a mutable buffer over `(struct len array)` with
             // grow-on-append, when `array.copy` x2 is the idiomatic
-            // shape. Keep the source InterpolatedStr in the IR.
+            // shape. Keep the source InterpolatedStr in the IR. Character
+            // traversal itself lowers directly over the UTF-8 String array.
             run_interp_lower: false,
             run_buffer_build: false,
-            run_chars_fusion: false,
+            run_chars_fusion: true,
             run_string_index: true,
             run_list_build: false,
             ..Default::default()
@@ -6960,7 +6961,7 @@ fn cmd_compile_wasip2(
         };
 
         let prepared_deps =
-            load_compile_deps_prepared(&items, &module_root, DepLowering::STRING_INDEX_ONLY);
+            load_compile_deps_prepared(&items, &module_root, DepLowering::STRING_TRAVERSAL);
         let dep_modules = prepared_deps.modules;
         use aver::ir::{PipelineConfig, TypecheckMode};
         let neutral_policy = aver::ir::NeutralAllocPolicy;
@@ -6972,7 +6973,7 @@ fn cmd_compile_wasip2(
                 dep_modules: &dep_modules,
                 run_interp_lower: false,
                 run_buffer_build: false,
-                run_chars_fusion: false,
+                run_chars_fusion: true,
                 run_string_index: true,
                 run_list_build: false,
                 ..Default::default()
@@ -11709,8 +11710,8 @@ pub(super) fn flatten_multimodule(
 /// One field per pipeline gate rather than a bundled "optimise" flag, so
 /// this matches the gates 1-to-1 with no magic translation in between:
 /// Proof exporters (Lean/Dafny) ask for [`Self::PRISTINE`]. The wasm-gc
-/// family asks for [`Self::STRING_INDEX_ONLY`] because it lowers the
-/// packed String index but not the older mutable buffers/cursors/builders.
+/// family asks for [`Self::STRING_TRAVERSAL`] because it lowers both the
+/// UTF-8 character cursor and the packed String index, but not mutable builders.
 /// VM and Rust turn every supported pass on for dependencies too.
 #[derive(Clone, Copy)]
 pub(super) struct DepLowering {
@@ -11746,10 +11747,12 @@ impl DepLowering {
         self_host: false,
     };
 
-    /// Runtime wasm-gc / wasip2 shape: the index is a native i32 array,
-    /// while Buffer/cursor/list-builder fabrications remain unsupported.
+    /// Runtime wasm-gc / wasip2 shape: character traversal uses the native
+    /// UTF-8 cursor and indexed access uses a native i32 boundary array.
+    /// Mutable Buffer/list-builder fabrications remain unsupported.
     #[cfg(any(feature = "wasm", feature = "wasip2"))]
-    pub(super) const STRING_INDEX_ONLY: Self = Self {
+    pub(super) const STRING_TRAVERSAL: Self = Self {
+        chars_fusion: true,
         string_index: true,
         ..Self::PRISTINE
     };

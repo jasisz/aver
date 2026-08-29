@@ -24,6 +24,34 @@ fn block_ty_is_raw_i64(block_ty: wasm_encoder::BlockType) -> bool {
     matches!(block_ty, wasm_encoder::BlockType::Result(ValType::I64))
 }
 
+/// Fabricating passes run after typecheck, so their new call nodes do not carry
+/// a `Spanned::ty` stamp. Their intrinsic contract is nevertheless closed and
+/// explicit; use it only at the match-dispatch seam that otherwise reads the
+/// subject stamp. Ordinary source expressions remain fail-closed through
+/// `aver_type_str_of`.
+fn fabricated_subject_type(subject: &Spanned<MirExpr>) -> Option<&'static str> {
+    use crate::ir::hir::BuiltinIntrinsic;
+    let MirExpr::Call(call) = &subject.node else {
+        return None;
+    };
+    let MirCallee::Intrinsic(intrinsic) = call.node.callee else {
+        return None;
+    };
+    match intrinsic {
+        BuiltinIntrinsic::StrCursorEnd => Some("Bool"),
+        BuiltinIntrinsic::StrCursorHead => Some("String"),
+        BuiltinIntrinsic::StrCursorNext
+        | BuiltinIntrinsic::StrCode1
+        | BuiltinIntrinsic::StrCode1Lower
+        | BuiltinIntrinsic::StrCode1Upper
+        | BuiltinIntrinsic::StrCursorCode
+        | BuiltinIntrinsic::StrFoldLower
+        | BuiltinIntrinsic::StrFoldUpper
+        | BuiltinIntrinsic::StrIndexCodeAt => Some("Int"),
+        _ => None,
+    }
+}
+
 /// Mirror of `emit_match` (emit.rs) for the primitive-subject shapes:
 /// `Bool` (a single `if`/`else`) and `Int` (an `i64.eq` cascade). An
 /// arm carrying a constructor or list pattern is routed to the carrier
@@ -67,6 +95,39 @@ pub(crate) fn emit_mir_match(
         }
     };
     let produces = !matches!(block_ty, wasm_encoder::BlockType::Empty);
+    let fabricated_type = fabricated_subject_type(&m.subject);
+    let subject_type = fabricated_type
+        .map(str::to_owned)
+        .unwrap_or_else(|| aver_type_str_of(&m.subject));
+
+    // Fusion passes express a compiler-local binding as an irrefutable
+    // one-arm match because the expression AST has no `let`. Lower only that
+    // fabricated shape as a store followed by the body, leaving source-level
+    // matches on their byte-stable established path. Cursor peeling synthesises
+    // both a String head binding and an Int next-offset binding. The latter
+    // follows the MIR bare-i64 decision for its slot; every other representation
+    // is emitted normally.
+    if fabricated_type.is_some()
+        && subject_type.trim() != "Unit"
+        && m.arms.len() == 1
+        && let MirPattern::Bind(slot, _) = &m.arms[0].pattern
+    {
+        let emitted = if subject_type.trim() == "Int" && ctx.slot_is_bare(slot.0) {
+            emit_mir_int_raw(func, &m.subject, slots, ctx)?
+        } else {
+            emit_mir_expr(func, &m.subject, slots, ctx)?
+        };
+        if emitted.is_none() {
+            return Ok(None);
+        }
+        if slot.0 == u32::from(u16::MAX) {
+            func.instruction(&Instruction::Drop);
+        } else {
+            func.instruction(&Instruction::LocalSet(slot.0));
+        }
+        ctx.int_result_raw.set(result_raw);
+        return emit_mir_expr(func, &m.arms[0].body, slots, ctx);
+    }
 
     // Tuple arms. The single-arm flat destructure `(a, b, …) -> body`
     // (every component a `Bind` or `Wildcard`) goes to `emit_mir_tuple_match`
@@ -140,7 +201,7 @@ pub(crate) fn emit_mir_match(
         return Ok(emit_mir_variant_dispatch(func, m, block_ty, slots, ctx)?.map(|()| produces));
     }
 
-    match aver_type_str_of(&m.subject).trim() {
+    match subject_type.trim() {
         "Bool" => {
             // Mirror of `emit_match`'s Bool special-case: a single
             // `if subject { true_body } else { false_body }`.

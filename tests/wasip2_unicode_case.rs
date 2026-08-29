@@ -102,6 +102,38 @@ fn main() -> Unit
 }
 
 #[test]
+fn wasip2_chars_fusion_walks_unicode_and_folds_codepoints() {
+    let dir = tempdir("cursor");
+    let src = r#"
+fn value(ch: String) -> Int
+    match String.toLower(ch)
+        "k" -> 1
+        _ -> 9
+
+fn walk(chars: List<String>, n: Int) -> Int
+    match chars
+        [] -> n
+        [head, ..tail] -> walk(tail, n * 10 + value(head))
+
+fn main() -> Unit
+    ! [Console.print]
+    result = walk(String.chars("KKİ😀"), 0)
+    Console.print("{result}")
+"#;
+    let fixture = write_fixture(&dir, "cursor.av", src);
+    let out = run_wasip2(&dir, &fixture);
+    assert!(
+        out.status.success(),
+        "cursor.av failed (exit {:?})\nstdout:\n{}\nstderr:\n{}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "1199\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn wasip2_trim_matches_rust_unicode_whitespace() {
     let dir = tempdir("trim");
     let sample = format!("{TRIM_WHITE_SPACE}x{TRIM_WHITE_SPACE}");

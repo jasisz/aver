@@ -2762,12 +2762,18 @@ pub(super) fn emit_module_with(
     // helper reads from one passive data segment. Built only when a
     // program actually calls one of the two, so every other module's
     // bytes are exactly what they were.
-    let need_lower = builtin_registry
-        .iter()
-        .any(|b| matches!(b, BuiltinName::StringToLower));
-    let need_upper = builtin_registry
-        .iter()
-        .any(|b| matches!(b, BuiltinName::StringToUpper));
+    let need_lower = builtin_registry.iter().any(|b| {
+        matches!(
+            b,
+            BuiltinName::StringToLower | BuiltinName::StrCode1Lower | BuiltinName::StrFoldLower
+        )
+    });
+    let need_upper = builtin_registry.iter().any(|b| {
+        matches!(
+            b,
+            BuiltinName::StringToUpper | BuiltinName::StrCode1Upper | BuiltinName::StrFoldUpper
+        )
+    });
     let case_blob: Option<CaseBlob> = (need_lower || need_upper)
         .then(|| super::builtins::case_tables::build_blob(need_lower, need_upper));
 
@@ -7158,12 +7164,11 @@ fn discover_builtins_in_expr(
 /// internals.
 /// Refuse any fabricated intrinsic the wasm-gc family cannot lower.
 ///
-/// The older fusion passes (`interp_lower` / `buffer_build` /
-/// `chars_fusion` / `list_build`) synthesize intrinsic calls (`__buf_*`,
-/// `__to_str`, cursor-shaped `__str_*`, `__lst_*`) that only VM and Rust
-/// lower. String-index workers are the exception: wasm-gc / wasip2 lower
-/// their immutable i32 boundary array directly. If an unsupported pass's
-/// exclusion ever regresses, the synthesized
+/// The mutable builder passes (`interp_lower` / `buffer_build` /
+/// `list_build`) synthesize `__buf_*`, `__to_str`, `__lst_*`, and `__byt_*`
+/// calls that only VM and Rust lower. wasm-gc / wasip2 do lower the immutable
+/// String-index workers and cursor-shaped `__str_*` calls directly. If an
+/// unsupported pass's exclusion ever regresses, the synthesized
 /// nodes reach this backend — and the failure used to be silent: the
 /// body emitter's `Intrinsic` arm fell through to the per-fn trap-stub
 /// fallback (or the type reader panicked first on a synthesized node
@@ -7199,13 +7204,7 @@ fn refuse_fabricated_intrinsics(
             | BuiltinIntrinsic::StrIndexBuild
             | BuiltinIntrinsic::StrIndexCharAt
             | BuiltinIntrinsic::StrIndexCodeAt
-            | BuiltinIntrinsic::StrIndexSlice => true,
-            // Older fusion-pass fabrications — VM / Rust codegen only.
-            BuiltinIntrinsic::BufNew
-            | BuiltinIntrinsic::BufAppend
-            | BuiltinIntrinsic::BufAppendSepUnlessFirst
-            | BuiltinIntrinsic::BufFinalize
-            | BuiltinIntrinsic::ToStr
+            | BuiltinIntrinsic::StrIndexSlice
             | BuiltinIntrinsic::StrCursorEnd
             | BuiltinIntrinsic::StrCursorHead
             | BuiltinIntrinsic::StrCursorNext
@@ -7214,7 +7213,13 @@ fn refuse_fabricated_intrinsics(
             | BuiltinIntrinsic::StrCode1Upper
             | BuiltinIntrinsic::StrCursorCode
             | BuiltinIntrinsic::StrFoldLower
-            | BuiltinIntrinsic::StrFoldUpper
+            | BuiltinIntrinsic::StrFoldUpper => true,
+            // Older fusion-pass fabrications — VM / Rust codegen only.
+            BuiltinIntrinsic::BufNew
+            | BuiltinIntrinsic::BufAppend
+            | BuiltinIntrinsic::BufAppendSepUnlessFirst
+            | BuiltinIntrinsic::BufFinalize
+            | BuiltinIntrinsic::ToStr
             | BuiltinIntrinsic::LstNew
             | BuiltinIntrinsic::LstPush
             | BuiltinIntrinsic::LstFinalize
