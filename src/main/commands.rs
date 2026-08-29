@@ -73,21 +73,30 @@ fn is_av_file(path: &Path) -> bool {
     path.extension().and_then(|ext| ext.to_str()) == Some("av")
 }
 
-/// Walk `path` for `.av` files, following symlinks but entering no directory
-/// twice.
+/// Walk `path` for `.av` files, following symlinks but never re-entering a
+/// directory it is already inside.
 ///
 /// A source directory reached through a symlink is legitimate — a corpus
 /// linked in from elsewhere is still a corpus — so the walk keeps following
-/// them. What it must not do is treat one directory reached by two routes as
-/// two directories: a link back up its own tree (`nested/loop -> ..`) is a
-/// cycle, and the walk branched through it until the operating system refused
-/// the path, listing every file dozens of times on the way. `visited` holds
-/// the canonical path of each directory already entered; a directory whose
-/// canonical path cannot be read is skipped rather than guessed at.
+/// them, and two routes to one directory are two places the caller asked it
+/// to look. What ends the walk is a directory reached from inside itself: a
+/// link back up its own tree (`nested/loop -> ..`) is a cycle, and the walk
+/// branched through it until the operating system refused the path, listing
+/// every file dozens of times on the way.
+///
+/// So `ancestors` is a chain, not a history: it holds the canonical path of
+/// each directory the walk is currently inside, and a directory is dropped
+/// off it again on the way out. Remembering every directory ever entered
+/// would end the cycle too, but it would also drop the second route to an
+/// ordinary aliased directory — and which of the two spellings survived would
+/// be decided by the order the parent happened to be read in, so a file on
+/// disk could go missing from `aver check` on one machine and not another. A
+/// directory whose canonical path cannot be read is skipped rather than
+/// guessed at.
 fn collect_av_input_files(
     path: &Path,
     out: &mut Vec<PathBuf>,
-    visited: &mut HashSet<PathBuf>,
+    ancestors: &mut HashSet<PathBuf>,
 ) -> Result<(), String> {
     if !path.exists() {
         return Err(format!("Path '{}' does not exist", path.display()));
@@ -104,10 +113,22 @@ fn collect_av_input_files(
     let Ok(canonical) = fs::canonicalize(path) else {
         return Ok(());
     };
-    if !visited.insert(canonical) {
+    if !ancestors.insert(canonical.clone()) {
         return Ok(());
     }
+    let walked = collect_av_files_in_directory(path, out, ancestors);
+    ancestors.remove(&canonical);
+    walked
+}
 
+/// The children half of [`collect_av_input_files`], split out so the
+/// directory leaves the ancestor chain by one path on the way out, however
+/// the walk of its children ended.
+fn collect_av_files_in_directory(
+    path: &Path,
+    out: &mut Vec<PathBuf>,
+    ancestors: &mut HashSet<PathBuf>,
+) -> Result<(), String> {
     let entries = fs::read_dir(path)
         .map_err(|e| format!("Cannot read directory '{}': {}", path.display(), e))?;
     for entry in entries {
@@ -115,7 +136,7 @@ fn collect_av_input_files(
             .map_err(|e| format!("Cannot read directory entry in '{}': {}", path.display(), e))?;
         let child = entry.path();
         if child.is_dir() {
-            collect_av_input_files(&child, out, visited)?;
+            collect_av_input_files(&child, out, ancestors)?;
         } else if is_av_file(&child) {
             out.push(child);
         }
@@ -127,8 +148,8 @@ fn collect_av_input_files(
 pub(super) fn resolve_av_inputs(path: &str) -> Result<Vec<String>, String> {
     let root = Path::new(path);
     let mut files = Vec::new();
-    let mut visited = HashSet::new();
-    collect_av_input_files(root, &mut files, &mut visited)?;
+    let mut ancestors = HashSet::new();
+    collect_av_input_files(root, &mut files, &mut ancestors)?;
     files.sort();
 
     if files.is_empty() {
@@ -2562,6 +2583,12 @@ fn report_stale_verify_costly(
         // file may be the whole point of the entry — the path this run was
         // never going to reach, or the one where the fn it names lives — and
         // the run that does reach it is the one entitled to call it stale.
+        //
+        // An entry with no `files` covers every module, so in a project of
+        // several this leaves the verdict to a run over the project. That is
+        // the intended reading and not an oversight: the alternative is to
+        // tell a reader that a fn is gone on the evidence of the one module
+        // they happened to verify, which sends them to delete a live entry.
         if on_disk
             .iter()
             .any(|key| cfg.verify_costly_covers_file(idx, key) && !verified.contains(key))
@@ -12828,6 +12855,34 @@ Dafny program verifier finished with 158 verified, 2 errors, 12 time outs";
             vec![
                 dir.join("b.av").to_string_lossy().to_string(),
                 nested.join("a.av").to_string_lossy().to_string(),
+            ]
+        );
+
+        fs::remove_dir_all(&dir).expect("cleanup temp dir");
+    }
+
+    /// Two routes to one directory are not always a cycle. A source tree and
+    /// a link beside it — the ordinary way a corpus is vendored in — are two
+    /// places the walk was asked to look, and it must list the files under
+    /// both. A cycle is a directory the walk is *currently inside*; one it
+    /// has already finished with is not, and dropping it silently loses a
+    /// file that is on disk, which of the two spellings depending on the
+    /// order the directory happened to be read in.
+    #[cfg(unix)]
+    #[test]
+    fn resolve_av_inputs_lists_a_directory_reached_by_two_routes() {
+        let dir = temp_case_dir("symlink_alias");
+        let src = dir.join("src");
+        fs::create_dir_all(&src).expect("create source dir");
+        fs::write(src.join("a.av"), "module A\n").expect("write a.av");
+        std::os::unix::fs::symlink("src", dir.join("link")).expect("create the alias");
+
+        let inputs = resolve_av_inputs(dir.to_str().expect("utf8 path")).expect("collect inputs");
+        assert_eq!(
+            inputs,
+            vec![
+                dir.join("link/a.av").to_string_lossy().to_string(),
+                src.join("a.av").to_string_lossy().to_string(),
             ]
         );
 

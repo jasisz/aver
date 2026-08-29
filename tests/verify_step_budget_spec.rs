@@ -418,6 +418,72 @@ reason     = "one corpus file is expensive on purpose"
     assert_eq!(out.status.code(), Some(0), "{}", format_output(&out));
 }
 
+/// An entry with no `files` key covers every module in the project, so the
+/// same rule reaches it, and this is where it is felt most: a run over one
+/// module of several has not seen where the fn could still be. It is the run
+/// that reaches every file the entry covers that is entitled to call the fn
+/// stale — every run in a project of one module, the run over the project in
+/// a project of several. Both directions are pinned, because the silence is
+/// the deliberate half.
+fn two_module_project_with_a_stale_global_entry(prefix: &str) -> ScratchDir {
+    let dir = project(
+        prefix,
+        "costly.av",
+        r#"
+[[verify.costly]]
+fn         = "countdown"
+files      = ["main.av"]
+step-limit = 50000000
+reason     = "the case counts down from 400,000"
+
+[[verify.costly]]
+fn         = "noSuchFunction"
+step-limit = 50000000
+reason     = "no file in this project declares that fn"
+"#,
+    );
+    std::fs::create_dir_all(dir.join("corpus")).expect("make the corpus directory");
+    std::fs::write(
+        dir.join("corpus/a.av"),
+        "module A\n\nfn light() -> Int\n    ? \"The module a run over main.av does not reach.\"\n    1\n\nverify light\n    light() => 1\n",
+    )
+    .expect("stage the second module");
+    dir
+}
+
+#[test]
+fn an_entry_without_files_is_not_called_stale_by_a_run_over_one_module_of_several() {
+    let dir = two_module_project_with_a_stale_global_entry("budget-global-partial");
+    let out = verify(&dir, &[]);
+    let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+
+    assert!(
+        !stderr.contains("may be stale"),
+        "an entry with no files covers corpus/a.av too, and this run did not verify it:\n{}",
+        format_output(&out)
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", format_output(&out));
+}
+
+#[test]
+fn an_entry_without_files_is_called_stale_by_a_run_over_the_whole_project() {
+    let dir = two_module_project_with_a_stale_global_entry("budget-global-whole");
+    let out = run_aver_in(&dir, &["verify", ".", "--module-root", "."]);
+    let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+
+    assert!(
+        stderr.contains(r#"fn = "noSuchFunction""#) && stderr.contains("the fn may be stale"),
+        "this run verified every file the entry covers, so it can say:\n{}",
+        format_output(&out)
+    );
+    assert!(
+        !stderr.contains(r#"fn = "countdown""#),
+        "the entry that did its job is not scolded:\n{}",
+        format_output(&out)
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", format_output(&out));
+}
+
 // ── d⁗. an inventory the run could not read is not evidence ─────────────
 
 /// Staleness is settled against the .av files under the module root. When
