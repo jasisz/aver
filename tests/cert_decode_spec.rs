@@ -819,12 +819,30 @@ fn f5_mutated_string_eq_loop_opcode_changes_kernel_classification() {
     let prelude = build_prelude();
     let out = temp_dir("cdec-f5-mutation");
     std::fs::create_dir_all(&out).unwrap();
-    let bytes = compile_wasm_at(
-        &repo,
-        &repo.join("tools/certkit/fixtures/stringeq.av"),
-        "stringeq",
-        &out,
-    );
+    // The certificate fixture deliberately stays on the one-comparison shape
+    // covered by the String.eq wall. Ordinary runtime compilation can scalarise
+    // a match whose literal arms are all one-byte ASCII, so this mutation test
+    // owns a multi-byte control arm that keeps the host helper reachable.
+    let runtime_fixture = out.join("runtime_stringeq.av");
+    std::fs::write(
+        &runtime_fixture,
+        r#"module RuntimeStringEq
+    intent =
+        "keep the ordinary wasm String.eq loop reachable for byte mutation"
+    exposes [quoteOrSelf, bump]
+
+fn quoteOrSelf(c: String) -> String
+    match c
+        "\"" -> "\\\""
+        "verbatim" -> "verbatim"
+        _ -> c
+
+fn bump(n: Int) -> Int
+    n + 1
+"#,
+    )
+    .unwrap();
+    let bytes = compile_wasm_at(&repo, &runtime_fixture, "runtime_stringeq", &out);
     let roles = aver::codegen::cert::byte_derived_string_host_roles(&bytes).unwrap();
     assert_eq!(roles, vec![(3, aver::codegen::cert::StringHostRole::Eq)]);
     let eq_idx = roles[0].0;
