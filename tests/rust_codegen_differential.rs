@@ -2656,6 +2656,115 @@ fn rust_map_helper_result_preserves_the_owned_move() {
     );
 }
 
+/// Issue #1196 end to end: a Map owned by a mutual-TCO trampoline crosses a
+/// module boundary into a normal helper, returns inside `Result<Tuple<...>>`,
+/// and is destructured before the next trampoline state. The pattern-bound
+/// successor is an owned Rust value; losing that fact makes `changed` borrow
+/// the Map and its first `insert_owned` copy the complete table every round.
+#[test]
+fn rust_mutual_tco_moves_last_use_map_into_cross_module_helper() {
+    let ws = temp_dir("mutual_tco_cross_module_map");
+    let worker = ws.join("worker.av");
+    let entry = ws.join("main.av");
+    fs::write(
+        &worker,
+        r#"module Worker
+    intent = "change an owned map and return it through a consumed aggregate"
+    depends []
+    exposes [changed, forked, inserted]
+    effects []
+
+fn changed(into: Map<String, Int>) -> Result<Tuple<Map<String, Int>, Int>, String>
+    ? "return the map successor in the aggregate consumed by the dispatcher"
+    Result.Ok((Map.set(into, "key", 1), 1))
+
+fn forked(into: Map<String, Int>) -> Tuple<Map<String, Int>, Map<String, Int>>
+    ? "return two COW handles so the Rust-only ownership fact is tested safely"
+    (into, into)
+
+fn inserted(into: Map<String, Int>, key: String) -> Map<String, Int>
+    ? "mutate one extracted handle while its sibling remains observable"
+    Map.set(into, key, 1)
+"#,
+    )
+    .expect("write worker module");
+    fs::write(
+        &entry,
+        r#"module Entry
+    intent = "thread a map through mutual TCO and a cross-module helper"
+    depends [Worker]
+    effects [Console.print]
+
+fn absorbing(left: Int, into: Map<String, Int>) -> Result<Map<String, Int>, String>
+    ? "hand the last-use map to Worker.changed before tail-calling continued"
+    match Worker.changed(into)
+        Result.Err(why) -> Result.Err(why)
+        Result.Ok(parts) -> match parts
+            (next, _) -> continued(left, next)
+
+fn continued(left: Int, into: Map<String, Int>) -> Result<Map<String, Int>, String>
+    ? "mutually tail-call absorbing until the requested rounds are complete"
+    match left
+        0 -> Result.Ok(into)
+        _ -> absorbing(left - 1, into)
+
+fn renderedFork(pair: Tuple<Map<String, Int>, Map<String, Int>>) -> String
+    ? "prove that moving a pattern local preserves a still-live COW sibling"
+    match pair
+        (moving, kept) -> "{Map.len(Worker.inserted(moving, "other"))}/{Map.len(kept)}"
+
+fn main() -> Unit
+    ! [Console.print]
+    built = Result.withDefault(absorbing(3, {}), {})
+    Console.print(renderedFork(Worker.forked(built)))
+"#,
+    )
+    .expect("write entry module");
+
+    let vm = run_vm(&entry, Some(&ws)).expect("VM run");
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("project dir");
+    let name = "mutual_tco_cross_module_map";
+    compile_rust(&entry, &project, name, Some(&ws), &[]).expect("compile Rust project");
+
+    let entry_rust = fs::read_to_string(project.join("src/aver_generated/entry/mod.rs"))
+        .expect("read generated entry module");
+    let worker_rust = fs::read_to_string(project.join("src/aver_generated/worker/mod.rs"))
+        .expect("read generated worker module");
+    assert!(
+        worker_rust.contains("pub fn changed(mut into @ _: aver_rt::AverMap"),
+        "the cross-module helper must take its Map by value:\n{worker_rust}"
+    );
+    assert!(
+        entry_rust.contains("worker::changed(into)"),
+        "the trampoline must move its last-use Map across the module call:\n{entry_rust}"
+    );
+    assert!(
+        !entry_rust.contains("worker::changed(&into)"),
+        "the old borrowed call recreates an Rc owner and forces full-table COW:\n{entry_rust}"
+    );
+    assert!(
+        worker_rust.contains("into.insert_owned"),
+        "the owned helper parameter must flow directly into Map.set:\n{worker_rust}"
+    );
+    assert!(
+        entry_rust.contains("worker::inserted(moving"),
+        "a last-use pattern local must move into an owned helper parameter:\n{entry_rust}"
+    );
+
+    let bin = cargo_build(&project, name).expect("build generated project");
+    let output = Command::new(bin).output().expect("run generated binary");
+    assert!(
+        output.status.success(),
+        "generated binary failed:\n{}",
+        format_output(&output)
+    );
+    let rust = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let _ = fs::remove_dir_all(&ws);
+    assert_eq!(vm, "2/1", "VM result and retained COW sibling");
+    assert_eq!(rust, vm, "generated Rust diverged from the VM");
+}
+
 // ─── fn-result alias summaries preserve caller aliases ─────────────────
 //
 // A named function result may grant ownership only through the complete

@@ -4220,7 +4220,7 @@ pub fn evalTopLevelStmts(
     let fns @ _ = std::sync::Arc::new(fns);
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(stmts, [] => { return Ok((last, env)); }, [s, rest] => { match crate::aver_generated::domain::eval::core::evalStmt(&s, &env, &crate::aver_generated::domain::eval::store::withGlobals(&*fns, &env)) { Err(e @ _) => { return Err(e); }, Ok(pair @ _) => { { let (v, newEnv) = pair; {
+        aver_list_match!(stmts, [] => { return Ok((last, env)); }, [s, rest] => { match crate::aver_generated::domain::eval::core::evalStmt(&s, &env.clone(), &crate::aver_generated::domain::eval::store::withGlobals(&*fns, env)) { Err(e @ _) => { return Err(e); }, Ok(pair @ _) => { { let (v, newEnv) = pair; {
             let __tco0 = rest;
             let __tco1 = newEnv;
             let __tco2 = v;
@@ -4247,7 +4247,7 @@ pub fn evalProgram(
     {
         let (v, globals) = top;
         crate::aver_generated::domain::eval::core::maybeCallMain(
-            &crate::aver_generated::domain::eval::store::withGlobals(&fnsStore, &globals),
+            &crate::aver_generated::domain::eval::store::withGlobals(&fnsStore, globals),
             &v,
         )
     }
@@ -4271,7 +4271,7 @@ pub fn evalProgramWithFns(
     {
         let (v, globals) = top;
         crate::aver_generated::domain::eval::core::maybeCallMain(
-            &crate::aver_generated::domain::eval::store::withGlobals(&allFns, &globals),
+            &crate::aver_generated::domain::eval::store::withGlobals(&allFns, globals),
             &v,
         )
     }

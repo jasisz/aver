@@ -2630,7 +2630,7 @@ pub fn builtinTcpPoll(
         let (socketsV, timeoutV) = pair;
         match socketsV {
             crate::aver_generated::domain::value::Val::ValMap(sockets) => {
-                crate::aver_generated::domain::builtins::builtinTcpPollInner(&sockets, &timeoutV)
+                crate::aver_generated::domain::builtins::builtinTcpPollInner(sockets, &timeoutV)
             }
             _ => Err(AverStr::from(
                 "Tcp.poll requires a Map as its first argument",
@@ -2641,7 +2641,7 @@ pub fn builtinTcpPoll(
 
 /// Inner Tcp.poll.
 pub fn builtinTcpPollInner(
-    sockets @ _: &aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val>,
+    mut sockets @ _: aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val>,
     timeoutV @ _: &crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
