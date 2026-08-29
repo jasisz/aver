@@ -1,0 +1,5 @@
+name       = "map_bytes_build"
+entry      = "map_bytes_build.av"
+iterations = 7
+warmup     = 2
+args       = []

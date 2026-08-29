@@ -1,0 +1,8 @@
+module MapBytesMiss
+    intent = "Bench — two million unsuccessful probes in a 200,000-entry byte-keyed map."
+    depends [Bytes, MapBytesWorkload]
+    effects []
+
+fn main() -> Int
+    map = MapBytesWorkload.build(200000)
+    MapBytesWorkload.misses(2000000, map)

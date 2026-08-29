@@ -1,0 +1,8 @@
+module MapBytesHit
+    intent = "Bench — two million successful probes in a 200,000-entry byte-keyed map."
+    depends [Bytes, MapBytesWorkload]
+    effects []
+
+fn main() -> Int
+    map = MapBytesWorkload.build(200000)
+    MapBytesWorkload.hits(2000000, map)

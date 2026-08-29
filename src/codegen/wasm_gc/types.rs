@@ -109,10 +109,10 @@ pub(super) struct TypeRegistry {
     /// for primitives, null for refs).
     pub(super) result_types: HashMap<String, u32>,
     pub(super) result_order: Vec<String>,
-    /// Per-instantiation `Map<K, V>` slot triple (keys array, values
-    /// array, map struct). Same monomorphisation strategy as Vector /
+    /// Per-instantiation `Map<K, V>` slots (keys array, values array,
+    /// hashes array, map struct). Same monomorphisation strategy as Vector /
     /// Option — each unique `Map<K, V>` reachable in the program gets
-    /// its own three slots and table/read/ordered-iteration helpers.
+    /// its own four slots and table/read/ordered-iteration helpers.
     pub(super) map_types: HashMap<String, MapSlots>,
     pub(super) map_order: Vec<String>,
     /// Shared scratch-array type used by canonical Map iteration. Each
@@ -296,7 +296,10 @@ pub(super) struct MapSlots {
     pub(super) keys_array: u32,
     /// `(array (mut V))` — values array; element type derived from `V`.
     pub(super) values_array: u32,
-    /// `(struct (mut i32 size) (mut i32 cap) (mut keys_ref) (mut values_ref))`.
+    /// `(array (mut i32))` — cached complete key hash per occupied bucket.
+    pub(super) hashes_array: u32,
+    /// `(struct (mut i32 size) (mut i32 cap) (mut keys_ref) (mut values_ref)
+    ///          (mut hashes_ref))`.
     pub(super) map: u32,
 }
 
@@ -918,12 +921,14 @@ impl TypeRegistry {
                     next_idx += 1;
                 }
             }
-            // Allocate three slots: keys_array, values_array, map.
+            // Allocate four slots: keys_array, values_array, hashes_array, map.
             // Order: arrays first so the struct (higher idx) can
             // reference them without crossing rec-group boundaries.
             let keys_array = next_idx;
             next_idx += 1;
             let values_array = next_idx;
+            next_idx += 1;
+            let hashes_array = next_idx;
             next_idx += 1;
             let map = next_idx;
             next_idx += 1;
@@ -932,6 +937,7 @@ impl TypeRegistry {
                 MapSlots {
                     keys_array,
                     values_array,
+                    hashes_array,
                     map,
                 },
             );
@@ -2571,7 +2577,7 @@ pub(super) fn aver_to_wasm(
     }
     // `Map<K, V>` — monomorphised per instantiation. The registry
     // discovers each unique `Map<K, V>` in fn signatures and
-    // allocates a slot triple (keys array, values array, struct).
+    // allocates four slots (keys array, values array, hashes array, struct).
     if trimmed.starts_with("Map<")
         && trimmed.ends_with('>')
         && let Some(reg) = registry

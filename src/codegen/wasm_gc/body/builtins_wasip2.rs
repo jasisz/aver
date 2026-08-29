@@ -1725,6 +1725,8 @@ fn emit_http_simple_method_wasip2(
     func.instruction(&Instruction::ArrayNewDefault(map_slots.keys_array));
     func.instruction(&Instruction::I32Const(INITIAL_CAP));
     func.instruction(&Instruction::ArrayNewDefault(map_slots.values_array));
+    func.instruction(&Instruction::I32Const(INITIAL_CAP));
+    func.instruction(&Instruction::ArrayNewDefault(map_slots.hashes_array));
     func.instruction(&Instruction::StructNew(map_slots.map));
     func.instruction(&Instruction::Call(fn_idx));
     Ok(())

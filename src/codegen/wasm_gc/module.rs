@@ -2359,6 +2359,7 @@ pub(super) fn emit_module_with(
             http_response_type_idx: resp_idx,
             headers_keys_array_type_idx: map_slots.keys_array,
             headers_values_array_type_idx: map_slots.values_array,
+            headers_hashes_array_type_idx: map_slots.hashes_array,
             headers_map_type_idx: map_slots.map,
             list_string_type_idx: list_string_idx,
             option_list_string_type_idx: opt_list_string_idx,
@@ -3682,6 +3683,7 @@ pub(super) fn emit_module_with(
             http_response_type_idx: http_response_idx,
             headers_keys_array_type_idx: map_slots.keys_array,
             headers_values_array_type_idx: map_slots.values_array,
+            headers_hashes_array_type_idx: map_slots.hashes_array,
             headers_map_type_idx: map_slots.map,
             list_string_type_idx: list_string_idx,
             option_list_string_type_idx: opt_list_string_idx,
@@ -6454,8 +6456,8 @@ fn emit_user_types(
         ));
     }
 
-    // `Map<K, V>` — three wasm types per registered instantiation
-    // (keys array, values array, map struct).
+    // `Map<K, V>` — four wasm types per registered instantiation
+    // (keys array, values array, cached-hashes array, map struct).
     for canonical in &registry.map_order {
         let (k_aver, v_aver) = super::types::parse_map_kv(canonical).ok_or(
             WasmGcError::Validation(format!("registered map `{canonical}` has no parsable K, V")),
@@ -6495,6 +6497,13 @@ fn emit_user_types(
                 mutable: true,
             }),
         ));
+        entries.push((
+            slots.hashes_array,
+            mk_array(wasm_encoder::FieldType {
+                element_type: wasm_encoder::StorageType::Val(ValType::I32),
+                mutable: true,
+            }),
+        ));
         let keys_ref = wasm_encoder::ValType::Ref(wasm_encoder::RefType {
             nullable: true,
             heap_type: wasm_encoder::HeapType::Concrete(slots.keys_array),
@@ -6502,6 +6511,10 @@ fn emit_user_types(
         let values_ref = wasm_encoder::ValType::Ref(wasm_encoder::RefType {
             nullable: true,
             heap_type: wasm_encoder::HeapType::Concrete(slots.values_array),
+        });
+        let hashes_ref = wasm_encoder::ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(slots.hashes_array),
         });
         entries.push((
             slots.map,
@@ -6520,6 +6533,10 @@ fn emit_user_types(
                 },
                 wasm_encoder::FieldType {
                     element_type: wasm_encoder::StorageType::Val(values_ref),
+                    mutable: true,
+                },
+                wasm_encoder::FieldType {
+                    element_type: wasm_encoder::StorageType::Val(hashes_ref),
                     mutable: true,
                 },
             ]),
@@ -10062,6 +10079,9 @@ fn emit_factory_map_string_list_string_empty(
     )));
     f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
         slots.values_array,
+    )));
+    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
+        slots.hashes_array,
     )));
     f.instruction(&Instruction::StructNew(slots.map));
     f.instruction(&Instruction::End);
