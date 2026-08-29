@@ -1071,12 +1071,27 @@ pub fn max_cases_for(config: Option<&ProjectConfig>, fn_name: &str, file_key: &s
 /// file relative to the module root when it lives under it, else the path as
 /// given. Same anchored form `[[check.suppress]].files` matches against, so
 /// one project writes one kind of glob.
+///
+/// Both sides are resolved on the filesystem before they are compared, so one
+/// file has one key however the command line spelled it. Stripping the base
+/// off the file as text alone meant an absolute file under a relative module
+/// root — `aver verify "$PWD/main.av" --module-root .` — kept the whole
+/// absolute path as its key, `files = ["main.av"]` matched nothing, and the
+/// budget the project had granted in writing silently did not apply. A path
+/// the filesystem cannot answer for (a source that is not on disk) still falls
+/// back to comparing the two spellings as text.
 pub fn costly_glob_key(source_file: &str, base_dir: Option<&str>) -> String {
     let path = std::path::Path::new(source_file);
-    if let Some(base) = base_dir
-        && let Ok(rel) = path.strip_prefix(base)
-    {
-        return rel.to_string_lossy().replace('\\', "/");
+    if let Some(base) = base_dir {
+        if let Ok(file) = std::fs::canonicalize(path)
+            && let Ok(root) = std::fs::canonicalize(base)
+            && let Ok(rel) = file.strip_prefix(&root)
+        {
+            return rel.to_string_lossy().replace('\\', "/");
+        }
+        if let Ok(rel) = path.strip_prefix(base) {
+            return rel.to_string_lossy().replace('\\', "/");
+        }
     }
     source_file.replace('\\', "/")
 }
