@@ -23,6 +23,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// case-ignorable, and an astral pair (Deseret).
 const SAMPLE: &str = "ĄĆĘ ŁÓŚ ß ÀÉÎ ΩΔ ΑΣ ΑΣΒ ΣΣ aΣ aΣb ΑΣ'Β ΑΣ' aΣ\u{02B0}b İ ı ﬀ 𐐀𐐨 abcXYZ";
 
+/// All Unicode `White_Space` scalar values used by Rust `str::trim`.
+const TRIM_WHITE_SPACE: &str = "\u{0009}\u{000A}\u{000B}\u{000C}\u{000D}\u{0020}\u{0085}\u{00A0}\u{1680}\u{2000}\u{2001}\u{2002}\u{2003}\u{2004}\u{2005}\u{2006}\u{2007}\u{2008}\u{2009}\u{200A}\u{2028}\u{2029}\u{202F}\u{205F}\u{3000}";
+
 fn tempdir(prefix: &str) -> PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -63,6 +66,7 @@ fn escape_aver(s: &str) -> String {
             '\n' => out.push_str("\\n"),
             '\r' => out.push_str("\\r"),
             '\t' => out.push_str("\\t"),
+            '\u{000C}' => out.push_str("\\f"),
             _ => out.push(c),
         }
     }
@@ -94,5 +98,33 @@ fn main() -> Unit
     let got = String::from_utf8_lossy(&out.stdout).into_owned();
     let want = format!("{}|{}\n", SAMPLE.to_lowercase(), SAMPLE.to_uppercase());
     assert_eq!(got, want, "wasip2 case mapping diverged from Rust std");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn wasip2_trim_matches_rust_unicode_whitespace() {
+    let dir = tempdir("trim");
+    let sample = format!("{TRIM_WHITE_SPACE}x{TRIM_WHITE_SPACE}");
+    let literal = escape_aver(&sample);
+    let src = format!(
+        r#"
+fn main() -> Unit
+    ! [Console.print]
+    text = "{literal}"
+    Console.print("[{{String.trim(text)}}]")
+"#
+    );
+    let fixture = write_fixture(&dir, "trim.av", &src);
+    let out = run_wasip2(&dir, &fixture);
+    assert!(
+        out.status.success(),
+        "trim.av failed (exit {:?})\nstdout:\n{}\nstderr:\n{}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let got = String::from_utf8_lossy(&out.stdout).into_owned();
+    let want = format!("[{}]\n", sample.trim());
+    assert_eq!(got, want, "wasip2 trim diverged from Rust std");
     let _ = std::fs::remove_dir_all(&dir);
 }

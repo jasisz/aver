@@ -1458,10 +1458,306 @@ fn emit_string_slice(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     wat_helper::compile_wat_helper(&wat)
 }
 
-/// `String.trim`. Trims ASCII whitespace (space, tab, LF, CR) from
-/// both ends; allocates a fresh string sized to the inner slice.
+/// `String.trim`. Trims Rust/Unicode `White_Space` scalar values from
+/// both ends; allocates a fresh string sized to the inner byte slice.
 fn emit_string_trim(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     let (_, preamble) = string_module_preamble(registry)?;
+    let decode_at_start = r#"
+                ;; Decode the UTF-8 scalar at byte offset `$start` into `$cp`
+                ;; and its byte width into `$step`. String arrays are always
+                ;; valid UTF-8, so this helper can decode without a fallback
+                ;; validation path.
+                local.get $s
+                local.get $start
+                array.get_u $string
+                local.set $ch
+
+                local.get $ch
+                i32.const 0x80
+                i32.lt_u
+                (if
+                  (then
+                    local.get $ch
+                    local.set $cp
+                    i32.const 1
+                    local.set $step)
+                  (else
+                    local.get $ch
+                    i32.const 0xE0
+                    i32.lt_u
+                    (if
+                      (then
+                        local.get $ch
+                        i32.const 0x1F
+                        i32.and
+                        i32.const 6
+                        i32.shl
+                        local.get $s
+                        local.get $start
+                        i32.const 1
+                        i32.add
+                        array.get_u $string
+                        i32.const 0x3F
+                        i32.and
+                        i32.or
+                        local.set $cp
+                        i32.const 2
+                        local.set $step)
+                      (else
+                        local.get $ch
+                        i32.const 0xF0
+                        i32.lt_u
+                        (if
+                          (then
+                            local.get $ch
+                            i32.const 0x0F
+                            i32.and
+                            i32.const 12
+                            i32.shl
+                            local.get $s
+                            local.get $start
+                            i32.const 1
+                            i32.add
+                            array.get_u $string
+                            i32.const 0x3F
+                            i32.and
+                            i32.const 6
+                            i32.shl
+                            i32.or
+                            local.get $s
+                            local.get $start
+                            i32.const 2
+                            i32.add
+                            array.get_u $string
+                            i32.const 0x3F
+                            i32.and
+                            i32.or
+                            local.set $cp
+                            i32.const 3
+                            local.set $step)
+                          (else
+                            local.get $ch
+                            i32.const 0x07
+                            i32.and
+                            i32.const 18
+                            i32.shl
+                            local.get $s
+                            local.get $start
+                            i32.const 1
+                            i32.add
+                            array.get_u $string
+                            i32.const 0x3F
+                            i32.and
+                            i32.const 12
+                            i32.shl
+                            i32.or
+                            local.get $s
+                            local.get $start
+                            i32.const 2
+                            i32.add
+                            array.get_u $string
+                            i32.const 0x3F
+                            i32.and
+                            i32.const 6
+                            i32.shl
+                            i32.or
+                            local.get $s
+                            local.get $start
+                            i32.const 3
+                            i32.add
+                            array.get_u $string
+                            i32.const 0x3F
+                            i32.and
+                            i32.or
+                            local.set $cp
+                            i32.const 4
+                            local.set $step))))))
+    "#;
+    let decode_at_prev = r#"
+                ;; `$end` is the first byte after the candidate scalar. Walk
+                ;; back over UTF-8 continuation bytes to find that scalar's
+                ;; start byte, then decode it into `$cp`.
+                local.get $end
+                i32.const 1
+                i32.sub
+                local.set $prev
+                (block $bd
+                  (loop $bt
+                    local.get $prev
+                    local.get $start
+                    i32.le_u
+                    br_if $bd
+
+                    local.get $s
+                    local.get $prev
+                    array.get_u $string
+                    i32.const 0xC0
+                    i32.and
+                    i32.const 0x80
+                    i32.ne
+                    br_if $bd
+
+                    local.get $prev
+                    i32.const 1
+                    i32.sub
+                    local.set $prev
+                    br $bt))
+
+                local.get $s
+                local.get $prev
+                array.get_u $string
+                local.set $ch
+
+                local.get $ch
+                i32.const 0x80
+                i32.lt_u
+                (if
+                  (then
+                    local.get $ch
+                    local.set $cp)
+                  (else
+                    local.get $ch
+                    i32.const 0xE0
+                    i32.lt_u
+                    (if
+                      (then
+                        local.get $ch
+                        i32.const 0x1F
+                        i32.and
+                        i32.const 6
+                        i32.shl
+                        local.get $s
+                        local.get $prev
+                        i32.const 1
+                        i32.add
+                        array.get_u $string
+                        i32.const 0x3F
+                        i32.and
+                        i32.or
+                        local.set $cp)
+                      (else
+                        local.get $ch
+                        i32.const 0xF0
+                        i32.lt_u
+                        (if
+                          (then
+                            local.get $ch
+                            i32.const 0x0F
+                            i32.and
+                            i32.const 12
+                            i32.shl
+                            local.get $s
+                            local.get $prev
+                            i32.const 1
+                            i32.add
+                            array.get_u $string
+                            i32.const 0x3F
+                            i32.and
+                            i32.const 6
+                            i32.shl
+                            i32.or
+                            local.get $s
+                            local.get $prev
+                            i32.const 2
+                            i32.add
+                            array.get_u $string
+                            i32.const 0x3F
+                            i32.and
+                            i32.or
+                            local.set $cp)
+                          (else
+                            local.get $ch
+                            i32.const 0x07
+                            i32.and
+                            i32.const 18
+                            i32.shl
+                            local.get $s
+                            local.get $prev
+                            i32.const 1
+                            i32.add
+                            array.get_u $string
+                            i32.const 0x3F
+                            i32.and
+                            i32.const 12
+                            i32.shl
+                            i32.or
+                            local.get $s
+                            local.get $prev
+                            i32.const 2
+                            i32.add
+                            array.get_u $string
+                            i32.const 0x3F
+                            i32.and
+                            i32.const 6
+                            i32.shl
+                            i32.or
+                            local.get $s
+                            local.get $prev
+                            i32.const 3
+                            i32.add
+                            array.get_u $string
+                            i32.const 0x3F
+                            i32.and
+                            i32.or
+                            local.set $cp))))))
+    "#;
+    let unicode_whitespace_predicate = r#"
+                ;; Unicode White_Space, matching Rust `char::is_whitespace`
+                ;; and therefore `str::trim`: U+0009..U+000D, U+0020,
+                ;; U+0085, U+00A0, U+1680, U+2000..U+200A, U+2028,
+                ;; U+2029, U+202F, U+205F and U+3000.
+                local.get $cp
+                i32.const 0x09
+                i32.ge_u
+                local.get $cp
+                i32.const 0x0D
+                i32.le_u
+                i32.and
+                local.get $cp
+                i32.const 0x20
+                i32.eq
+                i32.or
+                local.get $cp
+                i32.const 0x85
+                i32.eq
+                i32.or
+                local.get $cp
+                i32.const 0xA0
+                i32.eq
+                i32.or
+                local.get $cp
+                i32.const 0x1680
+                i32.eq
+                i32.or
+                local.get $cp
+                i32.const 0x2000
+                i32.ge_u
+                local.get $cp
+                i32.const 0x200A
+                i32.le_u
+                i32.and
+                i32.or
+                local.get $cp
+                i32.const 0x2028
+                i32.eq
+                i32.or
+                local.get $cp
+                i32.const 0x2029
+                i32.eq
+                i32.or
+                local.get $cp
+                i32.const 0x202F
+                i32.eq
+                i32.or
+                local.get $cp
+                i32.const 0x205F
+                i32.eq
+                i32.or
+                local.get $cp
+                i32.const 0x3000
+                i32.eq
+                i32.or
+    "#;
     let wat = format!(
         r#"
         (module
@@ -1472,7 +1768,10 @@ fn emit_string_trim(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
             (local $len i32)
             (local $start i32)
             (local $end i32)
+            (local $prev i32)
             (local $ch i32)
+            (local $cp i32)
+            (local $step i32)
             (local $new_len i32)
             (local $out (ref null $string))
 
@@ -1486,20 +1785,14 @@ fn emit_string_trim(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
                 i32.ge_u
                 br_if $sd
 
-                local.get $s
-                local.get $start
-                array.get_u $string
-                local.set $ch
+                {decode_at_start}
 
-                local.get $ch i32.const 0x20 i32.eq
-                local.get $ch i32.const 0x09 i32.eq i32.or
-                local.get $ch i32.const 0x0A i32.eq i32.or
-                local.get $ch i32.const 0x0D i32.eq i32.or
+                {unicode_whitespace_predicate}
                 i32.eqz
                 br_if $sd
 
                 local.get $start
-                i32.const 1
+                local.get $step
                 i32.add
                 local.set $start
                 br $st))
@@ -1512,23 +1805,13 @@ fn emit_string_trim(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
                 i32.le_u
                 br_if $ed
 
-                local.get $s
-                local.get $end
-                i32.const 1
-                i32.sub
-                array.get_u $string
-                local.set $ch
+                {decode_at_prev}
 
-                local.get $ch i32.const 0x20 i32.eq
-                local.get $ch i32.const 0x09 i32.eq i32.or
-                local.get $ch i32.const 0x0A i32.eq i32.or
-                local.get $ch i32.const 0x0D i32.eq i32.or
+                {unicode_whitespace_predicate}
                 i32.eqz
                 br_if $ed
 
-                local.get $end
-                i32.const 1
-                i32.sub
+                local.get $prev
                 local.set $end
                 br $et))
 
