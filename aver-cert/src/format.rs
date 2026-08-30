@@ -7,6 +7,16 @@
 /// Public certificate-package layout understood by this verifier.
 pub const FORMAT_VERSION: u32 = 1;
 
+/// Only artifact target admitted by schema 5. Future component certificates
+/// will add their own envelope instead of reinterpreting wasm-gc bytes.
+pub const TARGET_WASM_GC: &str = "wasm-gc";
+
+/// Only emitted-fragment profile admitted by schema 5.
+pub const PROFILE_ID: &str = "AverUserProfile/v1";
+
+/// Runtime ABI admitted for the wasm-gc artifact target in schema 5.
+pub const RUNTIME_ABI_WASM_GC: &str = "aver-wasm-gc/0";
+
 /// Manifest schema accepted by the standalone verifier. Version 2 made the
 /// subject's `hostRoleTable` optional: modules without the Int box helper
 /// declare `null`, pinned against a byte-derived proof of the helper's
@@ -25,14 +35,16 @@ pub const FORMAT_VERSION: u32 = 1;
 /// value-comparison faces bind `__aint_cmp` and `__aint_eq` by their named
 /// function exports, and because those two helpers declare the same function
 /// type, the export name is the only thing that tells one role from the other.
-pub const CERT_SCHEMA_VERSION: u32 = 4;
+/// Version 5 added the required top-level `target` field and moved the
+/// target/profile/ABI identifiers into the checker-owned statement schema.
+pub const CERT_SCHEMA_VERSION: u32 = 5;
 
 /// Named theorem audited by the checker-owned witness.
 pub const ARTIFACT_CERTIFICATE_ROOT: &str = "AverCert.Artifact.certificate";
 
 /// Identity of the exact checker-owned Lean wall shipped by this release.
 pub const CURRENT_WALL_ID: &str =
-    "sha256:ebcc1e97b5d2dcd7555b064b2f51e30ad0fa0b912caf95fd77dbd06bc765fa78";
+    "sha256:b06a0b43554911693b6f8b4b539dff7bb82b2dc8b1081b956c3a5db5238df8a0";
 
 /// Complete host-import surface admitted by the wasm-gc certificate format.
 ///

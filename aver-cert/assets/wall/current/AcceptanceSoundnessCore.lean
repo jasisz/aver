@@ -183,11 +183,16 @@ imply `Holds` — i.e. `Holds` is derivable, not asserted.
 
 Stated here as the goal; its proof is `holdsCore_of_claims` (structural heart,
 above) composed with the ten per-family discharges of `hClaims` from
-`acceptedFragments` + each family's generic soundness theorem, and the hash
-conjunct from the artifact-hash pin. See VERDICT.md for the enumerated residual.
+`acceptedFragments` + each family's generic soundness theorem, plus the
+hash/target/profile/ABI conjuncts from checker-owned identity pins. See
+VERDICT.md for the enumerated residual.
 -/
 def holdsAtHash (wasmSha256 : String) (m : Manifest) : Prop :=
-  m.subject.artifactHash = wasmSha256 ∧ HoldsCore m
+  m.subject.artifactHash = wasmSha256 ∧
+  m.subject.target = expectedArtifactTarget ∧
+  m.subject.profile = expectedProfile ∧
+  m.subject.abi = expectedRuntimeAbi ∧
+  HoldsCore m
 
 /-- Artifact-independent form of the production target.  Supplying the
 artifact's audited wasm hash recovers the thin `Schema.Holds` shim without

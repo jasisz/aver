@@ -4,10 +4,11 @@ expression: golden
 ---
 == cert-manifest.json ==
 {
-  "schema_version": 4,
-  "format": {"version": 1, "wall_id": "sha256:ebcc1e97b5d2dcd7555b064b2f51e30ad0fa0b912caf95fd77dbd06bc765fa78"},
+  "schema_version": 5,
+  "format": {"version": 1, "wall_id": "sha256:b06a0b43554911693b6f8b4b539dff7bb82b2dc8b1081b956c3a5db5238df8a0"},
   "wasm": "add_one.wasm",
   "wasm_sha256": "5f41ddfa9a5a395546d0c21e00c232be77e330ea587b2666456f0488ff0450c9",
+  "target": "wasm-gc",
   "level": "L1",
   "profile": "AverUserProfile/v1",
   "abi": "aver-wasm-gc/0",
@@ -72,6 +73,7 @@ abbrev addOneOb : Schema.Obligation :=
 def manifest : Schema.Manifest :=
   { subject :=
       { artifactHash := "5f41ddfa9a5a395546d0c21e00c232be77e330ea587b2666456f0488ff0450c9",
+        target := "wasm-gc",
         profile := "AverUserProfile/v1",
         abi := "aver-wasm-gc/0",
         artifactRoot := "AverCert.Artifact.certificate",

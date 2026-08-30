@@ -3077,7 +3077,8 @@ wasm hash.  The remaining semantic bridge assumptions are still explicit. -/
 theorem accept_sound_holds
     (hSide : AcceptanceSoundness.dischargeSideConditions AverCert.Artifact.data) :
     AverCert.Schema.Holds AverCert.Artifact.data.manifest := by
-  exact AcceptanceSoundness.accept_sound CertModule.wasmSha256 AverCert.Artifact.data rfl
+  exact AcceptanceSoundness.accept_sound CertModule.wasmSha256 AverCert.Artifact.data
+    rfl rfl rfl rfl
     AverCert.Artifact.claimObligationsBound
     AverCert.Artifact.standardFacesChecked
     AverCert.Artifact.fragmentsAccepted hSide
