@@ -143,6 +143,10 @@ fn assert_plans_lean_is_the_only_public_plan_data(
         "ArtifactBytes.lean is checker-generated from Wasm, not public package DATA"
     );
     assert!(
+        !cert_dir.join("ArtifactComponentBytes.lean").exists(),
+        "ArtifactComponentBytes.lean is checker-generated from the delivered artifact, not public package DATA"
+    );
+    assert!(
         !cert_dir.join("fragments").exists(),
         "the public package must not duplicate Plans.lean as fragment sidecars"
     );
@@ -357,8 +361,8 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     );
     assert_eq!(
         manifest["schema_version"].as_u64(),
-        Some(5),
-        "schema 5 added the required artifact target and fixed target/profile/ABI pins"
+        Some(6),
+        "schema 6 adds the component-envelope byte binding while preserving target/profile/ABI pins"
     );
     assert_eq!(
         manifest["target"].as_str(),
@@ -375,7 +379,7 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         Some(aver::codegen::cert::RUNTIME_ABI),
         "the wasm-gc runtime ABI is pinned exactly"
     );
-    assert_eq!(aver::codegen::cert::CERT_SCHEMA_VERSION, 5);
+    assert_eq!(aver::codegen::cert::CERT_SCHEMA_VERSION, 6);
     let declared_uncertified = manifest["declaredUncertified"].as_array().unwrap();
     assert_eq!(
         declared_uncertified.len(),

@@ -38,8 +38,9 @@
 //!
 //! * **A — byte co-occurrence.** The conjunct projects the field and applies a
 //!   byte anchor. Anchors are auto-derived, never hand-listed: a wall `def` is an
-//!   anchor when its binders carry the module byte stream (`(n len : Nat)`,
-//!   `(modBytes modLen : Nat)`) or `(artifact : ArtifactData)`. This is why
+//!   anchor when its binders carry a byte stream (`(n len : Nat)`,
+//!   `(modBytes modLen : Nat)`, `(componentBytes componentLen : Nat)`) or
+//!   `(artifact : ArtifactData)`. This is why
 //!   `CertDecode.AddSub.toIndexIdx` is an anchor and `decodedRoleIdx` is not —
 //!   exactly the distinction the bug turned on.
 //! * **A1 — one-hop argument.** A producer value passed whole into a reachable
@@ -759,14 +760,18 @@ fn reachable_from(w: &Wall, root: &str) -> BTreeSet<String> {
     seen
 }
 
-/// A definition is a byte anchor when its binders carry the module byte stream
-/// or the whole artifact. Auto-derived on purpose: a hand-maintained anchor list
-/// is exactly the sort of table that rots into a lie.
+/// A definition is a byte anchor when its binders carry a byte stream or the
+/// whole artifact. Auto-derived on purpose: a hand-maintained anchor list is
+/// exactly the sort of table that rots into a lie.
 fn is_byte_anchor(d: &Decl) -> bool {
     for b in binders(&d.sig) {
         let ty = b.ty.trim();
         if ty == "Nat" {
-            for pair in [("n", "len"), ("modBytes", "modLen")] {
+            for pair in [
+                ("n", "len"),
+                ("modBytes", "modLen"),
+                ("componentBytes", "componentLen"),
+            ] {
                 for i in 0..b.names.len().saturating_sub(1) {
                     if b.names[i] == pair.0 && b.names[i + 1] == pair.1 {
                         return true;
@@ -784,7 +789,11 @@ fn is_byte_anchor(d: &Decl) -> bool {
 fn binds_raw_bytes(d: &Decl) -> bool {
     for b in binders(&d.sig) {
         if b.ty.trim() == "Nat" {
-            for pair in [("n", "len"), ("modBytes", "modLen")] {
+            for pair in [
+                ("n", "len"),
+                ("modBytes", "modLen"),
+                ("componentBytes", "componentLen"),
+            ] {
                 for i in 0..b.names.len().saturating_sub(1) {
                     if b.names[i] == pair.0 && b.names[i + 1] == pair.1 {
                         return true;
@@ -1355,6 +1364,8 @@ pub fn analyse(sources: &[(&str, &str)]) -> Report {
             let tk: BTreeSet<String> = tokens(c).into_iter().collect();
             let has_bytes = tk.contains("modBytes")
                 || tk.contains("modLen")
+                || tk.contains("componentBytes")
+                || tk.contains("componentLen")
                 || (raw_bytes && tk.contains("n") && tk.contains("len"));
             if has_bytes {
                 for id in idents(c) {
@@ -1377,6 +1388,8 @@ pub fn analyse(sources: &[(&str, &str)]) -> Report {
             }
             let anchored = toks.contains("modBytes")
                 || toks.contains("modLen")
+                || toks.contains("componentBytes")
+                || toks.contains("componentLen")
                 || (raw_bytes && toks.contains("n") && toks.contains("len"))
                 || toks.iter().any(|t| anchors.contains(t))
                 || toks.iter().any(|t| anchor_short.contains(t));
@@ -1453,6 +1466,8 @@ pub fn analyse(sources: &[(&str, &str)]) -> Report {
                         .collect();
                     let b_bytes = btoks.contains("modBytes")
                         || btoks.contains("modLen")
+                        || btoks.contains("componentBytes")
+                        || btoks.contains("componentLen")
                         || (raw_bytes && btoks.contains("n") && btoks.contains("len"))
                         || btoks.iter().any(|t| anchors.contains(t))
                         || btoks.iter().any(|t| anchor_short.contains(t))

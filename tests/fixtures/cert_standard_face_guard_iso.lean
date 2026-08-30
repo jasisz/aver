@@ -50,6 +50,8 @@ def hostileArtifact : AcceptedArtifact.ArtifactData :=
 def acceptedWithoutStandardFaces
     (artifact : AcceptedArtifact.ArtifactData) : Prop :=
   Schema.Holds artifact.manifest ∧
+  AcceptedArtifact.artifactEnvelopeAccepted AverCert.ArtifactComponentBytes.componentBytes
+    AverCert.ArtifactComponentBytes.componentLen artifact = true ∧
   AcceptedArtifact.subjectMatchesArtifactRoot artifact ∧
   AcceptedArtifact.fragmentClaimObligationsInManifest artifact ∧
   AcceptedArtifact.claimsMatchManifest artifact ∧
@@ -58,14 +60,14 @@ def acceptedWithoutStandardFaces
   AcceptedArtifact.acceptedFragments artifact
 
 theorem hostileFinal : Schema.Holds hostileManifest := by
-  refine ⟨Final.cert.1, ?_⟩
+  refine ⟨Final.cert.1, Final.cert.2.1, Final.cert.2.2.1, ?_⟩
   intro obligation hmem
   have hcases : obligation = hostileAddTwoOb ∨
       obligation ∈ manifest.obligations.tail := by
     simpa [hostileManifest] using hmem
   rcases hcases with rfl | htail
   · exact hostileAddTwoHolds
-  · apply Final.cert.2 obligation
+  · apply Final.cert.2.2.2 obligation
     have hmanifest : manifest.obligations =
         AverCert.addTwoOb :: manifest.obligations.tail := by rfl
     rw [hmanifest]
@@ -74,8 +76,9 @@ theorem hostileFinal : Schema.Holds hostileManifest := by
 -- Every old guard accepts the host mutation.
 example : acceptedWithoutStandardFaces hostileArtifact := by
   rcases Artifact.certificate with
-    ⟨_, hsubject, hobs, hmatch, _hfaces, haxes, hdecoded, hfragments⟩
-  refine ⟨hostileFinal, ?_, ?_, ?_, ?_, ?_, ?_⟩
+    ⟨_, henvelope, hsubject, hobs, hmatch, _hfaces, haxes, hdecoded, hfragments⟩
+  refine ⟨hostileFinal, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  · exact henvelope
   · change AcceptedArtifact.subjectMatchesArtifactRoot Artifact.data
     exact hsubject
   · dsimp [AcceptedArtifact.fragmentClaimObligationsInManifest,

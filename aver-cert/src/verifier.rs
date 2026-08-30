@@ -133,6 +133,7 @@ struct ManifestIdentity {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ArtifactTarget {
     WasmGc,
+    Wasip2,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -144,7 +145,9 @@ struct Wasip2EnvelopeDeclaration {
 struct PreparedArtifact<'a> {
     /// Hash of the delivered artifact named by `target`.
     artifact_hash: String,
-    /// Core wasm module bytes consumed by the schema-5 Lean wall.
+    /// Delivered target-artifact bytes consumed by target-specific envelope checks.
+    target_artifact_bytes: &'a [u8],
+    /// Core wasm module bytes consumed by the existing wasm decoder wall.
     core_module_bytes: &'a [u8],
 }
 
@@ -159,6 +162,7 @@ struct Candidates {
     target: String,
     profile: String,
     abi: String,
+    wasip2_component_envelope: Option<format::Wasip2ComponentEnvelopeDeclaration>,
 }
 
 pub fn verify(artifact: &Path, cert_dir: &Path) -> Result<Verdict, String> {
@@ -290,10 +294,12 @@ fn trusted_check(
 
     let identity = read_manifest_identity(&manifest)?;
     let artifact_target = require_supported_identity(&identity)?;
+    let target_envelope = read_artifact_target_envelope(artifact_target, &manifest)?;
     let PreparedArtifact {
         artifact_hash: actual_hash,
+        target_artifact_bytes,
         core_module_bytes,
-    } = prepare_artifact_for_target(artifact_target, &bytes)?;
+    } = prepare_artifact_for_target(artifact_target, &bytes, target_envelope)?;
     let pinned_hash = manifest_str(&manifest, "wasm_sha256")?;
     if pinned_hash != actual_hash {
         return Err(format!(
@@ -331,11 +337,12 @@ fn trusted_check(
         ));
     }
 
-    let candidates = read_candidates(&manifest, identity)?;
+    let candidates = read_candidates(&manifest, identity, target_envelope.map(|env| env.inner))?;
     let lean = LeanRunner::new(selected_wall.toolchain)?;
     let build = assemble_build(
         cert_dir,
         core_module_bytes,
+        target_artifact_bytes,
         selected_wall,
         lean.memory_limit_mb(),
     )?;
@@ -528,6 +535,8 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
             .collect::<Vec<_>>()
             .join(", ")
     );
+    let wasip2_component_envelope =
+        lean_wasip2_component_envelope(candidates.wasip2_component_envelope);
     let allowed = AXIOM_WHITELIST
         .iter()
         .map(|name| format!("`{name}"))
@@ -545,7 +554,8 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
          namespace AverCertChecker\n\n\
          example : AverCert.Artifact.data.modBytes = AverCert.ArtifactBytes.modBytes := rfl\n\
          example : AverCert.Artifact.data.modLen = AverCert.ArtifactBytes.modLen := rfl\n\
-         example : AverCert.Artifact.data.manifest = AverCert.manifest := rfl\n\n\
+         example : AverCert.Artifact.data.manifest = AverCert.manifest := rfl\n\
+         example : AverCert.Artifact.data.wasip2ComponentEnvelope = {wasip2_component_envelope} := rfl\n\n\
          example : AverCert.manifest.subject.artifactHash = \"{sha}\" := rfl\n\
          example : AverCert.manifest.subject.artifactRoot = \"{}\" := rfl\n\
          example : AverCert.manifest.obligations.map (fun o => o.export_) = {names} := rfl\n\
@@ -614,16 +624,6 @@ fn read_manifest_identity(manifest: &Value) -> Result<ManifestIdentity, String> 
 }
 
 fn require_supported_identity(identity: &ManifestIdentity) -> Result<ArtifactTarget, String> {
-    let target = match identity.target.as_str() {
-        format::TARGET_WASM_GC => ArtifactTarget::WasmGc,
-        _ => {
-            return Err(format!(
-                "unsupported certificate target `{}`; this checker accepts {}",
-                identity.target,
-                format::TARGET_WASM_GC
-            ));
-        }
-    };
     if identity.profile != format::PROFILE_ID {
         return Err(format!(
             "unsupported certificate profile `{}`; this checker accepts {}",
@@ -631,34 +631,85 @@ fn require_supported_identity(identity: &ManifestIdentity) -> Result<ArtifactTar
             format::PROFILE_ID
         ));
     }
-    if identity.abi != format::RUNTIME_ABI_WASM_GC {
-        return Err(format!(
-            "unsupported certificate ABI `{}`; this checker accepts {}",
-            identity.abi,
-            format::RUNTIME_ABI_WASM_GC
-        ));
+
+    match identity.target.as_str() {
+        format::TARGET_WASM_GC if identity.abi == format::RUNTIME_ABI_WASM_GC => {
+            Ok(ArtifactTarget::WasmGc)
+        }
+        format::TARGET_WASIP2 if identity.abi == format::RUNTIME_ABI_WASIP2 => {
+            Ok(ArtifactTarget::Wasip2)
+        }
+        format::TARGET_WASM_GC | format::TARGET_WASIP2 => Err(format!(
+            "unsupported certificate ABI `{}` for target `{}`",
+            identity.abi, identity.target
+        )),
+        _ => Err(format!(
+            "unsupported certificate target `{}`; this checker accepts {}, {}",
+            identity.target,
+            format::TARGET_WASM_GC,
+            format::TARGET_WASIP2
+        )),
     }
-    Ok(target)
+}
+
+fn read_artifact_target_envelope(
+    target: ArtifactTarget,
+    manifest: &Value,
+) -> Result<Option<Wasip2EnvelopeDeclaration>, String> {
+    match target {
+        ArtifactTarget::WasmGc => {
+            if manifest
+                .get(format::WASIP2_COMPONENT_ENVELOPE_FIELD)
+                .is_some()
+            {
+                return Err(format!(
+                    "cert-manifest.json `{}` is only valid for target `{}`",
+                    format::WASIP2_COMPONENT_ENVELOPE_FIELD,
+                    format::TARGET_WASIP2
+                ));
+            }
+            Ok(None)
+        }
+        ArtifactTarget::Wasip2 => read_wasip2_component_envelope(manifest).map(Some),
+    }
 }
 
 fn prepare_artifact_for_target<'a>(
     target: ArtifactTarget,
     bytes: &'a [u8],
+    envelope: Option<Wasip2EnvelopeDeclaration>,
 ) -> Result<PreparedArtifact<'a>, String> {
-    match target {
-        ArtifactTarget::WasmGc => prepare_wasm_gc_artifact(bytes),
+    match (target, envelope) {
+        (ArtifactTarget::WasmGc, None) => prepare_wasm_gc_artifact(bytes),
+        (ArtifactTarget::Wasip2, Some(envelope)) => {
+            prepare_wasip2_artifact_with_declared_envelope(bytes, envelope)
+        }
+        (ArtifactTarget::WasmGc, Some(_)) => Err(format!(
+            "{} envelope cannot be used for target `{}`",
+            format::TARGET_WASIP2,
+            format::TARGET_WASM_GC
+        )),
+        (ArtifactTarget::Wasip2, None) => Err(format!(
+            "target `{}` requires `{}`",
+            format::TARGET_WASIP2,
+            format::WASIP2_COMPONENT_ENVELOPE_FIELD
+        )),
     }
 }
 
 fn prepare_wasm_gc_artifact(bytes: &[u8]) -> Result<PreparedArtifact<'_>, String> {
-    // The target field is read before validation so future schemas can select a
-    // component-envelope validator without trying to reinterpret component bytes
-    // as a core module. Schema 5 admits only wasm-gc core modules.
+    // The target field is read before validation so target-specific envelopes
+    // are selected before byte interpretation. A wasm-gc artifact is a core
+    // module, so its delivered artifact bytes and core module bytes coincide.
     wasmparser::Validator::new()
         .validate_all(bytes)
         .map_err(|error| format!("artifact is not valid WebAssembly: {error}"))?;
+    if !wasmparser::Parser::is_core_wasm(bytes) {
+        return Err("artifact is not a core WebAssembly module".to_string());
+    }
     Ok(PreparedArtifact {
         artifact_hash: sha256_hex(bytes),
+        target_artifact_bytes: bytes,
         core_module_bytes: bytes,
     })
 }
@@ -746,6 +797,7 @@ fn prepare_wasip2_artifact_with_declared_envelope<'a>(
 
     Ok(PreparedArtifact {
         artifact_hash: sha256_hex(component_bytes),
+        target_artifact_bytes: component_bytes,
         core_module_bytes,
     })
 }
@@ -759,7 +811,11 @@ fn envelope_u64(envelope: &Value, key: &str) -> Result<u64, String> {
     })
 }
 
-fn read_candidates(manifest: &Value, identity: ManifestIdentity) -> Result<Candidates, String> {
+fn read_candidates(
+    manifest: &Value,
+    identity: ManifestIdentity,
+    wasip2_component_envelope: Option<format::Wasip2ComponentEnvelopeDeclaration>,
+) -> Result<Candidates, String> {
     let certified_json = manifest
         .get("certified")
         .and_then(Value::as_array)
@@ -895,6 +951,7 @@ fn read_candidates(manifest: &Value, identity: ManifestIdentity) -> Result<Candi
         target: identity.target,
         profile: identity.profile,
         abi: identity.abi,
+        wasip2_component_envelope,
     };
     gate_candidates(&candidates)?;
     Ok(candidates)
@@ -1036,13 +1093,17 @@ fn is_checker_owned(name: &str, selected_wall: &wall::Wall) -> bool {
         .any(|source| source.name == name)
         || matches!(
             name,
-            "ArtifactBytes.lean" | "lakefile.lean" | "CheckerWitness.lean"
+            "ArtifactBytes.lean"
+                | "ArtifactComponentBytes.lean"
+                | "lakefile.lean"
+                | "CheckerWitness.lean"
         )
 }
 
 fn assemble_build(
     cert_dir: &Path,
-    wasm_bytes: &[u8],
+    core_module_bytes: &[u8],
+    target_artifact_bytes: &[u8],
     selected_wall: &wall::Wall,
     memory_limit_mb: u64,
 ) -> Result<BuildDir, String> {
@@ -1152,10 +1213,16 @@ fn assemble_build(
     }
     std::fs::write(
         build.path.join("ArtifactBytes.lean"),
-        wall::render_artifact_bytes(wasm_bytes),
+        wall::render_artifact_bytes(core_module_bytes),
     )
     .map_err(|error| format!("cannot stage ArtifactBytes.lean: {error}"))?;
     roots.push("ArtifactBytes".to_string());
+    std::fs::write(
+        build.path.join("ArtifactComponentBytes.lean"),
+        wall::render_artifact_component_bytes(target_artifact_bytes),
+    )
+    .map_err(|error| format!("cannot stage ArtifactComponentBytes.lean: {error}"))?;
+    roots.push("ArtifactComponentBytes".to_string());
     roots.sort();
     roots.dedup();
     std::fs::write(
@@ -1213,9 +1280,14 @@ fn reject_shadowed_root(root: &str, selected_wall: &wall::Wall) -> Result<(), St
                 .name
                 .strip_suffix(".lean")
                 .is_some_and(|reserved| reserved.eq_ignore_ascii_case(&prefix))
-        }) || ["ArtifactBytes", "CheckerWitness", "lakefile"]
-            .iter()
-            .any(|reserved| reserved.eq_ignore_ascii_case(&prefix));
+        }) || [
+            "ArtifactBytes",
+            "ArtifactComponentBytes",
+            "CheckerWitness",
+            "lakefile",
+        ]
+        .iter()
+        .any(|reserved| reserved.eq_ignore_ascii_case(&prefix));
         if shadows_toolchain || shadows_checker {
             return Err(format!(
                 "cert data module `{root}` shadows a checker/toolchain import"
@@ -1564,6 +1636,20 @@ fn lean_option_nat(value: Option<u32>) -> String {
     value.map_or_else(|| "none".to_string(), |value| format!("some {value}"))
 }
 
+fn lean_wasip2_component_envelope(
+    value: Option<format::Wasip2ComponentEnvelopeDeclaration>,
+) -> String {
+    value.map_or_else(
+        || "(none : Option AverCert.Wasip2Envelope.ComponentEnvelope)".to_string(),
+        |value| {
+            format!(
+                "some ({{ prefixLen := {}, embeddedCoreModuleLen := {}, suffixLen := {} }} : AverCert.Wasip2Envelope.ComponentEnvelope)",
+                value.prefix_len, value.embedded_core_module_len, value.suffix_len
+            )
+        },
+    )
+}
+
 fn sha256_hex(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
@@ -1892,6 +1978,7 @@ mod tests {
         assert!(reject_shadowed_root("Lean.Extra", wall).is_err());
         assert!(reject_shadowed_root("Schema.Sub", wall).is_err());
         assert!(reject_shadowed_root("ArtifactBytes.Decoy", wall).is_err());
+        assert!(reject_shadowed_root("ArtifactComponentBytes.Decoy", wall).is_err());
         assert!(reject_shadowed_root("CheckerWitness.X.Y", wall).is_err());
         // A reserved name in non-prefix position does not shadow the import.
         assert!(reject_shadowed_root("Apps.Schema", wall).is_ok());
@@ -1912,33 +1999,44 @@ mod tests {
     }
 
     #[test]
-    fn wasip2_identity_is_reserved_but_not_accepted_by_schema_five() {
-        let error = require_supported_identity(&ManifestIdentity {
-            target: format::TARGET_WASIP2.to_string(),
-            profile: format::PROFILE_ID.to_string(),
-            abi: format::RUNTIME_ABI_WASIP2.to_string(),
-        })
-        .unwrap_err();
-        assert!(
-            error.contains("unsupported certificate target `wasip2`"),
-            "{error}"
+    fn wasip2_identity_selects_wasip2_artifact_preparation() {
+        assert_eq!(
+            require_supported_identity(&ManifestIdentity {
+                target: format::TARGET_WASIP2.to_string(),
+                profile: format::PROFILE_ID.to_string(),
+                abi: format::RUNTIME_ABI_WASIP2.to_string(),
+            })
+            .unwrap(),
+            ArtifactTarget::Wasip2
         );
-        assert!(error.contains(format::TARGET_WASM_GC), "{error}");
     }
 
     #[test]
-    fn target_artifact_preparation_keeps_schema_five_on_core_wasm_modules() {
+    fn target_identity_rejects_wrong_target_abi_pairs() {
+        let error = require_supported_identity(&ManifestIdentity {
+            target: format::TARGET_WASIP2.to_string(),
+            profile: format::PROFILE_ID.to_string(),
+            abi: format::RUNTIME_ABI_WASM_GC.to_string(),
+        })
+        .unwrap_err();
+        assert!(error.contains("unsupported certificate ABI"), "{error}");
+        assert!(error.contains(format::TARGET_WASIP2), "{error}");
+    }
+
+    #[test]
+    fn target_artifact_preparation_keeps_schema_six_on_core_wasm_modules() {
         let bytes = b"\0asm\x01\0\0\0";
-        let prepared = prepare_artifact_for_target(ArtifactTarget::WasmGc, bytes)
-            .expect("empty wasm module is a valid schema-5 artifact envelope");
+        let prepared = prepare_artifact_for_target(ArtifactTarget::WasmGc, bytes, None)
+            .expect("empty wasm module is a valid schema-6 wasm-gc artifact envelope");
         assert_eq!(prepared.artifact_hash, sha256_hex(bytes));
+        assert_eq!(prepared.target_artifact_bytes, bytes);
         assert_eq!(prepared.core_module_bytes, bytes);
     }
 
     #[test]
     fn wasm_gc_artifact_preparation_still_rejects_non_wasm_bytes() {
-        let error =
-            prepare_artifact_for_target(ArtifactTarget::WasmGc, b"not a wasm module").unwrap_err();
+        let error = prepare_artifact_for_target(ArtifactTarget::WasmGc, b"not a wasm module", None)
+            .unwrap_err();
         assert!(
             error.contains("artifact is not valid WebAssembly"),
             "{error}"
@@ -1946,9 +2044,9 @@ mod tests {
     }
 
     #[test]
-    fn wasip2_target_still_rejects_before_envelope_parsing_or_wasm_validation() {
+    fn wasip2_missing_envelope_rejects_before_wasm_validation() {
         let root = std::env::temp_dir().join(format!(
-            "aver-cert-wasip2-still-reserved-{}-{}",
+            "aver-cert-wasip2-missing-envelope-{}-{}",
             std::process::id(),
             unique_nanos()
         ));
@@ -1968,14 +2066,13 @@ mod tests {
         .unwrap();
 
         let error = match trusted_check(&artifact, &root, ReplayMode::TrustBuiltOleans) {
-            Ok(_) => panic!("wasip2 target must still be rejected before envelope dispatch"),
+            Ok(_) => panic!("wasip2 target must require its manifest envelope"),
             Err(error) => error,
         };
         assert!(
-            error.contains("unsupported certificate target `wasip2`"),
+            error.contains("cert-manifest.json is missing object field `wasip2ComponentEnvelope`"),
             "{error}"
         );
-        assert!(!error.contains("wasip2ComponentEnvelope"), "{error}");
         assert!(!error.contains("WebAssembly"), "{error}");
         let _ = std::fs::remove_dir_all(root);
     }

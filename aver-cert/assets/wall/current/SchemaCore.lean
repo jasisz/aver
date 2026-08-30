@@ -98,16 +98,37 @@ def CAPABILITY_REGISTRY : List (String × String) := [
   ("aver", "record_exit_group")
 ]
 
-/-- The only artifact target this schema currently admits. Later schemas may
-    dispatch on this field to select a different envelope, but schema 5 is
-    deliberately wasm-gc-only. -/
-def expectedArtifactTarget : String := "wasm-gc"
+/-- Core wasm-gc module artifacts use the raw module bytes as the certified artifact. -/
+def expectedWasmGcArtifactTarget : String := "wasm-gc"
+
+/-- WASI 0.2 Component Model artifacts use a declared component envelope. -/
+def expectedWasip2ArtifactTarget : String := "wasip2"
+
+/-- Backwards-compatible alias for the historical wasm-gc-only target constant. -/
+def expectedArtifactTarget : String := expectedWasmGcArtifactTarget
 
 /-- The only emitted-fragment profile this schema currently admits. -/
 def expectedProfile : String := "AverUserProfile/v1"
 
-/-- The only runtime ABI this schema currently admits. -/
-def expectedRuntimeAbi : String := "aver-wasm-gc/0"
+/-- Runtime ABI admitted for raw wasm-gc module artifacts. -/
+def expectedRuntimeAbiWasmGc : String := "aver-wasm-gc/0"
+
+/-- Runtime ABI admitted for WASI 0.2 Component Model artifacts. -/
+def expectedRuntimeAbiWasip2 : String := "aver-wasip2/0"
+
+/-- Backwards-compatible alias for the historical wasm-gc-only ABI constant. -/
+def expectedRuntimeAbi : String := expectedRuntimeAbiWasmGc
+
+/-- Target/ABI pairs admitted by this schema.  The byte-level envelope check
+    lives at artifact acceptance time, where both the delivered target bytes and
+    the embedded core-module bytes are available. -/
+def artifactTargetAbiAccepted (target abi : String) : Bool :=
+  (target == expectedWasmGcArtifactTarget && abi == expectedRuntimeAbiWasmGc) ||
+  (target == expectedWasip2ArtifactTarget && abi == expectedRuntimeAbiWasip2)
+
+/-- Full statement identity helper used by tests and documentation. -/
+def artifactIdentityAccepted (target profile abi : String) : Bool :=
+  profile == expectedProfile && artifactTargetAbiAccepted target abi
 
 /-- What the artifact is: its pinned hash, explicit artifact target,
     emitted-fragment profile, runtime ABI, artifact theorem root, the certified

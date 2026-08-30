@@ -1,17 +1,17 @@
 /-
-  Wasip2Envelope — target-specific vocabulary for the future WASI 0.2
-  Component Model certificate envelope.
+  Wasip2Envelope — target-specific vocabulary for the WASI 0.2 Component Model
+  certificate envelope.
 
   This module intentionally does NOT parse, scan, or navigate component-model
   syntax. It only defines the declared-length split the producer will state:
 
       prefix ++ embedded_core_module ++ suffix
 
-  A future schema can feed the delivered component bytes into these definitions,
-  prove the declared split by equality, and then reuse the existing core-module
-  checks on the declared embedded module bytes. Schema 5 does not import this
-  vocabulary into acceptance, and the Rust verifier still rejects target
-  `wasip2` fail-closed before byte validation.
+  Schema 6 feeds the delivered component bytes into these definitions, proves
+  the declared split by equality, and then reuses the existing core-module checks
+  on the declared embedded module bytes. The producer-side `--target wasip2
+  --certify` path remains disabled until certificate emission can construct this
+  package end-to-end.
 -/
 import CertDecode
 

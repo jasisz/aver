@@ -252,6 +252,7 @@ def {primary}_mutualScc : MutualRecursionSoundness.AdmittedScc {k} {carrier} {bo
 def {primary}_mutualArtifact : AverCert.AcceptedArtifact.ArtifactData :=
   {{ modBytes := AverCert.ArtifactBytes.modBytes,
     modLen := AverCert.ArtifactBytes.modLen, manifest := AverCert.manifest,
+    wasip2ComponentEnvelope := none,
     symFragmentClaims := [], stringEqClaims := [], stringConcatClaims := [],
     constructClaims := [], recursionClaims := [],
     mutualRecursionClaims := {primary}_mutualClaims,

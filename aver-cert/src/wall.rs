@@ -342,10 +342,40 @@ pub fn resolve(id: &str) -> Option<&'static Wall> {
     (id == current_id()).then_some(&CURRENT)
 }
 
-/// Checker-authored Lean module containing the exact artifact bytes. A
+/// Checker-authored Lean module containing the exact core module bytes. A
 /// certificate package never supplies this module; production verification
-/// and direct-Lake test harnesses materialize it from the `.wasm` under test.
+/// and direct-Lake test harnesses materialize it from the artifact under test
+/// after target-specific envelope preparation.
 pub fn render_artifact_bytes(bytes: &[u8]) -> String {
+    render_byte_module(
+        "ArtifactBytes",
+        "modBytes",
+        "modLen",
+        "Exact core Wasm module bytes consumed by the certificate wall.",
+        bytes,
+    )
+}
+
+/// Checker-authored Lean module containing the exact delivered target artifact
+/// bytes. For wasm-gc this is the same byte string as `ArtifactBytes`; for
+/// wasip2 this is the outer component whose declared envelope embeds the core.
+pub fn render_artifact_component_bytes(bytes: &[u8]) -> String {
+    render_byte_module(
+        "ArtifactComponentBytes",
+        "componentBytes",
+        "componentLen",
+        "Exact delivered target artifact bytes consumed by envelope checks.",
+        bytes,
+    )
+}
+
+fn render_byte_module(
+    module: &str,
+    bytes_name: &str,
+    len_name: &str,
+    description: &str,
+    bytes: &[u8],
+) -> String {
     let numeral = if bytes.is_empty() {
         "0".to_string()
     } else {
@@ -357,7 +387,7 @@ pub fn render_artifact_bytes(bytes: &[u8]) -> String {
         numeral
     };
     format!(
-        "import WasmSlice\n\nset_option maxRecDepth 200000\n\nnamespace AverCert.ArtifactBytes\n\ndef modBytes : Nat := {numeral}\ndef modLen : Nat := {}\n\nend AverCert.ArtifactBytes\n",
+        "import WasmSlice\n\nset_option maxRecDepth 200000\n\nnamespace AverCert.{module}\n\n/-- {description} -/\ndef {bytes_name} : Nat := {numeral}\ndef {len_name} : Nat := {}\n\nend AverCert.{module}\n",
         bytes.len()
     )
 }
