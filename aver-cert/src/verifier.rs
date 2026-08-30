@@ -1759,6 +1759,21 @@ mod tests {
     }
 
     #[test]
+    fn wasip2_identity_is_reserved_but_not_accepted_by_schema_five() {
+        let error = require_supported_identity(&ManifestIdentity {
+            target: format::TARGET_WASIP2.to_string(),
+            profile: format::PROFILE_ID.to_string(),
+            abi: format::RUNTIME_ABI_WASIP2.to_string(),
+        })
+        .unwrap_err();
+        assert!(
+            error.contains("unsupported certificate target `wasip2`"),
+            "{error}"
+        );
+        assert!(error.contains(format::TARGET_WASM_GC), "{error}");
+    }
+
+    #[test]
     fn candidate_strings_cannot_escape_lean_literals() {
         assert!(gate_candidate("test", "plain ASCII").is_ok());
         assert!(gate_candidate("test", "quote: \"").is_err());

@@ -192,6 +192,24 @@ fn main() -> Int
         artifact.envelope.component_bytes(),
         artifact.component_bytes
     );
+    let declaration = artifact.envelope.declaration();
+    assert_eq!(
+        declaration.kind(),
+        aver::codegen::cert::format::WASIP2_COMPONENT_ENVELOPE_KIND
+    );
+    assert_eq!(
+        declaration.component_len(),
+        Some(artifact.component_bytes.len() as u64)
+    );
+    let (prefix, embedded_core, suffix) = declaration
+        .split_component(&artifact.component_bytes)
+        .expect("declaration accounts for the whole produced component");
+    assert_eq!(prefix, artifact.envelope.prefix.as_slice());
+    assert_eq!(
+        embedded_core,
+        artifact.envelope.embedded_core_module.as_slice()
+    );
+    assert_eq!(suffix, artifact.envelope.suffix.as_slice());
     assert!(
         artifact.envelope.embedded_core_module.starts_with(b"\0asm"),
         "the declared core payload should be a complete core wasm module"
@@ -226,6 +244,17 @@ fn component_artifact_selects_aver_user_core_among_adapter_modules() {
     assert_eq!(
         artifact.envelope.component_bytes(),
         artifact.component_bytes
+    );
+    let declaration = artifact.envelope.declaration();
+    assert_eq!(
+        declaration.component_len(),
+        Some(artifact.component_bytes.len() as u64)
+    );
+    let core_start = artifact.envelope.prefix.len() as u64;
+    let core_end = core_start + artifact.envelope.embedded_core_module.len() as u64;
+    assert_eq!(
+        declaration.embedded_core_module_range(),
+        Some(core_start..core_end)
     );
     assert!(
         core_module_exports(&artifact.envelope.embedded_core_module, "__caller_fn_count"),

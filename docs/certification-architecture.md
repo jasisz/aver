@@ -138,10 +138,12 @@ disassembler, candidate derivation, or reconstruction of
 
 For the planned `wasip2` target (#1146), the same rule applies to the component
 wrapper: the producer may declare a `prefix ++ embedded_core_module ++ suffix`
-split while constructing the component, but the trusted verifier path must not
+split while constructing the component, surfaced under the reserved
+`wasip2ComponentEnvelope` manifest field, but the trusted verifier path must not
 rediscover the user core by walking component bytes. It should consume the
-declaration, confirm byte equality against the caller-supplied component, and
-then run the core-module checks on the declared embedded module.
+declaration, split only by declared lengths, confirm byte equality against the
+caller-supplied component, and then run the core-module checks on the declared
+embedded module.
 
 ## Lean acceptance wall
 

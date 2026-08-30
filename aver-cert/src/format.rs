@@ -11,11 +11,106 @@ pub const FORMAT_VERSION: u32 = 1;
 /// will add their own envelope instead of reinterpreting wasm-gc bytes.
 pub const TARGET_WASM_GC: &str = "wasm-gc";
 
+/// Reserved artifact target identifier for the WASI 0.2 Component Model
+/// certificate envelope. Schema 5 still rejects this target fail-closed; this
+/// constant names the manifest value future schemas will dispatch on.
+pub const TARGET_WASIP2: &str = "wasip2";
+
 /// Only emitted-fragment profile admitted by schema 5.
 pub const PROFILE_ID: &str = "AverUserProfile/v1";
 
 /// Runtime ABI admitted for the wasm-gc artifact target in schema 5.
 pub const RUNTIME_ABI_WASM_GC: &str = "aver-wasm-gc/0";
+
+/// Reserved runtime ABI for future wasip2 component certificates.
+pub const RUNTIME_ABI_WASIP2: &str = "aver-wasip2/0";
+
+/// Reserved top-level manifest field for a wasip2 component envelope
+/// declaration. It is intentionally target-specific: schema 5 ignores unknown
+/// top-level fields and rejects `target = "wasip2"` before validation.
+pub const WASIP2_COMPONENT_ENVELOPE_FIELD: &str = "wasip2ComponentEnvelope";
+
+/// Field names inside the reserved wasip2 component-envelope object.
+pub const WASIP2_COMPONENT_ENVELOPE_KIND_FIELD: &str = "kind";
+pub const WASIP2_COMPONENT_ENVELOPE_PREFIX_LEN_FIELD: &str = "prefix_len";
+pub const WASIP2_COMPONENT_ENVELOPE_CORE_LEN_FIELD: &str = "embedded_core_module_len";
+pub const WASIP2_COMPONENT_ENVELOPE_SUFFIX_LEN_FIELD: &str = "suffix_len";
+
+/// Version tag for the declared `prefix ++ embedded_core_module ++ suffix`
+/// component split.
+pub const WASIP2_COMPONENT_ENVELOPE_KIND: &str = "prefix-core-suffix/v1";
+
+/// Manifest-facing declaration of the wasip2 component envelope.
+///
+/// The declaration carries byte counts only. A verifier that consumes it must
+/// slice the delivered component by these declared lengths and confirm equality
+/// against the separately supplied declared bytes; it must not rediscover the
+/// embedded core by parsing or navigating the delivered component.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Wasip2ComponentEnvelopeDeclaration {
+    /// Bytes before the embedded Aver user-core module payload.
+    pub prefix_len: u64,
+    /// Bytes in the embedded Aver user-core module payload.
+    pub embedded_core_module_len: u64,
+    /// Bytes after the embedded Aver user-core module payload.
+    pub suffix_len: u64,
+}
+
+impl Wasip2ComponentEnvelopeDeclaration {
+    pub const fn from_lengths(
+        prefix_len: u64,
+        embedded_core_module_len: u64,
+        suffix_len: u64,
+    ) -> Self {
+        Self {
+            prefix_len,
+            embedded_core_module_len,
+            suffix_len,
+        }
+    }
+
+    pub const fn kind(&self) -> &'static str {
+        WASIP2_COMPONENT_ENVELOPE_KIND
+    }
+
+    pub fn component_len(&self) -> Option<u64> {
+        self.prefix_len
+            .checked_add(self.embedded_core_module_len)?
+            .checked_add(self.suffix_len)
+    }
+
+    pub fn embedded_core_module_range(&self) -> Option<std::ops::Range<u64>> {
+        let start = self.prefix_len;
+        let end = start.checked_add(self.embedded_core_module_len)?;
+        Some(start..end)
+    }
+
+    /// Split component bytes by declared lengths only. This helper does not
+    /// inspect the bytes and is therefore suitable for the future trusted path,
+    /// provided the caller also checks the returned slices against the declared
+    /// byte sequences.
+    pub fn split_component<'a>(
+        &self,
+        component: &'a [u8],
+    ) -> Option<(&'a [u8], &'a [u8], &'a [u8])> {
+        if self.embedded_core_module_len == 0 {
+            return None;
+        }
+        let prefix_len = usize::try_from(self.prefix_len).ok()?;
+        let core_len = usize::try_from(self.embedded_core_module_len).ok()?;
+        let suffix_len = usize::try_from(self.suffix_len).ok()?;
+        let core_end = prefix_len.checked_add(core_len)?;
+        let declared_len = core_end.checked_add(suffix_len)?;
+        if declared_len != component.len() {
+            return None;
+        }
+        Some((
+            &component[..prefix_len],
+            &component[prefix_len..core_end],
+            &component[core_end..],
+        ))
+    }
+}
 
 /// Manifest schema accepted by the standalone verifier. Version 2 made the
 /// subject's `hostRoleTable` optional: modules without the Int box helper
@@ -180,6 +275,57 @@ mod tests {
     use super::*;
 
     #[test]
+    fn wasip2_envelope_surface_is_reserved_but_schema_five_stays_wasm_gc_only() {
+        assert_eq!(TARGET_WASM_GC, "wasm-gc");
+        assert_eq!(TARGET_WASIP2, "wasip2");
+        assert_eq!(RUNTIME_ABI_WASM_GC, "aver-wasm-gc/0");
+        assert_eq!(RUNTIME_ABI_WASIP2, "aver-wasip2/0");
+        assert_eq!(WASIP2_COMPONENT_ENVELOPE_FIELD, "wasip2ComponentEnvelope");
+        assert_eq!(WASIP2_COMPONENT_ENVELOPE_KIND_FIELD, "kind");
+        assert_eq!(WASIP2_COMPONENT_ENVELOPE_PREFIX_LEN_FIELD, "prefix_len");
+        assert_eq!(
+            WASIP2_COMPONENT_ENVELOPE_CORE_LEN_FIELD,
+            "embedded_core_module_len"
+        );
+        assert_eq!(WASIP2_COMPONENT_ENVELOPE_SUFFIX_LEN_FIELD, "suffix_len");
+        assert_eq!(WASIP2_COMPONENT_ENVELOPE_KIND, "prefix-core-suffix/v1");
+        assert_eq!(CERT_SCHEMA_VERSION, 5);
+    }
+
+    #[test]
+    fn wasip2_component_envelope_declaration_splits_by_declared_lengths_only() {
+        let declaration = Wasip2ComponentEnvelopeDeclaration::from_lengths(2, 3, 1);
+        assert_eq!(declaration.kind(), WASIP2_COMPONENT_ENVELOPE_KIND);
+        assert_eq!(declaration.component_len(), Some(6));
+        assert_eq!(declaration.embedded_core_module_range(), Some(2..5));
+
+        let (prefix, core, suffix) = declaration
+            .split_component(b"abcdef")
+            .expect("declared lengths match the component");
+        assert_eq!(prefix, b"ab");
+        assert_eq!(core, b"cde");
+        assert_eq!(suffix, b"f");
+
+        assert!(
+            Wasip2ComponentEnvelopeDeclaration::from_lengths(2, 0, 1)
+                .split_component(b"abc")
+                .is_none(),
+            "an empty embedded core declaration is not meaningful"
+        );
+        assert!(
+            Wasip2ComponentEnvelopeDeclaration::from_lengths(2, 2, 0)
+                .split_component(b"abc")
+                .is_none(),
+            "the declaration must account for the whole delivered component"
+        );
+        assert_eq!(
+            Wasip2ComponentEnvelopeDeclaration::from_lengths(u64::MAX, 1, 0).component_len(),
+            None,
+            "length overflow must fail closed"
+        );
+    }
+
+    #[test]
     fn capability_pairs_are_unique() {
         let unique = WASM_GC_CAPABILITIES
             .iter()
@@ -247,6 +393,26 @@ mod tests {
                 spec.contains(&phrase),
                 "certificate-format.md does not state \"{phrase}\"; \
                  update the schema version printed in the spec"
+            );
+        }
+    }
+
+    #[test]
+    fn format_spec_documents_reserved_wasip2_envelope_surface() {
+        let spec = include_str!("../../docs/certificate-format.md");
+        for phrase in [
+            TARGET_WASIP2,
+            RUNTIME_ABI_WASIP2,
+            WASIP2_COMPONENT_ENVELOPE_FIELD,
+            WASIP2_COMPONENT_ENVELOPE_KIND_FIELD,
+            WASIP2_COMPONENT_ENVELOPE_PREFIX_LEN_FIELD,
+            WASIP2_COMPONENT_ENVELOPE_CORE_LEN_FIELD,
+            WASIP2_COMPONENT_ENVELOPE_SUFFIX_LEN_FIELD,
+            WASIP2_COMPONENT_ENVELOPE_KIND,
+        ] {
+            assert!(
+                spec.contains(phrase),
+                "certificate-format.md does not document reserved wasip2 envelope surface `{phrase}`"
             );
         }
     }
