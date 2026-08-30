@@ -135,6 +135,11 @@ enum ArtifactTarget {
     WasmGc,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct Wasip2EnvelopeDeclaration {
+    inner: format::Wasip2ComponentEnvelopeDeclaration,
+}
+
 #[derive(Debug)]
 struct PreparedArtifact<'a> {
     /// Hash of the delivered artifact named by `target`.
@@ -655,6 +660,102 @@ fn prepare_wasm_gc_artifact(bytes: &[u8]) -> Result<PreparedArtifact<'_>, String
     Ok(PreparedArtifact {
         artifact_hash: sha256_hex(bytes),
         core_module_bytes: bytes,
+    })
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+fn read_wasip2_component_envelope(manifest: &Value) -> Result<Wasip2EnvelopeDeclaration, String> {
+    let field = format::WASIP2_COMPONENT_ENVELOPE_FIELD;
+    let envelope = manifest
+        .get(field)
+        .ok_or_else(|| format!("cert-manifest.json is missing object field `{field}`"))?;
+    exact_object_fields(
+        envelope,
+        field,
+        &[
+            format::WASIP2_COMPONENT_ENVELOPE_KIND_FIELD,
+            format::WASIP2_COMPONENT_ENVELOPE_PREFIX_LEN_FIELD,
+            format::WASIP2_COMPONENT_ENVELOPE_CORE_LEN_FIELD,
+            format::WASIP2_COMPONENT_ENVELOPE_SUFFIX_LEN_FIELD,
+        ],
+    )?;
+    let kind = envelope
+        .get(format::WASIP2_COMPONENT_ENVELOPE_KIND_FIELD)
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            format!(
+                "cert-manifest.json `{field}.{}` must be a string",
+                format::WASIP2_COMPONENT_ENVELOPE_KIND_FIELD
+            )
+        })?;
+    if kind != format::WASIP2_COMPONENT_ENVELOPE_KIND {
+        return Err(format!(
+            "unsupported wasip2 component envelope kind `{kind}`; this checker expects {}",
+            format::WASIP2_COMPONENT_ENVELOPE_KIND
+        ));
+    }
+    Ok(Wasip2EnvelopeDeclaration {
+        inner: format::Wasip2ComponentEnvelopeDeclaration::from_lengths(
+            envelope_u64(envelope, format::WASIP2_COMPONENT_ENVELOPE_PREFIX_LEN_FIELD)?,
+            envelope_u64(envelope, format::WASIP2_COMPONENT_ENVELOPE_CORE_LEN_FIELD)?,
+            envelope_u64(envelope, format::WASIP2_COMPONENT_ENVELOPE_SUFFIX_LEN_FIELD)?,
+        ),
+    })
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+fn prepare_wasip2_artifact_with_declared_envelope<'a>(
+    component_bytes: &'a [u8],
+    declaration: Wasip2EnvelopeDeclaration,
+) -> Result<PreparedArtifact<'a>, String> {
+    if !wasmparser::Parser::is_component(component_bytes) {
+        return Err("artifact is not a WebAssembly component".to_string());
+    }
+    // This is only a well-formedness gate for the delivered target artifact.
+    // It must not be used to locate the embedded core; the core slice below is
+    // derived solely from the manifest-declared envelope lengths.
+    wasmparser::Validator::new()
+        .validate_all(component_bytes)
+        .map_err(|error| format!("artifact is not a valid WebAssembly component: {error}"))?;
+
+    let declaration = declaration.inner;
+    if declaration.embedded_core_module_len == 0 {
+        return Err("wasip2 component envelope declares an empty embedded core module".to_string());
+    }
+    let declared_len = declaration.component_len().ok_or_else(|| {
+        "wasip2 component envelope length overflow while summing prefix/core/suffix".to_string()
+    })?;
+    let actual_len = u64::try_from(component_bytes.len())
+        .map_err(|_| "delivered component length does not fit in u64".to_string())?;
+    if declared_len != actual_len {
+        return Err(format!(
+            "wasip2 component envelope length mismatch: declaration totals {declared_len} bytes, delivered component has {actual_len} bytes"
+        ));
+    }
+    let (_prefix, core_module_bytes, _suffix) = declaration
+        .split_component(component_bytes)
+        .ok_or_else(|| "wasip2 component envelope split failed".to_string())?;
+    if !wasmparser::Parser::is_core_wasm(core_module_bytes) {
+        return Err("declared embedded core module is not a core WebAssembly module".to_string());
+    }
+    wasmparser::Validator::new()
+        .validate_all(core_module_bytes)
+        .map_err(|error| {
+            format!("declared embedded core module is not valid WebAssembly: {error}")
+        })?;
+
+    Ok(PreparedArtifact {
+        artifact_hash: sha256_hex(component_bytes),
+        core_module_bytes,
+    })
+}
+
+fn envelope_u64(envelope: &Value, key: &str) -> Result<u64, String> {
+    envelope.get(key).and_then(Value::as_u64).ok_or_else(|| {
+        format!(
+            "cert-manifest.json `{}.{key}` must be a u64",
+            format::WASIP2_COMPONENT_ENVELOPE_FIELD
+        )
     })
 }
 
@@ -1842,6 +1943,183 @@ mod tests {
             error.contains("artifact is not valid WebAssembly"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn wasip2_target_still_rejects_before_envelope_parsing_or_wasm_validation() {
+        let root = std::env::temp_dir().join(format!(
+            "aver-cert-wasip2-still-reserved-{}-{}",
+            std::process::id(),
+            unique_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let artifact = root.join("artifact.component.wasm");
+        std::fs::write(&artifact, b"not even wasm").unwrap();
+        std::fs::write(
+            root.join("cert-manifest.json"),
+            format!(
+                "{{\n  \"schema_version\": {},\n  \"target\": \"{}\",\n  \"profile\": \"{}\",\n  \"abi\": \"{}\"\n}}\n",
+                format::CERT_SCHEMA_VERSION,
+                format::TARGET_WASIP2,
+                format::PROFILE_ID,
+                format::RUNTIME_ABI_WASIP2
+            ),
+        )
+        .unwrap();
+
+        let error = match trusted_check(&artifact, &root, ReplayMode::TrustBuiltOleans) {
+            Ok(_) => panic!("wasip2 target must still be rejected before envelope dispatch"),
+            Err(error) => error,
+        };
+        assert!(
+            error.contains("unsupported certificate target `wasip2`"),
+            "{error}"
+        );
+        assert!(!error.contains("wasip2ComponentEnvelope"), "{error}");
+        assert!(!error.contains("WebAssembly"), "{error}");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn wasip2_envelope_manifest_parser_reads_declared_lengths() {
+        let manifest = serde_json::json!({
+            "wasip2ComponentEnvelope": {
+                "kind": format::WASIP2_COMPONENT_ENVELOPE_KIND,
+                "prefix_len": 10,
+                "embedded_core_module_len": 8,
+                "suffix_len": 3
+            }
+        });
+
+        let declaration = read_wasip2_component_envelope(&manifest).unwrap();
+        assert_eq!(
+            declaration.inner,
+            format::Wasip2ComponentEnvelopeDeclaration::from_lengths(10, 8, 3)
+        );
+    }
+
+    #[test]
+    fn wasip2_envelope_manifest_parser_rejects_bad_shape() {
+        let missing = read_wasip2_component_envelope(&serde_json::json!({})).unwrap_err();
+        assert!(missing.contains("wasip2ComponentEnvelope"), "{missing}");
+
+        let bad_kind = read_wasip2_component_envelope(&serde_json::json!({
+            "wasip2ComponentEnvelope": {
+                "kind": "prefix-core-suffix/v2",
+                "prefix_len": 10,
+                "embedded_core_module_len": 8,
+                "suffix_len": 0
+            }
+        }))
+        .unwrap_err();
+        assert!(
+            bad_kind.contains("unsupported wasip2 component envelope kind"),
+            "{bad_kind}"
+        );
+
+        let non_u64 = read_wasip2_component_envelope(&serde_json::json!({
+            "wasip2ComponentEnvelope": {
+                "kind": format::WASIP2_COMPONENT_ENVELOPE_KIND,
+                "prefix_len": "10",
+                "embedded_core_module_len": 8,
+                "suffix_len": 0
+            }
+        }))
+        .unwrap_err();
+        assert!(
+            non_u64.contains("prefix_len") && non_u64.contains("u64"),
+            "{non_u64}"
+        );
+    }
+
+    #[test]
+    fn wasip2_declared_envelope_preparation_splits_component_without_discovery() {
+        let core = b"\0asm\x01\0\0\0";
+        let component = component_with_embedded_core(core);
+        let declaration = Wasip2EnvelopeDeclaration {
+            inner: format::Wasip2ComponentEnvelopeDeclaration::from_lengths(
+                u64::try_from(component.len() - core.len()).unwrap(),
+                u64::try_from(core.len()).unwrap(),
+                0,
+            ),
+        };
+
+        let prepared = prepare_wasip2_artifact_with_declared_envelope(&component, declaration)
+            .expect("declared component envelope is valid");
+        assert_eq!(prepared.artifact_hash, sha256_hex(&component));
+        assert_eq!(prepared.core_module_bytes, core);
+    }
+
+    #[test]
+    fn wasip2_declared_envelope_preparation_rejects_bad_lengths() {
+        let core = b"\0asm\x01\0\0\0";
+        let component = component_with_embedded_core(core);
+
+        let empty_core = prepare_wasip2_artifact_with_declared_envelope(
+            &component,
+            Wasip2EnvelopeDeclaration {
+                inner: format::Wasip2ComponentEnvelopeDeclaration::from_lengths(
+                    u64::try_from(component.len()).unwrap(),
+                    0,
+                    0,
+                ),
+            },
+        )
+        .unwrap_err();
+        assert!(empty_core.contains("empty embedded core"), "{empty_core}");
+
+        let mismatch = prepare_wasip2_artifact_with_declared_envelope(
+            &component,
+            Wasip2EnvelopeDeclaration {
+                inner: format::Wasip2ComponentEnvelopeDeclaration::from_lengths(0, 8, 0),
+            },
+        )
+        .unwrap_err();
+        assert!(mismatch.contains("length mismatch"), "{mismatch}");
+
+        let overflow = prepare_wasip2_artifact_with_declared_envelope(
+            &component,
+            Wasip2EnvelopeDeclaration {
+                inner: format::Wasip2ComponentEnvelopeDeclaration::from_lengths(u64::MAX, 1, 0),
+            },
+        )
+        .unwrap_err();
+        assert!(overflow.contains("length overflow"), "{overflow}");
+    }
+
+    #[test]
+    fn wasip2_declared_envelope_preparation_rejects_non_module_core() {
+        let empty_component = b"\0asm\x0d\0\x01\0";
+        let error = prepare_wasip2_artifact_with_declared_envelope(
+            empty_component,
+            Wasip2EnvelopeDeclaration {
+                inner: format::Wasip2ComponentEnvelopeDeclaration::from_lengths(0, 8, 0),
+            },
+        )
+        .unwrap_err();
+        assert!(error.contains("not a core WebAssembly module"), "{error}");
+    }
+
+    fn component_with_embedded_core(core: &[u8]) -> Vec<u8> {
+        let mut component = b"\0asm\x0d\0\x01\0".to_vec();
+        component.push(1);
+        push_u32_leb(core.len().try_into().unwrap(), &mut component);
+        component.extend_from_slice(core);
+        component
+    }
+
+    fn push_u32_leb(mut value: u32, bytes: &mut Vec<u8>) {
+        loop {
+            let mut byte = (value & 0x7f) as u8;
+            value >>= 7;
+            if value != 0 {
+                byte |= 0x80;
+            }
+            bytes.push(byte);
+            if value == 0 {
+                break;
+            }
+        }
     }
 
     #[test]
