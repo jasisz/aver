@@ -143,7 +143,8 @@ split while constructing the component, surfaced under the reserved
 rediscover the user core by walking component bytes. It should consume the
 declaration, split only by declared lengths, confirm byte equality against the
 caller-supplied component, and then run the core-module checks on the declared
-embedded module.
+embedded module. The reserved wall vocabulary for that future proof lives in
+`Wasip2Envelope.lean`; schema 5 does not import it into acceptance.
 
 ## Lean acceptance wall
 

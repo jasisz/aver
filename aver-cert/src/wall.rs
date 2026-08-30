@@ -19,6 +19,7 @@ pub const CERT_PLAN_CHECK: &str = include_str!("../assets/wall/current/PlanCheck
 pub const CERT_PLAN_LOWER: &str = include_str!("../assets/wall/current/PlanLower.lean");
 pub const CERT_PLAN_BYTES: &str = include_str!("../assets/wall/current/PlanBytes.lean");
 pub const CERT_WASM_SLICE: &str = include_str!("../assets/wall/current/WasmSlice.lean");
+pub const CERT_WASIP2_ENVELOPE: &str = include_str!("../assets/wall/current/Wasip2Envelope.lean");
 pub const CERT_EXPR_FRAGMENT_ACCEPTED: &str =
     include_str!("../assets/wall/current/ExprFragmentAccepted.lean");
 pub const CERT_ACCEPTED_ARTIFACT: &str =
@@ -83,7 +84,7 @@ pub struct Source {
 
 /// Exact checker-owned source set. Ordering is not part of the identity:
 /// [`compute_id`] sorts by filename before hashing.
-pub const SOURCES: [Source; 38] = [
+pub const SOURCES: [Source; 39] = [
     Source {
         name: "AcceptedArtifact.lean",
         contents: CERT_ACCEPTED_ARTIFACT,
@@ -233,6 +234,10 @@ pub const SOURCES: [Source; 38] = [
         contents: CERT_WASM_SLICE,
     },
     Source {
+        name: "Wasip2Envelope.lean",
+        contents: CERT_WASIP2_ENVELOPE,
+    },
+    Source {
         name: "WidenedEnvelope.lean",
         contents: CERT_WIDENED_ENVELOPE,
     },
@@ -240,11 +245,12 @@ pub const SOURCES: [Source; 38] = [
 
 /// Roots whose complete import graph is artifact-independent and can therefore
 /// be cached before a certificate is seen.
-pub const PRISTINE_ROOTS: [&str; 36] = [
+pub const PRISTINE_ROOTS: [&str; 37] = [
     "CertPrelude",
     "CertDecode",
     "ArithTemplateDerisk",
     "WasmSlice",
+    "Wasip2Envelope",
     "SchemaCore",
     "PlanCheck",
     "PlanLower",
