@@ -26,7 +26,9 @@ pub mod symbol_table;
 pub mod vars;
 
 pub use analyze::{AnalysisResult, BodyShape, FnAnalysis, NeutralAllocPolicy, analyze};
-pub(crate) use buffer_build::INTERNAL_BUFFER_TYPE;
+pub(crate) use buffer_build::{
+    INTERNAL_BUFFER_TYPE, INTERNAL_BYTE_BUILDER_TYPE, INTERNAL_BYTE_PAYLOAD_TYPE,
+};
 pub use identity::{BuiltinId, CtorId, FnId, FnKey, LawKey, ModuleId, TypeId, TypeKey};
 pub use interval::{
     Bound, Interval, IntervalAnalysisResult, OpClass, RefinedTypeInterval,
@@ -57,7 +59,7 @@ pub use buffer_build::{
     BufferBuildPassReport, BufferBuildShape, ByteSinkDecline, ConsumerKind, FusionSite,
     ListBuildDecline, ListBuildKind, ListBuildPassReport, ListBuildShape,
     compute_buffer_build_sinks, find_fusion_sites, has_list_build_shape, rewrite_fusion_sites,
-    run_buffer_build_pass, run_list_build_pass, synthesize_buffered_variants,
+    run_buffer_build_pass, run_byte_sink_pass, run_list_build_pass, synthesize_buffered_variants,
 };
 pub use calls::{
     CallLowerCtx, CallPlan, ForwardArg, ForwardCallPlan, SemanticCallee, SemanticConstructor,

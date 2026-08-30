@@ -164,7 +164,7 @@ fn main() -> Unit
 }
 
 #[test]
-fn wasm_gc_runtime_pipeline_lowers_builder_inside_bytes_dependency() {
+fn wasm_gc_runtime_pipeline_lowers_builders_inside_bytes_dependency() {
     const SOURCE: &str = r#"module BuilderDep
     intent =
         "exercise String builder lowering in a loaded dependency"
@@ -173,8 +173,9 @@ fn wasm_gc_runtime_pipeline_lowers_builder_inside_bytes_dependency() {
 
 fn main() -> Unit
     ! [Console.print]
-    bytes = Bytes.fromList([0, 10, 255])
-    Console.print(Bytes.toHex(bytes))
+    match Bytes.fromHex("000aff")
+        Result.Ok(bytes) -> Console.print(Bytes.toHex(bytes))
+        Result.Err(message) -> Console.print(message)
 "#;
     let dir = tempfile::tempdir().expect("tempdir");
     let entry = dir.path().join("main.av");
@@ -195,14 +196,16 @@ fn main() -> Unit
 }
 
 #[test]
-fn wasm_gc_verify_lowers_builder_inside_bytes_dependency() {
+fn wasm_gc_verify_lowers_builders_inside_bytes_dependency() {
     const SOURCE: &str = r#"module BuilderVerify
     intent =
         "verify String builder lowering in a loaded dependency"
     depends [Bytes]
 
 fn hex() -> String
-    Bytes.toHex(Bytes.fromList([0, 10, 255]))
+    match Bytes.fromHex("000aff")
+        Result.Ok(bytes) -> Bytes.toHex(bytes)
+        Result.Err(message) -> message
 
 verify hex
     hex() => "000aff"

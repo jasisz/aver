@@ -4686,6 +4686,7 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
         "chars_fusion" => Some(PipelineStage::CharsFusion),
         "string_index" => Some(PipelineStage::StringIndex),
         "list_build" => Some(PipelineStage::ListBuild),
+        "byte_sink" => Some(PipelineStage::ByteSink),
         "resolve" => Some(PipelineStage::Resolve),
         "last_use" => Some(PipelineStage::LastUse),
         "analyze" => Some(PipelineStage::Analyze),
@@ -4700,7 +4701,7 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
                 "{}",
                 format!(
                     "unknown --emit-ir-after stage '{}'; expected one of: \
-                     parse, tco, typecheck, interp_lower, buffer_build, chars_fusion, string_index, list_build, resolve, last_use, analyze, escape, build_symbols, name_resolve, refinement_lower, contract_lower, law_lower, mir",
+                     parse, tco, typecheck, interp_lower, buffer_build, chars_fusion, string_index, list_build, byte_sink, resolve, last_use, analyze, escape, build_symbols, name_resolve, refinement_lower, contract_lower, law_lower, mir",
                     other
                 )
                 .red()
@@ -4771,6 +4772,10 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
             run_refinement_lower,
             run_contract_lower,
             run_law_lower,
+            // The byte-only stage is distinct from full list-build so its
+            // diagnostic snapshot cannot claim generic collectors ran.
+            run_list_build: target != PipelineStage::ByteSink,
+            run_byte_sink: target == PipelineStage::ByteSink,
             dep_modules: &dep_modules,
             on_after_pass: Some(Box::new(|stage, items_after| {
                 if stage == target {
@@ -5137,15 +5142,17 @@ pub(super) fn cmd_explain_passes(file: &str, module_root_override: Option<&str>,
 /// Which compile targets carry each fabrication reported by
 /// `--explain-passes`.
 ///
-/// String builders/cursors/indexes now run on every runtime backend, while
-/// generic list/byte collectors remain Rust/VM-only. Proof exporters skip all
-/// fabricating passes, and certified wasm-gc artifacts keep their independently
-/// classified source-level traversal. The diagnostic runs one observational
-/// pipeline regardless of `--target`, so every report names the artifacts its
-/// count actually describes.
+/// String builders/cursors/indexes and the closed byte sink run on every
+/// ordinary runtime backend, while generic list collectors remain Rust/VM-only.
+/// Proof exporters skip all fabricating passes, and certified wasm-gc artifacts
+/// keep their independently classified source-level traversal. The diagnostic
+/// runs one observational pipeline regardless of `--target`, so every report
+/// names the artifacts its count actually describes.
 const COLLECTOR_TARGETS_JSON: &str = "[\"rust\",\"vm\"]";
-const COLLECTOR_TARGETS_NOTE: &str = "counted for the rust and VM pipelines — --target wasm-gc and --target wasip2 build without this pass, so their artifacts carry none of these rewrites";
+const COLLECTOR_TARGETS_NOTE: &str =
+    "generic __lst_* rewrites apply only to the rust and VM pipelines";
 const RUNTIME_STRING_TARGETS_JSON: &str = "[\"rust\",\"vm\",\"wasm-gc\",\"wasip2\"]";
+const BYTE_SINK_TARGETS_NOTE: &str = "packed __byt_* rewrites apply to rust, VM, ordinary wasm-gc, and wasip2; certified/boxed wasm-gc retains source traversal";
 const BUFFER_BUILD_TARGETS_NOTE: &str = "counted for every runtime pipeline — rust, VM, ordinary wasm-gc, and wasip2; certified wasm-gc retains source traversal until its byte-level wall classifies the builder helpers";
 const CHARS_FUSION_TARGETS_NOTE: &str = "counted for every runtime pipeline — rust, VM, ordinary wasm-gc, and wasip2; certified wasm-gc retains source traversal until its byte-level wall classifies the cursor helpers";
 const STRING_INDEX_TARGETS_NOTE: &str =
@@ -5845,6 +5852,9 @@ fn render_pass_diagnostics(diags: &[aver::ir::pipeline::PassDiagnostic]) -> Stri
                         ));
                     }
                     out.push_str(&format!("  • {COLLECTOR_TARGETS_NOTE}\n"));
+                    if r.byte_retargets > 0 {
+                        out.push_str(&format!("  • {BYTE_SINK_TARGETS_NOTE}\n"));
+                    }
                 }
                 for (driver, steps) in &r.pair_inlined_by_fn {
                     out.push_str(&format!(
@@ -6204,7 +6214,8 @@ fn render_pass_diagnostics_json(diags: &[aver::ir::pipeline::PassDiagnostic]) ->
                      \"rewrites_by_fn\":{},\"declined\":{},\
                      \"pair_inlined_by_fn\":{},\"pair_declined\":{},\
                      \"byte_retargets\":{},\
-                     \"byte_fns\":{},\"byte_declined\":{},\"targets\":{}}}",
+                     \"byte_fns\":{},\"byte_declined\":{},\"targets\":{},\
+                     \"byte_targets\":{}}}",
                     r.rewrites,
                     json_str_array(&r.synthesized),
                     json_str_array(&r.builder_fns),
@@ -6215,7 +6226,8 @@ fn render_pass_diagnostics_json(diags: &[aver::ir::pipeline::PassDiagnostic]) ->
                     r.byte_retargets,
                     json_str_array(&r.byte_fns),
                     byte_declined,
-                    COLLECTOR_TARGETS_JSON
+                    COLLECTOR_TARGETS_JSON,
+                    RUNTIME_STRING_TARGETS_JSON
                 ));
             }
             PassReport::Resolve {
@@ -6655,11 +6667,14 @@ fn cmd_compile_wasm_gc(
     // helpers. Until that wall classifies the cursor family, keep certified
     // artifacts on the already-covered String-index-only shape; ordinary
     // wasm-gc compilation and execution use the cursor lowering below.
-    let wasm_lowering = if certify {
+    let mut wasm_lowering = if certify {
         DepLowering::STRING_INDEX_ONLY
     } else {
         DepLowering::STRING_TRAVERSAL
     };
+    // `--test-boxed-sequences` removes packed nominal layouts by design, so
+    // the byte sink must remain source traversal just like certification.
+    wasm_lowering.byte_sink = !certify && packed_sequences_enabled;
     let prepared_deps = load_compile_deps_prepared(&items, &module_root, wasm_lowering);
     let dep_modules = prepared_deps.modules;
     use aver::ir::{PipelineConfig, TypecheckMode};
@@ -6680,6 +6695,9 @@ fn cmd_compile_wasm_gc(
             run_chars_fusion: !certify,
             run_string_index: true,
             run_list_build: false,
+            // Certified and boxed-sequence differential artifacts stay on
+            // source traversal until a packed nominal carrier is available.
+            run_byte_sink: !certify && packed_sequences_enabled,
             ..Default::default()
         },
     );
@@ -6697,9 +6715,10 @@ fn cmd_compile_wasm_gc(
     // `call $fn` after rewriting `Attr(Ident("Fractal"), "render")`
     // call sites to `Ident("Fractal_render")`. Component Model is a
     // future separate mode (see `project_wasm_gc_multimodule.md`).
-    // The wasm-gc compile path lowers String traversal and joined collectors
-    // (both stay off only for the separately pinned certificate wall), but not
-    // list/byte collectors. It does not use the self-host typecheck driver.
+    // The wasm-gc compile path lowers String traversal, joined collectors, and
+    // canonical packed-byte consumers (all stay off only where their carrier
+    // or certificate-wall role is unavailable), but not generic list
+    // collectors. It does not use the self-host typecheck driver.
     reject_unsupported_capability_targets(
         &items,
         &dep_modules,
@@ -6979,6 +6998,7 @@ fn cmd_compile_wasip2(
                 run_chars_fusion: true,
                 run_string_index: true,
                 run_list_build: false,
+                run_byte_sink: true,
                 ..Default::default()
             },
         );
@@ -11714,8 +11734,9 @@ pub(super) fn flatten_multimodule(
 /// this matches the gates 1-to-1 with no magic translation in between:
 /// Proof exporters (Lean/Dafny) ask for [`Self::PRISTINE`]. The wasm-gc
 /// family asks for [`Self::STRING_TRAVERSAL`] because it lowers the String
-/// builder, UTF-8 character cursor, and packed String index, but not generic
-/// list/byte collectors. VM and Rust turn every supported pass on too.
+/// builder, UTF-8 character cursor, packed String index, and closed byte sink,
+/// but not generic list collectors. VM and Rust turn every supported pass on
+/// too.
 #[derive(Clone, Copy)]
 pub(super) struct DepLowering {
     pub interp_lower: bool,
@@ -11723,6 +11744,7 @@ pub(super) struct DepLowering {
     pub chars_fusion: bool,
     pub string_index: bool,
     pub list_build: bool,
+    pub byte_sink: bool,
     /// Self-host typecheck driver — bypasses the opaque-type checks so
     /// `domain/builtins.av` can round-trip host types.
     pub self_host: bool,
@@ -11747,6 +11769,7 @@ impl DepLowering {
         chars_fusion: false,
         string_index: false,
         list_build: false,
+        byte_sink: false,
         self_host: false,
     };
 
@@ -11760,13 +11783,15 @@ impl DepLowering {
 
     /// Runtime wasm-gc / wasip2 shape: joined String collectors use the
     /// growable GC buffer, character traversal uses the native UTF-8 cursor,
-    /// and indexed access uses a native i32 boundary array. List/byte
-    /// collector fabrications remain unsupported.
+    /// indexed access uses a native i32 boundary array, and canonical
+    /// `Bytes.fromList` consumers use the packed byte sink. Generic list
+    /// collectors remain unsupported.
     #[cfg(any(feature = "wasm", feature = "wasip2"))]
     pub(super) const STRING_TRAVERSAL: Self = Self {
         buffer_build: true,
         chars_fusion: true,
         string_index: true,
+        byte_sink: true,
         ..Self::PRISTINE
     };
 
@@ -11778,6 +11803,9 @@ impl DepLowering {
             chars_fusion: on,
             string_index: on,
             list_build: on,
+            // Full list-build already includes byte retargeting. The separate
+            // gate exists only for backends that must refuse generic lists.
+            byte_sink: false,
             self_host,
         }
     }
@@ -11858,6 +11886,7 @@ pub(super) fn load_compile_deps_prepared(
                 run_chars_fusion: lowering.chars_fusion,
                 run_string_index: lowering.string_index,
                 run_list_build: lowering.list_build,
+                run_byte_sink: lowering.byte_sink,
                 alloc_policy: Some(&neutral_policy),
                 ..Default::default()
             },

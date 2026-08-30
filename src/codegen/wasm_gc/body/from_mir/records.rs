@@ -28,6 +28,11 @@ pub(crate) fn mir_packed_carrier_projection<'a>(
 }
 
 fn is_mir_packed_carrier_expr(expr: &Spanned<MirExpr>, type_name: &str, ctx: &EmitCtx<'_>) -> bool {
+    if aver_type_str_of(expr).trim() == crate::ir::INTERNAL_BYTE_PAYLOAD_TYPE
+        && ctx.registry.byte_payload_type_name.as_deref() == Some(type_name)
+    {
+        return true;
+    }
     if let Some((_, projected_name)) = mir_packed_carrier_projection(expr, ctx) {
         return projected_name == type_name;
     }
@@ -59,6 +64,14 @@ fn emit_mir_packed_carrier_expr(
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
+    if aver_type_str_of(expr).trim() == crate::ir::INTERNAL_BYTE_PAYLOAD_TYPE
+        && ctx.registry.byte_payload_type_name.as_deref() == Some(type_name)
+    {
+        emit_mir_expr(func, expr, slots, ctx)?.ok_or_else(|| {
+            WasmGcError::Validation("packed byte payload could not be emitted".into())
+        })?;
+        return Ok(());
+    }
     if let Some((base, projected_name)) = mir_packed_carrier_projection(expr, ctx) {
         debug_assert_eq!(projected_name, type_name);
         emit_mir_expr(func, base, slots, ctx)?.ok_or_else(|| {

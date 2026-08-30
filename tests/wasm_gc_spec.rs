@@ -31,6 +31,37 @@ fn compile_bytes_with_buffer_build(source: &str, run_buffer_build: bool) -> Vec<
     compile_bytes_with_fusions(source, run_buffer_build, false)
 }
 
+fn compile_bytes_with_byte_sink(source: &str, run_byte_sink: bool) -> Vec<u8> {
+    let mut items = parse_source(source).unwrap_or_else(|e| {
+        panic!("parse failed: {e}\n--- source ---\n{source}");
+    });
+    let neutral_policy = aver::ir::NeutralAllocPolicy;
+    let result = pipeline::run(
+        &mut items,
+        PipelineConfig {
+            typecheck: Some(TypecheckMode::Full { base_dir: None }),
+            alloc_policy: Some(&neutral_policy),
+            run_interp_lower: false,
+            run_buffer_build: false,
+            run_chars_fusion: false,
+            run_list_build: false,
+            run_byte_sink,
+            ..Default::default()
+        },
+    );
+    if let Some(tc) = &result.typecheck
+        && !tc.errors.is_empty()
+    {
+        panic!(
+            "typecheck failed: {:?}\n--- source ---\n{source}",
+            tc.errors
+        );
+    }
+    compile_to_wasm_gc(&items, result.analysis.as_ref()).unwrap_or_else(|e| {
+        panic!("wasm-gc compile failed: {e:?}\n--- source ---\n{source}");
+    })
+}
+
 fn compile_bytes_with_fusions(
     source: &str,
     run_buffer_build: bool,
@@ -3293,6 +3324,19 @@ fn main() -> Int
     );
 }
 
+#[test]
+fn byte_sink_is_byte_identical_when_no_shape_matches() {
+    let source = r#"
+fn main() -> Int
+    42
+"#;
+    assert_eq!(
+        compile_bytes_with_byte_sink(source, false),
+        compile_bytes_with_byte_sink(source, true),
+        "an unfired byte pass must not add the hidden carrier or helpers"
+    );
+}
+
 /// The cursor-to-classifier rewrite takes the codepoint across the call
 /// boundary. Both one-to-one Unicode mappings and length-changing mappings
 /// must agree with the String route: Kelvin/long-s hit their ASCII arm while
@@ -3365,7 +3409,7 @@ fn main() -> Int
 }
 
 #[test]
-fn string_builder_runs_while_unsupported_collectors_are_still_refused_by_name() {
+fn string_and_byte_builders_run_while_generic_collectors_remain_refused() {
     let source = r#"
 record Buffer
     value: Int
@@ -3459,52 +3503,67 @@ fn main() -> List<Int>
         "{err}"
     );
 
-    // Byte builders are retargeted from that same disabled collector pass.
-    // The consumer is the canonical `Bytes.fromList` implementation shape;
-    // keep this family named too even though byte sinks remain a follow-up.
-    let byte_source = r#"
-record Bytes
-    values: List<Int>
-
-fn allInRange(xs: List<Int>) -> Bool
-    ? "Return true when every integer in the list is an octet."
+    // The byte-only gate reuses list-build's proof but commits only variants
+    // retargeted to `__byt_*`. `hexParts` in the standard module remains an
+    // ordinary source loop, proving generic `__lst_*` did not leak through.
+    let byte_source = format!(
+        "{}\n{}",
+        include_str!("../stdlib/bytes.av"),
+        r#"
+fn copyForSink(xs: List<Int>, acc: List<Int>) -> List<Int>
+    ? "Copy integers in source order for byte validation."
     match xs
-        [] -> true
-        [head, ..tail] -> match Bool.and(head >= 0, head <= 255)
-            true -> allInRange(tail)
-            false -> false
+        [] -> List.reverse(acc)
+        [head, ..tail] -> copyForSink(tail, List.prepend(head, acc))
 
-fn firstOutOfRange(xs: List<Int>) -> Int
-    ? "Return the first non-octet value; -1 when every value is an octet."
-    match xs
-        [] -> -1
-        [head, ..tail] -> match Bool.and(head >= 0, head <= 255)
-            true -> firstOutOfRange(tail)
-            false -> head
-
-fn firstOutOfRangeIndex(xs: List<Int>) -> Int
-    ? "Return the index of the first non-octet value; the length when every value is an octet."
-    match xs
-        [] -> 0
-        [head, ..tail] -> match Bool.and(head >= 0, head <= 255)
-            true -> 1 + firstOutOfRangeIndex(tail)
-            false -> 0
-
-fn fromList(xs: List<Int>) -> Result<Bytes, String>
-    ? "Validate raw integers and construct a byte sequence."
-    match allInRange(xs)
-        true -> Result.Ok(Bytes(values = xs))
-        false -> Result.Err("byte {firstOutOfRange(xs)} at index {firstOutOfRangeIndex(xs)} is outside 0..=255")
-
-fn collect(n: Int, acc: List<Int>) -> List<Int>
-    match n <= 0
+fn countForSink(remaining: Int, acc: List<Int>) -> List<Int>
+    ? "Produce enough valid bytes to force repeated geometric growth."
+    match remaining <= 0
         true -> List.reverse(acc)
-        false -> collect(n - 1, List.prepend(n, acc))
+        false -> countForSink(remaining - 1, List.prepend(Int.mod(remaining, 256), acc))
 
-fn main() -> Result<Bytes, String>
-    fromList(collect(5, []))
-"#;
-    let mut byte_items = parse_source(byte_source).expect("byte collector fixture parses");
+fn checkedForSink(xs: List<Int>) -> Result<Bytes, String>
+    ? "Validate a temporary collected list."
+    fromList(copyForSink(xs, []))
+
+fn validSinkCase() -> Bool
+    match checkedForSink([0, 127, 255])
+        Result.Ok(bytes) -> Bool.and(len(bytes) == 3, toHex(bytes) == "007fff")
+        Result.Err(_) -> false
+
+fn emptySinkCase() -> Bool
+    match checkedForSink([])
+        Result.Ok(bytes) -> len(bytes) == 0
+        Result.Err(_) -> false
+
+fn ordinaryErrorSinkCases() -> Bool
+    match checkedForSink([-1])
+        Result.Ok(_) -> false
+        Result.Err(negative) -> match checkedForSink([0, 256])
+            Result.Ok(_) -> false
+            Result.Err(large) -> Bool.and(
+                negative == "byte -1 at index 0 is outside 0..=255",
+                large == "byte 256 at index 1 is outside 0..=255"
+            )
+
+fn hugeErrorSinkCase() -> Bool
+    match checkedForSink([0, 184467440737095516160, -9])
+        Result.Ok(_) -> false
+        Result.Err(message) -> message == "byte 184467440737095516160 at index 1 is outside 0..=255"
+
+fn growthSinkCase() -> Bool
+    match fromList(countForSink(4096, []))
+        Result.Ok(bytes) -> len(bytes) == 4096
+        Result.Err(_) -> false
+
+fn main() -> Int
+    allSmall = Bool.and(Bool.and(validSinkCase(), emptySinkCase()), ordinaryErrorSinkCases())
+    match Bool.and(Bool.and(allSmall, hugeErrorSinkCase()), growthSinkCase())
+        true -> 1
+        false -> 0
+"#,
+    );
+    let mut byte_items = parse_source(&byte_source).expect("byte collector fixture parses");
     let byte_result = pipeline::run(
         &mut byte_items,
         PipelineConfig {
@@ -3513,7 +3572,8 @@ fn main() -> Result<Bytes, String>
             run_interp_lower: false,
             run_buffer_build: false,
             run_chars_fusion: false,
-            run_list_build: true,
+            run_list_build: false,
+            run_byte_sink: true,
             ..Default::default()
         },
     );
@@ -3521,18 +3581,13 @@ fn main() -> Result<Bytes, String>
         byte_result
             .list_build
             .as_ref()
-            .is_some_and(|report| report.byte_retargets > 0),
+            .is_some_and(|report| report.byte_retargets >= 2 && !report.byte_fns.is_empty()),
         "the fixture must reach the fabricated byte-builder contract: {:?}",
         byte_result.list_build
     );
-    let err = compile_to_wasm_gc(&byte_items, byte_result.analysis.as_ref())
-        .expect_err("wasm-gc must keep refusing unsupported byte builders")
-        .to_string();
-    assert!(err.contains("fabricated intrinsic `__byt_"), "{err}");
-    assert!(
-        err.contains("does not lower fabricated intrinsics"),
-        "{err}"
-    );
+    let bytes = compile_to_wasm_gc(&byte_items, byte_result.analysis.as_ref())
+        .expect("wasm-gc lowers packed byte sinks while generic lists stay source-level");
+    assert_eq!(run_int_bytes(&bytes).expect("packed byte sink runs"), 1);
 }
 
 #[test]

@@ -157,11 +157,13 @@ pub(super) fn try_run_wasm_gc(
             });
     let source = read_file(file)?;
     let mut items = parse_file(&source, &module_root, file)?;
-    let prepared_deps = super::commands::load_compile_deps_prepared(
-        &items,
-        &module_root,
-        super::commands::DepLowering::STRING_TRAVERSAL,
-    );
+    let mut dependency_lowering = super::commands::DepLowering::STRING_TRAVERSAL;
+    // The differential boxed-sequence seam deliberately removes every packed
+    // nominal layout; its IR must therefore retain source `Bytes.fromList`
+    // traversal instead of fabricating a helper whose carrier cannot exist.
+    dependency_lowering.byte_sink = packed_sequences_enabled;
+    let prepared_deps =
+        super::commands::load_compile_deps_prepared(&items, &module_root, dependency_lowering);
     let dep_modules = prepared_deps.modules;
     let neutral_policy = NeutralAllocPolicy;
     let result = aver::ir::pipeline::run(
@@ -177,6 +179,7 @@ pub(super) fn try_run_wasm_gc(
             run_chars_fusion: true,
             run_string_index: true,
             run_list_build: false,
+            run_byte_sink: packed_sequences_enabled,
             ..Default::default()
         },
     );

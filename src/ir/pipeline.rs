@@ -72,6 +72,10 @@ pub enum PipelineStage {
     /// intrinsics), so it sits BELOW the proof line next to
     /// `buffer_build` and `chars_fusion` — see [`AstView`].
     ListBuild,
+    /// Packed-byte-only gate over list-build. It probes the complete pass on a
+    /// copy but commits solely variants retargeted to `__byt_*`, allowing
+    /// wasm-gc/wasip2 to keep generic `__lst_*` collectors fail-closed.
+    ByteSink,
     Resolve,
     LastUse,
     Analyze,
@@ -136,6 +140,7 @@ impl PipelineStage {
             Self::CharsFusion => "chars_fusion",
             Self::StringIndex => "string_index",
             Self::ListBuild => "list_build",
+            Self::ByteSink => "byte_sink",
             Self::Resolve => "resolve",
             Self::LastUse => "last_use",
             Self::Analyze => "analyze",
@@ -208,13 +213,18 @@ pub struct PipelineConfig<'a> {
     /// recursive call components. Unlike the older cursor/builder passes,
     /// every runtime backend lowers this pass's `String.Index` contract.
     pub run_string_index: bool,
-    /// Whether to run the list-build pass. Unlike the String-specific buffer
-    /// and cursor contracts, generic `__lst_*` and packed `__byt_*` sinks are
-    /// lowered only by the VM and Rust backend.
+    /// Whether to run generic list-build. This enables the complete pass,
+    /// including its byte retarget, for VM and Rust. wasm-gc/wasip2 leave it
+    /// off because the `__lst_*` family remains unsupported.
     ///
     /// Also below the proof line, so what you pass here cannot change
     /// what gets proven (see [`AstView`]).
     pub run_list_build: bool,
+    /// Whether to run only list-build's packed byte retarget. The pass probes
+    /// on a copy and commits solely variants that become `__byt_*`, so this
+    /// gate never admits an ordinary `__lst_*` collector. wasm-gc/wasip2 use
+    /// this independently of `run_list_build`.
+    pub run_byte_sink: bool,
     pub run_resolve: bool,
     /// Whether to run the last-use ownership annotation pass after
     /// `resolve`. Annotates each `Expr::Resolved` slot reference with
@@ -314,6 +324,10 @@ impl<'a> Default for PipelineConfig<'a> {
             run_chars_fusion: true,
             run_string_index: true,
             run_list_build: true,
+            // Generic list-build already includes byte retargeting. Keep the
+            // independent gate off by default so a caller that disables
+            // `run_list_build` does not opt into fabrication accidentally.
+            run_byte_sink: false,
             run_resolve: true,
             run_last_use: true,
             run_analyze: true,
@@ -777,6 +791,11 @@ pub fn list_build(items: &mut Vec<TopLevel>) -> ListBuildPassReport {
     crate::ir::run_list_build_pass(items)
 }
 
+/// Packed-byte-only half of list-build. It commits no generic collector.
+pub fn byte_sink(items: &mut Vec<TopLevel>) -> ListBuildPassReport {
+    crate::ir::run_byte_sink_pass(items)
+}
+
 /// Buffer-build deforestation pass — detects `String.join(<builder>(args, []), sep)`
 /// shapes, rewrites them to `__buf_finalize(<builder>__buffered(...))`, and
 /// appends the synthesized buffered variants to `items`. Returns a
@@ -920,11 +939,17 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
     // replaces the character list it reads, this replaces the list it
     // writes, and the order is what lets the second see the first's
     // work rather than a loop that no longer exists.
-    if cfg.run_list_build {
-        let report = list_build(items);
-        result.pass_diagnostics.push(diag_for_list_build(&report));
+    if cfg.run_list_build || cfg.run_byte_sink {
+        let (stage, report) = if cfg.run_list_build {
+            (PipelineStage::ListBuild, list_build(items))
+        } else {
+            (PipelineStage::ByteSink, byte_sink(items))
+        };
+        result
+            .pass_diagnostics
+            .push(diag_for_list_build(stage, &report));
         result.list_build = Some(report);
-        fire(&mut cfg, PipelineStage::ListBuild, items);
+        fire(&mut cfg, stage, items);
     }
 
     if cfg.run_resolve {
@@ -1280,9 +1305,13 @@ fn diag_for_string_index(report: &StringIndexPassReport) -> PassDiagnostic {
     }
 }
 
-fn diag_for_list_build(report: &ListBuildPassReport) -> PassDiagnostic {
+fn diag_for_list_build(stage: PipelineStage, report: &ListBuildPassReport) -> PassDiagnostic {
+    debug_assert!(matches!(
+        stage,
+        PipelineStage::ListBuild | PipelineStage::ByteSink
+    ));
     PassDiagnostic {
-        stage: PipelineStage::ListBuild,
+        stage,
         report: PassReport::ListBuild(report.clone()),
     }
 }
@@ -1565,6 +1594,43 @@ fn id(n: Int) -> Int
                 PipelineStage::Resolve,
                 PipelineStage::NameResolve,
             ]
+        );
+    }
+
+    #[test]
+    fn byte_only_gate_reports_its_own_stage() {
+        let mut items = parse(
+            r#"fn main() -> Int
+    42"#,
+        );
+        let mut fired = Vec::new();
+        let result = run(
+            &mut items,
+            PipelineConfig {
+                typecheck: None,
+                run_interp_lower: false,
+                run_buffer_build: false,
+                run_chars_fusion: false,
+                run_string_index: false,
+                run_list_build: false,
+                run_byte_sink: true,
+                run_resolve: false,
+                run_last_use: false,
+                run_analyze: false,
+                run_escape: false,
+                on_after_pass: Some(Box::new(|stage, _| fired.push(stage))),
+                ..Default::default()
+            },
+        );
+        assert!(fired.contains(&PipelineStage::ByteSink), "{fired:?}");
+        assert!(!fired.contains(&PipelineStage::ListBuild), "{fired:?}");
+        assert!(
+            result
+                .pass_diagnostics
+                .iter()
+                .any(|diag| diag.stage == PipelineStage::ByteSink),
+            "{:?}",
+            result.pass_diagnostics
         );
     }
 

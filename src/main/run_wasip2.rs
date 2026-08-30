@@ -120,13 +120,14 @@ fn build_component(
             alloc_policy: Some(&neutral_policy),
             dep_modules: &dep_modules,
             // Native concat remains the better interpolation shape. Joined
-            // collecting loops use the growable String builder; list/byte
-            // collectors remain independently disabled.
+            // collecting loops use the growable String builder; canonical
+            // byte consumers use the packed sink while generic lists stay off.
             run_interp_lower: false,
             run_buffer_build: true,
             run_chars_fusion: true,
             run_string_index: true,
             run_list_build: false,
+            run_byte_sink: true,
             ..Default::default()
         },
     );

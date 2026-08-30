@@ -33,7 +33,7 @@
 //! reverse, and a path through an untouched exit would come back
 //! un-reversed — that loop is declined.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use super::*;
@@ -197,14 +197,84 @@ const BUILDER_INTRINSICS: [&str; 3] = ["__lst_new", "__lst_push", "__lst_finaliz
 /// the shape it will actually be compiled in — the two rewrites compose
 /// on one function, and this is the order that lets them.
 pub fn run_list_build_pass(items: &mut Vec<TopLevel>) -> ListBuildPassReport {
+    run_list_build_pass_filtered(items, None)
+}
+
+/// Run only the byte-retarget half of list-build.
+///
+/// Detection happens on a disposable full-pass copy because the byte sink is
+/// deliberately defined as a retarget of a proven collected variant. Once the
+/// exact set of byte consumers is known, the pass is replayed from pristine
+/// input with every other candidate filtered out. Therefore enabling this gate
+/// cannot leave a generic `__lst_*` rewrite behind, and a program with no byte
+/// shape remains byte-for-byte unchanged.
+pub fn run_byte_sink_pass(items: &mut Vec<TopLevel>) -> ListBuildPassReport {
+    let pristine = items.clone();
+    let mut probe = pristine.clone();
+    let probe_report = run_list_build_pass_filtered(&mut probe, None);
+    let byte_loops: HashSet<String> = probe_report
+        .byte_fns
+        .iter()
+        .filter_map(|name| name.strip_suffix(COLLECTED_SUFFIX).map(str::to_string))
+        .collect();
+    if byte_loops.is_empty() {
+        return ListBuildPassReport {
+            byte_declined: probe_report.byte_declined,
+            pair_declined: probe_report.pair_declined,
+            ..Default::default()
+        };
+    }
+
+    let mut replay = pristine.clone();
+    let report = run_list_build_pass_filtered(&mut replay, Some(&byte_loops));
+    if program_mentions_generic_list_builder(&replay) {
+        // The filtered replay is expected to be deterministic with the probe,
+        // but the safety boundary must not depend on that assumption. Commit
+        // nothing rather than ever handing wasm-gc a generic collector.
+        let mut declined = ListBuildPassReport {
+            byte_declined: probe_report.byte_declined,
+            pair_declined: probe_report.pair_declined,
+            ..Default::default()
+        };
+        for name in byte_loops {
+            declined.byte_declined.insert(
+                format!("{name}{COLLECTED_SUFFIX}"),
+                "filtered replay retained a generic list builder",
+            );
+        }
+        return declined;
+    }
+
+    *items = replay;
+    report
+}
+
+fn program_mentions_generic_list_builder(items: &[TopLevel]) -> bool {
+    crate::ir::chars_fusion::fn_defs(items).any(|fd| {
+        fd.body.stmts().iter().any(|stmt| {
+            let expr = match stmt {
+                Stmt::Binding(_, _, value) | Stmt::Expr(value) => value,
+            };
+            mentions_list_builder_intrinsic(expr)
+        })
+    })
+}
+
+fn run_list_build_pass_filtered(
+    items: &mut Vec<TopLevel>,
+    allowed_loops: Option<&HashSet<String>>,
+) -> ListBuildPassReport {
     let mut report = ListBuildPassReport::default();
     // The driver-and-step normalization first: a loop written as a pair
     // becomes the single fn the candidacy walk below knows how to read.
     // It commits only bodies whose merged loop it has already proven
     // will fuse, so everything after this line treats them like any
     // other candidate.
-    super::driver_step::run_driver_step_normalize(items, &mut report);
-    let candidates: Vec<(String, ListBuildAcc)> = list_build_candidates(items);
+    super::driver_step::run_driver_step_normalize(items, &mut report, allowed_loops);
+    let candidates: Vec<(String, ListBuildAcc)> = list_build_candidates(items)
+        .into_iter()
+        .filter(|(name, _)| allowed_loops.is_none_or(|allowed| allowed.contains(name)))
+        .collect();
     if candidates.is_empty() {
         return report;
     }
@@ -833,24 +903,52 @@ fn from_list_references() -> &'static [FromListReference] {
 /// both), so an exact copy at other line numbers passes and a copy
 /// that changed a word does not.
 fn from_list_is_the_stdlib_one(items: &[TopLevel]) -> bool {
+    // Source currently permits duplicate function names and resolves the later
+    // definition. A first, standard-shaped copy must therefore not prove a
+    // later shadowing definition safe. The same uniqueness rule protects the
+    // nominal record and top-level value namespace.
+    if items.iter().any(|item| {
+        matches!(
+            item,
+            TopLevel::Stmt(Stmt::Binding(name, _, _))
+                if FROM_LIST_FAMILY.contains(&name.as_str()) || name == BYTES_RECORD
+        ) || matches!(item, TopLevel::FnDef(fd) if fd.name == BYTES_RECORD)
+    }) {
+        return false;
+    }
+
     from_list_references().iter().any(|reference| {
         reference.fns.iter().all(|ref_fd| {
-            crate::ir::chars_fusion::fn_defs(items)
-                .find(|fd| fd.name == ref_fd.name)
-                .is_some_and(|fd| {
-                    fd.params == ref_fd.params
-                        && fd.return_type == ref_fd.return_type
-                        && fd.effects.is_empty()
-                        && ref_fd.effects.is_empty()
-                        && *fd.body == *ref_fd.body
-                })
-        }) && items.iter().any(|it| {
-            matches!(
-                it,
-                TopLevel::TypeDef(crate::ast::TypeDef::Product { name, fields, .. })
-                    if name == BYTES_RECORD && *fields == reference.record_fields
-            )
-        })
+            let mut matching =
+                crate::ir::chars_fusion::fn_defs(items).filter(|fd| fd.name == ref_fd.name);
+            let Some(fd) = matching.next() else {
+                return false;
+            };
+            matching.next().is_none()
+                && fd.params == ref_fd.params
+                && fd.return_type == ref_fd.return_type
+                && fd.effects.is_empty()
+                && ref_fd.effects.is_empty()
+                && *fd.body == *ref_fd.body
+        }) && {
+            let mut records = items.iter().filter(|item| {
+                matches!(
+                    item,
+                    TopLevel::TypeDef(crate::ast::TypeDef::Product { name, .. })
+                        | TopLevel::TypeDef(crate::ast::TypeDef::Sum { name, .. })
+                        if name == BYTES_RECORD
+                )
+            });
+            let Some(record) = records.next() else {
+                return false;
+            };
+            records.next().is_none()
+                && matches!(
+                    record,
+                    TopLevel::TypeDef(crate::ast::TypeDef::Product { fields, .. })
+                        if *fields == reference.record_fields
+                )
+        }
     })
 }
 
@@ -1412,18 +1510,22 @@ fn retargeted_call(
     fresh
 }
 
-/// Build `<intrinsic>(args…)` stamped `ByteBuilder` — what every
-/// `__byt_new` / `__byt_push` answers with.
+/// Build `<intrinsic>(args…)` stamped with the compiler-owned byte-builder
+/// carrier — what every `__byt_new` / `__byt_push` answers with.
 fn byte_intrinsic_call(line: usize, name: &str, args: Vec<Spanned<Expr>>) -> Spanned<Expr> {
     let call = intrinsic_call(line, name, args);
-    call.set_ty(crate::types::Type::named("ByteBuilder"));
+    call.set_ty(crate::types::Type::named(INTERNAL_BYTE_BUILDER_TYPE));
     call
 }
 
-/// The type `__byt_finalize` answers with.
+/// The type `__byt_finalize` answers with. The successful payload is a
+/// compiler-owned validated byte sequence: Rust represents it as a packed
+/// `AverIntList`, wasm-gc as the nominal packed `Bytes` array, and the VM as
+/// its ordinary semantic list. The synthesized record boundary remains
+/// visible in IR without forcing another validation traversal.
 fn byte_finalize_type() -> crate::types::Type {
     crate::types::Type::Result(
-        Box::new(crate::types::Type::List(Box::new(crate::types::Type::Int))),
+        Box::new(crate::types::Type::named(INTERNAL_BYTE_PAYLOAD_TYPE)),
         Box::new(crate::types::Type::Str),
     )
 }
@@ -1458,7 +1560,7 @@ fn byte_finalize_exit(line: usize, acc_name: &str) -> Spanned<Expr> {
         vec![sp_at_typed(
             line,
             Expr::Ident(acc_name.to_string()),
-            crate::types::Type::named("ByteBuilder"),
+            crate::types::Type::named(INTERNAL_BYTE_BUILDER_TYPE),
         )],
     );
     subject.set_ty(byte_finalize_type());
@@ -1466,7 +1568,7 @@ fn byte_finalize_exit(line: usize, acc_name: &str) -> Spanned<Expr> {
     let vals = sp_at_typed(
         line,
         Expr::Ident("__byt_vals".to_string()),
-        crate::types::Type::List(Box::new(crate::types::Type::Int)),
+        crate::types::Type::named(INTERNAL_BYTE_PAYLOAD_TYPE),
     );
     let record = sp_at_typed(
         line,
@@ -1539,7 +1641,7 @@ fn retarget_variant_to_bytes(
     }
 
     variant.body = Arc::new(FnBody::Block(stmts));
-    variant.params[meta.acc_idx].1 = "ByteBuilder".to_string();
+    variant.params[meta.acc_idx].1 = INTERNAL_BYTE_BUILDER_TYPE.to_string();
     variant.return_type = "Result<Bytes, String>".to_string();
     variant.desc = Some(format!(
         "{} Its only reader handed the collected list straight to the \
@@ -1582,6 +1684,7 @@ fn retarget_exit_expr(
         for arm in arms.iter_mut() {
             retarget_exit_expr(&mut arm.body, variant_name, meta, result_kind, exits)?;
         }
+        *expr = sp_at_typed(line, expr.node.clone(), bytes_result_type());
         return Ok(());
     }
 
@@ -1609,7 +1712,7 @@ fn retarget_exit_expr(
                         sp_at_typed(
                             line,
                             Expr::Ident(meta.acc_name.clone()),
-                            crate::types::Type::named("ByteBuilder"),
+                            crate::types::Type::named(INTERNAL_BYTE_BUILDER_TYPE),
                         ),
                         elem,
                     ],
@@ -1618,6 +1721,7 @@ fn retarget_exit_expr(
                 return Err(ByteSinkDecline::ExitShape);
             }
         }
+        *expr = sp_at_typed(line, expr.node.clone(), bytes_result_type());
         return Ok(());
     }
 
@@ -1636,6 +1740,7 @@ fn retarget_exit_expr(
         }
         if let Some(args) = result_wrapper_payload(&expr.node, "Err") {
             if args.len() == 1 && !mentions_list_builder_intrinsic(&args[0]) {
+                *expr = sp_at_typed(line, expr.node.clone(), bytes_result_type());
                 return Ok(());
             }
             return Err(ByteSinkDecline::ExitShape);

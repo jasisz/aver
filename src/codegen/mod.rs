@@ -1237,12 +1237,14 @@ fn codegen_ctx_fn_sig(ctx: &CodegenContext, name: &str) -> Option<crate::verify_
         // The byte-builder trio is monomorphic — bytes are bytes — so
         // unlike its list sibling below this oracle can answer for it.
         "__byt_new" | "__byt_push" => Some(FnSigInfo {
-            return_type: crate::types::Type::named("ByteBuilder"),
+            return_type: crate::types::Type::named(crate::ir::INTERNAL_BYTE_BUILDER_TYPE),
             is_pure: true,
         }),
         "__byt_finalize" => Some(FnSigInfo {
             return_type: crate::types::Type::Result(
-                Box::new(crate::types::Type::List(Box::new(crate::types::Type::Int))),
+                Box::new(crate::types::Type::named(
+                    crate::ir::INTERNAL_BYTE_PAYLOAD_TYPE,
+                )),
                 Box::new(crate::types::Type::Str),
             ),
             is_pure: true,

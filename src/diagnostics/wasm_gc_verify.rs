@@ -181,6 +181,7 @@ pub fn run_verify_for_items_wasm_gc_with_mode(
             run_chars_fusion: true,
             run_string_index: true,
             run_list_build: false,
+            run_byte_sink: true,
             ..Default::default()
         },
     );

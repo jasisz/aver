@@ -557,6 +557,13 @@ pub(super) fn emit_module_with(
         builtin_registry.register(BuiltinName::BufAppendSepUnlessFirst);
         builtin_registry.register(BuiltinName::BufFinalize);
     }
+    if registry.byte_builder_type_idx.is_some() {
+        // Finalization reproduces the source library's error for the exact
+        // first arbitrary-precision value and index.
+        builtin_registry.register(BuiltinName::StringFromInt);
+        builtin_registry.register(BuiltinName::BytPush);
+        builtin_registry.register(BuiltinName::BytFinalize);
+    }
     // bignum slice 1 — when the opt-in `$AverInt` representation is
     // active, register the full arithmetic prelude. Registration is
     // unconditional (not per-op-discovered) because the literal /
@@ -1365,6 +1372,10 @@ pub(super) fn emit_module_with(
     // through them without threading two extra `Option<u32>` params through
     // a dozen helper functions across maps.rs / lists.rs / eq_helpers.rs /
     // hash_helpers.rs. `Some` iff `bignum`.
+    if registry.byte_builder_type_idx.is_some() {
+        registry.byte_string_from_int_fn_idx =
+            builtin_registry.lookup_wasm_fn_idx(BuiltinName::StringFromInt);
+    }
     if registry.bignum {
         registry.aint_eq_fn_idx = builtin_registry.lookup_wasm_fn_idx(BuiltinName::AintEq);
         registry.aint_cmp_fn_idx = builtin_registry.lookup_wasm_fn_idx(BuiltinName::AintCmp);
@@ -6233,6 +6244,54 @@ fn emit_user_types(
         ));
     }
 
+    // Compiler-internal byte sink. The mutable capacity array is the same
+    // nominal packed-u8 `Bytes` carrier returned on success. A nullable
+    // `$AverInt` preserves the exact first invalid arbitrary-precision value.
+    if let Some(idx) = registry.byte_builder_type_idx {
+        let bytes_idx = registry
+            .byte_payload_packed_sequence()
+            .map(|packed| packed.type_idx)
+            .ok_or_else(|| {
+                WasmGcError::Validation(
+                    "byte builder allocated without proven packed-u8 `Bytes`".into(),
+                )
+            })?;
+        let aint_idx = registry.aint_struct_idx.ok_or_else(|| {
+            WasmGcError::Validation("byte builder allocated without arbitrary-precision Int".into())
+        })?;
+        entries.push((
+            idx,
+            mk_struct(vec![
+                wasm_encoder::FieldType {
+                    element_type: wasm_encoder::StorageType::Val(wasm_encoder::ValType::I32),
+                    mutable: true,
+                },
+                wasm_encoder::FieldType {
+                    element_type: wasm_encoder::StorageType::Val(wasm_encoder::ValType::Ref(
+                        wasm_encoder::RefType {
+                            nullable: true,
+                            heap_type: wasm_encoder::HeapType::Concrete(bytes_idx),
+                        },
+                    )),
+                    mutable: true,
+                },
+                wasm_encoder::FieldType {
+                    element_type: wasm_encoder::StorageType::Val(wasm_encoder::ValType::Ref(
+                        wasm_encoder::RefType {
+                            nullable: true,
+                            heap_type: wasm_encoder::HeapType::Concrete(aint_idx),
+                        },
+                    )),
+                    mutable: true,
+                },
+                wasm_encoder::FieldType {
+                    element_type: wasm_encoder::StorageType::Val(wasm_encoder::ValType::I32),
+                    mutable: true,
+                },
+            ]),
+        ));
+    }
+
     // Compiler-internal codepoint→byte boundary table. It is separate from
     // user `Vector<Int>`: offsets are machine `i32`s even when Aver `Int`
     // uses the arbitrary-precision carrier.
@@ -7219,7 +7278,7 @@ fn discover_builtins_in_expr(
 ///
 /// The fabricating passes synthesize the `__buf_*`, `__to_str`, `__lst_*`,
 /// and `__byt_*` contracts. wasm-gc / wasip2 lower the closed String-builder,
-/// String-index, and cursor families directly; generic list and packed-byte
+/// String-index, cursor, and packed-byte families directly; generic list
 /// sinks remain VM/Rust-only. If an unsupported pass's exclusion ever
 /// regresses, the synthesized
 /// nodes reach this backend — and the failure used to be silent: the
@@ -7271,14 +7330,14 @@ fn refuse_fabricated_intrinsics(
             | BuiltinIntrinsic::BufAppend
             | BuiltinIntrinsic::BufAppendSepUnlessFirst
             | BuiltinIntrinsic::BufFinalize
-            | BuiltinIntrinsic::ToStr => true,
-            // Collector / byte-sink fabrications remain VM / Rust only.
+            | BuiltinIntrinsic::ToStr
+            | BuiltinIntrinsic::BytNew
+            | BuiltinIntrinsic::BytPush
+            | BuiltinIntrinsic::BytFinalize => true,
+            // Generic collector fabrications remain VM / Rust only.
             BuiltinIntrinsic::LstNew
             | BuiltinIntrinsic::LstPush
             | BuiltinIntrinsic::LstFinalize
-            | BuiltinIntrinsic::BytNew
-            | BuiltinIntrinsic::BytPush
-            | BuiltinIntrinsic::BytFinalize
             | BuiltinIntrinsic::BranchPathChild
             | BuiltinIntrinsic::BranchPathParse => false,
         }

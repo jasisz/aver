@@ -259,6 +259,28 @@ fn string_to_utf8_round_trips_through_the_boxed_fallback() {
     assert_eq!(boxed, vm);
 }
 
+const FROM_HEX_BOXED_FALLBACK: &str = r#"module M
+    intent = "keep Bytes traversal when packed sequence layouts are disabled"
+    depends [Bytes]
+    effects [Console]
+
+fn main() -> Unit
+    ! [Console.print]
+    match Bytes.fromHex("000aff")
+        Result.Ok(bytes) -> Console.print(Bytes.toHex(bytes))
+        Result.Err(error) -> Console.print(error)
+"#;
+
+#[test]
+fn bytes_from_hex_keeps_source_traversal_in_the_boxed_fallback() {
+    let (vm_ok, vm) = run(FROM_HEX_BOXED_FALLBACK, false, true);
+    let (boxed_ok, boxed) = run(FROM_HEX_BOXED_FALLBACK, true, false);
+    assert!(vm_ok, "VM failed: {vm}");
+    assert!(boxed_ok, "boxed wasm failed: {boxed}");
+    assert_eq!(vm, "000aff");
+    assert_eq!(boxed, vm);
+}
+
 const OCTETS: &str = r#"module M
     intent = "generic packed sequence"
     effects [Console]

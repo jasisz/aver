@@ -682,7 +682,7 @@ fn canonical_passes(target: BenchTarget) -> Vec<String> {
         passes.push("interp_lower");
     }
     // String builders, character cursors, and the immutable codepoint-boundary
-    // index are lowered by every benchmark runtime target.
+    // index are lowered by every generated runtime target.
     if matches!(
         target,
         BenchTarget::Rust | BenchTarget::WasmGc | BenchTarget::WasmGcV8
@@ -690,7 +690,12 @@ fn canonical_passes(target: BenchTarget) -> Vec<String> {
         passes.extend(["buffer_build", "chars_fusion"]);
     }
     passes.push("string_index");
+    if matches!(target, BenchTarget::WasmGc | BenchTarget::WasmGcV8) {
+        passes.push("byte_sink");
+    }
     if target == BenchTarget::Rust {
+        // Full list-build includes the same byte retarget, but its pipeline
+        // stage is `list_build`, not the wasm-only safe subset.
         passes.push("list_build");
     }
     passes.extend([
@@ -768,10 +773,15 @@ mod tests {
         assert!(rust.iter().any(|pass| pass == "chars_fusion"));
         assert!(rust.iter().any(|pass| pass == "string_index"));
         assert!(rust.iter().any(|pass| pass == "list_build"));
+        assert!(!rust.iter().any(|pass| pass == "byte_sink"));
+
+        let vm = canonical_passes(BenchTarget::Vm);
+        assert!(!vm.iter().any(|pass| pass == "byte_sink"));
 
         let wasm = canonical_passes(BenchTarget::WasmGc);
         assert!(wasm.iter().any(|pass| pass == "chars_fusion"));
         assert!(wasm.iter().any(|pass| pass == "string_index"));
+        assert!(wasm.iter().any(|pass| pass == "byte_sink"));
         assert!(!wasm.iter().any(|pass| pass == "list_build"));
 
         let v8 = canonical_passes(BenchTarget::WasmGcV8);

@@ -1735,9 +1735,9 @@ fn list_expr_preserves_refinement(
     }
 }
 
-/// Carrier visitor that tracks values proven to be byte lists by the
-/// compiler-internal `__byt_finalize : ByteBuilder -> Result<List<Int>,
-/// String>` boundary. Facts are scoped to the matching `Result.Ok` arm and
+/// Carrier visitor that tracks values proven to be packed octets by the
+/// compiler-internal `__byt_finalize : __ByteBuilder ->
+/// Result<__BytePayload, String>` boundary. Facts are scoped to the matching `Result.Ok` arm and
 /// therefore cannot leak across an unrelated constructor site.
 pub(crate) fn carrier_walk_expr_with_byte_payloads(
     expr: &Spanned<Expr>,
