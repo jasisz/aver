@@ -382,17 +382,26 @@ fn main_impl(
                 eprintln!("{}", error.red());
                 std::process::exit(1);
             }
-            // `--certify` is a wasm-gc-only artifact certificate. Clap
-            // already blocks `--certify --optimize`; reject any non-wasm-gc
-            // target here so the flag never silently no-ops.
+            // `--certify` is available only for the current wasm-gc certificate
+            // target. In particular, fail closed for `--target wasip2 --certify`
+            // until #1146 lands the declared component-envelope byte binding;
+            // otherwise users could mistake an uncertified component for a
+            // certified artifact.
             if *certify && !matches!(effective_target, cli::CompileTarget::WasmGc) {
                 use colored::Colorize;
-                eprintln!(
-                    "{}",
-                    "--certify requires --target wasm-gc (the artifact certificate is emitted \
-                     for the wasm-gc module)"
-                        .red()
-                );
+                let error = match effective_target {
+                    cli::CompileTarget::Wasip2 => {
+                        "--target wasip2 --certify is not available yet: issue #1146 needs a \
+                         declared component envelope whose prefix/core/suffix bytes are checked \
+                         by equality against the delivered component. Use --target wasm-gc \
+                         --certify for certificate output today."
+                    }
+                    _ => {
+                        "--certify requires --target wasm-gc (the artifact certificate is emitted \
+                         for the wasm-gc module)"
+                    }
+                };
+                eprintln!("{}", error.red());
                 std::process::exit(1);
             }
             if matches!(preset, Some(cli::DeployPreset::Cloudflare)) && handler.is_none() {

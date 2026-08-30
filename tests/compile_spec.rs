@@ -227,6 +227,39 @@ fn compile_check_rejects_non_rust_target_before_codegen() {
     );
 }
 
+#[cfg(all(feature = "certify", feature = "wasip2"))]
+#[test]
+fn compile_wasip2_certify_is_rejected_instead_of_ignored() {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace = temp_output_dir("aver-wasip2-certify-reject");
+    let output_dir = workspace.join("out");
+    let output = Command::new(env!("CARGO_BIN_EXE_aver"))
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("examples/core/hello.av")
+        .arg("--target")
+        .arg("wasip2")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&output_dir)
+        .output()
+        .expect("run aver compile --target wasip2 --certify");
+
+    assert_eq!(output.status.code(), Some(1), "{}", format_output(&output));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--target wasip2 --certify is not available yet"),
+        "wrong wasip2 certify rejection:\n{}",
+        format_output(&output)
+    );
+    assert!(
+        !output_dir.join("hello.component.wasm").exists(),
+        "rejected --certify must not still emit an uncertified component"
+    );
+
+    let _ = fs::remove_dir_all(&workspace);
+}
+
 #[test]
 fn repeated_compile_preserves_byte_identical_generated_file_mtimes() {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
