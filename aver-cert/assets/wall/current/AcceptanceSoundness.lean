@@ -4,13 +4,13 @@ ACCEPTANCE-SOUNDNESS ASSEMBLY.
 The audited byte predicates do not constrain the semantic faces of an
 `Obligation` (`policy`, `Dom`, `Cod`, representations, and `model`).  The
 family discharge theorems therefore expose those faces as semantic bridge
-predicates.  For the Int-dispatch, named-ADT constructor, and String.concat
-families those bridges are no longer producer premises: the checked standard
-faces carry declared-index envelope pins, and the transport lemmas of
-`DeclaredEnvelopeAcceptTransport` derive the exact residual bridge bodies
-from them.  `dischargeSideConditions` collects precisely the remaining
-assumptions; everything else in this file is the mechanical ten-family
-assembly.
+predicates.  For the Int-dispatch and named-ADT constructor families those
+bridges are no longer producer premises: the checked standard faces carry
+declared-index envelope pins.  String.concat likewise derives its bridge from a
+checked standard face, but its ABI/type-section evidence is carried by
+`stringConcatPlanAccepted` rather than by a synthetic declared envelope.
+`dischargeSideConditions` collects precisely the remaining assumptions;
+everything else in this file is the mechanical ten-family assembly.
 -/
 import DischargeExprFragment
 import DischargeFieldProjection
@@ -67,9 +67,8 @@ def dischargeSideConditions (artifact : ArtifactData) : Prop :=
 /-! ### Face-derived semantic bridges
 
 Each lemma peels the family slice out of `StandardFace.checkedFaces`, reduces
-the checked plan lookup, and hands the declared-envelope face to the matching
-`DeclaredEnvelopeAcceptTransport` transport, which emits the exact residual
-bridge body the family discharge consumes. -/
+the checked plan lookup, and hands the checked face to the matching transport,
+which emits the exact residual bridge body the family discharge consumes. -/
 
 theorem intDispatch_bridges_of_faces
     (artifact : ArtifactData)

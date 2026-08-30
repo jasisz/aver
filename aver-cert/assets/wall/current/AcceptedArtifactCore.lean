@@ -271,7 +271,11 @@ def stringConcatCanonicalHost (funcIdx resultTy : Nat) :
 /-- Artifact-level acceptance for one String.concat export. The raw plan carries
     source-level chunks plus the encoder's data-index binding; the audited Lean
     lowerers rebuild both the semantic `WInstr` body and exact code-entry bytes,
-    and the Wasm slicer binds those bytes to the exported function.
+    and the Wasm slicer binds those bytes to the exported function. The exported
+    fragment's declared function type and the internal concat helper's declared
+    function type are then checked against the decoded type/function sections,
+    including nullable-reference tags; the code-entry match alone does not bind
+    either ABI.
 
     `carrier` is the declared CARRIER STATE of the module, not a plan parameter,
     and the second conjunct pins it to `CertDecode.carrierState` recomputed from
@@ -313,6 +317,10 @@ def stringConcatPlanAccepted
       carrier resultTy containerTy concatFuncIdx plan = some codeEntry ∧
     AverCert.WasmSlice.exactFuncBindingForExport
       modBytes modLen exportNameBytes codeEntry = some binding ∧
+    AverCert.WasmSlice.stringConcatExportFuncTypeMatches
+      modBytes modLen binding.typeIdx resultTy = true ∧
+    AverCert.WasmSlice.stringConcatHelperFuncTypeMatches
+      modBytes modLen concatFuncIdx containerTy resultTy = true ∧
     obligation.self = binding.funcIdx ∧
     obligation.code binding.funcIdx =
       some { arity := 1, nlocals := stringConcatNLocals carrier, body := body }

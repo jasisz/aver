@@ -1348,6 +1348,8 @@ fn render_string_concat_claim_bundles(parts: &[StringConcatParts]) -> (String, S
             let lower_body = format!("stringConcatClaim{index}LowerBody");
             let lower_code = format!("stringConcatClaim{index}LowerCode");
             let func_binding = format!("stringConcatClaim{index}FuncBinding");
+            let export_func_type = format!("stringConcatClaim{index}ExportFuncType");
+            let helper_func_type = format!("stringConcatClaim{index}HelperFuncType");
             let sym_plan = format!("AverCert.Plans.{name}StringConcatSymPlan");
             let plan = format!("AverCert.Plans.{name}StringConcatPlan");
             let declarations = format!(
@@ -1379,10 +1381,16 @@ fn render_string_concat_claim_bundles(parts: &[StringConcatParts]) -> (String, S
                    rfl\n\n\
                  theorem {func_binding} :\n  \
                    AverCert.WasmSlice.exactFuncBindingForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {export_name_bytes} {code_entry} = some {binding} := by\n  \
+                   rfl\n\n\
+                 theorem {export_func_type} :\n  \
+                   AverCert.WasmSlice.stringConcatExportFuncTypeMatches AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {binding}.typeIdx {result_ty} = true := by\n  \
+                   rfl\n\n\
+                 theorem {helper_func_type} :\n  \
+                   AverCert.WasmSlice.stringConcatHelperFuncTypeMatches AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {concat_func_idx} {container_ty} {result_ty} = true := by\n  \
                    rfl\n\n"
             );
             let aggregate_proof = format!(
-                "⟨rfl, {carrier_dec}, rfl, rfl, rfl, ⟨{body}, {code_entry}, {binding}, ⟨{check_sym}, {match_sym}, {check_plan}, {lower_body}, {lower_code}, {func_binding}, rfl, rfl⟩⟩⟩"
+                "⟨rfl, {carrier_dec}, rfl, rfl, rfl, ⟨{body}, {code_entry}, {binding}, ⟨{check_sym}, {match_sym}, {check_plan}, {lower_body}, {lower_code}, {func_binding}, {export_func_type}, {helper_func_type}, rfl, rfl⟩⟩⟩"
             );
             (declarations, aggregate_proof)
         },
@@ -2026,8 +2034,7 @@ fn render_artifact_expr_fragment_claims(
                     format!("AverCert.Plans.{name}StringConcatPlan"),
                     format!(
                         "⟨rfl, rfl, ([] : List Nat), (⟨0, {obligation_carrier}, []⟩ : AverCert.DeclaredIndexEnvelope.DIdxEnvelope), \
-                         ⟨AverCert.Plans.declaredTypeCur, rfl, Nat.zero_le _, rfl⟩, rfl, rfl, \
-                         HEq.rfl, HEq.rfl, HEq.rfl, HEq.rfl, HEq.rfl⟩"
+                         rfl, rfl, HEq.rfl, HEq.rfl, HEq.rfl, HEq.rfl, HEq.rfl⟩"
                     ),
                 )));
             }

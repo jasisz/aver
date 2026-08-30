@@ -780,6 +780,47 @@ def exactFuncBindingForExport
   (funcBindingForExport modBytes modLen targetName).filter
     (fun binding => binding.codeEntry = expectedCode)
 
+/-- The exported String.concat fragment must keep the ordinary Aver string ABI:
+    one nullable string-array reference in, one nullable string-array reference
+    out. The code-entry bytes pin the body, but not this function-section type
+    index; this check makes nullability and the selected string heap type
+    byte-derived instead of claim-only data. -/
+def checkStringConcatExportFuncType
+    (resultTy : Nat) (entry : CertDecode.TypeEntry) : Bool :=
+  match entry.form, entry.composite with
+  | .plain, .funcType [param] [result] =>
+      decide (param = nullableRefType resultTy) &&
+        decide (result = nullableRefType resultTy)
+  | _, _ => false
+
+def stringConcatExportFuncTypeMatches
+    (modBytes modLen typeIdx resultTy : Nat) : Bool :=
+  typeSectionMatches (checkStringConcatExportFuncType resultTy)
+    modBytes modLen typeIdx
+
+/-- The internal String.concat helper consumes the temporary container of parts
+    and returns the packed string array. `CertDecode.StringHost.roleTable`
+    recognizes the helper's byte body, while this separate pin keeps the helper
+    signature exact, including `0x63` nullable-reference tags. -/
+def checkStringConcatHelperFuncType
+    (containerTy resultTy : Nat) (entry : CertDecode.TypeEntry) : Bool :=
+  match entry.form, entry.composite with
+  | .plain, .funcType [param] [result] =>
+      decide (param = nullableRefType containerTy) &&
+        decide (result = nullableRefType resultTy)
+  | _, _ => false
+
+/-- Resolve a helper function index through the function section and require its
+    declared type to be the exact String.concat helper ABI. Imported functions
+    and malformed type/function sections fail closed. -/
+def stringConcatHelperFuncTypeMatches
+    (modBytes modLen funcIdx containerTy resultTy : Nat) : Bool :=
+  match funcBindingByFuncIndex modBytes modLen funcIdx with
+  | some binding =>
+      typeSectionMatches (checkStringConcatHelperFuncType containerTy resultTy)
+        modBytes modLen binding.typeIdx
+  | none => false
+
 /-- The record face's PARAM BINDING check over one decoded function type: a
     single parameter, and that parameter is EXACTLY the nullable reference to
     the record's pinned struct index (`checkExprProjectionTypes`'s move). -/

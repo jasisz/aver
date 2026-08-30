@@ -54,8 +54,9 @@
 //!       Lean byte-origin/host binding → DECLINED
 //!   (v) String.eq contract drift: deleting the plan-required contract from
 //!       both `Manifest.lean` and `cert-manifest.json` fails `ClaimAxes` → DECLINED
-//!   (w) String.concat helper shape / contract drift: same fail-closed checks
-//!       for the concat helper's byte-exact host-contract recognition
+//!   (w) String.concat helper shape / contract/type drift: same fail-closed checks
+//!       for the concat helper's byte-exact host-contract recognition plus
+//!       exported/helper declared function type pins
 //!   (x) plan DATA drift: mutating `Plans.lean` fails its structural,
 //!       canonical-lowering, or exact-byte binding inside Lean
 //!   (y) package-format drift: an unknown `format.version` is rejected rather
@@ -162,6 +163,22 @@ fn aver_verify_clean_cache(artifact: &Path, cert_dir: &Path) -> (bool, String) {
         String::from_utf8_lossy(&out.stderr)
     );
     (out.status.success(), combined)
+}
+
+fn rebind_cert_wasm_hash(dir: &Path, bytes: &[u8]) {
+    let mf = dir.join("cert").join("cert-manifest.json");
+    let mut m: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
+    let old_hash = m["wasm_sha256"].as_str().unwrap().to_string();
+    let new_hash = aver::codegen::cert::sha256_hex(bytes);
+    for file in ["Module.lean", "Manifest.lean"] {
+        let path = dir.join("cert").join(file);
+        let src = std::fs::read_to_string(&path).unwrap();
+        assert!(src.contains(&old_hash), "{file} should pin the old hash");
+        std::fs::write(&path, src.replace(&old_hash, &new_hash)).unwrap();
+    }
+    m["wasm_sha256"] = serde_json::Value::String(new_hash);
+    std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
 }
 
 fn find_named_file(root: &Path, name: &str) -> Option<PathBuf> {
@@ -3033,6 +3050,124 @@ fn cert_verify_declines_tampered_string_concat_helper_shape() {
     );
     assert!(shout_entry.get("fragment").is_none());
     assert!(shout_entry.get("source_fragment").is_none());
+
+    let wasm_bytes = std::fs::read(&wasm).unwrap();
+    let type_section_range = wasmparser::Parser::new(0)
+        .parse_all(&wasm_bytes)
+        .find_map(
+            |payload| match payload.expect("stringconcat wasm must parse") {
+                wasmparser::Payload::TypeSection(reader) => Some(reader.range()),
+                _ => None,
+            },
+        )
+        .expect("stringconcat wasm must carry a type section");
+    let artifact_text = std::fs::read_to_string(cert.join("Artifact.lean")).unwrap();
+    let lower_tail = artifact_text
+        .split("AverCert.PlanLower.lowerStringConcatBody ")
+        .nth(1)
+        .expect("Artifact.lean should render a String.concat lowering theorem");
+    let lower_args: Vec<usize> = lower_tail
+        .split_whitespace()
+        .take(3)
+        .map(|arg| arg.parse::<usize>().unwrap())
+        .collect();
+    assert_eq!(lower_args.len(), 3);
+    let result_ty = lower_args[0];
+    let container_ty = lower_args[1];
+    assert!(
+        result_ty < 128 && container_ty < 128,
+        "fixture type indices should have one-byte LEB encodings"
+    );
+
+    {
+        let dir = temp_dir("cert-stringconcat-export-type-tamper");
+        copy_dir(&out_dir, &dir);
+        let w = dir.join("stringconcat.wasm");
+        let mut bytes = wasm_bytes.clone();
+        let signature = [
+            0x60,
+            0x01,
+            0x63,
+            result_ty as u8,
+            0x01,
+            0x63,
+            result_ty as u8,
+        ];
+        let matches: Vec<usize> = bytes[type_section_range.clone()]
+            .windows(signature.len())
+            .enumerate()
+            .filter_map(|(offset, win)| {
+                (win == signature).then_some(type_section_range.start + offset)
+            })
+            .collect();
+        assert_eq!(
+            matches.len(),
+            1,
+            "String.concat export result-ref signature must be unique"
+        );
+        bytes[matches[0] + 2] = 0x64;
+        std::fs::write(&w, &bytes).unwrap();
+        rebind_cert_wasm_hash(&dir, &bytes);
+
+        let (ok, out) = aver_check(&w, &dir.join("cert"));
+        assert!(
+            !ok,
+            "tampered String.concat export declared function type must be DECLINED:\n{out}"
+        );
+        assert!(
+            out.contains("does not bind") || out.contains("did not build"),
+            "wrong reason for String.concat export type tamper:\n{out}"
+        );
+        assert!(
+            !out.contains("CERTIFIED"),
+            "tampered String.concat export type credited:\n{out}"
+        );
+    }
+
+    {
+        let dir = temp_dir("cert-stringconcat-helper-type-tamper");
+        copy_dir(&out_dir, &dir);
+        let w = dir.join("stringconcat.wasm");
+        let mut bytes = wasm_bytes.clone();
+        let signature = [
+            0x60,
+            0x01,
+            0x63,
+            container_ty as u8,
+            0x01,
+            0x63,
+            result_ty as u8,
+        ];
+        let matches: Vec<usize> = bytes[type_section_range.clone()]
+            .windows(signature.len())
+            .enumerate()
+            .filter_map(|(offset, win)| {
+                (win == signature).then_some(type_section_range.start + offset)
+            })
+            .collect();
+        assert_eq!(
+            matches.len(),
+            1,
+            "String.concat helper container-ref signature must be unique"
+        );
+        bytes[matches[0] + 2] = 0x64;
+        std::fs::write(&w, &bytes).unwrap();
+        rebind_cert_wasm_hash(&dir, &bytes);
+
+        let (ok, out) = aver_check(&w, &dir.join("cert"));
+        assert!(
+            !ok,
+            "tampered String.concat helper declared function type must be DECLINED:\n{out}"
+        );
+        assert!(
+            out.contains("does not bind") || out.contains("did not build"),
+            "wrong reason for String.concat helper type tamper:\n{out}"
+        );
+        assert!(
+            !out.contains("CERTIFIED"),
+            "tampered String.concat helper type credited:\n{out}"
+        );
+    }
 
     {
         let dir = temp_dir("cert-stringconcat-source-plan-tamper");

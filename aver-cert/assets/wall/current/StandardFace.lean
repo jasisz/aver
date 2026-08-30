@@ -951,14 +951,14 @@ def symFragmentMatches
 
 /-! ### Declared-index envelope faces (user ADT claims)
 
-The plan/certificate DECLARES the ADT envelope (root, carrier, every
-constructor's flattened index, shape, and payload target) plus the opaque
-type-section prefix before the constructor entries; the wall CONFIRMS the whole
-declaration with ONE byte-slice equality (`concatPinnedAt`). The declared
-envelope then pins the obligation's `Dom`/`domRepr`/`codRepr`/`model` to wall
-terms computed from the checked plan, closing the former free-model /
-free-`domRepr` faces. The envelope and prefix live in the proof term of the
-generated certificate, never in the public JSON manifest. -/
+The plan/certificate DECLARES ADT envelopes (root, carrier, every constructor's
+flattened index, shape, and payload target) plus the opaque type-section prefix
+before the constructor entries; the wall CONFIRMS those declarations with ONE
+byte-slice equality (`concatPinnedAt`). The declared envelope then pins the
+obligation's `Dom`/`domRepr`/`codRepr`/`model` to wall terms computed from the
+checked plan, closing the former free-model / free-`domRepr` faces. String.concat
+uses only the semantic-field transport below; its ABI/type-section pins live in
+`stringConcatPlanAccepted` rather than a synthetic empty ADT envelope. -/
 
 /-- The declared-envelope face carried by a named-ADT constructor claim. The
     declared hit constructor sits at the byte-pinned `structIdx`; the byte
@@ -992,10 +992,11 @@ def intDispatchDeclaredFace
     AverCert.DeclaredIndexEnvelope.DIdxIntReadFace
       modBytes modLen typePrefix env plan claim.obligation
 
-/-- The declared-envelope face carried by a String.concat claim. The literal
-    chunks are required non-empty so the declared `resultTy` occurs inside the
-    byte-matched code entry (`array.new_data resultTy`) — a chunk-less plan
-    would leave the result element type a free semantic tag. -/
+/-- The semantic face carried by a String.concat claim. The literal chunks are
+    required non-empty so the declared `resultTy` occurs inside the byte-matched
+    code entry (`array.new_data resultTy`) — a chunk-less plan would leave the
+    result element type a free semantic tag. The exported/helper declared
+    function types are byte-pinned by `stringConcatPlanAccepted`, not here. -/
 def stringConcatDeclaredFace
     (modBytes modLen : Nat) (claim : StringConcatClaim)
     (plan : StringConcatRawPlan) : Prop :=
