@@ -26,7 +26,7 @@
 
 use std::sync::Arc as Rc;
 
-use crate::{AverInt, AverList, AverStr};
+use crate::{AverInt, AverIntList, AverPackedU8, AverStr};
 
 /// The collected bytes, plus the first element that was not a byte.
 #[derive(Debug, Clone)]
@@ -86,7 +86,7 @@ pub fn byte_builder_push(mut builder: ByteBuilder, value: AverInt) -> ByteBuilde
 /// What `Bytes.fromList` would answer for the pushed elements: the
 /// collected list when every element was an octet, or the standard
 /// library's own words about the first one that was not.
-pub fn byte_builder_finalize(builder: ByteBuilder) -> Result<AverList<AverInt>, AverStr> {
+pub fn byte_builder_finalize(builder: ByteBuilder) -> Result<AverIntList, AverStr> {
     let inner = match Rc::try_unwrap(builder.inner) {
         Ok(owned) => owned,
         Err(shared) => shared.as_ref().clone(),
@@ -95,13 +95,9 @@ pub fn byte_builder_finalize(builder: ByteBuilder) -> Result<AverList<AverInt>, 
         Some((value, index)) => Err(AverStr::from(format!(
             "byte {value} at index {index} is outside 0..=255"
         ))),
-        None => Ok(AverList::from_vec(
-            inner
-                .bytes
-                .into_iter()
-                .map(|b| AverInt::from_i64(b as i64))
-                .collect(),
-        )),
+        None => Ok(AverIntList::from_packed(AverPackedU8::from_vec(
+            inner.bytes,
+        ))),
     }
 }
 

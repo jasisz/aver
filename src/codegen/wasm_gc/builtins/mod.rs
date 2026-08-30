@@ -70,6 +70,7 @@ use super::types::{OPTION_NONE_TAG, OPTION_SOME_TAG, TypeRegistry};
 use super::wat_helper;
 
 mod bignum;
+mod byte_builder;
 pub(in crate::codegen::wasm_gc) mod case_tables;
 mod crypto;
 mod endian;
@@ -77,6 +78,11 @@ mod string_builder;
 mod string_case;
 mod string_cursor;
 mod utf8;
+
+/// Shared with inline `__byt_new`, the WAT growth helper, and the deterministic
+/// growth regression. One policy, not three lookalike constants.
+pub(super) const BYTE_SINK_INITIAL_CAPACITY: i32 = 16;
+pub(super) const BYTE_SINK_GROWTH_FACTOR: i64 = 2;
 
 /// Curated set of pure-side builtins phase 3c+ implements. Adding a
 /// new builtin: extend this enum + `from_dotted` + `signature` +
@@ -177,6 +183,11 @@ pub(super) enum BuiltinName {
     BufAppend,
     BufAppendSepUnlessFirst,
     BufFinalize,
+    /// Compiler-internal packed byte sink. `__byt_new` is emitted inline;
+    /// push and finalization are shared helpers so geometric growth and exact
+    /// first-error formatting have one implementation.
+    BytPush,
+    BytFinalize,
     /// `String.replace(s, needle, repl) -> String`. Two-pass naive
     /// scan: count occurrences, allocate output of exact size, fill.
     /// Empty needle returns `s` unchanged.
@@ -322,6 +333,8 @@ impl BuiltinName {
             "__buf_append" => Some(Self::BufAppend),
             "__buf_append_sep_unless_first" => Some(Self::BufAppendSepUnlessFirst),
             "__buf_finalize" => Some(Self::BufFinalize),
+            "__byt_push" => Some(Self::BytPush),
+            "__byt_finalize" => Some(Self::BytFinalize),
             "String.replace" => Some(Self::StringReplace),
             "Crypto.sha256" => Some(Self::CryptoSha256),
             _ => None,
@@ -374,6 +387,8 @@ impl BuiltinName {
             Self::BufAppend => "__buf_append",
             Self::BufAppendSepUnlessFirst => "__buf_append_sep_unless_first",
             Self::BufFinalize => "__buf_finalize",
+            Self::BytPush => "__byt_push",
+            Self::BytFinalize => "__byt_finalize",
             Self::StringReplace => "String.replace",
             Self::CryptoSha256 => "Crypto.sha256",
             Self::IntModEuclid => "__int_mod_euclid",
@@ -476,6 +491,8 @@ impl BuiltinName {
                 Ok(vec![buffer_ref_ty(registry)?, string_ref_ty(registry)?])
             }
             Self::BufFinalize => Ok(vec![buffer_ref_ty(registry)?]),
+            Self::BytPush => Ok(vec![byte_builder_ref_ty(registry)?, aint_ref_ty(registry)?]),
+            Self::BytFinalize => Ok(vec![byte_builder_ref_ty(registry)?]),
             Self::StringReplace => Ok(vec![
                 string_ref_ty(registry)?,
                 string_ref_ty(registry)?,
@@ -570,6 +587,11 @@ impl BuiltinName {
             | Self::StrFoldUpper => Ok(vec![ValType::I64]),
             Self::BufAppend | Self::BufAppendSepUnlessFirst => Ok(vec![buffer_ref_ty(registry)?]),
             Self::BufFinalize => Ok(vec![string_ref_ty(registry)?]),
+            Self::BytPush => Ok(vec![byte_builder_ref_ty(registry)?]),
+            Self::BytFinalize => Ok(vec![result_ref_ty(
+                registry,
+                "Result<__BytePayload,String>",
+            )?]),
             Self::StringReplace => Ok(vec![string_ref_ty(registry)?]),
             Self::CryptoSha256 => Ok(vec![record_ref_ty(registry, "Digest32")?]),
             Self::IntModEuclid | Self::IntDivEuclid => Ok(vec![ValType::I64]),
@@ -658,6 +680,8 @@ impl BuiltinName {
             Self::BufAppend => string_builder::emit_append(registry),
             Self::BufAppendSepUnlessFirst => string_builder::emit_append_sep_unless_first(registry),
             Self::BufFinalize => string_builder::emit_finalize(registry),
+            Self::BytPush => byte_builder::emit_push(registry),
+            Self::BytFinalize => byte_builder::emit_finalize(registry),
             Self::StringReplace => emit_string_replace(registry),
             Self::CryptoSha256 => crypto::emit_sha256(registry),
             Self::IntModEuclid => emit_int_mod_euclid(),
@@ -758,6 +782,18 @@ fn buffer_ref_ty(registry: &TypeRegistry) -> Result<ValType, WasmGcError> {
         .string_buffer_type_idx
         .ok_or(WasmGcError::Validation(
             "String builder helper requires its hidden type slot".into(),
+        ))?;
+    Ok(ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(idx),
+    }))
+}
+
+fn byte_builder_ref_ty(registry: &TypeRegistry) -> Result<ValType, WasmGcError> {
+    let idx = registry
+        .byte_builder_type_idx
+        .ok_or(WasmGcError::Validation(
+            "byte sink helper requires its hidden type slot".into(),
         ))?;
     Ok(ValType::Ref(wasm_encoder::RefType {
         nullable: true,

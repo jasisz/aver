@@ -75,7 +75,7 @@ struct Flags {
     /// (`<sink>__buffered`, `__Buffer`), `chars_fusion`
     /// (`<loop>__cursor`, `__str_*`), `string_index`
     /// (`<fn>__indexed`, `String.Index`) and `list_build`
-    /// (`<loop>__collected`, `__lst_*`). Below the proof line.
+    /// (`<loop>__collected`, `__lst_*` / `__byt_*`). Below the proof line.
     fabricating: bool,
     /// The scalar-replace pass. Above the proof line — see the module
     /// doc.

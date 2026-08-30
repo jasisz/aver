@@ -1059,8 +1059,8 @@ pub fn load_compile_deps(
 ///
 /// The generic loader above intentionally preserves its historical neutral
 /// shape for analysis and proof callers. Runtime wasm verification needs the
-/// same closed String builder/cursor contracts as `aver run`, including inside
-/// dependencies such as `Bytes.toHex`.
+/// same closed String builder/cursor and packed-byte contracts as `aver run`,
+/// including inside dependencies such as `Bytes.toHex` / `Bytes.fromHex`.
 #[cfg(feature = "wasm")]
 pub(crate) fn load_compile_deps_for_wasm_runtime(
     items: &[TopLevel],
@@ -1114,6 +1114,7 @@ fn load_compile_deps_with_runtime_strings(
                 run_chars_fusion: runtime_strings,
                 run_string_index: true,
                 run_list_build: false,
+                run_byte_sink: runtime_strings,
                 alloc_policy: Some(&neutral_policy),
                 ..Default::default()
             },

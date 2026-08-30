@@ -1111,6 +1111,79 @@ pub(crate) fn emit_mir_expr(
                         func.instruction(&Instruction::StructNew(buffer_idx));
                         return Ok(Some(true));
                     }
+                    if matches!(intr, BuiltinIntrinsic::BytNew) {
+                        if call.args.len() != 1 {
+                            return Err(WasmGcError::Validation(format!(
+                                "{} expects 1 argument, got {}",
+                                intr.name(),
+                                call.args.len()
+                            )));
+                        }
+                        // Like `__buf_new`, the allocation hint is
+                        // semantic-free but still evaluates exactly once.
+                        if emit_mir_expr(func, &call.args[0], slots, ctx)?.is_none() {
+                            return Ok(None);
+                        }
+                        func.instruction(&Instruction::Drop);
+                        let bytes_idx = ctx
+                            .registry
+                            .byte_payload_packed_sequence()
+                            .map(|packed| packed.type_idx)
+                            .ok_or(WasmGcError::Validation(
+                                "__byt_new requires proven packed-u8 `Bytes`".into(),
+                            ))?;
+                        let aint_idx =
+                            ctx.registry.aint_struct_idx.ok_or(WasmGcError::Validation(
+                                "__byt_new requires arbitrary-precision Int".into(),
+                            ))?;
+                        let builder_idx =
+                            ctx.registry
+                                .byte_builder_type_idx
+                                .ok_or(WasmGcError::Validation(
+                                    "__byt_new requires the hidden byte builder type".into(),
+                                ))?;
+                        func.instruction(&Instruction::I32Const(0));
+                        func.instruction(&Instruction::I32Const(
+                            crate::codegen::wasm_gc::builtins::BYTE_SINK_INITIAL_CAPACITY,
+                        ));
+                        func.instruction(&Instruction::ArrayNewDefault(bytes_idx));
+                        func.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
+                            aint_idx,
+                        )));
+                        func.instruction(&Instruction::I32Const(0));
+                        func.instruction(&Instruction::StructNew(builder_idx));
+                        return Ok(Some(true));
+                    }
+                    if matches!(
+                        intr,
+                        BuiltinIntrinsic::BytPush | BuiltinIntrinsic::BytFinalize
+                    ) {
+                        let expected = if matches!(intr, BuiltinIntrinsic::BytPush) {
+                            2
+                        } else {
+                            1
+                        };
+                        if call.args.len() != expected {
+                            return Err(WasmGcError::Validation(format!(
+                                "{} expects {expected} argument(s), got {}",
+                                intr.name(),
+                                call.args.len()
+                            )));
+                        }
+                        for arg in &call.args {
+                            if emit_mir_expr(func, arg, slots, ctx)?.is_none() {
+                                return Ok(None);
+                            }
+                        }
+                        let helper = ctx.fn_map.builtins.get(intr.name()).copied().ok_or(
+                            WasmGcError::Validation(format!(
+                                "{} reached wasm-gc without its helper",
+                                intr.name()
+                            )),
+                        )?;
+                        func.instruction(&Instruction::Call(helper));
+                        return Ok(Some(true));
+                    }
                     if matches!(intr, BuiltinIntrinsic::ToStr) {
                         if call.args.len() != 1 {
                             return Err(WasmGcError::Validation(format!(

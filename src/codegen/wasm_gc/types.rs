@@ -167,6 +167,16 @@ pub(super) struct TypeRegistry {
     /// Absent when neither pass fabricated the closed `__buf_*` contract,
     /// preserving byte identity for unrelated programs.
     pub(super) string_buffer_type_idx: Option<u32>,
+    /// Compiler-internal packed byte sink synthesized by the byte-only half
+    /// of `list_build`: `(struct (mut i32 len) (mut (ref null $Bytes) data)
+    /// (mut (ref null $aint) first_bad) (mut i32 bad_index))`. The backing
+    /// array is the nominal packed `Bytes` carrier, not a generic list.
+    pub(super) byte_builder_type_idx: Option<u32>,
+    /// Exact post-flatten nominal type wrapped around `__BytePayload`. This is
+    /// usually `Bytes`, but becomes e.g. `Bytes.Bytes` when an entry record
+    /// collides with the standard dependency. Never use a bare-name fallback:
+    /// packed carriers have nominal identity.
+    pub(super) byte_payload_type_name: Option<String>,
     /// Hidden codepoint→UTF-8 byte-boundary table synthesized by the
     /// loop-scoped String indexing pass. Represented directly as a mutable
     /// `(array i32)` and allocated only when an indexed worker signature
@@ -289,6 +299,9 @@ pub(super) struct TypeRegistry {
     pub(super) aint_normalize_fn_idx: Option<u32>,
     pub(super) aint_strip_fn_idx: Option<u32>,
     pub(super) aint_umag_cmp_fn_idx: Option<u32>,
+    /// Decimal formatter called by the byte sink's exact `Bytes.fromList`
+    /// error message. Recorded after builtin slot assignment.
+    pub(super) byte_string_from_int_fn_idx: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -495,6 +508,47 @@ impl TypeRegistry {
             None
         };
 
+        let needs_byte_builder = resolved_fn_defs.iter().any(|fd| {
+            use crate::ir::hir::{BuiltinIntrinsic, ResolvedCallee};
+            fd.return_type.display().trim() == crate::ir::INTERNAL_BYTE_BUILDER_TYPE
+                || fd
+                    .return_type
+                    .display()
+                    .contains(crate::ir::INTERNAL_BYTE_PAYLOAD_TYPE)
+                || fd.params.iter().any(|(_, ty)| {
+                    ty.display().trim() == crate::ir::INTERNAL_BYTE_BUILDER_TYPE
+                        || ty.display().contains(crate::ir::INTERNAL_BYTE_PAYLOAD_TYPE)
+                })
+                || fn_body_reaches(fd, &|callee| {
+                    matches!(
+                        callee,
+                        ResolvedCallee::Intrinsic(
+                            BuiltinIntrinsic::BytNew
+                                | BuiltinIntrinsic::BytPush
+                                | BuiltinIntrinsic::BytFinalize
+                        )
+                    )
+                })
+        });
+        let byte_payload_type_names = if needs_byte_builder {
+            byte_payload_record_names(items)
+        } else {
+            std::collections::BTreeSet::new()
+        };
+        // One hidden builder has one nominal array field. Every sanctioned
+        // byte sink in an ordinary program targets the same standard `Bytes`
+        // type; retaining `None` for zero/multiple targets makes malformed or
+        // ambiguous fabricated IR fail closed during helper registration.
+        let byte_payload_type_name = (byte_payload_type_names.len() == 1)
+            .then(|| byte_payload_type_names.into_iter().next().unwrap());
+        let byte_builder_type_idx = if needs_byte_builder {
+            let idx = next_idx;
+            next_idx += 1;
+            Some(idx)
+        } else {
+            None
+        };
+
         let needs_string_index = resolved_fn_defs.iter().any(|fd| {
             fd.return_type.display().trim() == "String.Index"
                 || fd
@@ -554,7 +608,9 @@ impl TypeRegistry {
         // struct can reference it without a forward edge (a single rec
         // group makes this safe, but keeping the array lower mirrors the
         // other collection slots and reads cleaner).
-        let bignum = force_bignum || resolved_fn_defs.iter().any(fn_uses_int_arithmetic);
+        let bignum = force_bignum
+            || needs_byte_builder
+            || resolved_fn_defs.iter().any(fn_uses_int_arithmetic);
         let (aint_mag_array_idx, aint_struct_idx) = if bignum {
             let mag_idx = next_idx;
             next_idx += 1;
@@ -662,6 +718,14 @@ impl TypeRegistry {
         for name in &record_names_sorted {
             for (_, ty) in &record_fields[name] {
                 collect_results_from_str(ty, &mut result_types, &mut result_order, &mut next_idx);
+            }
+        }
+        if needs_byte_builder {
+            let canonical = "Result<__BytePayload,String>".to_string();
+            if !result_types.contains_key(&canonical) {
+                result_types.insert(canonical.clone(), next_idx);
+                result_order.push(canonical);
+                next_idx += 1;
             }
         }
         let mut list_types: HashMap<String, u32> = HashMap::new();
@@ -1331,6 +1395,8 @@ impl TypeRegistry {
             user_type_count: next_idx,
             string_array_type_idx,
             string_buffer_type_idx,
+            byte_builder_type_idx,
+            byte_payload_type_name,
             string_index_array_type_idx,
             crypto_byte_array_type_idx,
             crypto_word_array_type_idx,
@@ -1365,6 +1431,7 @@ impl TypeRegistry {
             aint_normalize_fn_idx: None,
             aint_strip_fn_idx: None,
             aint_umag_cmp_fn_idx: None,
+            byte_string_from_int_fn_idx: None,
         }
     }
 
@@ -1846,6 +1913,16 @@ impl TypeRegistry {
         self.packed_sequences
             .get(self.canonical_type_name(type_name))
             .copied()
+    }
+
+    /// Packed nominal carrier selected by the compiler-owned byte payload.
+    /// Exact post-flatten identity matters when an entry type collides with
+    /// the standard dependency's bare `Bytes` name.
+    pub(super) fn byte_payload_packed_sequence(&self) -> Option<PackedSequenceType> {
+        let name = self.byte_payload_type_name.as_deref()?;
+        self.packed_sequence(name).filter(|packed| {
+            packed.layout.element == crate::codegen::proof_lower::PackedIntElement::U8
+        })
     }
 
     /// ETAP-2 carrier-`i64`: is `type_name` a carrier whose erasure should be
@@ -2525,6 +2602,32 @@ pub(super) fn aver_to_wasm(
             })));
         }
     }
+    if trimmed == crate::ir::INTERNAL_BYTE_PAYLOAD_TYPE {
+        if let Some(reg) = registry
+            && let Some(packed) = reg.byte_payload_packed_sequence()
+        {
+            return Ok(Some(ValType::Ref(RefType {
+                nullable: true,
+                heap_type: HeapType::Concrete(packed.type_idx),
+            })));
+        }
+        return Err(WasmGcError::Validation(
+            "compiler byte payload reached wasm-gc without proven packed `Bytes`".into(),
+        ));
+    }
+    if trimmed == crate::ir::INTERNAL_BYTE_BUILDER_TYPE {
+        if let Some(reg) = registry
+            && let Some(idx) = reg.byte_builder_type_idx
+        {
+            return Ok(Some(ValType::Ref(RefType {
+                nullable: true,
+                heap_type: HeapType::Concrete(idx),
+            })));
+        }
+        return Err(WasmGcError::Validation(
+            "compiler byte builder reached wasm-gc without its hidden builder slot".into(),
+        ));
+    }
     // String maps to `(ref null (array i8))` when the registry has
     // pre-allocated the array type during `build`. Unique-pointer
     // semantics aren't needed; nullable is fine because Aver's type
@@ -2923,6 +3026,43 @@ fn builtin_type_to_aver_string(ty: &crate::codegen::builtin_records::BuiltinType
     }
 }
 
+/// Exact post-flatten record identities that wrap the compiler-owned packed
+/// byte payload. The payload stamp is more authoritative than the bare record
+/// spelling: a legal entry-side `Bytes` collision renames the standard record
+/// to `Bytes.Bytes`, and that nominal identity must reach every helper/type
+/// lookup unchanged.
+fn byte_payload_record_names(items: &[crate::ast::TopLevel]) -> std::collections::BTreeSet<String> {
+    use crate::ast::{Expr, Stmt};
+
+    let mut names = std::collections::BTreeSet::new();
+    for item in items {
+        let crate::ast::TopLevel::FnDef(fd) = item else {
+            continue;
+        };
+        for stmt in fd.body.stmts() {
+            let expr = match stmt {
+                Stmt::Binding(_, _, value) | Stmt::Expr(value) => value,
+            };
+            crate::codegen::expr_walk::walk(expr, &mut |node| {
+                let Expr::RecordCreate {
+                    type_name, fields, ..
+                } = &node.node
+                else {
+                    return;
+                };
+                if fields.iter().any(|(_, value)| {
+                    value.ty().is_some_and(|ty| {
+                        ty.display().trim() == crate::ir::INTERNAL_BYTE_PAYLOAD_TYPE
+                    })
+                }) {
+                    names.insert(type_name.clone());
+                }
+            });
+        }
+    }
+    names
+}
+
 /// True iff any FnDef signature or body literal mentions the given
 /// type name. Lightweight string scan over annotations + return
 /// types — a structural walk would be more precise but every name
@@ -3260,4 +3400,36 @@ fn rewrite_paren_tuples(s: &str) -> String {
         i += 1;
     }
     out
+}
+
+#[cfg(test)]
+mod byte_payload_tests {
+    use super::*;
+    use crate::ast::{Expr, FnBody, FnDef, Spanned, Stmt, TopLevel, Type};
+    use std::sync::Arc;
+
+    #[test]
+    fn payload_discovery_preserves_the_exact_post_flatten_nominal_name() {
+        let payload = Spanned::bare(Expr::Ident("payload".into()));
+        payload.set_ty(Type::named(crate::ir::INTERNAL_BYTE_PAYLOAD_TYPE));
+        let record = Spanned::bare(Expr::RecordCreate {
+            type_name: "Bytes.Bytes".into(),
+            fields: vec![("data".into(), payload)],
+        });
+        let items = vec![TopLevel::FnDef(FnDef {
+            name: "wrap".into(),
+            line: 0,
+            params: Vec::new(),
+            return_type: "Bytes.Bytes".into(),
+            effects: Vec::new(),
+            desc: None,
+            body: Arc::new(FnBody::Block(vec![Stmt::Expr(record)])),
+            resolution: None,
+        })];
+
+        assert_eq!(
+            byte_payload_record_names(&items),
+            std::collections::BTreeSet::from(["Bytes.Bytes".to_string()])
+        );
+    }
 }

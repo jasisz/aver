@@ -33,6 +33,7 @@ fn analyze_src(src: &str) -> IntervalAnalysisResult {
             run_chars_fusion: false,
             run_string_index: false,
             run_list_build: false,
+            run_byte_sink: false,
             run_resolve: false,
             run_last_use: false,
             run_analyze: true,

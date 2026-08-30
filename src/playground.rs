@@ -23,12 +23,14 @@ pub fn compile_to_wasm(source: &str) -> Result<Vec<u8>, String> {
             typecheck: Some(TypecheckMode::Full { base_dir: None }),
             // Keep interpolation on native variadic concat, while joined
             // collecting loops use the growable String builder. Character
-            // traversal and indexed access use their native wasm-gc carriers.
+            // traversal, indexed access, and packed byte consumers use their
+            // native wasm-gc carriers.
             run_interp_lower: false,
             run_buffer_build: true,
             run_chars_fusion: true,
             run_string_index: true,
             run_list_build: false,
+            run_byte_sink: true,
             ..Default::default()
         },
     );
@@ -66,7 +68,7 @@ pub fn compile_project_to_wasm(
     let loaded = load_module_tree_from_map(&root_depends, files)?;
 
     // Full wasm-gc pipeline — matches CLI `aver compile --target wasm-gc`:
-    // native interpolation plus the growable join builder.
+    // native interpolation plus the growable join and packed-byte builders.
     let pipeline_result = crate::ir::pipeline::run(
         &mut entry_items,
         PipelineConfig {
@@ -76,6 +78,7 @@ pub fn compile_project_to_wasm(
             run_chars_fusion: true,
             run_string_index: true,
             run_list_build: false,
+            run_byte_sink: true,
             ..Default::default()
         },
     );
@@ -149,6 +152,7 @@ pub fn compile_project_to_wasm_with_entry(
             run_chars_fusion: true,
             run_string_index: true,
             run_list_build: false,
+            run_byte_sink: true,
             ..Default::default()
         },
     );
@@ -545,6 +549,9 @@ fn loaded_to_module_info(
             run_chars_fusion: apply_string_index,
             run_string_index: apply_string_index,
             run_list_build: apply_traversal_lowering,
+            // Full traversal lowering (Rust) already retargets byte sinks as
+            // part of list-build; wasm requests only the safe byte-only gate.
+            run_byte_sink: apply_buffer_build && apply_string_index && !apply_traversal_lowering,
             alloc_policy: Some(&neutral_policy),
             ..Default::default()
         },

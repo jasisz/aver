@@ -176,9 +176,16 @@ pub(super) fn has_driver_step_shape(items: &[TopLevel]) -> bool {
 /// path goes through inlinable step companions, inline them on a copy,
 /// and commit the copy only when the merged loop fuses. Records what it
 /// did — and what it declined — on the pass report.
-pub(super) fn run_driver_step_normalize(items: &mut [TopLevel], report: &mut ListBuildPassReport) {
+pub(super) fn run_driver_step_normalize(
+    items: &mut [TopLevel],
+    report: &mut ListBuildPassReport,
+    allowed_drivers: Option<&HashSet<String>>,
+) {
     let drivers: Vec<String> = crate::ir::chars_fusion::fn_defs(items)
-        .filter(|fd| is_driver_shaped(fd, items))
+        .filter(|fd| {
+            is_driver_shaped(fd, items)
+                && allowed_drivers.is_none_or(|allowed| allowed.contains(&fd.name))
+        })
         .map(|fd| fd.name.clone())
         .collect();
     if drivers.is_empty() {

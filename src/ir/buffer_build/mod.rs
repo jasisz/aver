@@ -44,6 +44,16 @@ use crate::ast::{
 /// Compiler-only carrier name. Source type syntax rejects a leading `_`, so a
 /// user `record Buffer` cannot collide with a fabricated builder signature.
 pub(crate) const INTERNAL_BUFFER_TYPE: &str = "__Buffer";
+/// Source-inexpressible carrier threaded by the byte-retarget half of
+/// `list_build`. Keeping the name outside the surface type grammar prevents a
+/// user `record ByteBuilder` from colliding with compiler-owned storage.
+pub(crate) const INTERNAL_BYTE_BUILDER_TYPE: &str = "__ByteBuilder";
+/// Validated packed octets returned by `__byt_finalize`. On wasm-gc this is
+/// the nominal packed `Bytes` array itself; Rust maps it to `AverIntList` and
+/// the VM keeps its ordinary list value. The synthesized `Bytes` constructor
+/// is therefore still the identity boundary visible in IR without forcing a
+/// second validation traversal.
+pub(crate) const INTERNAL_BYTE_PAYLOAD_TYPE: &str = "__BytePayload";
 
 /// Which builder idiom the sink follows — the cross product of two
 /// independent axes: what drives the loop (a `Bool` condition or the
@@ -1346,5 +1356,5 @@ mod tests;
 
 pub use list_build::{
     ByteSinkDecline, ListBuildDecline, ListBuildKind, ListBuildPassReport, ListBuildShape,
-    has_list_build_shape, run_list_build_pass,
+    has_list_build_shape, run_byte_sink_pass, run_list_build_pass,
 };

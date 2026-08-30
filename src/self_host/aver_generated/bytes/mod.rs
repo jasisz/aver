@@ -726,7 +726,7 @@ pub fn hexDigitValue__code(__str_code @ _: i64) -> Option<aver_rt::AverInt> {
 pub fn parseHexChars__cursor__collected(
     mut __cur_s @ _: AverStr,
     mut __cur_i @ _: aver_rt::AverInt,
-    mut acc @ _: ByteBuilder,
+    mut acc @ _: aver_rt::ByteBuilder,
 ) -> Result<Bytes, AverStr> {
     loop {
         crate::cancel_checkpoint();

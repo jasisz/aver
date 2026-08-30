@@ -1118,6 +1118,11 @@ fn main() -> Int
         .clone();
     assert_eq!(data["byte_retargets"], 1);
     assert_eq!(data["byte_fns"][0], "collect__collected");
+    assert_eq!(data["targets"], serde_json::json!(["rust", "vm"]));
+    assert_eq!(
+        data["byte_targets"],
+        serde_json::json!(["rust", "vm", "wasm-gc", "wasip2"])
+    );
     assert_eq!(
         data["byte_declined"]["both__collected"],
         "another caller reads the collected list itself"

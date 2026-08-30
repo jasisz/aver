@@ -164,6 +164,33 @@ fn main() -> Unit
 }
 
 #[test]
+fn wasip2_bytes_from_hex_uses_the_packed_sink_in_a_dependency() {
+    let dir = tempdir("byte-sink");
+    let src = r#"module ByteSinkWasip2
+    intent = "exercise packed byte lowering through the standard dependency"
+    depends [Bytes]
+    effects [Console]
+
+fn main() -> Unit
+    ! [Console.print]
+    match Bytes.fromHex("000aff")
+        Result.Ok(bytes) -> Console.print(Bytes.toHex(bytes))
+        Result.Err(message) -> Console.print(message)
+"#;
+    let fixture = write_fixture(&dir, "byte_sink.av", src);
+    let out = run_wasip2(&dir, &fixture);
+    assert!(
+        out.status.success(),
+        "byte_sink.av failed (exit {:?})\nstdout:\n{}\nstderr:\n{}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "000aff\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn wasip2_trim_matches_rust_unicode_whitespace() {
     let dir = tempdir("trim");
     let sample = format!("{TRIM_WHITE_SPACE}x{TRIM_WHITE_SPACE}");

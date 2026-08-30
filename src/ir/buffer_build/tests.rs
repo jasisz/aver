@@ -1532,6 +1532,13 @@ fn list_build_with_copy(src: &str) -> (Vec<crate::ast::TopLevel>, ListBuildPassR
     (items, report)
 }
 
+fn byte_sink_with_copy(src: &str) -> (Vec<crate::ast::TopLevel>, ListBuildPassReport) {
+    let source = format!("{FROM_LIST_COPY}\n{src}");
+    let mut items = parse_and_tco(&source);
+    let report = run_byte_sink_pass(&mut items);
+    (items, report)
+}
+
 /// The direct spelling: a bare-list loop applied straight to
 /// `fromList`. The builder becomes the byte builder, the exits answer
 /// what the pair answered, and the `fromList` call is gone.
@@ -1558,15 +1565,76 @@ fn main() -> Result<Bytes, String>
             && body.contains("Bytes(values = __byt_vals)"),
         "the variant pushes bytes and wraps the record itself: {body}"
     );
+    assert_eq!(
+        body.matches("__byt_push").count(),
+        1,
+        "one producer step performs one fused parse/validation push: {body}"
+    );
+    assert_eq!(
+        body.matches("__byt_finalize").count(),
+        1,
+        "the exit finalizes once instead of starting a second validation walk: {body}"
+    );
     assert!(
         !body.contains("__lst_"),
         "no list builder is left in the variant: {body}"
     );
+    let expected = crate::types::Type::Result(
+        Box::new(crate::types::Type::named("Bytes")),
+        Box::new(crate::types::Type::Str),
+    );
+    let variant = crate::ir::chars_fusion::fn_defs(&items)
+        .find(|fd| fd.name == "collect__collected")
+        .expect("retargeted variant exists");
+    let Stmt::Expr(answer) = variant.body.stmts().last().expect("variant has an answer") else {
+        panic!("retargeted variant must end in an expression")
+    };
+    crate::codegen::expr_walk::walk(answer, &mut |node| {
+        if matches!(&node.node, Expr::Match { .. } | Expr::TailCall(_)) {
+            assert_eq!(
+                node.ty(),
+                Some(&expected),
+                "every surviving control-flow node must carry the retargeted result stamp: {body}"
+            );
+        }
+    });
     let main = body_source(&items, "main");
     assert!(
         main.contains("collect__collected(5, __byt_new(0))") && !main.contains("fromList"),
         "the caller starts the byte builder and the second walk is gone: {main}"
     );
+}
+
+/// The byte-only gate must not commit generic list candidates discovered by
+/// its disposable probe. This is the wasm-gc/wasip2 safety boundary.
+#[test]
+fn byte_only_mode_commits_no_generic_list_builder() {
+    let (items, report) = byte_sink_with_copy(
+        r#"
+fn bytesLoop(n: Int, acc: List<Int>) -> List<Int>
+    match n <= 0
+        true -> List.reverse(acc)
+        false -> bytesLoop(n - 1, List.prepend(n, acc))
+
+fn genericLoop(n: Int, acc: List<Int>) -> List<Int>
+    match n <= 0
+        true -> List.reverse(acc)
+        false -> genericLoop(n - 1, List.prepend(n, acc))
+
+fn byteAnswer() -> Result<Bytes, String>
+    fromList(bytesLoop(5, []))
+
+fn genericAnswer() -> List<Int>
+    genericLoop(5, [])
+"#,
+    );
+    assert_eq!(report.byte_retargets, 1, "{report:?}");
+    assert!(body_source(&items, "bytesLoop__collected").contains("__byt_push"));
+    assert!(
+        crate::ir::chars_fusion::fn_defs(&items).all(|fd| fd.name != "genericLoop__collected"),
+        "generic collectors must remain in source form under the byte-only gate"
+    );
+    assert!(!body_source(&items, "genericAnswer").contains("__lst_"));
 }
 
 /// The binding spelling — the standard library's own `fromHex` shape:
@@ -1740,6 +1808,44 @@ fn main() -> Result<Bytes, String>
         Some(ByteSinkDecline::ConsumerShape.reason()),
         "{report:?}"
     );
+}
+
+/// A standard-shaped first definition cannot prove a later duplicate safe:
+/// source resolution chooses the later function today. The whole validation
+/// family must be unique before its semantics may be baked into `__byt_*`.
+#[test]
+fn a_duplicate_from_list_family_definition_declines_the_byte_retarget() {
+    let shadows = [
+        r#"
+fn fromList(xs: List<Int>) -> Result<Bytes, String>
+    Result.Err("later definition wins")
+"#,
+        r#"
+fn allInRange(xs: List<Int>) -> Bool
+    false
+"#,
+    ];
+    for shadow in shadows {
+        let source = format!(
+            r#"
+{shadow}
+fn collect(n: Int, acc: List<Int>) -> List<Int>
+    match n <= 0
+        true -> List.reverse(acc)
+        false -> collect(n - 1, List.prepend(n, acc))
+
+fn main() -> Result<Bytes, String>
+    fromList(collect(5, []))
+"#
+        );
+        let (_, report) = list_build_with_copy(&source);
+        assert_eq!(report.byte_retargets, 0, "{shadow}\n{report:?}");
+        assert_eq!(
+            report.byte_declined.get("collect__collected").copied(),
+            Some(ByteSinkDecline::ConsumerShape.reason()),
+            "{shadow}\n{report:?}"
+        );
+    }
 }
 
 /// The consumer binds `fromList` itself, so the call underneath reads
