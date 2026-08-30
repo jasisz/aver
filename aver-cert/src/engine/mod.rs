@@ -38,14 +38,16 @@ pub use crate::wall;
 #[cfg(feature = "engine")]
 pub use crate::wall::*;
 
+/// Artifact target identifier recorded in the manifest.
+pub const ARTIFACT_TARGET: &str = crate::format::TARGET_WASM_GC;
 /// Emitted-fragment profile and runtime ABI identifiers recorded in the
-/// manifest. Stable strings the checker echoes; bumped when the certified
+/// manifest. Stable strings the checker verifies; bumped when the certified
 /// fragment or the runtime import surface changes.
-pub const PROFILE_ID: &str = "AverUserProfile/v1";
-pub const RUNTIME_ABI: &str = "aver-wasm-gc/0";
+pub const PROFILE_ID: &str = crate::format::PROFILE_ID;
+pub const RUNTIME_ABI: &str = crate::format::RUNTIME_ABI_WASM_GC;
 /// Conditional simulation under the runtime contracts named by the claim.
 pub const CERT_LEVEL: &str = "L1";
-pub const CERT_SCHEMA_VERSION: u32 = 4;
+pub const CERT_SCHEMA_VERSION: u32 = 5;
 pub const BOX_CONTRACT: &str = "__rt_aint_from_i64 (box i64 -> carrier)";
 pub const INT_ADD_CONTRACT: &str =
     "Int.add (carrier add = exact integer addition on represented values)";

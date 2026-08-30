@@ -98,11 +98,22 @@ def CAPABILITY_REGISTRY : List (String × String) := [
   ("aver", "record_exit_group")
 ]
 
-/-- What the artifact is: its pinned hash, emitted-fragment profile, runtime
-    ABI, artifact theorem root, the certified and explicitly uncertified export
-    names, the exact effect-import capability surface, byte-derived start
-    status, and the runtime contracts every certificate is conditional on.
-    Pure data, mirrored in `cert-manifest.json`.
+/-- The only artifact target this schema currently admits. Later schemas may
+    dispatch on this field to select a different envelope, but schema 5 is
+    deliberately wasm-gc-only. -/
+def expectedArtifactTarget : String := "wasm-gc"
+
+/-- The only emitted-fragment profile this schema currently admits. -/
+def expectedProfile : String := "AverUserProfile/v1"
+
+/-- The only runtime ABI this schema currently admits. -/
+def expectedRuntimeAbi : String := "aver-wasm-gc/0"
+
+/-- What the artifact is: its pinned hash, explicit artifact target,
+    emitted-fragment profile, runtime ABI, artifact theorem root, the certified
+    and explicitly uncertified export names, the exact effect-import capability
+    surface, byte-derived start status, and the runtime contracts every
+    certificate is conditional on. Pure data, mirrored in `cert-manifest.json`.
 
     `hostRoleTable` is optional exactly like `start`: a module without the Int
     carrier helper has no host-role table at all (`none`), which the acceptance
@@ -120,6 +131,7 @@ def CAPABILITY_REGISTRY : List (String × String) := [
     a wrong declaration fails the pin rather than riding a byte fingerprint. -/
 structure Subject where
   artifactHash : String
+  target       : String
   profile      : String
   abi          : String
   artifactRoot : String

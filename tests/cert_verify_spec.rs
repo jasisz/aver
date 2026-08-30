@@ -346,7 +346,7 @@ fn compile_cert_goals(prefix: &str) -> (ScratchDir, PathBuf, PathBuf) {
 /// build under the OLD (cert-controlled) build path.
 const WEAK_SCHEMA: &str = "import CertPrelude\nimport Module\n\
 namespace AverCert.Schema\nopen CertPrelude\n\
-structure Subject where\n  artifactHash : String\n  profile : String\n  abi : String\n  artifactRoot : String\n  \
+structure Subject where\n  artifactHash : String\n  target : String\n  profile : String\n  abi : String\n  artifactRoot : String\n  \
 exports : List String\n  contracts : List String\n\
 inductive Policy where\n  | simulatesModel\n\
 inductive ReprAll (R : Int -> WVal -> Prop) : List Int -> List WVal -> Prop\n\
@@ -842,6 +842,97 @@ fn cert_tripwire_declines_unsupported_schema_version() {
     assert!(
         out.contains("unsupported certificate schema_version 99"),
         "wrong reason for schema v99 rejection:\n{out}"
+    );
+}
+
+/// Schema 5 makes the artifact target a required transport discriminator.
+/// A missing target is rejected before any Lean process.
+#[test]
+fn cert_tripwire_declines_missing_artifact_target() {
+    let Some(out_dir) = tripwire_baseline("certverify-missing-target") else {
+        return;
+    };
+
+    let dir = temp_dir("neg-missing-target");
+    copy_dir(&out_dir, &dir);
+    let mf = dir.join("cert").join("cert-manifest.json");
+    let mut m: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
+    m.as_object_mut().unwrap().remove("target");
+    std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
+    let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+    assert!(!ok, "missing target must be rejected:\n{out}");
+    assert!(
+        out.contains("missing string field `target`"),
+        "wrong reason for missing target rejection:\n{out}"
+    );
+}
+
+/// The current schema admits only the wasm-gc envelope; a component target is
+/// not reinterpreted as core wasm.
+#[test]
+fn cert_tripwire_declines_unsupported_artifact_target() {
+    let Some(out_dir) = tripwire_baseline("certverify-target") else {
+        return;
+    };
+
+    let dir = temp_dir("neg-target");
+    copy_dir(&out_dir, &dir);
+    let mf = dir.join("cert").join("cert-manifest.json");
+    let mut m: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
+    m["target"] = serde_json::json!("wasip2");
+    std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
+    let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+    assert!(!ok, "unsupported target must be rejected:\n{out}");
+    assert!(
+        out.contains("unsupported certificate target `wasip2`"),
+        "wrong reason for unsupported target rejection:\n{out}"
+    );
+}
+
+/// Schema 5 also fixes the emitted-fragment profile, so a future profile cannot
+/// be accepted under the current wall's target statements.
+#[test]
+fn cert_tripwire_declines_unsupported_artifact_profile() {
+    let Some(out_dir) = tripwire_baseline("certverify-profile") else {
+        return;
+    };
+
+    let dir = temp_dir("neg-profile");
+    copy_dir(&out_dir, &dir);
+    let mf = dir.join("cert").join("cert-manifest.json");
+    let mut m: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
+    m["profile"] = serde_json::json!("AverUserProfile/v2");
+    std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
+    let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+    assert!(!ok, "unsupported profile must be rejected:\n{out}");
+    assert!(
+        out.contains("unsupported certificate profile `AverUserProfile/v2`"),
+        "wrong reason for unsupported profile rejection:\n{out}"
+    );
+}
+
+/// Schema 5 fixes the runtime ABI alongside the target/profile pair.
+#[test]
+fn cert_tripwire_declines_unsupported_artifact_abi() {
+    let Some(out_dir) = tripwire_baseline("certverify-abi") else {
+        return;
+    };
+
+    let dir = temp_dir("neg-abi");
+    copy_dir(&out_dir, &dir);
+    let mf = dir.join("cert").join("cert-manifest.json");
+    let mut m: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
+    m["abi"] = serde_json::json!("aver-wasm-gc/1");
+    std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
+    let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+    assert!(!ok, "unsupported ABI must be rejected:\n{out}");
+    assert!(
+        out.contains("unsupported certificate ABI `aver-wasm-gc/1`"),
+        "wrong reason for unsupported ABI rejection:\n{out}"
     );
 }
 
@@ -5864,7 +5955,7 @@ fn mutual_scc_kernel_guards_are_isolating() {
     lean.push_str("def dummyOb (nm : String) (s : Nat) : Obligation :=\n  { export_ := nm, policy := .simulatesModel, carrier := ");
     lean.push_str(&carrier);
     lean.push_str(", code := fun _ => none,\n    host := fun _ _ _ _ _ _ _ _ => fun _ => none, self := s, Dom := Unit, Cod := Unit,\n    domRepr := fun _ _ _ => True, codRepr := fun _ _ _ => True, model := fun _ => () }\n\n");
-    lean.push_str("def manifestS : Manifest :=\n  { subject := { artifactHash := \"\", profile := \"\", abi := \"\", artifactRoot := \"\", exports := [], declaredUncertified := [], capabilities := [], start := none, hostRoleTable := some { box := none, add := none, mul := none, sub := none, toIndex := none, cmp := none, eq := none }, arithParams := none, stringHostRoles := [], contracts := [] },\n    symFragmentPlans := [], stringEqPlans := [], stringConcatPlans := [], constructPlans := [],\n    exprFragmentPlans := [], recursionPlans := [], mutualPlans := [(\"a\", honestPlan)], compositionPlans := [], verbatimPlans := [], intDispatchPlans := [], fieldProjectionPlans := [], obligations := [] }\n\n");
+    lean.push_str("def manifestS : Manifest :=\n  { subject := { artifactHash := \"\", target := \"\", profile := \"\", abi := \"\", artifactRoot := \"\", exports := [], declaredUncertified := [], capabilities := [], start := none, hostRoleTable := some { box := none, add := none, mul := none, sub := none, toIndex := none, cmp := none, eq := none }, arithParams := none, stringHostRoles := [], contracts := [] },\n    symFragmentPlans := [], stringEqPlans := [], stringConcatPlans := [], constructPlans := [],\n    exprFragmentPlans := [], recursionPlans := [], mutualPlans := [(\"a\", honestPlan)], compositionPlans := [], verbatimPlans := [], intDispatchPlans := [], fieldProjectionPlans := [], obligations := [] }\n\n");
     lean.push_str(
         "def claimsS : List MutualRecursionClaim :=\n  [ { exportNameBytes := [], exportName := \"a\", carrier := ",
     );

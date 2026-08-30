@@ -357,15 +357,25 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     );
     assert_eq!(
         manifest["schema_version"].as_u64(),
-        Some(4),
-        "schema 4 added the required cmp and eq keys to the subject host-role table"
+        Some(5),
+        "schema 5 added the required artifact target and fixed target/profile/ABI pins"
+    );
+    assert_eq!(
+        manifest["target"].as_str(),
+        Some(aver::codegen::cert::ARTIFACT_TARGET),
+        "the artifact target is explicit before target-specific envelope validation"
     );
     assert_eq!(
         manifest["profile"].as_str(),
-        Some("AverUserProfile/v1"),
+        Some(aver::codegen::cert::PROFILE_ID),
         "the first public byte profile is pinned exactly"
     );
-    assert_eq!(aver::codegen::cert::CERT_SCHEMA_VERSION, 4);
+    assert_eq!(
+        manifest["abi"].as_str(),
+        Some(aver::codegen::cert::RUNTIME_ABI),
+        "the wasm-gc runtime ABI is pinned exactly"
+    );
+    assert_eq!(aver::codegen::cert::CERT_SCHEMA_VERSION, 5);
     let declared_uncertified = manifest["declaredUncertified"].as_array().unwrap();
     assert_eq!(
         declared_uncertified.len(),
@@ -888,8 +898,9 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     let manifest_lean =
         std::fs::read_to_string(out_dir.join("cert/Manifest.lean")).expect("Manifest.lean");
     assert!(
-        manifest_lean.contains("profile := \"AverUserProfile/v1\""),
-        "Lean manifest must pin the same public byte profile as JSON"
+        manifest_lean.contains("target := \"wasm-gc\"")
+            && manifest_lean.contains("profile := \"AverUserProfile/v1\""),
+        "Lean manifest must pin the same public target/profile identity as JSON"
     );
     for name in ["sumFrom", "countDown", "isEven", "isOdd"] {
         let obligation = lean_obligation_def(&manifest_lean, name);

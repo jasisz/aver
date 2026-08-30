@@ -562,6 +562,7 @@ fn render_manifest_lean(
         "def manifest : Schema.Manifest :=\n  \
          {{ subject :=\n      \
          {{ artifactHash := \"{sha}\",\n        \
+         target := \"{ARTIFACT_TARGET}\",\n        \
          profile := \"{PROFILE_ID}\",\n        \
          abi := \"{RUNTIME_ABI}\",\n        \
          artifactRoot := \"{ARTIFACT_CERTIFICATE_ROOT}\",\n        \
@@ -637,6 +638,7 @@ fn render_manifest(
     ));
     s.push_str(&format!("  \"wasm\": \"{wasm_name}.wasm\",\n"));
     s.push_str(&format!("  \"wasm_sha256\": \"{sha}\",\n"));
+    s.push_str(&format!("  \"target\": \"{ARTIFACT_TARGET}\",\n"));
     s.push_str(&format!("  \"level\": \"{artifact_level}\",\n"));
     s.push_str(&format!("  \"profile\": \"{PROFILE_ID}\",\n"));
     s.push_str(&format!("  \"abi\": \"{RUNTIME_ABI}\",\n"));

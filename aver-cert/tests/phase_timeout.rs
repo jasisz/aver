@@ -9,7 +9,10 @@
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
+
+static NEXT_FIXTURE_ID: AtomicU64 = AtomicU64::new(0);
 
 struct Fixture {
     root: PathBuf,
@@ -32,8 +35,11 @@ fn minimal_fixture() -> Fixture {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
         .unwrap_or(0);
-    let root =
-        std::env::temp_dir().join(format!("aver-cert-timeout-{}-{nanos}", std::process::id()));
+    let serial = NEXT_FIXTURE_ID.fetch_add(1, Ordering::Relaxed);
+    let root = std::env::temp_dir().join(format!(
+        "aver-cert-timeout-{}-{nanos}-{serial}",
+        std::process::id()
+    ));
     std::fs::create_dir(&root).expect("fixture root");
 
     let artifact = root.join("app.wasm");
@@ -49,8 +55,9 @@ fn minimal_fixture() -> Fixture {
   "wasm_sha256": "{hash}",
   "format": {{ "version": {version}, "wall_id": "{wall}" }},
   "artifact_certificate_root": "{root_name}",
-  "profile": "wasm-gc",
-  "abi": "wasm-gc",
+  "target": "{target}",
+  "profile": "{profile}",
+  "abi": "{abi}",
   "certified": [],
   "runtime_contracts": [],
   "declaredUncertified": [],
@@ -64,6 +71,9 @@ fn minimal_fixture() -> Fixture {
         version = aver_cert::format::FORMAT_VERSION,
         wall = aver_cert::format::CURRENT_WALL_ID,
         root_name = aver_cert::format::ARTIFACT_CERTIFICATE_ROOT,
+        target = aver_cert::format::TARGET_WASM_GC,
+        profile = aver_cert::format::PROFILE_ID,
+        abi = aver_cert::format::RUNTIME_ABI_WASM_GC,
     );
     std::fs::write(cert_dir.join("cert-manifest.json"), manifest).expect("fixture manifest");
 

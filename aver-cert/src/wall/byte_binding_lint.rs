@@ -1548,25 +1548,6 @@ pub struct Allowance {
 pub const ALLOWED: &[Allowance] = &[
     Allowance {
         structure: "Subject",
-        field: "profile",
-        category: Category::KnownGap,
-        reason: "The witness pins the JSON string to `subject.profile` by `rfl`, but no \
-                 acceptance conjunct compares it against any fixed identifier: any string \
-                 passing the candidate gate is accepted. The `PROFILE_ID` constant lives \
-                 only on the producer side (engine/mod.rs).",
-        doc_anchor: "the identifier constant exists only on the producer side (`PROFILE_ID` in `engine/mod.rs`)",
-    },
-    Allowance {
-        structure: "Subject",
-        field: "abi",
-        category: Category::KnownGap,
-        reason: "Same status as `profile`: pinned to `subject.abi` by `rfl`, not validated \
-                 against any fixed identifier. The `RUNTIME_ABI` constant lives only on the \
-                 producer side (engine/mod.rs).",
-        doc_anchor: "the constant exists only on the producer side (`RUNTIME_ABI` in `engine/mod.rs`)",
-    },
-    Allowance {
-        structure: "Subject",
         field: "exports",
         category: Category::PinnedOutsideTheWall,
         reason: "The wall never reads this field — its only occurrence in the whole wall is \

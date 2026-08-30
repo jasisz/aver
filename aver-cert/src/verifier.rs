@@ -90,6 +90,7 @@ struct CertifiedExport {
 struct TrustedReport {
     exports: Vec<CertifiedExport>,
     contracts: Vec<String>,
+    target: String,
     profile: String,
     abi: String,
     artifact_hash: String,
@@ -123,6 +124,12 @@ type HostRoleTable = (
     Option<u32>,
 );
 
+struct ManifestIdentity {
+    target: String,
+    profile: String,
+    abi: String,
+}
+
 struct Candidates {
     certified: Vec<CertifiedCandidate>,
     contracts: Vec<String>,
@@ -131,6 +138,7 @@ struct Candidates {
     start: Option<u32>,
     host_role_table: Option<HostRoleTable>,
     string_host_roles: Vec<(u32, StringHostRole)>,
+    target: String,
     profile: String,
     abi: String,
 }
@@ -252,15 +260,6 @@ fn trusted_check(
 ) -> Result<TrustedReport, String> {
     let bytes = std::fs::read(artifact)
         .map_err(|error| format!("cannot read artifact {}: {error}", artifact.display()))?;
-    // Artifact acceptance reasons about a valid WebAssembly module. The Lean
-    // wall decodes every trust-bearing section and instruction, but it is not
-    // yet a complete Wasm validation algorithm (stack/control typing included).
-    // Keep this one standard validator gate; none of the producer classifier or
-    // obligation reconstruction is linked into the verifier.
-    wasmparser::Validator::new()
-        .validate_all(&bytes)
-        .map_err(|error| format!("artifact is not valid WebAssembly: {error}"))?;
-    let actual_hash = sha256_hex(&bytes);
     let manifest = read_manifest(cert_dir)?;
 
     let schema_version = manifest_u64(&manifest, "schema_version")?;
@@ -270,6 +269,17 @@ fn trusted_check(
             format::CERT_SCHEMA_VERSION
         ));
     }
+
+    let identity = read_manifest_identity(&manifest)?;
+    require_supported_identity(&identity)?;
+
+    // The target field is read before validation so future schemas can select
+    // a component-envelope validator without trying to reinterpret component
+    // bytes as a core module. Schema 5 admits only wasm-gc core modules.
+    wasmparser::Validator::new()
+        .validate_all(&bytes)
+        .map_err(|error| format!("artifact is not valid WebAssembly: {error}"))?;
+    let actual_hash = sha256_hex(&bytes);
     let pinned_hash = manifest_str(&manifest, "wasm_sha256")?;
     if pinned_hash != actual_hash {
         return Err(format!(
@@ -307,7 +317,7 @@ fn trusted_check(
         ));
     }
 
-    let candidates = read_candidates(&manifest)?;
+    let candidates = read_candidates(&manifest, identity)?;
     let lean = LeanRunner::new(selected_wall.toolchain)?;
     let build = assemble_build(cert_dir, &bytes, selected_wall, lean.memory_limit_mb())?;
     let cache_pins = [("wasm_sha256", pinned_hash), ("wall_id", wall_id)];
@@ -391,6 +401,7 @@ fn trusted_check(
     Ok(TrustedReport {
         exports,
         contracts: candidates.contracts,
+        target: candidates.target,
         profile: candidates.profile,
         abi: candidates.abi,
         artifact_hash: actual_hash,
@@ -529,6 +540,7 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
          example : AverCert.manifest.subject.start = {start} := rfl\n\
          example : AverCert.manifest.subject.hostRoleTable = {roles} := rfl\n\
          example : AverCert.manifest.subject.stringHostRoles = {string_roles} := rfl\n\
+         example : AverCert.manifest.subject.target = \"{}\" := rfl\n\
          example : AverCert.manifest.subject.profile = \"{}\" := rfl\n\
          example : AverCert.manifest.subject.abi = \"{}\" := rfl\n\n\
          theorem checked : AverCert.AcceptedArtifact.accepted AverCert.Artifact.data :=\n\
@@ -542,6 +554,7 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
              unless allowed.contains usedAxiom do\n      \
                throwError s!\"non-whitelisted axiom: {{usedAxiom}}\"\n",
         format::ARTIFACT_CERTIFICATE_ROOT,
+        candidates.target,
         candidates.profile,
         candidates.abi,
     )
@@ -569,9 +582,44 @@ fn manifest_u64(manifest: &Value, key: &str) -> Result<u64, String> {
         .ok_or_else(|| format!("cert-manifest.json is missing integer field `{key}`"))
 }
 
-fn read_candidates(manifest: &Value) -> Result<Candidates, String> {
-    let profile = manifest_str(manifest, "profile")?.to_string();
-    let abi = manifest_str(manifest, "abi")?.to_string();
+fn read_manifest_identity(manifest: &Value) -> Result<ManifestIdentity, String> {
+    let identity = ManifestIdentity {
+        target: manifest_str(manifest, "target")?.to_string(),
+        profile: manifest_str(manifest, "profile")?.to_string(),
+        abi: manifest_str(manifest, "abi")?.to_string(),
+    };
+    gate_candidate("target", &identity.target)?;
+    gate_candidate("profile", &identity.profile)?;
+    gate_candidate("abi", &identity.abi)?;
+    Ok(identity)
+}
+
+fn require_supported_identity(identity: &ManifestIdentity) -> Result<(), String> {
+    if identity.target != format::TARGET_WASM_GC {
+        return Err(format!(
+            "unsupported certificate target `{}`; this checker accepts {}",
+            identity.target,
+            format::TARGET_WASM_GC
+        ));
+    }
+    if identity.profile != format::PROFILE_ID {
+        return Err(format!(
+            "unsupported certificate profile `{}`; this checker accepts {}",
+            identity.profile,
+            format::PROFILE_ID
+        ));
+    }
+    if identity.abi != format::RUNTIME_ABI_WASM_GC {
+        return Err(format!(
+            "unsupported certificate ABI `{}`; this checker accepts {}",
+            identity.abi,
+            format::RUNTIME_ABI_WASM_GC
+        ));
+    }
+    Ok(())
+}
+
+fn read_candidates(manifest: &Value, identity: ManifestIdentity) -> Result<Candidates, String> {
     let certified_json = manifest
         .get("certified")
         .and_then(Value::as_array)
@@ -704,8 +752,9 @@ fn read_candidates(manifest: &Value) -> Result<Candidates, String> {
         start,
         host_role_table,
         string_host_roles,
-        profile,
-        abi,
+        target: identity.target,
+        profile: identity.profile,
+        abi: identity.abi,
     };
     gate_candidates(&candidates)?;
     Ok(candidates)
@@ -821,6 +870,7 @@ fn gate_candidates(candidates: &Candidates) -> Result<(), String> {
         gate_candidate("capability module", module)?;
         gate_candidate("capability name", name)?;
     }
+    gate_candidate("target", &candidates.target)?;
     gate_candidate("profile", &candidates.profile)?;
     gate_candidate("abi", &candidates.abi)
 }
@@ -1549,7 +1599,10 @@ pub fn explain(artifact: &Path, cert_dir: &Path) -> Result<Explanation, String> 
     println!("{}", "Artifact certificate".bold());
     println!("  artifact: {}", artifact.display());
     println!("  pinned sha256: {}", report.artifact_hash);
-    println!("  profile: {}    abi: {}", report.profile, report.abi);
+    println!(
+        "  target: {}    profile: {}    abi: {}",
+        report.target, report.profile, report.abi
+    );
     if report.exports.is_empty() {
         println!("\n{}", "NO CERTIFIED EXPORTS".yellow().bold());
         return Ok(Explanation::NoExports);
