@@ -6359,6 +6359,25 @@ fn certify_flag_rejection(certify: bool) -> Option<&'static str> {
     }
 }
 
+/// Target-level gate for the still-open wasip2 certificate-envelope work.
+///
+/// Once the certificate engine exists, `--target wasip2 --certify` must not fall
+/// through and silently emit only `<name>.component.wasm`. Until #1146 lands the
+/// declared component envelope, fail closed with a named reason at target
+/// dispatch. The feature-level gate above still owns certify-less binaries.
+fn wasip2_certify_rejection(certify: bool) -> Option<&'static str> {
+    if certify {
+        Some(
+            "--target wasip2 --certify is not available yet: issue #1146 needs a \
+             declared component envelope whose prefix/core/suffix bytes are checked \
+             by equality against the delivered component. Use --target wasm-gc \
+             --certify for certificate output today.",
+        )
+    } else {
+        None
+    }
+}
+
 pub(super) fn capability_target_rejection(
     items: &[TopLevel],
     modules: &[ModuleInfo],
@@ -6481,6 +6500,10 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
     // stays untouched. Phase 1 of 0.18 "Span" — see `docs/wasip2.md`
     // for the contract.
     if matches!(target, super::cli::CompileTarget::Wasip2) {
+        if let Some(error) = wasip2_certify_rejection(certify) {
+            eprintln!("{}", error.red());
+            process::exit(1);
+        }
         cmd_compile_wasip2(
             file,
             output_dir,
@@ -11977,6 +12000,16 @@ mod tests {
             assert!(error.contains("certify"));
         }
         assert!(super::certify_flag_rejection(false).is_none());
+    }
+
+    #[test]
+    fn wasip2_certify_is_rejected_until_component_envelope_lands() {
+        let error = super::wasip2_certify_rejection(true)
+            .expect("wasip2 --certify must not be silently ignored");
+        assert!(error.contains("--target wasip2 --certify"));
+        assert!(error.contains("#1146"));
+        assert!(error.contains("declared component envelope"));
+        assert!(super::wasip2_certify_rejection(false).is_none());
     }
 
     #[test]
