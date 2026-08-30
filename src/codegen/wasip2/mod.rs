@@ -57,4 +57,8 @@ pub use plan::{
 #[cfg(feature = "wasip2")]
 pub use wit::{emit_world_wit, emit_world_wit_with_capabilities};
 #[cfg(feature = "wasip2")]
-pub use wrap::{Wasip2World, compile_to_component, compile_to_component_with_capabilities};
+pub use wrap::{
+    Wasip2ComponentArtifact, Wasip2ComponentEnvelope, Wasip2World, compile_to_component,
+    compile_to_component_artifact, compile_to_component_artifact_with_capabilities,
+    compile_to_component_with_capabilities,
+};

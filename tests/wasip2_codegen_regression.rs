@@ -170,6 +170,91 @@ fn compile_core_flattened(
 }
 
 #[test]
+fn component_artifact_declares_prefix_core_suffix_envelope() {
+    let source = r#"module Probe
+    intent = "Expose a small wasip2 component for envelope preparation."
+    exposes [main]
+    effects []
+
+fn main() -> Int
+    42
+"#;
+    let items = parse_pipeline(source).unwrap_or_else(|e| panic!("{e}\n--- source ---\n{source}"));
+    let core_bytes = compile_core_flattened(&items, &Default::default())
+        .unwrap_or_else(|e| panic!("wasip2 core compile: {e}\n--- source ---\n{source}"));
+    let artifact = aver::codegen::wasip2::compile_to_component_artifact(
+        &core_bytes,
+        aver::codegen::wasip2::Wasip2World::CliCommand,
+    )
+    .unwrap_or_else(|e| panic!("wasip2 component artifact wrap: {e}\n--- source ---\n{source}"));
+
+    assert_eq!(
+        artifact.envelope.component_bytes(),
+        artifact.component_bytes
+    );
+    assert!(
+        artifact.envelope.embedded_core_module.starts_with(b"\0asm"),
+        "the declared core payload should be a complete core wasm module"
+    );
+    assert_ne!(
+        artifact.envelope.embedded_core_module, core_bytes,
+        "the envelope must describe the core module bytes delivered inside the component, not assume the pre-encoder core is preserved"
+    );
+    wasmparser::Validator::new()
+        .validate_all(&artifact.envelope.embedded_core_module)
+        .expect("declared embedded core module validates as a core module");
+    wasmparser::Validator::new_with_features(wasmparser::WasmFeatures::default())
+        .validate_all(&artifact.component_bytes)
+        .expect("declared component validates as a component");
+}
+
+#[test]
+fn component_artifact_selects_aver_user_core_among_adapter_modules() {
+    let source_path = examples_dir().join("core/hello.av");
+    let source = fs::read_to_string(&source_path).expect("read hello example");
+    let (items, type_aliases) =
+        parse_pipeline_with_module_root(&source, Some(env!("CARGO_MANIFEST_DIR")))
+            .unwrap_or_else(|e| panic!("{e}\n--- source ---\n{source}"));
+    let core_bytes = compile_core_flattened(&items, &type_aliases)
+        .unwrap_or_else(|e| panic!("wasip2 core compile: {e}\n--- source ---\n{source}"));
+    let artifact = aver::codegen::wasip2::compile_to_component_artifact(
+        &core_bytes,
+        aver::codegen::wasip2::Wasip2World::CliCommand,
+    )
+    .unwrap_or_else(|e| panic!("wasip2 component artifact wrap: {e}\n--- source ---\n{source}"));
+
+    assert_eq!(
+        artifact.envelope.component_bytes(),
+        artifact.component_bytes
+    );
+    assert!(
+        core_module_exports(&artifact.envelope.embedded_core_module, "__caller_fn_count"),
+        "declared embedded module should be the Aver user core, not a wit-component shim"
+    );
+    assert!(
+        core_module_exports(&artifact.envelope.embedded_core_module, "main"),
+        "declared embedded user core should retain Aver exports"
+    );
+    wasmparser::Validator::new()
+        .validate_all(&artifact.envelope.embedded_core_module)
+        .expect("declared embedded core module validates as a core module");
+}
+
+fn core_module_exports(module: &[u8], expected: &str) -> bool {
+    for payload in wasmparser::Parser::new(0).parse_all(module) {
+        let Ok(wasmparser::Payload::ExportSection(reader)) = payload else {
+            continue;
+        };
+        for export in reader.into_iter().flatten() {
+            if export.name == expected && export.kind == wasmparser::ExternalKind::Func {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+#[test]
 fn recursive_string_index_compiles_and_validates_as_component() {
     let source = r#"module Probe
     intent = "Carry a hidden Unicode index through a recursive wasip2 worker."
@@ -477,16 +562,17 @@ fn wasip2_codegen_emits_valid_component_for_every_single_file_example() {
                 continue;
             }
         };
-        let component_bytes = match aver::codegen::wasip2::compile_to_component(
+        let artifact = match aver::codegen::wasip2::compile_to_component_artifact(
             &core_bytes,
             aver::codegen::wasip2::Wasip2World::CliCommand,
         ) {
-            Ok((bytes, _wit)) => bytes,
+            Ok(artifact) => artifact,
             Err(e) => {
                 failures.push(format!("{}: compile_to_component: {}", path.display(), e));
                 continue;
             }
         };
+        let component_bytes = artifact.component_bytes;
         // Component validation needs the component-model feature
         // explicitly enabled — `WasmFeatures::default()` enables it,
         // but spell it out so a future wasmparser default flip
