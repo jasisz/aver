@@ -79,8 +79,9 @@ The steps are:
 
 1. Read the actual module, run the standard WebAssembly validator, compute its
    SHA-256, and parse `cert-manifest.json`.
-2. Require package format `1`, statement schema `2`, the expected artifact
-   root, the actual hash, and a `wall_id` embedded in this verifier.
+2. Require package format `1`, statement schema `5`, the expected artifact
+   root, target/profile/ABI identity, the actual hash, and a `wall_id` embedded
+   in this verifier.
 3. Assemble a fresh project from the checker-owned wall and the allowed
    artifact-specific data. Checker-owned module names, build files, toolchain
    files, witnesses, and caches supplied by the package cannot replace the
@@ -134,6 +135,13 @@ No other producer analysis is needed for a positive verdict. In particular,
 the verifier does not re-run the producer's obligation classifier,
 disassembler, candidate derivation, or reconstruction of
 `AverCert.Artifact.data`.
+
+For the planned `wasip2` target (#1146), the same rule applies to the component
+wrapper: the producer may declare a `prefix ++ embedded_core_module ++ suffix`
+split while constructing the component, but the trusted verifier path must not
+rediscover the user core by walking component bytes. It should consume the
+declaration, confirm byte equality against the caller-supplied component, and
+then run the core-module checks on the declared embedded module.
 
 ## Lean acceptance wall
 

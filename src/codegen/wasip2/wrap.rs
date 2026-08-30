@@ -53,6 +53,119 @@ impl Wasip2World {
     }
 }
 
+/// Declared component envelope used by the wasip2 certificate work.
+///
+/// The producer is allowed to discover this split while constructing the
+/// component. The trusted verifier path must not rediscover it by walking the
+/// component bytes; it will receive the declaration and confirm only the byte
+/// equality `component == prefix ++ embedded_core_module ++ suffix` before
+/// applying the existing core-module certificate checks to `embedded_core_module`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Wasip2ComponentEnvelope {
+    /// Component bytes before the embedded core module section payload.
+    pub prefix: Vec<u8>,
+    /// Exact core wasm module payload embedded by `wit-component`.
+    /// This is the post-encoder module bytes found in the component's core
+    /// module section; it is not assumed to be byte-identical to the input
+    /// `core_wasm` passed to the wrapper.
+    pub embedded_core_module: Vec<u8>,
+    /// Component bytes after the embedded core module section payload.
+    pub suffix: Vec<u8>,
+}
+
+impl Wasip2ComponentEnvelope {
+    /// Declare the single embedded core module section of a produced component.
+    ///
+    /// This walks the component only on the producer side, immediately after
+    /// `wit-component` returns bytes. Certificate verification must consume the
+    /// resulting declaration and check byte equality instead of repeating this
+    /// discovery step on the trusted path.
+    fn from_component(component: &[u8]) -> Result<Self, Wasip2Error> {
+        use wasmparser::{Parser, Payload};
+
+        let mut ranges = Vec::new();
+        for payload in Parser::new(0).parse_all(component) {
+            match payload.map_err(|error| {
+                Wasip2Error::Envelope(format!("cannot parse produced component: {error}"))
+            })? {
+                Payload::ModuleSection {
+                    unchecked_range, ..
+                } => ranges.push(unchecked_range),
+                _ => {}
+            }
+        }
+        let range = match ranges.as_slice() {
+            [range] => range.clone(),
+            [] => {
+                return Err(Wasip2Error::Envelope(
+                    "component contains no embedded core module section".to_string(),
+                ));
+            }
+            _ => {
+                let marked = ranges
+                    .iter()
+                    .filter_map(|range| {
+                        module_range(component, range).ok().and_then(|module| {
+                            module_has_aver_user_core_marker(module).then(|| range.clone())
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                match marked.as_slice() {
+                    [range] => range.clone(),
+                    [] => {
+                        return Err(Wasip2Error::Envelope(format!(
+                            "component contains {} embedded core module sections, but none carries the Aver user-core marker exports",
+                            ranges.len()
+                        )));
+                    }
+                    _ => {
+                        return Err(Wasip2Error::Envelope(format!(
+                            "component contains {} embedded core module sections with Aver user-core marker exports; exactly one user core is supported",
+                            marked.len()
+                        )));
+                    }
+                }
+            }
+        };
+        if range.start >= range.end || range.end > component.len() {
+            return Err(Wasip2Error::Envelope(format!(
+                "component parser returned out-of-bounds core module range {}..{} for {} bytes",
+                range.start,
+                range.end,
+                component.len()
+            )));
+        }
+        Ok(Self {
+            prefix: component[..range.start].to_vec(),
+            embedded_core_module: component[range.clone()].to_vec(),
+            suffix: component[range.end..].to_vec(),
+        })
+    }
+
+    /// Reconstruct the full component from the declared envelope.
+    pub fn component_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(
+            self.prefix.len() + self.embedded_core_module.len() + self.suffix.len(),
+        );
+        bytes.extend_from_slice(&self.prefix);
+        bytes.extend_from_slice(&self.embedded_core_module);
+        bytes.extend_from_slice(&self.suffix);
+        bytes
+    }
+}
+
+/// Component output plus the explicit envelope declaration needed by the
+/// wasip2 certificate path.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Wasip2ComponentArtifact {
+    /// Delivered `.component.wasm` bytes.
+    pub component_bytes: Vec<u8>,
+    /// Sibling `.wit` source emitted for human/tooling inspection.
+    pub wit_source: String,
+    /// Declared `prefix/core/suffix` split of `component_bytes`.
+    pub envelope: Wasip2ComponentEnvelope,
+}
+
 /// Wrap a core wasm-gc module as a Component.
 ///
 /// `core_wasm` is the output of the wasm-gc backend re-targeted at
@@ -75,11 +188,46 @@ pub fn compile_to_component(
     compile_to_component_with_capabilities(core_wasm, world, &CapabilityWitPlan::default())
 }
 
+/// Wrap a core wasm-gc module as a Component and retain the declared component
+/// envelope that future wasip2 certificate emission will serialize.
+pub fn compile_to_component_artifact(
+    core_wasm: &[u8],
+    world: Wasip2World,
+) -> Result<Wasip2ComponentArtifact, Wasip2Error> {
+    compile_to_component_artifact_with_capabilities(core_wasm, world, &CapabilityWitPlan::default())
+}
+
 /// Wrap a core module whose custom canonical imports were generated
 /// from `capabilities`. The same plan emits the sibling WIT and the
 /// embedded component metadata; neither surface is reconstructed by
 /// scanning the other.
 pub fn compile_to_component_with_capabilities(
+    core_wasm: &[u8],
+    world: Wasip2World,
+    capabilities: &CapabilityWitPlan,
+) -> Result<(Vec<u8>, String), Wasip2Error> {
+    compile_to_component_bytes_with_capabilities(core_wasm, world, capabilities)
+}
+
+/// Wrap a core module and return the component plus a producer-declared
+/// `prefix/core/suffix` envelope for the embedded core payload.
+pub fn compile_to_component_artifact_with_capabilities(
+    core_wasm: &[u8],
+    world: Wasip2World,
+    capabilities: &CapabilityWitPlan,
+) -> Result<Wasip2ComponentArtifact, Wasip2Error> {
+    let (component_bytes, wit_source) =
+        compile_to_component_bytes_with_capabilities(core_wasm, world, capabilities)?;
+    let envelope = Wasip2ComponentEnvelope::from_component(&component_bytes)?;
+
+    Ok(Wasip2ComponentArtifact {
+        component_bytes,
+        wit_source,
+        envelope,
+    })
+}
+
+fn compile_to_component_bytes_with_capabilities(
     core_wasm: &[u8],
     world: Wasip2World,
     capabilities: &CapabilityWitPlan,
@@ -132,14 +280,51 @@ pub fn compile_to_component_with_capabilities(
         .map_err(|e| Wasip2Error::Wrap(format!("embed component-type metadata: {e}")))?;
 
     // Wrap as a component WITHOUT the preview-1 adapter.
-    let component = ComponentEncoder::default()
+    let component_bytes = ComponentEncoder::default()
         .module(&core)
         .map_err(|e| Wasip2Error::Wrap(format!("ComponentEncoder::module rejected core: {e}")))?
         .validate(true)
         .encode()
         .map_err(|e| Wasip2Error::Wrap(format!("ComponentEncoder::encode failed: {e}")))?;
+    Ok((component_bytes, wit_source))
+}
 
-    Ok((component, wit_source))
+fn module_range<'a>(
+    component: &'a [u8],
+    range: &std::ops::Range<usize>,
+) -> Result<&'a [u8], Wasip2Error> {
+    if range.start >= range.end || range.end > component.len() {
+        return Err(Wasip2Error::Envelope(format!(
+            "component parser returned out-of-bounds core module range {}..{} for {} bytes",
+            range.start,
+            range.end,
+            component.len()
+        )));
+    }
+    Ok(&component[range.clone()])
+}
+
+fn module_has_aver_user_core_marker(module: &[u8]) -> bool {
+    use wasmparser::{ExternalKind, Parser, Payload};
+
+    let mut caller_fn_count = false;
+    let mut caller_fn_name = false;
+    for payload in Parser::new(0).parse_all(module) {
+        let Ok(Payload::ExportSection(reader)) = payload else {
+            continue;
+        };
+        for export in reader.into_iter().flatten() {
+            if export.kind != ExternalKind::Func {
+                continue;
+            }
+            match export.name {
+                "__caller_fn_count" => caller_fn_count = true,
+                "__caller_fn_name" => caller_fn_name = true,
+                _ => {}
+            }
+        }
+    }
+    caller_fn_count && caller_fn_name
 }
 
 /// Scan a core wasm module's imports for any module name starting
@@ -166,4 +351,17 @@ fn core_imports_use_wasi_http(core_wasm: &[u8]) -> bool {
         }
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn component_envelope_rejects_bytes_with_no_embedded_core_payload() {
+        let err = Wasip2ComponentEnvelope::from_component(b"\0asm\x01\0\0\0")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("no embedded core module section"), "{err}");
+    }
 }

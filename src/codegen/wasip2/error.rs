@@ -18,6 +18,12 @@ pub enum Wasip2Error {
     /// validates its own output. Carries the validator's message
     /// when it does.
     Validation(String),
+    /// The produced component could not be represented as a declared
+    /// `prefix ++ embedded_core_module ++ suffix` envelope. This is a
+    /// producer-side preparation check for artifact certificates; the
+    /// future verifier path must confirm the declaration by equality,
+    /// not rediscover it by walking the component.
+    Envelope(String),
     /// A surface feature is not yet wired by the current Phase 1
     /// increment. Distinct from a capability target-manifest rejection,
     /// which describes an operation the selected target cannot bind.
@@ -30,6 +36,9 @@ impl fmt::Display for Wasip2Error {
             Wasip2Error::Wrap(msg) => write!(f, "wasip2: component wrap failed — {msg}"),
             Wasip2Error::Validation(msg) => {
                 write!(f, "wasip2: component validation failed — {msg}")
+            }
+            Wasip2Error::Envelope(msg) => {
+                write!(f, "wasip2: component envelope declaration failed — {msg}")
             }
             Wasip2Error::NotImplemented(msg) => {
                 write!(f, "wasip2: not yet implemented — {msg}")
