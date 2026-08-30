@@ -150,6 +150,23 @@ For claim matching, an absent table binds no roles at all (`Subject.hostRoles` m
 
 The subject fields split along one criterion: what their kernel pin is stated against. Fields pinned against fixed constants or against other manifest data — `wasm_sha256`/`artifactHash` (the pin shape; the hash function itself is a target choice), `target`, `profile`, `abi`, `artifact_certificate_root`, the certified export names, `declaredUncertified`, and `runtime_contracts` — are **target-generic core**: they describe the claim structure and the selected envelope, not WebAssembly sections. Fields pinned against byte decoders over the artifact — `capabilities`, `start`, `hostRoleTable`, and `stringHostRoles` — are the **wasm envelope**: facts about wasm sections (the import section, the start section, the Int-carrier helper exports, the string-helper function bodies) that only exist because the target is WebAssembly. Section 4.3 and the decode-bound rows above are envelope material, as are the byte-level mechanisms of sections 6–7 (the fragment IR, the byte lowering, the section framing and closure scan). A future non-wasm target would keep the core — obligations, policies, plan-claim agreement, faces, axes, the whole-module accounting principles — and replace the envelope with its own decoder-pinned facts, specified as an added envelope section of this document rather than a rewrite. Schema version 5 still transports core and envelope fields as siblings in one flat manifest object, but the `target` field is now the explicit dispatch point: this version admits only `wasm-gc`, and a later component schema must add a target-specific envelope instead of treating component bytes as a core wasm module.
 
+### 4.5 Reserved wasip2 component-envelope surface
+
+The implementation reserves the target/ABI pair `target = "wasip2"`, `abi = "aver-wasip2/0"` and the top-level field name `wasip2ComponentEnvelope` for the future WASI 0.2 Component Model envelope. Schema version 5 **does not accept** that target: a conforming version-5 verifier must still reject `target = "wasip2"` before byte validation and must not treat this reserved surface as trust-bearing evidence.
+
+The reserved envelope declaration is a length-only object:
+
+```json
+"wasip2ComponentEnvelope": {
+  "kind": "prefix-core-suffix/v1",
+  "prefix_len": 123,
+  "embedded_core_module_len": 456,
+  "suffix_len": 789
+}
+```
+
+A later schema may use those declared lengths to split the caller-supplied component as `prefix ++ embedded_core_module ++ suffix`, then check equality against the declared parts and run the existing core-module certificate checks on the declared embedded core. The split must be driven only by the declared lengths; the trusted verifier path must not parse, scan, or navigate the delivered component to rediscover which core module is the Aver user core. The producer-side `wit-component` wrapper may discover the split while constructing the package, but that discovery is not an acceptance rule.
+
 ## 5. Obligations, claims, and policies
 
 The Lean manifest (`Schema.Manifest`) carries the subject, eleven per-family plan association lists keyed by export name (`symFragmentPlans`, `stringEqPlans`, `stringConcatPlans`, `constructPlans`, `exprFragmentPlans`, `recursionPlans`, `mutualPlans`, `compositionPlans`, `verbatimPlans`, `intDispatchPlans`, `fieldProjectionPlans`), and `obligations : List Obligation`.

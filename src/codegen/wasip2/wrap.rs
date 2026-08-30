@@ -74,6 +74,16 @@ pub struct Wasip2ComponentEnvelope {
 }
 
 impl Wasip2ComponentEnvelope {
+    /// Manifest-facing length declaration for this envelope.
+    pub fn declaration(&self) -> aver_cert::format::Wasip2ComponentEnvelopeDeclaration {
+        aver_cert::format::Wasip2ComponentEnvelopeDeclaration::from_lengths(
+            u64::try_from(self.prefix.len()).expect("prefix length fits in u64"),
+            u64::try_from(self.embedded_core_module.len())
+                .expect("embedded core module length fits in u64"),
+            u64::try_from(self.suffix.len()).expect("suffix length fits in u64"),
+        )
+    }
+
     /// Declare the single embedded core module section of a produced component.
     ///
     /// This walks the component only on the producer side, immediately after
