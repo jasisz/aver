@@ -7,30 +7,27 @@
 /// Public certificate-package layout understood by this verifier.
 pub const FORMAT_VERSION: u32 = 1;
 
-/// Only artifact target admitted by schema 5. Future component certificates
-/// will add their own envelope instead of reinterpreting wasm-gc bytes.
+/// Raw wasm-gc module artifact target admitted by schema 6.
 pub const TARGET_WASM_GC: &str = "wasm-gc";
 
-/// Reserved artifact target identifier for the WASI 0.2 Component Model
-/// certificate envelope. Schema 5 still rejects this target fail-closed; this
-/// constant names the manifest value future schemas will dispatch on.
+/// WASI 0.2 Component Model artifact target admitted by schema 6 through a
+/// declared component envelope.
 pub const TARGET_WASIP2: &str = "wasip2";
 
-/// Only emitted-fragment profile admitted by schema 5.
+/// Only emitted-fragment profile admitted by schema 6.
 pub const PROFILE_ID: &str = "AverUserProfile/v1";
 
-/// Runtime ABI admitted for the wasm-gc artifact target in schema 5.
+/// Runtime ABI admitted for the wasm-gc artifact target in schema 6.
 pub const RUNTIME_ABI_WASM_GC: &str = "aver-wasm-gc/0";
 
-/// Reserved runtime ABI for future wasip2 component certificates.
+/// Runtime ABI admitted for wasip2 component certificates in schema 6.
 pub const RUNTIME_ABI_WASIP2: &str = "aver-wasip2/0";
 
-/// Reserved top-level manifest field for a wasip2 component envelope
-/// declaration. It is intentionally target-specific: schema 5 ignores unknown
-/// top-level fields and rejects `target = "wasip2"` before validation.
+/// Top-level manifest field for a wasip2 component envelope declaration.
+/// It is intentionally target-specific and is rejected for wasm-gc artifacts.
 pub const WASIP2_COMPONENT_ENVELOPE_FIELD: &str = "wasip2ComponentEnvelope";
 
-/// Field names inside the reserved wasip2 component-envelope object.
+/// Field names inside the wasip2 component-envelope object.
 pub const WASIP2_COMPONENT_ENVELOPE_KIND_FIELD: &str = "kind";
 pub const WASIP2_COMPONENT_ENVELOPE_PREFIX_LEN_FIELD: &str = "prefix_len";
 pub const WASIP2_COMPONENT_ENVELOPE_CORE_LEN_FIELD: &str = "embedded_core_module_len";
@@ -132,14 +129,16 @@ impl Wasip2ComponentEnvelopeDeclaration {
 /// type, the export name is the only thing that tells one role from the other.
 /// Version 5 added the required top-level `target` field and moved the
 /// target/profile/ABI identifiers into the checker-owned statement schema.
-pub const CERT_SCHEMA_VERSION: u32 = 5;
+/// Version 6 added the wasip2 component-envelope byte binding while keeping
+/// the producer's `--target wasip2 --certify` path disabled.
+pub const CERT_SCHEMA_VERSION: u32 = 6;
 
 /// Named theorem audited by the checker-owned witness.
 pub const ARTIFACT_CERTIFICATE_ROOT: &str = "AverCert.Artifact.certificate";
 
 /// Identity of the exact checker-owned Lean wall shipped by this release.
 pub const CURRENT_WALL_ID: &str =
-    "sha256:ea9bf24a9293ad5b107024e75eba4f8ed55575d02505084a19ea6d1f82d45f70";
+    "sha256:6b5c0326a4db9eeffc13ec0d08453d1a62413216fa96f57e34e82a7387016c9c";
 
 /// Complete host-import surface admitted by the wasm-gc certificate format.
 ///
@@ -275,7 +274,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn wasip2_envelope_surface_is_reserved_but_schema_five_stays_wasm_gc_only() {
+    fn wasip2_envelope_surface_names_schema_six_component_binding() {
         assert_eq!(TARGET_WASM_GC, "wasm-gc");
         assert_eq!(TARGET_WASIP2, "wasip2");
         assert_eq!(RUNTIME_ABI_WASM_GC, "aver-wasm-gc/0");
@@ -289,7 +288,7 @@ mod tests {
         );
         assert_eq!(WASIP2_COMPONENT_ENVELOPE_SUFFIX_LEN_FIELD, "suffix_len");
         assert_eq!(WASIP2_COMPONENT_ENVELOPE_KIND, "prefix-core-suffix/v1");
-        assert_eq!(CERT_SCHEMA_VERSION, 5);
+        assert_eq!(CERT_SCHEMA_VERSION, 6);
     }
 
     #[test]
@@ -398,7 +397,7 @@ mod tests {
     }
 
     #[test]
-    fn format_spec_documents_reserved_wasip2_envelope_surface() {
+    fn format_spec_documents_wasip2_envelope_surface() {
         let spec = include_str!("../../docs/certificate-format.md");
         for phrase in [
             TARGET_WASIP2,
@@ -412,7 +411,7 @@ mod tests {
         ] {
             assert!(
                 spec.contains(phrase),
-                "certificate-format.md does not document reserved wasip2 envelope surface `{phrase}`"
+                "certificate-format.md does not document wasip2 envelope surface `{phrase}`"
             );
         }
     }
@@ -430,10 +429,10 @@ mod tests {
     #[test]
     fn the_two_schema_version_constants_agree() {
         let engine_src = include_str!("engine/mod.rs");
-        let expected = format!("pub const CERT_SCHEMA_VERSION: u32 = {CERT_SCHEMA_VERSION};");
+        let expected = "pub const CERT_SCHEMA_VERSION: u32 = crate::format::CERT_SCHEMA_VERSION;";
         assert!(
-            engine_src.contains(&expected),
-            "engine/mod.rs does not declare `{expected}`; the producer would emit a \
+            engine_src.contains(expected),
+            "engine/mod.rs does not delegate to `{expected}`; the producer would emit a \
              schema version the transport parser rejects"
         );
     }

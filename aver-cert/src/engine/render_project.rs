@@ -2856,7 +2856,7 @@ fn render_artifact(
             "    (finalCert : AverCert.Schema.Holds AverCert.manifest) :\n",
             "    AverCert.AcceptedArtifact.accepted data := by\n",
             "  dsimp [AverCert.AcceptedArtifact.accepted, AverCert.AcceptedArtifact.subjectMatchesArtifactRoot, AverCert.AcceptedArtifact.expectedArtifactRoot]\n",
-            "  exact ⟨finalCert, rfl, claimObligationsBound, claimsMatchManifest, standardFacesChecked, claimAxesChecked, decodedNonExprFacts, fragmentsAccepted⟩\n"
+            "  exact ⟨finalCert, artifactEnvelopeAccepted, rfl, claimObligationsBound, claimsMatchManifest, standardFacesChecked, claimAxesChecked, decodedNonExprFacts, fragmentsAccepted⟩\n"
         ),
         obligation_proof_step = family_exact(&claims.obligation_proof),
         sym_proof_step = family_exact(&claims.sym_proof),
@@ -2898,6 +2898,7 @@ fn render_artifact(
          -- audits `AverCert.Artifact.certificate` through the Lean axiom collector.\n\
          import AcceptedArtifact\n\
          import ArtifactBytes\n\
+         import ArtifactComponentBytes\n\
          import Certificate\n\
          import Manifest\n\
          import Plans\n\
@@ -2930,7 +2931,10 @@ fn render_artifact(
          def closureClaim : AverCert.AcceptedArtifact.ClosureClaim := {closure_claim}\n\n\
          {mutual_scc_closure_pins}\
          def data : AverCert.AcceptedArtifact.ArtifactData :=\n  \
-           ({{ modBytes := AverCert.ArtifactBytes.modBytes, modLen := AverCert.ArtifactBytes.modLen, manifest := AverCert.manifest, symFragmentClaims := symFragmentClaims, stringEqClaims := stringEqClaims, stringConcatClaims := stringConcatClaims, constructClaims := constructClaims, recursionClaims := recursionClaims, mutualRecursionClaims := mutualRecursionClaims, verbatimClaims := verbatimClaims, intDispatchClaims := intDispatchClaims, fieldProjectionClaims := fieldProjectionClaims, compositionMembers := compositionMembers, compositionClaims := compositionClaims, closureFuel := {closure_fuel}, closureClaim := closureClaim }} : AverCert.AcceptedArtifact.ArtifactData)\n\n\
+           ({{ modBytes := AverCert.ArtifactBytes.modBytes, modLen := AverCert.ArtifactBytes.modLen, manifest := AverCert.manifest, wasip2ComponentEnvelope := none, symFragmentClaims := symFragmentClaims, stringEqClaims := stringEqClaims, stringConcatClaims := stringConcatClaims, constructClaims := constructClaims, recursionClaims := recursionClaims, mutualRecursionClaims := mutualRecursionClaims, verbatimClaims := verbatimClaims, intDispatchClaims := intDispatchClaims, fieldProjectionClaims := fieldProjectionClaims, compositionMembers := compositionMembers, compositionClaims := compositionClaims, closureFuel := {closure_fuel}, closureClaim := closureClaim }} : AverCert.AcceptedArtifact.ArtifactData)\n\n\
+         theorem artifactEnvelopeAccepted : AverCert.AcceptedArtifact.artifactEnvelopeAccepted AverCert.ArtifactComponentBytes.componentBytes AverCert.ArtifactComponentBytes.componentLen data = true := by\n  \
+         dsimp [AverCert.AcceptedArtifact.artifactEnvelopeAccepted, data]\n  \
+         rfl\n\n\
          {decoded_host_roles_proof}\n\n\
          theorem decodedStringHostRoles : CertDecode.StringHost.roleTable AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen = some AverCert.manifest.subject.stringHostRoles := by change AverCert.AcceptedArtifact.decodedStringHostRoles data; dsimp [AverCert.AcceptedArtifact.decodedStringHostRoles, data]; rfl\n\n\
          {claim_proof_bundles}\
@@ -3078,7 +3082,7 @@ theorem accept_sound_holds
     (hSide : AcceptanceSoundness.dischargeSideConditions AverCert.Artifact.data) :
     AverCert.Schema.Holds AverCert.Artifact.data.manifest := by
   exact AcceptanceSoundness.accept_sound CertModule.wasmSha256 AverCert.Artifact.data
-    rfl rfl rfl rfl
+    rfl rfl rfl
     AverCert.Artifact.claimObligationsBound
     AverCert.Artifact.standardFacesChecked
     AverCert.Artifact.fragmentsAccepted hSide
@@ -3145,31 +3149,11 @@ fn render_byte_list(bytes: &[u8]) -> String {
 }
 
 pub fn render_artifact_bytes_lean(wasm_bytes: &[u8]) -> String {
-    format!(
-        "-- Exact Wasm module as a little-endian Lean Nat plus byte length.\n\
-         -- `aver cert verify` regenerates this file from the artifact it reads;\n\
-         -- a cert-supplied file with this name is ignored.\n\
-         import WasmSlice\n\n\
-         set_option maxRecDepth 200000\n\n\
-         namespace AverCert.ArtifactBytes\n\n\
-         def modBytes : Nat := {}\n\n\
-         def modLen : Nat := {}\n\n\
-         end AverCert.ArtifactBytes\n",
-        render_byte_nat(wasm_bytes),
-        wasm_bytes.len()
-    )
+    crate::wall::render_artifact_bytes(wasm_bytes)
 }
 
-fn render_byte_nat(bytes: &[u8]) -> String {
-    if bytes.is_empty() {
-        return "0".to_string();
-    }
-    let mut numeral = String::with_capacity(2 + bytes.len() * 2);
-    numeral.push_str("0x");
-    for byte in bytes.iter().rev() {
-        numeral.push_str(&format!("{byte:02x}"));
-    }
-    numeral
+pub fn render_artifact_component_bytes_lean(artifact_bytes: &[u8]) -> String {
+    crate::wall::render_artifact_component_bytes(artifact_bytes)
 }
 
 /// Write one file of the certificate project.

@@ -136,15 +136,16 @@ the verifier does not re-run the producer's obligation classifier,
 disassembler, candidate derivation, or reconstruction of
 `AverCert.Artifact.data`.
 
-For the planned `wasip2` target (#1146), the same rule applies to the component
+For the `wasip2` target (#1146), the same rule applies to the component
 wrapper: the producer may declare a `prefix ++ embedded_core_module ++ suffix`
-split while constructing the component, surfaced under the reserved
+split while constructing the component, surfaced under the
 `wasip2ComponentEnvelope` manifest field, but the trusted verifier path must not
-rediscover the user core by walking component bytes. It should consume the
-declaration, split only by declared lengths, confirm byte equality against the
-caller-supplied component, and then run the core-module checks on the declared
-embedded module. The reserved wall vocabulary for that future proof lives in
-`Wasip2Envelope.lean`; schema 5 does not import it into acceptance.
+rediscover the user core by walking component bytes. It consumes the declaration,
+splits only by declared lengths, stages the caller-supplied component as
+checker-owned `ArtifactComponentBytes.lean`, and the wall confirms that the
+split core bytes equal the `ArtifactBytes.lean` core module consumed by the
+existing wasm decoders. Producer-side `--target wasip2 --certify` remains
+disabled until emission can construct that package end-to-end.
 
 ## Lean acceptance wall
 

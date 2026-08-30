@@ -29,6 +29,11 @@ pub fn materialize(cert_dir: &Path) {
         aver::codegen::cert::wall::render_artifact_bytes(&wasm_bytes),
     )
     .unwrap();
+    std::fs::write(
+        cert_dir.join("ArtifactComponentBytes.lean"),
+        aver::codegen::cert::wall::render_artifact_component_bytes(&wasm_bytes),
+    )
+    .unwrap();
 
     fn collect_roots(base: &Path, dir: &Path, roots: &mut Vec<String>) {
         for entry in std::fs::read_dir(dir).unwrap() {

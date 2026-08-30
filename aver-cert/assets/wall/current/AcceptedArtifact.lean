@@ -7,11 +7,14 @@ import Schema
 import AcceptedArtifactCore
 import ClaimAxes
 import StandardFace
+import ArtifactComponentBytes
 
 namespace AverCert.AcceptedArtifact
 
 def accepted (artifact : ArtifactData) : Prop :=
   AverCert.Schema.Holds artifact.manifest ∧
+  artifactEnvelopeAccepted AverCert.ArtifactComponentBytes.componentBytes
+    AverCert.ArtifactComponentBytes.componentLen artifact = true ∧
   subjectMatchesArtifactRoot artifact ∧
   fragmentClaimObligationsInManifest artifact ∧
   claimsMatchManifest artifact ∧

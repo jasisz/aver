@@ -11,6 +11,7 @@ import PlanBytes
 import ExprFragmentAccepted
 import WasmSlice
 import CertDecode
+import Wasip2Envelope
 
 namespace AverCert.AcceptedArtifact
 open AverCert.Schema
@@ -1553,6 +1554,7 @@ structure ArtifactData where
   modBytes           : Nat
   modLen             : Nat
   manifest           : AverCert.Schema.Manifest
+  wasip2ComponentEnvelope : Option AverCert.Wasip2Envelope.ComponentEnvelope
   symFragmentClaims  : List SymFragmentClaim
   stringEqClaims     : List StringEqClaim
   stringConcatClaims : List StringConcatClaim
@@ -2210,6 +2212,41 @@ def acceptedFragments (artifact : ArtifactData) : Prop :=
   acceptedFieldProjectionFragments artifact ∧
   acceptedCompositionFragments artifact ∧
   acceptedWholeModule artifact
+
+def artifactCoreBytes (artifact : ArtifactData) : AverCert.Wasip2Envelope.ByteSeq :=
+  AverCert.Wasip2Envelope.ComponentEnvelope.bytes artifact.modBytes artifact.modLen
+
+/-- Check a single wasip2 envelope declaration against delivered component bytes
+    and the already-selected core module bytes. The split is length-driven only:
+    it never parses component syntax or searches for a core module. -/
+def wasip2EnvelopeAccepted
+    (env : AverCert.Wasip2Envelope.ComponentEnvelope)
+    (componentBytes componentLen modBytes modLen : Nat) : Bool :=
+  env.embeddedCoreModuleLen != 0 &&
+  componentLen == env.prefixLen + env.embeddedCoreModuleLen + env.suffixLen &&
+  match env.split componentBytes componentLen with
+  | some (_, core, _) =>
+      core == AverCert.Wasip2Envelope.ComponentEnvelope.bytes modBytes modLen
+  | none => false
+
+/-- Bind the target artifact bytes to the core module bytes used by the existing
+    wasm decoders.  For wasm-gc, the delivered artifact is the core module.  For
+    wasip2, the delivered artifact is a component and the manifest-declared
+    prefix/core/suffix lengths must split that component so that its embedded
+    core byte sequence is exactly `artifact.modBytes`.  No component syntax is
+    parsed here. -/
+def artifactEnvelopeAccepted
+    (componentBytes componentLen : Nat) (artifact : ArtifactData) : Bool :=
+  match artifact.wasip2ComponentEnvelope with
+  | none =>
+      artifact.manifest.subject.target == expectedWasmGcArtifactTarget &&
+      artifact.manifest.subject.abi == expectedRuntimeAbiWasmGc &&
+      componentBytes == artifact.modBytes &&
+      componentLen == artifact.modLen
+  | some env =>
+      artifact.manifest.subject.target == expectedWasip2ArtifactTarget &&
+      artifact.manifest.subject.abi == expectedRuntimeAbiWasip2 &&
+      wasip2EnvelopeAccepted env componentBytes componentLen artifact.modBytes artifact.modLen
 
 def expectedArtifactRoot : String :=
   "AverCert.Artifact.certificate"

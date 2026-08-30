@@ -181,6 +181,39 @@ fn rebind_cert_wasm_hash(dir: &Path, bytes: &[u8]) {
     std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
 }
 
+fn wasip2_component_with_embedded_core(core: &[u8]) -> (Vec<u8>, usize) {
+    let mut component = b"\0asm\x0d\0\x01\0".to_vec();
+    component.push(1);
+    push_u32_leb(core.len().try_into().unwrap(), &mut component);
+    let prefix_len = component.len();
+    component.extend_from_slice(core);
+    (component, prefix_len)
+}
+
+fn push_u32_leb(mut value: u32, bytes: &mut Vec<u8>) {
+    loop {
+        let mut byte = (value & 0x7f) as u8;
+        value >>= 7;
+        if value != 0 {
+            byte |= 0x80;
+        }
+        bytes.push(byte);
+        if value == 0 {
+            break;
+        }
+    }
+}
+
+fn replace_once(path: &Path, needle: &str, replacement: &str) {
+    let src = std::fs::read_to_string(path).unwrap();
+    assert!(
+        src.contains(needle),
+        "{} should contain `{needle}`",
+        path.display()
+    );
+    std::fs::write(path, src.replacen(needle, replacement, 1)).unwrap();
+}
+
 fn find_named_file(root: &Path, name: &str) -> Option<PathBuf> {
     for entry in std::fs::read_dir(root).ok()? {
         let entry = entry.ok()?;
@@ -488,6 +521,71 @@ fn cert_tripwire_accepts_clean_certificate_end_to_end() {
     );
 }
 
+/// Schema 6 can verify a wasip2 component certificate once the package declares
+/// the component envelope. This test deliberately constructs the package by
+/// rewriting a wasm-gc certificate: producer-side `--target wasip2 --certify`
+/// remains disabled until the real emitter can generate the same surface.
+#[test]
+fn cert_tripwire_accepts_declared_wasip2_component_envelope_end_to_end() {
+    let Some(out_dir) = tripwire_baseline("certverify-wasip2-envelope") else {
+        return;
+    };
+
+    let wasm = out_dir.join("certprobe2.wasm");
+    let core = std::fs::read(&wasm).unwrap();
+    let (component, prefix_len) = wasip2_component_with_embedded_core(&core);
+    let component_path = out_dir.join("certprobe2.component.wasm");
+    std::fs::write(&component_path, &component).unwrap();
+    rebind_cert_wasm_hash(&out_dir, &component);
+
+    let cert = out_dir.join("cert");
+    let manifest_json = cert.join("cert-manifest.json");
+    let mut manifest: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&manifest_json).unwrap()).unwrap();
+    manifest["target"] = serde_json::json!(aver::codegen::cert::format::TARGET_WASIP2);
+    manifest["abi"] = serde_json::json!(aver::codegen::cert::format::RUNTIME_ABI_WASIP2);
+    manifest["wasip2ComponentEnvelope"] = serde_json::json!({
+        "kind": aver::codegen::cert::format::WASIP2_COMPONENT_ENVELOPE_KIND,
+        "prefix_len": prefix_len,
+        "embedded_core_module_len": core.len(),
+        "suffix_len": 0
+    });
+    std::fs::write(
+        &manifest_json,
+        serde_json::to_string_pretty(&manifest).unwrap(),
+    )
+    .unwrap();
+
+    replace_once(
+        &cert.join("Manifest.lean"),
+        "target := \"wasm-gc\"",
+        "target := \"wasip2\"",
+    );
+    replace_once(
+        &cert.join("Manifest.lean"),
+        "abi := \"aver-wasm-gc/0\"",
+        "abi := \"aver-wasip2/0\"",
+    );
+    replace_once(
+        &cert.join("Artifact.lean"),
+        "wasip2ComponentEnvelope := none,",
+        &format!(
+            "wasip2ComponentEnvelope := some ({{ prefixLen := {prefix_len}, embeddedCoreModuleLen := {}, suffixLen := 0 }} : AverCert.Wasip2Envelope.ComponentEnvelope),",
+            core.len()
+        ),
+    );
+
+    let (ok, report) = aver_check(&component_path, &cert);
+    assert!(
+        ok,
+        "declared wasip2 component envelope should verify:\n{report}"
+    );
+    assert!(
+        report.contains("CHECKED") && !report.contains("CERTIFIED"),
+        "wasip2 envelope preflight should pass via checker-owned predicate:\n{report}"
+    );
+}
+
 /// Emits the nested-module fixture baseline: a project whose dotted module
 /// dependency (`Nested.Deep.Util`) makes the certificate carry a nested model
 /// file (`Nested/Deep/Util.lean`) that `Manifest.lean` and `Certificate.lean`
@@ -772,6 +870,31 @@ fn cert_verify_declines_nested_shadow_of_checker_root() {
     );
 }
 
+/// `ArtifactComponentBytes` is checker-owned just like `ArtifactBytes`: a
+/// package must not be able to stage nested DATA under that import prefix.
+#[test]
+fn cert_verify_declines_nested_shadow_of_component_bytes_root() {
+    let Some(out_dir) = nested_module_baseline("certverify-nested-component-bytes-shadow") else {
+        return;
+    };
+
+    let wasm = out_dir.join("app.wasm");
+    let cert = out_dir.join("cert");
+    let dir = cert.join("ArtifactComponentBytes");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("Decoy.lean"), "-- inert\ndef x : Nat := 0\n").unwrap();
+
+    let (ok, report) = aver_check(&wasm, &cert);
+    assert!(
+        !ok,
+        "nested ArtifactComponentBytes shadow must decline:\n{report}"
+    );
+    assert!(
+        report.contains("shadows a checker/toolchain import"),
+        "wrong reason for nested ArtifactComponentBytes shadow:\n{report}"
+    );
+}
+
 /// Two staged paths that differ only by ASCII case are rejected at staging:
 /// on a case-insensitive filesystem they silently merge and the later write
 /// clobbers the earlier one nondeterministically. Authoring both casings
@@ -845,7 +968,7 @@ fn cert_tripwire_declines_unsupported_schema_version() {
     );
 }
 
-/// Schema 5 makes the artifact target a required transport discriminator.
+/// Schema 6 keeps the artifact target as a required transport discriminator.
 /// A missing target is rejected before any Lean process.
 #[test]
 fn cert_tripwire_declines_missing_artifact_target() {
@@ -868,8 +991,8 @@ fn cert_tripwire_declines_missing_artifact_target() {
     );
 }
 
-/// The current schema admits only the wasm-gc envelope; a component target is
-/// not reinterpreted as core wasm.
+/// The current schema admits only the wasm-gc and wasip2 envelope targets;
+/// unknown targets are not reinterpreted as core wasm.
 #[test]
 fn cert_tripwire_declines_unsupported_artifact_target() {
     let Some(out_dir) = tripwire_baseline("certverify-target") else {
@@ -881,17 +1004,17 @@ fn cert_tripwire_declines_unsupported_artifact_target() {
     let mf = dir.join("cert").join("cert-manifest.json");
     let mut m: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
-    m["target"] = serde_json::json!("wasip2");
+    m["target"] = serde_json::json!("native");
     std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
     let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
     assert!(!ok, "unsupported target must be rejected:\n{out}");
     assert!(
-        out.contains("unsupported certificate target `wasip2`"),
+        out.contains("unsupported certificate target `native`"),
         "wrong reason for unsupported target rejection:\n{out}"
     );
 }
 
-/// Schema 5 also fixes the emitted-fragment profile, so a future profile cannot
+/// Schema 6 also fixes the emitted-fragment profile, so a future profile cannot
 /// be accepted under the current wall's target statements.
 #[test]
 fn cert_tripwire_declines_unsupported_artifact_profile() {
@@ -914,7 +1037,7 @@ fn cert_tripwire_declines_unsupported_artifact_profile() {
     );
 }
 
-/// Schema 5 fixes the runtime ABI alongside the target/profile pair.
+/// Schema 6 fixes the runtime ABI alongside the target/profile pair.
 #[test]
 fn cert_tripwire_declines_unsupported_artifact_abi() {
     let Some(out_dir) = tripwire_baseline("certverify-abi") else {
@@ -2372,7 +2495,7 @@ fn plans_authority_baseline(prefix: &str) -> Option<ScratchDir> {
 }
 
 /// The honest goals package verifies, and `Plans.lean` is its only public plan
-/// DATA: no checker-generated `ArtifactBytes.lean`, no fragment sidecars, and
+/// DATA: no checker-generated artifact-byte modules, no fragment sidecars, and
 /// no plan metadata leaking into the public manifest.
 #[test]
 fn cert_plans_authority_accepts_clean_certificate_and_pins_public_plan_data() {
@@ -2391,6 +2514,10 @@ fn cert_plans_authority_accepts_clean_certificate_and_pins_public_plan_data() {
     assert!(
         !cert.join("ArtifactBytes.lean").exists(),
         "ArtifactBytes.lean is checker-generated, not package DATA"
+    );
+    assert!(
+        !cert.join("ArtifactComponentBytes.lean").exists(),
+        "ArtifactComponentBytes.lean is checker-generated, not package DATA"
     );
     assert!(
         !cert.join("fragments").exists(),
@@ -4363,6 +4490,8 @@ def acceptedFragmentsWithoutClaimCoverage
 def acceptedWithoutClaimCoverage
     (artifact : AcceptedArtifact.ArtifactData) : Prop :=
   Schema.Holds artifact.manifest ∧
+  AcceptedArtifact.artifactEnvelopeAccepted AverCert.ArtifactComponentBytes.componentBytes
+    AverCert.ArtifactComponentBytes.componentLen artifact = true ∧
   AcceptedArtifact.subjectMatchesArtifactRoot artifact ∧
   AcceptedArtifact.fragmentClaimObligationsInManifest artifact ∧
   AcceptedArtifact.claimsMatchManifest artifact ∧
@@ -4382,13 +4511,13 @@ def unclaimedArtifact : AcceptedArtifact.ArtifactData :=
   { Artifact.data with manifest := unclaimedManifest }
 
 theorem unclaimedFinal : Schema.Holds unclaimedManifest := by
-  refine ⟨Final.cert.1, ?_⟩
+  refine ⟨Final.cert.1, Final.cert.2.1, Final.cert.2.2.1, ?_⟩
   intro o ho
   have ho' : o ∈ AverCert.manifest.obligations ∨ o = unclaimedOb := by
     simpa [unclaimedManifest] using ho
   rcases ho' with ho | rfl
-  · exact Final.cert.2 o ho
-  · have hadd := Final.cert.2 AverCert.addTwoOb (by simp [AverCert.manifest])
+  · exact Final.cert.2.2.2 o ho
+  · have hadd := Final.cert.2.2.2 AverCert.addTwoOb (by simp [AverCert.manifest])
     simpa [unclaimedOb, Obligation.holds] using hadd
 
 example : AcceptedArtifact.manifestObligationsClaimed unclaimedArtifact = false := rfl
@@ -4408,7 +4537,7 @@ example : ∀ nameBytes,
 
 example : ¬ AcceptedArtifact.accepted unclaimedArtifact := by
   intro h
-  rcases h with ⟨_, _, _, _, _, _, _, hfragments⟩
+  rcases h with ⟨_, _, _, _, _, _, _, _, hfragments⟩
   rcases hfragments with ⟨_, _, _, _, _, _, _, _, _, hcomposition, _⟩
   have hclaimed := hcomposition.2.2.1
   change false = true at hclaimed
@@ -4416,11 +4545,12 @@ example : ¬ AcceptedArtifact.accepted unclaimedArtifact := by
 
 example : acceptedWithoutClaimCoverage unclaimedArtifact := by
   rcases Artifact.certificate with
-    ⟨_, hsubject, hobs, hmatch, hfaces, haxes, hdecoded, hsym, hstringEq, hstringConcat, hconstruct,
-      hrecursion, hmutual, hverbatim, hintDispatch, hfieldProjection,
+    ⟨_, henvelope, hsubject, hobs, hmatch, hfaces, haxes, hdecoded, hsym, hstringEq, hstringConcat,
+      hconstruct, hrecursion, hmutual, hverbatim, hintDispatch, hfieldProjection,
       hcompositionAccepted, _⟩
   rcases hcompositionAccepted with ⟨hcomposition, hmembersCovered, _, _⟩
-  refine ⟨unclaimedFinal, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  refine ⟨unclaimedFinal, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  · exact henvelope
   · exact hsubject
   · simpa [unclaimedArtifact, unclaimedManifest,
       AcceptedArtifact.fragmentClaimObligationsInManifest,
@@ -4490,11 +4620,11 @@ def duplicateArtifact : AcceptedArtifact.ArtifactData :=
   { Artifact.data with manifest := duplicateManifest }
 
 theorem duplicateFinal : Schema.Holds duplicateManifest := by
-  refine ⟨Final.cert.1, ?_⟩
+  refine ⟨Final.cert.1, Final.cert.2.1, Final.cert.2.2.1, ?_⟩
   intro o ho
   change o ∈ AverCert.manifest.obligations ++ [duplicateOb] at ho
   rcases List.mem_append.mp ho with ho | ho
-  · exact Final.cert.2 o ho
+  · exact Final.cert.2.2.2 o ho
   · simp only [List.mem_singleton] at ho
     subst o
     exact duplicateObHolds
@@ -4523,6 +4653,8 @@ def acceptedFragmentsWithoutUniqueExports
 def acceptedWithoutUniqueExports
     (artifact : AcceptedArtifact.ArtifactData) : Prop :=
   Schema.Holds artifact.manifest ∧
+  AcceptedArtifact.artifactEnvelopeAccepted AverCert.ArtifactComponentBytes.componentBytes
+    AverCert.ArtifactComponentBytes.componentLen artifact = true ∧
   AcceptedArtifact.subjectMatchesArtifactRoot artifact ∧
   AcceptedArtifact.fragmentClaimObligationsInManifest artifact ∧
   AcceptedArtifact.claimsMatchManifest artifact ∧
@@ -4548,7 +4680,7 @@ example : ∀ nameBytes,
 
 example : ¬ AcceptedArtifact.accepted duplicateArtifact := by
   intro h
-  rcases h with ⟨_, _, _, _, _, _, _, hfragments⟩
+  rcases h with ⟨_, _, _, _, _, _, _, _, hfragments⟩
   rcases hfragments with ⟨_, _, _, _, _, _, _, _, _, hcomposition, _⟩
   have hunique := hcomposition.2.2.2
   change false = true at hunique
@@ -4556,11 +4688,12 @@ example : ¬ AcceptedArtifact.accepted duplicateArtifact := by
 
 example : acceptedWithoutUniqueExports duplicateArtifact := by
   rcases Artifact.certificate with
-    ⟨_, hsubject, hobs, hmatch, hfaces, haxes, hdecoded, hsym, hstringEq, hstringConcat, hconstruct,
-      hrecursion, hmutual, hverbatim, hintDispatch, hfieldProjection,
+    ⟨_, henvelope, hsubject, hobs, hmatch, hfaces, haxes, hdecoded, hsym, hstringEq, hstringConcat,
+      hconstruct, hrecursion, hmutual, hverbatim, hintDispatch, hfieldProjection,
       hcompositionAccepted, _⟩
   rcases hcompositionAccepted with ⟨hcomposition, hmembersCovered, _, _⟩
-  refine ⟨duplicateFinal, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  refine ⟨duplicateFinal, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  · exact henvelope
   · exact hsubject
   · simpa [duplicateArtifact, duplicateManifest,
       AcceptedArtifact.fragmentClaimObligationsInManifest,

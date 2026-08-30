@@ -1,11 +1,12 @@
 ---
 source: tests/cert_certify_spec.rs
+assertion_line: 3960
 expression: golden
 ---
 == cert-manifest.json ==
 {
-  "schema_version": 5,
-  "format": {"version": 1, "wall_id": "sha256:ea9bf24a9293ad5b107024e75eba4f8ed55575d02505084a19ea6d1f82d45f70"},
+  "schema_version": 6,
+  "format": {"version": 1, "wall_id": "sha256:6b5c0326a4db9eeffc13ec0d08453d1a62413216fa96f57e34e82a7387016c9c"},
   "wasm": "add_one.wasm",
   "wasm_sha256": "5f41ddfa9a5a395546d0c21e00c232be77e330ea587b2666456f0488ff0450c9",
   "target": "wasm-gc",

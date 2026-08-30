@@ -181,15 +181,15 @@ theorem hClaims_of_accepted
 /-- The faithful accept-sound capstone.  Manifest coverage and export
 uniqueness are recovered from `acceptedCompositionFragments`, which is an
 unconditional slice of `acceptedFragments`.  The artifact hash and
-target/profile/ABI identities remain explicit premises because they are fixed
-statement metadata rather than byte-derived fragment facts. -/
+target/profile/ABI identity remains an explicit premise because it is fixed
+statement metadata rather than a byte-derived fragment fact. -/
 theorem accept_sound
     (wasmSha256 : String)
     (artifact : ArtifactData)
     (hHash : artifact.manifest.subject.artifactHash = wasmSha256)
-    (hTarget : artifact.manifest.subject.target = expectedArtifactTarget)
     (hProfile : artifact.manifest.subject.profile = expectedProfile)
-    (hAbi : artifact.manifest.subject.abi = expectedRuntimeAbi)
+    (hTargetAbi : artifactTargetAbiAccepted artifact.manifest.subject.target
+        artifact.manifest.subject.abi = true)
     (hInManifest : fragmentClaimObligationsInManifest artifact)
     (hFaces : AverCert.StandardFace.checkedFaces artifact)
     (hAccepted : acceptedFragments artifact)
@@ -199,7 +199,7 @@ theorem accept_sound
   rcases hAcceptedParts with
     ⟨_, _, _, _, _, _, _, _, _, hComposition, _⟩
   rcases hComposition with ⟨_, _, hCover, hUnique⟩
-  exact ⟨hHash, hTarget, hProfile, hAbi,
+  exact ⟨hHash, hProfile, hTargetAbi,
     holdsCore_of_claims artifact hCover hInManifest hUnique
       (hClaims_of_accepted artifact hFaces hAccepted hSide)⟩
 

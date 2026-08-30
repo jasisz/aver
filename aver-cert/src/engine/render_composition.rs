@@ -376,6 +376,7 @@ fn render_composition_semantic_bridge(
          AcceptanceSoundness.compositionClaimSemanticBridge\n      \
          ({{ modBytes := AverCert.ArtifactBytes.modBytes,\n         \
          modLen := AverCert.ArtifactBytes.modLen, manifest := AverCert.manifest,\n         \
+         wasip2ComponentEnvelope := none,\n         \
          symFragmentClaims := [], stringEqClaims := [], stringConcatClaims := [],\n         \
          constructClaims := [], recursionClaims := [], mutualRecursionClaims := [],\n         \
          verbatimClaims := [], intDispatchClaims := [], fieldProjectionClaims := [],\n         \

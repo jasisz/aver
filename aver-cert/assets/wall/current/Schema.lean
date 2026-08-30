@@ -10,14 +10,15 @@ import SchemaCore
 namespace AverCert.Schema
 
 /-- The single audited certificate proposition: the manifest's pinned hash is
-    the module hash, its target/profile/ABI are this wall's fixed wasm-gc
-    identities, and every certified export satisfies the partial or total
-    model-simulation denotation selected by its policy. -/
+    the delivered artifact hash recorded by `Module.lean`, its
+    target/profile/ABI tuple is one of this schema's admitted identities, and
+    every certified export satisfies the partial or total model-simulation
+    denotation selected by its policy. Target-specific byte-envelope checks live
+    in `AcceptedArtifact.accepted`, where artifact bytes are available. -/
 def Holds (m : Manifest) : Prop :=
   m.subject.artifactHash = CertModule.wasmSha256 ∧
-  m.subject.target = expectedArtifactTarget ∧
   m.subject.profile = expectedProfile ∧
-  m.subject.abi = expectedRuntimeAbi ∧
+  artifactTargetAbiAccepted m.subject.target m.subject.abi = true ∧
   HoldsCore m
 
 end AverCert.Schema
