@@ -95,13 +95,12 @@ impl Wasip2ComponentEnvelope {
 
         let mut ranges = Vec::new();
         for payload in Parser::new(0).parse_all(component) {
-            match payload.map_err(|error| {
+            if let Payload::ModuleSection {
+                unchecked_range, ..
+            } = payload.map_err(|error| {
                 Wasip2Error::Envelope(format!("cannot parse produced component: {error}"))
             })? {
-                Payload::ModuleSection {
-                    unchecked_range, ..
-                } => ranges.push(unchecked_range),
-                _ => {}
+                ranges.push(unchecked_range);
             }
         }
         let range = match ranges.as_slice() {
