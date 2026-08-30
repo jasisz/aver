@@ -2697,9 +2697,14 @@ fn certify_string_concat_host_contract_lake_builds_kernel_clean() {
         "String.concat artifact claim should carry lowering indices:\n{artifact_lean}"
     );
     assert!(
+        artifact_lean.contains("theorem stringConcatClaim0ExportFuncType")
+            && artifact_lean.contains("theorem stringConcatClaim0HelperFuncType"),
+        "String.concat must carry export/helper function-type proof leaves:\n{artifact_lean}"
+    );
+    assert!(
         artifact_lean.contains("theorem stringConcatClaim0Face")
             && artifact_lean.contains("AverCert.StandardFace.stringConcatDeclaredFace"),
-        "String.concat must carry its declared-envelope face:\n{artifact_lean}"
+        "String.concat must carry its semantic standard face:\n{artifact_lean}"
     );
     let certificate = std::fs::read_to_string(cert_dir.join("Certificate.lean"))
         .expect("Certificate.lean exists");

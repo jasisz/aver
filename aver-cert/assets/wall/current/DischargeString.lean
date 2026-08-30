@@ -144,7 +144,7 @@ theorem stringConcat_accepted_call
       rcases hAccepted with
         ⟨_hExport, _hCarrierState, _hCarrier, _hRole, hHost, body, codeEntry, binding,
           _hSym, _hMatches, hCheck, hLow, _hCodeEntry, _hExactBinding,
-          hSelf, hCode⟩
+          _hExportFuncType, _hHelperFuncType, hSelf, hCode⟩
       have hCodeSelf : claim.obligation.code claim.obligation.self =
           some ⟨1, stringConcatNLocals claim.carrier, body⟩ := by
         simpa [hSelf] using hCode

@@ -170,15 +170,15 @@ theorem face_gives_declaredConstruct_bridge
 
 /-! ## §3 The string-concat transport (finishing the Lean core)
 
-The String.concat column, threaded in the SAME declared-index discipline. The
+The String.concat column uses this transport only for semantic-face fields. The
 model terms are exactly the canonical string obligation's (`DischargeString`): the
 domain is the single input `WVal`, `domRepr` is `vs = [v]`, `codRepr` is
 `verbatimRepr` (`w = v`), and the model is the plan's `evalStringConcat`. The
-face pins those onto `o.Dom / o.domRepr / o.codRepr / o.model` (plus the same
-single `concatPinnedAt` type-section byte pin and `o.policy = .simulatesModel`),
-and the HEq transport — mirroring `face_gives_declaredIntDispatch_bridge` — emits
-the residual body that `AcceptanceSoundness.stringConcatSemanticBridge` consumes
-(policy conjunct plus represented-model agreement against `evalStringConcat`). -/
+face pins those onto `o.Dom / o.domRepr / o.codRepr / o.model` plus
+`o.policy = .simulatesModel`. The String.concat ABI/type-section pins live in
+`AcceptedArtifact.stringConcatPlanAccepted`, where they are checked against the
+real exported binding and helper function; this face deliberately carries no
+synthetic declared-envelope byte pin. -/
 
 /-- Canonical string-concat domain representation: the single input `WVal`. -/
 def dStrConcatDomRepr (carrier : Nat) : CarrierSpec carrier → WVal → List WVal → Prop :=
@@ -207,14 +207,14 @@ theorem dStringConcat_bridge (carrier resultTy containerTy : Nat)
   refine ⟨x, hdom, ?_⟩
   simp only [dStrConcatCodRepr, dStrConcatModel, verbatimRepr]
 
-/-- The declared-index string-concat face. Same shape as `DIdxIntReadFace`: one
-    `concatPinnedAt` byte pin, `o.policy = .simulatesModel`, and the model-term
-    HEq column, with the string-concat domain/codomain/model. -/
+/-- The String.concat semantic face. It intentionally does NOT carry a
+    `concatPinnedAt (declaredConcat …)` conjunct: String.concat has no declared
+    ADT envelope, and the previous empty envelope made that byte pin vacuous.
+    ABI/type-section checks are separate byte-derived acceptance conjuncts. -/
 def DIdxStringConcatFace
-    (modBytes modLen : Nat) (typePrefix : List Nat)
+    (_modBytes _modLen : Nat) (_typePrefix : List Nat)
     (env : DIdxEnvelope) (resultTy containerTy : Nat)
     (plan : StringConcatRawPlan) (o : Obligation) : Prop :=
-  concatPinnedAt modBytes modLen (declaredConcat typePrefix env) ∧
   o.policy = .simulatesModel ∧
   o.carrier = env.carrier ∧
   HEq o.Dom WVal ∧
@@ -276,7 +276,7 @@ theorem face_gives_declaredStringConcat_bridge
       ∃ v, vs = [v] ∧
         o.codRepr S (o.model x)
           (StringSoundness.evalStringConcat resultTy containerTy plan v) := by
-  obtain ⟨-, hpolicy, hcar, hDom, hCod, hdomRepr, hcodRepr, hmodel⟩ := hface
+  obtain ⟨hpolicy, hcar, hDom, hCod, hdomRepr, hcodRepr, hmodel⟩ := hface
   refine ⟨hpolicy, ?_⟩
   exact dStringConcat_bridge_transport env resultTy containerTy plan
     o.carrier o.Dom o.Cod o.domRepr o.codRepr o.model
