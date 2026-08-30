@@ -225,13 +225,17 @@ pub(super) fn dialled(dial: &TcpDial) -> Result<Option<TcpConnection>, String> {
         let Some(pending) = dials.get(id) else {
             return Err(format!("Tcp.dialled: unknown dial '{}'", dial.id));
         };
-        if Instant::now() >= pending.deadline {
-            let timeout = pending.timeout;
-            dials.remove(id);
-            return Err(format!(
-                "Tcp.beginConnect: socket establishment timed out (deadline: {} ms)",
-                timeout.as_millis()
-            ));
+        if pending.stream.peer_addr().is_ok() {
+            let pending = dials.remove(id).expect("checked connected dial");
+            pending
+                .stream
+                .set_nonblocking(false)
+                .map_err(|error| format_io_error("Tcp.dialled", &error))?;
+            return Ok(Some(register_connection(
+                pending.stream,
+                pending.host,
+                pending.port,
+            )));
         }
         if let Some(error) = pending
             .stream
@@ -242,20 +246,15 @@ pub(super) fn dialled(dial: &TcpDial) -> Result<Option<TcpConnection>, String> {
             dials.remove(id);
             return Err(format_connect_error("Tcp.beginConnect", &error, timeout));
         }
-        if pending.stream.peer_addr().is_err() {
-            return Ok(None);
+        if Instant::now() >= pending.deadline {
+            let timeout = pending.timeout;
+            dials.remove(id);
+            return Err(format!(
+                "Tcp.beginConnect: socket establishment timed out (deadline: {} ms)",
+                timeout.as_millis()
+            ));
         }
-
-        let pending = dials.remove(id).expect("checked live dial");
-        pending
-            .stream
-            .set_nonblocking(false)
-            .map_err(|error| format_io_error("Tcp.dialled", &error))?;
-        Ok(Some(register_connection(
-            pending.stream,
-            pending.host,
-            pending.port,
-        )))
+        Ok(None)
     })
 }
 
@@ -523,6 +522,15 @@ pub(super) fn listener_local_address(listener: &TcpListener) -> SocketAddr {
 
 #[cfg(test)]
 pub(super) fn insert_test_dial(stream: TcpStream, deadline_after: Duration) -> TcpDial {
+    insert_test_dial_with_deadline(stream, Instant::now() + deadline_after, deadline_after)
+}
+
+#[cfg(test)]
+pub(super) fn insert_test_dial_with_deadline(
+    stream: TcpStream,
+    deadline: Instant,
+    timeout: Duration,
+) -> TcpDial {
     let id = next_id("tcp-test-dial");
     DIALS.with(|dials| {
         dials.borrow_mut().insert(
@@ -531,8 +539,8 @@ pub(super) fn insert_test_dial(stream: TcpStream, deadline_after: Duration) -> T
                 stream,
                 host: "test.invalid".to_string(),
                 port: 9,
-                deadline: Instant::now() + deadline_after,
-                timeout: deadline_after,
+                deadline,
+                timeout,
                 poll_source_disabled: true,
             },
         );

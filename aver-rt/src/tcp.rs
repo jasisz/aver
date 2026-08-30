@@ -577,6 +577,40 @@ mod tests {
     }
 
     #[test]
+    fn dialled_promotes_connected_socket_even_after_the_deadline() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind connected dial target");
+        let address = listener
+            .local_addr()
+            .expect("connected dial target address");
+        let (release_tx, release_rx) = mpsc::channel();
+        let server = thread::spawn(move || {
+            let (_stream, _) = listener.accept().expect("accept connected dial");
+            release_rx.recv().expect("hold connected dial peer open");
+        });
+        let stream = TcpStream::connect(address).expect("connect test dial");
+        stream
+            .set_nonblocking(true)
+            .expect("make test dial nonblocking");
+        let expired_deadline = Instant::now()
+            .checked_sub(Duration::from_secs(1))
+            .unwrap_or_else(Instant::now);
+        let dial = reactor::insert_test_dial_with_deadline(
+            stream,
+            expired_deadline,
+            Duration::from_secs(5),
+        );
+
+        let connection = dialled(&dial)
+            .expect("inspect expired connected dial")
+            .expect("expired connected dial is still connected");
+        assert!(reactor::connection_exists(&connection));
+
+        close(&connection).expect("close promoted dial");
+        release_tx.send(()).expect("release connected dial peer");
+        server.join().expect("connected dial server");
+    }
+
+    #[test]
     fn read_some_returns_available_bytes_without_filling_the_maximum() {
         let (written_tx, written_rx) = mpsc::channel();
         let (release_tx, release_rx) = mpsc::channel();
@@ -767,8 +801,10 @@ mod tests {
             elapsed < Duration::from_millis(300),
             "ignored dial deadline: {elapsed:?}"
         );
-        let error = dialled(&blocked_dial).expect_err("expired dial must fail");
-        assert!(error.contains("timed out"), "{error}");
+        let promoted_after_deadline = dialled(&blocked_dial)
+            .expect("inspect deadline-ready connected dial")
+            .expect("connected dial survives an expired deadline");
+        close(&promoted_after_deadline).expect("close deadline-ready dial");
         release_blocked_tx.send(()).expect("release blocked peer");
         blocked_server.join().expect("blocked server");
     }
