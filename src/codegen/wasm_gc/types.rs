@@ -159,6 +159,14 @@ pub(super) struct TypeRegistry {
     /// reachable from the program (most numeric bench scenarios).
     /// See `builtins/` README for the full repr decision.
     pub(super) string_array_type_idx: Option<u32>,
+    /// Compiler-internal growable String builder synthesized by
+    /// `buffer_build` / `interp_lower`: `(struct (mut i32 len)
+    /// (mut i32 has_parts) (mut (ref null $string) data))`. Capacity is
+    /// `array.len(data)`; `has_parts` keeps separators correct after an empty
+    /// first fragment.
+    /// Absent when neither pass fabricated the closed `__buf_*` contract,
+    /// preserving byte identity for unrelated programs.
+    pub(super) string_buffer_type_idx: Option<u32>,
     /// Hidden codepoint→UTF-8 byte-boundary table synthesized by the
     /// loop-scoped String indexing pass. Represented directly as a mutable
     /// `(array i32)` and allocated only when an indexed worker signature
@@ -453,6 +461,33 @@ impl TypeRegistry {
                     || fn_body_produces_string(fd)
             });
         let string_array_type_idx = if needs_string {
+            let idx = next_idx;
+            next_idx += 1;
+            Some(idx)
+        } else {
+            None
+        };
+
+        let needs_string_buffer = resolved_fn_defs.iter().any(|fd| {
+            use crate::ir::hir::{BuiltinIntrinsic, ResolvedCallee};
+            fd.return_type.display().trim() == crate::ir::INTERNAL_BUFFER_TYPE
+                || fd
+                    .params
+                    .iter()
+                    .any(|(_, ty)| ty.display().trim() == crate::ir::INTERNAL_BUFFER_TYPE)
+                || fn_body_reaches(fd, &|callee| {
+                    matches!(
+                        callee,
+                        ResolvedCallee::Intrinsic(
+                            BuiltinIntrinsic::BufNew
+                                | BuiltinIntrinsic::BufAppend
+                                | BuiltinIntrinsic::BufAppendSepUnlessFirst
+                                | BuiltinIntrinsic::BufFinalize
+                        )
+                    )
+                })
+        });
+        let string_buffer_type_idx = if needs_string_buffer {
             let idx = next_idx;
             next_idx += 1;
             Some(idx)
@@ -1295,6 +1330,7 @@ impl TypeRegistry {
             type_name_aliases: HashMap::new(),
             user_type_count: next_idx,
             string_array_type_idx,
+            string_buffer_type_idx,
             string_index_array_type_idx,
             crypto_byte_array_type_idx,
             crypto_word_array_type_idx,
@@ -2504,6 +2540,19 @@ pub(super) fn aver_to_wasm(
         }
         return Err(WasmGcError::Validation(
             "String reachable from a fn signature but no string type slot was allocated".into(),
+        ));
+    }
+    if trimmed == crate::ir::INTERNAL_BUFFER_TYPE {
+        if let Some(reg) = registry
+            && let Some(idx) = reg.string_buffer_type_idx
+        {
+            return Ok(Some(ValType::Ref(RefType {
+                nullable: true,
+                heap_type: HeapType::Concrete(idx),
+            })));
+        }
+        return Err(WasmGcError::Validation(
+            "compiler String buffer reached wasm-gc without its hidden builder slot".into(),
         ));
     }
     if trimmed == "String.Index" {

@@ -41,6 +41,10 @@ use crate::ast::{
     Expr, FnBody, FnDef, Literal, MatchArm, Pattern, Spanned, Stmt, StrPart, TailCallData,
 };
 
+/// Compiler-only carrier name. Source type syntax rejects a leading `_`, so a
+/// user `record Buffer` cannot collide with a fabricated builder signature.
+pub(crate) const INTERNAL_BUFFER_TYPE: &str = "__Buffer";
+
 /// Which builder idiom the sink follows — the cross product of two
 /// independent axes: what drives the loop (a `Bool` condition or the
 /// input list itself) and where the single `List.reverse` lives (in the
@@ -400,6 +404,20 @@ fn is_ident_named(expr: &Expr, name: &str) -> bool {
     matches!(expr, Expr::Ident(n) if n == name)
 }
 
+/// Whether moving the separator read before the buffered producer preserves
+/// source evaluation order. The unfused `String.join(producer(), separator)`
+/// finishes `producer()` before evaluating its second argument, while the
+/// buffered worker needs the separator during that producer walk. A String
+/// literal or an already-evaluated immutable binding is only a value read, so
+/// moving it is unobservable; any computed expression can perform effects or
+/// trap and must keep the source path.
+fn is_stable_join_separator(expr: &Expr) -> bool {
+    matches!(
+        expr,
+        Expr::Literal(Literal::Str(_)) | Expr::Ident(_) | Expr::Resolved { .. }
+    )
+}
+
 /// Recognise a `String.join` first-arg as either a direct sink call or
 /// a `List.reverse(<sink>(args, []))` wrapper. Returns the matched
 /// sink fn name when the kind matches the shape we expect:
@@ -420,6 +438,9 @@ fn is_ident_named(expr: &Expr, name: &str) -> bool {
 ///    Anything else means the user is starting the fold with a
 ///    non-empty accumulator, and the buffered rewrite would silently
 ///    drop those initial elements.
+/// 5. The separator is a String literal or an already-evaluated immutable
+///    binding. The buffered worker needs it before walking the producer, so a
+///    computed separator would otherwise move effects/traps ahead of that walk.
 ///
 /// Both `find_fusion_sites` (diagnostics) and `try_rewrite_fusion_site`
 /// (the actual AST rewrite) call this so the two stay in lockstep —
@@ -433,6 +454,9 @@ fn match_string_join_fusion_site(
         return None;
     };
     if !is_dotted_ident(&callee.node, "String", "join") || args.len() != 2 {
+        return None;
+    }
+    if !is_stable_join_separator(&args[1].node) {
         return None;
     }
     let consumer_arg = &args[0].node;
@@ -718,7 +742,7 @@ fn is_dotted_ident(expr: &Expr, module: &str, member: &str) -> bool {
 ///
 /// Synthesized:
 /// ```aver
-/// fn build__buffered(.., __buf: Buffer, __sep: String) -> Buffer
+/// fn build__buffered(.., __buf: __Buffer, __sep: String) -> __Buffer
 ///     match <cond>
 ///         true  -> __buf
 ///         false -> build__buffered(..,
@@ -784,12 +808,12 @@ fn intrinsic_call(line: usize, name: &str, args: Vec<Spanned<Expr>>) -> Spanned<
     sp_at(line, Expr::FnCall(Box::new(callee), args))
 }
 
-/// Same as [`intrinsic_call`] but stamps the result with `Buffer` —
-/// every `__buf_new` / `__buf_append` / `__buf_append_sep_unless_first`
-/// returns the (possibly-grown) owned buffer.
+/// Same as [`intrinsic_call`] but stamps the result with the compiler-only
+/// `__Buffer` carrier — every `__buf_new` / `__buf_append` /
+/// `__buf_append_sep_unless_first` returns the (possibly-grown) owned buffer.
 fn buffer_intrinsic_call(line: usize, name: &str, args: Vec<Spanned<Expr>>) -> Spanned<Expr> {
     let call = intrinsic_call(line, name, args);
-    call.set_ty(crate::types::Type::named("Buffer"));
+    call.set_ty(crate::types::Type::named(INTERNAL_BUFFER_TYPE));
     call
 }
 
@@ -1176,7 +1200,7 @@ fn build_buffered_variant(fd: &FnDef, shape: &BufferBuildShape) -> Option<FnDef>
     // returning the possibly-grown buffer. The outer intrinsic appends
     // the user's element. The result is what gets passed as the
     // buffered variant's `__buf` arg in the recursive call.
-    let buffer_ty = crate::types::Type::named("Buffer");
+    let buffer_ty = crate::types::Type::named(INTERNAL_BUFFER_TYPE);
     let buf_ident = || sp_at_typed(line, Expr::Ident(buf_name.to_string()), buffer_ty.clone());
     let sep_ident = || {
         sp_at_typed(
@@ -1209,7 +1233,7 @@ fn build_buffered_variant(fd: &FnDef, shape: &BufferBuildShape) -> Option<FnDef>
     new_args.push(sep_ident());
 
     // The recursive tail-call lands on `<fn>__buffered`, which returns
-    // Buffer; stamp the type so the typed WASM emitter doesn't have to
+    // compiler Buffer; stamp the type so the typed WASM emitter doesn't have to
     // re-derive it from the call target.
     let new_recursive_body = sp_at_typed(
         line,
@@ -1262,9 +1286,9 @@ fn build_buffered_variant(fd: &FnDef, shape: &BufferBuildShape) -> Option<FnDef>
         }
     };
 
-    // Synthesised Match returns Buffer — both arms produce one
+    // Synthesised Match returns the compiler Buffer — both arms produce one
     // (terminating arm: bare `__buf` ident; recursive arm: a
-    // `<fn>__buffered` tail-call returning Buffer). Stamp it so the
+    // `<fn>__buffered` tail-call returning the compiler Buffer). Stamp it so the
     // Step 2 type-driven WASM emitter can read the type without a
     // fallback.
     let new_match = sp_at_typed(
@@ -1273,26 +1297,26 @@ fn build_buffered_variant(fd: &FnDef, shape: &BufferBuildShape) -> Option<FnDef>
             subject: subject_orig.clone(),
             arms: new_arms,
         },
-        crate::types::Type::named("Buffer"),
+        crate::types::Type::named(INTERNAL_BUFFER_TYPE),
     );
 
     let new_body = FnBody::Block(vec![Stmt::Expr(new_match)]);
 
-    // Params: original minus acc + (__buf, "Buffer") + (__sep, "String").
+    // Params: original minus acc + (__buf, compiler Buffer) + (__sep, String).
     let mut new_params: Vec<(String, String)> = fd
         .params
         .iter()
         .enumerate()
         .filter_map(|(i, p)| (i != shape.acc_param_idx).then_some(p).cloned())
         .collect();
-    new_params.push((buf_name.to_string(), "Buffer".to_string()));
+    new_params.push((buf_name.to_string(), INTERNAL_BUFFER_TYPE.to_string()));
     new_params.push((sep_name.to_string(), "String".to_string()));
 
     Some(FnDef {
         name: buffered_target,
         line,
         params: new_params,
-        return_type: "Buffer".to_string(),
+        return_type: INTERNAL_BUFFER_TYPE.to_string(),
         // Synthesized variants inherit effects from the original — if
         // the matched fn calls effectful helpers (like `renderRow`
         // calling `Console.print`), the buffered variant calls them

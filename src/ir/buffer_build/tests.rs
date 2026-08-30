@@ -230,6 +230,74 @@ fn main() -> String
     assert!(site.line > 0, "expected real line info, got 0");
 }
 
+/// The buffered worker needs its separator while walking the producer, whereas
+/// source call evaluation computes the separator only after that producer has
+/// returned. A computed separator can perform effects or trap, so fusion must
+/// refuse it rather than reorder observable evaluation.
+#[test]
+fn rejects_fusion_when_separator_is_computed() {
+    let src = r#"
+fn build(n: Int, acc: List<Int>) -> List<Int>
+    match n <= 0
+        true  -> List.reverse(acc)
+        false -> build(n - 1, List.prepend(n, acc))
+
+fn separator() -> String
+    ","
+
+fn main() -> String
+    String.join(build(5, []), separator())
+"#;
+    let mut lexer = crate::lexer::Lexer::new(src);
+    let tokens = lexer.tokenize().expect("lex");
+    let mut parser = crate::parser::Parser::new(tokens);
+    let mut items = parser.parse().expect("parse");
+    crate::ir::pipeline::tco(&mut items);
+    let fns: Vec<&FnDef> = items
+        .iter()
+        .filter_map(|it| match it {
+            crate::ast::TopLevel::FnDef(fd) => Some(fd),
+            _ => None,
+        })
+        .collect();
+    let sinks = compute_buffer_build_sinks(&fns);
+    let sites = find_fusion_sites(&fns, &sinks);
+    assert!(
+        sites.is_empty(),
+        "computed separator must preserve source evaluation order, got {sites:?}"
+    );
+}
+
+/// An identifier is already a stable immutable value at the call site, so
+/// passing it to the buffered worker cannot run a computation early.
+#[test]
+fn accepts_fusion_when_separator_is_an_immutable_value() {
+    let src = r#"
+fn build(n: Int, acc: List<Int>) -> List<Int>
+    match n <= 0
+        true  -> List.reverse(acc)
+        false -> build(n - 1, List.prepend(n, acc))
+
+fn main(separator: String) -> String
+    String.join(build(5, []), separator)
+"#;
+    let mut lexer = crate::lexer::Lexer::new(src);
+    let tokens = lexer.tokenize().expect("lex");
+    let mut parser = crate::parser::Parser::new(tokens);
+    let mut items = parser.parse().expect("parse");
+    crate::ir::pipeline::tco(&mut items);
+    let fns: Vec<&FnDef> = items
+        .iter()
+        .filter_map(|it| match it {
+            crate::ast::TopLevel::FnDef(fd) => Some(fd),
+            _ => None,
+        })
+        .collect();
+    let sinks = compute_buffer_build_sinks(&fns);
+    let sites = find_fusion_sites(&fns, &sinks);
+    assert_eq!(sites.len(), 1, "stable separator should fuse: {sites:?}");
+}
+
 /// Caller passes the matched fn's result to a non-`String.join`
 /// destination — should NOT register as a fusion site (no buffer
 /// to write into).
@@ -333,11 +401,11 @@ fn build(n: Int, acc: List<Int>) -> List<Int>
 
     // Name + signature shape.
     assert_eq!(bf.name, "build__buffered");
-    assert_eq!(bf.return_type, "Buffer");
+    assert_eq!(bf.return_type, "__Buffer");
     let param_names: Vec<&str> = bf.params.iter().map(|(n, _)| n.as_str()).collect();
     let param_types: Vec<&str> = bf.params.iter().map(|(_, t)| t.as_str()).collect();
     assert_eq!(param_names, vec!["n", "__buf", "__sep"]);
-    assert_eq!(param_types, vec!["Int", "Buffer", "String"]);
+    assert_eq!(param_types, vec!["Int", "__Buffer", "String"]);
 
     // Body: single Stmt::Expr holding a 2-arm match.
     let stmts = bf.body.stmts();
@@ -774,7 +842,7 @@ fn toHex(values: List<Int>) -> String
     // The buffered variant keeps the list-driven arms and returns
     // the buffer straight out of the `[]` case.
     let buffered = fn_named(&items, "hexParts__buffered");
-    assert_eq!(buffered.return_type, "Buffer");
+    assert_eq!(buffered.return_type, "__Buffer");
     let arms = match &buffered.body.stmts()[0] {
         Stmt::Expr(s) => match &s.node {
             Expr::Match { arms, .. } => arms,

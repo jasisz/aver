@@ -5134,21 +5134,19 @@ pub(super) fn cmd_explain_passes(file: &str, module_root_override: Option<&str>,
     }
 }
 
-/// Which compile targets actually carry the fusion the `buffer_build`
-/// report counts.
+/// Which compile targets carry each fabrication reported by
+/// `--explain-passes`.
 ///
-/// The pass is half of the traversal-lowering toggle: `aver run` and the
-/// default Rust codegen run it over the entry module and every
-/// dependency, while `--target wasm-gc` and `--target wasip2` build with
-/// it off (their lowering has no representation for the buffer it
-/// introduces) — as do the proof exporters. `--explain-passes` runs one
-/// pipeline regardless of `--target`, so a report of N rewritten sites
-/// is a statement about the rust / VM artifact and about no other. Say
-/// so rather than let the reader assume it describes the wasm they
-/// asked for.
-const DEFORESTING_TARGETS_JSON: &str = "[\"rust\",\"vm\"]";
-const DEFORESTING_TARGETS_NOTE: &str = "counted for the rust and VM pipelines — --target wasm-gc and --target wasip2 build without this pass, so their artifacts carry none of these rewrites";
+/// String builders/cursors/indexes now run on every runtime backend, while
+/// generic list/byte collectors remain Rust/VM-only. Proof exporters skip all
+/// fabricating passes, and certified wasm-gc artifacts keep their independently
+/// classified source-level traversal. The diagnostic runs one observational
+/// pipeline regardless of `--target`, so every report names the artifacts its
+/// count actually describes.
+const COLLECTOR_TARGETS_JSON: &str = "[\"rust\",\"vm\"]";
+const COLLECTOR_TARGETS_NOTE: &str = "counted for the rust and VM pipelines — --target wasm-gc and --target wasip2 build without this pass, so their artifacts carry none of these rewrites";
 const RUNTIME_STRING_TARGETS_JSON: &str = "[\"rust\",\"vm\",\"wasm-gc\",\"wasip2\"]";
+const BUFFER_BUILD_TARGETS_NOTE: &str = "counted for every runtime pipeline — rust, VM, ordinary wasm-gc, and wasip2; certified wasm-gc retains source traversal until its byte-level wall classifies the builder helpers";
 const CHARS_FUSION_TARGETS_NOTE: &str = "counted for every runtime pipeline — rust, VM, ordinary wasm-gc, and wasip2; certified wasm-gc retains source traversal until its byte-level wall classifies the cursor helpers";
 const STRING_INDEX_TARGETS_NOTE: &str =
     "counted for every runtime pipeline — rust, VM, wasm-gc, and wasip2";
@@ -5759,7 +5757,7 @@ fn render_pass_diagnostics(diags: &[aver::ir::pipeline::PassDiagnostic]) -> Stri
                     for fn_name in &r.synthesized {
                         out.push_str(&format!("  • synthesized {fn_name}\n"));
                     }
-                    out.push_str(&format!("  • {DEFORESTING_TARGETS_NOTE}\n"));
+                    out.push_str(&format!("  • {BUFFER_BUILD_TARGETS_NOTE}\n"));
                 }
             }
             PassReport::CharsFusion(r) => {
@@ -5846,7 +5844,7 @@ fn render_pass_diagnostics(diags: &[aver::ir::pipeline::PassDiagnostic]) -> Stri
                             "  • {fn_name} collects bytes; its fromList call is gone\n"
                         ));
                     }
-                    out.push_str(&format!("  • {DEFORESTING_TARGETS_NOTE}\n"));
+                    out.push_str(&format!("  • {COLLECTOR_TARGETS_NOTE}\n"));
                 }
                 for (driver, steps) in &r.pair_inlined_by_fn {
                     out.push_str(&format!(
@@ -6103,7 +6101,7 @@ fn render_pass_diagnostics_json(diags: &[aver::ir::pipeline::PassDiagnostic]) ->
                     json_str_array(&r.synthesized),
                     json_str_array(&r.sink_fns),
                     by_sink,
-                    DEFORESTING_TARGETS_JSON
+                    RUNTIME_STRING_TARGETS_JSON
                 ));
             }
             PassReport::CharsFusion(r) => {
@@ -6217,7 +6215,7 @@ fn render_pass_diagnostics_json(diags: &[aver::ir::pipeline::PassDiagnostic]) ->
                     r.byte_retargets,
                     json_str_array(&r.byte_fns),
                     byte_declined,
-                    DEFORESTING_TARGETS_JSON
+                    COLLECTOR_TARGETS_JSON
                 ));
             }
             PassReport::Resolve {
@@ -6672,17 +6670,13 @@ fn cmd_compile_wasm_gc(
             typecheck: Some(TypecheckMode::WithCheckedLoaded(&prepared_deps.loaded)),
             alloc_policy: Some(&neutral_policy),
             dep_modules: &dep_modules,
-            // wasm-gc backend lowers `Expr::InterpolatedStr` natively
-            // to a `String.concat` chain (immutable arrays match the
-            // engine's GC primitives). The `__buf_*` pipeline that
-            // `interp_lower` produces targets bump-allocator backends
-            // (legacy wasm, VM); for wasm-gc it would force us to
-            // emulate a mutable buffer over `(struct len array)` with
-            // grow-on-append, when `array.copy` x2 is the idiomatic
-            // shape. Keep the source InterpolatedStr in the IR. Character
-            // traversal itself lowers directly over the UTF-8 String array.
+            // Interpolation keeps the backend's native variadic concat shape;
+            // joined collecting loops use the growable GC String builder.
+            // The independent byte-level certificate wall has not classified
+            // either handwritten helper family yet, so certified artifacts
+            // retain their already-covered source traversal.
             run_interp_lower: false,
-            run_buffer_build: false,
+            run_buffer_build: !certify,
             run_chars_fusion: !certify,
             run_string_index: true,
             run_list_build: false,
@@ -6703,10 +6697,9 @@ fn cmd_compile_wasm_gc(
     // `call $fn` after rewriting `Attr(Ident("Fractal"), "render")`
     // call sites to `Ident("Fractal_render")`. Component Model is a
     // future separate mode (see `project_wasm_gc_multimodule.md`).
-    // The wasm-gc compile path lowers immutable String traversal (the cursor
-    // stays off only for the separately pinned certificate wall), but not the
-    // mutable buffer/list builders. It does not use the self-host typecheck
-    // driver.
+    // The wasm-gc compile path lowers String traversal and joined collectors
+    // (both stay off only for the separately pinned certificate wall), but not
+    // list/byte collectors. It does not use the self-host typecheck driver.
     reject_unsupported_capability_targets(
         &items,
         &dep_modules,
@@ -6982,7 +6975,7 @@ fn cmd_compile_wasip2(
                 alloc_policy: Some(&neutral_policy),
                 dep_modules: &dep_modules,
                 run_interp_lower: false,
-                run_buffer_build: false,
+                run_buffer_build: true,
                 run_chars_fusion: true,
                 run_string_index: true,
                 run_list_build: false,
@@ -11720,9 +11713,9 @@ pub(super) fn flatten_multimodule(
 /// One field per pipeline gate rather than a bundled "optimise" flag, so
 /// this matches the gates 1-to-1 with no magic translation in between:
 /// Proof exporters (Lean/Dafny) ask for [`Self::PRISTINE`]. The wasm-gc
-/// family asks for [`Self::STRING_TRAVERSAL`] because it lowers both the
-/// UTF-8 character cursor and the packed String index, but not mutable builders.
-/// VM and Rust turn every supported pass on for dependencies too.
+/// family asks for [`Self::STRING_TRAVERSAL`] because it lowers the String
+/// builder, UTF-8 character cursor, and packed String index, but not generic
+/// list/byte collectors. VM and Rust turn every supported pass on too.
 #[derive(Clone, Copy)]
 pub(super) struct DepLowering {
     pub interp_lower: bool,
@@ -11765,11 +11758,13 @@ impl DepLowering {
         ..Self::PRISTINE
     };
 
-    /// Runtime wasm-gc / wasip2 shape: character traversal uses the native
-    /// UTF-8 cursor and indexed access uses a native i32 boundary array.
-    /// Mutable Buffer/list-builder fabrications remain unsupported.
+    /// Runtime wasm-gc / wasip2 shape: joined String collectors use the
+    /// growable GC buffer, character traversal uses the native UTF-8 cursor,
+    /// and indexed access uses a native i32 boundary array. List/byte
+    /// collector fabrications remain unsupported.
     #[cfg(any(feature = "wasm", feature = "wasip2"))]
     pub(super) const STRING_TRAVERSAL: Self = Self {
+        buffer_build: true,
         chars_fusion: true,
         string_index: true,
         ..Self::PRISTINE

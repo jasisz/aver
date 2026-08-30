@@ -1075,6 +1075,56 @@ pub(crate) fn emit_mir_expr(
                     // mix an i64 helper with ref operands (invalid wasm)
                     // and silently truncate a Big.
                     use crate::ir::hir::BuiltinIntrinsic;
+                    if matches!(intr, BuiltinIntrinsic::BufNew) {
+                        if call.args.len() != 1 {
+                            return Err(WasmGcError::Validation(format!(
+                                "{} expects 1 argument, got {}",
+                                intr.name(),
+                                call.args.len()
+                            )));
+                        }
+                        // The argument is an allocation hint, not a semantic
+                        // value. Evaluate it exactly once, then start from a
+                        // small fixed capacity; geometric growth in the append
+                        // helper makes this amortized linear without needing a
+                        // second helper signature for boxed versus raw Int.
+                        if emit_mir_expr(func, &call.args[0], slots, ctx)?.is_none() {
+                            return Ok(None);
+                        }
+                        func.instruction(&Instruction::Drop);
+                        let string_idx =
+                            ctx.registry
+                                .string_array_type_idx
+                                .ok_or(WasmGcError::Validation(
+                                    "__buf_new requires the String storage type".into(),
+                                ))?;
+                        let buffer_idx =
+                            ctx.registry
+                                .string_buffer_type_idx
+                                .ok_or(WasmGcError::Validation(
+                                    "__buf_new requires the hidden String builder type".into(),
+                                ))?;
+                        func.instruction(&Instruction::I32Const(0)); // logical byte length
+                        func.instruction(&Instruction::I32Const(0)); // no fragments appended yet
+                        func.instruction(&Instruction::I32Const(16));
+                        func.instruction(&Instruction::ArrayNewDefault(string_idx));
+                        func.instruction(&Instruction::StructNew(buffer_idx));
+                        return Ok(Some(true));
+                    }
+                    if matches!(intr, BuiltinIntrinsic::ToStr) {
+                        if call.args.len() != 1 {
+                            return Err(WasmGcError::Validation(format!(
+                                "{} expects 1 argument, got {}",
+                                intr.name(),
+                                call.args.len()
+                            )));
+                        }
+                        return match emit_mir_primitive_to_string(func, &call.args[0], slots, ctx)?
+                        {
+                            Some(()) => Ok(Some(true)),
+                            None => Ok(None),
+                        };
+                    }
                     if matches!(intr, BuiltinIntrinsic::ResultProven) {
                         return match emit_mir_result_proven(func, &call.args, slots, ctx)? {
                             MirBuiltinEmit::Produced(produces) => Ok(Some(produces)),
@@ -1163,10 +1213,10 @@ pub(crate) fn emit_mir_expr(
                     // registered wasm helpers).
                     //
                     // Anything unregistered is a fabricated intrinsic
-                    // from a fusion pass (`__buf_*`, `__str_*`,
-                    // `__lst_*`, `__to_str`) that only the VM and the
-                    // Rust codegen can lower; the wasm-gc pipeline
-                    // excludes those passes, so one showing up here
+                    // from a fusion pass (`__lst_*`, `__byt_*`, or a future
+                    // family) that wasm-gc cannot lower. The implemented
+                    // String builder/cursor families route above or through
+                    // the registry. An unregistered intrinsic showing up here
                     // means the exclusion regressed. REFUSE instead of
                     // falling through to `Ok(None)`: that fallback
                     // would ship a trap stub for a fn whose call sites

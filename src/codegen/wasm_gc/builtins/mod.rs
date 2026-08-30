@@ -73,6 +73,7 @@ mod bignum;
 pub(in crate::codegen::wasm_gc) mod case_tables;
 mod crypto;
 mod endian;
+mod string_builder;
 mod string_case;
 mod string_cursor;
 mod utf8;
@@ -169,6 +170,13 @@ pub(super) enum BuiltinName {
     StrCursorCode,
     StrFoldLower,
     StrFoldUpper,
+    /// Compiler-internal mutable String builder helpers fabricated by
+    /// `buffer_build` / `interp_lower`. `__buf_new` is emitted inline because
+    /// its ignored capacity hint has an Int representation that varies with
+    /// the bignum mode; `__to_str` dispatches inline by its stamped arg type.
+    BufAppend,
+    BufAppendSepUnlessFirst,
+    BufFinalize,
     /// `String.replace(s, needle, repl) -> String`. Two-pass naive
     /// scan: count occurrences, allocate output of exact size, fill.
     /// Empty needle returns `s` unchanged.
@@ -311,6 +319,9 @@ impl BuiltinName {
             "__str_cursor_code" => Some(Self::StrCursorCode),
             "__str_fold_lower" => Some(Self::StrFoldLower),
             "__str_fold_upper" => Some(Self::StrFoldUpper),
+            "__buf_append" => Some(Self::BufAppend),
+            "__buf_append_sep_unless_first" => Some(Self::BufAppendSepUnlessFirst),
+            "__buf_finalize" => Some(Self::BufFinalize),
             "String.replace" => Some(Self::StringReplace),
             "Crypto.sha256" => Some(Self::CryptoSha256),
             _ => None,
@@ -360,6 +371,9 @@ impl BuiltinName {
             Self::StrCursorCode => "__str_cursor_code",
             Self::StrFoldLower => "__str_fold_lower",
             Self::StrFoldUpper => "__str_fold_upper",
+            Self::BufAppend => "__buf_append",
+            Self::BufAppendSepUnlessFirst => "__buf_append_sep_unless_first",
+            Self::BufFinalize => "__buf_finalize",
             Self::StringReplace => "String.replace",
             Self::CryptoSha256 => "Crypto.sha256",
             Self::IntModEuclid => "__int_mod_euclid",
@@ -458,6 +472,10 @@ impl BuiltinName {
                 Ok(vec![string_ref_ty(registry)?])
             }
             Self::StrFoldLower | Self::StrFoldUpper => Ok(vec![ValType::I64]),
+            Self::BufAppend | Self::BufAppendSepUnlessFirst => {
+                Ok(vec![buffer_ref_ty(registry)?, string_ref_ty(registry)?])
+            }
+            Self::BufFinalize => Ok(vec![buffer_ref_ty(registry)?]),
             Self::StringReplace => Ok(vec![
                 string_ref_ty(registry)?,
                 string_ref_ty(registry)?,
@@ -550,6 +568,8 @@ impl BuiltinName {
             | Self::StrCursorCode
             | Self::StrFoldLower
             | Self::StrFoldUpper => Ok(vec![ValType::I64]),
+            Self::BufAppend | Self::BufAppendSepUnlessFirst => Ok(vec![buffer_ref_ty(registry)?]),
+            Self::BufFinalize => Ok(vec![string_ref_ty(registry)?]),
             Self::StringReplace => Ok(vec![string_ref_ty(registry)?]),
             Self::CryptoSha256 => Ok(vec![record_ref_ty(registry, "Digest32")?]),
             Self::IntModEuclid | Self::IntDivEuclid => Ok(vec![ValType::I64]),
@@ -635,6 +655,9 @@ impl BuiltinName {
             Self::StrCursorCode => string_cursor::emit_cursor_code(registry),
             Self::StrFoldLower => string_cursor::emit_fold(registry, false, case),
             Self::StrFoldUpper => string_cursor::emit_fold(registry, true, case),
+            Self::BufAppend => string_builder::emit_append(registry),
+            Self::BufAppendSepUnlessFirst => string_builder::emit_append_sep_unless_first(registry),
+            Self::BufFinalize => string_builder::emit_finalize(registry),
             Self::StringReplace => emit_string_replace(registry),
             Self::CryptoSha256 => crypto::emit_sha256(registry),
             Self::IntModEuclid => emit_int_mod_euclid(),
@@ -730,6 +753,18 @@ fn mag_ref_ty(registry: &TypeRegistry) -> Result<ValType, WasmGcError> {
 }
 
 /// `(ref null $string_array)` — shared String repr.
+fn buffer_ref_ty(registry: &TypeRegistry) -> Result<ValType, WasmGcError> {
+    let idx = registry
+        .string_buffer_type_idx
+        .ok_or(WasmGcError::Validation(
+            "String builder helper requires its hidden type slot".into(),
+        ))?;
+    Ok(ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(idx),
+    }))
+}
+
 fn string_ref_ty(registry: &TypeRegistry) -> Result<ValType, WasmGcError> {
     let idx = registry
         .string_array_type_idx

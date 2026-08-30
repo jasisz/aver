@@ -70,11 +70,36 @@ use std::iter::FusedIterator;
 
 /// Internal builder for the deforestation lowering (0.15 Traversal).
 /// Backs `__buf_*` intrinsics emitted when the compiler fuses
-/// `String.join(<builder>(...), sep)` shapes — `String::with_capacity`
-/// plus `push_str` is exactly the right shape, no GC dance needed.
-/// User code never sees this directly; it lives strictly between
-/// `__buf_new` and `__buf_finalize` inside synthesized helpers.
-pub type Buffer = String;
+/// `String.join(<builder>(...), sep)` shapes.
+///
+/// `has_parts` is intentionally distinct from `bytes.is_empty()`: joining
+/// `["", "b"]` must emit `",b"`, so the separator decision records that an
+/// empty first fragment was appended. User code never sees this type; it lives
+/// strictly between `__buf_new` and `__buf_finalize`.
+pub struct Buffer {
+    bytes: String,
+    has_parts: bool,
+}
+
+impl Buffer {
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            bytes: String::with_capacity(capacity),
+            has_parts: false,
+        }
+    }
+
+    pub fn push_str(&mut self, value: &str) {
+        self.bytes.push_str(value);
+        self.has_parts = true;
+    }
+
+    /// Internal "is first fragment" predicate retained under the old method
+    /// name so already-generated self-host code shares the corrected contract.
+    pub fn is_empty(&self) -> bool {
+        !self.has_parts
+    }
+}
 
 /// Aver string type: newtype over Rc<str> for O(1) clone and native `+` operator.
 #[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
@@ -111,6 +136,12 @@ impl std::borrow::Borrow<str> for AverStr {
 impl From<String> for AverStr {
     fn from(s: String) -> Self {
         Self(Rc::from(s.as_str()))
+    }
+}
+
+impl From<Buffer> for AverStr {
+    fn from(buffer: Buffer) -> Self {
+        Self(Rc::from(buffer.bytes.as_str()))
     }
 }
 
@@ -1513,9 +1544,25 @@ pub fn string_join<S: AsRef<str>>(parts: &AverList<S>, sep: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        AverList, AverListInner, AverMap, LIST_APPEND_CHUNK_LIMIT, aver_display, env_set,
-        string_slice,
+        AverList, AverListInner, AverMap, AverStr, Buffer, LIST_APPEND_CHUNK_LIMIT, aver_display,
+        env_set, string_slice,
     };
+
+    #[test]
+    fn buffer_separator_state_survives_an_empty_first_fragment() {
+        let mut buffer = Buffer::with_capacity(0);
+        if !buffer.is_empty() {
+            buffer.push_str(",");
+        }
+        buffer.push_str("");
+        if !buffer.is_empty() {
+            buffer.push_str(",");
+        }
+        buffer.push_str("b");
+
+        let rendered = AverStr::from(buffer);
+        assert_eq!(rendered.as_ref(), ",b");
+    }
 
     /// `AverMap` is exposed to generated programs, including programs that put
     /// network-derived values into a map. Keep the fast hasher keyed per map

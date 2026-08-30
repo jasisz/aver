@@ -119,11 +119,11 @@ fn build_component(
             typecheck: Some(TypecheckMode::WithCheckedLoaded(&prepared_deps.loaded)),
             alloc_policy: Some(&neutral_policy),
             dep_modules: &dep_modules,
-            // Mutable buffer/list lowering stays off: wasm-gc has no Buffer
-            // carrier yet. Character fusion is independent of that carrier and
-            // lowers directly over the shared UTF-8 String array.
+            // Native concat remains the better interpolation shape. Joined
+            // collecting loops use the growable String builder; list/byte
+            // collectors remain independently disabled.
             run_interp_lower: false,
-            run_buffer_build: false,
+            run_buffer_build: true,
             run_chars_fusion: true,
             run_string_index: true,
             run_list_build: false,

@@ -546,6 +546,17 @@ pub(super) fn emit_module_with(
             &symbol_table,
         );
     }
+    // A hidden Buffer type means the fabricating pass made the closed builder
+    // contract reachable. Register the whole three-helper family together:
+    // unlike surface calls, MIR optimization may move or remove individual
+    // intrinsic sites after HIR discovery, while helper indices must already
+    // be stable before body emission begins. `wasm-opt -Oz` removes any member
+    // whose call site disappeared.
+    if registry.string_buffer_type_idx.is_some() {
+        builtin_registry.register(BuiltinName::BufAppend);
+        builtin_registry.register(BuiltinName::BufAppendSepUnlessFirst);
+        builtin_registry.register(BuiltinName::BufFinalize);
+    }
     // bignum slice 1 — when the opt-in `$AverInt` representation is
     // active, register the full arithmetic prelude. Registration is
     // unconditional (not per-op-discovered) because the literal /
@@ -6190,6 +6201,38 @@ fn emit_user_types(
         ));
     }
 
+    // Compiler-internal growable String builder. The byte array reuses the
+    // mutable String storage type; its logical prefix is the accumulated text
+    // and `array.len(data)` is the capacity. Finalization copies only `len`
+    // bytes into the immutable-by-convention String result.
+    if let Some(idx) = registry.string_buffer_type_idx {
+        let string_idx = registry.string_array_type_idx.ok_or_else(|| {
+            WasmGcError::Validation("String builder allocated without String storage".into())
+        })?;
+        entries.push((
+            idx,
+            mk_struct(vec![
+                wasm_encoder::FieldType {
+                    element_type: wasm_encoder::StorageType::Val(wasm_encoder::ValType::I32),
+                    mutable: true,
+                },
+                wasm_encoder::FieldType {
+                    element_type: wasm_encoder::StorageType::Val(wasm_encoder::ValType::I32),
+                    mutable: true,
+                },
+                wasm_encoder::FieldType {
+                    element_type: wasm_encoder::StorageType::Val(wasm_encoder::ValType::Ref(
+                        wasm_encoder::RefType {
+                            nullable: true,
+                            heap_type: wasm_encoder::HeapType::Concrete(string_idx),
+                        },
+                    )),
+                    mutable: true,
+                },
+            ]),
+        ));
+    }
+
     // Compiler-internal codepoint→byte boundary table. It is separate from
     // user `Vector<Int>`: offsets are machine `i32`s even when Aver `Int`
     // uses the arbitrary-precision carrier.
@@ -6845,6 +6888,16 @@ fn discover_builtins_in_expr(
                 if let Some(name) = BuiltinName::from_dotted(intrinsic.name()) {
                     builtins.register(name);
                 }
+                if matches!(intrinsic, crate::ir::hir::BuiltinIntrinsic::ToStr)
+                    && let Some(arg) = args.first()
+                {
+                    match arg.ty().map(|ty| ty.display()).as_deref() {
+                        Some("Int") => builtins.register(BuiltinName::StringFromInt),
+                        Some("Float") => builtins.register(BuiltinName::StringFromFloat),
+                        Some("Bool") => builtins.register(BuiltinName::StringFromBool),
+                        _ => {}
+                    }
+                }
                 if matches!(intrinsic, crate::ir::hir::BuiltinIntrinsic::ResultProven) {
                     effects.register(EffectName::ProviderContractViolation);
                 }
@@ -7164,11 +7217,11 @@ fn discover_builtins_in_expr(
 /// internals.
 /// Refuse any fabricated intrinsic the wasm-gc family cannot lower.
 ///
-/// The mutable builder passes (`interp_lower` / `buffer_build` /
-/// `list_build`) synthesize `__buf_*`, `__to_str`, `__lst_*`, and `__byt_*`
-/// calls that only VM and Rust lower. wasm-gc / wasip2 do lower the immutable
-/// String-index workers and cursor-shaped `__str_*` calls directly. If an
-/// unsupported pass's exclusion ever regresses, the synthesized
+/// The fabricating passes synthesize the `__buf_*`, `__to_str`, `__lst_*`,
+/// and `__byt_*` contracts. wasm-gc / wasip2 lower the closed String-builder,
+/// String-index, and cursor families directly; generic list and packed-byte
+/// sinks remain VM/Rust-only. If an unsupported pass's exclusion ever
+/// regresses, the synthesized
 /// nodes reach this backend — and the failure used to be silent: the
 /// body emitter's `Intrinsic` arm fell through to the per-fn trap-stub
 /// fallback (or the type reader panicked first on a synthesized node
@@ -7213,14 +7266,14 @@ fn refuse_fabricated_intrinsics(
             | BuiltinIntrinsic::StrCode1Upper
             | BuiltinIntrinsic::StrCursorCode
             | BuiltinIntrinsic::StrFoldLower
-            | BuiltinIntrinsic::StrFoldUpper => true,
-            // Older fusion-pass fabrications — VM / Rust codegen only.
-            BuiltinIntrinsic::BufNew
+            | BuiltinIntrinsic::StrFoldUpper
+            | BuiltinIntrinsic::BufNew
             | BuiltinIntrinsic::BufAppend
             | BuiltinIntrinsic::BufAppendSepUnlessFirst
             | BuiltinIntrinsic::BufFinalize
-            | BuiltinIntrinsic::ToStr
-            | BuiltinIntrinsic::LstNew
+            | BuiltinIntrinsic::ToStr => true,
+            // Collector / byte-sink fabrications remain VM / Rust only.
+            BuiltinIntrinsic::LstNew
             | BuiltinIntrinsic::LstPush
             | BuiltinIntrinsic::LstFinalize
             | BuiltinIntrinsic::BytNew

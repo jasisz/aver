@@ -454,8 +454,9 @@ fn is_user_defined_named(ty: &Type) -> bool {
     match ty {
         Type::Named { id: Some(_), name } => {
             // Exclude standard-library and compiler boundary types the resolver
-            // stamps with an id (Http.Response, Header, Tcp.Connection, Buffer,
-            // etc.). They are not user domain types.
+            // stamps with an id (Http.Response, Header, Tcp.Connection, etc.).
+            // Compiler-only `__Buffer` carries no TypeId; a user `Buffer` is a
+            // genuine domain type and must not be filtered here.
             !is_builtin_named(name)
         }
         // Result/Option wrapping a user type still counts as semantic
@@ -474,7 +475,6 @@ fn is_builtin_named(name: &str) -> bool {
             | "HttpRequest"
             | "Header"
             | "Tcp.Connection"
-            | "Buffer"
             | "Date"
             | "Duration"
             | "Time"

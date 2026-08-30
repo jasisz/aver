@@ -21,17 +21,11 @@ pub fn compile_to_wasm(source: &str) -> Result<Vec<u8>, String> {
         &mut items,
         PipelineConfig {
             typecheck: Some(TypecheckMode::Full { base_dir: None }),
-            // wasm-gc backend lowers `Expr::InterpolatedStr` natively
-            // (`array.new_fixed` + variadic concat helper). The
-            // `__buf_*` pipeline that `interp_lower` produces targets
-            // bump-allocator backends; wasm-gc would have to emulate
-            // a mutable buffer over `(struct len array)` with
-            // grow-on-append, while `array.copy` x2 is the idiomatic
-            // shape. Keep those mutable lowerings off, but enable the
-            // UTF-8 character cursor and immutable String boundary index that
-            // wasm-gc lowers natively.
+            // Keep interpolation on native variadic concat, while joined
+            // collecting loops use the growable String builder. Character
+            // traversal and indexed access use their native wasm-gc carriers.
             run_interp_lower: false,
-            run_buffer_build: false,
+            run_buffer_build: true,
             run_chars_fusion: true,
             run_string_index: true,
             run_list_build: false,
@@ -71,15 +65,14 @@ pub fn compile_project_to_wasm(
     let root_depends = load_roots(&entry_items);
     let loaded = load_module_tree_from_map(&root_depends, files)?;
 
-    // Full wasm-gc pipeline — matches CLI `aver compile --target wasm-gc`
-    // for multi-file projects. Keep interpolation/buffer lowering off because
-    // wasm-gc lowers strings natively.
+    // Full wasm-gc pipeline — matches CLI `aver compile --target wasm-gc`:
+    // native interpolation plus the growable join builder.
     let pipeline_result = crate::ir::pipeline::run(
         &mut entry_items,
         PipelineConfig {
             typecheck: Some(TypecheckMode::WithLoaded(&loaded)),
             run_interp_lower: false,
-            run_buffer_build: false,
+            run_buffer_build: true,
             run_chars_fusion: true,
             run_string_index: true,
             run_list_build: false,
@@ -93,7 +86,7 @@ pub fn compile_project_to_wasm(
 
     let modules: Vec<codegen::ModuleInfo> = loaded
         .into_iter()
-        .map(|m| loaded_to_module_info(m, false, true))
+        .map(|m| loaded_to_module_info(m, false, true, true))
         .collect();
 
     let type_aliases = codegen::wasm_gc::flatten_multimodule(
@@ -152,7 +145,7 @@ pub fn compile_project_to_wasm_with_entry(
         PipelineConfig {
             typecheck: Some(TypecheckMode::WithLoaded(&loaded)),
             run_interp_lower: false,
-            run_buffer_build: false,
+            run_buffer_build: true,
             run_chars_fusion: true,
             run_string_index: true,
             run_list_build: false,
@@ -166,7 +159,7 @@ pub fn compile_project_to_wasm_with_entry(
 
     let modules: Vec<codegen::ModuleInfo> = loaded
         .into_iter()
-        .map(|m| loaded_to_module_info(m, false, true))
+        .map(|m| loaded_to_module_info(m, false, true, true))
         .collect();
     let type_aliases = codegen::wasm_gc::flatten_multimodule(
         &mut entry_items,
@@ -410,7 +403,14 @@ fn build_project_ctx(
     let modules: Vec<codegen::ModuleInfo> = loaded
         .iter()
         .cloned()
-        .map(|m| loaded_to_module_info(m, apply_traversal_lowering, apply_traversal_lowering))
+        .map(|m| {
+            loaded_to_module_info(
+                m,
+                apply_traversal_lowering,
+                apply_traversal_lowering,
+                apply_traversal_lowering,
+            )
+        })
         .collect();
 
     // Multi-file pipeline. `apply_traversal_lowering` mirrors the CLI
@@ -522,12 +522,14 @@ fn load_roots(items: &[TopLevel]) -> Vec<String> {
     deps
 }
 
-/// Lower one virtual-fs dependency with the entry target's matrix. Mutable
-/// builders and immutable String traversal are separate: wasm requests cursor
-/// fusion + indexing, Rust requests all passes, and proofs request none.
+/// Lower one virtual-fs dependency with the entry target's matrix. String
+/// builders, the remaining mutable collectors, and immutable String traversal
+/// are separate: wasm requests buffer + cursor + index, Rust requests every
+/// pass, and proofs request none.
 fn loaded_to_module_info(
     m: LoadedModule,
     apply_traversal_lowering: bool,
+    apply_buffer_build: bool,
     apply_string_index: bool,
 ) -> codegen::ModuleInfo {
     let mut items = m.items;
@@ -539,7 +541,7 @@ fn loaded_to_module_info(
         &mut items,
         PipelineConfig {
             run_interp_lower: apply_traversal_lowering,
-            run_buffer_build: apply_traversal_lowering,
+            run_buffer_build: apply_buffer_build,
             run_chars_fusion: apply_string_index,
             run_string_index: apply_string_index,
             run_list_build: apply_traversal_lowering,
@@ -1281,9 +1283,10 @@ fn main() -> Int
             "runtime modules must carry the indexed worker"
         );
 
-        // The wasm virtual-fs path has its own matrix: mutable builders off,
-        // immutable String index on. A successful compile proves the hidden
-        // String.Index survives flattening and has a concrete wasm type.
+        // The wasm virtual-fs path enables the String builder/cursor/index
+        // contracts but keeps generic list/byte collectors off. A successful
+        // compile proves the hidden String.Index survives flattening and has a
+        // concrete wasm type.
         let bytes = compile_project_to_wasm(&files, "main.av").expect("wasm project");
         assert!(bytes.len() > 1000);
     }

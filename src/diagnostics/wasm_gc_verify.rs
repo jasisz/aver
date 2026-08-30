@@ -154,7 +154,9 @@ pub fn run_verify_for_items_wasm_gc_with_mode(
     let plans = build_verify_wasm_gc_plans(&mut items, &blocks);
 
     let prepared_deps = if let Some(root) = base_dir {
-        Some(crate::source::load_compile_deps(&items, root)?)
+        Some(crate::source::load_compile_deps_for_wasm_runtime(
+            &items, root,
+        )?)
     } else {
         None
     };
@@ -175,7 +177,7 @@ pub fn run_verify_for_items_wasm_gc_with_mode(
             }),
             alloc_policy: Some(&neutral_policy),
             run_interp_lower: false,
-            run_buffer_build: false,
+            run_buffer_build: true,
             run_chars_fusion: true,
             run_string_index: true,
             run_list_build: false,

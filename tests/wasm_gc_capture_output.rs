@@ -77,6 +77,154 @@ fn wasm_gc_console_print_writes_to_capture_buffer() {
     );
 }
 
+#[test]
+fn wasm_gc_runtime_pipeline_lowers_string_join_builder() {
+    const SOURCE: &str = r#"module Builder
+    intent =
+        "exercise the production wasm-gc String builder matrix"
+    effects [Console]
+
+fn parts(values: List<String>, acc: List<String>) -> List<String>
+    match values
+        [] -> List.reverse(acc)
+        [head, ..tail] -> parts(tail, List.prepend(head, acc))
+
+fn main() -> Unit
+    ! [Console.print]
+    joined = String.join(parts(["", "é🙂", "x", "y", "z", "long-fragment"], []), "|")
+    Console.print(joined)
+"#;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let entry = dir.path().join("main.av");
+    std::fs::write(&entry, SOURCE).expect("write builder fixture");
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_aver"))
+        .arg("run")
+        .arg(&entry)
+        .arg("--wasm-gc")
+        .env("AVER_WASMGC_REQUIRE_MIR", "1")
+        .output()
+        .expect("run aver --wasm-gc");
+    assert!(
+        output.status.success(),
+        "builder run failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "|é🙂|x|y|z|long-fragment\n"
+    );
+}
+
+#[test]
+fn wasm_gc_builder_preserves_computed_separator_effect_order() {
+    const SOURCE: &str = r#"module BuilderOrder
+    intent =
+        "preserve String.join argument evaluation order"
+    effects [Console]
+
+fn observe(value: String) -> String
+    ! [Console.print]
+    Console.print(value)
+    value
+
+fn parts(values: List<String>, acc: List<String>) -> List<String>
+    ! [Console.print]
+    match values
+        [] -> List.reverse(acc)
+        [head, ..tail] -> parts(tail, List.prepend(observe(head), acc))
+
+fn separator() -> String
+    ! [Console.print]
+    Console.print("separator")
+    "|"
+
+fn main() -> Unit
+    ! [Console.print]
+    joined = String.join(parts(["a", "b"], []), separator())
+    Console.print(joined)
+"#;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let entry = dir.path().join("main.av");
+    std::fs::write(&entry, SOURCE).expect("write separator-order fixture");
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_aver"))
+        .arg("run")
+        .arg(&entry)
+        .arg("--wasm-gc")
+        .output()
+        .expect("run aver --wasm-gc");
+    assert!(
+        output.status.success(),
+        "separator-order run failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "a\nb\nseparator\na|b\n"
+    );
+}
+
+#[test]
+fn wasm_gc_runtime_pipeline_lowers_builder_inside_bytes_dependency() {
+    const SOURCE: &str = r#"module BuilderDep
+    intent =
+        "exercise String builder lowering in a loaded dependency"
+    depends [Bytes]
+    effects [Console]
+
+fn main() -> Unit
+    ! [Console.print]
+    bytes = Bytes.fromList([0, 10, 255])
+    Console.print(Bytes.toHex(bytes))
+"#;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let entry = dir.path().join("main.av");
+    std::fs::write(&entry, SOURCE).expect("write dependency fixture");
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_aver"))
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .arg("run")
+        .arg(&entry)
+        .arg("--wasm-gc")
+        .output()
+        .expect("run aver --wasm-gc with Bytes");
+    assert!(
+        output.status.success(),
+        "Bytes.toHex run failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "000aff\n");
+}
+
+#[test]
+fn wasm_gc_verify_lowers_builder_inside_bytes_dependency() {
+    const SOURCE: &str = r#"module BuilderVerify
+    intent =
+        "verify String builder lowering in a loaded dependency"
+    depends [Bytes]
+
+fn hex() -> String
+    Bytes.toHex(Bytes.fromList([0, 10, 255]))
+
+verify hex
+    hex() => "000aff"
+"#;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let entry = dir.path().join("main.av");
+    std::fs::write(&entry, SOURCE).expect("write verify fixture");
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_aver"))
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .arg("verify")
+        .arg(&entry)
+        .arg("--wasm-gc")
+        .output()
+        .expect("run aver verify --wasm-gc with Bytes");
+    assert!(
+        output.status.success(),
+        "Bytes.toHex verify failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 #[cfg(feature = "terminal")]
 #[test]
 fn wasm_gc_terminal_result_family_builds_and_validates() {
@@ -309,7 +457,7 @@ fn vm_and_wasm_gc_stdout(src: &str) -> (String, String) {
                 typecheck: Some(TypecheckMode::Full { base_dir: None }),
                 alloc_policy: Some(&aver::ir::NeutralAllocPolicy),
                 run_interp_lower: false,
-                run_buffer_build: false,
+                run_buffer_build: true,
                 run_chars_fusion: true,
                 run_list_build: false,
                 ..Default::default()

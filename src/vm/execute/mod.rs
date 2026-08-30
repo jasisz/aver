@@ -16,6 +16,11 @@ use super::types::{CallFrame, CodeStore, VmError};
 use super::{VmProfileReport, profile::VmProfileState};
 use crate::nan_value::{Arena, NanValue};
 
+struct StringBuffer {
+    bytes: String,
+    has_parts: bool,
+}
+
 /// The Aver bytecode virtual machine.
 pub struct VM {
     stack: Vec<NanValue>,
@@ -58,11 +63,12 @@ pub struct VM {
     /// actually dispatches the capability operation.
     defer_missing_capability_providers_to_dispatch: bool,
     /// Mutable scratch buffers for the deforestation lowering's `__buf_*`
-    /// intrinsics (0.15 Traversal). Slots are `Option<String>` so finalize
-    /// can take ownership and leave a tombstone; `BUFFER_NEW` reuses freed
-    /// slots before extending. The pool lives on the host heap, opaque to
-    /// the arena GC — buffer handles travel as `Int(idx)` NanValues.
-    buffer_pool: Vec<Option<String>>,
+    /// intrinsics (0.15 Traversal). `has_parts` is separate from byte length
+    /// so an empty first fragment still causes the next separator to emit.
+    /// Slots are optional so finalize can take ownership and leave a tombstone;
+    /// `BUFFER_NEW` reuses freed slots before extending. The pool lives on the
+    /// host heap, opaque to arena GC; handles travel as `Int(idx)` NanValues.
+    buffer_pool: Vec<Option<StringBuffer>>,
     /// Element vectors for the list-build lowering's `__lst_*`
     /// intrinsics. Slots are `Option<Vec<NanValue>>` so finalize can take
     /// ownership and leave a tombstone; `LIST_BUILDER_NEW` reuses freed

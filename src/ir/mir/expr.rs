@@ -550,7 +550,7 @@ pub struct MirConstruct {
 
 /// Build a fresh record. `type_id` is `Some` for records declared in
 /// the current user program; imported capability-owned and compiler-owned
-/// product types (`Http.Response`, `Header`, `Buffer`, …) carry no local
+/// product types (`Http.Response`, `Header`, `__Buffer`, …) carry no local
 /// `TypeId`, so they ride `type_name` alone.
 #[derive(Debug, Clone)]
 pub struct MirRecordCreate {
