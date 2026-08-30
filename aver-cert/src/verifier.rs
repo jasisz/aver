@@ -130,6 +130,19 @@ struct ManifestIdentity {
     abi: String,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ArtifactTarget {
+    WasmGc,
+}
+
+#[derive(Debug)]
+struct PreparedArtifact<'a> {
+    /// Hash of the delivered artifact named by `target`.
+    artifact_hash: String,
+    /// Core wasm module bytes consumed by the schema-5 Lean wall.
+    core_module_bytes: &'a [u8],
+}
+
 struct Candidates {
     certified: Vec<CertifiedCandidate>,
     contracts: Vec<String>,
@@ -271,15 +284,11 @@ fn trusted_check(
     }
 
     let identity = read_manifest_identity(&manifest)?;
-    require_supported_identity(&identity)?;
-
-    // The target field is read before validation so future schemas can select
-    // a component-envelope validator without trying to reinterpret component
-    // bytes as a core module. Schema 5 admits only wasm-gc core modules.
-    wasmparser::Validator::new()
-        .validate_all(&bytes)
-        .map_err(|error| format!("artifact is not valid WebAssembly: {error}"))?;
-    let actual_hash = sha256_hex(&bytes);
+    let artifact_target = require_supported_identity(&identity)?;
+    let PreparedArtifact {
+        artifact_hash: actual_hash,
+        core_module_bytes,
+    } = prepare_artifact_for_target(artifact_target, &bytes)?;
     let pinned_hash = manifest_str(&manifest, "wasm_sha256")?;
     if pinned_hash != actual_hash {
         return Err(format!(
@@ -319,7 +328,12 @@ fn trusted_check(
 
     let candidates = read_candidates(&manifest, identity)?;
     let lean = LeanRunner::new(selected_wall.toolchain)?;
-    let build = assemble_build(cert_dir, &bytes, selected_wall, lean.memory_limit_mb())?;
+    let build = assemble_build(
+        cert_dir,
+        core_module_bytes,
+        selected_wall,
+        lean.memory_limit_mb(),
+    )?;
     let cache_pins = [("wasm_sha256", pinned_hash), ("wall_id", wall_id)];
     let mut cache = ArtifactBuildCache::prepare(
         &build.path,
@@ -594,14 +608,17 @@ fn read_manifest_identity(manifest: &Value) -> Result<ManifestIdentity, String> 
     Ok(identity)
 }
 
-fn require_supported_identity(identity: &ManifestIdentity) -> Result<(), String> {
-    if identity.target != format::TARGET_WASM_GC {
-        return Err(format!(
-            "unsupported certificate target `{}`; this checker accepts {}",
-            identity.target,
-            format::TARGET_WASM_GC
-        ));
-    }
+fn require_supported_identity(identity: &ManifestIdentity) -> Result<ArtifactTarget, String> {
+    let target = match identity.target.as_str() {
+        format::TARGET_WASM_GC => ArtifactTarget::WasmGc,
+        _ => {
+            return Err(format!(
+                "unsupported certificate target `{}`; this checker accepts {}",
+                identity.target,
+                format::TARGET_WASM_GC
+            ));
+        }
+    };
     if identity.profile != format::PROFILE_ID {
         return Err(format!(
             "unsupported certificate profile `{}`; this checker accepts {}",
@@ -616,7 +633,29 @@ fn require_supported_identity(identity: &ManifestIdentity) -> Result<(), String>
             format::RUNTIME_ABI_WASM_GC
         ));
     }
-    Ok(())
+    Ok(target)
+}
+
+fn prepare_artifact_for_target<'a>(
+    target: ArtifactTarget,
+    bytes: &'a [u8],
+) -> Result<PreparedArtifact<'a>, String> {
+    match target {
+        ArtifactTarget::WasmGc => prepare_wasm_gc_artifact(bytes),
+    }
+}
+
+fn prepare_wasm_gc_artifact(bytes: &[u8]) -> Result<PreparedArtifact<'_>, String> {
+    // The target field is read before validation so future schemas can select a
+    // component-envelope validator without trying to reinterpret component bytes
+    // as a core module. Schema 5 admits only wasm-gc core modules.
+    wasmparser::Validator::new()
+        .validate_all(bytes)
+        .map_err(|error| format!("artifact is not valid WebAssembly: {error}"))?;
+    Ok(PreparedArtifact {
+        artifact_hash: sha256_hex(bytes),
+        core_module_bytes: bytes,
+    })
 }
 
 fn read_candidates(manifest: &Value, identity: ManifestIdentity) -> Result<Candidates, String> {
@@ -1759,6 +1798,19 @@ mod tests {
     }
 
     #[test]
+    fn wasm_gc_identity_selects_wasm_gc_artifact_preparation() {
+        assert_eq!(
+            require_supported_identity(&ManifestIdentity {
+                target: format::TARGET_WASM_GC.to_string(),
+                profile: format::PROFILE_ID.to_string(),
+                abi: format::RUNTIME_ABI_WASM_GC.to_string(),
+            })
+            .unwrap(),
+            ArtifactTarget::WasmGc
+        );
+    }
+
+    #[test]
     fn wasip2_identity_is_reserved_but_not_accepted_by_schema_five() {
         let error = require_supported_identity(&ManifestIdentity {
             target: format::TARGET_WASIP2.to_string(),
@@ -1771,6 +1823,25 @@ mod tests {
             "{error}"
         );
         assert!(error.contains(format::TARGET_WASM_GC), "{error}");
+    }
+
+    #[test]
+    fn target_artifact_preparation_keeps_schema_five_on_core_wasm_modules() {
+        let bytes = b"\0asm\x01\0\0\0";
+        let prepared = prepare_artifact_for_target(ArtifactTarget::WasmGc, bytes)
+            .expect("empty wasm module is a valid schema-5 artifact envelope");
+        assert_eq!(prepared.artifact_hash, sha256_hex(bytes));
+        assert_eq!(prepared.core_module_bytes, bytes);
+    }
+
+    #[test]
+    fn wasm_gc_artifact_preparation_still_rejects_non_wasm_bytes() {
+        let error =
+            prepare_artifact_for_target(ArtifactTarget::WasmGc, b"not a wasm module").unwrap_err();
+        assert!(
+            error.contains("artifact is not valid WebAssembly"),
+            "{error}"
+        );
     }
 
     #[test]
