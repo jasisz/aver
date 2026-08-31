@@ -2148,6 +2148,58 @@ fn main() -> Result<Unit, String>
 }
 
 #[test]
+fn rust_disk_sync_accepts_a_file_and_a_directory_and_leaves_content_alone() {
+    let data_root = temp_dir("disk_sync_data");
+    let data_file = data_root.join("payload.bin");
+    fs::write(&data_file, [0, 127, 128, 255]).expect("write sync fixture");
+    let file = aver_path_literal(&data_file);
+    let dir = aver_path_literal(&data_root);
+    let missing = aver_path_literal(&data_root.join("absent.bin"));
+    let src = format!(
+        r#"module DiskSync
+    intent = "Generated Rust must reach Disk.sync through the provider table"
+    effects [Console.print, Disk.sync]
+
+fn shape(outcome: Result<Unit, String>) -> String
+    ? "Reduce an outcome to ok/err so host error text stays out of the output."
+    match outcome
+        Result.Ok(_) -> "ok"
+        Result.Err(_) -> "err"
+
+fn main() -> Result<Unit, String>
+    ! [Console.print, Disk.sync]
+    onFile = shape(Disk.sync("{file}"))
+    onDir = shape(Disk.sync("{dir}"))
+    onMissing = shape(Disk.sync("{missing}"))
+    shown = Console.print("{{onFile}}:{{onDir}}:{{onMissing}}")
+    Result.Ok(Unit)
+"#
+    );
+
+    let result = (|| -> Result<(), String> {
+        let vm = run_vm_inline("disk_sync", &src)?;
+        let rust = build_run_rust_inline("disk_sync", &src)?;
+        // A file and a directory both sync; an absent path does not.
+        // The directory half is what makes a new file's name durable,
+        // and it only works because the provider opens read-only.
+        if vm != "ok:ok:err" {
+            return Err(format!("VM Disk.sync result changed: {vm}"));
+        }
+        if rust != vm {
+            return Err(format!("Rust Disk.sync result diverged: {rust}"));
+        }
+        let bytes = fs::read(&data_file).map_err(|error| format!("read payload: {error}"))?;
+        if bytes != [0, 127, 128, 255] {
+            return Err(format!("Disk.sync rewrote the file it flushed: {bytes:?}"));
+        }
+        Ok(())
+    })();
+
+    let _ = fs::remove_dir_all(&data_root);
+    result.expect("VM/Rust Disk.sync parity");
+}
+
+#[test]
 fn rust_tcp_write_bytes_builds_with_nominal_bytes() {
     let src = r#"module TcpWriteBytesBuild
     intent = "Rust codegen must render Tcp.writeBytes with nominal Bytes"

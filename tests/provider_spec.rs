@@ -1490,6 +1490,68 @@ fn main() -> Result<Unit, String>
     );
 }
 
+#[cfg(feature = "wasm")]
+#[test]
+fn wasm_gc_disk_sync_binding_accepts_a_file_and_a_directory() {
+    let root = temp_root("wasm-gc-disk-sync");
+    let source_path = root.join("main.av");
+    let file_path = root.join("payload.bin");
+    fs::write(&file_path, [0, 127, 128, 255]).expect("write wasm-gc sync fixture");
+    let missing_path = root.join("absent.bin");
+    let source = format!(
+        r#"module Probe
+    intent = "Exercise the Disk.sync host binding."
+    exposes [main]
+    effects [Console.print, Disk.sync]
+
+fn shape(outcome: Result<Unit, String>) -> String
+    ? "Reduce an outcome to ok/err so host error text stays out of the output."
+    match outcome
+        Result.Ok(_) -> "ok"
+        Result.Err(_) -> "err"
+
+fn main() -> Result<Unit, String>
+    ! [Console.print, Disk.sync]
+    onFile = shape(Disk.sync({file_path:?}))
+    onDir = shape(Disk.sync({dir_path:?}))
+    onMissing = shape(Disk.sync({missing_path:?}))
+    Console.print("{{onFile}}:{{onDir}}:{{onMissing}}")
+    Result.Ok(Unit)
+"#,
+        file_path = file_path.to_string_lossy(),
+        dir_path = root.to_string_lossy(),
+        missing_path = missing_path.to_string_lossy()
+    );
+    fs::write(&source_path, source).expect("write wasm-gc sync fixture source");
+
+    let run = Command::new(aver_bin())
+        .args([
+            "run",
+            source_path.to_str().expect("fixture path"),
+            "--wasm-gc",
+        ])
+        .output()
+        .expect("run Disk.sync capability canary on wasm-gc");
+    let report = format!(
+        "{}{}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert!(run.status.success(), "{report}");
+    // A directory syncs because the provider opens read-only; a write
+    // open would refuse it, and the directory half is what makes a newly
+    // created file's name durable.
+    assert!(
+        report.contains("ok:ok:err"),
+        "unexpected Disk.sync output: {report}"
+    );
+    assert_eq!(
+        fs::read(&file_path).expect("read synced payload"),
+        [0, 127, 128, 255],
+        "Disk.sync must not rewrite the file it flushes"
+    );
+}
+
 #[cfg(feature = "wasip2")]
 #[test]
 fn wasip2_runs_standard_capabilities_through_registered_bindings() {

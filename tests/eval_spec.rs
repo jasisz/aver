@@ -2011,6 +2011,37 @@ mod disk_tests {
     }
 
     #[test]
+    fn disk_sync_accepts_a_file_and_a_directory_and_refuses_an_absent_path() {
+        let dir = tmp_path("sync_dir");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create sync fixture dir");
+        let file = dir.join("payload.bin");
+        std::fs::write(&file, [0, 127, 128, 255]).expect("write sync fixture");
+
+        let sync_of = |path: &std::path::Path| {
+            let src = format!(
+                "fn run() -> Result<Unit, String>\n    ! [Disk.sync]\n    Disk.sync(\"{}\")\n",
+                path.to_string_lossy().replace('\\', "\\\\")
+            );
+            run_disk_fn(&src, "run")
+        };
+
+        // The file half flushes the bytes; the directory half is what makes
+        // a newly created file's own name durable on POSIX. A read-only open
+        // is what lets the same operation accept both.
+        assert_eq!(sync_of(&file), Value::Ok(Box::new(Value::Unit)));
+        assert_eq!(sync_of(&dir), Value::Ok(Box::new(Value::Unit)));
+        assert!(matches!(sync_of(&dir.join("absent.bin")), Value::Err(_)));
+        assert_eq!(
+            std::fs::read(&file).expect("read synced payload"),
+            vec![0, 127, 128, 255],
+            "Disk.sync must not rewrite the file it flushes"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn disk_read_missing_file_returns_err() {
         let src = "fn run() -> Result<String, String>\n    ! [Disk.readText]\n    Disk.readText(\"/no/such/file.txt\")\n";
         let val = run_disk_fn(src, "run");
@@ -2323,6 +2354,30 @@ paths = ["./data/**"]
         let msg = err.to_string();
         assert!(msg.contains("denied by aver.toml policy"), "got: {}", msg);
         assert!(msg.contains("Disk.writeBytes"), "got: {}", msg);
+    }
+
+    #[test]
+    fn runtime_policy_blocks_disk_sync_through_the_capability_door() {
+        let src = "fn run() -> Result<Unit, String>\n    ! [Disk.sync]\n    Disk.sync(\"/definitely/outside/allow.bin\")\n";
+        let items = parse(src);
+        let mut machine = vm_compile(&items);
+        machine.set_runtime_policy(
+            ProjectConfig::parse(
+                r#"
+[effects.Disk]
+paths = ["./data/**"]
+"#,
+            )
+            .expect("parse policy"),
+        );
+        machine.run_top_level().expect("top-level failed");
+
+        let err = machine
+            .run_named_function("run", &[])
+            .expect_err("expected policy denial");
+        let msg = err.to_string();
+        assert!(msg.contains("denied by aver.toml policy"), "got: {}", msg);
+        assert!(msg.contains("Disk.sync"), "got: {}", msg);
     }
 }
 
