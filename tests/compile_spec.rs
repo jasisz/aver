@@ -236,7 +236,7 @@ fn compile_wasip2_certify_emits_component_bound_package() {
     let output = Command::new(env!("CARGO_BIN_EXE_aver"))
         .current_dir(&repo_root)
         .arg("compile")
-        .arg("tools/certkit/fixtures/wasip2_carrierless.av")
+        .arg("tests/fixtures/wasip2_carrierless.av")
         .arg("--target")
         .arg("wasip2")
         .arg("--certify")

@@ -3968,7 +3968,7 @@ fn certify_wasip2_component_package_snapshot() {
     let compile = aver_command()
         .current_dir(&repo_root)
         .arg("compile")
-        .arg("tools/certkit/fixtures/wasip2_carrierless.av")
+        .arg("tests/fixtures/wasip2_carrierless.av")
         .arg("--target")
         .arg("wasip2")
         .arg("--certify")

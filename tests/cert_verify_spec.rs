@@ -512,7 +512,7 @@ fn cert_tripwire_accepts_produced_wasip2_component_end_to_end() {
     let compile = aver_command()
         .current_dir(&repo_root)
         .arg("compile")
-        .arg("tools/certkit/fixtures/wasip2_carrierless.av")
+        .arg("tests/fixtures/wasip2_carrierless.av")
         .arg("--target")
         .arg("wasip2")
         .arg("--certify")
