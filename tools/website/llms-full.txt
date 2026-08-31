@@ -464,6 +464,8 @@ There is no blessed agent workflow here. Take the files and keep whatever prompt
 
 Safety:
 - bytes outside the `AGENTS.md` markers are never touched, and a file with no markers is appended to, never rewritten
+- a marker bounds the section only when it is alone on its own line, so a sentence naming one — like the paragraph above — is prose and is left where it stands
+- an `AGENTS.md` carrying half a marker pair, an inverted pair, or a second pair is refused by name rather than rewritten on a guess
 - a `SKILL.md` that exists without the `aver agent-connect: managed file` marker is refused by name, never overwritten
 - re-running produces no diff; every line of the summary says `created`, `updated`, or `unchanged`
 - exit is nonzero only on a refusal or an IO error

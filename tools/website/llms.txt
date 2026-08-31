@@ -405,7 +405,7 @@ Key `Map` API:
 Effectful namespaces:
 - `Console`: print, error, warn, readLine — **`print`/`error`/`warn` take `String`**, not arbitrary values. Stringify at the call site: interpolation `"{x}"` for primitives, a per-type render fn (`fn show(r: Result<T, E>) -> String`) for compound shapes.
 - `Http`: get, post, put, patch, delete, head
-- `Disk`: readText, writeText, appendText, exists, delete, deleteDir, listDir, makeDir
+- `Disk`: readText, writeText, appendText, readBytes, readBytesAt, writeBytes, appendBytes, size, exists, delete, deleteDir, listDir, makeDir, sync — the byte methods move exact octets as nominal `Bytes`, and `Disk.sync(path)` is `fsync`: it returns once the named file *or directory* is on stable storage, so a freshly created file needs its parent directory synced too
 - `Tcp`: connect, writeLine, writeBytes, readLine, readBytes, close, send, sendBytes, ping — `send`/`readLine` are text-only (UTF-8); binary payloads use nominal `Bytes` through `sendBytes`, `writeBytes`, and `readBytes`
 - `Terminal`: every operation is fallible. Control/output calls return `Result<Unit, String>`, `readKey` returns `Result<Option<String>, String>`, and `size` returns `Result<Terminal.Size, String>`. The cursor move is `Terminal.moveTo(x, y)`; `Terminal.print` / `Terminal.setColor` take `String`.
 - `Time`: now, unixMs, sleep — `Time.sleep(ms) -> Result<Unit, String>` for a dynamic duration; a valid non-negative i64 literal discharges directly to `Unit`

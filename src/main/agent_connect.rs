@@ -15,7 +15,10 @@
 //! Every file this command owns carries [`MANAGED_MARKER`]. A file without
 //! it belongs to somebody else and is refused, never overwritten. `AGENTS.md`
 //! is edited only between [`SECTION_START`] and [`SECTION_END`]; every byte
-//! outside those markers is preserved.
+//! outside those markers is preserved. A marker counts only when it is alone
+//! on its own line, and only one pair may be present — a marker named inside
+//! a sentence is prose, and a second pair is ambiguous, so both are left
+//! alone rather than rewritten on a guess.
 
 use std::fmt;
 use std::fs;
@@ -96,8 +99,11 @@ pub(super) struct Change {
 pub(super) enum ConnectError {
     /// A target file exists but was not written by this command.
     ForeignFile(PathBuf),
-    /// `AGENTS.md` carries one marker of the pair but not the other.
-    MalformedSection(PathBuf),
+    /// `AGENTS.md` marker lines do not describe one rewritable section.
+    MalformedSection {
+        path: PathBuf,
+        problem: MalformedSection,
+    },
     /// `--global` with no home directory in the environment.
     NoHome,
     Io {
@@ -115,11 +121,12 @@ impl fmt::Display for ConnectError {
                  (no `aver agent-connect: managed file` marker). Move or delete it, then re-run.",
                 path.display()
             ),
-            Self::MalformedSection(path) => write!(
+            Self::MalformedSection { path, problem } => write!(
                 formatter,
-                "refusing to edit '{}': it has an `aver agent-connect: start` marker without a \
-                 matching `aver agent-connect: end`. Repair the markers, then re-run.",
-                path.display()
+                "refusing to edit '{}': it has {}, so the section this command owns cannot be \
+                 identified. Repair the markers, then re-run.",
+                path.display(),
+                problem.reason()
             ),
             Self::NoHome => write!(
                 formatter,
@@ -256,10 +263,35 @@ fn render_skill(skill: &Skill) -> String {
     format!(
         "---\nname: {}\ndescription: {}\n---\n\n{}\n\n{}\n",
         skill.name,
-        skill.description,
+        yaml_double_quoted(skill.description),
         MANAGED_MARKER,
         skill.body.trim_end()
     )
+}
+
+/// One YAML double-quoted scalar.
+///
+/// A description is a sentence, and a sentence may contain a colon followed by
+/// a space — which is exactly what YAML reads as the end of a key in a plain
+/// (unquoted) scalar. An unquoted description therefore does not merely look
+/// wrong, it makes the whole frontmatter block unparseable, and a skill whose
+/// frontmatter does not parse never loads. Quoting settles every plain-scalar
+/// rule at once, so the descriptions can be written as ordinary prose.
+fn yaml_double_quoted(value: &str) -> String {
+    let mut quoted = String::with_capacity(value.len() + 2);
+    quoted.push('"');
+    for character in value.chars() {
+        match character {
+            '"' => quoted.push_str("\\\""),
+            '\\' => quoted.push_str("\\\\"),
+            '\n' => quoted.push_str("\\n"),
+            '\t' => quoted.push_str("\\t"),
+            '\r' => quoted.push_str("\\r"),
+            _ => quoted.push(character),
+        }
+    }
+    quoted.push('"');
+    quoted
 }
 
 /// Create the file, refresh it if we wrote it before, or refuse it if we did not.
@@ -316,8 +348,12 @@ fn write_agents_section(path: &Path) -> Result<Outcome, ConnectError> {
         }
     };
 
-    let updated = upsert_section(existing.as_deref(), &agents_section())
-        .map_err(|_| ConnectError::MalformedSection(path.to_path_buf()))?;
+    let updated = upsert_section(existing.as_deref(), &agents_section()).map_err(|problem| {
+        ConnectError::MalformedSection {
+            path: path.to_path_buf(),
+            problem,
+        }
+    })?;
 
     match existing {
         Some(text) if text == updated => Ok(Outcome::Unchanged),
@@ -332,10 +368,31 @@ fn write_agents_section(path: &Path) -> Result<Outcome, ConnectError> {
     }
 }
 
-/// One start marker with no end marker (or the pair inverted) is not a
-/// section we can safely rewrite.
-#[derive(Debug, PartialEq, Eq)]
-pub(super) struct MalformedSection;
+/// Why the markers in a file do not describe one rewritable section.
+///
+/// Every variant means the same thing operationally: the span this command
+/// owns cannot be identified, so it rewrites nothing and says so.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum MalformedSection {
+    /// One marker line of the pair is present, its partner is not.
+    Unpaired,
+    /// The end marker line comes before the start marker line.
+    Inverted,
+    /// More than one marker line of the same kind, so which pair bounds the
+    /// managed section would be a guess.
+    Repeated,
+}
+
+impl MalformedSection {
+    /// The middle of the refusal message — what the file actually has.
+    fn reason(self) -> &'static str {
+        match self {
+            Self::Unpaired => "one `aver agent-connect` marker line without its partner",
+            Self::Inverted => "an `aver agent-connect: end` marker line before its `start`",
+            Self::Repeated => "more than one `aver agent-connect` marker line of the same kind",
+        }
+    }
+}
 
 /// The pointer block written between the markers.
 pub(super) fn agents_section() -> String {
@@ -365,7 +422,52 @@ pub(super) fn agents_section() -> String {
     )
 }
 
+/// Byte spans of the lines whose entire content is `marker`.
+///
+/// A marker delimits the managed section only when it stands alone on its own
+/// line. A marker named inside a sentence is prose the reader wrote — the
+/// guide this very command installs contains such a sentence — and prose is
+/// not a boundary. Without that rule, the first run on a file that merely
+/// mentions both marker names would splice the pointer block over the
+/// sentence and delete everything between the two names.
+///
+/// The returned span covers the line's content, not its terminator, so
+/// splicing at it leaves the newline that ended the line in place.
+fn marker_lines(text: &str, marker: &str) -> Vec<(usize, usize)> {
+    let mut spans = Vec::new();
+    let mut offset = 0;
+    for line in text.split_inclusive('\n') {
+        let content = line.trim_end_matches('\n').trim_end_matches('\r');
+        if content.trim() == marker {
+            spans.push((offset, offset + content.len()));
+        }
+        offset += line.len();
+    }
+    spans
+}
+
+/// Append `block` to `text`, separated by one blank line.
+fn append_block(text: &str, block: &str) -> String {
+    if text.is_empty() {
+        return format!("{block}\n");
+    }
+    let mut out = String::with_capacity(text.len() + block.len() + 2);
+    out.push_str(text);
+    if !out.ends_with('\n') {
+        out.push('\n');
+    }
+    out.push('\n');
+    out.push_str(block);
+    out.push('\n');
+    out
+}
+
 /// Replace the marked section, or append it, leaving every other byte alone.
+///
+/// Exactly one start marker line and one end marker line after it is the only
+/// shape that gets rewritten. Anything else — a half pair, an inverted pair, a
+/// second pair from a merge — is refused, because picking a span among them
+/// would mean deleting bytes on a guess.
 pub(super) fn upsert_section(
     existing: Option<&str>,
     block: &str,
@@ -374,29 +476,26 @@ pub(super) fn upsert_section(
         return Ok(format!("{block}\n"));
     };
 
-    let start = text.find(SECTION_START);
-    let end = text.rfind(SECTION_END);
+    let starts = marker_lines(text, SECTION_START);
+    let ends = marker_lines(text, SECTION_END);
 
-    match (start, end) {
-        (Some(start), Some(end)) if end > start => {
-            let after = end + SECTION_END.len();
-            Ok(format!("{}{}{}", &text[..start], block, &text[after..]))
-        }
-        (None, None) => {
-            if text.is_empty() {
-                return Ok(format!("{block}\n"));
+    match (starts.len(), ends.len()) {
+        (0, 0) => Ok(append_block(text, block)),
+        (1, 1) => {
+            let (section_start, _) = starts[0];
+            let (_, section_end) = ends[0];
+            if section_end <= section_start {
+                return Err(MalformedSection::Inverted);
             }
-            let mut out = String::with_capacity(text.len() + block.len() + 2);
-            out.push_str(text);
-            if !out.ends_with('\n') {
-                out.push('\n');
-            }
-            out.push('\n');
-            out.push_str(block);
-            out.push('\n');
-            Ok(out)
+            Ok(format!(
+                "{}{}{}",
+                &text[..section_start],
+                block,
+                &text[section_end..]
+            ))
         }
-        _ => Err(MalformedSection),
+        (0, _) | (_, 0) => Err(MalformedSection::Unpaired),
+        _ => Err(MalformedSection::Repeated),
     }
 }
 
@@ -470,7 +569,7 @@ mod tests {
 
         assert_eq!(
             upsert_section(Some(&broken), &block()),
-            Err(MalformedSection)
+            Err(MalformedSection::Unpaired)
         );
     }
 
@@ -480,8 +579,68 @@ mod tests {
 
         assert_eq!(
             upsert_section(Some(&broken), &block()),
-            Err(MalformedSection)
+            Err(MalformedSection::Unpaired)
         );
+    }
+
+    #[test]
+    fn an_end_marker_before_its_start_is_refused() {
+        let inverted = format!("{SECTION_END}\n\nupside down\n\n{SECTION_START}\n");
+
+        assert_eq!(
+            upsert_section(Some(&inverted), &block()),
+            Err(MalformedSection::Inverted)
+        );
+    }
+
+    #[test]
+    fn a_second_pair_of_markers_is_refused_rather_than_guessed_at() {
+        // A merge can leave two managed blocks. Splicing from the first start
+        // to the last end would delete everything between them.
+        let doubled = format!(
+            "{SECTION_START}\nfirst\n{SECTION_END}\n\nMINE, KEEP ME\n\n{SECTION_START}\nsecond\n{SECTION_END}\n"
+        );
+
+        assert_eq!(
+            upsert_section(Some(&doubled), &block()),
+            Err(MalformedSection::Repeated)
+        );
+    }
+
+    #[test]
+    fn a_sentence_naming_both_markers_is_prose_not_a_section() {
+        // This is the sentence the installed guide itself carries. Before the
+        // markers were line-anchored, the first run deleted its middle.
+        let original = "# House rules\n\nAver keeps its pointer in `AGENTS.md` between \
+                        `<!-- aver agent-connect: start -->` and `<!-- aver agent-connect: end -->`.\n";
+
+        let out = upsert_section(Some(original), &block()).expect("append, not replace");
+
+        assert!(
+            out.starts_with(original),
+            "the sentence must survive verbatim, got:\n{out}"
+        );
+        assert_eq!(out, format!("{original}\n{}\n", block()));
+    }
+
+    #[test]
+    fn a_later_inline_mention_does_not_extend_the_replaced_span() {
+        let before = "# House rules\n\n";
+        let after = "\n\nSee `<!-- aver agent-connect: end -->` for where my section stops.\n";
+        let stale = format!("{before}{SECTION_START}\nSTALE POINTER\n{SECTION_END}{after}");
+
+        let out = upsert_section(Some(&stale), &block()).expect("replace the block only");
+
+        assert_eq!(out, format!("{before}{}{after}", block()));
+    }
+
+    #[test]
+    fn an_indented_marker_line_still_bounds_the_section() {
+        let stale = format!("  {SECTION_START}\nSTALE\n  {SECTION_END}\n");
+
+        let out = upsert_section(Some(&stale), &block()).expect("replace");
+
+        assert_eq!(out, format!("{}\n", block()));
     }
 
     #[test]
@@ -513,6 +672,66 @@ mod tests {
                 skill.name
             );
         }
+    }
+
+    #[test]
+    fn every_description_is_written_as_a_quoted_yaml_scalar() {
+        // Both descriptions are sentences containing ": ", which YAML reads as
+        // a key/value split inside a plain scalar. Unquoted, the frontmatter
+        // does not parse and the skill silently never loads.
+        for skill in SKILLS {
+            let rendered = render_skill(skill);
+            let line = rendered
+                .lines()
+                .nth(2)
+                .expect("frontmatter has a description line");
+
+            let value = line.strip_prefix("description: ").unwrap_or_else(|| {
+                panic!("{}: expected a description line, got {line}", skill.name)
+            });
+            assert!(
+                value.starts_with('"') && value.ends_with('"') && value.len() >= 2,
+                "{} must quote its description, got {value}",
+                skill.name
+            );
+            assert_eq!(
+                unquote_yaml(value),
+                skill.description,
+                "{} must round-trip through the quoting",
+                skill.name
+            );
+        }
+    }
+
+    #[test]
+    fn quoting_escapes_what_a_yaml_double_quoted_scalar_cannot_carry_raw() {
+        assert_eq!(yaml_double_quoted("plain: text"), "\"plain: text\"");
+        assert_eq!(
+            yaml_double_quoted(r#"a "quote" and a \ backslash"#),
+            r#""a \"quote\" and a \\ backslash""#
+        );
+        assert_eq!(yaml_double_quoted("two\nlines"), "\"two\\nlines\"");
+    }
+
+    /// Read back a double-quoted YAML scalar, escapes and all.
+    fn unquote_yaml(value: &str) -> String {
+        let inner = &value[1..value.len() - 1];
+        let mut out = String::with_capacity(inner.len());
+        let mut characters = inner.chars();
+        while let Some(character) = characters.next() {
+            if character != '\\' {
+                out.push(character);
+                continue;
+            }
+            match characters.next() {
+                Some('n') => out.push('\n'),
+                Some('t') => out.push('\t'),
+                Some('r') => out.push('\r'),
+                Some(escaped) => out.push(escaped),
+                None => panic!("trailing backslash in {value}"),
+            }
+        }
+        out
     }
 
     #[test]
