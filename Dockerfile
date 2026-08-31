@@ -38,6 +38,9 @@ COPY aver-lsp ./aver-lsp
 COPY aver-cert ./aver-cert
 COPY src ./src
 COPY benches ./benches
+# Agent material `src/main/agent_connect.rs` bundles with `include_str!`.
+COPY .claude/commands ./.claude/commands
+COPY tools/website/llms.txt ./tools/website/llms.txt
 
 RUN cargo build --bin aver --features wasm && \
     cargo build -p aver-cert --bin aver-cert

@@ -3,3 +3,6 @@ target*
 out
 prompts
 .claude
+# `aver agent-connect` bundles these two guides into the binary with
+# `include_str!`, so the build needs them in the context.
+!.claude/commands

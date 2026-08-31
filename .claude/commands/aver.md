@@ -201,6 +201,8 @@ Rules:
 
 ### Decision blocks
 
+A `decision` is top-level syntax, a sibling of `fn` and `type` — not a comment, not a markdown file next to the code. It records why the code looks the way it does: what was chosen, what was rejected, and which parts of the program the choice reaches. Write one whenever a reader would otherwise ask "why not the obvious thing?", and put it in the module the choice is about (a project may also gather them in one module, the way this repository uses `decisions/architecture.av`).
+
 ```aver
 decision UseResultNotExceptions
     date = "2024-01-15"
@@ -213,10 +215,40 @@ decision UseResultNotExceptions
     author = "team"
 ```
 
-Rules:
-- first-class syntax, not comments or markdown
-- `chosen`, `rejected`, `impacts` may reference symbols or quoted labels
-- exported through `aver context --decisions-only`
+Fields — all optional, any order:
+
+- `date = "YYYY-MM-DD"` — a quoted string, when the decision was made
+- `reason =` followed by an indented block of quoted strings, one claim per line — the argument itself
+- `chosen = X` — one symbol or one quoted label: what won
+- `rejected = [X, Y]` — symbols or quoted labels: what lost, and is therefore not to be re-proposed
+- `impacts = [X, Y]` — symbols or quoted labels: what the decision reaches
+- `author = "name"` — a quoted string, who to ask
+
+A bare identifier in `chosen`, `rejected`, or `impacts` is a real reference: it must name a function, type, or effect the checker can see, and `aver check` reports an error on one that does not resolve. A quoted string is a free-form semantic label for anything the program does not contain (`"Exceptions"`, `"Braces"`, a rejected library). Prefer identifiers when the thing exists, so a rename or a deletion cannot quietly rot the record.
+
+A real one, from this repository's own `decisions/architecture.av` — Aver explaining its own design in Aver:
+
+```aver
+decision SignificantIndentation
+    date = "2024-01-20"
+    author = "Aver core team"
+    reason =
+        "Braces are syntactic noise that adds no meaning and forces style debates."
+        "Indentation is already how humans read code, so making it structural removes a class of inconsistency."
+        "The lexer emits explicit INDENT and DEDENT tokens, keeping the parser context-free and easy to extend."
+    chosen = "Indentation"
+    rejected = ["Braces", "BeginEnd", "Keywords"]
+    impacts = ["Lexer", "Parser", "AllModules"]
+```
+
+Reading them back:
+
+```bash
+aver context decisions/architecture.av --decisions-only
+aver context main.av --module-root . --decisions-only --json
+```
+
+`--decisions-only` drops functions, types, and module intent from the context export and keeps only the `decision` blocks reachable from the entry through `depends [...]`, selected under the same `--budget` as an ordinary `aver context` run. That is the point of writing rationale as syntax instead of prose: it is checked, it is indexed, and one command hands a reader the whole argument behind a codebase without any of its code.
 
 ### Operators
 
@@ -271,6 +303,7 @@ Key `String` API:
 - `String.join`, `String.split`, `String.chars` — concat is the `+` operator
 - `String.toUtf8 : String -> Bytes`, `String.fromUtf8 : Bytes -> Result<String, String>` — explicit, lossless encoding and validated decoding
 - `Int.fromString : String -> Result<Int, String>`, `String.fromInt : Int -> String`
+- `Int.toBigEndian`, `Int.toLittleEndian : (Int, Int) -> Result<Bytes, String>`; `Int.fromBigEndian`, `Int.fromLittleEndian : Bytes -> Int`
 - `Float.fromString`, `String.fromFloat`, `String.fromBool` — convention: `<targetTyp>.from<source>`
 - string interpolation: `"Hello, {name}!"` is the idiomatic way to render PRIMITIVES into text; reserve `String.fromInt` etc. for explicit data conversion (e.g. building keys: `"user:" + String.fromInt(id)`). Compound values have no built-in rendering — write your own `fn show(x: T) -> String`.
 
@@ -282,6 +315,7 @@ Key `Int` API:
 - `Int.abs : Int -> Int`, `Int.min`, `Int.max` — `(Int, Int) -> Int`
 - `Int.div`, `Int.mod` — `(Int, Int) -> Result<Int, String>`, Euclidean, see the operators section above
 - `Int.fromString : String -> Result<Int, String>`, `Int.fromFloat : Float -> Int`
+- `Int.toBigEndian`, `Int.toLittleEndian : (Int, Int) -> Result<Bytes, String>`; `Int.fromBigEndian`, `Int.fromLittleEndian : Bytes -> Int`
 
 Key `Float` API:
 - `Float.abs`, `Float.sqrt`, `Float.sin`, `Float.cos` — `Float -> Float`; the trig functions take radians

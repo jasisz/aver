@@ -26,6 +26,7 @@ If you only remember one section, make it this one:
 - Pure functions get colocated `verify` blocks
 - Classified effectful fns (Random, Disk, Http, Tcp one-shot, Time, Console.readLine, Terminal non-modal, all output) get `verify fn trace` with `given` stubs; unclassified ambient / session / modal flows go through record/replay
 - Parse integers with `Int.fromString`, which returns `Result<Int, String>`
+- Convert unsigned integers to fixed-width protocol bytes with `Int.toBigEndian(value, width)` or `Int.toLittleEndian(value, width)`; both return `Result<Bytes, String>` unless both literal arguments prove the call cannot fail. Decode total `Bytes` values with `Int.fromBigEndian` / `Int.fromLittleEndian`
 - `Console.readLine()` returns `Result<String, String>`, not plain `String`
 
 ## Minimal correct file

@@ -98,9 +98,9 @@ xs: List<Int> = []
 Primitives: `Int`, `Float`, `String`, `Bool`, `Unit` — each has exactly one spelling; the string type is `String`, never abbreviated
 
 Compound:
-- `Result<T, E>`, `Option<T>`, `List<T>`, `Vector<T>`, `Map<K, V>`
+- `Result<T, E>`, `Option<T>`, `List<T>`, `Vector<T>`, `Map<K, V>` — `K` must be a type that orders; records, variants, lists and tuples all do, `Float` does not
 - tuples: type is `Tuple<A, B, ...>` (2+ elements). Value literal and pattern are both paren: `(a, b)`. The type spelling and the value spelling are deliberately different.
-- function types: `Fn(A) -> B`, `Fn(A) -> B ! [Console.print]`
+- function types: `Fn(A) -> B`, `Fn(A) -> B ! [Console.print]`; `! [_]` on a callback parameter forwards the concrete named callback's effects at the helper call site
 
 Notes:
 - top-level named functions can be passed where `Fn(...)` is expected
@@ -234,17 +234,17 @@ verify roll trace
     rolled.trace.length() => 1
     rolled.trace.contains(Random.int) => true
 
-fn highDie(path: BranchPath, k: Int, lo: Int, hi: Int) -> Int
+fn highDie(path: BranchPath, k: Int, lo: Int, hi: Int) -> Result<Int, String>
     ? "stub oracle: always max."
-    hi
+    Result.Ok(hi)
 ```
 
 Rules:
 - `given name: Effect.method = [stubFn, ...]` binds a stub for the classified effect. Multi-value list expands cartesian with cases; one `given` per effect — duplicates are rejected
-- Stub signature for generative effects (`Random.*`, `Http.*`, `Disk.*`, `Tcp.send/.ping`, `Console.readLine`, `Terminal.readKey`, `Time.now/.unixMs`): `(path: BranchPath, k: Int, args...) -> ReturnType`
-- Stub signature for snapshot effects (`Args.get`, `Env.get`): `(args...) -> ReturnType` — no path/counter prefix
-- Output-only effects (`Console.print/.error/.warn`, `Time.sleep`, `Terminal.clear/.moveTo/.print/.hideCursor/.showCursor/.flush`) don't need stubs; they append to the trace directly
-- `BranchPath.Root` is a nullary value constructor — no parens, PascalCase. Dynamic `BranchPath.child(parent, idx)` and `BranchPath.parse(str)` return `Result<BranchPath, String>`; syntactically valid literals discharge directly to `BranchPath`
+- Stub signature for generative and generative-output effects (`Random.*`, `Process.stopRequested`, `Http.*`, `Disk.*`, `Tcp.*`, `Console.readLine`, `Time.*`, `Env.set`, and every `Terminal.*` operation except `size`): `(path: BranchPath, k: Int, args...) -> ReturnType`
+- Stub signature for snapshot effects (`Args.get`, `Env.get`, `Terminal.size`): `(args...) -> ReturnType` — no path/counter prefix
+- Output-only effects (`Console.print/.error/.warn`) don't need stubs; they append to the trace directly
+- `BranchPath.Root` is a nullary value constructor — no parens, PascalCase. `BranchPath.child(parent, idx)` and `BranchPath.parse(str)` are the constructors for nested paths
 - Case LHS projections:
   - `fn(args).result` — return value
   - `fn(args).trace` — full trace as a `Trace` record
@@ -255,9 +255,11 @@ Rules:
   - `fn(args).trace.group(N).branch(idx).*` — tree-nav into `!`/`?!` independent products (0-based N, idx)
 - Local bindings with `name = expr` go between `given` clauses and case assertions; they're substituted into every case (so each case still runs its own fresh `fn()` invocation)
 - Every generative/gen+output effect the fn uses must have a `given` stub under `trace`; missing stubs are rejected with a pointer at the fix
-- Long-running or stateful effects (`Env.set`, persistent `Tcp.*`, terminal modes) are rejected by `verify trace` — use record/replay for those
+- Whole server loops are not trace laws: verify pure `HttpWire` and handler functions separately, and use record/replay for the persistent `Tcp` session loop
 
 ### Decision blocks
+
+A `decision` is top-level syntax, a sibling of `fn` and `type` — not a comment, not a markdown file next to the code. It records why the code looks the way it does: what was chosen, what was rejected, and which parts of the program the choice reaches. Write one whenever a reader would otherwise ask "why not the obvious thing?", and put it in the module the choice is about (a project may also gather them in one module, the way this repository uses `decisions/architecture.av`).
 
 ```aver
 decision UseResultNotExceptions
@@ -271,10 +273,40 @@ decision UseResultNotExceptions
     author = "team"
 ```
 
-Rules:
-- first-class syntax, not comments or markdown
-- `chosen`, `rejected`, `impacts` may reference symbols or quoted labels
-- exported through `aver context --decisions-only`
+Fields — all optional, any order:
+
+- `date = "YYYY-MM-DD"` — a quoted string, when the decision was made
+- `reason =` followed by an indented block of quoted strings, one claim per line — the argument itself
+- `chosen = X` — one symbol or one quoted label: what won
+- `rejected = [X, Y]` — symbols or quoted labels: what lost, and is therefore not to be re-proposed
+- `impacts = [X, Y]` — symbols or quoted labels: what the decision reaches
+- `author = "name"` — a quoted string, who to ask
+
+A bare identifier in `chosen`, `rejected`, or `impacts` is a real reference: it must name a function, type, or effect the checker can see, and `aver check` reports an error on one that does not resolve. A quoted string is a free-form semantic label for anything the program does not contain (`"Exceptions"`, `"Braces"`, a rejected library). Prefer identifiers when the thing exists, so a rename or a deletion cannot quietly rot the record.
+
+A real one, from this repository's own `decisions/architecture.av` — Aver explaining its own design in Aver:
+
+```aver
+decision SignificantIndentation
+    date = "2024-01-20"
+    author = "Aver core team"
+    reason =
+        "Braces are syntactic noise that adds no meaning and forces style debates."
+        "Indentation is already how humans read code, so making it structural removes a class of inconsistency."
+        "The lexer emits explicit INDENT and DEDENT tokens, keeping the parser context-free and easy to extend."
+    chosen = "Indentation"
+    rejected = ["Braces", "BeginEnd", "Keywords"]
+    impacts = ["Lexer", "Parser", "AllModules"]
+```
+
+Reading them back:
+
+```bash
+aver context decisions/architecture.av --decisions-only
+aver context main.av --module-root . --decisions-only --json
+```
+
+`--decisions-only` drops functions, types, and module intent from the context export and keeps only the `decision` blocks reachable from the entry through `depends [...]`, selected under the same `--budget` as an ordinary `aver context` run. That is the point of writing rationale as syntax instead of prose: it is checked, it is indexed, and one command hands a reader the whole argument behind a codebase without any of its code.
 
 ### Operators
 
@@ -327,12 +359,13 @@ Key `String` API:
 - `String.charAt : (String, Int) -> Option<String>`, `String.slice : (String, Int, Int) -> String` — character indices; a slice with an out-of-range end clamps
 - `String.toUpper`, `String.toLower`, `String.trim`, `String.replace : (String, String, String) -> String`
 - `String.join`, `String.split`, `String.chars` — concat is the `+` operator
+- `String.toUtf8 : String -> Bytes`, `String.fromUtf8 : Bytes -> Result<String, String>` — explicit, lossless encoding and validated decoding
 - `Int.fromString : String -> Result<Int, String>`, `String.fromInt : Int -> String`
 - `Int.toBigEndian`, `Int.toLittleEndian : (Int, Int) -> Result<Bytes, String>`; `Int.fromBigEndian`, `Int.fromLittleEndian : Bytes -> Int`
 - `Float.fromString`, `String.fromFloat`, `String.fromBool` — convention: `<targetTyp>.from<source>`
 - string interpolation: `"Hello, {name}!"` is the idiomatic way to render PRIMITIVES into text; reserve `String.fromInt` etc. for explicit data conversion (e.g. building keys: `"user:" + String.fromInt(id)`). Compound values have no built-in rendering — write your own `fn show(x: T) -> String`.
 
-Key `Char` API — a namespace, not a type; it works on `String` and `Int`:
+Key code-point API:
 - `String.firstCodePoint : String -> Option<Int>` — first Unicode scalar value, `Option.None` for empty text
 - `String.fromCodePoint : Int -> Option<String>` — code point to a 1-character string, `Option.None` for surrogates and out-of-range values
 
@@ -359,11 +392,13 @@ Key `List` API (small, recursion-first):
 - empty list literal: `[]`
 
 Key `Vector` API (O(1) indexed access):
-- `Vector.new(n, default)`, `Vector.get(v, i) -> Option<T>`, `Vector.set(v, i, val) -> Option<Vector<T>>`
+- `Vector.new(n, default) -> Result<Vector<T>, String>` for a dynamic size; a syntactic literal in the portable `0..=1_048_576` element budget discharges directly to `Vector<T>`
+- `Vector.get(v, i) -> Option<T>`, `Vector.set(v, i, val) -> Option<Vector<T>>`
 - `Vector.len(v) -> Int`
 - `Vector.fromList(l)` — conversion in the other direction lives on `List`
 
 Key `Map` API:
+- a map iterates sorted by key on every backend, so the key type must order. Records (by field name), variants (by constructor name), lists, tuples and `Bytes` all key a map fine. `Float` cannot — a NaN has no place in the finite range — and neither can `Map` or `Vector`. Float stays legal as a *value*.
 - empty map literal: `{}` (type from context); non-empty: `{a => 1, b => 2}`. There is no `Map.empty()` builtin.
 - `Map.fromList(pairs)`, `Map.get(m, k) -> Option<V>`, `Map.set(m, k, v)`, `Map.has(m, k)`, `Map.remove(m, k)`, `Map.keys(m)`, `Map.values(m)`, `Map.entries(m)`, `Map.len(m)`
 
@@ -372,12 +407,13 @@ Effectful namespaces:
 - `Http`: get, post, put, patch, delete, head
 - `Disk`: readText, writeText, appendText, exists, delete, deleteDir, listDir, makeDir
 - `Tcp`: connect, writeLine, writeBytes, readLine, readBytes, close, send, sendBytes, ping — `send`/`readLine` are text-only (UTF-8); binary payloads use nominal `Bytes` through `sendBytes`, `writeBytes`, and `readBytes`
-- `Terminal`: enableRawMode, disableRawMode, readKey, moveTo, print, setColor, resetColor, clear, size, hideCursor, showCursor, flush — the cursor move is `Terminal.moveTo(x, y)`, and `Terminal.print` / `Terminal.setColor` also take `String`.
-- `Time`: now, unixMs, sleep
-- `Random`: int, float — `Random.int(lo, hi)` is inclusive on both ends, `Random.float()` is in `[0.0, 1.0)`
+- `Terminal`: every operation is fallible. Control/output calls return `Result<Unit, String>`, `readKey` returns `Result<Option<String>, String>`, and `size` returns `Result<Terminal.Size, String>`. The cursor move is `Terminal.moveTo(x, y)`; `Terminal.print` / `Terminal.setColor` take `String`.
+- `Time`: now, unixMs, sleep — `Time.sleep(ms) -> Result<Unit, String>` for a dynamic duration; a valid non-negative i64 literal discharges directly to `Unit`
+- `Random`: int, float — `Random.int(lo, hi) -> Result<Int, String>` is inclusive on both ends; safe literal bounds discharge directly to `Int`. `Random.float()` is in `[0.0, 1.0)`
 - `Env`: get, set
 - `Args`: get
-- Incoming HTTP: pure `HttpWire`, native `HttpServer` over `Tcp`, or explicit `--handler` on proxy hosts
+
+Incoming HTTP is not an effect namespace: use pure `HttpWire`, native `HttpServe` over `Tcp` + `Process.stopRequested`, or an explicit `--handler <fn>` on fetch/proxy hosts.
 
 ### Common patterns
 
@@ -430,6 +466,7 @@ match Map.get(ages, "alice")
 20. `expr?` on an `Option<T>` — `?` is Result-only. For `Option`, use `Option.withDefault(opt, fallback)`, or `match opt { Option.Some(v) -> … ; Option.None -> … }`. `Vector.get` and `Map.get` return `Option`, so neither composes with `?` directly — wrap the value first
 21. `(A, B)` as a tuple type — type position uses `Tuple<A, B>` exclusively. Tuple **value** literals stay paren: `(1, 2)`, `[(1, 2), (3, 4)]`, `Result.Ok((a, b))`. Tuple **patterns** stay paren: `match p { (a, b) -> … }`. The type and the value spelling are deliberately different so grep-for-type and grep-for-value don't collide
 22. Dispatching on a `String` or an `Int` through a chain of `match x == "lit"` with `true ->` / `false ->` helper functions — literal patterns exist: `match cmd { "verack" -> 1 ; "tx" -> 4 ; _ -> 0 }`. Only the trailing `_` arm is mandatory
+23. Keying a map on a `Float` — the key type has to order and a NaN has no place in the finite range. Key on the value that orders (`Map<String, Reading>` rather than `Map<Float, Reading>`). A `Map` or a `Vector` in key position is refused for the same reason: neither has an order of its own
 
 ### Style
 

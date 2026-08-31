@@ -1,5 +1,7 @@
 use clap::Parser as ClapParser;
 
+#[path = "main/agent_connect.rs"]
+mod agent_connect;
 #[path = "main/capabilities_cmd.rs"]
 mod capabilities_cmd;
 #[path = "main/cert_delegate.rs"]
@@ -522,6 +524,9 @@ fn main_impl(
                 gate.as_deref(),
                 write_baseline.as_deref(),
             );
+        }
+        Commands::AgentConnect { global, print } => {
+            agent_connect::cmd_agent_connect(*global, *print);
         }
         Commands::Cert { .. } => unreachable!("`aver cert` is delegated before CLI parsing"),
     }
