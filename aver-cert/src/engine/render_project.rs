@@ -76,7 +76,7 @@ impl CertificateArtifact<'_> {
         }
     }
 
-    fn target(&self) -> &'static str {
+    pub fn target(&self) -> &'static str {
         match self {
             Self::WasmGc { .. } => crate::format::TARGET_WASM_GC,
             Self::Wasip2 { .. } => crate::format::TARGET_WASIP2,

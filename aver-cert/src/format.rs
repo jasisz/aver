@@ -138,7 +138,7 @@ pub const ARTIFACT_CERTIFICATE_ROOT: &str = "AverCert.Artifact.certificate";
 
 /// Identity of the exact checker-owned Lean wall shipped by this release.
 pub const CURRENT_WALL_ID: &str =
-    "sha256:fc2cf8a9c1fbf3d420272cad08b1246b7d9ef8af42cd463cd0bcdbd9b6b1f09a";
+    "sha256:a00a21ccb1dffff46e4cd472e9be7c6ed26e5ee940c9f654c4dadd20881f2acf";
 
 /// Complete host-import surface admitted by the wasm-gc certificate format.
 ///
@@ -230,17 +230,187 @@ pub const WASM_GC_CAPABILITIES: &[(&str, &str)] = &[
     ("aver", "record_exit_group"),
 ];
 
+/// Complete standard host-import surface admitted for a wasip2 embedded core.
+///
+/// The list mirrors the compiler's exhaustive `Wasip2ImportSlot` enum. Exact
+/// interface versions and canonical-ABI operation names are part of the
+/// certificate boundary; no broad `wasi:*` prefix is accepted.
+pub const WASIP2_CAPABILITIES: &[(&str, &str)] = &[
+    ("wasi:cli/stdout@0.2.4", "get-stdout"),
+    ("wasi:cli/stderr@0.2.4", "get-stderr"),
+    (
+        "wasi:io/streams@0.2.4",
+        "[method]output-stream.blocking-write-and-flush",
+    ),
+    ("wasi:clocks/wall-clock@0.2.4", "now"),
+    ("wasi:random/random@0.2.4", "get-random-u64"),
+    ("wasi:cli/environment@0.2.4", "get-arguments"),
+    ("wasi:cli/environment@0.2.4", "get-environment"),
+    ("wasi:cli/stdin@0.2.4", "get-stdin"),
+    (
+        "wasi:io/streams@0.2.4",
+        "[method]input-stream.blocking-read",
+    ),
+    ("wasi:io/streams@0.2.4", "[method]input-stream.subscribe"),
+    ("wasi:clocks/monotonic-clock@0.2.4", "subscribe-duration"),
+    ("wasi:io/poll@0.2.4", "poll"),
+    ("wasi:io/poll@0.2.4", "[resource-drop]pollable"),
+    ("wasi:filesystem/preopens@0.2.4", "get-directories"),
+    ("wasi:filesystem/types@0.2.4", "[method]descriptor.stat-at"),
+    ("wasi:filesystem/types@0.2.4", "[method]descriptor.open-at"),
+    (
+        "wasi:filesystem/types@0.2.4",
+        "[method]descriptor.read-via-stream",
+    ),
+    ("wasi:filesystem/types@0.2.4", "[resource-drop]descriptor"),
+    ("wasi:io/streams@0.2.4", "[resource-drop]input-stream"),
+    (
+        "wasi:filesystem/types@0.2.4",
+        "[method]descriptor.write-via-stream",
+    ),
+    ("wasi:io/streams@0.2.4", "[resource-drop]output-stream"),
+    (
+        "wasi:filesystem/types@0.2.4",
+        "[method]descriptor.unlink-file-at",
+    ),
+    (
+        "wasi:filesystem/types@0.2.4",
+        "[method]descriptor.remove-directory-at",
+    ),
+    (
+        "wasi:filesystem/types@0.2.4",
+        "[method]descriptor.create-directory-at",
+    ),
+    ("wasi:filesystem/types@0.2.4", "[method]descriptor.sync"),
+    (
+        "wasi:filesystem/types@0.2.4",
+        "[method]descriptor.append-via-stream",
+    ),
+    (
+        "wasi:filesystem/types@0.2.4",
+        "[method]descriptor.read-directory",
+    ),
+    (
+        "wasi:filesystem/types@0.2.4",
+        "[method]directory-entry-stream.read-directory-entry",
+    ),
+    (
+        "wasi:filesystem/types@0.2.4",
+        "[resource-drop]directory-entry-stream",
+    ),
+    ("wasi:http/types@0.2.4", "[constructor]fields"),
+    ("wasi:http/types@0.2.4", "[constructor]outgoing-request"),
+    (
+        "wasi:http/types@0.2.4",
+        "[method]outgoing-request.set-scheme",
+    ),
+    (
+        "wasi:http/types@0.2.4",
+        "[method]outgoing-request.set-authority",
+    ),
+    (
+        "wasi:http/types@0.2.4",
+        "[method]outgoing-request.set-path-with-query",
+    ),
+    ("wasi:http/outgoing-handler@0.2.4", "handle"),
+    (
+        "wasi:http/types@0.2.4",
+        "[method]future-incoming-response.subscribe",
+    ),
+    (
+        "wasi:http/types@0.2.4",
+        "[method]future-incoming-response.get",
+    ),
+    ("wasi:http/types@0.2.4", "[method]incoming-response.status"),
+    ("wasi:http/types@0.2.4", "[method]incoming-response.consume"),
+    ("wasi:http/types@0.2.4", "[method]incoming-body.stream"),
+    ("wasi:http/types@0.2.4", "[static]incoming-body.finish"),
+    ("wasi:http/types@0.2.4", "[resource-drop]outgoing-request"),
+    (
+        "wasi:http/types@0.2.4",
+        "[resource-drop]future-incoming-response",
+    ),
+    ("wasi:http/types@0.2.4", "[resource-drop]incoming-response"),
+    ("wasi:http/types@0.2.4", "[resource-drop]future-trailers"),
+    ("wasi:http/types@0.2.4", "[resource-drop]incoming-body"),
+    ("wasi:http/types@0.2.4", "[method]incoming-response.headers"),
+    ("wasi:http/types@0.2.4", "[method]fields.entries"),
+    ("wasi:http/types@0.2.4", "[resource-drop]fields"),
+    (
+        "wasi:http/types@0.2.4",
+        "[method]outgoing-request.set-method",
+    ),
+    ("wasi:http/types@0.2.4", "[method]outgoing-request.body"),
+    ("wasi:http/types@0.2.4", "[method]outgoing-body.write"),
+    ("wasi:http/types@0.2.4", "[static]outgoing-body.finish"),
+    ("wasi:http/types@0.2.4", "[method]fields.append"),
+    ("wasi:http/types@0.2.4", "[resource-drop]outgoing-body"),
+    ("wasi:http/types@0.2.4", "[method]incoming-request.method"),
+    (
+        "wasi:http/types@0.2.4",
+        "[method]incoming-request.path-with-query",
+    ),
+    ("wasi:http/types@0.2.4", "[method]incoming-request.headers"),
+    ("wasi:http/types@0.2.4", "[method]incoming-request.consume"),
+    ("wasi:http/types@0.2.4", "[resource-drop]incoming-request"),
+    ("wasi:http/types@0.2.4", "[constructor]outgoing-response"),
+    (
+        "wasi:http/types@0.2.4",
+        "[method]outgoing-response.set-status-code",
+    ),
+    ("wasi:http/types@0.2.4", "[method]outgoing-response.body"),
+    ("wasi:http/types@0.2.4", "[static]response-outparam.set"),
+    ("wasi:sockets/instance-network@0.2.4", "instance-network"),
+    ("wasi:sockets/ip-name-lookup@0.2.4", "resolve-addresses"),
+    (
+        "wasi:sockets/ip-name-lookup@0.2.4",
+        "[method]resolve-address-stream.resolve-next-address",
+    ),
+    (
+        "wasi:sockets/ip-name-lookup@0.2.4",
+        "[method]resolve-address-stream.subscribe",
+    ),
+    (
+        "wasi:sockets/ip-name-lookup@0.2.4",
+        "[resource-drop]resolve-address-stream",
+    ),
+    ("wasi:sockets/tcp-create-socket@0.2.4", "create-tcp-socket"),
+    ("wasi:sockets/tcp@0.2.4", "[method]tcp-socket.start-connect"),
+    (
+        "wasi:sockets/tcp@0.2.4",
+        "[method]tcp-socket.finish-connect",
+    ),
+    ("wasi:sockets/tcp@0.2.4", "[method]tcp-socket.subscribe"),
+    ("wasi:sockets/tcp@0.2.4", "[method]tcp-socket.shutdown"),
+    ("wasi:sockets/tcp@0.2.4", "[resource-drop]tcp-socket"),
+];
+
+/// Whether an import belongs to the exact standard/custom capability surface
+/// admitted for the manifest target.
+pub fn is_capability_import_for_target(target: &str, module: &str, field: &str) -> bool {
+    let standard = match target {
+        TARGET_WASM_GC => WASM_GC_CAPABILITIES.contains(&(module, field)),
+        TARGET_WASIP2 => WASIP2_CAPABILITIES.contains(&(module, field)),
+        _ => return false,
+    };
+    standard || is_custom_capability_import(module, field)
+}
+
 /// Whether a raw wasm-gc import is part of the certificate's admitted host
 /// surface. Compiler-shipped effects use the finite table above. Program-
 /// defined capabilities use a deterministic contract-derived namespace:
 /// `aver:user/cap-n<module-utf8-hex>-c<sha256>` and
 /// `op-n<operation-utf8-hex>`.
 pub fn is_wasm_gc_capability_import(module: &str, field: &str) -> bool {
-    WASM_GC_CAPABILITIES.contains(&(module, field))
-        || is_custom_wasm_gc_capability_import(module, field)
+    is_capability_import_for_target(TARGET_WASM_GC, module, field)
 }
 
-fn is_custom_wasm_gc_capability_import(module: &str, field: &str) -> bool {
+/// Whether an import belongs to the exact wasip2 capability surface.
+pub fn is_wasip2_capability_import(module: &str, field: &str) -> bool {
+    is_capability_import_for_target(TARGET_WASIP2, module, field)
+}
+
+fn is_custom_capability_import(module: &str, field: &str) -> bool {
     const MODULE_PREFIX: &str = "aver:user/cap-n";
     const OP_PREFIX: &str = "op-n";
 
@@ -327,17 +497,47 @@ mod tests {
 
     #[test]
     fn capability_pairs_are_unique() {
-        let unique = WASM_GC_CAPABILITIES
-            .iter()
-            .copied()
-            .collect::<std::collections::BTreeSet<_>>();
-        assert_eq!(unique.len(), WASM_GC_CAPABILITIES.len());
+        assert_eq!(WASIP2_CAPABILITIES.len(), 75);
+        for registry in [WASM_GC_CAPABILITIES, WASIP2_CAPABILITIES] {
+            let unique = registry
+                .iter()
+                .copied()
+                .collect::<std::collections::BTreeSet<_>>();
+            assert_eq!(unique.len(), registry.len());
+        }
+    }
+
+    #[test]
+    fn standard_capability_imports_are_target_specific_and_version_exact() {
+        let wasi_pair = ("wasi:cli/stdout@0.2.4", "get-stdout");
+        assert!(is_wasip2_capability_import(wasi_pair.0, wasi_pair.1));
+        assert!(!is_wasm_gc_capability_import(wasi_pair.0, wasi_pair.1));
+        assert!(!is_wasip2_capability_import(
+            "wasi:cli/stdout@0.2.5",
+            wasi_pair.1
+        ));
+        assert!(!is_wasip2_capability_import(
+            "wasi:cli/unknown@0.2.4",
+            wasi_pair.1
+        ));
+        assert!(!is_wasip2_capability_import(
+            wasi_pair.0,
+            "unknown-operation"
+        ));
+
+        let wasm_gc_pair = ("aver", "console_print");
+        assert!(is_wasm_gc_capability_import(wasm_gc_pair.0, wasm_gc_pair.1));
+        assert!(!is_wasip2_capability_import(wasm_gc_pair.0, wasm_gc_pair.1));
     }
 
     #[test]
     fn custom_capability_import_syntax_is_exact() {
         let hash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
         assert!(is_wasm_gc_capability_import(
+            &format!("aver:user/cap-n436c6f636b-c{hash}"),
+            "op-n6e6f77"
+        ));
+        assert!(is_wasip2_capability_import(
             &format!("aver:user/cap-n436c6f636b-c{hash}"),
             "op-n6e6f77"
         ));

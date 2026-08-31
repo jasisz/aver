@@ -1,0 +1,25 @@
+module Wasip2WasiImports
+    intent =
+        "Exercise target-specific WASI import admission in component certificates."
+    effects [Console, Disk, Time]
+    exposes [greet, observe, main]
+
+fn greet(name: String) -> String
+    ? "Keep a pure certified export beside several standard WASI imports."
+    "Hello, {name}"
+
+verify greet
+    greet("Aver") => "Hello, Aver"
+
+fn observe(path: String) -> Unit
+    ? "Reach Console, Disk, and Time so their exact canonical imports enter the core."
+    ! [Console.print, Disk.exists, Time.now]
+    exists = Disk.exists(path)
+    timestamp = Time.now()
+    match exists
+        true -> Console.print("present at {timestamp}")
+        false -> Console.print("missing at {timestamp}")
+
+fn main() -> Unit
+    ! [Console.print, Disk.exists, Time.now]
+    observe("aver.toml")

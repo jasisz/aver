@@ -498,12 +498,13 @@ fn cert_tripwire_accepts_clean_certificate_end_to_end() {
     );
 }
 
-/// The real wasip2 producer emits a component-bound package that closes through
+/// The real wasip2 producer emits a component-bound package whose embedded core
+/// carries exact standard Console, Disk, and Time imports. It closes through
 /// the same production verifier as a raw wasm-gc module. No test-side manifest,
-/// hash, envelope, or Lean rewriting is allowed on this path.
+/// hash, envelope, capability, or Lean rewriting is allowed on this path.
 #[cfg(feature = "wasip2")]
 #[test]
-fn cert_tripwire_accepts_produced_wasip2_component_end_to_end() {
+fn cert_tripwire_accepts_produced_wasip2_wasi_imports_end_to_end() {
     if !tripwire_lake_available() {
         return;
     }
@@ -512,7 +513,7 @@ fn cert_tripwire_accepts_produced_wasip2_component_end_to_end() {
     let compile = aver_command()
         .current_dir(&repo_root)
         .arg("compile")
-        .arg("tests/fixtures/wasip2_carrierless.av")
+        .arg("tests/fixtures/wasip2_wasi_imports.av")
         .arg("--target")
         .arg("wasip2")
         .arg("--certify")
@@ -527,16 +528,41 @@ fn cert_tripwire_accepts_produced_wasip2_component_end_to_end() {
         String::from_utf8_lossy(&compile.stderr)
     );
 
-    let component_path = out_dir.join("wasip2_carrierless.component.wasm");
+    let component_path = out_dir.join("wasip2_wasi_imports.component.wasm");
     let cert = out_dir.join("cert");
+    let manifest: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(cert.join("cert-manifest.json")).expect("certificate manifest"),
+    )
+    .expect("valid certificate manifest");
+    let capabilities = manifest["capabilities"]
+        .as_array()
+        .expect("capability import list");
+    for (module, name) in [
+        ("wasi:cli/stdout@0.2.4", "get-stdout"),
+        ("wasi:clocks/wall-clock@0.2.4", "now"),
+        ("wasi:filesystem/preopens@0.2.4", "get-directories"),
+        ("wasi:filesystem/types@0.2.4", "[method]descriptor.stat-at"),
+        (
+            "wasi:io/streams@0.2.4",
+            "[method]output-stream.blocking-write-and-flush",
+        ),
+    ] {
+        assert!(
+            capabilities
+                .iter()
+                .any(|pair| pair["module"] == module && pair["name"] == name),
+            "manifest is missing exact WASI import {module}.{name}"
+        );
+    }
+
     let (ok, report) = aver_verify_clean_cache(&component_path, &cert);
     assert!(
         ok,
         "producer-emitted wasip2 component certificate should verify:\n{report}"
     );
     assert!(
-        report.contains("CERTIFIED") && report.contains("2 certified exports"),
-        "wasip2 verifier report should name both carrier-free exports:\n{report}"
+        report.contains("CERTIFIED") && report.contains("1 certified export"),
+        "wasip2 verifier report should name the pure export beside WASI imports:\n{report}"
     );
 }
 

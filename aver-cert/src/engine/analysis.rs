@@ -134,6 +134,23 @@ pub fn analyze_with_fragment_plans(
     model_files: &[(String, String)],
     fragment_plans: &[FragmentPlanArtifact],
 ) -> Result<Analysis, String> {
+    analyze_for_target_with_fragment_plans(
+        wasm_bytes,
+        model_files,
+        fragment_plans,
+        crate::format::TARGET_WASM_GC,
+    )
+}
+
+/// Analyze a core module under the exact host-import registry selected by the
+/// delivered artifact target. wasip2 still analyzes only its byte-exact
+/// embedded core; the target affects capability admission, not body claims.
+pub fn analyze_for_target_with_fragment_plans(
+    wasm_bytes: &[u8],
+    model_files: &[(String, String)],
+    fragment_plans: &[FragmentPlanArtifact],
+    artifact_target: &str,
+) -> Result<Analysis, String> {
     let (user_fns, box_idx, user_idx_set, carrier, host_roles, frag_host_table, struct_field_counts) =
         disassemble(wasm_bytes)?;
     let string_host_roles = string_host_roles(&host_roles);
@@ -252,7 +269,8 @@ pub fn analyze_with_fragment_plans(
         .iter()
         .map(|cert| (cert.name().to_string(), cert.self_idx()))
         .collect::<Vec<_>>();
-    let module_envelope = collect_module_envelope_facts(wasm_bytes, &certified)?;
+    let module_envelope =
+        collect_module_envelope_facts(wasm_bytes, &certified, artifact_target)?;
 
     Ok(Analysis {
         certs,

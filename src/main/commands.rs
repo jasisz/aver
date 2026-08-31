@@ -6879,10 +6879,11 @@ fn emit_artifact_certificate(
     );
     let model_out = lean_codegen::transpile_for_cert_model(&mut mctx);
 
-    let analysis = cert::analyze_with_fragment_plans(
+    let analysis = cert::analyze_for_target_with_fragment_plans(
         artifact.core_module_bytes(),
         &model_out.files,
         fragment_plans,
+        artifact.target(),
     )?;
     let artifact_file_name = artifact.file_name().to_string();
 
