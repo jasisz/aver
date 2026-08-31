@@ -999,6 +999,9 @@ def String.fromInt (n : Int) : String :=
   | .ofNat m => String.ofList (AverDigits.natDigitsChars m)
   | .negSucc m => String.ofList ('-' :: AverDigits.natDigitsChars (m + 1))
 
+def String.fromBool (b : Bool) : String :=
+  if b then "true" else "false"
+
 def Int.fromString (s : String) : Except String Int :=
   match s.toList with
   | [] => .error ("Cannot parse '" ++ s ++ "' as Int")

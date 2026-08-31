@@ -543,6 +543,10 @@ def stringFromUtf8 (bytes : Bytes) : Except String String :=
             if !inst.is_empty() {
                 sections.push(inst);
             }
+            let beq = toplevel::emit_beq_instance(td);
+            if !beq.is_empty() {
+                sections.push(beq);
+            }
         }
         if toplevel::is_recursive_type_def(td)
             && crate::codegen::proof_recognize::detect_canonical_peano(td).is_none()

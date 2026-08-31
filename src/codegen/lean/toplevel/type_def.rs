@@ -113,6 +113,42 @@ pub fn emit_inhabited_instance(td: &TypeDef, ctx: &CodegenContext, scope: Option
     }
 }
 
+/// Cert-model `BEq` witness for an all-nullary sum. The certificate's model
+/// files may not carry `deriving` (the checker's code-exec token wall rejects
+/// the token), so `==` on a user enum needs a hand-emitted instance the same
+/// way `Inhabited` gets one. Only the all-nullary shape is emitted: it needs
+/// no field instances and no recursion, so the instance can never itself fail
+/// to elaborate. A type with payload fields stays uninstanced — `==` on it
+/// still fails typeclass synthesis loudly, the same fail-closed decline as
+/// before.
+pub fn emit_beq_instance(td: &TypeDef) -> String {
+    if crate::codegen::proof_recognize::detect_canonical_peano(td).is_some() {
+        return String::new();
+    }
+    match td {
+        TypeDef::Sum { name, variants, .. } if variants.iter().all(|v| v.fields.is_empty()) => {
+            let lean_name = aver_name_to_lean(name);
+            let arms = variants
+                .iter()
+                .map(|v| {
+                    let ctor = lean_ctor_name(&v.name);
+                    format!("    | .{ctor}, .{ctor} => true")
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            let fallback = if variants.len() > 1 {
+                "\n    | _, _ => false"
+            } else {
+                ""
+            };
+            format!(
+                "instance : BEq {lean_name} :=\n  ⟨fun a b => match a, b with\n{arms}{fallback}⟩"
+            )
+        }
+        _ => String::new(),
+    }
+}
+
 /// Can `deriving Inhabited` find a witness for a value of this annotation?
 /// Only ONE thing here says no: a capability's resource type is emitted as an
 /// identity with deliberately no `Inhabited`, because a default handle is a

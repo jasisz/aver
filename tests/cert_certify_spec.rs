@@ -4179,3 +4179,49 @@ fn certify_leaves_a_faceless_host_call_shape_on_the_legacy_route() {
         "an unplanned export must carry no plan in the certificate:\n{plans}"
     );
 }
+
+/// First contact with a real program tree: the certify pipeline must emit a
+/// package for `projects/payment_ops` that builds and reaches a `check`
+/// verdict. Regression net for the 2026-08-31 finding that every projects/
+/// package failed `aver-cert check`: the carried model lacked `BEq`
+/// instances for user enums and its `decreasing_by` was too weak for list
+/// recursion under an `if` inside a match arm.
+#[test]
+fn cert_projects_payment_ops_package_checks() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping certify projects test: `lake` not available");
+        return;
+    }
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("certify-projects-payment-ops");
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("projects/payment_ops/main.av")
+        .arg("--module-root")
+        .arg("projects/payment_ops")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("expected `aver compile --certify` to run");
+    assert!(
+        compile.status.success(),
+        "compile --certify payment_ops failed:\n{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let (ok, report) = check_certificate(&out_dir.join("main.wasm"), &out_dir.join("cert"));
+    assert!(
+        ok,
+        "aver cert check on the payment_ops package failed:\n{report}"
+    );
+    assert!(
+        report.contains("CHECKED"),
+        "payment_ops check verdict does not say CHECKED:\n{report}"
+    );
+}
