@@ -838,8 +838,9 @@ fn builtin_reduces_in_kernel(builtin: Builtin) -> bool {
         // `String.Slice` iteration, `trim`/`replace` through `String.Pos`
         // arithmetic — the kernel does not get these to `isTrue`/`isFalse`.
         StringContains | StringTrim | StringReplace => false,
-        // Carries a Float; and `String.fromBool` has no prelude definition at
-        // all (its native emission is already broken).
+        // `String.fromFloat` carries a Float. `String.fromBool` now has a
+        // prelude definition (a plain `if`), but stays declined here until
+        // its kernel reduction is probed like the rest of this table.
         StringFromFloat | StringFromBool => false,
 
         BoolOr | BoolAnd | BoolNot => true,

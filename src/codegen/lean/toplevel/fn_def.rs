@@ -308,7 +308,15 @@ pub fn emit_fn_def_proof(fd: &FnDef, ctx: &CodegenContext) -> Option<String> {
                 let lean_param = aver_name_to_lean(param);
                 lines.push(format!("termination_by {}.length", lean_param));
                 lines.push("decreasing_by".to_string());
-                lines.push("  decreasing_tactic".to_string());
+                // `decreasing_tactic` alone misses the recursive calls that
+                // sit under an `if` inside a match arm (measured on
+                // payment_ops materializeInto/openCasesForPaymentInto:
+                // `rest.length < (item :: rest).length` stays open). The
+                // fallback mirrors the robust chain fuel.rs uses.
+                lines.push(
+                    "  all_goals (first | decreasing_tactic | (simp_wf; (try simp_all); omega))"
+                        .to_string(),
+                );
             }
             _ => {}
         }
