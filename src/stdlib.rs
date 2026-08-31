@@ -701,11 +701,11 @@ mod tests {
         let contract = registry.contract("Disk").expect("Disk contract");
         assert_eq!(
             contract.contract_hash,
-            "sha256:21ba58983c2ba61c06153df36a9c205770994c36a61ae280c1f49da336e63e23"
+            "sha256:7a010547d81840dbcfc2bde61c8a21e0bf6796fc0ace3d90ab634fbf3b378d8a"
         );
         assert_eq!(
             contract.model_hash,
-            "sha256:cf55979e264c3a26a246bb77663422011efb71e6ce2ba973ad4b267195f25570"
+            "sha256:ab6fa8e6e9b06daccdcbe0b321d0f8756549672c9399abf0d83354af221c97b1"
         );
         // Existing text-operation labels remain stable while the binary and
         // metadata profiles make short reads and zero-length files explicit.
@@ -723,6 +723,7 @@ mod tests {
             ("Disk.deleteDir", vec!["normal_ok", "always_err"]),
             ("Disk.listDir", vec!["normal", "empty", "always_err"]),
             ("Disk.makeDir", vec!["normal_ok", "always_err"]),
+            ("Disk.sync", vec!["normal_ok", "always_err"]),
         ] {
             assert_eq!(
                 standard_hostile_profiles(method)

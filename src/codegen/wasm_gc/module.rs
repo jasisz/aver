@@ -108,11 +108,11 @@ use super::wasip2_disk_bytes::{
 use super::wasip2_disk_read_at::{DiskReadBytesAtIndices, emit_disk_read_bytes_at};
 use super::wasip2_helpers::{
     CabiReallocIndices, ConsoleReadLineIndices, DecodeListStringIndices, DiskExistsIndices,
-    DiskListDirIndices, DiskReadTextIndices, DiskSimplePathOpIndices, DiskWriteTextIndices,
-    EnvGetLookupIndices, FormatIso8601Indices, TimeSleepIndices, emit_cabi_realloc,
-    emit_console_read_line, emit_decode_list_string, emit_disk_exists, emit_disk_list_dir,
-    emit_disk_read_text, emit_disk_simple_path_op, emit_disk_write_text, emit_env_get_lookup,
-    emit_format_iso8601, emit_time_sleep,
+    DiskListDirIndices, DiskReadTextIndices, DiskSimplePathOpIndices, DiskSyncIndices,
+    DiskWriteTextIndices, EnvGetLookupIndices, FormatIso8601Indices, TimeSleepIndices,
+    emit_cabi_realloc, emit_console_read_line, emit_decode_list_string, emit_disk_exists,
+    emit_disk_list_dir, emit_disk_read_text, emit_disk_simple_path_op, emit_disk_sync,
+    emit_disk_write_text, emit_env_get_lookup, emit_format_iso8601, emit_time_sleep,
 };
 use super::wat_helper;
 use crate::types::Type as AverType;
@@ -963,6 +963,16 @@ pub(super) fn emit_module_with(
                     EffectName::DiskMakeDir => {
                         wasip2_imports.register(Wasip2ImportSlot::FilesystemPreopensGetDirectories);
                         wasip2_imports.register(Wasip2ImportSlot::FilesystemTypesCreateDirectoryAt);
+                    }
+                    EffectName::DiskSync => {
+                        // `descriptor.sync` is a method on an open
+                        // descriptor, so this one needs open-at and
+                        // the descriptor drop as well.
+                        wasip2_imports.register(Wasip2ImportSlot::FilesystemPreopensGetDirectories);
+                        wasip2_imports.register(Wasip2ImportSlot::FilesystemTypesOpenAt);
+                        wasip2_imports.register(Wasip2ImportSlot::FilesystemTypesSync);
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::FilesystemTypesResourceDropDescriptor);
                     }
                     EffectName::DiskListDir => {
                         wasip2_imports.register(Wasip2ImportSlot::FilesystemPreopensGetDirectories);
@@ -2183,6 +2193,52 @@ pub(super) fn emit_module_with(
         super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesCreateDirectoryAt,
     );
 
+    // `__rt_disk_sync(path: ref string) -> ref null
+    // $result_unit_string`. Opens the path read-only (file OR
+    // directory), calls `descriptor.sync`, drops the descriptor.
+    let disk_sync: Option<DiskSyncIndices> = if cabi_realloc.is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemPreopensGetDirectories,
+            )
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesOpenAt)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesSync)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesResourceDropDescriptor,
+            )
+            .is_some()
+        && let Some(string_idx) = registry.string_array_type_idx
+        && let Some(result_idx) = registry.result_type_idx("Result<Unit,String>")
+    {
+        let r_ref = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(result_idx),
+        });
+        let s_ref = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(string_idx),
+        });
+        types.ty().function([s_ref], [r_ref]);
+        let fn_type = next_type_idx;
+        next_type_idx += 1;
+        let fn_idx = next_builtin_fn_idx;
+        next_builtin_fn_idx += 1;
+        Some(DiskSyncIndices {
+            fn_type,
+            fn_idx,
+            string_type_idx: string_idx,
+            result_unit_string_type_idx: result_idx,
+        })
+    } else {
+        None
+    };
+
     // Phase 1.5.6 — `__rt_disk_list_dir(path: ref string) ->
     // ref null $result_list_string_string`. Opens path as a
     // directory, drives `read-directory-entry` until None,
@@ -2691,6 +2747,9 @@ pub(super) fn emit_module_with(
     if let Some(d) = &disk_make_dir {
         funcs.function(d.fn_type);
     }
+    if let Some(d) = &disk_sync {
+        funcs.function(d.fn_type);
+    }
     if let Some(d) = &disk_list_dir {
         funcs.function(d.fn_type);
     }
@@ -3086,6 +3145,7 @@ pub(super) fn emit_module_with(
                 disk_delete_fn_idx: disk_delete.as_ref().map(|d| d.fn_idx),
                 disk_delete_dir_fn_idx: disk_delete_dir.as_ref().map(|d| d.fn_idx),
                 disk_make_dir_fn_idx: disk_make_dir.as_ref().map(|d| d.fn_idx),
+                disk_sync_fn_idx: disk_sync.as_ref().map(|d| d.fn_idx),
                 disk_list_dir_fn_idx: disk_list_dir.as_ref().map(|d| d.fn_idx),
                 http_get_fn_idx: http_get.as_ref().map(|h| h.fn_idx),
                 tcp_connect_fn_idx: tcp.connect.as_ref().map(|t| t.fn_idx),
@@ -4626,6 +4686,47 @@ pub(super) fn emit_module_with(
             get_directories,
             op_fn,
             b"makeDir failed",
+        ));
+    }
+    if let Some(d) = &disk_sync {
+        let preopen_global = wasip2_globals
+            .as_ref()
+            .and_then(|g| g.disk_preopen_handle)
+            .expect("disk_sync emit requires disk_preopen_handle global");
+        let cabi = cabi_realloc
+            .as_ref()
+            .expect("disk_sync emit requires cabi_realloc fn idx")
+            .fn_idx;
+        let str_to_lm = bridge
+            .as_ref()
+            .expect("disk_sync emit requires bridge")
+            .to_lm_fn;
+        let get_directories = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemPreopensGetDirectories,
+            )
+            .expect("disk_sync emit requires get-directories fn idx");
+        let open_at = wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesOpenAt)
+            .expect("disk_sync emit requires open-at fn idx");
+        let sync_fn = wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesSync)
+            .expect("disk_sync emit requires descriptor.sync fn idx");
+        let drop_descriptor = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesResourceDropDescriptor,
+            )
+            .expect("disk_sync emit requires drop-descriptor fn idx");
+        codes.function(&emit_disk_sync(
+            d.string_type_idx,
+            d.result_unit_string_type_idx,
+            preopen_global,
+            cabi,
+            str_to_lm,
+            get_directories,
+            open_at,
+            sync_fn,
+            drop_descriptor,
         ));
     }
     if let Some(ld) = &disk_list_dir {
@@ -8175,7 +8276,7 @@ fn allocate_factory_exports(
     }
 
     // Result<Unit, String> factories — Disk.{writeText, appendText,
-    // delete, deleteDir, makeDir}, Tcp.{writeLine, writeBytes, close, ping},
+    // delete, deleteDir, makeDir, sync}, Tcp.{writeLine, writeBytes, close, ping},
     // Env.set, Time.sleep, and the terminal output/control effects all yield
     // this shape.
     // Tcp.send is ephemeral (Phase 4.7+ pass 4) — its body returns
@@ -8191,6 +8292,7 @@ fn allocate_factory_exports(
                 | EffectName::DiskDelete
                 | EffectName::DiskDeleteDir
                 | EffectName::DiskMakeDir
+                | EffectName::DiskSync
                 | EffectName::TcpWriteLine
                 | EffectName::TcpWriteBytes
                 | EffectName::TcpClose

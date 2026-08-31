@@ -29,8 +29,8 @@ fn build_registry(
         ),
         ProviderContractSpec::new(
             "Disk",
-            "sha256:21ba58983c2ba61c06153df36a9c205770994c36a61ae280c1f49da336e63e23",
-            "sha256:cf55979e264c3a26a246bb77663422011efb71e6ce2ba973ad4b267195f25570",
+            "sha256:7a010547d81840dbcfc2bde61c8a21e0bf6796fc0ace3d90ab634fbf3b378d8a",
+            "sha256:ab6fa8e6e9b06daccdcbe0b321d0f8756549672c9399abf0d83354af221c97b1",
             vec![
                 "Disk.appendBytes".to_string(),
                 "Disk.appendText".to_string(),
@@ -43,6 +43,7 @@ fn build_registry(
                 "Disk.readBytesAt".to_string(),
                 "Disk.readText".to_string(),
                 "Disk.size".to_string(),
+                "Disk.sync".to_string(),
                 "Disk.writeBytes".to_string(),
                 "Disk.writeText".to_string(),
             ],
@@ -152,7 +153,7 @@ fn build_registry(
     if include_defaults {
         registry.bind(ProviderBinding::new(
             "Disk",
-            "sha256:21ba58983c2ba61c06153df36a9c205770994c36a61ae280c1f49da336e63e23",
+            "sha256:7a010547d81840dbcfc2bde61c8a21e0bf6796fc0ace3d90ab634fbf3b378d8a",
             vec![
                 "Disk.appendBytes".to_string(),
                 "Disk.appendText".to_string(),
@@ -165,6 +166,7 @@ fn build_registry(
                 "Disk.readBytesAt".to_string(),
                 "Disk.readText".to_string(),
                 "Disk.size".to_string(),
+                "Disk.sync".to_string(),
                 "Disk.writeBytes".to_string(),
                 "Disk.writeText".to_string(),
             ],

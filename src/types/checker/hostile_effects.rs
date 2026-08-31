@@ -140,6 +140,7 @@ mod tests {
             "Disk.appendBytes",
             "Disk.size",
             "Disk.exists",
+            "Disk.sync",
             "Console.readLine",
             "Http.get",
             "Http.post",

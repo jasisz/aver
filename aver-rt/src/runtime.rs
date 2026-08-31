@@ -239,6 +239,26 @@ pub fn append_bytes(path: &str, content: &[u8]) -> Result<(), String> {
     file.write_all(content).map_err(|e| e.to_string())
 }
 
+/// Force the named path's bytes AND metadata to stable storage.
+///
+/// The path may be a file or a directory. Syncing a directory is what
+/// makes a newly created file's directory entry durable — an fsync of
+/// the file alone does not do that on POSIX, so a crash-safe "create
+/// then name it" sequence syncs the file and then its parent directory.
+///
+/// The descriptor is opened read-only on purpose: it only has to name
+/// the file, and the kernel flushes the file's dirty pages whoever
+/// opened it. A read-only open also lets a directory path through,
+/// which a write open would refuse.
+///
+/// `File::sync_all` is `fcntl(F_FULLFSYNC)` on macOS, so the bytes go
+/// past the drive's write cache rather than only to the disk buffer.
+pub fn sync_path(path: &str) -> Result<(), String> {
+    std::fs::File::open(path)
+        .and_then(|file| file.sync_all())
+        .map_err(|error| error.to_string())
+}
+
 pub fn path_exists(path: &str) -> bool {
     std::path::Path::new(path).exists()
 }
