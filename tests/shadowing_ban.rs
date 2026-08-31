@@ -661,6 +661,11 @@ const NOT_A_DOOR: &[(&str, &str)] = &[
          about to fix",
     ),
     (
+        "agent-connect",
+        "writes the bundled language guides into the working directory or the user's \
+         skill folder and never opens, parses or type-checks any Aver source at all",
+    ),
+    (
         "why",
         "reads descriptions and verify blocks off the parsed AST to report justification \
          coverage; it type-checks nothing and rejects nothing",
