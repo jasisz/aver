@@ -229,14 +229,14 @@ fn compile_check_rejects_non_rust_target_before_codegen() {
 
 #[cfg(all(feature = "certify", feature = "wasip2"))]
 #[test]
-fn compile_wasip2_certify_is_rejected_instead_of_ignored() {
+fn compile_wasip2_certify_emits_component_bound_package() {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let workspace = temp_output_dir("aver-wasip2-certify-reject");
+    let workspace = temp_output_dir("aver-wasip2-certify-package");
     let output_dir = workspace.join("out");
     let output = Command::new(env!("CARGO_BIN_EXE_aver"))
         .current_dir(&repo_root)
         .arg("compile")
-        .arg("examples/core/hello.av")
+        .arg("tools/certkit/fixtures/wasip2_carrierless.av")
         .arg("--target")
         .arg("wasip2")
         .arg("--certify")
@@ -245,16 +245,40 @@ fn compile_wasip2_certify_is_rejected_instead_of_ignored() {
         .output()
         .expect("run aver compile --target wasip2 --certify");
 
-    assert_eq!(output.status.code(), Some(1), "{}", format_output(&output));
-    let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("--target wasip2 --certify is not available yet"),
-        "wrong wasip2 certify rejection:\n{}",
+        output.status.success(),
+        "wasip2 certificate emission failed:\n{}",
         format_output(&output)
     );
+    let component = fs::read(output_dir.join("wasip2_carrierless.component.wasm"))
+        .expect("component artifact exists");
+    let cert_dir = output_dir.join("cert");
+    let manifest: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(cert_dir.join("cert-manifest.json"))
+            .expect("certificate manifest exists"),
+    )
+    .expect("certificate manifest is JSON");
+    assert_eq!(manifest["target"], "wasip2");
+    assert_eq!(manifest["abi"], "aver-wasip2/0");
+    assert_eq!(manifest["wasm"], "wasip2_carrierless.component.wasm");
+    assert_eq!(
+        manifest["wasm_sha256"],
+        aver::codegen::cert::sha256_hex(&component),
+        "the package hash must bind the delivered component, not the pre-wrap core"
+    );
+    let envelope = manifest["wasip2ComponentEnvelope"]
+        .as_object()
+        .expect("wasip2 envelope is declared");
+    let declared_len = ["prefix_len", "embedded_core_module_len", "suffix_len"]
+        .iter()
+        .map(|field| envelope[*field].as_u64().expect("envelope length is u64"))
+        .sum::<u64>();
+    assert_eq!(declared_len, component.len() as u64);
     assert!(
-        !output_dir.join("hello.component.wasm").exists(),
-        "rejected --certify must not still emit an uncertified component"
+        fs::read_to_string(cert_dir.join("Artifact.lean"))
+            .expect("Artifact.lean exists")
+            .contains("wasip2ComponentEnvelope := some"),
+        "Lean artifact data must carry the same component envelope"
     );
 
     let _ = fs::remove_dir_all(&workspace);

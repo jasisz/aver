@@ -504,3 +504,56 @@ fn wasm_gc_certificate_keeps_custom_operations_opaque() {
     }));
     std::fs::remove_dir_all(output_dir).expect("remove certificate output");
 }
+
+#[test]
+#[cfg(all(feature = "wasip2", feature = "certify"))]
+fn wasip2_certificate_keeps_custom_operations_opaque() {
+    let root = fixture_root();
+    let output_dir = temp_output("custom-capability-wasip2-cert");
+    let output = Command::new(aver_bin())
+        .arg("compile")
+        .arg(root.join("cert_client.av"))
+        .arg("--module-root")
+        .arg(&root)
+        .args(["--target", "wasip2", "--certify", "-o"])
+        .arg(&output_dir)
+        .output()
+        .expect("certify custom capability component");
+    assert!(
+        output.status.success(),
+        "custom capability component certification failed:\n{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let manifest: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(output_dir.join("cert/cert-manifest.json")).expect("certificate manifest"),
+    )
+    .expect("valid certificate manifest");
+    assert_eq!(manifest["target"], "wasip2");
+    assert_eq!(manifest["abi"], "aver-wasip2/0");
+    assert_eq!(manifest["wasm"], "cert_client.component.wasm");
+    assert_eq!(
+        manifest["wasip2ComponentEnvelope"]["kind"],
+        "prefix-core-suffix/v1"
+    );
+    let capabilities = manifest["capabilities"]
+        .as_array()
+        .expect("capability imports");
+    assert_eq!(
+        capabilities.len(),
+        2,
+        "the complete Clock contract is opaque"
+    );
+    assert!(capabilities.iter().all(|pair| {
+        pair.as_object().is_some_and(|pair| {
+            pair["module"]
+                .as_str()
+                .is_some_and(|module| module.starts_with("aver:user/cap-n436c6f636b-c"))
+                && pair["name"]
+                    .as_str()
+                    .is_some_and(|field| field.starts_with("op-n"))
+        })
+    }));
+    std::fs::remove_dir_all(output_dir).expect("remove certificate output");
+}

@@ -1,0 +1,21 @@
+module Wasip2Carrierless
+    intent =
+        "Exercise producer-side wasip2 component certificate emission."
+    exposes [greet, shout, main]
+
+fn greet(name: String) -> String
+    ? "Return a greeting while keeping the module free of Int host helpers."
+    "Hello, {name}"
+
+fn shout(text: String) -> String
+    ? "Append a fixed suffix through the carrier-free String.concat face."
+    "{text}!!!"
+
+fn main() -> String
+    shout(greet("Aver"))
+
+verify greet
+    greet("Aver") => "Hello, Aver"
+
+verify shout
+    shout("Hello") => "Hello!!!"

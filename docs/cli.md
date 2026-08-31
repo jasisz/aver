@@ -329,21 +329,25 @@ aver compile file.av --explain-passes
 
 ```bash
 aver compile app.av --target wasm-gc --certify -o out/
+aver compile app.av --target wasip2 --certify -o out/
 aver-cert verify out/app.wasm out/cert
+aver-cert verify out/app.component.wasm out/cert
 aver-cert check out/app.wasm out/cert
 aver-cert explain out/app.wasm out/cert
 aver cert verify out/app.wasm out/cert
+aver cert verify out/app.component.wasm out/cert
 aver cert check out/app.wasm out/cert
 aver cert explain out/app.wasm out/cert
 ```
 
-`--certify` emits a version-1 artifact certificate for admitted exports of the
-exact wasm-gc module. It is currently rejected on `--target wasip2` until the
-wasip2 component envelope from #1146 lands; the flag must not silently emit an
-uncertified component. Install `aver-cert` separately; it is an independently
-versioned verifier using Lean 4.32. A crates.io compiler install needs the
-backend enabled: `cargo install aver-lang --features wasm`. Verification also
-requires a standard Elan installation for the pinned toolchain.
+`--certify` emits a version-1 artifact certificate for admitted exports of an
+exact wasm-gc module or wasip2 component. A wasip2 package hashes the delivered
+`.component.wasm`; its declared prefix/core/suffix envelope binds the exact
+embedded core bytes consumed by the existing Wasm wall. Install `aver-cert`
+separately; it is an independently versioned verifier using Lean 4.32. A
+crates.io compiler install needs `--features wasm` for wasm-gc, plus `wasip2`
+for component output. Verification also requires a standard Elan installation
+for the pinned toolchain.
 
 `check` is the faster development preflight. It trusts the freshly built or
 explicitly cached `.olean` closure, skips the final `leanchecker --fresh`

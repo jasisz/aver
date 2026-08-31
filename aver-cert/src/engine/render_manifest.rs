@@ -309,6 +309,8 @@ fn render_manifest_lean(
     model_roots: &[String],
     model_info: &ModelInfo,
     sha: &str,
+    target: &str,
+    abi: &str,
 ) -> String {
     let mut s = String::new();
     s.push_str(
@@ -562,9 +564,9 @@ fn render_manifest_lean(
         "def manifest : Schema.Manifest :=\n  \
          {{ subject :=\n      \
          {{ artifactHash := \"{sha}\",\n        \
-         target := \"{ARTIFACT_TARGET}\",\n        \
+         target := \"{target}\",\n        \
          profile := \"{PROFILE_ID}\",\n        \
-         abi := \"{RUNTIME_ABI}\",\n        \
+         abi := \"{abi}\",\n        \
          artifactRoot := \"{ARTIFACT_CERTIFICATE_ROOT}\",\n        \
          exports := [{exports}],\n        \
          declaredUncertified := [{declared_uncertified}],\n        \
@@ -612,8 +614,11 @@ fn render_final() -> String {
 fn render_manifest(
     analysis: &Analysis,
     model_info: &ModelInfo,
-    wasm_name: &str,
+    artifact_file_name: &str,
     sha: &str,
+    target: &str,
+    abi: &str,
+    wasip2_component_envelope: Option<crate::format::Wasip2ComponentEnvelopeDeclaration>,
 ) -> String {
     let mut s = String::new();
     let has_total = analysis
@@ -636,12 +641,26 @@ fn render_manifest(
         wall::FORMAT_VERSION,
         json_str(wall::current_id()),
     ));
-    s.push_str(&format!("  \"wasm\": \"{wasm_name}.wasm\",\n"));
+    s.push_str(&format!("  \"wasm\": {},\n", json_str(artifact_file_name)));
     s.push_str(&format!("  \"wasm_sha256\": \"{sha}\",\n"));
-    s.push_str(&format!("  \"target\": \"{ARTIFACT_TARGET}\",\n"));
+    s.push_str(&format!("  \"target\": {},\n", json_str(target)));
     s.push_str(&format!("  \"level\": \"{artifact_level}\",\n"));
     s.push_str(&format!("  \"profile\": \"{PROFILE_ID}\",\n"));
-    s.push_str(&format!("  \"abi\": \"{RUNTIME_ABI}\",\n"));
+    s.push_str(&format!("  \"abi\": {},\n", json_str(abi)));
+    if let Some(envelope) = wasip2_component_envelope {
+        s.push_str(&format!(
+            "  \"{}\": {{\"{}\": {}, \"{}\": {}, \"{}\": {}, \"{}\": {}}},\n",
+            crate::format::WASIP2_COMPONENT_ENVELOPE_FIELD,
+            crate::format::WASIP2_COMPONENT_ENVELOPE_KIND_FIELD,
+            json_str(envelope.kind()),
+            crate::format::WASIP2_COMPONENT_ENVELOPE_PREFIX_LEN_FIELD,
+            envelope.prefix_len,
+            crate::format::WASIP2_COMPONENT_ENVELOPE_CORE_LEN_FIELD,
+            envelope.embedded_core_module_len,
+            crate::format::WASIP2_COMPONENT_ENVELOPE_SUFFIX_LEN_FIELD,
+            envelope.suffix_len,
+        ));
+    }
     s.push_str(&format!("  \"final_theorem\": \"{FINAL_THEOREM}\",\n"));
     s.push_str(&format!(
         "  \"artifact_certificate_root\": \"{ARTIFACT_CERTIFICATE_ROOT}\",\n"

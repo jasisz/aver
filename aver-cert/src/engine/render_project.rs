@@ -1,5 +1,151 @@
 // ---- rendering -----------------------------------------------------------
 
+/// Target artifact whose delivered bytes are bound by a certificate package.
+///
+/// The certificate engine always analyzes and renders facts about a core Wasm
+/// module. For raw wasm-gc the delivered artifact and that core are the same
+/// bytes. For wasip2 they are deliberately distinct: the component is hashed
+/// as the delivered artifact, while the existing Wasm wall consumes the exact
+/// core-module payload declared inside that component.
+pub enum CertificateArtifact<'a> {
+    WasmGc {
+        file_name: &'a str,
+        module_bytes: &'a [u8],
+    },
+    Wasip2 {
+        file_name: &'a str,
+        component_bytes: &'a [u8],
+        embedded_core_module: &'a [u8],
+        envelope: crate::format::Wasip2ComponentEnvelopeDeclaration,
+    },
+}
+
+impl CertificateArtifact<'_> {
+    fn validate(&self) -> Result<(), String> {
+        match self {
+            Self::WasmGc { module_bytes, .. } => {
+                if module_bytes.is_empty() {
+                    return Err("cannot certify an empty wasm-gc module".to_string());
+                }
+            }
+            Self::Wasip2 {
+                component_bytes,
+                embedded_core_module,
+                envelope,
+                ..
+            } => {
+                let (_, declared_core, _) = envelope
+                    .split_component(component_bytes)
+                    .ok_or_else(|| {
+                        "wasip2 certificate envelope does not split the delivered component by its declared lengths"
+                            .to_string()
+                    })?;
+                if declared_core != *embedded_core_module {
+                    return Err(
+                        "wasip2 certificate core bytes do not equal the envelope-declared component slice"
+                            .to_string(),
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn file_name(&self) -> &str {
+        match self {
+            Self::WasmGc { file_name, .. } | Self::Wasip2 { file_name, .. } => file_name,
+        }
+    }
+
+    fn delivered_bytes(&self) -> &[u8] {
+        match self {
+            Self::WasmGc { module_bytes, .. } => module_bytes,
+            Self::Wasip2 {
+                component_bytes, ..
+            } => component_bytes,
+        }
+    }
+
+    pub fn core_module_bytes(&self) -> &[u8] {
+        match self {
+            Self::WasmGc { module_bytes, .. } => module_bytes,
+            Self::Wasip2 {
+                embedded_core_module,
+                ..
+            } => embedded_core_module,
+        }
+    }
+
+    fn target(&self) -> &'static str {
+        match self {
+            Self::WasmGc { .. } => crate::format::TARGET_WASM_GC,
+            Self::Wasip2 { .. } => crate::format::TARGET_WASIP2,
+        }
+    }
+
+    fn abi(&self) -> &'static str {
+        match self {
+            Self::WasmGc { .. } => crate::format::RUNTIME_ABI_WASM_GC,
+            Self::Wasip2 { .. } => crate::format::RUNTIME_ABI_WASIP2,
+        }
+    }
+
+    fn wasip2_component_envelope(
+        &self,
+    ) -> Option<crate::format::Wasip2ComponentEnvelopeDeclaration> {
+        match self {
+            Self::WasmGc { .. } => None,
+            Self::Wasip2 { envelope, .. } => Some(*envelope),
+        }
+    }
+}
+
+#[cfg(test)]
+mod certificate_artifact_tests {
+    use super::CertificateArtifact;
+
+    #[test]
+    fn wasip2_artifact_requires_the_exact_declared_core_slice() {
+        let component = [0x10, 0x20, 0x21, 0x30];
+        let envelope = crate::format::Wasip2ComponentEnvelopeDeclaration::from_lengths(1, 2, 1);
+        assert!(
+            CertificateArtifact::Wasip2 {
+                file_name: "app.component.wasm",
+                component_bytes: &component,
+                embedded_core_module: &component[1..3],
+                envelope,
+            }
+            .validate()
+            .is_ok()
+        );
+
+        let wrong_core = [0x20, 0x22];
+        let error = CertificateArtifact::Wasip2 {
+            file_name: "app.component.wasm",
+            component_bytes: &component,
+            embedded_core_module: &wrong_core,
+            envelope,
+        }
+        .validate()
+        .expect_err("a core different from the declared component slice must fail");
+        assert!(error.contains("do not equal"));
+    }
+
+    #[test]
+    fn wasip2_artifact_rejects_a_length_declaration_outside_the_component() {
+        let component = [0x10, 0x20, 0x21, 0x30];
+        let error = CertificateArtifact::Wasip2 {
+            file_name: "app.component.wasm",
+            component_bytes: &component,
+            embedded_core_module: &component[1..3],
+            envelope: crate::format::Wasip2ComponentEnvelopeDeclaration::from_lengths(1, 2, 2),
+        }
+        .validate()
+        .expect_err("a declaration whose lengths do not total the component must fail");
+        assert!(error.contains("does not split"));
+    }
+}
+
 /// Write the artifact-specific `cert/` package. `model_files` are the
 /// `(path, content)` pairs from the reused `aver proof` Lean emission. The
 /// checker-owned wall and build configuration are resolved from `wall_id`.
@@ -15,11 +161,12 @@
 /// package is written.
 pub fn write_project(
     out_dir: &Path,
-    wasm_name: &str,
-    wasm_bytes: &[u8],
+    artifact: CertificateArtifact<'_>,
     analysis: &Analysis,
     model_files: &[(String, String)],
 ) -> Result<(), String> {
+    artifact.validate()?;
+
     // Enforce the model-file precondition BEFORE touching the output
     // directory, so a mismatched call leaves any existing package intact.
     let model_info = ModelInfo::from_files(model_files);
@@ -51,9 +198,9 @@ pub fn write_project(
         }
     }
 
-    let sha = {
+    let artifact_sha = {
         let mut h = Sha256::new();
-        h.update(wasm_bytes);
+        h.update(artifact.delivered_bytes());
         hex(&h.finalize())
     };
 
@@ -61,14 +208,14 @@ pub fn write_project(
     write(
         &cert_dir,
         "Module.lean",
-        &render_module(analysis, wasm_name, &sha),
+        &render_module(analysis, artifact.file_name(), &artifact_sha),
     )?;
     // Checker-owned Lean sources are identified by `format.wall_id` and are
     // materialized by the verifier. They are not duplicated in the package.
     // Byte-derived host-role table for source-plan encoding. One module-wide
     // value: every sym-plan encode example and artifact claim consumes it, so
     // plan-supplied indices can never enter the encoder.
-    let host_table_lean = byte_derived_frag_host_table_lean(wasm_bytes)?;
+    let host_table_lean = byte_derived_frag_host_table_lean(artifact.core_module_bytes())?;
     // Struct-binding table for field projections: one module-wide value,
     // unioned from the per-export (source plan, encoded plan) pairs the
     // byte-exact gate already pinned. Like the host-role table, plan-supplied
@@ -83,7 +230,14 @@ pub fn write_project(
     write(
         &cert_dir,
         "Manifest.lean",
-        &render_manifest_lean(analysis, &model_roots, &model_info, &sha),
+        &render_manifest_lean(
+            analysis,
+            &model_roots,
+            &model_info,
+            &artifact_sha,
+            artifact.target(),
+            artifact.abi(),
+        ),
     )?;
     write(
         &cert_dir,
@@ -110,7 +264,13 @@ pub fn write_project(
     write(
         &cert_dir,
         "Artifact.lean",
-        &render_artifact(analysis, &model_info, &host_table_lean, &struct_table_lean),
+        &render_artifact(
+            analysis,
+            &model_info,
+            &host_table_lean,
+            &struct_table_lean,
+            artifact.wasip2_component_envelope(),
+        ),
     )?;
     write(
         &cert_dir,
@@ -124,7 +284,15 @@ pub fn write_project(
     )?;
     std::fs::write(
         cert_dir.join("cert-manifest.json"),
-        render_manifest(analysis, &model_info, wasm_name, &sha),
+        render_manifest(
+            analysis,
+            &model_info,
+            artifact.file_name(),
+            &artifact_sha,
+            artifact.target(),
+            artifact.abi(),
+            artifact.wasip2_component_envelope(),
+        ),
     )
     .map_err(|e| format!("write manifest: {e}"))?;
     Ok(())
@@ -2600,6 +2768,7 @@ fn render_artifact(
     model_info: &ModelInfo,
     host_table_lean: &str,
     struct_table_lean: &str,
+    wasip2_component_envelope: Option<crate::format::Wasip2ComponentEnvelopeDeclaration>,
 ) -> String {
     let claims = render_artifact_expr_fragment_claims(
         analysis,
@@ -2623,6 +2792,16 @@ fn render_artifact(
         nat_list(&analysis.module_envelope.closure.helpers),
         nat_list(&analysis.module_envelope.closure.admitted),
     );
+    let wasip2_component_envelope = wasip2_component_envelope
+        .map(|envelope| {
+            format!(
+                "some ({{ prefixLen := {}, embeddedCoreModuleLen := {}, suffixLen := {} }} : AverCert.Wasip2Envelope.ComponentEnvelope)",
+                envelope.prefix_len,
+                envelope.embedded_core_module_len,
+                envelope.suffix_len,
+            )
+        })
+        .unwrap_or_else(|| "none".to_string());
     // Shared source-side rendering for the few cross-family reductions. Each
     // proof family below gets its own opaque theorem instead of contributing
     // an inline branch to one enormous `acceptedWithFinal` proof term. The
@@ -2931,7 +3110,7 @@ fn render_artifact(
          def closureClaim : AverCert.AcceptedArtifact.ClosureClaim := {closure_claim}\n\n\
          {mutual_scc_closure_pins}\
          def data : AverCert.AcceptedArtifact.ArtifactData :=\n  \
-           ({{ modBytes := AverCert.ArtifactBytes.modBytes, modLen := AverCert.ArtifactBytes.modLen, manifest := AverCert.manifest, wasip2ComponentEnvelope := none, symFragmentClaims := symFragmentClaims, stringEqClaims := stringEqClaims, stringConcatClaims := stringConcatClaims, constructClaims := constructClaims, recursionClaims := recursionClaims, mutualRecursionClaims := mutualRecursionClaims, verbatimClaims := verbatimClaims, intDispatchClaims := intDispatchClaims, fieldProjectionClaims := fieldProjectionClaims, compositionMembers := compositionMembers, compositionClaims := compositionClaims, closureFuel := {closure_fuel}, closureClaim := closureClaim }} : AverCert.AcceptedArtifact.ArtifactData)\n\n\
+           ({{ modBytes := AverCert.ArtifactBytes.modBytes, modLen := AverCert.ArtifactBytes.modLen, manifest := AverCert.manifest, wasip2ComponentEnvelope := {wasip2_component_envelope}, symFragmentClaims := symFragmentClaims, stringEqClaims := stringEqClaims, stringConcatClaims := stringConcatClaims, constructClaims := constructClaims, recursionClaims := recursionClaims, mutualRecursionClaims := mutualRecursionClaims, verbatimClaims := verbatimClaims, intDispatchClaims := intDispatchClaims, fieldProjectionClaims := fieldProjectionClaims, compositionMembers := compositionMembers, compositionClaims := compositionClaims, closureFuel := {closure_fuel}, closureClaim := closureClaim }} : AverCert.AcceptedArtifact.ArtifactData)\n\n\
          theorem artifactEnvelopeAccepted : AverCert.AcceptedArtifact.artifactEnvelopeAccepted AverCert.ArtifactComponentBytes.componentBytes AverCert.ArtifactComponentBytes.componentLen data = true := by\n  \
          dsimp [AverCert.AcceptedArtifact.artifactEnvelopeAccepted, data]\n  \
          rfl\n\n\
@@ -2954,6 +3133,7 @@ fn render_artifact(
         composition_claims_list = claims.composition_claims,
         closure_claim = closure_claim,
         closure_fuel = analysis.module_envelope.closure_fuel,
+        wasip2_component_envelope = wasip2_component_envelope,
         mutual_scc_closure_pins = render_mutual_scc_closure_pins(analysis),
         claim_proof_bundles = claims.claim_proof_bundles,
         proof_bundles = proof_bundles,
@@ -3214,15 +3394,15 @@ fn render_contracts(analysis: &Analysis) -> String {
     s
 }
 
-fn render_module(analysis: &Analysis, wasm_name: &str, sha: &str) -> String {
+fn render_module(analysis: &Analysis, artifact_file_name: &str, sha: &str) -> String {
     let mut s = String::new();
     s.push_str(&format!(
         "-- Emitted user-function bodies as `CertPrelude.WInstr` data, plus the\n\
-         -- sha256 of the final `{wasm_name}.wasm` bytes (pinned).\n\
+         -- sha256 of the final `{artifact_file_name}` bytes (pinned).\n\
          import CertPrelude\n\nnamespace CertModule\nopen CertPrelude\n\n",
     ));
     s.push_str(&format!(
-        "/-- sha256 of the certified `{wasm_name}.wasm` module bytes. -/\n\
+        "/-- sha256 of the certified `{artifact_file_name}` artifact bytes. -/\n\
          def wasmSha256 : String := \"{sha}\"\n\n",
     ));
     for c in &analysis.certs {

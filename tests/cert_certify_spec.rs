@@ -3960,6 +3960,44 @@ fn certify_add_one_output_is_unchanged_when_the_int_helper_is_present() {
     insta::assert_snapshot!("add_one_certificate_package", golden);
 }
 
+#[cfg(feature = "wasip2")]
+#[test]
+fn certify_wasip2_component_package_snapshot() {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("certify-wasip2-component-snapshot");
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/wasip2_carrierless.av")
+        .arg("--target")
+        .arg("wasip2")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver compile --target wasip2 --certify runs");
+    assert!(
+        compile.status.success(),
+        "wasip2 certificate emission failed:\n{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let cert_dir = out_dir.join("cert");
+    let manifest_json = std::fs::read_to_string(cert_dir.join("cert-manifest.json"))
+        .expect("cert-manifest.json exists");
+    let artifact_lean =
+        std::fs::read_to_string(cert_dir.join("Artifact.lean")).expect("Artifact.lean exists");
+    let artifact_data = artifact_lean
+        .lines()
+        .find(|line| line.contains("wasip2ComponentEnvelope := some"))
+        .expect("Artifact.data carries the wasip2 envelope");
+    let golden = format!(
+        "== cert-manifest.json ==\n{manifest_json}\n== Artifact.data envelope ==\n{artifact_data}"
+    );
+    insta::assert_snapshot!("wasip2_component_certificate_package", golden);
+}
+
 #[test]
 fn certify_nested_module_models_close_end_to_end() {
     // A project with a dotted module dependency emits its dependency model at

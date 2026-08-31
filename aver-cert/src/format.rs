@@ -129,8 +129,8 @@ impl Wasip2ComponentEnvelopeDeclaration {
 /// type, the export name is the only thing that tells one role from the other.
 /// Version 5 added the required top-level `target` field and moved the
 /// target/profile/ABI identifiers into the checker-owned statement schema.
-/// Version 6 added the wasip2 component-envelope byte binding while keeping
-/// the producer's `--target wasip2 --certify` path disabled.
+/// Version 6 added the wasip2 component-envelope byte binding used by the
+/// producer's `--target wasip2 --certify` path.
 pub const CERT_SCHEMA_VERSION: u32 = 6;
 
 /// Named theorem audited by the checker-owned witness.
