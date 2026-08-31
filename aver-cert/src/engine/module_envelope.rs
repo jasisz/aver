@@ -65,6 +65,7 @@ fn external_kind_byte(kind: wasmparser::ExternalKind) -> u8 {
 pub fn collect_module_envelope_facts(
     wasm_bytes: &[u8],
     certified: &[(String, u32)],
+    artifact_target: &str,
 ) -> Result<ModuleEnvelopeFacts, String> {
     use wasmparser::{Operator, Parser, Payload, TypeRef};
 
@@ -87,13 +88,14 @@ pub fn collect_module_envelope_facts(
                     for import in group {
                         let (_, import) = import.map_err(|e| format!("import read: {e}"))?;
                         let pair = (import.module.to_string(), import.name.to_string());
-                        if !crate::format::is_wasm_gc_capability_import(
+                        if !crate::format::is_capability_import_for_target(
+                            artifact_target,
                             import.module,
                             import.name,
                         ) {
                             return Err(format!(
-                                "module import `{}.{}` is outside the certificate capability registry",
-                                import.module, import.name
+                                "module import `{}.{}` is outside the certificate capability registry for target `{artifact_target}`",
+                                import.module, import.name,
                             ));
                         }
                         capabilities.push(pair);
@@ -197,16 +199,91 @@ pub fn collect_module_envelope_facts(
 #[cfg(test)]
 mod module_envelope_tests {
     #[test]
-    fn audited_kernel_capability_registry_tracks_effect_import_pairs() {
-        let registry = crate::format::WASM_GC_CAPABILITIES;
-        let unique = registry.iter().copied().collect::<std::collections::BTreeSet<_>>();
-        assert_eq!(registry.len(), unique.len(), "effect import pairs must be unique");
-        for (module, field) in registry {
-            let lean_entry = format!("(\"{module}\", \"{field}\")");
-            assert!(
-                super::CERT_SCHEMA_CORE.contains(&lean_entry),
-                "SchemaCore.CAPABILITY_REGISTRY is missing {module}.{field}"
+    fn audited_kernel_capability_registries_track_rust_import_pairs() {
+        for (name, registry) in [
+            ("WASM_GC_CAPABILITY_REGISTRY", crate::format::WASM_GC_CAPABILITIES),
+            ("WASIP2_CAPABILITY_REGISTRY", crate::format::WASIP2_CAPABILITIES),
+        ] {
+            let marker = format!("def {name} : List (String × String) := [");
+            let body = super::CERT_SCHEMA_CORE
+                .split_once(&marker)
+                .unwrap_or_else(|| panic!("SchemaCore is missing {name}"))
+                .1
+                .split_once("\n]")
+                .unwrap_or_else(|| panic!("SchemaCore.{name} is not a closed list"))
+                .0;
+            let lean_pairs = body
+                .lines()
+                .map(str::trim)
+                .filter(|line| line.starts_with("(\""))
+                .map(|line| {
+                    let row = line.strip_suffix(',').unwrap_or(line);
+                    let pair = row
+                        .strip_prefix("(\"")
+                        .and_then(|line| line.strip_suffix("\")"))
+                        .unwrap_or_else(|| panic!("invalid SchemaCore.{name} row `{line}`"));
+                    let (module, field) = pair
+                        .split_once("\", \"")
+                        .unwrap_or_else(|| panic!("invalid SchemaCore.{name} pair `{pair}`"));
+                    (
+                        module.to_string(),
+                        field.to_string(),
+                    )
+                })
+                .collect::<Vec<_>>();
+            let rust_pairs = registry
+                .iter()
+                .map(|(module, field)| ((*module).to_string(), (*field).to_string()))
+                .collect::<Vec<_>>();
+            assert_eq!(
+                lean_pairs, rust_pairs,
+                "SchemaCore.{name} must exactly match the Rust registry"
             );
+        }
+    }
+
+    fn module_with_import(module: &str, field: &str) -> Vec<u8> {
+        wat::parse_str(format!(
+            "(module (import \"{module}\" \"{field}\" (func)))"
+        ))
+        .expect("valid imported module")
+    }
+
+    #[test]
+    fn wasip2_registry_accepts_only_the_exact_target_and_version() {
+        let bytes = module_with_import("wasi:cli/stdout@0.2.4", "get-stdout");
+        let facts = super::collect_module_envelope_facts(
+            &bytes,
+            &[],
+            crate::format::TARGET_WASIP2,
+        )
+        .expect("exact wasip2 import is admitted");
+        assert_eq!(
+            facts.capabilities,
+            [("wasi:cli/stdout@0.2.4".into(), "get-stdout".into())]
+        );
+
+        let error = super::collect_module_envelope_facts(
+            &bytes,
+            &[],
+            crate::format::TARGET_WASM_GC,
+        )
+        .expect_err("WASI imports are not part of the wasm-gc registry");
+        assert!(error.contains("target `wasm-gc`"));
+
+        for (module, field) in [
+            ("wasi:cli/unknown@0.2.4", "get-stdout"),
+            ("wasi:cli/stdout@0.2.5", "get-stdout"),
+            ("wasi:cli/stdout@0.2.4", "unknown-operation"),
+        ] {
+            let bytes = module_with_import(module, field);
+            let error = super::collect_module_envelope_facts(
+                &bytes,
+                &[],
+                crate::format::TARGET_WASIP2,
+            )
+            .expect_err("unknown WASI import must fail closed");
+            assert!(error.contains("target `wasip2`"));
         }
     }
 }

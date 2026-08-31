@@ -2084,14 +2084,14 @@ def capabilityBytes (capability : String × String) :
   (stringBytes capability.1, stringBytes capability.2)
 
 /-- The manifest capability list is exact (including import order), contains no
-    duplicates, and every import is either in the finite standard registry or
-    in the exact contract-derived custom-capability namespace. Non-capability
-    and malformed imports therefore fail here. -/
+    duplicates, and every import is either in the finite standard registry for
+    the manifest target or in the exact contract-derived custom-capability
+    namespace. Non-capability and malformed imports therefore fail here. -/
 def importsWithinCapabilities (artifact : ArtifactData) : Bool :=
   let declared := artifact.manifest.subject.capabilities
   stringListNodup (declared.map (fun capability => capability.1 ++ "." ++ capability.2)) &&
   declared.all (fun capability =>
-    AverCert.Schema.CAPABILITY_REGISTRY.contains capability ||
+    (AverCert.Schema.capabilityRegistryForTarget artifact.manifest.subject.target).contains capability ||
       customCapabilityImport capability) &&
   match AverCert.WasmSlice.enumImportNames artifact.modBytes artifact.modLen with
   | some actual => actual == declared.map capabilityBytes

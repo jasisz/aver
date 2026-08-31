@@ -10,11 +10,11 @@ import ArithTemplateDerisk
 namespace AverCert.Schema
 open CertPrelude
 
-/-- The finite host-capability registry, minted from wasm-gc's exhaustive
+/-- The finite wasm-gc host-capability registry, minted from its exhaustive
     `EffectName.import_pair` mapping.  Artifact manifests may declare only
     pairs in this kernel-owned list; the Wasm import section is independently
     enumerated and must match the declaration exactly. -/
-def CAPABILITY_REGISTRY : List (String × String) := [
+def WASM_GC_CAPABILITY_REGISTRY : List (String × String) := [
   ("aver", "console_print"),
   ("aver", "console_error"),
   ("aver", "console_warn"),
@@ -99,11 +99,111 @@ def CAPABILITY_REGISTRY : List (String × String) := [
   ("aver", "record_exit_group")
 ]
 
+/-- Exact standard canonical-ABI import surface emitted into wasip2 core
+    modules. Interface versions and operation names are part of the boundary;
+    there is deliberately no wildcard for the `wasi:` namespace. -/
+def WASIP2_CAPABILITY_REGISTRY : List (String × String) := [
+  ("wasi:cli/stdout@0.2.4", "get-stdout"),
+  ("wasi:cli/stderr@0.2.4", "get-stderr"),
+  ("wasi:io/streams@0.2.4", "[method]output-stream.blocking-write-and-flush"),
+  ("wasi:clocks/wall-clock@0.2.4", "now"),
+  ("wasi:random/random@0.2.4", "get-random-u64"),
+  ("wasi:cli/environment@0.2.4", "get-arguments"),
+  ("wasi:cli/environment@0.2.4", "get-environment"),
+  ("wasi:cli/stdin@0.2.4", "get-stdin"),
+  ("wasi:io/streams@0.2.4", "[method]input-stream.blocking-read"),
+  ("wasi:io/streams@0.2.4", "[method]input-stream.subscribe"),
+  ("wasi:clocks/monotonic-clock@0.2.4", "subscribe-duration"),
+  ("wasi:io/poll@0.2.4", "poll"),
+  ("wasi:io/poll@0.2.4", "[resource-drop]pollable"),
+  ("wasi:filesystem/preopens@0.2.4", "get-directories"),
+  ("wasi:filesystem/types@0.2.4", "[method]descriptor.stat-at"),
+  ("wasi:filesystem/types@0.2.4", "[method]descriptor.open-at"),
+  ("wasi:filesystem/types@0.2.4", "[method]descriptor.read-via-stream"),
+  ("wasi:filesystem/types@0.2.4", "[resource-drop]descriptor"),
+  ("wasi:io/streams@0.2.4", "[resource-drop]input-stream"),
+  ("wasi:filesystem/types@0.2.4", "[method]descriptor.write-via-stream"),
+  ("wasi:io/streams@0.2.4", "[resource-drop]output-stream"),
+  ("wasi:filesystem/types@0.2.4", "[method]descriptor.unlink-file-at"),
+  ("wasi:filesystem/types@0.2.4", "[method]descriptor.remove-directory-at"),
+  ("wasi:filesystem/types@0.2.4", "[method]descriptor.create-directory-at"),
+  ("wasi:filesystem/types@0.2.4", "[method]descriptor.sync"),
+  ("wasi:filesystem/types@0.2.4", "[method]descriptor.append-via-stream"),
+  ("wasi:filesystem/types@0.2.4", "[method]descriptor.read-directory"),
+  ("wasi:filesystem/types@0.2.4", "[method]directory-entry-stream.read-directory-entry"),
+  ("wasi:filesystem/types@0.2.4", "[resource-drop]directory-entry-stream"),
+  ("wasi:http/types@0.2.4", "[constructor]fields"),
+  ("wasi:http/types@0.2.4", "[constructor]outgoing-request"),
+  ("wasi:http/types@0.2.4", "[method]outgoing-request.set-scheme"),
+  ("wasi:http/types@0.2.4", "[method]outgoing-request.set-authority"),
+  ("wasi:http/types@0.2.4", "[method]outgoing-request.set-path-with-query"),
+  ("wasi:http/outgoing-handler@0.2.4", "handle"),
+  ("wasi:http/types@0.2.4", "[method]future-incoming-response.subscribe"),
+  ("wasi:http/types@0.2.4", "[method]future-incoming-response.get"),
+  ("wasi:http/types@0.2.4", "[method]incoming-response.status"),
+  ("wasi:http/types@0.2.4", "[method]incoming-response.consume"),
+  ("wasi:http/types@0.2.4", "[method]incoming-body.stream"),
+  ("wasi:http/types@0.2.4", "[static]incoming-body.finish"),
+  ("wasi:http/types@0.2.4", "[resource-drop]outgoing-request"),
+  ("wasi:http/types@0.2.4", "[resource-drop]future-incoming-response"),
+  ("wasi:http/types@0.2.4", "[resource-drop]incoming-response"),
+  ("wasi:http/types@0.2.4", "[resource-drop]future-trailers"),
+  ("wasi:http/types@0.2.4", "[resource-drop]incoming-body"),
+  ("wasi:http/types@0.2.4", "[method]incoming-response.headers"),
+  ("wasi:http/types@0.2.4", "[method]fields.entries"),
+  ("wasi:http/types@0.2.4", "[resource-drop]fields"),
+  ("wasi:http/types@0.2.4", "[method]outgoing-request.set-method"),
+  ("wasi:http/types@0.2.4", "[method]outgoing-request.body"),
+  ("wasi:http/types@0.2.4", "[method]outgoing-body.write"),
+  ("wasi:http/types@0.2.4", "[static]outgoing-body.finish"),
+  ("wasi:http/types@0.2.4", "[method]fields.append"),
+  ("wasi:http/types@0.2.4", "[resource-drop]outgoing-body"),
+  ("wasi:http/types@0.2.4", "[method]incoming-request.method"),
+  ("wasi:http/types@0.2.4", "[method]incoming-request.path-with-query"),
+  ("wasi:http/types@0.2.4", "[method]incoming-request.headers"),
+  ("wasi:http/types@0.2.4", "[method]incoming-request.consume"),
+  ("wasi:http/types@0.2.4", "[resource-drop]incoming-request"),
+  ("wasi:http/types@0.2.4", "[constructor]outgoing-response"),
+  ("wasi:http/types@0.2.4", "[method]outgoing-response.set-status-code"),
+  ("wasi:http/types@0.2.4", "[method]outgoing-response.body"),
+  ("wasi:http/types@0.2.4", "[static]response-outparam.set"),
+  ("wasi:sockets/instance-network@0.2.4", "instance-network"),
+  ("wasi:sockets/ip-name-lookup@0.2.4", "resolve-addresses"),
+  ("wasi:sockets/ip-name-lookup@0.2.4", "[method]resolve-address-stream.resolve-next-address"),
+  ("wasi:sockets/ip-name-lookup@0.2.4", "[method]resolve-address-stream.subscribe"),
+  ("wasi:sockets/ip-name-lookup@0.2.4", "[resource-drop]resolve-address-stream"),
+  ("wasi:sockets/tcp-create-socket@0.2.4", "create-tcp-socket"),
+  ("wasi:sockets/tcp@0.2.4", "[method]tcp-socket.start-connect"),
+  ("wasi:sockets/tcp@0.2.4", "[method]tcp-socket.finish-connect"),
+  ("wasi:sockets/tcp@0.2.4", "[method]tcp-socket.subscribe"),
+  ("wasi:sockets/tcp@0.2.4", "[method]tcp-socket.shutdown"),
+  ("wasi:sockets/tcp@0.2.4", "[resource-drop]tcp-socket")
+]
+
+/-- Backwards-compatible name for the original wasm-gc-only registry. -/
+def CAPABILITY_REGISTRY : List (String × String) := WASM_GC_CAPABILITY_REGISTRY
+
 /-- Core wasm-gc module artifacts use the raw module bytes as the certified artifact. -/
 def expectedWasmGcArtifactTarget : String := "wasm-gc"
 
 /-- WASI 0.2 Component Model artifacts use a declared component envelope. -/
 def expectedWasip2ArtifactTarget : String := "wasip2"
+
+/-- Select the finite standard host-import registry from the manifest target.
+    Unknown targets receive no standard imports and therefore fail closed. -/
+def capabilityRegistryForTarget (target : String) : List (String × String) :=
+  if target == expectedWasmGcArtifactTarget then WASM_GC_CAPABILITY_REGISTRY
+  else if target == expectedWasip2ArtifactTarget then WASIP2_CAPABILITY_REGISTRY
+  else []
+
+theorem wasiStdoutIsWasip2Only :
+    (capabilityRegistryForTarget expectedWasip2ArtifactTarget).contains
+      ("wasi:cli/stdout@0.2.4", "get-stdout") = true ∧
+    (capabilityRegistryForTarget expectedWasmGcArtifactTarget).contains
+      ("wasi:cli/stdout@0.2.4", "get-stdout") = false ∧
+    (capabilityRegistryForTarget expectedWasip2ArtifactTarget).contains
+      ("wasi:cli/stdout@0.2.5", "get-stdout") = false := by
+  native_decide
 
 /-- Backwards-compatible alias for the historical wasm-gc-only target constant. -/
 def expectedArtifactTarget : String := expectedWasmGcArtifactTarget

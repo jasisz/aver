@@ -90,12 +90,13 @@ freshly built or explicitly cached `.olean` closure and skips the final
 For wasip2, the manifest hash is always the full component hash. The producer
 may locate the user core while building the component, but verification splits
 only at the declared prefix/core/suffix lengths and checks equality; it never
-parses the component to rediscover the core. The current wall admits its fixed
-wasm-gc host-import registry and exact contract-derived custom-capability import
-grammar. A wasip2 core containing other imports, including standard `wasi:*`
-imports not yet in that registry, is refused with an artifact-specific reason
-rather than receiving a weaker certificate. The target-specific WASI registry
-is tracked in [#1230](https://github.com/jasisz/aver/issues/1230).
+parses the component to rediscover the core. The wall selects a finite import
+registry from the pinned target: wasm-gc keeps its exact Aver host imports,
+while wasip2 admits the exact 75 canonical-ABI module/name pairs the compiler
+can emit, including their pinned WASI interface versions. Contract-derived
+custom-capability imports keep their exact hashed-namespace grammar on both
+targets. Any unknown interface, operation, or version is refused with an
+artifact-specific reason rather than receiving a weaker certificate.
 
 Build caches are disabled by default. `AVER_CERT_DATA_CACHE=/trusted/path`
 opts into artifact-specific Lake output, while

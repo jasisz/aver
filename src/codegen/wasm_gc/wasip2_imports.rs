@@ -34,8 +34,21 @@ use wasm_encoder::ValType;
 /// - field for resource methods = `"[method]<resource>.<method>"`
 ///   (`"[method]output-stream.blocking-write-and-flush"`);
 /// - field for resource drops = `"[resource-drop]<resource>"`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(super) enum Wasip2ImportSlot {
+macro_rules! define_wasip2_import_slots {
+    ($( $(#[$meta:meta])* $slot:ident, )+) => {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        pub(super) enum Wasip2ImportSlot {
+            $( $(#[$meta])* $slot, )+
+        }
+
+        impl Wasip2ImportSlot {
+            #[cfg(test)]
+            const ALL: &'static [Self] = &[$(Self::$slot),+];
+        }
+    };
+}
+
+define_wasip2_import_slots! {
     /// `wasi:cli/stdout.get-stdout: func() -> output-stream`.
     /// Canonical-ABI signature: `() -> i32` (the resource handle).
     CliGetStdout,
@@ -1519,6 +1532,15 @@ mod tests {
                 "[method]output-stream.blocking-write-and-flush",
             ),
         );
+    }
+
+    #[test]
+    fn emitted_import_registry_matches_the_verifier_owned_format() {
+        let emitted = Wasip2ImportSlot::ALL
+            .iter()
+            .map(|slot| slot.module_field_pair())
+            .collect::<Vec<_>>();
+        assert_eq!(emitted.as_slice(), aver_cert::format::WASIP2_CAPABILITIES);
     }
 
     #[test]

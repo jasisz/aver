@@ -55,13 +55,12 @@ the exact embedded core bytes consumed by the existing Wasm certificate wall.
 The verifier splits only at those declared lengths and checks byte equality; it
 does not parse or navigate the component to find the core module.
 
-The current wall admits its fixed wasm-gc host-import registry plus the exact
-contract-derived custom-capability namespace. If the embedded core contains an
-import outside that vocabulary (including standard `wasi:*` imports not yet
-added to the certificate registry), certification fails closed with that
-artifact-specific reason. Ordinary wasip2 compilation remains unaffected. The
-finite wasip2 registry is tracked in
-[#1230](https://github.com/jasisz/aver/issues/1230).
+The wall selects a finite import registry from the manifest target. For
+`wasip2`, that registry contains the exact 75 canonical-ABI module/name pairs
+the compiler can emit, including their pinned WASI interface versions. An
+unknown interface, operation, or version still fails closed with an
+artifact-specific reason. Contract-derived custom-capability imports keep the
+same exact hashed-namespace grammar on both Wasm targets.
 
 ## Component contract
 
