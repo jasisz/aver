@@ -46,6 +46,23 @@ ComponentEncoder
 
 The wasm-gc emitter does **not** implement the Component Model boundary. It emits core imports/exports in canonical-ABI-compatible shapes and inserts Aver-side glue at effect call sites. Component-type metadata says what those core signatures mean in WIT. `wit_component::ComponentEncoder` does the actual lifting/lowering at component build time.
 
+## Artifact certificates
+
+`aver compile app.av --target wasip2 --certify -o out/` emits `out/cert/`
+beside the component. The package binds the hash of the full delivered
+`app.component.wasm`, while a declared prefix/core/suffix envelope identifies
+the exact embedded core bytes consumed by the existing Wasm certificate wall.
+The verifier splits only at those declared lengths and checks byte equality; it
+does not parse or navigate the component to find the core module.
+
+The current wall admits its fixed wasm-gc host-import registry plus the exact
+contract-derived custom-capability namespace. If the embedded core contains an
+import outside that vocabulary (including standard `wasi:*` imports not yet
+added to the certificate registry), certification fails closed with that
+artifact-specific reason. Ordinary wasip2 compilation remains unaffected. The
+finite wasip2 registry is tracked in
+[#1230](https://github.com/jasisz/aver/issues/1230).
+
 ## Component contract
 
 Eight properties every `--target wasip2` build must satisfy:

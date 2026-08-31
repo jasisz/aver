@@ -1,0 +1,44 @@
+---
+source: tests/cert_certify_spec.rs
+expression: golden
+---
+== cert-manifest.json ==
+{
+  "schema_version": 6,
+  "format": {"version": 1, "wall_id": "sha256:6b5c0326a4db9eeffc13ec0d08453d1a62413216fa96f57e34e82a7387016c9c"},
+  "wasm": "wasip2_carrierless.component.wasm",
+  "wasm_sha256": "0e7064150f82e180dff6f774a8f48711acd2ea21d183ee06576d4f7c9f135aed",
+  "target": "wasip2",
+  "level": "L1",
+  "profile": "AverUserProfile/v1",
+  "abi": "aver-wasip2/0",
+  "wasip2ComponentEnvelope": {"kind": "prefix-core-suffix/v1", "prefix_len": 11, "embedded_core_module_len": 2496, "suffix_len": 478},
+  "final_theorem": "AverCert.Final.cert",
+  "artifact_certificate_root": "AverCert.Artifact.certificate",
+  "carrier_type_index": null,
+  "runtime_contracts": [
+    "String.concat (container-of-string-arrays -> byte-concatenated array)"
+  ],
+  "declaredUncertified": [
+    {"name": "wasi:cli/run@0.2.4#run", "reason": "body does not match a carrier-free certified template, and the module has no Int carrier host helpers (`__rt_aint_from_i64`); integer-family certification requires the Int carrier"},
+    {"name": "main", "reason": "body does not match a carrier-free certified template, and the module has no Int carrier host helpers (`__rt_aint_from_i64`); integer-family certification requires the Int carrier"},
+    {"name": "memory", "reason": "module export is outside the claimed certification obligations"},
+    {"name": "__caller_fn_count", "reason": "module export is outside the claimed certification obligations"},
+    {"name": "__caller_fn_name", "reason": "module export is outside the claimed certification obligations"}
+  ],
+  "capabilities": [],
+  "start": {"present": false, "function_index": null},
+  "hostRoleTable": null,
+  "stringHostRoles": [{"function_index": 4, "role": "stringConcat"},{"function_index": 8, "role": "stringEq"}],
+  "certified": [
+    {"name": "greet", "class": "verbatim-string-concat", "policy": "simulatesModel", "level": "L1", "dom": "WVal", "cod": "WVal", "theorem": "AcceptanceSoundness.stringConcat_canonical_discharges"},
+    {"name": "shout", "class": "verbatim-string-concat", "policy": "simulatesModel", "level": "L1", "dom": "WVal", "cod": "WVal", "theorem": "AcceptanceSoundness.stringConcat_canonical_discharges"}
+  ],
+  "source_level_only": [
+    {"name": "wasi:cli/run@0.2.4#run", "reason": "body does not match a carrier-free certified template, and the module has no Int carrier host helpers (`__rt_aint_from_i64`); integer-family certification requires the Int carrier"},
+    {"name": "main", "reason": "body does not match a carrier-free certified template, and the module has no Int carrier host helpers (`__rt_aint_from_i64`); integer-family certification requires the Int carrier"}
+  ]
+}
+
+== Artifact.data envelope ==
+  ({ modBytes := AverCert.ArtifactBytes.modBytes, modLen := AverCert.ArtifactBytes.modLen, manifest := AverCert.manifest, wasip2ComponentEnvelope := some ({ prefixLen := 11, embeddedCoreModuleLen := 2496, suffixLen := 478 } : AverCert.Wasip2Envelope.ComponentEnvelope), symFragmentClaims := symFragmentClaims, stringEqClaims := stringEqClaims, stringConcatClaims := stringConcatClaims, constructClaims := constructClaims, recursionClaims := recursionClaims, mutualRecursionClaims := mutualRecursionClaims, verbatimClaims := verbatimClaims, intDispatchClaims := intDispatchClaims, fieldProjectionClaims := fieldProjectionClaims, compositionMembers := compositionMembers, compositionClaims := compositionClaims, closureFuel := 5, closureClaim := closureClaim } : AverCert.AcceptedArtifact.ArtifactData)

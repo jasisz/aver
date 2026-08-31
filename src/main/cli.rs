@@ -488,12 +488,12 @@ pub(super) enum Commands {
         /// for runtime tuning (`-O3`).
         #[arg(long, value_enum)]
         optimize: Option<WasmOptMode>,
-        /// Emit a format-v1 certificate data package next to `<name>.wasm`.
+        /// Emit a format-v1 certificate data package next to the Wasm artifact.
         /// `aver cert verify` supplies its own Lean wall and the actual artifact
         /// bytes, then checks the package with Lean 4.32. Unsupported exports
         /// are listed with a reason, never credited with a weaker theorem.
-        /// Requires `--target wasm-gc`; incompatible with `--optimize` because
-        /// the certificate binds the emitter's exact module bytes.
+        /// Requires `--target wasm-gc` or `--target wasip2`; incompatible with
+        /// `--optimize` because the certificate binds the exact delivered bytes.
         #[arg(long, default_value_t = false, conflicts_with = "optimize")]
         certify: bool,
         /// Internal representation-differential hook used by wasm-gc backend tests.
