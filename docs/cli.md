@@ -419,6 +419,26 @@ aver replay recordings/ --test --diff
 
 Use replay for effectful debugging and regression capture.
 
+### Agent connect
+
+```bash
+aver agent-connect            # this project: skills + a marked AGENTS.md section
+aver agent-connect --global   # ~/.claude/skills/ instead, AGENTS.md untouched
+aver agent-connect --print    # the language guide on stdout, nothing written
+```
+
+The language guide and this toolchain guide ship inside the `aver` binary, so an install carries them and nothing has to be fetched. `aver agent-connect` writes them out as `.claude/skills/aver/SKILL.md` and `.claude/skills/aver-tooling/SKILL.md`, then creates or refreshes a short pointer section in `AGENTS.md` between `<!-- aver agent-connect: start -->` and `<!-- aver agent-connect: end -->`.
+
+There is no blessed agent workflow here. Take the files and keep whatever prompt, harness, or command you already use — `--print` exists precisely so an agent that wants one file rather than a skill directory can have it.
+
+Safety:
+- bytes outside the `AGENTS.md` markers are never touched, and a file with no markers is appended to, never rewritten
+- a marker bounds the section only when it is alone on its own line, so a sentence naming one — like the paragraph above — is prose and is left where it stands
+- an `AGENTS.md` carrying half a marker pair, an inverted pair, or a second pair is refused by name rather than rewritten on a guess
+- a `SKILL.md` that exists without the `aver agent-connect: managed file` marker is refused by name, never overwritten
+- re-running produces no diff; every line of the summary says `created`, `updated`, or `unchanged`
+- exit is nonzero only on a refusal or an IO error
+
 ## Recommended workflows
 
 ### Logic bug
@@ -436,9 +456,10 @@ Use replay for effectful debugging and regression capture.
 
 ### Project discovery
 
-1. `aver context <entry> --budget 10kb`
-2. if needed, raise budget or target a specific module
-3. only then open raw source files
+1. `aver agent-connect` once, so the language and toolchain guides are in the project
+2. `aver context <entry> --budget 10kb`
+3. if needed, raise budget or target a specific module
+4. only then open raw source files
 
 ## aver.toml
 

@@ -19,8 +19,10 @@ aver run file.av --module-root . --wasip2
   to a Rust package, `run` builds that provider host once (the first build
   says which packages it links and where they come from) and reuses it from
   the cache afterwards; with `--wasip2` it adapts the WIT-lowerable bindings
-  to Component Model imports. `--wasm-gc` and `--self-host` have no provider
-  host and refuse such a program with `error[capability-provider-unhosted]`.
+  to Component Model imports, while `--wasm-gc` adapts the complete provider
+  value vocabulary through the contract-derived raw ABI. `--self-host` has no
+  provider host and refuses such a program with
+  `error[capability-provider-unhosted]`.
   A project without `[providers]` never invokes Cargo
 
 ### Check
@@ -70,6 +72,7 @@ reason code.
 
 ```bash
 aver verify file-or-dir --module-root .
+aver verify file-or-dir -j 8
 aver verify file-or-dir --wasm-gc
 ```
 
@@ -81,19 +84,74 @@ rooted at each file, each module verified once. Embedded standard modules
 are not sampled (their blocks are verified per release). A failing case in
 any module fails the command; pointing at a single module is still the fast
 way to iterate on it.
+
+VM verification resolves one project graph and prepares each project module
+once, then runs independent files and declared cases in a bounded worker pool.
+`-j N` / `--jobs N` sets that pool's maximum size; it defaults to the machine's
+available parallelism. `-j 1` disables concurrency without giving up graph
+reuse, which makes it the useful comparison/debugging mode. Reports are always
+collected in input, module, block, and case order, so sequential and parallel
+runs emit identical text/JSON and failure coordinates. `--hostile` keeps the
+base/profile cases of a block sequential, and `--wasm-gc` keeps cases within a
+module sequential; independent input files may still share the bounded pool.
+
 It fails on:
 - mismatched examples
 - parse/type errors
 - execution errors
+- cases it could not answer within their step budget
 
 It is not a coverage tool.
+
+Every case runs under a per-case budget of VM opcodes — 1,000,000 by default.
+A case that exceeds it is **declined**: a third outcome, counted separately
+from passes and failures, reported as `fail[verify-declined]: case not
+answered`, and failing the command. A decline is not a counter-example. It
+says the case was not checked, which is why it can never be read as a pass.
+
+A project whose corpus legitimately contains expensive cases raises the
+budget for the function it knows about, in `aver.toml`, with a written reason
+— see `[verify]` below. The report then names the cases the raise bought:
+
+```
+  ✓ checkScript      1119/1119
+    checkScript case 41: 8.2M steps (limit 50M, aver.toml [[verify.costly]] fn = "checkScript")
+```
+
+`--wasm-gc` runs the same cases on the same budget, converted to wasmtime
+fuel by one documented factor, so a case is runnable on both lanes or on
+neither.
+
+A file whose program `verify` could not run — a type error anywhere in it,
+a backend or provider failure, a refusal by verify itself — is **not
+checked**, and the report says so rather than leaving it out. Such files are
+listed under a heading naming the reason, with the number of verify blocks
+that went unchecked with each one; the module that carries the fault is the
+one named, not the entry that depends on it. The summary line gains a
+`| N file(s) not checked` member and is never green while N is above zero,
+and `--json` carries `files_skipped` and `blocks_unchecked` in its summary
+record. Modules that did verify before the walk stopped still report their
+cases. A stop that happens before the first module runs — a project file that
+does not parse, for instance — counts every module of that program, not just
+the entry. The buckets that say `aver check` will not help are the ones verify
+itself is known to own: a `--wasm-gc` backend refusal, a provider composition
+failure, and verify's own refusals. Anything else is treated as a source error
+and points at `aver check`.
+
+Declined cases and unchecked files are independent counts and a run can carry
+both at once: the summary states each of them separately, `--json` carries
+`cases_declined` (only when something was declined) alongside `files_skipped`
+and `blocks_unchecked`, and either one above zero keeps the run out of green
+and out of exit code 0.
 
 When the project's `aver.toml` binds providers and a module reaches one of
 those capabilities, the cases run inside the cached provider host, so a
 configured pure provider executes in ordinary VM cases. An exact operation
 `given` remains a case-local override. Project bindings unrelated to a module
 are ignored for that module instead of causing a skip or a fake type error.
-`--wasm-gc` has no provider host and refuses such a program.
+`verify --wasm-gc` has no configured-provider adapter yet and refuses such a
+program; ordinary `run --wasm-gc` and `replay --wasm-gc` do use the cached
+provider host.
 
 `--wasm-gc` (0.17.3+) executes the same cases via the wasm-gc backend instead of the VM — cross-target check that catches divergence between VM and wasm-gc codegen on equality. The host decodes a single Bool per case (wasm-gc lowers `==` per-type via eq_helpers natively). Failure diagnostics show the actual runtime value for primitive return types (Int/Float/Bool/String). Trace projections (`.trace.*`), classified-effect Oracle stubs (`given X: Time = stub`), and case bodies mentioning `BranchPath` are rejected upfront with a pointer back to VM verify — those features depend on namespace-value dispatch and runtime override that the wasm-gc backend doesn't have yet.
 
@@ -256,7 +314,7 @@ aver compile file.av --explain-passes
 - `--target wasip2`: WASI 0.2 / Component Model output for wasmtime and other component hosts. It wraps the wasm-gc core with `wit-component`; see `docs/wasip2.md` for the supported effect surface.
 - `--optimize size|speed`: post-process with binaryen `-Oz` (size) or `-O3` (speed). It drops the name section, so a wasm trap reports `<wasm function N>` instead of the name of the function that trapped — `aver compile` says so on stderr for a program whose named helpers it is about to strip.
 
-- `--preset cloudflare --handler <fn>`: Cloudflare Workers pack — `--target wasm-gc --pack cloudflare`, drops `worker.js` + `wrangler.toml` next to the wasm. `<fn>` must have signature `Fn(HttpRequest) -> HttpResponse`.
+- `--preset cloudflare --handler <fn>`: Cloudflare Workers pack — `--target wasm-gc --pack cloudflare`, drops `worker.js` + `wrangler.toml` next to the wasm. `<fn>` must have signature `Fn(HttpRequest) -> Http.Response`.
 - `--emit-ir-after=PASS`: print the IR snapshot after the named pipeline stage and exit before codegen. PASS ∈ { `parse`, `tco`, `typecheck`, `interp_lower`, `buffer_build`, `resolve`, `last_use`, `analyze`, `escape`, `build_symbols`, `name_resolve`, `refinement_lower`, `contract_lower`, `law_lower` }. `diff -u` between two stages shows exactly what each pass rewrote.
 - `--explain-passes`: run the full pipeline (no codegen) and print a per-pass diagnostic report — tail-call conversions, interpolations lowered, fusion sites rewritten + sinks synthesized, slots resolved, last-use markers annotated, alloc/recursion facts. Drives failable-invariant CI checks ("fail if buffer_build no longer fires on the canonical shape", "fail if hot fn loses no-alloc status"). Pair with `--json` for typed-per-stage shape: `{schema_version: 1, passes: [{stage, data: {...stage-specific fields}}, ...]}` — buffer_build's `data` exposes `rewrites`, `synthesized`, `sinks`, `rewrites_by_sink`; analyze's exposes `total_fns`, `no_alloc_fns`, `recursive_fns`, `mutual_tco_members`. `jq '.passes[] | select(.stage=="buffer_build") | .data.rewrites'` instead of regex-parsing summary strings.
 
@@ -266,19 +324,25 @@ aver compile file.av --explain-passes
 
 ```bash
 aver compile app.av --target wasm-gc --certify -o out/
+aver compile app.av --target wasip2 --certify -o out/
 aver-cert verify out/app.wasm out/cert
+aver-cert verify out/app.component.wasm out/cert
 aver-cert check out/app.wasm out/cert
 aver-cert explain out/app.wasm out/cert
 aver cert verify out/app.wasm out/cert
+aver cert verify out/app.component.wasm out/cert
 aver cert check out/app.wasm out/cert
 aver cert explain out/app.wasm out/cert
 ```
 
-`--certify` emits a version-1 artifact certificate for admitted exports of the
-exact wasm-gc module. Install `aver-cert` separately; it is an independently
-versioned verifier using Lean 4.32. A crates.io compiler install needs the
-backend enabled: `cargo install aver-lang --features wasm`. Verification also
-requires a standard Elan installation for the pinned toolchain.
+`--certify` emits a version-1 artifact certificate for admitted exports of an
+exact wasm-gc module or wasip2 component. A wasip2 package hashes the delivered
+`.component.wasm`; its declared prefix/core/suffix envelope binds the exact
+embedded core bytes consumed by the existing Wasm wall. Install `aver-cert`
+separately; it is an independently versioned verifier using Lean 4.32. A
+crates.io compiler install needs `--features wasm` for wasm-gc, plus `wasip2`
+for component output. Verification also requires a standard Elan installation
+for the pinned toolchain.
 
 `check` is the faster development preflight. It trusts the freshly built or
 explicitly cached `.olean` closure, skips the final `leanchecker --fresh`
@@ -350,6 +414,26 @@ aver replay recordings/ --test --diff
 
 Use replay for effectful debugging and regression capture.
 
+### Agent connect
+
+```bash
+aver agent-connect            # this project: skills + a marked AGENTS.md section
+aver agent-connect --global   # ~/.claude/skills/ instead, AGENTS.md untouched
+aver agent-connect --print    # the language guide on stdout, nothing written
+```
+
+The language guide and this toolchain guide ship inside the `aver` binary, so an install carries them and nothing has to be fetched. `aver agent-connect` writes them out as `.claude/skills/aver/SKILL.md` and `.claude/skills/aver-tooling/SKILL.md`, then creates or refreshes a short pointer section in `AGENTS.md` between `<!-- aver agent-connect: start -->` and `<!-- aver agent-connect: end -->`.
+
+There is no blessed agent workflow here. Take the files and keep whatever prompt, harness, or command you already use — `--print` exists precisely so an agent that wants one file rather than a skill directory can have it.
+
+Safety:
+- bytes outside the `AGENTS.md` markers are never touched, and a file with no markers is appended to, never rewritten
+- a marker bounds the section only when it is alone on its own line, so a sentence naming one — like the paragraph above — is prose and is left where it stands
+- an `AGENTS.md` carrying half a marker pair, an inverted pair, or a second pair is refused by name rather than rewritten on a guess
+- a `SKILL.md` that exists without the `aver agent-connect: managed file` marker is refused by name, never overwritten
+- re-running produces no diff; every line of the summary says `created`, `updated`, or `unchanged`
+- exit is nonzero only on a refusal or an IO error
+
 ## Recommended workflows
 
 ### Logic bug
@@ -367,9 +451,10 @@ Use replay for effectful debugging and regression capture.
 
 ### Project discovery
 
-1. `aver context <entry> --budget 10kb`
-2. if needed, raise budget or target a specific module
-3. only then open raw source files
+1. `aver agent-connect` once, so the language and toolchain guides are in the project
+2. `aver context <entry> --budget 10kb`
+3. if needed, raise budget or target a specific module
+4. only then open raw source files
 
 ## aver.toml
 
@@ -385,14 +470,30 @@ paths = ["./data/**"]
 [effects.Env]
 keys = ["APP_*", "TOKEN"]
 
+[effects.Tcp]
+connect_timeout_secs = 5
+request_idle_timeout_secs = 30
+max_connections = 256
+
 [[check.suppress]]
 slug = "verify-coverage"
 files = ["domain/checks.av"]
-fn = "eachInBranch"
+fn = "eachInBranch"            # optional exact function scope
 reason = "Its Result error arm is uninhabited by constructible inputs."
+
+[verify]
+step-limit = 1_000_000          # per-case opcode budget (default)
+max-cases  = 10_000             # ceiling on `given`-domain expansion (default)
+
+[[verify.costly]]
+fn         = "checkScript"
+files      = ["domain/scriptcases*.av"]
+step-limit = 50_000_000          # raise the per-case budget for this fn
+max-cases  = 40_000              # raise the case ceiling for this fn
+reason     = "Bitcoin Core corpus includes consensus-max 10,000-byte scripts"
 ```
 
-Effect-host / path / key allowlists narrow which hosts, files, and env keys the runtime will admit. `[[check.suppress]]` lets a project waive specific lint slugs in specific paths, optionally for one exact function, with a reason.
+Effect-host / path / key allowlists narrow which hosts, files, and env keys the runtime will admit. Tcp's positive-integer settings configure connection establishment, one-shot request idle timeouts, and one shared limit for established/accepted connections plus in-flight dials; they never impose a deadline on persistent session I/O. Unknown or misplaced keys inside an effect section are errors. `[[check.suppress]]` lets a project waive specific lint slugs in specific paths, optionally for one exact function, with a reason.
 
 Disk path patterns have deliberately small, explicit semantics:
 
@@ -405,10 +506,21 @@ Disk path patterns have deliberately small, explicit semantics:
 
 An empty pattern, unsupported `*` placement, or a `..`-rooted pattern is also a config-load error. An absent `paths` key or `paths = []` keeps the existing allow-all behavior. Matching is string-only: Aver normalizes `.` and `..` in the caller-supplied path without resolving it against the working directory or touching the filesystem. A project-relative pattern therefore does not admit an absolute spelling of the same in-project file.
 
+`[verify]` budgets in detail:
+
+- `step-limit` is the per-case opcode budget `aver verify` installs before every case. The default, 1,000,000, is what stops a tail-recursive function without a base case: Aver's tail-call optimization turns that into a goto-loop with no stack growth, so nothing else would. Raising it globally trades that bail-out away for every case in the project; `[[verify.costly]]` trades it away for one function, which is almost always what you mean.
+- `[[verify.costly]]` raises the budgets for the verify blocks of one function. `fn` is required. `reason` is required and must be non-empty — the same rule `[[check.suppress]]` has, for the same reason: a budget nobody explained is a budget nobody can retire. `files` is optional and uses the same anchored globs, matched against the file's path relative to the module root.
+- An entry carries both dials, and must set at least one: `step-limit` for a fn whose cases are slow, `max-cases` for a fn whose `given` domain is wide, both for a fn that is both. An entry that sets neither is a config error, and so is a dial that is not above the number already in force — `[[verify.costly]]` says "this case is expensive, give it room", and a lower number says the opposite. So an entry only ever raises, and where several entries match one block the most permissive value wins, for both dials. First-match-wins would make the order of the entries part of what the file means: an entry added near the top would silently change which one governs a block elsewhere, and a reader would have to scan the whole list to know what applies. This way each entry is an independent statement about one function, and adding one can only loosen, never re-point.
+- The report names every case that needed more than the project default, with its step count and the entry that raised it, so a raise is never a silent licence.
+- An entry that matched no verify block during a run is reported on stderr — separately for "matched no verified file" and "matched files but no block of that fn" — and never changes the exit code. An entry another entry out-granted is not reported: it matched a live block, and losing a tie-break says nothing about whether the declaration is still true of the project.
+- `max-cases` is the ceiling on how many cases one verify block may expand into, on both sides: the `given` domain the parser expands and the `--hostile` cartesian the runner expands on top of it. Both fail loudly with the count rather than truncating, because a truncated case list is a claim you did not make. Each expanded case clones an expression pair, so raising this costs parse-time memory in proportion to the new ceiling. `[verify] max-cases` moves it for the whole project; a `[[verify.costly]]` entry moves it for the blocks of the one function it names, which is usually what a wide corpus actually means.
+- The ceiling belongs to the file, not to one command. Every command that reads your `.av` files parses them under it — `check`, `run`, `compile`, `proof`, `audit`, `format`, `shape`, `context`, `why`, `capabilities`, `replay`, `bench` — as does the dependency walk each of them performs. A `given` domain your project declared legal is legal at every door, a domain over the ceiling is refused at every door, and the message names the number that actually applied rather than the built-in one.
+- Neither setting changes what a program means. The same source verifies the same way under any budget; it just gets more or less room to finish.
+
 `[[check.suppress]]` rules in detail:
 
 - `files` globs match the file's path **relative to the module root**, so a leading `./` is insignificant on either side and every spelling of the same file (`aver check domain/version.av`, `aver check ./domain/version.av`, `aver check .`, an absolute path, or a dependency module of the program) honours the same rule. A rule with no `files` key applies everywhere.
-- `fn` is optional. When present, it matches only diagnostics carrying that exact function name; diagnostics without a function cannot match it. Use it to accept one deliberate residue without silencing neighbouring functions.
+- `fn` is optional. When present, the rule matches only diagnostics carrying that exact function name; a file-level diagnostic cannot accidentally match it. This is the narrow form for an unavoidable residue such as one `verify-coverage` Result arm. Without `fn`, the rule keeps its existing file-wide meaning.
 - `aver check` and `aver audit` apply the same rules. Both print how many warnings a file's waivers removed.
 - Suppression applies to warnings only. It can never hide an `error[...]`, a verify failure, or the `needs-format` result, so a waiver can never change a command's exit code.
 - A rule that removes nothing during a whole-directory run (`aver check .`, `aver audit .`) is reported on stderr, telling you whether its globs matched no checked file at all or matched files whose warning no longer fires. Single-file runs stay quiet, since they legitimately never exercise rules scoped to other paths.

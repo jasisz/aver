@@ -771,6 +771,22 @@ pub(super) enum Commands {
         #[arg(long)]
         write_baseline: Option<String>,
     },
+    /// Hand the bundled Aver agent material to your agent setup. The language
+    /// guide and the toolchain guide ship inside the binary; this writes them
+    /// out as `.claude/skills/aver/SKILL.md` and
+    /// `.claude/skills/aver-tooling/SKILL.md`, and points a marked section of
+    /// `AGENTS.md` at them. There is no blessed agent workflow here — take the
+    /// files and keep whatever prompt or harness you already use.
+    AgentConnect {
+        /// Write the skills into `~/.claude/skills/` instead of this
+        /// directory, and leave `AGENTS.md` alone.
+        #[arg(long)]
+        global: bool,
+        /// Write the curated language guide to stdout and change nothing on
+        /// disk — for an agent that wants one file rather than skills.
+        #[arg(long, conflicts_with = "global")]
+        print: bool,
+    },
     /// Inspect and verify an emitted artifact certificate (`cert/`) against its
     /// wasm-gc module. Consumer side of `aver compile --certify`.
     Cert {

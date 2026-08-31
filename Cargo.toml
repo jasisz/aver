@@ -23,6 +23,15 @@ include = [
     "/build.rs",
     "/README.md",
     "/LICENSE",
+    # Agent material shipped inside the binary. `src/main/agent_connect.rs`
+    # `include_str!`s all three, so `aver agent-connect` works from a
+    # `cargo install aver-lang` with no repository checkout. Cargo does
+    # package dot-directories when they are named explicitly here
+    # (verified with `cargo package --list`), so the skill sources need no
+    # generated mirror under `src/`.
+    "/.claude/commands/aver.md",
+    "/.claude/commands/aver-tooling.md",
+    "/tools/website/llms.txt",
 ]
 
 [lib]
