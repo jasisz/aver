@@ -113,7 +113,7 @@ Today the heuristic is intentionally small and conservative:
 
 - Any mix of `Console.*` and `Terminal.*` warns. This includes cross-namespace pairs like `Console.print` with `Terminal.flush`, because both share the terminal/output channel.
 - Any pair of `Tcp.*` effects warns.
-- `Disk.*` warns when at least one side is mutating: `writeText`, `appendText`, `delete`, `deleteDir`, `makeDir`.
+- `Disk.*` warns when at least one side is mutating: `writeText`, `appendText`, `writeBytes`, `appendBytes`, `delete`, `deleteDir`, `makeDir`, `sync`. `sync` writes no new content, but it is an ordering barrier — making a new file durable means syncing the file and then its parent directory, which is exactly the order an independent product does not keep.
 - `Http.*` warns when at least one side is mutating: `post`, `put`, `patch`, `delete`.
 - `Env.*` warns when at least one side is mutating: `set`.
 - Broad namespace effects such as `! [Console]` or `! [Disk]` participate in the same rules.

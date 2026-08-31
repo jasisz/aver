@@ -355,6 +355,11 @@ fn belongs_to_output_namespace(effect: &str) -> bool {
 }
 
 fn is_disk_mutating(effect: &str) -> bool {
+    // `Disk.sync` belongs here even though it writes no new content: it is
+    // an ordering barrier, and the recipe for making a new file durable is
+    // to sync the file and only then its parent directory. Running the two
+    // as an independent product would let the directory entry reach stable
+    // storage before the bytes it names.
     [
         "Disk.writeText",
         "Disk.appendText",
@@ -363,6 +368,7 @@ fn is_disk_mutating(effect: &str) -> bool {
         "Disk.delete",
         "Disk.deleteDir",
         "Disk.makeDir",
+        "Disk.sync",
     ]
     .iter()
     .any(|required| crate::effects::effect_satisfies(effect, required))
@@ -471,6 +477,88 @@ fn demo() -> Tuple<Bool, Option<String>>
         assert!(!is_disk_mutating("Disk.readBytes"));
         assert!(!is_disk_mutating("Disk.readBytesAt"));
         assert!(!is_disk_mutating("Disk.size"));
+    }
+
+    #[test]
+    fn sync_is_a_disk_mutation_because_it_is_an_ordering_barrier() {
+        assert!(is_disk_mutating("Disk.sync"));
+    }
+
+    #[test]
+    fn warns_when_a_file_sync_and_its_directory_sync_run_independently() {
+        // Making a new file durable means syncing the file and only then
+        // its parent directory. Written as an independent product the two
+        // may run in either order, which is exactly the hazard.
+        let items = parse_items(
+            r#"
+fn flushFile() -> Result<Unit, String>
+    ! [Disk.sync]
+    Disk.sync("data/log.bin")
+
+fn flushDir() -> Result<Unit, String>
+    ! [Disk.sync]
+    Disk.sync("data")
+
+fn demo() -> Tuple<Result<Unit, String>, Result<Unit, String>>
+    ! [Disk.sync]
+    (flushFile(), flushDir())!
+"#,
+        );
+        let tc = crate::ir::pipeline::typecheck(
+            &items,
+            &crate::ir::TypecheckMode::Full { base_dir: None },
+        );
+        assert!(
+            tc.errors.is_empty(),
+            "unexpected type errors: {:?}",
+            tc.errors
+        );
+
+        let warnings = collect_independence_warnings(&items, &tc.fn_sigs);
+        assert_eq!(warnings.len(), 1, "warnings={warnings:?}");
+        assert!(
+            warnings[0].message.contains("disk mutation hazard"),
+            "message={}",
+            warnings[0].message
+        );
+        assert!(warnings[0].message.contains("Disk.sync"));
+        assert_eq!(warnings[0].fn_name.as_deref(), Some("demo"));
+    }
+
+    #[test]
+    fn warns_when_a_sync_runs_independently_of_a_read_of_the_same_file() {
+        let items = parse_items(
+            r#"
+fn flush() -> Result<Unit, String>
+    ! [Disk.sync]
+    Disk.sync("data/log.bin")
+
+fn load() -> Result<String, String>
+    ! [Disk.readText]
+    Disk.readText("data/log.bin")
+
+fn demo() -> Tuple<Result<Unit, String>, Result<String, String>>
+    ! [Disk.sync, Disk.readText]
+    (flush(), load())!
+"#,
+        );
+        let tc = crate::ir::pipeline::typecheck(
+            &items,
+            &crate::ir::TypecheckMode::Full { base_dir: None },
+        );
+        assert!(
+            tc.errors.is_empty(),
+            "unexpected type errors: {:?}",
+            tc.errors
+        );
+
+        let warnings = collect_independence_warnings(&items, &tc.fn_sigs);
+        assert_eq!(warnings.len(), 1, "warnings={warnings:?}");
+        assert!(
+            warnings[0].message.contains("disk mutation hazard"),
+            "message={}",
+            warnings[0].message
+        );
     }
 
     #[test]

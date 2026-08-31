@@ -1479,6 +1479,7 @@ pub mod aver_replay {
                 "Disk.readBytesAt" => Some("Disk"),
                 "Disk.readText" => Some("Disk"),
                 "Disk.size" => Some("Disk"),
+                "Disk.sync" => Some("Disk"),
                 "Disk.writeBytes" => Some("Disk"),
                 "Disk.writeText" => Some("Disk"),
                 "Env.get" => Some("Env"),

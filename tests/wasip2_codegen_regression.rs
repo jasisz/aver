@@ -553,6 +553,67 @@ fn size(path: String) -> Result<Int, String>
         .unwrap_or_else(|e| panic!("component validate: {e}\n--- source ---\n{source}"));
 }
 
+/// `Disk.sync` is the one Disk op that reaches wasi through an opened
+/// descriptor, so its lowering pulls in four import slots at once. This
+/// pins the whole set: losing any of them would leave the emitted body
+/// calling a function index that means something else.
+#[test]
+fn disk_sync_compiles_and_imports_the_descriptor_sync_method() {
+    let source = r#"module Probe
+    intent = "Compile the Disk.sync capability binding."
+    exposes [flush]
+    effects [Disk.sync]
+
+fn flush(path: String) -> Result<Unit, String>
+    ? "Force a path's bytes and metadata to stable storage."
+    ! [Disk.sync]
+    Disk.sync(path)
+"#;
+    let (items, type_aliases) =
+        parse_pipeline_with_module_root(source, Some(env!("CARGO_MANIFEST_DIR")))
+            .unwrap_or_else(|e| panic!("{e}\n--- source ---\n{source}"));
+    let core_bytes = compile_core_flattened(&items, &type_aliases)
+        .unwrap_or_else(|e| panic!("wasip2 core compile: {e}\n--- source ---\n{source}"));
+
+    let imports = core_module_imports(&core_bytes);
+    for expected in [
+        ("wasi:filesystem/types@0.2.4", "[method]descriptor.sync"),
+        ("wasi:filesystem/types@0.2.4", "[method]descriptor.open-at"),
+        ("wasi:filesystem/types@0.2.4", "[resource-drop]descriptor"),
+        ("wasi:filesystem/preopens@0.2.4", "get-directories"),
+    ] {
+        assert!(
+            imports.contains(&(expected.0.to_string(), expected.1.to_string())),
+            "Disk.sync lowering must import {}/{}; imports were {:#?}",
+            expected.0,
+            expected.1,
+            imports
+        );
+    }
+
+    let (component_bytes, _) = aver::codegen::wasip2::compile_to_component(
+        &core_bytes,
+        aver::codegen::wasip2::Wasip2World::CliCommand,
+    )
+    .unwrap_or_else(|e| panic!("wasip2 component wrap: {e}\n--- source ---\n{source}"));
+    wasmparser::Validator::new_with_features(wasmparser::WasmFeatures::default())
+        .validate_all(&component_bytes)
+        .unwrap_or_else(|e| panic!("component validate: {e}\n--- source ---\n{source}"));
+}
+
+fn core_module_imports(module: &[u8]) -> Vec<(String, String)> {
+    let mut found = Vec::new();
+    for payload in wasmparser::Parser::new(0).parse_all(module) {
+        let Ok(wasmparser::Payload::ImportSection(reader)) = payload else {
+            continue;
+        };
+        for import in reader.into_imports().flatten() {
+            found.push((import.module.to_string(), import.name.to_string()));
+        }
+    }
+    found
+}
+
 #[test]
 fn wasip2_codegen_emits_valid_component_for_every_single_file_example() {
     let files = single_file_examples();

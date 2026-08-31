@@ -827,6 +827,77 @@ fn main() -> Result<String, String>
         .expect("Disk byte transcript consumed");
 }
 
+#[test]
+fn standard_disk_sync_records_a_durability_barrier_and_replays_offline() {
+    // `Disk.sync` promises the bytes AND the metadata are on stable
+    // storage before it returns. A newly created file needs its parent
+    // directory synced too — fsync of the file alone does not make its
+    // directory entry durable — so both shapes are exercised here, and
+    // the recorded transcript must replay with the file gone.
+    let root = temp_root("disk-sync-recorded-replay");
+    let file = root.join("ledger.log");
+    fs::write(
+        root.join("main.av"),
+        format!(
+            "\
+module Client
+    exposes [main]
+    effects [Disk.appendText, Disk.sync]
+
+fn main() -> Result<String, String>
+    ! [Disk.appendText, Disk.sync]
+    first = Disk.appendText({path:?}, \"one\\n\")?
+    second = Disk.appendText({path:?}, \"two\\n\")?
+    flushed = Disk.sync({path:?})?
+    named = Disk.sync({dir:?})?
+    Result.Ok(\"durable\")
+",
+            path = file.to_string_lossy(),
+            dir = root.to_string_lossy()
+        ),
+    )
+    .expect("write entry");
+
+    let expected = Value::Ok(Box::new(Value::Str("durable".to_string())));
+    let (mut recording_vm, contracts) = compile_vm(&root, "main.av");
+    let providers = ProviderRegistry::for_program(contracts).expect("standard registry");
+    let provenance = providers.provenance();
+    recording_vm.set_provider_registry(Arc::new(providers));
+    recording_vm.start_recording();
+    let recorded = recording_vm
+        .run()
+        .expect("record two appends and two syncs")
+        .to_value(&recording_vm.arena);
+    assert_eq!(recorded, expected);
+    assert_eq!(
+        fs::read_to_string(&file).expect("read back the appended text"),
+        "one\ntwo\n"
+    );
+    let effects = recording_vm.recorded_effects().to_vec();
+    assert_eq!(effects.len(), 4);
+    assert_eq!(effects[2].effect_type, "Disk.sync");
+    assert_eq!(effects[3].effect_type, "Disk.sync");
+
+    fs::remove_file(&file).expect("remove the recorded file");
+
+    let (mut replay_vm, replay_contracts) = compile_vm(&root, "main.av");
+    let replay_providers =
+        ProviderRegistry::for_program(replay_contracts).expect("standard registry");
+    replay_vm.set_provider_registry(Arc::new(replay_providers));
+    replay_vm
+        .start_replay_with_provenance(effects, &provenance, true)
+        .expect("Disk.sync replay provenance");
+    let replayed = replay_vm
+        .run()
+        .expect("offline Disk.sync replay")
+        .to_value(&replay_vm.arena);
+    assert_eq!(replayed, expected);
+    assert!(!file.exists(), "offline replay must not touch the disk");
+    replay_vm
+        .ensure_replay_consumed()
+        .expect("Disk.sync transcript consumed");
+}
+
 struct PureCounterProvider {
     calls: Arc<AtomicUsize>,
     fingerprint: &'static str,
@@ -1347,7 +1418,7 @@ fn check_and_rust_compile_report_standard_binding_identities() {
     );
     assert!(
         provider_support
-            .contains("sha256:21ba58983c2ba61c06153df36a9c205770994c36a61ae280c1f49da336e63e23")
+            .contains("sha256:7a010547d81840dbcfc2bde61c8a21e0bf6796fc0ace3d90ab634fbf3b378d8a")
     );
 }
 
@@ -1416,6 +1487,68 @@ fn main() -> Result<Unit, String>
     assert_eq!(
         fs::read(file_path).expect("read wasm-gc byte output"),
         [0, 127, 128, 255, 1, 2]
+    );
+}
+
+#[cfg(feature = "wasm")]
+#[test]
+fn wasm_gc_disk_sync_binding_accepts_a_file_and_a_directory() {
+    let root = temp_root("wasm-gc-disk-sync");
+    let source_path = root.join("main.av");
+    let file_path = root.join("payload.bin");
+    fs::write(&file_path, [0, 127, 128, 255]).expect("write wasm-gc sync fixture");
+    let missing_path = root.join("absent.bin");
+    let source = format!(
+        r#"module Probe
+    intent = "Exercise the Disk.sync host binding."
+    exposes [main]
+    effects [Console.print, Disk.sync]
+
+fn shape(outcome: Result<Unit, String>) -> String
+    ? "Reduce an outcome to ok/err so host error text stays out of the output."
+    match outcome
+        Result.Ok(_) -> "ok"
+        Result.Err(_) -> "err"
+
+fn main() -> Result<Unit, String>
+    ! [Console.print, Disk.sync]
+    onFile = shape(Disk.sync({file_path:?}))
+    onDir = shape(Disk.sync({dir_path:?}))
+    onMissing = shape(Disk.sync({missing_path:?}))
+    Console.print("{{onFile}}:{{onDir}}:{{onMissing}}")
+    Result.Ok(Unit)
+"#,
+        file_path = file_path.to_string_lossy(),
+        dir_path = root.to_string_lossy(),
+        missing_path = missing_path.to_string_lossy()
+    );
+    fs::write(&source_path, source).expect("write wasm-gc sync fixture source");
+
+    let run = Command::new(aver_bin())
+        .args([
+            "run",
+            source_path.to_str().expect("fixture path"),
+            "--wasm-gc",
+        ])
+        .output()
+        .expect("run Disk.sync capability canary on wasm-gc");
+    let report = format!(
+        "{}{}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert!(run.status.success(), "{report}");
+    // A directory syncs because the provider opens read-only; a write
+    // open would refuse it, and the directory half is what makes a newly
+    // created file's name durable.
+    assert!(
+        report.contains("ok:ok:err"),
+        "unexpected Disk.sync output: {report}"
+    );
+    assert_eq!(
+        fs::read(&file_path).expect("read synced payload"),
+        [0, 127, 128, 255],
+        "Disk.sync must not rewrite the file it flushes"
     );
 }
 

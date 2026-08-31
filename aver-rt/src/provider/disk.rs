@@ -1,7 +1,7 @@
 use super::{CapabilityProvider, ProviderContext, ProviderFault, ProviderValue};
 
 /// Standard native Disk provider shared by the bytecode VM and generated
-/// Rust artifacts. All thirteen operations of the canonical
+/// Rust artifacts. All fourteen operations of the canonical
 /// `stdlib/capabilities/disk.av` contract lower onto shared `aver_rt`
 /// filesystem helpers; wasm targets keep host/WASI adapters of the same
 /// contract.
@@ -154,10 +154,88 @@ impl CapabilityProvider for StandardDiskProvider {
             "Disk.makeDir" => disk_result(crate::make_dir(path(operation, args)?), |_| {
                 ProviderValue::Unit
             }),
+            "Disk.sync" => disk_result(crate::sync_path(path(operation, args)?), |_| {
+                ProviderValue::Unit
+            }),
             _ => Err(ProviderFault::new(
                 "unknown_operation",
                 format!("standard Disk provider cannot invoke '{operation}'"),
             )),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_path(label: &str) -> std::path::PathBuf {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("aver-rt-disk-sync-{label}-{nonce}"))
+    }
+
+    fn sync(path: &str) -> Result<ProviderValue, ProviderFault> {
+        StandardDiskProvider.invoke(
+            &ProviderContext {
+                capability: "Disk".to_string(),
+                operation: "Disk.sync".to_string(),
+                contract_hash: String::new(),
+                model_hash: String::new(),
+            },
+            &[ProviderValue::String(path.to_string())],
+        )
+    }
+
+    #[test]
+    fn syncing_an_existing_file_succeeds() {
+        let path = temp_path("file");
+        let text = path.to_string_lossy().into_owned();
+        crate::write_bytes(&text, b"durable").expect("write the file");
+
+        assert!(matches!(
+            sync(&text).expect("provider boundary held"),
+            ProviderValue::ResultOk(ok) if matches!(*ok, ProviderValue::Unit)
+        ));
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn syncing_a_missing_path_is_a_catchable_error_not_a_fault() {
+        let path = temp_path("missing");
+        let text = path.to_string_lossy().into_owned();
+
+        match sync(&text).expect("a missing path is a value, not a boundary violation") {
+            ProviderValue::ResultErr(message) => match *message {
+                ProviderValue::String(message) => assert!(
+                    !message.is_empty(),
+                    "the OS error text must reach the program"
+                ),
+                other => panic!("expected a String error, got {}", other.shape()),
+            },
+            other => panic!("expected Result.Err, got {}", other.shape()),
+        }
+    }
+
+    // A directory sync is the half that makes a newly created file's
+    // directory entry durable, so a directory path must reach the same
+    // Ok as a file path. Windows cannot open a directory as a file, so
+    // there the operation is a plain Result.Err instead.
+    #[cfg(unix)]
+    #[test]
+    fn syncing_a_directory_succeeds() {
+        let path = temp_path("dir");
+        let text = path.to_string_lossy().into_owned();
+        crate::make_dir(&text).expect("create the directory");
+
+        assert!(matches!(
+            sync(&text).expect("provider boundary held"),
+            ProviderValue::ResultOk(ok) if matches!(*ok, ProviderValue::Unit)
+        ));
+
+        let _ = std::fs::remove_dir_all(&path);
     }
 }

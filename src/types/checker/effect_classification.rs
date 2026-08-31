@@ -694,6 +694,7 @@ mod tests {
             "Disk.delete",
             "Disk.deleteDir",
             "Disk.makeDir",
+            "Disk.sync",
             "Console.readLine",
             "Http.get",
             "Http.head",

@@ -1,5 +1,5 @@
 //! `Disk.*` host imports — text and byte read/write/append, metadata size,
-//! exists, delete, makeDir, deleteDir, and listDir.
+//! exists, delete, makeDir, deleteDir, listDir, and sync.
 
 use super::super::RunWasmGcHost;
 use super::super::decode::{
@@ -313,6 +313,25 @@ pub(super) fn dispatch(
             };
             results[0] = Val::AnyRef(result_ref);
             record_effect_if_recording(caller, "Disk.deleteDir", args, outcome, caller_fn);
+            Ok(true)
+        }
+        "disk_sync" => {
+            let path = lm_string_to_host(caller, params.first())?.unwrap_or_default();
+            let args = vec![aver::replay::JsonValue::String(path.clone())];
+            if let Some(cached) = try_replay(caller, "Disk.sync", args.clone())? {
+                let r = decode_result_unit(caller, &cached)?;
+                results[0] = Val::AnyRef(r);
+                return Ok(true);
+            }
+            let (result_ref, outcome) = match aver_rt::sync_path(&path) {
+                Ok(()) => (
+                    host_result_ok_unit(caller)?,
+                    json_ok(aver::replay::JsonValue::Null),
+                ),
+                Err(e) => (host_result_err_unit_string(caller, &e)?, json_err(&e)),
+            };
+            results[0] = Val::AnyRef(result_ref);
+            record_effect_if_recording(caller, "Disk.sync", args, outcome, caller_fn);
             Ok(true)
         }
         "disk_list_dir" => {

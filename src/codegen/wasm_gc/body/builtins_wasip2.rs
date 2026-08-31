@@ -1603,6 +1603,32 @@ pub(super) fn emit_disk_make_dir_wasip2(
     Ok(())
 }
 
+/// `Disk.sync(path) -> Result<Unit, String>` on `--target wasip2`.
+/// The helper opens the path read-only — a file or a directory —
+/// and calls `[method]descriptor.sync`.
+pub(super) fn emit_disk_sync_wasip2(
+    func: &mut wasm_encoder::Function,
+    args: &[Spanned<MirExpr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let lowering = ctx.wasip2_lowering.ok_or_else(|| {
+        WasmGcError::Validation("Disk.sync on wasip2: lowering ctx missing".into())
+    })?;
+    if args.len() != 1 {
+        return Err(WasmGcError::Validation(format!(
+            "Disk.sync on `--target wasip2` expects 1 arg (path), got {}",
+            args.len()
+        )));
+    }
+    let fn_idx = lowering.disk_sync_fn_idx.ok_or_else(|| {
+        WasmGcError::Validation("Disk.sync on wasip2: __rt_disk_sync fn idx missing".into())
+    })?;
+    emit_mir_expr(func, &args[0], slots, ctx)?;
+    func.instruction(&Instruction::Call(fn_idx));
+    Ok(())
+}
+
 /// Phase 1.5.5 — `Disk.appendText(path, content) ->
 /// Result<Unit, String>` on `--target wasip2`. Pushes both args
 /// and calls `__rt_disk_append_text`, which uses the same body

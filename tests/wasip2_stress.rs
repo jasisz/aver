@@ -30,6 +30,14 @@
 //! 7. `binary_disk_short_read_and_size` — byte-exact whole/positional
 //!    reads, write/append, EOF shortening, metadata size, and a large
 //!    requested upper bound that must not be preallocated eagerly.
+//! 8. `disk_sync_accepts_a_file_and_a_directory_and_leaves_content_alone`
+//!    — `emit_disk_sync` opens the path itself, so it carries its own
+//!    open-flags constant. Plain `open-at` (flags = 0, read-only) is
+//!    what admits a file AND a directory, and a directory sync is the
+//!    half that makes a newly created file's name durable. The absent
+//!    path must stay an error, and the file's bytes must survive.
+//! 9. `disk_sync_repeated_does_not_exhaust_descriptors` — 500 syncs;
+//!    each opens a descriptor that the emitter has to drop again.
 //!
 //! All fixtures run in a per-test tempdir which we preopen as the
 //! component's working directory (the embedded runner in
@@ -219,6 +227,91 @@ fn main() -> Result<Unit, String>
     assert_eq!(
         std::fs::read(dir.join("copy.bin")).expect("read binary copy"),
         [0, 127, 128, 255, 1, 2, 128, 255, 1, 2]
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn disk_sync_accepts_a_file_and_a_directory_and_leaves_content_alone() {
+    let dir = tempdir("disk-sync");
+    std::fs::create_dir_all(dir.join("nest")).expect("create nested fixture dir");
+    std::fs::write(dir.join("nest/payload.bin"), [0, 127, 128, 255])
+        .expect("write binary sync fixture");
+    let src = r#"module Probe
+    intent = "Exercise Disk.sync through direct WASI bindings."
+    exposes [main]
+    effects [Console.print, Disk.sync]
+
+fn shape(outcome: Result<Unit, String>) -> String
+    ? "Reduce an outcome to ok/err so host error text stays out of the output."
+    match outcome
+        Result.Ok(_) -> "ok"
+        Result.Err(_) -> "err"
+
+fn main() -> Unit
+    ! [Console.print, Disk.sync]
+    file: String = shape(Disk.sync("nest/payload.bin"))
+    parent: String = shape(Disk.sync("nest"))
+    root: String = shape(Disk.sync("."))
+    missing: String = shape(Disk.sync("nest/absent.bin"))
+    Console.print("file={file} parent={parent} root={root} missing={missing}")
+"#;
+    let fixture = write_fixture(&dir, "disk_sync.av", src);
+    let out = run_wasip2(&dir, &fixture, &[]);
+    assert_ok(&out, "disk_sync.av");
+    let s = stdout(&out);
+    // A file AND a directory must both open. `open-flags = directory`
+    // would lose the file; `open-flags = create | exclusive` would lose
+    // the existing file and wrongly succeed on the absent one.
+    assert!(
+        s.contains("file=ok parent=ok root=ok missing=err"),
+        "expected sync to accept a file, a directory, and the preopen root, and to \
+         refuse an absent path, got:\n{s}"
+    );
+    // A read-only open. `open-flags = truncate` would empty the file.
+    assert_eq!(
+        std::fs::read(dir.join("nest/payload.bin")).expect("read synced payload"),
+        [0, 127, 128, 255],
+        "Disk.sync must not rewrite the file it flushes"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn disk_sync_repeated_does_not_exhaust_descriptors() {
+    let dir = tempdir("disk-sync-loop");
+    std::fs::write(dir.join("log.bin"), b"seed").expect("write sync loop fixture");
+    // Every call opens a fresh descriptor and must drop it again. A
+    // missing `resource-drop` leaks one handle per iteration.
+    let src = r#"module Probe
+    intent = "Sync the same path many times; each call must release its descriptor."
+    exposes [main]
+    effects [Console.print, Disk.sync]
+
+fn flushMany(n: Int, ok: Int) -> Int
+    ! [Disk.sync]
+    match n == 0
+        true -> ok
+        false -> flushMany(n - 1, step(ok))
+
+fn step(ok: Int) -> Int
+    ! [Disk.sync]
+    match Disk.sync("log.bin")
+        Result.Ok(_) -> ok + 1
+        Result.Err(_) -> ok
+
+fn main() -> Unit
+    ! [Console.print, Disk.sync]
+    ok: Int = flushMany(500, 0)
+    Console.print("ok={ok}")
+"#;
+    let fixture = write_fixture(&dir, "disk_sync_loop.av", src);
+    let out = run_wasip2(&dir, &fixture, &[]);
+    assert_ok(&out, "disk_sync_loop.av");
+    let s = stdout(&out);
+    assert!(
+        s.contains("ok=500"),
+        "expected 500 successful syncs, got:\n{s}"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }

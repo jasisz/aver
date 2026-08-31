@@ -251,6 +251,14 @@ pub(super) enum Wasip2ImportSlot {
     /// `wasi:filesystem/types.[method]descriptor.create-directory-at`
     /// — same shape as unlink-file-at; backs `Disk.makeDir`.
     FilesystemTypesCreateDirectoryAt,
+    /// `wasi:filesystem/types.[method]descriptor.sync: func(
+    ///   this: borrow<descriptor>) -> result<_, error-code>`.
+    /// Backs `Disk.sync` — the descriptor is one this module just
+    /// opened through `open-at`, not the preopen root. retptr is
+    /// 4 bytes (`tag i8` + `error-code` at offset 1), the same
+    /// shape unlink-file-at uses.
+    /// Canonical-ABI signature: `(handle: i32, retptr: i32) -> ()`.
+    FilesystemTypesSync,
     /// `wasi:filesystem/types.[method]descriptor.append-via-stream:
     ///   func(this: borrow<descriptor>) -> result<output-stream,
     ///     error-code>`. Same retptr shape as `write-via-stream`,
@@ -838,6 +846,9 @@ impl Wasip2ImportSlot {
                 "wasi:filesystem/types@0.2.4",
                 "[method]descriptor.create-directory-at",
             ),
+            Wasip2ImportSlot::FilesystemTypesSync => {
+                ("wasi:filesystem/types@0.2.4", "[method]descriptor.sync")
+            }
             Wasip2ImportSlot::FilesystemTypesAppendViaStream => (
                 "wasi:filesystem/types@0.2.4",
                 "[method]descriptor.append-via-stream",
@@ -1110,10 +1121,12 @@ impl Wasip2ImportSlot {
             ],
             // `append-via-stream(this) -> result<output-stream, _>`
             // — no offset, retptr only. Same shape for
-            // read-directory and read-directory-entry.
+            // read-directory, read-directory-entry, and
+            // `sync(this) -> result<_, error-code>`.
             Wasip2ImportSlot::FilesystemTypesAppendViaStream
             | Wasip2ImportSlot::FilesystemTypesReadDirectory
-            | Wasip2ImportSlot::FilesystemTypesDirectoryEntryStreamReadDirectoryEntry => {
+            | Wasip2ImportSlot::FilesystemTypesDirectoryEntryStreamReadDirectoryEntry
+            | Wasip2ImportSlot::FilesystemTypesSync => {
                 vec![ValType::I32, ValType::I32]
             }
             Wasip2ImportSlot::FilesystemTypesResourceDropDirectoryEntryStream => {
@@ -1347,6 +1360,7 @@ impl Wasip2ImportSlot {
             | Wasip2ImportSlot::FilesystemTypesUnlinkFileAt
             | Wasip2ImportSlot::FilesystemTypesRemoveDirectoryAt
             | Wasip2ImportSlot::FilesystemTypesCreateDirectoryAt
+            | Wasip2ImportSlot::FilesystemTypesSync
             | Wasip2ImportSlot::FilesystemTypesAppendViaStream
             | Wasip2ImportSlot::FilesystemTypesReadDirectory
             | Wasip2ImportSlot::FilesystemTypesDirectoryEntryStreamReadDirectoryEntry

@@ -417,6 +417,7 @@ mod tests {
             "Disk.delete",
             "Disk.deleteDir",
             "Disk.makeDir",
+            "Disk.sync",
             "Http.get",
             "Http.post",
             "Tcp.send",

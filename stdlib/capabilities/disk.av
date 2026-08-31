@@ -2,7 +2,7 @@ module Disk
     kind = capability
     semantics = effectful
     depends [Bytes]
-    exposes [readText, writeText, appendText, readBytes, readBytesAt, writeBytes, appendBytes, size, exists, delete, deleteDir, listDir, makeDir]
+    exposes [readText, writeText, appendText, readBytes, readBytesAt, writeBytes, appendBytes, size, exists, delete, deleteDir, listDir, makeDir, sync]
 
 operation readText(file: String) -> Result<String, String>
     ? "Reads a whole file as UTF-8 text."
@@ -81,6 +81,12 @@ operation makeDir(file: String) -> Result<Unit, String>
     oracle = generativeOutput
     replay = recorded
     hostile = [makeDirNormalOk, makeDirAlwaysErr]
+
+operation sync(file: String) -> Result<Unit, String>
+    ? "Forces a file's or directory's bytes and metadata to stable storage; sync the parent directory too to make a new file's directory entry durable."
+    oracle = generativeOutput
+    replay = recorded
+    hostile = [syncNormalOk, syncAlwaysErr]
 
 fn readTextNormal(branch: BranchPath, call: Int, file: String) -> Result<String, String>
     ? "honest: file reads back a plausible payload"
@@ -209,3 +215,11 @@ fn makeDirNormalOk(branch: BranchPath, call: Int, file: String) -> Result<Unit, 
 fn makeDirAlwaysErr(branch: BranchPath, call: Int, file: String) -> Result<Unit, String>
     ? "hostile: filesystem op fails"
     Result.Err("hostile: op failed")
+
+fn syncNormalOk(branch: BranchPath, call: Int, file: String) -> Result<Unit, String>
+    ? "honest: the flush reaches stable storage"
+    Result.Ok(Unit)
+
+fn syncAlwaysErr(branch: BranchPath, call: Int, file: String) -> Result<Unit, String>
+    ? "hostile: the flush fails — the bytes are not durable"
+    Result.Err("hostile: sync failed")

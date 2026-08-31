@@ -477,6 +477,11 @@ pub(super) struct Wasip2Lowering {
     pub(super) disk_delete_fn_idx: Option<u32>,
     pub(super) disk_delete_dir_fn_idx: Option<u32>,
     pub(super) disk_make_dir_fn_idx: Option<u32>,
+    /// `__rt_disk_sync(path: ref string) -> ref null
+    /// $result_unit_string` helper wasm fn idx. Opens the path
+    /// read-only (a file or a directory), calls
+    /// `[method]descriptor.sync`, drops the descriptor.
+    pub(super) disk_sync_fn_idx: Option<u32>,
     /// Phase 1.5.6 — `__rt_disk_list_dir(path: ref string) ->
     /// ref null $result_list_string_string` helper wasm fn idx.
     /// Owns open-at(directory) + read-directory + entry-iteration

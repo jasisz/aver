@@ -262,6 +262,18 @@ pub(super) struct DiskSimplePathOpIndices {
     pub(super) result_unit_string_type_idx: u32,
 }
 
+/// `__rt_disk_sync(path: ref string) -> ref null
+/// $result_unit_string` helper indices. Unlike the
+/// `DiskSimplePathOpIndices` family, `descriptor.sync` is a method
+/// on an OPEN descriptor, so the body opens the path first and
+/// drops the descriptor afterwards.
+pub(super) struct DiskSyncIndices {
+    pub(super) fn_type: u32,
+    pub(super) fn_idx: u32,
+    pub(super) string_type_idx: u32,
+    pub(super) result_unit_string_type_idx: u32,
+}
+
 /// Phase 1.5.6 — `__rt_disk_list_dir(path: ref string) ->
 /// ref null $result_list_string_string` helper indices. Drives
 /// `read-directory-entry` until `Ok(None)`, accumulates entry
@@ -2451,6 +2463,210 @@ pub(super) fn emit_disk_simple_path_op(
     f.instruction(&Instruction::If(BlockType::Empty));
     {
         emit_err(&mut f);
+    }
+    f.instruction(&Instruction::End);
+
+    // ── Result.Ok(Unit) ─────────────────────────────────────
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::RefNull(HeapType::Concrete(string_type_idx)));
+    f.instruction(&Instruction::StructNew(result_type_idx));
+
+    f.instruction(&Instruction::End); // fn end
+    f
+}
+
+/// `Disk.sync(path) -> Result<Unit, String>` body.
+///
+/// `descriptor.sync` is a method on an open descriptor, so unlike
+/// `emit_disk_simple_path_op` this one opens the path first:
+///
+///   1. Lazy-init preopen (shared cache).
+///   2. Marshal `path` to LM[0..path_len].
+///   3. `open-at(preopen, symlink-follow, path, open-flags=0,
+///      descriptor-flags=READ, retptr)`. No `directory` open-flag,
+///      so the same call opens a file OR a directory — a directory
+///      sync is what makes a newly created file's directory entry
+///      durable. Read-only is enough: the descriptor only names the
+///      file, and the host flushes it whoever opened it.
+///   4. `sync(fd, retptr)` — 4-byte retptr (`tag i8` +
+///      `error-code`), the same shape unlink-file-at returns.
+///   5. Drop the descriptor, then tag: 0 ⇒ `Result.Ok(Unit)`,
+///      anything else ⇒ `Result.Err("sync failed")`.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn emit_disk_sync(
+    string_type_idx: u32,
+    result_type_idx: u32,
+    preopen_global: u32,
+    cabi_realloc_fn: u32,
+    str_to_lm_fn: u32,
+    get_directories_fn: u32,
+    open_at_fn: u32,
+    sync_fn: u32,
+    drop_descriptor_fn: u32,
+) -> wasm_encoder::Function {
+    use wasm_encoder::{BlockType, Function, HeapType, Instruction, MemArg, RefType};
+
+    let s_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(string_type_idx),
+    });
+
+    // Locals (after 1 ref-s param at idx 0):
+    //   6 i32 locals (idx 1..=6): preopen, path_len, retptr, fd,
+    //     list_ptr, list_len.
+    //   1 ref-s local at idx 7: arr (Err string scratch).
+    let mut f = Function::new(vec![(6, ValType::I32), (1, s_ref)]);
+    let p_path = 0u32;
+    let l_preopen = 1u32;
+    let l_path_len = 2u32;
+    let l_retptr = 3u32;
+    let l_fd = 4u32;
+    let l_list_ptr = 5u32;
+    let l_list_len = 6u32;
+    let l_arr = 7u32;
+
+    let mem4 = MemArg {
+        offset: 0,
+        align: 2,
+        memory_index: 0,
+    };
+    let mem4_o4 = MemArg {
+        offset: 4,
+        align: 2,
+        memory_index: 0,
+    };
+    let mem1 = MemArg {
+        offset: 0,
+        align: 0,
+        memory_index: 0,
+    };
+
+    let emit_err = |f: &mut Function, msg: &[u8]| {
+        f.instruction(&Instruction::I32Const(msg.len() as i32));
+        f.instruction(&Instruction::ArrayNewDefault(string_type_idx));
+        f.instruction(&Instruction::LocalSet(l_arr));
+        for (i, b) in msg.iter().enumerate() {
+            f.instruction(&Instruction::LocalGet(l_arr));
+            f.instruction(&Instruction::I32Const(i as i32));
+            f.instruction(&Instruction::I32Const(*b as i32));
+            f.instruction(&Instruction::ArraySet(string_type_idx));
+        }
+        // tag=0 (Err), ok=0 (Unit placeholder), err=arr
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::LocalGet(l_arr));
+        f.instruction(&Instruction::StructNew(result_type_idx));
+        f.instruction(&Instruction::Return);
+    };
+
+    // ── lazy-init preopen ─────────────────────────────────────
+    f.instruction(&Instruction::GlobalGet(preopen_global));
+    f.instruction(&Instruction::LocalSet(l_preopen));
+    f.instruction(&Instruction::LocalGet(l_preopen));
+    f.instruction(&Instruction::I32Const(-1));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    {
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::I32Const(4));
+        f.instruction(&Instruction::I32Const(8));
+        f.instruction(&Instruction::Call(cabi_realloc_fn));
+        f.instruction(&Instruction::LocalSet(l_retptr));
+        f.instruction(&Instruction::LocalGet(l_retptr));
+        f.instruction(&Instruction::Call(get_directories_fn));
+        f.instruction(&Instruction::LocalGet(l_retptr));
+        f.instruction(&Instruction::I32Load(mem4));
+        f.instruction(&Instruction::LocalSet(l_list_ptr));
+        f.instruction(&Instruction::LocalGet(l_retptr));
+        f.instruction(&Instruction::I32Load(mem4_o4));
+        f.instruction(&Instruction::LocalSet(l_list_len));
+        f.instruction(&Instruction::LocalGet(l_list_len));
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::I32GtU);
+        f.instruction(&Instruction::If(BlockType::Empty));
+        {
+            f.instruction(&Instruction::LocalGet(l_list_ptr));
+            f.instruction(&Instruction::I32Load(mem4));
+            f.instruction(&Instruction::LocalTee(l_preopen));
+            f.instruction(&Instruction::GlobalSet(preopen_global));
+        }
+        f.instruction(&Instruction::End);
+    }
+    f.instruction(&Instruction::End);
+
+    f.instruction(&Instruction::LocalGet(l_preopen));
+    f.instruction(&Instruction::I32Const(-1));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    {
+        emit_err(&mut f, b"no preopens");
+    }
+    f.instruction(&Instruction::End);
+
+    // ── marshal path → LM[0..path_len] ────────────────────────
+    f.instruction(&Instruction::LocalGet(p_path));
+    f.instruction(&Instruction::Call(str_to_lm_fn));
+    f.instruction(&Instruction::LocalSet(l_path_len));
+
+    // ── open-at(preopen, 1, 0, path_len, 0, 1, retptr) ───────
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(4));
+    f.instruction(&Instruction::I32Const(8));
+    f.instruction(&Instruction::Call(cabi_realloc_fn));
+    f.instruction(&Instruction::LocalSet(l_retptr));
+
+    f.instruction(&Instruction::LocalGet(l_preopen));
+    f.instruction(&Instruction::I32Const(1)); // path-flags = symlink-follow
+    f.instruction(&Instruction::I32Const(0)); // path_ptr = 0
+    f.instruction(&Instruction::LocalGet(l_path_len));
+    // open-flags = 0. Deliberately NOT `directory` (bit1): a plain
+    // open-at admits both a file and a directory in WASI 0.2, and a
+    // directory sync is the half that makes a new file's name
+    // durable.
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(1)); // descriptor-flags = READ
+    f.instruction(&Instruction::LocalGet(l_retptr));
+    f.instruction(&Instruction::Call(open_at_fn));
+
+    f.instruction(&Instruction::LocalGet(l_retptr));
+    f.instruction(&Instruction::I32Load8U(mem1));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Ne);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    {
+        emit_err(&mut f, b"open failed");
+    }
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::LocalGet(l_retptr));
+    f.instruction(&Instruction::I32Load(mem4_o4));
+    f.instruction(&Instruction::LocalSet(l_fd));
+
+    // ── sync(fd, retptr) ────────────────────────────────────
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(4));
+    f.instruction(&Instruction::I32Const(4));
+    f.instruction(&Instruction::Call(cabi_realloc_fn));
+    f.instruction(&Instruction::LocalSet(l_retptr));
+
+    f.instruction(&Instruction::LocalGet(l_fd));
+    f.instruction(&Instruction::LocalGet(l_retptr));
+    f.instruction(&Instruction::Call(sync_fn));
+
+    // ── drop the per-call descriptor, then read the tag ──────
+    f.instruction(&Instruction::LocalGet(l_fd));
+    f.instruction(&Instruction::Call(drop_descriptor_fn));
+
+    f.instruction(&Instruction::LocalGet(l_retptr));
+    f.instruction(&Instruction::I32Load8U(mem1));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Ne);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    {
+        emit_err(&mut f, b"sync failed");
     }
     f.instruction(&Instruction::End);
 

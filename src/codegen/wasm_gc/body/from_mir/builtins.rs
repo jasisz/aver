@@ -201,6 +201,7 @@ pub(crate) fn emit_mir_wasip2_effect(
         ("Disk", "delete") => emit_disk_delete_wasip2(func, args, slots, ctx)?,
         ("Disk", "deleteDir") => emit_disk_delete_dir_wasip2(func, args, slots, ctx)?,
         ("Disk", "makeDir") => emit_disk_make_dir_wasip2(func, args, slots, ctx)?,
+        ("Disk", "sync") => emit_disk_sync_wasip2(func, args, slots, ctx)?,
         ("Disk", "listDir") => emit_disk_list_dir_wasip2(func, args, slots, ctx)?,
         ("Http", "get") => emit_http_get_wasip2(func, args, slots, ctx)?,
         ("Http", "head") => emit_http_head_wasip2(func, args, slots, ctx)?,

@@ -160,6 +160,11 @@ pub(super) enum EffectName {
     DiskDeleteDir,
     DiskListDir,
     DiskMakeDir,
+    /// `Disk.sync` — force a path's bytes and metadata to stable
+    /// storage. The path may be a file or a directory; syncing the
+    /// parent directory is what makes a new file's directory entry
+    /// durable.
+    DiskSync,
     // ── TCP surface — sessions backed by a thread-local socket pool
     //   in `aver_rt::tcp`. Connection records cross the boundary as
     //   `Tcp.Connection` struct refs.
@@ -263,6 +268,7 @@ impl EffectName {
         Self::DiskDeleteDir,
         Self::DiskListDir,
         Self::DiskMakeDir,
+        Self::DiskSync,
         Self::TcpConnect,
         Self::TcpBeginConnect,
         Self::TcpDialled,
@@ -354,6 +360,7 @@ impl EffectName {
             "Disk.deleteDir" => Some(Self::DiskDeleteDir),
             "Disk.listDir" => Some(Self::DiskListDir),
             "Disk.makeDir" => Some(Self::DiskMakeDir),
+            "Disk.sync" => Some(Self::DiskSync),
             "Tcp.connect" => Some(Self::TcpConnect),
             "Tcp.beginConnect" => Some(Self::TcpBeginConnect),
             "Tcp.dialled" => Some(Self::TcpDialled),
@@ -443,6 +450,7 @@ impl EffectName {
             Self::DiskDeleteDir => "Disk.deleteDir",
             Self::DiskListDir => "Disk.listDir",
             Self::DiskMakeDir => "Disk.makeDir",
+            Self::DiskSync => "Disk.sync",
             Self::TcpConnect => "Tcp.connect",
             Self::TcpBeginConnect => "Tcp.beginConnect",
             Self::TcpDialled => "Tcp.dialled",
@@ -534,6 +542,7 @@ impl EffectName {
             Self::DiskDeleteDir => ("aver", "disk_delete_dir"),
             Self::DiskListDir => ("aver", "disk_list_dir"),
             Self::DiskMakeDir => ("aver", "disk_make_dir"),
+            Self::DiskSync => ("aver", "disk_sync"),
             Self::TcpConnect => ("aver", "tcp_connect"),
             Self::TcpBeginConnect => ("aver", "tcp_begin_connect"),
             Self::TcpDialled => ("aver", "tcp_dialled"),
@@ -645,7 +654,8 @@ impl EffectName {
             | Self::DiskDelete
             | Self::DiskDeleteDir
             | Self::DiskListDir
-            | Self::DiskMakeDir => Ok(vec![any_ref_ty()]),
+            | Self::DiskMakeDir
+            | Self::DiskSync => Ok(vec![any_ref_ty()]),
             Self::DiskWriteText
             | Self::DiskAppendText
             | Self::DiskWriteBytes
@@ -771,7 +781,8 @@ impl EffectName {
             | Self::DiskAppendBytes
             | Self::DiskDelete
             | Self::DiskDeleteDir
-            | Self::DiskMakeDir => Ok(vec![result_ref_ty(registry, "Result<Unit,String>")?]),
+            | Self::DiskMakeDir
+            | Self::DiskSync => Ok(vec![result_ref_ty(registry, "Result<Unit,String>")?]),
             Self::DiskListDir => Ok(vec![result_ref_ty(
                 registry,
                 "Result<List<String>,String>",
@@ -989,6 +1000,7 @@ impl EffectName {
                 | EffectName::DiskDelete
                 | EffectName::DiskDeleteDir
                 | EffectName::DiskMakeDir
+                | EffectName::DiskSync
                 | EffectName::DiskListDir
                 | EffectName::HttpGet
                 | EffectName::HttpHead

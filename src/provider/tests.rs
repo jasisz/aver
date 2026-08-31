@@ -985,6 +985,7 @@ fn target_manifest_is_total_and_standard_capabilities_have_explicit_rows() {
                 "Disk.readBytesAt",
                 "Disk.readText",
                 "Disk.size",
+                "Disk.sync",
                 "Disk.writeBytes",
                 "Disk.writeText",
             ][..],

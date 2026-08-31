@@ -126,8 +126,8 @@ Oracle has a fixed built-in effect set:
 | `Random` | `int`, `float` | generative |
 | `Time` | `now`, `unixMs` | generative |
 | `Time` | `sleep` | output |
-| `Disk` | `readText`, `exists`, `listDir` | generative |
-| `Disk` | `writeText`, `appendText`, `delete`, `deleteDir`, `makeDir` | generative + output |
+| `Disk` | `readText`, `readBytes`, `readBytesAt`, `size`, `exists`, `listDir` | generative |
+| `Disk` | `writeText`, `appendText`, `writeBytes`, `appendBytes`, `delete`, `deleteDir`, `makeDir`, `sync` | generative + output |
 | `Http` | `get`, `head`, `delete`, `post`, `put`, `patch` | generative + output |
 | `Tcp` | `send`, `sendBytes`, `ping` | generative + output |
 | `Tcp` | `connect`, `readLine`, `readBytes`, `writeLine`, `writeBytes`, `close` | generative + output |
@@ -421,7 +421,7 @@ user already wrote is not re-run.
 | `Console.readLine` | `normal`, `eof`, `empty` |
 | `Terminal.readKey` | `normal`, `no_input` |
 | `Http.{get,head,delete,post,put,patch}` | `normal_ok`, `always_err` |
-| `Disk.{writeText,appendText,writeBytes,appendBytes,delete,deleteDir,makeDir}` | `normal_ok`, `always_err` |
+| `Disk.{writeText,appendText,writeBytes,appendBytes,delete,deleteDir,makeDir,sync}` | `normal_ok`, `always_err` |
 | `Tcp.{send,sendBytes,ping,readLine,writeLine,close,closeDial,closeListener,peerAddress}` | `normal_ok`, `always_err` |
 | `Tcp.readBytes` | `normal_ok`, `short_read`, `always_err` |
 | `Tcp.writeBytes` | `normal_ok`, `always_err` |

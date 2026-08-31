@@ -407,6 +407,9 @@ Contract source: `stdlib/capabilities/disk.av`. Native VM and generated Rust sha
 | `Disk.deleteDir` | `String -> Result<Unit, String>` | Recursive |
 | `Disk.listDir` | `String -> Result<List<String>, String>` | |
 | `Disk.makeDir` | `String -> Result<Unit, String>` | Creates parents |
+| `Disk.sync` | `String -> Result<Unit, String>` | Flushes a file or a directory to stable storage |
+
+`Disk.sync(path)` returns only after the named path's bytes AND metadata are on stable storage — it is `fsync`, not a buffer flush. The path may be a file or a directory, and the distinction matters: syncing a file does not make its own directory entry durable on POSIX, so the crash-safe recipe for a file that has just been created is `Disk.sync(file)` followed by `Disk.sync(parentDirectory)`. One sync after a batch of appends costs one flush; one sync per append costs one flush each.
 
 `Disk.readBytesAt` is a single positional effect. It reads at most the requested length, returns `Ok(Bytes.fromList([]))` when the offset is at or beyond EOF, and rejects negative offsets or lengths. Reading a whole file remains a separate `Disk.readBytes` effect, so callers do not need the racy `size`-then-`readBytesAt` sequence.
 
