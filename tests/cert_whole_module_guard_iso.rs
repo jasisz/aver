@@ -557,7 +557,7 @@ set_option maxRecDepth 300000
 
 def honestDecoded : AcceptedArtifact.decodedNonExprFacts Artifact.data := by
   have accepted : AcceptedArtifact.accepted Artifact.data := Artifact.certificate
-  exact accepted.2.2.2.2.2.2.1
+  exact accepted.2.2.2.2.2.2.2.1
 
 -- Same bytes and claims; only the manifest's add index is hostile.
 def hostileRoleTable : CertDecode.AddSub.Roles :=
@@ -862,7 +862,7 @@ set_option maxRecDepth 300000
 
 def honestDecoded : AcceptedArtifact.decodedNonExprFacts Artifact.data := by
   have accepted : AcceptedArtifact.accepted Artifact.data := Artifact.certificate
-  exact accepted.2.2.2.2.2.2.1
+  exact accepted.2.2.2.2.2.2.2.1
 
 -- Literal one-conjunct-weakened copy of the decoded-facts bundle: only the
 -- role-table equality is absent.
@@ -1599,7 +1599,7 @@ fn arith_call_target_leb_encoding_is_isolated_and_weaken_confirmed() {
          @[default_target]\nlean_lib «AverCert» where\n  srcDir := \".\"\n  \
          roots := #[`CertPrelude, `CertDecode, `SchemaCore, `ArithTemplateDerisk, \
          `PlanCheck, `PlanLower, `PlanBytes, `WasmSlice, `ExprFragmentAccepted, \
-         `AcceptedArtifactCore]\n",
+         `Wasip2Envelope, `AcceptedArtifactCore]\n",
     )
     .unwrap();
     let build = Command::new("lake")
@@ -1883,7 +1883,7 @@ fn comparison_templates_splice_wide_indices_through_their_encoders() {
          @[default_target]\nlean_lib «AverCert» where\n  srcDir := \".\"\n  \
          roots := #[`CertPrelude, `CertDecode, `SchemaCore, `ArithTemplateDerisk, \
          `PlanCheck, `PlanLower, `PlanBytes, `WasmSlice, `ExprFragmentAccepted, \
-         `AcceptedArtifactCore]\n",
+         `Wasip2Envelope, `AcceptedArtifactCore]\n",
     )
     .unwrap();
     let build = Command::new("lake")
@@ -2110,7 +2110,7 @@ set_option maxRecDepth 300000
 
 def honestDecoded : AcceptedArtifact.decodedNonExprFacts Artifact.data := by
   have accepted : AcceptedArtifact.accepted Artifact.data := Artifact.certificate
-  exact accepted.2.2.2.2.2.2.1
+  exact accepted.2.2.2.2.2.2.2.1
 
 def hostileStringRoles : List (Nat × CertDecode.StringHost.Role) :=
   [({wrong_eq_idx}, .eq)]
@@ -2704,7 +2704,7 @@ fn string_concat_carrier_state_guard_is_isolated_and_weaken_confirmed() {
          @[default_target]\nlean_lib «AverCert» where\n  srcDir := \".\"\n  \
          roots := #[`CertPrelude, `CertDecode, `SchemaCore, `ArithTemplateDerisk, \
          `PlanCheck, `PlanLower, `PlanBytes, `WasmSlice, `ExprFragmentAccepted, \
-         `StringSoundness, `AcceptedArtifactCore]\n",
+         `StringSoundness, `Wasip2Envelope, `AcceptedArtifactCore]\n",
     )
     .unwrap();
     let build = Command::new("lake")
@@ -2819,6 +2819,10 @@ def stringConcatPlanAcceptedWithoutCarrierState
       carrier resultTy containerTy concatFuncIdx plan = some codeEntry ∧
     AverCert.WasmSlice.exactFuncBindingForExport
       modBytes modLen exportNameBytes codeEntry = some binding ∧
+    AverCert.WasmSlice.stringConcatExportFuncTypeMatches
+      modBytes modLen binding.typeIdx resultTy = true ∧
+    AverCert.WasmSlice.stringConcatHelperFuncTypeMatches
+      modBytes modLen concatFuncIdx containerTy resultTy = true ∧
     obligation.self = binding.funcIdx ∧
     obligation.code binding.funcIdx =
       some {{ arity := 1, nlocals := stringConcatNLocals carrier, body := body }}
@@ -2843,7 +2847,7 @@ example : stringConcatPlanAccepted honestCarrieredBytes honestCarrieredLen greet
     "greet" (some 2) 0 1 0 concatRoles concatSymPlan concatPlan (greetOb 2 1) :=
   ⟨rfl, rfl, rfl, rfl, rfl, concatBody, oneLocalEntry,
    bindingIn honestCarrieredBytes honestCarrieredLen oneLocalEntry,
-   rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+   rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
 -- (a) Isolation, honest carrierless: no carrier struct, zero-local body,
 -- `carrier := none` claimed. The real predicate accepts this too, which is the
@@ -2852,7 +2856,7 @@ example : stringConcatPlanAccepted honestCarrierlessBytes honestCarrierlessLen g
     "greet" none 0 1 0 concatRoles concatSymPlan concatPlan (greetOb 0 0) :=
   ⟨rfl, rfl, rfl, rfl, rfl, concatBody, zeroLocalEntry,
    bindingIn honestCarrierlessBytes honestCarrierlessLen zeroLocalEntry,
-   rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+   rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
 -- (b) A CARRIERED module claiming the carrierless template is rejected, exactly
 -- at the carrier-state decode.
@@ -2878,14 +2882,14 @@ example : stringConcatPlanAcceptedWithoutCarrierState hostileCarrieredBytes
     concatPlan (greetOb 0 0) :=
   ⟨rfl, rfl, rfl, rfl, concatBody, zeroLocalEntry,
    bindingIn hostileCarrieredBytes hostileCarrieredLen zeroLocalEntry,
-   rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+   rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
 example : stringConcatPlanAcceptedWithoutCarrierState hostileCarrierlessBytes
     hostileCarrierlessLen greetName "greet" (some 2) 0 1 0 concatRoles concatSymPlan
     concatPlan (greetOb 2 1) :=
   ⟨rfl, rfl, rfl, rfl, concatBody, oneLocalEntry,
    bindingIn hostileCarrierlessBytes hostileCarrierlessLen oneLocalEntry,
-   rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+   rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
 -- The byte equality on its own is blind to the attack, which is why it cannot
 -- stand in for the pin: each hostile module really does carry the code entry
@@ -3014,7 +3018,7 @@ fn declared_arith_carrier_is_isolated_and_weaken_confirmed() {
          @[default_target]\nlean_lib «AverCert» where\n  srcDir := \".\"\n  \
          roots := #[`CertPrelude, `CertDecode, `SchemaCore, `ArithTemplateDerisk, \
          `PlanCheck, `PlanLower, `PlanBytes, `WasmSlice, `ExprFragmentAccepted, \
-         `StringSoundness, `AcceptedArtifactCore, `ConstructVerbatimSoundness, \
+         `StringSoundness, `Wasip2Envelope, `AcceptedArtifactCore, `ConstructVerbatimSoundness, \
          `DeclaredEnvelopeAcceptTransport, `DeclaredIndexEnvelope, `EnvelopeLowering, \
          `FieldProjectionSoundness, `IntDispatchSoundness, `WidenedEnvelope, \
          `StandardFace]\n",
@@ -3910,7 +3914,7 @@ fn host_table_declared_type_pin_is_isolated_and_weaken_confirmed() {
          @[default_target]\nlean_lib «AverCert» where\n  srcDir := \".\"\n  \
          roots := #[`CertPrelude, `CertDecode, `SchemaCore, `ArithTemplateDerisk, \
          `PlanCheck, `PlanLower, `PlanBytes, `WasmSlice, `ExprFragmentAccepted, \
-         `AcceptedArtifactCore]\n",
+         `Wasip2Envelope, `AcceptedArtifactCore]\n",
     )
     .unwrap();
     let build = Command::new("lake")
@@ -4920,7 +4924,7 @@ fn record_type_declaration_pin_is_isolated_and_weaken_confirmed() {
          @[default_target]\nlean_lib «AverCert» where\n  srcDir := \".\"\n  \
          roots := #[`CertPrelude, `CertDecode, `ArithTemplateDerisk, `SchemaCore, \
          `PlanCheck, `PlanLower, `PlanBytes, `WasmSlice, `ExprFragmentAccepted, \
-         `AcceptedArtifactCore, `IntDispatchSoundness, `EnvelopeLowering, \
+         `Wasip2Envelope, `AcceptedArtifactCore, `IntDispatchSoundness, `EnvelopeLowering, \
          `ConstructVerbatimSoundness, `FieldProjectionSoundness, `StringSoundness, \
          `WidenedEnvelope, `DeclaredIndexEnvelope, `DeclaredEnvelopeAcceptTransport, \
          `StandardFace]\n",

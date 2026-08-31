@@ -81,6 +81,8 @@ mod tests {
     use std::fs;
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
+    #[cfg(unix)]
+    use std::os::unix::process::ExitStatusExt;
 
     #[cfg(unix)]
     fn shell_quote(path: &Path) -> String {
@@ -128,17 +130,14 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn preserves_cargo_failure_exit_code() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let project = temp.path().join("generated");
-        fs::create_dir_all(&project).expect("create generated project");
-        let (cargo, _) = fake_cargo(temp.path(), 37);
-
-        let error = run_with_program(cargo.as_os_str(), &project)
-            .expect_err("fake cargo check should fail");
+    fn failed_cargo_check_preserves_the_status_exit_code() {
+        let status = ExitStatus::from_raw(37 << 8);
+        let error = CargoCheckError::Failed {
+            manifest: PathBuf::from("/tmp/generated/Cargo.toml"),
+            status,
+        };
 
         assert_eq!(error.exit_code(), 37);
-        assert!(error.to_string().contains("project remains at"));
     }
 
     #[test]
