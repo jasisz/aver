@@ -144,8 +144,9 @@ rediscover the user core by walking component bytes. It consumes the declaration
 splits only by declared lengths, stages the caller-supplied component as
 checker-owned `ArtifactComponentBytes.lean`, and the wall confirms that the
 split core bytes equal the `ArtifactBytes.lean` core module consumed by the
-existing wasm decoders. Producer-side `--target wasip2 --certify` remains
-disabled until emission can construct that package end-to-end.
+existing wasm decoders. Producer-side `--target wasip2 --certify` constructs
+that package from the wrapper's delivered component bytes, declared envelope,
+and exact post-wrapper embedded core bytes.
 
 ## Lean acceptance wall
 

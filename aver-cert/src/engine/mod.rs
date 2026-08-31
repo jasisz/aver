@@ -1,4 +1,4 @@
-//! Stage B artifact-certificate emitter: `aver compile --target wasm-gc --certify`.
+//! Stage B artifact-certificate emitter for wasm-gc modules and wasip2 components.
 //!
 //! Emits, next to `<name>.wasm`, an artifact-specific `cert/` package. The
 //! package names its checker-owned Lean soundness wall by `format.wall_id`;

@@ -1,13 +1,14 @@
 # Artifact Behavioral Certificates
 
 An Aver artifact certificate states what selected exports of one exact
-WebAssembly module compute. It is checked against the module bytes by Lean
-4.32 and does not require trusting the Aver compiler that produced either the
-module or the certificate package.
+WebAssembly artifact compute. The artifact may be a raw wasm-gc module or a
+wasip2 component containing the checked core module. It is checked against the
+delivered bytes by Lean 4.32 and does not require trusting the Aver compiler
+that produced either the artifact or the certificate package.
 
 This is a behavioral proof, not a signature or a reproducible-build
 attestation. A valid certificate binds all accepted claims to the supplied
-`.wasm` bytes and to a fixed, checker-owned statement schema.
+artifact bytes and to a fixed, checker-owned statement schema.
 
 This document is the user guide: what a certificate is and how to produce and verify one. See [Certification Architecture](certification-architecture.md) for how the verifier reaches its verdict, and the [Certificate Format Specification](certificate-format.md) for the normative reference aimed at independent reimplementors, including the trust inventory and the versioning and freeze policy.
 
@@ -20,14 +21,16 @@ cargo install aver-lang --features wasm
 cargo install aver-cert
 ```
 
-The compiler needs the `wasm` feature for `--target wasm-gc --certify`.
+The compiler needs the `wasm` feature for `--target wasm-gc --certify`; add
+`wasip2` for component output.
 Verification also requires a standard Elan installation; `aver-cert` selects
 the pinned Lean 4.32 toolchain through Elan and installs it when necessary.
 
-Generate a wasm-gc module and its certificate package:
+Generate either target and its certificate package:
 
 ```bash
 aver compile app.av --target wasm-gc --certify -o out/
+aver compile app.av --target wasip2 --certify -o out/
 ```
 
 `--certify` cannot be combined with `--optimize`, because the certificate binds
@@ -41,6 +44,10 @@ checker:
 aver-cert check out/app.wasm out/cert
 aver-cert verify out/app.wasm out/cert
 aver-cert explain out/app.wasm out/cert
+
+aver-cert check out/app.component.wasm out/cert
+aver-cert verify out/app.component.wasm out/cert
+aver-cert explain out/app.component.wasm out/cert
 ```
 
 If `aver-cert` is next to `aver` or on `PATH`, the same commands are available
@@ -50,6 +57,10 @@ through:
 aver cert check out/app.wasm out/cert
 aver cert verify out/app.wasm out/cert
 aver cert explain out/app.wasm out/cert
+
+aver cert check out/app.component.wasm out/cert
+aver cert verify out/app.component.wasm out/cert
+aver cert explain out/app.component.wasm out/cert
 ```
 
 `aver cert` is an exact subprocess shortcut. It forwards the original
@@ -67,6 +78,24 @@ Rust gates, `lake build`, and fresh checker-witness elaboration, but trusts the
 freshly built or explicitly cached `.olean` closure and skips the final
 `leanchecker --fresh` whole-closure replay. It reports `CHECKED`, never
 `CERTIFIED`; do not use it as a release or admission gate.
+
+### Target matrix
+
+| Compile target | Certified artifact | Core bytes checked by the Wasm wall | Status |
+|---|---|---|---|
+| `wasm-gc` | `<name>.wasm` | The delivered module itself | Supported |
+| `wasip2` | `<name>.component.wasm` | The envelope-declared embedded module from the delivered component | Supported |
+| `rust` | Generated Cargo project | None | Unsupported: the current certificate wall is a Wasm byte wall |
+
+For wasip2, the manifest hash is always the full component hash. The producer
+may locate the user core while building the component, but verification splits
+only at the declared prefix/core/suffix lengths and checks equality; it never
+parses the component to rediscover the core. The current wall admits its fixed
+wasm-gc host-import registry and exact contract-derived custom-capability import
+grammar. A wasip2 core containing other imports, including standard `wasi:*`
+imports not yet in that registry, is refused with an artifact-specific reason
+rather than receiving a weaker certificate. The target-specific WASI registry
+is tracked in [#1230](https://github.com/jasisz/aver/issues/1230).
 
 Build caches are disabled by default. `AVER_CERT_DATA_CACHE=/trusted/path`
 opts into artifact-specific Lake output, while

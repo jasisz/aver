@@ -382,25 +382,17 @@ fn main_impl(
                 eprintln!("{}", error.red());
                 std::process::exit(1);
             }
-            // `--certify` is available only for the current wasm-gc certificate
-            // target. In particular, fail closed for `--target wasip2 --certify`
-            // until #1146 lands the declared component-envelope byte binding;
-            // otherwise users could mistake an uncertified component for a
-            // certified artifact.
-            if *certify && !matches!(effective_target, cli::CompileTarget::WasmGc) {
+            // Certification is available for the two Wasm execution targets:
+            // raw wasm-gc modules and wasip2 components whose declared envelope
+            // binds the delivered component to its exact embedded core module.
+            if *certify
+                && !matches!(
+                    effective_target,
+                    cli::CompileTarget::WasmGc | cli::CompileTarget::Wasip2
+                )
+            {
                 use colored::Colorize;
-                let error = match effective_target {
-                    cli::CompileTarget::Wasip2 => {
-                        "--target wasip2 --certify is not available yet: issue #1146 needs a \
-                         declared component envelope whose prefix/core/suffix bytes are checked \
-                         by equality against the delivered component. Use --target wasm-gc \
-                         --certify for certificate output today."
-                    }
-                    _ => {
-                        "--certify requires --target wasm-gc (the artifact certificate is emitted \
-                         for the wasm-gc module)"
-                    }
-                };
+                let error = "--certify requires --target wasm-gc or --target wasip2";
                 eprintln!("{}", error.red());
                 std::process::exit(1);
             }

@@ -6359,25 +6359,6 @@ fn certify_flag_rejection(certify: bool) -> Option<&'static str> {
     }
 }
 
-/// Target-level gate for the still-open wasip2 certificate-envelope work.
-///
-/// Once the certificate engine exists, `--target wasip2 --certify` must not fall
-/// through and silently emit only `<name>.component.wasm`. Until #1146 lands the
-/// declared component envelope, fail closed with a named reason at target
-/// dispatch. The feature-level gate above still owns certify-less binaries.
-fn wasip2_certify_rejection(certify: bool) -> Option<&'static str> {
-    if certify {
-        Some(
-            "--target wasip2 --certify is not available yet: issue #1146 needs a \
-             declared component envelope whose prefix/core/suffix bytes are checked \
-             by equality against the delivered component. Use --target wasm-gc \
-             --certify for certificate output today.",
-        )
-    } else {
-        None
-    }
-}
-
 pub(super) fn capability_target_rejection(
     items: &[TopLevel],
     modules: &[ModuleInfo],
@@ -6500,10 +6481,6 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
     // stays untouched. Phase 1 of 0.18 "Span" — see `docs/wasip2.md`
     // for the contract.
     if matches!(target, super::cli::CompileTarget::Wasip2) {
-        if let Some(error) = wasip2_certify_rejection(certify) {
-            eprintln!("{}", error.red());
-            process::exit(1);
-        }
         cmd_compile_wasip2(
             file,
             output_dir,
@@ -6512,6 +6489,7 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
             world,
             optimize,
             handler,
+            certify,
         );
         return;
     }
@@ -6837,19 +6815,25 @@ fn cmd_compile_wasm_gc(
     // emits kernel-clean Lean theorems for the certified ones. The model
     // definitions are the reused `aver proof` Lean emission.
     #[cfg(feature = "certify")]
-    if certify
-        && let Err(error) = emit_artifact_certificate(
+    if certify {
+        let artifact_file_name = wasm_file
+            .file_name()
+            .and_then(|name| name.to_str())
+            .expect("generated wasm file name is UTF-8");
+        if let Err(error) = emit_artifact_certificate(
             file,
             project_name,
             module_root_override,
             out_path,
-            &wasm_name,
-            &bytes,
+            aver::codegen::cert::CertificateArtifact::WasmGc {
+                file_name: artifact_file_name,
+                module_bytes: &bytes,
+            },
             &wasm_gc_output.fragment_plans,
-        )
-    {
-        eprintln!("{}", format!("certificate: {error}").red());
-        process::exit(1);
+        ) {
+            eprintln!("{}", format!("certificate: {error}").red());
+            process::exit(1);
+        }
     }
     // Deployment pack — drops platform-specific bootstrap files
     // next to the wasm-gc artifact. Same call site as the legacy
@@ -6863,17 +6847,16 @@ fn cmd_compile_wasm_gc(
 /// Emit the Stage-B artifact certificate: classify the emitted module,
 /// reuse the `aver proof` Lean model emission, and write `cert/`.
 ///
-/// Gated on `certify` (the aver-cert producer engine + `codegen::cert`) AND
-/// `wasm` (the sole caller, `cmd_compile_wasm_gc`), so a bare
-/// `--features certify` build compiles without an uncallable function.
-#[cfg(all(feature = "certify", feature = "wasm"))]
+/// Gated on `certify` (the aver-cert producer engine + `codegen::cert`). Both
+/// wasm-gc and wasip2 call this with an explicit description of the delivered
+/// artifact and the core-module bytes consumed by the existing Wasm wall.
+#[cfg(feature = "certify")]
 fn emit_artifact_certificate(
     file: &str,
     project_name: Option<&str>,
     module_root_override: Option<&str>,
     out_path: &Path,
-    wasm_name: &str,
-    bytes: &[u8],
+    artifact: aver::codegen::cert::CertificateArtifact<'_>,
     fragment_plans: &[aver::codegen::cert::FragmentPlanArtifact],
 ) -> Result<(), String> {
     use aver::codegen::cert;
@@ -6896,9 +6879,14 @@ fn emit_artifact_certificate(
     );
     let model_out = lean_codegen::transpile_for_cert_model(&mut mctx);
 
-    let analysis = cert::analyze_with_fragment_plans(bytes, &model_out.files, fragment_plans)?;
+    let analysis = cert::analyze_with_fragment_plans(
+        artifact.core_module_bytes(),
+        &model_out.files,
+        fragment_plans,
+    )?;
+    let artifact_file_name = artifact.file_name().to_string();
 
-    cert::write_project(out_path, wasm_name, bytes, &analysis, &model_out.files)?;
+    cert::write_project(out_path, artifact, &analysis, &model_out.files)?;
 
     let cert_dir = out_path.join("cert");
     let certified = analysis.certified_names();
@@ -6914,7 +6902,7 @@ fn emit_artifact_certificate(
     }
     println!(
         "    verify: aver cert verify {} {}",
-        out_path.join(format!("{wasm_name}.wasm")).display(),
+        out_path.join(artifact_file_name).display(),
         cert_dir.display()
     );
     Ok(())
@@ -6940,6 +6928,7 @@ fn emit_artifact_certificate(
 /// `Env.set`, and `Process.*`) are rejected at this command's entry — see
 /// `docs/wasip2.md` "Why X is rejected, not stubbed" for the
 /// dynamic-host vs static-target axis.
+#[allow(clippy::too_many_arguments)]
 fn cmd_compile_wasip2(
     file: &str,
     output_dir: &str,
@@ -6948,6 +6937,7 @@ fn cmd_compile_wasip2(
     world: super::cli::Wasip2World,
     optimize: Option<super::cli::WasmOptMode>,
     handler: Option<&str>,
+    certify: bool,
 ) {
     #[cfg(not(feature = "wasip2"))]
     {
@@ -6959,6 +6949,7 @@ fn cmd_compile_wasip2(
             world,
             optimize,
             handler,
+            certify,
         );
         eprintln!(
             "{}",
@@ -7005,8 +6996,12 @@ fn cmd_compile_wasip2(
             }
         };
 
-        let prepared_deps =
-            load_compile_deps_prepared(&items, &module_root, DepLowering::STRING_TRAVERSAL);
+        let wasip2_lowering = if certify {
+            DepLowering::STRING_INDEX_ONLY
+        } else {
+            DepLowering::STRING_TRAVERSAL
+        };
+        let prepared_deps = load_compile_deps_prepared(&items, &module_root, wasip2_lowering);
         let dep_modules = prepared_deps.modules;
         use aver::ir::{PipelineConfig, TypecheckMode};
         let neutral_policy = aver::ir::NeutralAllocPolicy;
@@ -7017,11 +7012,11 @@ fn cmd_compile_wasip2(
                 alloc_policy: Some(&neutral_policy),
                 dep_modules: &dep_modules,
                 run_interp_lower: false,
-                run_buffer_build: true,
-                run_chars_fusion: true,
+                run_buffer_build: !certify,
+                run_chars_fusion: !certify,
                 run_string_index: true,
                 run_list_build: false,
-                run_byte_sink: true,
+                run_byte_sink: !certify,
                 ..Default::default()
             },
         );
@@ -7102,7 +7097,7 @@ fn cmd_compile_wasip2(
         // handler. There is no listener call to detect or lower in
         // proxy mode: the codegen path reads handler identity from
         // the explicit flag alone.
-        let core_bytes = if matches!(world, super::cli::Wasip2World::HttpProxy) {
+        let wasm_gc_output = if matches!(world, super::cli::Wasip2World::HttpProxy) {
             let handler_name = handler.unwrap_or_else(|| {
                 eprintln!(
                     "{}",
@@ -7120,7 +7115,7 @@ fn cmd_compile_wasip2(
                 &type_aliases,
                 &capability_wit_plan,
             ) {
-                Ok(out) => out.bytes,
+                Ok(out) => out,
                 Err(e) => {
                     eprintln!("{}", format!("{e}").red());
                     process::exit(1);
@@ -7145,7 +7140,7 @@ fn cmd_compile_wasip2(
                 &type_aliases,
                 &capability_wit_plan,
             ) {
-                Ok(out) => out.bytes,
+                Ok(out) => out,
                 Err(e) => {
                     eprintln!("{}", format!("{e}").red());
                     process::exit(1);
@@ -7158,9 +7153,9 @@ fn cmd_compile_wasip2(
             super::cli::Wasip2World::HttpProxy => wasip2_codegen::Wasip2World::HttpProxy,
         };
 
-        let (component_bytes, wit_source) =
-            match wasip2_codegen::compile_to_component_with_capabilities(
-                &core_bytes,
+        let component_artifact =
+            match wasip2_codegen::compile_to_component_artifact_with_capabilities(
+                &wasm_gc_output.bytes,
                 world_codegen,
                 &capability_wit_plan,
             ) {
@@ -7198,11 +7193,11 @@ fn cmd_compile_wasip2(
         let component_file = out_path.join(format!("{}.component.wasm", stem));
         let wit_file = out_path.join(format!("{}.wit", stem));
 
-        if let Err(e) = std::fs::write(&component_file, &component_bytes) {
+        if let Err(e) = std::fs::write(&component_file, &component_artifact.component_bytes) {
             eprintln!("{}", format!("Failed to write component file: {}", e).red());
             process::exit(1);
         }
-        if let Err(e) = std::fs::write(&wit_file, &wit_source) {
+        if let Err(e) = std::fs::write(&wit_file, &component_artifact.wit_source) {
             eprintln!("{}", format!("Failed to write WIT file: {}", e).red());
             process::exit(1);
         }
@@ -7211,7 +7206,7 @@ fn cmd_compile_wasip2(
             "{} wasip2 → {} ({} bytes, world {})",
             "•".cyan(),
             component_file.display().to_string().cyan(),
-            component_bytes.len(),
+            component_artifact.component_bytes.len(),
             world_codegen.wit_name(),
         );
         println!(
@@ -7229,6 +7224,30 @@ fn cmd_compile_wasip2(
                 .capabilities,
             aver::provider::CapabilityTarget::Wasip2,
         );
+        #[cfg(feature = "certify")]
+        if certify {
+            let artifact_file_name = component_file
+                .file_name()
+                .and_then(|name| name.to_str())
+                .expect("generated component file name is UTF-8");
+            let envelope = component_artifact.envelope.declaration();
+            if let Err(error) = emit_artifact_certificate(
+                file,
+                project_name,
+                module_root_override,
+                out_path,
+                aver::codegen::cert::CertificateArtifact::Wasip2 {
+                    file_name: artifact_file_name,
+                    component_bytes: &component_artifact.component_bytes,
+                    embedded_core_module: &component_artifact.envelope.embedded_core_module,
+                    envelope,
+                },
+                &wasm_gc_output.fragment_plans,
+            ) {
+                eprintln!("{}", format!("certificate: {error}").red());
+                process::exit(1);
+            }
+        }
     }
 }
 
@@ -11798,7 +11817,7 @@ impl DepLowering {
 
     /// Certificate-wall shape: immutable indexed access is covered, while the
     /// handwritten cursor helper family still awaits byte-level wall roles.
-    #[cfg(feature = "wasm")]
+    #[cfg(any(feature = "wasm", feature = "wasip2", feature = "certify"))]
     pub(super) const STRING_INDEX_ONLY: Self = Self {
         string_index: true,
         ..Self::PRISTINE
@@ -12000,16 +12019,6 @@ mod tests {
             assert!(error.contains("certify"));
         }
         assert!(super::certify_flag_rejection(false).is_none());
-    }
-
-    #[test]
-    fn wasip2_certify_is_rejected_until_component_envelope_lands() {
-        let error = super::wasip2_certify_rejection(true)
-            .expect("wasip2 --certify must not be silently ignored");
-        assert!(error.contains("--target wasip2 --certify"));
-        assert!(error.contains("#1146"));
-        assert!(error.contains("declared component envelope"));
-        assert!(super::wasip2_certify_rejection(false).is_none());
     }
 
     #[test]

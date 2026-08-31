@@ -92,7 +92,7 @@ pub fn collect_module_envelope_facts(
                             import.name,
                         ) {
                             return Err(format!(
-                                "module import `{}.{}` is outside the wasm-gc effect capability registry",
+                                "module import `{}.{}` is outside the certificate capability registry",
                                 import.module, import.name
                             ));
                         }
