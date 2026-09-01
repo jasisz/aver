@@ -18,7 +18,7 @@
 /// stay UNPLANNED here rather than reach the verifier: an emitted plan would
 /// change the function's bytes and then decline, whereas leaving it unplanned
 /// keeps the bytes identical to a build with no plan path at all.
-fn expr_fragment_plan_has_face(plan: &ExprFragmentPlan) -> bool {
+fn expr_fragment_plan_has_face(plan: &ExprFragmentPlan, host_table: &FragHostTable) -> bool {
     let tag_dispatch = expr_fragment_is_tag_dispatch(plan);
     let vector_get = expr_fragment_vector_get_face(plan).is_some();
     let record_proj = expr_fragment_record_proj_face(plan).is_some();
@@ -27,25 +27,46 @@ fn expr_fragment_plan_has_face(plan: &ExprFragmentPlan) -> bool {
     // input local rather than a fresh box.
     let int_cmp_bool = expr_fragment_int_cmp_bool_face(plan).is_some();
     let int_select = expr_fragment_int_select_face(plan).is_some();
+    let record_compute = expr_fragment_record_compute_face(plan, host_table).is_some();
+    // Construction is certified ONLY through the compute face: a plan that
+    // packs a struct without that face must stay unplanned (fail-closed,
+    // bytes untouched) — the generic renderers have no construction arm.
+    let struct_new_ok = record_compute
+        || !plan_contains_struct_new(&plan.body);
     let int_face_ok = plan.result != FragTy::IntCarrier
         || expr_fragment_int_add_face(plan).is_some()
         || tag_dispatch
         || vector_get
         || record_proj
-        || int_select;
+        || int_select
+        || record_compute;
     let host_call_face_ok = !expr_fragment_plan_has_host_calls(plan)
         || expr_fragment_int_add_face(plan).is_some()
         || tag_dispatch
         || vector_get
         || record_proj
         || int_cmp_bool
-        || int_select;
+        || int_select
+        || record_compute;
     let adt_face_ok = !expr_fragment_plan_touches_adt_ref(plan)
         || expr_fragment_project_face(plan).is_some()
         || tag_dispatch
         || vector_get
-        || record_proj;
-    int_face_ok && host_call_face_ok && adt_face_ok
+        || record_proj
+        || record_compute;
+    int_face_ok && host_call_face_ok && adt_face_ok && struct_new_ok
+}
+
+fn plan_contains_struct_new(block: &FragBlock) -> bool {
+    block.nodes.iter().any(|n| match &n.kind {
+        FragNodeKind::StructNew { .. } => true,
+        FragNodeKind::If {
+            then_block,
+            else_block,
+            ..
+        } => plan_contains_struct_new(then_block) || plan_contains_struct_new(else_block),
+        _ => false,
+    })
 }
 
 /// Producer-side record layout resolver: `(record type name, field name) ->
@@ -73,13 +94,13 @@ pub(crate) fn fragment_plan_from_mir_fn(
             &FragStructTable::placeholder_for(&plan),
         )
         && lower_expr_fragment_plan_code_entry_bytes(&frag, 0).is_ok()
-        && expr_fragment_plan_has_face(&frag)
+        && expr_fragment_plan_has_face(&frag, &FragHostTable::placeholder())
     {
         return Some(FragmentPlan::Sym(plan));
     }
     let plan = repr_expr_fragment_plan_from_mir_fn(mir_fn)?;
     if lower_expr_fragment_plan_code_entry_bytes(&plan, 0).is_ok()
-        && expr_fragment_plan_has_face(&plan)
+        && expr_fragment_plan_has_face(&plan, &FragHostTable::placeholder())
     {
         Some(FragmentPlan::Expr(plan))
     } else {
@@ -409,6 +430,9 @@ impl<'a, 'e> MirSymPlanBuilder<'a, 'e> {
                 crate::ast::Literal::Bool(value) => {
                     self.push_node(SymTy::Bool, SymNodeKind::ConstBool(*value))
                 }
+                crate::ast::Literal::Int(value) => {
+                    self.push_node(SymTy::Int, SymNodeKind::ConstInt(*value))
+                }
                 crate::ast::Literal::Float(value) => {
                     self.push_node(SymTy::Float, SymNodeKind::ConstFloatBits(value.to_bits()))
                 }
@@ -465,6 +489,32 @@ impl<'a, 'e> MirSymPlanBuilder<'a, 'e> {
             // an ADT tag dispatch.
             crate::ir::mir::MirExpr::Match(m) => self.lower_tag_match(&m.node),
             crate::ir::mir::MirExpr::Call(call) => self.lower_call(&call.node),
+            crate::ir::mir::MirExpr::RecordCreate(rc) => {
+                // Record construction over already-planned field values. v1
+                // demands the written field order to BE the declared order
+                // (the emitter evaluates fields as written and `struct.new`
+                // consumes them in declared order; a reordering write stays
+                // unplanned, fail-closed, bytes untouched).
+                let rc = &rc.node;
+                let mut args = Vec::with_capacity(rc.fields.len());
+                for (pos, field) in rc.fields.iter().enumerate() {
+                    let (idx, _field_ty) =
+                        (self.record_fields)(&rc.type_name, &field.name)?;
+                    if idx as usize != pos {
+                        return None;
+                    }
+                    let (value, _value_ty) = self.lower_expr(&field.value)?;
+                    args.push(value);
+                }
+                self.push_node(
+                    SymTy::Named(rc.type_name.clone()),
+                    SymNodeKind::Construct {
+                        type_name: rc.type_name.clone(),
+                        ctor_name: rc.type_name.clone(),
+                        args,
+                    },
+                )
+            }
             _ => None,
         }
     }
@@ -638,6 +688,26 @@ impl<'a, 'e> MirSymPlanBuilder<'a, 'e> {
         // recognize. Placed before the Float bail so a Float comparison keeps
         // its existing primitive lowering untouched. `<=` and `!=` decline:
         // neither has an admitted plan primitive behind it.
+        // Int arithmetic over arbitrary planned operands (projections,
+        // literals, prior results). Comparisons fall through to the
+        // value-comparison block below.
+        if lhs_ty == SymTy::Int && rhs_ty == SymTy::Int {
+            let arith = match binop.op {
+                crate::ast::BinOp::Add => Some(SymPrim::IntAdd),
+                crate::ast::BinOp::Sub => Some(SymPrim::IntSub),
+                crate::ast::BinOp::Mul => Some(SymPrim::IntMul),
+                _ => None,
+            };
+            if let Some(op) = arith {
+                return self.push_node(
+                    SymTy::Int,
+                    SymNodeKind::Prim {
+                        op,
+                        args: vec![lhs, rhs],
+                    },
+                );
+            }
+        }
         if lhs_ty == SymTy::Int && rhs_ty == SymTy::Int {
             let op = sym_int_cmp_op(binop.op)?;
             return self.push_node(SymTy::Bool, SymNodeKind::IntCmp { op, lhs, rhs });
@@ -1607,7 +1677,7 @@ mod tests {
             .expect("source int identity encodes to a representation plan");
         assert_eq!(expr_plan.result, FragTy::IntCarrier);
         assert!(
-            !expr_fragment_plan_has_face(&expr_plan),
+            !expr_fragment_plan_has_face(&expr_plan, &FragHostTable::placeholder()),
             "carrier identity must not have a rendered proof face"
         );
         assert!(

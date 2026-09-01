@@ -85,7 +85,7 @@ def fragBlockMentionsIntCarrierFuel : Nat → FragBlock → Bool
           | .local _ | .constBool _ | .constI64 _ | .constI32 _
           | .constF64Bits _ | .structGet _ _ | .structGetUser _ _ _
           | .refIsNull _ | .prim _ _ | .hostCall _ _ _ | .selfCall _ _ _
-          | .vectorGetOrDefault _ _ _ _ => false
+          | .vectorGetOrDefault _ _ _ _ | .structNew _ _ => false
 
 /-- Whether an encoded fragment plan names the Int carrier ANYWHERE. A
     `FragTy` occurs in exactly three positions of an `ExprFragmentRawPlan` —

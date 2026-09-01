@@ -172,6 +172,17 @@ impl<'a> FragPlanParser<'a> {
                     value,
                 }
             }
+            "struct.new" => {
+                let ty_idx = plan_attr_u32(id, &attrs, "ty")?;
+                let args = plan_attr_values(id, &attrs, "args")?;
+                // v1 record leaves are Int carriers; the byte-exact gate and
+                // the byte-derived struct context bind `ty` and the arity.
+                for arg in &args {
+                    require_plan_node_ty(nodes, *arg, FragTy::IntCarrier)?;
+                }
+                require_plan_ty(id, ty, FragTy::AdtRef)?;
+                FragNodeKind::StructNew { ty_idx, args }
+            }
             "ref.is_null" => {
                 let value = plan_attr_value(id, &attrs, "value")?;
                 require_plan_node_ty(nodes, value, FragTy::Ref)?;
@@ -429,6 +440,7 @@ fn reject_extra_plan_attrs(
         "const.f64" => &["bits"],
         "struct.get" => &["field", "receiver"],
         "struct.get.user" => &["ty", "field", "value"],
+        "struct.new" => &["ty", "args"],
         "ref.is_null" => &["value"],
         "prim" => &["op", "args"],
         "hostcall" => &["role", "func", "args"],

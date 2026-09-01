@@ -7938,3 +7938,91 @@ fn cert_verify_declines_int_comparison_role_tampers() {
             .replace("(.cmp, __SWAP__)", &format!("(.cmp, {eq_idx})"))
     });
 }
+
+/// Tamper gate for the record projection-compute face's exact-signature pin:
+/// flipping one byte of the certified export's declared parameter reference
+/// (nullable `0x63` -> non-nullable `0x64`) with the wasm hash re-bound must
+/// DECLINE — the #1209 tamper class, now caught by `funcTypeMatchesExact`.
+#[test]
+fn cert_tripwire_declines_tampered_record_compute_signature() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping record-compute tamper test: `lake` not available");
+        return;
+    }
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("cert-recordcompute");
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/recordcompute.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver compile --certify runs");
+    assert!(
+        compile.status.success(),
+        "recordcompute compile --certify failed:\n{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let wasm = out_dir.join("recordcompute.wasm");
+    let cert = out_dir.join("cert");
+    let (ok, report) = aver_check(&wasm, &cert);
+    assert!(ok, "clean recordcompute certificate must verify:\n{report}");
+    assert!(
+        report.contains("2 checked exports"),
+        "recordcompute should certify combine and flip:\n{report}"
+    );
+
+    let wasm_bytes = std::fs::read(&wasm).unwrap();
+    let type_section_range = wasmparser::Parser::new(0)
+        .parse_all(&wasm_bytes)
+        .find_map(
+            |payload| match payload.expect("recordcompute wasm must parse") {
+                wasmparser::Payload::TypeSection(reader) => Some(reader.range()),
+                _ => None,
+            },
+        )
+        .expect("recordcompute wasm must carry a type section");
+
+    // combine: (Pair, Pair) -> Pair over struct index 0:
+    // 0x60, 2 params [ref null 0, ref null 0], 1 result [ref null 0].
+    let signature = [0x60, 0x02, 0x63, 0x00, 0x63, 0x00, 0x01, 0x63, 0x00];
+    let matches: Vec<usize> = wasm_bytes[type_section_range.clone()]
+        .windows(signature.len())
+        .enumerate()
+        .filter_map(|(offset, win)| (win == signature).then_some(type_section_range.start + offset))
+        .collect();
+    assert_eq!(
+        matches.len(),
+        1,
+        "combine's two-record signature must be unique in the type section"
+    );
+
+    let dir = temp_dir("cert-recordcompute-signature-tamper");
+    copy_dir(&out_dir, &dir);
+    let w = dir.join("recordcompute.wasm");
+    let mut bytes = wasm_bytes.clone();
+    bytes[matches[0] + 2] = 0x64;
+    std::fs::write(&w, &bytes).unwrap();
+    rebind_cert_wasm_hash(&dir, &bytes);
+
+    let (ok, out) = aver_check(&w, &dir.join("cert"));
+    assert!(
+        !ok,
+        "tampered record-compute export signature must be DECLINED:\n{out}"
+    );
+    assert!(
+        out.contains("does not bind") || out.contains("did not build"),
+        "wrong reason for record-compute signature tamper:\n{out}"
+    );
+    assert!(
+        !out.contains("CERTIFIED"),
+        "tampered record-compute signature credited:\n{out}"
+    );
+}

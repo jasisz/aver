@@ -120,6 +120,13 @@ fn lower_expr_fragment_block(block: &FragBlock, carrier: u32) -> Result<Vec<Op>,
                 ]);
                 stack.push(node.id);
             }
+            FragNodeKind::StructNew { ty_idx, args } => {
+                for arg in args.iter().rev() {
+                    lower_pop(&mut stack, *arg, node.id)?;
+                }
+                ops.push(Op::StructNew(*ty_idx, args.len() as u32));
+                stack.push(node.id);
+            }
             FragNodeKind::If {
                 cond,
                 then_block,

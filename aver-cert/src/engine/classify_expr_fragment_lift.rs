@@ -183,6 +183,29 @@ fn check_plan_struct_gets(
                     ));
                 }
             }
+            FragNodeKind::StructNew { ty_idx, args } => {
+                let Some(count) = struct_field_counts.get(ty_idx) else {
+                    return Err(format!(
+                        "plan struct.new v{} cites type {} outside the module's struct types",
+                        node.id.0, ty_idx
+                    ));
+                };
+                if *ty_idx == carrier {
+                    return Err(format!(
+                        "plan struct.new v{} cites the Int carrier type {}",
+                        node.id.0, ty_idx
+                    ));
+                }
+                if args.len() as u32 != *count {
+                    return Err(format!(
+                        "plan struct.new v{} packs {} values into struct {}'s {} fields",
+                        node.id.0,
+                        args.len(),
+                        ty_idx,
+                        count
+                    ));
+                }
+            }
             FragNodeKind::VectorGetOrDefault { arr_ty, .. } if *arr_ty == carrier => {
                 return Err(format!(
                     "plan fused vector read v{} cites the Int carrier type {} as its array",
@@ -325,6 +348,7 @@ fn byte_derived_frag_struct_table(
         .iter()
         .filter_map(|op| match op {
             Op::StructGet(t, _) if !uses_vector_get && *t != carrier => Some(*t),
+            Op::StructNew(t, _) if !uses_vector_get && *t != carrier => Some(*t),
             Op::ArrayGet(t) if uses_vector_get && *t != carrier => Some(*t),
             _ => None,
         })

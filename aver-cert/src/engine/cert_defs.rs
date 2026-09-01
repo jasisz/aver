@@ -305,6 +305,11 @@ enum Cert {
         /// non-record fragment. Renderers pin the whole declaration by equality
         /// against the bytes and discharge through the wall's record face.
         record_decl: Option<(u32, Vec<RecordLeaf>)>,
+        /// When the plan is a record projection-compute body (the v1 compute
+        /// face), the recognized face. Populated only when the pinned struct
+        /// decodes to a flat ALL-Int record (the face's declared decl), with
+        /// `record_decl` carrying those leaves. `None` otherwise.
+        record_compute: Option<FragRecordComputeFace>,
         plan: ExprFragmentPlan,
         ops: Vec<Op>,
     },

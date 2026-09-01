@@ -30,6 +30,11 @@ fn render_expr_fragment_cert(c: &Cert) -> String {
     if c.record_param_face().is_some() {
         return String::new();
     }
+    // Compute-face fragments likewise discharge through the wall's checked
+    // face (`recordCompute_claim_discharges`) and emit no bespoke proof.
+    if c.record_compute_face().is_some() {
+        return String::new();
+    }
     if let Some(face) = c.vector_get_face() {
         return render_expr_fragment_vector_get_cert(c, face);
     }
@@ -297,6 +302,9 @@ where
         FragNodeKind::VectorGetOrDefault { .. } => {
             unreachable!("the fused vector read is rendered by its own face, not the generic value renderer")
         }
+        FragNodeKind::StructNew { .. } => {
+            unreachable!("user struct construction is rendered by its own face, not the generic value renderer")
+        }
         FragNodeKind::RefIsNull { value } => {
             let v = expr_fragment_value_expr(block, *value, local);
             format!("{v} = WVal.null")
@@ -544,6 +552,7 @@ where
         | FragNodeKind::SelfCall { .. }
         | FragNodeKind::StructGet { .. }
         | FragNodeKind::StructGetUser { .. }
+        | FragNodeKind::StructNew { .. }
         | FragNodeKind::VectorGetOrDefault { .. } => unreachable!("node is not BoolI32"),
     }
 }

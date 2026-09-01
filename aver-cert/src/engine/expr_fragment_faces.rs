@@ -682,3 +682,94 @@ mod record_proj_face_tests {
         assert_eq!(expr_fragment_record_proj_face(&plan), None);
     }
 }
+
+
+/// The record projection-compute face: k opaque record parameters of ONE
+/// pinned struct type, a body over the v1 compute node set (projections,
+/// construction, box/add/sub/mul/eq host calls, i64 literals), and a
+/// record/Int/Bool result. Twin of `StandardFace.classifyRecordCompute`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FragRecordComputeFace {
+    pub struct_idx: u32,
+}
+
+fn record_compute_node_ok(host_table: &FragHostTable, kind: &FragNodeKind) -> bool {
+    match kind {
+        FragNodeKind::Local { .. }
+        | FragNodeKind::ConstI64(_)
+        | FragNodeKind::StructGetUser { .. }
+        | FragNodeKind::StructNew { .. } => true,
+        FragNodeKind::HostCall {
+            role,
+            func_idx,
+            args,
+        } => {
+            host_table.lookup(*role) == Some(*func_idx)
+                && match role {
+                    FragHostRole::Box => args.len() == 1,
+                    // `eq` is deliberately OUT of v1: the wall's `_hEq`
+                    // contract is small-band, the bridge's equality is not.
+                    FragHostRole::Add
+                    | FragHostRole::Sub
+                    | FragHostRole::Mul => args.len() == 2,
+                    _ => false,
+                }
+        }
+        _ => false,
+    }
+}
+
+fn frag_node_struct_idx(kind: &FragNodeKind) -> Option<u32> {
+    match kind {
+        FragNodeKind::StructGetUser { ty_idx, .. } => Some(*ty_idx),
+        FragNodeKind::StructNew { ty_idx, .. } => Some(*ty_idx),
+        _ => None,
+    }
+}
+
+/// Twin of the wall's `classifyRecordCompute`: fires only when every
+/// parameter is an opaque record reference, every node is in the admitted
+/// set with host calls citing the byte-derived role table, at least one node
+/// computes (rules the two-node projection faces out), the result is a
+/// record/Int/Bool, and every cited user-struct index agrees.
+pub fn expr_fragment_record_compute_face(
+    plan: &ExprFragmentPlan,
+    host_table: &FragHostTable,
+) -> Option<FragRecordComputeFace> {
+    if !plan.params.iter().all(|ty| *ty == FragTy::AdtRef) {
+        return None;
+    }
+    if !plan
+        .body
+        .nodes
+        .iter()
+        .all(|n| record_compute_node_ok(host_table, &n.kind))
+    {
+        return None;
+    }
+    if !plan.body.nodes.iter().any(|n| {
+        matches!(
+            n.kind,
+            FragNodeKind::StructNew { .. } | FragNodeKind::HostCall { .. }
+        )
+    }) {
+        return None;
+    }
+    if !matches!(
+        plan.result,
+        FragTy::AdtRef | FragTy::IntCarrier | FragTy::BoolI32
+    ) {
+        return None;
+    }
+    let mut idxs = plan
+        .body
+        .nodes
+        .iter()
+        .filter_map(|n| frag_node_struct_idx(&n.kind));
+    let first = idxs.next()?;
+    if idxs.all(|i| i == first) {
+        Some(FragRecordComputeFace { struct_idx: first })
+    } else {
+        None
+    }
+}

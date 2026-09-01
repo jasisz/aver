@@ -496,7 +496,9 @@ fn check_sym_plan_prim_args(
         | SymPrim::FloatEq => {
             vec![SymTy::Float, SymTy::Float]
         }
-        SymPrim::IntAdd => vec![SymTy::Int, SymTy::Int],
+        SymPrim::IntAdd | SymPrim::IntSub | SymPrim::IntMul => {
+            vec![SymTy::Int, SymTy::Int]
+        }
         SymPrim::StringEq => vec![SymTy::String, SymTy::String],
         SymPrim::StringConcat => Vec::new(),
         SymPrim::BoolAnd => vec![SymTy::Bool, SymTy::Bool],
@@ -523,7 +525,7 @@ fn check_sym_plan_prim_args(
     }
     Ok(match op {
         SymPrim::FloatAdd | SymPrim::FloatMul => SymTy::Float,
-        SymPrim::IntAdd => SymTy::Int,
+        SymPrim::IntAdd | SymPrim::IntSub | SymPrim::IntMul => SymTy::Int,
         SymPrim::FloatLe
         | SymPrim::FloatGe
         | SymPrim::FloatLt

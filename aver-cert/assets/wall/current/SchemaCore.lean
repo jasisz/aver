@@ -367,6 +367,8 @@ inductive SymPrim where
   | floatGt
   | floatEq
   | intAdd
+  | intSub
+  | intMul
   | stringEq
   | stringConcat
   /-- Source-level `Bool.and` (eager conjunction on Aver `Bool`). Both
@@ -545,6 +547,11 @@ mutual
         the byte-exact gate and to the byte-derived role table by acceptance.
         The node reads locals directly and consumes no operand stack values. -/
     | vectorGetOrDefault (arrTy toIndexIdx boxIdx : Nat) (default : Int)
+    /-- Construction of a user struct of wasm type `tyIdx` from `args` (source
+        field order). The type index is node data bound to the module bytes by
+        the byte-exact gate, mirroring how `structGetUser` binds its projection
+        index. -/
+    | structNew (tyIdx : Nat) (args : List Nat)
   deriving Repr
 
   /-- A typed value definition. `id` must match its position in the containing

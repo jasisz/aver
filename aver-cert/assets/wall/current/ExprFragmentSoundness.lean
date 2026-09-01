@@ -391,6 +391,21 @@ theorem mutualCorrectStep :
               -- The monolithic fused vector read never runs through the
               -- symbolic evaluator, so a successful run is contradictory.
               simp at hrun
+            next tyIdx args =>
+              cases hp : popExpectedAll symS args.reverse with
+              | none => simp [hp] at hlow hrun
+              | some symS' =>
+                  simp only [hp] at hlow hrun
+                  cases hrest : lowerNodesFuel fuel carrier rest (node.id :: symS') with
+                  | none => simp [hrest] at hlow
+                  | some pair =>
+                      obtain ⟨restInstrs, fin⟩ := pair
+                      rw [hrest] at hlow
+                      simp only [Option.some.injEq, Prod.mk.injEq] at hlow
+                      obtain ⟨rfl, rfl⟩ := hlow
+                      exact oneThenNodes fuel ih.1 host ar callee carrier rest
+                        (node.id :: symS') (.structNew tyIdx args.length) restInstrs fin
+                        hcallsRest hrest locals stack out hrun
       · intro host ar callee carrier block instrs hcalls hlow locals out hrun
         simp only [lowerBlockFuel] at hlow
         cases hn : lowerNodesFuel fuel carrier block.nodes [] with

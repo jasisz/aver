@@ -33,6 +33,8 @@ pub const CERT_INTERPRETER_SEQUENCING: &str =
     include_str!("../assets/wall/current/InterpreterSequencing.lean");
 pub const CERT_EXPR_FRAGMENT_SOUNDNESS: &str =
     include_str!("../assets/wall/current/ExprFragmentSoundness.lean");
+pub const CERT_RECORD_COMPUTE_BRIDGE: &str =
+    include_str!("../assets/wall/current/RecordComputeBridge.lean");
 pub const CERT_FIELD_PROJECTION_SOUNDNESS: &str =
     include_str!("../assets/wall/current/FieldProjectionSoundness.lean");
 pub const CERT_CONSTRUCT_VERBATIM_SOUNDNESS: &str =
@@ -84,7 +86,7 @@ pub struct Source {
 
 /// Exact checker-owned source set. Ordering is not part of the identity:
 /// [`compute_id`] sorts by filename before hashing.
-pub const SOURCES: [Source; 39] = [
+pub const SOURCES: [Source; 40] = [
     Source {
         name: "AcceptedArtifact.lean",
         contents: CERT_ACCEPTED_ARTIFACT,
@@ -182,6 +184,10 @@ pub const SOURCES: [Source; 39] = [
         contents: CERT_EXPR_FRAGMENT_SOUNDNESS,
     },
     Source {
+        name: "RecordComputeBridge.lean",
+        contents: CERT_RECORD_COMPUTE_BRIDGE,
+    },
+    Source {
         name: "FieldProjectionSoundness.lean",
         contents: CERT_FIELD_PROJECTION_SOUNDNESS,
     },
@@ -245,7 +251,7 @@ pub const SOURCES: [Source; 39] = [
 
 /// Roots whose complete import graph is artifact-independent and can therefore
 /// be cached before a certificate is seen.
-pub const PRISTINE_ROOTS: [&str; 37] = [
+pub const PRISTINE_ROOTS: [&str; 38] = [
     "CertPrelude",
     "CertDecode",
     "ArithTemplateDerisk",
@@ -261,6 +267,7 @@ pub const PRISTINE_ROOTS: [&str; 37] = [
     "ExprFragmentSemantics",
     "InterpreterSequencing",
     "ExprFragmentSoundness",
+    "RecordComputeBridge",
     "FieldProjectionSoundness",
     "ConstructVerbatimSoundness",
     "IntDispatchSoundness",

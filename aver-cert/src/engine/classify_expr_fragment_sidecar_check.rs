@@ -23,7 +23,10 @@ pub fn check_expr_fragment_plan_sidecar(
         .enumerate()
         .find(|(_, f)| f.name == export_name)
         .ok_or_else(|| format!("plan names unknown export `{export_name}`"))?;
-    if f.arity == 0 || !frag_calls_resolvable(&f.calls, &host_table) {
+    // Zero-arity exports are legitimate compute-face targets (constant
+    // constructors); the per-face parameter checks and the exact nominal
+    // signature pin keep every other family fail-closed.
+    if !frag_calls_resolvable(&f.calls, &host_table) {
         return Err(format!(
             "plan for `{export_name}` does not target a non-recursive expr fragment"
         ));
@@ -165,7 +168,10 @@ pub fn check_sym_fragment_plan_sidecar(
         .enumerate()
         .find(|(_, f)| f.name == export_name)
         .ok_or_else(|| format!("source plan names unknown export `{export_name}`"))?;
-    if f.arity == 0 || !frag_calls_resolvable(&f.calls, &host_table) {
+    // Zero-arity exports are legitimate compute-face targets (constant
+    // constructors); the per-face parameter checks and the exact nominal
+    // signature pin keep every other family fail-closed.
+    if !frag_calls_resolvable(&f.calls, &host_table) {
         return Err(format!(
             "source plan for `{export_name}` does not target a non-recursive expr fragment"
         ));
@@ -314,7 +320,10 @@ fn check_expr_fragment_plan_object(
         .enumerate()
         .find(|(_, f)| f.name == export_name)
         .ok_or_else(|| format!("plan names unknown export `{export_name}`"))?;
-    if f.arity == 0 || !frag_calls_resolvable(&f.calls, &host_table) {
+    // Zero-arity exports are legitimate compute-face targets (constant
+    // constructors); the per-face parameter checks and the exact nominal
+    // signature pin keep every other family fail-closed.
+    if !frag_calls_resolvable(&f.calls, &host_table) {
         return Err(format!(
             "plan for `{export_name}` does not target a non-recursive expr fragment"
         ));
@@ -355,12 +364,14 @@ fn check_expr_fragment_plan_object(
     // without its own admission.
     let int_cmp = expr_fragment_int_cmp_bool_face(&plan).is_some()
         || expr_fragment_int_select_face(&plan).is_some();
+    let record_compute = expr_fragment_record_compute_face(&plan, &host_table).is_some();
     if (expr_fragment_plan_has_host_calls(&plan) || plan.result == FragTy::IntCarrier)
         && expr_fragment_int_add_face(&plan).is_none()
         && !tag_dispatch
         && !vector_get
         && !record_proj
         && !int_cmp
+        && !record_compute
     {
         return Err(format!(
             "plan for `{export_name}` has no rendered proof face: Int-carrier results \
@@ -377,6 +388,7 @@ fn check_expr_fragment_plan_object(
         && !tag_dispatch
         && !vector_get
         && !record_proj
+        && !record_compute
     {
         return Err(format!(
             "plan for `{export_name}` has no rendered proof face: user-ADT references \
@@ -424,6 +436,7 @@ fn check_expr_fragment_plan_object(
         carrier,
         source_plan: None,
         record_decl: None,
+        record_compute: None,
         plan: plan.clone(),
         ops: canonical_ops,
     };
@@ -457,6 +470,8 @@ fn block_has_nan_nondeterministic_float_op(block: &FragBlock) -> bool {
     // Deliberately exhaustive: extending FragNodeKind must force an explicit
     // decision about nested blocks and Float-bit observation at this gate.
     block.nodes.iter().any(|node| match &node.kind {
+        // Packs already-computed values; observes no Float bits itself.
+        FragNodeKind::StructNew { .. } => false,
         FragNodeKind::Prim { op, .. } => prim_has_nan_nondeterministic_float_result(op),
         FragNodeKind::If {
             then_block,
@@ -639,7 +654,10 @@ fn check_sym_fragment_plan_object(
         .enumerate()
         .find(|(_, f)| f.name == export_name)
         .ok_or_else(|| format!("source plan names unknown export `{export_name}`"))?;
-    if f.arity == 0 || !frag_calls_resolvable(&f.calls, &host_table) {
+    // Zero-arity exports are legitimate compute-face targets (constant
+    // constructors); the per-face parameter checks and the exact nominal
+    // signature pin keep every other family fail-closed.
+    if !frag_calls_resolvable(&f.calls, &host_table) {
         return Err(format!(
             "source plan for `{export_name}` does not target a non-recursive expr fragment"
         ));
@@ -710,6 +728,7 @@ fn check_sym_fragment_plan_object(
     let Cert::ExprFragment {
         source_plan,
         record_decl,
+        record_compute,
         plan,
         carrier,
         ..
@@ -735,6 +754,23 @@ fn check_sym_fragment_plan_object(
                 ));
             }
         }
+    }
+    // Record projection-compute face (v1): recognized only when the pinned
+    // struct decodes to a flat ALL-Int record; otherwise the export simply
+    // stays on the source-level-only route (no error — the face is optional).
+    if record_compute.is_none()
+        && let Some(face) = expr_fragment_record_compute_face(plan, &host_table)
+        && let Some(leaves) = record_leaves_from_bytes(wasm_bytes, *carrier, face.struct_idx)
+        && leaves.iter().all(|l| matches!(l, RecordLeaf::IntCarrier))
+    {
+        *record_decl = Some((face.struct_idx, leaves));
+        *record_compute = Some(face);
+    }
+    if record_compute.is_none() && plan_contains_struct_new_sidecar(&plan.body) {
+        return Err(format!(
+            "source plan for `{export_name}` constructs a struct outside the \
+             compute face (its record is not a flat all-Int declaration)"
+        ));
     }
     let sidecar = sym_fragment_sidecar(export_name, &sym_plan);
     Ok((
@@ -810,4 +846,20 @@ fn sym_sidecar_declared_tys(
         ));
     }
     Ok((params, result))
+}
+
+
+fn plan_contains_struct_new_sidecar(block: &FragBlock) -> bool {
+    block.nodes.iter().any(|n| match &n.kind {
+        FragNodeKind::StructNew { .. } => true,
+        FragNodeKind::If {
+            then_block,
+            else_block,
+            ..
+        } => {
+            plan_contains_struct_new_sidecar(then_block)
+                || plan_contains_struct_new_sidecar(else_block)
+        }
+        _ => false,
+    })
 }

@@ -1,4 +1,4 @@
-fn render_obligation_def(c: &Cert, model_info: &ModelInfo) -> String {
+fn render_obligation_def(c: &Cert, model_info: &ModelInfo, host_table_lean: &str) -> String {
     let name = c.name();
     // A host-call expr fragment with the straight-line integer face states the
     // SAME full-strength obligation the legacy straight-line class shipped:
@@ -113,6 +113,21 @@ fn render_obligation_def(c: &Cert, model_info: &ModelInfo) -> String {
     // projected scalar leaf under the single generic `ReprOf`, and the model the
     // field read — every meaning field is the wall term the checked record face
     // pins by `HEq`, exactly like `intDispatchDeclaredFace`.
+    if let Some(face) = c.record_compute_face() {
+        let name = c.name();
+        return format!(
+            "abbrev {name}Ob : Schema.Obligation :=\n  \
+             {{ export_ := \"{name}\", policy := .simulatesModel, carrier := {carrier},\n    \
+             code := CertModule.{name}Code, host := AverCert.StandardFace.recordComputeHost {carrier} {host_table_lean}, self := {self_idx},\n    \
+             Dom := List RecordComputeBridge.SVal, Cod := Option RecordComputeBridge.SVal,\n    \
+             domRepr := AverCert.StandardFace.recordComputeDomRepr {carrier} {struct_idx} Plans.{name}Plan.params,\n    \
+             codRepr := AverCert.StandardFace.recordComputeCodRepr {carrier} {struct_idx},\n    \
+             model := AverCert.StandardFace.recordComputeModel Plans.{name}Plan.body }}\n\n",
+            carrier = c.carrier(),
+            self_idx = c.self_idx(),
+            struct_idx = face.struct_idx,
+        );
+    }
     if let Some(face) = c.record_param_face() {
         return format!(
             "abbrev {name}Ob : Schema.Obligation :=\n  \
@@ -325,8 +340,9 @@ fn render_manifest_lean(
     );
     s.push_str(&render_user_repr_defs(analysis, model_info));
     // One obligation def per certified export.
+    let host_table_lean = analysis.frag_host_table().lean_value();
     for c in &analysis.certs {
-        s.push_str(&render_obligation_def(c, model_info));
+        s.push_str(&render_obligation_def(c, model_info, &host_table_lean));
     }
     // Subject + manifest.
     let exports = analysis
@@ -799,6 +815,8 @@ fn render_manifest(
             "AverCert.StandardFace.vectorGetOrDefault_simulates_model".to_string()
         } else if c.project_face().is_some() {
             "AcceptanceSoundness.fieldProjection_direct_canonical_discharges".to_string()
+        } else if c.record_compute_face().is_some() {
+            "AcceptanceSoundness.recordCompute_claim_discharges".to_string()
         } else if c.record_param_face().is_some() {
             "AcceptanceSoundness.recordParam_claim_discharges".to_string()
         } else if matches!(c.inner(), Cert::FieldProjection { .. }) {

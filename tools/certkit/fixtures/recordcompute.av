@@ -1,0 +1,25 @@
+module RecordCompute
+    intent =
+        "Certify fixture for the record projection-compute face: one flat"
+        "all-Int record, straight-line projection arithmetic, construction."
+    exposes [Pair, combine, flip]
+    effects []
+
+record Pair
+    top: Int
+    bottom: Int
+
+fn combine(a: Pair, b: Pair) -> Pair
+    ? "Cross-multiplied combination, the plus shape without normalization."
+    Pair(top = a.top * b.bottom + b.top * a.bottom, bottom = a.bottom * b.bottom)
+
+verify combine
+    combine(Pair(top = 1, bottom = 2), Pair(top = 1, bottom = 3)) => Pair(top = 5, bottom = 6)
+    combine(Pair(top = -1, bottom = 2), Pair(top = 1, bottom = 2)) => Pair(top = 0, bottom = 4)
+
+fn flip(a: Pair) -> Pair
+    ? "Negated top, kept bottom."
+    Pair(top = 0 - a.top, bottom = a.bottom)
+
+verify flip
+    flip(Pair(top = 3, bottom = 4)) => Pair(top = -3, bottom = 4)

@@ -23,6 +23,12 @@ pub struct Analysis {
 }
 
 impl Analysis {
+    /// The strict byte-derived host-role table, for renderers that state a
+    /// table-driven obligation host (the compute face).
+    pub(crate) fn frag_host_table(&self) -> &FragHostTable {
+        &self.frag_host_table
+    }
+
     pub fn certified_names(&self) -> Vec<String> {
         self.certs.iter().map(|c| c.name().to_string()).collect()
     }
@@ -383,6 +389,24 @@ fn runtime_contracts_for_certs<'a>(certs: impl IntoIterator<Item = &'a Cert>) ->
         if c.int_add_face().is_some() {
             has_box = true;
             has_add = true;
+            continue;
+        }
+        if c.record_compute_face().is_some() {
+            // Twin of the wall's `useSymFragment` role accounting: disclose
+            // exactly the roles the encoded compute plan calls.
+            if let Cert::ExprFragment { plan, .. } = c.inner() {
+                for node in &plan.body.nodes {
+                    if let FragNodeKind::HostCall { role, .. } = &node.kind {
+                        match role {
+                            FragHostRole::Box => has_box = true,
+                            FragHostRole::Add => has_add = true,
+                            FragHostRole::Sub => has_sub = true,
+                            FragHostRole::Mul => has_mul = true,
+                            _ => {}
+                        }
+                    }
+                }
+            }
             continue;
         }
         if c.tag_dispatch_face().is_some() {

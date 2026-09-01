@@ -95,6 +95,8 @@ pub enum SymPrim {
     FloatGt,
     FloatEq,
     IntAdd,
+    IntSub,
+    IntMul,
     StringEq,
     StringConcat,
     /// Source-level `Bool.and` (eager conjunction); encodes to the
@@ -491,6 +493,12 @@ fn sym_block_struct_names_in_order(block: &SymBlock, out: &mut Vec<String>) {
     for node in &block.nodes {
         match &node.kind {
             SymNodeKind::ProjectField { type_name, .. } => out.push(type_name.clone()),
+            // Record construction anchors its type the same way a projection
+            // does; List cells keep their dedicated constructor family and
+            // never bind a struct index here.
+            SymNodeKind::Construct { type_name, .. } if type_name != "List" => {
+                out.push(type_name.clone())
+            }
             SymNodeKind::VectorGetOrDefault { type_name, .. } => out.push(type_name.clone()),
             SymNodeKind::TagMatch {
                 type_name,
@@ -534,6 +542,7 @@ fn frag_block_struct_get_user_tys_in_order(block: &FragBlock, out: &mut Vec<u32>
     for node in &block.nodes {
         match &node.kind {
             FragNodeKind::StructGetUser { ty_idx, .. } => out.push(*ty_idx),
+            FragNodeKind::StructNew { ty_idx, .. } => out.push(*ty_idx),
             FragNodeKind::VectorGetOrDefault { arr_ty, .. } => out.push(*arr_ty),
             FragNodeKind::If {
                 then_block,
@@ -602,6 +611,11 @@ fn sym_block_struct_bindings(block: &SymBlock, out: &mut Vec<(String, SymTy)>) -
             } => {
                 let ty = block.nodes.get(value.0)?.ty.clone();
                 out.push((type_name.clone(), ty));
+            }
+            // Record construction binds its type at emit time the same way a
+            // projection does; List cells keep their dedicated family.
+            SymNodeKind::Construct { type_name, .. } if type_name != "List" => {
+                out.push((type_name.clone(), node.ty.clone()));
             }
             SymNodeKind::TagMatch {
                 type_name,
@@ -695,6 +709,7 @@ fn sym_node_from_frag_source_subset(node: &FragNode) -> Option<SymNode> {
             args: args.iter().map(|id| SymValueId(id.0)).collect(),
         },
         FragNodeKind::VectorGetOrDefault { .. } => return None,
+        FragNodeKind::StructNew { .. } => return None,
         FragNodeKind::If {
             cond,
             then_block,

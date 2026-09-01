@@ -90,6 +90,10 @@ mutual
             match popExpected symStack value with
             | some symStack' => step symStack' (.structGet tyIdx field)
             | none => none
+        | .structNew tyIdx args =>
+            match popExpectedAll symStack args.reverse with
+            | some symStack' => step symStack' (.structNew tyIdx args.length)
+            | none => none
         | .refIsNull value =>
             match popExpected symStack value with
             | some symStack' => step symStack' .refIsNull

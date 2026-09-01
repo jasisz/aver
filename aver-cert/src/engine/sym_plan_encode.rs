@@ -10,7 +10,7 @@ impl SymPrim {
             SymPrim::FloatEq => Some(FragPrim::F64Eq),
             // `IntAdd` has no representation-level primitive: the encoder
             // binds it to a `hostCall add` node through the role table.
-            SymPrim::IntAdd => None,
+            SymPrim::IntAdd | SymPrim::IntSub | SymPrim::IntMul => None,
             SymPrim::StringEq => None,
             SymPrim::StringConcat => None,
             SymPrim::BoolAnd => Some(FragPrim::I32And),
@@ -75,10 +75,15 @@ impl SymToFragEncoder<'_> {
             SymNodeKind::ConstFloatBits(bits) => self.push_node(ty, FragNodeKind::ConstF64(*bits)),
             SymNodeKind::ConstStringBytes(_) => return None,
             SymNodeKind::Prim {
-                op: SymPrim::IntAdd,
+                op: op @ (SymPrim::IntAdd | SymPrim::IntSub | SymPrim::IntMul),
                 args,
             } => {
-                let add_idx = self.host_table.lookup(FragHostRole::Add)?;
+                let role = match op {
+                    SymPrim::IntAdd => FragHostRole::Add,
+                    SymPrim::IntSub => FragHostRole::Sub,
+                    _ => FragHostRole::Mul,
+                };
+                let role_idx = self.host_table.lookup(role)?;
                 let args = args
                     .iter()
                     .map(|id| self.sym_to_frag.get(id.0).copied())
@@ -86,8 +91,8 @@ impl SymToFragEncoder<'_> {
                 self.push_node(
                     ty,
                     FragNodeKind::HostCall {
-                        role: FragHostRole::Add,
-                        func_idx: add_idx,
+                        role,
+                        func_idx: role_idx,
                         args,
                     },
                 )
@@ -105,7 +110,21 @@ impl SymToFragEncoder<'_> {
                     },
                 )
             }
-            SymNodeKind::Construct { .. } => return None,
+            SymNodeKind::Construct {
+                type_name,
+                ctor_name: _,
+                args,
+            } => {
+                // Record construction: bind the declared type name to its
+                // byte-derived struct index and pack the planned field values
+                // in declaration order (`struct.new`).
+                let ty_idx = self.struct_table.lookup(type_name)?;
+                let args = args
+                    .iter()
+                    .map(|id| self.sym_to_frag.get(id.0).copied())
+                    .collect::<Option<Vec<_>>>()?;
+                self.push_node(ty, FragNodeKind::StructNew { ty_idx, args })
+            }
             SymNodeKind::EmptyList { .. } => return None,
             SymNodeKind::ProjectField {
                 type_name,
