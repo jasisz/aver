@@ -135,6 +135,20 @@ impl Cert {
 
     /// The projected struct index and ordered scalar-leaf field list of a record
     /// projection cert, byte-derived at check time.
+    /// The record projection-compute face, when the sidecar recognized one
+    /// over an all-Int record. Renderers branch on this to state the wall's
+    /// compute obligation (plan-as-claim) and discharge through
+    /// `recordCompute_claim_discharges`.
+    fn record_compute_face(&self) -> Option<FragRecordComputeFace> {
+        match self.inner() {
+            Cert::ExprFragment {
+                record_compute: Some(face),
+                ..
+            } => Some(*face),
+            _ => None,
+        }
+    }
+
     fn record_decl(&self) -> Option<(u32, &[RecordLeaf])> {
         match self.inner() {
             Cert::ExprFragment {

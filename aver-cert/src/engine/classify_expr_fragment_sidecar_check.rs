@@ -424,6 +424,7 @@ fn check_expr_fragment_plan_object(
         carrier,
         source_plan: None,
         record_decl: None,
+        record_compute: None,
         plan: plan.clone(),
         ops: canonical_ops,
     };
@@ -712,6 +713,7 @@ fn check_sym_fragment_plan_object(
     let Cert::ExprFragment {
         source_plan,
         record_decl,
+        record_compute,
         plan,
         carrier,
         ..
@@ -737,6 +739,17 @@ fn check_sym_fragment_plan_object(
                 ));
             }
         }
+    }
+    // Record projection-compute face (v1): recognized only when the pinned
+    // struct decodes to a flat ALL-Int record; otherwise the export simply
+    // stays on the source-level-only route (no error — the face is optional).
+    if record_compute.is_none()
+        && let Some(face) = expr_fragment_record_compute_face(plan, &host_table)
+        && let Some(leaves) = record_leaves_from_bytes(wasm_bytes, *carrier, face.struct_idx)
+        && leaves.iter().all(|l| matches!(l, RecordLeaf::IntCarrier))
+    {
+        *record_decl = Some((face.struct_idx, leaves));
+        *record_compute = Some(face);
     }
     let sidecar = sym_fragment_sidecar(export_name, &sym_plan);
     Ok((

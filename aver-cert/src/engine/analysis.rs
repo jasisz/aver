@@ -23,6 +23,12 @@ pub struct Analysis {
 }
 
 impl Analysis {
+    /// The strict byte-derived host-role table, for renderers that state a
+    /// table-driven obligation host (the compute face).
+    pub(crate) fn frag_host_table(&self) -> &FragHostTable {
+        &self.frag_host_table
+    }
+
     pub fn certified_names(&self) -> Vec<String> {
         self.certs.iter().map(|c| c.name().to_string()).collect()
     }

@@ -707,10 +707,11 @@ fn record_compute_node_ok(host_table: &FragHostTable, kind: &FragNodeKind) -> bo
             host_table.lookup(*role) == Some(*func_idx)
                 && match role {
                     FragHostRole::Box => args.len() == 1,
+                    // `eq` is deliberately OUT of v1: the wall's `_hEq`
+                    // contract is small-band, the bridge's equality is not.
                     FragHostRole::Add
                     | FragHostRole::Sub
-                    | FragHostRole::Mul
-                    | FragHostRole::Eq => args.len() == 2,
+                    | FragHostRole::Mul => args.len() == 2,
                     _ => false,
                 }
         }
