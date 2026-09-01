@@ -3008,9 +3008,10 @@ fn declared_arith_carrier_is_isolated_and_weaken_confirmed() {
     // root list plus `StandardFace` and everything `StandardFace` transitively
     // imports. A `roots` list is NOT auto-extended: a module outside it is not
     // part of the library, so its olean is never built and the import fails,
-    // which is why naming `StandardFace` alone is not enough. Nineteen roots
-    // instead of the wall's full thirty-six keeps the fresh-temp-dir build
-    // proportionate. Only files the wall actually EMBEDS may be named: the
+    // which is why naming `StandardFace` alone is not enough — nor is the
+    // list that predates the record projection-compute face, whose four
+    // modules `StandardFace` now imports. Twenty-three roots instead of the
+    // wall's full forty keeps the fresh-temp-dir build proportionate. Only files the wall actually EMBEDS may be named: the
     // staged directory is `wall.sources`, a strict subset of the repository.
     std::fs::write(
         wall_dir.join("lakefile.lean"),
@@ -3021,7 +3022,8 @@ fn declared_arith_carrier_is_isolated_and_weaken_confirmed() {
          `StringSoundness, `Wasip2Envelope, `AcceptedArtifactCore, `ConstructVerbatimSoundness, \
          `DeclaredEnvelopeAcceptTransport, `DeclaredIndexEnvelope, `EnvelopeLowering, \
          `FieldProjectionSoundness, `IntDispatchSoundness, `WidenedEnvelope, \
-         `StandardFace]\n",
+         `ExprFragmentSemantics, `InterpreterSequencing, `ExprFragmentSoundness, \
+         `RecordComputeBridge, `StandardFace]\n",
     )
     .unwrap();
     let build = Command::new("lake")
@@ -4927,7 +4929,8 @@ fn record_type_declaration_pin_is_isolated_and_weaken_confirmed() {
          `Wasip2Envelope, `AcceptedArtifactCore, `IntDispatchSoundness, `EnvelopeLowering, \
          `ConstructVerbatimSoundness, `FieldProjectionSoundness, `StringSoundness, \
          `WidenedEnvelope, `DeclaredIndexEnvelope, `DeclaredEnvelopeAcceptTransport, \
-         `StandardFace]\n",
+         `ExprFragmentSemantics, `InterpreterSequencing, `ExprFragmentSoundness, \
+         `RecordComputeBridge, `StandardFace]\n",
     )
     .unwrap();
     let build = Command::new("lake")

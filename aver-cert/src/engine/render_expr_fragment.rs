@@ -215,7 +215,7 @@ theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
         · simp [wFuncN, wRunF, {name}Code, {name}Host, boxRef, popArgs, initLocals, hc] at hrun
         · simp [wFuncN, wRunF, {name}Code, {name}Host, boxRef, popArgs, initLocals, hc] at hrun
           subst hrun
-          simpa [AverCert.Schema.intRepr] using hadd n ({k}) v (carrierSmall {carrier} ({k})) r hv (S.smallIntro ({k})) hc
+          simpa [AverCert.Schema.intRepr] using (hadd n ({k}) v (carrierSmall {carrier} ({k})) r hv (S.smallIntro ({k})) hc).1
     | cons _ _ =>
       simp at harity
 "#
