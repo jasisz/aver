@@ -766,6 +766,12 @@ fn check_sym_fragment_plan_object(
         *record_decl = Some((face.struct_idx, leaves));
         *record_compute = Some(face);
     }
+    if record_compute.is_none() && plan_contains_struct_new_sidecar(&plan.body) {
+        return Err(format!(
+            "source plan for `{export_name}` constructs a struct outside the \
+             compute face (its record is not a flat all-Int declaration)"
+        ));
+    }
     let sidecar = sym_fragment_sidecar(export_name, &sym_plan);
     Ok((
         func_order,
@@ -840,4 +846,20 @@ fn sym_sidecar_declared_tys(
         ));
     }
     Ok((params, result))
+}
+
+
+fn plan_contains_struct_new_sidecar(block: &FragBlock) -> bool {
+    block.nodes.iter().any(|n| match &n.kind {
+        FragNodeKind::StructNew { .. } => true,
+        FragNodeKind::If {
+            then_block,
+            else_block,
+            ..
+        } => {
+            plan_contains_struct_new_sidecar(then_block)
+                || plan_contains_struct_new_sidecar(else_block)
+        }
+        _ => false,
+    })
 }

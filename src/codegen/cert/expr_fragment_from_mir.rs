@@ -28,6 +28,11 @@ fn expr_fragment_plan_has_face(plan: &ExprFragmentPlan, host_table: &FragHostTab
     let int_cmp_bool = expr_fragment_int_cmp_bool_face(plan).is_some();
     let int_select = expr_fragment_int_select_face(plan).is_some();
     let record_compute = expr_fragment_record_compute_face(plan, host_table).is_some();
+    // Construction is certified ONLY through the compute face: a plan that
+    // packs a struct without that face must stay unplanned (fail-closed,
+    // bytes untouched) — the generic renderers have no construction arm.
+    let struct_new_ok = record_compute
+        || !plan_contains_struct_new(&plan.body);
     let int_face_ok = plan.result != FragTy::IntCarrier
         || expr_fragment_int_add_face(plan).is_some()
         || tag_dispatch
@@ -49,7 +54,19 @@ fn expr_fragment_plan_has_face(plan: &ExprFragmentPlan, host_table: &FragHostTab
         || vector_get
         || record_proj
         || record_compute;
-    int_face_ok && host_call_face_ok && adt_face_ok
+    int_face_ok && host_call_face_ok && adt_face_ok && struct_new_ok
+}
+
+fn plan_contains_struct_new(block: &FragBlock) -> bool {
+    block.nodes.iter().any(|n| match &n.kind {
+        FragNodeKind::StructNew { .. } => true,
+        FragNodeKind::If {
+            then_block,
+            else_block,
+            ..
+        } => plan_contains_struct_new(then_block) || plan_contains_struct_new(else_block),
+        _ => false,
+    })
 }
 
 /// Producer-side record layout resolver: `(record type name, field name) ->
