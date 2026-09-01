@@ -648,7 +648,6 @@ pub enum FragNodeKind {
 
 /// The i64 comparison the sign template's SMALL arm performs against the
 /// literal. Twin of `PlanLower.intSignCmpSmallPrim`.
-#[cfg(feature = "engine")]
 fn int_sign_cmp_small_prim(op: SymIntCmp) -> FragPrim {
     match op {
         SymIntCmp::Eq => FragPrim::I64Eq,
@@ -663,7 +662,6 @@ fn int_sign_cmp_small_prim(op: SymIntCmp) -> FragPrim {
 /// `i32.const 0`, or `None` for equality — which reads no sign field at all,
 /// because a canonical limb-carrying carrier never equals an i64 literal.
 /// Twin of `PlanLower.intSignCmpBigArm`.
-#[cfg(feature = "engine")]
 fn int_sign_cmp_sign_prim(op: SymIntCmp) -> Option<FragPrim> {
     match op {
         SymIntCmp::Eq => None,
