@@ -49,7 +49,14 @@ fn render_expr_side_arm(c: &Cert) -> String {
     }
     if c.int_select_face().is_some() {
         return String::from(
-            "exact Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr ⟨rfl, rfl⟩))))))",
+            "exact Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inl ⟨rfl, rfl⟩)))))))",
+        );
+    }
+    // The compute arm sits at position nine of nine: pure routing, the
+    // discharge derives the obligation from the checked compute face.
+    if c.record_compute_face().is_some() {
+        return String::from(
+            "exact Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr rfl)))))))",
         );
     }
     if expr_fragment_uses_audited_generic(c) {

@@ -30,6 +30,11 @@ fn render_expr_fragment_cert(c: &Cert) -> String {
     if c.record_param_face().is_some() {
         return String::new();
     }
+    // Compute-face fragments likewise discharge through the wall's checked
+    // face (`recordCompute_claim_discharges`) and emit no bespoke proof.
+    if c.record_compute_face().is_some() {
+        return String::new();
+    }
     if let Some(face) = c.vector_get_face() {
         return render_expr_fragment_vector_get_cert(c, face);
     }
