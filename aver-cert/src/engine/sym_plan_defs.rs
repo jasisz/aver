@@ -542,6 +542,7 @@ fn frag_block_struct_get_user_tys_in_order(block: &FragBlock, out: &mut Vec<u32>
     for node in &block.nodes {
         match &node.kind {
             FragNodeKind::StructGetUser { ty_idx, .. } => out.push(*ty_idx),
+            FragNodeKind::StructNew { ty_idx, .. } => out.push(*ty_idx),
             FragNodeKind::VectorGetOrDefault { arr_ty, .. } => out.push(*arr_ty),
             FragNodeKind::If {
                 then_block,
