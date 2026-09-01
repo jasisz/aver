@@ -75,6 +75,7 @@ const S1_FIXTURES: &[&str] = &[
     "rangepred",
     "recdecline",
     "recgen",
+    "recordcompute",
     "refinedsum",
     "signalgauge",
     "strdispatch",
