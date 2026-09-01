@@ -460,6 +460,17 @@ fn render_expr_fragment_plans(
                 field = face.field_idx,
             ));
         }
+        if let (Some(face), Some((_struct_idx, leaves))) =
+            (c.record_compute_face(), c.record_decl())
+        {
+            s.push_str(&format!(
+                "/-- The Plan record declaration for `{name}` as ordered scalar leaves. -/\n\
+                 def {name}RecordFields : List TypeDecl := {fields_value}\n\n\
+                 def {name}RecordDecl : TypeDecl := .record {struct_idx} {name}RecordFields\n\n",
+                fields_value = record_leaves_lean_value(leaves),
+                struct_idx = face.struct_idx,
+            ));
+        }
     }
     for c in &analysis.certs {
         let Cert::FieldProjection {
@@ -1107,13 +1118,18 @@ fn render_face_bundles(
     claims_def: &str,
     extra_unfolds: &str,
     host_table_conj: bool,
-    elements: &[Option<(String, String)>],
+    elements: &[Option<(String, String, String)>],
 ) -> (String, String) {
     let mut theorems = String::new();
     let mut parts = Vec::with_capacity(elements.len());
     for (index, element) in elements.iter().enumerate() {
         match element {
-            Some((plan_ref, proof)) => {
+            Some((element_face, plan_ref, proof)) => {
+                let face_def = if element_face.is_empty() {
+                    face_def
+                } else {
+                    element_face.as_str()
+                };
                 let theorem = format!("{family}Claim{index}Face");
                 theorems.push_str(&format!(
                     "theorem {theorem} :\n  \
@@ -2073,13 +2089,13 @@ fn render_artifact_expr_fragment_claims(
     let mut int_dispatch_parts: Vec<IntDispatchParts> = Vec::new();
     let mut field_projection_parts: Vec<FieldProjectionParts> = Vec::new();
     let mut composition_parts: Vec<CompositionParts> = Vec::new();
-    let mut string_concat_faces: Vec<Option<(String, String)>> = Vec::new();
-    let mut construct_faces: Vec<Option<(String, String)>> = Vec::new();
-    let mut int_dispatch_faces: Vec<Option<(String, String)>> = Vec::new();
+    let mut string_concat_faces: Vec<Option<(String, String, String)>> = Vec::new();
+    let mut construct_faces: Vec<Option<(String, String, String)>> = Vec::new();
+    let mut int_dispatch_faces: Vec<Option<(String, String, String)>> = Vec::new();
     // One entry per `sym` claim, in `symFragmentClaims` order: `Some` carries a
     // record-parameter face witness, `None` is a known-face claim closed inline
     // by `repeat' constructor`.
-    let mut sym_faces: Vec<Option<(String, String)>> = Vec::new();
+    let mut sym_faces: Vec<Option<(String, String, String)>> = Vec::new();
     for c in &analysis.certs {
         match c.inner() {
             Cert::ExprFragment {
@@ -2126,6 +2142,29 @@ fn render_artifact_expr_fragment_claims(
                     // type entry, the export's parameter binding, and the `HEq`
                     // meaning fields — the exact structure of the hand-checked
                     // `PersonBeachhead.isMemberFace`.
+                    if let Some(face) = c.record_compute_face() {
+                        let result_ty = match plan.result {
+                            FragTy::AdtRef => format!(
+                                "(AverCert.WasmSlice.nullableRefType {})",
+                                face.struct_idx
+                            ),
+                            FragTy::IntCarrier => format!(
+                                "(AverCert.WasmSlice.nullableRefType {carrier})"
+                            ),
+                            _ => "(CertDecode.ValType.numeric 0x7f)".to_string(),
+                        };
+                        let witness = format!(
+                            "⟨rfl, rfl, rfl, AverCert.Plans.{name}RecordFields, {result_ty},                              by decide, by decide, rfl, rfl, rfl, rfl, rfl,                              ⟨rfl, HEq.rfl, HEq.rfl, HEq.rfl, HEq.rfl, rfl, HEq.rfl⟩⟩"
+                        );
+                        sym_faces.push(Some((
+                            "recordComputeDeclaredFace".to_string(),
+                            format!(
+                                "AverCert.Plans.{name}Plan {{ structIdx := {} }}",
+                                face.struct_idx
+                            ),
+                            witness,
+                        )));
+                    } else {
                     sym_faces.push(c.record_param_face().map(|face| {
                         // The three byte pins (carrier state, type-section
                         // equality, parameter binding) discharge by kernel `rfl`,
@@ -2142,8 +2181,13 @@ fn render_artifact_expr_fragment_claims(
                             si = face.struct_idx,
                             fi = face.field_idx,
                         );
-                        (format!("AverCert.Plans.{name}Plan"), witness)
+                        (
+                            String::new(),
+                            format!("AverCert.Plans.{name}Plan"),
+                            witness,
+                        )
                     }));
+                    }
                 }
             }
             Cert::StringConcatVerbatimMatch {
@@ -2199,6 +2243,7 @@ fn render_artifact_expr_fragment_claims(
                     type_idx: *type_idx,
                 });
                 string_concat_faces.push(Some((
+                    String::new(),
                     format!("AverCert.Plans.{name}StringConcatPlan"),
                     format!(
                         "⟨rfl, rfl, ([] : List Nat), (⟨0, {obligation_carrier}, []⟩ : AverCert.DeclaredIndexEnvelope.DIdxEnvelope), \
@@ -2297,6 +2342,7 @@ fn render_artifact_expr_fragment_claims(
                 });
                 if adt_constructor_uses_model(c, model_info) {
                     construct_faces.push(Some((
+                    String::new(),
                         format!("AverCert.Plans.{name}ConstructPlan"),
                         "⟨rfl, rfl, rfl, AverCert.Plans.{name}TypePrefix, AverCert.Plans.{name}DeclaredEnvelope, \
                          by decide, by decide, rfl, rfl, \
@@ -2445,6 +2491,7 @@ fn render_artifact_expr_fragment_claims(
                     carrier: *carrier,
                 });
                 int_dispatch_faces.push(Some((
+                    String::new(),
                     format!("AverCert.Plans.{name}IntDispatchPlan"),
                     "⟨rfl, rfl, AverCert.Plans.{name}TypePrefix, AverCert.Plans.{name}DeclaredEnvelope, \
                      by decide, by decide, \

@@ -18,7 +18,7 @@
 /// stay UNPLANNED here rather than reach the verifier: an emitted plan would
 /// change the function's bytes and then decline, whereas leaving it unplanned
 /// keeps the bytes identical to a build with no plan path at all.
-fn expr_fragment_plan_has_face(plan: &ExprFragmentPlan) -> bool {
+fn expr_fragment_plan_has_face(plan: &ExprFragmentPlan, host_table: &FragHostTable) -> bool {
     let tag_dispatch = expr_fragment_is_tag_dispatch(plan);
     let vector_get = expr_fragment_vector_get_face(plan).is_some();
     let record_proj = expr_fragment_record_proj_face(plan).is_some();
@@ -27,24 +27,28 @@ fn expr_fragment_plan_has_face(plan: &ExprFragmentPlan) -> bool {
     // input local rather than a fresh box.
     let int_cmp_bool = expr_fragment_int_cmp_bool_face(plan).is_some();
     let int_select = expr_fragment_int_select_face(plan).is_some();
+    let record_compute = expr_fragment_record_compute_face(plan, host_table).is_some();
     let int_face_ok = plan.result != FragTy::IntCarrier
         || expr_fragment_int_add_face(plan).is_some()
         || tag_dispatch
         || vector_get
         || record_proj
-        || int_select;
+        || int_select
+        || record_compute;
     let host_call_face_ok = !expr_fragment_plan_has_host_calls(plan)
         || expr_fragment_int_add_face(plan).is_some()
         || tag_dispatch
         || vector_get
         || record_proj
         || int_cmp_bool
-        || int_select;
+        || int_select
+        || record_compute;
     let adt_face_ok = !expr_fragment_plan_touches_adt_ref(plan)
         || expr_fragment_project_face(plan).is_some()
         || tag_dispatch
         || vector_get
-        || record_proj;
+        || record_proj
+        || record_compute;
     int_face_ok && host_call_face_ok && adt_face_ok
 }
 
@@ -73,13 +77,13 @@ pub(crate) fn fragment_plan_from_mir_fn(
             &FragStructTable::placeholder_for(&plan),
         )
         && lower_expr_fragment_plan_code_entry_bytes(&frag, 0).is_ok()
-        && expr_fragment_plan_has_face(&frag)
+        && expr_fragment_plan_has_face(&frag, &FragHostTable::placeholder())
     {
         return Some(FragmentPlan::Sym(plan));
     }
     let plan = repr_expr_fragment_plan_from_mir_fn(mir_fn)?;
     if lower_expr_fragment_plan_code_entry_bytes(&plan, 0).is_ok()
-        && expr_fragment_plan_has_face(&plan)
+        && expr_fragment_plan_has_face(&plan, &FragHostTable::placeholder())
     {
         Some(FragmentPlan::Expr(plan))
     } else {
@@ -1656,7 +1660,7 @@ mod tests {
             .expect("source int identity encodes to a representation plan");
         assert_eq!(expr_plan.result, FragTy::IntCarrier);
         assert!(
-            !expr_fragment_plan_has_face(&expr_plan),
+            !expr_fragment_plan_has_face(&expr_plan, &FragHostTable::placeholder()),
             "carrier identity must not have a rendered proof face"
         );
         assert!(

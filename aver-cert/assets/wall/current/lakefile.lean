@@ -15,6 +15,7 @@ lean_lib «CertPrelude» where
     `EnvelopeAcceptTransport, `ConstructVerbatimSoundness, `StringSoundness,
     `WidenedEnvelope, `DeclaredIndexEnvelope, `DeclaredEnvelopeAcceptTransport,
     `ClaimAxes, `ExprFragmentSemantics, `InterpreterSequencing,
+    `RecordComputeBridge,
     `ExprFragmentSoundness, `FieldProjectionSoundness, `StandardFace,
     `RecursionSoundness, `MutualRecursionSoundness,
     `CompositionSoundness, `AcceptanceSoundnessCore, `DischargeExprFragment,

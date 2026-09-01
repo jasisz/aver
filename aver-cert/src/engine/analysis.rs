@@ -391,6 +391,24 @@ fn runtime_contracts_for_certs<'a>(certs: impl IntoIterator<Item = &'a Cert>) ->
             has_add = true;
             continue;
         }
+        if c.record_compute_face().is_some() {
+            // Twin of the wall's `useSymFragment` role accounting: disclose
+            // exactly the roles the encoded compute plan calls.
+            if let Cert::ExprFragment { plan, .. } = c.inner() {
+                for node in &plan.body.nodes {
+                    if let FragNodeKind::HostCall { role, .. } = &node.kind {
+                        match role {
+                            FragHostRole::Box => has_box = true,
+                            FragHostRole::Add => has_add = true,
+                            FragHostRole::Sub => has_sub = true,
+                            FragHostRole::Mul => has_mul = true,
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            continue;
+        }
         if c.tag_dispatch_face().is_some() {
             // Both arms box their Int constant (twin of the wall's
             // `useFragBlockFuel` role accounting for the encoded plan).

@@ -355,12 +355,14 @@ fn check_expr_fragment_plan_object(
     // without its own admission.
     let int_cmp = expr_fragment_int_cmp_bool_face(&plan).is_some()
         || expr_fragment_int_select_face(&plan).is_some();
+    let record_compute = expr_fragment_record_compute_face(&plan, &host_table).is_some();
     if (expr_fragment_plan_has_host_calls(&plan) || plan.result == FragTy::IntCarrier)
         && expr_fragment_int_add_face(&plan).is_none()
         && !tag_dispatch
         && !vector_get
         && !record_proj
         && !int_cmp
+        && !record_compute
     {
         return Err(format!(
             "plan for `{export_name}` has no rendered proof face: Int-carrier results \
@@ -377,6 +379,7 @@ fn check_expr_fragment_plan_object(
         && !tag_dispatch
         && !vector_get
         && !record_proj
+        && !record_compute
     {
         return Err(format!(
             "plan for `{export_name}` has no rendered proof face: user-ADT references \

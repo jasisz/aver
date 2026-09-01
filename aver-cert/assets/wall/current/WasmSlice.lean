@@ -517,6 +517,56 @@ def exprRecordProjTypesMatch
       | _, _ => false
   | none => false
 
+/-- Exact function-type pin: the decoded entry is a plain func type with
+    EXACTLY the given parameter and result lists. -/
+def checkFuncTypeExact (params results : List CertDecode.ValType)
+    (entry : CertDecode.TypeEntry) : Bool :=
+  match entry.form, entry.composite with
+  | .plain, .funcType ps rs => decide (ps = params) && decide (rs = results)
+  | _, _ => false
+
+/-- Byte-level recognizer of the record projection-compute shape (mirror of
+    `StandardFace.classifyRecordCompute`'s struct-index core; lives here
+    because WasmSlice cannot import StandardFace): every parameter is an
+    opaque record reference, at least one node computes, and every cited
+    user-struct index agrees on one pinned index. -/
+def exprRecordComputeStructIdx?
+    (plan : AverCert.Schema.ExprFragmentRawPlan) : Option Nat :=
+  if plan.params.all (· == .adtRef) &&
+      plan.body.nodes.any (fun n =>
+        match n.kind with
+        | .structNew _ _ => true
+        | .hostCall _ _ _ => true
+        | _ => false) then
+    match plan.body.nodes.filterMap (fun n =>
+        match n.kind with
+        | .structGetUser tyIdx _ _ => some tyIdx
+        | .structNew tyIdx _ => some tyIdx
+        | _ => none) with
+    | [] => none
+    | i :: rest => if rest.all (· == i) then some i else none
+  else none
+
+/-- Nominal signature of a compute-shape export: k references to the pinned
+    struct in, and the declared record/carrier/i32 result out. -/
+def exprRecordComputeTypesMatch
+    (modBytes modLen typeIdx carrier structIdx : Nat)
+    (plan : AverCert.Schema.ExprFragmentRawPlan) : Bool :=
+  let result? : Option CertDecode.ValType :=
+    match plan.result with
+    | .adtRef => some (nullableRefType structIdx)
+    | .intCarrier => some (nullableRefType carrier)
+    | .boolI32 => some (.numeric 0x7f)
+    | _ => none
+  match result? with
+  | some result =>
+      typeSectionMatches
+        (checkFuncTypeExact
+          (List.replicate plan.params.length (nullableRefType structIdx))
+          [result])
+        modBytes modLen typeIdx
+  | none => false
+
 /-- Opaque references fail closed unless the plan has one of the four admitted
     faces: the field-projection face (whose nominal signature and field type are
     decoded above), the tag-dispatch face (whose i32 tag field is decoded
@@ -543,7 +593,12 @@ def exprFragmentNominalTypesMatch
                 | some (structIdx, field) =>
                     exprRecordProjTypesMatch
                       modBytes modLen typeIdx carrier structIdx field
-                | none => false
+                | none =>
+                    match exprRecordComputeStructIdx? plan with
+                    | some structIdx =>
+                        exprRecordComputeTypesMatch
+                          modBytes modLen typeIdx carrier structIdx plan
+                    | none => false
   else true
 
 def isNonnegativeNullableRef : CertDecode.ValType → Bool
@@ -839,6 +894,18 @@ def recordParamFuncTypeMatches
   match funcBindingForExport modBytes modLen exportName with
   | some binding =>
       typeSectionMatches (checkRecordParamFuncType structIdx)
+        modBytes modLen binding.typeIdx
+  | none => false
+
+/-- Exact function-type pin against the module bytes for one certified
+    export: resolve its function binding and require the declared type to be
+    exactly the given parameter/result lists. -/
+def funcTypeMatchesExact
+    (modBytes modLen : Nat) (exportName : ByteSeq)
+    (params results : List CertDecode.ValType) : Bool :=
+  match funcBindingForExport modBytes modLen exportName with
+  | some binding =>
+      typeSectionMatches (checkFuncTypeExact params results)
         modBytes modLen binding.typeIdx
   | none => false
 

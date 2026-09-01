@@ -6,6 +6,7 @@ standard domain, codomain, or representation relations of a known family.
 -/
 import AcceptedArtifactCore
 import ConstructVerbatimSoundness
+import RecordComputeBridge
 import FieldProjectionSoundness
 import StringSoundness
 import DeclaredEnvelopeAcceptTransport
@@ -846,6 +847,372 @@ noncomputable def genericFragmentAllowed (plan : ExprFragmentRawPlan) : Bool :=
     plan.result != .intCarrier &&
     genericFragmentAllowedFuel (sizeOf plan.body + 1) plan.body
 
+/-! ### Record projection-compute face (plan-as-claim over one flat Int record)
+
+The face admits k record parameters of ONE pinned struct type whose fields
+are all Int carriers, a body over the bridge's v1 node set, and a
+record/Int/Bool result. Its meaning is the plan itself: the obligation's
+model RUNS the checked plan over source values
+(`RecordComputeBridge.sourceRunBlock`), so the report shows the exact
+expression the bytes compute and no per-shape model term exists to get
+wrong. -/
+
+/-- Host slots of the compute face: the byte-derived role table lowered to
+    the canonical `if fn = idx` chain; `box` wires the audited `boxRef`,
+    add/sub/mul/eq wire the obligation's contract slots, and the two roles
+    the face's grammar never cites wire trap-only slots at their honest
+    arities. -/
+def recordComputeSlots
+    (carrier : Nat) (add sub mul eq : List WVal → Option WVal) :
+    List (HostRole × Nat) → HostTbl
+  | [] => fun _ => none
+  | (role, idx) :: rest => fun fn =>
+      if fn = idx then
+        some (match role with
+          | .box => ((1 : Nat), boxRef carrier)
+          | .add => ((2 : Nat), add)
+          | .mul => ((2 : Nat), mul)
+          | .sub => ((2 : Nat), sub)
+          | .eq => ((2 : Nat), eq)
+          | .toIndex => ((1 : Nat), fun _ => none)
+          | .cmp => ((2 : Nat), fun _ => none))
+      else recordComputeSlots carrier add sub mul eq rest fn
+
+def recordComputeHost (carrier : Nat) (hostTable : List (HostRole × Nat)) :
+    HostBuilder :=
+  fun add sub mul _stringEq _stringConcat _toIndex _cmp eq =>
+    recordComputeSlots carrier add sub mul eq hostTable
+
+structure RecordComputeFace where
+  structIdx : Nat
+deriving Repr, DecidableEq
+
+private theorem recordComputeHostRoleIdx_mem_pair
+    (hostTable : List (HostRole × Nat)) (role : HostRole) (idx : Nat)
+    (hLookup : AverCert.PlanCheck.hostRoleIdx? hostTable role = some idx) :
+    (role, idx) ∈ hostTable := by
+  induction hostTable with
+  | nil => simp [AverCert.PlanCheck.hostRoleIdx?] at hLookup
+  | cons head rest ih =>
+      rcases head with ⟨headRole, headIdx⟩
+      by_cases hRole : headRole = role
+      · subst headRole
+        simp [AverCert.PlanCheck.hostRoleIdx?] at hLookup
+        subst idx
+        simp
+      · simp [AverCert.PlanCheck.hostRoleIdx?, hRole] at hLookup
+        simp [ih hLookup]
+
+/-- Discharge-facing binding lemma: over a byte-derived role table whose
+    indices are pairwise distinct, the compute-face slots bind the index the
+    table resolves for each ADMITTED role (`box`/`add`/`sub`/`mul`) to
+    exactly that role's arity and wired contract function — `box` wires the
+    audited `boxRef`. This is the single fact the discharge needs to satisfy
+    the bridge's `hHost` hypothesis. -/
+theorem recordComputeSlots_bind
+    (carrier : Nat) (add sub mul eq : List WVal → Option WVal)
+    (hostTable : List (HostRole × Nat))
+    (hDistinct : AverCert.PlanCheck.hostTableIndicesDistinct hostTable = true)
+    (role : HostRole) (idx : Nat)
+    (hRole : role ∈ [HostRole.box, HostRole.add, HostRole.sub, HostRole.mul])
+    (hLookup : AverCert.PlanCheck.hostRoleIdx? hostTable role = some idx) :
+    recordComputeSlots carrier add sub mul eq hostTable idx =
+      some (RecordComputeBridge.roleArity role,
+        RecordComputeBridge.roleFn (boxRef carrier) add sub mul role) := by
+  induction hostTable with
+  | nil => simp [AverCert.PlanCheck.hostRoleIdx?] at hLookup
+  | cons head rest ih =>
+      rcases head with ⟨headRole, headIdx⟩
+      simp only [AverCert.PlanCheck.hostTableIndicesDistinct,
+        AverCert.PlanCheck.natListNoDup, List.map_cons,
+        Bool.and_eq_true] at hDistinct
+      rcases hDistinct with ⟨hHeadFresh, hRestDistinct⟩
+      by_cases hR : headRole = role
+      · subst headRole
+        simp [AverCert.PlanCheck.hostRoleIdx?] at hLookup
+        subst idx
+        simp only [List.mem_cons, List.not_mem_nil, or_false] at hRole
+        rcases hRole with rfl | rfl | rfl | rfl <;>
+          simp [recordComputeSlots, RecordComputeBridge.roleArity,
+            RecordComputeBridge.roleFn]
+      · have hTailLookup :
+            AverCert.PlanCheck.hostRoleIdx? rest role = some idx := by
+          simpa [AverCert.PlanCheck.hostRoleIdx?, hR] using hLookup
+        have hPairMem : (role, idx) ∈ rest :=
+          recordComputeHostRoleIdx_mem_pair rest role idx hTailLookup
+        have hNe : idx ≠ headIdx := by
+          intro hEqIdx
+          subst idx
+          simp at hHeadFresh
+          exact hHeadFresh role hPairMem
+        change (if idx = headIdx then _ else
+          recordComputeSlots carrier add sub mul eq rest idx) = _
+        rw [if_neg hNe]
+        exact ih hRestDistinct hTailLookup
+
+
+/-- The user-struct index a node cites, if any. -/
+def fragNodeStructIdx? : FragNodeKind → Option Nat
+  | .structGetUser tyIdx _ _ => some tyIdx
+  | .structNew tyIdx _ => some tyIdx
+  | _ => none
+
+/-- Executable admission of one node kind against the byte-derived role
+    table: exactly the bridge's v1 node set, with every host call citing the
+    table's index for its role at the role's arity. -/
+def recordComputeNodeOk
+    (hostTable : List (HostRole × Nat)) : FragNodeKind → Bool
+  | .local _ => true
+  | .constI64 _ => true
+  | .structGetUser _ _ _ => true
+  | .structNew _ _ => true
+  | .hostCall role f args =>
+      (AverCert.PlanCheck.hostRoleIdx? hostTable role == some f) &&
+        (match role with
+          | .box => args.length == 1
+          | .add | .sub | .mul => args.length == 2
+          | _ => false)
+  | _ => false
+
+/-- Classifier of the compute face: every parameter is an opaque record
+    reference, every node is in the admitted set, at least one node computes
+    (a host call or a construction — which also rules the two-node
+    projection faces out), the result is a record/Int/Bool, and every cited
+    user-struct index agrees on ONE pinned index. -/
+def classifyRecordCompute
+    (hostTable : List (HostRole × Nat)) (plan : ExprFragmentRawPlan) :
+    Option RecordComputeFace :=
+  if plan.params.all (· == .adtRef) &&
+      plan.body.nodes.all (fun n => recordComputeNodeOk hostTable n.kind) &&
+      plan.body.nodes.any (fun n =>
+        match n.kind with
+        | .structNew _ _ => true
+        | .hostCall _ _ _ => true
+        | _ => false) &&
+      (plan.result == .adtRef || plan.result == .intCarrier ||
+        plan.result == .boolI32) then
+    match plan.body.nodes.filterMap (fun n => fragNodeStructIdx? n.kind) with
+    | [] => none
+    | i :: rest =>
+        if rest.all (· == i) &&
+            RecordComputeBridge.planTypedB i
+              (fun nodeId =>
+                ((plan.body.nodes[nodeId]?).map (fun n => n.ty)).getD .i64)
+              plan.params plan.body.nodes then
+          some { structIdx := i }
+        else none
+  else none
+
+/-- The declared wasm result type of a compute-face plan: a record result is
+    the pinned struct reference, an Int result the carrier reference, a Bool
+    result the i32. Anything else has no certified signature. -/
+def recordComputeResultValType (carrier structIdx : Nat) :
+    FragTy → Option CertDecode.ValType
+  | .adtRef => some (AverCert.WasmSlice.nullableRefType structIdx)
+  | .intCarrier => some (AverCert.WasmSlice.nullableRefType carrier)
+  | .boolI32 => some (.numeric 0x7f)
+  | _ => none
+
+/-- Domain representation of the compute face: pointwise-SRepr inputs whose
+    source shapes match the plan's declared parameter types. -/
+def recordComputeDomRepr (carrier structIdx : Nat) (params : List FragTy) :
+    CarrierSpec carrier → List RecordComputeBridge.SVal → List WVal → Prop :=
+  fun S svs vs =>
+    RecordComputeBridge.SReprAll S.Repr structIdx svs vs ∧
+    svs.length = params.length ∧
+    ∀ (i : Nat) (sv : RecordComputeBridge.SVal), svs[i]? = some sv →
+      params[i]? = some (RecordComputeBridge.svalTy sv)
+
+/-- Codomain representation: the model produced a source value and the
+    machine word represents it. -/
+def recordComputeCodRepr (carrier structIdx : Nat) :
+    CarrierSpec carrier → Option RecordComputeBridge.SVal → WVal → Prop :=
+  fun S o w => ∃ sv, o = some sv ∧
+    RecordComputeBridge.SRepr S.Repr structIdx sv w
+
+/-- The compute face's model IS the checked plan, run by the audited source
+    evaluator (at the wall's audited fixed fuel `PlanCheck.maxFuel` — the same
+    fuel the canonical lowering and the bridge's completeness speak at, so the
+    discharge needs no fuel-monotonicity step). -/
+def recordComputeModel (body : FragBlock) :
+    List RecordComputeBridge.SVal → Option RecordComputeBridge.SVal :=
+  fun svs =>
+    RecordComputeBridge.sourceRunBlock AverCert.PlanCheck.maxFuel body svs
+
+/-- The compute face as a standard face: the domain is the source values of
+    the k record parameters, the codomain the (optional) source result, and
+    the model IS the checked plan, run by the audited source evaluator. -/
+noncomputable def recordCompute (carrier : Nat) (face : RecordComputeFace)
+    (hostTable : List (HostRole × Nat)) (plan : ExprFragmentRawPlan) :
+    FaceSpec where
+  carrier := carrier
+  Dom := List RecordComputeBridge.SVal
+  Cod := Option RecordComputeBridge.SVal
+  domRepr := recordComputeDomRepr carrier face.structIdx plan.params
+  codRepr := recordComputeCodRepr carrier face.structIdx
+  host := recordComputeHost carrier hostTable
+  model? := some (recordComputeModel plan.body)
+
+/-- The declared face carried by a record projection-compute claim. Byte
+    conjuncts: the pinned struct's type-section entry IS the wall lowering of
+    an all-Int flat record declaration at that index; the certified export's
+    declared signature is EXACTLY k references to the pinned struct in and
+    the declared result out; the classifier fired on this plan at this face;
+    the byte-derived carrier is the claimed one. Meaning conjuncts: the
+    obligation's Dom/Cod/representations/host/model are the wall's compute
+    face terms over the checked plan (`StandardFace.Matches`). -/
+def recordComputeDeclaredFace
+    (modBytes modLen : Nat) (claim : SymFragmentClaim)
+    (plan : ExprFragmentRawPlan) (face : RecordComputeFace) : Prop :=
+  claim.obligation.policy = .simulatesModel ∧
+  claim.obligation.carrier = claim.carrier ∧
+  classifyRecordCompute claim.hostTable plan = some face ∧
+  ∃ (fields : List TypeDecl) (resultTy : CertDecode.ValType),
+    (fields.all fun f => match f with
+      | .intCarrier => true
+      | _ => false) = true ∧
+    fields.length ≠ 0 ∧
+    checkRecordDecl (.record face.structIdx fields) = true ∧
+    CertDecode.carrierState modBytes modLen = some (some claim.carrier) ∧
+    AverCert.WasmSlice.typeSectionMatches
+      (fun entry =>
+        decide (lowerTypeDecl claim.carrier lowerTypeDeclFuel
+          (.record face.structIdx fields) = some entry))
+      modBytes modLen face.structIdx = true ∧
+    recordComputeResultValType claim.carrier face.structIdx plan.result =
+      some resultTy ∧
+    AverCert.WasmSlice.funcTypeMatchesExact
+      modBytes modLen claim.exportNameBytes
+      (List.replicate plan.params.length
+        (AverCert.WasmSlice.nullableRefType face.structIdx))
+      [resultTy] = true ∧
+    (StandardFace.known
+      (recordCompute claim.carrier face claim.hostTable plan)).Matches
+      claim.obligation
+
+/-- The node kinds the compute classifier's any-fact counts: a construction
+    or a host call. Named so the non-overlap lemmas below can cite one term. -/
+def fragNodeComputes (n : FragNode) : Bool :=
+  match n.kind with
+  | .structNew _ _ => true
+  | .hostCall _ _ _ => true
+  | _ => false
+
+/-- Structural content of a fired compute classifier: the four Bool facts of
+    its admission condition (all-`.adtRef` parameters, every node admitted,
+    at least one computing node, record/Int/Bool result). The pinned-index
+    fact is deliberately absent — non-overlap needs only the condition. -/
+theorem classifyRecordCompute_spec
+    (hostTable : List (HostRole × Nat)) (plan : ExprFragmentRawPlan)
+    (face : RecordComputeFace)
+    (h : classifyRecordCompute hostTable plan = some face) :
+    plan.params.all (· == .adtRef) = true ∧
+    plan.body.nodes.all (fun n => recordComputeNodeOk hostTable n.kind) = true ∧
+    plan.body.nodes.any fragNodeComputes = true ∧
+    (plan.result == .adtRef || plan.result == .intCarrier ||
+      plan.result == .boolI32) = true := by
+  simp only [classifyRecordCompute] at h
+  split at h
+  case isTrue hcond =>
+    simp only [Bool.and_eq_true] at hcond
+    obtain ⟨⟨⟨h1, h2⟩, h3⟩, h4⟩ := hcond
+    exact ⟨h1, h2, h3, h4⟩
+  case isFalse => exact absurd h (by simp)
+
+/-- An all-`.adtRef` parameter list is never one of the Int-carrier parameter
+    lists the exact-pinned Int classifiers require (an empty list fails all
+    three as well). -/
+theorem allAdtRef_ne_intLists
+    (params : List FragTy)
+    (hAll : params.all (· == .adtRef) = true) :
+    params ≠ [.intCarrier] ∧ params ≠ [.adtRef, .intCarrier] ∧
+      params ≠ [.intCarrier, .intCarrier] := by
+  refine ⟨?_, ?_, ?_⟩ <;> intro hEq <;> rw [hEq] at hAll <;> simp at hAll
+
+/-- A fired tag-dispatch classifier's body carries an `i32.eq` primitive node
+    (the five-node match's `n3`) — a kind the compute face's node admission
+    rejects. -/
+theorem classifyTagDispatch_hasPrim
+    (plan : ExprFragmentRawPlan) (face : TagDispatchFace)
+    (h : classifyTagDispatch plan = some face) :
+    ∃ n ∈ plan.body.nodes, ∃ args, n.kind = .prim .i32Eq args := by
+  unfold classifyTagDispatch at h
+  split at h
+  case isFalse => exact absurd h (by simp)
+  case isTrue =>
+    split at h
+    case h_2 => exact absurd h (by simp)
+    case h_1 n0 n1 n2 n3 n4 hnodes =>
+      split at h
+      case h_2 => exact absurd h (by simp)
+      case h_1 optIdx tag hitBlk missBlk h0 h1 h2 h3 h4 =>
+        exact ⟨n3, by rw [hnodes]; simp, [1, 2], h3⟩
+
+/-- The compute face's node admission has no `prim` arm: a body whose every
+    node passes `recordComputeNodeOk` contains no primitive node. -/
+theorem recordComputeNodeOk_no_prim
+    (hostTable : List (HostRole × Nat)) (nodes : List FragNode)
+    (hAll : nodes.all (fun n => recordComputeNodeOk hostTable n.kind) = true)
+    (n : FragNode) (hMem : n ∈ nodes) (op : FragPrim) (args : List Nat) :
+    n.kind ≠ .prim op args := by
+  intro hkind
+  simp only [List.all_eq_true] at hAll
+  have hOk := hAll n hMem
+  rw [hkind] at hOk
+  simp [recordComputeNodeOk] at hOk
+
+/-- The two-node opaque projection body computes nothing: no construction
+    and no host call, against the compute classifier's any-fact. -/
+theorem exprProjectionFace?_no_compute
+    (plan : ExprFragmentRawPlan) (p : Nat × Nat)
+    (h : AverCert.WasmSlice.exprProjectionFace? plan = some p) :
+    plan.body.nodes.any fragNodeComputes = false := by
+  unfold AverCert.WasmSlice.exprProjectionFace? at h
+  split at h
+  case isFalse => exact absurd h (by simp)
+  case isTrue =>
+    split at h
+    case h_2 => exact absurd h (by simp)
+    case h_1 n0 n1 hnodes =>
+      split at h
+      case h_2 => exact absurd h (by simp)
+      case h_1 structIdx fieldIdx h0 h1 =>
+        rw [hnodes]
+        simp [fragNodeComputes, h0, h1]
+
+/-- The two-node record-projection body computes nothing either. -/
+theorem exprRecordProjFace?_no_compute
+    (plan : ExprFragmentRawPlan) (structIdx field : Nat)
+    (h : AverCert.WasmSlice.exprRecordProjFace? plan
+      = some (structIdx, field)) :
+    plan.body.nodes.any fragNodeComputes = false := by
+  obtain ⟨-, -, hbody⟩ :=
+    AverCert.WasmSlice.exprRecordProjFace?_spec plan structIdx field h
+  rw [hbody]
+  simp [fragNodeComputes]
+
+/-- The generic gate's walker rejects every construction and host call, so a
+    walked body has no node the compute classifier's any-fact counts. -/
+theorem genericFragmentAllowedFuel_no_compute
+    (fuel : Nat) (block : FragBlock)
+    (h : genericFragmentAllowedFuel fuel block = true) :
+    block.nodes.any fragNodeComputes = false := by
+  cases fuel with
+  | zero => simp [genericFragmentAllowedFuel] at h
+  | succ fuel =>
+      simp only [genericFragmentAllowedFuel, List.all_eq_true] at h
+      simp only [List.any_eq_false]
+      intro n hMem
+      have hn := (Bool.and_eq_true _ _).mp (h n hMem) |>.2
+      cases hkind : n.kind
+      case structNew tyIdx args =>
+        rw [hkind] at hn
+        simp at hn
+      case hostCall role funcIdx args =>
+        rw [hkind] at hn
+        simp at hn
+      all_goals simp [fragNodeComputes, hkind]
+
 noncomputable def symFragmentFace (claim : SymFragmentClaim) : Option StandardFace :=
   match AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan
       claim.hostTable claim.structTable claim.plan with
@@ -929,6 +1296,72 @@ theorem symFragmentFace_none_of_recordProj
   simp [hIntAdd, hProjection, hTagDispatch, hVectorGet, hIntCmpBool, hIntSelect,
     hGeneric]
 
+/-- No `FaceSpec` branch of the classify chain fires on a compute-face plan,
+    so trying the compute face on the chain's `none` arm neither shadows nor
+    reorders any existing face. Parameter kills: every compute parameter is
+    `.adtRef`, while `classifyIntAdd`, `classifyVectorGetOrDefault` and the
+    two Int comparison classifiers pin Int-carrier parameter lists (an empty
+    list fails all four as well). Body kills: `classifyTagDispatch` needs an
+    `i32.eq` primitive the node admission rejects; `exprProjectionFace?` and
+    the generic walker admit no construction or host call, against the
+    classifier's any-fact; a nonempty all-`.adtRef` parameter list is
+    rejected by the generic gate directly. -/
+theorem symFragmentFace_none_of_recordCompute
+    (claim : SymFragmentClaim) (plan : ExprFragmentRawPlan)
+    (hEncode : AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan
+      claim.hostTable claim.structTable claim.plan = some plan)
+    (face : RecordComputeFace)
+    (hFace : classifyRecordCompute claim.hostTable plan = some face) :
+    symFragmentFace claim = none := by
+  obtain ⟨hparams, hAllOk, hAny, -⟩ :=
+    classifyRecordCompute_spec claim.hostTable plan face hFace
+  obtain ⟨hne1, hne2, hne3⟩ := allAdtRef_ne_intLists plan.params hparams
+  unfold symFragmentFace
+  rw [hEncode]
+  have hIntAdd : classifyIntAdd plan = none := by
+    unfold classifyIntAdd
+    simp [hne1]
+  have hProjection : AverCert.WasmSlice.exprProjectionFace? plan = none := by
+    cases hp : AverCert.WasmSlice.exprProjectionFace? plan with
+    | none => rfl
+    | some p =>
+        exact absurd (exprProjectionFace?_no_compute plan p hp) (by simp [hAny])
+  have hTagDispatch : classifyTagDispatch plan = none := by
+    cases ht : classifyTagDispatch plan with
+    | none => rfl
+    | some f =>
+        obtain ⟨n, hMem, args, hkind⟩ := classifyTagDispatch_hasPrim plan f ht
+        exact absurd hkind
+          (recordComputeNodeOk_no_prim claim.hostTable plan.body.nodes hAllOk
+            n hMem .i32Eq args)
+  have hVectorGet : classifyVectorGetOrDefault plan = none := by
+    unfold classifyVectorGetOrDefault
+    simp [hne2]
+  have hIntCmpBool : classifyIntCmpBool plan = none := by
+    unfold classifyIntCmpBool
+    simp [hne3]
+  have hIntSelect : classifyIntSelect plan = none := by
+    unfold classifyIntSelect
+    simp [hne3]
+  have hGeneric : genericFragmentAllowed plan = false := by
+    unfold genericFragmentAllowed
+    cases hps : plan.params with
+    | nil =>
+        cases hw : genericFragmentAllowedFuel (sizeOf plan.body + 1) plan.body
+          with
+        | false => simp [hw]
+        | true =>
+            exact absurd (genericFragmentAllowedFuel_no_compute _ _ hw)
+              (by simp [hAny])
+    | cons p ps =>
+        have hp : p = .adtRef := by
+          rw [hps] at hparams
+          simp at hparams
+          exact hparams.1
+        simp [hp]
+  simp [hIntAdd, hProjection, hTagDispatch, hVectorGet, hIntCmpBool, hIntSelect,
+    hGeneric]
+
 def symFragmentMatches
     (modBytes modLen : Nat)
     (roles : CertDecode.AddSub.Roles) (claim : SymFragmentClaim) : Prop :=
@@ -946,7 +1379,11 @@ def symFragmentMatches
         | some plan =>
             match AverCert.WasmSlice.exprRecordProjFace? plan with
             | some _ => recordParamDeclaredFace modBytes modLen claim plan
-            | none => False
+            | none =>
+                match classifyRecordCompute claim.hostTable plan with
+                | some face =>
+                    recordComputeDeclaredFace modBytes modLen claim plan face
+                | none => False
         | none => False
 
 /-! ### Declared-index envelope faces (user ADT claims)
