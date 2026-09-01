@@ -52,6 +52,7 @@ fn minimal_fixture() -> Fixture {
     let manifest = format!(
         r#"{{
   "schema_version": {schema},
+  "laws": [],
   "wasm_sha256": "{hash}",
   "format": {{ "version": {version}, "wall_id": "{wall}" }},
   "artifact_certificate_root": "{root_name}",

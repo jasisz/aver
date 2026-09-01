@@ -627,6 +627,7 @@ fn render_final() -> String {
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_manifest(
     analysis: &Analysis,
     model_info: &ModelInfo,

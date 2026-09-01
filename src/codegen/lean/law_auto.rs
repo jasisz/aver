@@ -313,6 +313,7 @@ fn emit_hand_sidecar_law(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn emit_verify_law_forall_auto_proof(
     vb: &VerifyBlock,
     law: &VerifyLaw,
@@ -591,6 +592,7 @@ fn emit_finite_int_domain_law(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emit_verify_law_forall_auto_proof_inner(
     vb: &VerifyBlock,
     law: &VerifyLaw,
