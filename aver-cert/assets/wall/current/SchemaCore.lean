@@ -502,15 +502,15 @@ inductive HostRole where
       `i32` sentinel `-1`/`0`/`1` (`CertPrelude.cmpW`). The emitter never reads
       it as a Boolean: it always follows the call with `i32.const 0` and a
       signed relational operator, so the node's result type is `rawI32`, not
-      `boolI32`. The ASSUMED CONTRACT covers small-band carrier operands only —
+      `boolI32`. The ASSUMED CONTRACT covers a CANONICAL CARRIER PAIR only —
       see the note on `Obligation.holds`. -/
   | cmp
   /-- `__aint_eq`: equality of two Int carriers, yielding the `0`/`1` wasm
       Boolean directly (`CertPrelude.eqW`). Unlike `cmp` its result IS the
       source-level Boolean, so the node's result type is `boolI32` and the
-      emitter appends no comparison tail. Its assumed contract is small-band
-      for the same reason `cmp`'s is, and for one more: `__aint_eq` decides a
-      `Small`/`Big` pair structurally. -/
+      emitter appends no comparison tail. Its assumed contract is over a
+      canonical carrier pair for the same reason `cmp`'s is, and for one more:
+      `__aint_eq` decides a `Small`/`Big` pair structurally. -/
   | eq
 deriving Repr, DecidableEq
 
@@ -552,6 +552,21 @@ mutual
         the byte-exact gate, mirroring how `structGetUser` binds its projection
         index. -/
     | structNew (tyIdx : Nat) (args : List Nat)
+    /-- The emitter's monolithic sign template for comparing a COMPUTED Int
+        carrier against an i64 literal, without calling `__aint_cmp`
+        (`from_mir/builtins.rs::emit_aint_cmp_const`). The operand is already on
+        the stack; the template stashes it in the scratch local, branches on
+        `limbs = null`, and decides either by the native i64 compare of the
+        `small` field against `constant` or — for a limb-carrying operand,
+        whose value is outside the i64 band — by the sign field alone.
+
+        `scratch` is the local slot the template writes; the checker pins it to
+        `params.length`, the one declared scratch every plan-first island
+        reserves, so the template can never clobber a parameter. `constant` is
+        pinned to the i64 band, which is what makes the sign arm exact. Like
+        `vectorGetOrDefault` this is ONE node: the whole instruction list
+        lowers and runs together. -/
+    | intSignCmp (op : SymIntCmp) (constant : Int) (scratch : Nat) (value : Nat)
   deriving Repr
 
   /-- A typed value definition. `id` must match its position in the containing
@@ -943,9 +958,26 @@ inductive ReprAll (R : Int → WVal → Prop) : List Int → List WVal → Prop
 
 /-- The representation-relation faces a simulation certificate is stated over
     (the Int carrier `{i64 small, ref limbs, i32 sign}`). Bundled in the audited
-    schema so `Obligation.holds` is self-contained. -/
+    schema so `Obligation.holds` is self-contained.
+
+    `Canon` is the runtime's NORMAL FORM on carrier words. The emitted runtime
+    routes every carrier it builds through `__aint_normalize` (`wat/normalize.wat`),
+    which fixes the representation choice: a value is `Small` (`limbs = null`)
+    exactly when it fits the i64 band `[-2^63, 2^63)`, and `Big` otherwise, with
+    tight limbs and a non-zero sign. `Canon` names that state abstractly and the
+    two axioms below say only what the helpers need:
+
+    * `canonSmall` — the boxing helper's output (a literal small carrier for an
+      i64-band value) is canonical;
+    * `canonBig` — a canonical carrier that CARRIES LIMBS represents a value
+      outside the i64 band and has a non-zero sign.
+
+    Nothing else about `Canon` is assumed. It is what makes the STRUCTURAL
+    helpers (`wat/eq.wat`, `wat/cmp.wat`) exact: on a canonical pair, "same
+    shape and same fields" and "same integer" coincide. -/
 structure CarrierSpec (C : Nat) where
   Repr : Int → WVal → Prop
+  Canon : WVal → Prop
   car : ∀ n v, Repr n v →
     (∃ s sg, v = .structv C [.i64v s, .null, .i32v sg]) ∨
     (∃ s lty les sg, v = .structv C [.i64v s, .arr lty les, .i32v sg])
@@ -953,6 +985,47 @@ structure CarrierSpec (C : Nat) where
   smallElim : ∀ n s sg, Repr n (.structv C [.i64v s, .null, .i32v sg]) → s = n
   bigElim : ∀ n s lty les sg,
       Repr n (.structv C [.i64v s, .arr lty les, .i32v sg]) → ((sg < 0) ↔ (n < 0)) ∧ n ≠ 0
+  canonSmall : ∀ k : Int, -(2 ^ 63 : Int) ≤ k → k < 2 ^ 63 → Canon (carrierSmall C k)
+  canonBig : ∀ n s lty les sg,
+      Repr n (.structv C [.i64v s, .arr lty les, .i32v sg]) →
+      Canon (.structv C [.i64v s, .arr lty les, .i32v sg]) →
+      ¬(-(2 ^ 63 : Int) ≤ n ∧ n < 2 ^ 63) ∧ sg ≠ 0
+
+/-- The small-band shape of a canonical comparison contract: literal small
+    carriers inside the i64 band are represented (`smallIntro`) and canonical
+    (`canonSmall`), so the relational contract specialises to the band form the
+    exact-shape comparison faces were written against. -/
+theorem canonicalCmp_smallBand {C : Nat} (S : CarrierSpec C)
+    (cmp : List WVal → Option WVal)
+    (h : ∀ a b va vb r, S.Repr a va → S.Repr b vb → S.Canon va → S.Canon vb →
+      cmp [va, vb] = some r → r = .i32v (cmpW a b)) :
+    ∀ k1 k2 r, -(2 ^ 63 : Int) ≤ k1 → k1 < 2 ^ 63 → -(2 ^ 63 : Int) ≤ k2 → k2 < 2 ^ 63 →
+      cmp [carrierSmall C k1, carrierSmall C k2] = some r → r = .i32v (cmpW k1 k2) :=
+  fun k1 k2 r hlo1 hhi1 hlo2 hhi2 hc =>
+    h k1 k2 _ _ r (S.smallIntro k1) (S.smallIntro k2)
+      (S.canonSmall k1 hlo1 hhi1) (S.canonSmall k2 hlo2 hhi2) hc
+
+/-- Forget the canonicity of an arithmetic contract's RESULT. The faces that
+    predate the canonical-carrier contract consume only the representation
+    conclusion; this is the one-line adapter their discharges apply. -/
+theorem carrierContract_weaken {C : Nat} {S : CarrierSpec C}
+    {op : List WVal → Option WVal} {f : Int → Int → Int}
+    (h : ∀ a b va vb w, S.Repr a va → S.Repr b vb → op [va, vb] = some w →
+      S.Repr (f a b) w ∧ S.Canon w) :
+    ∀ a b va vb w, S.Repr a va → S.Repr b vb → op [va, vb] = some w →
+      S.Repr (f a b) w :=
+  fun a b va vb w h1 h2 h3 => (h a b va vb w h1 h2 h3).1
+
+/-- `canonicalCmp_smallBand` for the equality helper. -/
+theorem canonicalEq_smallBand {C : Nat} (S : CarrierSpec C)
+    (eq : List WVal → Option WVal)
+    (h : ∀ a b va vb r, S.Repr a va → S.Repr b vb → S.Canon va → S.Canon vb →
+      eq [va, vb] = some r → r = .i32v (eqW a b)) :
+    ∀ k1 k2 r, -(2 ^ 63 : Int) ≤ k1 → k1 < 2 ^ 63 → -(2 ^ 63 : Int) ≤ k2 → k2 < 2 ^ 63 →
+      eq [carrierSmall C k1, carrierSmall C k2] = some r → r = .i32v (eqW k1 k2) :=
+  fun k1 k2 r hlo1 hhi1 hlo2 hhi2 hc =>
+    h k1 k2 _ _ r (S.smallIntro k1) (S.smallIntro k2)
+      (S.canonSmall k1 hlo1 hhi1) (S.canonSmall k2 hlo2 hhi2) hc
 
 /-- Standard representation of a single integer result. -/
 def intRepr (S : CarrierSpec C) : Int → WVal → Prop := S.Repr
@@ -1373,48 +1446,50 @@ structure Obligation where
     fuel exhaustion. Each contract is an assumed runtime law: the host helper
     wired to that slot computes the named operation on represented values.
 
+    The three arithmetic premises also conclude that the RESULT is canonical.
+    That is a statement about the helper's output alone: `wat/add.wat`,
+    `wat/sub.wat` and `wat/mul.wat` all end in `__aint_normalize`, so whatever
+    they return is in the runtime's normal form. Nothing is assumed about
+    non-canonical inputs.
+
     The two comparison premises are EXACT on the result, like `_hToIndex`,
     because the helpers leave the carrier — they return a raw `i32` that no
-    representation relation describes. Unlike `_hToIndex` they are quantified
-    over LITERAL `carrierSmall` operands inside the i64 band, not over the
-    representation relation, and that scoping is load-bearing rather than
-    stylistic:
+    representation relation describes. They are quantified over a CANONICAL
+    CARRIER PAIR: two represented operands that are both in the runtime's
+    normal form. That scoping is load-bearing rather than stylistic. Both
+    helpers decide STRUCTURALLY — `wat/eq.wat` compares shape and fields,
+    `wat/cmp.wat` branches on the raw sign fields — so on an arbitrary pair
+    they are not exact at all: a `Small` and a limb-carrying `Big` word can
+    represent the same integer and still compare unequal. Canonicity is
+    exactly the fact that rules that pair out (`CarrierSpec.canonBig`: a
+    canonical limb-carrying word is outside the i64 band, where no canonical
+    `Small` lives).
 
-    * `CarrierSpec.smallIntro` gives `S.Repr k (carrierSmall C k)` for EVERY
-      `k`, so a relational premise would demand agreement between a `Small`
-      operand and a limb-carrying `Big` operand representing the same integer.
-      `__aint_eq` decides that pair STRUCTURALLY (a `Small` against a `Big` is
-      unequal outright), so the relational form is refutable at any carrier
-      specification that models `Big` carriers at all — it would make every
-      comparison obligation vacuous.
-    * `__aint_cmp` decides on the raw sign FIELDS of its operands, which
-      `CarrierSpec.bigElim` leaves unconstrained beyond the sign/zero facts, so
-      a relational premise is not satisfiable there either.
-
-    Both helpers therefore certify over the SMALL BAND ONLY: the two literal
-    three-field carriers `carrierSmall C k` with `k` in `[-2^63, 2^63)`, which
-    is what the emitter's own boxing produces for an i64-sized value. A
-    limb-carrying input is OUTSIDE THE CERTIFIED DOMAIN — the same epistemic
-    position as `toIndexW`'s `-1` region, stated rather than assumed away: the
-    obligation says nothing about it, and the faces' `domRepr` restricts to the
-    same band so the two line up exactly. Neither premise demands trap-freedom;
-    a helper that returns `none` makes the premise vacuous and the run yields
-    nothing, exactly as everywhere else in this denotation. -/
+    A NON-canonical operand is OUTSIDE THE CERTIFIED DOMAIN — the same
+    epistemic position as `toIndexW`'s `-1` region, stated rather than assumed
+    away: the obligation says nothing about it. It is also a state the emitted
+    runtime never builds, because every carrier it produces comes out of
+    `__aint_normalize`. Neither premise demands trap-freedom; a helper that
+    returns `none` makes the premise vacuous and the run yields nothing,
+    exactly as everywhere else in this denotation. -/
 def Obligation.holds (o : Obligation) : Prop :=
   ∀ (S : CarrierSpec o.carrier)
     (add sub mul stringEq : List WVal → Option WVal)
     (stringConcat : Nat → List WVal → Option WVal)
     (toIndex cmp eq : List WVal → Option WVal)
-    (_hadd : ∀ a b va vb w, S.Repr a va → S.Repr b vb → add [va, vb] = some w → S.Repr (a + b) w)
-    (_hsub : ∀ a b va vb w, S.Repr a va → S.Repr b vb → sub [va, vb] = some w → S.Repr (a - b) w)
-    (_hmul : ∀ a b va vb w, S.Repr a va → S.Repr b vb → mul [va, vb] = some w → S.Repr (a * b) w)
+    (_hadd : ∀ a b va vb w, S.Repr a va → S.Repr b vb → add [va, vb] = some w →
+      S.Repr (a + b) w ∧ S.Canon w)
+    (_hsub : ∀ a b va vb w, S.Repr a va → S.Repr b vb → sub [va, vb] = some w →
+      S.Repr (a - b) w ∧ S.Canon w)
+    (_hmul : ∀ a b va vb w, S.Repr a va → S.Repr b vb → mul [va, vb] = some w →
+      S.Repr (a * b) w ∧ S.Canon w)
     (_hStringEq : ∀ a b w, stringEq [a, b] = some w → w = b32 (stringEqW a b))
     (_hStringConcat : ∀ resultTy parts c, stringConcat resultTy [parts] = some c → stringConcatW resultTy parts = some c)
     (_hToIndex : ∀ n v r, S.Repr n v → toIndex [v] = some r → r = .i32v (toIndexW n))
-    (_hCmp : ∀ k1 k2 r, -(2 ^ 63 : Int) ≤ k1 → k1 < 2 ^ 63 → -(2 ^ 63 : Int) ≤ k2 → k2 < 2 ^ 63 →
-      cmp [carrierSmall o.carrier k1, carrierSmall o.carrier k2] = some r → r = .i32v (cmpW k1 k2))
-    (_hEq : ∀ k1 k2 r, -(2 ^ 63 : Int) ≤ k1 → k1 < 2 ^ 63 → -(2 ^ 63 : Int) ≤ k2 → k2 < 2 ^ 63 →
-      eq [carrierSmall o.carrier k1, carrierSmall o.carrier k2] = some r → r = .i32v (eqW k1 k2))
+    (_hCmp : ∀ a b va vb r, S.Repr a va → S.Repr b vb → S.Canon va → S.Canon vb →
+      cmp [va, vb] = some r → r = .i32v (cmpW a b))
+    (_hEq : ∀ a b va vb r, S.Repr a va → S.Repr b vb → S.Canon va → S.Canon vb →
+      eq [va, vb] = some r → r = .i32v (eqW a b))
     (fuel : Nat) (x : o.Dom) (vs : List WVal) (w : WVal),
     o.domRepr S x vs →
     wFuncN o.code (o.host add sub mul stringEq stringConcat toIndex cmp eq) fuel o.self vs = some w →
@@ -1435,16 +1510,19 @@ def Obligation.holdsTotal (o : Obligation) : Prop :=
         (add sub mul stringEq : List WVal → Option WVal)
         (stringConcat : Nat → List WVal → Option WVal)
         (toIndex cmp eq : List WVal → Option WVal)
-        (_hadd : ∀ a b va vb w, S.Repr a va → S.Repr b vb → add [va, vb] = some w → S.Repr (a + b) w)
-        (_hsub : ∀ a b va vb w, S.Repr a va → S.Repr b vb → sub [va, vb] = some w → S.Repr (a - b) w)
-        (_hmul : ∀ a b va vb w, S.Repr a va → S.Repr b vb → mul [va, vb] = some w → S.Repr (a * b) w)
+        (_hadd : ∀ a b va vb w, S.Repr a va → S.Repr b vb → add [va, vb] = some w →
+          S.Repr (a + b) w ∧ S.Canon w)
+        (_hsub : ∀ a b va vb w, S.Repr a va → S.Repr b vb → sub [va, vb] = some w →
+          S.Repr (a - b) w ∧ S.Canon w)
+        (_hmul : ∀ a b va vb w, S.Repr a va → S.Repr b vb → mul [va, vb] = some w →
+          S.Repr (a * b) w ∧ S.Canon w)
         (_hStringEq : ∀ a b w, stringEq [a, b] = some w → w = b32 (stringEqW a b))
         (_hStringConcat : ∀ resultTy parts c, stringConcat resultTy [parts] = some c → stringConcatW resultTy parts = some c)
         (_hToIndex : ∀ n v r, S.Repr n v → toIndex [v] = some r → r = .i32v (toIndexW n))
-        (_hCmp : ∀ k1 k2 r, -(2 ^ 63 : Int) ≤ k1 → k1 < 2 ^ 63 → -(2 ^ 63 : Int) ≤ k2 → k2 < 2 ^ 63 →
-          cmp [carrierSmall o.carrier k1, carrierSmall o.carrier k2] = some r → r = .i32v (cmpW k1 k2))
-        (_hEq : ∀ k1 k2 r, -(2 ^ 63 : Int) ≤ k1 → k1 < 2 ^ 63 → -(2 ^ 63 : Int) ≤ k2 → k2 < 2 ^ 63 →
-          eq [carrierSmall o.carrier k1, carrierSmall o.carrier k2] = some r → r = .i32v (eqW k1 k2))
+        (_hCmp : ∀ a b va vb r, S.Repr a va → S.Repr b vb → S.Canon va → S.Canon vb →
+          cmp [va, vb] = some r → r = .i32v (cmpW a b))
+        (_hEq : ∀ a b va vb r, S.Repr a va → S.Repr b vb → S.Canon va → S.Canon vb →
+          eq [va, vb] = some r → r = .i32v (eqW a b))
         (_hAddTot : ∀ a b va vb, S.Repr a va → S.Repr b vb → ∃ w, add [va, vb] = some w)
         (_hSubTot : ∀ a b va vb, S.Repr a va → S.Repr b vb → ∃ w, sub [va, vb] = some w)
         (x : o.Dom) (vs : List WVal), o.domRepr S x vs →
@@ -1457,16 +1535,19 @@ def Obligation.holdsTotal (o : Obligation) : Prop :=
         (add sub mul stringEq : List WVal → Option WVal)
         (stringConcat : Nat → List WVal → Option WVal)
         (toIndex cmp eq : List WVal → Option WVal)
-        (_hadd : ∀ a b va vb w, S.Repr a va → S.Repr b vb → add [va, vb] = some w → S.Repr (a + b) w)
-        (_hsub : ∀ a b va vb w, S.Repr a va → S.Repr b vb → sub [va, vb] = some w → S.Repr (a - b) w)
-        (_hmul : ∀ a b va vb w, S.Repr a va → S.Repr b vb → mul [va, vb] = some w → S.Repr (a * b) w)
+        (_hadd : ∀ a b va vb w, S.Repr a va → S.Repr b vb → add [va, vb] = some w →
+          S.Repr (a + b) w ∧ S.Canon w)
+        (_hsub : ∀ a b va vb w, S.Repr a va → S.Repr b vb → sub [va, vb] = some w →
+          S.Repr (a - b) w ∧ S.Canon w)
+        (_hmul : ∀ a b va vb w, S.Repr a va → S.Repr b vb → mul [va, vb] = some w →
+          S.Repr (a * b) w ∧ S.Canon w)
         (_hStringEq : ∀ a b w, stringEq [a, b] = some w → w = b32 (stringEqW a b))
         (_hStringConcat : ∀ resultTy parts c, stringConcat resultTy [parts] = some c → stringConcatW resultTy parts = some c)
         (_hToIndex : ∀ n v r, S.Repr n v → toIndex [v] = some r → r = .i32v (toIndexW n))
-        (_hCmp : ∀ k1 k2 r, -(2 ^ 63 : Int) ≤ k1 → k1 < 2 ^ 63 → -(2 ^ 63 : Int) ≤ k2 → k2 < 2 ^ 63 →
-          cmp [carrierSmall o.carrier k1, carrierSmall o.carrier k2] = some r → r = .i32v (cmpW k1 k2))
-        (_hEq : ∀ k1 k2 r, -(2 ^ 63 : Int) ≤ k1 → k1 < 2 ^ 63 → -(2 ^ 63 : Int) ≤ k2 → k2 < 2 ^ 63 →
-          eq [carrierSmall o.carrier k1, carrierSmall o.carrier k2] = some r → r = .i32v (eqW k1 k2))
+        (_hCmp : ∀ a b va vb r, S.Repr a va → S.Repr b vb → S.Canon va → S.Canon vb →
+          cmp [va, vb] = some r → r = .i32v (cmpW a b))
+        (_hEq : ∀ a b va vb r, S.Repr a va → S.Repr b vb → S.Canon va → S.Canon vb →
+          eq [va, vb] = some r → r = .i32v (eqW a b))
         (_hAddTot : ∀ a b va vb, S.Repr a va → S.Repr b vb → ∃ w, add [va, vb] = some w)
         (_hSubTot : ∀ a b va vb, S.Repr a va → S.Repr b vb → ∃ w, sub [va, vb] = some w)
         (_hMulTot : ∀ a b va vb, S.Repr a va → S.Repr b vb → ∃ w, mul [va, vb] = some w)

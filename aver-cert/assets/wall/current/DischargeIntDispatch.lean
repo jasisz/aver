@@ -215,7 +215,8 @@ theorem intDispatch_claim_discharges
   cases fuel with
   | zero => simp [wFuncN] at hRun
   | succ fuel =>
-      exact hCod w (hGeneric S add sub mul stringEq stringConcat toIndex cmp eq hAdd hSub
+      exact hCod w (hGeneric S add sub mul stringEq stringConcat toIndex cmp eq
+        (carrierContract_weaken hAdd) (carrierContract_weaken hSub)
         fuel tag fields n w hCascade hRun)
 
 /-- Per-obligation option-(b) discharge for a concrete Int-dispatch export.
@@ -286,7 +287,8 @@ theorem intDispatch_canonical_discharges
         exact canonicalHostSlots carrier add sub mul hostTable hDistinct
       have hGeneric := IntDispatchSoundness.generic_int_dispatch_certified
         S plan code (host add sub mul stringEq stringConcat toIndex cmp eq) self
-        hostTable add sub hSlots hAdd hSub
+        hostTable add sub hSlots (carrierContract_weaken hAdd)
+        (carrierContract_weaken hSub)
         (intDispatchRoot_of_raw plan hRaw) body hLow hCode
       exact hCod w (hGeneric fuel tag fields n w hCascade hRun)
 

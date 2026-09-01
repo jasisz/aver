@@ -171,6 +171,38 @@ def primBytes : FragPrim → List Nat
   | .i32GeS => [0x4e]
   | .i32And => [0x71]
 
+/-- Byte twin of `PlanLower.intSignCmpBigArm`. -/
+def intSignCmpBigArmBytes (carrier scratch : Nat) : SymIntCmp → Option (List Nat)
+  | .eq => some [0x41, 0x00]
+  | op =>
+      match uleb32 scratch, uleb32 0x02, uleb32 carrier, uleb32 2 with
+      | some scratchB, some getOp, some carrierB, some fieldB =>
+          some ([0x20] ++ scratchB ++ [0xfb] ++ getOp ++ carrierB ++ fieldB ++
+            [0x41, 0x00] ++
+            primBytes (match op with
+              | .lt | .le => FragPrim.i32LtS
+              | _ => FragPrim.i32GtS))
+      | _, _, _, _ => none
+
+/-- Byte twin of `PlanLower.intSignCmpTemplate`: `local.set` (`0x21`), the
+    `limbs = null` test, and an `i32` block-typed `if` whose arms are the byte
+    twins of the two `WInstr` arms. -/
+def intSignCmpTemplateBytes (carrier scratch : Nat) (op : SymIntCmp) (k : Int) :
+    Option (List Nat) :=
+  match uleb32 scratch, uleb32 0x02, uleb32 carrier, uleb32 1, uleb32 0,
+        sleb64 k, intSignCmpBigArmBytes carrier scratch op with
+  | some scratchB, some getOp, some carrierB, some limbsField, some smallField,
+      some kB, some bigBytes =>
+      some ([0x21] ++ scratchB ++
+        [0x20] ++ scratchB ++ [0xfb] ++ getOp ++ carrierB ++ limbsField ++
+        [0xd1] ++
+        [0x04, 0x7f] ++
+        ([0x20] ++ scratchB ++ [0xfb] ++ getOp ++ carrierB ++ smallField ++
+          [0x42] ++ kB ++
+          primBytes (AverCert.PlanLower.intSignCmpSmallPrim op)) ++
+        [0x05] ++ bigBytes ++ [0x0b])
+  | _, _, _, _, _, _, _ => none
+
 /-- Byte and semantic lowering share one symbolic-stack discipline and one
     fail-closed recursion budget.  The aliases retain the public API while
     making divergence between the two lowerers impossible here. -/
@@ -270,6 +302,11 @@ mutual
                         [node.id])
                   | _, _, _, _, _ => none
               | _ => none
+          | .intSignCmp op k scratch value =>
+              match popExpected stack value,
+                    intSignCmpTemplateBytes carrier scratch op k with
+              | some stack', some bytes => some (bytes, node.id :: stack')
+              | _, _ => none
         match lowered? with
         | some (bytes, stack') =>
             match lowerNodesBytesFuel fuel carrier rest stack' with

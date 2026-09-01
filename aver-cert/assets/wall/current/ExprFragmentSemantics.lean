@@ -69,13 +69,16 @@ mutual
     | 0, _, _, _, _, _ => none
     | _fuel + 1, _, [], _, locals, stack => some (.ok locals stack)
     | fuel + 1, carrier, node :: rest, symStack, locals, stack =>
-        let step (symStack' : List Nat) (instr : WInstr) :=
-          match wRunF host ar callee [instr] locals stack with
+        -- `stepN` runs a whole instruction LIST for one node (the monolithic
+        -- templates emit several); `step` is the single-instruction case.
+        let stepN (symStack' : List Nat) (instrs : List WInstr) :=
+          match wRunF host ar callee instrs locals stack with
           | some (.ok locals' stack') =>
               runNodesFuel host ar callee fuel carrier rest
                 (node.id :: symStack') locals' stack'
           | some (.ret value) => some (.ret value)
           | none => none
+        let step (symStack' : List Nat) (instr : WInstr) := stepN symStack' [instr]
         match node.kind with
         | .local index => step symStack (.localGet index)
         | .constBool value => step symStack (.i32Const (if value then 1 else 0))
@@ -115,6 +118,15 @@ mutual
         -- semantics: its face discharges through the audited template
         -- theorem, never through this evaluator (fail-closed here).
         | .vectorGetOrDefault _ _ _ _ => none
+        -- The sign template IS its instruction list: the node steps exactly
+        -- the sequence `PlanLower` emits for it, so plan-walker and lowered
+        -- code agree by construction in both directions.
+        | .intSignCmp op k scratch value =>
+            match popExpected symStack value with
+            | some symStack' =>
+                stepN symStack'
+                  (AverCert.PlanLower.intSignCmpTemplate carrier scratch op k)
+            | none => none
         -- The branch runs on a fresh block stack; already-computed values
         -- under the condition (e.g. the first operand of `Bool.and` over two
         -- encoded comparisons) ride through untouched, mirroring the wasm

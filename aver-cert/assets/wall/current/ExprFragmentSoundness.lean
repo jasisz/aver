@@ -71,6 +71,36 @@ def BlockCorrect (fuel : Nat) : Prop :=
       runBlockFuel host ar callee fuel carrier block locals = some out ->
       wRunF host ar callee instrs locals [] = some out
 
+/-- One node's instruction LIST, then the rest of the block. The monolithic
+    templates emit several instructions per node; `oneThenNodes` is the
+    single-instruction case. -/
+theorem manyThenNodes (fuel : Nat) (hcorrect : NodesCorrect fuel)
+    (host : HostTbl) (ar : Nat -> Option Nat) (callee : Callee)
+    (carrier : Nat) (rest : List FragNode) (nextSym : List Nat)
+    (instrs : List WInstr) (restInstrs : List WInstr) (finalStack : List Nat)
+    (hcalls : nodesCallsOK host ar rest)
+    (hlow : lowerNodesFuel fuel carrier rest nextSym =
+      some (restInstrs, finalStack))
+    (locals stack : List WVal) (out : Out)
+    (hrun :
+      (match wRunF host ar callee instrs locals stack with
+       | some (.ok locals' stack') =>
+           runNodesFuel host ar callee fuel carrier rest nextSym locals' stack'
+       | some (.ret value) => some (.ret value)
+       | none => none) = some out) :
+    wRunF host ar callee (instrs ++ restInstrs) locals stack = some out := by
+  rw [wRunF_append]
+  cases hs : wRunF host ar callee instrs locals stack with
+  | none => simp [hs] at hrun
+  | some stepOut =>
+      cases stepOut with
+      | ret value => simpa [seqOut, hs] using hrun
+      | ok locals' stack' =>
+          simp only [hs] at hrun
+          simp only [seqOut]
+          exact hcorrect host ar callee carrier rest nextSym restInstrs finalStack
+            hcalls hlow locals' stack' out hrun
+
 theorem oneThenNodes (fuel : Nat) (hcorrect : NodesCorrect fuel)
     (host : HostTbl) (ar : Nat -> Option Nat) (callee : Callee)
     (carrier : Nat) (rest : List FragNode) (nextSym : List Nat)
@@ -85,18 +115,9 @@ theorem oneThenNodes (fuel : Nat) (hcorrect : NodesCorrect fuel)
            runNodesFuel host ar callee fuel carrier rest nextSym locals' stack'
        | some (.ret value) => some (.ret value)
        | none => none) = some out) :
-    wRunF host ar callee ([instr] ++ restInstrs) locals stack = some out := by
-  rw [wRunF_append]
-  cases hs : wRunF host ar callee [instr] locals stack with
-  | none => simp [hs] at hrun
-  | some stepOut =>
-      cases stepOut with
-      | ret value => simpa [seqOut, hs] using hrun
-      | ok locals' stack' =>
-          simp only [hs] at hrun
-          simp only [seqOut]
-          exact hcorrect host ar callee carrier rest nextSym restInstrs finalStack
-            hcalls hlow locals' stack' out hrun
+    wRunF host ar callee ([instr] ++ restInstrs) locals stack = some out :=
+  manyThenNodes fuel hcorrect host ar callee carrier rest nextSym [instr]
+    restInstrs finalStack hcalls hlow locals stack out hrun
 
 theorem runBlockFuel_ok_stack
     (host : HostTbl) (ar : Nat -> Option Nat) (callee : Callee)
@@ -406,6 +427,25 @@ theorem mutualCorrectStep :
                       exact oneThenNodes fuel ih.1 host ar callee carrier rest
                         (node.id :: symS') (.structNew tyIdx args.length) restInstrs fin
                         hcallsRest hrest locals stack out hrun
+            next op k scratch value =>
+              -- Monolithic sign template: the plan walker steps exactly the
+              -- instruction list the lowerer emits, so the step is `wRunF` of
+              -- the same list on both sides.
+              cases hp : popExpected symS value with
+              | none => simp [hp] at hlow hrun
+              | some symS' =>
+                  simp only [hp] at hlow hrun
+                  cases hrest : lowerNodesFuel fuel carrier rest (node.id :: symS') with
+                  | none => simp [hrest] at hlow
+                  | some pair =>
+                      obtain ⟨restInstrs, fin⟩ := pair
+                      rw [hrest] at hlow
+                      simp only [Option.some.injEq, Prod.mk.injEq] at hlow
+                      obtain ⟨rfl, rfl⟩ := hlow
+                      exact manyThenNodes fuel ih.1 host ar callee carrier rest
+                        (node.id :: symS')
+                        (AverCert.PlanLower.intSignCmpTemplate carrier scratch op k)
+                        restInstrs fin hcallsRest hrest locals stack out hrun
       · intro host ar callee carrier block instrs hcalls hlow locals out hrun
         simp only [lowerBlockFuel] at hlow
         cases hn : lowerNodesFuel fuel carrier block.nodes [] with

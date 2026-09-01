@@ -518,12 +518,13 @@ def toIndexRef : List WVal → Option WVal
     signed relational operator — so the exact sentinel values matter and a
     boolean-valued model would not do.
 
-    WHERE IT IS ASSUMED: `Obligation.holds` quantifies this contract over
-    LITERAL small carriers in the i64 band, not over the representation
-    relation. `wat/cmp.wat` decides first on the raw SIGN FIELDS of its two
-    operands, and `CarrierSpec.bigElim` constrains those fields only up to the
-    sign/non-zero facts, so a relational premise would not be satisfiable by
-    the real helper.
+    WHERE IT IS ASSUMED: `Obligation.holds` quantifies this contract over a
+    CANONICAL CARRIER PAIR — two represented operands that are both in the
+    runtime's normal form (`CarrierSpec.Canon`). `wat/cmp.wat` decides first on
+    the raw SIGN FIELDS of its two operands, so over ARBITRARY represented
+    words it is not exact; canonicity is what pins the shape choice, because
+    `CarrierSpec.canonBig` puts every canonical limb-carrying word outside the
+    i64 band where the canonical `Small` words live.
 
     An earlier revision of this file carried a `cmpRef` family that returned
     `0`/`1` for five derived predicates. It was wired to nothing, and its ABI
@@ -537,13 +538,14 @@ def cmpW (a b : Int) : Int :=
     the wasm Boolean the source `==` denotes, which is why the emitter appends
     no comparison tail after the call.
 
-    WHERE IT IS ASSUMED: small-band literal carriers only, like `cmpW`, and
-    here the relational form is not merely unproved but REFUTABLE. `wat/eq.wat`
-    compares STRUCTURALLY — a `Small` operand against a limb-carrying `Big` one
-    returns `0` outright — while `CarrierSpec.smallIntro` admits
-    `carrierSmall C k` as a representation of `k` for every `k`. A relational
-    premise would therefore be unsatisfiable at any carrier specification that
-    models `Big` carriers, making every comparison obligation vacuous. -/
+    WHERE IT IS ASSUMED: a canonical carrier pair only, like `cmpW`, and here
+    the reason is sharpest. `wat/eq.wat` compares STRUCTURALLY — a `Small`
+    operand against a limb-carrying `Big` one returns `0` outright — while
+    `CarrierSpec.smallIntro` admits `carrierSmall C k` as a representation of
+    `k` for every `k`. A premise over arbitrary represented words would
+    therefore be unsatisfiable at any carrier specification that models `Big`
+    carriers. Canonicity rules that pair out: the runtime's normalisation
+    never produces a `Big` word for an i64-band value. -/
 def eqW (a b : Int) : Int :=
   if a = b then 1 else 0
 

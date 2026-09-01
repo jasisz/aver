@@ -837,6 +837,10 @@ def genericFragmentAllowedFuel : Nat → FragBlock → Bool
               genericFragmentAllowedFuel fuel elseBlock
         | .selfCall _ _ _ => false
         | .vectorGetOrDefault _ _ _ _ => false
+        -- The sign template writes the declared scratch local and reads the
+        -- carrier's limb/sign fields; the generic face has no carrier facts
+        -- to interpret either with, so it fail-closes here.
+        | .intSignCmp _ _ _ _ => false
         | .local _ | .constBool _ | .constI64 _ | .constI32 _ |
           .constF64Bits _ | .structGet _ _ | .refIsNull _ |
           .prim _ _ => true
@@ -859,11 +863,11 @@ wrong. -/
 
 /-- Host slots of the compute face: the byte-derived role table lowered to
     the canonical `if fn = idx` chain; `box` wires the audited `boxRef`,
-    add/sub/mul/eq wire the obligation's contract slots, and the two roles
-    the face's grammar never cites wire trap-only slots at their honest
-    arities. -/
+    add/sub/mul/cmp/eq wire the obligation's contract slots, and the one role
+    the face's grammar never cites (`toIndex`) wires a trap-only slot at its
+    honest arity. -/
 def recordComputeSlots
-    (carrier : Nat) (add sub mul eq : List WVal → Option WVal) :
+    (carrier : Nat) (add sub mul cmp eq : List WVal → Option WVal) :
     List (HostRole × Nat) → HostTbl
   | [] => fun _ => none
   | (role, idx) :: rest => fun fn =>
@@ -874,14 +878,14 @@ def recordComputeSlots
           | .mul => ((2 : Nat), mul)
           | .sub => ((2 : Nat), sub)
           | .eq => ((2 : Nat), eq)
-          | .toIndex => ((1 : Nat), fun _ => none)
-          | .cmp => ((2 : Nat), fun _ => none))
-      else recordComputeSlots carrier add sub mul eq rest fn
+          | .cmp => ((2 : Nat), cmp)
+          | .toIndex => ((1 : Nat), fun _ => none))
+      else recordComputeSlots carrier add sub mul cmp eq rest fn
 
 def recordComputeHost (carrier : Nat) (hostTable : List (HostRole × Nat)) :
     HostBuilder :=
-  fun add sub mul _stringEq _stringConcat _toIndex _cmp eq =>
-    recordComputeSlots carrier add sub mul eq hostTable
+  fun add sub mul _stringEq _stringConcat _toIndex cmp eq =>
+    recordComputeSlots carrier add sub mul cmp eq hostTable
 
 structure RecordComputeFace where
   structIdx : Nat
@@ -905,20 +909,21 @@ private theorem recordComputeHostRoleIdx_mem_pair
 
 /-- Discharge-facing binding lemma: over a byte-derived role table whose
     indices are pairwise distinct, the compute-face slots bind the index the
-    table resolves for each ADMITTED role (`box`/`add`/`sub`/`mul`) to
-    exactly that role's arity and wired contract function — `box` wires the
+    table resolves for each ADMITTED role (`box`/`add`/`sub`/`mul`/`cmp`/`eq`)
+    to exactly that role's arity and wired contract function — `box` wires the
     audited `boxRef`. This is the single fact the discharge needs to satisfy
     the bridge's `hHost` hypothesis. -/
 theorem recordComputeSlots_bind
-    (carrier : Nat) (add sub mul eq : List WVal → Option WVal)
+    (carrier : Nat) (add sub mul cmp eq : List WVal → Option WVal)
     (hostTable : List (HostRole × Nat))
     (hDistinct : AverCert.PlanCheck.hostTableIndicesDistinct hostTable = true)
     (role : HostRole) (idx : Nat)
-    (hRole : role ∈ [HostRole.box, HostRole.add, HostRole.sub, HostRole.mul])
+    (hRole : role ∈ [HostRole.box, HostRole.add, HostRole.sub, HostRole.mul,
+      HostRole.cmp, HostRole.eq])
     (hLookup : AverCert.PlanCheck.hostRoleIdx? hostTable role = some idx) :
-    recordComputeSlots carrier add sub mul eq hostTable idx =
+    recordComputeSlots carrier add sub mul cmp eq hostTable idx =
       some (RecordComputeBridge.roleArity role,
-        RecordComputeBridge.roleFn (boxRef carrier) add sub mul role) := by
+        RecordComputeBridge.roleFn (boxRef carrier) add sub mul cmp eq role) := by
   induction hostTable with
   | nil => simp [AverCert.PlanCheck.hostRoleIdx?] at hLookup
   | cons head rest ih =>
@@ -932,7 +937,7 @@ theorem recordComputeSlots_bind
         simp [AverCert.PlanCheck.hostRoleIdx?] at hLookup
         subst idx
         simp only [List.mem_cons, List.not_mem_nil, or_false] at hRole
-        rcases hRole with rfl | rfl | rfl | rfl <;>
+        rcases hRole with rfl | rfl | rfl | rfl | rfl | rfl <;>
           simp [recordComputeSlots, RecordComputeBridge.roleArity,
             RecordComputeBridge.roleFn]
       · have hTailLookup :
@@ -946,7 +951,7 @@ theorem recordComputeSlots_bind
           simp at hHeadFresh
           exact hHeadFresh role hPairMem
         change (if idx = headIdx then _ else
-          recordComputeSlots carrier add sub mul eq rest idx) = _
+          recordComputeSlots carrier add sub mul cmp eq rest idx) = _
         rw [if_neg hNe]
         exact ih hRestDistinct hTailLookup
 
@@ -959,18 +964,25 @@ def fragNodeStructIdx? : FragNodeKind → Option Nat
 
 /-- Executable admission of one node kind against the byte-derived role
     table: exactly the bridge's v1 node set, with every host call citing the
-    table's index for its role at the role's arity. -/
+    table's index for its role at the role's arity. The two i64-band checks
+    are the sign template's exactness condition and the boxing helper's
+    canonicity condition; both are decided here rather than assumed. -/
 def recordComputeNodeOk
     (hostTable : List (HostRole × Nat)) : FragNodeKind → Bool
   | .local _ => true
-  | .constI64 _ => true
+  | .constI64 value => AverCert.PlanCheck.inI64Band value
+  | .constI32 _ => true
   | .structGetUser _ _ _ => true
   | .structNew _ _ => true
+  | .prim .i32LtS args => args.length == 2
+  | .prim .i32GtS args => args.length == 2
+  | .prim .i32GeS args => args.length == 2
+  | .intSignCmp _ constant _ _ => AverCert.PlanCheck.inI64Band constant
   | .hostCall role f args =>
       (AverCert.PlanCheck.hostRoleIdx? hostTable role == some f) &&
         (match role with
           | .box => args.length == 1
-          | .add | .sub | .mul => args.length == 2
+          | .add | .sub | .mul | .cmp | .eq => args.length == 2
           | _ => false)
   | _ => false
 
@@ -1014,11 +1026,19 @@ def recordComputeResultValType (carrier structIdx : Nat) :
   | _ => none
 
 /-- Domain representation of the compute face: pointwise-SRepr inputs whose
-    source shapes match the plan's declared parameter types. -/
+    source shapes match the plan's declared parameter types.
+
+    DISCLOSURE: `SRepr` on an Int carrier means REPRESENTED AND CANONICAL, so
+    this face states its claim about inputs (and record fields) that are in the
+    runtime's normal form. That is every value the emitted module can build —
+    each carrier it produces comes out of `__aint_normalize` — but it is an
+    assumption about the inputs all the same, and it is the assumption the
+    structural helpers (`__aint_cmp`, `__aint_eq`) and the inline sign template
+    need to be exact. -/
 def recordComputeDomRepr (carrier structIdx : Nat) (params : List FragTy) :
     CarrierSpec carrier → List RecordComputeBridge.SVal → List WVal → Prop :=
   fun S svs vs =>
-    RecordComputeBridge.SReprAll S.Repr structIdx svs vs ∧
+    RecordComputeBridge.SReprAll S structIdx svs vs ∧
     svs.length = params.length ∧
     ∀ (i : Nat) (sv : RecordComputeBridge.SVal), svs[i]? = some sv →
       params[i]? = some (RecordComputeBridge.svalTy sv)
@@ -1028,7 +1048,7 @@ def recordComputeDomRepr (carrier structIdx : Nat) (params : List FragTy) :
 def recordComputeCodRepr (carrier structIdx : Nat) :
     CarrierSpec carrier → Option RecordComputeBridge.SVal → WVal → Prop :=
   fun S o w => ∃ sv, o = some sv ∧
-    RecordComputeBridge.SRepr S.Repr structIdx sv w
+    RecordComputeBridge.SRepr S structIdx sv w
 
 /-- The compute face's model IS the checked plan, run by the audited source
     evaluator (at the wall's audited fixed fuel `PlanCheck.maxFuel` — the same
@@ -1148,13 +1168,15 @@ theorem classifyTagDispatch_hasPrim
       case h_1 optIdx tag hitBlk missBlk h0 h1 h2 h3 h4 =>
         exact ⟨n3, by rw [hnodes]; simp, [1, 2], h3⟩
 
-/-- The compute face's node admission has no `prim` arm: a body whose every
-    node passes `recordComputeNodeOk` contains no primitive node. -/
-theorem recordComputeNodeOk_no_prim
+/-- The compute face's node admission has no `i32.eq` arm: it admits exactly
+    the three SIGNED RELATIONAL primitives that read a `__aint_cmp` verdict, so
+    a body whose every node passes `recordComputeNodeOk` carries no `i32.eq` —
+    which is the node the tag-dispatch face's five-node shape must have. -/
+theorem recordComputeNodeOk_no_eqPrim
     (hostTable : List (HostRole × Nat)) (nodes : List FragNode)
     (hAll : nodes.all (fun n => recordComputeNodeOk hostTable n.kind) = true)
-    (n : FragNode) (hMem : n ∈ nodes) (op : FragPrim) (args : List Nat) :
-    n.kind ≠ .prim op args := by
+    (n : FragNode) (hMem : n ∈ nodes) (args : List Nat) :
+    n.kind ≠ .prim .i32Eq args := by
   intro hkind
   simp only [List.all_eq_true] at hAll
   have hOk := hAll n hMem
@@ -1332,8 +1354,8 @@ theorem symFragmentFace_none_of_recordCompute
     | some f =>
         obtain ⟨n, hMem, args, hkind⟩ := classifyTagDispatch_hasPrim plan f ht
         exact absurd hkind
-          (recordComputeNodeOk_no_prim claim.hostTable plan.body.nodes hAllOk
-            n hMem .i32Eq args)
+          (recordComputeNodeOk_no_eqPrim claim.hostTable plan.body.nodes hAllOk
+            n hMem args)
   have hVectorGet : classifyVectorGetOrDefault plan = none := by
     unfold classifyVectorGetOrDefault
     simp [hne2]

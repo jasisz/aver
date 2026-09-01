@@ -139,18 +139,18 @@ pub enum FragHostRole {
     /// to the `-1` out-of-bounds sentinel. Consumed only inside the monolithic
     /// fused vector-read node, never as a standalone `hostCall`.
     ToIndex,
-    /// The `__aint_cmp` three-way comparison contract: two small-band carriers
+    /// The `__aint_cmp` three-way comparison contract: two CANONICAL carriers
     /// in, the raw `i32` sentinel `-1`/`0`/`1` out. The result is NOT a Boolean
     /// — the emitter always follows the call with `i32.const 0` and a signed
     /// relational operator — so its node type is `RawI32`. The assumed law is
-    /// quantified over literal small carriers only; see section 4.3 of
-    /// `docs/certificate-format.md` for why widening it is unsound.
+    /// quantified over a canonical carrier pair; see section 4.3 of
+    /// `docs/certificate-format.md` for why dropping canonicity is unsound.
     Cmp,
-    /// The `__aint_eq` equality contract: two small-band carriers in, the
+    /// The `__aint_eq` equality contract: two canonical carriers in, the
     /// `0`/`1` wasm Boolean out. Unlike `Cmp` the result IS the source-level
     /// Boolean, so its node type is `BoolI32` and no comparison tail follows.
-    /// Same small-band scoping as `Cmp`, and here the wider form is refutable:
-    /// the helper compares a small against a limb-carrying operand
+    /// Same canonical scoping as `Cmp`, and here the unscoped form is
+    /// refutable: the helper compares a small against a limb-carrying operand
     /// structurally.
     Eq,
 }

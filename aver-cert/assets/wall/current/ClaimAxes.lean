@@ -208,11 +208,11 @@ def requiredContractUse (artifact : ArtifactData) : Option ContractUse := do
 def boxContract : String :=
   "__rt_aint_from_i64 (box i64 -> carrier)"
 def addContract : String :=
-  "Int.add (carrier add = exact integer addition on represented values)"
+  "Int.add (carrier add = exact integer addition on represented values; result canonical)"
 def subContract : String :=
-  "Int.sub (carrier sub = exact integer subtraction on represented values)"
+  "Int.sub (carrier sub = exact integer subtraction on represented values; result canonical)"
 def mulContract : String :=
-  "Int.mul (carrier mul = exact integer multiplication on represented values)"
+  "Int.mul (carrier mul = exact integer multiplication on represented values; result canonical)"
 def stringEqContract : String :=
   "String.eq (WVal byte-array equality; non-arrays compare false)"
 def stringConcatContract : String :=
@@ -220,15 +220,15 @@ def stringConcatContract : String :=
 def toIndexContract : String :=
   "__aint_to_index (carrier -> i32 array index; [0, 2^31) passes, else -1)"
 def cmpContract : String :=
-  "__aint_cmp (small-band carrier pair -> i32 sign; -1 less, 0 equal, 1 greater)"
+  "__aint_cmp (canonical carrier pair -> i32 sign; -1 less, 0 equal, 1 greater)"
 def eqContract : String :=
-  "__aint_eq (small-band carrier pair -> i32 boolean; 1 when equal, else 0)"
+  "__aint_eq (canonical carrier pair -> i32 boolean; 1 when equal, else 0)"
 def addTotalContract : String :=
-  "Int.add (carrier add = exact integer addition on represented values); total on represented values"
+  "Int.add (carrier add = exact integer addition on represented values; result canonical); total on represented values"
 def subTotalContract : String :=
-  "Int.sub (carrier sub = exact integer subtraction on represented values); total on represented values"
+  "Int.sub (carrier sub = exact integer subtraction on represented values; result canonical); total on represented values"
 def mulTotalContract : String :=
-  "Int.mul (carrier mul = exact integer multiplication on represented values); total on represented values"
+  "Int.mul (carrier mul = exact integer multiplication on represented values; result canonical); total on represented values"
 
 def ContractUse.contracts (use : ContractUse) : List String :=
   (if use.box then [boxContract] else []) ++

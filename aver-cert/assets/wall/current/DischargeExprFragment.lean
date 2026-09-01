@@ -33,11 +33,11 @@ def exprFragmentSemanticBridge
     (stringConcat : Nat → List WVal → Option WVal)
     (toIndex cmp eq : List WVal → Option WVal)
     (hAdd : ∀ a b va vb w, S.Repr a va → S.Repr b vb →
-      add [va, vb] = some w → S.Repr (a + b) w)
+      add [va, vb] = some w → S.Repr (a + b) w ∧ S.Canon w)
     (hSub : ∀ a b va vb w, S.Repr a va → S.Repr b vb →
-      sub [va, vb] = some w → S.Repr (a - b) w)
+      sub [va, vb] = some w → S.Repr (a - b) w ∧ S.Canon w)
     (hMul : ∀ a b va vb w, S.Repr a va → S.Repr b vb →
-      mul [va, vb] = some w → S.Repr (a * b) w)
+      mul [va, vb] = some w → S.Repr (a * b) w ∧ S.Canon w)
     (hStringEq : ∀ a b w, stringEq [a, b] = some w →
       w = b32 (stringEqW a b))
     (hStringConcat : ∀ resultTy parts c,
@@ -45,16 +45,12 @@ def exprFragmentSemanticBridge
         stringConcatW resultTy parts = some c)
     (hToIndex : ∀ n v r, S.Repr n v → toIndex [v] = some r →
       r = .i32v (toIndexW n))
-      (hCmp : ∀ k1 k2 r, -(2 ^ 63 : Int) ≤ k1 → k1 < 2 ^ 63 →
-        -(2 ^ 63 : Int) ≤ k2 → k2 < 2 ^ 63 →
-        cmp [carrierSmall claim.obligation.carrier k1,
-             carrierSmall claim.obligation.carrier k2] = some r →
-          r = .i32v (cmpW k1 k2))
-      (hEq : ∀ k1 k2 r, -(2 ^ 63 : Int) ≤ k1 → k1 < 2 ^ 63 →
-        -(2 ^ 63 : Int) ≤ k2 → k2 < 2 ^ 63 →
-        eq [carrierSmall claim.obligation.carrier k1,
-            carrierSmall claim.obligation.carrier k2] = some r →
-          r = .i32v (eqW k1 k2))
+      (hCmp : ∀ a b va vb r, S.Repr a va → S.Repr b vb →
+        S.Canon va → S.Canon vb →
+        cmp [va, vb] = some r → r = .i32v (cmpW a b))
+      (hEq : ∀ a b va vb r, S.Repr a va → S.Repr b vb →
+        S.Canon va → S.Canon vb →
+        eq [va, vb] = some r → r = .i32v (eqW a b))
     (fuel : Nat) (x : claim.obligation.Dom) (vs : List WVal) (w : WVal),
     claim.obligation.domRepr S x vs →
     wFuncN claim.obligation.code
@@ -433,7 +429,8 @@ theorem intCmpBool_claim_discharges
       exact AverCert.StandardFace.intCmp_transport claim.carrier face.helperIdx
         face.op claim.obligation.carrier claim.obligation.Dom claim.obligation.Cod
         claim.obligation.domRepr claim.obligation.codRepr claim.obligation.model
-        hcar hDomT hCodT hdomReprT hcodReprT hmodelT S cmp eq hCmp hEq
+        hcar hDomT hCodT hdomReprT hcodReprT hmodelT S cmp eq
+        (canonicalCmp_smallBand S cmp hCmp) (canonicalEq_smallBand S eq hEq)
         claim.obligation.code claim.obligation.self (exprFragmentNLocals plan)
         hCodeSelf fuel x vs w hDom hRun
 
@@ -510,29 +507,28 @@ theorem intSelect_claim_discharges
       exact AverCert.StandardFace.intSelect_transport claim.carrier face.helperIdx
         face.op claim.obligation.carrier claim.obligation.Dom claim.obligation.Cod
         claim.obligation.domRepr claim.obligation.codRepr claim.obligation.model
-        hcar hDomT hCodT hdomReprT hcodReprT hmodelT S cmp eq hCmp hEq
+        hcar hDomT hCodT hdomReprT hcodReprT hmodelT S cmp eq
+        (canonicalCmp_smallBand S cmp hCmp) (canonicalEq_smallBand S eq hEq)
         claim.obligation.code claim.obligation.self (exprFragmentNLocals plan)
         hCodeSelf fuel x vs w hDom hRun
 
 /-! ### Record projection-compute discharge helpers
 
 The wasm entry runs with `initLocals`' one-slot `.null` scratch pad appended
-to the arguments, while the bridge's agreement corollary speaks about a
-locals list pointwise `SRepr`-related to the source parameters — and no
-source value represents `.null`. The admitted v1 node set never writes a
-local and, on a typed plan, never reads past the parameter prefix, so the
-pad is observationally inert: the "unpad" lemmas below erase it from a
-successful plan-walker run. The remaining helpers convert classifier facts
-into the bridge's admission/typing hypotheses and transport the face's
-`HEq` pins onto the obligation fields, like `recordParam_transport`. -/
+to the arguments. The bridge's source evaluator mirrors that slot with its
+own `SVal.pad`, so the two locals lists are pointwise `SRepr`-related from
+the start and stay related when the inline sign template writes the slot.
+The helpers here convert classifier facts into the bridge's admission and
+typing hypotheses and transport the face's `HEq` pins onto the obligation
+fields, like `recordParam_transport`. -/
 
 section RecordComputeDischarge
 
 open ExprFragmentSemantics AverCert.PlanLower RecordComputeBridge
 
-private theorem sreprAll_len {Repr : Int → WVal → Prop} {structIdx : Nat} :
+private theorem sreprAll_len {C : Nat} {S : CarrierSpec C} {structIdx : Nat} :
     ∀ {ss : List RecordComputeBridge.SVal} {ws : List WVal},
-      SReprAll Repr structIdx ss ws → ss.length = ws.length := by
+      SReprAll S structIdx ss ws → ss.length = ws.length := by
   intro ss ws h
   induction h with
   | nil => rfl
@@ -560,6 +556,10 @@ private theorem recordComputeNodeOk_admits
   cases kind
   case hostCall role f args =>
     cases role <;>
+      simp_all [AverCert.StandardFace.recordComputeNodeOk,
+        RecordComputeBridge.nodeAdmitted]
+  case prim op args =>
+    cases op <;>
       simp_all [AverCert.StandardFace.recordComputeNodeOk,
         RecordComputeBridge.nodeAdmitted]
   all_goals
@@ -591,239 +591,11 @@ private theorem classifyRecordCompute_typed
         subst hface
         exact ((Bool.and_eq_true _ _).mp hcond).2
 
-/-- A `local.get` below the parameter count reads the same value with and
-    without the scratch pad, leaving the locals untouched. -/
-private theorem wRunF_localGet_pad
-    (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee)
-    (base ext stack : List WVal) (index : Nat) (hlt : index < base.length) :
-    ∃ v, base[index]? = some v ∧
-      wRunF host ar callee [.localGet index] (base ++ ext) stack
-        = some (.ok (base ++ ext) (v :: stack)) ∧
-      wRunF host ar callee [.localGet index] base stack
-        = some (.ok base (v :: stack)) := by
-  refine ⟨base[index], List.getElem?_eq_getElem hlt, ?_, ?_⟩
-  · simp [wRunF, List.getElem?_append_left hlt, List.getElem?_eq_getElem hlt]
-  · simp [wRunF, List.getElem?_eq_getElem hlt]
-
-/-- The other single instructions the admitted node set emits neither read
-    nor write locals: with the same operand stack they either fail on both
-    locals lists or succeed on both with the same result stack. -/
-private theorem wRunF_single_pad
-    (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee)
-    (base ext stack : List WVal) (instr : WInstr)
-    (hi : match instr with
-      | .i64Const _ => True
-      | .structGet _ _ => True
-      | .structNew _ _ => True
-      | .call _ => True
-      | _ => False) :
-    (wRunF host ar callee [instr] (base ++ ext) stack = none ∧
-      wRunF host ar callee [instr] base stack = none) ∨
-    (∃ st', wRunF host ar callee [instr] (base ++ ext) stack
-        = some (.ok (base ++ ext) st') ∧
-      wRunF host ar callee [instr] base stack = some (.ok base st')) := by
-  cases instr
-  case i64Const k =>
-    exact Or.inr ⟨.i64v k :: stack, by simp [wRunF], by simp [wRunF]⟩
-  case structGet ty field =>
-    cases stack with
-    | nil => exact Or.inl ⟨by simp [wRunF], by simp [wRunF]⟩
-    | cons v st =>
-        cases v
-        case structv t fs =>
-          by_cases ht : t = ty
-          · subst ht
-            cases hf : fs[field]? with
-            | none => exact Or.inl ⟨by simp [wRunF, hf], by simp [wRunF, hf]⟩
-            | some fv =>
-                exact Or.inr ⟨fv :: st, by simp [wRunF, hf], by simp [wRunF, hf]⟩
-          · exact Or.inl ⟨by simp [wRunF, ht], by simp [wRunF, ht]⟩
-        all_goals exact Or.inl ⟨by simp [wRunF], by simp [wRunF]⟩
-  case structNew ty nf =>
-    cases hpa : popArgs nf stack with
-    | none => exact Or.inl ⟨by simp [wRunF, hpa], by simp [wRunF, hpa]⟩
-    | some p =>
-        exact Or.inr ⟨.structv ty p.1 :: p.2,
-          by simp [wRunF, hpa], by simp [wRunF, hpa]⟩
-  case call fn =>
-    cases hh : host fn with
-    | some p =>
-        cases hpa : popArgs p.1 stack with
-        | none =>
-            exact Or.inl ⟨by simp [wRunF, hh, hpa], by simp [wRunF, hh, hpa]⟩
-        | some q =>
-            cases hr : p.2 q.1 with
-            | none =>
-                exact Or.inl ⟨by simp [wRunF, hh, hpa, hr],
-                  by simp [wRunF, hh, hpa, hr]⟩
-            | some r =>
-                exact Or.inr ⟨r :: q.2, by simp [wRunF, hh, hpa, hr],
-                  by simp [wRunF, hh, hpa, hr]⟩
-    | none =>
-        cases ha : ar fn with
-        | none =>
-            exact Or.inl ⟨by simp [wRunF, hh, ha], by simp [wRunF, hh, ha]⟩
-        | some a =>
-            cases hpa : popArgs a stack with
-            | none =>
-                exact Or.inl ⟨by simp [wRunF, hh, ha, hpa],
-                  by simp [wRunF, hh, ha, hpa]⟩
-            | some q =>
-                cases hc : callee fn q.1 with
-                | none =>
-                    exact Or.inl ⟨by simp [wRunF, hh, ha, hpa, hc],
-                      by simp [wRunF, hh, ha, hpa, hc]⟩
-                | some r =>
-                    exact Or.inr ⟨r :: q.2, by simp [wRunF, hh, ha, hpa, hc],
-                      by simp [wRunF, hh, ha, hpa, hc]⟩
-  all_goals cases hi
-
-/-- Pad erasure for the plan walker over admitted, prefix-reading nodes: a
-    successful run with the scratch pad appended never touches it, so the
-    same run succeeds on the bare parameter locals — and the admitted node
-    set never returns early, so the result is always an `.ok` stack. -/
-private theorem runNodesFuel_unpad
-    (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee)
-    (hostTable : List (HostRole × Nat)) (carrier : Nat)
-    (base ext : List WVal) :
-    ∀ (fuel : Nat) (nodes : List FragNode) (symStack : List Nat)
-      (stack : List WVal) (out : Out),
-      nodesAdmitted hostTable nodes = true →
-      (∀ n ∈ nodes, ∀ index, n.kind = FragNodeKind.local index →
-        index < base.length) →
-      runNodesFuel host ar callee fuel carrier nodes symStack (base ++ ext)
-        stack = some out →
-      ∃ st', out = .ok (base ++ ext) st' ∧
-        runNodesFuel host ar callee fuel carrier nodes symStack base stack
-          = some (.ok base st') := by
-  intro fuel
-  induction fuel with
-  | zero =>
-      intro nodes symStack stack out _ _ hrun
-      simp [runNodesFuel] at hrun
-  | succ fuel ih =>
-      intro nodes symStack stack out hAdm hIdx hrun
-      cases nodes with
-      | nil =>
-          simp only [runNodesFuel, Option.some.injEq] at hrun
-          exact ⟨stack, hrun.symm, by simp [runNodesFuel]⟩
-      | cons node rest =>
-          have hAdmPair : nodeAdmitted hostTable node.kind = true ∧
-              nodesAdmitted hostTable rest = true := by
-            simpa [nodesAdmitted, List.all_cons] using hAdm
-          obtain ⟨hAdmN, hAdmR⟩ := hAdmPair
-          have hIdxR : ∀ n ∈ rest, ∀ index,
-              n.kind = FragNodeKind.local index → index < base.length :=
-            fun n hn => hIdx n (List.mem_cons_of_mem _ hn)
-          cases hk : node.kind
-          case «local» index =>
-            have hlt : index < base.length :=
-              hIdx node List.mem_cons_self index hk
-            obtain ⟨v, hv, hp1, hp2⟩ :=
-              wRunF_localGet_pad host ar callee base ext stack index hlt
-            simp only [runNodesFuel, hk, hp1] at hrun
-            simp only [runNodesFuel, hk, hp2]
-            exact ih rest (node.id :: symStack) (v :: stack) out hAdmR hIdxR hrun
-          case constI64 value =>
-            rcases wRunF_single_pad host ar callee base ext stack
-                (.i64Const value) trivial with ⟨hp1, hp2⟩ | ⟨st', hp1, hp2⟩
-            · simp [runNodesFuel, hk, hp1] at hrun
-            · simp only [runNodesFuel, hk, hp1] at hrun
-              simp only [runNodesFuel, hk, hp2]
-              exact ih rest (node.id :: symStack) st' out hAdmR hIdxR hrun
-          case structGetUser tyIdx field value =>
-            simp only [runNodesFuel, hk] at hrun ⊢
-            cases hpop : popExpected symStack value with
-            | none => simp [hpop] at hrun
-            | some symRest =>
-                simp only [hpop] at hrun ⊢
-                rcases wRunF_single_pad host ar callee base ext stack
-                    (.structGet tyIdx field) trivial with
-                  ⟨hp1, hp2⟩ | ⟨st', hp1, hp2⟩
-                · simp [hp1] at hrun
-                · simp only [hp1] at hrun
-                  simp only [hp2]
-                  exact ih rest (node.id :: symRest) st' out hAdmR hIdxR hrun
-          case structNew tyIdx args =>
-            simp only [runNodesFuel, hk] at hrun ⊢
-            cases hpop : popExpectedAll symStack args.reverse with
-            | none => simp [hpop] at hrun
-            | some symRest =>
-                simp only [hpop] at hrun ⊢
-                rcases wRunF_single_pad host ar callee base ext stack
-                    (.structNew tyIdx args.length) trivial with
-                  ⟨hp1, hp2⟩ | ⟨st', hp1, hp2⟩
-                · simp [hp1] at hrun
-                · simp only [hp1] at hrun
-                  simp only [hp2]
-                  exact ih rest (node.id :: symRest) st' out hAdmR hIdxR hrun
-          case hostCall role funcIdx args =>
-            simp only [runNodesFuel, hk] at hrun ⊢
-            cases hpop : popExpectedAll symStack args.reverse with
-            | none => simp [hpop] at hrun
-            | some symRest =>
-                simp only [hpop] at hrun ⊢
-                rcases wRunF_single_pad host ar callee base ext stack
-                    (.call funcIdx) trivial with
-                  ⟨hp1, hp2⟩ | ⟨st', hp1, hp2⟩
-                · simp [hp1] at hrun
-                · simp only [hp1] at hrun
-                  simp only [hp2]
-                  exact ih rest (node.id :: symRest) st' out hAdmR hIdxR hrun
-          case constBool value => simp [nodeAdmitted, hk] at hAdmN
-          case constI32 value => simp [nodeAdmitted, hk] at hAdmN
-          case constF64Bits bits => simp [nodeAdmitted, hk] at hAdmN
-          case structGet field receiver => simp [nodeAdmitted, hk] at hAdmN
-          case refIsNull value => simp [nodeAdmitted, hk] at hAdmN
-          case prim op args => simp [nodeAdmitted, hk] at hAdmN
-          case selfCall tail funcIdx args => simp [nodeAdmitted, hk] at hAdmN
-          case ifElse cond thenBlock elseBlock =>
-            simp [nodeAdmitted, hk] at hAdmN
-          case vectorGetOrDefault arrTy toIndexIdx boxIdx default =>
-            simp [nodeAdmitted, hk] at hAdmN
-
-/-- Block-level pad erasure: a successful padded block run is an `.ok` on a
-    single value (the admitted node set never returns early), and the same
-    block run succeeds on the bare parameter locals. -/
-private theorem runBlockFuel_unpad
-    (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee)
-    (hostTable : List (HostRole × Nat)) (carrier fuel : Nat)
-    (block : FragBlock) (base ext : List WVal) (out : Out)
-    (hAdm : nodesAdmitted hostTable block.nodes = true)
-    (hIdx : ∀ n ∈ block.nodes, ∀ index,
-      n.kind = FragNodeKind.local index → index < base.length)
-    (hrun : runBlockFuel host ar callee fuel carrier block (base ++ ext)
-      = some out) :
-    ∃ v, out = .ok (base ++ ext) [v] ∧
-      runBlockFuel host ar callee fuel carrier block base
-        = some (.ok base [v]) := by
-  cases fuel with
-  | zero => simp [runBlockFuel] at hrun
-  | succ fuel =>
-      simp only [runBlockFuel] at hrun ⊢
-      cases hr : runNodesFuel host ar callee fuel carrier block.nodes []
-          (base ++ ext) [] with
-      | none => simp [hr] at hrun
-      | some out0 =>
-          obtain ⟨st', rfl, hr'⟩ := runNodesFuel_unpad host ar callee hostTable
-            carrier base ext fuel block.nodes [] [] out0 hAdm hIdx hr
-          rw [hr] at hrun
-          rw [hr']
-          cases st' with
-          | nil => simp at hrun
-          | cons v tail =>
-              cases tail with
-              | nil =>
-                  have hout : Out.ok (base ++ ext) [v] = out := by
-                    simpa using hrun
-                  exact ⟨v, hout.symm, by simp⟩
-              | cons w tail' => simp at hrun
-
 /-- The compute face's template-implies-model core, at the face's concrete
     types: a successful `wFuncN` run of the canonically lowered body under
     the compute-face host slots yields a word representing the source
     evaluator's result — instruction-run success gives plan-walker success
-    (`runBlock_complete`), the pad is erased, and the lockstep agreement
+    (`runBlock_complete`), and the lockstep agreement
     (`sourceRunBlock_agrees`) lands on the model's value. -/
 private theorem recordCompute_simulates_model
     (carrier structIdx : Nat) (hostTable : List (HostRole × Nat))
@@ -837,53 +609,49 @@ private theorem recordCompute_simulates_model
     (code : CodeTbl) (self : Nat)
     (hCode : code self = some ⟨plan.params.length, 1, body⟩)
     (S : CarrierSpec carrier)
-    (add sub mul eq : List WVal → Option WVal)
+    (add sub mul cmp eq : List WVal → Option WVal)
     (hAdd : ∀ a b va vb w, S.Repr a va → S.Repr b vb →
-      add [va, vb] = some w → S.Repr (a + b) w)
+      add [va, vb] = some w → S.Repr (a + b) w ∧ S.Canon w)
     (hSub : ∀ a b va vb w, S.Repr a va → S.Repr b vb →
-      sub [va, vb] = some w → S.Repr (a - b) w)
+      sub [va, vb] = some w → S.Repr (a - b) w ∧ S.Canon w)
     (hMul : ∀ a b va vb w, S.Repr a va → S.Repr b vb →
-      mul [va, vb] = some w → S.Repr (a * b) w)
+      mul [va, vb] = some w → S.Repr (a * b) w ∧ S.Canon w)
+    (hCmp : ∀ a b va vb r, S.Repr a va → S.Repr b vb → S.Canon va → S.Canon vb →
+      cmp [va, vb] = some r → r = .i32v (cmpW a b))
+    (hEq : ∀ a b va vb r, S.Repr a va → S.Repr b vb → S.Canon va → S.Canon vb →
+      eq [va, vb] = some r → r = .i32v (eqW a b))
     (fuel : Nat) (x : List RecordComputeBridge.SVal) (vs : List WVal) (w : WVal)
     (hdom : AverCert.StandardFace.recordComputeDomRepr carrier structIdx
       plan.params S x vs)
     (hRun : wFuncN code
-      (AverCert.StandardFace.recordComputeSlots carrier add sub mul eq hostTable)
+      (AverCert.StandardFace.recordComputeSlots carrier add sub mul cmp eq
+        hostTable)
       fuel self vs = some w) :
     AverCert.StandardFace.recordComputeCodRepr carrier structIdx S
       (AverCert.StandardFace.recordComputeModel plan.body x) w := by
   obtain ⟨hSRepr, hLen, hTyIdx⟩ := hdom
   have hTy := planTypedB_sound hTyB
-  have hvs : vs.length = plan.params.length := (sreprAll_len hSRepr).symm.trans hLen
-  have hIdx : ∀ n ∈ plan.body.nodes, ∀ index,
-      n.kind = FragNodeKind.local index → index < vs.length := by
-    intro n hn index hkind
-    have hnt := planTyped_mem hTy n hn
-    simp only [RecordComputeBridge.nodeTyped, hkind] at hnt
-    have hlt : index < plan.params.length := by
-      rcases Nat.lt_or_ge index plan.params.length with h | h
-      · exact h
-      · rw [List.getElem?_eq_none h] at hnt
-        simp at hnt
-    omega
-  have hbox : ∀ (n : Int) (bw : WVal),
-      boxRef carrier [WVal.i64v n] = some bw → S.Repr n bw := by
-    intro n bw hb
+  have hbox : ∀ (n : Int) (bw : WVal), -(2 ^ 63 : Int) ≤ n → n < 2 ^ 63 →
+      boxRef carrier [WVal.i64v n] = some bw → CanonRepr S n bw := by
+    intro n bw hlo hhi hb
     simp only [boxRef, Option.some.injEq] at hb
-    exact hb ▸ S.smallIntro n
-  have hC : Contracts S.Repr (boxRef carrier) add sub mul :=
-    ⟨hbox, hAdd, hSub, hMul⟩
+    exact ⟨hb ▸ S.smallIntro n, hb ▸ S.canonSmall n hlo hhi⟩
+  have hC : Contracts S (boxRef carrier) add sub mul cmp eq :=
+    ⟨hbox, hAdd, hSub, hMul, hCmp, hEq⟩
   have hHost : ∀ role idx,
-      role ∈ [HostRole.box, HostRole.add, HostRole.sub, HostRole.mul] →
+      role ∈ [HostRole.box, HostRole.add, HostRole.sub, HostRole.mul,
+        HostRole.cmp, HostRole.eq] →
       AverCert.PlanCheck.hostRoleIdx? hostTable role = some idx →
-      AverCert.StandardFace.recordComputeSlots carrier add sub mul eq
+      AverCert.StandardFace.recordComputeSlots carrier add sub mul cmp eq
           hostTable idx =
-        some (roleArity role, roleFn (boxRef carrier) add sub mul role) :=
+        some (roleArity role,
+          roleFn (boxRef carrier) add sub mul cmp eq role) :=
     fun role idx hRole hLookup =>
-      AverCert.StandardFace.recordComputeSlots_bind carrier add sub mul eq
+      AverCert.StandardFace.recordComputeSlots_bind carrier add sub mul cmp eq
         hostTable hDistinct role idx hRole hLookup
   have hlow : AverCert.PlanLower.lowerBlockFuel AverCert.PlanCheck.maxFuel
       carrier plan.body = some body := hLower
+  have hpad : (vs ++ List.replicate 1 WVal.null) = vs ++ [WVal.null] := by simp
   cases fuel with
   | zero => simp [wFuncN] at hRun
   | succ fuel =>
@@ -895,26 +663,30 @@ private theorem recordCompute_simulates_model
         have hRB := runBlock_complete _ _ _ hostTable
           AverCert.PlanCheck.maxFuel carrier plan.body body _ _
           hAdm hlow heq (Or.inl ⟨ls, v, rfl⟩)
-        obtain ⟨v', hout, hRB'⟩ := runBlockFuel_unpad _ _ _ hostTable carrier
-          AverCert.PlanCheck.maxFuel plan.body vs (List.replicate 1 WVal.null)
-          _ hAdm hIdx hRB
+        rw [hpad] at hRB
+        obtain ⟨wl, w', sv, hout, hsrc, hsrepr⟩ :=
+          sourceRunBlock_agrees S structIdx (boxRef carrier) add sub mul cmp eq
+            hC _ _ _ hostTable hHost AverCert.PlanCheck.maxFuel plan.body x vs
+            _ hAdm
+            (fun nodeId =>
+              ((plan.body.nodes[nodeId]?).map (fun n => n.ty)).getD .i64)
+            plan.params hTy hLen hTyIdx hSRepr hRB
         injection hout with hls hst
-        injection hst with hv' htail
-        subst hv'
-        obtain ⟨sv, hsrc, hsrepr⟩ := sourceRunBlock_agrees S.Repr structIdx
-          (boxRef carrier) add sub mul hC _ _ _ carrier hostTable hHost
-          AverCert.PlanCheck.maxFuel plan.body x vs vs v hAdm
-          (fun nodeId =>
-            ((plan.body.nodes[nodeId]?).map (fun n => n.ty)).getD .i64)
-          plan.params hTy hTyIdx hSRepr hRB'
+        injection hst with hvv htail
+        subst hvv
         exact ⟨sv, hsrc, hsrepr⟩
       next v heq =>
         have hRB := runBlock_complete _ _ _ hostTable
           AverCert.PlanCheck.maxFuel carrier plan.body body _ _
           hAdm hlow heq (Or.inr ⟨v, rfl⟩)
-        obtain ⟨v', hout, -⟩ := runBlockFuel_unpad _ _ _ hostTable carrier
-          AverCert.PlanCheck.maxFuel plan.body vs (List.replicate 1 WVal.null)
-          _ hAdm hIdx hRB
+        rw [hpad] at hRB
+        obtain ⟨wl, w', sv, hout, -, -⟩ :=
+          sourceRunBlock_agrees S structIdx (boxRef carrier) add sub mul cmp eq
+            hC _ _ _ hostTable hHost AverCert.PlanCheck.maxFuel plan.body x vs
+            _ hAdm
+            (fun nodeId =>
+              ((plan.body.nodes[nodeId]?).map (fun n => n.ty)).getD .i64)
+            plan.params hTy hLen hTyIdx hSRepr hRB
         simp at hout
       next => simp at hRun
 
@@ -947,17 +719,21 @@ private theorem recordCompute_transport
     (code : CodeTbl) (self : Nat)
     (hCode : code self = some ⟨plan.params.length, 1, body⟩)
     (S : CarrierSpec carrier)
-    (add sub mul eq : List WVal → Option WVal)
+    (add sub mul cmp eq : List WVal → Option WVal)
     (hAdd : ∀ a b va vb w, S.Repr a va → S.Repr b vb →
-      add [va, vb] = some w → S.Repr (a + b) w)
+      add [va, vb] = some w → S.Repr (a + b) w ∧ S.Canon w)
     (hSub : ∀ a b va vb w, S.Repr a va → S.Repr b vb →
-      sub [va, vb] = some w → S.Repr (a - b) w)
+      sub [va, vb] = some w → S.Repr (a - b) w ∧ S.Canon w)
     (hMul : ∀ a b va vb w, S.Repr a va → S.Repr b vb →
-      mul [va, vb] = some w → S.Repr (a * b) w)
+      mul [va, vb] = some w → S.Repr (a * b) w ∧ S.Canon w)
+    (hCmp : ∀ a b va vb r, S.Repr a va → S.Repr b vb → S.Canon va → S.Canon vb →
+      cmp [va, vb] = some r → r = .i32v (cmpW a b))
+    (hEq : ∀ a b va vb r, S.Repr a va → S.Repr b vb → S.Canon va → S.Canon vb →
+      eq [va, vb] = some r → r = .i32v (eqW a b))
     (fuel : Nat) (x : Dom) (vs : List WVal) (w : WVal)
     (hdom : domRepr S x vs)
     (hRun : wFuncN code
-      (AverCert.StandardFace.recordComputeSlots claimCarrier add sub mul eq
+      (AverCert.StandardFace.recordComputeSlots claimCarrier add sub mul cmp eq
         hostTable)
       fuel self vs = some w) :
     codRepr S (model x) w := by
@@ -976,8 +752,8 @@ private theorem recordCompute_transport
     eq_of_heq hmodelT
   subst e3
   exact recordCompute_simulates_model carrier face.structIdx hostTable plan
-    body hDistinct hAdm hTyB hLower code self hCode S add sub mul eq
-    hAdd hSub hMul fuel x vs w hdom hRun
+    body hDistinct hAdm hTyB hLower code self hCode S add sub mul cmp eq
+    hAdd hSub hMul hCmp hEq fuel x vs w hdom hRun
 
 /-- Face-derived discharge of one record projection-compute claim: the
     declared face pins the obligation's meaning to the wall's compute-face
@@ -1073,7 +849,7 @@ theorem recordCompute_claim_discharges
         rw [hSelf]; exact hCode
       rw [obligationHolds, hPolicy]
       intro S add sub mul stringEq stringConcat toIndex cmp eq
-        hAdd hSub hMul _hStringEq _hStringConcat _hToIndex _hCmp _hEq
+        hAdd hSub hMul _hStringEq _hStringConcat _hToIndex hCmp hEq
         fuel x vs w hDom hRun
       rw [hhost] at hRun
       exact recordCompute_transport claim.carrier face claim.hostTable plan
@@ -1083,7 +859,7 @@ theorem recordCompute_claim_discharges
         claim.obligation.model
         hcar hDomT hCodT hdomReprT hcodReprT hmodelT
         claim.obligation.code claim.obligation.self hCodeSelf
-        S add sub mul eq hAdd hSub hMul fuel x vs w hDom hRun
+        S add sub mul cmp eq hAdd hSub hMul hCmp hEq fuel x vs w hDom hRun
 
 end RecordComputeDischarge
 

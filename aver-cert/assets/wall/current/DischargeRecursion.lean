@@ -117,14 +117,16 @@ theorem unary_recursion_claim_discharges
             claim.obligation.carrier .add claim.obligation.self boxIdx
             combineIdx subIdx 1 S claim.obligation.code
             (claim.obligation.host add sub mul stringEq stringConcat toIndex cmp eq)
-            add sub hBox hCombineHost hSubHost hSelfHost hAdd hSub plan sh
+            add sub hBox hCombineHost hSubHost hSelfHost
+            (carrierContract_weaken hAdd) (carrierContract_weaken hSub) plan sh
             hParse body hLower hCodeSelf fuel n v w hv hRun
       | mul =>
           exact RecursionSoundness.recursion_generic_certified
             claim.obligation.carrier .mul claim.obligation.self boxIdx
             combineIdx subIdx 1 S claim.obligation.code
             (claim.obligation.host add sub mul stringEq stringConcat toIndex cmp eq)
-            mul sub hBox hCombineHost hSubHost hSelfHost _hMul hSub plan sh
+            mul sub hBox hCombineHost hSubHost hSelfHost
+            (carrierContract_weaken _hMul) (carrierContract_weaken hSub) plan sh
             hParse body hLower hCodeSelf fuel n v w hv hRun
   | simulatesModelTotally =>
       cases combineOp with
@@ -142,7 +144,8 @@ theorem unary_recursion_claim_discharges
               claim.obligation.carrier .add claim.obligation.self boxIdx
               combineIdx subIdx 1 S claim.obligation.code
               (claim.obligation.host add sub mul stringEq stringConcat toIndex cmp eq)
-              add sub hBox hCombineHost hSubHost hSelfHost hAdd hSub
+              add sub hBox hCombineHost hSubHost hSelfHost
+              (carrierContract_weaken hAdd) (carrierContract_weaken hSub)
               hAddTot hSubTot plan sh hParse body hLower hCodeSelf n v hv
           exact ⟨n, v, [], rfl, hv, w, hRun, hCod w hRepr⟩
       | mul =>
@@ -159,7 +162,8 @@ theorem unary_recursion_claim_discharges
               claim.obligation.carrier .mul claim.obligation.self boxIdx
               combineIdx subIdx 1 S claim.obligation.code
               (claim.obligation.host add sub mul stringEq stringConcat toIndex cmp eq)
-              mul sub hBox hCombineHost hSubHost hSelfHost hMul hSub
+              mul sub hBox hCombineHost hSubHost hSelfHost
+              (carrierContract_weaken hMul) (carrierContract_weaken hSub)
               hMulTot hSubTot plan sh hParse body hLower hCodeSelf n v hv
           exact ⟨n, v, [], rfl, hv, w, hRun, hCod w hRepr⟩
 
@@ -203,7 +207,8 @@ theorem accumulator_recursion_claim_discharges
         claim.obligation.carrier claim.obligation.self boxIdx addIdx
         subIdx 1 S claim.obligation.code
         (claim.obligation.host add sub mul stringEq stringConcat toIndex cmp eq)
-        add sub hBox hAddHost hSubHost hSelfHost hAdd hSub plan sh
+        add sub hBox hAddHost hSubHost hSelfHost
+        (carrierContract_weaken hAdd) (carrierContract_weaken hSub) plan sh
         hParse body hLower hCodeSelf fuel n acc vn vacc w hvn hvacc hRun
   | simulatesModelTotally =>
       rw [obligationHolds, hPolicy]
@@ -220,7 +225,8 @@ theorem accumulator_recursion_claim_discharges
           claim.obligation.carrier claim.obligation.self boxIdx addIdx
           subIdx 1 S claim.obligation.code
           (claim.obligation.host add sub mul stringEq stringConcat toIndex cmp eq)
-          add sub hBox hAddHost hSubHost hSelfHost hAdd hSub
+          add sub hBox hAddHost hSubHost hSelfHost
+          (carrierContract_weaken hAdd) (carrierContract_weaken hSub)
           hAddTot hSubTot plan sh hParse body hLower hCodeSelf
           n acc vn vacc hvn hvacc
       exact ⟨n, vn, [vacc], rfl, hvn, w, hRun, hCod w hRepr⟩
@@ -378,7 +384,8 @@ theorem mutual_claim_discharges
           simpa [hSccSelf] using MutualRecursionSoundness.mutual_generic_certified
             k claim.obligation.carrier boxIdx subIdx scc S claim.obligation.code
             (claim.obligation.host add sub mul stringEq stringConcat toIndex cmp eq)
-            sub hBox hSubHost hMemberHost hCodeAll hSub fuel i n v w hv hRun'
+            sub hBox hSubHost hMemberHost hCodeAll (carrierContract_weaken hSub)
+            fuel i n v w hv hRun'
       | simulatesModelTotally =>
           rw [obligationHolds, hPolicy]
           simp only [Obligation.holdsTotal, hTotalityRole]
@@ -392,7 +399,8 @@ theorem mutual_claim_discharges
             MutualRecursionSoundness.mutual_generic_certified_total
               k claim.obligation.carrier boxIdx subIdx scc S claim.obligation.code
               (claim.obligation.host add sub mul stringEq stringConcat toIndex cmp eq)
-              sub hBox hSubHost hMemberHost hCodeAll hSub hSubTot i n v hv
+              sub hBox hSubHost hMemberHost hCodeAll (carrierContract_weaken hSub)
+              hSubTot i n v hv
           exact ⟨n, v, [], rfl, hv, w,
             by simpa [hSccSelf] using hRun, hCod w hRepr⟩
 
