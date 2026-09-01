@@ -493,6 +493,12 @@ fn sym_block_struct_names_in_order(block: &SymBlock, out: &mut Vec<String>) {
     for node in &block.nodes {
         match &node.kind {
             SymNodeKind::ProjectField { type_name, .. } => out.push(type_name.clone()),
+            // Record construction anchors its type the same way a projection
+            // does; List cells keep their dedicated constructor family and
+            // never bind a struct index here.
+            SymNodeKind::Construct { type_name, .. } if type_name != "List" => {
+                out.push(type_name.clone())
+            }
             SymNodeKind::VectorGetOrDefault { type_name, .. } => out.push(type_name.clone()),
             SymNodeKind::TagMatch {
                 type_name,

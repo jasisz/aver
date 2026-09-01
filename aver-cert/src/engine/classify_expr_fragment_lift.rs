@@ -348,6 +348,7 @@ fn byte_derived_frag_struct_table(
         .iter()
         .filter_map(|op| match op {
             Op::StructGet(t, _) if !uses_vector_get && *t != carrier => Some(*t),
+            Op::StructNew(t, _) if !uses_vector_get && *t != carrier => Some(*t),
             Op::ArrayGet(t) if uses_vector_get && *t != carrier => Some(*t),
             _ => None,
         })
