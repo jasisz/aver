@@ -211,6 +211,10 @@ def symPrimResultTy? (nodes : List SymNode) (op : SymPrim) (args : List Nat) :
       if symArgsHaveTys nodes args [.float, .float] then some .bool else none
   | .intAdd =>
       if symArgsHaveTys nodes args [.int, .int] then some .int else none
+  | .intSub =>
+      if symArgsHaveTys nodes args [.int, .int] then some .int else none
+  | .intMul =>
+      if symArgsHaveTys nodes args [.int, .int] then some .int else none
   | .stringEq =>
       if symArgsHaveTys nodes args [.string, .string] then some .bool else none
   | .stringConcat =>
@@ -264,6 +268,17 @@ def checkBlockFuel : Nat → List FragTy → FragBlock → Bool
                 (node.ty = .adtRef || node.ty = .rawI32 ||
                   fragTyIsRecordScalar node.ty)
             then some node.ty else none
+        -- Construction of a user struct from already-computed values: yields
+        -- the opaque reference. Field-count/type agreement with the module's
+        -- type section is byte-side work (the type index is bound by the
+        -- byte-exact gate); the structural check demands the args exist as
+        -- typed nodes. Like `structGetUser`, the generic path never admits it
+        -- (`genericFragmentAllowedFuel` rejects it outright).
+        | .structNew _tyIdx args =>
+            if !args.isEmpty &&
+                args.all (fun a => (lookupNode checked a).isSome) then
+              some .adtRef
+            else none
         | .refIsNull value =>
             if hasTy checked value .ref && isCarrierLimbField checked value
             then some .boolI32
@@ -452,6 +467,7 @@ def blockNeedsRelationalFloatResultFuel : Nat → FragBlock → Bool
         | .hostCall _ _ _ => false
         | .selfCall _ _ _ => false
         | .vectorGetOrDefault _ _ _ _ => false
+        | .structNew _ _ => false
 
 def exactBitFloatResultAllowed (plan : ExprFragmentRawPlan) : Bool :=
   match plan.result with
@@ -820,9 +836,11 @@ def encodeSymPrim? : SymPrim → Option FragPrim
   | .floatLt => some .f64Lt
   | .floatGt => some .f64Gt
   | .floatEq => some .f64Eq
-  -- `intAdd` has no representation-level primitive: the encoder binds it to a
-  -- `hostCall .add` node through the byte-derived host-role table instead.
+  -- Int arithmetic has no representation-level primitive: the encoder binds
+  -- it to the byte-derived add/sub/mul host-role calls instead.
   | .intAdd => none
+  | .intSub => none
+  | .intMul => none
   | .stringEq => none
   | .stringConcat => none
   | .boolAnd => some .i32And
@@ -970,12 +988,37 @@ def encodeSymBlockFuel :
                   let (st, id) :=
                     pushEncodedNode st fragTy (.hostCall .add addIdx fragArgs)
                   some { st with symToFrag := st.symToFrag ++ [id] }
+              | .intSub =>
+                  let subIdx ← hostRoleIdx? hostTable .sub
+                  let fragArgs ← args.mapM (encodedValue? st)
+                  let (st, id) :=
+                    pushEncodedNode st fragTy (.hostCall .sub subIdx fragArgs)
+                  some { st with symToFrag := st.symToFrag ++ [id] }
+              | .intMul =>
+                  let mulIdx ← hostRoleIdx? hostTable .mul
+                  let fragArgs ← args.mapM (encodedValue? st)
+                  let (st, id) :=
+                    pushEncodedNode st fragTy (.hostCall .mul mulIdx fragArgs)
+                  some { st with symToFrag := st.symToFrag ++ [id] }
               | _ =>
                   let prim ← encodeSymPrim? op
                   let fragArgs ← args.mapM (encodedValue? st)
                   let (st, id) := pushEncodedNode st fragTy (.prim prim fragArgs)
                   some { st with symToFrag := st.symToFrag ++ [id] }
-          | .construct _ _ _ => none
+          | .construct typeName _ args =>
+              -- Record construction: bind the declared type name to its
+              -- byte-derived struct index and pack the planned field values
+              -- in declaration order (`struct.new`). List cells keep their
+              -- dedicated constructor family; only opaque user records
+              -- encode here.
+              if typeName = "List" || fragTy != FragTy.adtRef then
+                none
+              else
+                let tyIdx ← structTyIdx? structTable typeName
+                let fragArgs ← args.mapM (encodedValue? st)
+                let (st, id) :=
+                  pushEncodedNode st fragTy (.structNew tyIdx fragArgs)
+                some { st with symToFrag := st.symToFrag ++ [id] }
           | .emptyList _ => none
           | .projectField typeName field _fieldTy value =>
               -- Opaque reference fields encode for the field-projection face;

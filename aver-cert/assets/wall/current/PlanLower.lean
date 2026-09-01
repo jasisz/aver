@@ -92,6 +92,11 @@ mutual
               match popExpected stack value with
               | some stack' => some ([.structGet tyIdx field], node.id :: stack')
               | none => none
+          | .structNew tyIdx args =>
+              match popExpectedAll stack args.reverse with
+              | some stack' =>
+                  some ([.structNew tyIdx args.length], node.id :: stack')
+              | none => none
           | .refIsNull value =>
               match popExpected stack value with
               | some stack' => some ([.refIsNull], node.id :: stack')

@@ -216,6 +216,11 @@ mutual
               | some stack', some opBytes, some tyBytes, some fieldBytes =>
                   some ([0xfb] ++ opBytes ++ tyBytes ++ fieldBytes, node.id :: stack')
               | _, _, _, _ => none
+          | .structNew tyIdx args =>
+              match popExpectedAll stack args.reverse, uleb32 0x00, uleb32 tyIdx with
+              | some stack', some opBytes, some tyBytes =>
+                  some ([0xfb] ++ opBytes ++ tyBytes, node.id :: stack')
+              | _, _, _ => none
           | .refIsNull value =>
               match popExpected stack value with
               | some stack' => some ([0xd1], node.id :: stack')

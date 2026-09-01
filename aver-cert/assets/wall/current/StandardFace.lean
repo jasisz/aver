@@ -830,7 +830,7 @@ def genericFragmentAllowedFuel : Nat → FragBlock → Bool
       block.nodes.all fun node =>
         node.ty != .adtRef &&
         match node.kind with
-        | .hostCall _ _ _ | .structGetUser _ _ _ => false
+        | .hostCall _ _ _ | .structGetUser _ _ _ | .structNew _ _ => false
         | .ifElse _ thenBlock elseBlock =>
             genericFragmentAllowedFuel fuel thenBlock &&
               genericFragmentAllowedFuel fuel elseBlock
