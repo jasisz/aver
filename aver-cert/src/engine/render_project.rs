@@ -282,6 +282,12 @@ pub fn write_project(
         "ArtifactSoundness.lean",
         &render_artifact_soundness(),
     )?;
+    // Law-claims surface: the universal law theorems the model modules carry,
+    // each tied to the artifact by a `Laws.lean` corollary citing `Final.cert`.
+    let law_claims = extract_law_claims(model_files);
+    if !law_claims.is_empty() {
+        write(&cert_dir, "Laws.lean", &render_laws_lean(&law_claims))?;
+    }
     std::fs::write(
         cert_dir.join("cert-manifest.json"),
         render_manifest(
@@ -292,6 +298,7 @@ pub fn write_project(
             artifact.target(),
             artifact.abi(),
             artifact.wasip2_component_envelope(),
+            &law_claims,
         ),
     )
     .map_err(|e| format!("write manifest: {e}"))?;

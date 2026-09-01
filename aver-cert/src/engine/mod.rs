@@ -132,6 +132,7 @@ include!("analysis.rs");
 include!("module_envelope.rs");
 #[cfg(feature = "engine")]
 include!("declared_envelope.rs");
+include!("law_claims.rs");
 #[cfg(feature = "engine")]
 include!("rederive.rs");
 #[cfg(feature = "engine")]

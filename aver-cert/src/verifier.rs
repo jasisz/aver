@@ -151,8 +151,25 @@ struct PreparedArtifact<'a> {
     core_module_bytes: &'a [u8],
 }
 
+/// One manifest law-claim: the checker-owned witness re-elaborates the
+/// package's `Laws.lean` corollary at exactly this declared statement and
+/// audits its axioms against the kernel whitelist.
+struct LawCandidate {
+    label: String,
+    /// Fully qualified model theorem name (`Domain.Rational.plus_law_commutative`).
+    theorem: String,
+    /// Verbatim single-line universal statement text.
+    statement: String,
+    /// Corollary name inside `AverCert.Laws`.
+    corollary: String,
+    /// Namespace to `open` so the statement elaborates (`theorem` minus its
+    /// last segment).
+    prefix: String,
+}
+
 struct Candidates {
     certified: Vec<CertifiedCandidate>,
+    laws: Vec<LawCandidate>,
     contracts: Vec<String>,
     declared_uncertified: Vec<(String, String)>,
     capabilities: Vec<(String, String)>,
@@ -542,16 +559,46 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
         .map(|name| format!("`{name}"))
         .collect::<Vec<_>>()
         .join(", ");
+    // Law-claim surface: one type-pinning example per claim (built by
+    // concatenation, never `format!`, so statement braces stay inert), the
+    // conditional `Laws` import, and the corollary roots the axiom audit
+    // walks. All fields were validated by `validate_law_candidate`.
+    let law_import = if candidates.laws.is_empty() {
+        String::new()
+    } else {
+        "import Laws\n".to_string()
+    };
+    let mut law_pins = String::new();
+    for law in &candidates.laws {
+        if !law.prefix.is_empty() {
+            law_pins.push_str("open ");
+            law_pins.push_str(&law.prefix);
+            law_pins.push_str(" in\n");
+        }
+        law_pins.push_str("example : (");
+        law_pins.push_str(&law.statement);
+        law_pins.push_str(") ∧ (AverCert.Schema.Holds AverCert.manifest) := AverCert.Laws.");
+        law_pins.push_str(&law.corollary);
+        law_pins.push_str("\n\n");
+    }
+    let law_roots = candidates
+        .laws
+        .iter()
+        .map(|law| format!("`AverCert.Laws.{}", law.corollary))
+        .collect::<Vec<_>>()
+        .join(", ");
     format!(
         "-- Authored by aver-cert; never accepted from the certificate.\n\
          import Lean\n\
          import AcceptedArtifact\n\
          import ArtifactBytes\n\
          import Manifest\n\
-         import Artifact\n\n\
+         import Artifact\n\
+         {law_import}\
          import ArtifactCertificate\n\n\
          set_option maxRecDepth 200000\n\n\
          namespace AverCertChecker\n\n\
+         {law_pins}\
          example : AverCert.Artifact.data.modBytes = AverCert.ArtifactBytes.modBytes := rfl\n\
          example : AverCert.Artifact.data.modLen = AverCert.ArtifactBytes.modLen := rfl\n\
          example : AverCert.Artifact.data.manifest = AverCert.manifest := rfl\n\
@@ -581,7 +628,13 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
            let axioms ← Lean.collectAxioms `{CHECKED_ROOT}\n  \
            for usedAxiom in axioms do\n    \
              unless allowed.contains usedAxiom do\n      \
-               throwError s!\"non-whitelisted axiom: {{usedAxiom}}\"\n",
+               throwError s!\"non-whitelisted axiom: {{usedAxiom}}\"\n  \
+           let lawRoots : List Lean.Name := [{law_roots}]\n  \
+           for lawRoot in lawRoots do\n    \
+             let lawAxioms ← Lean.collectAxioms lawRoot\n    \
+             for usedAxiom in lawAxioms do\n      \
+               unless allowed.contains usedAxiom do\n        \
+                 throwError s!\"non-whitelisted axiom in law-claim {{lawRoot}}: {{usedAxiom}}\"\n",
         format::ARTIFACT_CERTIFICATE_ROOT,
         candidates.target,
         candidates.profile,
@@ -860,6 +913,28 @@ fn read_candidates(
         });
     }
 
+    let laws_json = manifest
+        .get("laws")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "cert-manifest.json is missing array field `laws`".to_string())?;
+    let mut laws = Vec::with_capacity(laws_json.len());
+    for (index, entry) in laws_json.iter().enumerate() {
+        let context = format!("laws[{index}]");
+        exact_object_fields(
+            entry,
+            &context,
+            &["label", "theorem", "statement", "corollary"],
+        )?;
+        let law = LawCandidate {
+            label: required_string(entry, "label", &context)?,
+            theorem: required_string(entry, "theorem", &context)?,
+            statement: required_string(entry, "statement", &context)?,
+            corollary: required_string(entry, "corollary", &context)?,
+            prefix: String::new(),
+        };
+        laws.push(validate_law_candidate(law)?);
+    }
+
     let contracts = string_array(manifest, "runtime_contracts")?;
     let declared_uncertified =
         object_pair_array(manifest, "declaredUncertified", "name", "reason")?;
@@ -942,6 +1017,7 @@ fn read_candidates(
 
     let candidates = Candidates {
         certified,
+        laws,
         contracts,
         declared_uncertified,
         capabilities,
@@ -955,6 +1031,59 @@ fn read_candidates(
     };
     gate_candidates(&candidates)?;
     Ok(candidates)
+}
+
+/// Validate one manifest law-claim before any of its fields reach the
+/// checker-authored Lean witness. The names must be plain dotted Lean
+/// identifiers, the corollary must be exactly the label's underscore
+/// flattening, and the statement — which the witness re-elaborates verbatim
+/// inside one `example` type — must stay a single term-position line: no
+/// newline, no `:=`, no comment openers, so a crafted statement cannot
+/// terminate the pin early or smuggle in a further declaration.
+fn validate_law_candidate(mut law: LawCandidate) -> Result<LawCandidate, String> {
+    let plain_dotted = |value: &str, field: &str| -> Result<(), String> {
+        let ok =
+            !value.is_empty() && value.len() <= 200 && value.split('.').all(|segment| {
+                let mut chars = segment.chars();
+                matches!(chars.next(), Some(first) if first.is_ascii_alphabetic() || first == '_')
+                    && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+            });
+        if ok {
+            Ok(())
+        } else {
+            Err(format!(
+                "law-claim `{}` field `{field}` is not a plain dotted Lean identifier",
+                law.label
+            ))
+        }
+    };
+    plain_dotted(&law.label, "label")?;
+    plain_dotted(&law.theorem, "theorem")?;
+    plain_dotted(&law.corollary, "corollary")?;
+    if law.corollary != law.label.replace('.', "_") {
+        return Err(format!(
+            "law-claim `{}` corollary `{}` is not the label's flattening",
+            law.label, law.corollary
+        ));
+    }
+    if law.statement.is_empty()
+        || law.statement.len() > 2000
+        || law.statement.contains('\n')
+        || law.statement.contains(":=")
+        || law.statement.contains("--")
+        || law.statement.contains("/-")
+    {
+        return Err(format!(
+            "law-claim `{}` statement is not a single plain term-position line",
+            law.label
+        ));
+    }
+    law.prefix = law
+        .theorem
+        .rsplit_once('.')
+        .map(|(prefix, _)| prefix.to_string())
+        .unwrap_or_default();
+    Ok(law)
 }
 
 fn parse_termination(value: Option<&Value>, export: &str) -> Result<String, String> {
@@ -1848,6 +1977,25 @@ pub fn explain(artifact: &Path, cert_dir: &Path) -> Result<Explanation, String> 
     }
 
     let manifest = read_manifest(cert_dir)?;
+    if let Some(laws) = manifest.get("laws").and_then(Value::as_array)
+        && !laws.is_empty()
+    {
+        println!("\n{}", "LAW-CLAIMS".green().bold());
+        for entry in laws {
+            let label = entry
+                .get("label")
+                .and_then(Value::as_str)
+                .map(display_safe)
+                .unwrap_or_else(|| "<unknown>".to_string());
+            let statement = entry
+                .get("statement")
+                .and_then(Value::as_str)
+                .map(display_safe)
+                .unwrap_or_else(|| "<unknown>".to_string());
+            println!("  {}", label.bold());
+            println!("    {statement}");
+        }
+    }
     if let Some(declined) = manifest.get("source_level_only").and_then(Value::as_array)
         && !declined.is_empty()
     {

@@ -130,8 +130,13 @@ impl Wasip2ComponentEnvelopeDeclaration {
 /// Version 5 added the required top-level `target` field and moved the
 /// target/profile/ABI identifiers into the checker-owned statement schema.
 /// Version 6 added the wasip2 component-envelope byte binding used by the
-/// producer's `--target wasip2 --certify` path.
-pub const CERT_SCHEMA_VERSION: u32 = 6;
+/// producer's `--target wasip2 --certify` path. Version 7 added the required
+/// top-level `laws` array — the certificate's law-claims surface: each entry
+/// names a universal law theorem of the model modules together with its
+/// verbatim statement and its `Laws.lean` corollary, and the checker-owned
+/// witness re-elaborates every corollary at exactly the declared statement
+/// and audits its axioms against the kernel whitelist.
+pub const CERT_SCHEMA_VERSION: u32 = 7;
 
 /// Named theorem audited by the checker-owned witness.
 pub const ARTIFACT_CERTIFICATE_ROOT: &str = "AverCert.Artifact.certificate";
@@ -459,7 +464,7 @@ mod tests {
         );
         assert_eq!(WASIP2_COMPONENT_ENVELOPE_SUFFIX_LEN_FIELD, "suffix_len");
         assert_eq!(WASIP2_COMPONENT_ENVELOPE_KIND, "prefix-core-suffix/v1");
-        assert_eq!(CERT_SCHEMA_VERSION, 6);
+        assert_eq!(CERT_SCHEMA_VERSION, 7);
     }
 
     #[test]
