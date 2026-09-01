@@ -23,7 +23,10 @@ pub fn check_expr_fragment_plan_sidecar(
         .enumerate()
         .find(|(_, f)| f.name == export_name)
         .ok_or_else(|| format!("plan names unknown export `{export_name}`"))?;
-    if f.arity == 0 || !frag_calls_resolvable(&f.calls, &host_table) {
+    // Zero-arity exports are legitimate compute-face targets (constant
+    // constructors); the per-face parameter checks and the exact nominal
+    // signature pin keep every other family fail-closed.
+    if !frag_calls_resolvable(&f.calls, &host_table) {
         return Err(format!(
             "plan for `{export_name}` does not target a non-recursive expr fragment"
         ));
@@ -317,7 +320,10 @@ fn check_expr_fragment_plan_object(
         .enumerate()
         .find(|(_, f)| f.name == export_name)
         .ok_or_else(|| format!("plan names unknown export `{export_name}`"))?;
-    if f.arity == 0 || !frag_calls_resolvable(&f.calls, &host_table) {
+    // Zero-arity exports are legitimate compute-face targets (constant
+    // constructors); the per-face parameter checks and the exact nominal
+    // signature pin keep every other family fail-closed.
+    if !frag_calls_resolvable(&f.calls, &host_table) {
         return Err(format!(
             "plan for `{export_name}` does not target a non-recursive expr fragment"
         ));
