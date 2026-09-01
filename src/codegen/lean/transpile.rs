@@ -1082,9 +1082,11 @@ pub(super) fn transpile_unified(
         // cross-file CITATION (`module.verify_laws`), never whether a module's
         // private obligation is checked. This is the same emit path the entry
         // uses and the active module scope pins bare names to this module's
-        // `FnId`s. Certificate model files omit verify declarations just like
-        // the entry certificate model does.
-        if matches!(emit_mode, LeanEmitMode::Proof) && !cert_model {
+        // `FnId`s. Certificate model files emit ONLY the universal law
+        // theorems from this surface (the sampled cases/`native_decide`
+        // machinery is dropped inside `emit_verify_block`), so a package's
+        // law-claims can cite dependency-module laws such as the k5 ring.
+        if matches!(emit_mode, LeanEmitMode::Proof) {
             ctx.with_module_scope(Some(module.prefix.as_str()), || {
                 let mut dep_verify_counters: HashMap<String, usize> = HashMap::new();
                 let decidability = super::kernel_decide::CaseDecidability::new(
@@ -1096,8 +1098,14 @@ pub(super) fn transpile_unified(
                 for vb in &module.verify_blocks {
                     let key = verify_counter_key(vb);
                     let start_idx = *dep_verify_counters.get(&key).unwrap_or(&0);
-                    let (emitted, next_idx) =
-                        toplevel::emit_verify_block(vb, ctx, verify_mode, start_idx, &decidability);
+                    let (emitted, next_idx) = toplevel::emit_verify_block(
+                        vb,
+                        ctx,
+                        verify_mode,
+                        start_idx,
+                        &decidability,
+                        cert_model,
+                    );
                     dep_verify_counters.insert(key, next_idx);
                     body_sections.push(emitted);
                     body_sections.push(String::new());
@@ -1261,26 +1269,26 @@ pub(super) fn transpile_unified(
     };
     let mut entry_verify_sections: Vec<String> = Vec::new();
     let mut verify_case_counters: HashMap<String, usize> = HashMap::new();
-    // Certificate model modules omit the `verify` sample-check `example`
-    // blocks: they are decided by `native_decide`, need the recursive-type
-    // `DecidableEq` shim the cert mode also drops, and a certificate carries
-    // its own decode-to-Int/bytes anti-vacuity guards instead.
-    if !cert_model {
-        for item in &ctx.items {
-            if let TopLevel::Verify(vb) = item {
-                let key = verify_counter_key(vb);
-                let start_idx = *verify_case_counters.get(&key).unwrap_or(&0);
-                let (emitted, next_idx) = toplevel::emit_verify_block(
-                    vb,
-                    ctx,
-                    verify_mode,
-                    start_idx,
-                    &case_decidability,
-                );
-                verify_case_counters.insert(key, next_idx);
-                entry_verify_sections.push(emitted);
-                entry_verify_sections.push(String::new());
-            }
+    // Certificate model modules keep ONLY the universal law theorems from
+    // this surface: the sample-check `example` blocks are decided by
+    // `native_decide`, need the recursive-type `DecidableEq` shim the cert
+    // mode also drops, and a certificate carries its own decode-to-Int/bytes
+    // anti-vacuity guards instead. `emit_verify_block` owns that split.
+    for item in &ctx.items {
+        if let TopLevel::Verify(vb) = item {
+            let key = verify_counter_key(vb);
+            let start_idx = *verify_case_counters.get(&key).unwrap_or(&0);
+            let (emitted, next_idx) = toplevel::emit_verify_block(
+                vb,
+                ctx,
+                verify_mode,
+                start_idx,
+                &case_decidability,
+                cert_model,
+            );
+            verify_case_counters.insert(key, next_idx);
+            entry_verify_sections.push(emitted);
+            entry_verify_sections.push(String::new());
         }
     }
 
