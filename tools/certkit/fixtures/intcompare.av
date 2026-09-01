@@ -1,0 +1,45 @@
+module IntCompare
+    intent =
+        "Certify fixture for the comparison half of the record"
+        "projection-compute face: the sign template on a computed product,"
+        "the three-way helper with a relational tail, and the equality helper."
+    exposes [Ratio, isNonNeg, isNonPos, below, sameValue]
+    effects []
+
+record Ratio
+    top: Int
+    bottom: Int
+
+fn isNonNeg(a: Ratio) -> Bool
+    ? "Sign template on a product: the emitter compares the carrier against the literal zero inline, without calling the three-way helper."
+    a.top * a.bottom >= 0
+
+verify isNonNeg
+    isNonNeg(Ratio(top = 3, bottom = 4)) => true
+    isNonNeg(Ratio(top = -3, bottom = 4)) => false
+    isNonNeg(Ratio(top = -3, bottom = -4)) => true
+
+fn isNonPos(a: Ratio) -> Bool
+    ? "The same template with the other pair of operators."
+    a.top * a.bottom <= 0
+
+verify isNonPos
+    isNonPos(Ratio(top = -3, bottom = 4)) => true
+    isNonPos(Ratio(top = 0, bottom = 1)) => true
+    isNonPos(Ratio(top = 3, bottom = 4)) => false
+
+fn below(a: Ratio, b: Ratio) -> Bool
+    ? "Two computed products through the three-way helper, read by a signed relational tail."
+    a.top * b.bottom < b.top * a.bottom
+
+verify below
+    below(Ratio(top = 1, bottom = 2), Ratio(top = 2, bottom = 3)) => true
+    below(Ratio(top = 2, bottom = 3), Ratio(top = 1, bottom = 2)) => false
+
+fn sameValue(a: Ratio, b: Ratio) -> Bool
+    ? "Two computed products through the equality helper, whose result already is the source Boolean."
+    a.top * b.bottom == b.top * a.bottom
+
+verify sameValue
+    sameValue(Ratio(top = 1, bottom = 2), Ratio(top = 2, bottom = 4)) => true
+    sameValue(Ratio(top = 1, bottom = 2), Ratio(top = 2, bottom = 3)) => false

@@ -3883,7 +3883,7 @@ fn certify_add_one_output_is_unchanged_when_the_int_helper_is_present() {
         manifest["runtime_contracts"],
         serde_json::json!([
             "__rt_aint_from_i64 (box i64 -> carrier)",
-            "Int.add (carrier add = exact integer addition on represented values)",
+            "Int.add (carrier add = exact integer addition on represented values; result canonical)",
         ]),
         "add_one's runtime contracts must be unchanged"
     );

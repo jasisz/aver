@@ -7846,6 +7846,20 @@ fn cert_verify_certifies_the_five_int_comparison_witnesses() {
 /// re-credit. Each is DECLINED instead, because the role indices are derived
 /// from the module's export section and the lowered bytes are pinned to the
 /// module's own code section.
+/// Read one host role's resolved function index out of the public plan data,
+/// so tampers stay robust to shifting module indices.
+fn plan_role_index(plans_text: &str, marker: &str) -> u32 {
+    let at = plans_text
+        .find(marker)
+        .unwrap_or_else(|| panic!("Plans.lean carries `{marker}`"));
+    plans_text[at + marker.len()..]
+        .split(|c: char| !c.is_ascii_digit())
+        .find(|s| !s.is_empty())
+        .expect("an index follows the marker")
+        .parse()
+        .expect("the index parses")
+}
+
 #[test]
 fn cert_verify_declines_int_comparison_role_tampers() {
     if Command::new("lake").arg("--version").output().is_err() {
@@ -7879,19 +7893,8 @@ fn cert_verify_declines_int_comparison_role_tampers() {
     // Recover the two helper indices from the public plan data so the tampers
     // stay robust to shifting module indices.
     let plans_text = std::fs::read_to_string(cert.join("Plans.lean")).unwrap();
-    let hole = |marker: &str| -> u32 {
-        let at = plans_text
-            .find(marker)
-            .unwrap_or_else(|| panic!("Plans.lean carries `{marker}`"));
-        plans_text[at + marker.len()..]
-            .split(|c: char| !c.is_ascii_digit())
-            .find(|s| !s.is_empty())
-            .expect("an index follows the marker")
-            .parse()
-            .expect("the index parses")
-    };
-    let cmp_idx = hole("(.cmp, ");
-    let eq_idx = hole("(.eq, ");
+    let cmp_idx = plan_role_index(&plans_text, "(.cmp, ");
+    let eq_idx = plan_role_index(&plans_text, "(.eq, ");
     assert_ne!(cmp_idx, eq_idx, "the two helper roles must be distinct");
 
     let tamper = |name: &str, edit: &dyn Fn(&str) -> String| {
@@ -8027,6 +8030,126 @@ fn cert_tripwire_declines_tampered_record_compute_signature() {
     );
 }
 
+/// Tamper trio for the inline sign template's two new pin columns — the
+/// scratch slot it writes and the operator it decides with — plus the compute
+/// face's newly wired comparison roles. The positive half asserts the clean
+/// fixture really reaches all three conjuncts (a declared `intSignCmp` node,
+/// a `__aint_cmp` call and an `__aint_eq` call); each tamper must DECLINE.
+#[test]
+fn cert_tripwire_declines_tampered_int_sign_cmp_plan() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping sign-template tamper test: `lake` not available");
+        return;
+    }
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("cert-intcompare");
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/intcompare.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver compile --certify runs");
+    assert!(
+        compile.status.success(),
+        "intcompare compile --certify failed:\n{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let wasm = out_dir.join("intcompare.wasm");
+    let cert = out_dir.join("cert");
+    let plans_text = std::fs::read_to_string(cert.join("Plans.lean")).unwrap();
+
+    // Positive half: every new conjunct is really reached by this fixture.
+    assert!(
+        plans_text.contains(".intSignCmp .ge (0 : Int) 1 "),
+        "isNonNeg must carry the sign template at the declared scratch slot:\n{plans_text}"
+    );
+    assert!(
+        plans_text.contains(".intSignCmp .le (0 : Int) 1 "),
+        "isNonPos must carry the sign template with the other operator:\n{plans_text}"
+    );
+    assert!(
+        plans_text.contains(".hostCall .cmp "),
+        "below must call the three-way helper:\n{plans_text}"
+    );
+    assert!(
+        plans_text.contains(".hostCall .eq "),
+        "sameValue must call the equality helper:\n{plans_text}"
+    );
+
+    let (ok, report) = aver_check(&wasm, &cert);
+    assert!(ok, "clean intcompare certificate must check:\n{report}");
+    assert!(
+        report.contains("4 checked exports"),
+        "intcompare should certify all four comparisons:\n{report}"
+    );
+
+    let cmp_idx = plan_role_index(&plans_text, "(.cmp, ");
+    let eq_idx = plan_role_index(&plans_text, "(.eq, ");
+    assert_ne!(cmp_idx, eq_idx, "the two helper roles must be distinct");
+
+    let tamper = |name: &str, edit: &dyn Fn(&str) -> String| {
+        let dir = temp_dir(&format!("cert-intcompare-tamper-{name}"));
+        copy_dir(&out_dir, &dir);
+        let plans = dir.join("cert").join("Plans.lean");
+        let text = std::fs::read_to_string(&plans).unwrap();
+        let edited = edit(&text);
+        assert_ne!(text, edited, "tamper `{name}` must change Plans.lean");
+        std::fs::write(&plans, edited).unwrap();
+        let (ok, out) = aver_check(&dir.join("intcompare.wasm"), &dir.join("cert"));
+        assert!(!ok, "tamper `{name}` must be DECLINED:\n{out}");
+        assert!(
+            !out.contains("CERTIFIED") && !out.contains("CHECKED"),
+            "tamper `{name}` must never re-credit an export:\n{out}"
+        );
+    };
+
+    // (1) Point the template at a PARAMETER slot instead of the one declared
+    //     scratch local. The checker pins the slot to `params.length` — that
+    //     pin is what stops the template from clobbering an input — and the
+    //     lowered `local.set` immediate no longer matches the module's bytes.
+    tamper("scratch-slot", &|text| {
+        text.replace(
+            ".intSignCmp .ge (0 : Int) 1 ",
+            ".intSignCmp .ge (0 : Int) 0 ",
+        )
+    });
+
+    // (2) Flip the operator the template decides with. Both the small arm's
+    //     i64 comparison and the sign arm's i32 comparison change, so the
+    //     lowered bytes diverge from the emitted body.
+    tamper("operator", &|text| {
+        text.replace(
+            ".intSignCmp .ge (0 : Int) 1 ",
+            ".intSignCmp .gt (0 : Int) 1 ",
+        )
+    });
+
+    // (3) Move the literal the template compares against.
+    tamper("constant", &|text| {
+        text.replace(
+            ".intSignCmp .ge (0 : Int) 1 ",
+            ".intSignCmp .ge (1 : Int) 1 ",
+        )
+    });
+
+    // (4) Swap which exported helper each comparison role names. Both helpers
+    //     declare the same function type, so only the export-name binding
+    //     objects — and it is what drives the audited encoder.
+    tamper("cmp-eq-role-swap", &|text| {
+        text.replace(&format!("(.cmp, {cmp_idx})"), "(.cmp, __SWAP__)")
+            .replace(&format!("(.eq, {eq_idx})"), &format!("(.eq, {cmp_idx})"))
+            .replace("(.cmp, __SWAP__)", &format!("(.cmp, {eq_idx})"))
+    });
+}
+
 /// Law-claims pin (schema 7): a clean k5 package carries eleven kernel-checked
 /// law corollaries; the checker-owned witness re-elaborates each corollary at
 /// exactly the manifest-declared statement and audits its axioms. The trio:
@@ -8078,8 +8201,8 @@ fn cert_tripwire_declines_tampered_law_claims() {
     let (ok, report) = aver_check(&wasm, &cert);
     assert!(ok, "clean k5 law-claims certificate must check:\n{report}");
     assert!(
-        report.contains("6 checked exports"),
-        "k5 should keep its six certified exports:\n{report}"
+        report.contains("10 checked exports"),
+        "k5 should keep its ten certified exports:\n{report}"
     );
 
     // Tamper A: edit one law statement inside the package's `Laws.lean`. The

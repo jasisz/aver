@@ -5,7 +5,7 @@ expression: golden
 == cert-manifest.json ==
 {
   "schema_version": 7,
-  "format": {"version": 1, "wall_id": "sha256:625fbf848bd21bafd6fcc7d4def3e55352dfaedf2fb4466f456ef7363adc5dbf"},
+  "format": {"version": 1, "wall_id": "sha256:15934e0a1871eaf595ce870094863ddb913f0d27fc545cda1ed035c0f66a4529"},
   "wasm": "add_one.wasm",
   "wasm_sha256": "5f41ddfa9a5a395546d0c21e00c232be77e330ea587b2666456f0488ff0450c9",
   "target": "wasm-gc",
@@ -17,7 +17,7 @@ expression: golden
   "carrier_type_index": 2,
   "runtime_contracts": [
     "__rt_aint_from_i64 (box i64 -> carrier)",
-    "Int.add (carrier add = exact integer addition on represented values)"
+    "Int.add (carrier add = exact integer addition on represented values; result canonical)"
   ],
   "laws": [],
   "declaredUncertified": [
@@ -85,7 +85,7 @@ def manifest : Schema.Manifest :=
         hostRoleTable := some ({ box := some 6, add := some 7, mul := some 9, sub := some 8, toIndex := some 18, cmp := none, eq := none } : CertDecode.AddSub.Roles),
         arithParams := some ({ carrier := 2, limb := 1, decompose := 2, normalize := 3, strip := 4, umagCmp := 5 } : ArithTemplateDerisk.ArithHostParams),
         stringHostRoles := [],
-        contracts := ["__rt_aint_from_i64 (box i64 -> carrier)", "Int.add (carrier add = exact integer addition on represented values)"] },
+        contracts := ["__rt_aint_from_i64 (box i64 -> carrier)", "Int.add (carrier add = exact integer addition on represented values; result canonical)"] },
     symFragmentPlans := [("addOne", Plans.addOneSymPlan)],
     stringEqPlans := [],
     stringConcatPlans := [],
