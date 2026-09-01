@@ -611,6 +611,11 @@ fn sym_block_struct_bindings(block: &SymBlock, out: &mut Vec<(String, SymTy)>) -
                 let ty = block.nodes.get(value.0)?.ty.clone();
                 out.push((type_name.clone(), ty));
             }
+            // Record construction binds its type at emit time the same way a
+            // projection does; List cells keep their dedicated family.
+            SymNodeKind::Construct { type_name, .. } if type_name != "List" => {
+                out.push((type_name.clone(), node.ty.clone()));
+            }
             SymNodeKind::TagMatch {
                 type_name,
                 scrutinee,
