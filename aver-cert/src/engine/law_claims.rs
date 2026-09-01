@@ -38,6 +38,59 @@ impl LawClaim {
 /// (`LAW_CLASS_MARKER_PREFIX` in the aver-lang Lean codegen).
 const LAW_CLASS_MARKER: &str = "-- aver:law-class ";
 
+/// Mirror of the checker's `validate_law_candidate` gates. The producer must
+/// never write a manifest entry its own checker hard-rejects — one refused
+/// entry fails candidate parsing for the WHOLE package before Lean even runs.
+/// Legitimate compiler output can trip the gates (a record literal
+/// `{ field := value }` in a statement carries `:=`; a reserved-word module
+/// escapes to `Type'`), so such a law is simply not claimed — the surface is
+/// additive and omitting a claim is fail-closed.
+fn claim_survives_checker_gates(claim: &LawClaim) -> bool {
+    let plain_dotted = |value: &str| {
+        !value.is_empty()
+            && value.len() <= 200
+            && value.split('.').all(|segment| {
+                let mut chars = segment.chars();
+                matches!(chars.next(), Some(first) if first.is_ascii_alphabetic() || first == '_')
+                    && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+            })
+    };
+    if !plain_dotted(&claim.label)
+        || !plain_dotted(&claim.qualified())
+        || !plain_dotted(&claim.corollary())
+    {
+        return false;
+    }
+    let statement = &claim.statement;
+    if statement.is_empty()
+        || statement.len() > 2000
+        || statement.contains('\n')
+        || statement.contains(":=")
+        || statement.contains("--")
+        || statement.contains("/-")
+    {
+        return false;
+    }
+    let mut depth: Vec<char> = Vec::new();
+    for character in statement.chars() {
+        let matched = match character {
+            '(' | '[' | '{' | '⟨' => {
+                depth.push(character);
+                true
+            }
+            ')' => depth.pop() == Some('('),
+            ']' => depth.pop() == Some('['),
+            '}' => depth.pop() == Some('{'),
+            '⟩' => depth.pop() == Some('⟨'),
+            _ => true,
+        };
+        if !matched {
+            return false;
+        }
+    }
+    depth.is_empty()
+}
+
 /// Scan the emitted model files for universal law theorems.
 ///
 /// The emitter writes, for every exported law, one marker line
@@ -81,12 +134,15 @@ pub fn extract_law_claims(model_files: &[(String, String)]) -> Vec<LawClaim> {
                 let head = format!("theorem {theorem} : ");
                 if let Some(rest) = trimmed.strip_prefix(head.as_str()) {
                     if let Some(statement) = rest.strip_suffix(" := by") {
-                        claims.push(LawClaim {
+                        let claim = LawClaim {
                             label,
                             prefix: namespaces.join("."),
                             theorem,
                             statement: statement.to_string(),
-                        });
+                        };
+                        if claim_survives_checker_gates(&claim) {
+                            claims.push(claim);
+                        }
                     }
                     // A marked theorem that is not single-line yields no claim.
                 } else {

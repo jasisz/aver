@@ -8152,8 +8152,9 @@ fn cert_tripwire_declines_tampered_law_claims() {
     let (ok, out) = aver_check(&dir.join("main.wasm"), &dir.join("cert"));
     assert!(!ok, "sorry'd law corollary must be DECLINED:\n{out}");
     assert!(
-        out.contains("non-whitelisted axiom") || out.contains("did not build"),
-        "wrong reason for sorry'd law corollary:\n{out}"
+        out.contains("non-whitelisted axiom"),
+        "the sorry'd corollary must be caught by the per-law axiom audit, \
+         not by an unrelated build failure:\n{out}"
     );
     assert!(
         !out.contains("CERTIFIED"),

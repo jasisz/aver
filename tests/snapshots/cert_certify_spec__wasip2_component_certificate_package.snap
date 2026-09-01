@@ -4,8 +4,8 @@ expression: golden
 ---
 == cert-manifest.json ==
 {
-  "schema_version": 6,
-  "format": {"version": 1, "wall_id": "sha256:a00a21ccb1dffff46e4cd472e9be7c6ed26e5ee940c9f654c4dadd20881f2acf"},
+  "schema_version": 7,
+  "format": {"version": 1, "wall_id": "sha256:625fbf848bd21bafd6fcc7d4def3e55352dfaedf2fb4466f456ef7363adc5dbf"},
   "wasm": "wasip2_carrierless.component.wasm",
   "wasm_sha256": "0e7064150f82e180dff6f774a8f48711acd2ea21d183ee06576d4f7c9f135aed",
   "target": "wasip2",
@@ -19,6 +19,7 @@ expression: golden
   "runtime_contracts": [
     "String.concat (container-of-string-arrays -> byte-concatenated array)"
   ],
+  "laws": [],
   "declaredUncertified": [
     {"name": "wasi:cli/run@0.2.4#run", "reason": "body does not match a carrier-free certified template, and the module has no Int carrier host helpers (`__rt_aint_from_i64`); integer-family certification requires the Int carrier"},
     {"name": "main", "reason": "body does not match a carrier-free certified template, and the module has no Int carrier host helpers (`__rt_aint_from_i64`); integer-family certification requires the Int carrier"},

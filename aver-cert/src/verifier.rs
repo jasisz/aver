@@ -569,22 +569,25 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
         "import Laws\n".to_string()
     };
     let mut law_pins = String::new();
-    for law in &candidates.laws {
+    for (index, law) in candidates.laws.iter().enumerate() {
         if !law.prefix.is_empty() {
             law_pins.push_str("open ");
             law_pins.push_str(&law.prefix);
             law_pins.push_str(" in\n");
         }
-        law_pins.push_str("example : (");
+        law_pins.push_str(&format!("theorem law_pin_{index} :\n    ("));
         law_pins.push_str(&law.statement);
-        law_pins.push_str(") ∧ (AverCert.Schema.Holds AverCert.manifest) := AverCert.Laws.");
+        law_pins
+            .push_str(") ∧ (AverCert.Schema.Holds AverCert.manifest) :=\n  _root_.AverCert.Laws.");
         law_pins.push_str(&law.corollary);
         law_pins.push_str("\n\n");
     }
-    let law_roots = candidates
-        .laws
-        .iter()
-        .map(|law| format!("`AverCert.Laws.{}", law.corollary))
+    // The audit walks the CHECKER-NAMED pins, never the package's bare
+    // corollary names: the pin's term cites `_root_.AverCert.Laws.<c>` (so an
+    // `open <prefix>`-shadowed decoy cannot be substituted), and auditing
+    // `AverCertChecker.law_pin_<i>` covers exactly the closure the pin proved.
+    let law_roots = (0..candidates.laws.len())
+        .map(|index| format!("`AverCertChecker.law_pin_{index}"))
         .collect::<Vec<_>>()
         .join(", ");
     format!(
@@ -934,6 +937,18 @@ fn read_candidates(
         };
         laws.push(validate_law_candidate(law)?);
     }
+    // The label→corollary underscore flattening is not injective; a duplicate
+    // corollary would declare the same theorem twice in `Laws.lean` and make
+    // the package unverifiable with a confusing Lean error. Reject it here.
+    let mut seen_corollaries = std::collections::BTreeSet::new();
+    for law in &laws {
+        if !seen_corollaries.insert(law.corollary.as_str()) {
+            return Err(format!(
+                "law-claims declare duplicate corollary `{}`",
+                law.corollary
+            ));
+        }
+    }
 
     let contracts = string_array(manifest, "runtime_contracts")?;
     let declared_uncertified =
@@ -1068,13 +1083,38 @@ fn validate_law_candidate(mut law: LawCandidate) -> Result<LawCandidate, String>
     }
     if law.statement.is_empty()
         || law.statement.len() > 2000
-        || law.statement.contains('\n')
+        || law.statement.chars().any(char::is_control)
         || law.statement.contains(":=")
         || law.statement.contains("--")
         || law.statement.contains("/-")
     {
         return Err(format!(
             "law-claim `{}` statement is not a single plain term-position line",
+            law.label
+        ));
+    }
+    // Bracket balance: the witness wraps the statement in one `(...)`, so a
+    // statement whose delimiters close more than they open could escape that
+    // wrapping and re-associate the pin's `∧ Holds` conjunct. Depth may never
+    // go negative and must end at zero, per delimiter family.
+    let mut depth: Vec<char> = Vec::new();
+    let mut balanced = true;
+    for character in law.statement.chars() {
+        match character {
+            '(' | '[' | '{' | '⟨' => depth.push(character),
+            ')' => balanced = balanced && depth.pop() == Some('('),
+            ']' => balanced = balanced && depth.pop() == Some('['),
+            '}' => balanced = balanced && depth.pop() == Some('{'),
+            '⟩' => balanced = balanced && depth.pop() == Some('⟨'),
+            _ => {}
+        }
+        if !balanced {
+            break;
+        }
+    }
+    if !balanced || !depth.is_empty() {
+        return Err(format!(
+            "law-claim `{}` statement has unbalanced brackets",
             law.label
         ));
     }
@@ -1940,10 +1980,13 @@ fn display_safe(value: &str) -> String {
     value
         .chars()
         .map(|character| {
-            if (' '..='~').contains(&character) {
-                character
-            } else {
+            // Guard terminal control sequences only: statements and reasons
+            // are legitimately unicode (∀, ∧, ≤), and flattening them to `?`
+            // makes materially different claims render identically.
+            if character.is_control() {
                 '?'
+            } else {
+                character
             }
         })
         .collect()

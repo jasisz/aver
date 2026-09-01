@@ -321,6 +321,7 @@ pub fn emit_verify_law_forall_auto_proof(
     theorem_base: &str,
     quant_params: &str,
     theorem_prop: &str,
+    cert_model: bool,
 ) -> Option<AutoProof> {
     let inner = emit_verify_law_forall_auto_proof_inner(
         vb,
@@ -330,6 +331,7 @@ pub fn emit_verify_law_forall_auto_proof(
         theorem_base,
         quant_params,
         theorem_prop,
+        cert_model,
     )?;
     // ADDITIVE, SHAPE-GATED `grind` outright-closer rung — prepended at
     // the TOP of the ladder, but ONLY for laws whose goal is
@@ -597,6 +599,7 @@ fn emit_verify_law_forall_auto_proof_inner(
     theorem_base: &str,
     quant_params: &str,
     theorem_prop: &str,
+    cert_model: bool,
 ) -> Option<AutoProof> {
     if verify_mode != VerifyEmitMode::NativeDecide {
         return None;
@@ -1713,7 +1716,7 @@ fn emit_verify_law_forall_auto_proof_inner(
             // by `recognize_core_when_linear` in the `conditional_universal`
             // chain (dropping the sampled domain), and the `sorry` floor + the
             // `#print axioms` whitelist keep credit fail-closed.
-            if recognize_core_when_linear(vb, law, ctx) {
+            if cert_model && recognize_core_when_linear(vb, law, ctx) {
                 let defs = shared::law_simp_defs(ctx, vb, law);
                 let unfolds: Vec<String> = defs.iter().cloned().collect();
                 let mut simp_names = unfolds.clone();
@@ -1898,8 +1901,15 @@ fn emit_verify_law_forall_auto_proof_inner(
 /// fully unfolds into a bare arithmetic implication for `omega`/`grind`, so
 /// the statement builder drops the sampled-domain disjunctions
 /// (`omit_domain`) and classes the law `universal`, keeping statement and
-/// proof body in lockstep. Everything else declines fail-closed and keeps
-/// the bounded sampled-domain statement.
+/// proof body in lockstep. CERT-MODEL ONLY: both the statement flip and the
+/// proof arm are gated on `cert_model`, so `aver proof` output — and the
+/// bounded credit the corpus already earns there — is byte-identical.
+/// Known residual: a builtin call in the cone is invisible here (the cone
+/// collector resolves user defs only), so an unfoldable-looking cone can
+/// still fall to the honest `sorry` floor; in the certificate that claim is
+/// then dropped or declined loudly, never silently credited. Everything
+/// else declines fail-closed and keeps the bounded sampled-domain
+/// statement.
 pub(in crate::codegen::lean) fn recognize_core_when_linear(
     vb: &VerifyBlock,
     law: &VerifyLaw,

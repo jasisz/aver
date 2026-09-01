@@ -1178,7 +1178,7 @@ fn emit_verify_law_block(
             // `nonNegOfPositive` shape). The proof arm unfolds the cone and
             // closes by `omega`/`grind`; dropping the sampled domain keeps the
             // universal statement in lockstep with that proof.
-            || super::law_auto::recognize_core_when_linear(vb, &law_for_auto_proof, ctx)
+            || (cert_model && super::law_auto::recognize_core_when_linear(vb, &law_for_auto_proof, ctx))
             // Mathlib BREAK-GLASS (`--allow-mathlib` only, entry-module only): a
             // walling `when`-law no core recognizer above claimed is emitted in
             // true-universal form and closed by the generic Mathlib portfolio.
@@ -1188,6 +1188,7 @@ fn emit_verify_law_block(
             // (also last in the proof cascade).
             || super::law_auto::recognize_mathlib_break_glass(ctx, &law_for_auto_proof)
         );
+    let mut universal_fell_to_sorry = false;
     if !quant_params.is_empty() && !skip_universal {
         lines.extend(emit_verify_law_support_theorems(
             vb,
@@ -1277,6 +1278,7 @@ fn emit_verify_law_block(
                 &theorem_base,
                 &quant_params,
                 &theorem_parts[0].prop,
+                cert_model,
             )
         {
             lines.extend(auto_proof.support_lines);
@@ -1321,6 +1323,7 @@ fn emit_verify_law_block(
                     &theorem_base,
                     &quant_params,
                     &part.prop,
+                    cert_model,
                 ) {
                     if auto_proof.replaces_theorem {
                         // The strategy emitted a part-specific theorem statement
@@ -1364,6 +1367,7 @@ fn emit_verify_law_block(
                             .to_string(),
                     );
                     body.push("  sorry".to_string());
+                    universal_fell_to_sorry = true;
                 }
                 part_bodies.push(body);
             }
@@ -1381,6 +1385,18 @@ fn emit_verify_law_block(
     // no universal statement (no quantifiable givens, or a skipped shape)
     // exports nothing.
     if cert_model {
+        // A universal statement whose proof is the bare manual-sorry fallback
+        // must not enter the certificate: the per-law axiom audit would
+        // permanently decline the WHOLE package for one unclosable law. The
+        // emitter knows this case at emission time — drop the claim here
+        // (comment only), keeping law-claims additive and fail-closed.
+        if universal_fell_to_sorry {
+            let label = scoped_claim(ctx, format!("{}.{}", vb.fn_name, law.name));
+            return (
+                format!("-- cert-model law {label}: universal proof did not close; not exported"),
+                case_index_start + vb.cases.len(),
+            );
+        }
         return (lines.join("\n"), case_index_start + vb.cases.len());
     }
 

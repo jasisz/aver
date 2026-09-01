@@ -7,20 +7,20 @@
 /// Public certificate-package layout understood by this verifier.
 pub const FORMAT_VERSION: u32 = 1;
 
-/// Raw wasm-gc module artifact target admitted by schema 6.
+/// Raw wasm-gc module artifact target admitted since schema 6.
 pub const TARGET_WASM_GC: &str = "wasm-gc";
 
-/// WASI 0.2 Component Model artifact target admitted by schema 6 through a
+/// WASI 0.2 Component Model artifact target admitted since schema 6 through a
 /// declared component envelope.
 pub const TARGET_WASIP2: &str = "wasip2";
 
-/// Only emitted-fragment profile admitted by schema 6.
+/// Only emitted-fragment profile admitted since schema 6.
 pub const PROFILE_ID: &str = "AverUserProfile/v1";
 
-/// Runtime ABI admitted for the wasm-gc artifact target in schema 6.
+/// Runtime ABI admitted for the wasm-gc artifact target since schema 6.
 pub const RUNTIME_ABI_WASM_GC: &str = "aver-wasm-gc/0";
 
-/// Runtime ABI admitted for wasip2 component certificates in schema 6.
+/// Runtime ABI admitted for wasip2 component certificates since schema 6.
 pub const RUNTIME_ABI_WASIP2: &str = "aver-wasip2/0";
 
 /// Top-level manifest field for a wasip2 component envelope declaration.
@@ -450,7 +450,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn wasip2_envelope_surface_names_schema_six_component_binding() {
+    fn wasip2_envelope_surface_names_component_binding() {
         assert_eq!(TARGET_WASM_GC, "wasm-gc");
         assert_eq!(TARGET_WASIP2, "wasip2");
         assert_eq!(RUNTIME_ABI_WASM_GC, "aver-wasm-gc/0");
