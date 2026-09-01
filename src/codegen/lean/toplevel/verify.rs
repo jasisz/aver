@@ -117,7 +117,17 @@ pub fn emit_verify_block(
     verify_mode: VerifyEmitMode,
     case_index_start: usize,
     decidability: &CaseDecidability,
+    cert_model: bool,
 ) -> (String, usize) {
+    // Certificate model files carry ONLY the law surface: the sampled
+    // cases-form blocks are `native_decide` ground checks (the tokens the
+    // cert wall rejects) and a certificate carries its own decode-to-Int/
+    // bytes anti-vacuity guards instead. Skip them before the refusal
+    // bookkeeping so cert emission never records declines for a surface
+    // it does not export.
+    if cert_model && !matches!(vb.kind, VerifyKind::Law(_)) {
+        return (String::new(), case_index_start + vb.cases.len());
+    }
     // Fail closed inside the exported artifact, not only in `aver proof
     // --check`'s build-log panic scan.  Lean's `panic!` returns `default`, so a
     // fuel-zero branch evaluated by `native_decide` can certify a false ground
@@ -193,7 +203,15 @@ pub fn emit_verify_block(
     }
 
     if let VerifyKind::Law(law) = &vb.kind {
-        return emit_verify_law_block(vb, law, ctx, verify_mode, case_index_start, decidability);
+        return emit_verify_law_block(
+            vb,
+            law,
+            ctx,
+            verify_mode,
+            case_index_start,
+            decidability,
+            cert_model,
+        );
     }
 
     // Oracle v1: `verify fn trace` cases-form — mix of provable and
@@ -642,6 +660,7 @@ fn emit_verify_law_block(
     verify_mode: VerifyEmitMode,
     case_index_start: usize,
     decidability: &CaseDecidability,
+    cert_model: bool,
 ) -> (String, usize) {
     let mut lines = Vec::new();
     let fn_name = aver_name_to_lean(&vb.fn_name);
@@ -1154,6 +1173,12 @@ fn emit_verify_law_block(
             // on the shared opaque core, so the statement drops its sampled
             // domain to the true `∀ givens, <when> = true -> claim` universal.
             || super::law_auto::recognize_validated_wrapper(vb, &law_for_auto_proof, ctx)
+            // CORE when-linear consequence: a conditional `holds` law whose
+            // whole call cone is effect-free straight-line arithmetic (the k5
+            // `nonNegOfPositive` shape). The proof arm unfolds the cone and
+            // closes by `omega`/`grind`; dropping the sampled domain keeps the
+            // universal statement in lockstep with that proof.
+            || (cert_model && super::law_auto::recognize_core_when_linear(vb, &law_for_auto_proof, ctx))
             // Mathlib BREAK-GLASS (`--allow-mathlib` only, entry-module only): a
             // walling `when`-law no core recognizer above claimed is emitted in
             // true-universal form and closed by the generic Mathlib portfolio.
@@ -1163,6 +1188,7 @@ fn emit_verify_law_block(
             // (also last in the proof cascade).
             || super::law_auto::recognize_mathlib_break_glass(ctx, &law_for_auto_proof)
         );
+    let mut universal_fell_to_sorry = false;
     if !quant_params.is_empty() && !skip_universal {
         lines.extend(emit_verify_law_support_theorems(
             vb,
@@ -1214,14 +1240,25 @@ fn emit_verify_law_block(
         // Additive: the marker parser consumes only the first two fields, so
         // an older reader ignores it.
         let law_label = scoped_claim(ctx, format!("{}.{}", vb.fn_name, law.name));
+        let stmt_universal =
+            !(theorem_parts.iter().any(|part| part.bounded_domain) && !floor_window_universal);
+        // Certificate model: a bounded-domain statement is not a law-claim
+        // (its premises bind it to the finite sample domain), so the cert
+        // surface drops it entirely — comment only, no theorem, no marker.
+        if cert_model && !stmt_universal {
+            return (
+                format!("-- cert-model law {law_label}: bounded-domain statement is not exported"),
+                case_index_start + vb.cases.len(),
+            );
+        }
         lines.push(format!(
             "{}{} {} {}",
             super::LAW_CLASS_MARKER_PREFIX,
             theorem_base,
-            if theorem_parts.iter().any(|part| part.bounded_domain) && !floor_window_universal {
-                super::LAW_CLASS_BOUNDED_DOMAIN
-            } else {
+            if stmt_universal {
                 super::LAW_CLASS_UNIVERSAL
+            } else {
+                super::LAW_CLASS_BOUNDED_DOMAIN
             },
             law_label,
         ));
@@ -1241,6 +1278,7 @@ fn emit_verify_law_block(
                 &theorem_base,
                 &quant_params,
                 &theorem_parts[0].prop,
+                cert_model,
             )
         {
             lines.extend(auto_proof.support_lines);
@@ -1285,6 +1323,7 @@ fn emit_verify_law_block(
                     &theorem_base,
                     &quant_params,
                     &part.prop,
+                    cert_model,
                 ) {
                     if auto_proof.replaces_theorem {
                         // The strategy emitted a part-specific theorem statement
@@ -1328,6 +1367,7 @@ fn emit_verify_law_block(
                             .to_string(),
                     );
                     body.push("  sorry".to_string());
+                    universal_fell_to_sorry = true;
                 }
                 part_bodies.push(body);
             }
@@ -1336,6 +1376,28 @@ fn emit_verify_law_block(
                 lines.extend(body);
             }
         }
+    }
+
+    // Certificate model: the law surface ends at the universal theorem.
+    // `_checked_domain` and the per-case `_sample_N` cross-checks below are
+    // `native_decide` ground checks — the tokens the cert wall rejects — and
+    // the certificate carries its own anti-vacuity guards. A law that built
+    // no universal statement (no quantifiable givens, or a skipped shape)
+    // exports nothing.
+    if cert_model {
+        // A universal statement whose proof is the bare manual-sorry fallback
+        // must not enter the certificate: the per-law axiom audit would
+        // permanently decline the WHOLE package for one unclosable law. The
+        // emitter knows this case at emission time — drop the claim here
+        // (comment only), keeping law-claims additive and fail-closed.
+        if universal_fell_to_sorry {
+            let label = scoped_claim(ctx, format!("{}.{}", vb.fn_name, law.name));
+            return (
+                format!("-- cert-model law {label}: universal proof did not close; not exported"),
+                case_index_start + vb.cases.len(),
+            );
+        }
+        return (lines.join("\n"), case_index_start + vb.cases.len());
     }
 
     // Skip checked_domain emission for refinement-lifted laws: the

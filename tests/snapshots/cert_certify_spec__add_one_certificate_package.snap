@@ -4,7 +4,7 @@ expression: golden
 ---
 == cert-manifest.json ==
 {
-  "schema_version": 6,
+  "schema_version": 7,
   "format": {"version": 1, "wall_id": "sha256:625fbf848bd21bafd6fcc7d4def3e55352dfaedf2fb4466f456ef7363adc5dbf"},
   "wasm": "add_one.wasm",
   "wasm_sha256": "5f41ddfa9a5a395546d0c21e00c232be77e330ea587b2666456f0488ff0450c9",
@@ -19,6 +19,7 @@ expression: golden
     "__rt_aint_from_i64 (box i64 -> carrier)",
     "Int.add (carrier add = exact integer addition on represented values)"
   ],
+  "laws": [],
   "declaredUncertified": [
     {"name": "_start", "reason": "module export is outside the claimed certification obligations"},
     {"name": "__rt_string_from_lm", "reason": "module export is outside the claimed certification obligations"},

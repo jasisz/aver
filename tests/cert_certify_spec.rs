@@ -361,8 +361,8 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     );
     assert_eq!(
         manifest["schema_version"].as_u64(),
-        Some(6),
-        "schema 6 adds the component-envelope byte binding while preserving target/profile/ABI pins"
+        Some(7),
+        "schema 7 adds the law-claims surface on top of the component-envelope binding"
     );
     assert_eq!(
         manifest["target"].as_str(),
@@ -379,7 +379,7 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         Some(aver::codegen::cert::RUNTIME_ABI),
         "the wasm-gc runtime ABI is pinned exactly"
     );
-    assert_eq!(aver::codegen::cert::CERT_SCHEMA_VERSION, 6);
+    assert_eq!(aver::codegen::cert::CERT_SCHEMA_VERSION, 7);
     let declared_uncertified = manifest["declaredUncertified"].as_array().unwrap();
     assert_eq!(
         declared_uncertified.len(),

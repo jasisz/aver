@@ -313,6 +313,7 @@ fn emit_hand_sidecar_law(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn emit_verify_law_forall_auto_proof(
     vb: &VerifyBlock,
     law: &VerifyLaw,
@@ -321,6 +322,7 @@ pub fn emit_verify_law_forall_auto_proof(
     theorem_base: &str,
     quant_params: &str,
     theorem_prop: &str,
+    cert_model: bool,
 ) -> Option<AutoProof> {
     let inner = emit_verify_law_forall_auto_proof_inner(
         vb,
@@ -330,6 +332,7 @@ pub fn emit_verify_law_forall_auto_proof(
         theorem_base,
         quant_params,
         theorem_prop,
+        cert_model,
     )?;
     // ADDITIVE, SHAPE-GATED `grind` outright-closer rung — prepended at
     // the TOP of the ladder, but ONLY for laws whose goal is
@@ -589,6 +592,7 @@ fn emit_finite_int_domain_law(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emit_verify_law_forall_auto_proof_inner(
     vb: &VerifyBlock,
     law: &VerifyLaw,
@@ -597,6 +601,7 @@ fn emit_verify_law_forall_auto_proof_inner(
     theorem_base: &str,
     quant_params: &str,
     theorem_prop: &str,
+    cert_model: bool,
 ) -> Option<AutoProof> {
     if verify_mode != VerifyEmitMode::NativeDecide {
         return None;
@@ -1704,6 +1709,44 @@ fn emit_verify_law_forall_auto_proof_inner(
             // `sorry` floor + the unchanged `#print axioms` whitelist keep credit
             // fail-closed (a goal outside the portfolio degrades to an honest
             // sorry, never a false universal).
+            // CORE when-linear consequence (the k5 `nonNegOfPositive` shape): a
+            // conditional `holds` law whose subject and `when` cone are all
+            // effect-free straight-line arithmetic definitions. Unfold the whole
+            // (small, non-`match`) cone, bridge the Bool comparisons down to
+            // `Prop`, and hand the residual implication to `omega`, with `grind`
+            // as the nonlinear fallback. The statement side is kept in lockstep
+            // by `recognize_core_when_linear` in the `conditional_universal`
+            // chain (dropping the sampled domain), and the `sorry` floor + the
+            // `#print axioms` whitelist keep credit fail-closed.
+            if cert_model && recognize_core_when_linear(vb, law, ctx) {
+                let defs = shared::law_simp_defs(ctx, vb, law);
+                let unfolds: Vec<String> = defs.iter().cloned().collect();
+                let mut simp_names = unfolds.clone();
+                for bridge in [
+                    "decide_eq_true_eq",
+                    "Bool.and_eq_true",
+                    "beq_iff_eq",
+                    "ge_iff_le",
+                    "gt_iff_lt",
+                ] {
+                    simp_names.push(bridge.to_string());
+                }
+                let simp_set = simp_names.join(", ");
+                let grind_cone = unfolds.join(", ");
+                let intro = format!("  intro {} h_when", intro_names.join(" "));
+                let close = format!(
+                    "  first\n    \
+                     | (simp only [{simp_set}] at h_when ⊢; omega)\n    \
+                     | (simp only [{simp_set}] at h_when ⊢; grind)\n    \
+                     | (grind [{grind_cone}]; done)\n    \
+                     | sorry"
+                );
+                return Some(AutoProof {
+                    support_lines: Vec::new(),
+                    body: crate::codegen::lean::tactic_ir::Tactic::raw(vec![intro, close]),
+                    replaces_theorem: false,
+                });
+            }
             if ctx.allow_mathlib
                 && ctx.active_module_scope().is_none()
                 && let Some(proof) = emit_mathlib_break_glass_law(vb, law, ctx, &intro_names)
@@ -1850,6 +1893,70 @@ fn emit_verify_law_forall_auto_proof_inner(
                 replaces_theorem: false,
             })
         })
+}
+
+/// Predicate half of the CORE when-linear-consequence arm: a conditional
+/// `holds` law (`when P(...) -> subject(...) holds`) whose subject call heads
+/// the LHS and whose whole call cone — subject, `when` guards, and everything
+/// they reach — is a small set of effect-free, non-`match`, non-recursive
+/// straight-line definitions. That is exactly the shape `simp only [cone]`
+/// fully unfolds into a bare arithmetic implication for `omega`/`grind`, so
+/// the statement builder drops the sampled-domain disjunctions
+/// (`omit_domain`) and classes the law `universal`, keeping statement and
+/// proof body in lockstep. CERT-MODEL ONLY: both the statement flip and the
+/// proof arm are gated on `cert_model`, so `aver proof` output — and the
+/// bounded credit the corpus already earns there — is byte-identical.
+/// Known residual: a builtin call in the cone is invisible here (the cone
+/// collector resolves user defs only), so an unfoldable-looking cone can
+/// still fall to the honest `sorry` floor; in the certificate that claim is
+/// then dropped or declined loudly, never silently credited. Everything
+/// else declines fail-closed and keeps the bounded sampled-domain
+/// statement.
+pub(in crate::codegen::lean) fn recognize_core_when_linear(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+) -> bool {
+    if law.when.is_none() {
+        return false;
+    }
+    // `holds` shape: the RHS is the literal `true` and the LHS is a call to
+    // the law's own subject fn.
+    if !matches!(
+        law.rhs.node,
+        crate::ast::Expr::Literal(crate::ast::Literal::Bool(true))
+    ) {
+        return false;
+    }
+    let crate::ast::Expr::FnCall(callee, _) = &law.lhs.node else {
+        return false;
+    };
+    if shared::expr_dotted_name(callee).as_deref() != Some(vb.fn_name.as_str()) {
+        return false;
+    }
+    // The unfold cone must be small and every member an effect-free,
+    // expression-only (no `match` tail — no branch structure for simp to
+    // strand), non-`main` definition. A name that resolves to no def (a
+    // builtin, a capability) declines the whole law.
+    let names = shared::law_simp_source_names(ctx, vb, law);
+    if names.len() > 10 {
+        return false;
+    }
+    for name in &names {
+        let Some(fd) = ctx.fn_def_by_name(name, ctx.active_module_scope().as_deref()) else {
+            return false;
+        };
+        if !fd.effects.is_empty() || fd.name == "main" {
+            return false;
+        }
+        if matches!(
+            fd.body.tail_expr().map(|e| &e.node),
+            Some(crate::ast::Expr::Match { .. }) | None
+        ) {
+            return false;
+        }
+    }
+    true
 }
 
 /// Predicate half of [`emit_mathlib_break_glass_law`]: with `--allow-mathlib`

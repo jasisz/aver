@@ -8026,3 +8026,138 @@ fn cert_tripwire_declines_tampered_record_compute_signature() {
         "tampered record-compute signature credited:\n{out}"
     );
 }
+
+/// Law-claims pin (schema 7): a clean k5 package carries eleven kernel-checked
+/// law corollaries; the checker-owned witness re-elaborates each corollary at
+/// exactly the manifest-declared statement and audits its axioms. The trio:
+/// a statement edited in `Laws.lean`, a statement edited in the manifest, and
+/// a corollary proof degraded to `sorry` must each be DECLINED.
+#[test]
+fn cert_tripwire_declines_tampered_law_claims() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping law-claims tamper test: `lake` not available");
+        return;
+    }
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("cert-k5-laws");
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("projects/k5_fdiv/main.av")
+        .arg("--module-root")
+        .arg("projects/k5_fdiv")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver compile --certify runs");
+    assert!(
+        compile.status.success(),
+        "k5_fdiv compile --certify failed:\n{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let wasm = out_dir.join("main.wasm");
+    let cert = out_dir.join("cert");
+    let laws_lean = std::fs::read_to_string(cert.join("Laws.lean")).unwrap();
+    let manifest = std::fs::read_to_string(cert.join("cert-manifest.json")).unwrap();
+    assert_eq!(
+        laws_lean.matches("/-- law-claim `").count(),
+        11,
+        "k5 package must carry eleven law corollaries"
+    );
+    assert!(
+        manifest.contains("\"label\": \"Domain.Rational.isNonNeg.nonNegOfPositive\""),
+        "the when-law must be part of the claimed surface"
+    );
+
+    let (ok, report) = aver_check(&wasm, &cert);
+    assert!(ok, "clean k5 law-claims certificate must check:\n{report}");
+    assert!(
+        report.contains("6 checked exports"),
+        "k5 should keep its six certified exports:\n{report}"
+    );
+
+    // Tamper A: edit one law statement inside the package's `Laws.lean`. The
+    // corollary no longer has the declared type, so the package build (or the
+    // witness) must fail — never a silent re-interpretation.
+    let needle = "(Domain.Rational.plus a b) (Domain.Rational.plus b a)";
+    assert!(laws_lean.contains(needle), "expected commutative statement");
+    let dir = temp_dir("cert-k5-laws-file-tamper");
+    copy_dir(&out_dir, &dir);
+    std::fs::write(
+        dir.join("cert").join("Laws.lean"),
+        laws_lean.replacen(
+            needle,
+            "(Domain.Rational.plus a b) (Domain.Rational.plus a a)",
+            1,
+        ),
+    )
+    .unwrap();
+    let (ok, out) = aver_check(&dir.join("main.wasm"), &dir.join("cert"));
+    assert!(!ok, "tampered Laws.lean statement must be DECLINED:\n{out}");
+    assert!(
+        !out.contains("CERTIFIED"),
+        "tampered Laws.lean credited:\n{out}"
+    );
+
+    // Tamper B: edit the same statement in `cert-manifest.json` only. The
+    // witness re-elaborates the corollary at the manifest-declared statement,
+    // so the declared surface and the package theorem no longer agree.
+    let json_needle = "(Domain.Rational.plus a b) (Domain.Rational.plus b a)";
+    assert!(
+        manifest.contains(json_needle),
+        "expected statement in manifest"
+    );
+    let dir = temp_dir("cert-k5-laws-manifest-tamper");
+    copy_dir(&out_dir, &dir);
+    std::fs::write(
+        dir.join("cert").join("cert-manifest.json"),
+        manifest.replacen(
+            json_needle,
+            "(Domain.Rational.plus a b) (Domain.Rational.plus a a)",
+            1,
+        ),
+    )
+    .unwrap();
+    let (ok, out) = aver_check(&dir.join("main.wasm"), &dir.join("cert"));
+    assert!(
+        !ok,
+        "tampered manifest law statement must be DECLINED:\n{out}"
+    );
+    assert!(
+        !out.contains("CERTIFIED"),
+        "tampered manifest law credited:\n{out}"
+    );
+
+    // Tamper C: degrade one corollary proof to `sorry`. The package still
+    // builds and the statement still matches, so only the per-law axiom audit
+    // stands between a sorry and a credited law-claim.
+    let proof_needle = "⟨Domain.Rational.plus_law_commutative, AverCert.Final.cert⟩";
+    assert!(
+        laws_lean.contains(proof_needle),
+        "expected corollary proof term"
+    );
+    let dir = temp_dir("cert-k5-laws-sorry-tamper");
+    copy_dir(&out_dir, &dir);
+    std::fs::write(
+        dir.join("cert").join("Laws.lean"),
+        laws_lean.replacen(proof_needle, "sorry", 1),
+    )
+    .unwrap();
+    let (ok, out) = aver_check(&dir.join("main.wasm"), &dir.join("cert"));
+    assert!(!ok, "sorry'd law corollary must be DECLINED:\n{out}");
+    assert!(
+        out.contains("non-whitelisted axiom"),
+        "the sorry'd corollary must be caught by the per-law axiom audit, \
+         not by an unrelated build failure:\n{out}"
+    );
+    assert!(
+        !out.contains("CERTIFIED"),
+        "sorry'd law corollary credited:\n{out}"
+    );
+}

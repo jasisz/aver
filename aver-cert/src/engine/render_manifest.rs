@@ -627,6 +627,7 @@ fn render_final() -> String {
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_manifest(
     analysis: &Analysis,
     model_info: &ModelInfo,
@@ -635,6 +636,7 @@ fn render_manifest(
     target: &str,
     abi: &str,
     wasip2_component_envelope: Option<crate::format::Wasip2ComponentEnvelopeDeclaration>,
+    law_claims: &[LawClaim],
 ) -> String {
     let mut s = String::new();
     let has_total = analysis
@@ -694,6 +696,26 @@ fn render_manifest(
         s.push_str(&format!("\n    {}", json_str(c)));
     }
     if !analysis.contracts.is_empty() {
+        s.push_str("\n  ");
+    }
+    s.push_str("],\n");
+    // Law-claims surface (schema 7): one entry per universal model law, with
+    // the verbatim statement the checker-owned witness re-elaborates the
+    // `Laws.lean` corollary at.
+    s.push_str("  \"laws\": [");
+    for (i, claim) in law_claims.iter().enumerate() {
+        if i > 0 {
+            s.push(',');
+        }
+        s.push_str(&format!(
+            "\n    {{\"label\": {}, \"theorem\": {}, \"statement\": {}, \"corollary\": {}}}",
+            json_str(&claim.label),
+            json_str(&claim.qualified()),
+            json_str(&claim.statement),
+            json_str(&claim.corollary()),
+        ));
+    }
+    if !law_claims.is_empty() {
         s.push_str("\n  ");
     }
     s.push_str("],\n");
