@@ -113,6 +113,15 @@ fn lower_expr_fragment_block_bytes(
                 out.push(0xd1);
                 stack.push(node.id);
             }
+            FragNodeKind::StructNew { ty_idx, args } => {
+                for arg in args.iter().rev() {
+                    lower_pop(&mut stack, *arg, node.id)?;
+                }
+                out.push(0xfb);
+                push_u32_leb(out, 0x00);
+                push_u32_leb(out, *ty_idx);
+                stack.push(node.id);
+            }
             FragNodeKind::Prim { op, args } => {
                 for arg in args.iter().rev() {
                     lower_pop(&mut stack, *arg, node.id)?;

@@ -95,6 +95,8 @@ pub enum SymPrim {
     FloatGt,
     FloatEq,
     IntAdd,
+    IntSub,
+    IntMul,
     StringEq,
     StringConcat,
     /// Source-level `Bool.and` (eager conjunction); encodes to the
@@ -695,6 +697,7 @@ fn sym_node_from_frag_source_subset(node: &FragNode) -> Option<SymNode> {
             args: args.iter().map(|id| SymValueId(id.0)).collect(),
         },
         FragNodeKind::VectorGetOrDefault { .. } => return None,
+        FragNodeKind::StructNew { .. } => return None,
         FragNodeKind::If {
             cond,
             then_block,

@@ -457,6 +457,8 @@ fn block_has_nan_nondeterministic_float_op(block: &FragBlock) -> bool {
     // Deliberately exhaustive: extending FragNodeKind must force an explicit
     // decision about nested blocks and Float-bit observation at this gate.
     block.nodes.iter().any(|node| match &node.kind {
+        // Packs already-computed values; observes no Float bits itself.
+        FragNodeKind::StructNew { .. } => false,
         FragNodeKind::Prim { op, .. } => prim_has_nan_nondeterministic_float_result(op),
         FragNodeKind::If {
             then_block,

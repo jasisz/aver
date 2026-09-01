@@ -409,6 +409,9 @@ impl<'a, 'e> MirSymPlanBuilder<'a, 'e> {
                 crate::ast::Literal::Bool(value) => {
                     self.push_node(SymTy::Bool, SymNodeKind::ConstBool(*value))
                 }
+                crate::ast::Literal::Int(value) => {
+                    self.push_node(SymTy::Int, SymNodeKind::ConstInt(*value))
+                }
                 crate::ast::Literal::Float(value) => {
                     self.push_node(SymTy::Float, SymNodeKind::ConstFloatBits(value.to_bits()))
                 }
@@ -465,6 +468,32 @@ impl<'a, 'e> MirSymPlanBuilder<'a, 'e> {
             // an ADT tag dispatch.
             crate::ir::mir::MirExpr::Match(m) => self.lower_tag_match(&m.node),
             crate::ir::mir::MirExpr::Call(call) => self.lower_call(&call.node),
+            crate::ir::mir::MirExpr::RecordCreate(rc) => {
+                // Record construction over already-planned field values. v1
+                // demands the written field order to BE the declared order
+                // (the emitter evaluates fields as written and `struct.new`
+                // consumes them in declared order; a reordering write stays
+                // unplanned, fail-closed, bytes untouched).
+                let rc = &rc.node;
+                let mut args = Vec::with_capacity(rc.fields.len());
+                for (pos, field) in rc.fields.iter().enumerate() {
+                    let (idx, _field_ty) =
+                        (self.record_fields)(&rc.type_name, &field.name)?;
+                    if idx as usize != pos {
+                        return None;
+                    }
+                    let (value, _value_ty) = self.lower_expr(&field.value)?;
+                    args.push(value);
+                }
+                self.push_node(
+                    SymTy::Named(rc.type_name.clone()),
+                    SymNodeKind::Construct {
+                        type_name: rc.type_name.clone(),
+                        ctor_name: rc.type_name.clone(),
+                        args,
+                    },
+                )
+            }
             _ => None,
         }
     }
@@ -638,6 +667,26 @@ impl<'a, 'e> MirSymPlanBuilder<'a, 'e> {
         // recognize. Placed before the Float bail so a Float comparison keeps
         // its existing primitive lowering untouched. `<=` and `!=` decline:
         // neither has an admitted plan primitive behind it.
+        // Int arithmetic over arbitrary planned operands (projections,
+        // literals, prior results). Comparisons fall through to the
+        // value-comparison block below.
+        if lhs_ty == SymTy::Int && rhs_ty == SymTy::Int {
+            let arith = match binop.op {
+                crate::ast::BinOp::Add => Some(SymPrim::IntAdd),
+                crate::ast::BinOp::Sub => Some(SymPrim::IntSub),
+                crate::ast::BinOp::Mul => Some(SymPrim::IntMul),
+                _ => None,
+            };
+            if let Some(op) = arith {
+                return self.push_node(
+                    SymTy::Int,
+                    SymNodeKind::Prim {
+                        op,
+                        args: vec![lhs, rhs],
+                    },
+                );
+            }
+        }
         if lhs_ty == SymTy::Int && rhs_ty == SymTy::Int {
             let op = sym_int_cmp_op(binop.op)?;
             return self.push_node(SymTy::Bool, SymNodeKind::IntCmp { op, lhs, rhs });

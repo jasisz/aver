@@ -621,6 +621,15 @@ pub enum FragNodeKind {
         box_idx: u32,
         default: i64,
     },
+    /// Construction of a user struct of wasm type `ty_idx` from `args` (source
+    /// field order). Lowers to `struct.new ty_idx`; the type index is bound to
+    /// the module bytes by the byte-exact gate, mirroring `StructGetUser`.
+    /// Twin of `FragNodeKind.structNew` (added LAST in the Lean inductive so
+    /// existing `next`-goal order in the wall induction is untouched).
+    StructNew {
+        ty_idx: u32,
+        args: Vec<FragValueId>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -772,6 +781,13 @@ fn expr_fragment_node_kind_lean_value(kind: &FragNodeKind) -> String {
             value,
         } => format!(".structGetUser {ty_idx} {field} {}", value.0),
         FragNodeKind::RefIsNull { value } => format!(".refIsNull {}", value.0),
+        FragNodeKind::StructNew { ty_idx, args } => format!(
+            ".structNew {ty_idx} [{}]",
+            args.iter()
+                .map(|id| id.0.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
         FragNodeKind::Prim { op, args } => format!(
             ".prim {} [{}]",
             op.lean_plan_ctor(),
@@ -871,6 +887,12 @@ fn render_fragment_node_plan(node: &FragNode, indent: usize, out: &mut String) {
         }
         FragNodeKind::RefIsNull { value } => {
             out.push_str(&format!("ref.is_null value=v{}\n", value.0));
+        }
+        FragNodeKind::StructNew { ty_idx, args } => {
+            out.push_str(&format!(
+                "struct.new ty={ty_idx} args={}\n",
+                render_fragment_plan_ids(args)
+            ));
         }
         FragNodeKind::Prim { op, args } => {
             out.push_str(&format!(

@@ -297,6 +297,9 @@ where
         FragNodeKind::VectorGetOrDefault { .. } => {
             unreachable!("the fused vector read is rendered by its own face, not the generic value renderer")
         }
+        FragNodeKind::StructNew { .. } => {
+            unreachable!("user struct construction is rendered by its own face, not the generic value renderer")
+        }
         FragNodeKind::RefIsNull { value } => {
             let v = expr_fragment_value_expr(block, *value, local);
             format!("{v} = WVal.null")
@@ -544,6 +547,7 @@ where
         | FragNodeKind::SelfCall { .. }
         | FragNodeKind::StructGet { .. }
         | FragNodeKind::StructGetUser { .. }
+        | FragNodeKind::StructNew { .. }
         | FragNodeKind::VectorGetOrDefault { .. } => unreachable!("node is not BoolI32"),
     }
 }
