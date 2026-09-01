@@ -8137,7 +8137,7 @@ fn cert_tripwire_declines_tampered_law_claims() {
     // Tamper C: degrade one corollary proof to `sorry`. The package still
     // builds and the statement still matches, so only the per-law axiom audit
     // stands between a sorry and a credited law-claim.
-    let proof_needle = "⟨Domain.Rational.plus_law_commutative, AverCert.Final.cert⟩";
+    let proof_needle = "⟨_root_.Domain.Rational.plus_law_commutative, _root_.AverCert.Final.cert⟩";
     assert!(
         laws_lean.contains(proof_needle),
         "expected corollary proof term"

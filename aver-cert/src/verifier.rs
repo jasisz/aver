@@ -559,10 +559,20 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
         .map(|name| format!("`{name}"))
         .collect::<Vec<_>>()
         .join(", ");
-    // Law-claim surface: one type-pinning example per claim (built by
+    // Law-claim surface: one type-pinning theorem per claim (built by
     // concatenation, never `format!`, so statement braces stay inert), the
     // conditional `Laws` import, and the corollary roots the axiom audit
     // walks. All fields were validated by `validate_law_candidate`.
+    //
+    // The statement is re-elaborated inside the model theorem's OWN namespace
+    // — the same context the package's `Laws.lean` uses — because `open
+    // <prefix> in` at root does not reproduce it: inside `namespace Json` the
+    // text `Json.jsonInt` reaches the constructor `Json.Json.jsonInt`, while
+    // at root it reaches the accessor `Json.jsonInt` that `open` only adds an
+    // alias beside. The pins therefore sit OUTSIDE `namespace AverCertChecker`
+    // and name themselves `_root_.AverCertChecker.law_pin_<i>`: nested inside
+    // it the current namespace would be `AverCertChecker.<prefix>`, whose
+    // resolution is not the model's either.
     let law_import = if candidates.laws.is_empty() {
         String::new()
     } else {
@@ -571,16 +581,24 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
     let mut law_pins = String::new();
     for (index, law) in candidates.laws.iter().enumerate() {
         if !law.prefix.is_empty() {
-            law_pins.push_str("open ");
+            law_pins.push_str("namespace ");
             law_pins.push_str(&law.prefix);
-            law_pins.push_str(" in\n");
+            law_pins.push_str("\n\n");
         }
-        law_pins.push_str(&format!("theorem law_pin_{index} :\n    ("));
+        law_pins.push_str(&format!(
+            "theorem _root_.AverCertChecker.law_pin_{index} :\n    ("
+        ));
         law_pins.push_str(&law.statement);
-        law_pins
-            .push_str(") ∧ (AverCert.Schema.Holds AverCert.manifest) :=\n  _root_.AverCert.Laws.");
+        law_pins.push_str(
+            ") ∧ (_root_.AverCert.Schema.Holds _root_.AverCert.manifest) :=\n  _root_.AverCert.Laws.",
+        );
         law_pins.push_str(&law.corollary);
         law_pins.push_str("\n\n");
+        if !law.prefix.is_empty() {
+            law_pins.push_str("end ");
+            law_pins.push_str(&law.prefix);
+            law_pins.push_str("\n\n");
+        }
     }
     // The audit walks the CHECKER-NAMED pins, never the package's bare
     // corollary names: the pin's term cites `_root_.AverCert.Laws.<c>` (so an
@@ -600,8 +618,9 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
          {law_import}\
          import ArtifactCertificate\n\n\
          set_option maxRecDepth 200000\n\n\
-         namespace AverCertChecker\n\n\
+         set_option autoImplicit false\n\n\
          {law_pins}\
+         namespace AverCertChecker\n\n\
          example : AverCert.Artifact.data.modBytes = AverCert.ArtifactBytes.modBytes := rfl\n\
          example : AverCert.Artifact.data.modLen = AverCert.ArtifactBytes.modLen := rfl\n\
          example : AverCert.Artifact.data.manifest = AverCert.manifest := rfl\n\

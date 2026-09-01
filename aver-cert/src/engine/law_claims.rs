@@ -122,32 +122,57 @@ pub fn admit_law_claims(claims: Vec<LawClaim>) -> (Vec<LawClaim>, Vec<(String, S
     (admitted, declined)
 }
 
-/// Render the package's `Laws.lean`: one three-line corollary per claim,
-/// conjoining the law's verbatim universal statement with the artifact-level
-/// `Holds` fact by citing the model theorem and `AverCert.Final.cert`. One
-/// kernel-checked name per claim ties the law to exactly the certified bytes.
+/// Render the package's `Laws.lean`: one corollary per claim, conjoining the
+/// law's universal statement with the artifact-level `Holds` fact by citing
+/// the model theorem and `AverCert.Final.cert`. One kernel-checked name per
+/// claim ties the law to exactly the certified bytes.
+///
+/// The statement is re-elaborated INSIDE the model theorem's own namespace,
+/// not under an `open <prefix> in` at root. Those two contexts do not agree:
+/// inside `namespace Json`, `Json.jsonInt` resolves to the constructor
+/// `Json.Json.jsonInt`, while at root the same text reaches the accessor
+/// `Json.jsonInt` that an `open` only adds an alias beside. Reproducing the
+/// namespace makes the claim text mean exactly what it meant where the
+/// emitter wrote it — the namespace is `theorem` minus its last segment, so
+/// the manifest names the context it is read in.
+///
+/// Everything the certificate owns is spelled `_root_.`-qualified, so a model
+/// module that declares an `AverCert` sub-namespace cannot shadow the fact
+/// being conjoined or the proof term citing it.
 pub fn render_laws_lean(claims: &[LawClaim]) -> String {
     let mut s = String::new();
     s.push_str(
         "-- Law-claims of this certificate. Each corollary conjoins one universal\n\
          -- law of the model modules with the artifact-level `Holds` fact, so a\n\
          -- single kernel-checked name ties the law to exactly the certified bytes.\n\
-         import Manifest\nimport Final\n\nnamespace AverCert.Laws\n\n",
+         -- Each statement is elaborated inside the namespace its model theorem was\n\
+         -- emitted in, so the claim text means there what it means in the model.\n\
+         import Manifest\n\
+         import Final\n\n\
+         set_option autoImplicit false\n\n",
     );
     for claim in claims {
-        let open_line = if claim.prefix.is_empty() {
-            String::new()
-        } else {
-            format!("open {} in\n", claim.prefix)
-        };
-        s.push_str(&format!(
-            "{open_line}/-- law-claim `{}` -/\ntheorem {} :\n    ({}) ∧ (AverCert.Schema.Holds AverCert.manifest) :=\n  ⟨{}, AverCert.Final.cert⟩\n\n",
-            claim.label,
-            claim.corollary(),
-            claim.statement,
-            claim.qualified(),
-        ));
+        // Concatenated, never interpolated into a format string: a statement
+        // carrying `{`/`}` must stay inert text.
+        if !claim.prefix.is_empty() {
+            s.push_str("namespace ");
+            s.push_str(&claim.prefix);
+            s.push_str("\n\n");
+        }
+        s.push_str("/-- law-claim `");
+        s.push_str(&claim.label);
+        s.push_str("` -/\ntheorem _root_.AverCert.Laws.");
+        s.push_str(&claim.corollary());
+        s.push_str(" :\n    (");
+        s.push_str(&claim.statement);
+        s.push_str(") ∧ (_root_.AverCert.Schema.Holds _root_.AverCert.manifest) :=\n  ⟨_root_.");
+        s.push_str(&claim.qualified());
+        s.push_str(", _root_.AverCert.Final.cert⟩\n\n");
+        if !claim.prefix.is_empty() {
+            s.push_str("end ");
+            s.push_str(&claim.prefix);
+            s.push_str("\n\n");
+        }
     }
-    s.push_str("end AverCert.Laws\n");
     s
 }
