@@ -201,6 +201,58 @@ fn lower_expr_fragment_block_bytes(
                 out.push(0x0b);
                 stack.push(node.id);
             }
+            FragNodeKind::IntSignCmp {
+                op,
+                constant,
+                scratch,
+                value,
+            } => {
+                // Monolithic sign template (byte twin of
+                // `PlanBytes.intSignCmpTemplateBytes`): stash the operand in
+                // the declared scratch local, test `limbs = null`, then decide
+                // on the `small` field or on the sign field alone.
+                lower_pop(&mut stack, *value, node.id)?;
+                out.push(0x21);
+                push_u32_leb(out, *scratch);
+                out.push(0x20);
+                push_u32_leb(out, *scratch);
+                out.push(0xfb);
+                push_u32_leb(out, 0x02);
+                push_u32_leb(out, carrier);
+                push_u32_leb(out, 1);
+                out.push(0xd1);
+                out.push(0x04);
+                out.push(0x7f);
+                out.push(0x20);
+                push_u32_leb(out, *scratch);
+                out.push(0xfb);
+                push_u32_leb(out, 0x02);
+                push_u32_leb(out, carrier);
+                push_u32_leb(out, 0);
+                out.push(0x42);
+                push_i64_leb(out, *constant);
+                push_prim_opcode(out, int_sign_cmp_small_prim(*op));
+                out.push(0x05);
+                match int_sign_cmp_sign_prim(*op) {
+                    None => {
+                        out.push(0x41);
+                        push_i32_leb(out, 0);
+                    }
+                    Some(prim) => {
+                        out.push(0x20);
+                        push_u32_leb(out, *scratch);
+                        out.push(0xfb);
+                        push_u32_leb(out, 0x02);
+                        push_u32_leb(out, carrier);
+                        push_u32_leb(out, 2);
+                        out.push(0x41);
+                        push_i32_leb(out, 0);
+                        push_prim_opcode(out, prim);
+                    }
+                }
+                out.push(0x0b);
+                stack.push(node.id);
+            }
             FragNodeKind::If {
                 cond,
                 then_block,

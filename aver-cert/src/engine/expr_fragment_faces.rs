@@ -686,8 +686,10 @@ mod record_proj_face_tests {
 
 /// The record projection-compute face: k opaque record parameters of ONE
 /// pinned struct type, a body over the v1 compute node set (projections,
-/// construction, box/add/sub/mul/eq host calls, i64 literals), and a
-/// record/Int/Bool result. Twin of `StandardFace.classifyRecordCompute`.
+/// construction, box/add/sub/mul/cmp/eq host calls, i64 and raw i32 literals,
+/// the three signed relational primitives that read a comparison verdict, and
+/// the inline sign template), and a record/Int/Bool result. Twin of
+/// `StandardFace.classifyRecordCompute`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FragRecordComputeFace {
     pub struct_idx: u32,
@@ -695,10 +697,20 @@ pub struct FragRecordComputeFace {
 
 fn record_compute_node_ok(host_table: &FragHostTable, kind: &FragNodeKind) -> bool {
     match kind {
+        // The wall additionally decides the i64 band of the two literals
+        // below; here the `i64` type of the payload already carries it.
         FragNodeKind::Local { .. }
         | FragNodeKind::ConstI64(_)
+        | FragNodeKind::ConstI32(_)
         | FragNodeKind::StructGetUser { .. }
-        | FragNodeKind::StructNew { .. } => true,
+        | FragNodeKind::StructNew { .. }
+        | FragNodeKind::IntSignCmp { .. } => true,
+        FragNodeKind::Prim { op, args } => {
+            matches!(
+                op,
+                FragPrim::I32LtS | FragPrim::I32GtS | FragPrim::I32GeS
+            ) && args.len() == 2
+        }
         FragNodeKind::HostCall {
             role,
             func_idx,
@@ -707,12 +719,12 @@ fn record_compute_node_ok(host_table: &FragHostTable, kind: &FragNodeKind) -> bo
             host_table.lookup(*role) == Some(*func_idx)
                 && match role {
                     FragHostRole::Box => args.len() == 1,
-                    // `eq` is deliberately OUT of v1: the wall's `_hEq`
-                    // contract is small-band, the bridge's equality is not.
                     FragHostRole::Add
                     | FragHostRole::Sub
-                    | FragHostRole::Mul => args.len() == 2,
-                    _ => false,
+                    | FragHostRole::Mul
+                    | FragHostRole::Cmp
+                    | FragHostRole::Eq => args.len() == 2,
+                    FragHostRole::ToIndex => false,
                 }
         }
         _ => false,

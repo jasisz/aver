@@ -127,6 +127,39 @@ fn lower_expr_fragment_block(block: &FragBlock, carrier: u32) -> Result<Vec<Op>,
                 ops.push(Op::StructNew(*ty_idx, args.len() as u32));
                 stack.push(node.id);
             }
+            FragNodeKind::IntSignCmp {
+                op,
+                constant,
+                scratch,
+                value,
+            } => {
+                // Monolithic sign template (twin of
+                // `PlanLower.intSignCmpTemplate`).
+                lower_pop(&mut stack, *value, node.id)?;
+                ops.extend([
+                    Op::LocalSet(*scratch),
+                    Op::LocalGet(*scratch),
+                    Op::StructGet(carrier, 1),
+                    Op::RefIsNull,
+                    Op::If,
+                    Op::LocalGet(*scratch),
+                    Op::StructGet(carrier, 0),
+                    Op::I64Const(*constant),
+                    op_to_wasm(int_sign_cmp_small_prim(*op)),
+                    Op::Else,
+                ]);
+                match int_sign_cmp_sign_prim(*op) {
+                    None => ops.push(Op::I32Const(0)),
+                    Some(prim) => ops.extend([
+                        Op::LocalGet(*scratch),
+                        Op::StructGet(carrier, 2),
+                        Op::I32Const(0),
+                        op_to_wasm(prim),
+                    ]),
+                }
+                ops.push(Op::End);
+                stack.push(node.id);
+            }
             FragNodeKind::If {
                 cond,
                 then_block,

@@ -420,6 +420,9 @@ where
         FragNodeKind::SelfCall { .. } => {
             unreachable!("self-call is rendered by the fuel-recursion face, not the generic value renderer")
         }
+        FragNodeKind::IntSignCmp { .. } => {
+            unreachable!("the sign template is rendered by the record-compute face, not the generic value renderer")
+        }
         FragNodeKind::If {
             cond,
             then_block,
@@ -553,7 +556,8 @@ where
         | FragNodeKind::StructGet { .. }
         | FragNodeKind::StructGetUser { .. }
         | FragNodeKind::StructNew { .. }
-        | FragNodeKind::VectorGetOrDefault { .. } => unreachable!("node is not BoolI32"),
+        | FragNodeKind::VectorGetOrDefault { .. }
+        | FragNodeKind::IntSignCmp { .. } => unreachable!("node is not BoolI32"),
     }
 }
 

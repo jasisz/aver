@@ -630,6 +630,46 @@ pub enum FragNodeKind {
         ty_idx: u32,
         args: Vec<FragValueId>,
     },
+    /// The emitter's monolithic sign template for comparing a COMPUTED Int
+    /// carrier against an i64 literal without calling `__aint_cmp`
+    /// (`from_mir/builtins.rs::emit_aint_cmp_const`). The operand is popped off
+    /// the stack into `scratch` — the one declared scratch local, pinned to
+    /// `params.length` by the plan checker — and the `limbs = null` test picks
+    /// either the native i64 compare of the `small` field or, for a canonical
+    /// limb-carrying operand, the sign field alone. Twin of
+    /// `FragNodeKind.intSignCmp` (added LAST in the Lean inductive).
+    IntSignCmp {
+        op: SymIntCmp,
+        constant: i64,
+        scratch: u32,
+        value: FragValueId,
+    },
+}
+
+/// The i64 comparison the sign template's SMALL arm performs against the
+/// literal. Twin of `PlanLower.intSignCmpSmallPrim`.
+#[cfg(feature = "engine")]
+fn int_sign_cmp_small_prim(op: SymIntCmp) -> FragPrim {
+    match op {
+        SymIntCmp::Eq => FragPrim::I64Eq,
+        SymIntCmp::Lt => FragPrim::I64LtS,
+        SymIntCmp::Le => FragPrim::I64LeS,
+        SymIntCmp::Ge => FragPrim::I64GeS,
+        SymIntCmp::Gt => FragPrim::I64GtS,
+    }
+}
+
+/// The i32 comparison the sign template's LIMB-CARRYING arm performs against
+/// `i32.const 0`, or `None` for equality — which reads no sign field at all,
+/// because a canonical limb-carrying carrier never equals an i64 literal.
+/// Twin of `PlanLower.intSignCmpBigArm`.
+#[cfg(feature = "engine")]
+fn int_sign_cmp_sign_prim(op: SymIntCmp) -> Option<FragPrim> {
+    match op {
+        SymIntCmp::Eq => None,
+        SymIntCmp::Lt | SymIntCmp::Le => Some(FragPrim::I32LtS),
+        SymIntCmp::Ge | SymIntCmp::Gt => Some(FragPrim::I32GtS),
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -788,6 +828,16 @@ fn expr_fragment_node_kind_lean_value(kind: &FragNodeKind) -> String {
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
+        FragNodeKind::IntSignCmp {
+            op,
+            constant,
+            scratch,
+            value,
+        } => format!(
+            ".intSignCmp {} ({constant} : Int) {scratch} {}",
+            op.lean_plan_ctor(),
+            value.0
+        ),
         FragNodeKind::Prim { op, args } => format!(
             ".prim {} [{}]",
             op.lean_plan_ctor(),
@@ -892,6 +942,19 @@ fn render_fragment_node_plan(node: &FragNode, indent: usize, out: &mut String) {
             out.push_str(&format!(
                 "struct.new ty={ty_idx} args={}\n",
                 render_fragment_plan_ids(args)
+            ));
+        }
+        FragNodeKind::IntSignCmp {
+            op,
+            constant,
+            scratch,
+            value,
+        } => {
+            out.push_str(&format!(
+                "int.sign_cmp op={} constant={constant} scratch={scratch} \
+                 value=v{}\n",
+                op.plan_tag(),
+                value.0
             ));
         }
         FragNodeKind::Prim { op, args } => {

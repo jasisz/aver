@@ -402,7 +402,9 @@ fn runtime_contracts_for_certs<'a>(certs: impl IntoIterator<Item = &'a Cert>) ->
                             FragHostRole::Add => has_add = true,
                             FragHostRole::Sub => has_sub = true,
                             FragHostRole::Mul => has_mul = true,
-                            _ => {}
+                            FragHostRole::Cmp => has_cmp = true,
+                            FragHostRole::Eq => has_eq = true,
+                            FragHostRole::ToIndex => {}
                         }
                     }
                 }

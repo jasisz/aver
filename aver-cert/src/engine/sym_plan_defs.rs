@@ -241,14 +241,16 @@ impl SymPlan {
         host_table: &FragHostTable,
         struct_table: &FragStructTable,
     ) -> Option<ExprFragmentPlan> {
+        let params = self
+            .params
+            .iter()
+            .map(SymTy::to_frag_ty)
+            .collect::<Option<Vec<_>>>()?;
+        let nparams = u32::try_from(params.len()).ok()?;
         Some(ExprFragmentPlan {
-            params: self
-                .params
-                .iter()
-                .map(SymTy::to_frag_ty)
-                .collect::<Option<Vec<_>>>()?,
+            params,
             result: self.result.to_frag_ty()?,
-            body: expr_fragment_block_from_sym(&self.body, host_table, struct_table)?,
+            body: expr_fragment_block_from_sym(&self.body, nparams, host_table, struct_table)?,
         })
     }
 }
@@ -710,6 +712,10 @@ fn sym_node_from_frag_source_subset(node: &FragNode) -> Option<SymNode> {
         },
         FragNodeKind::VectorGetOrDefault { .. } => return None,
         FragNodeKind::StructNew { .. } => return None,
+        // The sign template is a REPRESENTATION shape (scratch slot, limb
+        // test); its source form is an `IntConstCmp` the producer already
+        // carries forward, so there is nothing to recover here.
+        FragNodeKind::IntSignCmp { .. } => return None,
         FragNodeKind::If {
             cond,
             then_block,

@@ -491,7 +491,9 @@ fn block_has_nan_nondeterministic_float_op(block: &FragBlock) -> bool {
         | FragNodeKind::RefIsNull { .. }
         | FragNodeKind::HostCall { .. }
         | FragNodeKind::SelfCall { .. }
-        | FragNodeKind::VectorGetOrDefault { .. } => false,
+        | FragNodeKind::VectorGetOrDefault { .. }
+        // Yields the source Boolean; observes no Float bits.
+        | FragNodeKind::IntSignCmp { .. } => false,
     })
 }
 
@@ -772,6 +774,15 @@ fn check_sym_fragment_plan_object(
              compute face (its record is not a flat all-Int declaration)"
         ));
     }
+    // Same fail-closed shape for the inline sign template: the compute face is
+    // the only face that interprets it, and the generic renderers have no arm
+    // for it.
+    if record_compute.is_none() && plan_contains_int_sign_cmp_sidecar(&plan.body) {
+        return Err(format!(
+            "source plan for `{export_name}` compares a computed Int against a \
+             literal outside the compute face"
+        ));
+    }
     let sidecar = sym_fragment_sidecar(export_name, &sym_plan);
     Ok((
         func_order,
@@ -848,6 +859,21 @@ fn sym_sidecar_declared_tys(
     Ok((params, result))
 }
 
+
+fn plan_contains_int_sign_cmp_sidecar(block: &FragBlock) -> bool {
+    block.nodes.iter().any(|n| match &n.kind {
+        FragNodeKind::IntSignCmp { .. } => true,
+        FragNodeKind::If {
+            then_block,
+            else_block,
+            ..
+        } => {
+            plan_contains_int_sign_cmp_sidecar(then_block)
+                || plan_contains_int_sign_cmp_sidecar(else_block)
+        }
+        _ => false,
+    })
+}
 
 fn plan_contains_struct_new_sidecar(block: &FragBlock) -> bool {
     block.nodes.iter().any(|n| match &n.kind {
