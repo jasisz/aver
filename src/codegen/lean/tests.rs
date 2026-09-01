@@ -4800,3 +4800,106 @@ fn chained_method_receivers_are_parenthesised() {
         "{lean}"
     );
 }
+
+/// CORE when-linear consequence, POSITIVE gate: the k5 shape — a conditional
+/// `holds` law whose whole unfold cone (subject, `when` guard, and what the
+/// guard calls) is built only from parameters, record field projections, `Int`
+/// literals, `*`, `<` and `>=`, and record construction. The positive walker
+/// admits every cone body, so the certificate model states and classes the law
+/// `universal` instead of bounding it to the sampled domain.
+#[test]
+fn cert_model_classes_when_linear_arithmetic_cone_law_universal() {
+    let mut ctx = ctx_from_source(
+        r#"
+module WhenLinearCone
+    intent = "conditional holds law over a straight-line arithmetic cone"
+
+record Fraction
+    top: Int
+    bottom: Int
+
+fn zeroF() -> Fraction
+    ? "The fraction zero."
+    Fraction(top = 0, bottom = 1)
+
+fn lessF(a: Fraction, b: Fraction) -> Bool
+    ? "Strict rational order, robust for either denominator sign."
+    a.top * a.bottom * (b.bottom * b.bottom) < b.top * b.bottom * (a.bottom * a.bottom)
+
+fn nonNeg(a: Fraction) -> Bool
+    ? "Nonnegativity of a fraction."
+    a.top * a.bottom >= 0
+
+verify nonNeg law nonNegOfPositive
+    given x: Fraction = [Fraction(top = 3, bottom = 4), Fraction(top = 1, bottom = 2)]
+    when lessF(zeroF(), x)
+    nonNeg(x) holds
+"#,
+        "when_linear_cone",
+    );
+    let lean = generated_lean_file(&transpile_for_cert_model(&mut ctx));
+
+    assert!(
+        lean.contains(
+            "-- aver:law-class nonNeg_law_nonNegOfPositive universal nonNeg.nonNegOfPositive"
+        ),
+        "an all-arithmetic cone must be classed universal:\n{lean}"
+    );
+    assert!(
+        lean.contains(
+            "theorem nonNeg_law_nonNegOfPositive : ∀ (x : Fraction), lessF zeroF x = true -> nonNeg x = true := by"
+        ),
+        "the universal statement must drop the sampled domain and keep the `when` premise:\n{lean}"
+    );
+}
+
+/// CORE when-linear consequence, NEGATIVE gate: the SAME law shape, but one
+/// cone body calls the builtin `Int.abs`. The cone-name collector resolves
+/// user definitions only, so that call leaves no name behind — the older
+/// negative gate could not see it. The positive walker refuses any callee that
+/// does not resolve to a user definition of the cone, so the law keeps its
+/// bounded sampled-domain statement, which the certificate model then declines
+/// to export.
+#[test]
+fn cert_model_declines_when_linear_law_whose_cone_calls_a_builtin() {
+    let mut ctx = ctx_from_source(
+        r#"
+module WhenLinearBuiltinCone
+    intent = "conditional holds law whose cone reaches a builtin"
+
+record Fraction
+    top: Int
+    bottom: Int
+
+fn zeroF() -> Fraction
+    ? "The fraction zero."
+    Fraction(top = 0, bottom = 1)
+
+fn lessF(a: Fraction, b: Fraction) -> Bool
+    ? "Strict rational order, robust for either denominator sign."
+    a.top * a.bottom * (b.bottom * b.bottom) < b.top * b.bottom * (a.bottom * a.bottom)
+
+fn nonNeg(a: Fraction) -> Bool
+    ? "Nonnegativity of a fraction, spelled through the absolute value."
+    Int.abs(a.top * a.bottom) == a.top * a.bottom
+
+verify nonNeg law nonNegOfPositive
+    given x: Fraction = [Fraction(top = 3, bottom = 4), Fraction(top = 1, bottom = 2)]
+    when lessF(zeroF(), x)
+    nonNeg(x) holds
+"#,
+        "when_linear_builtin_cone",
+    );
+    let lean = generated_lean_file(&transpile_for_cert_model(&mut ctx));
+
+    assert!(
+        !lean.contains("-- aver:law-class nonNeg_law_nonNegOfPositive universal"),
+        "a builtin anywhere in the cone must not earn the universal class:\n{lean}"
+    );
+    assert!(
+        lean.contains(
+            "-- cert-model law nonNeg.nonNegOfPositive: bounded-domain statement is not exported"
+        ),
+        "the law must stay bounded-domain and be dropped from the certificate surface:\n{lean}"
+    );
+}

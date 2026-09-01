@@ -1898,20 +1898,24 @@ fn emit_verify_law_forall_auto_proof_inner(
 /// Predicate half of the CORE when-linear-consequence arm: a conditional
 /// `holds` law (`when P(...) -> subject(...) holds`) whose subject call heads
 /// the LHS and whose whole call cone — subject, `when` guards, and everything
-/// they reach — is a small set of effect-free, non-`match`, non-recursive
-/// straight-line definitions. That is exactly the shape `simp only [cone]`
-/// fully unfolds into a bare arithmetic implication for `omega`/`grind`, so
-/// the statement builder drops the sampled-domain disjunctions
-/// (`omit_domain`) and classes the law `universal`, keeping statement and
-/// proof body in lockstep. CERT-MODEL ONLY: both the statement flip and the
-/// proof arm are gated on `cert_model`, so `aver proof` output — and the
-/// bounded credit the corpus already earns there — is byte-identical.
-/// Known residual: a builtin call in the cone is invisible here (the cone
-/// collector resolves user defs only), so an unfoldable-looking cone can
-/// still fall to the honest `sorry` floor; in the certificate that claim is
-/// then dropped or declined loudly, never silently credited. Everything
-/// else declines fail-closed and keeps the bounded sampled-domain
-/// statement.
+/// they reach — unfolds into bare integer arithmetic. That is exactly the
+/// shape `simp only [cone]` reduces to an arithmetic implication for
+/// `omega`/`grind`, so the statement builder drops the sampled-domain
+/// disjunctions (`omit_domain`) and classes the law `universal`, keeping
+/// statement and proof body in lockstep. CERT-MODEL ONLY: both the statement
+/// flip and the proof arm are gated on `cert_model`, so `aver proof` output —
+/// and the bounded credit the corpus already earns there — is byte-identical.
+///
+/// The cone gate is a POSITIVE, content-blind walk (see
+/// [`cone_body_is_transparent_arithmetic`]): every definition the law reaches
+/// must have a body assembled only from the admitted grammar, and every call
+/// inside that body must land on another definition of the same cone. Nothing
+/// is admitted by failing to look like a known obstacle, so an unknown
+/// construct declines by default. In particular a BUILTIN or capability call
+/// anywhere in the cone declines the law — the cone collector resolves user
+/// definitions only, so such a call leaves no name behind and the older
+/// negative gate could not see it. The honest `sorry` floor in the proof
+/// ladder stays the safety net underneath.
 pub(in crate::codegen::lean) fn recognize_core_when_linear(
     vb: &VerifyBlock,
     law: &VerifyLaw,
@@ -1934,12 +1938,11 @@ pub(in crate::codegen::lean) fn recognize_core_when_linear(
     if shared::expr_dotted_name(callee).as_deref() != Some(vb.fn_name.as_str()) {
         return false;
     }
-    // The unfold cone must be small and every member an effect-free,
-    // expression-only (no `match` tail — no branch structure for simp to
-    // strand), non-`main` definition. A name that resolves to no def (a
-    // builtin, a capability) declines the whole law.
+    // Every member of the unfold cone must be a pure, non-entry definition
+    // whose body the positive walker admits. A name that resolves to no def
+    // declines the whole law.
     let names = shared::law_simp_source_names(ctx, vb, law);
-    if names.len() > 10 {
+    if names.is_empty() {
         return false;
     }
     for name in &names {
@@ -1949,14 +1952,107 @@ pub(in crate::codegen::lean) fn recognize_core_when_linear(
         if !fd.effects.is_empty() || fd.name == "main" {
             return false;
         }
-        if matches!(
-            fd.body.tail_expr().map(|e| &e.node),
-            Some(crate::ast::Expr::Match { .. }) | None
-        ) {
+        if !cone_body_is_transparent_arithmetic(fd, &names, ctx) {
             return false;
         }
     }
     true
+}
+
+/// Positive admission for ONE cone definition's body: a straight line of
+/// `name = <admitted>` bindings ending in an admitted tail expression.
+/// Anything else — a `match` tail, a bare non-tail expression statement, a
+/// binding in tail position — declines.
+fn cone_body_is_transparent_arithmetic(
+    fd: &crate::ast::FnDef,
+    cone: &std::collections::BTreeSet<String>,
+    ctx: &CodegenContext,
+) -> bool {
+    let mut bound: std::collections::HashSet<&str> =
+        fd.params.iter().map(|(name, _)| name.as_str()).collect();
+    let Some((tail, leading)) = fd.body.stmts().split_last() else {
+        return false;
+    };
+    for stmt in leading {
+        let crate::ast::Stmt::Binding(name, _, value) = stmt else {
+            return false;
+        };
+        if !transparent_arithmetic_expr(value, &bound, cone, ctx) {
+            return false;
+        }
+        bound.insert(name.as_str());
+    }
+    match tail {
+        crate::ast::Stmt::Expr(expr) => transparent_arithmetic_expr(expr, &bound, cone, ctx),
+        crate::ast::Stmt::Binding(..) => false,
+    }
+}
+
+/// The admitted expression grammar of a transparent-arithmetic cone. Reading
+/// it top to bottom IS the specification of what `simp only [cone]` is
+/// guaranteed to unfold to a bare `Int`/`Bool` proposition:
+///
+/// - `Int` and `Bool` literals;
+/// - a variable already in scope (a parameter or an earlier binding of the
+///   same body) — an identifier bound nowhere declines, so a bare reference
+///   to a definition or a namespace can never pass as a value;
+/// - record field projection over an admitted base;
+/// - integer `+ - *` and unary negation, the comparisons `< <= > >= == !=`;
+/// - record construction whose every field is admitted;
+/// - a call to a user definition that is ITSELF a member of this cone, with
+///   admitted arguments. A callee that resolves to no user definition — every
+///   builtin (`Int.abs`, `Bool.and`, …) and every capability operation — is
+///   refused here, which is the whole point of walking bodies rather than
+///   inspecting the collected name set.
+///
+/// Everything else (`match`, lists, tuples, maps, strings, `Float`, `?`,
+/// record update, tail calls, independent products, constructors) declines.
+/// The rule is content-blind: it keys on expression shape only, never on the
+/// name of a function or a type.
+fn transparent_arithmetic_expr(
+    expr: &crate::ast::Spanned<Expr>,
+    bound: &std::collections::HashSet<&str>,
+    cone: &std::collections::BTreeSet<String>,
+    ctx: &CodegenContext,
+) -> bool {
+    match &expr.node {
+        Expr::Literal(crate::ast::Literal::Int(_) | crate::ast::Literal::Bool(_)) => true,
+        Expr::Ident(name) | Expr::Resolved { name, .. } => bound.contains(name.as_str()),
+        Expr::Attr(base, _) => transparent_arithmetic_expr(base, bound, cone, ctx),
+        Expr::Neg(inner) => transparent_arithmetic_expr(inner, bound, cone, ctx),
+        Expr::BinOp(op, left, right) => {
+            use crate::ast::BinOp;
+            matches!(
+                op,
+                BinOp::Add
+                    | BinOp::Sub
+                    | BinOp::Mul
+                    | BinOp::Lt
+                    | BinOp::Lte
+                    | BinOp::Gt
+                    | BinOp::Gte
+                    | BinOp::Eq
+                    | BinOp::Neq
+            ) && transparent_arithmetic_expr(left, bound, cone, ctx)
+                && transparent_arithmetic_expr(right, bound, cone, ctx)
+        }
+        Expr::RecordCreate { fields, .. } => fields
+            .iter()
+            .all(|(_, value)| transparent_arithmetic_expr(value, bound, cone, ctx)),
+        Expr::FnCall(callee, args) => {
+            let Some(name) = shared::expr_dotted_name(callee) else {
+                return false;
+            };
+            let Some(fd) = shared::find_fn_def_by_call_name(ctx, &name) else {
+                return false;
+            };
+            cone.contains(&fd.name)
+                && args
+                    .iter()
+                    .all(|arg| transparent_arithmetic_expr(arg, bound, cone, ctx))
+        }
+        _ => false,
+    }
 }
 
 /// Predicate half of [`emit_mathlib_break_glass_law`]: with `--allow-mathlib`
