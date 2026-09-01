@@ -401,6 +401,55 @@ fn scoped_claim(ctx: &CodegenContext, claim: String) -> String {
     }
 }
 
+/// The Lean namespace the emission wraps the active scope's declarations in:
+/// a dependency module's own path, or the project name for the entry file.
+/// Mirrors the `namespace …` line `transpile_unified` writes around each body.
+fn emitted_namespace(ctx: &CodegenContext) -> String {
+    match ctx.active_module_scope() {
+        Some(prefix) => crate::codegen::lean::syntax::aver_path_to_lean(&prefix),
+        None => crate::codegen::lean::lean_project_name(ctx),
+    }
+}
+
+/// Render a law theorem's universal statement — the text between
+/// `theorem <name> : ` and ` := by` — from the quantifier binders and the
+/// statement body the emitter built.
+///
+/// Any line break inside the body is folded to a single space so the claim is
+/// always ONE line. Lean is whitespace-insensitive, so the folded text
+/// elaborates to exactly the Prop the emitted theorem declares, and a
+/// multi-line statement becomes a claim instead of silently falling out of the
+/// surface the way the old text scan dropped it.
+fn universal_statement(quant_params: &str, prop: &str) -> String {
+    let folded = prop.split_whitespace().collect::<Vec<_>>().join(" ");
+    format!("∀ {quant_params}, {folded}")
+}
+
+/// The universal statement of a theorem a proof strategy substituted for the
+/// default one (`AutoProof::replaces_theorem`): the strategy wrote its own
+/// declaration into `support_lines`, so the statement is read back from that
+/// declaration — the emitter's own output, still in memory, in the function
+/// that produced it. Returns `None` unless exactly one line declares
+/// `theorem <name>` and carries the whole statement, so a substituted
+/// declaration the emitter cannot pin down claims nothing.
+fn substituted_theorem_statement(support_lines: &[String], theorem_name: &str) -> Option<String> {
+    let head = format!("theorem {theorem_name} : ");
+    let mut found: Option<String> = None;
+    for line in support_lines {
+        for candidate in line.lines() {
+            let Some(rest) = candidate.trim().strip_prefix(head.as_str()) else {
+                continue;
+            };
+            let statement = rest.strip_suffix(" := by")?;
+            if found.is_some() {
+                return None;
+            }
+            found = Some(statement.to_string());
+        }
+    }
+    found
+}
+
 /// Emit the left side of a verify case or a law statement, and report whether
 /// it propagates an error.
 ///
@@ -819,7 +868,11 @@ fn emit_verify_law_block(
     } else {
         "native_decide".to_string()
     };
-    let mut quant_param_parts = law
+    // The quantifier binders as `(name, Lean type)` pairs. `quant_params` — the
+    // text the theorem statement carries — is rendered from these, so the
+    // law-claim's structured givens and the emitted statement are the same
+    // data, not two independent renderings of it.
+    let mut quant_binders: Vec<(String, String)> = law
         .givens
         .iter()
         .map(|given| {
@@ -852,17 +905,19 @@ fn emit_verify_law_block(
                     None => type_annotation_to_lean(&given.type_name),
                 }
             };
-            format!("({} : {})", aver_name_to_lean(&given.name), type_text)
+            (aver_name_to_lean(&given.name), type_text)
         })
         .collect::<Vec<_>>();
-    quant_param_parts.extend(fresh_resource_params.iter().map(|(_, name, resource)| {
-        format!(
-            "({} : {})",
-            aver_name_to_lean(name),
-            type_annotation_to_lean(resource)
-        )
-    }));
-    let quant_params = quant_param_parts.join(" ");
+    quant_binders.extend(
+        fresh_resource_params.iter().map(|(_, name, resource)| {
+            (aver_name_to_lean(name), type_annotation_to_lean(resource))
+        }),
+    );
+    let quant_params = quant_binders
+        .iter()
+        .map(|(name, type_text)| format!("({name} : {type_text})"))
+        .collect::<Vec<_>>()
+        .join(" ");
 
     match &spec_ref {
         Some(spec_ref) => lines.push(format!(
@@ -1189,6 +1244,15 @@ fn emit_verify_law_block(
             || super::law_auto::recognize_mathlib_break_glass(ctx, &law_for_auto_proof)
         );
     let mut universal_fell_to_sorry = false;
+    // The universal statement of the theorem the law-class marker names, as
+    // the emitter assembled it — the certificate producer's law-claim is built
+    // from this instead of re-parsing the emitted file. Recorded in the
+    // certificate model only; `None` whenever no single theorem named
+    // `theorem_base` carries the whole claim (a partitioned statement, or a
+    // strategy whose substituted declaration is not one line), which is
+    // fail-closed: a law-claim is additive surface, so omitting one is never
+    // wrong.
+    let mut claim_statement: Option<String> = None;
     if !quant_params.is_empty() && !skip_universal {
         lines.extend(emit_verify_law_support_theorems(
             vb,
@@ -1240,8 +1304,12 @@ fn emit_verify_law_block(
         // Additive: the marker parser consumes only the first two fields, so
         // an older reader ignores it.
         let law_label = scoped_claim(ctx, format!("{}.{}", vb.fn_name, law.name));
+        // Universal unless some part carries sampled-domain premises — and a
+        // `FloorDivWindow`/`TailRecFixedBaseFold` statement is universal even
+        // then, because those strategies replace the bounded statement with
+        // the true `∀ givens, <when> = true -> claim` form.
         let stmt_universal =
-            !(theorem_parts.iter().any(|part| part.bounded_domain) && !floor_window_universal);
+            !theorem_parts.iter().any(|part| part.bounded_domain) || floor_window_universal;
         // Certificate model: a bounded-domain statement is not a law-claim
         // (its premises bind it to the finite sample domain), so the cert
         // surface drops it entirely — comment only, no theorem, no marker.
@@ -1281,6 +1349,13 @@ fn emit_verify_law_block(
                 cert_model,
             )
         {
+            if cert_model {
+                claim_statement = if auto_proof.replaces_theorem {
+                    substituted_theorem_statement(&auto_proof.support_lines, &theorem_base)
+                } else {
+                    Some(universal_statement(&quant_params, &theorem_parts[0].prop))
+                };
+            }
             lines.extend(auto_proof.support_lines);
             if !auto_proof.replaces_theorem {
                 lines.push(format!(
@@ -1325,6 +1400,17 @@ fn emit_verify_law_block(
                     &part.prop,
                     cert_model,
                 ) {
+                    // Only an UNPARTITIONED law states its whole claim in one
+                    // theorem named `theorem_base` — the parts of a partitioned
+                    // one are separate `<base>_partN` theorems and no single
+                    // name carries the claim, so none is recorded.
+                    if cert_model && !partitioned {
+                        claim_statement = if auto_proof.replaces_theorem {
+                            substituted_theorem_statement(&auto_proof.support_lines, &part.name)
+                        } else {
+                            Some(universal_statement(&quant_params, &part.prop))
+                        };
+                    }
                     if auto_proof.replaces_theorem {
                         // The strategy emitted a part-specific theorem statement
                         // inside its support lines; it is not shared across parts
@@ -1396,6 +1482,24 @@ fn emit_verify_law_block(
                 format!("-- cert-model law {label}: universal proof did not close; not exported"),
                 case_index_start + vb.cases.len(),
             );
+        }
+        // Hand the certificate producer the law-claim as STRUCTURE. Recorded
+        // here because this is where the statement was built — the same reason
+        // the law-class marker is written here — so the claim and the theorem
+        // it cites are assembled from one set of pieces and cannot drift.
+        if let Some(statement) = claim_statement {
+            ctx.universal_law_claims
+                .borrow_mut()
+                .push(crate::codegen::UniversalLawClaim {
+                    label: scoped_claim(ctx, format!("{}.{}", vb.fn_name, law.name)),
+                    namespace: emitted_namespace(ctx),
+                    theorem: theorem_base.clone(),
+                    givens: quant_binders,
+                    when_expr: when_template.clone(),
+                    lhs: lhs_template.clone(),
+                    rhs: rhs_template.clone(),
+                    statement,
+                });
         }
         return (lines.join("\n"), case_index_start + vb.cases.len());
     }

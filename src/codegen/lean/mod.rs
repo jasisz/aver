@@ -72,6 +72,14 @@ use crate::codegen::{CodegenContext, ProjectOutput};
 /// must NEVER re-derive the class from theorem names or by re-parsing
 /// statements. A law theorem without a marker earns no universal credit
 /// (fail-closed for stale/foreign export dirs).
+///
+/// The marker is COMPILER-PRIVATE. `aver proof --check` reads it from an
+/// export directory it did not produce in this process, which is what the
+/// marker exists for; the certificate producer does not, because the emitter
+/// hands it the law-claims as structure
+/// ([`ProjectOutput::law_claims`](crate::codegen::ProjectOutput::law_claims))
+/// and `aver-cert verify` reads the manifest's `laws` array. Nothing outside
+/// this crate spells the prefix, so there is no second copy to keep in step.
 pub const LAW_CLASS_MARKER_PREFIX: &str = "-- aver:law-class ";
 /// Marker class tag: no sampled-domain premises — the `∀`-statement is the
 /// law's genuine universal claim.

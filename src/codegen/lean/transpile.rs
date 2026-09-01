@@ -1406,7 +1406,12 @@ pub(super) fn transpile_unified(
     }
     files.push(("lakefile.lean".to_string(), lakefile));
     files.push(("lean-toolchain".to_string(), toolchain));
-    ProjectOutput::of(files)
+    let mut output = ProjectOutput::of(files);
+    // Hand the law-claims the certificate model recorded to the caller and
+    // clear the sink, so a context reused for a second emission starts empty
+    // instead of carrying the previous run's claims.
+    output.law_claims = std::mem::take(&mut *ctx.universal_law_claims.borrow_mut());
+    output
 }
 
 #[cfg(test)]
