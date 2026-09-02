@@ -1,5 +1,7 @@
 import Bridge.Coverage
 
+set_option autoImplicit false
+
 /-!
 # Tripwire: the profile is enumerated on both grammars
 

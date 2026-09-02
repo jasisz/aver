@@ -18,15 +18,18 @@ under the OLD heap; `Rs_prefix` carries them to the new heap.
 
 namespace Bridge
 open Wasm Wasm.SmallStep CertPrelude
+open AverCert.Schema (CarrierSpec)
 
 theorem bridge_hostCall {α : Type}
-    (env : TranslateEnv) (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee)
-    (hostEnv : HostEnv α) (hsim : HostSimulation env host hostEnv) (hsorts : HostSorts env host)
+    (env : TranslateEnv) (S : CarrierSpec env.carrier) (host : HostTbl) (ar : Nat → Option Nat)
+    (callee : Callee)
+    (hostEnv : HostEnv α) (hsim : HostSimulation env S host hostEnv) (hsorts : HostSorts env S host)
     (paramSorts : List STy) (result : STy) (nlocals : Nat) (body : Program)
     (wasm : Store α) (L : Locals) (code : Program) (arity : Nat) (remainder : List Value)
     (controls : List ControlFrame) (calls : List CallFrame)
     (locA stA stA' : List WVal) (f i : Nat) (sig : ImportSig)
     (hslot : slotLookup? env.imports f = some (i, sig))
+    (hsorted : Sorted env S (stA.take sig.params.length).reverse sig.params)
     (hL : RLocals wasm.gcHeap L locA) (hS : Rs wasm.gcHeap L.values stA)
     (hA : wRunF host ar callee [.call f] locA stA = some (.ok locA stA')) :
     ∃ values' wasm',
@@ -56,11 +59,11 @@ theorem bridge_hostCall {α : Type}
         -- Talos's host call.
         obtain ⟨hsig, -⟩ := slotLookup?_getElem hslot
         obtain ⟨hfn, hhfn⟩ := hsim.resolved i sig hsig
-        have hargs : Rs wasm.gcHeap (L.values.take sig.params.length).reverse
+        have hRargs : Rs wasm.gcHeap (L.values.take sig.params.length).reverse
             (stA.take sig.params.length).reverse :=
           Rs_reverse (Rs_take _ hS)
         obtain ⟨r', wasm', hinv, hpre, hRr⟩ :=
-          hsim.invoke f i sig hf hfn hslot hhf hhfn wasm _ _ r hargs hr
+          hsim.invoke f i sig hf hfn hslot hhf hhfn wasm _ _ r hsorted hRargs hr
         have hlt : i < env.imports.length := (List.getElem?_eq_some_iff.mp hsig).1
         have himports : i < (synthRuntime (synthModule env paramSorts result nlocals body)
             hostEnv).currentModule.imports.length := by

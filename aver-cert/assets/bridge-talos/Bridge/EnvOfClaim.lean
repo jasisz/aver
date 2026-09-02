@@ -41,9 +41,10 @@ open CertPrelude AverCert.Schema AverCert.Schema.Lowering AverCert.PlanCheck
 /-! ## Struct half -/
 
 /-- Sort of a wall-lowered scalar field storage (`lowerScalarStorage`):
-    `ref null C` is a reference, `i32` (`0x7f`) and `f64` (`0x7c`) are numeric. -/
+    `ref null C` holds a carrier (a canonical one, by the compute face's domain
+    representation), `i32` (`0x7f`) and `f64` (`0x7c`) are numeric. -/
 def sortOfStorage : CertDecode.FieldType → Option STy
-  | ⟨.val (.ref 0x63 _), _⟩ => some .ref
+  | ⟨.val (.ref 0x63 _), _⟩ => some .car
   | ⟨.val (.numeric 0x7f), _⟩ => some .i32
   | ⟨.val (.numeric 0x7c), _⟩ => some .f64
   | _ => none
@@ -206,9 +207,9 @@ def k5FractionDecl : TypeDecl := .record 0 [.intCarrier, .intCarrier]
 
 def k5Env : TranslateEnv := envOfClaim k5HostTable 3 [k5FractionDecl]
 
-example : k5Env.structs = [(3, [.i64, .ref, .i32]), (0, [.ref, .ref])] := by decide
+example : k5Env.structs = [(3, [.i64, .ref, .i32]), (0, [.car, .car])] := by decide
 example : k5Env.imports.map (·.slot) = [23, 24, 26, 25, 35, 30, 31] := by decide
-example : slotLookup? k5Env.imports 24 = some (1, ⟨24, [.ref, .ref], .ref⟩) := by decide
+example : slotLookup? k5Env.imports 24 = some (1, ⟨24, [.car, .car], .car⟩) := by decide
 example : lowerTypeDecl 3 1 k5FractionDecl =
     some ⟨.plain, .structType [⟨.val (.ref 0x63 3), 0⟩, ⟨.val (.ref 0x63 3), 0⟩]⟩ := by decide
 

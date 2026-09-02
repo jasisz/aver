@@ -30,12 +30,15 @@ reference — the locals, the rest of the stack — related across the call.
 
 namespace Bridge
 open Wasm Wasm.SmallStep CertPrelude
+open AverCert.Schema (CarrierSpec)
 
 def valueTypeOf : STy → ValueType
   | .i32 => .i32
   | .i64 => .i64
+  | .i64b => .i64
   | .f64 => .f64
   | .ref => .anyref
+  | .car => .anyref
 
 def fieldTypeOf (t : STy) : FieldType := { storage := .val (valueTypeOf t), isMut := false }
 
@@ -156,7 +159,9 @@ theorem initSingleModuleConfig_synth (env : TranslateEnv) (paramSorts : List STy
 
     * `resolved`: every import has a resolver (Talos's `callHostReturn` needs
       `currentHost.funcs[i]? = some _`).
-    * `invoke`: on arguments related by `Rs` (under the current heap), a
+    * `invoke`: on SORTED arguments (the typed run only calls with sorted
+      arguments; the sorts fix the carrier shapes a concrete host reads) related
+      by `Rs` (under the current heap), a
       DEFINED contract result `hf ws = some w` is matched by the resolver
       returning exactly one value related to `w`, with the old heap a PREFIX
       of the new one (the heap frame). Nothing is assumed when the contract is
@@ -164,14 +169,15 @@ theorem initSingleModuleConfig_synth (env : TranslateEnv) (paramSorts : List STy
 
     The wall's arity agreement (`host f = some (sig.params.length, _)`) is
     `HostSorts` (Translate.lean), which the sort discipline needs anyway. -/
-structure HostSimulation (env : TranslateEnv) (host : HostTbl) (hostEnv : HostEnv α) : Prop where
+structure HostSimulation (env : TranslateEnv) (S : CarrierSpec env.carrier) (host : HostTbl)
+    (hostEnv : HostEnv α) : Prop where
   resolved : ∀ (i : Nat) (sig : ImportSig), env.imports[i]? = some sig → ∃ hfn, hostEnv.funcs[i]? = some hfn
   invoke : ∀ (f i : Nat) (sig : ImportSig) (hf : List WVal → Option WVal) (hfn : HostFn α),
     slotLookup? env.imports f = some (i, sig) →
     host f = some (sig.params.length, hf) →
     hostEnv.funcs[i]? = some hfn →
     ∀ (st : Store α) (args : List Value) (ws : List WVal) (w : WVal),
-      Rs st.gcHeap args ws → hf ws = some w →
+      Sorted env S ws sig.params → Rs st.gcHeap args ws → hf ws = some w →
       ∃ r st', hfn.invoke st args = .Return [r] st' ∧ st.gcHeap <+: st'.gcHeap ∧ R st'.gcHeap r w
 
 end Bridge

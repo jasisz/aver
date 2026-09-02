@@ -1,6 +1,7 @@
 import Bridge.Bridge
 import Bridge.EnvOfClaim
 import Bridge.Coverage
+import Bridge.Contracts
 import Bridge.Tripwire
 
 /-!
@@ -30,3 +31,6 @@ statements, never axioms. `lake build Bridge.Axioms` prints the lists.
 #print axioms Bridge.coverage
 #print axioms Bridge.coverage_envOfClaim
 #print axioms Bridge.Tripwire.translate_eq_none_of_out
+#print axioms Bridge.hostTableBound_nodup
+#print axioms Bridge.recordComputeSlots_getElem
+#print axioms Bridge.HostSorts_of_contracts

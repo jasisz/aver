@@ -29,20 +29,22 @@ minimal stack discipline that closes the gap: locals and stack slots carry a
 sort (`STy`), an `if` branch is typed from the EMPTY stack (wasm's own rule,
 which is what makes `exitControl`'s `take resultArity ++ belowStack` agree
 with the wall's flat branch run), and `localSet` needs a declared slot. On the
-profile every lowered body is typed — that is the coverage lemma of brief §3,
-which this spike does not prove (it takes `HasTy` as a hypothesis).
+profile every lowered body is typed — the coverage lemma (`Coverage.lean`).
 `typed_run` is the wall-side consequence the bridge consumes: a typed run
 returns `.ok`, touches only the typed prefix of the stack, and preserves sorts.
+
+The sorts are refined by what the wall's host CONTRACTS need (`Env.lean`):
+carrier operands are canonical carriers (`.car`), `box`'s operand is a band
+literal (`.i64b`). Inclusion (`SubSort`) enters at exactly three rules: a
+`localSet` may store a finer value into a coarser slot (the sign template
+stores a carrier into the `.ref` scratch local), a `structGet` receiver may be
+either reference sort, an `if` joins its branches at a common coarser sort.
+Nothing else needs subsumption, and there is no general weakening rule.
 -/
 
 namespace Bridge
 open Wasm CertPrelude
-
-def i32Band (n : Int) : Prop := -2147483648 ≤ n ∧ n < 2147483648
-def i64Band (n : Int) : Prop := -9223372036854775808 ≤ n ∧ n < 9223372036854775808
-
-instance : DecidablePred i32Band := fun n => by unfold i32Band; infer_instance
-instance : DecidablePred i64Band := fun n => by unfold i64Band; infer_instance
+open AverCert.Schema (CarrierSpec)
 
 /-- The i32 bit pattern of an in-band integer. -/
 def constI32 (n : Int) : UInt32 := (Int32.ofInt n).toUInt32
@@ -107,14 +109,15 @@ inductive HasTy (env : TranslateEnv) (Γ : List STy) : List STy → List WInstr 
   | nil {σ} : HasTy env Γ σ [] σ
   | localGet {σ σ' i t is} (h : Γ[i]? = some t)
       (rest : HasTy env Γ (t :: σ) is σ') : HasTy env Γ σ (.localGet i :: is) σ'
-  | localSet {σ σ' i t is} (h : Γ[i]? = some t)
-      (rest : HasTy env Γ σ is σ') : HasTy env Γ (t :: σ) (.localSet i :: is) σ'
+  | localSet {σ σ' i t t' is} (h : Γ[i]? = some t) (hsub : SubSort t' t)
+      (rest : HasTy env Γ σ is σ') : HasTy env Γ (t' :: σ) (.localSet i :: is) σ'
   | i64Const {σ σ' n is} (hn : i64Band n)
-      (rest : HasTy env Γ (.i64 :: σ) is σ') : HasTy env Γ σ (.i64Const n :: is) σ'
+      (rest : HasTy env Γ (.i64b :: σ) is σ') : HasTy env Γ σ (.i64Const n :: is) σ'
   | i32Const {σ σ' n is} (hn : i32Band n)
       (rest : HasTy env Γ (.i32 :: σ) is σ') : HasTy env Γ σ (.i32Const n :: is) σ'
-  | structGet {σ σ' ty f fs t is} (hs : structSorts? env.structs ty = some fs) (hf : fs[f]? = some t)
-      (rest : HasTy env Γ (t :: σ) is σ') : HasTy env Γ (.ref :: σ) (.structGet ty f :: is) σ'
+  | structGet {σ σ' ty f fs t t₀ is} (h₀ : IsRef t₀) (hs : structSorts? env.structs ty = some fs)
+      (hf : fs[f]? = some t)
+      (rest : HasTy env Γ (t :: σ) is σ') : HasTy env Γ (t₀ :: σ) (.structGet ty f :: is) σ'
   | structNew {σ σ' ty fs is} (hs : structSorts? env.structs ty = some fs)
       (rest : HasTy env Γ (.ref :: σ) is σ') :
       HasTy env Γ (fs.reverse ++ σ) (.structNew ty fs.length :: is) σ'
@@ -123,30 +126,32 @@ inductive HasTy (env : TranslateEnv) (Γ : List STy) : List STy → List WInstr 
   | call {σ σ' f i sig is} (hs : slotLookup? env.imports f = some (i, sig))
       (rest : HasTy env Γ (sig.result :: σ) is σ') :
       HasTy env Γ (sig.params.reverse ++ σ) (.call f :: is) σ'
-  | i64Cmp {σ σ' op is} (hop : op ∈ i64Cmps)
-      (rest : HasTy env Γ (.i32 :: σ) is σ') : HasTy env Γ (.i64 :: .i64 :: σ) (op :: is) σ'
+  | i64Cmp {σ σ' t₁ t₂ op is} (h₁ : IsI64 t₁) (h₂ : IsI64 t₂) (hop : op ∈ i64Cmps)
+      (rest : HasTy env Γ (.i32 :: σ) is σ') : HasTy env Γ (t₁ :: t₂ :: σ) (op :: is) σ'
   | i32Cmp {σ σ' op is} (hop : op ∈ i32Cmps)
       (rest : HasTy env Γ (.i32 :: σ) is σ') : HasTy env Γ (.i32 :: .i32 :: σ) (op :: is) σ'
-  | ifElse {σ σ' t tB eB is} (ht : HasTy env Γ [] tB [t]) (he : HasTy env Γ [] eB [t])
+  | ifElse {σ σ' t t₁ t₂ tB eB is} (ht : HasTy env Γ [] tB [t₁]) (he : HasTy env Γ [] eB [t₂])
+      (h₁ : SubSort t₁ t) (h₂ : SubSort t₂ t)
       (rest : HasTy env Γ (t :: σ) is σ') : HasTy env Γ (.i32 :: σ) (.ifElse tB eB :: is) σ'
 
 /-- The wall's abstract host table agrees with the environment's import
     table: every import IS a wall host slot of the declared arity, and its
     contract returns a value of the declared sort on arguments of the declared
-    sorts. (The wall's contracts give the second half for REPRESENTED
-    operands; on the profile every argument of a host call is one.) -/
-def HostSorts (env : TranslateEnv) (host : HostTbl) : Prop :=
+    sorts. `Contracts.lean` derives this from the wall's `Obligation.holds`
+    hypotheses for the compute face's host: the declared sorts are exactly
+    the contracts' domains (canonical carriers, a band literal for `box`). -/
+def HostSorts (env : TranslateEnv) (S : CarrierSpec env.carrier) (host : HostTbl) : Prop :=
   ∀ f i sig, slotLookup? env.imports f = some (i, sig) →
     ∃ hf, host f = some (sig.params.length, hf) ∧
-      ∀ ws w, Sorted env ws sig.params → hf ws = some w → HasSort env w sig.result
+      ∀ ws w, Sorted env S ws sig.params → hf ws = some w → HasSort env S w sig.result
 
 /-! ## The wall side of a typed run -/
 
-theorem popArgs_sorted {env : TranslateEnv} {st below : List WVal} {ts σ : List STy}
-    (h : Sorted env st (ts ++ σ)) :
+theorem popArgs_sorted {env : TranslateEnv} {S : CarrierSpec env.carrier} {st below : List WVal}
+    {ts σ : List STy} (h : Sorted env S st (ts ++ σ)) :
     popArgs ts.length (st ++ below) =
       some ((st.take ts.length).reverse, st.drop ts.length ++ below) ∧
-      Sorted env (st.take ts.length).reverse ts.reverse ∧ Sorted env (st.drop ts.length) σ := by
+      Sorted env S (st.take ts.length).reverse ts.reverse ∧ Sorted env S (st.drop ts.length) σ := by
   obtain ⟨st₁, st₂, rfl, h₁, h₂⟩ := Sorted_append_inv h
   have hlen : st₁.length = ts.length := Sorted_length h₁
   have hle : ts.length ≤ (st₁ ++ st₂ ++ below).length := by
@@ -165,12 +170,13 @@ theorem popArgs_sorted {env : TranslateEnv} {st below : List WVal} {ts σ : List
     beneath the typed prefix untouched, and preserves the sorts of locals and
     stack. Induction on the typing derivation, one interpreter arm per case. -/
 theorem typed_run (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee)
-    {env : TranslateEnv} (hhost : HostSorts env host) {Γ : List STy} :
+    {env : TranslateEnv} (S : CarrierSpec env.carrier) (hcar : CarrierDeclared env)
+    (hhost : HostSorts env S host) {Γ : List STy} :
     ∀ {σ : List STy} {is : List WInstr} {σ' : List STy}, HasTy env Γ σ is σ' →
     ∀ (locA st below : List WVal) (out : Out),
-      Sorted env locA Γ → Sorted env st σ →
+      Sorted env S locA Γ → Sorted env S st σ →
       wRunF host ar callee is locA (st ++ below) = some out →
-      ∃ locA' st', out = .ok locA' (st' ++ below) ∧ Sorted env locA' Γ ∧ Sorted env st' σ' := by
+      ∃ locA' st', out = .ok locA' (st' ++ below) ∧ Sorted env S locA' Γ ∧ Sorted env S st' σ' := by
   intro σ is σ' hty
   induction hty with
   | nil =>
@@ -182,33 +188,34 @@ theorem typed_run (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee)
       obtain ⟨w, hw, hsort⟩ := Sorted_getElem? _ _ hΓ h
       simp only [wRunF, hw] at hrun
       exact ih locA (w :: st) below out hΓ (Sorted_cons hsort hσ) hrun
-  | localSet h _ ih =>
+  | localSet h hsub _ ih =>
       intro locA st below out hΓ hσ hrun
       match st, hσ with
       | w :: st, hσ =>
         simp only [Sorted] at hσ
         simp only [wRunF, List.cons_append] at hrun
-        exact ih (locA.set _ w) st below out (Sorted_set _ hΓ h hσ.1) hσ.2 hrun
-  | @i64Const _ _ n _ _ _ ih =>
+        exact ih (locA.set _ w) st below out (Sorted_set _ hΓ h (HasSort_sub hcar hsub hσ.1)) hσ.2 hrun
+  | @i64Const _ _ n _ hn _ ih =>
       intro locA st below out hΓ hσ hrun
       simp only [wRunF] at hrun
-      exact ih locA (.i64v n :: st) below out hΓ (Sorted_cons (by simp [HasSort]) hσ) hrun
+      exact ih locA (.i64v n :: st) below out hΓ (Sorted_cons (HasSort_i64b_of_band hn) hσ) hrun
   | @i32Const _ _ n _ _ _ ih =>
       intro locA st below out hΓ hσ hrun
       simp only [wRunF] at hrun
       exact ih locA (.i32v n :: st) below out hΓ (Sorted_cons (by simp [HasSort]) hσ) hrun
-  | structGet hs hf _ ih =>
+  | structGet h₀ hs hf _ ih =>
       intro locA st below out hΓ hσ hrun
       match st, hσ with
       | w :: st, hσ =>
         simp only [Sorted] at hσ
-        rcases HasSort_ref hσ.1 with rfl | ⟨t', fs', rfl⟩ | ⟨t', es', rfl⟩
+        have hw : HasSort env S w .ref := HasSort_isRef hcar h₀ hσ.1
+        rcases HasSort_ref hw with rfl | ⟨t', fs', rfl⟩ | ⟨t', es', rfl⟩
         · simp [wRunF] at hrun
         · simp only [wRunF, List.cons_append] at hrun
           split at hrun
           · rename_i hty
             subst hty
-            obtain ⟨ts, hts, hfs⟩ := HasSort_structv hσ.1
+            obtain ⟨ts, hts, hfs⟩ := HasSort_structv hw
             rw [hs] at hts
             simp only [Option.some.injEq] at hts
             subst hts
@@ -253,13 +260,13 @@ theorem typed_run (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee)
       · rename_i r hr
         exact ih locA (r :: st.drop _) below out hΓ (Sorted_cons (hsort _ _ hargs hr) hrest) hrun
       · simp at hrun
-  | i64Cmp hop _ ih =>
+  | i64Cmp h₁ h₂ hop _ ih =>
       intro locA st below out hΓ hσ hrun
       match st, hσ with
       | w₁ :: w₂ :: st, hσ =>
         simp only [Sorted] at hσ
-        obtain ⟨b, rfl⟩ := HasSort_i64 hσ.1
-        obtain ⟨a, rfl⟩ := HasSort_i64 hσ.2.1
+        obtain ⟨b, rfl⟩ := HasSort_isI64 h₁ hσ.1
+        obtain ⟨a, rfl⟩ := HasSort_isI64 h₂ hσ.2.1
         simp only [i64Cmps, List.mem_cons, List.not_mem_nil, or_false] at hop
         rcases hop with rfl | rfl | rfl | rfl | rfl <;>
           simp only [wRunF, List.cons_append] at hrun <;>
@@ -275,7 +282,7 @@ theorem typed_run (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee)
         rcases hop with rfl | rfl | rfl | rfl <;>
           simp only [wRunF, List.cons_append] at hrun <;>
           exact ih locA (b32 _ :: st) below out hΓ (Sorted_cons (HasSort_b32 _) hσ.2.2) hrun
-  | ifElse _ _ _ iht ihe ih =>
+  | ifElse _ _ h₁ h₂ _ iht ihe ih =>
       intro locA st below out hΓ hσ hrun
       match st, hσ with
       | w :: st, hσ =>
@@ -292,7 +299,8 @@ theorem typed_run (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee)
             obtain ⟨hl, hst⟩ := heq
             subst hl; subst hst
             obtain ⟨v, rfl, hv⟩ := Sorted_singleton_inv hσ₂
-            exact ih l₁ (v :: st) below out hΓ₂ (Sorted_cons hv hσ.2) (by simpa using hrun)
+            exact ih l₁ (v :: st) below out hΓ₂ (Sorted_cons (HasSort_sub hcar h₂ hv) hσ.2)
+              (by simpa using hrun)
           · rename_i v hbr
             obtain ⟨_, _, heq, _, _⟩ :=
               ihe locA [] (st ++ below) _ hΓ Sorted_nil (by simpa using hbr)
@@ -307,7 +315,8 @@ theorem typed_run (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee)
             obtain ⟨hl, hst⟩ := heq
             subst hl; subst hst
             obtain ⟨v, rfl, hv⟩ := Sorted_singleton_inv hσ₂
-            exact ih l₁ (v :: st) below out hΓ₂ (Sorted_cons hv hσ.2) (by simpa using hrun)
+            exact ih l₁ (v :: st) below out hΓ₂ (Sorted_cons (HasSort_sub hcar h₁ hv) hσ.2)
+              (by simpa using hrun)
           · rename_i v hbr
             obtain ⟨_, _, heq, _, _⟩ :=
               iht locA [] (st ++ below) _ hΓ Sorted_nil (by simpa using hbr)

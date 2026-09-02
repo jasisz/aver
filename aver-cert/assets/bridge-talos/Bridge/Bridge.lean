@@ -27,6 +27,7 @@ translation, related and well-sorted arguments.
 
 namespace Bridge
 open Wasm Wasm.SmallStep CertPrelude
+open AverCert.Schema (CarrierSpec)
 
 theorem Rs_replicate_null (heap : List GcObject) (n : Nat) :
     Rs heap (List.replicate n (.anyref none)) (List.replicate n .null) := by
@@ -35,20 +36,21 @@ theorem Rs_replicate_null (heap : List GcObject) (n : Nat) :
   | succ n ih => simpa [List.replicate_succ, Rs, R] using ih
 
 /-- The whole-list lemma. -/
-theorem bridge_run {α : Type} (env : TranslateEnv) (host : HostTbl) (ar : Nat → Option Nat)
+theorem bridge_run {α : Type} (env : TranslateEnv) (S : CarrierSpec env.carrier)
+    (hcar : CarrierDeclared env) (host : HostTbl) (ar : Nat → Option Nat)
     (callee : Callee) (hostEnv : HostEnv α) (paramSorts : List STy) (result : STy)
     (nlocals : Nat) (fbody : Program)
-    (hsim : HostSimulation env host hostEnv) (hsorts : HostSorts env host) {Γ : List STy} :
+    (hsim : HostSimulation env S host hostEnv) (hsorts : HostSorts env S host) {Γ : List STy} :
     ∀ {σ : List STy} {is : List WInstr} {σ' : List STy}, HasTy env Γ σ is σ' →
     ∀ (code' : Program), translateList env is = some code' →
     ∀ (locA st below : List WVal) (out : Out),
-      Sorted env locA Γ → Sorted env st σ →
+      Sorted env S locA Γ → Sorted env S st σ →
       wRunF host ar callee is locA (st ++ below) = some out →
       ∀ (cont : Program) (L : Locals) (wasm : Store α) (arity : Nat) (remainder : List Value)
         (controls : List ControlFrame) (calls : List CallFrame),
         RLocals wasm.gcHeap L locA → Rs wasm.gcHeap L.values (st ++ below) →
         ∃ locA' st' trace L' wasm',
-          out = .ok locA' (st' ++ below) ∧ Sorted env locA' Γ ∧ Sorted env st' σ' ∧
+          out = .ok locA' (st' ++ below) ∧ Sorted env S locA' Γ ∧ Sorted env S st' σ' ∧
           Steps ⟨.running ⟨L, code' ++ cont, arity, remainder, controls, calls⟩,
                 ⟨synthRuntime (synthModule env paramSorts result nlocals fbody) hostEnv, wasm⟩⟩ trace
             ⟨.running ⟨L', cont, arity, remainder, controls, calls⟩,
@@ -79,7 +81,7 @@ theorem bridge_run {α : Type} (env : TranslateEnv) (host : HostTbl) (ar : Nat �
         ih xs' hxs locA (w :: st) below out hΓ (Sorted_cons hsort hσ) hrun cont
           ⟨params, locs, tv :: values⟩ wasm arity remainder controls calls hL (Rs_cons hR hS)
       exact ⟨locA', st', _ :: trace, L', wasm', hout, hΓ', hσ', Steps.cons hstep hsteps, hpre, hL', hS'⟩
-  | @localSet _ _ i _ _ h _ ih =>
+  | @localSet _ _ i _ _ _ h hsub _ ih =>
       intro code' htr locA st below out hΓ hσ hrun cont L wasm arity remainder controls calls hL hS
       obtain ⟨x', xs', hx, hxs, rfl⟩ := translateList_cons htr
       simp only [translate, Option.some.injEq] at hx
@@ -99,7 +101,8 @@ theorem bridge_run {α : Type} (env : TranslateEnv) (host : HostTbl) (ar : Nat �
             result nlocals fbody) hostEnv) wasm params locs values tv (xs' ++ cont) arity remainder
             controls calls locA _ w hi hL hS.1
           obtain ⟨locA', st', trace, L', wasm', hout, hΓ', hσ', hsteps, hpre, hL', hS'⟩ :=
-            ih xs' hxs (locA.set _ w) st below out (Sorted_set _ hΓ h hσ.1) hσ.2 hrun cont
+            ih xs' hxs (locA.set _ w) st below out (Sorted_set _ hΓ h (HasSort_sub hcar hsub hσ.1))
+              hσ.2 hrun cont
               { L₁ with values := values } wasm arity remainder controls calls hL₁ hS.2
           exact ⟨locA', st', _ :: trace, L', wasm', hout, hΓ', hσ', Steps.cons hstep hsteps, hpre,
             hL', hS'⟩
@@ -114,7 +117,7 @@ theorem bridge_run {α : Type} (env : TranslateEnv) (host : HostTbl) (ar : Nat �
         nlocals fbody) hostEnv) wasm params locs values (xs' ++ cont) arity remainder controls calls
         n hn
       obtain ⟨locA', st', trace, L', wasm', hout, hΓ', hσ', hsteps, hpre, hL', hS'⟩ :=
-        ih xs' hxs locA (.i64v n :: st) below out hΓ (Sorted_cons (by simp [HasSort]) hσ) hrun cont
+        ih xs' hxs locA (.i64v n :: st) below out hΓ (Sorted_cons (HasSort_i64b_of_band hn) hσ) hrun cont
           ⟨params, locs, .i64 (constI64 n) :: values⟩ wasm arity remainder controls calls hL
           (Rs_cons hR hS)
       exact ⟨locA', st', _ :: trace, L', wasm', hout, hΓ', hσ', Steps.cons hstep hsteps, hpre, hL', hS'⟩
@@ -133,7 +136,7 @@ theorem bridge_run {α : Type} (env : TranslateEnv) (host : HostTbl) (ar : Nat �
           ⟨params, locs, .i32 (constI32 n) :: values⟩ wasm arity remainder controls calls hL
           (Rs_cons hR hS)
       exact ⟨locA', st', _ :: trace, L', wasm', hout, hΓ', hσ', Steps.cons hstep hsteps, hpre, hL', hS'⟩
-  | structGet hs hf _ ih =>
+  | structGet h₀ hs hf _ ih =>
       intro code' htr locA st below out hΓ hσ hrun cont L wasm arity remainder controls calls hL hS
       obtain ⟨x', xs', hx, hxs, rfl⟩ := translateList_cons htr
       simp only [translate, Option.some.injEq] at hx
@@ -141,17 +144,18 @@ theorem bridge_run {α : Type} (env : TranslateEnv) (host : HostTbl) (ar : Nat �
       match st, hσ, hS with
       | w :: st, hσ, hS =>
         simp only [Sorted] at hσ
+        have hw : HasSort env S w .ref := HasSort_isRef hcar h₀ hσ.1
         obtain ⟨params, locs, values0⟩ := L
         match values0, hS with
         | tv :: values, hS =>
           simp only [List.cons_append, Rs] at hS
-          rcases HasSort_ref hσ.1 with rfl | ⟨t', fs', rfl⟩ | ⟨t', es', rfl⟩
+          rcases HasSort_ref hw with rfl | ⟨t', fs', rfl⟩ | ⟨t', es', rfl⟩
           · simp [wRunF] at hrun
           · simp only [wRunF, List.cons_append] at hrun
             split at hrun
             · rename_i hty
               subst hty
-              obtain ⟨ts, hts, hfs⟩ := HasSort_structv hσ.1
+              obtain ⟨ts, hts, hfs⟩ := HasSort_structv hw
               rw [hs] at hts
               simp only [Option.some.injEq] at hts
               subst hts
@@ -246,9 +250,16 @@ theorem bridge_run {α : Type} (env : TranslateEnv) (host : HostTbl) (ar : Nat �
         have hA : wRunF host ar callee [.call f] locA (st ++ below) =
             some (.ok locA (r :: (st.drop sig.params.length ++ below))) := by
           simp [wRunF, hhf, hpop, hr]
-        obtain ⟨values₁, wasm₁, hstep, hpre₁, hL₁, hS₁⟩ := bridge_hostCall env host ar callee hostEnv
-          hsim hsorts paramSorts result nlocals fbody wasm L (xs' ++ cont) arity remainder controls
-          calls locA (st ++ below) _ f i sig hs hL hS hA
+        have hle : sig.params.length ≤ st.length := by
+          have := Sorted_length hσ
+          simp only [List.length_append, List.length_reverse] at this
+          omega
+        have hsorted : Sorted env S ((st ++ below).take sig.params.length).reverse sig.params := by
+          rw [List.take_append_of_le_length hle]
+          exact hargs
+        obtain ⟨values₁, wasm₁, hstep, hpre₁, hL₁, hS₁⟩ := bridge_hostCall env S host ar callee
+          hostEnv hsim hsorts paramSorts result nlocals fbody wasm L (xs' ++ cont) arity remainder
+          controls calls locA (st ++ below) _ f i sig hs hsorted hL hS hA
         obtain ⟨locA', st', trace, L', wasm', hout, hΓ', hσ', hsteps, hpre, hL', hS'⟩ :=
           ih xs' hxs locA (r :: st.drop sig.params.length) below out hΓ
             (Sorted_cons (hsort _ _ hargs hr) hrest) hrun cont { L with values := values₁ } wasm₁
@@ -256,14 +267,14 @@ theorem bridge_run {α : Type} (env : TranslateEnv) (host : HostTbl) (ar : Nat �
         exact ⟨locA', st', _ :: trace, L', wasm', hout, hΓ', hσ', Steps.cons hstep hsteps,
           hpre₁.trans hpre, hL', hS'⟩
       · simp at hrun
-  | @i64Cmp _ _ op _ hop _ ih =>
+  | @i64Cmp _ _ _ _ op _ h₁ h₂ hop _ ih =>
       intro code' htr locA st below out hΓ hσ hrun cont L wasm arity remainder controls calls hL hS
       obtain ⟨x', xs', hx, hxs, rfl⟩ := translateList_cons htr
       match st, hσ, hS with
       | w₁ :: w₂ :: st, hσ, hS =>
         simp only [Sorted] at hσ
-        obtain ⟨b, rfl⟩ := HasSort_i64 hσ.1
-        obtain ⟨a, rfl⟩ := HasSort_i64 hσ.2.1
+        obtain ⟨b, rfl⟩ := HasSort_isI64 h₁ hσ.1
+        obtain ⟨a, rfl⟩ := HasSort_isI64 h₂ hσ.2.1
         obtain ⟨params, locs, values0⟩ := L
         match values0, hS with
         | tv₁ :: tv₂ :: values, hS =>
@@ -272,7 +283,7 @@ theorem bridge_run {α : Type} (env : TranslateEnv) (host : HostTbl) (ar : Nat �
           obtain ⟨lhs, rfl, ha⟩ := R_i64v hS.2.1
           obtain ⟨r, w, heq, hwsort, hstep, hR⟩ := bridge_i64Cmp (synthRuntime (synthModule env
             paramSorts result nlocals fbody) hostEnv) wasm params locs values lhs rhs (xs' ++ cont)
-            arity remainder controls calls a b ha hb env host ar callee op hop x' hx
+            arity remainder controls calls a b ha hb env S host ar callee op hop x' hx
           rw [List.cons_append, List.cons_append, heq] at hrun
           obtain ⟨locA', st', trace, L', wasm', hout, hΓ', hσ', hsteps, hpre, hL', hS'⟩ :=
             ih xs' hxs locA (w :: st) below out hΓ (Sorted_cons hwsort hσ.2.2) hrun cont
@@ -296,7 +307,7 @@ theorem bridge_run {α : Type} (env : TranslateEnv) (host : HostTbl) (ar : Nat �
           obtain ⟨lhs, rfl, ha⟩ := R_i32v hS.2.1
           obtain ⟨r, w, heq, hwsort, hstep, hR⟩ := bridge_i32Cmp (synthRuntime (synthModule env
             paramSorts result nlocals fbody) hostEnv) wasm params locs values lhs rhs (xs' ++ cont)
-            arity remainder controls calls a b ha hb env host ar callee op hop x' hx
+            arity remainder controls calls a b ha hb env S host ar callee op hop x' hx
           rw [List.cons_append, List.cons_append, heq] at hrun
           obtain ⟨locA', st', trace, L', wasm', hout, hΓ', hσ', hsteps, hpre, hL', hS'⟩ :=
             ih xs' hxs locA (w :: st) below out hΓ (Sorted_cons hwsort hσ.2.2) hrun cont
@@ -304,7 +315,7 @@ theorem bridge_run {α : Type} (env : TranslateEnv) (host : HostTbl) (ar : Nat �
               (Rs_cons hR hS.2.2)
           exact ⟨locA', st', _ :: trace, L', wasm', hout, hΓ', hσ', Steps.cons hstep hsteps, hpre,
             hL', hS'⟩
-  | @ifElse _ σ₀' t tB eB is₀ ht he _ iht ihe ih =>
+  | @ifElse _ σ₀' t t₁ t₂ tB eB is₀ ht he h₁ h₂ _ iht ihe ih =>
       intro code' htr locA st below out hΓ hσ hrun cont L wasm arity remainder controls calls hL hS
       obtain ⟨x', xs', hx, hxs, rfl⟩ := translateList_cons htr
       simp only [translate] at hx
@@ -318,16 +329,16 @@ theorem bridge_run {α : Type} (env : TranslateEnv) (host : HostTbl) (ar : Nat �
           obtain ⟨c, rfl⟩ := HasSort_i32 hσ.1
           rw [List.cons_append] at hS
           -- A branch at this entry state, from its induction hypothesis.
-          have hbranch : ∀ (bodyA : List WInstr) (body' : Program),
+          have hbranch : ∀ (bodyA : List WInstr) (body' : Program) (tb : STy),
               (∀ (code' : Program), translateList env bodyA = some code' →
                 ∀ (locA st below : List WVal) (out : Out),
-                  Sorted env locA Γ → Sorted env st [] →
+                  Sorted env S locA Γ → Sorted env S st [] →
                   wRunF host ar callee bodyA locA (st ++ below) = some out →
                   ∀ (cont : Program) (L : Locals) (wasm : Store α) (arity : Nat)
                     (remainder : List Value) (controls : List ControlFrame) (calls : List CallFrame),
                     RLocals wasm.gcHeap L locA → Rs wasm.gcHeap L.values (st ++ below) →
                     ∃ locA' st' trace L' wasm',
-                      out = .ok locA' (st' ++ below) ∧ Sorted env locA' Γ ∧ Sorted env st' [t] ∧
+                      out = .ok locA' (st' ++ below) ∧ Sorted env S locA' Γ ∧ Sorted env S st' [tb] ∧
                       Steps ⟨.running ⟨L, code' ++ cont, arity, remainder, controls, calls⟩,
                             ⟨synthRuntime (synthModule env paramSorts result nlocals fbody) hostEnv, wasm⟩⟩
                         trace
@@ -338,7 +349,7 @@ theorem bridge_run {α : Type} (env : TranslateEnv) (host : HostTbl) (ar : Nat �
               translateList env bodyA = some body' →
               BranchSimAt host ar callee hostEnv (synthModule env paramSorts result nlocals fbody)
                 bodyA body' locA (st ++ below) := by
-            intro bodyA body' ihb htrb locA' stA' hbr cont₁ L₁ wasm₁ arity₁ remainder₁ controls₁
+            intro bodyA body' tb ihb htrb locA' stA' hbr cont₁ L₁ wasm₁ arity₁ remainder₁ controls₁
               calls₁ hL₁ hS₁
             obtain ⟨locA₂, st₂, trace, L₂, wasm₂, hout, -, hσ₂, hsteps, hpre, hL₂, hS₂⟩ :=
               ihb body' htrb locA [] (st ++ below) _ hΓ Sorted_nil (by simpa using hbr) cont₁ L₁
@@ -347,17 +358,17 @@ theorem bridge_run {α : Type} (env : TranslateEnv) (host : HostTbl) (ar : Nat �
             simp only [Out.ok.injEq] at hout
             obtain ⟨rfl, rfl⟩ := hout
             exact ⟨v, trace, L₂, wasm₂, rfl, hsteps, hpre, hL₂, by simpa using hS₂⟩
-          have hsim_t := hbranch tB tB' iht htB
-          have hsim_e := hbranch eB eB' ihe heB
+          have hsim_t := hbranch tB tB' t₁ iht htB
+          have hsim_e := hbranch eB eB' t₂ ihe heB
           -- The wall's step, one branch at a time.
           simp only [wRunF, List.cons_append] at hrun
-          have hfinish : ∀ (bodyA : List WInstr) (hty : HasTy env Γ [] bodyA [t])
-              (l₁ : List WVal) (s₁ : List WVal),
+          have hfinish : ∀ (bodyA : List WInstr) (tb : STy) (hty : HasTy env Γ [] bodyA [tb])
+              (hsub : SubSort tb t) (l₁ : List WVal) (s₁ : List WVal),
               wRunF host ar callee bodyA locA (st ++ below) = some (.ok l₁ s₁) →
               wRunF host ar callee [.ifElse tB eB] locA (.i32v c :: (st ++ below)) = some (.ok l₁ s₁) →
               wRunF host ar callee is₀ l₁ s₁ = some out →
               ∃ locA' st' trace L' wasm',
-                out = .ok locA' (st' ++ below) ∧ Sorted env locA' Γ ∧ Sorted env st' σ₀' ∧
+                out = .ok locA' (st' ++ below) ∧ Sorted env S locA' Γ ∧ Sorted env S st' σ₀' ∧
                 Steps ⟨.running ⟨L, (Instruction.iff 0 1 tB' eB' [] [.anyref] :: xs') ++ cont, arity,
                         remainder, controls, calls⟩,
                       ⟨synthRuntime (synthModule env paramSorts result nlocals fbody) hostEnv, wasm⟩⟩
@@ -366,9 +377,9 @@ theorem bridge_run {α : Type} (env : TranslateEnv) (host : HostTbl) (ar : Nat �
                       ⟨synthRuntime (synthModule env paramSorts result nlocals fbody) hostEnv, wasm'⟩⟩ ∧
                 wasm.gcHeap <+: wasm'.gcHeap ∧ RLocals wasm'.gcHeap L' locA' ∧
                 Rs wasm'.gcHeap L'.values (st' ++ below) := by
-            intro bodyA hty l₁ s₁ hbr hA hrun
+            intro bodyA tb hty hsub l₁ s₁ hbr hA hrun
             obtain ⟨l₂, s₂, hout, hΓ₂, hσ₂⟩ :=
-              typed_run host ar callee hsorts hty locA [] (st ++ below) _ hΓ Sorted_nil
+              typed_run host ar callee S hcar hsorts hty locA [] (st ++ below) _ hΓ Sorted_nil
                 (by simpa using hbr)
             obtain ⟨v, rfl, hv⟩ := Sorted_singleton_inv hσ₂
             simp only [Out.ok.injEq] at hout
@@ -377,27 +388,28 @@ theorem bridge_run {α : Type} (env : TranslateEnv) (host : HostTbl) (ar : Nat �
               bridge_ifElse host ar callee hostEnv _ tB eB tB' eB' L wasm (xs' ++ cont) arity
                 remainder controls calls locA (st ++ below) l₁ _ c hsim_t hsim_e hL hS hA
             obtain ⟨locA', st', trace, L', wasm', hout, hΓ', hσ', hsteps, hpre, hL', hS'⟩ :=
-              ih xs' hxs l₁ (v :: st) below out hΓ₂ (Sorted_cons hv hσ.2) (by simpa using hrun) cont
-                L₁ wasm₁ arity remainder controls calls hL₁ (by simpa using hS₁)
+              ih xs' hxs l₁ (v :: st) below out hΓ₂ (Sorted_cons (HasSort_sub hcar hsub hv) hσ.2)
+                (by simpa using hrun) cont L₁ wasm₁ arity remainder controls calls hL₁
+                (by simpa using hS₁)
             exact ⟨locA', st', trace₁ ++ trace, L', wasm', hout, hΓ', hσ',
               Steps.trans hsteps₁ hsteps, hpre₁.trans hpre, hL', hS'⟩
           split at hrun
           · rename_i hc
             split at hrun
             · rename_i l₁ s₁ hbr
-              exact hfinish eB he l₁ s₁ hbr (by simp [wRunF, hc, hbr]) hrun
+              exact hfinish eB t₂ he h₂ l₁ s₁ hbr (by simp [wRunF, hc, hbr]) hrun
             · rename_i v hbr
-              obtain ⟨_, _, heq, -, -⟩ := typed_run host ar callee hsorts he locA [] (st ++ below) _
-                hΓ Sorted_nil (by simpa using hbr)
+              obtain ⟨_, _, heq, -, -⟩ := typed_run host ar callee S hcar hsorts he locA []
+                (st ++ below) _ hΓ Sorted_nil (by simpa using hbr)
               simp at heq
             · simp at hrun
           · rename_i hc
             split at hrun
             · rename_i l₁ s₁ hbr
-              exact hfinish tB ht l₁ s₁ hbr (by simp [wRunF, hc, hbr]) hrun
+              exact hfinish tB t₁ ht h₁ l₁ s₁ hbr (by simp [wRunF, hc, hbr]) hrun
             · rename_i v hbr
-              obtain ⟨_, _, heq, -, -⟩ := typed_run host ar callee hsorts ht locA [] (st ++ below) _
-                hΓ Sorted_nil (by simpa using hbr)
+              obtain ⟨_, _, heq, -, -⟩ := typed_run host ar callee S hcar hsorts ht locA []
+                (st ++ below) _ hΓ Sorted_nil (by simpa using hbr)
               simp at heq
             · simp at hrun
       · simp at hx
@@ -408,13 +420,14 @@ theorem bridge_run {α : Type} (env : TranslateEnv) (host : HostTbl) (ar : Nat �
     run from `initialConfig` to `.done [v]` with `v` related to the wall's
     result. Fuel is the wall's only source of non-termination and it is
     already spent by the hypothesis. -/
-theorem wFuncN_terminatesWith {α : Type} (env : TranslateEnv) (host : HostTbl) (hostEnv : HostEnv α)
-    (hsim : HostSimulation env host hostEnv) (hsorts : HostSorts env host)
+theorem wFuncN_terminatesWith {α : Type} (env : TranslateEnv) (S : CarrierSpec env.carrier)
+    (hcar : CarrierDeclared env) (host : HostTbl) (hostEnv : HostEnv α)
+    (hsim : HostSimulation env S host hostEnv) (hsorts : HostSorts env S host)
     (code : CodeTbl) (self fuel : Nat) (c : WCode) (hc : code self = some c)
     (paramSorts : List STy) (result : STy) (body' : Program)
     (hty : HasTy env (paramSorts ++ List.replicate c.nlocals .ref) [] c.body [result])
     (htr : translateList env c.body = some body')
-    (vs : List WVal) (hvs : Sorted env vs paramSorts)
+    (vs : List WVal) (hvs : Sorted env S vs paramSorts)
     (store0 : Store α) (args : List Value) (hargs : Rs store0.gcHeap args vs)
     (w : WVal) (hrun : wFuncN code host fuel self vs = some w) :
     ∃ trace v store',
@@ -428,7 +441,7 @@ theorem wFuncN_terminatesWith {α : Type} (env : TranslateEnv) (host : HostTbl) 
     simp only [wFuncN, hc] at hrun
     -- The wall's initial locals are the arguments followed by null padding;
     -- Talos's are the arguments followed by the zero of the declared local type.
-    have hΓ : Sorted env (initLocals c vs) (paramSorts ++ List.replicate c.nlocals .ref) :=
+    have hΓ : Sorted env S (initLocals c vs) (paramSorts ++ List.replicate c.nlocals .ref) :=
       Sorted_append hvs (Sorted_replicate_null _)
     have hL0 : RLocals store0.gcHeap
         ((synthFunction env paramSorts result c.nlocals body').toLocals args) (initLocals c vs) := by
@@ -440,7 +453,7 @@ theorem wFuncN_terminatesWith {α : Type} (env : TranslateEnv) (host : HostTbl) 
       simp only [Option.some.injEq] at hrun
       subst hrun
       obtain ⟨locA', st', trace, L', wasm', hout, -, -, hsteps, -, -, hS'⟩ :=
-        bridge_run env host _ _ hostEnv paramSorts result c.nlocals body' hsim hsorts hty body' htr
+        bridge_run env S hcar host _ _ hostEnv paramSorts result c.nlocals body' hsim hsorts hty body' htr
           (initLocals c vs) [] [] _ hΓ Sorted_nil (by simpa using hbody) []
           ((synthFunction env paramSorts result c.nlocals body').toLocals args) store0 1 [] [] []
           hL0 (by simp [Function.toLocals, Rs])
@@ -458,27 +471,28 @@ theorem wFuncN_terminatesWith {α : Type} (env : TranslateEnv) (host : HostTbl) 
     · rename_i v hbody
       -- A typed body never returns through `.ret`.
       obtain ⟨_, _, heq, -, -⟩ :=
-        typed_run host _ _ hsorts hty (initLocals c vs) [] [] _ hΓ Sorted_nil (by simpa using hbody)
+        typed_run host _ _ S hcar hsorts hty (initLocals c vs) [] [] _ hΓ Sorted_nil (by simpa using hbody)
       simp at heq
     · simp at hrun
 
 /-- The same statement in Talos's own vocabulary (`TerminatesWith`,
     SmallStep.lean:7066). -/
-theorem wFuncN_TerminatesWith {α : Type} (env : TranslateEnv) (host : HostTbl) (hostEnv : HostEnv α)
-    (hsim : HostSimulation env host hostEnv) (hsorts : HostSorts env host)
+theorem wFuncN_TerminatesWith {α : Type} (env : TranslateEnv) (S : CarrierSpec env.carrier)
+    (hcar : CarrierDeclared env) (host : HostTbl) (hostEnv : HostEnv α)
+    (hsim : HostSimulation env S host hostEnv) (hsorts : HostSorts env S host)
     (code : CodeTbl) (self fuel : Nat) (c : WCode) (hc : code self = some c)
     (paramSorts : List STy) (result : STy) (body' : Program)
     (hty : HasTy env (paramSorts ++ List.replicate c.nlocals .ref) [] c.body [result])
     (htr : translateList env c.body = some body')
-    (vs : List WVal) (hvs : Sorted env vs paramSorts)
+    (vs : List WVal) (hvs : Sorted env S vs paramSorts)
     (store0 : Store α) (args : List Value) (hargs : Rs store0.gcHeap args vs)
     (w : WVal) (hrun : wFuncN code host fuel self vs = some w) :
     TerminatesWith
       (initialConfig (synthModule env paramSorts result c.nlocals body') hostEnv
         (synthFunction env paramSorts result c.nlocals body') store0 args)
       (fun values store' => ∃ v, values = [v] ∧ R store'.wasm.gcHeap v w) := by
-  obtain ⟨trace, v, store', hsteps, hR⟩ := wFuncN_terminatesWith env host hostEnv hsim hsorts code
-    self fuel c hc paramSorts result body' hty htr vs hvs store0 args hargs w hrun
+  obtain ⟨trace, v, store', hsteps, hR⟩ := wFuncN_terminatesWith env S hcar host hostEnv hsim hsorts
+    code self fuel c hc paramSorts result body' hty htr vs hvs store0 args hargs w hrun
   exact ⟨trace, [v], store', hsteps, v, rfl, hR⟩
 
 end Bridge

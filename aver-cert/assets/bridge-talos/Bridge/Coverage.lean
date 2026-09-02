@@ -1,5 +1,7 @@
 import Bridge.EnvOfClaim
 
+set_option autoImplicit false
+
 /-!
 # Coverage: every lowered compute-face body is typed and translatable
 
@@ -36,7 +38,9 @@ constructor makes the match non-exhaustive: the build stops):
   `constI64`/`constI32` literals must be in the machine band (the checker
   types them at any `Int`; the record-compute classifier does pin
   `constI64`, `recordComputeNodeOk`), a `hostCall` must resolve through the
-  environment's import table to its role's signature, a `structGetUser`/
+  environment's import table to its role's signature and `box` must box a
+  literal (the only argument shape under which `boxRef`'s result is
+  canonical, `CarrierSpec.canonSmall`), a `structGetUser`/
   `structNew` must cite a DECLARED struct index whose declared field sorts
   agree with the node's types (this is the envelope gap of brief §9: the
   layout comes from a `typedecl-v1` claim, not from the compute plan);
@@ -48,41 +52,85 @@ constructor makes the match non-exhaustive: the build stops):
 
 namespace Bridge
 open Wasm CertPrelude AverCert.Schema AverCert.PlanCheck AverCert.PlanLower
+open AverCert.Schema (CarrierSpec)
 
 /-! ## The sort map -/
 
-/-- `FragTy → STy`: the coarse wasm sort of each representation type. -/
+/-- `FragTy → STy`: the coarse wasm sort of each representation type. An
+    `intCarrier` is a canonical carrier (`.car`): that is what the checker's
+    typing means for a value the host contracts consume, and what the
+    record-compute face's domain representation supplies. -/
 def sortOfFragTy : FragTy → STy
   | .f64 => .f64
   | .boolI32 => .i32
-  | .intCarrier => .ref
+  | .intCarrier => .car
   | .i64 => .i64
   | .rawI32 => .i32
   | .ref => .ref
   | .adtRef => .ref
 
+/-- The sort of one node: its declared type's sort, except that an `i64`
+    LITERAL node is an `.i64b` (the operand shape `box` needs). -/
+def sortOfNode (n : FragNode) : STy :=
+  match n.kind with
+  | .constI64 _ =>
+      match n.ty with
+      | .i64 => .i64b
+      | ty => sortOfFragTy ty
+  | _ => sortOfFragTy n.ty
+
 /-- The sort of a node id of a block (the default is never consulted on a
     checked plan: every id on the symbolic stack names a checked node). -/
 def sortAt (nodes : List FragNode) (id : Nat) : STy :=
-  match lookupTy nodes id with
-  | some t => sortOfFragTy t
+  match lookupNode nodes id with
+  | some n => sortOfNode n
   | none => .i32
 
 /-- Locals of a compute-face body: the parameters, then the ONE declared
     carrier scratch local (`AcceptedArtifact.exprFragmentNLocals = 1`). -/
 def Γof (params : List FragTy) : List STy := params.map sortOfFragTy ++ [.ref]
 
-theorem lookupTy_prefix {checked : List FragNode} (more : List FragNode) {a : Nat} {t : FragTy}
-    (h : lookupTy checked a = some t) : lookupTy (checked ++ more) a = some t := by
-  simp only [lookupTy, lookupNode] at h ⊢
+theorem sortOfNode_sub (n : FragNode) : SubSort (sortOfNode n) (sortOfFragTy n.ty) := by
+  unfold sortOfNode
+  cases hk : n.kind <;> try exact SubSort.refl _
+  cases hty : n.ty <;> first | exact SubSort.refl _ | exact Or.inr (Or.inl ⟨rfl, rfl⟩)
+
+theorem sortOfNode_of_ne (n : FragNode) (h : n.ty ≠ .i64) : sortOfNode n = sortOfFragTy n.ty := by
+  unfold sortOfNode
+  cases hk : n.kind <;> try rfl
+  cases hty : n.ty <;> first | rfl | exact absurd hty h
+
+theorem sortOfNode_isI64 (n : FragNode) (h : n.ty = .i64) : IsI64 (sortOfNode n) := by
+  unfold sortOfNode
+  rw [h]
+  cases hk : n.kind <;> first | exact Or.inr rfl | exact Or.inl rfl
+
+theorem sortOfNode_constI64 (n : FragNode) (v : Int) (hk : n.kind = .constI64 v) (h : n.ty = .i64) :
+    sortOfNode n = .i64b := by
+  unfold sortOfNode
+  rw [hk, h]
+
+theorem lookupNode_prefix {checked : List FragNode} (more : List FragNode) {a : Nat} {n : FragNode}
+    (h : lookupNode checked a = some n) : lookupNode (checked ++ more) a = some n := by
+  simp only [lookupNode] at h ⊢
+  rw [List.getElem?_append_left (List.getElem?_eq_some_iff.mp h).1]
+  exact h
+
+theorem lookupTy_of_lookupNode {nodes : List FragNode} {id : Nat} {n : FragNode}
+    (h : lookupNode nodes id = some n) : lookupTy nodes id = some n.ty := by
+  simp [lookupTy, h]
+
+theorem lookupNode_of_lookupTy {nodes : List FragNode} {id : Nat} {t : FragTy}
+    (h : lookupTy nodes id = some t) : ∃ n, lookupNode nodes id = some n ∧ n.ty = t := by
+  simp only [lookupTy] at h
   split at h
   · rename_i n hn
-    rw [List.getElem?_append_left (List.getElem?_eq_some_iff.mp hn).1, hn]
-    exact h
+    simp only [Option.some.injEq] at h
+    exact ⟨n, hn, h⟩
   · simp at h
 
-theorem sortAt_of_lookupTy {nodes : List FragNode} {a : Nat} {t : FragTy}
-    (h : lookupTy nodes a = some t) : sortAt nodes a = sortOfFragTy t := by
+theorem sortAt_of_lookupNode {nodes : List FragNode} {a : Nat} {n : FragNode}
+    (h : lookupNode nodes a = some n) : sortAt nodes a = sortOfNode n := by
   simp [sortAt, h]
 
 theorem sameTy_eq {a b : FragTy} (h : sameTy a b = true) : a = b := by
@@ -97,34 +145,53 @@ theorem hasTy_lookupTy {checked : List FragNode} {a : Nat} {t : FragTy}
     exact hg
   · simp at h
 
-theorem hasI32Ty_sort {checked : List FragNode} {a : Nat} (h : hasI32Ty checked a = true) :
-    ∃ t, lookupTy checked a = some t ∧ sortOfFragTy t = .i32 := by
+/-- The sort of a checked argument of a non-`i64` type, read off the whole
+    block (`checked` is a prefix). -/
+theorem sortAt_of_hasTy_ne {checked : List FragNode} (more : List FragNode) {a : Nat} {t : FragTy}
+    (h : hasTy checked a t = true) (hne : t ≠ .i64) :
+    sortAt (checked ++ more) a = sortOfFragTy t := by
+  obtain ⟨n, hn, rfl⟩ := lookupNode_of_lookupTy (hasTy_lookupTy h)
+  rw [sortAt_of_lookupNode (lookupNode_prefix more hn), sortOfNode_of_ne n hne]
+
+theorem sortAt_of_hasTy_i64 {checked : List FragNode} (more : List FragNode) {a : Nat}
+    (h : hasTy checked a .i64 = true) : IsI64 (sortAt (checked ++ more) a) := by
+  obtain ⟨n, hn, hty⟩ := lookupNode_of_lookupTy (hasTy_lookupTy h)
+  rw [sortAt_of_lookupNode (lookupNode_prefix more hn)]
+  exact sortOfNode_isI64 n hty
+
+theorem hasI32Ty_sort {checked : List FragNode} (more : List FragNode) {a : Nat}
+    (h : hasI32Ty checked a = true) : sortAt (checked ++ more) a = .i32 := by
   simp only [hasI32Ty] at h
   split at h
-  · rename_i hl; exact ⟨_, hl, rfl⟩
-  · rename_i hl; exact ⟨_, hl, rfl⟩
+  · rename_i hl
+    obtain ⟨n, hn, hty⟩ := lookupNode_of_lookupTy hl
+    rw [sortAt_of_lookupNode (lookupNode_prefix more hn), sortOfNode_of_ne n (by rw [hty]; decide),
+      hty]
+    rfl
+  · rename_i hl
+    obtain ⟨n, hn, hty⟩ := lookupNode_of_lookupTy hl
+    rw [sortAt_of_lookupNode (lookupNode_prefix more hn), sortOfNode_of_ne n (by rw [hty]; decide),
+      hty]
+    rfl
   · simp at h
 
-theorem lookupTy_self {checked : List FragNode} {node : FragNode} {rest : List FragNode}
-    (hid : node.id = checked.length) : lookupTy (checked ++ node :: rest) node.id = some node.ty := by
-  simp only [lookupTy, lookupNode]
+theorem lookupNode_self {checked : List FragNode} {node : FragNode} {rest : List FragNode}
+    (hid : node.id = checked.length) : lookupNode (checked ++ node :: rest) node.id = some node := by
+  simp only [lookupNode]
   rw [hid, List.getElem?_append_right (Nat.le_refl _), Nat.sub_self]
   rfl
 
-theorem lookupTy_of_lookupNode {nodes : List FragNode} {id : Nat} {n : FragNode}
-    (h : lookupNode nodes id = some n) : lookupTy nodes id = some n.ty := by
-  simp [lookupTy, h]
-
+/-- Arguments of non-`i64` types have exactly their types' sorts. -/
 theorem argsHaveTys_sorts {checked : List FragNode} (more : List FragNode) :
     ∀ {args : List Nat} {tys : List FragTy}, argsHaveTys checked args tys = true →
-      args.map (sortAt (checked ++ more)) = tys.map sortOfFragTy
-  | [], [], _ => rfl
-  | a :: args, t :: tys, h => by
+      (∀ t ∈ tys, t ≠ .i64) → args.map (sortAt (checked ++ more)) = tys.map sortOfFragTy
+  | [], [], _, _ => rfl
+  | a :: args, t :: tys, h, hne => by
       simp only [argsHaveTys, Bool.and_eq_true] at h
-      simp only [List.map_cons, argsHaveTys_sorts more h.2,
-        sortAt_of_lookupTy (lookupTy_prefix more (hasTy_lookupTy h.1))]
-  | [], _ :: _, h => by simp [argsHaveTys] at h
-  | _ :: _, [], h => by simp [argsHaveTys] at h
+      simp only [List.map_cons, argsHaveTys_sorts more h.2 (fun t ht => hne t (List.mem_cons_of_mem _ ht)),
+        sortAt_of_hasTy_ne more h.1 (hne t List.mem_cons_self)]
+  | [], _ :: _, h, _ => by simp [argsHaveTys] at h
+  | _ :: _, [], h, _ => by simp [argsHaveTys] at h
 
 theorem popExpected_eq {stack : List Nat} {v : Nat} {s' : List Nat}
     (h : popExpected stack v = some s') : stack = v :: s' := by
@@ -168,9 +235,7 @@ theorem Γof_scratch (params : List FragTy) : (Γof params)[params.length]? = so
 
 theorem inI64Band_band {k : Int} (h : inI64Band k = true) : i64Band k := by
   simp only [inI64Band, Bool.and_eq_true, decide_eq_true_eq] at h
-  have h63 : (2 : Int) ^ 63 = 9223372036854775808 := by decide
-  rw [h63] at h
-  exact h
+  exact (i64Band_iff k).mpr h
 
 theorem i32Band_bool (v : Bool) : i32Band (if v then 1 else 0) := by
   cases v <;> simp [i32Band]
@@ -334,10 +399,19 @@ def nodeInProfile : Nat → TranslateEnv → List FragNode → FragNode → Bool
           | none => false
       | .refIsNull _ => true
       | .prim op _ => primInProfile op
-      | .hostCall role funcIdx _ =>
-          match slotLookup? env.imports funcIdx with
-          | some (_, sig) => sig.params == (roleSig role).1 && sig.result == (roleSig role).2
-          | none => false
+      | .hostCall role funcIdx args =>
+          (match slotLookup? env.imports funcIdx with
+            | some (_, sig) => sig.params == (roleSig role).1 && sig.result == (roleSig role).2
+            | none => false) &&
+          -- `box` boxes a LITERAL (the emitter's `i64.const k; call box` idiom):
+          -- that is the one argument shape under which its result is canonical.
+          (match role, args with
+            | .box, [a] =>
+                match lookupNode nodes a with
+                | some n => match n.kind with | .constI64 _ => true | _ => false
+                | none => false
+            | .box, _ => false
+            | _, _ => true)
       | .selfCall _ _ _ => false
       | .ifElse _ thenBlock elseBlock =>
           thenBlock.nodes.all (nodeInProfile fuel env thenBlock.nodes) &&
@@ -364,16 +438,16 @@ theorem HasTy_append {env : TranslateEnv} {Γ : List STy} :
   induction h₁ with
   | nil => intro σ₂ is₂ h₂; simpa using h₂
   | localGet h _ ih => intro σ₂ is₂ h₂; exact .localGet h (ih h₂)
-  | localSet h _ ih => intro σ₂ is₂ h₂; exact .localSet h (ih h₂)
+  | localSet h hsub _ ih => intro σ₂ is₂ h₂; exact .localSet h hsub (ih h₂)
   | i64Const hn _ ih => intro σ₂ is₂ h₂; exact .i64Const hn (ih h₂)
   | i32Const hn _ ih => intro σ₂ is₂ h₂; exact .i32Const hn (ih h₂)
-  | structGet hs hf _ ih => intro σ₂ is₂ h₂; exact .structGet hs hf (ih h₂)
+  | structGet h₀ hs hf _ ih => intro σ₂ is₂ h₂; exact .structGet h₀ hs hf (ih h₂)
   | structNew hs _ ih => intro σ₂ is₂ h₂; exact .structNew hs (ih h₂)
   | refIsNull _ ih => intro σ₂ is₂ h₂; exact .refIsNull (ih h₂)
   | call hs _ ih => intro σ₂ is₂ h₂; exact .call hs (ih h₂)
-  | i64Cmp hop _ ih => intro σ₂ is₂ h₂; exact .i64Cmp hop (ih h₂)
+  | i64Cmp h₁ h₂ hop _ ih => intro σ₂ is₂ hc; exact .i64Cmp h₁ h₂ hop (ih hc)
   | i32Cmp hop _ ih => intro σ₂ is₂ h₂; exact .i32Cmp hop (ih h₂)
-  | ifElse ht he _ _ _ ih => intro σ₂ is₂ h₂; exact .ifElse ht he (ih h₂)
+  | ifElse ht he h₁ h₂ _ _ _ ih => intro σ₂ is₂ hc; exact .ifElse ht he h₁ h₂ (ih hc)
 
 theorem translateList_cons_of {env : TranslateEnv} {x : WInstr} {x' : Instruction}
     {xs : List WInstr} {c : Program} (hx : translate env x = some x')
@@ -410,7 +484,7 @@ theorem HasTy_translates {env : TranslateEnv} {Γ : List STy} :
   | @localGet _ _ i _ _ _ _ ih =>
       obtain ⟨c, hc⟩ := ih
       exact ⟨_, translateList_cons_of (x' := .localGet i) (by simp [translate]) hc⟩
-  | @localSet _ _ i _ _ _ _ ih =>
+  | @localSet _ _ i _ _ _ _ _ _ ih =>
       obtain ⟨c, hc⟩ := ih
       exact ⟨_, translateList_cons_of (x' := .localSet i) (by simp [translate]) hc⟩
   | @i64Const _ _ n _ hn _ ih =>
@@ -419,7 +493,7 @@ theorem HasTy_translates {env : TranslateEnv} {Γ : List STy} :
   | @i32Const _ _ n _ hn _ ih =>
       obtain ⟨c, hc⟩ := ih
       exact ⟨_, translateList_cons_of (x' := .const (constI32 n)) (by simp [translate, hn]) hc⟩
-  | @structGet _ _ ty f _ _ _ _ _ _ ih =>
+  | @structGet _ _ ty f _ _ _ _ _ _ _ _ ih =>
       obtain ⟨c, hc⟩ := ih
       exact ⟨_, translateList_cons_of (x' := .gc (.structGet ty f)) (by simp [translate]) hc⟩
   | @structNew _ _ ty _ _ hs _ ih =>
@@ -431,7 +505,7 @@ theorem HasTy_translates {env : TranslateEnv} {Γ : List STy} :
   | @call _ _ _ i _ _ hs _ ih =>
       obtain ⟨c, hc⟩ := ih
       exact ⟨_, translateList_cons_of (x' := .call i) (by simp [translate, hs]) hc⟩
-  | i64Cmp hop _ ih =>
+  | i64Cmp _ _ hop _ ih =>
       obtain ⟨c, hc⟩ := ih
       obtain ⟨x, hx⟩ := translate_i64Cmp (env := env) hop
       exact ⟨_, translateList_cons_of hx hc⟩
@@ -439,37 +513,42 @@ theorem HasTy_translates {env : TranslateEnv} {Γ : List STy} :
       obtain ⟨c, hc⟩ := ih
       obtain ⟨x, hx⟩ := translate_i32Cmp (env := env) hop
       exact ⟨_, translateList_cons_of hx hc⟩
-  | ifElse _ _ _ iht ihe ih =>
+  | ifElse _ _ _ _ _ iht ihe ih =>
       obtain ⟨ct, hct⟩ := iht
       obtain ⟨ce, hce⟩ := ihe
       obtain ⟨c, hc⟩ := ih
       exact ⟨_, translateList_cons_of (x' := .iff 0 1 ct ce [] [.anyref])
         (by simp [translate, hct, hce]) hc⟩
 
-/-- The sign template is typed `ref → i32` against the carrier layout, with
-    the declared scratch local `params.length`. -/
+/-- The sign template is typed `carrier → i32` against the carrier layout,
+    with the declared scratch local `params.length` (a `.ref` slot: the
+    template stores the operand — a canonical carrier, `.car` — into it,
+    `SubSort .car .ref`, and reads it back as a declared struct). -/
 theorem HasTy_intSignCmpTemplate (env : TranslateEnv) (carrier : Nat)
     (hcar : structSorts? env.structs carrier = some [.i64, .ref, .i32])
-    (params : List FragTy) (op : SymIntCmp) (k : Int) (hk : i64Band k) (σ : List STy) :
-    HasTy env (Γof params) (.ref :: σ) (intSignCmpTemplate carrier params.length op k) (.i32 :: σ) := by
+    (params : List FragTy) (op : SymIntCmp) (k : Int) (hk : i64Band k) (t₀ : STy)
+    (h₀ : SubSort t₀ .ref) (σ : List STy) :
+    HasTy env (Γof params) (t₀ :: σ) (intSignCmpTemplate carrier params.length op k) (.i32 :: σ) := by
   have hscr := Γof_scratch params
   have hsmall : HasTy env (Γof params) []
       [.localGet params.length, .structGet carrier 0, .i64Const k,
         primInstr (intSignCmpSmallPrim op)] [.i32] := by
-    refine .localGet hscr (.structGet hcar rfl (.i64Const hk (.i64Cmp ?_ .nil)))
+    refine .localGet hscr (.structGet (Or.inl rfl) hcar rfl
+      (.i64Const hk (.i64Cmp (Or.inr rfl) (Or.inl rfl) ?_ .nil)))
     cases op <;> simp [intSignCmpSmallPrim, primInstr, i64Cmps]
   have hbig : HasTy env (Γof params) [] (intSignCmpBigArm carrier params.length op) [.i32] := by
     cases op <;> simp only [intSignCmpBigArm]
     · exact .i32Const (by simp [i32Band]) .nil
-    · exact .localGet hscr (.structGet hcar rfl (.i32Const (by simp [i32Band])
+    · exact .localGet hscr (.structGet (Or.inl rfl) hcar rfl (.i32Const (by simp [i32Band])
         (.i32Cmp (by simp [i32Cmps]) .nil)))
-    · exact .localGet hscr (.structGet hcar rfl (.i32Const (by simp [i32Band])
+    · exact .localGet hscr (.structGet (Or.inl rfl) hcar rfl (.i32Const (by simp [i32Band])
         (.i32Cmp (by simp [i32Cmps]) .nil)))
-    · exact .localGet hscr (.structGet hcar rfl (.i32Const (by simp [i32Band])
+    · exact .localGet hscr (.structGet (Or.inl rfl) hcar rfl (.i32Const (by simp [i32Band])
         (.i32Cmp (by simp [i32Cmps]) .nil)))
-    · exact .localGet hscr (.structGet hcar rfl (.i32Const (by simp [i32Band])
+    · exact .localGet hscr (.structGet (Or.inl rfl) hcar rfl (.i32Const (by simp [i32Band])
         (.i32Cmp (by simp [i32Cmps]) .nil)))
-  exact .localSet hscr (.localGet hscr (.structGet hcar rfl (.refIsNull (.ifElse hsmall hbig .nil))))
+  exact .localSet hscr h₀ (.localGet hscr (.structGet (Or.inl rfl) hcar rfl
+    (.refIsNull (.ifElse hsmall hbig (SubSort.refl _) (SubSort.refl _) .nil))))
 
 /-! ### Host-call and primitive shapes fixed by the checker -/
 
@@ -494,10 +573,16 @@ def roleResTy : HostRole → FragTy
   | .cmp => .rawI32
   | .eq => .boolI32
 
-theorem roleSig_sorts (role : HostRole) :
+/-- For every role but `box` the signature is the sort image of the checker's
+    argument types; `box` refines its `i64` operand to a literal (`.i64b`). -/
+theorem roleSig_sorts (role : HostRole) (hne : role ≠ .box) :
     (roleSig role).1 = (roleArgTys role).map sortOfFragTy ∧
       (roleSig role).2 = sortOfFragTy (roleResTy role) := by
-  cases role <;> exact ⟨rfl, rfl⟩
+  cases role <;> first | exact absurd rfl hne | exact ⟨rfl, rfl⟩
+
+theorem roleArgTys_ne_i64 (role : HostRole) (hne : role ≠ .box) :
+    ∀ t ∈ roleArgTys role, t ≠ .i64 := by
+  cases role <;> simp_all [roleArgTys]
 
 theorem hostCallResultTy?_some {checked : List FragNode} {role : HostRole} {args : List Nat}
     {ty : FragTy} (h : hostCallResultTy? checked role args = some ty) :
@@ -513,10 +598,23 @@ theorem primInProfile_cases {op : FragPrim} (h : primInProfile op = true) :
 theorem prim_i64 {checked : List FragNode} {op : FragPrim} {args : List Nat} {ty : FragTy}
     (hop : op ∈ [FragPrim.i64Eq, .i64LeS, .i64LtS, .i64GeS, .i64GtS])
     (h : primResultTy? checked op args = some ty) :
-    argsHaveTys checked args [.i64, .i64] = true ∧ ty = .boolI32 ∧ primInstr op ∈ i64Cmps := by
+    ∃ a b, args = [a, b] ∧ hasTy checked a .i64 = true ∧ hasTy checked b .i64 = true ∧
+      ty = .boolI32 ∧ primInstr op ∈ i64Cmps := by
   simp only [List.mem_cons, List.not_mem_nil, or_false] at hop
-  rcases hop with rfl | rfl | rfl | rfl | rfl <;>
-    simp only [primResultTy?] at h <;> split at h <;> simp_all [primInstr, i64Cmps]
+  rcases hop with rfl | rfl | rfl | rfl | rfl
+  all_goals
+    simp only [primResultTy?] at h
+    split at h
+    · rename_i hargs
+      simp only [Option.some.injEq] at h
+      match args, hargs with
+      | [a, b], hargs =>
+        simp only [argsHaveTys, Bool.and_eq_true, and_true] at hargs
+        exact ⟨a, b, rfl, hargs.1, hargs.2, h.symm, by simp [primInstr, i64Cmps]⟩
+      | [], hargs => simp [argsHaveTys] at hargs
+      | [_], hargs => simp [argsHaveTys] at hargs
+      | _ :: _ :: _ :: _, hargs => simp [argsHaveTys] at hargs
+    · simp at h
 
 theorem prim_i32 {checked : List FragNode} {op : FragPrim} {args : List Nat} {ty : FragTy}
     (hop : op ∈ [FragPrim.i32Eq, .i32LtS, .i32GtS, .i32GeS])
@@ -583,15 +681,15 @@ theorem covStep : ∀ lf, (∀ m, m < lf → NodesCov m ∧ BlockCov m) → Node
         subst hty
         simp only [List.all_cons, Bool.and_eq_true] at hprof
         obtain ⟨hprof1, hprof2⟩ := hprof
-        have hself : sortAt nodes node.id = sortOfFragTy node.ty :=
-          sortAt_of_lookupTy (hn ▸ lookupTy_self hid)
-        have hpre : ∀ {a : Nat} {t : FragTy}, hasTy checked a t = true →
-            sortAt nodes a = sortOfFragTy t := fun h =>
-          sortAt_of_lookupTy (hn ▸ lookupTy_prefix _ (hasTy_lookupTy h))
+        have hself : sortAt nodes node.id = sortOfNode node :=
+          sortAt_of_lookupNode (hn ▸ lookupNode_self hid)
+        have hpre : ∀ {a : Nat} {t : FragTy}, hasTy checked a t = true → t ≠ .i64 →
+            sortAt nodes a = sortOfFragTy t := fun h hne =>
+          hn ▸ sortAt_of_hasTy_ne _ h hne
         -- The rest of the block, one fuel level down (the lowerer's own accounting).
         have restIH : ∀ (stack' : List Nat) (r : List WInstr) (f : List Nat),
             lowerNodesFuel lf carrier rest (node.id :: stack') = some (r, f) →
-            HasTy env (Γof params) (sortOfFragTy node.ty :: stack'.map (sortAt nodes)) r
+            HasTy env (Γof params) (sortOfNode node :: stack'.map (sortAt nodes)) r
               (f.map (sortAt nodes)) := by
           intro stack' r f hrest
           have := ih.1 env carrier hcar params cf pf nodes (checked ++ [node]) rest (node.id :: stack')
@@ -608,7 +706,9 @@ theorem covStep : ∀ lf, (∀ m, m < lf → NodesCov m ∧ BlockCov m) → Node
           · rename_i r f hrest
             simp only [Option.some.injEq, Prod.mk.injEq] at hlow
             obtain ⟨rfl, rfl⟩ := hlow
-            exact HasTy_append (.localGet (Γof_param hinf) .nil) (restIH _ _ _ hrest)
+            have hih := restIH _ _ _ hrest
+            rw [show sortOfNode node = sortOfFragTy node.ty by unfold sortOfNode; rw [hk]] at hih
+            exact HasTy_append (.localGet (Γof_param hinf) .nil) hih
           · simp at hlow
         case constBool value =>
           simp only [inferNodeKindTy, hk, Option.some.injEq] at hinf
@@ -617,7 +717,7 @@ theorem covStep : ∀ lf, (∀ m, m < lf → NodesCov m ∧ BlockCov m) → Node
             simp only [Option.some.injEq, Prod.mk.injEq] at hlow
             obtain ⟨rfl, rfl⟩ := hlow
             have hih := restIH _ _ _ hrest
-            rw [← hinf] at hih
+            simp only [sortOfNode, hk, ← hinf, sortOfFragTy] at hih
             exact HasTy_append (.i32Const (i32Band_bool value) .nil) hih
           · simp at hlow
         case constI64 value =>
@@ -628,7 +728,7 @@ theorem covStep : ∀ lf, (∀ m, m < lf → NodesCov m ∧ BlockCov m) → Node
             simp only [Option.some.injEq, Prod.mk.injEq] at hlow
             obtain ⟨rfl, rfl⟩ := hlow
             have hih := restIH _ _ _ hrest
-            rw [← hinf] at hih
+            rw [sortOfNode_constI64 node value hk hinf.symm] at hih
             exact HasTy_append (.i64Const hprof1 .nil) hih
           · simp at hlow
         case constI32 value =>
@@ -639,7 +739,7 @@ theorem covStep : ∀ lf, (∀ m, m < lf → NodesCov m ∧ BlockCov m) → Node
             simp only [Option.some.injEq, Prod.mk.injEq] at hlow
             obtain ⟨rfl, rfl⟩ := hlow
             have hih := restIH _ _ _ hrest
-            rw [← hinf] at hih
+            simp only [sortOfNode, hk, ← hinf, sortOfFragTy] at hih
             exact HasTy_append (.i32Const hprof1 .nil) hih
           · simp at hlow
         case constF64Bits bits =>
@@ -658,8 +758,9 @@ theorem covStep : ∀ lf, (∀ m, m < lf → NodesCov m ∧ BlockCov m) → Node
                 simp only [Option.some.injEq, Prod.mk.injEq] at hlow
                 obtain ⟨rfl, rfl⟩ := hlow
                 have hih := restIH _ _ _ hrest
-                simp only [List.map_cons, hpre hrecv, sortOfFragTy]
-                exact HasTy_append (.structGet hcar (carrierFieldTy?_sort hinf) .nil) hih
+                rw [show sortOfNode node = sortOfFragTy node.ty by unfold sortOfNode; rw [hk]] at hih
+                simp only [List.map_cons, hpre hrecv (by decide), sortOfFragTy]
+                exact HasTy_append (.structGet (Or.inr rfl) hcar (carrierFieldTy?_sort hinf) .nil) hih
               · simp at hlow
           · simp at hinf
         case structGetUser tyIdx field value =>
@@ -681,8 +782,9 @@ theorem covStep : ∀ lf, (∀ m, m < lf → NodesCov m ∧ BlockCov m) → Node
                   simp only [Option.some.injEq, Prod.mk.injEq] at hlow
                   obtain ⟨rfl, rfl⟩ := hlow
                   have hih := restIH _ _ _ hrest
-                  simp only [List.map_cons, hpre hc.1, sortOfFragTy]
-                  exact HasTy_append (.structGet hfs hprof1 .nil) hih
+                  rw [show sortOfNode node = sortOfFragTy node.ty by unfold sortOfNode; rw [hk]] at hih
+                  simp only [List.map_cons, hpre hc.1 (by decide), sortOfFragTy]
+                  exact HasTy_append (.structGet (Or.inl rfl) hfs hprof1 .nil) hih
                 · simp at hlow
             · simp at hprof1
           · simp at hinf
@@ -702,8 +804,8 @@ theorem covStep : ∀ lf, (∀ m, m < lf → NodesCov m ∧ BlockCov m) → Node
                 simp only [Option.some.injEq, Prod.mk.injEq] at hlow
                 obtain ⟨rfl, rfl⟩ := hlow
                 have hih := restIH _ _ _ hrest
-                rw [← hinf] at hih
-                simp only [List.map_cons, hpre hc.1, sortOfFragTy]
+                simp only [sortOfNode, hk, ← hinf, sortOfFragTy] at hih
+                simp only [List.map_cons, hpre hc.1 (by decide), sortOfFragTy]
                 exact HasTy_append (.refIsNull .nil) hih
               · simp at hlow
           · simp at hinf
@@ -720,37 +822,31 @@ theorem covStep : ∀ lf, (∀ m, m < lf → NodesCov m ∧ BlockCov m) → Node
               simp only [Option.some.injEq, Prod.mk.injEq] at hlow
               obtain ⟨rfl, rfl⟩ := hlow
               have hih := restIH _ _ _ hrest
+              simp only [sortOfNode, hk] at hih
               rcases primInProfile_cases hprof1 with h64 | h32
-              · obtain ⟨hargs, hres, hmem⟩ := prim_i64 h64 hinf
-                have hsorts := argsHaveTys_sorts (node :: rest) hargs
-                rw [← hn] at hsorts
-                have hσ : List.map (sortAt nodes) (args.reverse ++ stack') =
-                    .i64 :: .i64 :: List.map (sortAt nodes) stack' := by
-                  rw [List.map_append, List.map_reverse, hsorts]
-                  rfl
+              · obtain ⟨a, b, rfl, ha, hb, hres, hmem⟩ := prim_i64 h64 hinf
+                have hσ : List.map (sortAt nodes) ([a, b].reverse ++ stack') =
+                    sortAt nodes b :: sortAt nodes a :: List.map (sortAt nodes) stack' := by
+                  simp
                 rw [hσ]
                 rw [hres] at hih
-                exact HasTy_append (.i64Cmp hmem .nil) hih
+                exact HasTy_append (.i64Cmp (hn ▸ sortAt_of_hasTy_i64 _ hb)
+                  (hn ▸ sortAt_of_hasTy_i64 _ ha) hmem .nil) hih
               · obtain ⟨a, b, rfl, ha, hb, hres, hmem⟩ := prim_i32 h32 hinf
-                obtain ⟨ta, hla, hsa⟩ := hasI32Ty_sort ha
-                obtain ⟨tb, hlb, hsb⟩ := hasI32Ty_sort hb
-                have hsa' : sortAt nodes a = .i32 := by
-                  rw [sortAt_of_lookupTy (hn ▸ lookupTy_prefix _ hla), hsa]
-                have hsb' : sortAt nodes b = .i32 := by
-                  rw [sortAt_of_lookupTy (hn ▸ lookupTy_prefix _ hlb), hsb]
                 have hσ : List.map (sortAt nodes) ([a, b].reverse ++ stack') =
                     .i32 :: .i32 :: List.map (sortAt nodes) stack' := by
-                  simp [hsa', hsb']
+                  simp [hn ▸ hasI32Ty_sort _ ha, hn ▸ hasI32Ty_sort _ hb]
                 rw [hσ]
                 rw [hres] at hih
                 exact HasTy_append (.i32Cmp hmem .nil) hih
             · simp at hlow
         case hostCall role funcIdx args =>
           simp only [inferNodeKindTy, hk] at hinf
-          simp only [nodeInProfile, hk] at hprof1
-          split at hprof1
+          simp only [nodeInProfile, hk, Bool.and_eq_true] at hprof1
+          obtain ⟨hslot', hbox⟩ := hprof1
+          split at hslot'
           · rename_i i sig hslot
-            simp only [Bool.and_eq_true, beq_iff_eq] at hprof1
+            simp only [Bool.and_eq_true, beq_iff_eq] at hslot'
             obtain ⟨hargs, hres⟩ := hostCallResultTy?_some hinf
             cases hp : popExpectedAll stack args.reverse with
             | none => simp [hp] at hlow
@@ -762,16 +858,41 @@ theorem covStep : ∀ lf, (∀ m, m < lf → NodesCov m ∧ BlockCov m) → Node
                 simp only [Option.some.injEq, Prod.mk.injEq] at hlow
                 obtain ⟨rfl, rfl⟩ := hlow
                 have hih := restIH _ _ _ hrest
-                have hsorts := argsHaveTys_sorts (node :: rest) hargs
-                rw [← hn] at hsorts
-                have hσ : List.map (sortAt nodes) (args.reverse ++ stack') =
-                    sig.params.reverse ++ List.map (sortAt nodes) stack' := by
-                  rw [List.map_append, List.map_reverse, hsorts, ← (roleSig_sorts role).1, ← hprof1.1]
-                rw [hσ]
-                rw [hres, ← (roleSig_sorts role).2, ← hprof1.2] at hih
-                exact HasTy_append (.call hslot .nil) hih
+                simp only [sortOfNode, hk] at hih
+                rw [hres] at hih
+                by_cases hb : role = .box
+                · subst hb
+                  -- `box`: one literal argument.
+                  simp only [roleArgTys] at hargs
+                  match args, hargs, hbox with
+                  | [a], hargs, hbox =>
+                    simp only [argsHaveTys, Bool.and_eq_true, and_true] at hargs
+                    obtain ⟨n, hna, hnty⟩ := lookupNode_of_lookupTy (hasTy_lookupTy hargs)
+                    have hna' : lookupNode nodes a = some n := hn ▸ lookupNode_prefix _ hna
+                    simp only [hna'] at hbox
+                    split at hbox
+                    · rename_i v hkv
+                      have hsa : sortAt nodes a = .i64b := by
+                        rw [sortAt_of_lookupNode hna', sortOfNode_constI64 n v hkv hnty]
+                      have hσ : List.map (sortAt nodes) ([a].reverse ++ stack') =
+                          sig.params.reverse ++ List.map (sortAt nodes) stack' := by
+                        simp [hsa, hslot'.1, roleSig]
+                      rw [hσ]
+                      rw [show sortOfFragTy (roleResTy .box) = sig.result by
+                        rw [hslot'.2]; rfl] at hih
+                      exact HasTy_append (.call hslot .nil) hih
+                    · simp at hbox
+                · have hsorts := argsHaveTys_sorts (node :: rest) hargs (roleArgTys_ne_i64 role hb)
+                  rw [← hn] at hsorts
+                  have hσ : List.map (sortAt nodes) (args.reverse ++ stack') =
+                      sig.params.reverse ++ List.map (sortAt nodes) stack' := by
+                    rw [List.map_append, List.map_reverse, hsorts, ← (roleSig_sorts role hb).1,
+                      ← hslot'.1]
+                  rw [hσ]
+                  rw [← (roleSig_sorts role hb).2, ← hslot'.2] at hih
+                  exact HasTy_append (.call hslot .nil) hih
               · simp at hlow
-          · simp at hprof1
+          · simp at hslot'
         case selfCall tail funcIdx args =>
           simp [nodeInProfile, hk] at hprof1
         case ifElse cond thenBlock elseBlock =>
@@ -804,13 +925,14 @@ theorem covStep : ∀ lf, (∀ m, m < lf → NodesCov m ∧ BlockCov m) → Node
                         simp only [Option.some.injEq, Prod.mk.injEq] at hlow
                         obtain ⟨rfl, rfl⟩ := hlow
                         have hih := restIH _ _ _ hrest
-                        rw [← hinf] at hih
+                        rw [show sortOfNode node = sortOfFragTy node.ty by unfold sortOfNode; rw [hk], ← hinf] at hih
                         have hT := ih.2 env carrier hcar params cf pf thenBlock tI hct hpt ht
                         have hE := ih.2 env carrier hcar params cf pf elseBlock eI hce hpe he
-                        rw [sortAt_of_lookupTy (lookupTy_of_lookupNode htn)] at hT
-                        rw [sortAt_of_lookupTy (lookupTy_of_lookupNode hen), ← hte] at hE
-                        simp only [List.map_cons, hpre hcond, sortOfFragTy]
-                        exact HasTy_append (.ifElse hT hE .nil) hih
+                        rw [sortAt_of_lookupNode htn] at hT
+                        rw [sortAt_of_lookupNode hen] at hE
+                        simp only [List.map_cons, hpre hcond (by decide), sortOfFragTy]
+                        exact HasTy_append (.ifElse hT hE (sortOfNode_sub tn)
+                          (hte ▸ sortOfNode_sub en) .nil) hih
                       · simp at hlow
               · simp at hinf
             · simp at hinf
@@ -832,7 +954,7 @@ theorem covStep : ∀ lf, (∀ m, m < lf → NodesCov m ∧ BlockCov m) → Node
                 simp only [Option.some.injEq, Prod.mk.injEq] at hlow
                 obtain ⟨rfl, rfl⟩ := hlow
                 have hih := restIH _ _ _ hrest
-                rw [← hinf] at hih
+                simp only [sortOfNode, hk, ← hinf, sortOfFragTy] at hih
                 have hσ : List.map (sortAt nodes) (args.reverse ++ stack') =
                     (args.map (sortAt nodes)).reverse ++ List.map (sortAt nodes) stack' := by
                   rw [List.map_append, List.map_reverse]
@@ -860,10 +982,11 @@ theorem covStep : ∀ lf, (∀ m, m < lf → NodesCov m ∧ BlockCov m) → Node
                 simp only [Option.some.injEq, Prod.mk.injEq] at hlow
                 obtain ⟨rfl, rfl⟩ := hlow
                 have hih := restIH _ _ _ hrest
-                rw [← hinf] at hih
-                simp only [List.map_cons, hpre hval, sortOfFragTy]
+                simp only [sortOfNode, hk, ← hinf, sortOfFragTy] at hih
+                simp only [List.map_cons, hpre hval (by decide), sortOfFragTy]
                 exact HasTy_append
-                  (HasTy_intSignCmpTemplate env carrier hcar params op k (inI64Band_band hband) _) hih
+                  (HasTy_intSignCmpTemplate env carrier hcar params op k (inI64Band_band hband) .car
+                    (Or.inr (Or.inr ⟨rfl, rfl⟩)) _) hih
               · simp at hlow
           · simp at hinf
     · intro env carrier hcar params cf pf block instrs hchk hprof hlow
@@ -902,13 +1025,16 @@ theorem cov (lf : Nat) : NodesCov lf ∧ BlockCov lf :=
 /-- Brief §3/§9 (1): a plan the wall lowers (hence one that passed
     `checkExprFragmentRawPlan`) whose nodes are in the profile relative to
     `env` has a typed body over the compute-face locals, and the body
-    translates. The carrier index must be declared in `env` with the fixed
-    `{i64, ref, i32}` layout (`envOfClaim_carrier` for `envOfClaim`). -/
+    translates. The result sort is the result node's (`sortAt`), which is the
+    plan's declared result sort or its literal refinement (`SubSort`). The
+    carrier index must be declared in `env` with the fixed `{i64, ref, i32}`
+    layout (`envOfClaim_carrier` for `envOfClaim`). -/
 theorem coverage (env : TranslateEnv) (carrier : Nat)
     (hcar : structSorts? env.structs carrier = some [.i64, .ref, .i32])
     (plan : ExprFragmentRawPlan) (pf : Nat) (hprof : blockInProfile pf env plan.body = true)
     (instrs : List WInstr) (hlow : lowerExprFragmentBody carrier plan = some instrs) :
-    HasTy env (Γof plan.params) [] instrs [sortOfFragTy plan.result] ∧
+    ∃ t, SubSort t (sortOfFragTy plan.result) ∧
+      HasTy env (Γof plan.params) [] instrs [t] ∧
       ∃ code, translateList env instrs = some code := by
   simp only [lowerExprFragmentBody] at hlow
   split at hlow
@@ -919,13 +1045,12 @@ theorem coverage (env : TranslateEnv) (carrier : Nat)
     have hty : HasTy env (Γof plan.params) [] instrs [sortAt plan.body.nodes plan.body.result] :=
       (cov AverCert.PlanCheck.maxFuel).2 env carrier hcar plan.params AverCert.PlanCheck.maxFuel pf
         plan.body instrs hblock hprof hlow
-    have hsort : sortAt plan.body.nodes plan.body.result = sortOfFragTy plan.result := by
-      split at hres
-      · rename_i n hn
-        rw [sortAt_of_lookupTy (lookupTy_of_lookupNode hn), sameTy_eq hres]
-      · simp at hres
-    rw [hsort] at hty
-    exact ⟨hty, HasTy_translates hty⟩
+    refine ⟨_, ?_, hty, HasTy_translates hty⟩
+    split at hres
+    · rename_i n hn
+      rw [sortAt_of_lookupNode hn, ← sameTy_eq hres]
+      exact sortOfNode_sub n
+    · simp at hres
   · simp at hlow
 
 /-- The same over the claim's projection `envOfClaim`. -/
@@ -933,8 +1058,8 @@ theorem coverage_envOfClaim (hostTable : List (HostRole × Nat)) (carrier : Nat)
     (decls : List TypeDecl) (plan : ExprFragmentRawPlan)
     (hprof : planInProfile (envOfClaim hostTable carrier decls) plan = true)
     (instrs : List WInstr) (hlow : lowerExprFragmentBody carrier plan = some instrs) :
-    HasTy (envOfClaim hostTable carrier decls) (Γof plan.params) [] instrs
-        [sortOfFragTy plan.result] ∧
+    ∃ t, SubSort t (sortOfFragTy plan.result) ∧
+      HasTy (envOfClaim hostTable carrier decls) (Γof plan.params) [] instrs [t] ∧
       ∃ code, translateList (envOfClaim hostTable carrier decls) instrs = some code :=
   coverage _ carrier (envOfClaim_carrier hostTable carrier decls) plan AverCert.PlanCheck.maxFuel hprof
     instrs hlow

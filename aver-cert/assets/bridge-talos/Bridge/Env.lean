@@ -19,6 +19,7 @@ serve the TYPING judgment of `Translate.lean`, not Talos's own validator.
 
 namespace Bridge
 open Wasm CertPrelude
+open AverCert.Schema (CarrierSpec)
 
 /-- One import of the synthetic module: the wall's function index the plan
     calls (`call slot`), and the sorts of its arguments and result. -/
@@ -85,38 +86,61 @@ theorem structSorts?_lt_bound :
         simp only [structsBound]
         omega
 
-/-! ## Value sorts, relative to the declared struct table
+/-! ## Machine bands -/
 
-`HasSort env w t`: `w` is a wall value of sort `t`; a struct value must be an
-instance of a DECLARED struct type with fields of the declared sorts (that is
-what lets `structGet` be typed by the table). Arrays are opaque references
-(the profile never reads into one). -/
+def i32Band (n : Int) : Prop := -2147483648 ≤ n ∧ n < 2147483648
+def i64Band (n : Int) : Prop := -9223372036854775808 ≤ n ∧ n < 9223372036854775808
+
+instance : DecidablePred i32Band := fun n => by unfold i32Band; infer_instance
+instance : DecidablePred i64Band := fun n => by unfold i64Band; infer_instance
+
+theorem i64Band_iff (n : Int) : i64Band n ↔ (-(2 ^ 63 : Int) ≤ n ∧ n < 2 ^ 63) := by
+  have h63 : (2 : Int) ^ 63 = 9223372036854775808 := by decide
+  rw [h63]
+  exact Iff.rfl
+
+/-! ## Value sorts, relative to the declared struct table and a carrier specification
+
+`HasSort env S w t`: `w` is a wall value of sort `t`. A `.ref` struct must be
+an instance of a DECLARED struct type with fields of the declared sorts (that
+is what lets `structGet` be typed by the table); a `.car` value is a
+REPRESENTED, CANONICAL Int carrier under the wall's `CarrierSpec S` — the
+operand shape `Obligation.holds`' contracts speak about (the arguments of
+`add`/`sub`/`mul`/`cmp`/`eq`); an `.i64b` is a band literal (the argument
+shape under which `boxRef` returns a canonical carrier). Arrays are opaque
+references (the profile never reads into one). -/
 
 mutual
-def HasSort (env : TranslateEnv) : WVal → STy → Prop
+def HasSort (env : TranslateEnv) (S : CarrierSpec env.carrier) : WVal → STy → Prop
   | .i32v _, .i32 => True
   | .i64v _, .i64 => True
+  | .i64v n, .i64b => i64Band n
   | .f64v _, .f64 => True
-  | .structv t fs, .ref => ∃ ts, structSorts? env.structs t = some ts ∧ Sorted env fs ts
+  | .structv t fs, .ref => ∃ ts, structSorts? env.structs t = some ts ∧ Sorted env S fs ts
   | .arr _ _, .ref => True
   | .null, .ref => True
+  | .structv t fs, .car => ∃ n, S.Repr n (.structv t fs) ∧ S.Canon (.structv t fs)
   | _, _ => False
 
-def Sorted (env : TranslateEnv) : List WVal → List STy → Prop
+def Sorted (env : TranslateEnv) (S : CarrierSpec env.carrier) : List WVal → List STy → Prop
   | [], [] => True
-  | w :: ws, t :: ts => HasSort env w t ∧ Sorted env ws ts
+  | w :: ws, t :: ts => HasSort env S w t ∧ Sorted env S ws ts
   | _, _ => False
 end
 
-variable {env : TranslateEnv}
+/-- The carrier's declared layout, as every wall face assumes it. -/
+def CarrierDeclared (env : TranslateEnv) : Prop :=
+  structSorts? env.structs env.carrier = some [.i64, .ref, .i32]
 
-theorem Sorted_nil : Sorted env [] [] := by simp [Sorted]
+variable {env : TranslateEnv} {S : CarrierSpec env.carrier}
+
+theorem Sorted_nil : Sorted env S [] [] := by simp [Sorted]
 
 theorem Sorted_cons {w : WVal} {ws : List WVal} {t : STy} {ts : List STy}
-    (h : HasSort env w t) (hs : Sorted env ws ts) : Sorted env (w :: ws) (t :: ts) := by
+    (h : HasSort env S w t) (hs : Sorted env S ws ts) : Sorted env S (w :: ws) (t :: ts) := by
   simp only [Sorted]; exact ⟨h, hs⟩
 
-theorem Sorted_length : ∀ {ws : List WVal} {ts : List STy}, Sorted env ws ts → ws.length = ts.length
+theorem Sorted_length : ∀ {ws : List WVal} {ts : List STy}, Sorted env S ws ts → ws.length = ts.length
   | [], [], _ => rfl
   | _ :: ws, _ :: ts, h => by
       simp only [Sorted] at h
@@ -126,7 +150,7 @@ theorem Sorted_length : ∀ {ws : List WVal} {ts : List STy}, Sorted env ws ts �
 
 theorem Sorted_getElem? :
     ∀ {ws : List WVal} {ts : List STy} (i : Nat) (t : STy),
-      Sorted env ws ts → ts[i]? = some t → ∃ w, ws[i]? = some w ∧ HasSort env w t
+      Sorted env S ws ts → ts[i]? = some t → ∃ w, ws[i]? = some w ∧ HasSort env S w t
   | [], [], i, t, _, ht => by simp at ht
   | w :: ws, t' :: ts, 0, t, h, ht => by
       simp only [Sorted] at h
@@ -141,7 +165,7 @@ theorem Sorted_getElem? :
 
 theorem Sorted_set :
     ∀ {ws : List WVal} {ts : List STy} (i : Nat) {w : WVal} {t : STy},
-      Sorted env ws ts → ts[i]? = some t → HasSort env w t → Sorted env (ws.set i w) ts
+      Sorted env S ws ts → ts[i]? = some t → HasSort env S w t → Sorted env S (ws.set i w) ts
   | [], [], _, _, _, h, _, _ => h
   | _ :: ws, t' :: ts, 0, w, t, h, ht, hw => by
       simp only [Sorted] at h
@@ -159,7 +183,7 @@ theorem Sorted_set :
 
 theorem Sorted_append :
     ∀ {ws₁ ws₂ : List WVal} {ts₁ ts₂ : List STy},
-      Sorted env ws₁ ts₁ → Sorted env ws₂ ts₂ → Sorted env (ws₁ ++ ws₂) (ts₁ ++ ts₂)
+      Sorted env S ws₁ ts₁ → Sorted env S ws₂ ts₂ → Sorted env S (ws₁ ++ ws₂) (ts₁ ++ ts₂)
   | [], _, [], _, _, h₂ => h₂
   | _ :: ws₁, _, _ :: ts₁, _, h₁, h₂ => by
       simp only [Sorted] at h₁
@@ -170,7 +194,8 @@ theorem Sorted_append :
 
 theorem Sorted_append_inv :
     ∀ {ws : List WVal} {ts₁ ts₂ : List STy},
-      Sorted env ws (ts₁ ++ ts₂) → ∃ ws₁ ws₂, ws = ws₁ ++ ws₂ ∧ Sorted env ws₁ ts₁ ∧ Sorted env ws₂ ts₂
+      Sorted env S ws (ts₁ ++ ts₂) →
+        ∃ ws₁ ws₂, ws = ws₁ ++ ws₂ ∧ Sorted env S ws₁ ts₁ ∧ Sorted env S ws₂ ts₂
   | ws, [], ts₂, h => ⟨[], ws, rfl, Sorted_nil, h⟩
   | [], _ :: _, _, h => by simp [Sorted] at h
   | w :: ws, t :: ts₁, ts₂, h => by
@@ -179,7 +204,7 @@ theorem Sorted_append_inv :
       exact ⟨w :: ws₁, ws₂, rfl, Sorted_cons h.1 h₁, h₂⟩
 
 theorem Sorted_reverse :
-    ∀ {ws : List WVal} {ts : List STy}, Sorted env ws ts → Sorted env ws.reverse ts.reverse
+    ∀ {ws : List WVal} {ts : List STy}, Sorted env S ws ts → Sorted env S ws.reverse ts.reverse
   | [], [], _ => Sorted_nil
   | w :: ws, t :: ts, h => by
       simp only [Sorted] at h
@@ -188,20 +213,29 @@ theorem Sorted_reverse :
   | [], _ :: _, h => by simp [Sorted] at h
   | _ :: _, [], h => by simp [Sorted] at h
 
-theorem Sorted_singleton_inv {ws : List WVal} {t : STy} (h : Sorted env ws [t]) :
-    ∃ w, ws = [w] ∧ HasSort env w t := by
+theorem Sorted_singleton_inv {ws : List WVal} {t : STy} (h : Sorted env S ws [t]) :
+    ∃ w, ws = [w] ∧ HasSort env S w t := by
   match ws, h with
   | [w], h => exact ⟨w, rfl, by simpa [Sorted] using h⟩
   | [], h => simp [Sorted] at h
   | _ :: _ :: _, h => simp [Sorted] at h
 
-theorem Sorted_replicate_null (n : Nat) : Sorted env (List.replicate n .null) (List.replicate n .ref) := by
+theorem Sorted_pair_inv {ws : List WVal} {t₁ t₂ : STy} (h : Sorted env S ws [t₁, t₂]) :
+    ∃ w₁ w₂, ws = [w₁, w₂] ∧ HasSort env S w₁ t₁ ∧ HasSort env S w₂ t₂ := by
+  match ws, h with
+  | [w₁, w₂], h => exact ⟨w₁, w₂, rfl, by simpa [Sorted] using h⟩
+  | [], h => simp [Sorted] at h
+  | [_], h => simp [Sorted] at h
+  | _ :: _ :: _ :: _, h => simp [Sorted] at h
+
+theorem Sorted_replicate_null (n : Nat) :
+    Sorted env S (List.replicate n .null) (List.replicate n .ref) := by
   induction n with
   | zero => exact Sorted_nil
   | succ n ih => simpa [List.replicate_succ, Sorted, HasSort] using ih
 
 /-- A value of reference sort is one of the three reference shapes. -/
-theorem HasSort_ref {w : WVal} (h : HasSort env w .ref) :
+theorem HasSort_ref {w : WVal} (h : HasSort env S w .ref) :
     w = .null ∨ (∃ t fs, w = .structv t fs) ∨ (∃ t es, w = .arr t es) := by
   cases w with
   | null => exact Or.inl rfl
@@ -211,18 +245,70 @@ theorem HasSort_ref {w : WVal} (h : HasSort env w .ref) :
   | i64v _ => simp [HasSort] at h
   | f64v _ => simp [HasSort] at h
 
-theorem HasSort_structv {t : Nat} {fs : List WVal} (h : HasSort env (.structv t fs) .ref) :
-    ∃ ts, structSorts? env.structs t = some ts ∧ Sorted env fs ts := by
+theorem HasSort_structv {t : Nat} {fs : List WVal} (h : HasSort env S (.structv t fs) .ref) :
+    ∃ ts, structSorts? env.structs t = some ts ∧ Sorted env S fs ts := by
   simpa [HasSort] using h
 
-theorem HasSort_i32 {w : WVal} (h : HasSort env w .i32) : ∃ n, w = .i32v n := by
+theorem HasSort_i32 {w : WVal} (h : HasSort env S w .i32) : ∃ n, w = .i32v n := by
   cases w <;> simp [HasSort] at h ⊢
 
-theorem HasSort_i64 {w : WVal} (h : HasSort env w .i64) : ∃ n, w = .i64v n := by
+theorem HasSort_i64 {w : WVal} (h : HasSort env S w .i64) : ∃ n, w = .i64v n := by
   cases w <;> simp [HasSort] at h ⊢
 
-theorem HasSort_b32 (p : Bool) : HasSort env (b32 p) .i32 := by
+theorem HasSort_i64b {w : WVal} (h : HasSort env S w .i64b) : ∃ n, w = .i64v n ∧ i64Band n := by
+  cases w <;> simp [HasSort] at h ⊢
+  exact h
+
+theorem HasSort_isI64 {t : STy} {w : WVal} (ht : IsI64 t) (h : HasSort env S w t) :
+    ∃ n, w = .i64v n := by
+  rcases ht with rfl | rfl
+  · exact HasSort_i64 h
+  · obtain ⟨n, rfl, -⟩ := HasSort_i64b h
+    exact ⟨n, rfl⟩
+
+theorem HasSort_b32 (p : Bool) : HasSort env S (b32 p) .i32 := by
   cases p <;> simp [b32, HasSort]
+
+theorem HasSort_i64b_of_band {n : Int} (hn : i64Band n) : HasSort env S (.i64v n) .i64b := by
+  simpa [HasSort] using hn
+
+/-- A canonical carrier: represented and canonical, hence (by `CarrierSpec.car`)
+    a struct at the carrier index in one of the two carrier shapes. -/
+theorem HasSort_car {w : WVal} (h : HasSort env S w .car) : ∃ n, S.Repr n w ∧ S.Canon w := by
+  cases w <;> simp [HasSort] at h ⊢
+  exact h
+
+theorem HasSort_of_canonRepr {w : WVal} {n : Int} (hR : S.Repr n w) (hC : S.Canon w) :
+    HasSort env S w .car := by
+  rcases S.car n w hR with ⟨s, sg, rfl⟩ | ⟨s, lty, les, sg, rfl⟩ <;>
+    exact ⟨n, hR, hC⟩
+
+theorem HasSort_car_shape {w : WVal} (h : HasSort env S w .car) :
+    (∃ s sg, w = .structv env.carrier [.i64v s, .null, .i32v sg]) ∨
+      (∃ s lty les sg, w = .structv env.carrier [.i64v s, .arr lty les, .i32v sg]) := by
+  obtain ⟨n, hR, -⟩ := HasSort_car h
+  exact S.car n w hR
+
+/-- Under the carrier's declared layout, a canonical carrier is also a
+    `.ref`: its fields are sorted `[i64, ref, i32]`. -/
+theorem HasSort_car_ref (hcar : CarrierDeclared env) {w : WVal} (h : HasSort env S w .car) :
+    HasSort env S w .ref := by
+  rcases HasSort_car_shape h with ⟨s, sg, rfl⟩ | ⟨s, lty, les, sg, rfl⟩ <;>
+    exact ⟨_, hcar, by simp [Sorted, HasSort]⟩
+
+theorem HasSort_sub (hcar : CarrierDeclared env) {t' t : STy} {w : WVal} (hs : SubSort t' t)
+    (h : HasSort env S w t') : HasSort env S w t := by
+  rcases hs with rfl | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩
+  · exact h
+  · obtain ⟨n, rfl, -⟩ := HasSort_i64b h
+    simp [HasSort]
+  · exact HasSort_car_ref hcar h
+
+theorem HasSort_isRef (hcar : CarrierDeclared env) {t : STy} {w : WVal} (ht : IsRef t)
+    (h : HasSort env S w t) : HasSort env S w .ref := by
+  rcases ht with rfl | rfl
+  · exact h
+  · exact HasSort_car_ref hcar h
 
 /-! ## `envOfClaim` — the projection of the declared envelope
 
@@ -235,20 +321,22 @@ source-order scalar fields, `checkRecordDecl`). The Int carrier is the fixed
 open AverCert.Schema in
 /-- Argument/result sorts fixed by a host role (`PlanCheck` types the roles
     exactly like this: box `i64 → carrier`, add/sub/mul `carrier² → carrier`,
-    cmp/eq `carrier² → i32`, toIndex `carrier → i32`). -/
+    cmp/eq `carrier² → i32`, toIndex `carrier → i32`), refined to what the
+    wall's contracts need: carrier operands are canonical carriers (`.car`),
+    the `box` operand is a band literal (`.i64b`). -/
 def roleSig : HostRole → List STy × STy
-  | .box => ([.i64], .ref)
-  | .add => ([.ref, .ref], .ref)
-  | .mul => ([.ref, .ref], .ref)
-  | .sub => ([.ref, .ref], .ref)
-  | .toIndex => ([.ref], .i32)
-  | .cmp => ([.ref, .ref], .i32)
-  | .eq => ([.ref, .ref], .i32)
+  | .box => ([.i64b], .car)
+  | .add => ([.car, .car], .car)
+  | .mul => ([.car, .car], .car)
+  | .sub => ([.car, .car], .car)
+  | .toIndex => ([.car], .i32)
+  | .cmp => ([.car, .car], .i32)
+  | .eq => ([.car, .car], .i32)
 
 open AverCert.Schema in
 /-- Sort of a stage-1 scalar record field. -/
 def scalarSort : TypeDecl → Option STy
-  | .intCarrier => some .ref
+  | .intCarrier => some .car
   | .boolScalar => some .i32
   | .floatScalar => some .f64
   | .record _ _ => none

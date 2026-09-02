@@ -17,6 +17,7 @@ The state is always a Talos thread `⟨params, locs, values⟩` over the store
 
 namespace Bridge
 open Wasm Wasm.SmallStep CertPrelude
+open AverCert.Schema (CarrierSpec)
 
 /-! ## Machine-word facts -/
 
@@ -211,13 +212,14 @@ theorem bridge_i64Cmp {α : Type} (rt : RuntimeEnv α) (wasm : Store α)
     (params locs values : List Value) (lhs rhs : UInt64) (code : Program) (arity : Nat)
     (remainder : List Value) (controls : List ControlFrame) (calls : List CallFrame)
     (a b : Int) (ha : a = lhs.toInt64.toInt) (hb : b = rhs.toInt64.toInt)
-    (env : TranslateEnv) (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee)
+    (env : TranslateEnv) (S : CarrierSpec env.carrier) (host : HostTbl) (ar : Nat → Option Nat)
+    (callee : Callee)
     (op : WInstr) (hop : op ∈ i64Cmps) (instr : Instruction) (htr : translate env op = some instr) :
     ∃ r w,
       (∀ (rest : List WInstr) (locA stA : List WVal),
         wRunF host ar callee (op :: rest) locA (.i64v b :: .i64v a :: stA) =
           wRunF host ar callee rest locA (w :: stA)) ∧
-      HasSort env w .i32 ∧
+      HasSort env S w .i32 ∧
       Step ⟨.running ⟨⟨params, locs, .i64 rhs :: .i64 lhs :: values⟩, instr :: code, arity, remainder,
               controls, calls⟩, ⟨rt, wasm⟩⟩
           (.instruction instr)
@@ -242,13 +244,14 @@ theorem bridge_i32Cmp {α : Type} (rt : RuntimeEnv α) (wasm : Store α)
     (params locs values : List Value) (lhs rhs : UInt32) (code : Program) (arity : Nat)
     (remainder : List Value) (controls : List ControlFrame) (calls : List CallFrame)
     (a b : Int) (ha : a = lhs.toInt32.toInt) (hb : b = rhs.toInt32.toInt)
-    (env : TranslateEnv) (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee)
+    (env : TranslateEnv) (S : CarrierSpec env.carrier) (host : HostTbl) (ar : Nat → Option Nat)
+    (callee : Callee)
     (op : WInstr) (hop : op ∈ i32Cmps) (instr : Instruction) (htr : translate env op = some instr) :
     ∃ r w,
       (∀ (rest : List WInstr) (locA stA : List WVal),
         wRunF host ar callee (op :: rest) locA (.i32v b :: .i32v a :: stA) =
           wRunF host ar callee rest locA (w :: stA)) ∧
-      HasSort env w .i32 ∧
+      HasSort env S w .i32 ∧
       Step ⟨.running ⟨⟨params, locs, .i32 rhs :: .i32 lhs :: values⟩, instr :: code, arity, remainder,
               controls, calls⟩, ⟨rt, wasm⟩⟩
           (.instruction instr)

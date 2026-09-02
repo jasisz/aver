@@ -1182,3 +1182,225 @@ def lowerExprFragmentBody (carrier : Nat) (plan : ExprFragmentRawPlan) :
     none
 end AverCert.PlanLower
 -- END PlanLower fragment
+
+/-!
+## Verbatim fragments for the host contracts (`Contracts.lean`, `Adapter.lean`, `Accepted.lean`)
+
+`CertPrelude.carrierSmall`/`boxRef`/`cmpW`/`eqW` (CertPrelude.lean lines
+407–408, 427–430, 533–534, 549–550); `Schema.CarrierSpec` (SchemaCore.lean
+lines 998–1013) and the five arithmetic/comparison hypotheses of
+`Obligation.holds` (lines 1512–1517, 1521–1524) — the structure
+`ComputeContracts` below has exactly those lines as its fields (Lean accepts
+the binder syntax `(name : type)` for structure fields, so the text is the
+wall's); `RecordComputeBridge.CanonRepr`/`roleArity`/`roleFn`/`nodeTypedB`/
+`planTypedB` (RecordComputeBridge.lean lines 47–53, 95–111, 1709–1737);
+`StandardFace.decodedRoleIdx`/`hostTableBound`/`recordComputeSlots`/
+`fragNodeStructIdx?`/`recordComputeNodeOk` (StandardFace.lean lines 35–52,
+869–883, 959–987); `CertDecode.AddSub.Roles` (CertDecode.lean lines 979–987).
+Same wall id.
+
+Check with:
+`diff <(sed -n '407,408p;427,430p;533,534p;549,550p' aver-cert/assets/wall/current/CertPrelude.lean) <(sed -n '/^-- BEGIN CertPrelude fragment 2$/,/^-- END CertPrelude fragment 2$/p' aver-cert/assets/bridge-talos/Bridge/AverMin.lean | sed '1,2d;$d' | sed '$d')`
+`diff <(sed -n '998,1013p' aver-cert/assets/wall/current/SchemaCore.lean) <(sed -n '/^-- BEGIN SchemaCore fragment 3$/,/^-- END SchemaCore fragment 3$/p' aver-cert/assets/bridge-talos/Bridge/AverMin.lean | sed '1,3d;$d' | sed '$d')`
+`diff <(sed -n '1512,1517p;1521,1524p' aver-cert/assets/wall/current/SchemaCore.lean) <(sed -n '/^-- BEGIN SchemaCore contracts$/,/^-- END SchemaCore contracts$/p' aver-cert/assets/bridge-talos/Bridge/AverMin.lean | sed '1,5d;$d' | sed '$d')`
+`diff <(sed -n '47,53p;95,111p;1709,1737p' aver-cert/assets/wall/current/RecordComputeBridge.lean) <(sed -n '/^-- BEGIN RecordComputeBridge fragment$/,/^-- END RecordComputeBridge fragment$/p' aver-cert/assets/bridge-talos/Bridge/AverMin.lean | sed '1,3d;$d' | sed '$d')`
+`diff <(sed -n '35,52p;869,883p;959,987p' aver-cert/assets/wall/current/StandardFace.lean) <(sed -n '/^-- BEGIN StandardFace fragment$/,/^-- END StandardFace fragment$/p' aver-cert/assets/bridge-talos/Bridge/AverMin.lean | sed '1,4d;$d' | sed '$d')`
+`diff <(sed -n '979,987p' aver-cert/assets/wall/current/CertDecode.lean) <(sed -n '/^-- BEGIN CertDecode fragment 2$/,/^-- END CertDecode fragment 2$/p' aver-cert/assets/bridge-talos/Bridge/AverMin.lean | sed '1,2d;$d' | sed '$d')`
+-/
+
+-- BEGIN CertPrelude fragment 2
+namespace CertPrelude
+/-- Carrier constructor for a small integer. -/
+def carrierSmall (C : Nat) (k : Int) : WVal := .structv C [.i64v k, .null, .i32v 0]
+/-- `__rt_aint_from_i64`: box an i64 into a small carrier. -/
+def boxRef (C : Nat) : List WVal → Option WVal
+  | [.i64v k] => some (carrierSmall C k)
+  | _ => none
+def cmpW (a b : Int) : Int :=
+  if a < b then -1 else if a = b then 0 else 1
+def eqW (a b : Int) : Int :=
+  if a = b then 1 else 0
+end CertPrelude
+-- END CertPrelude fragment 2
+
+-- BEGIN SchemaCore fragment 3
+namespace AverCert.Schema
+open CertPrelude
+structure CarrierSpec (C : Nat) where
+  Repr : Int → WVal → Prop
+  Canon : WVal → Prop
+  car : ∀ n v, Repr n v →
+    (∃ s sg, v = .structv C [.i64v s, .null, .i32v sg]) ∨
+    (∃ s lty les sg, v = .structv C [.i64v s, .arr lty les, .i32v sg])
+  smallIntro : ∀ k : Int, Repr k (carrierSmall C k)
+  smallElim : ∀ n s sg, Repr n (.structv C [.i64v s, .null, .i32v sg]) → s = n
+  bigElim : ∀ n s lty les sg,
+      Repr n (.structv C [.i64v s, .arr lty les, .i32v sg]) → ((sg < 0) ↔ (n < 0)) ∧ n ≠ 0
+  canonSmall : ∀ k : Int,
+      Canon (carrierSmall C k) ↔ (-(2 ^ 63 : Int) ≤ k ∧ k < 2 ^ 63)
+  canonBig : ∀ n s lty les sg,
+      Repr n (.structv C [.i64v s, .arr lty les, .i32v sg]) →
+      Canon (.structv C [.i64v s, .arr lty les, .i32v sg]) →
+      ¬(-(2 ^ 63 : Int) ≤ n ∧ n < 2 ^ 63) ∧ sg ≠ 0
+end AverCert.Schema
+-- END SchemaCore fragment 3
+
+-- BEGIN SchemaCore contracts
+namespace AverCert.Schema
+open CertPrelude
+structure ComputeContracts {C : Nat} (S : CarrierSpec C)
+    (add sub mul cmp eq : List CertPrelude.WVal → Option CertPrelude.WVal) : Prop where
+    (_hadd : ∀ a b va vb w, S.Repr a va → S.Repr b vb → add [va, vb] = some w →
+      S.Repr (a + b) w ∧ S.Canon w)
+    (_hsub : ∀ a b va vb w, S.Repr a va → S.Repr b vb → sub [va, vb] = some w →
+      S.Repr (a - b) w ∧ S.Canon w)
+    (_hmul : ∀ a b va vb w, S.Repr a va → S.Repr b vb → mul [va, vb] = some w →
+      S.Repr (a * b) w ∧ S.Canon w)
+    (_hCmp : ∀ a b va vb r, S.Repr a va → S.Repr b vb → S.Canon va → S.Canon vb →
+      cmp [va, vb] = some r → r = .i32v (cmpW a b))
+    (_hEq : ∀ a b va vb r, S.Repr a va → S.Repr b vb → S.Canon va → S.Canon vb →
+      eq [va, vb] = some r → r = .i32v (eqW a b))
+end AverCert.Schema
+-- END SchemaCore contracts
+
+-- BEGIN CertDecode fragment 2
+namespace CertDecode.AddSub
+structure Roles where
+  box : Option Nat
+  add : Option Nat
+  mul : Option Nat
+  sub : Option Nat
+  toIndex : Option Nat
+  cmp : Option Nat
+  eq : Option Nat
+  deriving DecidableEq, Repr
+end CertDecode.AddSub
+-- END CertDecode fragment 2
+
+-- BEGIN RecordComputeBridge fragment
+namespace RecordComputeBridge
+open CertPrelude AverCert.Schema
+/-- A represented carrier word that is additionally in the runtime's normal
+    form. Every carrier this face ever holds is canonical: parameters and
+    record fields by the face's domain representation, box/add/sub/mul results
+    by their contracts. Canonicity is what makes the two STRUCTURAL helpers
+    (`__aint_cmp`, `__aint_eq`) and the inline sign template exact. -/
+def CanonRepr {C : Nat} (S : CarrierSpec C) (n : Int) (w : WVal) : Prop :=
+  S.Repr n w ∧ S.Canon w
+/-- The wasm arity of each host role's signature. -/
+def roleArity : HostRole → Nat
+  | .box => 1
+  | .toIndex => 1
+  | _ => 2
+
+/-- The contract function a used role denotes; the one role the v1 face never
+    admits (`toIndex`) maps to the trap-only function. -/
+def roleFn (box add sub mul cmp eq : List WVal → Option WVal) :
+    HostRole → List WVal → Option WVal
+  | .box => box
+  | .add => add
+  | .sub => sub
+  | .mul => mul
+  | .cmp => cmp
+  | .eq => eq
+  | .toIndex => fun _ => none
+def nodeTypedB (structIdx : Nat) (tyOf : Nat → FragTy)
+    (params : List FragTy) (node : FragNode) : Bool :=
+  match node.kind with
+  | .local index => params[index]? == some (tyOf node.id)
+  | .constI64 _ => tyOf node.id == .i64
+  | .constI32 _ => tyOf node.id == .rawI32
+  | .structGetUser _ _ value =>
+      tyOf value == .adtRef && tyOf node.id == .intCarrier
+  | .structNew tyIdx args =>
+      tyIdx == structIdx &&
+        (args.all (fun a => tyOf a == .intCarrier) && tyOf node.id == .adtRef)
+  | .prim _ args =>
+      args.all (fun a => tyOf a == .rawI32) && tyOf node.id == .boolI32
+  | .hostCall .box _ args =>
+      args.all (fun a => tyOf a == .i64) && tyOf node.id == .intCarrier
+  | .hostCall .cmp _ args =>
+      args.all (fun a => tyOf a == .intCarrier) && tyOf node.id == .rawI32
+  | .hostCall .eq _ args =>
+      args.all (fun a => tyOf a == .intCarrier) && tyOf node.id == .boolI32
+  | .hostCall _ _ args =>
+      args.all (fun a => tyOf a == .intCarrier) && tyOf node.id == .intCarrier
+  | .intSignCmp _ _ scratch value =>
+      tyOf value == .intCarrier && scratch == params.length &&
+        tyOf node.id == .boolI32
+  | _ => true
+
+def planTypedB (structIdx : Nat) (tyOf : Nat → FragTy)
+    (params : List FragTy) (nodes : List FragNode) : Bool :=
+  nodes.all (nodeTypedB structIdx tyOf params)
+end RecordComputeBridge
+-- END RecordComputeBridge fragment
+
+-- BEGIN StandardFace fragment
+namespace AverCert.StandardFace
+open AverCert.Schema
+open CertPrelude
+def decodedRoleIdx (roles : CertDecode.AddSub.Roles) : HostRole → Option Nat
+  | .box => roles.box
+  | .add => roles.add
+  | .mul => roles.mul
+  | .sub => roles.sub
+  | .toIndex => roles.toIndex
+  | .cmp => roles.cmp
+  | .eq => roles.eq
+
+/-- Every role/index pair used by a claim must agree with the unique table
+    decoded from the module. Family checkers already require every role their
+    plan consumes; distinct indices make the lookup extensional and reject
+    duplicate or aliased role entries. -/
+def hostTableBound
+    (roles : CertDecode.AddSub.Roles)
+    (hostTable : List (HostRole × Nat)) : Bool :=
+  AverCert.PlanCheck.hostTableIndicesDistinct hostTable &&
+    hostTable.all fun entry => decodedRoleIdx roles entry.1 == some entry.2
+def recordComputeSlots
+    (carrier : Nat) (add sub mul cmp eq : List WVal → Option WVal) :
+    List (HostRole × Nat) → HostTbl
+  | [] => fun _ => none
+  | (role, idx) :: rest => fun fn =>
+      if fn = idx then
+        some (match role with
+          | .box => ((1 : Nat), boxRef carrier)
+          | .add => ((2 : Nat), add)
+          | .mul => ((2 : Nat), mul)
+          | .sub => ((2 : Nat), sub)
+          | .eq => ((2 : Nat), eq)
+          | .cmp => ((2 : Nat), cmp)
+          | .toIndex => ((1 : Nat), fun _ => none))
+      else recordComputeSlots carrier add sub mul cmp eq rest fn
+/-- The user-struct index a node cites, if any. -/
+def fragNodeStructIdx? : FragNodeKind → Option Nat
+  | .structGetUser tyIdx _ _ => some tyIdx
+  | .structNew tyIdx _ => some tyIdx
+  | _ => none
+
+/-- Executable admission of one node kind against the byte-derived role
+    table: exactly the bridge's v1 node set, with every host call citing the
+    table's index for its role at the role's arity. The two i64-band checks
+    are the sign template's exactness condition and the boxing helper's
+    canonicity condition; both are decided here rather than assumed. -/
+def recordComputeNodeOk
+    (hostTable : List (HostRole × Nat)) : FragNodeKind → Bool
+  | .local _ => true
+  | .constI64 value => AverCert.PlanCheck.inI64Band value
+  | .constI32 _ => true
+  | .structGetUser _ _ _ => true
+  | .structNew _ _ => true
+  | .prim .i32LtS args => args.length == 2
+  | .prim .i32GtS args => args.length == 2
+  | .prim .i32GeS args => args.length == 2
+  | .intSignCmp _ constant _ _ => AverCert.PlanCheck.inI64Band constant
+  | .hostCall role f args =>
+      (AverCert.PlanCheck.hostRoleIdx? hostTable role == some f) &&
+        (match role with
+          | .box => args.length == 1
+          | .add | .sub | .mul | .cmp | .eq => args.length == 2
+          | _ => false)
+  | _ => false
+end AverCert.StandardFace
+-- END StandardFace fragment

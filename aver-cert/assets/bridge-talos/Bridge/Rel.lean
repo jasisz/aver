@@ -382,8 +382,31 @@ struct table and lives in `Env.lean`. -/
 inductive STy where
   | i32
   | i64
+  /-- An `i64` known to be a machine-band LITERAL (`i64Const`): the one
+      argument shape under which the wall's `boxRef` returns a canonical
+      carrier (`CarrierSpec.canonSmall`). -/
+  | i64b
   | f64
+  /-- Any reference: `null`, an array, or a struct of a DECLARED type whose
+      fields are sorted by the declared table. -/
   | ref
+  /-- A represented, canonical Int carrier (`CarrierSpec.Repr` and `Canon`):
+      the operand shape the wall's host contracts speak about. -/
+  | car
 deriving DecidableEq, Repr
+
+/-- Sort inclusion: a band literal is an `i64`, a canonical carrier is a
+    reference (its fields are sorted by the carrier's declared layout). -/
+def SubSort (t' t : STy) : Prop := t' = t ∨ (t' = .i64b ∧ t = .i64) ∨ (t' = .car ∧ t = .ref)
+
+instance : DecidableRel SubSort := fun _ _ => by unfold SubSort; infer_instance
+
+theorem SubSort.refl (t : STy) : SubSort t t := Or.inl rfl
+
+/-- The two `i64` sorts (both comparison operands). -/
+def IsI64 (t : STy) : Prop := t = .i64 ∨ t = .i64b
+
+/-- The two reference sorts (both `structGet` receivers). -/
+def IsRef (t : STy) : Prop := t = .ref ∨ t = .car
 
 end Bridge

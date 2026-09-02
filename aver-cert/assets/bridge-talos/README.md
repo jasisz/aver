@@ -58,6 +58,7 @@ the smoke comparison.
 | `Bridge/Bridge.lean` | `bridge_run` (induction on `HasTy`, framed) and the export theorem `wFuncN_terminatesWith` / `wFuncN_TerminatesWith` |
 | `Bridge/Coverage.lean` | the coverage lemma (brief §3): `lowerExprFragmentBody carrier plan = some instrs` for a plan in the profile ⇒ `HasTy env (Γof plan.params) [] instrs [sortOfFragTy plan.result]` and `translateList env instrs = some _`, by induction over the wall's `lowerNodesFuel`/`lowerBlockFuel` with the checker's facts read one node at a time |
 | `Bridge/Tripwire.lean` | fail-closed enumeration: `wInstrInProfile` (every `WInstr` constructor) with `translate_eq_none_of_out`, and 27 checked sample plans, one per `FragNodeKind` constructor, lowered by the wall and translated (`#eval` fails the build on disagreement) |
+| `Bridge/Contracts.lean` | `HostSorts_of_contracts`: `HostSorts` for the compute face's real host table (`StandardFace.recordComputeSlots`) from the five `Obligation.holds` contract hypotheses (`ComputeContracts`, verbatim) and distinct indices; `hostTableBound_nodup`: the `Nodup` the host half needs is the claim check's `hostTableIndicesDistinct` |
 | `Bridge/Axioms.lean` | `#print axioms` of every theorem (all `[propext, Classical.choice, Quot.sound]` or fewer) |
 | `Bridge/Smoke.lean` | k5 `plus`/`isNonNeg`/`lessThan` bodies through `wFuncN` and through `translate` + Talos `runSteps`, results compared (not part of the proof) |
 
@@ -149,6 +150,40 @@ the smoke comparison.
   argument sorts, declared field at the index) are exactly the envelope gap of
   brief §9. Elaboration: `Coverage.lean` 1.2 s, `Tripwire.lean` 0.5 s; axioms
   `[propext, Quot.sound]`.
+- **Step 11 — sorts refined to the contracts' domains; `HostSorts` derived (brief §9 (2)),
+  `Nodup` derived (§9 (5)).** CLOSED. The wall's `_hadd/_hsub/_hmul` speak about
+  REPRESENTED operands and `_hCmp/_hEq` about CANONICAL ones; the old `HostSorts`
+  asked for well-sorted results on every `.ref` argument (null, any struct), which no
+  contract gives. The sort language now says what the contracts need: `STy.car` = a
+  represented canonical carrier under the wall's `CarrierSpec S` (`HasSort env S w
+  .car := ∃ n, S.Repr n w ∧ S.Canon w`), `STy.i64b` = an `i64` band literal (the one
+  operand shape under which `boxRef` returns a canonical word, `canonSmall`), and
+  every sort-carrying object (`HasSort`/`Sorted`/`HasTy`/`typed_run`/`bridge_run`/
+  `HostSimulation`/`HostSorts`/the export theorems) takes `S`. Inclusion (`SubSort`:
+  `i64b ≤ i64`, `car ≤ ref` — the carrier's fields are sorted by its declared layout,
+  `CarrierDeclared`) enters at exactly three typing rules: `localSet` (the sign
+  template stores a carrier into the `.ref` scratch local), the `structGet` receiver
+  (`IsRef`), and the `if` join; no general weakening rule exists. `roleSig`: `box :
+  [i64b] → car`, `add/sub/mul : [car, car] → car`, `cmp/eq : [car, car] → i32`;
+  `scalarSort .intCarrier = .car` (a record's Int field is a canonical carrier by the
+  compute face's domain representation, `SRepr`). The coverage lemma follows suit:
+  `sortAt` reads the node KIND (`sortOfNode`: an `i64` literal node is `.i64b`), the
+  profile demands that `box` box a literal (the emitter's `i64.const k; call box`
+  idiom), and `coverage` concludes at the result node's sort with `SubSort` to the
+  declared result sort. `Contracts.lean`: `HostSorts_of_contracts ht C decls S add sub
+  mul cmp eq (hc : ComputeContracts S add sub mul cmp eq) (hnd :
+  hostTableIndicesDistinct ht = true) : HostSorts (envOfClaim ht C decls) S
+  (recordComputeSlots C add sub mul cmp eq ht)` — slot by slot
+  (`recordComputeSlots_getElem`, with distinct indices), `box` by `smallIntro` +
+  `canonSmall`, `add/sub/mul` by the contracts' `Repr ∧ Canon` conclusion, `cmp/eq`
+  by their exact `i32` conclusion, `toIndex` vacuous (trap-only slot). And
+  `hostTableBound_nodup`: `hostTableIndicesDistinct` IS `natListNoDup` of the index
+  column, so the `Nodup` of §9 (5) is a claim-check fact the wall already imposes
+  (first conjunct of `StandardFace.hostTableBound`), not a new hypothesis.
+  `HostSimulation.invoke` also gained the premise `Sorted env S ws sig.params` (the
+  typed run only calls with sorted arguments; a concrete host reads carrier shapes
+  off the sorts — Step 12). Elaboration: `Contracts.lean` 0.3 s, `Bridge.lean` 1.1 s;
+  axioms `[propext, Classical.choice, Quot.sound]` or fewer, unchanged.
 - **Step 9 — smoke, `Smoke.lean`.** The three k5 bodies (verbatim `WCode` from the
   package's `Module.lean`) agree between `wFuncN` (small-int faces) and Talos
   (`translate` + `runSteps`, heap host): `plus(1/2,1/3)` = 5/6 (18 Talos steps),
@@ -160,11 +195,9 @@ the smoke comparison.
    the profile predicate's struct half: `nodeInProfile` demands, for `structNew`/
    `structGetUser`, a declared struct entry agreeing with the node's types; deriving
    it from the accepted artifact is item 4.
-2. **`HostSorts` from the wall's contracts**: the wall's `_hadd`/`_hmul`/`_hCmp` give a
-   well-sorted result only for REPRESENTED operands (`CarrierSpec.car`); `HostSorts` asks
-   it for all sorted operands. Either restate `HostSorts` relative to `domRepr`-represented
-   runs (then `Obligation.holds`'s hypotheses discharge it) or prove the sort discipline
-   with representation as the invariant.
+2. ~~`HostSorts` from the wall's contracts~~ — DONE (Step 11, `Contracts.lean`): the sorts
+   carry representation (`STy.car`), and `HostSorts_of_contracts` discharges `HostSorts`
+   from the verbatim `Obligation.holds` hypotheses for `recordComputeSlots`.
 3. **`HostSimulation` for a concrete host**: instantiate `hostEnv` with the runtime's
    real helper semantics (or with the reference faces) and prove `invoke`; today the
    assumption is stated, used, and discharged only by the smoke's small-int faces.
@@ -172,5 +205,5 @@ the smoke comparison.
    declared data; connecting `translate (envOfClaim …) (lower plan)` to "these bytes" is
    the existing `PlanBytes` + `typeSectionMatches` + `hostTableBound` pins composed with
    spike (c)'s two lemmas — a statement over `AcceptedArtifact`, not written here.
-5. **Distinct host indices** (`hostRoleIdx?_slotLookup` needs `(hostTable.map Prod.snd).Nodup`):
-   derive it from the byte-derived role table or add it to the claim check.
+5. ~~Distinct host indices~~ — DONE (Step 11): `hostTableBound_nodup` — it is the claim
+   check's own `hostTableIndicesDistinct` (`StandardFace.hostTableBound`'s first conjunct).
