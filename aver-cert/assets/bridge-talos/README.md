@@ -59,6 +59,7 @@ the smoke comparison.
 | `Bridge/Coverage.lean` | the coverage lemma (brief §3): `lowerExprFragmentBody carrier plan = some instrs` for a plan in the profile ⇒ `HasTy env (Γof plan.params) [] instrs [sortOfFragTy plan.result]` and `translateList env instrs = some _`, by induction over the wall's `lowerNodesFuel`/`lowerBlockFuel` with the checker's facts read one node at a time |
 | `Bridge/Tripwire.lean` | fail-closed enumeration: `wInstrInProfile` (every `WInstr` constructor) with `translate_eq_none_of_out`, and 27 checked sample plans, one per `FragNodeKind` constructor, lowered by the wall and translated (`#eval` fails the build on disagreement) |
 | `Bridge/Contracts.lean` | `HostSorts_of_contracts`: `HostSorts` for the compute face's real host table (`StandardFace.recordComputeSlots`) from the five `Obligation.holds` contract hypotheses (`ComputeContracts`, verbatim) and distinct indices; `hostTableBound_nodup`: the `Nodup` the host half needs is the claim check's `hostTableIndicesDistinct` |
+| `Bridge/Adapter.lean` | the concrete Talos host: `adapterEnv` reads each slot's arguments back along their sorts, applies the wall's abstract contract function, reifies the result into the heap; `HostSimulation_adapter` (any machine-shaped table) and `HostSimulation_recordCompute` (the compute face's `recordComputeSlots` under the contracts) |
 | `Bridge/Axioms.lean` | `#print axioms` of every theorem (all `[propext, Classical.choice, Quot.sound]` or fewer) |
 | `Bridge/Smoke.lean` | k5 `plus`/`isNonNeg`/`lessThan` bodies through `wFuncN` and through `translate` + Talos `runSteps`, results compared (not part of the proof) |
 
@@ -184,6 +185,30 @@ the smoke comparison.
   typed run only calls with sorted arguments; a concrete host reads carrier shapes
   off the sorts — Step 12). Elaboration: `Contracts.lean` 0.3 s, `Bridge.lean` 1.1 s;
   axioms `[propext, Classical.choice, Quot.sound]` or fewer, unchanged.
+- **Step 12 — the concrete host, `Adapter.lean` (brief §9 (3), the adapter alternative of
+  §4.3).** CLOSED. `adapterFn sig hf` is a Talos `HostFn` whose `invoke` reads the
+  arguments back into wall values ALONG THEIR SORTS (`readArg`: `i32`/`i64` words are
+  their integers, a `.car` argument is the carrier struct read off the heap with its limb
+  array read as `i32` words; `readArgs_of_Rs`: sorted, related arguments read back
+  exactly), applies the abstract `hf`, and REIFIES a defined result into the heap
+  (`reify`: numbers become words, structs and arrays are allocated bottom-up, the old
+  heap is a prefix — `reify_spec`); it traps where the contract is undefined.
+  `adapterEnv env host` wires every import of `env` to the wall's table entry at its
+  function index. `HostSimulation_adapter`: for any table whose results on sorted
+  arguments are machine-shaped, over an environment whose imports take no `.ref`
+  argument; `HostSimulation_recordCompute`: the instance for `recordComputeSlots` under
+  the verbatim contracts (`recordComputeSlots_machine`: `add/sub/mul` results are
+  represented hence machine words, `cmp/eq` return `cmpW/eqW ∈ {-1,0,1}`, `box` returns
+  `carrierSmall C k` for a band `k`). ONE PREMISE BEYOND THE CONTRACTS, about the
+  representation: `CarrierMachine S` — the carrier specification's words are wasm words
+  (`i64` small and `i32` sign in band, limbs `null` or an array of in-band `i32` words).
+  `CarrierSpec.car` fixes the three-field shape but not the bands or the limb element
+  type, and `Obligation.holds` quantifies over every `CarrierSpec`; without it no Talos
+  value relates to a represented word with an out-of-band small field, so no host could
+  simulate the abstract table. The runtime's representation satisfies it (`wat/*.wat`,
+  limbs are `(array (mut i32))`). The abstract `HostSimulation` stays the theorem's
+  interface; `HostSimulation.invoke` carries the `Sorted` premise since Step 11.
+  Elaboration: `Adapter.lean` 0.5 s; axioms `[propext, Classical.choice, Quot.sound]`.
 - **Step 9 — smoke, `Smoke.lean`.** The three k5 bodies (verbatim `WCode` from the
   package's `Module.lean`) agree between `wFuncN` (small-int faces) and Talos
   (`translate` + `runSteps`, heap host): `plus(1/2,1/3)` = 5/6 (18 Talos steps),
@@ -198,9 +223,8 @@ the smoke comparison.
 2. ~~`HostSorts` from the wall's contracts~~ — DONE (Step 11, `Contracts.lean`): the sorts
    carry representation (`STy.car`), and `HostSorts_of_contracts` discharges `HostSorts`
    from the verbatim `Obligation.holds` hypotheses for `recordComputeSlots`.
-3. **`HostSimulation` for a concrete host**: instantiate `hostEnv` with the runtime's
-   real helper semantics (or with the reference faces) and prove `invoke`; today the
-   assumption is stated, used, and discharged only by the smoke's small-int faces.
+3. ~~`HostSimulation` for a concrete host~~ — DONE (Step 12, `Adapter.lean`), with the
+   representation premise `CarrierMachine S` stated and reported.
 4. **Composition with the byte pins**: `envOfClaim` is shown to be a projection of the
    declared data; connecting `translate (envOfClaim …) (lower plan)` to "these bytes" is
    the existing `PlanBytes` + `typeSectionMatches` + `hostTableBound` pins composed with
