@@ -423,6 +423,14 @@ lowerings to the same exact contract. Signatures, resource ownership,
 Oracle classification, hostile profiles, replay semantics, and target
 accounting derive from that source contract.
 
+`--target wasip2` binds eleven of the eighteen operations: `connect`,
+`writeLine`, `writeBytes`, `readLine`, `readBytes`, `readSome`, `poll`,
+`close`, and the three one-shot calls. The seven dial and listener operations —
+`beginConnect`, `dialled`, `listen`, `accept`, `peerAddress`, `closeDial`,
+`closeListener` — are refused at compile time on that target with
+`capability-target-unsupported`; see [`docs/wasip2.md`](wasip2.md). Every other
+shipped target binds all eighteen.
+
 **One-shot (stateless):**
 
 | Function | Signature |
@@ -436,20 +444,20 @@ accounting derive from that source contract.
 | Function | Signature | Notes |
 |---|---|---|
 | `Tcp.connect` | `(String, Int) -> Result<Tcp.Connection, String>` | Provider-owned resource. Socket establishment has a 5-second default deadline on native and the in-process wasm-gc host; configure it with `[effects.Tcp].connect_timeout_secs`. wasip2 timing is host-controlled. |
-| `Tcp.beginConnect` | `(String, Int) -> Result<Tcp.Dial, String>` | Starts a non-blocking outbound attempt. A `Dial` cannot be read or written. |
-| `Tcp.dialled` | `Tcp.Dial -> Result<Option<Tcp.Connection>, String>` | `None` means still in flight (including a false wake), `Some` promotes the dial to a usable connection, and `Err` means refusal or deadline expiry. |
-| `Tcp.listen` | `(Int, Int) -> Result<Tcp.Listener, String>` | Binds a port with the requested positive backlog. A listener cannot be read or written. |
-| `Tcp.accept` | `Tcp.Listener -> Result<Option<Tcp.Connection>, String>` | Accepts at most one queued client without blocking; `None` is a legal false wake or an empty backlog. |
-| `Tcp.peerAddress` | `Tcp.Connection -> Result<String, String>` | Returns the remote endpoint, including brackets around an IPv6 address. |
+| `Tcp.beginConnect` | `(String, Int) -> Result<Tcp.Dial, String>` | Starts a non-blocking outbound attempt. A `Dial` cannot be read or written. Not on wasip2. |
+| `Tcp.dialled` | `Tcp.Dial -> Result<Option<Tcp.Connection>, String>` | `None` means still in flight (including a false wake), `Some` promotes the dial to a usable connection, and `Err` means refusal or deadline expiry. Not on wasip2. |
+| `Tcp.listen` | `(Int, Int) -> Result<Tcp.Listener, String>` | Binds a port with the requested positive backlog. A listener cannot be read or written. Not on wasip2. |
+| `Tcp.accept` | `Tcp.Listener -> Result<Option<Tcp.Connection>, String>` | Accepts at most one queued client without blocking; `None` is a legal false wake or an empty backlog. Not on wasip2. |
+| `Tcp.peerAddress` | `Tcp.Connection -> Result<String, String>` | Returns the remote endpoint, including brackets around an IPv6 address. Not on wasip2. |
 | `Tcp.writeLine` | `(Tcp.Connection, String) -> Result<Unit, String>` | Appends `\r\n` on the wire. |
 | `Tcp.writeBytes` | `(Tcp.Connection, Bytes) -> Result<Unit, String>` | Exact bytes; nothing appended, nothing encoded. |
 | `Tcp.readLine` | `Tcp.Connection -> Result<String, String>` | Strips the trailing `\r\n`; `Ok("")` on a clean EOF before any byte. |
 | `Tcp.readBytes` | `(Tcp.Connection, Int) -> Result<Bytes, String>` | Reads exactly N bytes, no decoding. Short read is an error. |
 | `Tcp.readSome` | `(Tcp.Connection, Int) -> Result<Bytes, String>` | Reads 1–N bytes without waiting to fill N; empty `Bytes` means clean EOF. |
-| `Tcp.poll` | `(Map<Int, Tcp.Socket>, Int) -> Result<List<Int>, String>` | One wait over connected peers, in-flight dials, and listeners. Returns sorted caller IDs; `[]` means timeout. |
+| `Tcp.poll` | `(Map<Int, Tcp.Socket>, Int) -> Result<List<Int>, String>` | One wait over connected peers, in-flight dials, and listeners. Returns sorted caller IDs; `[]` means timeout. On wasip2 only connected peers, because that target mints no dial or listener. |
 | `Tcp.close` | `Tcp.Connection -> Result<Unit, String>` | `Err("tcp: unknown connection ...")` on a double-close. |
-| `Tcp.closeDial` | `Tcp.Dial -> Result<Unit, String>` | Cancels an in-flight attempt and invalidates the handle. |
-| `Tcp.closeListener` | `Tcp.Listener -> Result<Unit, String>` | Releases the bound port; accepted connections remain live. |
+| `Tcp.closeDial` | `Tcp.Dial -> Result<Unit, String>` | Cancels an in-flight attempt and invalidates the handle. Not on wasip2. |
+| `Tcp.closeListener` | `Tcp.Listener -> Result<Unit, String>` | Releases the bound port; accepted connections remain live. Not on wasip2. |
 
 `Tcp.Connection`, `Tcp.Dial`, and `Tcp.Listener` are distinct capability
 **resources**: only the provider can mint them, while construction, field

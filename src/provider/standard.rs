@@ -187,6 +187,14 @@ impl StandardCapabilityBinding {
             (Self::Env, CapabilityTarget::Wasip2, "Env.set") => Some(
                 "WASI 0.2 exposes the environment as a read-only snapshot and has no portable environment mutation operation",
             ),
+            (
+                Self::Tcp,
+                CapabilityTarget::Wasip2,
+                "Tcp.beginConnect" | "Tcp.dialled" | "Tcp.listen" | "Tcp.accept"
+                | "Tcp.peerAddress" | "Tcp.closeDial" | "Tcp.closeListener",
+            ) => Some(
+                "this target's WASI 0.2 socket binding owns blocking connects and connected-socket I/O only, with no non-blocking dial, listener, or peer-address resource; use `Tcp.connect` and the connected-socket operations",
+            ),
             _ => None,
         }
     }

@@ -887,20 +887,21 @@ mod certificate_format_tests {
         );
     }
 
-    /// An effect that names canonical-ABI import slots must be one the
-    /// manifest binds here, or the emitter would import what the program can
-    /// never call.
+    /// "The manifest binds it here" and "it names canonical-ABI import slots"
+    /// must be the same set of effects. One side without the other is a
+    /// module that imports what the program can never call, or one that
+    /// admits a call it never imported anything for.
     #[test]
-    fn every_effect_with_wasip2_slots_is_one_the_manifest_binds() {
-        for effect in EffectName::ALL
-            .iter()
-            .filter(|e| !e.wasip2_slots().is_empty())
-        {
-            assert!(
+    fn wasip2_slots_and_wasip2_lowering_partition_the_effects_the_same_way() {
+        for effect in EffectName::ALL {
+            assert_eq!(
                 effect.lowers_on_wasip2(),
-                "{} names canonical-ABI import slots but the capability target \
-                 manifest does not bind it on wasip2",
-                effect.canonical()
+                !effect.wasip2_slots().is_empty(),
+                "{}: the capability target manifest binds it on wasip2 = {}, \
+                 but it names {} canonical-ABI import slots",
+                effect.canonical(),
+                effect.lowers_on_wasip2(),
+                effect.wasip2_slots().len()
             );
         }
     }
