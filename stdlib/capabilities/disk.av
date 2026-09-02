@@ -83,7 +83,7 @@ operation makeDir(file: String) -> Result<Unit, String>
     hostile = [makeDirNormalOk, makeDirAlwaysErr]
 
 operation sync(file: String) -> Result<Unit, String>
-    ? "Forces a file's or directory's bytes and metadata to stable storage; sync the parent directory too to make a new file's directory entry durable."
+    ? "Forces a file's or directory's bytes and metadata to stable storage; sync the parent directory too to make a new file's directory entry durable. On Windows a directory sync is a no-op that returns Ok, because there is no call that flushes a directory and NTFS journals the metadata instead."
     oracle = generativeOutput
     replay = recorded
     hostile = [syncNormalOk, syncAlwaysErr]

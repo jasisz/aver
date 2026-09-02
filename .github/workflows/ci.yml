@@ -138,6 +138,31 @@ jobs:
       - name: Test shard
         run: ${{ matrix.command }}
 
+  windows_runtime:
+    # The runtime crate carries platform arms no Linux job can reach.
+    # `Disk.sync` is the first one whose behaviour differs rather than
+    # its implementation: Windows has no call that flushes a directory,
+    # so the operation answers Ok there without a handle. That arm and
+    # its tests are `#[cfg(windows)]`, so they only ever compile here.
+    # `aver-rt` alone, with no features: the wasm/wasip2 surface is
+    # Linux-only in this workflow and nothing in it is Windows-specific.
+    name: Runtime crate (windows)
+    runs-on: windows-latest
+    # Scheduled runs belong to this repository. A fork with Actions enabled
+    # otherwise runs our cron on its owner's account and mails them about any
+    # failure. Every other trigger still works in a fork, so a contributor can
+    # run this workflow on their own branch.
+    if: github.event_name != 'schedule' || github.repository == 'jasisz/aver'
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Test aver-rt
+        run: cargo test -p aver-rt
+
   wasm:
     name: WASM
     runs-on: ubuntu-latest

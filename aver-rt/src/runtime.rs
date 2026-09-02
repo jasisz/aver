@@ -253,7 +253,26 @@ pub fn append_bytes(path: &str, content: &[u8]) -> Result<(), String> {
 ///
 /// `File::sync_all` is `fcntl(F_FULLFSYNC)` on macOS, so the bytes go
 /// past the drive's write cache rather than only to the disk buffer.
+///
+/// On Windows a directory path is answered `Ok` without touching the
+/// disk. There is no call that does what the POSIX idiom asks for:
+/// `File::open` refuses a directory outright (a handle to one needs
+/// `FILE_FLAG_BACKUP_SEMANTICS`), and even that handle cannot be
+/// flushed, because `FlushFileBuffers` requires write access a
+/// directory handle does not grant. What the caller is asking for —
+/// that the entry naming a file it just made survives a crash — NTFS
+/// already provides through its metadata journal, so the `Ok` is not a
+/// silent downgrade: the durability the caller asked for holds when the
+/// call returns. RocksDB and LevelDB answer the same way on Windows.
 pub fn sync_path(path: &str) -> Result<(), String> {
+    #[cfg(windows)]
+    if std::fs::metadata(path)
+        .map(|meta| meta.is_dir())
+        .unwrap_or(false)
+    {
+        return Ok(());
+    }
+
     std::fs::File::open(path)
         .and_then(|file| file.sync_all())
         .map_err(|error| error.to_string())
@@ -455,5 +474,51 @@ mod disk_binary_tests {
         );
 
         let _ = std::fs::remove_file(path);
+    }
+}
+
+/// The Windows arm of `sync_path`. A directory is answered `Ok` without
+/// a handle, a file still takes the ordinary flush, and a path that is
+/// not there is still an error the program can catch.
+#[cfg(all(test, windows))]
+mod windows_sync_tests {
+    use super::{sync_path, write_bytes};
+
+    fn temp_path(label: &str) -> std::path::PathBuf {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("aver-rt-win-sync-{label}-{nonce}"))
+    }
+
+    #[test]
+    fn syncing_a_directory_is_ok() {
+        let path = temp_path("dir");
+        std::fs::create_dir(&path).expect("create the directory");
+
+        assert_eq!(sync_path(&path.to_string_lossy()), Ok(()));
+
+        let _ = std::fs::remove_dir_all(&path);
+    }
+
+    #[test]
+    fn syncing_a_file_still_flushes_and_is_ok() {
+        let path = temp_path("file");
+        let text = path.to_string_lossy().into_owned();
+        write_bytes(&text, b"durable").expect("write the file");
+
+        assert_eq!(sync_path(&text), Ok(()));
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn syncing_a_missing_path_is_still_an_error() {
+        let path = temp_path("missing");
+        assert!(
+            sync_path(&path.to_string_lossy()).is_err(),
+            "a path that is not there must not be reported durable"
+        );
     }
 }
