@@ -266,13 +266,24 @@ pub fn append_bytes(path: &str, content: &[u8]) -> Result<(), String> {
 /// call returns. RocksDB and LevelDB answer the same way on Windows.
 pub fn sync_path(path: &str) -> Result<(), String> {
     #[cfg(windows)]
-    if std::fs::metadata(path)
-        .map(|meta| meta.is_dir())
-        .unwrap_or(false)
     {
-        return Ok(());
+        if std::fs::metadata(path)
+            .map(|meta| meta.is_dir())
+            .unwrap_or(false)
+        {
+            return Ok(());
+        }
+        // `FlushFileBuffers` needs a handle opened with write access; the
+        // read-only open the Unix arm uses is refused with
+        // `ERROR_ACCESS_DENIED` on Windows even for a plain file.
+        return std::fs::OpenOptions::new()
+            .write(true)
+            .open(path)
+            .and_then(|file| file.sync_all())
+            .map_err(|error| error.to_string());
     }
 
+    #[cfg(not(windows))]
     std::fs::File::open(path)
         .and_then(|file| file.sync_all())
         .map_err(|error| error.to_string())
