@@ -4224,4 +4224,23 @@ fn cert_projects_payment_ops_package_checks() {
         report.contains("CHECKED"),
         "payment_ops check verdict does not say CHECKED:\n{report}"
     );
+    assert!(
+        report.contains("5 checked exports"),
+        "payment_ops must keep the five exports it certifies:\n{report}"
+    );
+    // The project's single `verify … law` is universal by design but its
+    // emitted proof ladder has no `String.replace` theory and lands on its
+    // `sorry` floor. That law is not credited — and the five exports beside it
+    // still are. An uncredited law never sinks a package.
+    assert!(
+        report.contains("law-claims: 0 of 1 credited"),
+        "payment_ops declares one law-claim its proof ladder cannot close:\n{report}"
+    );
+    assert!(
+        report.contains(
+            "law-claim not credited: Infra.Codec.unescapeField.escapedRoundtrip \
+             (proof depends on sorryAx)"
+        ),
+        "the uncredited law must be named with the axiom that sank it:\n{report}"
+    );
 }
