@@ -853,6 +853,39 @@ mod certificate_format_tests {
         );
     }
 
+    /// The parity the `lowers_on_wasip2` doc comment used to promise and
+    /// nothing checked: the set of operations the capability target manifest
+    /// binds on wasip2 and the set this backend lowers there must be the same
+    /// set, in both directions.
+    ///
+    /// One direction holds by construction — `lowers_on_wasip2` reads the
+    /// manifest. The other does not: an operation added to a standard
+    /// capability contract gets a manifest row the moment its capability is
+    /// bound on wasip2, and with no `EffectName` carrying its canonical name
+    /// the CLI would admit a program the emitter cannot lower. Both sides are
+    /// enumerated from their registries, so neither is a literal list.
+    #[test]
+    fn wasip2_lowering_covers_exactly_the_operations_the_manifest_binds() {
+        use std::collections::BTreeSet;
+
+        let bound = crate::provider::standard_operations_bound_on(
+            crate::provider::CapabilityTarget::Wasip2,
+        )
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+        let lowered = EffectName::ALL
+            .iter()
+            .filter(|effect| effect.lowers_on_wasip2())
+            .map(|effect| effect.canonical())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            lowered, bound,
+            "wasip2 lowering and the capability target manifest disagree; \
+             operations only the manifest binds have no `EffectName` to lower them"
+        );
+    }
+
     #[test]
     fn every_standard_capability_operation_has_a_wasm_lowering_route() {
         for operation in crate::stdlib::standard_capability_registry_ref().operations() {
@@ -969,64 +1002,24 @@ impl EffectRegistry {
 }
 
 impl EffectName {
-    /// True iff this effect has a canonical-ABI lowering for wasip2.
-    /// Drives `Wasip2ImportRegistry` population from the effects found
-    /// by the per-function walker. The standard capability target
-    /// manifest rejects unavailable operations before this emitter is
-    /// entered; tests keep its supported rows aligned with this set.
+    /// True iff the capability target manifest binds this effect's operation
+    /// on wasip2.
+    ///
+    /// The manifest (`crate::provider::standard_operations_bound_on`) is the
+    /// single authority for per-target support: the CLI refuses a program
+    /// whose required operations it calls unsupported, and this backend
+    /// lowers exactly what it calls bound. Effects that are not standard
+    /// capability operations at all — the fetch bridge, the libm shims,
+    /// `Http.send`, the recorder markers — have no manifest row and so never
+    /// lower here.
+    ///
+    /// `wasip2_lowering_covers_exactly_the_operations_the_manifest_binds`
+    /// below checks the direction this derivation cannot: that every
+    /// operation the manifest binds is also an `EffectName` the emitter can
+    /// reach.
     pub(super) fn lowers_on_wasip2(self) -> bool {
-        matches!(
-            self,
-            EffectName::ConsolePrint
-                | EffectName::ConsoleError
-                | EffectName::ConsoleWarn
-                | EffectName::ConsoleReadLine
-                | EffectName::TimeUnixMs
-                | EffectName::TimeNow
-                | EffectName::TimeSleep
-                | EffectName::RandomInt
-                | EffectName::RandomFloat
-                | EffectName::ArgsGet
-                | EffectName::EnvGet
-                | EffectName::DiskExists
-                | EffectName::DiskReadText
-                | EffectName::DiskWriteText
-                | EffectName::DiskAppendText
-                | EffectName::DiskReadBytes
-                | EffectName::DiskReadBytesAt
-                | EffectName::DiskWriteBytes
-                | EffectName::DiskAppendBytes
-                | EffectName::DiskSize
-                | EffectName::DiskDelete
-                | EffectName::DiskDeleteDir
-                | EffectName::DiskMakeDir
-                | EffectName::DiskSync
-                | EffectName::DiskListDir
-                | EffectName::HttpGet
-                | EffectName::HttpHead
-                | EffectName::HttpDelete
-                | EffectName::HttpPost
-                | EffectName::HttpPut
-                | EffectName::HttpPatch
-                | EffectName::TcpConnect
-                | EffectName::TcpBeginConnect
-                | EffectName::TcpDialled
-                | EffectName::TcpListen
-                | EffectName::TcpAccept
-                | EffectName::TcpPeerAddress
-                | EffectName::TcpWriteLine
-                | EffectName::TcpWriteBytes
-                | EffectName::TcpReadLine
-                | EffectName::TcpReadBytes
-                | EffectName::TcpReadSome
-                | EffectName::TcpPoll
-                | EffectName::TcpSend
-                | EffectName::TcpSendBytes
-                | EffectName::TcpClose
-                | EffectName::TcpCloseDial
-                | EffectName::TcpCloseListener
-                | EffectName::TcpPing,
-        )
+        crate::provider::standard_operations_bound_on(crate::provider::CapabilityTarget::Wasip2)
+            .contains(self.canonical())
     }
 }
 

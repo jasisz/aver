@@ -379,6 +379,66 @@ pub fn required_capability_operations(
     required
 }
 
+/// Canonical operations of the compiler-shipped standard capabilities that
+/// `target` actually binds.
+///
+/// Derived from the manifest rows `capability_target_rejection` consults, so
+/// there is one answer to "does this operation exist on this target" rather
+/// than one per backend. A backend asks this instead of keeping a second
+/// per-target name list: a list can drift, and a list that claims more than
+/// the manifest admits describes a program the CLI already refused, while a
+/// list that claims less silently drops an operation the CLI let through.
+///
+/// Program-defined capabilities never appear here. Their binding is supplied
+/// by the host, not shipped by the compiler, so the manifest records them as
+/// host-bound rather than provided.
+pub fn standard_operations_bound_on(target: CapabilityTarget) -> &'static BTreeSet<String> {
+    static BOUND: std::sync::OnceLock<BTreeMap<CapabilityTarget, BTreeSet<String>>> =
+        std::sync::OnceLock::new();
+    BOUND
+        .get_or_init(|| {
+            let contracts = crate::stdlib::standard_capability_registry_ref();
+            let every_operation = contracts
+                .operations()
+                .map(|operation| operation.canonical_name.clone())
+                .collect::<BTreeSet<_>>();
+            let manifest = CapabilityTargetManifest::build(contracts, &every_operation)
+                .expect("the standard capability registry names its own operations");
+            CapabilityTarget::ALL
+                .into_iter()
+                .map(|target| {
+                    let mut bound = BTreeSet::new();
+                    for row in manifest.for_target(target) {
+                        match &row.status {
+                            TargetBindingStatus::Provided(_) => {
+                                bound.extend(row.required_operations.iter().cloned());
+                            }
+                            // A row is unsupported as soon as one required
+                            // operation is; the rest of that capability still
+                            // binds, and the reason names the exact shortfall.
+                            TargetBindingStatus::Unsupported {
+                                reason:
+                                    UnsupportedReason::StandardOperationsUnavailable {
+                                        operations, ..
+                                    },
+                            } => bound.extend(
+                                row.required_operations
+                                    .iter()
+                                    .filter(|operation| !operations.contains(*operation))
+                                    .cloned(),
+                            ),
+                            TargetBindingStatus::HostBound { .. }
+                            | TargetBindingStatus::Unsupported { .. } => {}
+                        }
+                    }
+                    (target, bound)
+                })
+                .collect()
+        })
+        .get(&target)
+        .expect("every shipped target has a row")
+}
+
 pub fn shipped_target_provenance(
     target: CapabilityTarget,
     contracts: &CapabilityRegistry,

@@ -1211,7 +1211,9 @@ pub(super) fn emit_module_with(
                         wasip2_imports.register(Wasip2ImportSlot::IoPollPoll);
                         wasip2_imports.register(Wasip2ImportSlot::IoPollResourceDropPollable);
                     }
-                    _ => {} // unreachable; `lowers_on_wasip2` enumerates the wired set.
+                    // Unreachable: `lowers_on_wasip2` admits exactly the
+                    // operations the capability target manifest binds here.
+                    _ => {}
                 }
             }
             // Phase 3 — `--world wasi:http/proxy` server slots. The
