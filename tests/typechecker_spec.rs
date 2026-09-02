@@ -4952,6 +4952,39 @@ fn undeclared_type_name_is_reported_in_every_annotation_position() {
     }
 }
 
+/// A LOWERCASE name in a declared field is the same phantom, one step
+/// earlier: the strict annotation parser refuses it outright, so it never
+/// even becomes a `Type::Named` for the undeclared-name rule above to catch.
+/// Both `TypeDef` arms used to swallow that refusal into the checker's
+/// internal `Type::Invalid` recovery value without reporting anything, so
+/// `type Tree / Leaf / Node(tree, Int)` passed `aver check`, ran on the VM,
+/// and reached the Rust emitter, where `type_to_rust` panics on
+/// `Type::Invalid` by design — 45 of the 121 `fuzz_codegen_rust` crashes on
+/// the 2026-08-31 nightly. The same annotation on a fn parameter has always
+/// been an error.
+#[test]
+fn a_lowercase_type_name_in_a_declared_field_is_reported() {
+    let errs = errors(
+        "type Tree\n\
+         \x20   Leaf\n\
+         \x20   Node(tree, Int)\n\
+         \n\
+         record Holder\n\
+         \x20   slot: ghost\n",
+    );
+    for (position, name) in [
+        ("Type 'Tree', variant 'Node'", "tree"),
+        ("Type 'Holder', field 'slot'", "ghost"),
+    ] {
+        assert!(
+            errs.iter().any(|e| e.contains(position)
+                && e.contains(&format!("Unknown type '{name}'"))
+                && e.contains("type names are capitalized")),
+            "expected {position} to report Unknown type '{name}', got: {errs:?}"
+        );
+    }
+}
+
 /// The names the compiler itself declares have no `type` declaration to
 /// resolve against, yet a user may legitimately write every one of them in an
 /// annotation: the host records effect signatures hand back, the opaque `Tcp`

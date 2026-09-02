@@ -304,6 +304,48 @@ impl TypeChecker {
         }
     }
 
+    /// Resolve the type annotation a DECLARED FIELD carries — a sum-type
+    /// variant field or a record field — and report the annotation itself
+    /// when the language has no such spelling.
+    ///
+    /// `parse_type_str_strict` refuses what a user may not write: a
+    /// lowercase `tree`, an unclosed `Result<`, the compiler-internal
+    /// `__Buffer`. Both `TypeDef` arms used to swallow that refusal with
+    /// `.unwrap_or(Type::Invalid)` — but `Type::Invalid` is the checker's
+    /// INTERNAL post-error recovery value, and reaching it without an
+    /// error means nothing downstream knows the program was rejected.
+    /// `type Tree / Leaf / Node(tree, Int)` therefore typechecked ✓, ran
+    /// on the VM, and only died in Rust codegen, where `type_to_rust`
+    /// panics on `Type::Invalid` by design ("unresolved typing leaked
+    /// into codegen") — 45 of the 121 `fuzz_codegen_rust` crashes.
+    ///
+    /// A fn parameter or return type spelled the same way has always been
+    /// a check-time error (`Function 'f': unknown type 'tree' for
+    /// parameter 'x'`); a declared field now says the same thing, in the
+    /// wording [`Self::report_ambiguous_named`] uses for the neighbouring
+    /// "this name resolves to nothing" case.
+    fn declared_field_type(&mut self, annotation: &str, line: usize, source_ctx: &str) -> Type {
+        match parse_type_str_strict(annotation) {
+            Ok(ty) => self.canonicalize_named(ty),
+            Err(unknown) => {
+                // The overwhelming shape here is a lowercase name — Aver
+                // has no type variables in a declaration, so `tree` reads
+                // as a forgotten capital. Say so only when it IS one; a
+                // malformed `Result<` gets the bare sentence.
+                let hint = if unknown.chars().next().is_some_and(char::is_lowercase) {
+                    " — type names are capitalized"
+                } else {
+                    ""
+                };
+                self.error_at_line(
+                    line,
+                    format!("{source_ctx}: Unknown type '{unknown}'{hint}"),
+                );
+                Type::Invalid
+            }
+        }
+    }
+
     /// Resolve a single type name in `owner_module`'s context. See
     /// `canonicalize_named_in_module` for the three-case ordering.
     fn resolve_in_owner_context(&self, name: &str, owner_module: &str) -> Option<TypeId> {
@@ -449,10 +491,8 @@ impl TypeChecker {
                         .fields
                         .iter()
                         .map(|f| {
-                            let canon = self.canonicalize_named(
-                                parse_type_str_strict(f).unwrap_or(Type::Invalid),
-                            );
                             let ctx = format!("Type '{}', variant '{}'", type_name, variant.name);
+                            let canon = self.declared_field_type(f, *line, &ctx);
                             self.report_ambiguous_named(&canon, *line, &ctx);
                             self.reject_fn_in_type(&canon, false, *line, &ctx);
                             canon
@@ -536,9 +576,8 @@ impl TypeChecker {
                 // `canonical_type_name` resolving through the symbol
                 // table on lookup.
                 for (field_name, ty_str) in fields {
-                    let field_ty = self
-                        .canonicalize_named(parse_type_str_strict(ty_str).unwrap_or(Type::Invalid));
                     let ctx = format!("Type '{}', field '{}'", type_name, field_name);
+                    let field_ty = self.declared_field_type(ty_str, *line, &ctx);
                     self.report_ambiguous_named(&field_ty, *line, &ctx);
                     self.reject_fn_in_type(&field_ty, false, *line, &ctx);
                     let canonical_type = if module_name != type_name {

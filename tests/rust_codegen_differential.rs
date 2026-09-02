@@ -6120,6 +6120,72 @@ fn value() -> Int
     result.unwrap_or_else(|error| panic!("{error}"));
 }
 
+/// A lowercase name in a sum-type variant field is refused with a
+/// diagnostic, not an emitter panic.
+///
+/// `type Tree / Leaf / Node(tree, Int)` used to pass `aver check` ✓ — the
+/// strict annotation parser refused `tree`, and both `TypeDef` arms
+/// swallowed the refusal into the checker's internal `Type::Invalid`
+/// recovery value without reporting it. Codegen then hit
+/// `type_to_rust`'s deliberate panic on `Type::Invalid` ("unresolved
+/// typing leaked into codegen"), which is the right assertion in the
+/// wrong place: 45 of the 121 `fuzz_codegen_rust` crashes on the
+/// 2026-08-31 nightly were this one shape. The compiler must refuse the
+/// program where the annotation is, and must not abort.
+#[test]
+fn a_lowercase_variant_field_type_is_a_diagnostic_not_a_codegen_panic() {
+    let ws = temp_dir("lowercase_variant_field");
+    let entry = ws.join("main.av");
+    fs::write(
+        &entry,
+        r#"module M
+    intent = "A variant field annotated with a name that is not a type."
+    effects []
+
+type Tree
+    Leaf
+    Node(tree, Int)
+
+fn size(t: Tree) -> Int
+    ? "Never reached — the declaration above does not typecheck."
+    1
+"#,
+    )
+    .expect("write lowercase-variant entry");
+
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+
+    let out = Command::new(aver_bin())
+        .current_dir(repo_root())
+        .arg("compile")
+        .arg(&entry)
+        .arg("--target")
+        .arg("rust")
+        .arg("--module-root")
+        .arg(&ws)
+        .arg("-o")
+        .arg(&project)
+        .output()
+        .expect("expected `aver compile --target rust` to spawn");
+    let rendered = format_output(&out);
+    let _ = fs::remove_dir_all(&ws);
+
+    assert!(
+        !out.status.success(),
+        "compile must refuse the program:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("Type 'Tree', variant 'Node'")
+            && rendered.contains("Unknown type 'tree'"),
+        "expected the annotation to be named:\n{rendered}"
+    );
+    assert!(
+        !rendered.contains("panicked"),
+        "the emitter must not abort:\n{rendered}"
+    );
+}
+
 // ─── Mode (h): Int.fromString / Float.fromString Err-message bytes ────────
 //
 // `Int.fromString` / `Float.fromString` return a `Result<_, String>`.
