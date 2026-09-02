@@ -8490,7 +8490,7 @@ fn cert_tripwire_declines_tampered_law_claims() {
         "a law failing only its axiom audit must not sink the exports:\n{out}"
     );
     assert!(
-        out.contains("6 checked exports"),
+        out.contains("10 checked exports"),
         "the export verdict must stand unchanged beside an uncredited law:\n{out}"
     );
     assert!(
