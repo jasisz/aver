@@ -842,6 +842,86 @@ fn cross_literal_divisor_discharge_vm_vs_wasm_gc_vs_rust() {
     );
 }
 
+/// A record literal and a `T.update` whose field expressions each print a
+/// marker, so the order the backend evaluates them in is READ OFF stdout
+/// rather than inferred from the value. The fields are written in an order
+/// other than the declared one, which is the only shape where the two can
+/// disagree.
+///
+/// This is the observable half of the same contract `src/ir/last_use.rs`
+/// depends on: it decides which read of a local may consume it by walking
+/// a record's fields in the order they are WRITTEN, so a backend that
+/// evaluates them in declared order can run a consuming read before a
+/// field written earlier has taken its value. Issue #1240 was that bug on
+/// the VM; wasm-gc iterated its declared fields the same way.
+const RECORD_FIELD_ORDER_SRC: &str = r#"module Tmp
+
+record Trio
+    a: Int
+    b: Int
+    c: Int
+
+fn mark(label: String, value: Int) -> Int
+    ! [Console.print]
+    Console.print(label)
+    value
+
+fn show(t: Trio) -> String
+    "{t.a} {t.b} {t.c}"
+
+fn main()
+    ! [Console.print]
+    made = Trio(c = mark("create-c", 3), a = mark("create-a", 1), b = mark("create-b", 2))
+    Console.print(show(made))
+    partial = Trio.update(made, c = mark("partial-c", 30), a = mark("partial-a", 10))
+    Console.print(show(partial))
+    whole = Trio.update(partial, b = mark("whole-b", 200), c = mark("whole-c", 300), a = mark("whole-a", 100))
+    Console.print(show(whole))
+    declared = Trio(a = mark("declared-a", 7), b = mark("declared-b", 8), c = mark("declared-c", 9))
+    Console.print(show(declared))
+"#;
+
+/// The order the source writes, and the values it therefore builds.
+const RECORD_FIELD_ORDER_OUT: &str = "\
+create-c
+create-a
+create-b
+1 2 3
+partial-c
+partial-a
+10 2 30
+whole-b
+whole-c
+whole-a
+100 200 300
+declared-a
+declared-b
+declared-c
+7 8 9";
+
+#[test]
+fn cross_record_field_evaluation_order_vm_vs_wasm_gc_vs_rust() {
+    let vm = run_vm("cross-record-order-vm", RECORD_FIELD_ORDER_SRC)
+        .expect("VM must accept the record field-order harness");
+    let wg = run_wasm_gc("cross-record-order-wg", RECORD_FIELD_ORDER_SRC)
+        .expect("wasm-gc must accept the record field-order harness");
+    let rs = run_rust("cross-record-order-rust", RECORD_FIELD_ORDER_SRC)
+        .expect("generated Rust must accept the record field-order harness");
+
+    assert_eq!(
+        vm, RECORD_FIELD_ORDER_OUT,
+        "the VM stopped evaluating record fields in the order they are written"
+    );
+    assert_eq!(
+        vm, wg,
+        "VM vs wasm-gc diverged on record field evaluation order"
+    );
+    assert_eq!(
+        vm, rs,
+        "VM vs generated Rust diverged on record field evaluation order"
+    );
+}
+
 #[test]
 fn cross_int_big_operand_divmod_vm_vs_wasm_gc() {
     // Big-operand divmod specifically exercises the limb long division

@@ -2988,27 +2988,43 @@ pub(super) fn record_struct_type(
 ) -> Result<StructType, WasmGcError> {
     let mut out = Vec::with_capacity(fields.len());
     for (fname, ty) in fields {
-        // ETAP-2 multi-field carrier-`i64`: a bounded Int field of a recognized
-        // multi-arg smart-ctor record erases to a native `i64` (the storage size
-        // lever — identical to the single-field-leaf composition). Every other
-        // field keeps its default lowering, so a MIXED record (one bounded Int
-        // → i64, one unbounded → boxed `$AverInt`) lowers each field correctly.
-        let val_ty = if registry.is_eligible_carrier_field(record_name, fname) {
-            ValType::I64
-        } else {
-            // Unit has no stack value. Keep an unobservable i32 placeholder
-            // so represented capability records can carry the complete Aver
-            // value vocabulary without inventing a host-only exception.
-            aver_to_wasm(ty, Some(registry))?.unwrap_or(ValType::I32)
-        };
         out.push(FieldType {
-            element_type: StorageType::Val(val_ty),
+            element_type: StorageType::Val(record_field_val_type(
+                record_name,
+                fname,
+                ty,
+                registry,
+            )?),
             mutable: false,
         });
     }
     Ok(StructType {
         fields: out.into_boxed_slice(),
     })
+}
+
+/// The wasm `ValType` one declared record field occupies — the single
+/// source of truth for both the struct layout above and any local that
+/// has to hold a field value between its evaluation and the
+/// `struct.new` that consumes it.
+pub(super) fn record_field_val_type(
+    record_name: &str,
+    field_name: &str,
+    field_ty: &str,
+    registry: &TypeRegistry,
+) -> Result<ValType, WasmGcError> {
+    // ETAP-2 multi-field carrier-`i64`: a bounded Int field of a recognized
+    // multi-arg smart-ctor record erases to a native `i64` (the storage size
+    // lever — identical to the single-field-leaf composition). Every other
+    // field keeps its default lowering, so a MIXED record (one bounded Int
+    // → i64, one unbounded → boxed `$AverInt`) lowers each field correctly.
+    if registry.is_eligible_carrier_field(record_name, field_name) {
+        return Ok(ValType::I64);
+    }
+    // Unit has no stack value. Keep an unobservable i32 placeholder
+    // so represented capability records can carry the complete Aver
+    // value vocabulary without inventing a host-only exception.
+    Ok(aver_to_wasm(field_ty, Some(registry))?.unwrap_or(ValType::I32))
 }
 
 /// Aver type-string for a `BuiltinType` — Map and List forms use the
