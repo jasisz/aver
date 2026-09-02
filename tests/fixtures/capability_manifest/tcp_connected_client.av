@@ -1,0 +1,14 @@
+module TcpConnectedClient
+    intent = "show the connected-socket Tcp operations wasip2 still binds"
+    depends []
+    exposes [main]
+    effects [Tcp.connect, Tcp.writeLine, Tcp.readLine, Tcp.close]
+
+fn main() -> Result<String, String>
+    ? "Open one connection, ask one line, read one line, and close."
+    ! [Tcp.connect, Tcp.writeLine, Tcp.readLine, Tcp.close]
+    connection = Tcp.connect("127.0.0.1", 9)?
+    Tcp.writeLine(connection, "PING")?
+    answer = Tcp.readLine(connection)?
+    Tcp.close(connection)?
+    Result.Ok(answer)

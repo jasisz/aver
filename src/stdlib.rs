@@ -4,6 +4,8 @@
 //! parser, type checker, VM compiler, and proof exporters as project modules.
 //! Embedding only gives them an installation-independent home.
 
+mod profile_render;
+
 /// An Aver source module embedded in the compiler binary.
 pub(crate) struct EmbeddedModule {
     pub(crate) virtual_path: &'static str,
@@ -305,12 +307,38 @@ pub(crate) fn standard_capability_modules() -> Vec<crate::source::LoadedModule> 
             let module = find(name).expect("standard capability source must be embedded");
             crate::source::LoadedModule {
                 dep_name: (*name).to_string(),
-                items: crate::source::parse_source(module.source)
-                    .expect("embedded standard capability must parse"),
+                items: standard_capability_items(name)
+                    .expect("standard capability source must be embedded")
+                    .to_vec(),
                 path: std::path::PathBuf::from(module.virtual_path),
             }
         })
         .collect()
+}
+
+/// The parsed source of one embedded standard capability.
+///
+/// Parsed once per process. Everything that needs to know what a capability
+/// contract says — its `depends`, its hostile profile bodies — reads this
+/// instead of searching the source text or parsing it again.
+pub(crate) fn standard_capability_items(module: &str) -> Option<&'static [crate::ast::TopLevel]> {
+    static ITEMS: std::sync::OnceLock<
+        std::collections::BTreeMap<&'static str, Vec<crate::ast::TopLevel>>,
+    > = std::sync::OnceLock::new();
+    ITEMS
+        .get_or_init(|| {
+            STANDARD_CAPABILITY_MODULES
+                .iter()
+                .map(|name| {
+                    let source = find(name).expect("standard capability source must be embedded");
+                    let items = crate::source::parse_source(source.source)
+                        .expect("embedded standard capability must parse");
+                    (*name, items)
+                })
+                .collect()
+        })
+        .get(module)
+        .map(Vec::as_slice)
 }
 
 /// Canonical registry for compiler-shipped capabilities. Construction is
@@ -349,14 +377,10 @@ pub(crate) fn standard_capability_profile_dependencies(method: &str) -> Vec<Stri
     let Some(operation) = standard_capability_registry_ref().operation(method) else {
         return Vec::new();
     };
-    let Some(module) = find(&operation.module) else {
-        return Vec::new();
-    };
-    crate::source::parse_source(module.source)
-        .ok()
+    standard_capability_items(&operation.module)
         .and_then(|items| {
-            items.into_iter().find_map(|item| match item {
-                crate::ast::TopLevel::Module(module) => Some(module.depends),
+            items.iter().find_map(|item| match item {
+                crate::ast::TopLevel::Module(module) => Some(module.depends.clone()),
                 _ => None,
             })
         })
@@ -424,39 +448,42 @@ pub(crate) fn append_required_standard_capability_modules(
     }
 }
 
-/// Hostile profile source declared by a standard capability operation.
-/// Returns `(diagnostic_label, declared_fn_name, source_fn)` in declaration
-/// order so the legacy verify injector can consume the canonical module model
-/// without carrying a second hand-written semantic table.
-pub(crate) fn standard_hostile_profiles(method: &str) -> Vec<(&'static str, String, String)> {
-    type ProfileSource = (&'static str, String, String);
-    static PROFILES: std::sync::OnceLock<std::collections::BTreeMap<String, Vec<ProfileSource>>> =
+/// Hostile profile functions declared by a standard capability operation.
+///
+/// Returns `(diagnostic_label, declared_fn_name, function)` in declaration
+/// order so the verify injector can consume the canonical module model
+/// without carrying a second hand-written semantic table. The function is the
+/// one the parser produced; `render_standard_hostile_profile` prints it under
+/// whatever name the injector needs.
+pub(crate) fn standard_hostile_profiles(
+    method: &str,
+) -> Vec<(&'static str, String, &'static crate::ast::FnDef)> {
+    type Profile = (&'static str, String, &'static crate::ast::FnDef);
+    static PROFILES: std::sync::OnceLock<std::collections::BTreeMap<String, Vec<Profile>>> =
         std::sync::OnceLock::new();
     PROFILES
         .get_or_init(|| {
             let mut profiles = std::collections::BTreeMap::new();
             for operation in standard_capability_registry_ref().operations() {
-                let Some(module) = find(&operation.module) else {
+                let Some(items) = standard_capability_items(&operation.module) else {
                     continue;
                 };
                 let entries = operation
                     .hostile
                     .iter()
                     .filter_map(|profile| {
-                        let marker = format!("fn {profile}(");
-                        let start = module.source.find(&marker)?;
-                        let rest = &module.source[start..];
-                        let end = rest[1..]
-                            .find("\nfn ")
-                            .map(|offset| offset + 1)
-                            .unwrap_or(rest.len());
-                        let source = format!("{}\n", rest[..end].trim_end());
+                        let function = items.iter().find_map(|item| match item {
+                            crate::ast::TopLevel::FnDef(function) if function.name == *profile => {
+                                Some(function)
+                            }
+                            _ => None,
+                        })?;
                         let suffix = profile
                             .strip_prefix(&operation.name)
                             .unwrap_or(profile.as_str());
                         let label: &'static str =
                             Box::leak(camel_to_snake(suffix).into_boxed_str());
-                        Some((label, profile.clone(), source))
+                        Some((label, profile.clone(), function))
                     })
                     .collect();
                 profiles.insert(operation.canonical_name.clone(), entries);
@@ -466,6 +493,21 @@ pub(crate) fn standard_hostile_profiles(method: &str) -> Vec<(&'static str, Stri
         .get(method)
         .cloned()
         .unwrap_or_default()
+}
+
+/// Print one hostile profile as an injectable top-level function named
+/// `name`.
+///
+/// The profile is compiler-owned source that the capability registry already
+/// validated, so a shape the renderer cannot print is a compiler defect and
+/// not something a user program can provoke.
+pub(crate) fn render_standard_hostile_profile(function: &crate::ast::FnDef, name: &str) -> String {
+    profile_render::render_fn_def(function, name).unwrap_or_else(|error| {
+        panic!(
+            "embedded hostile profile `{}` cannot be rendered as Aver source: {error}",
+            function.name
+        )
+    })
 }
 
 pub(crate) fn standard_hostile_profile_label(
@@ -496,9 +538,107 @@ fn camel_to_snake(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        find, implicit_stdlib_deps, standard_capability_registry, standard_hostile_profile_label,
+        find, implicit_stdlib_deps, render_standard_hostile_profile, standard_capability_registry,
+        standard_capability_registry_ref, standard_hostile_profile_label,
         standard_hostile_profiles,
     };
+
+    /// The boundary the injector used before the profiles came off the AST:
+    /// find `fn <name>(` in the contract text and cut at the next line
+    /// starting `fn `. Kept here as the oracle for
+    /// `rendered_profiles_are_byte_identical_to_the_text_they_replaced`, so
+    /// the replacement is proved equal rather than asserted to be.
+    fn sliced_from_contract_text(module: &str, profile: &str) -> Option<String> {
+        let source = find(module)?.source;
+        let start = source.find(&format!("fn {profile}("))?;
+        let rest = &source[start..];
+        let end = rest[1..]
+            .find("\nfn ")
+            .map(|offset| offset + 1)
+            .unwrap_or(rest.len());
+        Some(format!("{}\n", rest[..end].trim_end()))
+    }
+
+    /// Every hostile profile of every standard capability, rendered from the
+    /// parsed function, is the same bytes the text cut produced. The roster
+    /// is the registry, so a capability or a profile added later is covered
+    /// without touching this test.
+    ///
+    /// One profile is allowed to differ, and the difference is named rather
+    /// than tolerated: `Args.argsMany` writes `"\0"`, and Aver's lexer has no
+    /// `\0` escape, so it reads that as the one-character string `"0"`. The
+    /// cut text therefore never spelled the value it denotes; the renderer
+    /// prints the value. Where the bytes differ, the two must still be the
+    /// same program, which is checked by rendering the cut text back.
+    #[test]
+    fn rendered_profiles_are_byte_identical_to_the_text_they_replaced() {
+        let mut checked = 0;
+        let mut differing = Vec::new();
+        for operation in standard_capability_registry_ref().operations() {
+            for (_, declared, function) in standard_hostile_profiles(&operation.canonical_name) {
+                let expected = sliced_from_contract_text(&operation.module, &declared)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "{}: no `fn {declared}(` in the contract text",
+                            operation.module
+                        )
+                    });
+                let rendered = render_standard_hostile_profile(function, &declared);
+                checked += 1;
+                if rendered == expected {
+                    continue;
+                }
+                differing.push(format!("{}.{declared}", operation.module));
+                assert_eq!(
+                    render_standard_hostile_profile(&reparse_fn(&expected), &declared),
+                    rendered,
+                    "{}.{declared}: the rendered profile is not the same program as its \
+                     contract source",
+                    operation.module
+                );
+            }
+        }
+        assert!(
+            checked > 100,
+            "expected the whole profile roster, saw {checked}"
+        );
+        assert_eq!(
+            differing,
+            ["Args.argsMany"],
+            "a profile whose rendering is not byte-identical to its contract source"
+        );
+    }
+
+    fn reparse_fn(source: &str) -> crate::ast::FnDef {
+        let mut lexer = crate::lexer::Lexer::new(source);
+        let tokens = lexer.tokenize().expect("rendered profile lexes");
+        let items = crate::parser::Parser::new_compiler_generated(tokens)
+            .parse()
+            .expect("rendered profile parses");
+        items
+            .into_iter()
+            .find_map(|item| match item {
+                crate::ast::TopLevel::FnDef(function) => Some(function),
+                _ => None,
+            })
+            .expect("rendered profile is a function")
+    }
+
+    /// Renaming is what the injector actually asks for, and it must touch the
+    /// declaration and nothing else — not a mention of the same name inside a
+    /// string or a recursive call.
+    #[test]
+    fn a_rendered_profile_carries_the_name_it_was_asked_for() {
+        let profiles = standard_hostile_profiles("Time.now");
+        let (_, declared, function) = profiles.first().expect("Time.now ships profiles");
+        let renamed = render_standard_hostile_profile(function, "__hostile_Time_now_frozen");
+        assert!(renamed.starts_with("fn __hostile_Time_now_frozen("));
+        assert!(!renamed.contains(declared.as_str()));
+        assert_eq!(
+            renamed.replacen("__hostile_Time_now_frozen", declared, 1),
+            render_standard_hostile_profile(function, declared)
+        );
+    }
 
     fn parse(source: &str) -> Vec<crate::ast::TopLevel> {
         crate::source::parse_source(source).expect("parse test module")

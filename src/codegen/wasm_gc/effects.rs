@@ -16,6 +16,7 @@ use wasm_encoder::ValType;
 
 use super::WasmGcError;
 use super::types::TypeRegistry;
+use super::wasip2_imports::Wasip2ImportSlot;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) enum EffectName {
@@ -25,7 +26,7 @@ pub(super) enum EffectName {
     /// canonical-ABI `wasi:cli/stdout.get-stdout` (cached) plus
     /// `wasi:io/streams.[method]output-stream.blocking-write-and-flush`
     /// in the per-effect glue at the call site — see
-    /// `EffectName::lowers_on_wasip2` and `Wasip2ImportSlot`.
+    /// `EffectName::lowers_on_wasip2` and `EffectName::wasip2_slots`.
     ConsolePrint,
     ConsoleError,
     ConsoleWarn,
@@ -853,6 +854,58 @@ mod certificate_format_tests {
         );
     }
 
+    /// The parity the `lowers_on_wasip2` doc comment used to promise and
+    /// nothing checked: the set of operations the capability target manifest
+    /// binds on wasip2 and the set this backend lowers there must be the same
+    /// set, in both directions.
+    ///
+    /// One direction holds by construction — `lowers_on_wasip2` reads the
+    /// manifest. The other does not: an operation added to a standard
+    /// capability contract gets a manifest row the moment its capability is
+    /// bound on wasip2, and with no `EffectName` carrying its canonical name
+    /// the CLI would admit a program the emitter cannot lower. Both sides are
+    /// enumerated from their registries, so neither is a literal list.
+    #[test]
+    fn wasip2_lowering_covers_exactly_the_operations_the_manifest_binds() {
+        use std::collections::BTreeSet;
+
+        let bound = crate::provider::standard_operations_bound_on(
+            crate::provider::CapabilityTarget::Wasip2,
+        )
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+        let lowered = EffectName::ALL
+            .iter()
+            .filter(|effect| effect.lowers_on_wasip2())
+            .map(|effect| effect.canonical())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            lowered, bound,
+            "wasip2 lowering and the capability target manifest disagree; \
+             operations only the manifest binds have no `EffectName` to lower them"
+        );
+    }
+
+    /// "The manifest binds it here" and "it names canonical-ABI import slots"
+    /// must be the same set of effects. One side without the other is a
+    /// module that imports what the program can never call, or one that
+    /// admits a call it never imported anything for.
+    #[test]
+    fn wasip2_slots_and_wasip2_lowering_partition_the_effects_the_same_way() {
+        for effect in EffectName::ALL {
+            assert_eq!(
+                effect.lowers_on_wasip2(),
+                !effect.wasip2_slots().is_empty(),
+                "{}: the capability target manifest binds it on wasip2 = {}, \
+                 but it names {} canonical-ABI import slots",
+                effect.canonical(),
+                effect.lowers_on_wasip2(),
+                effect.wasip2_slots().len()
+            );
+        }
+    }
+
     #[test]
     fn every_standard_capability_operation_has_a_wasm_lowering_route() {
         for operation in crate::stdlib::standard_capability_registry_ref().operations() {
@@ -969,64 +1022,345 @@ impl EffectRegistry {
 }
 
 impl EffectName {
-    /// True iff this effect has a canonical-ABI lowering for wasip2.
-    /// Drives `Wasip2ImportRegistry` population from the effects found
-    /// by the per-function walker. The standard capability target
-    /// manifest rejects unavailable operations before this emitter is
-    /// entered; tests keep its supported rows aligned with this set.
+    /// True iff the capability target manifest binds this effect's operation
+    /// on wasip2.
+    ///
+    /// The manifest (`crate::provider::standard_operations_bound_on`) is the
+    /// single authority for per-target support: the CLI refuses a program
+    /// whose required operations it calls unsupported, and this backend
+    /// lowers exactly what it calls bound. Effects that are not standard
+    /// capability operations at all — the fetch bridge, the libm shims,
+    /// `Http.send`, the recorder markers — have no manifest row and so never
+    /// lower here.
+    ///
+    /// `wasip2_lowering_covers_exactly_the_operations_the_manifest_binds`
+    /// below checks the direction this derivation cannot: that every
+    /// operation the manifest binds is also an `EffectName` the emitter can
+    /// reach.
     pub(super) fn lowers_on_wasip2(self) -> bool {
-        matches!(
-            self,
-            EffectName::ConsolePrint
-                | EffectName::ConsoleError
-                | EffectName::ConsoleWarn
-                | EffectName::ConsoleReadLine
-                | EffectName::TimeUnixMs
-                | EffectName::TimeNow
-                | EffectName::TimeSleep
-                | EffectName::RandomInt
-                | EffectName::RandomFloat
-                | EffectName::ArgsGet
-                | EffectName::EnvGet
-                | EffectName::DiskExists
-                | EffectName::DiskReadText
-                | EffectName::DiskWriteText
-                | EffectName::DiskAppendText
-                | EffectName::DiskReadBytes
-                | EffectName::DiskReadBytesAt
-                | EffectName::DiskWriteBytes
-                | EffectName::DiskAppendBytes
-                | EffectName::DiskSize
-                | EffectName::DiskDelete
-                | EffectName::DiskDeleteDir
-                | EffectName::DiskMakeDir
-                | EffectName::DiskSync
-                | EffectName::DiskListDir
-                | EffectName::HttpGet
-                | EffectName::HttpHead
-                | EffectName::HttpDelete
-                | EffectName::HttpPost
-                | EffectName::HttpPut
-                | EffectName::HttpPatch
-                | EffectName::TcpConnect
-                | EffectName::TcpBeginConnect
-                | EffectName::TcpDialled
-                | EffectName::TcpListen
-                | EffectName::TcpAccept
-                | EffectName::TcpPeerAddress
-                | EffectName::TcpWriteLine
-                | EffectName::TcpWriteBytes
-                | EffectName::TcpReadLine
-                | EffectName::TcpReadBytes
-                | EffectName::TcpReadSome
-                | EffectName::TcpPoll
-                | EffectName::TcpSend
-                | EffectName::TcpSendBytes
-                | EffectName::TcpClose
-                | EffectName::TcpCloseDial
-                | EffectName::TcpCloseListener
-                | EffectName::TcpPing,
-        )
+        crate::provider::standard_operations_bound_on(crate::provider::CapabilityTarget::Wasip2)
+            .contains(self.canonical())
+    }
+
+    /// Canonical-ABI import slots this effect's wasip2 lowering calls, in the
+    /// order they are registered — which is the order they appear in the
+    /// emitted module's import section.
+    ///
+    /// Exhaustive on purpose. These lists lived in a `match` inside
+    /// `module.rs` that ended in `_ => {}`, so an effect added without one
+    /// registered nothing and produced a module that linked nothing for it.
+    /// Now such an effect does not compile.
+    pub(super) fn wasip2_slots(self) -> &'static [Wasip2ImportSlot] {
+        match self {
+            Self::ConsolePrint => &[
+                Wasip2ImportSlot::CliGetStdout,
+                Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush,
+            ],
+            // `Console.warn` writes to fd 2, matching the VM and the
+            // wasm-gc bridge target.
+            Self::ConsoleError | Self::ConsoleWarn => &[
+                Wasip2ImportSlot::CliGetStderr,
+                Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush,
+            ],
+            Self::TimeUnixMs | Self::TimeNow => &[Wasip2ImportSlot::ClocksWallClockNow],
+            Self::RandomInt | Self::RandomFloat => &[Wasip2ImportSlot::RandomGetRandomU64],
+            Self::ArgsGet => &[Wasip2ImportSlot::CliEnvironmentGetArguments],
+            Self::EnvGet => &[Wasip2ImportSlot::CliEnvironmentGetEnvironment],
+            Self::ConsoleReadLine => &[
+                Wasip2ImportSlot::CliStdinGetStdin,
+                Wasip2ImportSlot::InputStreamBlockingRead,
+            ],
+            Self::TimeSleep => &[
+                Wasip2ImportSlot::ClocksMonotonicSubscribeDuration,
+                Wasip2ImportSlot::IoPollPoll,
+                Wasip2ImportSlot::IoPollResourceDropPollable,
+            ],
+            Self::DiskExists | Self::DiskSize => &[
+                Wasip2ImportSlot::FilesystemPreopensGetDirectories,
+                Wasip2ImportSlot::FilesystemTypesStatAt,
+            ],
+            Self::DiskReadText | Self::DiskReadBytes | Self::DiskReadBytesAt => &[
+                // Shares the preopens cache with Disk.exists.
+                Wasip2ImportSlot::FilesystemPreopensGetDirectories,
+                Wasip2ImportSlot::FilesystemTypesOpenAt,
+                Wasip2ImportSlot::FilesystemTypesReadViaStream,
+                Wasip2ImportSlot::InputStreamBlockingRead,
+                Wasip2ImportSlot::FilesystemTypesResourceDropDescriptor,
+                Wasip2ImportSlot::IoStreamsResourceDropInputStream,
+            ],
+            Self::DiskWriteText | Self::DiskWriteBytes => &[
+                // Shares preopens / open-at / blocking-write-and-flush
+                // / drop-descriptor with earlier phases; adds
+                // write-via-stream and the output-stream drop.
+                Wasip2ImportSlot::FilesystemPreopensGetDirectories,
+                Wasip2ImportSlot::FilesystemTypesOpenAt,
+                Wasip2ImportSlot::FilesystemTypesWriteViaStream,
+                Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush,
+                Wasip2ImportSlot::FilesystemTypesResourceDropDescriptor,
+                Wasip2ImportSlot::IoStreamsResourceDropOutputStream,
+            ],
+            Self::DiskAppendText | Self::DiskAppendBytes => &[
+                // Same shape as writeText, but uses
+                // append-via-stream + open-flags=CREATE only.
+                Wasip2ImportSlot::FilesystemPreopensGetDirectories,
+                Wasip2ImportSlot::FilesystemTypesOpenAt,
+                Wasip2ImportSlot::FilesystemTypesAppendViaStream,
+                Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush,
+                Wasip2ImportSlot::FilesystemTypesResourceDropDescriptor,
+                Wasip2ImportSlot::IoStreamsResourceDropOutputStream,
+            ],
+            Self::DiskDelete => &[
+                Wasip2ImportSlot::FilesystemPreopensGetDirectories,
+                Wasip2ImportSlot::FilesystemTypesUnlinkFileAt,
+            ],
+            Self::DiskDeleteDir => &[
+                Wasip2ImportSlot::FilesystemPreopensGetDirectories,
+                Wasip2ImportSlot::FilesystemTypesRemoveDirectoryAt,
+            ],
+            Self::DiskMakeDir => &[
+                Wasip2ImportSlot::FilesystemPreopensGetDirectories,
+                Wasip2ImportSlot::FilesystemTypesCreateDirectoryAt,
+            ],
+            Self::DiskSync => &[
+                // `descriptor.sync` is a method on an open
+                // descriptor, so this one needs open-at and
+                // the descriptor drop as well.
+                Wasip2ImportSlot::FilesystemPreopensGetDirectories,
+                Wasip2ImportSlot::FilesystemTypesOpenAt,
+                Wasip2ImportSlot::FilesystemTypesSync,
+                Wasip2ImportSlot::FilesystemTypesResourceDropDescriptor,
+            ],
+            Self::DiskListDir => &[
+                Wasip2ImportSlot::FilesystemPreopensGetDirectories,
+                Wasip2ImportSlot::FilesystemTypesOpenAt,
+                Wasip2ImportSlot::FilesystemTypesReadDirectory,
+                Wasip2ImportSlot::FilesystemTypesDirectoryEntryStreamReadDirectoryEntry,
+                Wasip2ImportSlot::FilesystemTypesResourceDropDescriptor,
+                Wasip2ImportSlot::FilesystemTypesResourceDropDirectoryEntryStream,
+            ],
+            Self::HttpGet
+            | Self::HttpHead
+            | Self::HttpDelete
+            | Self::HttpPost
+            | Self::HttpPut
+            | Self::HttpPatch => &[
+                // GET/HEAD/DELETE all share the same wasi:http
+                // import set — only `set-method` differentiates
+                // the verb (handled inside `__rt_http_request`
+                // based on the method_tag i32 param).
+                //
+                // 16 new + 4 reused (Step D) + Step F+G's 4 +
+                // Step J's set-method = 24 new + 4 reused.
+                // Reused: `wasi:io/poll.poll` (Time.sleep
+                // pollable-wait), `[resource-drop]pollable`,
+                // `input-stream.blocking-read` (Disk.readText
+                // / Console.readLine), input-stream drop.
+                Wasip2ImportSlot::HttpTypesFieldsNew,
+                Wasip2ImportSlot::HttpTypesOutgoingRequestNew,
+                Wasip2ImportSlot::HttpTypesOutgoingRequestSetScheme,
+                Wasip2ImportSlot::HttpTypesOutgoingRequestSetAuthority,
+                Wasip2ImportSlot::HttpTypesOutgoingRequestSetPathWithQuery,
+                Wasip2ImportSlot::HttpOutgoingHandlerHandle,
+                Wasip2ImportSlot::HttpTypesFutureIncomingResponseSubscribe,
+                Wasip2ImportSlot::IoPollPoll,
+                Wasip2ImportSlot::IoPollResourceDropPollable,
+                Wasip2ImportSlot::HttpTypesFutureIncomingResponseGet,
+                Wasip2ImportSlot::HttpTypesIncomingResponseStatus,
+                Wasip2ImportSlot::HttpTypesIncomingResponseConsume,
+                Wasip2ImportSlot::HttpTypesIncomingBodyStream,
+                Wasip2ImportSlot::InputStreamBlockingRead,
+                Wasip2ImportSlot::HttpTypesIncomingBodyFinish,
+                Wasip2ImportSlot::IoStreamsResourceDropInputStream,
+                Wasip2ImportSlot::HttpTypesResourceDropOutgoingRequest,
+                Wasip2ImportSlot::HttpTypesResourceDropFutureIncomingResponse,
+                Wasip2ImportSlot::HttpTypesResourceDropIncomingResponse,
+                Wasip2ImportSlot::HttpTypesResourceDropFutureTrailers,
+                // Step F: drop incoming-body on error paths
+                // (between consume() and finish()).
+                Wasip2ImportSlot::HttpTypesResourceDropIncomingBody,
+                // Step G: surface real response headers via
+                // incoming-response.headers + fields.entries +
+                // [resource-drop]fields (child of response).
+                Wasip2ImportSlot::HttpTypesIncomingResponseHeaders,
+                Wasip2ImportSlot::HttpTypesFieldsEntries,
+                Wasip2ImportSlot::HttpTypesResourceDropFields,
+                // Step J: set-method for HEAD/DELETE (GET keeps
+                // constructor default — set-method call is
+                // gated by p_method != 0 inside the helper).
+                Wasip2ImportSlot::HttpTypesOutgoingRequestSetMethod,
+                // Step K: outgoing-body marshalling for
+                // POST/PUT/PATCH — request.body, body.write,
+                // chunked write via existing
+                // OutputStreamBlockingWriteAndFlush, body.finish,
+                // and fields.append for headers + Content-Type.
+                // outgoing-body resource-drop covers the error
+                // path between request.body() and body.finish().
+                Wasip2ImportSlot::HttpTypesOutgoingRequestBody,
+                Wasip2ImportSlot::HttpTypesOutgoingBodyWrite,
+                Wasip2ImportSlot::HttpTypesOutgoingBodyFinish,
+                Wasip2ImportSlot::HttpTypesFieldsAppend,
+                Wasip2ImportSlot::HttpTypesResourceDropOutgoingBody,
+                Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush,
+                Wasip2ImportSlot::IoStreamsResourceDropOutputStream,
+            ],
+            // ── Phase 4 / 0.20 "Pulse" — wasi:sockets/* ──────
+            //
+            // The Tcp.* surface shares one connect pipeline,
+            // one read loop, one write loop, plus the
+            // timeout-race for ping. Each effect registers
+            // exactly the slots its lowering needs; the union
+            // covers the whole choreography. Reuses from the
+            // HTTP path: input-stream/output-stream blocking
+            // read/write + drops, io/poll.poll + drop pollable,
+            // monotonic-clock subscribe-duration (ping only).
+            Self::TcpConnect => &[
+                Wasip2ImportSlot::SocketsInstanceNetworkInstanceNetwork,
+                Wasip2ImportSlot::SocketsIpNameLookupResolveAddresses,
+                Wasip2ImportSlot::SocketsIpNameLookupResolveNextAddress,
+                Wasip2ImportSlot::SocketsIpNameLookupResolveAddressStreamSubscribe,
+                Wasip2ImportSlot::SocketsIpNameLookupResourceDropResolveAddressStream,
+                Wasip2ImportSlot::SocketsTcpCreateSocketCreateTcpSocket,
+                Wasip2ImportSlot::SocketsTcpStartConnect,
+                Wasip2ImportSlot::SocketsTcpFinishConnect,
+                Wasip2ImportSlot::SocketsTcpSubscribe,
+                // Drop socket on every error path inside the
+                // connect helper (Phase 4.2.2c: start-connect
+                // Err, finish-connect Err). On the happy path
+                // Phase 4.2.2d will keep it live and store in
+                // the pool slot.
+                Wasip2ImportSlot::SocketsTcpResourceDropTcpSocket,
+                // Phase 4.2.2e — stale-slot recovery (pool
+                // wraparound after 256+ connects) shuts the
+                // old socket down and drops its streams
+                // before reusing the slot.
+                Wasip2ImportSlot::SocketsTcpShutdown,
+                Wasip2ImportSlot::IoStreamsResourceDropInputStream,
+                Wasip2ImportSlot::IoStreamsResourceDropOutputStream,
+                Wasip2ImportSlot::IoPollPoll,
+                Wasip2ImportSlot::IoPollResourceDropPollable,
+            ],
+            Self::TcpWriteLine | Self::TcpWriteBytes => &[
+                Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush,
+                Wasip2ImportSlot::IoStreamsResourceDropInputStream,
+                Wasip2ImportSlot::IoStreamsResourceDropOutputStream,
+                Wasip2ImportSlot::SocketsTcpResourceDropTcpSocket,
+            ],
+            Self::TcpReadLine | Self::TcpReadBytes | Self::TcpReadSome => &[
+                Wasip2ImportSlot::InputStreamBlockingRead,
+                Wasip2ImportSlot::IoStreamsResourceDropInputStream,
+                Wasip2ImportSlot::IoStreamsResourceDropOutputStream,
+                Wasip2ImportSlot::SocketsTcpResourceDropTcpSocket,
+            ],
+            Self::TcpPoll => &[
+                Wasip2ImportSlot::InputStreamSubscribe,
+                Wasip2ImportSlot::ClocksMonotonicSubscribeDuration,
+                Wasip2ImportSlot::IoPollPoll,
+                Wasip2ImportSlot::IoPollResourceDropPollable,
+            ],
+            Self::TcpClose => &[
+                Wasip2ImportSlot::SocketsTcpShutdown,
+                Wasip2ImportSlot::IoStreamsResourceDropInputStream,
+                Wasip2ImportSlot::IoStreamsResourceDropOutputStream,
+                Wasip2ImportSlot::SocketsTcpResourceDropTcpSocket,
+            ],
+            Self::TcpSend | Self::TcpSendBytes => &[
+                // Phase 4.7+ pass 4 — `__rt_tcp_send` is ephemeral
+                // (inline dial + raw bytes + shutdown(send) +
+                // read-to-EOF, no pool slot). Slot union is the
+                // wasi:sockets/* dial set plus the wasi:io stream
+                // pair used by the write + read loops; no overlap
+                // with `Tcp.connect`'s pool path.
+                Wasip2ImportSlot::SocketsInstanceNetworkInstanceNetwork,
+                Wasip2ImportSlot::SocketsIpNameLookupResolveAddresses,
+                Wasip2ImportSlot::SocketsIpNameLookupResolveNextAddress,
+                Wasip2ImportSlot::SocketsIpNameLookupResolveAddressStreamSubscribe,
+                Wasip2ImportSlot::SocketsIpNameLookupResourceDropResolveAddressStream,
+                Wasip2ImportSlot::SocketsTcpCreateSocketCreateTcpSocket,
+                Wasip2ImportSlot::SocketsTcpStartConnect,
+                Wasip2ImportSlot::SocketsTcpFinishConnect,
+                Wasip2ImportSlot::SocketsTcpSubscribe,
+                Wasip2ImportSlot::SocketsTcpShutdown,
+                Wasip2ImportSlot::SocketsTcpResourceDropTcpSocket,
+                Wasip2ImportSlot::IoPollPoll,
+                Wasip2ImportSlot::IoPollResourceDropPollable,
+                Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush,
+                Wasip2ImportSlot::InputStreamBlockingRead,
+                Wasip2ImportSlot::IoStreamsResourceDropInputStream,
+                Wasip2ImportSlot::IoStreamsResourceDropOutputStream,
+            ],
+            Self::TcpPing => &[
+                // Phase 4.7+ pass 5 — `__rt_tcp_ping` is ephemeral
+                // (inline dial + drop streams + drop socket, no
+                // pool slot, no shutdown). Slot union is the
+                // wasi:sockets/* dial set plus the stream-drop
+                // pair used to release the never-read streams
+                // after a successful finish-connect. No
+                // monotonic-clock timeout race yet —
+                // `subscribe-duration` lands when a real
+                // source-level timeout knob shows up.
+                Wasip2ImportSlot::SocketsInstanceNetworkInstanceNetwork,
+                Wasip2ImportSlot::SocketsIpNameLookupResolveAddresses,
+                Wasip2ImportSlot::SocketsIpNameLookupResolveNextAddress,
+                Wasip2ImportSlot::SocketsIpNameLookupResolveAddressStreamSubscribe,
+                Wasip2ImportSlot::SocketsIpNameLookupResourceDropResolveAddressStream,
+                Wasip2ImportSlot::SocketsTcpCreateSocketCreateTcpSocket,
+                Wasip2ImportSlot::SocketsTcpStartConnect,
+                Wasip2ImportSlot::SocketsTcpFinishConnect,
+                Wasip2ImportSlot::SocketsTcpSubscribe,
+                Wasip2ImportSlot::SocketsTcpResourceDropTcpSocket,
+                Wasip2ImportSlot::IoStreamsResourceDropInputStream,
+                Wasip2ImportSlot::IoStreamsResourceDropOutputStream,
+                Wasip2ImportSlot::IoPollPoll,
+                Wasip2ImportSlot::IoPollResourceDropPollable,
+            ],
+            // No wasip2 lowering, and `lowers_on_wasip2` says so. Two
+            // reasons, both permanent for as long as they hold: the effect is
+            // not a standard capability operation at all — the fetch bridge,
+            // the libm shims, `Http.send`, the paired `Args.len` half of
+            // `Args.get`, the recorder's group markers, the internal
+            // contract-violation sink — or it is one the capability target
+            // manifest refuses on this target.
+            Self::ProviderContractViolation
+            | Self::RequestMethod
+            | Self::RequestUrl
+            | Self::RequestQuery
+            | Self::RequestBody
+            | Self::RequestHeadersLoad
+            | Self::ResponseText
+            | Self::ResponseSetHeader
+            | Self::HttpSend
+            | Self::HttpAddRequestHeader
+            | Self::HttpClearRequestHeaders
+            | Self::ArgsLen
+            | Self::FloatSin
+            | Self::FloatCos
+            | Self::FloatAtan2
+            | Self::FloatPow
+            | Self::RecordEnterGroup
+            | Self::RecordSetBranch
+            | Self::RecordExitGroup
+            | Self::ProcessStopRequested
+            | Self::EnvSet
+            | Self::TerminalEnableRawMode
+            | Self::TerminalDisableRawMode
+            | Self::TerminalClear
+            | Self::TerminalMoveTo
+            | Self::TerminalPrint
+            | Self::TerminalSetColor
+            | Self::TerminalResetColor
+            | Self::TerminalReadKey
+            | Self::TerminalSize
+            | Self::TerminalHideCursor
+            | Self::TerminalShowCursor
+            | Self::TerminalFlush
+            | Self::TcpBeginConnect
+            | Self::TcpDialled
+            | Self::TcpListen
+            | Self::TcpAccept
+            | Self::TcpPeerAddress
+            | Self::TcpCloseDial
+            | Self::TcpCloseListener => &[],
+        }
     }
 }
 

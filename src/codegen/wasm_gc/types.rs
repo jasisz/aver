@@ -1325,16 +1325,6 @@ impl TypeRegistry {
                 // `aver-rt::tcp::send` caps at 10 MiB; wasip2 used
                 // to grow the buffer unbounded.
                 b"tcp: response exceeds 10 MiB limit".as_ref(),
-                // #1131 Level B on wasip2: asynchronous dial/listen resource
-                // operations remain callable and fail as typed Results until
-                // the backend grows resource-pool support for them.
-                b"Tcp.beginConnect: native sockets are unavailable on this target".as_ref(),
-                b"Tcp.dialled: native sockets are unavailable on this target".as_ref(),
-                b"Tcp.listen: native socket listening is unavailable on this target".as_ref(),
-                b"Tcp.accept: native socket listening is unavailable on this target".as_ref(),
-                b"Tcp.peerAddress: native sockets are unavailable on this target".as_ref(),
-                b"Tcp.closeDial: native sockets are unavailable on this target".as_ref(),
-                b"Tcp.closeListener: native sockets are unavailable on this target".as_ref(),
             ] {
                 let bytes = msg.to_vec();
                 string_literal_idx.entry(bytes.clone()).or_insert_with(|| {
