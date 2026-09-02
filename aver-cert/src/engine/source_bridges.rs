@@ -198,6 +198,17 @@ fn bridge_survives_checker_gates(bridge: &SourceBridge) -> bool {
         return false;
     }
     statement_is_single_plain_line(&bridge.statement, MAX_BRIDGE_STATEMENT_LEN)
+        && statement_is_root_qualified(&bridge.statement)
+}
+
+/// Mirror of the checker's root-qualification gate: every dotted name in a
+/// bridge statement must be spelled `_root_.`-first, because the checker's pin
+/// elaborates the statement at the root namespace with no `open`.
+fn statement_is_root_qualified(statement: &str) -> bool {
+    statement
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '\''))
+        .filter(|token| token.contains('.'))
+        .all(|token| token.starts_with("_root_."))
 }
 
 /// Longest name and statement the bridge surface transports. The statement cap

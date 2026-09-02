@@ -50,6 +50,11 @@ struct ModelInfo {
     /// certified set of every existing package. The plan-equals-source bridge
     /// needs only the signature, so it reads both maps and nothing else moves.
     nullary_fns: std::collections::HashMap<String, FnSig>,
+    /// Flat keys two DIFFERENT parameterless defs claim. Kept apart from
+    /// `ambiguous` for the same reason `nullary_fns` is kept apart from `fns`:
+    /// `model_lean_name` reads `ambiguous`, so recording a nullary collision
+    /// there could turn an export that resolves today into one that declines.
+    nullary_ambiguous: std::collections::HashSet<String>,
     /// Flat forms (dots replaced by underscores) of every dependency namespace.
     /// An export name shaped like `<prefix>_<rest>` for one of these prefixes
     /// may be a dependency function, so its Lean identifier cannot be assumed
@@ -211,13 +216,27 @@ impl ModelInfo {
             .any(|sig| sig.lean_name == qualified)
     }
 
+    /// Whether a parameterless model def collided on its flat key. Kept for the
+    /// symmetry the bridge gate relies on: an ambiguous nullary key must not
+    /// resolve, and it must not disturb `model_lean_name` either.
+    #[cfg(test)]
+    fn nullary_is_ambiguous(&self, flat: &str) -> bool {
+        self.nullary_ambiguous.contains(flat)
+    }
+
     /// The parsed signature of the model def a certified export cites, when it
     /// resolves unambiguously. `None` keeps the caller fail-closed.
     fn model_fn_sig(&self, name: &str) -> Option<&FnSig> {
         if self.ambiguous.contains(name) {
             return None;
         }
-        self.fns.get(name).or_else(|| self.nullary_fns.get(name))
+        self.fns.get(name).or_else(|| {
+            if self.nullary_ambiguous.contains(name) {
+                None
+            } else {
+                self.nullary_fns.get(name)
+            }
+        })
     }
 
     fn parse_lean(&mut self, content: &str, entry_namespace: Option<&str>) {
@@ -340,17 +359,17 @@ impl ModelInfo {
                     i += 1;
                     continue;
                 }
-                let table = if nullary {
-                    &mut self.nullary_fns
+                let (table, ambiguous) = if nullary {
+                    (&mut self.nullary_fns, &mut self.nullary_ambiguous)
                 } else {
-                    &mut self.fns
+                    (&mut self.fns, &mut self.ambiguous)
                 };
                 match table.get(&flat) {
                     Some(existing) if existing.lean_name != sig.lean_name => {
                         // Two distinct qualified names collide on one flat
                         // key: neither may ever resolve (fail-closed).
                         table.remove(&flat);
-                        self.ambiguous.insert(flat);
+                        ambiguous.insert(flat);
                     }
                     _ => {
                         table.insert(flat, sig);
@@ -500,6 +519,74 @@ end Program\n";
             Some("AverList_get"),
             "a flat export must not be shadowed by a prelude namespace"
         );
+    }
+
+    /// The bridge renderer needs a record's field ACCESSORS in declaration
+    /// order, and a parameterless def's return type. Neither may disturb
+    /// `model_lean_name`, whose resolution decides the certified set.
+    #[test]
+    fn structures_and_parameterless_defs_are_read_without_widening_model_names() {
+        // Written as one escaped literal on purpose: a `\`-continued Rust
+        // string eats the following line's indentation, and this parser reads
+        // exactly that indentation to find a structure's field lines.
+        let dep = concat!(
+            "namespace Domain.Rational\n",
+            "structure Fraction where\n",
+            "  top : Int\n",
+            "  bottom : Int\n",
+            "instance : Inhabited Fraction := mk\n",
+            "def zeroFraction  : Fraction :=\n",
+            "  { top := 0, bottom := 1 : Fraction }\n",
+            "def plus (a : Fraction) (b : Fraction) : Fraction :=\n",
+            "  a\n",
+            "end Domain.Rational\n",
+        );
+        let info = super::ModelInfo::from_files(&[
+            (
+                "AverCommon.lean".to_string(),
+                "def unrelated : Int := 0\n".to_string(),
+            ),
+            ("Domain/Rational.lean".to_string(), dep.to_string()),
+            (
+                "lakefile.lean".to_string(),
+                "roots := #[`Main, `AverCommon]\n".to_string(),
+            ),
+        ]);
+
+        let (qualified, record) = info
+            .resolve_structure("Domain.Rational", "Fraction")
+            .expect("the transpiled structure is read");
+        assert_eq!(qualified, "Domain.Rational.Fraction");
+        assert_eq!(
+            record.fields,
+            vec![
+                ("top".to_string(), "Int".to_string()),
+                ("bottom".to_string(), "Int".to_string()),
+            ],
+            "fields must keep declaration order — it is the wasm packing order"
+        );
+
+        let nullary = info
+            .model_fn_sig("Domain_Rational_zeroFraction")
+            .expect("a parameterless def has a readable signature");
+        assert!(nullary.params.is_empty());
+        assert_eq!(nullary.ret, "Fraction");
+        assert_eq!(nullary.lean_name, "Domain.Rational.zeroFraction");
+        assert!(info.is_model_fn("Domain.Rational.zeroFraction"));
+
+        // The regression this guards: reading parameterless defs must NOT make
+        // `model_lean_name` resolve a name it declined before, because that
+        // gate decides which exports survive certification.
+        assert_eq!(
+            info.model_lean_name("Domain_Rational_zeroFraction"),
+            None,
+            "a parameterless def must stay outside the model-citation name space"
+        );
+        assert_eq!(
+            info.model_lean_name("Domain_Rational_plus").as_deref(),
+            Some("Domain.Rational.plus"),
+        );
+        assert!(!info.nullary_is_ambiguous("Domain_Rational_zeroFraction"));
     }
 
     /// A real dependency module DOES define the name space: its namespace is a
