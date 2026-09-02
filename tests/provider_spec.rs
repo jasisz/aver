@@ -429,6 +429,86 @@ fn main() -> Int
     );
 }
 
+/// The 58-byte `fuzz_replay_roundtrip` repro, verbatim. `Console.warn`
+/// is `replay = reissued`, so it names a LIVE capability during replay
+/// and the operation is reachable from the compiled program whether or
+/// not the run reaches it.
+const CONSOLE_REISSUED: &str = "\
+module M
+
+fn f()->Unit
+ ![Console.warn]
+ Console.warn(\"\")
+";
+
+/// Record and replay a Console program through exactly the two calls
+/// production makes, so an embedder — the `fuzz_replay_roundtrip`
+/// harness above all — cannot drift from the CLI without this failing.
+///
+/// `aver run --record` writes `machine.provider_registry().provenance()`
+/// into the recording (`main/commands.rs`); `aver replay` hands that
+/// table back through `start_replay_with_provenance`
+/// (`main/replay_cmd/backends.rs`). `Console.print/error/warn` became
+/// `replay = reissued` in d05c0581, which means a replay executes a live
+/// Console provider, which in turn means
+/// `validate_replay_provenance_for_operations` demands the recording pin
+/// that provider's identity. The provenance-less `start_replay` is
+/// therefore NOT a shorter spelling of the same replay: it refuses every
+/// program that so much as names Console, at preflight, before a single
+/// effect is consumed. The fuzz harness called it and reported 47 of 47
+/// "crashes" that were all this refusal — including on its own committed
+/// `corpus/parser/{hello,effects}.av` seeds. Both halves are pinned here.
+#[test]
+fn console_reissued_replay_needs_the_recording_provenance() {
+    let root = temp_root("console-reissued-replay");
+    fs::write(root.join("main.av"), CONSOLE_REISSUED).expect("write entry");
+
+    // Record. No `set_provider_registry`: the VM's own standard registry
+    // is what an embedder gets, and it is the registry whose provenance
+    // the recording carries.
+    let (mut recording_vm, _) = compile_vm(&root, "main.av");
+    recording_vm.start_recording();
+    recording_vm.run().expect("record top level");
+    let (recorded, record_stdout, _) =
+        aver::services::console::capture_output(|| recording_vm.run_named_function("f", &[]));
+    recorded.expect("record Console.warn");
+    let effects = recording_vm.recorded_effects().to_vec();
+    let provenance = recording_vm.provider_registry().provenance();
+    assert_eq!(effects.len(), 1, "one reissued Console.warn event");
+    assert!(
+        provenance.iter().any(|entry| entry.capability == "Console"),
+        "the recording pins the live Console provider: {provenance:?}"
+    );
+
+    // Replay through the recording's provenance — the `aver replay` call.
+    let (mut replay_vm, _) = compile_vm(&root, "main.av");
+    replay_vm
+        .start_replay_with_provenance(effects.clone(), &provenance, true)
+        .expect("recorded provenance admits the reissued Console replay");
+    replay_vm.run().expect("replay top level");
+    let (replayed, replay_stdout, _) =
+        aver::services::console::capture_output(|| replay_vm.run_named_function("f", &[]));
+    replayed.expect("replay Console.warn");
+    replay_vm
+        .ensure_replay_consumed()
+        .expect("transcript consumed");
+    assert_eq!(record_stdout, replay_stdout, "replay reproduces the run");
+
+    // The provenance-less API refuses the same trace — the drift the
+    // harness had, stated as a fact instead of a comment.
+    let (mut empty_provenance_vm, _) = compile_vm(&root, "main.av");
+    empty_provenance_vm.start_replay(effects, true);
+    let error = empty_provenance_vm
+        .run()
+        .expect_err("empty provenance must not admit a reissued capability");
+    assert!(
+        error
+            .to_string()
+            .contains("live replay capability 'Console' has no provider provenance in the replay"),
+        "unexpected refusal: {error}"
+    );
+}
+
 #[test]
 fn removing_standard_time_binding_proves_there_is_no_legacy_vm_bypass() {
     let root = temp_root("time-fault-injection");
