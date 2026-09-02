@@ -37,13 +37,15 @@ fn examples_dir() -> PathBuf {
 ///   * `examples/diagnostics/` — same exclusions as
 ///     `tests/wasm_gc_codegen_regression.rs`.
 ///   * Three `Terminal.*` users — `status_board.av`,
-///     `oracle_trace.av`, `terminal_size_snapshot.av`. The wasip2
-///     backend lowered 10 effects in 0.18 "Span" (all of `Disk`,
-///     `Time.sleep`, `Console.readLine`) but `Terminal.moveTo` /
-///     `Terminal.readKey` / `Terminal.size` are not yet wired —
-///     codegen errors with "no helper registered, no effect
-///     import, no inline lowering". Tracked as a follow-up; this
-///     suite is the regression net, the wiring is its own ticket.
+///     `oracle_trace.av`, `terminal_size_snapshot.av`. WASI 0.2 has no
+///     raw/cooked-mode terminal interface, so the capability target
+///     manifest calls `Terminal` unsupported on wasip2 and the CLI
+///     refuses these programs before codegen. This suite drives the
+///     emitter directly, past that refusal, where the missing lowering
+///     is a codegen error instead. They are skipped because the
+///     refusal is the shipped behaviour, not because the wiring is
+///     pending — `tests/capability_target_manifest_spec.rs` is where
+///     that refusal is pinned.
 ///
 /// `oracle_independent_products.av` used to be skipped (its
 /// higher-order `Fn(BranchPath, …)` spec param was mis-discovered as a

@@ -26,7 +26,7 @@ pub(super) enum EffectName {
     /// canonical-ABI `wasi:cli/stdout.get-stdout` (cached) plus
     /// `wasi:io/streams.[method]output-stream.blocking-write-and-flush`
     /// in the per-effect glue at the call site — see
-    /// `EffectName::lowers_on_wasip2` and `Wasip2ImportSlot`.
+    /// `EffectName::lowers_on_wasip2` and `EffectName::wasip2_slots`.
     ConsolePrint,
     ConsoleError,
     ConsoleWarn,
