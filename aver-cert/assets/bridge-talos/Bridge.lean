@@ -9,3 +9,4 @@ import Bridge.EnvOfClaim
 import Bridge.Instr
 import Bridge.Bridge
 import Bridge.Axioms
+import Bridge.Smoke

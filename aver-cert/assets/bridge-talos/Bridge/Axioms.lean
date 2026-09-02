@@ -1,0 +1,24 @@
+import Bridge.Bridge
+import Bridge.EnvOfClaim
+
+/-!
+# Axiom audit
+
+Every theorem of the bridge must rest on `propext`, `Classical.choice` and
+`Quot.sound` only; `HostSimulation`/`HostSorts`/`HasTy` are premises of the
+statements, never axioms. `lake build Bridge.Axioms` prints the lists.
+-/
+
+#print axioms Bridge.typed_run
+#print axioms Bridge.bridge_hostCall
+#print axioms Bridge.bridge_ifElse
+#print axioms Bridge.bridge_structNew
+#print axioms Bridge.bridge_i64Cmp
+#print axioms Bridge.bridge_i32Cmp
+#print axioms Bridge.declEntry?_lowerTypeDecl
+#print axioms Bridge.hostRoleIdx?_slotLookup
+#print axioms Bridge.envOfClaim_import_role
+#print axioms Bridge.initSingleModuleConfig_synth
+#print axioms Bridge.bridge_run
+#print axioms Bridge.wFuncN_terminatesWith
+#print axioms Bridge.wFuncN_TerminatesWith

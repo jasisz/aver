@@ -38,7 +38,9 @@ LEAN_NUM_THREADS=6 lake build   # the bridge itself, seconds
 ```
 
 `.lake/` is ignored and is large (about 7.5 GB, almost all Mathlib). The build has no
-network needs after `lake update`.
+network needs after `lake update`. A clean build of the bridge modules alone takes about
+ten seconds; `lake build Bridge.Axioms` prints the axiom audit, `lake build Bridge.Smoke`
+the smoke comparison.
 
 ## Layout
 
@@ -52,6 +54,10 @@ network needs after `lake update`.
 | `Bridge/HostCall.lean` | spike (a): `bridge_hostCall` — a wall `call` of a host slot is one Talos `callHostReturn` step |
 | `Bridge/IfElse.lean` | spike (b): `bridge_ifElse` — a wall `ifElse` is `Step.iff`, the branch, `Step.exitControl` |
 | `Bridge/EnvOfClaim.lean` | spike (c): `envOfClaim` is a projection of the declared envelope (host half, struct half), the k5 instance |
+| `Bridge/Instr.lean` | one `Step` per remaining profile instruction: locals, constants, `structGet`/`structNew`, `refIsNull`, the nine comparisons |
+| `Bridge/Bridge.lean` | `bridge_run` (induction on `HasTy`, framed) and the export theorem `wFuncN_terminatesWith` / `wFuncN_TerminatesWith` |
+| `Bridge/Axioms.lean` | `#print axioms` of every theorem (all `[propext, Classical.choice, Quot.sound]` or fewer) |
+| `Bridge/Smoke.lean` | k5 `plus`/`isNonNeg`/`lessThan` bodies through `wFuncN` and through `translate` + Talos `runSteps`, results compared (not part of the proof) |
 
 ## Log
 
@@ -107,3 +113,39 @@ network needs after `lake update`.
   claim has no declared layout and `translate` refuses its `structNew`. Also erased but
   harmless: `if` block types (inert for `Step`), local types (fixed by
   `PlanBytes.singleCarrierLocalBodyBytes`: one nullable carrier reference).
+- **Step 8 — assembly, `Instr.lean` + `Bridge.lean`.** CLOSED. `bridge_run` is one
+  induction on the typing derivation (twelve cases), stated FRAMED (typed prefix over an
+  arbitrary stack beneath), which is what lets an `if` branch — typed from the empty
+  stack — reuse the lemma at the empty prefix; nested `ifElse` needs nothing more.
+  `wFuncN_terminatesWith`: `wFuncN code host fuel self vs = some w` ⇒ `∃ trace v store',
+  Steps (initialConfig …) trace ⟨.done [v], store'⟩ ∧ R store'.wasm.gcHeap v w`, and the same
+  as Talos's `TerminatesWith`. Premises: `HostSimulation`, `HostSorts`, `HasTy` for the
+  body, `translateList = some`, sorted and related arguments. `#print axioms` on every
+  theorem: `[propext, Classical.choice, Quot.sound]` (some fewer). Elaboration: whole
+  bridge under 10 s cold; `Bridge.lean` 1.0 s, `Instr.lean` 0.7 s, `Translate.lean` 0.9 s.
+- **Step 9 — smoke, `Smoke.lean`.** The three k5 bodies (verbatim `WCode` from the
+  package's `Module.lean`) agree between `wFuncN` (small-int faces) and Talos
+  (`translate` + `runSteps`, heap host): `plus(1/2,1/3)` = 5/6 (18 Talos steps),
+  `plus(7/9,-2/5)` = 17/45, `isNonNeg` on 1/2, -3/4, 0/1, `lessThan` both ways. Smoke only.
+
+## What is NOT proved here (the list, not an estimate)
+
+1. **Coverage lemma** (brief §3): `lowerExprFragmentBody carrier plan = some instrs` for a
+   checked compute plan without `selfCall` ⇒ `HasTy (envOfClaim …) Γ [] instrs [t]` and
+   `translateList … = some _`. Induction over `lowerNodesFuel`/`lowerBlockFuel` with the
+   plan checker's typing (`FragTy` → `STy`), the symbolic stack of `lowerNodesFuel` being
+   the `σ` of `HasTy`.
+2. **`HostSorts` from the wall's contracts**: the wall's `_hadd`/`_hmul`/`_hCmp` give a
+   well-sorted result only for REPRESENTED operands (`CarrierSpec.car`); `HostSorts` asks
+   it for all sorted operands. Either restate `HostSorts` relative to `domRepr`-represented
+   runs (then `Obligation.holds`'s hypotheses discharge it) or prove the sort discipline
+   with representation as the invariant.
+3. **`HostSimulation` for a concrete host**: instantiate `hostEnv` with the runtime's
+   real helper semantics (or with the reference faces) and prove `invoke`; today the
+   assumption is stated, used, and discharged only by the smoke's small-int faces.
+4. **Composition with the byte pins**: `envOfClaim` is shown to be a projection of the
+   declared data; connecting `translate (envOfClaim …) (lower plan)` to "these bytes" is
+   the existing `PlanBytes` + `typeSectionMatches` + `hostTableBound` pins composed with
+   spike (c)'s two lemmas — a statement over `AcceptedArtifact`, not written here.
+5. **Distinct host indices** (`hostRoleIdx?_slotLookup` needs `(hostTable.map Prod.snd).Nodup`):
+   derive it from the byte-derived role table or add it to the claim check.
