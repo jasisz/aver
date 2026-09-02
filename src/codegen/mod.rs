@@ -430,6 +430,20 @@ pub struct CodegenContext {
     /// run as `cargo test` — but it must not be a secret either: `compile`
     /// reports what it left behind.
     pub omitted_verify_cases: std::cell::RefCell<Vec<String>>,
+    /// Universal law-claims of a certificate-model Lean emission, in emit
+    /// order — see [`UniversalLawClaim`].
+    ///
+    /// Same reason as `declined_claims` above: only the code that BUILDS the
+    /// law statement knows what it stated, so it says so here. The certificate
+    /// producer used to recover this by line-parsing the emitted `.lean` files
+    /// for the `-- aver:law-class` marker, which coupled a second crate to the
+    /// emitter's formatting and silently lost every statement the emitter did
+    /// not put on one line.
+    ///
+    /// Written by `lean::toplevel::emit_verify_law_block` (certificate model
+    /// only); read out into [`ProjectOutput::law_claims`] at the end of a Lean
+    /// transpile.
+    pub universal_law_claims: std::cell::RefCell<Vec<UniversalLawClaim>>,
     /// Canonical resolved-program view of the whole codegen input —
     /// entry items (post-pipeline `NameResolve`) + per-dep-module
     /// resolved fn defs + `FnId`-keyed lookup.
@@ -522,6 +536,38 @@ pub struct CodegenContext {
     pub hand_proofs: std::collections::HashMap<(String, String), String>,
 }
 
+/// One universal law-claim of a certificate-model Lean emission, recorded by
+/// the emitter at the point it wrote the theorem.
+///
+/// This is the STRUCTURE the certificate producer consumes. The rendered
+/// `statement` is assembled here from the same quantifier binders and
+/// statement body the emitted theorem was assembled from, so the claim and the
+/// model theorem cannot drift apart the way a downstream re-parse of the
+/// emitted text could. `givens`, `when_expr`, `lhs` and `rhs` carry the pieces
+/// the statement was built from, so a consumer can inspect a claim without
+/// taking the rendered text apart again.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UniversalLawClaim {
+    /// Stable source identity, `<module>.<fn>.<law>` (`Domain.Rational.plus.commutative`).
+    pub label: String,
+    /// Lean namespace the theorem was emitted inside (`Domain.Rational`);
+    /// empty when the theorem is not namespaced.
+    pub namespace: String,
+    /// Bare theorem name inside that namespace (`plus_law_commutative`).
+    pub theorem: String,
+    /// Quantifier binders, as the emitted `(name, Lean type)` pairs.
+    pub givens: Vec<(String, String)>,
+    /// The `when` premise as emitted Lean, when the law has one.
+    pub when_expr: Option<String>,
+    /// The law's left-hand side as emitted Lean.
+    pub lhs: String,
+    /// The law's right-hand side as emitted Lean.
+    pub rhs: String,
+    /// The theorem's universal statement, rendered on a single line —
+    /// verbatim the text between `theorem <name> : ` and ` := by`.
+    pub statement: String,
+}
+
 /// Output files from a codegen backend.
 pub struct ProjectOutput {
     /// Files to write: (relative_path, content).
@@ -535,6 +581,9 @@ pub struct ProjectOutput {
     /// `cargo test` passes — but the user is told which of their cases the
     /// crate does not carry.
     pub omitted_verify_cases: Vec<String>,
+    /// Universal law-claims the emission carries, in emit order. Populated by
+    /// the certificate-model Lean emission only; empty everywhere else.
+    pub law_claims: Vec<UniversalLawClaim>,
 }
 
 impl ProjectOutput {
@@ -545,6 +594,7 @@ impl ProjectOutput {
             files,
             substituted_compile_errors: Vec::new(),
             omitted_verify_cases: Vec::new(),
+            law_claims: Vec::new(),
         }
     }
 
@@ -833,6 +883,7 @@ pub fn build_context(
         declined_claims: std::cell::RefCell::new(std::collections::BTreeMap::new()),
         substituted_compile_errors: std::cell::RefCell::new(Vec::new()),
         omitted_verify_cases: std::cell::RefCell::new(Vec::new()),
+        universal_law_claims: std::cell::RefCell::new(Vec::new()),
         program_shape,
         resolved_program,
         mir_program,
@@ -1297,6 +1348,7 @@ pub(crate) fn empty_test_ctx() -> CodegenContext {
         declined_claims: std::cell::RefCell::new(std::collections::BTreeMap::new()),
         substituted_compile_errors: std::cell::RefCell::new(Vec::new()),
         omitted_verify_cases: std::cell::RefCell::new(Vec::new()),
+        universal_law_claims: std::cell::RefCell::new(Vec::new()),
         resolved_program: crate::codegen::program_view::ResolvedProgramView::default(),
         program_shape: None,
         mir_program: None,

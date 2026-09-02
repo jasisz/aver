@@ -78,9 +78,16 @@ fn main() -> ExitCode {
     match Cli::parse().command.into_route() {
         Route::StrictVerify { artifact, cert_dir } => match aver_cert::verify(&artifact, &cert_dir)
         {
-            Ok(Verdict::Certified { summary, faces }) => {
+            Ok(Verdict::Certified {
+                summary,
+                faces,
+                laws,
+            }) => {
                 println!("{} {}", "CERTIFIED".green().bold(), summary);
                 println!("  {}", aver_cert::ARTIFACT_DECODE_LINE);
+                for law in laws {
+                    println!("  {}", law.yellow());
+                }
                 for face in faces {
                     println!("  {face}");
                 }
@@ -103,12 +110,19 @@ fn main() -> ExitCode {
         },
         Route::TrustedOleanCheck { artifact, cert_dir } => {
             match aver_cert::check(&artifact, &cert_dir) {
-                Ok(CheckVerdict::Checked { summary, faces }) => {
+                Ok(CheckVerdict::Checked {
+                    summary,
+                    faces,
+                    laws,
+                }) => {
                     println!("{} {}", "CHECKED".cyan().bold(), summary);
                     println!(
                         "  trusted freshly built or explicitly cached .olean closure; \
                          whole-closure leanchecker --fresh replay was skipped"
                     );
+                    for law in laws {
+                        println!("  {}", law.yellow());
+                    }
                     for face in faces {
                         println!("  {face}");
                     }

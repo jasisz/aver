@@ -1,8 +1,16 @@
 // Included from engine/mod.rs (engine feature) — see the include! list there.
 
-/// One law-claim extracted from the emitted model modules: a universal law
-/// theorem the certificate's `Laws.lean` corollary cites, keyed by the stable
-/// source-level `module.fn.law` label from its `-- aver:law-class` marker.
+/// One law-claim of a certificate package: a universal law theorem of the
+/// emitted model modules that the certificate's `Laws.lean` corollary cites,
+/// keyed by the stable source-level `module.fn.law` label.
+///
+/// The producer HANDS these over as structure. The emitter that built the law
+/// theorem's statement records the claim at the point it wrote the theorem
+/// (`ProjectOutput::law_claims` on the compiler side), so this crate never
+/// reads the emitted Lean text to recover what was stated. That also keeps the
+/// `-- aver:law-class` marker private to the compiler: nothing here parses it,
+/// and `aver-cert verify` reads the manifest's `laws` array, not the model
+/// files.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LawClaim {
     /// Stable source identity (`Domain.Rational.plus.commutative`).
@@ -11,8 +19,8 @@ pub struct LawClaim {
     pub prefix: String,
     /// Bare theorem name inside that namespace (`plus_law_commutative`).
     pub theorem: String,
-    /// The theorem's verbatim universal statement text — the single line
-    /// exactly as emitted between `theorem <name> : ` and ` := by`.
+    /// The theorem's universal statement, on one line — exactly the text the
+    /// emitter wrote between `theorem <name> : ` and ` := by`.
     pub statement: String,
 }
 
@@ -34,17 +42,14 @@ impl LawClaim {
     }
 }
 
-/// Marker prefix — kept in lockstep with the compiler emitter
-/// (`LAW_CLASS_MARKER_PREFIX` in the aver-lang Lean codegen).
-const LAW_CLASS_MARKER: &str = "-- aver:law-class ";
-
-/// Mirror of the checker's `validate_law_candidate` gates. The producer must
-/// never write a manifest entry its own checker hard-rejects — one refused
-/// entry fails candidate parsing for the WHOLE package before Lean even runs.
-/// Legitimate compiler output can trip the gates (a record literal
-/// `{ field := value }` in a statement carries `:=`; a reserved-word module
-/// escapes to `Type'`), so such a law is simply not claimed — the surface is
-/// additive and omitting a claim is fail-closed.
+/// Mirror of the checker's `validate_law_candidate` gates, kept as a
+/// DEFENSIVE check on the rendered statement even though the claim now arrives
+/// as structure: the producer must never write a manifest entry its own
+/// checker hard-rejects — one refused entry fails candidate parsing for the
+/// WHOLE package before Lean even runs. Legitimate compiler output can trip
+/// the gates (a record literal `{ field := value }` in a statement carries
+/// `:=`; a reserved-word module escapes to `Type'`), so such a law is simply
+/// not claimed — the surface is additive and omitting a claim is fail-closed.
 fn claim_survives_checker_gates(claim: &LawClaim) -> bool {
     let plain_dotted = |value: &str| {
         !value.is_empty()
@@ -91,97 +96,83 @@ fn claim_survives_checker_gates(claim: &LawClaim) -> bool {
     depth.is_empty()
 }
 
-/// Scan the emitted model files for universal law theorems.
+/// Admit the law-claims the producer handed over.
 ///
-/// The emitter writes, for every exported law, one marker line
-/// `-- aver:law-class <theorem> <class> <label>` followed (possibly after
-/// support theorems) by the law theorem itself on a single line
-/// `theorem <theorem> : <statement> := by`. Only `universal`-classed laws are
-/// claims; a marker whose theorem never materializes on a single line (for
-/// example a partitioned statement) contributes no claim — a law-claim is
-/// additive surface, so omitting one is fail-closed, never wrong.
-pub fn extract_law_claims(model_files: &[(String, String)]) -> Vec<LawClaim> {
-    let mut claims = Vec::new();
-    for (path, content) in model_files {
-        if !path.ends_with(".lean") || path == "AverCommon.lean" || path == "lakefile.lean" {
-            continue;
-        }
-        let mut namespaces: Vec<String> = Vec::new();
-        let mut pending: Option<(String, String)> = None;
-        for line in content.lines() {
-            let trimmed = line.trim();
-            if let Some(ns) = trimmed.strip_prefix("namespace ") {
-                namespaces.push(ns.trim().to_string());
-                continue;
-            }
-            if let Some(ns) = trimmed.strip_prefix("end ")
-                && namespaces.last().map(String::as_str) == Some(ns.trim())
-            {
-                namespaces.pop();
-                continue;
-            }
-            if let Some(rest) = trimmed.strip_prefix(LAW_CLASS_MARKER) {
-                let mut fields = rest.split_whitespace();
-                pending = match (fields.next(), fields.next(), fields.next()) {
-                    (Some(theorem), Some("universal"), Some(label)) => {
-                        Some((theorem.to_string(), label.to_string()))
-                    }
-                    _ => None,
-                };
-                continue;
-            }
-            if let Some((theorem, label)) = pending.take() {
-                let head = format!("theorem {theorem} : ");
-                if let Some(rest) = trimmed.strip_prefix(head.as_str()) {
-                    if let Some(statement) = rest.strip_suffix(" := by") {
-                        let claim = LawClaim {
-                            label,
-                            prefix: namespaces.join("."),
-                            theorem,
-                            statement: statement.to_string(),
-                        };
-                        if claim_survives_checker_gates(&claim) {
-                            claims.push(claim);
-                        }
-                    }
-                    // A marked theorem that is not single-line yields no claim.
-                } else {
-                    // Support theorems and proof lines sit between the marker
-                    // and the law theorem; keep waiting for the marked name.
-                    pending = Some((theorem, label));
-                }
-            }
+/// The compiler's Lean emitter records one claim per exported universal law at
+/// the point it writes that law's theorem, so claims arrive as STRUCTURE and
+/// nothing here reads the emitted `.lean` text. All this function does is
+/// apply the defensive gates above: a claim whose rendered statement or whose
+/// identifiers the checker would refuse is dropped, because a single refused
+/// entry fails candidate parsing for the whole package before Lean even runs.
+/// Each dropped claim comes back as `(label, reason)` so the caller can say
+/// what it declined instead of losing it silently.
+pub fn admit_law_claims(claims: Vec<LawClaim>) -> (Vec<LawClaim>, Vec<(String, String)>) {
+    let mut admitted = Vec::with_capacity(claims.len());
+    let mut declined = Vec::new();
+    for claim in claims {
+        if claim_survives_checker_gates(&claim) {
+            admitted.push(claim);
+        } else {
+            declined.push((
+                claim.label.clone(),
+                "statement or identifiers would be refused by the checker's law gates".to_string(),
+            ));
         }
     }
-    claims
+    (admitted, declined)
 }
 
-/// Render the package's `Laws.lean`: one three-line corollary per claim,
-/// conjoining the law's verbatim universal statement with the artifact-level
-/// `Holds` fact by citing the model theorem and `AverCert.Final.cert`. One
-/// kernel-checked name per claim ties the law to exactly the certified bytes.
+/// Render the package's `Laws.lean`: one corollary per claim, conjoining the
+/// law's universal statement with the artifact-level `Holds` fact by citing
+/// the model theorem and `AverCert.Final.cert`. One kernel-checked name per
+/// claim ties the law to exactly the certified bytes.
+///
+/// The statement is re-elaborated INSIDE the model theorem's own namespace,
+/// not under an `open <prefix> in` at root. Those two contexts do not agree:
+/// inside `namespace Json`, `Json.jsonInt` resolves to the constructor
+/// `Json.Json.jsonInt`, while at root the same text reaches the accessor
+/// `Json.jsonInt` that an `open` only adds an alias beside. Reproducing the
+/// namespace makes the claim text mean exactly what it meant where the
+/// emitter wrote it — the namespace is `theorem` minus its last segment, so
+/// the manifest names the context it is read in.
+///
+/// Everything the certificate owns is spelled `_root_.`-qualified, so a model
+/// module that declares an `AverCert` sub-namespace cannot shadow the fact
+/// being conjoined or the proof term citing it.
 pub fn render_laws_lean(claims: &[LawClaim]) -> String {
     let mut s = String::new();
     s.push_str(
         "-- Law-claims of this certificate. Each corollary conjoins one universal\n\
          -- law of the model modules with the artifact-level `Holds` fact, so a\n\
          -- single kernel-checked name ties the law to exactly the certified bytes.\n\
-         import Manifest\nimport Final\n\nnamespace AverCert.Laws\n\n",
+         -- Each statement is elaborated inside the namespace its model theorem was\n\
+         -- emitted in, so the claim text means there what it means in the model.\n\
+         import Manifest\n\
+         import Final\n\n\
+         set_option autoImplicit false\n\n",
     );
     for claim in claims {
-        let open_line = if claim.prefix.is_empty() {
-            String::new()
-        } else {
-            format!("open {} in\n", claim.prefix)
-        };
-        s.push_str(&format!(
-            "{open_line}/-- law-claim `{}` -/\ntheorem {} :\n    ({}) ∧ (AverCert.Schema.Holds AverCert.manifest) :=\n  ⟨{}, AverCert.Final.cert⟩\n\n",
-            claim.label,
-            claim.corollary(),
-            claim.statement,
-            claim.qualified(),
-        ));
+        // Concatenated, never interpolated into a format string: a statement
+        // carrying `{`/`}` must stay inert text.
+        if !claim.prefix.is_empty() {
+            s.push_str("namespace ");
+            s.push_str(&claim.prefix);
+            s.push_str("\n\n");
+        }
+        s.push_str("/-- law-claim `");
+        s.push_str(&claim.label);
+        s.push_str("` -/\ntheorem _root_.AverCert.Laws.");
+        s.push_str(&claim.corollary());
+        s.push_str(" :\n    (");
+        s.push_str(&claim.statement);
+        s.push_str(") ∧ (_root_.AverCert.Schema.Holds _root_.AverCert.manifest) :=\n  ⟨_root_.");
+        s.push_str(&claim.qualified());
+        s.push_str(", _root_.AverCert.Final.cert⟩\n\n");
+        if !claim.prefix.is_empty() {
+            s.push_str("end ");
+            s.push_str(&claim.prefix);
+            s.push_str("\n\n");
+        }
     }
-    s.push_str("end AverCert.Laws\n");
     s
 }
