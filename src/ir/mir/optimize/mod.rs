@@ -4,7 +4,7 @@
 //! pipeline composes through plain function chaining
 //! (`branch_collapse(bool_match_to_if(const_fold(program)))`).
 //! The VM compiler wires them up in
-//! `vm::compiler::compile_program_with_mir_fallback`.
+//! `vm::compiler::compile_program`.
 //!
 //! ## Pass directory
 //!

@@ -59,8 +59,7 @@ fn run_mir(src: &str, fn_name: &str, args: &[i64]) -> Value {
 
     let mut arena = Arena::new();
     let (code, globals) =
-        vm::compile_program_with_mir_fallback(&resolved, &symbols, &mut arena, None)
-            .expect("MIR compile failed");
+        vm::compile_program(&resolved, &symbols, &mut arena, None).expect("MIR compile failed");
     let nv_args: Vec<NanValue> = args
         .iter()
         .map(|i| NanValue::new_int(*i, &mut arena))
@@ -95,7 +94,7 @@ fn compile_mir(src: &str) -> aver::vm::CodeStore {
     }
     let mut arena = Arena::new();
     vm::register_service_types(&mut arena);
-    let (code, _) = vm::compile_program_with_mir_fallback(
+    let (code, _) = vm::compile_program(
         &result.resolved_items,
         &result.symbol_table,
         &mut arena,
@@ -618,23 +617,18 @@ fn add_int_emitted_for_double() {
     );
 }
 
-// ── MIR-coverage smoke ──────────────────────────────────────────────
+// ── Corpus smoke ────────────────────────────────────────────────────
 
 #[test]
-fn corpus_hello_smoke_mir_walker_covers_it() {
-    // examples/core/hello.av uses Console.print; the MIR walker's
-    // CALL_BUILTIN coverage lands the main fn in the covered set.
+fn corpus_hello_compiles_through_the_mir_walker() {
+    // examples/core/hello.av uses Console.print, so its `main` reaches
+    // the walker's CALL_BUILTIN emit. The walker has no fallback: if it
+    // could not emit this shape, compilation would fail outright.
     let src = std::fs::read_to_string("examples/core/hello.av")
         .expect("examples/core/hello.av should exist");
-    let mut items = parse(&src);
-    tco::transform_program(&mut items);
-    resolver::resolve_program(&mut items);
-    let (resolved, _) = resolve(&items);
-    let mir = aver::ir::mir::lower_program(&resolved);
-    let cov = aver::vm::mir_vm::classify_mir_program_coverage(&mir);
+    let code = compile_mir(&src);
     assert!(
-        cov.covered >= 1,
-        "examples/core/hello.av should have at least one fn in MIR-covered: {:?}",
-        cov
+        code.find("main").is_some(),
+        "examples/core/hello.av should compile its `main` chunk"
     );
 }
