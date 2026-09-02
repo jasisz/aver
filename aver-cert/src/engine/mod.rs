@@ -142,4 +142,6 @@ include!("classification.rs");
 #[cfg(feature = "engine")]
 include!("model_eval.rs");
 #[cfg(feature = "engine")]
+include!("source_bridges.rs");
+#[cfg(feature = "engine")]
 include!("render.rs");

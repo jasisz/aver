@@ -6900,7 +6900,7 @@ fn emit_artifact_certificate(
             statement: claim.statement.clone(),
         })
         .collect();
-    let declined_law_claims =
+    let declines =
         cert::write_project(out_path, artifact, &analysis, &model_out.files, law_claims)?;
 
     let cert_dir = out_path.join("cert");
@@ -6918,8 +6918,14 @@ fn emit_artifact_certificate(
     // A law-claim the package renderer refused is said out loud rather than
     // dropped in silence: the law is still proved in the model modules, it
     // just does not enter the certificate's claimed surface.
-    for (label, reason) in &declined_law_claims {
+    for (label, reason) in &declines.law_claims {
         println!("    law-claim declined: {label} — {reason}");
+    }
+    // Same treatment for a record projection-compute export whose plan the
+    // producer could not identify with a source function: the export stays
+    // certified, its certified model just stays the plan.
+    for (export, reason) in &declines.source_bridges {
+        println!("    source-bridge declined: {export} — {reason}");
     }
     println!(
         "    verify: aver cert verify {} {}",

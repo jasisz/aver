@@ -136,7 +136,7 @@ impl Wasip2ComponentEnvelopeDeclaration {
 /// verbatim statement and its `Laws.lean` corollary, and the checker-owned
 /// witness re-elaborates every corollary at exactly the declared statement
 /// and audits its axioms against the kernel whitelist.
-pub const CERT_SCHEMA_VERSION: u32 = 7;
+pub const CERT_SCHEMA_VERSION: u32 = 8;
 
 /// Named theorem audited by the checker-owned witness.
 pub const ARTIFACT_CERTIFICATE_ROOT: &str = "AverCert.Artifact.certificate";

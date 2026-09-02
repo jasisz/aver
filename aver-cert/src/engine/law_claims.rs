@@ -139,19 +139,37 @@ pub fn admit_law_claims(claims: Vec<LawClaim>) -> (Vec<LawClaim>, Vec<(String, S
 /// Everything the certificate owns is spelled `_root_.`-qualified, so a model
 /// module that declares an `AverCert` sub-namespace cannot shadow the fact
 /// being conjoined or the proof term citing it.
-pub fn render_laws_lean(claims: &[LawClaim]) -> String {
+///
+/// `bridge_statements` carries, per claim, the plan-equals-source bridge
+/// statements of every model function that claim's statement mentions — empty
+/// when some mentioned function has no bridge, in which case the corollary is
+/// exactly the two-conjunct one this surface has always emitted. When they are
+/// all bridged the corollary conjoins them too, so a single kernel-checked
+/// name says: this law holds of the source function, the bytes simulate the
+/// plan, AND the plan IS that source function.
+pub fn render_laws_lean(claims: &[LawClaim], bridge_statements: &[Vec<(String, String)>]) -> String {
+    let any_bridged = bridge_statements.iter().any(|entry| !entry.is_empty());
     let mut s = String::new();
     s.push_str(
         "-- Law-claims of this certificate. Each corollary conjoins one universal\n\
          -- law of the model modules with the artifact-level `Holds` fact, so a\n\
          -- single kernel-checked name ties the law to exactly the certified bytes.\n\
+         -- A law whose every mentioned function carries a plan-equals-source\n\
+         -- bridge conjoins those bridges as well.\n\
          -- Each statement is elaborated inside the namespace its model theorem was\n\
          -- emitted in, so the claim text means there what it means in the model.\n\
          import Manifest\n\
-         import Final\n\n\
-         set_option autoImplicit false\n\n",
+         import Final\n",
     );
-    for claim in claims {
+    if any_bridged {
+        s.push_str("import Bridge\n");
+    }
+    s.push_str("\nset_option autoImplicit false\n\n");
+    for (index, claim) in claims.iter().enumerate() {
+        let bridges: &[(String, String)] = bridge_statements
+            .get(index)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
         // Concatenated, never interpolated into a format string: a statement
         // carrying `{`/`}` must stay inert text.
         if !claim.prefix.is_empty() {
@@ -165,9 +183,21 @@ pub fn render_laws_lean(claims: &[LawClaim]) -> String {
         s.push_str(&claim.corollary());
         s.push_str(" :\n    (");
         s.push_str(&claim.statement);
-        s.push_str(") ∧ (_root_.AverCert.Schema.Holds _root_.AverCert.manifest) :=\n  ⟨_root_.");
+        s.push_str(") ∧ (_root_.AverCert.Schema.Holds _root_.AverCert.manifest)");
+        for (_, statement) in bridges {
+            s.push_str(" ∧\n      (");
+            s.push_str(statement);
+            s.push(')');
+        }
+        s.push_str(" :=\n  ⟨_root_.");
         s.push_str(&claim.qualified());
-        s.push_str(", _root_.AverCert.Final.cert⟩\n\n");
+        s.push_str(", _root_.AverCert.Final.cert");
+        for (corollary, _) in bridges {
+            s.push_str(",\n    (_root_.");
+            s.push_str(corollary);
+            s.push_str(").1");
+        }
+        s.push_str("⟩\n\n");
         if !claim.prefix.is_empty() {
             s.push_str("end ");
             s.push_str(&claim.prefix);

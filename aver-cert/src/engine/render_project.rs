@@ -163,15 +163,19 @@ mod certificate_artifact_tests {
 /// `law_claims` are the universal law-claims the SAME emission recorded while
 /// it wrote those theorems. They arrive as structure rather than being scanned
 /// back out of `model_files`, so the package's `Laws.lean` and the manifest's
-/// `laws` array cannot drift from what the emitter actually stated. The
-/// returned list names every claim the defensive statement gates declined.
+/// `laws` array cannot drift from what the emitter actually stated.
+///
+/// The returned [`ProjectDeclines`] names every law-claim and every
+/// plan-equals-source bridge the producer's defensive gates refused to declare,
+/// with the reason, so the caller can say what it declined instead of losing it
+/// silently. Neither kind of decline changes which exports are certified.
 pub fn write_project(
     out_dir: &Path,
     artifact: CertificateArtifact<'_>,
     analysis: &Analysis,
     model_files: &[(String, String)],
     law_claims: Vec<LawClaim>,
-) -> Result<Vec<(String, String)>, String> {
+) -> Result<ProjectDeclines, String> {
     artifact.validate()?;
 
     // Enforce the model-file precondition BEFORE touching the output
@@ -289,12 +293,58 @@ pub fn write_project(
         "ArtifactSoundness.lean",
         &render_artifact_soundness(),
     )?;
-    // Law-claims surface: the universal law theorems the model modules carry,
-    // each tied to the artifact by a `Laws.lean` corollary citing `Final.cert`.
-    let (law_claims, declined_law_claims) = admit_law_claims(law_claims);
-    if !law_claims.is_empty() {
-        write(&cert_dir, "Laws.lean", &render_laws_lean(&law_claims))?;
+    // Plan-equals-source bridges: one theorem per record projection-compute
+    // export identifying the plan its obligation evaluates with the transpiled
+    // source function, plus the corollary that ties it to `Final.cert`.
+    let (bridge_plans, declined_source_bridges) = plan_source_bridges(analysis, &model_info);
+    let source_bridges: Vec<SourceBridge> = bridge_plans
+        .iter()
+        .map(|plan| plan.bridge.clone())
+        .collect();
+    if !bridge_plans.is_empty() {
+        write(&cert_dir, "Bridge.lean", &render_bridge_lean(&bridge_plans))?;
     }
+    // Law-claims surface: the universal law theorems the model modules carry,
+    // each tied to the artifact by a `Laws.lean` corollary citing `Final.cert`,
+    // and to the source functions it mentions by their bridges when all of them
+    // have one.
+    let (law_claims, declined_law_claims) = admit_law_claims(law_claims);
+    let law_bridges: Vec<Vec<usize>> = law_claims
+        .iter()
+        .map(|claim| {
+            law_bridge_coverage(&claim.statement, &model_info, &source_bridges).unwrap_or_default()
+        })
+        .collect();
+    let law_bridge_terms: Vec<Vec<(String, String)>> = law_bridges
+        .iter()
+        .map(|indices| {
+            indices
+                .iter()
+                .map(|index| {
+                    (
+                        source_bridges[*index].corollary.clone(),
+                        source_bridges[*index].statement.clone(),
+                    )
+                })
+                .collect()
+        })
+        .collect();
+    if !law_claims.is_empty() {
+        write(
+            &cert_dir,
+            "Laws.lean",
+            &render_laws_lean(&law_claims, &law_bridge_terms),
+        )?;
+    }
+    let law_bridge_exports: Vec<Vec<String>> = law_bridges
+        .iter()
+        .map(|indices| {
+            indices
+                .iter()
+                .map(|index| source_bridges[*index].export.clone())
+                .collect()
+        })
+        .collect();
     std::fs::write(
         cert_dir.join("cert-manifest.json"),
         render_manifest(
@@ -306,10 +356,23 @@ pub fn write_project(
             artifact.abi(),
             artifact.wasip2_component_envelope(),
             &law_claims,
+            &law_bridge_exports,
+            &source_bridges,
         ),
     )
     .map_err(|e| format!("write manifest: {e}"))?;
-    Ok(declined_law_claims)
+    Ok(ProjectDeclines {
+        law_claims: declined_law_claims,
+        source_bridges: declined_source_bridges,
+    })
+}
+
+/// What the producer's defensive gates refused to declare, by surface. Each
+/// entry is `(name, reason)`; the name is a law label or a certified export.
+#[derive(Debug, Default)]
+pub struct ProjectDeclines {
+    pub law_claims: Vec<(String, String)>,
+    pub source_bridges: Vec<(String, String)>,
 }
 
 /// The Lean module name a model file is imported by. A module declared as

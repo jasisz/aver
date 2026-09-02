@@ -603,6 +603,8 @@ fn render_manifest(
     abi: &str,
     wasip2_component_envelope: Option<crate::format::Wasip2ComponentEnvelopeDeclaration>,
     law_claims: &[LawClaim],
+    law_bridges: &[Vec<String>],
+    source_bridges: &[SourceBridge],
 ) -> String {
     let mut s = String::new();
     let has_total = analysis
@@ -667,14 +669,25 @@ fn render_manifest(
     s.push_str("],\n");
     // Law-claims surface (schema 7): one entry per universal model law, with
     // the verbatim statement the checker-owned witness re-elaborates the
-    // `Laws.lean` corollary at.
+    // `Laws.lean` corollary at. `bridges` (schema 8) names the certified
+    // exports whose plan-equals-source bridges the corollary also conjoins:
+    // every model function the statement mentions, or empty when one of them
+    // has no bridge.
     s.push_str("  \"laws\": [");
     for (i, claim) in law_claims.iter().enumerate() {
         if i > 0 {
             s.push(',');
         }
+        let bridges = law_bridges
+            .get(i)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+            .iter()
+            .map(|export| json_str(export))
+            .collect::<Vec<_>>()
+            .join(", ");
         s.push_str(&format!(
-            "\n    {{\"label\": {}, \"theorem\": {}, \"statement\": {}, \"corollary\": {}}}",
+            "\n    {{\"label\": {}, \"theorem\": {}, \"statement\": {}, \"corollary\": {}, \"bridges\": [{bridges}]}}",
             json_str(&claim.label),
             json_str(&claim.qualified()),
             json_str(&claim.statement),
@@ -682,6 +695,27 @@ fn render_manifest(
         ));
     }
     if !law_claims.is_empty() {
+        s.push_str("\n  ");
+    }
+    s.push_str("],\n");
+    // Plan-equals-source bridge surface (schema 8): one entry per bridged
+    // export, with the verbatim statement the checker-owned witness
+    // re-elaborates the package's corollary at.
+    s.push_str("  \"sourceBridges\": [");
+    for (i, bridge) in source_bridges.iter().enumerate() {
+        if i > 0 {
+            s.push(',');
+        }
+        s.push_str(&format!(
+            "\n    {{\"export\": {}, \"theorem\": {}, \"statement\": {}, \"corollary\": {}, \"model\": {}}}",
+            json_str(&bridge.export),
+            json_str(&bridge.theorem),
+            json_str(&bridge.statement),
+            json_str(&bridge.corollary),
+            json_str(&bridge.model),
+        ));
+    }
+    if !source_bridges.is_empty() {
         s.push_str("\n  ");
     }
     s.push_str("],\n");

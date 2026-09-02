@@ -39,6 +39,17 @@ struct ModelInfo {
     fns: std::collections::HashMap<String, FnSig>,
     /// Keyed by the qualified Lean name (`P.Ty` inside `namespace P`).
     inductives: std::collections::HashMap<String, InductiveInfo>,
+    /// Record (`structure`) declarations, keyed by the qualified Lean name.
+    /// Read by the plan-equals-source bridge renderer, which needs the source
+    /// field ACCESSORS in declaration order to encode a record argument.
+    structures: std::collections::HashMap<String, StructureInfo>,
+    /// Signatures of PARAMETERLESS model defs (`def zeroFraction : Fraction :=`),
+    /// keyed like `fns`. They are deliberately kept out of `fns`: that map
+    /// backs `model_lean_name`, whose resolution decides which exports survive
+    /// the model-citation gate, so admitting a new shape there would widen the
+    /// certified set of every existing package. The plan-equals-source bridge
+    /// needs only the signature, so it reads both maps and nothing else moves.
+    nullary_fns: std::collections::HashMap<String, FnSig>,
     /// Flat forms (dots replaced by underscores) of every dependency namespace.
     /// An export name shaped like `<prefix>_<rest>` for one of these prefixes
     /// may be a dependency function, so its Lean identifier cannot be assumed
@@ -60,6 +71,14 @@ struct FnSig {
 
 struct InductiveInfo {
     ctors: Vec<CtorInfo>,
+}
+
+/// One transpiled `structure` declaration: its fields in DECLARATION order,
+/// each as `(accessor name, type as written)`. Declaration order is the order
+/// the emitter packs the wasm struct in, so it is the order a bridge encoder
+/// must list the record's Int leaves in.
+struct StructureInfo {
+    fields: Vec<(String, String)>,
 }
 
 struct CtorInfo {
@@ -165,6 +184,42 @@ impl ModelInfo {
             .map(|ind| (written.to_string(), ind))
     }
 
+    /// Resolve a type name AS WRITTEN in a model def signature (relative to
+    /// that def's namespace) to the qualified `structure` it denotes. Same
+    /// two-step lookup as [`Self::resolve_inductive`].
+    fn resolve_structure<'a>(
+        &'a self,
+        prefix: &str,
+        written: &str,
+    ) -> Option<(String, &'a StructureInfo)> {
+        if !prefix.is_empty()
+            && let Some(found) = self.structures.get(&format!("{prefix}.{written}"))
+        {
+            return Some((format!("{prefix}.{written}"), found));
+        }
+        self.structures
+            .get(written)
+            .map(|found| (written.to_string(), found))
+    }
+
+    /// Whether `qualified` is the fully qualified name of a def the user model
+    /// modules declare. Read by the law/bridge coverage scan.
+    fn is_model_fn(&self, qualified: &str) -> bool {
+        self.fns
+            .values()
+            .chain(self.nullary_fns.values())
+            .any(|sig| sig.lean_name == qualified)
+    }
+
+    /// The parsed signature of the model def a certified export cites, when it
+    /// resolves unambiguously. `None` keeps the caller fail-closed.
+    fn model_fn_sig(&self, name: &str) -> Option<&FnSig> {
+        if self.ambiguous.contains(name) {
+            return None;
+        }
+        self.fns.get(name).or_else(|| self.nullary_fns.get(name))
+    }
+
     fn parse_lean(&mut self, content: &str, entry_namespace: Option<&str>) {
         let lines: Vec<&str> = content.lines().collect();
         // Namespace stack: `namespace X` pushes (X may be dotted), a matching
@@ -196,6 +251,44 @@ impl ModelInfo {
                 continue;
             }
             let prefix = ns_stack.join(".");
+            // `structure X where` followed by one indented `field : Type` line
+            // per field, in declaration order. Anything else about the block
+            // (a different header shape, a field line that is not exactly
+            // `name : Type`) ends the field walk, so a shape this parser does
+            // not understand yields a partial or absent record rather than a
+            // wrong one — and the bridge renderer that reads it cross-checks
+            // the field count against the byte-derived record declaration.
+            if let Some(name) = line
+                .strip_prefix("structure ")
+                .and_then(|rest| rest.strip_suffix(" where"))
+                .map(str::trim)
+                .filter(|name| !name.is_empty() && !name.contains(char::is_whitespace))
+            {
+                let qualified = qualify(&prefix, name);
+                i += 1;
+                let mut fields = Vec::new();
+                while i < lines.len() {
+                    let raw = lines[i];
+                    if !raw.starts_with(' ') {
+                        break;
+                    }
+                    let Some((field, ty)) = raw.trim().split_once(" : ") else {
+                        break;
+                    };
+                    let field = field.trim();
+                    let plain_field = !field.is_empty()
+                        && field
+                            .chars()
+                            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '\'');
+                    if !plain_field {
+                        break;
+                    }
+                    fields.push((field.to_string(), ty.trim().to_string()));
+                    i += 1;
+                }
+                self.structures.insert(qualified, StructureInfo { fields });
+                continue;
+            }
             if let Some(name) = line
                 .strip_prefix("inductive ")
                 .and_then(|s| s.split_whitespace().next())
@@ -233,7 +326,7 @@ impl ModelInfo {
             if line.starts_with("def ")
                 && line.contains(" : ")
                 && line.ends_with(":=")
-                && let Some((name, mut sig)) = parse_def_sig(line)
+                && let Some((name, mut sig, nullary)) = parse_def_sig(line)
             {
                 let qualified = qualify(&prefix, &name);
                 let flat = if entry_namespace == Some(prefix.as_str()) {
@@ -247,15 +340,20 @@ impl ModelInfo {
                     i += 1;
                     continue;
                 }
-                match self.fns.get(&flat) {
+                let table = if nullary {
+                    &mut self.nullary_fns
+                } else {
+                    &mut self.fns
+                };
+                match table.get(&flat) {
                     Some(existing) if existing.lean_name != sig.lean_name => {
                         // Two distinct qualified names collide on one flat
                         // key: neither may ever resolve (fail-closed).
-                        self.fns.remove(&flat);
+                        table.remove(&flat);
                         self.ambiguous.insert(flat);
                     }
                     _ => {
-                        self.fns.insert(flat, sig);
+                        table.insert(flat, sig);
                     }
                 }
             }
@@ -273,15 +371,31 @@ fn qualify(prefix: &str, name: &str) -> String {
 }
 
 /// Parse one single-line def signature. `lean_name`/`prefix` are filled by the
-/// caller, which knows the namespace the line was parsed under.
-fn parse_def_sig(line: &str) -> Option<(String, FnSig)> {
+/// caller, which knows the namespace the line was parsed under. The third
+/// component says whether the def takes NO parameters, which the caller keys a
+/// separate table on — see `ModelInfo::nullary_fns`.
+fn parse_def_sig(line: &str) -> Option<(String, FnSig, bool)> {
     let rest = line.strip_prefix("def ")?;
     let name = rest.split_whitespace().next()?.to_string();
     let after_name = rest[name.len()..].trim();
     let before_assign = after_name.strip_suffix(":=")?.trim();
-    let ret_colon = before_assign.rfind(" : ")?;
-    let params_part = before_assign[..ret_colon].trim();
-    let ret = before_assign[ret_colon + 3..].trim().to_string();
+    // `def f (a : Int) : Int :=` splits at the LAST ` : `; a parameterless
+    // `def zero : Fraction :=` has no such separator and starts at the colon.
+    let (params_part, ret, nullary) = match before_assign.rfind(" : ") {
+        Some(at) => (
+            before_assign[..at].trim(),
+            before_assign[at + 3..].trim().to_string(),
+            false,
+        ),
+        None => (
+            "",
+            before_assign.strip_prefix(':')?.trim().to_string(),
+            true,
+        ),
+    };
+    if ret.is_empty() {
+        return None;
+    }
     let mut params = Vec::new();
     let mut tail = params_part;
     while let Some(start) = tail.find('(') {
@@ -308,6 +422,7 @@ fn parse_def_sig(line: &str) -> Option<(String, FnSig)> {
         }
         tail = &after[end + 1..];
     }
+    let nullary = nullary && params.is_empty();
     Some((
         name.clone(),
         FnSig {
@@ -316,6 +431,7 @@ fn parse_def_sig(line: &str) -> Option<(String, FnSig)> {
             params,
             ret,
         },
+        nullary,
     ))
 }
 
