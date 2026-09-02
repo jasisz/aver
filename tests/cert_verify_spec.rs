@@ -8030,11 +8030,20 @@ fn cert_tripwire_declines_tampered_record_compute_signature() {
     );
 }
 
-/// Tamper trio for the inline sign template's two new pin columns — the
-/// scratch slot it writes and the operator it decides with — plus the compute
-/// face's newly wired comparison roles. The positive half asserts the clean
-/// fixture really reaches all three conjuncts (a declared `intSignCmp` node,
-/// a `__aint_cmp` call and an `__aint_eq` call); each tamper must DECLINE.
+/// Tamper suite for the inline sign template and the compute face's comparison
+/// roles. The positive half asserts the clean fixture really reaches every
+/// conjunct (a declared `intSignCmp` node, a `__aint_cmp` call, a `__aint_eq`
+/// call and a body whose ONLY computing node is the template).
+///
+/// Each tamper must DECLINE, and each asserts WHICH pin fires. That is the
+/// point of the suite: `Plans.lean` carries the sym plan and the fragment plan
+/// side by side, and any edit to one alone is caught by the sym-to-fragment
+/// re-encoding equality (`encodeSymRawPlanToExprFragmentRawPlan … = some plan`,
+/// by `rfl`) before any byte pin is ever consulted. So the first four tampers
+/// exercise that equality — naming a pin they do not reach would be a false
+/// account of what defends the format. The fifth edits BOTH plans coherently,
+/// clears the re-encoding equality, and is then caught by the pins that bind
+/// the plan to the module's actual bytes.
 #[test]
 fn cert_tripwire_declines_tampered_int_sign_cmp_plan() {
     if Command::new("lake").arg("--version").output().is_err() {
@@ -8083,71 +8092,253 @@ fn cert_tripwire_declines_tampered_int_sign_cmp_plan() {
         plans_text.contains(".hostCall .eq "),
         "sameValue must call the equality helper:\n{plans_text}"
     );
+    // `isNonNegField` is a body whose only computing node is the template:
+    // one field read, no host call anywhere. It used to be silently
+    // non-admitted, so its plan is the positive half of that fix.
+    assert!(
+        plans_text.contains("def isNonNegFieldPlan"),
+        "a projection-only sign test must reach the compute face:\n{plans_text}"
+    );
+    assert!(
+        !plans_text
+            .split("def isNonNegFieldPlan")
+            .nth(1)
+            .expect("the isNonNegField plan exists")
+            .split("\n\n")
+            .next()
+            .expect("the plan is one line")
+            .contains(".hostCall"),
+        "isNonNegField must carry no host call at all:\n{plans_text}"
+    );
 
     let (ok, report) = aver_check(&wasm, &cert);
     assert!(ok, "clean intcompare certificate must check:\n{report}");
     assert!(
-        report.contains("4 checked exports"),
-        "intcompare should certify all four comparisons:\n{report}"
+        report.contains("5 checked exports"),
+        "intcompare should certify all five comparisons:\n{report}"
     );
 
     let cmp_idx = plan_role_index(&plans_text, "(.cmp, ");
     let eq_idx = plan_role_index(&plans_text, "(.eq, ");
     assert_ne!(cmp_idx, eq_idx, "the two helper roles must be distinct");
 
-    let tamper = |name: &str, edit: &dyn Fn(&str) -> String| {
-        let dir = temp_dir(&format!("cert-intcompare-tamper-{name}"));
-        copy_dir(&out_dir, &dir);
-        let plans = dir.join("cert").join("Plans.lean");
-        let text = std::fs::read_to_string(&plans).unwrap();
-        let edited = edit(&text);
-        assert_ne!(text, edited, "tamper `{name}` must change Plans.lean");
-        std::fs::write(&plans, edited).unwrap();
-        let (ok, out) = aver_check(&dir.join("intcompare.wasm"), &dir.join("cert"));
-        assert!(!ok, "tamper `{name}` must be DECLINED:\n{out}");
-        assert!(
-            !out.contains("CERTIFIED") && !out.contains("CHECKED"),
-            "tamper `{name}` must never re-credit an export:\n{out}"
-        );
-    };
+    // `expect_pins` are Lean-level pin names the decline report must name;
+    // `absent_pins` are pins that must NOT appear, which is how the last
+    // tamper proves it got past the re-encoding equality.
+    let tamper =
+        |name: &str, edit: &dyn Fn(&str) -> String, expect_pins: &[&str], absent_pins: &[&str]| {
+            let dir = temp_dir(&format!("cert-intcompare-tamper-{name}"));
+            copy_dir(&out_dir, &dir);
+            let plans = dir.join("cert").join("Plans.lean");
+            let text = std::fs::read_to_string(&plans).unwrap();
+            let edited = edit(&text);
+            assert_ne!(text, edited, "tamper `{name}` must change Plans.lean");
+            std::fs::write(&plans, edited).unwrap();
+            let (ok, out) = aver_check(&dir.join("intcompare.wasm"), &dir.join("cert"));
+            assert!(!ok, "tamper `{name}` must be DECLINED:\n{out}");
+            assert!(
+                !out.contains("CERTIFIED") && !out.contains("CHECKED"),
+                "tamper `{name}` must never re-credit an export:\n{out}"
+            );
+            for pin in expect_pins {
+                assert!(
+                    out.contains(pin),
+                    "tamper `{name}` must be caught by `{pin}`:\n{out}"
+                );
+            }
+            for pin in absent_pins {
+                assert!(
+                    !out.contains(pin),
+                    "tamper `{name}` must NOT reach `{pin}`:\n{out}"
+                );
+            }
+        };
 
     // (1) Point the template at a PARAMETER slot instead of the one declared
-    //     scratch local. The checker pins the slot to `params.length` — that
-    //     pin is what stops the template from clobbering an input — and the
-    //     lowered `local.set` immediate no longer matches the module's bytes.
-    tamper("scratch-slot", &|text| {
-        text.replace(
-            ".intSignCmp .ge (0 : Int) 1 ",
-            ".intSignCmp .ge (0 : Int) 0 ",
-        )
-    });
+    //     scratch local. `params.length` is the pin that stops the template
+    //     from clobbering an input, and it is enforced in TWO places: the sym
+    //     plan no longer re-encodes to this fragment plan, and the fragment
+    //     plan no longer passes `checkExprFragmentRawPlan`. Both are asserted,
+    //     because the second is the one that owns the slot rule.
+    tamper(
+        "scratch-slot",
+        &|text| {
+            text.replace(
+                ".intSignCmp .ge (0 : Int) 1 ",
+                ".intSignCmp .ge (0 : Int) 0 ",
+            )
+        },
+        &[
+            "encodeSymRawPlanToExprFragmentRawPlan",
+            "checkExprFragmentRawPlan",
+        ],
+        &[],
+    );
 
-    // (2) Flip the operator the template decides with. Both the small arm's
-    //     i64 comparison and the sign arm's i32 comparison change, so the
-    //     lowered bytes diverge from the emitted body.
-    tamper("operator", &|text| {
-        text.replace(
-            ".intSignCmp .ge (0 : Int) 1 ",
-            ".intSignCmp .gt (0 : Int) 1 ",
-        )
-    });
+    // (2) Flip the operator the template decides with. The fragment plan alone
+    //     is edited, so the sym-to-fragment re-encoding equality is what
+    //     objects; the byte pins report the same divergence behind it.
+    tamper(
+        "operator",
+        &|text| {
+            text.replace(
+                ".intSignCmp .ge (0 : Int) 1 ",
+                ".intSignCmp .gt (0 : Int) 1 ",
+            )
+        },
+        &["encodeSymRawPlanToExprFragmentRawPlan"],
+        &[],
+    );
 
-    // (3) Move the literal the template compares against.
-    tamper("constant", &|text| {
-        text.replace(
-            ".intSignCmp .ge (0 : Int) 1 ",
-            ".intSignCmp .ge (1 : Int) 1 ",
-        )
-    });
+    // (3) Move the literal the template compares against. Same pin as (2).
+    tamper(
+        "constant",
+        &|text| {
+            text.replace(
+                ".intSignCmp .ge (0 : Int) 1 ",
+                ".intSignCmp .ge (1 : Int) 1 ",
+            )
+        },
+        &["encodeSymRawPlanToExprFragmentRawPlan"],
+        &[],
+    );
 
     // (4) Swap which exported helper each comparison role names. Both helpers
     //     declare the same function type, so only the export-name binding
-    //     objects — and it is what drives the audited encoder.
-    tamper("cmp-eq-role-swap", &|text| {
-        text.replace(&format!("(.cmp, {cmp_idx})"), "(.cmp, __SWAP__)")
-            .replace(&format!("(.eq, {eq_idx})"), &format!("(.eq, {cmp_idx})"))
-            .replace("(.cmp, __SWAP__)", &format!("(.cmp, {eq_idx})"))
-    });
+    //     objects — and it is what drives the audited encoder, which is
+    //     exactly why the re-encoding equality is the pin that fires.
+    tamper(
+        "cmp-eq-role-swap",
+        &|text| {
+            text.replace(&format!("(.cmp, {cmp_idx})"), "(.cmp, __SWAP__)")
+                .replace(&format!("(.eq, {eq_idx})"), &format!("(.eq, {cmp_idx})"))
+                .replace("(.cmp, __SWAP__)", &format!("(.cmp, {eq_idx})"))
+        },
+        &["encodeSymRawPlanToExprFragmentRawPlan"],
+        &[],
+    );
+
+    // (5) Move the literal in BOTH plans at once, so the sym plan really does
+    //     re-encode to the edited fragment plan. The re-encoding equality is
+    //     satisfied and the tamper reaches the pins that bind the plan to the
+    //     module: the canonical lowering against `Module.lean`'s emitted body
+    //     and the byte lowering against the pinned code entry. This is the
+    //     tamper that shows the byte binding is load-bearing on its own and
+    //     not merely shadowed by the encoder equality.
+    tamper(
+        "consistent-literal",
+        &|text| {
+            let sym = ".intConstCmp .ge 4 (0 : Int)";
+            let frag = ".intSignCmp .ge (0 : Int) 1 4";
+            assert_eq!(text.matches(sym).count(), 1, "isNonNeg sym node is unique");
+            assert_eq!(
+                text.matches(frag).count(),
+                1,
+                "isNonNeg frag node is unique"
+            );
+            text.replace(sym, ".intConstCmp .ge 4 (1 : Int)")
+                .replace(frag, ".intSignCmp .ge (1 : Int) 1 4")
+        },
+        &["lowerExprFragmentBody", "lowerExprFragmentCodeEntry"],
+        &["encodeSymRawPlanToExprFragmentRawPlan"],
+    );
+}
+
+/// The record projection-compute face is the one whose certified domain is
+/// narrower than "any represented carrier": its inputs AND the Int leaves of
+/// its record parameters are assumed to be in the runtime's normal form
+/// (`StandardFace.recordComputeDomRepr`). A reader of a verdict has to be told,
+/// so `explain` prints that domain on the export's own line — and only there.
+/// A generic expression fragment carries no such restriction and must show no
+/// such line.
+#[test]
+fn explain_states_the_record_compute_faces_certified_domain() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping compute-face domain disclosure test: `lake` not available");
+        return;
+    }
+    const DOMAIN_LINE: &str =
+        "domain: Int leaves assumed in the runtime's normal form (canonical carriers)";
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+
+    // Positive half: every k5 ring export is a record projection-compute claim.
+    let k5_dir = temp_dir("cert-k5-explain-domain");
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("projects/k5_fdiv/main.av")
+        .arg("--module-root")
+        .arg("projects/k5_fdiv")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&k5_dir)
+        .output()
+        .expect("aver compile --certify runs");
+    assert!(
+        compile.status.success(),
+        "k5_fdiv compile --certify failed:\n{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let (ok, explain) = aver_cert(
+        &["explain"],
+        &k5_dir.join("main.wasm"),
+        &k5_dir.join("cert"),
+    );
+    assert!(ok, "k5 explain must accept the certificate:\n{explain}");
+
+    let mut plus_block = explain
+        .split("  Domain_Rational_plus\n")
+        .nth(1)
+        .expect("explain names the ring's addition export")
+        .lines()
+        .take_while(|line| line.starts_with("    "));
+    assert!(
+        plus_block.any(|line| line.trim() == DOMAIN_LINE),
+        "the compute face must disclose its certified domain:\n{explain}"
+    );
+
+    // Negative half: a generic expression fragment (`certprobe`'s `addTwo`,
+    // Int carriers in and out, no record parameter) is unconditional over
+    // represented carriers, so it must carry no domain line at all.
+    let probe_dir = temp_dir("cert-certprobe-explain-domain");
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/certprobe.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&probe_dir)
+        .output()
+        .expect("aver compile --certify runs");
+    assert!(
+        compile.status.success(),
+        "certprobe compile --certify failed:\n{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let (ok, explain) = aver_cert(
+        &["explain"],
+        &probe_dir.join("certprobe.wasm"),
+        &probe_dir.join("cert"),
+    );
+    assert!(
+        ok,
+        "certprobe explain must accept the certificate:\n{explain}"
+    );
+    assert!(
+        explain.contains("addTwo"),
+        "certprobe explain lost its generic fragment export:\n{explain}"
+    );
+    assert!(
+        !explain.contains(DOMAIN_LINE),
+        "a generic fragment must not claim the compute face's narrower domain:\n{explain}"
+    );
 }
 
 /// Law-claims pin (schema 7): a clean k5 package carries eleven kernel-checked
