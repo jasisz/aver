@@ -374,6 +374,7 @@ fn transpile_project(
         files,
         substituted_compile_errors: ctx.substituted_compile_errors.borrow().clone(),
         omitted_verify_cases: ctx.omitted_verify_cases.borrow().clone(),
+        law_claims: Vec::new(),
     }
 }
 

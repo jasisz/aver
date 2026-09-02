@@ -65,9 +65,17 @@
   },
   {
     "suite": "cert_certify_spec",
+    "lane": "projects",
+    "mode": "nextest",
+    "filter": "test(/^cert_projects_/)",
+    "partition": "1/1",
+    "phase_timeout_secs": 1800
+  },
+  {
+    "suite": "cert_certify_spec",
     "lane": "rest",
     "mode": "nextest",
-    "filter": "not (test(/^cert_hostile_model_/) or test(/^cert_adt_witness_/))",
+    "filter": "not (test(/^cert_hostile_model_/) or test(/^cert_adt_witness_/) or test(/^cert_projects_/))",
     "partition": "1/1"
   },
   {

@@ -6887,7 +6887,21 @@ fn emit_artifact_certificate(
     )?;
     let artifact_file_name = artifact.file_name().to_string();
 
-    cert::write_project(out_path, artifact, &analysis, &model_out.files)?;
+    // Law-claims travel as STRUCTURE from the emitter that built each law
+    // theorem's statement to the package renderer — the producer never scans
+    // the emitted Lean text back for them.
+    let law_claims: Vec<cert::LawClaim> = model_out
+        .law_claims
+        .iter()
+        .map(|claim| cert::LawClaim {
+            label: claim.label.clone(),
+            prefix: claim.namespace.clone(),
+            theorem: claim.theorem.clone(),
+            statement: claim.statement.clone(),
+        })
+        .collect();
+    let declined_law_claims =
+        cert::write_project(out_path, artifact, &analysis, &model_out.files, law_claims)?;
 
     let cert_dir = out_path.join("cert");
     let certified = analysis.certified_names();
@@ -6900,6 +6914,12 @@ fn emit_artifact_certificate(
     );
     if !certified.is_empty() {
         println!("    certified: {}", certified.join(", "));
+    }
+    // A law-claim the package renderer refused is said out loud rather than
+    // dropped in silence: the law is still proved in the model modules, it
+    // just does not enter the certificate's claimed surface.
+    for (label, reason) in &declined_law_claims {
+        println!("    law-claim declined: {label} — {reason}");
     }
     println!(
         "    verify: aver cert verify {} {}",
@@ -12880,6 +12900,7 @@ Dafny program verifier finished with 158 verified, 2 errors, 12 time outs";
             declined_claims: std::cell::RefCell::new(std::collections::BTreeMap::new()),
             substituted_compile_errors: std::cell::RefCell::new(Vec::new()),
             omitted_verify_cases: std::cell::RefCell::new(Vec::new()),
+            universal_law_claims: std::cell::RefCell::new(Vec::new()),
             resolved_program: aver::codegen::program_view::ResolvedProgramView::default(),
             program_shape: None,
             mir_program: None,

@@ -159,12 +159,19 @@ mod certificate_artifact_tests {
 /// pair would leave a renderer with a citation the gate never approved. This
 /// is checked here rather than assumed: a mismatch returns an error and no
 /// package is written.
+///
+/// `law_claims` are the universal law-claims the SAME emission recorded while
+/// it wrote those theorems. They arrive as structure rather than being scanned
+/// back out of `model_files`, so the package's `Laws.lean` and the manifest's
+/// `laws` array cannot drift from what the emitter actually stated. The
+/// returned list names every claim the defensive statement gates declined.
 pub fn write_project(
     out_dir: &Path,
     artifact: CertificateArtifact<'_>,
     analysis: &Analysis,
     model_files: &[(String, String)],
-) -> Result<(), String> {
+    law_claims: Vec<LawClaim>,
+) -> Result<Vec<(String, String)>, String> {
     artifact.validate()?;
 
     // Enforce the model-file precondition BEFORE touching the output
@@ -284,7 +291,7 @@ pub fn write_project(
     )?;
     // Law-claims surface: the universal law theorems the model modules carry,
     // each tied to the artifact by a `Laws.lean` corollary citing `Final.cert`.
-    let law_claims = extract_law_claims(model_files);
+    let (law_claims, declined_law_claims) = admit_law_claims(law_claims);
     if !law_claims.is_empty() {
         write(&cert_dir, "Laws.lean", &render_laws_lean(&law_claims))?;
     }
@@ -302,7 +309,7 @@ pub fn write_project(
         ),
     )
     .map_err(|e| format!("write manifest: {e}"))?;
-    Ok(())
+    Ok(declined_law_claims)
 }
 
 /// The Lean module name a model file is imported by. A module declared as
