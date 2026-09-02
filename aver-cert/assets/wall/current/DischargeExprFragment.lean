@@ -635,7 +635,7 @@ private theorem recordCompute_simulates_model
       boxRef carrier [WVal.i64v n] = some bw → CanonRepr S n bw := by
     intro n bw hlo hhi hb
     simp only [boxRef, Option.some.injEq] at hb
-    exact ⟨hb ▸ S.smallIntro n, hb ▸ S.canonSmall n hlo hhi⟩
+    exact ⟨hb ▸ S.smallIntro n, hb ▸ (S.canonSmall n).mpr ⟨hlo, hhi⟩⟩
   have hC : Contracts S (boxRef carrier) add sub mul cmp eq :=
     ⟨hbox, hAdd, hSub, hMul, hCmp, hEq⟩
   have hHost : ∀ role idx,

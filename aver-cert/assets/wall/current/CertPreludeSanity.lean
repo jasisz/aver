@@ -364,8 +364,15 @@ def sanityCarrierSpec (C : Nat) : CarrierSpec C where
       subst hsg
       exact ⟨hsign, hne⟩
   canonSmall := by
-    intro k hlo hhi
-    exact Or.inl ⟨k, rfl, hlo, hhi⟩
+    intro k
+    constructor
+    · rintro (⟨k', h, hlo, hhi⟩ | ⟨s, lty, les, sg, h, -, -⟩)
+      · simp only [carrierSmall, WVal.structv.injEq, List.cons.injEq,
+          WVal.i64v.injEq] at h
+        exact h.2.1 ▸ ⟨hlo, hhi⟩
+      · simp [carrierSmall] at h
+    · rintro ⟨hlo, hhi⟩
+      exact Or.inl ⟨k, rfl, hlo, hhi⟩
   canonBig := by
     intro n s lty les sg hrepr hcanon
     -- The represented value sits in the `$small` field on both shapes, so a

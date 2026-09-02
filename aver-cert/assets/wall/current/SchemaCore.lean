@@ -978,14 +978,23 @@ inductive ReprAll (R : Int → WVal → Prop) : List Int → List WVal → Prop
     `Canon` names that state abstractly and the two axioms below say only what
     the helpers need:
 
-    * `canonSmall` — the boxing helper's output (a literal small carrier for an
-      i64-band value) is canonical;
+    * `canonSmall` — a literal small carrier is canonical EXACTLY on the i64
+      band. The forward direction is what the boxing helper's output needs;
+      the backward one says an out-of-band `Small` is not in normal form, which
+      is what separates the two shapes;
     * `canonBig` — a canonical carrier that CARRIES LIMBS represents a value
       outside the i64 band and has a non-zero sign.
 
-    Nothing else about `Canon` is assumed. It is what makes the STRUCTURAL
-    helpers (`wat/eq.wat`, `wat/cmp.wat`) exact: on a canonical pair, "same
-    shape and same fields" and "same integer" coincide. -/
+    Nothing else about `Canon` is assumed, and the two axioms are exactly what
+    the proofs consume — no more. In particular they do NOT establish that the
+    real `wat/eq.wat` and `wat/cmp.wat` are exact on a canonical pair: that is
+    an assumption, carried as an explicit hypothesis of `Obligation.holds` and
+    validated empirically against the running helpers by
+    `tests/cert_intcmp_differential.rs`. `Obligation.holds` quantifies over
+    every `CarrierSpec`, and a specification whose `Canon` marks words the
+    runtime would never build is admitted by this schema; the instance a
+    verdict is read at is the runtime's own, where `Canon` is the normal form
+    described above. -/
 structure CarrierSpec (C : Nat) where
   Repr : Int → WVal → Prop
   Canon : WVal → Prop
@@ -996,7 +1005,8 @@ structure CarrierSpec (C : Nat) where
   smallElim : ∀ n s sg, Repr n (.structv C [.i64v s, .null, .i32v sg]) → s = n
   bigElim : ∀ n s lty les sg,
       Repr n (.structv C [.i64v s, .arr lty les, .i32v sg]) → ((sg < 0) ↔ (n < 0)) ∧ n ≠ 0
-  canonSmall : ∀ k : Int, -(2 ^ 63 : Int) ≤ k → k < 2 ^ 63 → Canon (carrierSmall C k)
+  canonSmall : ∀ k : Int,
+      Canon (carrierSmall C k) ↔ (-(2 ^ 63 : Int) ≤ k ∧ k < 2 ^ 63)
   canonBig : ∀ n s lty les sg,
       Repr n (.structv C [.i64v s, .arr lty les, .i32v sg]) →
       Canon (.structv C [.i64v s, .arr lty les, .i32v sg]) →
@@ -1014,7 +1024,7 @@ theorem canonicalCmp_smallBand {C : Nat} (S : CarrierSpec C)
       cmp [carrierSmall C k1, carrierSmall C k2] = some r → r = .i32v (cmpW k1 k2) :=
   fun k1 k2 r hlo1 hhi1 hlo2 hhi2 hc =>
     h k1 k2 _ _ r (S.smallIntro k1) (S.smallIntro k2)
-      (S.canonSmall k1 hlo1 hhi1) (S.canonSmall k2 hlo2 hhi2) hc
+      ((S.canonSmall k1).mpr ⟨hlo1, hhi1⟩) ((S.canonSmall k2).mpr ⟨hlo2, hhi2⟩) hc
 
 /-- Forget the canonicity of an arithmetic contract's RESULT. The faces that
     predate the canonical-carrier contract consume only the representation
@@ -1036,7 +1046,7 @@ theorem canonicalEq_smallBand {C : Nat} (S : CarrierSpec C)
       eq [carrierSmall C k1, carrierSmall C k2] = some r → r = .i32v (eqW k1 k2) :=
   fun k1 k2 r hlo1 hhi1 hlo2 hhi2 hc =>
     h k1 k2 _ _ r (S.smallIntro k1) (S.smallIntro k2)
-      (S.canonSmall k1 hlo1 hhi1) (S.canonSmall k2 hlo2 hhi2) hc
+      ((S.canonSmall k1).mpr ⟨hlo1, hhi1⟩) ((S.canonSmall k2).mpr ⟨hlo2, hhi2⟩) hc
 
 /-- Standard representation of a single integer result. -/
 def intRepr (S : CarrierSpec C) : Int → WVal → Prop := S.Repr
@@ -1458,10 +1468,11 @@ structure Obligation where
     wired to that slot computes the named operation on represented values.
 
     The three arithmetic premises also conclude that the RESULT is canonical.
-    That is a statement about the helper's output alone: `wat/add.wat`,
-    `wat/sub.wat` and `wat/mul.wat` all end in `__aint_normalize`, so whatever
-    they return is in the runtime's normal form. Nothing is assumed about
-    non-canonical inputs.
+    That is a statement about the helper's output alone: every arm of
+    `wat/addsub.wat` and `wat/mul.wat` either builds an in-band `Small`
+    directly or ends in the normalisation epilogue (`wat/normalize.wat`), so
+    whatever they return is in the runtime's normal form. Nothing is assumed
+    about non-canonical inputs.
 
     The two comparison premises are EXACT on the result, like `_hToIndex`,
     because the helpers leave the carrier — they return a raw `i32` that no
@@ -1472,9 +1483,17 @@ structure Obligation where
     `wat/cmp.wat` branches on the raw sign fields — so on an arbitrary pair
     they are not exact at all: a `Small` and a limb-carrying `Big` word can
     represent the same integer and still compare unequal. Canonicity is
-    exactly the fact that rules that pair out (`CarrierSpec.canonBig`: a
-    canonical limb-carrying word is outside the i64 band, where no canonical
-    `Small` lives).
+    exactly the fact the proofs use to rule that pair out: `canonBig` puts a
+    canonical limb-carrying word outside the i64 band, and the BACKWARD
+    direction of `canonSmall` puts every canonical `Small` inside it, so the
+    two shapes cannot denote the same integer.
+
+    What the two axioms do NOT do is make the real helpers exact. Exactness is
+    an assumption about `wat/cmp.wat` and `wat/eq.wat` at the runtime's own
+    carrier specification, stated here as a hypothesis and checked empirically
+    by `tests/cert_intcmp_differential.rs`. This denotation quantifies over
+    every `CarrierSpec`; an instance that marks non-normal-form words canonical
+    satisfies the schema, and simply is not the instance a verdict is read at.
 
     A NON-canonical operand is OUTSIDE THE CERTIFIED DOMAIN — the same
     epistemic position as `toIndexW`'s `-1` region, stated rather than assumed
