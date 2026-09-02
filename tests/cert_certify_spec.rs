@@ -1709,9 +1709,19 @@ fn cert_hostile_model_baseline_is_preflight_clean_and_lake_builds() {
     assert_certificate_target_builds(&build_green.join("cert"), "mutual hostile-model baseline");
 }
 
-/// Hostile model: the generated expression-fragment leaf definition `addTwo`
-/// in `cert/CertGoals.lean` computes `x + 3` instead of `x + 2`, with the wasm
-/// bytes and the manifest's model reference left untouched.
+/// Hostile model: the generated expression-fragment leaf definition
+/// `inAsciiDigit` in `cert/CertGoals.lean` accepts one code point too many
+/// (`c <= 58` instead of `c <= 57`), with the wasm bytes and the manifest's
+/// model reference left untouched.
+///
+/// The vector used to target `addTwo`. Folding the straight-line integer face
+/// into the declared compute face moved that obligation's model off the leaf
+/// definition and onto the emitted plan
+/// (`AverCert.StandardFace.recordComputeModel Plans.addTwoPlan.body`), so
+/// `CertGoals.addTwo` is no longer cited by anything in the package and
+/// rewriting it proves nothing. `inAsciiDigit` is the closest remaining
+/// export: same `expr-fragment-v1` class, and its obligation still names the
+/// generated leaf (`model := CertGoals.inAsciiDigit`).
 #[test]
 fn cert_hostile_model_expr_fragment_leaf_definition_is_declined() {
     let Some(out_dir) = hostile_models_baseline("certify-hostile-expr-fragment-baseline") else {
@@ -1723,8 +1733,8 @@ fn cert_hostile_model_expr_fragment_leaf_definition_is_declined() {
     copy_dir_all(&out_dir, &tampered);
     let model = tampered.join("cert/CertGoals.lean");
     let source = std::fs::read_to_string(&model).unwrap();
-    let honest = "def addTwo (x : Int) : Int :=\n  (x + 2)";
-    let hostile = "def addTwo (x : Int) : Int :=\n  (x + 3)";
+    let honest = "def inAsciiDigit (c : Int) : Bool :=\n  (if (c >= 48) then (c <= 57)";
+    let hostile = "def inAsciiDigit (c : Int) : Bool :=\n  (if (c >= 48) then (c <= 58)";
     let edited = source.replacen(honest, hostile, 1);
     assert_ne!(
         source, edited,
@@ -1738,7 +1748,7 @@ fn cert_hostile_model_expr_fragment_leaf_definition_is_declined() {
     );
     let manifest = std::fs::read_to_string(tampered.join("cert/Manifest.lean")).unwrap();
     assert!(
-        manifest.contains("model := fun ns => CertGoals.addTwo (ns.headD 0)"),
+        manifest.contains("model := CertGoals.inAsciiDigit"),
         "expr-fragment hostile regression must leave the manifest model reference untouched"
     );
 
@@ -1939,9 +1949,12 @@ fn certify_straight_line_fixture_lake_builds_kernel_clean() {
     let combined = lake_build_package(&cert_dir, "emitted cert");
     // Kernel-clean: the certificate theorem's `#print axioms` must show the
     // core whitelist and never `sorryAx`.
+    // `addTwo` certifies through the declared compute face since the
+    // straight-line integer face was folded into it; the package root is the
+    // theorem whose axiom closure matters.
     assert!(
         combined.contains(
-            "addTwo_exprFragmentSemanticBridge' depends on axioms: [propext, Classical.choice, Quot.sound]"
+            "'AverCert.Final.cert' depends on axioms: [propext, Classical.choice, Quot.sound]"
         ),
         "certificate theorem not kernel-clean:\n{combined}"
     );
@@ -3717,12 +3730,13 @@ fn certify_then_verify_carrierless_module_acceptance_pin_closes() {
 /// to live in this file. `empty_cert_is_admission_only_and_exits_nonzero`
 /// (`tests/cert_verify_spec.rs`) runs the same `compile --certify` then
 /// `cert verify` pipeline on `tools/certkit/fixtures/certempty.av`, whose only
-/// export is a two-argument `Int` add that no certified template admits, and
-/// pins the same banner, the same nonzero exit and the absence of the green
-/// path. Restating it here would duplicate a full Lean verification in a second
-/// CI lane for no additional guarantee, so this comment stands in for the test:
-/// if that one is ever deleted or repointed at a module that certifies
-/// something, the admission-only verdict loses its only coverage.
+/// export measures a `String` through `String.len` — a parameter shape only the
+/// projection, variant-dispatch and String templates admit, over a body none of
+/// them match — and pins the same banner, the same nonzero exit, and the absence
+/// of the green path. Restating it here would duplicate a full Lean verification
+/// in a second CI lane for no additional guarantee, so this comment stands in
+/// for the test: if that one is ever deleted or repointed at a module that
+/// certifies something, the admission-only verdict loses its only coverage.
 #[cfg(test)]
 const _ADMISSION_ONLY_COVERAGE_NOTE: () = ();
 
@@ -4053,11 +4067,13 @@ fn certify_nested_module_models_close_end_to_end() {
         "nestedmods --certify failed:\n{report}"
     );
     assert!(
-        report.contains("3 certified"),
-        "nestedmods must certify the entry export and both nested-module exports:\n{report}"
+        report.contains("4 certified"),
+        "nestedmods must certify the entry export and all three nested-module exports:\n{report}"
     );
     assert!(
-        report.contains("Nested_Deep_Util_bump") && report.contains("Nested_Deep_Util_tally"),
+        report.contains("Nested_Deep_Util_combine")
+            && report.contains("Nested_Deep_Util_bump")
+            && report.contains("Nested_Deep_Util_tally"),
         "nestedmods must certify the exports whose models live in the nested module:\n{report}"
     );
 
@@ -4082,22 +4098,29 @@ fn certify_nested_module_models_close_end_to_end() {
             "{file} must not emit a path-shaped import line:\n{contents}"
         );
     }
-    // The nested-module export's obligation must cite its model by the
-    // QUALIFIED name the model file declares (inside `namespace
+    // A nested-module export whose obligation names a model LEAF must name it
+    // by the QUALIFIED name the model file declares (inside `namespace
     // Nested.Deep.Util`), never by the flattened wasm export name — the
     // flattened form is not a Lean identifier in the model and fails the
-    // package build.
+    // package build. `tally` is the export that still carries this: `combine`
+    // and `bump` certify through the declared compute face, whose model is the
+    // emitted plan and names no model leaf at all, so their side of the rule is
+    // that the plan is keyed by the flattened name the plan file declares.
     let manifest_lean =
         std::fs::read_to_string(cert_dir.join("Manifest.lean")).expect("Manifest.lean exists");
     assert!(
-        manifest_lean.contains("model := fun ns => Nested.Deep.Util.bump (ns.headD 0)")
-            && manifest_lean.contains("model := fun ns => Nested.Deep.Util.tally (ns.headD 0)"),
-        "each nested export's obligation must cite the qualified model name:\n{manifest_lean}"
+        manifest_lean.contains("model := fun ns => Nested.Deep.Util.tally (ns.headD 0)"),
+        "the nested export that names a model leaf must cite the qualified name:\n{manifest_lean}"
     );
     assert!(
-        !manifest_lean.contains("model := fun ns => Nested_Deep_Util_bump")
-            && !manifest_lean.contains("model := fun ns => Nested_Deep_Util_tally"),
+        !manifest_lean.contains("model := fun ns => Nested_Deep_Util_tally"),
         "the obligation must never cite the flattened export name as the model:\n{manifest_lean}"
+    );
+    assert!(
+        manifest_lean.contains(
+            "model := AverCert.StandardFace.recordComputeModel Plans.Nested_Deep_Util_bumpPlan.body"
+        ),
+        "the nested compute-face export must cite its emitted plan:\n{manifest_lean}"
     );
     // The nested recursion bridge must also cite the model's qualified fuel
     // form (`Nested.Deep.Util.tally__fuel`), never a flattened one.
