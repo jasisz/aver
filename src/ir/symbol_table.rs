@@ -38,7 +38,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::ast::{CapabilityItem, FnDef, TopLevel, TypeDef, TypeVariant};
+use crate::ast::{CapabilityItem, FnDef, TopLevel, TypeDef};
 use crate::capability::{OracleDimension, ReplaySemantics};
 use crate::codegen::ModuleInfo;
 use crate::ir::identity::{BuiltinId, CtorId, FnId, FnKey, ModuleId, TypeId, TypeKey};
@@ -992,9 +992,6 @@ impl SymbolTable {
         }
     }
 }
-
-#[allow(dead_code)] // suppresses warning while no production caller uses these helpers
-fn _no_warning_for_unused_variant_field(_v: &TypeVariant) {}
 
 #[cfg(test)]
 mod tests {

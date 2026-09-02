@@ -1367,8 +1367,8 @@ fn string_idx(registry: &TypeRegistry) -> Result<u32, WasmGcError> {
 }
 
 /// DJB2 hash over the byte content of a `(ref null $string)`.
-/// `h = 5381; for b in s: h = h * 33 + b`. Standard non-cryptographic
-/// hash used in legacy backend's `rt_hash_string` shape.
+/// `h = 5381; for b in s: h = h * 33 + b`. A standard non-cryptographic
+/// string hash.
 fn emit_hash_string(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     let s_idx = string_idx(registry)?;
     let padding = wat_helper::padding_types(s_idx);

@@ -8,10 +8,9 @@
 //! Rust loop rewrite). `FnId` survives so no string lookup is
 //! needed on the backend side.
 //!
-//! Coverage gate: `SkipReason::UnsupportedTailCall` must
-//! disappear from `LowerStats.skipped` on the test corpus.
+//! Coverage gate: a tail call must not drop the fn.
 
-use aver::ir::mir::{SkipReason, lower_program};
+use aver::ir::mir::lower_program;
 use aver::ir::pipeline::{self, PipelineConfig, TypecheckMode};
 use aver::source::parse_source;
 
@@ -41,16 +40,14 @@ fn self_recursive_tail_call_lowers() {
     //
     // The recursive call in the second arm is in tail position —
     // TCO should classify it as `TailCall`, which lowers to the
-    // MIR tail-call node. `SkipReason::UnsupportedTailCall` must
-    // be 0 (not just absent — actively zero).
+    // MIR tail-call node, so nothing drops.
     let (dump, stats) = lower(
         "fn count_down(n: Int) -> Int\n    match n\n        0 -> 0\n        _ -> count_down(n - 1)\n",
     );
     assert!(dump.contains("fn count_down"), "fn must lower:\n{dump}");
-    assert_eq!(
-        stats.skipped.get(&SkipReason::UnsupportedTailCall).copied(),
-        None,
-        "UnsupportedTailCall must be absent after wave 3c-iii: {:?}",
+    assert!(
+        stats.skipped.is_empty(),
+        "a tail call must not drop the fn: {:?}",
         stats.skipped
     );
     assert!(stats.lowered >= 1, "count_down must lower: {:?}", stats);

@@ -897,7 +897,6 @@ fn prepare_wasm_gc_artifact(bytes: &[u8]) -> Result<PreparedArtifact<'_>, String
     })
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 fn read_wasip2_component_envelope(manifest: &Value) -> Result<Wasip2EnvelopeDeclaration, String> {
     let field = format::WASIP2_COMPONENT_ENVELOPE_FIELD;
     let envelope = manifest
@@ -937,7 +936,6 @@ fn read_wasip2_component_envelope(manifest: &Value) -> Result<Wasip2EnvelopeDecl
     })
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 fn prepare_wasip2_artifact_with_declared_envelope<'a>(
     component_bytes: &'a [u8],
     declaration: Wasip2EnvelopeDeclaration,

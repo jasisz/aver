@@ -2,9 +2,7 @@
 //!
 //! These don't get bodies in the user module. Instead, the codegen
 //! emits `(import "aver" "<name>" (func ...))` and the host (browser
-//! / workerd / wasmtime+wasi) supplies the implementation. Same shape
-//! the legacy backend uses for effects, just without the
-//! `aver_runtime.wasm` middleman.
+//! / workerd / wasmtime+wasi) supplies the implementation.
 //!
 //! Imports take the lowest fn indices in wasm — `0..K` for K
 //! registered effects. User fn indices and builtin helper fn
@@ -82,9 +80,7 @@ pub(super) enum EffectName {
     /// `(name: String, value: String) -> Result<Unit, String>` — no-op Ok on
     /// Workers (env is read-only); hosted runtimes report write failures.
     EnvSet,
-    // ── CLI / runtime side effects covered by the legacy
-    //    `abi.rs` table; ported one-for-one so wasm-gc has the
-    //    same surface area.
+    // ── CLI / runtime side effects ──────────────────────────
     /// `() -> Result<String, String>` — read one line from stdin.
     ConsoleReadLine,
     /// `() -> Int` — number of CLI args.
@@ -108,10 +104,10 @@ pub(super) enum EffectName {
     FloatCos,
     FloatAtan2,
     FloatPow,
-    // ── Terminal raw-mode TUI surface — same set the legacy `abi.rs`
-    //   ports. Hosts that don't implement Terminal (workers, browser)
-    //   should treat these as no-ops; Aver `! [Terminal.foo]` effect
-    //   declarations drive when imports are emitted.
+    // ── Terminal raw-mode TUI surface. Hosts that don't implement
+    //   Terminal (workers, browser) should treat these as no-ops; Aver
+    //   `! [Terminal.foo]` effect declarations drive when imports are
+    //   emitted.
     /// `() -> Result<Unit, String>` — switch the host terminal to raw mode (no line
     /// buffering, no echo). Pairs with `Terminal.disableRawMode`.
     TerminalEnableRawMode,

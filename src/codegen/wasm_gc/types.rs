@@ -2787,8 +2787,7 @@ pub(super) fn aver_to_wasm(
     // Built-in opaque types — `BranchPath`, `Trace`, `EffectEvent`
     // are introduced by the verify / oracle / effect-lifting pipeline
     // and only reach runtime fns whose bodies are dead from a `_start`
-    // perspective. The legacy `--target wasm` backend implicitly hides
-    // them inside its tagged-i64 fallback; on wasm-gc we lower the
+    // perspective. We lower the
     // param/return slot to `(ref null eq)` so the fn signature is
     // representable without committing to a concrete struct shape.
     if matches!(trimmed, "BranchPath" | "Trace" | "EffectEvent") {

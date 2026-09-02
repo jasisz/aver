@@ -2599,8 +2599,7 @@ fn emit_list_hash(
             // that reuses the per-fn locals would need extra
             // scratch. Cheap fallback: take array length as the
             // string "hash" — collisions are fine, eq still
-            // disambiguates. Same shape the legacy backend uses
-            // for non-cryptographic mix.
+            // disambiguates.
             f.instruction(&Instruction::ArrayLen);
         }
         ListEqKind::RecordEq(record_name) => {

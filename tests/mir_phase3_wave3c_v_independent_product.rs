@@ -7,10 +7,9 @@
 //! `sequential`) is NOT carried — RFC pin, that's an aver.toml
 //! runtime policy decision.
 //!
-//! Coverage gate: `UnsupportedIndependentProduct` drops out of
-//! `LowerStats.skipped` on the test corpus.
+//! Coverage gate: an independent product must not drop the fn.
 
-use aver::ir::mir::{SkipReason, lower_program};
+use aver::ir::mir::lower_program;
 use aver::ir::pipeline::{self, PipelineConfig, TypecheckMode};
 use aver::source::parse_source;
 
@@ -37,13 +36,9 @@ fn unsupported_independent_product_zero_for_non_ip_corpus() {
     // that don't use the construct. Sanity: a plain wave-1 fn
     // doesn't bump UnsupportedIndependentProduct.
     let (_dump, stats) = lower("fn one() -> Int\n    1\n");
-    assert_eq!(
-        stats
-            .skipped
-            .get(&SkipReason::UnsupportedIndependentProduct)
-            .copied(),
-        None,
-        "UnsupportedIndependentProduct shouldn't fire on non-IP code: {:?}",
+    assert!(
+        stats.skipped.is_empty(),
+        "nothing should drop on non-IP code: {:?}",
         stats.skipped
     );
 }
@@ -57,14 +52,9 @@ fn skip_reason_unsupported_independent_product_is_removed_from_lowerer() {
     // this test pins the negative side: no fn should silently
     // drop with that reason on a small smoke corpus.
     let (_dump, stats) = lower("fn a() -> Int\n    1\n\nfn b() -> Int\n    2\n");
-    let n = stats
-        .skipped
-        .get(&SkipReason::UnsupportedIndependentProduct)
-        .copied()
-        .unwrap_or(0);
-    assert_eq!(
-        n, 0,
-        "UnsupportedIndependentProduct must be 0 on this corpus: {:?}",
+    assert!(
+        stats.skipped.is_empty(),
+        "nothing may drop on this corpus: {:?}",
         stats.skipped
     );
 }

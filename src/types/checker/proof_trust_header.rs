@@ -30,18 +30,8 @@ use super::effect_classification::EffectDimension;
 /// - `has_independent_products`: whether the source uses `!` / `?!`
 ///   anywhere; without that the schedule-invariance argument and
 ///   three-lemma block are irrelevant and skipped entirely.
-#[allow(dead_code)]
-pub(crate) fn generate_for_effects(
-    declared_effects: &crate::codegen::common::DeclaredEffects,
-    has_independent_products: bool,
-) -> String {
-    generate_for_effects_with_registry(
-        declared_effects,
-        has_independent_products,
-        &crate::capability::CapabilityRegistry::default(),
-    )
-}
-
+/// - `capabilities`: the program-defined capability registry, whose
+///   operations join the classified standard ones.
 pub(crate) fn generate_for_effects_with_registry(
     declared_effects: &crate::codegen::common::DeclaredEffects,
     has_independent_products: bool,
@@ -301,23 +291,30 @@ pub(crate) fn generate_for_effects_with_registry(
 /// marker (typically `"// "` for Dafny / `"-- "` for Lean 4). An empty /
 /// whitespace-only input line is still commented so the block reads as
 /// one consistent comment region in the generated file.
+///
+/// Production goes through `generate_commented_with_registry`; this
+/// no-registry form is reached only from tests.
 #[allow(dead_code)]
 pub(crate) fn generate_commented(
     prefix: &str,
     declared_effects: &crate::codegen::common::DeclaredEffects,
     has_independent_products: bool,
 ) -> String {
-    generate_for_effects(declared_effects, has_independent_products)
-        .lines()
-        .map(|line| {
-            if line.is_empty() {
-                prefix.trim_end().to_string()
-            } else {
-                format!("{}{}", prefix, line)
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+    generate_for_effects_with_registry(
+        declared_effects,
+        has_independent_products,
+        &crate::capability::CapabilityRegistry::default(),
+    )
+    .lines()
+    .map(|line| {
+        if line.is_empty() {
+            prefix.trim_end().to_string()
+        } else {
+            format!("{}{}", prefix, line)
+        }
+    })
+    .collect::<Vec<_>>()
+    .join("\n")
 }
 
 pub(crate) fn generate_commented_with_registry(
@@ -382,7 +379,11 @@ mod tests {
                 .map(str::to_string)
                 .collect(),
         };
-        generate_for_effects(&declared, true)
+        generate_for_effects_with_registry(
+            &declared,
+            true,
+            &crate::capability::CapabilityRegistry::default(),
+        )
     }
 
     fn args_get_effects() -> crate::codegen::common::DeclaredEffects {

@@ -272,8 +272,8 @@ impl TypeChecker {
 
     /// Visit every function body in each loaded dependency module so the
     /// per-`Spanned<Expr>` type slot gets populated. Without this, the
-    /// downstream codegen consumers (Step 2 legacy WASM, Step 1 Rust,
-    /// future wasm-gc) would see `Spanned::ty() == None` for everything in
+    /// downstream codegen consumers (Rust, wasm-gc) would see
+    /// `Spanned::ty() == None` for everything in
     /// dependent modules — which used to be patched over by per-backend
     /// ad-hoc inference; the typed pipeline closes that gap properly.
     ///

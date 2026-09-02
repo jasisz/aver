@@ -47,9 +47,7 @@
 //!   `MirPattern::Ctor { ctor: MirCtor::Builtin(bc), bindings }`.
 //! - User ctors stay on `MirCtor::User(CtorId)`; the two flavors
 //!   ride the same node shape so backends pattern-match once.
-//! - `SkipReason::BuiltinCtorConstruction` /
-//!   `BuiltinCtorPattern` drop out of `LowerStats.skipped` (the
-//!   variants stay in the enum for historical attribution).
+//! - Built-in ctor construction and patterns stop dropping fns.
 //!
 //! **Wave 3c-ii** — `Try` (`?` propagation): `ErrorProp(inner)` →
 //! `MirExpr::Try(inner)`. RFC pin: stays a node, backends pick
@@ -79,22 +77,16 @@
 //! - `MissingResolution` / `EmptyBody` / `BindingOnlyTail` /
 //!   `BindingSlotLookupMissing` / `PatternSlotShortfall` —
 //!   defensive guards for upstream pipeline gaps.
-//! - `UnsupportedCallee` — only `Unresolved` callees (typecheck-error
-//!   recovery) now. Buffer intrinsics (`MirCallee::Intrinsic`) and
-//!   first-class-fn *calls* (`MirCallee::LocalSlot` → `CALL_VALUE`)
-//!   lower.
+//! - `UnresolvedCtor` / `UnsupportedCallee` — a name the resolver could
+//!   not classify (typecheck-error recovery). Buffer intrinsics
+//!   (`MirCallee::Intrinsic`) and first-class-fn *calls*
+//!   (`MirCallee::LocalSlot` → `CALL_VALUE`) lower.
+//! - `UnsupportedOther` — a `ResolvedExpr` variant the lowerer misses.
 //!
-//! Fn-value *passing* (`callWith(dbl)` → bare `dbl`) used to drop as
-//! `UnresolvedIdent`; it now lowers to `MirExpr::FnValue`, which the VM
-//! walker resolves through the shared `compile_ident` symbol path. The
-//! `UnresolvedIdent` variant is retained for the coverage gate's
-//! "no-longer-drops" assertion but is no longer produced.
-//! - `BuiltinRecord` / `BuiltinCtorConstruction` / `BuiltinCtorPattern`
-//!   / `UnsupportedTry` / `UnsupportedTailCall` / `UnsupportedList` /
-//!   `UnsupportedTuple` / `UnsupportedMap` / `UnsupportedInterpolatedStr`
-//!   / `UnsupportedIndependentProduct` — kept in the enum for historical
-//!   attribution; no longer reachable from the lowerer (built-in records
-//!   now ride `MirRecordCreate.type_name` when they carry no `TypeId`).
+//! Every shape-specific reason the widening waves closed is gone from
+//! the enum, not merely unused: fn-value *passing* (`callWith(dbl)` →
+//! bare `dbl`) lowers to `MirExpr::FnValue`, and a built-in record rides
+//! `MirRecordCreate.type_name` when it carries no `TypeId`.
 //!
 //! Functions that use anything outside the waves' supported
 //! subset are dropped — `MirProgram.fns` only contains what the
