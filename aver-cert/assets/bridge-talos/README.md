@@ -49,6 +49,8 @@ network needs after `lake update`.
 | `Bridge/Env.lean` | `TranslateEnv` (imports, struct sorts, carrier), value sorts `HasSort`/`Sorted`, `envOfClaim` (projection of host-role table + certified `TypeDecl`s) |
 | `Bridge/Translate.lean` | `translate`/`translateList` for the profile, the stack typing `HasTy`, `typed_run` (typed wall runs return `.ok`, keep the stack beneath, preserve sorts) |
 | `Bridge/Config.lean` | synthetic module (one function, host slots as imports, declared struct types), initial configuration, the `HostSimulation` assumption |
+| `Bridge/HostCall.lean` | spike (a): `bridge_hostCall` — a wall `call` of a host slot is one Talos `callHostReturn` step |
+| `Bridge/IfElse.lean` | spike (b): `bridge_ifElse` — a wall `ifElse` is `Step.iff`, the branch, `Step.exitControl` |
 
 ## Log
 
@@ -78,3 +80,13 @@ network needs after `lake update`.
 - **Step 4 — `Config.lean`.** Synthetic module + `initialConfig`;
   `initSingleModuleConfig_synth` shows it is what Talos's own entry point builds.
   `HostSimulation` stated (heap frame as a prefix relation).
+- **Step 5 — spike (a), `HostCall.lean`.** CLOSED in one round (`bridge_hostCall`,
+  elaboration 0.3 s). Talos rule: `Step.callHostReturn` (SmallStep.lean:3558–3573).
+  The heap-frame half of `HostSimulation` is used (`Rs_prefix` on the locals and the
+  rest of the stack); without it the lemma does not close.
+- **Step 6 — spike (b), `IfElse.lean`.** CLOSED in one round (`bridge_ifElse`, 0.4 s).
+  Talos rules: `Step.iff` (3499–3516) and `Step.exitControl` (3261–3270). The block
+  type is inert for `Step` (arities only). The branch is discharged through a
+  hypothesis in the shape of the whole-list lemma (`BranchSim`), so nested `ifElse`
+  is the same lemma one level down; the wall-side condition is `BranchPushesOne`,
+  which `typed_run` supplies for typed branches.
