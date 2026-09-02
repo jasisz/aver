@@ -3727,12 +3727,13 @@ fn certify_then_verify_carrierless_module_acceptance_pin_closes() {
 /// to live in this file. `empty_cert_is_admission_only_and_exits_nonzero`
 /// (`tests/cert_verify_spec.rs`) runs the same `compile --certify` then
 /// `cert verify` pipeline on `tools/certkit/fixtures/certempty.av`, whose only
-/// export is a two-argument `Int` add that no certified template admits, and
-/// pins the same banner, the same nonzero exit and the absence of the green
-/// path. Restating it here would duplicate a full Lean verification in a second
-/// CI lane for no additional guarantee, so this comment stands in for the test:
-/// if that one is ever deleted or repointed at a module that certifies
-/// something, the admission-only verdict loses its only coverage.
+/// export measures a `String` through `String.len` — a parameter shape only the
+/// projection, variant-dispatch and String templates admit, over a body none of
+/// them match — and pins the same banner, the same nonzero exit, and the absence
+/// of the green path. Restating it here would duplicate a full Lean verification
+/// in a second CI lane for no additional guarantee, so this comment stands in
+/// for the test: if that one is ever deleted or repointed at a module that
+/// certifies something, the admission-only verdict loses its only coverage.
 #[cfg(test)]
 const _ADMISSION_ONLY_COVERAGE_NOTE: () = ();
 
