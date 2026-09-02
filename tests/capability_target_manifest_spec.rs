@@ -240,6 +240,109 @@ fn wasip2_compile_rejects_process_with_the_target_matrix_reason() {
 }
 
 #[test]
+fn tcp_dial_and_listener_operations_are_unsupported_on_wasip2() {
+    let output = run_capabilities("tcp_listener_client.av", true);
+    assert!(
+        output.status.success(),
+        "capabilities failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("valid Tcp manifest JSON");
+    let rows = json["rows"].as_array().expect("rows array");
+    let tcp = |target: &str| {
+        rows.iter()
+            .find(|row| row["capability"] == "Tcp" && row["target"] == target)
+            .expect("Tcp target row")
+    };
+
+    // Every other shipped target binds the whole capability, so the refusal
+    // is about this target's socket binding and not about the operations.
+    for target in ["vm", "rust", "wasm-gc"] {
+        assert_eq!(tcp(target)["status"]["kind"], "provided");
+    }
+    let wasip2 = tcp("wasip2");
+    assert_eq!(wasip2["status"]["kind"], "unsupported");
+    assert_eq!(
+        wasip2["status"]["reason"]["code"],
+        "standard-operations-unavailable"
+    );
+    let message = wasip2["status"]["reason"]["message"]
+        .as_str()
+        .expect("reason message");
+    assert!(
+        message.contains("cannot bind operation(s) Tcp.accept, Tcp.closeListener, Tcp.listen"),
+        "reason names the wrong operations: {message}"
+    );
+    assert!(message.contains("no non-blocking dial, listener, or peer-address resource"));
+    // The refusal names exactly what the program asked for, not the whole
+    // capability: `wasip2_still_compiles_the_connected_socket_operations`
+    // covers the half that still binds.
+    assert_eq!(
+        wasip2["requiredOperations"]
+            .as_array()
+            .expect("required operation list")
+            .iter()
+            .map(|value| value.as_str().expect("operation name"))
+            .collect::<Vec<_>>(),
+        ["Tcp.accept", "Tcp.closeListener", "Tcp.listen"]
+    );
+}
+
+#[test]
+#[cfg(feature = "wasip2")]
+fn wasip2_compile_rejects_tcp_listeners_with_the_target_matrix_reason() {
+    let root = fixture_root();
+    let output_dir = temp_output("tcp-listener-wasip2");
+    let output = Command::new(aver_bin())
+        .arg("compile")
+        .arg(root.join("tcp_listener_client.av"))
+        .arg("--module-root")
+        .arg(&root)
+        .args(["--target", "wasip2", "-o"])
+        .arg(&output_dir)
+        .output()
+        .expect("compile Tcp listeners for wasip2");
+    assert!(!output.status.success());
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(text.contains("error[capability-target-unsupported]"));
+    assert!(text.contains("Tcp.accept, Tcp.closeListener, Tcp.listen"));
+    assert!(text.contains("no non-blocking dial, listener, or peer-address resource"));
+    assert!(
+        !output_dir.exists(),
+        "rejected target must not emit an artifact"
+    );
+}
+
+#[test]
+#[cfg(feature = "wasip2")]
+fn wasip2_still_compiles_the_connected_socket_operations() {
+    let root = fixture_root();
+    let output_dir = temp_output("tcp-connected-wasip2");
+    let output = Command::new(aver_bin())
+        .arg("compile")
+        .arg(root.join("tcp_connected_client.av"))
+        .arg("--module-root")
+        .arg(&root)
+        .args(["--target", "wasip2", "-o"])
+        .arg(&output_dir)
+        .output()
+        .expect("compile connected Tcp for wasip2");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.status.success(), "compile failed:\n{text}");
+    assert!(text.contains("provided by aver.standard.Tcp/wasip2-wasi@"));
+    std::fs::remove_dir_all(output_dir).expect("remove generated component");
+}
+
+#[test]
 fn rust_compilation_emits_a_host_bound_provider_artifact() {
     let root = fixture_root();
     let output_dir = temp_output("host-bound-rust");

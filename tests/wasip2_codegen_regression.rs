@@ -37,13 +37,15 @@ fn examples_dir() -> PathBuf {
 ///   * `examples/diagnostics/` — same exclusions as
 ///     `tests/wasm_gc_codegen_regression.rs`.
 ///   * Three `Terminal.*` users — `status_board.av`,
-///     `oracle_trace.av`, `terminal_size_snapshot.av`. The wasip2
-///     backend lowered 10 effects in 0.18 "Span" (all of `Disk`,
-///     `Time.sleep`, `Console.readLine`) but `Terminal.moveTo` /
-///     `Terminal.readKey` / `Terminal.size` are not yet wired —
-///     codegen errors with "no helper registered, no effect
-///     import, no inline lowering". Tracked as a follow-up; this
-///     suite is the regression net, the wiring is its own ticket.
+///     `oracle_trace.av`, `terminal_size_snapshot.av`. WASI 0.2 has no
+///     raw/cooked-mode terminal interface, so the capability target
+///     manifest calls `Terminal` unsupported on wasip2 and the CLI
+///     refuses these programs before codegen. This suite drives the
+///     emitter directly, past that refusal, where the missing lowering
+///     is a codegen error instead. They are skipped because the
+///     refusal is the shipped behaviour, not because the wiring is
+///     pending — `tests/capability_target_manifest_spec.rs` is where
+///     that refusal is pinned.
 ///
 /// `oracle_independent_products.av` used to be skipped (its
 /// higher-order `Fn(BranchPath, …)` spec param was mis-discovered as a
@@ -393,82 +395,6 @@ fn chunk(conn: Tcp.Connection, maxBytes: Int) -> Result<Bytes, String>
         .unwrap_or_else(|e| panic!("wasip2 core compile: {e}\n--- source ---\n{source}"));
     let (component_bytes, _) = aver::codegen::wasip2::compile_to_component(
         &core_bytes,
-        aver::codegen::wasip2::Wasip2World::CliCommand,
-    )
-    .unwrap_or_else(|e| panic!("wasip2 component wrap: {e}\n--- source ---\n{source}"));
-    wasmparser::Validator::new_with_features(wasmparser::WasmFeatures::default())
-        .validate_all(&component_bytes)
-        .unwrap_or_else(|e| panic!("component validate: {e}\n--- source ---\n{source}"));
-}
-
-#[test]
-fn tcp_async_resources_land_as_explicit_level_b_errors_on_wasip2() {
-    let source = r#"module Probe
-    intent = "Compile every asynchronous TCP resource operation without bridge imports."
-    exposes [begin, finish, listen, acceptOne, peer, closeDial, closeListener]
-    effects [Tcp.beginConnect, Tcp.dialled, Tcp.listen, Tcp.accept, Tcp.peerAddress, Tcp.closeDial, Tcp.closeListener]
-
-fn begin(host: String, port: Int) -> Result<Tcp.Dial, String>
-    ? "Start one outbound connection attempt."
-    ! [Tcp.beginConnect]
-    Tcp.beginConnect(host, port)
-
-fn finish(dial: Tcp.Dial) -> Result<Option<Tcp.Connection>, String>
-    ? "Inspect one outbound connection attempt."
-    ! [Tcp.dialled]
-    Tcp.dialled(dial)
-
-fn listen(port: Int, backlog: Int) -> Result<Tcp.Listener, String>
-    ? "Start one listener."
-    ! [Tcp.listen]
-    Tcp.listen(port, backlog)
-
-fn acceptOne(listener: Tcp.Listener) -> Result<Option<Tcp.Connection>, String>
-    ? "Accept one inbound connection if present."
-    ! [Tcp.accept]
-    Tcp.accept(listener)
-
-fn peer(conn: Tcp.Connection) -> Result<String, String>
-    ? "Describe the remote endpoint."
-    ! [Tcp.peerAddress]
-    Tcp.peerAddress(conn)
-
-fn closeDial(dial: Tcp.Dial) -> Result<Unit, String>
-    ? "Release one outbound attempt."
-    ! [Tcp.closeDial]
-    Tcp.closeDial(dial)
-
-fn closeListener(listener: Tcp.Listener) -> Result<Unit, String>
-    ? "Release one listener."
-    ! [Tcp.closeListener]
-    Tcp.closeListener(listener)
-"#;
-    let (items, aliases) =
-        parse_pipeline_with_module_root(source, Some(env!("CARGO_MANIFEST_DIR")))
-            .unwrap_or_else(|e| panic!("{e}\n--- source ---\n{source}"));
-    let bytes = compile_core_flattened(&items, &aliases)
-        .unwrap_or_else(|e| panic!("wasip2 core compile: {e}\n--- source ---\n{source}"));
-
-    let (segments, body_refs) = segments_and_body_data_refs(&bytes);
-    for message in [
-        b"Tcp.beginConnect: native sockets are unavailable on this target".as_slice(),
-        b"Tcp.dialled: native sockets are unavailable on this target".as_slice(),
-        b"Tcp.listen: native socket listening is unavailable on this target".as_slice(),
-        b"Tcp.accept: native socket listening is unavailable on this target".as_slice(),
-        b"Tcp.peerAddress: native sockets are unavailable on this target".as_slice(),
-        b"Tcp.closeDial: native sockets are unavailable on this target".as_slice(),
-        b"Tcp.closeListener: native sockets are unavailable on this target".as_slice(),
-    ] {
-        let idx = segment_idx(&segments, message);
-        assert!(
-            body_refs.iter().any(|refs| refs.contains(&idx)),
-            "Level-B Err message {:?} must be materialized by a function body",
-            String::from_utf8_lossy(message)
-        );
-    }
-
-    let (component_bytes, _) = aver::codegen::wasip2::compile_to_component(
-        &bytes,
         aver::codegen::wasip2::Wasip2World::CliCommand,
     )
     .unwrap_or_else(|e| panic!("wasip2 component wrap: {e}\n--- source ---\n{source}"));

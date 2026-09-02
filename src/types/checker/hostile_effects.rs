@@ -52,13 +52,10 @@ pub fn hostile_profiles_for(method: &str) -> Vec<HostileProfile> {
     if !standard.is_empty() {
         return standard
             .into_iter()
-            .map(|(label, declared_name, source)| {
+            .map(|(label, _declared_name, function)| {
                 let synthetic = stub_name(label);
-                let stub_body = source.replacen(
-                    &format!("fn {declared_name}("),
-                    &format!("fn {synthetic}("),
-                    1,
-                );
+                let stub_body =
+                    crate::stdlib::render_standard_hostile_profile(function, &synthetic);
                 HostileProfile {
                     name: label,
                     stub_fn_name: synthetic,

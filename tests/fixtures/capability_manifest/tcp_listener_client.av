@@ -1,0 +1,12 @@
+module TcpListenerClient
+    intent = "show the Tcp listener target matrix"
+    depends []
+    exposes [main]
+    effects [Tcp.listen, Tcp.accept, Tcp.closeListener]
+
+fn main() -> Result<Unit, String>
+    ? "Bind one listener, take at most one client, and release the port."
+    ! [Tcp.listen, Tcp.accept, Tcp.closeListener]
+    listener = Tcp.listen(9, 1)?
+    _accepted = Tcp.accept(listener)?
+    Tcp.closeListener(listener)
