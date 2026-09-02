@@ -41,7 +41,7 @@ The wasm-gc column covers the **default invocation** (`--target wasm-gc`, host w
 | `Disk.readBytes` / `readBytesAt` / `writeBytes` / `appendBytes` | ✅ exact octets | ✅ exact octets | ✅ wasmtime / host wires | ✅ raw WASI streams; positional reads are bounded and EOF-short | Oracle | Oracle |
 | `Disk.size` | ✅ | ✅ | ✅ wasmtime / host wires | ✅ descriptor `stat-at` metadata | Oracle | Oracle |
 | `Disk.exists` / `delete` / `deleteDir` / `listDir` / `makeDir` | ✅ | ✅ | ✅ wasmtime / ❌ in JS hosts | ✅ `wasi:filesystem/types` (stat-at / unlink-file-at / etc.) | Oracle | Oracle |
-| `Disk.sync` | ✅ `fsync` on a file or a directory | ✅ | ✅ wasmtime / ❌ in JS hosts | ✅ `open-at` + `[method]descriptor.sync` | Oracle | Oracle |
+| `Disk.sync` | ✅ `fsync` on a file or a directory; on Windows a directory sync is a no-op `Ok` (NTFS journals metadata) | ✅ same as VM | ✅ wasmtime, same as VM / ❌ in JS hosts | ✅ `open-at` + `[method]descriptor.sync` | Oracle | Oracle |
 | `Env.get` | ✅ | ✅ | ✅ wasmtime / Workers `env` | ✅ `wasi:cli/environment.get-environment` + linear search | Oracle | Oracle |
 | `Env.set` | ✅ | ✅ | ⚠️ wasmtime / no-op in JS | n/a — WASI 0.2 environment is read-only by design | Oracle | Oracle |
 | `Http.get` / `head` / `delete` / `post` / `put` / `patch` | ✅ | ✅ | ✅ wasmtime / ✅ JSPI-suspending `fetch()` | ✅ `wasi:http/outgoing-handler` | Oracle | Oracle |
