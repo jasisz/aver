@@ -1709,9 +1709,19 @@ fn cert_hostile_model_baseline_is_preflight_clean_and_lake_builds() {
     assert_certificate_target_builds(&build_green.join("cert"), "mutual hostile-model baseline");
 }
 
-/// Hostile model: the generated expression-fragment leaf definition `addTwo`
-/// in `cert/CertGoals.lean` computes `x + 3` instead of `x + 2`, with the wasm
-/// bytes and the manifest's model reference left untouched.
+/// Hostile model: the generated expression-fragment leaf definition
+/// `inAsciiDigit` in `cert/CertGoals.lean` accepts one code point too many
+/// (`c <= 58` instead of `c <= 57`), with the wasm bytes and the manifest's
+/// model reference left untouched.
+///
+/// The vector used to target `addTwo`. Folding the straight-line integer face
+/// into the declared compute face moved that obligation's model off the leaf
+/// definition and onto the emitted plan
+/// (`AverCert.StandardFace.recordComputeModel Plans.addTwoPlan.body`), so
+/// `CertGoals.addTwo` is no longer cited by anything in the package and
+/// rewriting it proves nothing. `inAsciiDigit` is the closest remaining
+/// export: same `expr-fragment-v1` class, and its obligation still names the
+/// generated leaf (`model := CertGoals.inAsciiDigit`).
 #[test]
 fn cert_hostile_model_expr_fragment_leaf_definition_is_declined() {
     let Some(out_dir) = hostile_models_baseline("certify-hostile-expr-fragment-baseline") else {
@@ -1723,8 +1733,8 @@ fn cert_hostile_model_expr_fragment_leaf_definition_is_declined() {
     copy_dir_all(&out_dir, &tampered);
     let model = tampered.join("cert/CertGoals.lean");
     let source = std::fs::read_to_string(&model).unwrap();
-    let honest = "def addTwo (x : Int) : Int :=\n  (x + 2)";
-    let hostile = "def addTwo (x : Int) : Int :=\n  (x + 3)";
+    let honest = "def inAsciiDigit (c : Int) : Bool :=\n  (if (c >= 48) then (c <= 57)";
+    let hostile = "def inAsciiDigit (c : Int) : Bool :=\n  (if (c >= 48) then (c <= 58)";
     let edited = source.replacen(honest, hostile, 1);
     assert_ne!(
         source, edited,
@@ -1738,7 +1748,7 @@ fn cert_hostile_model_expr_fragment_leaf_definition_is_declined() {
     );
     let manifest = std::fs::read_to_string(tampered.join("cert/Manifest.lean")).unwrap();
     assert!(
-        manifest.contains("model := fun ns => CertGoals.addTwo (ns.headD 0)"),
+        manifest.contains("model := CertGoals.inAsciiDigit"),
         "expr-fragment hostile regression must leave the manifest model reference untouched"
     );
 
