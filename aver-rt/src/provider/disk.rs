@@ -222,9 +222,9 @@ mod tests {
 
     // A directory sync is the half that makes a newly created file's
     // directory entry durable, so a directory path must reach the same
-    // Ok as a file path. Windows cannot open a directory as a file, so
-    // there the operation is a plain Result.Err instead.
-    #[cfg(unix)]
+    // Ok as a file path. Windows has no call that flushes a directory
+    // handle; `sync_path` answers Ok there because NTFS journals the
+    // metadata this asks about, so the verdict is the same either way.
     #[test]
     fn syncing_a_directory_succeeds() {
         let path = temp_path("dir");

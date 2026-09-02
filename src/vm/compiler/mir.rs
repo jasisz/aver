@@ -602,8 +602,9 @@ pub(super) fn compile_mir_expr(
             // (`Http.Response`, …) carry no `TypeId` and ride their
             // canonical `type_name` directly (the arena registers
             // built-in record types by that name). The arena's field
-            // order is declaration order, which is what RECORD_NEW
-            // expects on the stack.
+            // order is declaration order; `RECORD_NEW` expects the
+            // stack in that order, `RECORD_NEW_INDEXED` carries an
+            // explicit permutation for literals written out of order.
             let qualified_type_name = match rc.type_id {
                 Some(id) => fc.canonical_type_name(id)?,
                 None => rc.type_name.clone(),
@@ -618,17 +619,48 @@ pub(super) fn compile_mir_expr(
                 })
             })?;
             let field_names = fc.arena.get_field_names(arena_type_id).to_vec();
-            // Push fields in declared order.
-            for expected_name in &field_names {
-                let field = rc.fields.iter().find(|f| f.name == *expected_name).ok_or_else(
-                    || {
+            // Declared index of every written field, in *written* order. The
+            // last-use pass reasons in source order, so the last read of a
+            // local may be a `MOVE_LOCAL` that empties its slot; evaluating in
+            // any other order would let that move run before a field written
+            // later still needs the value.
+            let mut written_indices = Vec::with_capacity(rc.fields.len());
+            let mut covered = vec![false; field_names.len()];
+            for field in &rc.fields {
+                let field_idx = field_names
+                    .iter()
+                    .position(|n| *n == field.name)
+                    .ok_or_else(|| {
                         MirVmUnsupported::InnerError(CompileError {
                             msg: format!(
-                                "MIR-VM: missing field `{expected_name}` in record `{qualified_type_name}`"
+                                "MIR-VM: unknown field `{}` in record `{qualified_type_name}`",
+                                field.name
                             ),
                         })
-                    },
-                )?;
+                    })?;
+                if covered[field_idx] {
+                    return Err(MirVmUnsupported::InnerError(CompileError {
+                        msg: format!(
+                            "MIR-VM: field `{}` given twice in record `{qualified_type_name}`",
+                            field.name
+                        ),
+                    }));
+                }
+                covered[field_idx] = true;
+                written_indices.push(operand_u8(
+                    field_idx,
+                    &format!("record literal `{qualified_type_name}` uses field index {field_idx}"),
+                )?);
+            }
+            if let Some(missing) = covered.iter().position(|seen| !seen) {
+                return Err(MirVmUnsupported::InnerError(CompileError {
+                    msg: format!(
+                        "MIR-VM: missing field `{}` in record `{qualified_type_name}`",
+                        field_names[missing]
+                    ),
+                }));
+            }
+            for field in &rc.fields {
                 compile_mir_expr(fc, &field.value)?;
             }
             let field_count = operand_u8(
@@ -638,9 +670,24 @@ pub(super) fn compile_mir_expr(
                     field_names.len()
                 ),
             )?;
-            fc.emit_op(RECORD_NEW);
-            fc.emit_u16(arena_type_id as u16);
-            fc.emit_u8(field_count);
+            // Written order == declared order is the common case; keep it on
+            // the plain `RECORD_NEW` encoding so its bytecode is unchanged.
+            let in_declared_order = written_indices
+                .iter()
+                .enumerate()
+                .all(|(pos, idx)| pos == *idx as usize);
+            if in_declared_order {
+                fc.emit_op(RECORD_NEW);
+                fc.emit_u16(arena_type_id as u16);
+                fc.emit_u8(field_count);
+            } else {
+                fc.emit_op(RECORD_NEW_INDEXED);
+                fc.emit_u16(arena_type_id as u16);
+                fc.emit_u8(field_count);
+                for idx in written_indices {
+                    fc.emit_u8(idx);
+                }
+            }
             Ok(())
         }
         MirExpr::RecordUpdate(spanned_ru) => {
@@ -663,16 +710,28 @@ pub(super) fn compile_mir_expr(
 
             compile_mir_expr(fc, &ru.base)?;
 
-            for (field_idx, field_name) in field_names.iter().enumerate() {
-                if let Some(field) = ru.updates.iter().find(|f| f.name == *field_name) {
-                    compile_mir_expr(fc, &field.value)?;
-                    updated_indices.push(operand_u8(
-                        field_idx,
-                        &format!(
-                            "record update `{qualified_type_name}` uses field index {field_idx}"
-                        ),
-                    )?);
+            // Evaluate the overrides in *written* order — the order the
+            // last-use pass assumed when it turned the final read of a local
+            // into a consuming `MOVE_LOCAL`. `RECORD_UPDATE` pairs its index
+            // list positionally with the stack, so the list needs no
+            // particular order of its own.
+            //
+            // A field named twice keeps the first `field = value` and drops
+            // the rest, unevaluated, exactly as the declared-order walk did.
+            let mut seen = vec![false; field_names.len()];
+            for field in &ru.updates {
+                let Some(field_idx) = field_names.iter().position(|n| *n == field.name) else {
+                    continue;
+                };
+                if seen[field_idx] {
+                    continue;
                 }
+                seen[field_idx] = true;
+                compile_mir_expr(fc, &field.value)?;
+                updated_indices.push(operand_u8(
+                    field_idx,
+                    &format!("record update `{qualified_type_name}` uses field index {field_idx}"),
+                )?);
             }
             let update_count = operand_u8(
                 updated_indices.len(),

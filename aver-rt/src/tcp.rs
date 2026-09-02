@@ -685,7 +685,9 @@ mod tests {
         let settings = TcpSettings::from_policy(1, 1, 1).expect("one connection policy");
         let listener = listen_with_settings(0, 16, settings).expect("open runtime listener");
         let listener_address = reactor::listener_local_address(&listener);
-        let waiting_client = TcpStream::connect(listener_address).expect("queue inbound client");
+        let waiting_client =
+            TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, listener_address.port()))
+                .expect("queue inbound client");
 
         let (release_tx, release_rx) = mpsc::channel();
         let (occupied, occupied_server) = loopback_connection(move |_| {
@@ -727,7 +729,9 @@ mod tests {
 
         let listener = listen(0, 16).expect("open runtime listener");
         let listener_address = reactor::listener_local_address(&listener);
-        let waiting_client = TcpStream::connect(listener_address).expect("queue inbound client");
+        let waiting_client =
+            TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, listener_address.port()))
+                .expect("queue inbound client");
 
         let dial_target = TcpListener::bind(("127.0.0.1", 0)).expect("bind dial target");
         let dial_port = dial_target

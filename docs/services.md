@@ -411,6 +411,8 @@ Contract source: `stdlib/capabilities/disk.av`. Native VM and generated Rust sha
 
 `Disk.sync(path)` returns only after the named path's bytes AND metadata are on stable storage — it is `fsync`, not a buffer flush. The path may be a file or a directory, and the distinction matters: syncing a file does not make its own directory entry durable on POSIX, so the crash-safe recipe for a file that has just been created is `Disk.sync(file)` followed by `Disk.sync(parentDirectory)`. One sync after a batch of appends costs one flush; one sync per append costs one flush each.
 
+Write the same two calls on every platform. Windows has no call that flushes a directory — a directory handle needs `FILE_FLAG_BACKUP_SEMANTICS` to open at all, and `FlushFileBuffers` refuses it for want of write access — so there `Disk.sync` on a directory returns `Ok` without touching the disk. That is not a silent downgrade: NTFS journals the metadata the second call asks about, so the durability the program asked for holds when the call returns. Syncing a file is a real flush on Windows as everywhere else.
+
 `Disk.readBytesAt` is a single positional effect. It reads at most the requested length, returns `Ok(Bytes.fromList([]))` when the offset is at or beyond EOF, and rejects negative offsets or lengths. Reading a whole file remains a separate `Disk.readBytes` effect, so callers do not need the racy `size`-then-`readBytesAt` sequence.
 
 ### `Tcp` namespace — use granular effects (`! [Tcp.send]`, `! [Tcp.ping]`, etc.)

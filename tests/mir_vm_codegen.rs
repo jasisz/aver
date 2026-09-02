@@ -471,6 +471,25 @@ fn record_create_emits_record_new() {
 }
 
 #[test]
+fn record_create_written_out_of_declared_order_emits_record_new_indexed() {
+    // Fields are evaluated as written, so the declared order has to
+    // travel with the values rather than with the stack. A literal
+    // written in the declared order keeps the plain RECORD_NEW above.
+    let src = "record P\n  x: Int\n  y: Int\n\nfn makeP() -> P\n    P(y = 2, x = 1)\n";
+    assert_emits(
+        src,
+        "makeP",
+        opcode::RECORD_NEW_INDEXED,
+        "RECORD_NEW_INDEXED",
+    );
+    let cs = compile_mir(src);
+    assert!(
+        !fn_code(&cs, "makeP").contains(&opcode::RECORD_NEW),
+        "an out-of-order literal must not also emit the plain RECORD_NEW"
+    );
+}
+
+#[test]
 fn map_literal_emits_call_builtin() {
     // `{"a" => 1, "b" => 2}` builds via CALL_BUILTIN(MapSet) per entry.
     assert_emits(
