@@ -30,32 +30,28 @@ frame pushed here invisible to the branch.
 namespace Bridge
 open Wasm Wasm.SmallStep CertPrelude
 
-/-- The induction-hypothesis shape for a branch body: from any Talos thread
-    related to the wall's entry state, a successful wall run of `bodyA` is
-    matched by a Talos run of `body'` that consumes exactly `body'` and lands
-    in a related state, extending the heap. -/
-def BranchSim {α : Type} (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee)
-    (hostEnv : HostEnv α) (m : Module) (bodyA : List WInstr) (body' : Program) : Prop :=
-  ∀ (locA stA locA' stA' : List WVal),
-    wRunF host ar callee bodyA locA stA = some (.ok locA' stA') →
+/-- The induction-hypothesis shape for a branch body at the entry state
+    `(locA, st₀)`: a successful wall run of `bodyA` pushes one value and is
+    matched, from any related Talos thread, by a Talos run of `body'` that
+    consumes exactly `body'` and lands in a related state, extending the heap.
+    This is the conclusion of the whole-list lemma `bridge_run` (Bridge.lean)
+    instantiated at the empty typed prefix. -/
+def BranchSimAt {α : Type} (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee)
+    (hostEnv : HostEnv α) (m : Module) (bodyA : List WInstr) (body' : Program)
+    (locA st₀ : List WVal) : Prop :=
+  ∀ (locA' stA' : List WVal),
+    wRunF host ar callee bodyA locA st₀ = some (.ok locA' stA') →
     ∀ (cont : Program) (L : Locals) (wasm : Store α) (arity : Nat) (remainder : List Value)
       (controls : List ControlFrame) (calls : List CallFrame),
-      RLocals wasm.gcHeap L locA → Rs wasm.gcHeap L.values stA →
-      ∃ trace L' wasm',
+      RLocals wasm.gcHeap L locA → Rs wasm.gcHeap L.values st₀ →
+      ∃ v trace L' wasm',
+        stA' = v :: st₀ ∧
         Steps ⟨.running ⟨L, body' ++ cont, arity, remainder, controls, calls⟩,
               ⟨synthRuntime m hostEnv, wasm⟩⟩ trace
           ⟨.running ⟨L', cont, arity, remainder, controls, calls⟩, ⟨synthRuntime m hostEnv, wasm'⟩⟩
         ∧ wasm.gcHeap <+: wasm'.gcHeap
         ∧ RLocals wasm'.gcHeap L' locA'
         ∧ Rs wasm'.gcHeap L'.values stA'
-
-/-- The wall-side stack discipline of a typed branch (`typed_run` with the
-    empty typed prefix): a successful run pushes exactly one value on the
-    stack it was entered with. -/
-def BranchPushesOne (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee)
-    (bodyA : List WInstr) : Prop :=
-  ∀ (locA st locA' st' : List WVal),
-    wRunF host ar callee bodyA locA st = some (.ok locA' st') → ∃ v, st' = v :: st
 
 theorem UInt32.toInt32_toInt_eq_zero (u : UInt32) : u.toInt32.toInt = 0 ↔ u = 0 := by
   rw [← Int32.toInt_zero, Int32.toInt_inj]
@@ -80,11 +76,10 @@ theorem bridge_branch {α : Type}
     (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee)
     (hostEnv : HostEnv α) (m : Module)
     (bodyA : List WInstr) (body' : Program)
-    (hsim : BranchSim host ar callee hostEnv m bodyA body')
-    (hpush : BranchPushesOne host ar callee bodyA)
     (L : Locals) (wasm : Store α) (cont : Program) (arity : Nat) (remainder : List Value)
     (controls : List ControlFrame) (calls : List CallFrame)
     (locA st₀ locA' stA' : List WVal)
+    (hsim : BranchSimAt host ar callee hostEnv m bodyA body' locA st₀)
     (hL : RLocals wasm.gcHeap L locA) (hS : Rs wasm.gcHeap L.values st₀)
     (hbr : wRunF host ar callee bodyA locA st₀ = some (.ok locA' stA')) :
     ∃ trace L' wasm',
@@ -94,9 +89,8 @@ theorem bridge_branch {α : Type}
       ∧ wasm.gcHeap <+: wasm'.gcHeap
       ∧ RLocals wasm'.gcHeap L' locA'
       ∧ Rs wasm'.gcHeap L'.values stA' := by
-  obtain ⟨v, rfl⟩ := hpush _ _ _ _ hbr
-  obtain ⟨trace, L₁, wasm', hsteps, hpre, hL', hS'⟩ :=
-    hsim locA st₀ locA' (v :: st₀) hbr [] L wasm arity remainder
+  obtain ⟨v, trace, L₁, wasm', rfl, hsteps, hpre, hL', hS'⟩ :=
+    hsim locA' stA' hbr [] L wasm arity remainder
       (ifFrame body' cont L.values :: controls) calls hL hS
   rw [List.append_nil] at hsteps
   -- The branch leaves one related value on top of the entering stack.
@@ -119,15 +113,13 @@ theorem bridge_ifElse {α : Type}
     (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee)
     (hostEnv : HostEnv α) (m : Module)
     (tB eB : List WInstr) (tB' eB' : Program)
-    (hsim_t : BranchSim host ar callee hostEnv m tB tB')
-    (hsim_e : BranchSim host ar callee hostEnv m eB eB')
-    (hpush_t : BranchPushesOne host ar callee tB)
-    (hpush_e : BranchPushesOne host ar callee eB)
     (L : Locals) (wasm : Store α) (cont : Program) (arity : Nat) (remainder : List Value)
     (controls : List ControlFrame) (calls : List CallFrame)
-    (locA stA locA' stA' : List WVal)
-    (hL : RLocals wasm.gcHeap L locA) (hS : Rs wasm.gcHeap L.values stA)
-    (hA : wRunF host ar callee [.ifElse tB eB] locA stA = some (.ok locA' stA')) :
+    (locA st₀ locA' stA' : List WVal) (c : Int)
+    (hsim_t : BranchSimAt host ar callee hostEnv m tB tB' locA st₀)
+    (hsim_e : BranchSimAt host ar callee hostEnv m eB eB' locA st₀)
+    (hL : RLocals wasm.gcHeap L locA) (hS : Rs wasm.gcHeap L.values (.i32v c :: st₀))
+    (hA : wRunF host ar callee [.ifElse tB eB] locA (.i32v c :: st₀) = some (.ok locA' stA')) :
     ∃ trace L' wasm',
       Steps ⟨.running ⟨L, .iff 0 1 tB' eB' [] [.anyref] :: cont, arity, remainder, controls, calls⟩,
             ⟨synthRuntime m hostEnv, wasm⟩⟩ trace
@@ -135,68 +127,58 @@ theorem bridge_ifElse {α : Type}
       ∧ wasm.gcHeap <+: wasm'.gcHeap
       ∧ RLocals wasm'.gcHeap L' locA'
       ∧ Rs wasm'.gcHeap L'.values stA' := by
-  -- The wall's step: an `i32` condition on top.
-  match hstA : stA, hA with
-  | .i32v c :: st₀, hA =>
-    subst hstA
-    -- Its Talos twin.
-    obtain ⟨params, locs, vals0⟩ := L
-    match vals0, hS with
-    | vc :: vals, hS =>
-      simp only [Rs] at hS
-      obtain ⟨u, rfl, hcu⟩ := R_i32v hS.1
-      simp only [wRunF] at hA
+  -- The Talos twin of the `i32` condition.
+  obtain ⟨params, locs, vals0⟩ := L
+  match vals0, hS with
+  | vc :: vals, hS =>
+    simp only [Rs] at hS
+    obtain ⟨u, rfl, hcu⟩ := R_i32v hS.1
+    simp only [wRunF] at hA
+    split at hA
+    · -- else branch
+      rename_i hc
+      have hu : u = 0 := (UInt32.toInt32_toInt_eq_zero u).mp (hcu ▸ hc)
+      subst hu
       split at hA
-      · -- else branch
-        rename_i hc
-        have hu : u = 0 := (UInt32.toInt32_toInt_eq_zero u).mp (hcu ▸ hc)
-        subst hu
-        split at hA
-        · rename_i l₁ st₁ hbr
-          simp only [Option.some.injEq, Out.ok.injEq] at hA
-          obtain ⟨rfl, rfl⟩ := hA
-          obtain ⟨trace, L', wasm', hsteps, hpre, hL', hS'⟩ :=
-            bridge_branch host ar callee hostEnv m eB eB' hsim_e hpush_e
-              ⟨params, locs, vals⟩ wasm cont arity remainder controls calls
-              locA st₀ l₁ st₁ hL hS.2 hbr
-          refine ⟨.instruction (.iff 0 1 tB' eB' [] [.anyref]) :: trace, L', wasm', ?_, hpre, hL', hS'⟩
-          refine Steps.cons ?_ hsteps
-          have hstep := Step.iff (α := α) (params := params) (localValues := locs)
-            (values := vals) (condition := 0) (thenBody := tB') (elseBody := eB')
-            (paramArity := 0) (resultArity := 1) (paramTypes := []) (resultTypes := [.anyref])
-            (code := cont) (arity := arity) (remainder := remainder) (controls := controls)
-            (calls := calls) (store := ⟨synthRuntime m hostEnv, wasm⟩) (selectedBody := eB')
-            (by simp)
-          simpa [ifFrame] using hstep
-        · simp at hA
-        · simp at hA
-      · -- then branch
-        rename_i hc
-        have hu : u ≠ 0 := fun h => hc ((UInt32.toInt32_toInt_eq_zero u).mpr h ▸ hcu)
-        split at hA
-        · rename_i l₁ st₁ hbr
-          simp only [Option.some.injEq, Out.ok.injEq] at hA
-          obtain ⟨rfl, rfl⟩ := hA
-          obtain ⟨trace, L', wasm', hsteps, hpre, hL', hS'⟩ :=
-            bridge_branch host ar callee hostEnv m tB tB' hsim_t hpush_t
-              ⟨params, locs, vals⟩ wasm cont arity remainder controls calls
-              locA st₀ l₁ st₁ hL hS.2 hbr
-          refine ⟨.instruction (.iff 0 1 tB' eB' [] [.anyref]) :: trace, L', wasm', ?_, hpre, hL', hS'⟩
-          refine Steps.cons ?_ hsteps
-          have hstep := Step.iff (α := α) (params := params) (localValues := locs)
-            (values := vals) (condition := u) (thenBody := tB') (elseBody := eB')
-            (paramArity := 0) (resultArity := 1) (paramTypes := []) (resultTypes := [.anyref])
-            (code := cont) (arity := arity) (remainder := remainder) (controls := controls)
-            (calls := calls) (store := ⟨synthRuntime m hostEnv, wasm⟩) (selectedBody := tB')
-            (by simp [hu])
-          simpa [ifFrame] using hstep
-        · simp at hA
-        · simp at hA
-  | [], hA => simp [wRunF] at hA
-  | .i64v _ :: _, hA => simp [wRunF] at hA
-  | .f64v _ :: _, hA => simp [wRunF] at hA
-  | .structv _ _ :: _, hA => simp [wRunF] at hA
-  | .arr _ _ :: _, hA => simp [wRunF] at hA
-  | .null :: _, hA => simp [wRunF] at hA
+      · rename_i l₁ st₁ hbr
+        simp only [Option.some.injEq, Out.ok.injEq] at hA
+        obtain ⟨rfl, rfl⟩ := hA
+        obtain ⟨trace, L', wasm', hsteps, hpre, hL', hS'⟩ :=
+          bridge_branch host ar callee hostEnv m eB eB'
+            ⟨params, locs, vals⟩ wasm cont arity remainder controls calls
+            locA st₀ l₁ st₁ hsim_e hL hS.2 hbr
+        refine ⟨.instruction (.iff 0 1 tB' eB' [] [.anyref]) :: trace, L', wasm', ?_, hpre, hL', hS'⟩
+        refine Steps.cons ?_ hsteps
+        have hstep := Step.iff (α := α) (params := params) (localValues := locs)
+          (values := vals) (condition := 0) (thenBody := tB') (elseBody := eB')
+          (paramArity := 0) (resultArity := 1) (paramTypes := []) (resultTypes := [.anyref])
+          (code := cont) (arity := arity) (remainder := remainder) (controls := controls)
+          (calls := calls) (store := ⟨synthRuntime m hostEnv, wasm⟩) (selectedBody := eB')
+          (by simp)
+        simpa [ifFrame] using hstep
+      · simp at hA
+      · simp at hA
+    · -- then branch
+      rename_i hc
+      have hu : u ≠ 0 := fun h => hc ((UInt32.toInt32_toInt_eq_zero u).mpr h ▸ hcu)
+      split at hA
+      · rename_i l₁ st₁ hbr
+        simp only [Option.some.injEq, Out.ok.injEq] at hA
+        obtain ⟨rfl, rfl⟩ := hA
+        obtain ⟨trace, L', wasm', hsteps, hpre, hL', hS'⟩ :=
+          bridge_branch host ar callee hostEnv m tB tB'
+            ⟨params, locs, vals⟩ wasm cont arity remainder controls calls
+            locA st₀ l₁ st₁ hsim_t hL hS.2 hbr
+        refine ⟨.instruction (.iff 0 1 tB' eB' [] [.anyref]) :: trace, L', wasm', ?_, hpre, hL', hS'⟩
+        refine Steps.cons ?_ hsteps
+        have hstep := Step.iff (α := α) (params := params) (localValues := locs)
+          (values := vals) (condition := u) (thenBody := tB') (elseBody := eB')
+          (paramArity := 0) (resultArity := 1) (paramTypes := []) (resultTypes := [.anyref])
+          (code := cont) (arity := arity) (remainder := remainder) (controls := controls)
+          (calls := calls) (store := ⟨synthRuntime m hostEnv, wasm⟩) (selectedBody := tB')
+          (by simp [hu])
+        simpa [ifFrame] using hstep
+      · simp at hA
+      · simp at hA
 
 end Bridge

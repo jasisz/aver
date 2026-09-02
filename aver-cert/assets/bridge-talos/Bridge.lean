@@ -6,3 +6,6 @@ import Bridge.Config
 import Bridge.HostCall
 import Bridge.IfElse
 import Bridge.EnvOfClaim
+import Bridge.Instr
+import Bridge.Bridge
+import Bridge.Axioms
