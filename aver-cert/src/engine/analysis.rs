@@ -200,8 +200,8 @@ pub fn analyze_for_target_with_fragment_plans(
                 }
             };
             match checked {
-                Ok((_func_order, cert, _sidecar, true, _reason)) => certs.push(cert),
-                Ok((_func_order, _cert, _sidecar, false, reason)) => declined.push((
+                Ok((_func_order, cert, true, _reason)) => certs.push(cert),
+                Ok((_func_order, _cert, false, reason)) => declined.push((
                     f.name.clone(),
                     format!(
                         "producer fragment plan does not match emitted wasm: {}",
@@ -902,9 +902,10 @@ fn floatLeGoal(a: Float, b: Float) -> Bool
             );
         }
 
-        // Old certificate directories may still carry either public sidecar
-        // profile. The verifier-owned parsers must enforce the same boundary,
-        // not merely the producer-plan overlay above.
+        // The boundary must hold on the ExprFragment ENCODING of that plan
+        // too, not only on the SymPlan the producer emitted above: a
+        // certificate directory carries the encoded form, and the checker
+        // reads it back through its own path.
         let add_plan = output
             .fragment_plans
             .iter()
@@ -913,34 +914,25 @@ fn floatLeGoal(a: Float, b: Float) -> Bool
         let FragmentPlan::Sym(add_sym) = &add_plan.plan else {
             panic!("Float add should originate as a SymPlan");
         };
-        let sym_error = check_sym_fragment_plan_sidecar(
-            &output.bytes,
-            "floatAddGoal",
-            &sym_fragment_plan_text(add_sym),
-        )
-        .err()
-        .expect("historical SymPlan sidecar must be rejected");
-        assert!(
-            sym_error.contains("exact-bit Float output needs a relational result model"),
-            "SymPlan verifier should report the NaN boundary: {sym_error}"
-        );
-
         let add_expr = add_sym
             .to_expr_fragment_plan(
                 &FragHostTable::placeholder(),
                 &FragStructTable::default(),
             )
-            .expect("Float add encodes to the historical ExprFragment plan");
-        let expr_error = check_expr_fragment_plan_sidecar(
-            &output.bytes,
-            "floatAddGoal",
-            &expr_fragment_plan_text(&add_expr),
-        )
-        .err()
-        .expect("historical ExprFragment sidecar must be rejected");
+            .expect("Float add encodes to the ExprFragment plan");
+        let expr_error =
+            match check_expr_fragment_plan_object(&output.bytes, "floatAddGoal", add_expr) {
+                Ok((_, _, true, _)) => {
+                    panic!("the encoded Float-add plan must not be certified")
+                }
+                Ok((_, _, false, reason)) => {
+                    reason.expect("a declined plan states its reason")
+                }
+                Err(reason) => reason,
+            };
         assert!(
             expr_error.contains("exact-bit Float output needs a relational result model"),
-            "ExprFragment verifier should report the NaN boundary: {expr_error}"
+            "ExprFragment checker should report the NaN boundary: {expr_error}"
         );
     }
 
@@ -1462,7 +1454,7 @@ fn userName(u: User) -> String
         };
 
         // Baseline: the honest plan checks and matches the bytes.
-        let (_order, _cert, _sidecar, matches, reason) =
+        let (_order, _cert, matches, reason) =
             check_expr_fragment_plan_object(&bytes, "userName", projection_plan(real_ty, 0))
                 .expect("honest projection plan is admitted");
         assert!(matches, "honest projection plan must match bytes: {reason:?}");
@@ -1506,7 +1498,7 @@ fn userName(u: User) -> String
             .copied()
             .find(|t| *t != real_ty && *t != carrier)
             .expect("module has another struct type");
-        let (_order, _cert, _sidecar, matches, reason) =
+        let (_order, _cert, matches, reason) =
             check_expr_fragment_plan_object(&bytes, "userName", projection_plan(wrong_ty, 0))
                 .expect("wrong-type plan is well-formed but must not match");
         assert!(
@@ -1519,7 +1511,7 @@ fn userName(u: User) -> String
         );
 
         // (b) field index flipped 0 -> 1: well-typed, wrong bytes.
-        let (_order, _cert, _sidecar, matches, _reason) =
+        let (_order, _cert, matches, _reason) =
             check_expr_fragment_plan_object(&bytes, "userName", projection_plan(real_ty, 1))
                 .expect("flipped-field plan is well-formed but must not match");
         assert!(

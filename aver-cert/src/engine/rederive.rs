@@ -28,15 +28,8 @@ pub struct RederivedObligation {
     /// `WCode` body. The current plan-first lowering emits one scratch carrier
     /// local; artifact acceptance also binds it to the decoded code table.
     pub fragment_nlocals: Option<u32>,
-    /// Internal serialized form of the expression plan. Public packages render
-    /// the authoritative value only in `Plans.lean`.
-    pub fragment_plan: Option<FragmentPlanSidecar>,
     /// The expression plan rendered as an `ExprFragmentRawPlan` term.
     pub fragment_plan_lean: Option<String>,
-    /// For expression fragments whose checked representation plan can be
-    /// projected into the source-level symbolic grammar, its internal
-    /// serialized form.
-    pub fragment_sym_plan: Option<FragmentPlanSidecar>,
     /// For expression fragments whose checked representation plan can be
     /// projected into the source-level symbolic grammar, the corresponding
     /// `SymRawPlan` term. Representation-only fragments leave it absent.
@@ -52,11 +45,6 @@ pub struct RederivedObligation {
     /// Producer-computed canonical code-entry bytes used as an emission
     /// consistency check. Lean lowers and compares independently.
     pub fragment_lowered_code_entry_lean: Option<String>,
-    /// For `string-concat-v1`, the byte-derived target-bound concat plan.
-    pub string_concat_plan: Option<FragmentPlanSidecar>,
-    /// For `string-concat-v1`, the byte-derived source-level symbolic view of
-    /// the concat plan in the producer's internal serialization.
-    pub string_concat_sym_plan: Option<FragmentPlanSidecar>,
     /// The string-concat plan rendered as a `StringConcatRawPlan` term.
     pub string_concat_plan_lean: Option<String>,
     /// The source-level `SymRawPlan` view of the same byte-derived string
@@ -76,10 +64,6 @@ pub struct RederivedObligation {
     pub string_concat_container_ty: Option<u32>,
     /// The wasm function index of the `String.concat` host helper.
     pub string_concat_func_idx: Option<u32>,
-    /// For `string-eq-v1`, the byte-derived target-bound equality dispatch plan.
-    pub string_eq_plan: Option<FragmentPlanSidecar>,
-    /// For `string-eq-v1`, the byte-derived source-level symbolic view.
-    pub string_eq_sym_plan: Option<FragmentPlanSidecar>,
     /// The same checked String.eq plan rendered as a Lean `StringEqRawPlan` term.
     pub string_eq_plan_lean: Option<String>,
     /// The source-level `SymRawPlan` view of the same byte-derived String.eq shape.
@@ -94,12 +78,6 @@ pub struct RederivedObligation {
     pub string_eq_string_ty: Option<u32>,
     /// The wasm function index of the `String.eq` host helper.
     pub string_eq_func_idx: Option<u32>,
-    /// For `construct-v1`, the byte-derived target-bound ADT constructor plan.
-    pub construct_plan: Option<FragmentPlanSidecar>,
-    /// For `construct-v1`, the byte-derived source-level symbolic constructor
-    /// view. This is reconstructed from the checked source model plus the
-    /// byte-derived constructor shape.
-    pub construct_sym_plan: Option<FragmentPlanSidecar>,
     /// The same checked construct plan rendered as a Lean `ConstructRawPlan`
     /// term.
     pub construct_plan_lean: Option<String>,
@@ -284,10 +262,6 @@ fn verbatim_string_face_pins(idx: usize) -> String {
 }
 
 impl ObligationFace {
-    fn of_cert(c: &Cert) -> ObligationFace {
-        Self::of_cert_with_model_info(c, None)
-    }
-
     fn of_cert_with_model_info(
         c: &Cert,
         model_info: Option<&ModelInfo>,
@@ -744,10 +718,6 @@ fn rederive_certificate_inner(
                 Cert::ExprFragment { nlocals, .. } => Some(*nlocals as u32),
                 _ => None,
             },
-            fragment_plan: match c.inner() {
-                Cert::ExprFragment { plan, .. } => Some(expr_fragment_sidecar(c.name(), plan)),
-                _ => None,
-            },
             fragment_plan_lean: match c.inner() {
                 Cert::ExprFragment { plan, .. } => Some(expr_fragment_plan_lean_value(plan)),
                 _ => None,
@@ -756,13 +726,6 @@ fn rederive_certificate_inner(
                 Cert::ExprFragment {
                     source_plan, plan, ..
                 } => expr_fragment_source_plan(source_plan, plan).map(|sym| sym_plan_lean_value(&sym)),
-                _ => None,
-            },
-            fragment_sym_plan: match c.inner() {
-                Cert::ExprFragment {
-                    source_plan, plan, ..
-                } => expr_fragment_source_plan(source_plan, plan)
-                    .map(|sym| sym_fragment_sidecar(c.name(), &sym)),
                 _ => None,
             },
             fragment_struct_entries: match c.inner() {
@@ -783,18 +746,6 @@ fn rederive_certificate_inner(
                         .ok()
                         .map(|bytes| render_byte_list(&bytes))
                 }
-                _ => None,
-            },
-            string_concat_plan: match c.inner() {
-                Cert::StringConcatVerbatimMatch { .. } => {
-                    string_concat_plan_from_cert(c).map(|plan| string_concat_sidecar(c.name(), &plan))
-                }
-                _ => None,
-            },
-            string_concat_sym_plan: match c.inner() {
-                Cert::StringConcatVerbatimMatch { .. } => string_concat_plan_from_cert(c)
-                    .map(|plan| string_concat_sym_plan_from_plan(&plan))
-                    .map(|plan| sym_fragment_sidecar(c.name(), &plan)),
                 _ => None,
             },
             string_concat_plan_lean: match c.inner() {
@@ -867,18 +818,6 @@ fn rederive_certificate_inner(
                 } => Some(*string_concat_idx),
                 _ => None,
             },
-            string_eq_plan: match c.inner() {
-                Cert::StringEqVerbatimMatch { .. } => {
-                    string_eq_plan_from_cert(c).map(|plan| string_eq_sidecar(c.name(), &plan))
-                }
-                _ => None,
-            },
-            string_eq_sym_plan: match c.inner() {
-                Cert::StringEqVerbatimMatch { .. } => string_eq_plan_from_cert(c)
-                    .map(|plan| string_eq_sym_plan_from_plan(&plan))
-                    .map(|plan| sym_fragment_sidecar(c.name(), &plan)),
-                _ => None,
-            },
             string_eq_plan_lean: match c.inner() {
                 Cert::StringEqVerbatimMatch { .. } => {
                     string_eq_plan_from_cert(c).map(|plan| string_eq_plan_lean_value(&plan))
@@ -935,17 +874,6 @@ fn rederive_certificate_inner(
             },
             string_eq_func_idx: match c.inner() {
                 Cert::StringEqVerbatimMatch { string_eq_idx, .. } => Some(*string_eq_idx),
-                _ => None,
-            },
-            construct_plan: match c.inner() {
-                Cert::AdtConstructor { .. } => {
-                    construct_plan_from_cert(c).map(|plan| construct_sidecar(c.name(), &plan))
-                }
-                _ => None,
-            },
-            construct_sym_plan: match c.inner() {
-                Cert::AdtConstructor { .. } => adt_constructor_sym_plan_from_cert(c, &model_info)
-                    .map(|plan| sym_fragment_sidecar(c.name(), &plan)),
                 _ => None,
             },
             construct_plan_lean: match c.inner() {

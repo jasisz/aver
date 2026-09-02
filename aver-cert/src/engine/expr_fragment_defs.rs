@@ -88,20 +88,6 @@ impl FragTy {
     }
 
     #[cfg(feature = "engine")]
-    fn from_plan_tag(tag: &str) -> Option<Self> {
-        match tag {
-            "f64" => Some(FragTy::F64),
-            "bool-i32" => Some(FragTy::BoolI32),
-            "int-carrier" => Some(FragTy::IntCarrier),
-            "i64" => Some(FragTy::I64),
-            "raw-i32" => Some(FragTy::RawI32),
-            "ref" => Some(FragTy::Ref),
-            "adt-ref" => Some(FragTy::AdtRef),
-            _ => None,
-        }
-    }
-
-    #[cfg(feature = "engine")]
     fn source_name(self) -> &'static str {
         self.model_ty().display_name()
     }
@@ -520,29 +506,6 @@ pub enum FragPrim {
 
 impl FragPrim {
     #[cfg(feature = "engine")]
-    fn plan_tag(self) -> &'static str {
-        match self {
-            FragPrim::F64Add => "f64.add",
-            FragPrim::F64Mul => "f64.mul",
-            FragPrim::F64Le => "f64.le",
-            FragPrim::F64Ge => "f64.ge",
-            FragPrim::F64Lt => "f64.lt",
-            FragPrim::F64Gt => "f64.gt",
-            FragPrim::F64Eq => "f64.eq",
-            FragPrim::I64Eq => "i64.eq",
-            FragPrim::I64LeS => "i64.le_s",
-            FragPrim::I64LtS => "i64.lt_s",
-            FragPrim::I64GeS => "i64.ge_s",
-            FragPrim::I64GtS => "i64.gt_s",
-            FragPrim::I32Eq => "i32.eq",
-            FragPrim::I32LtS => "i32.lt_s",
-            FragPrim::I32GtS => "i32.gt_s",
-            FragPrim::I32GeS => "i32.ge_s",
-            FragPrim::I32And => "i32.and",
-        }
-    }
-
-    #[cfg(feature = "engine")]
     fn lean_plan_ctor(self) -> &'static str {
         match self {
             FragPrim::F64Add => ".f64Add",
@@ -722,49 +685,6 @@ impl ExprFragmentPlan {
 }
 
 #[cfg(feature = "engine")]
-#[derive(Clone, Debug)]
-pub struct FragmentPlanSidecar {
-    pub path: String,
-    pub sha256: String,
-    pub text: String,
-}
-
-#[cfg(feature = "engine")]
-fn expr_fragment_sidecar(name: &str, plan: &ExprFragmentPlan) -> FragmentPlanSidecar {
-    let text = expr_fragment_plan_text(plan);
-    FragmentPlanSidecar {
-        path: expr_fragment_plan_path(name),
-        sha256: sha256_hex(text.as_bytes()),
-        text,
-    }
-}
-
-#[cfg(feature = "engine")]
-fn expr_fragment_plan_path(name: &str) -> String {
-    format!(
-        "fragments/{}.expr-fragment-v1.plan",
-        hex(name.as_bytes())
-    )
-}
-
-#[cfg(feature = "engine")]
-fn expr_fragment_plan_text(plan: &ExprFragmentPlan) -> String {
-    let mut out = String::new();
-    out.push_str("aver.expr-fragment.plan.v1\n");
-    out.push_str("profile expr-fragment-v1\n");
-    out.push_str("params");
-    for ty in &plan.params {
-        out.push(' ');
-        out.push_str(ty.plan_tag());
-    }
-    out.push('\n');
-    out.push_str(&format!("result {}\n", plan.result.plan_tag()));
-    out.push_str("body\n");
-    render_fragment_block_plan(&plan.body, 0, &mut out);
-    out
-}
-
-#[cfg(feature = "engine")]
 fn expr_fragment_plan_lean_value(plan: &ExprFragmentPlan) -> String {
     format!(
         "{{ profile := \"expr-fragment-v1\", params := [{}], result := {}, body := {} }}",
@@ -884,137 +804,6 @@ fn expr_fragment_node_kind_lean_value(kind: &FragNodeKind) -> String {
             expr_fragment_block_lean_value(else_block)
         ),
     }
-}
-
-#[cfg(feature = "engine")]
-fn render_fragment_block_plan(block: &FragBlock, indent: usize, out: &mut String) {
-    let pad = "  ".repeat(indent);
-    out.push_str(&format!("{pad}block result=v{}\n", block.result.0));
-    for node in &block.nodes {
-        render_fragment_node_plan(node, indent + 1, out);
-    }
-    out.push_str(&format!("{pad}end\n"));
-}
-
-#[cfg(feature = "engine")]
-fn render_fragment_node_plan(node: &FragNode, indent: usize, out: &mut String) {
-    let pad = "  ".repeat(indent);
-    out.push_str(&format!(
-        "{pad}v{} ty={} ",
-        node.id.0,
-        node.ty.plan_tag()
-    ));
-    match &node.kind {
-        FragNodeKind::Local { index } => {
-            out.push_str(&format!("local index={index}\n"));
-        }
-        FragNodeKind::ConstBool(v) => {
-            out.push_str(&format!("const.bool value={v}\n"));
-        }
-        FragNodeKind::ConstI64(v) => {
-            out.push_str(&format!("const.i64 value={v}\n"));
-        }
-        FragNodeKind::ConstI32(v) => {
-            out.push_str(&format!("const.i32 value={v}\n"));
-        }
-        FragNodeKind::ConstF64(bits) => {
-            out.push_str(&format!("const.f64 bits=0x{bits:016x}\n"));
-        }
-        FragNodeKind::StructGet { field, receiver } => {
-            out.push_str(&format!("struct.get field={field} receiver=v{}\n", receiver.0));
-        }
-        FragNodeKind::StructGetUser {
-            ty_idx,
-            field,
-            value,
-        } => {
-            out.push_str(&format!(
-                "struct.get.user ty={ty_idx} field={field} value=v{}\n",
-                value.0
-            ));
-        }
-        FragNodeKind::RefIsNull { value } => {
-            out.push_str(&format!("ref.is_null value=v{}\n", value.0));
-        }
-        FragNodeKind::StructNew { ty_idx, args } => {
-            out.push_str(&format!(
-                "struct.new ty={ty_idx} args={}\n",
-                render_fragment_plan_ids(args)
-            ));
-        }
-        FragNodeKind::IntSignCmp {
-            op,
-            constant,
-            scratch,
-            value,
-        } => {
-            out.push_str(&format!(
-                "int.sign_cmp op={} constant={constant} scratch={scratch} \
-                 value=v{}\n",
-                op.plan_tag(),
-                value.0
-            ));
-        }
-        FragNodeKind::Prim { op, args } => {
-            out.push_str(&format!(
-                "prim op={} args={}\n",
-                op.plan_tag(),
-                render_fragment_plan_ids(args)
-            ));
-        }
-        FragNodeKind::HostCall {
-            role,
-            func_idx,
-            args,
-        } => {
-            out.push_str(&format!(
-                "hostcall role={} func={func_idx} args={}\n",
-                role.plan_tag(),
-                render_fragment_plan_ids(args)
-            ));
-        }
-        FragNodeKind::SelfCall {
-            tail,
-            func_idx,
-            args,
-        } => {
-            out.push_str(&format!(
-                "selfcall tail={tail} func={func_idx} args={}\n",
-                render_fragment_plan_ids(args)
-            ));
-        }
-        FragNodeKind::VectorGetOrDefault {
-            arr_ty,
-            to_index_idx,
-            box_idx,
-            default,
-        } => {
-            out.push_str(&format!(
-                "vector.get_or_default arr_ty={arr_ty} to_index={to_index_idx} \
-                 box={box_idx} default={default}\n"
-            ));
-        }
-        FragNodeKind::If {
-            cond,
-            then_block,
-            else_block,
-        } => {
-            out.push_str(&format!("if cond=v{}\n", cond.0));
-            out.push_str(&format!("{pad}then\n"));
-            render_fragment_block_plan(then_block, indent + 1, out);
-            out.push_str(&format!("{pad}else\n"));
-            render_fragment_block_plan(else_block, indent + 1, out);
-            out.push_str(&format!("{pad}endif\n"));
-        }
-    }
-}
-
-#[cfg(feature = "engine")]
-fn render_fragment_plan_ids(args: &[FragValueId]) -> String {
-    args.iter()
-        .map(|id| format!("v{}", id.0))
-        .collect::<Vec<_>>()
-        .join(",")
 }
 
 #[cfg(feature = "engine")]
@@ -1183,24 +972,6 @@ mod expr_fragment_sem_ty_tests {
     }
 
     #[test]
-    fn hostcall_plan_text_round_trips_through_parser() {
-        let plan = add_two_hostcall_plan();
-        let text = expr_fragment_plan_text(&plan);
-        let mut parser =
-            FragPlanParser::new(&text, vec![FragTy::IntCarrier], FragTy::IntCarrier);
-        let body = parser.parse().expect("parse hostcall plan");
-        let reparsed = ExprFragmentPlan {
-            params: vec![FragTy::IntCarrier],
-            result: FragTy::IntCarrier,
-            body,
-        };
-        assert_eq!(
-            lower_expr_fragment_plan_code_entry_bytes(&reparsed, 2).expect("relower"),
-            vec![13, 1, 1, 99, 2, 32, 0, 66, 2, 16, 6, 16, 7, 11]
-        );
-    }
-
-    #[test]
     fn hostcall_plan_lean_value_uses_host_call_ctor() {
         let lean = expr_fragment_plan_lean_value(&add_two_hostcall_plan());
         assert!(lean.contains(".hostCall .box 6 [1]"), "lean = {lean}");
@@ -1253,26 +1024,6 @@ mod expr_fragment_sem_ty_tests {
         assert_eq!(ops, vec![Op::LocalGet(0), Op::StructGet(15, 0)]);
     }
 
-    #[test]
-    fn user_struct_projection_plan_text_round_trips_through_parser() {
-        let plan = user_name_projection_plan();
-        let text = expr_fragment_plan_text(&plan);
-        let mut parser = FragPlanParser::new(&text, vec![FragTy::AdtRef], FragTy::AdtRef);
-        let body = parser.parse().expect("parse projection plan");
-        let reparsed = ExprFragmentPlan {
-            params: vec![FragTy::AdtRef],
-            result: FragTy::AdtRef,
-            body,
-        };
-        assert_eq!(
-            lower_expr_fragment_plan_code_entry_bytes(&reparsed, 18).expect("relower"),
-            vec![0x0b, 0x01, 0x01, 0x63, 0x12, 0x20, 0x00, 0xfb, 0x02, 0x0f, 0x00, 0x0b]
-        );
-    }
-
-    /// The inline sign template on a computed Int operand, at the one declared
-    /// scratch slot (`params.length`). `op`/`constant`/`scratch`/`value` are all
-    /// plan data, so the text form must round-trip every one of them.
     fn sign_template_plan(op: SymIntCmp, constant: i64) -> ExprFragmentPlan {
         ExprFragmentPlan {
             params: vec![FragTy::IntCarrier],
@@ -1304,49 +1055,6 @@ mod expr_fragment_sem_ty_tests {
     /// must read it back — including a NEGATIVE literal, whose minus sign is
     /// the one character an attribute scanner is most likely to drop.
     #[test]
-    fn sign_template_plan_text_round_trips_through_parser() {
-        for (op, constant) in [
-            (SymIntCmp::Ge, 0_i64),
-            (SymIntCmp::Le, 0),
-            (SymIntCmp::Eq, 7),
-            (SymIntCmp::Lt, -5),
-            (SymIntCmp::Gt, i64::MIN),
-        ] {
-            let plan = sign_template_plan(op, constant);
-            let text = expr_fragment_plan_text(&plan);
-            let mut parser =
-                FragPlanParser::new(&text, vec![FragTy::IntCarrier], FragTy::BoolI32);
-            let body = parser
-                .parse()
-                .unwrap_or_else(|e| panic!("parse sign-template plan: {e}\n{text}"));
-            let reparsed = ExprFragmentPlan {
-                params: vec![FragTy::IntCarrier],
-                result: FragTy::BoolI32,
-                body,
-            };
-            assert_eq!(reparsed, plan, "plan text = {text}");
-        }
-    }
-
-    /// The three typing pins the wall's `nodeTypedB` states for `.intSignCmp`
-    /// are enforced by the plan-text parser too: the operand is an Int carrier,
-    /// the written slot is exactly `params.length`, and the node is Boolean.
-    #[test]
-    fn sign_template_plan_text_rejects_a_slot_that_is_not_the_scratch_local() {
-        let plan = sign_template_plan(SymIntCmp::Ge, 0);
-        let text = expr_fragment_plan_text(&plan).replace("scratch=1", "scratch=0");
-        let mut parser = FragPlanParser::new(&text, vec![FragTy::IntCarrier], FragTy::BoolI32);
-        let error = parser.parse().expect_err("a parameter slot must be refused");
-        assert!(
-            error.contains("declared scratch slot"),
-            "unexpected error: {error}"
-        );
-    }
-
-    /// The sign template IS a Boolean node, so the Boolean renderer must give
-    /// it its source reading (`value op k`) rather than panic with "node is not
-    /// BoolI32".
-    #[test]
     fn bool_renderer_reads_the_sign_template_instead_of_panicking() {
         let local = |index: u32, _ty: FragTy| format!("a{index}");
         for (op, constant, expected) in [
@@ -1364,13 +1072,8 @@ mod expr_fragment_sem_ty_tests {
     }
 
     #[test]
-    fn user_struct_projection_plan_text_and_lean_render_the_user_node() {
+    fn user_struct_projection_plan_lean_renders_the_user_node() {
         let plan = user_name_projection_plan();
-        let text = expr_fragment_plan_text(&plan);
-        assert!(
-            text.contains("struct.get.user ty=15 field=0 value=v0"),
-            "plan text = {text}"
-        );
         let lean = expr_fragment_plan_lean_value(&plan);
         assert!(lean.contains(".structGetUser 15 0 0"), "lean = {lean}");
         assert!(lean.contains("params := [.adtRef]"), "lean = {lean}");

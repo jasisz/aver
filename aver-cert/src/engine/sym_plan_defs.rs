@@ -70,16 +70,6 @@ impl SymTy {
         }
     }
 
-    #[cfg(feature = "engine")]
-    fn from_plan_tag(tag: &str) -> Option<Self> {
-        match tag {
-            "int" => Some(SymTy::Int),
-            "float" => Some(SymTy::Float),
-            "bool" => Some(SymTy::Bool),
-            "string" => Some(SymTy::String),
-            _ => parse_sym_ty_plan_tag(tag),
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -448,36 +438,6 @@ fn split_top_level(value: &str, needle: char) -> Option<(&str, &str)> {
         }
     }
     None
-}
-
-#[cfg(feature = "engine")]
-fn parse_sym_ty_plan_tag(tag: &str) -> Option<SymTy> {
-    if let Some(name) = tag.strip_prefix("named:") {
-        return sym_plan_simple_token(name).then(|| SymTy::Named(name.to_string()));
-    }
-    let app = tag.strip_prefix("app:")?;
-    let open = app.find('[')?;
-    let name = &app[..open];
-    let args_text = app.get(open + 1..)?.strip_suffix(']')?;
-    if !sym_plan_simple_token(name) || args_text.is_empty() {
-        return None;
-    }
-    let mut args = Vec::new();
-    let mut start = 0usize;
-    let mut depth = 0i32;
-    for (at, ch) in args_text.char_indices() {
-        match ch {
-            '[' => depth += 1,
-            ']' => depth -= 1,
-            ';' if depth == 0 => {
-                args.push(SymTy::from_plan_tag(&args_text[start..at])?);
-                start = at + 1;
-            }
-            _ => {}
-        }
-    }
-    args.push(SymTy::from_plan_tag(&args_text[start..])?);
-    Some(SymTy::App(name.to_string(), args))
 }
 
 #[cfg(feature = "engine")]
@@ -876,22 +836,6 @@ mod sym_plan_defs_tests {
     }
 
     #[test]
-    fn slot_count_tag_match_sidecar_roundtrips_and_rejects_wrong_type_name() {
-        let plan = slot_count_sym_plan();
-        let text = sym_fragment_plan_text(&plan);
-        let mut parser = SymPlanParser::new(&text, plan.params.clone(), plan.result.clone());
-        assert_eq!(parser.parse().expect("parse tag.match plan"), plan.body);
-
-        let malformed = text.replace("type=Option", "type=Unknown");
-        let mut parser = SymPlanParser::new(&malformed, plan.params.clone(), plan.result.clone());
-        let error = parser.parse().expect_err("wrong tag.match type must decline");
-        assert!(
-            error.contains("names type `Unknown`") && error.contains("app:Option[int]"),
-            "unexpected parser error: {error}"
-        );
-    }
-
-    #[test]
     fn sym_plan_projects_direct_float_fragment() {
         let plan = ExprFragmentPlan {
             params: vec![FragTy::F64, FragTy::F64],
@@ -984,10 +928,9 @@ mod sym_plan_defs_tests {
     }
 
     #[test]
-    fn sym_plan_named_types_roundtrip_but_do_not_encode_to_expr_fragment() {
+    fn sym_plan_named_types_render_but_do_not_encode_to_expr_fragment() {
         let named = SymTy::Named("User".to_string());
         assert_eq!(named.plan_tag(), "named:User");
-        assert_eq!(SymTy::from_plan_tag("named:User"), Some(named.clone()));
         // Named types encode to the opaque `adtRef` representation type; the
         // plan below still does NOT encode because its body carries a string
         // literal (no representation-level constructor).
@@ -1018,7 +961,7 @@ mod sym_plan_defs_tests {
     }
 
     #[test]
-    fn sym_plan_construct_roundtrips_but_does_not_encode_to_expr_fragment() {
+    fn sym_plan_construct_renders_in_lean_but_does_not_encode_to_expr_fragment() {
         let plan = SymPlan {
             params: vec![SymTy::Int],
             result: SymTy::Named("Op".to_string()),
@@ -1043,17 +986,9 @@ mod sym_plan_defs_tests {
             },
         };
 
-        let text = sym_fragment_plan_text(&plan);
-        assert!(text.contains("result named:Op"));
-        assert!(text.contains("construct type=Op ctor=Add args=v0"));
-
         let lean = sym_plan_lean_value(&plan);
         assert!(lean.contains("result := (.named \"Op\")"));
         assert!(lean.contains(".construct \"Op\" \"Add\" [0]"));
-
-        let mut parser = SymPlanParser::new(&text, vec![SymTy::Int], SymTy::Named("Op".to_string()));
-        let parsed = parser.parse().expect("parse construct plan");
-        assert_eq!(parsed, plan.body);
         assert!(plan.to_expr_fragment_plan(&FragHostTable::placeholder(), &FragStructTable::default()).is_none());
     }
 
