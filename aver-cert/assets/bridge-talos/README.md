@@ -56,6 +56,8 @@ the smoke comparison.
 | `Bridge/EnvOfClaim.lean` | spike (c): `envOfClaim` is a projection of the declared envelope (host half, struct half), the k5 instance |
 | `Bridge/Instr.lean` | one `Step` per remaining profile instruction: locals, constants, `structGet`/`structNew`, `refIsNull`, the nine comparisons |
 | `Bridge/Bridge.lean` | `bridge_run` (induction on `HasTy`, framed) and the export theorem `wFuncN_terminatesWith` / `wFuncN_TerminatesWith` |
+| `Bridge/Coverage.lean` | the coverage lemma (brief §3): `lowerExprFragmentBody carrier plan = some instrs` for a plan in the profile ⇒ `HasTy env (Γof plan.params) [] instrs [sortOfFragTy plan.result]` and `translateList env instrs = some _`, by induction over the wall's `lowerNodesFuel`/`lowerBlockFuel` with the checker's facts read one node at a time |
+| `Bridge/Tripwire.lean` | fail-closed enumeration: `wInstrInProfile` (every `WInstr` constructor) with `translate_eq_none_of_out`, and 27 checked sample plans, one per `FragNodeKind` constructor, lowered by the wall and translated (`#eval` fails the build on disagreement) |
 | `Bridge/Axioms.lean` | `#print axioms` of every theorem (all `[propext, Classical.choice, Quot.sound]` or fewer) |
 | `Bridge/Smoke.lean` | k5 `plus`/`isNonNeg`/`lessThan` bodies through `wFuncN` and through `translate` + Talos `runSteps`, results compared (not part of the proof) |
 
@@ -123,6 +125,30 @@ the smoke comparison.
   body, `translateList = some`, sorted and related arguments. `#print axioms` on every
   theorem: `[propext, Classical.choice, Quot.sound]` (some fewer). Elaboration: whole
   bridge under 10 s cold; `Bridge.lean` 1.0 s, `Instr.lean` 0.7 s, `Translate.lean` 0.9 s.
+- **Step 10 — coverage, `Coverage.lean` + `Tripwire.lean` (brief §9 (1)).** CLOSED.
+  `AverMin.lean` gains the verbatim plan grammar, checker (`checkBlockFuel`,
+  `checkExprFragmentRawPlan`) and lowering (`lowerNodesFuel`/`lowerBlockFuel`,
+  the sign template); diff commands in the file header. The checker's local
+  `let inferNodeKindTy` is given a name and `checkBlockFuel (cf+1) params block`
+  is `rfl`-equal to `checkNodes (inferNodeKindTy cf params) [] block.nodes && …`
+  (`checkBlockFuel_succ`) — the one place the copy is trusted. `coverage`:
+  the lowerer's symbolic stack IS the typing context (`σ = stack.map (sortAt
+  nodes)`, `sortOfFragTy : FragTy → STy`), induction on the lowering fuel with
+  the checker's and the profile's fuel universally quantified inside (the
+  lowerer burns fuel per node, the checker per nesting level); `ifElse` is the
+  block lemma one level down, `intSignCmp` is typed once against the carrier
+  layout (`HasTy_intSignCmpTemplate`, `localSet` of `params.length`).
+  `HasTy_translates` closes the second half (the typing rules' side conditions
+  are `translate`'s). Findings: (a) the checker types `constI64`/`constI32` at
+  ANY `Int` — the machine band is a profile condition (`nodeInProfile`), which
+  the record-compute classifier does pin (`recordComputeNodeOk`); (b)
+  `translate` is type-blind on `structGet`, so a `structGetUser` of an
+  UNDECLARED struct translates and is refused only by `HasTy` — the coverage
+  lemma, not the translation, is the gate (tripwire sample); (c) the
+  `structNew`/`structGetUser` conditions of `nodeInProfile` (declared sorts =
+  argument sorts, declared field at the index) are exactly the envelope gap of
+  brief §9. Elaboration: `Coverage.lean` 1.2 s, `Tripwire.lean` 0.5 s; axioms
+  `[propext, Quot.sound]`.
 - **Step 9 — smoke, `Smoke.lean`.** The three k5 bodies (verbatim `WCode` from the
   package's `Module.lean`) agree between `wFuncN` (small-int faces) and Talos
   (`translate` + `runSteps`, heap host): `plus(1/2,1/3)` = 5/6 (18 Talos steps),
@@ -130,11 +156,10 @@ the smoke comparison.
 
 ## What is NOT proved here (the list, not an estimate)
 
-1. **Coverage lemma** (brief §3): `lowerExprFragmentBody carrier plan = some instrs` for a
-   checked compute plan without `selfCall` ⇒ `HasTy (envOfClaim …) Γ [] instrs [t]` and
-   `translateList … = some _`. Induction over `lowerNodesFuel`/`lowerBlockFuel` with the
-   plan checker's typing (`FragTy` → `STy`), the symbolic stack of `lowerNodesFuel` being
-   the `σ` of `HasTy`.
+1. ~~Coverage lemma~~ — DONE (Step 10, `Coverage.lean`). What remains open there is
+   the profile predicate's struct half: `nodeInProfile` demands, for `structNew`/
+   `structGetUser`, a declared struct entry agreeing with the node's types; deriving
+   it from the accepted artifact is item 4.
 2. **`HostSorts` from the wall's contracts**: the wall's `_hadd`/`_hmul`/`_hCmp` give a
    well-sorted result only for REPRESENTED operands (`CarrierSpec.car`); `HostSorts` asks
    it for all sorted operands. Either restate `HostSorts` relative to `domRepr`-represented

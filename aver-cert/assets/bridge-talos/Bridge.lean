@@ -8,5 +8,7 @@ import Bridge.IfElse
 import Bridge.EnvOfClaim
 import Bridge.Instr
 import Bridge.Bridge
+import Bridge.Coverage
+import Bridge.Tripwire
 import Bridge.Axioms
 import Bridge.Smoke

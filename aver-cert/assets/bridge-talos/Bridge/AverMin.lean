@@ -512,3 +512,673 @@ def hostRoleIdx? (hostTable : List (HostRole × Nat)) (role : HostRole) : Option
   | (r, idx) :: rest => if r = role then some idx else hostRoleIdx? rest role
 
 end AverCert.PlanCheck
+
+/-!
+## Verbatim fragments for the coverage lemma (`Coverage.lean`)
+
+The plan grammar (`FragTy`, `SymIntCmp`, `FragPrim`, `FragNodeKind`/`FragNode`/
+`FragBlock`, `ExprFragmentRawPlan`, `fragTyIsRecordScalar`; SchemaCore.lean
+lines 314–327, 384–390, 458–485, 517–585, 590–595, 1313–1320), the plan
+checker (`PlanCheck.lean` lines 20–21, 26–27, 32–35, 42–45, 57–61, 63–67,
+69–72, 74–77, 95–151, 153–187, 191–193, 226–234, 243–341, 434–504, 776–778,
+1456–1465: the typing helpers, `checkBlockFuel`/`checkBlock`, the Float
+boundary, `checkExprFragmentRawPlan`, `natListNoDup`/`hostTableIndicesDistinct`)
+and the canonical lowering (`PlanLower.lean` lines 19–201: `primInstr`, the
+symbolic-stack helpers, the two monolithic templates, `lowerNodesFuel`/
+`lowerBlockFuel`, `lowerBlock`, `lowerExprFragmentBody`). Same wall id.
+
+Check with:
+`diff <(sed -n '314,327p;384,390p;458,485p;517,585p;590,595p;1313,1320p' aver-cert/assets/wall/current/SchemaCore.lean) <(sed -n '/^-- BEGIN SchemaCore fragment 2$/,/^-- END SchemaCore fragment 2$/p' aver-cert/assets/bridge-talos/Bridge/AverMin.lean | sed '1,2d;$d' | sed '$d')`
+`diff <(sed -n '20,21p;26,27p;32,35p;42,45p;57,61p;63,67p;69,72p;74,77p;95,151p;153,187p;191,193p;226,234p;243,341p;434,504p;776,778p;1456,1465p' aver-cert/assets/wall/current/PlanCheck.lean) <(sed -n '/^-- BEGIN PlanCheck fragment 2$/,/^-- END PlanCheck fragment 2$/p' aver-cert/assets/bridge-talos/Bridge/AverMin.lean | sed '1,3d;$d' | sed '$d')`
+`diff <(sed -n '19,201p' aver-cert/assets/wall/current/PlanLower.lean) <(sed -n '/^-- BEGIN PlanLower fragment$/,/^-- END PlanLower fragment$/p' aver-cert/assets/bridge-talos/Bridge/AverMin.lean | sed '1,4d;$d' | sed '$d')`
+-/
+
+-- BEGIN SchemaCore fragment 2
+namespace AverCert.Schema
+inductive FragTy where
+  | f64
+  | boolI32
+  | intCarrier
+  | i64
+  | rawI32
+  | ref
+  /-- Opaque user-ADT / record reference. Unlike `ref` (an Int-carrier limb),
+      this is a whole user struct/array reference handled verbatim. The concrete
+      wasm type index is never part of the type: it lives on the projecting
+      node (`structGetUser`) and is bound to the module bytes by the byte-exact
+      gate, mirroring how `hostCall` carries its resolved function index. -/
+  | adtRef
+deriving Repr, DecidableEq
+inductive SymIntCmp where
+  | eq
+  | lt
+  | le
+  | ge
+  | gt
+deriving Repr, DecidableEq
+inductive FragPrim where
+  | f64Add
+  | f64Mul
+  | f64Le
+  | f64Ge
+  | f64Lt
+  | f64Gt
+  | f64Eq
+  | i64Eq
+  | i64LeS
+  | i64LtS
+  | i64GeS
+  | i64GtS
+  | i32Eq
+  | i32LtS
+  | i32GtS
+  /-- `i32.ge_s`: the tail the emitter appends to a `__aint_cmp` call for a
+      source-level `>=`. The signed relational family is admitted one member at
+      a time, as a plan that needs it appears; `i32.le_s` has an interpreter
+      clause and a `WInstr` constructor already but no admitted plan, so it is
+      deliberately still outside `FragPrim`. -/
+  | i32GeS
+  /-- `i32.and` restricted to the Boolean domain: `PlanCheck` types it only
+      over two `boolI32` operands (NOT the loose `hasI32Ty`), because bitwise
+      AND of arbitrary raw i32 values can produce a non-Boolean result
+      (`2 and 2 = 2`) and the interpreter models the operation on {0,1}. -/
+  | i32And
+deriving Repr, DecidableEq
+mutual
+  /-- A single typed ANF node in an expression-fragment plan. -/
+  inductive FragNodeKind where
+    | local (index : Nat)
+    | constBool (value : Bool)
+    | constI64 (value : Int)
+    | constI32 (value : Int)
+    | constF64Bits (bits : Nat)
+    | structGet (field : Nat) (receiver : Nat)
+    /-- Projection of `field` out of a user struct of wasm type `tyIdx` (a whole
+        record/ADT, not the Int carrier). The type index is node data bound to
+        the module bytes by the byte-exact gate and validated against the
+        struct context decoded from the artifact, mirroring `hostCall`'s
+        resolved function index. -/
+    | structGetUser (tyIdx : Nat) (field : Nat) (value : Nat)
+    | refIsNull (value : Nat)
+    | prim (op : FragPrim) (args : List Nat)
+    | hostCall (role : HostRole) (funcIdx : Nat) (args : List Nat)
+    /-- A self-recursive call to the function being certified. `tail` selects
+        `return_call` (tail position, `0x12`) over `call` (`0x10`). `funcIdx` is
+        the resolved self function index; it is bound to the module bytes by the
+        byte-exact gate and validated against the decoded self index, exactly as
+        `hostCall` binds its resolved index. The plan never invents it. -/
+    | selfCall (tail : Bool) (funcIdx : Nat) (args : List Nat)
+    | ifElse (cond : Nat) (thenBlock elseBlock : FragBlock)
+    /-- Monolithic fused bounds-checked vector read: the exact emitter template
+        `to_index/ge_s // to_index/len/lt_u // and // if (array.get) (box d)`
+        over locals 0 (vector) and 1 (index). `arrTy` is the vector's wasm
+        array type index; `toIndexIdx`/`boxIdx` are the resolved
+        `__aint_to_index` / box helper indices, bound to the module bytes by
+        the byte-exact gate and to the byte-derived role table by acceptance.
+        The node reads locals directly and consumes no operand stack values. -/
+    | vectorGetOrDefault (arrTy toIndexIdx boxIdx : Nat) (default : Int)
+    /-- Construction of a user struct of wasm type `tyIdx` from `args` (source
+        field order). The type index is node data bound to the module bytes by
+        the byte-exact gate, mirroring how `structGetUser` binds its projection
+        index. -/
+    | structNew (tyIdx : Nat) (args : List Nat)
+    /-- The emitter's monolithic sign template for comparing a COMPUTED Int
+        carrier against an i64 literal, without calling `__aint_cmp`
+        (`from_mir/builtins.rs::emit_aint_cmp_const`). The operand is already on
+        the stack; the template stashes it in the scratch local, branches on
+        `limbs = null`, and decides either by the native i64 compare of the
+        `small` field against `constant` or — for a limb-carrying operand,
+        whose value is outside the i64 band — by the sign field alone.
+
+        `scratch` is the local slot the template writes; the checker pins it to
+        `params.length`, the one declared scratch every plan-first island
+        reserves, so the template can never clobber a parameter. `constant` is
+        pinned to the i64 band, which is what makes the sign arm exact. Like
+        `vectorGetOrDefault` this is ONE node: the whole instruction list
+        lowers and runs together. -/
+    | intSignCmp (op : SymIntCmp) (constant : Int) (scratch : Nat) (value : Nat)
+  deriving Repr
+
+  /-- A typed value definition. `id` must match its position in the containing
+      block; `PlanCheck` enforces this before lowering. -/
+  structure FragNode where
+    id   : Nat
+    ty   : FragTy
+    kind : FragNodeKind
+  deriving Repr
+
+  /-- Ordered ANF block. `result` is the id of the value yielded by the block. -/
+  structure FragBlock where
+    nodes  : List FragNode
+    result : Nat
+  deriving Repr
+end
+structure ExprFragmentRawPlan where
+  profile : String
+  params  : List FragTy
+  result  : FragTy
+  body    : FragBlock
+deriving Repr
+def fragTyIsRecordScalar : FragTy → Bool
+  | .intCarrier => true
+  | .boolI32 => true
+  | .f64 => true
+  | .i64 => false
+  | .rawI32 => false
+  | .ref => false
+  | .adtRef => false
+end AverCert.Schema
+-- END SchemaCore fragment 2
+
+-- BEGIN PlanCheck fragment 2
+namespace AverCert.PlanCheck
+open AverCert.Schema
+def sameTy (a b : FragTy) : Bool :=
+  if a = b then true else false
+def lookupNode (nodes : List FragNode) (id : Nat) : Option FragNode :=
+  nodes[id]?
+def lookupTy (nodes : List FragNode) (id : Nat) : Option FragTy :=
+  match lookupNode nodes id with
+  | some n => some n.ty
+  | none => none
+def hasTy (nodes : List FragNode) (id : Nat) (expected : FragTy) : Bool :=
+  match lookupTy nodes id with
+  | some got => sameTy got expected
+  | none => false
+def hasI32Ty (nodes : List FragNode) (id : Nat) : Bool :=
+  match lookupTy nodes id with
+  | some .rawI32 => true
+  | some .boolI32 => true
+  | _ => false
+def carrierFieldTy? : Nat → Option FragTy
+  | 0 => some .i64
+  | 1 => some .ref
+  | 2 => some .rawI32
+  | _ => none
+def isCarrierLimbField (nodes : List FragNode) (id : Nat) : Bool :=
+  match lookupNode nodes id with
+  | some { kind := .structGet 1 _, .. } => true
+  | _ => false
+def argsHaveTys (nodes : List FragNode) : List Nat → List FragTy → Bool
+  | [], [] => true
+  | arg :: args, ty :: tys => hasTy nodes arg ty && argsHaveTys nodes args tys
+  | _, _ => false
+def primResultTy? (nodes : List FragNode) (op : FragPrim) (args : List Nat) :
+    Option FragTy :=
+  match op with
+  | .f64Add =>
+      if argsHaveTys nodes args [.f64, .f64] then some .f64 else none
+  | .f64Mul =>
+      if argsHaveTys nodes args [.f64, .f64] then some .f64 else none
+  | .f64Le =>
+      if argsHaveTys nodes args [.f64, .f64] then some .boolI32 else none
+  | .f64Ge =>
+      if argsHaveTys nodes args [.f64, .f64] then some .boolI32 else none
+  | .f64Lt =>
+      if argsHaveTys nodes args [.f64, .f64] then some .boolI32 else none
+  | .f64Gt =>
+      if argsHaveTys nodes args [.f64, .f64] then some .boolI32 else none
+  | .f64Eq =>
+      if argsHaveTys nodes args [.f64, .f64] then some .boolI32 else none
+  | .i64Eq =>
+      if argsHaveTys nodes args [.i64, .i64] then some .boolI32 else none
+  | .i64LeS =>
+      if argsHaveTys nodes args [.i64, .i64] then some .boolI32 else none
+  | .i64LtS =>
+      if argsHaveTys nodes args [.i64, .i64] then some .boolI32 else none
+  | .i64GeS =>
+      if argsHaveTys nodes args [.i64, .i64] then some .boolI32 else none
+  | .i64GtS =>
+      if argsHaveTys nodes args [.i64, .i64] then some .boolI32 else none
+  | .i32Eq =>
+      match args with
+      | [a, b] => if hasI32Ty nodes a && hasI32Ty nodes b then some .boolI32 else none
+      | _ => none
+  | .i32LtS =>
+      match args with
+      | [a, b] => if hasI32Ty nodes a && hasI32Ty nodes b then some .boolI32 else none
+      | _ => none
+  | .i32GtS =>
+      match args with
+      | [a, b] => if hasI32Ty nodes a && hasI32Ty nodes b then some .boolI32 else none
+      | _ => none
+  | .i32GeS =>
+      match args with
+      | [a, b] => if hasI32Ty nodes a && hasI32Ty nodes b then some .boolI32 else none
+      | _ => none
+  -- SOUNDNESS: `i32.and` must NOT use the loose `hasI32Ty` the comparisons
+  -- use. Bitwise AND over arbitrary `rawI32` operands can yield a value
+  -- outside {0,1} (`2 and 2 = 2`), so declaring `boolI32` for it would let a
+  -- non-Boolean flow into every consumer that reads the result as a `Bool`;
+  -- on top of that, the interpreter's `.i32And` clause models the operation
+  -- on the {0,1} domain, where it coincides with wasm's bitwise `i32.and`
+  -- only when both operands are Booleans. Requiring `.boolI32` on BOTH
+  -- operands is therefore load-bearing twice over.
+  | .i32And =>
+      match args with
+      | [a, b] =>
+          if hasTy nodes a .boolI32 && hasTy nodes b .boolI32 then some .boolI32
+          else none
+      | _ => none
+/-- Static registry of host-helper role type signatures. `box` takes one raw
+    `i64` and returns the Int carrier; each arithmetic role takes two Int
+    carriers and returns the Int carrier. The resolved wasm function index is
+    not checked here (it is bound to the module bytes by the byte-exact gate
+    and to the in-kernel decoded role table); this is purely the
+    representation-level type discipline. -/
+def hostCallResultTy? (nodes : List FragNode) (role : HostRole) (args : List Nat) :
+    Option FragTy :=
+  match role with
+  | .box => if argsHaveTys nodes args [.i64] then some .intCarrier else none
+  | .add =>
+      if argsHaveTys nodes args [.intCarrier, .intCarrier] then some .intCarrier else none
+  | .mul =>
+      if argsHaveTys nodes args [.intCarrier, .intCarrier] then some .intCarrier else none
+  | .sub =>
+      if argsHaveTys nodes args [.intCarrier, .intCarrier] then some .intCarrier else none
+  -- `__aint_to_index` is consumed only inside the monolithic fused
+  -- vector-read node; a standalone host call to it has no admitted face.
+  | .toIndex => none
+  -- `__aint_cmp` leaves the carrier: it takes two represented integers and
+  -- returns the raw three-way sign, which the emitter always feeds into a
+  -- signed comparison against `i32.const 0`. Typing it `rawI32` rather than
+  -- `boolI32` is load-bearing: `-1` is a perfectly good result here and would
+  -- be a lie as a Boolean, and the `boolI32`-only consumers (`i32.and`, the
+  -- fragment's `if` condition) must not accept it unfiltered.
+  | .cmp =>
+      if argsHaveTys nodes args [.intCarrier, .intCarrier] then some .rawI32 else none
+  -- `__aint_eq` already yields the source-level Boolean (`0`/`1`), so its
+  -- result IS `boolI32` and needs no comparison tail. Read this as a TYPING
+  -- rule, not as a proved range: the `{0, 1}` guarantee is contract-backed
+  -- only inside the certified small band (`Obligation.holds`'s `_hEq` is
+  -- quantified over literal small carriers), and outside it the typing rests
+  -- on the pinned helper body alone.
+  | .eq =>
+      if argsHaveTys nodes args [.intCarrier, .intCarrier] then some .boolI32 else none
+def fragArgsAllTy (nodes : List FragNode) (expected : FragTy) : List Nat → Bool
+  | [] => true
+  | arg :: args => hasTy nodes arg expected && fragArgsAllTy nodes expected args
+/-- Hard cap for recursive plan checking. Exceeding it is a fail-closed
+    unsupported fragment, matching the producer's profile-limit discipline. -/
+abbrev maxFuel : Nat := 10000
+
+/-- Decidable membership of the i64 band `[-2^63, 2^63)`. The sign template's
+    literal must live there: the limb-carrying arm decides on the sign field
+    alone, and that is only exact against a literal the band contains. -/
+def inI64Band (value : Int) : Bool :=
+  decide (-(2 ^ 63 : Int) ≤ value) && decide (value < (2 ^ 63 : Int))
+def checkBlockFuel : Nat → List FragTy → FragBlock → Bool
+  | 0, _, _ => false
+  | fuel + 1, params, block =>
+      let inferNodeKindTy (checked : List FragNode) (node : FragNode) :
+          Option FragTy :=
+        match node.kind with
+        | .local index => params[index]?
+        | .constBool _ => some .boolI32
+        | .constI64 _ => some .i64
+        | .constI32 _ => some .rawI32
+        | .constF64Bits _ => some .f64
+        | .structGet field receiver =>
+            if hasTy checked receiver .intCarrier then carrierFieldTy? field else none
+        -- v1 admits three field reads out of a user struct: the opaque
+        -- reference-field projection (`adtRef`, flowed verbatim through the
+        -- field-projection face), the scalar `i32` tag/discriminant read
+        -- (`rawI32`, e.g. the Option/Result tag) that a tag-dispatch feeds into
+        -- `i32`-typed primitives, and the record-declaration scalar field read
+        -- (`intCarrier`/`boolI32`/`f64` via `fragTyIsRecordScalar`), whose
+        -- declared type is confirmed against the module's type section by the
+        -- record face's equality pin over the certified Plan declaration. The
+        -- plan DECLARES which via `node.ty`; the byte-exact gate and decoded
+        -- struct context bind `tyIdx`/`field` and confirm the field's real
+        -- storage. A wrong declaration lowers to bytes whose read yields the
+        -- wrong `WVal` kind and traps (fail-closed). The scalar admission
+        -- cannot leak into the generic path: `genericFragmentAllowedFuel`
+        -- rejects EVERY `structGetUser` node outright, so a scalar-typed read
+        -- is only acceptable through the record-parameter classify branch,
+        -- whose exact two-node shape and byte pins gate it.
+        | .structGetUser _tyIdx _field value =>
+            if hasTy checked value .adtRef &&
+                (node.ty = .adtRef || node.ty = .rawI32 ||
+                  fragTyIsRecordScalar node.ty)
+            then some node.ty else none
+        -- Construction of a user struct from already-computed values: yields
+        -- the opaque reference. Field-count/type agreement with the module's
+        -- type section is byte-side work (the type index is bound by the
+        -- byte-exact gate); the structural check demands the args exist as
+        -- typed nodes. Like `structGetUser`, the generic path never admits it
+        -- (`genericFragmentAllowedFuel` rejects it outright).
+        | .structNew _tyIdx args =>
+            if !args.isEmpty &&
+                args.all (fun a => (lookupNode checked a).isSome) then
+              some .adtRef
+            else none
+        | .refIsNull value =>
+            if hasTy checked value .ref && isCarrierLimbField checked value
+            then some .boolI32
+            else none
+        | .prim op args => primResultTy? checked op args
+        | .hostCall role _funcIdx args => hostCallResultTy? checked role args
+        -- A self-call yields the Int carrier when every argument is an Int
+        -- carrier. `funcIdx` is not typed here; artifact acceptance binds it to
+        -- the byte-derived self index,
+        -- mirroring `hostCall`.
+        | .selfCall _tail _funcIdx args =>
+            if !args.isEmpty && fragArgsAllTy checked .intCarrier args then
+              some .intCarrier
+            else none
+        | .ifElse cond thenBlock elseBlock =>
+            if hasTy checked cond .boolI32 &&
+               checkBlockFuel fuel params thenBlock &&
+               checkBlockFuel fuel params elseBlock then
+              match lookupNode thenBlock.nodes thenBlock.result,
+                    lookupNode elseBlock.nodes elseBlock.result with
+              | some t, some e => if t.ty = e.ty then some t.ty else none
+              | _, _ => none
+            else none
+        -- The monolithic fused vector read hard-references locals 0 (vector)
+        -- and 1 (index), so it types only under exactly that param prefix.
+        | .vectorGetOrDefault _arrTy _toIndexIdx _boxIdx _default =>
+            if params[0]? = some .adtRef && params[1]? = some .intCarrier then
+              some .intCarrier
+            else none
+        -- The sign template consumes ONE Int carrier and yields the source
+        -- Boolean. Two pins live here rather than in a face: the scratch slot
+        -- is exactly the one declared local (`params.length`), so the template
+        -- cannot write over a parameter, and the literal must be inside the
+        -- i64 band, which is what makes its limb-carrying arm exact.
+        | .intSignCmp _op constant scratch value =>
+            if hasTy checked value .intCarrier && scratch = params.length &&
+                inI64Band constant then
+              some .boolI32
+            else none
+      let rec checkNodes (checked : List FragNode) : List FragNode → Bool
+        | [] => true
+        | node :: rest =>
+            node.id = checked.length &&
+              (match inferNodeKindTy checked node with
+              | some ty => sameTy node.ty ty
+              | none => false) &&
+              checkNodes (checked ++ [node]) rest
+      checkNodes [] block.nodes &&
+        match lookupNode block.nodes block.result with
+        | some n => n.id = block.result && block.result + 1 = block.nodes.length
+        | none => false
+
+def checkBlock (params : List FragTy) (block : FragBlock) : Bool :=
+  checkBlockFuel maxFuel params block
+/-- Exhaustive so extending `FragPrim` requires an explicit NaN-profile choice. -/
+def primNeedsRelationalFloatResult : FragPrim → Bool
+  | .f64Add => true
+  | .f64Mul => true
+  | .f64Le => false
+  | .f64Ge => false
+  | .f64Lt => false
+  | .f64Gt => false
+  | .f64Eq => false
+  | .i64Eq => false
+  | .i64LeS => false
+  | .i64LtS => false
+  | .i64GeS => false
+  | .i64GtS => false
+  | .i32Eq => false
+  | .i32LtS => false
+  | .i32GtS => false
+  | .i32GeS => false
+  | .i32And => false
+
+/-- The general WebAssembly profile gives `f64.add`/`f64.mul` a set-valued
+    result when they produce NaN: more than one sign/payload bit pattern may
+    be valid. The current Float codomain face names one exact `UInt64`, so a
+    Float-result plan containing either operation needs a relational result
+    model before it can be admitted. Fuel exhaustion rejects fail-closed. The
+    node match is deliberately exhaustive so extending `FragNodeKind` forces an
+    explicit decision about nested blocks and Float-bit observation here.
+
+    A Bool-result plan is intentionally outside this gate. In the current
+    grammar the Float-to-Bool primitives are `f64.le`, `f64.ge`, `f64.lt`,
+    `f64.gt` and `f64.eq`; each is an IEEE-754 ORDERED comparison, so its
+    result is false for every NaN operand independently of that NaN's sign or
+    payload. The single Float comparison general Wasm defines as UNORDERED,
+    `f64.ne` (true whenever an operand is NaN, including `NaN != NaN`), is
+    deliberately absent from `FragPrim`: it does not follow from this clause by
+    analogy and would need its own decision here before it could be admitted. -/
+def blockNeedsRelationalFloatResultFuel : Nat → FragBlock → Bool
+  | 0, _ => true
+  | fuel + 1, block =>
+      block.nodes.any fun node =>
+        match node.kind with
+        | .prim op _ => primNeedsRelationalFloatResult op
+        | .ifElse _ thenBlock elseBlock =>
+            blockNeedsRelationalFloatResultFuel fuel thenBlock ||
+              blockNeedsRelationalFloatResultFuel fuel elseBlock
+        | .local _ => false
+        | .constBool _ => false
+        | .constI64 _ => false
+        | .constI32 _ => false
+        | .constF64Bits _ => false
+        | .structGet _ _ => false
+        | .structGetUser _ _ _ => false
+        | .refIsNull _ => false
+        | .hostCall _ _ _ => false
+        | .selfCall _ _ _ => false
+        | .vectorGetOrDefault _ _ _ _ => false
+        | .structNew _ _ => false
+        | .intSignCmp _ _ _ _ => false
+
+def exactBitFloatResultAllowed (plan : ExprFragmentRawPlan) : Bool :=
+  match plan.result with
+  | .f64 => !blockNeedsRelationalFloatResultFuel maxFuel plan.body
+  | _ => true
+
+def checkExprFragmentRawPlan (plan : ExprFragmentRawPlan) : Bool :=
+  plan.profile = "expr-fragment-v1" &&
+    exactBitFloatResultAllowed plan &&
+    checkBlock plan.params plan.body &&
+    match lookupNode plan.body.nodes plan.body.result with
+    | some n => sameTy n.ty plan.result
+    | none => false
+def natListNoDup : List Nat → Bool
+  | [] => true
+  | n :: rest => (!rest.contains n) && natListNoDup rest
+/-- Whether a byte-derived host-role table maps its roles to pairwise DISTINCT
+    function indices. The Int-face plan names host helpers by ROLE only and the
+    byte lowering substitutes table indices, so with a duplicated table (e.g.
+    `add` and `sub` claiming the same index) two plans differing only in an
+    arm's role would lower to identical bytes — the byte-equality gate would be
+    blind to the role. Requiring distinct indices restores the gate's
+    discrimination; the honest table is byte-derived from the strict role
+    markers, which are unique per role. -/
+def hostTableIndicesDistinct (hostTable : List (HostRole × Nat)) : Bool :=
+  natListNoDup (hostTable.map (fun e => e.2))
+end AverCert.PlanCheck
+-- END PlanCheck fragment 2
+
+-- BEGIN PlanLower fragment
+namespace AverCert.PlanLower
+open AverCert.Schema
+open CertPrelude
+def primInstr : FragPrim → WInstr
+  | .f64Add => .f64Add
+  | .f64Mul => .f64Mul
+  | .f64Le => .f64Le
+  | .f64Ge => .f64Ge
+  | .f64Lt => .f64Lt
+  | .f64Gt => .f64Gt
+  | .f64Eq => .f64Eq
+  | .i64Eq => .i64Eq
+  | .i64LeS => .i64LeS
+  | .i64LtS => .i64LtS
+  | .i64GeS => .i64GeS
+  | .i64GtS => .i64GtS
+  | .i32Eq => .i32Eq
+  | .i32LtS => .i32LtS
+  | .i32GtS => .i32GtS
+  | .i32GeS => .i32GeS
+  | .i32And => .i32And
+
+def popExpected : List Nat → Nat → Option (List Nat)
+  | got :: rest, expected => if got = expected then some rest else none
+  | [], _ => none
+
+def popExpectedAll : List Nat → List Nat → Option (List Nat)
+  | stack, [] => some stack
+  | stack, expected :: rest =>
+      match popExpected stack expected with
+      | some stack' => popExpectedAll stack' rest
+      | none => none
+
+/-- Semantic lowering uses the checker's one canonical recursive-plan budget. -/
+abbrev maxFuel : Nat := AverCert.PlanCheck.maxFuel
+
+/-- The fused `Option.withDefault(Vector.get(vec, idx), d)` template exactly as
+    the wasm-gc emitter produces it (`from_mir/builtins.rs`): extract the index
+    through `__aint_to_index`, test `idx >= 0 (signed) AND idx < len
+    (unsigned)`, read the element on hit, box the literal default on miss.
+    Holes: `toIndexIdx` (the `__aint_to_index` function index), `boxIdx` (the
+    `__rt_aint_from_i64` function index), `arrTy` (the vector's array type
+    index), `d` (the literal default). Locals pinned: vec = 0, idx = 1. -/
+def vectorGetOrDefaultTemplate
+    (toIndexIdx boxIdx arrTy : Nat) (d : Int) : List WInstr :=
+  [ .localGet 1, .call toIndexIdx, .i32Const 0, .i32GeS,
+    .localGet 1, .call toIndexIdx,
+    .localGet 0, .arrayLen, .i32LtU,
+    .i32And,
+    .ifElse
+      [.localGet 0, .localGet 1, .call toIndexIdx, .arrayGet arrTy]
+      [.i64Const d, .call boxIdx] ]
+
+/-- The emitter's inline sign template for `carrier OP i64-literal`
+    (`from_mir/builtins.rs::emit_aint_cmp_const`), as a `WInstr` list. The
+    operand is consumed off the stack into `scratch`; the `limbs = null` test
+    picks the native i64 compare of the `small` field, and the limb-carrying
+    arm decides on the sign field alone — `eq` needs no field read there at
+    all, because a canonical limb-carrying carrier never equals an i64
+    literal. Holes: `carrier` (the Int carrier struct index), `scratch` (the
+    declared scratch local), `op`, `k`. -/
+def intSignCmpSmallPrim : SymIntCmp → FragPrim
+  | .eq => .i64Eq
+  | .lt => .i64LtS
+  | .le => .i64LeS
+  | .ge => .i64GeS
+  | .gt => .i64GtS
+
+def intSignCmpBigArm (carrier scratch : Nat) : SymIntCmp → List WInstr
+  | .eq => [.i32Const 0]
+  | .lt => [.localGet scratch, .structGet carrier 2, .i32Const 0, .i32LtS]
+  | .le => [.localGet scratch, .structGet carrier 2, .i32Const 0, .i32LtS]
+  | .ge => [.localGet scratch, .structGet carrier 2, .i32Const 0, .i32GtS]
+  | .gt => [.localGet scratch, .structGet carrier 2, .i32Const 0, .i32GtS]
+
+def intSignCmpTemplate (carrier scratch : Nat) (op : SymIntCmp) (k : Int) :
+    List WInstr :=
+  [ .localSet scratch,
+    .localGet scratch, .structGet carrier 1, .refIsNull,
+    .ifElse
+      [.localGet scratch, .structGet carrier 0, .i64Const k,
+        primInstr (intSignCmpSmallPrim op)]
+      (intSignCmpBigArm carrier scratch op) ]
+
+mutual
+  def lowerNodesFuel :
+      Nat → Nat → List FragNode → List Nat → Option (List WInstr × List Nat)
+    | 0, _, _, _ => none
+    | _fuel + 1, _carrier, [], stack => some ([], stack)
+    | fuel + 1, carrier, node :: rest, stack =>
+        let lowered? : Option (List WInstr × List Nat) :=
+          match node.kind with
+          | .local index =>
+              some ([.localGet index], node.id :: stack)
+          | .constBool value =>
+              some ([.i32Const (if value then 1 else 0)], node.id :: stack)
+          | .constI64 value =>
+              some ([.i64Const value], node.id :: stack)
+          | .constI32 value =>
+              some ([.i32Const value], node.id :: stack)
+          | .constF64Bits bits =>
+              some ([.f64Const (UInt64.ofNat bits)], node.id :: stack)
+          | .structGet field receiver =>
+              match popExpected stack receiver with
+              | some stack' => some ([.structGet carrier field], node.id :: stack')
+              | none => none
+          | .structGetUser tyIdx field value =>
+              match popExpected stack value with
+              | some stack' => some ([.structGet tyIdx field], node.id :: stack')
+              | none => none
+          | .structNew tyIdx args =>
+              match popExpectedAll stack args.reverse with
+              | some stack' =>
+                  some ([.structNew tyIdx args.length], node.id :: stack')
+              | none => none
+          | .refIsNull value =>
+              match popExpected stack value with
+              | some stack' => some ([.refIsNull], node.id :: stack')
+              | none => none
+          | .prim op args =>
+              match popExpectedAll stack args.reverse with
+              | some stack' => some ([primInstr op], node.id :: stack')
+              | none => none
+          | .hostCall _role funcIdx args =>
+              match popExpectedAll stack args.reverse with
+              | some stack' => some ([.call funcIdx], node.id :: stack')
+              | none => none
+          | .selfCall tail funcIdx args =>
+              match popExpectedAll stack args.reverse with
+              | some stack' =>
+                  some ([if tail then .returnCall funcIdx else .call funcIdx],
+                    node.id :: stack')
+              | none => none
+          -- Values already on the symbolic stack stay beneath the branch,
+          -- exactly as the wasm `if` leaves the remaining operand stack in
+          -- place (`InterpreterSequencing.wRunF_frame`).
+          | .ifElse cond thenBlock elseBlock =>
+              match popExpected stack cond with
+              | some stack' =>
+                  match lowerBlockFuel fuel carrier thenBlock,
+                        lowerBlockFuel fuel carrier elseBlock with
+                  | some thenInstrs, some elseInstrs =>
+                      some ([.ifElse thenInstrs elseInstrs], node.id :: stack')
+                  | _, _ => none
+              | none => none
+          | .vectorGetOrDefault arrTy toIndexIdx boxIdx default =>
+              -- Monolithic template over pinned locals 0/1; it consumes no
+              -- stack operands, so it is canonical only as the sole value.
+              match stack with
+              | [] =>
+                  some (vectorGetOrDefaultTemplate toIndexIdx boxIdx arrTy default,
+                    [node.id])
+              | _ => none
+          | .intSignCmp op k scratch value =>
+              -- Monolithic template: pops its one operand off the symbolic
+              -- stack exactly like `refIsNull`, then emits the whole
+              -- stash/branch/compare sequence.
+              match popExpected stack value with
+              | some stack' =>
+                  some (intSignCmpTemplate carrier scratch op k, node.id :: stack')
+              | none => none
+        match lowered? with
+        | some (instrs, stack') =>
+            match lowerNodesFuel fuel carrier rest stack' with
+            | some (restInstrs, finalStack) => some (instrs ++ restInstrs, finalStack)
+            | none => none
+        | none => none
+
+  def lowerBlockFuel : Nat → Nat → FragBlock → Option (List WInstr)
+    | 0, _, _ => none
+    | fuel + 1, carrier, block =>
+        match lowerNodesFuel fuel carrier block.nodes [] with
+        | some (instrs, [result]) =>
+            if result = block.result then some instrs else none
+        | _ => none
+end
+
+def lowerBlock (carrier : Nat) (block : FragBlock) : Option (List WInstr) :=
+  lowerBlockFuel maxFuel carrier block
+
+def lowerExprFragmentBody (carrier : Nat) (plan : ExprFragmentRawPlan) :
+    Option (List WInstr) :=
+  if AverCert.PlanCheck.checkExprFragmentRawPlan plan then
+    lowerBlock carrier plan.body
+  else
+    none
+end AverCert.PlanLower
+-- END PlanLower fragment

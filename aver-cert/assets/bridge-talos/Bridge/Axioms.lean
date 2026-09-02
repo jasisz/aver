@@ -1,5 +1,7 @@
 import Bridge.Bridge
 import Bridge.EnvOfClaim
+import Bridge.Coverage
+import Bridge.Tripwire
 
 /-!
 # Axiom audit
@@ -22,3 +24,9 @@ statements, never axioms. `lake build Bridge.Axioms` prints the lists.
 #print axioms Bridge.bridge_run
 #print axioms Bridge.wFuncN_terminatesWith
 #print axioms Bridge.wFuncN_TerminatesWith
+#print axioms Bridge.checkBlockFuel_succ
+#print axioms Bridge.HasTy_translates
+#print axioms Bridge.cov
+#print axioms Bridge.coverage
+#print axioms Bridge.coverage_envOfClaim
+#print axioms Bridge.Tripwire.translate_eq_none_of_out
