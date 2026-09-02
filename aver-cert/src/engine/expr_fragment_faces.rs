@@ -695,16 +695,51 @@ pub struct FragRecordComputeFace {
     pub struct_idx: u32,
 }
 
-fn record_compute_node_ok(host_table: &FragHostTable, kind: &FragNodeKind) -> bool {
-    match kind {
+/// Twin of the wall's `RecordComputeBridge.nodeTypedB` arm for `.intSignCmp`,
+/// the ONE node this face's typing scaffold pins beyond the node's own kind.
+/// Mirroring it here is fail-closed symmetry: without it the producer can plan
+/// a body the wall's classifier then rejects, and the export silently drops to
+/// source-level-only at verify time instead of at emit time.
+///
+/// Three conjuncts, all three load-bearing:
+///  * the operand is an Int carrier — the template reads the carrier's limb
+///    and sign fields, so anything else has no meaning to read;
+///  * the written slot is exactly `params.length`, the ONE declared scratch
+///    local, so the template can never clobber a parameter (the lockstep
+///    locals invariant of the bridge's `agreement` rests on this);
+///  * the node itself is a Boolean verdict.
+///
+/// The wall's fourth conjunct, `PlanCheck.inI64Band constant`, needs no code
+/// here: `constant` is an `i64`, so the band is carried by the type.
+fn record_compute_sign_template_ok(
+    params_len: usize,
+    nodes: &[FragNode],
+    node: &FragNode,
+    scratch: u32,
+    value: FragValueId,
+) -> bool {
+    nodes.get(value.0).map(|n| n.ty) == Some(FragTy::IntCarrier)
+        && scratch as usize == params_len
+        && node.ty == FragTy::BoolI32
+}
+
+fn record_compute_node_ok(
+    host_table: &FragHostTable,
+    params_len: usize,
+    nodes: &[FragNode],
+    node: &FragNode,
+) -> bool {
+    match &node.kind {
         // The wall additionally decides the i64 band of the two literals
         // below; here the `i64` type of the payload already carries it.
         FragNodeKind::Local { .. }
         | FragNodeKind::ConstI64(_)
         | FragNodeKind::ConstI32(_)
         | FragNodeKind::StructGetUser { .. }
-        | FragNodeKind::StructNew { .. }
-        | FragNodeKind::IntSignCmp { .. } => true,
+        | FragNodeKind::StructNew { .. } => true,
+        FragNodeKind::IntSignCmp {
+            scratch, value, ..
+        } => record_compute_sign_template_ok(params_len, nodes, node, *scratch, *value),
         FragNodeKind::Prim { op, args } => {
             matches!(
                 op,
@@ -731,6 +766,21 @@ fn record_compute_node_ok(host_table: &FragHostTable, kind: &FragNodeKind) -> bo
     }
 }
 
+/// Twin of the wall's `StandardFace.fragNodeComputes`: the nodes that make a
+/// body COMPUTE rather than merely project. A construction, ANY host call
+/// (`cmp`/`eq` included — they leave the carrier and decide an order), and the
+/// inline sign template, which is the emitter's open-coded comparison of a
+/// computed carrier against a literal. The two-node projection faces carry
+/// none of the three, which is what keeps them out of this face.
+fn frag_node_computes(node: &FragNode) -> bool {
+    matches!(
+        node.kind,
+        FragNodeKind::StructNew { .. }
+            | FragNodeKind::HostCall { .. }
+            | FragNodeKind::IntSignCmp { .. }
+    )
+}
+
 fn frag_node_struct_idx(kind: &FragNodeKind) -> Option<u32> {
     match kind {
         FragNodeKind::StructGetUser { ty_idx, .. } => Some(*ty_idx),
@@ -741,9 +791,10 @@ fn frag_node_struct_idx(kind: &FragNodeKind) -> Option<u32> {
 
 /// Twin of the wall's `classifyRecordCompute`: fires only when every
 /// parameter is an opaque record reference, every node is in the admitted
-/// set with host calls citing the byte-derived role table, at least one node
-/// computes (rules the two-node projection faces out), the result is a
-/// record/Int/Bool, and every cited user-struct index agrees.
+/// set with host calls citing the byte-derived role table and the sign
+/// template passing the wall's typing pins, at least one node computes
+/// (`frag_node_computes`, which rules the two-node projection faces out), the
+/// result is a record/Int/Bool, and every cited user-struct index agrees.
 pub fn expr_fragment_record_compute_face(
     plan: &ExprFragmentPlan,
     host_table: &FragHostTable,
@@ -755,16 +806,11 @@ pub fn expr_fragment_record_compute_face(
         .body
         .nodes
         .iter()
-        .all(|n| record_compute_node_ok(host_table, &n.kind))
+        .all(|n| record_compute_node_ok(host_table, plan.params.len(), &plan.body.nodes, n))
     {
         return None;
     }
-    if !plan.body.nodes.iter().any(|n| {
-        matches!(
-            n.kind,
-            FragNodeKind::StructNew { .. } | FragNodeKind::HostCall { .. }
-        )
-    }) {
+    if !plan.body.nodes.iter().any(frag_node_computes) {
         return None;
     }
     if !matches!(
@@ -783,5 +829,126 @@ pub fn expr_fragment_record_compute_face(
         Some(FragRecordComputeFace { struct_idx: first })
     } else {
         None
+    }
+}
+
+#[cfg(all(test, feature = "engine"))]
+mod record_compute_face_tests {
+    use super::*;
+
+    /// `isNonNegField(f: Frac) -> Bool = f.num >= 0`: read one Int leaf of the
+    /// pinned struct and decide its sign with the emitter's inline template.
+    /// No host call anywhere in the body — this is the shape that used to be
+    /// silently non-admitted.
+    fn sign_only_plan(struct_idx: u32) -> ExprFragmentPlan {
+        ExprFragmentPlan {
+            params: vec![FragTy::AdtRef],
+            result: FragTy::BoolI32,
+            body: FragBlock {
+                nodes: vec![
+                    FragNode {
+                        id: FragValueId(0),
+                        ty: FragTy::AdtRef,
+                        kind: FragNodeKind::Local { index: 0 },
+                    },
+                    FragNode {
+                        id: FragValueId(1),
+                        ty: FragTy::IntCarrier,
+                        kind: FragNodeKind::StructGetUser {
+                            ty_idx: struct_idx,
+                            field: 0,
+                            value: FragValueId(0),
+                        },
+                    },
+                    FragNode {
+                        id: FragValueId(2),
+                        ty: FragTy::BoolI32,
+                        kind: FragNodeKind::IntSignCmp {
+                            op: SymIntCmp::Ge,
+                            constant: 0,
+                            scratch: 1,
+                            value: FragValueId(1),
+                        },
+                    },
+                ],
+                result: FragValueId(2),
+            },
+        }
+    }
+
+    fn table() -> FragHostTable {
+        FragHostTable::placeholder()
+    }
+
+    /// The sign template is a COMPUTING node, so a projection-only sign test
+    /// reaches the compute face instead of falling through to no face at all.
+    #[test]
+    fn sign_template_alone_is_a_computing_body() {
+        assert_eq!(
+            expr_fragment_record_compute_face(&sign_only_plan(4), &table()),
+            Some(FragRecordComputeFace { struct_idx: 4 })
+        );
+    }
+
+    /// The two-node projection body still carries no computing node, so the
+    /// projection faces keep their own route.
+    #[test]
+    fn a_bare_projection_still_computes_nothing() {
+        let mut plan = sign_only_plan(4);
+        plan.body.nodes.pop();
+        plan.body.result = FragValueId(1);
+        plan.result = FragTy::IntCarrier;
+        assert_eq!(expr_fragment_record_compute_face(&plan, &table()), None);
+    }
+
+    /// Pin 1 of the wall's `nodeTypedB` arm: the written slot is exactly the
+    /// one declared scratch local, `params.length`. A parameter slot would let
+    /// the template clobber an input.
+    #[test]
+    fn declines_a_sign_template_that_writes_a_parameter_slot() {
+        let mut plan = sign_only_plan(4);
+        let FragNodeKind::IntSignCmp { scratch, .. } = &mut plan.body.nodes[2].kind else {
+            panic!("node 2 is the sign template");
+        };
+        *scratch = 0;
+        assert_eq!(expr_fragment_record_compute_face(&plan, &table()), None);
+    }
+
+    /// Pin 2: the operand is an Int carrier. The template reads the carrier's
+    /// limb and sign fields, so anything else has no meaning to read.
+    #[test]
+    fn declines_a_sign_template_over_a_non_carrier_operand() {
+        let mut plan = sign_only_plan(4);
+        plan.body.nodes[1].ty = FragTy::I64;
+        assert_eq!(expr_fragment_record_compute_face(&plan, &table()), None);
+    }
+
+    /// Pin 3: the template node is a Boolean verdict.
+    #[test]
+    fn declines_a_sign_template_that_is_not_a_boolean() {
+        let mut plan = sign_only_plan(4);
+        plan.body.nodes[2].ty = FragTy::RawI32;
+        plan.result = FragTy::IntCarrier;
+        assert_eq!(expr_fragment_record_compute_face(&plan, &table()), None);
+    }
+
+    /// Pin 4, carried by the type rather than by code: the literal is an
+    /// `i64`, which IS the wall's `PlanCheck.inI64Band` conjunct. Both band
+    /// edges are admitted.
+    #[test]
+    fn admits_both_edges_of_the_i64_band() {
+        for constant in [i64::MIN, i64::MAX] {
+            let mut plan = sign_only_plan(4);
+            let FragNodeKind::IntSignCmp { constant: k, .. } = &mut plan.body.nodes[2].kind
+            else {
+                panic!("node 2 is the sign template");
+            };
+            *k = constant;
+            assert_eq!(
+                expr_fragment_record_compute_face(&plan, &table()),
+                Some(FragRecordComputeFace { struct_idx: 4 }),
+                "literal {constant} must stay inside the band"
+            );
+        }
     }
 }

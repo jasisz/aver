@@ -986,21 +986,38 @@ def recordComputeNodeOk
           | _ => false)
   | _ => false
 
+/-- The nodes that make a body COMPUTE rather than merely PROJECT — the
+    classifier's any-fact, named so the non-overlap lemmas below can cite one
+    term. Three kinds qualify: a construction, ANY host call (`cmp` and `eq`
+    included — they leave the carrier and decide an order), and the inline
+    sign template, which is the emitter's open-coded comparison of a computed
+    carrier against a literal and is therefore exactly as computing as the
+    `cmp` call it replaces.
+
+    Leaving `.intSignCmp` out was a SILENT non-admission: a projection-only
+    sign test (`f.num >= 0`, no host call anywhere in the body) matched
+    neither the two-node projection face nor the compute face, so the producer
+    emitted no plan at all and the export dropped to source-level-only with no
+    stated reason. The two-node projection faces stay ruled out because their
+    bodies carry none of the three. -/
+def fragNodeComputes (n : FragNode) : Bool :=
+  match n.kind with
+  | .structNew _ _ => true
+  | .hostCall _ _ _ => true
+  | .intSignCmp _ _ _ _ => true
+  | _ => false
+
 /-- Classifier of the compute face: every parameter is an opaque record
     reference, every node is in the admitted set, at least one node computes
-    (a host call or a construction — which also rules the two-node
-    projection faces out), the result is a record/Int/Bool, and every cited
-    user-struct index agrees on ONE pinned index. -/
+    (`fragNodeComputes` — which also rules the two-node projection faces out),
+    the result is a record/Int/Bool, and every cited user-struct index agrees
+    on ONE pinned index. -/
 def classifyRecordCompute
     (hostTable : List (HostRole × Nat)) (plan : ExprFragmentRawPlan) :
     Option RecordComputeFace :=
   if plan.params.all (· == .adtRef) &&
       plan.body.nodes.all (fun n => recordComputeNodeOk hostTable n.kind) &&
-      plan.body.nodes.any (fun n =>
-        match n.kind with
-        | .structNew _ _ => true
-        | .hostCall _ _ _ => true
-        | _ => false) &&
+      plan.body.nodes.any fragNodeComputes &&
       (plan.result == .adtRef || plan.result == .intCarrier ||
         plan.result == .boolI32) then
     match plan.body.nodes.filterMap (fun n => fragNodeStructIdx? n.kind) with
@@ -1109,14 +1126,6 @@ def recordComputeDeclaredFace
     (StandardFace.known
       (recordCompute claim.carrier face claim.hostTable plan)).Matches
       claim.obligation
-
-/-- The node kinds the compute classifier's any-fact counts: a construction
-    or a host call. Named so the non-overlap lemmas below can cite one term. -/
-def fragNodeComputes (n : FragNode) : Bool :=
-  match n.kind with
-  | .structNew _ _ => true
-  | .hostCall _ _ _ => true
-  | _ => false
 
 /-- Structural content of a fired compute classifier: the four Bool facts of
     its admission condition (all-`.adtRef` parameters, every node admitted,
@@ -1231,6 +1240,11 @@ theorem genericFragmentAllowedFuel_no_compute
         rw [hkind] at hn
         simp at hn
       case hostCall role funcIdx args =>
+        rw [hkind] at hn
+        simp at hn
+      -- The generic walker fail-closes on the sign template (it has no carrier
+      -- facts to read the limb/sign fields with), so a walked body carries none.
+      case intSignCmp op constant scratch value =>
         rw [hkind] at hn
         simp at hn
       all_goals simp [fragNodeComputes, hkind]
