@@ -7,7 +7,8 @@ mod scratch_dir;
 
 use cert_wall::materialize as materialize_wall;
 use scratch_dir::temp_dir;
-use std::path::PathBuf;
+use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn aver_command() -> Command {
@@ -72,6 +73,31 @@ fn section_offset_after_export(bytes: &[u8]) -> usize {
         }
     }
     panic!("compiler-produced module has no export section")
+}
+
+/// The declared closure of the emitted certificate, read back out of the
+/// `Artifact.lean` the producer just wrote. The whole-module guard-iso needs it
+/// to keep its escaped-call control non-vacuous: an admitted index is not a
+/// mutation that leaves the closure.
+fn admitted_closure_indices(artifact_lean: &Path) -> BTreeSet<u32> {
+    let text = std::fs::read_to_string(artifact_lean).expect("Artifact.lean exists");
+    let start = text
+        .find("admitted := [")
+        .expect("Artifact.lean declares the closure's admitted set")
+        + "admitted := [".len();
+    let end = start
+        + text[start..]
+            .find(']')
+            .expect("the admitted set is a closed list");
+    text[start..end]
+        .split(',')
+        .map(|entry| {
+            entry
+                .trim()
+                .parse::<u32>()
+                .expect("the admitted set holds function indices")
+        })
+        .collect()
 }
 
 fn certified_opcode_offsets(bytes: &[u8]) -> (usize, u32, usize) {
@@ -294,6 +320,23 @@ fn whole_module_guards_are_isolated_and_weaken_confirmed() {
         .expect("json wasm must import aver.console_print");
     assert_eq!(wasm[capability_offset], b'c');
     assert_eq!(wasm[call_offset], leb_low_byte(call_target));
+    // The escaped-call control below re-points `jsonInt`'s first call by adding
+    // a delta to the LOW LEB byte of its target. A fixed delta of 1 goes
+    // vacuous the moment the admitted closure happens to contain the next
+    // function index — which is exactly what happened when one more export
+    // became certified. The delta is therefore derived from the closure the
+    // producer just declared, so the mutated call provably leaves it.
+    let admitted = admitted_closure_indices(&cert.join("Artifact.lean"));
+    assert!(
+        admitted.contains(&call_target),
+        "jsonInt's own box helper must be inside the declared closure: \
+         {call_target} not in {admitted:?}"
+    );
+    let call_delta = (1u32..=0x7f)
+        .find(|delta| {
+            (call_target & 0x7f) + delta <= 0x7f && !admitted.contains(&(call_target + delta))
+        })
+        .expect("some in-byte call target must sit outside the admitted closure");
     let lean = format!(
         r#"import Artifact
 
@@ -352,7 +395,7 @@ example : withoutStart undeclaredStartArtifact := ⟨rfl, rfl, rfl⟩
 
 -- (d) Spike negative control: jsonInt's call leaves the admitted closure.
 def escapedCallBytes : Nat := ArtifactBytes.modBytes +
-  (1 <<< (8 * {call_offset}))
+  ({call_delta} <<< (8 * {call_offset}))
 def escapedCallArtifact : AcceptedArtifact.ArtifactData :=
   {{ Artifact.data with modBytes := escapedCallBytes }}
 example : AcceptedArtifact.closureIsolation escapedCallArtifact = false := rfl
