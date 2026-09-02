@@ -36,27 +36,24 @@ fn render_claim_cases(
 
 fn render_expr_side_arm(c: &Cert) -> String {
     let name = c.name();
-    // The two comparison arms sit at positions seven and eight of eight. Their
-    // side condition is purely the routing discriminator plus the family's
-    // partial-correctness policy; the discharge derives the obligation from the
-    // checked face, so no producer semantic premise participates. Both are
-    // tested before the audited-generic arm: their source types sit inside that
-    // gate but their plans call a runtime helper it refuses.
-    if c.int_cmp_bool_face().is_some() {
+    // The selection arm sits at position seven of eight. Its side condition is
+    // purely the routing discriminator plus the family's partial-correctness
+    // policy; the discharge derives the obligation from the checked face, so
+    // no producer semantic premise participates. It is tested before the
+    // audited-generic arm: its source types sit inside that gate but its plan
+    // calls a runtime helper the generic grammar refuses.
+    if c.int_select_face().is_some() {
         return String::from(
             "exact Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inl ⟨rfl, rfl⟩))))))",
         );
     }
-    if c.int_select_face().is_some() {
-        return String::from(
-            "exact Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inl ⟨rfl, rfl⟩)))))))",
-        );
-    }
-    // The compute arm sits at position nine of nine: pure routing, the
-    // discharge derives the obligation from the checked compute face.
+    // The compute arm sits at position eight of eight: pure routing, the
+    // discharge derives the obligation from the checked compute face. It too
+    // is tested before the audited-generic arm — a scalar-parameter compute
+    // plan has Int/Bool source types and a plan the generic grammar refuses.
     if c.record_compute_face().is_some() {
         return String::from(
-            "exact Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr rfl)))))))",
+            "exact Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr rfl))))))",
         );
     }
     if expr_fragment_uses_audited_generic(c) {

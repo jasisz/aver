@@ -383,7 +383,7 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     let declared_uncertified = manifest["declaredUncertified"].as_array().unwrap();
     assert_eq!(
         declared_uncertified.len(),
-        17,
+        16,
         "all 43 module exports must be certified or explicitly declared"
     );
     assert!(declared_uncertified.iter().all(|entry| {
@@ -620,6 +620,10 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         ("floatLtGoal", "expr-fragment-v1"),
         ("floatGtGoal", "expr-fragment-v1"),
         ("floatEqGoal", "expr-fragment-v1"),
+        // `double(n) = n * 2`: plain arithmetic on an Int argument, which the
+        // record projection-compute face absorbed when it gained scalar
+        // parameters (numerator moved deliberately).
+        ("double", "expr-fragment-v1"),
     ]
     .into_iter()
     .map(|(name, class)| (name.to_string(), class.to_string()))
@@ -636,7 +640,7 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         .collect::<Vec<_>>();
     assert_eq!(
         expr_entries.len(),
-        12,
+        13,
         "expr-fragment report count changed; update this deliberately"
     );
     let expr_names = expr_entries
@@ -647,6 +651,7 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         expr_names,
         [
             "addTwo",
+            "double",
             "userName",
             "inAsciiDigit",
             "intLessZero",
@@ -668,6 +673,7 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         .expect("Plans.lean exists");
     for name in [
         "addTwo",
+        "double",
         "userName",
         "inAsciiDigit",
         "intLessZero",
@@ -833,6 +839,7 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
 
     let planned_goal_names: BTreeSet<String> = [
         "addTwo",
+        "double",
         "sumFrom",
         "countDown",
         "quad",
@@ -877,8 +884,8 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     .into_iter()
     .map(str::to_string)
     .collect();
-    assert_eq!(planned_goal_names.len(), 31, "goal denominator changed");
-    assert_eq!(actual.len(), 26, "goal numerator changed");
+    assert_eq!(planned_goal_names.len(), 32, "goal denominator changed");
+    assert_eq!(actual.len(), 27, "goal numerator changed");
 
     let contracts: Vec<&str> = manifest["runtime_contracts"]
         .as_array()
@@ -943,8 +950,10 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         );
     }
     assert!(
-        declined_names.contains("double"),
-        "composition helper should remain reported as source-level-only: {declined_names:?}"
+        !declined_names.contains("double"),
+        "the composition helper `double` is plain arithmetic on an Int \
+         argument and is now certified through the record projection-compute \
+         face: {declined_names:?}"
     );
 }
 
@@ -1059,8 +1068,10 @@ fn certify_goal_matrix_lands_acceptance_wall_kernel_clean() {
         ),
         "field-projection-faced expr claim must use its audited generic:\n{artifact_lean}"
     );
+    // `addTwo` and `double` are absent by design: a scalar-parameter compute
+    // plan routes through the wall's record projection-compute face, which
+    // carries no producer semantic bridge at all.
     for (name, bridge_kind) in [
-        ("addTwo", "exprFragmentSemanticBridge"),
         ("inAsciiDigit", "exprFragmentSemanticBridge"),
         ("intLessZero", "exprFragmentSemanticBridge"),
         ("intEqZero", "exprFragmentSemanticBridge"),
@@ -1177,13 +1188,9 @@ fn certify_goal_matrix_lands_acceptance_wall_kernel_clean() {
             && !certificate.contains("isEvenHostRef"),
         "migrated leaf/dispatch/construct/recursion/expr-fragment/composition/mutual families must not emit bespoke simulations or tripwires:\n{certificate}"
     );
-    for expr_fragment_name in [
-        "addTwo",
-        "inAsciiDigit",
-        "intLessZero",
-        "intEqZero",
-        "boolAndGoal",
-    ] {
+    // `addTwo` and `double` are absent: a scalar-parameter compute claim
+    // carries claim acceptance but no producer semantic bridge at all.
+    for expr_fragment_name in ["inAsciiDigit", "intLessZero", "intEqZero", "boolAndGoal"] {
         assert!(
             certificate.contains(&format!(
                 "theorem {expr_fragment_name}_exprFragmentClaimAccepted"
@@ -1300,13 +1307,7 @@ fn certify_goal_matrix_lands_acceptance_wall_kernel_clean() {
         count_down["theorem"],
         "AcceptanceSoundness.recursion_claim_discharges"
     );
-    for name in [
-        "addTwo",
-        "inAsciiDigit",
-        "intLessZero",
-        "intEqZero",
-        "boolAndGoal",
-    ] {
+    for name in ["inAsciiDigit", "intLessZero", "intEqZero", "boolAndGoal"] {
         let entry = manifest["certified"]
             .as_array()
             .unwrap()
@@ -1316,6 +1317,19 @@ fn certify_goal_matrix_lands_acceptance_wall_kernel_clean() {
         assert_eq!(
             entry["theorem"],
             "AcceptanceSoundness.exprFragment_claim_discharges"
+        );
+    }
+    // Scalar-parameter arithmetic routes through the declared compute face.
+    for name in ["addTwo", "double"] {
+        let entry = manifest["certified"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["name"] == name)
+            .unwrap();
+        assert_eq!(
+            entry["theorem"],
+            "AcceptanceSoundness.recordCompute_claim_discharges"
         );
     }
     for name in ["quad", "hex16"] {
@@ -1415,8 +1429,9 @@ fn certify_goal_matrix_lands_acceptance_wall_kernel_clean() {
         ),
         "recursion bridge/discharge changed axiom surface:\n{combined}"
     );
+    // `addTwo` and `double` emit no semantic bridge: a scalar-parameter
+    // compute claim is discharged from its checked face alone.
     for bridge in [
-        "addTwo_exprFragmentSemanticBridge",
         "inAsciiDigit_exprFragmentSemanticBridge",
         "intLessZero_exprFragmentSemanticBridge",
         "intEqZero_exprFragmentSemanticBridge",
@@ -3865,7 +3880,11 @@ fn certify_add_one_output_is_unchanged_when_the_int_helper_is_present() {
     )
     .expect("manifest is valid JSON");
 
-    // The certified entry, byte for byte the pre-change classification.
+    // The certified entry. `dom`/`theorem` moved deliberately when the
+    // straight-line integer face retired into the record projection-compute
+    // face: `addOne` is a scalar-parameter compute claim, its model IS the
+    // checked plan, and its domain is one canonical carrier rather than a
+    // represented `List Int`.
     assert_eq!(
         manifest["certified"],
         serde_json::json!([{
@@ -3873,9 +3892,9 @@ fn certify_add_one_output_is_unchanged_when_the_int_helper_is_present() {
             "class": "expr-fragment-v1",
             "policy": "simulatesModel",
             "level": "L1",
-            "dom": "List Int",
+            "dom": "Int",
             "cod": "Int",
-            "theorem": "AcceptanceSoundness.exprFragment_claim_discharges",
+            "theorem": "AcceptanceSoundness.recordCompute_claim_discharges",
         }]),
         "the add_one certification must be unchanged by the optional-helper handling"
     );

@@ -147,7 +147,7 @@ fn check_plan_host_calls(block: &FragBlock, table: &FragHostTable) -> Result<(),
     Ok(())
 }
 
-// `FragIntAddFace` / `FragProjectFace` and their recognisers moved to
+// `FragProjectFace` and the other face recognisers live in
 // `expr_fragment_faces.rs` (`plans` layer): the producer's MIR adapter gates
 // plan emission on the same faces the classifier admits.
 

@@ -1,12 +1,13 @@
 /// Whether a representation plan has a rendered proof face. `IntCarrier`
-/// results are admitted ONLY through the exact straight-line integer face
-/// (`add(param0, box(k))`): a bare Int passthrough or any other
-/// carrier-returning shape has no coherent face yet (its `Cod` would read as
-/// `Int` while `codRepr` falls to the verbatim `WVal` relation), so it must
-/// never be selected here nor accepted by the verifier. Likewise, `AdtRef`
-/// values are admitted ONLY through the exact field-projection face: any other
-/// ADT-ref plan (a bare reference passthrough, a projection chain) stays
-/// unplanned here and declines fail-closed at the verifier.
+/// results are admitted ONLY through an exact face — today the record
+/// projection-compute face (whose meaning IS the plan) or one of the pinned
+/// shapes below: a bare Int passthrough or any other carrier-returning shape
+/// has no coherent face yet (its `Cod` would read as `Int` while `codRepr`
+/// falls to the verbatim `WVal` relation), so it must never be selected here
+/// nor accepted by the verifier. Likewise, `AdtRef` values are admitted ONLY
+/// through the exact field-projection face: any other ADT-ref plan (a bare
+/// reference passthrough, a projection chain) stays unplanned here and
+/// declines fail-closed at the verifier.
 ///
 /// Host CALLS carry the same discipline, and it is a separate condition from
 /// the result type: a plan may call `__aint_cmp` and still return `boolI32`,
@@ -22,10 +23,9 @@ fn expr_fragment_plan_has_face(plan: &ExprFragmentPlan, host_table: &FragHostTab
     let tag_dispatch = expr_fragment_is_tag_dispatch(plan);
     let vector_get = expr_fragment_vector_get_face(plan).is_some();
     let record_proj = expr_fragment_record_proj_face(plan).is_some();
-    // The Int comparison faces call a runtime helper, and the selection face
-    // additionally returns an Int carrier; its result is a passthrough of an
-    // input local rather than a fresh box.
-    let int_cmp_bool = expr_fragment_int_cmp_bool_face(plan).is_some();
+    // The Int selection face calls a runtime helper and returns an Int
+    // carrier; its result is a passthrough of an input local rather than a
+    // fresh box.
     let int_select = expr_fragment_int_select_face(plan).is_some();
     let record_compute = expr_fragment_record_compute_face(plan, host_table).is_some();
     // Construction is certified ONLY through the compute face: a plan that
@@ -38,18 +38,15 @@ fn expr_fragment_plan_has_face(plan: &ExprFragmentPlan, host_table: &FragHostTab
     // (bytes untouched) instead of reaching the verifier and declining there.
     let int_sign_cmp_ok = record_compute || !plan_contains_int_sign_cmp(&plan.body);
     let int_face_ok = plan.result != FragTy::IntCarrier
-        || expr_fragment_int_add_face(plan).is_some()
         || tag_dispatch
         || vector_get
         || record_proj
         || int_select
         || record_compute;
     let host_call_face_ok = !expr_fragment_plan_has_host_calls(plan)
-        || expr_fragment_int_add_face(plan).is_some()
         || tag_dispatch
         || vector_get
         || record_proj
-        || int_cmp_bool
         || int_select
         || record_compute;
     let adt_face_ok = !expr_fragment_plan_touches_adt_ref(plan)
@@ -1536,22 +1533,24 @@ mod tests {
         }
     }
 
-    /// `a < b` — one of the shapes the Int comparison face was built for. The
-    /// control for the refusal below: the gate must still admit a host call
-    /// that DOES land on an exact face.
+    /// `a < b` — a scalar-parameter comparison, which the record
+    /// projection-compute face absorbed when the pinned Int-comparison face
+    /// retired. The control for the refusal below: the gate must still admit a
+    /// host call that DOES land on an exact face.
     #[test]
     fn bare_int_value_comparison_still_plans() {
         let mir_fn = int_pair_fn("Bool", binop(BinOp::Lt, int_local(0), int_local(1)), 2);
         let plan = fragment_plan_from_mir_fn(&mir_fn, &|_, _| None, &[])
-            .expect("a bare Int value comparison must plan through the comparison face");
+            .expect("a bare Int value comparison must plan through the compute face");
         let FragmentPlan::Sym(sym) = &plan else {
             panic!("int value comparison should use SymPlan")
         };
+        let table = FragHostTable::placeholder();
         let frag = sym
-            .to_expr_fragment_plan(&FragHostTable::placeholder(), &FragStructTable::default())
+            .to_expr_fragment_plan(&table, &FragStructTable::default())
             .expect("comparison encodes to a representation plan");
         assert!(expr_fragment_plan_has_host_calls(&frag));
-        assert!(expr_fragment_int_cmp_bool_face(&frag).is_some());
+        assert!(expr_fragment_record_compute_face(&frag, &table).is_some());
     }
 
     /// `if a >= 0 { a < b } else { false }` — `validClockValue` after the MIR
@@ -2011,9 +2010,10 @@ mod tests {
     }
 
     #[test]
-    fn let_over_int_add_lowers_through_the_int_add_face() {
+    fn let_over_int_add_lowers_through_the_compute_face() {
         // `m = x + 2; m` — the single read of `m` re-lowers the initializer,
-        // producing exactly the straight-line integer face node order.
+        // producing exactly the add-constant node order the compute face
+        // absorbed from the retired straight-line integer face.
         let body = let_expr(1, binop(BinOp::Add, int_local(0), int_lit(2)), int_local(1));
         let mir_fn = int_param_fn("Int", body, 2);
         let plan = fragment_plan_from_mir_fn(&mir_fn, &|_, _| None, &[]).expect("plan");
@@ -2082,21 +2082,29 @@ mod tests {
     }
 
     #[test]
-    fn computed_alias_is_not_an_int_const_cmp_operand() {
+    fn computed_alias_is_an_int_const_cmp_operand_on_the_compute_face() {
         // `y = x + 2; y > 0` — the alias chain terminates in a COMPUTED
-        // expression, not a param read. PlanCheck's `isSymParam` requires the
-        // comparison operand to be a param read, so the producer must refuse
-        // rather than emit a plan the kernel rejects.
+        // expression, not a param read. The sign template over a computed
+        // carrier is exactly what the record projection-compute face
+        // interprets, and that face now takes scalar parameters, so the shape
+        // plans instead of staying unplanned. (It used to be refused because
+        // no face covered it, not because the plan was ill-formed.)
         let body = let_expr(
             1,
             binop(BinOp::Add, int_local(0), int_lit(2)),
             binop(BinOp::Gt, int_local(1), int_lit(0)),
         );
         let mir_fn = int_param_fn("Bool", body, 2);
-        assert!(
-            fragment_plan_from_mir_fn(&mir_fn, &|_, _| None, &[]).is_none(),
-            "a computed let alias must not become an intConstCmp operand"
-        );
+        let plan = fragment_plan_from_mir_fn(&mir_fn, &|_, _| None, &[])
+            .expect("a computed sign test must plan through the compute face");
+        let FragmentPlan::Sym(sym) = &plan else {
+            panic!("a computed sign test should use SymPlan")
+        };
+        let table = FragHostTable::placeholder();
+        let frag = sym
+            .to_expr_fragment_plan(&table, &FragStructTable::default())
+            .expect("the sign test encodes to a representation plan");
+        assert!(expr_fragment_record_compute_face(&frag, &table).is_some());
     }
 
     #[test]

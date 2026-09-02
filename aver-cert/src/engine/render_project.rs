@@ -474,16 +474,24 @@ fn render_expr_fragment_plans(
                 field = face.field_idx,
             ));
         }
-        if let (Some(face), Some((_struct_idx, leaves))) =
-            (c.record_compute_face(), c.record_decl())
-        {
-            s.push_str(&format!(
-                "/-- The Plan record declaration for `{name}` as ordered scalar leaves. -/\n\
-                 def {name}RecordFields : List TypeDecl := {fields_value}\n\n\
-                 def {name}RecordDecl : TypeDecl := .record {struct_idx} {name}RecordFields\n\n",
-                fields_value = record_leaves_lean_value(leaves),
-                struct_idx = face.struct_idx,
-            ));
+        if let Some(face) = c.record_compute_face() {
+            match c.record_decl() {
+                Some((_struct_idx, leaves)) => s.push_str(&format!(
+                    "/-- The Plan record declaration for `{name}` as ordered scalar leaves. -/\n\
+                     def {name}RecordFields : List TypeDecl := {fields_value}\n\n\
+                     def {name}RecordDecl : TypeDecl := .record {struct_idx} {name}RecordFields\n\n",
+                    fields_value = record_leaves_lean_value(leaves),
+                    struct_idx = face.struct_idx,
+                )),
+                // A scalar-parameter compute plan names no record at all: the
+                // wall's declared face demands no type-section entry for it,
+                // and the empty list is the unused witness slot the guarded
+                // declaration conjunct still takes.
+                None => s.push_str(&format!(
+                    "/-- `{name}` names no record; the declared face's declaration slot is empty. -/\n\
+                     def {name}RecordFields : List TypeDecl := []\n\n"
+                )),
+            }
         }
     }
     for c in &analysis.certs {
@@ -2157,7 +2165,7 @@ fn render_artifact_expr_fragment_claims(
                     // meaning fields — the exact structure of the hand-checked
                     // `PersonBeachhead.isMemberFace`.
                     if let Some(face) = c.record_compute_face() {
-                        let result_ty = match plan.result {
+                        let val_ty = |ty: FragTy| match ty {
                             FragTy::AdtRef => format!(
                                 "(AverCert.WasmSlice.nullableRefType {})",
                                 face.struct_idx
@@ -2167,8 +2175,25 @@ fn render_artifact_expr_fragment_claims(
                             ),
                             _ => "(CertDecode.ValType.numeric 0x7f)".to_string(),
                         };
+                        let result_ty = val_ty(plan.result);
+                        let param_tys = format!(
+                            "[{}]",
+                            plan.params
+                                .iter()
+                                .map(|ty| val_ty(*ty))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        );
+                        // A plan that names no record discharges the guarded
+                        // declaration conjunct vacuously: the guard evaluates
+                        // to `false` by kernel reduction on the plan itself.
+                        let decl_witness = if expr_fragment_plan_uses_struct(plan) {
+                            "fun _ => ⟨by decide, by decide, rfl, rfl⟩".to_string()
+                        } else {
+                            "fun h => absurd h (by decide)".to_string()
+                        };
                         let witness = format!(
-                            "⟨rfl, rfl, rfl, AverCert.Plans.{name}RecordFields, {result_ty},                              by decide, by decide, rfl, rfl, rfl, rfl, rfl,                              ⟨rfl, HEq.rfl, HEq.rfl, HEq.rfl, HEq.rfl, rfl, HEq.rfl⟩⟩"
+                            "⟨rfl, rfl, rfl, rfl, AverCert.Plans.{name}RecordFields,                              {param_tys}, {result_ty}, {decl_witness}, rfl, rfl, rfl,                              ⟨rfl, HEq.rfl, HEq.rfl, HEq.rfl, HEq.rfl, rfl, HEq.rfl⟩⟩"
                         );
                         sym_faces.push(Some((
                             "recordComputeDeclaredFace".to_string(),
@@ -3480,20 +3505,6 @@ fn render_module(analysis: &Analysis, artifact_file_name: &str, sha: &str) -> St
 /// `CertModule` so both the certificate proofs and the manifest reference the
 /// one definition.
 fn render_host_def(c: &Cert) -> String {
-    // Host-call expr fragments with the integer-add face wire the byte-derived
-    // box/add indices directly.
-    if let Some(face) = c.int_add_face() {
-        return format!(
-            "/-- Runtime host wiring for `{name}` (box + add contracts). -/\n\
-             def {name}Host (add : List WVal → Option WVal) : HostTbl := fun fn =>\n  \
-             if fn = {box_idx} then some (1, boxRef {carrier})\n  \
-             else if fn = {add_idx} then some (2, add)\n  else none\n",
-            name = c.name(),
-            box_idx = face.box_idx,
-            add_idx = face.add_idx,
-            carrier = c.carrier(),
-        );
-    }
     match c.inner() {
         Cert::Recursive {
             name,

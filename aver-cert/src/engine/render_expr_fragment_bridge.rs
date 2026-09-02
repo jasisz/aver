@@ -170,15 +170,6 @@ fn render_expr_fragment_semantic_bridge(
         );
     }
     debug_assert!(expr_fragment_uses_audited_generic(c));
-    if let Some(face) = c.int_add_face() {
-        return render_expr_fragment_int_add_semantic_bridge(
-            c,
-            face,
-            host_table,
-            struct_table_lean,
-            model_info,
-        );
-    }
     render_expr_fragment_int_bool_semantic_bridge(c, host_table, struct_table_lean, model_info)
 }
 
@@ -237,87 +228,6 @@ theorem {name}_exprFragmentSemanticBridge :
   subst hDom
   by_cases hx : x.1 = {tag}
 {then_arm}{else_arm}
-#print axioms {name}_exprFragmentSemanticBridge
-"#
-    )
-}
-
-fn render_expr_fragment_int_add_semantic_bridge(
-    c: &Cert,
-    face: FragIntAddFace,
-    host_table: FragHostTable,
-    struct_table_lean: &str,
-    model_info: &ModelInfo,
-) -> String {
-    let name = c.name();
-    let model_name = c.model_lean_name(model_info);
-    let carrier = c.carrier();
-    let k = lean_int_lit(face.k);
-    let claim = expr_fragment_claim_lean_value(c, host_table, struct_table_lean);
-    let host_table_lean = host_table.lean_value();
-    let claim_accepted = render_expr_fragment_claim_accepted_split(c, &claim, &host_table_lean);
-    format!(
-        r#"/-! ### {name} — option-(b) integer expr-fragment semantic bridge -/
-
-{claim_accepted}
-theorem {name}_exprFragmentSemanticBridge :
-    AcceptanceSoundness.exprFragmentSemanticBridge {claim}
-      AverCert.Plans.{name}Plan := by
-  refine ⟨rfl, ?_⟩
-  intro S add sub mul stringEq stringConcat toIndex cmp eq
-    hAdd hSub hMul hStringEq hStringConcat _hToIndex _hCmp _hEq fuel ns vs out hDom hRun
-  dsimp [AverCert.{name}Ob] at ns vs hDom hRun ⊢
-  rcases hDom with ⟨hRepr, hLen⟩
-  cases hRepr with
-  | nil => simp at hLen
-  | cons hv htail =>
-      rename_i n v ns' vs'
-      cases htail with
-      | cons _ _ => simp at hLen
-      | nil =>
-          cases hc : add [v, carrierSmall {carrier} ({k})] with
-          | none =>
-              simp [wFuncN, wRunF, CertModule.{name}Code, CertModule.{name}Host,
-                boxRef, popArgs, initLocals, hc] at hRun
-          | some result =>
-              refine ⟨[v], [v, .null], result, rfl, rfl, ?_, ?_, ?_⟩
-              · simp [ExprFragmentSoundness.blockCallsOK,
-                  ExprFragmentSoundness.nodesCallsOK,
-                  ExprFragmentSoundness.kindCallsOK, AverCert.Plans.{name}Plan,
-                  CertModule.{name}Code, CertModule.{name}Host]
-              · simp only [ExprFragmentSemantics.evalSymRawPlan]
-                rw [show AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan
-                  {host_table_lean} {struct_table_lean}
-                  AverCert.Plans.{name}SymPlan =
-                    some AverCert.Plans.{name}Plan by rfl]
-                simp [AverCert.Plans.{name}Plan,
-                  AverCert.PlanLower.maxFuel, ExprFragmentSemantics.runBlock,
-                  ExprFragmentSemantics.runBlockFuel,
-                  ExprFragmentSemantics.runNodesFuel,
-                  ExprFragmentSemantics.finishWith,
-                  AverCert.AcceptedArtifact.exprFragmentNLocals,
-                  CertModule.{name}Code, CertModule.{name}Host, boxRef,
-                  popArgs, initLocals, carrierSmall, hc] <;>
-                try simp_all [ExprFragmentSemantics.runBlockFuel,
-                  ExprFragmentSemantics.runNodesFuel,
-                  ExprFragmentSemantics.finishWith, PlanLower.popExpected,
-                  PlanLower.popExpectedAll, PlanLower.primInstr,
-                  ExprFragmentSemantics.runPrim, wRunF,
-                  AverCert.AcceptedArtifact.exprFragmentNLocals,
-                  CertModule.{name}Code, CertModule.{name}Host, boxRef,
-                  popArgs, initLocals, hc, carrierSmall, b32] <;>
-                try simp_all [ExprFragmentSemantics.runBlockFuel,
-                  ExprFragmentSemantics.runNodesFuel,
-                  ExprFragmentSemantics.finishWith, PlanLower.popExpected,
-                  PlanLower.popExpectedAll, PlanLower.primInstr,
-                  ExprFragmentSemantics.runPrim, wRunF,
-                  AverCert.AcceptedArtifact.exprFragmentNLocals,
-                  CertModule.{name}Code, CertModule.{name}Host, boxRef,
-                  popArgs, initLocals, hc, carrierSmall, b32]
-              · simpa [AverCert.Schema.intRepr, {model_name}] using
-                  (hAdd n ({k}) v (carrierSmall {carrier} ({k})) result hv
-                    (S.smallIntro ({k})) hc).1
-
 #print axioms {name}_exprFragmentSemanticBridge
 "#
     )

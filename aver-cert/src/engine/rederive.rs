@@ -266,11 +266,6 @@ impl ObligationFace {
         c: &Cert,
         model_info: Option<&ModelInfo>,
     ) -> ObligationFace {
-        // A host-call expr fragment with the integer-add face keeps the
-        // full-strength integer simulation face (List Int / ReprAll / intRepr).
-        if c.int_add_face().is_some() {
-            return ObligationFace::IntList { arity: 1 };
-        }
         // A projection-faced expr fragment keeps the legacy field-projection
         // semantic face (WVal x WVal / verbatimRepr), exactly like the legacy
         // class it migrates.

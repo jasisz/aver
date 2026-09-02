@@ -1,21 +1,25 @@
 fn render_expr_fragment_cert(c: &Cert) -> String {
-    // The two Int comparison faces discharge entirely inside the wall
-    // (`intCmpBool_claim_discharges` / `intSelect_claim_discharges`): the
-    // checked face pins their whole meaning, so there is no producer semantic
-    // premise and no bespoke proof declaration to emit. This test precedes the
-    // audited-generic one because their source types (Int, Int -> Bool) sit
-    // inside that gate while their PLAN calls a runtime helper the generic
-    // fragment grammar refuses.
+    // The Int selection face discharges entirely inside the wall
+    // (`intSelect_claim_discharges`): the checked face pins its whole meaning,
+    // so there is no producer semantic premise and no bespoke proof
+    // declaration to emit. This test precedes the audited-generic one because
+    // its source types (Int, Int -> Int) sit inside that gate while its PLAN
+    // calls a runtime helper the generic fragment grammar refuses.
     if c.int_cmp_face().is_some() {
+        return String::new();
+    }
+    // Compute-face fragments discharge through the wall's checked face
+    // (`recordCompute_claim_discharges`) and emit no bespoke proof. This test
+    // precedes the audited-generic one for the same reason: a scalar-parameter
+    // compute plan (a boxed add-constant, a helper comparison) has Int/Bool
+    // source types but a plan the generic fragment grammar refuses.
+    if c.record_compute_face().is_some() {
         return String::new();
     }
     // Audited integer/Bool source fragments emit only their option-(b)
     // semantic bridge in `Certificate.lean`.
     if expr_fragment_uses_audited_generic(c) {
         return String::new();
-    }
-    if let Some(face) = c.int_add_face() {
-        return render_expr_fragment_int_add_cert(c, face);
     }
     // Projection-faced fragments are discharged in `Final.cert` through the
     // audited direct-projection generic and emit no bespoke proof declarations.
@@ -28,11 +32,6 @@ fn render_expr_fragment_cert(c: &Cert) -> String {
     // `{name}_simulates` over `verbatimRepr` (and, for an Int-carrier field
     // read, panic in the value renderer on the user struct projection).
     if c.record_param_face().is_some() {
-        return String::new();
-    }
-    // Compute-face fragments likewise discharge through the wall's checked
-    // face (`recordCompute_claim_discharges`) and emit no bespoke proof.
-    if c.record_compute_face().is_some() {
         return String::new();
     }
     if let Some(face) = c.vector_get_face() {
@@ -132,93 +131,6 @@ theorem {name}_simulates : AverCert.Schema.Obligation.holds AverCert.{name}Ob :=
         box_idx = face.box_idx,
         arr_ty = face.arr_ty,
         d = face.default,
-    )
-}
-
-/// The straight-line integer proof face for a host-call expr fragment
-/// `add(param0, box(k))`: the SAME theorem shapes (and closer) the legacy
-/// straight-line class ships, stated over the plan-lowered code table. The
-/// obligation covers ALL representations under the named add contract — no
-/// weakening relative to the legacy class.
-fn render_expr_fragment_int_add_cert(c: &Cert, face: FragIntAddFace) -> String {
-    let name = c.name();
-    let self_idx = c.self_idx();
-    let carrier = c.carrier();
-    let k = face.k;
-    let g1 = k + 3;
-    let g2 = k - 5;
-    format!(
-        r#"/-! ### {name} — expr-fragment-v1 certificate (carrier type {carrier}, straight-line integer face) -/
-
-/-- The plan-lowered body of `{name}` maps any representation of `n` to a
-    representation of `n + {k}`, for ALL `n : ℤ`, under the named runtime
-    contract `hadd` (carrier add = exact integer addition on represented values). -/
-theorem {name}_wasm_certified
-    (S : ReprSpec {carrier})
-    (add : List WVal → Option WVal)
-    (hadd : ∀ a b va vb, S.Repr a va → S.Repr b vb →
-          ∃ w, add [va, vb] = some w ∧ S.Repr (a + b) w) :
-    ∀ (n : Int) (v : WVal), S.Repr n v →
-      ∃ w, wFuncN {name}Code ({name}Host add) 1 {self_idx} [v] = some w ∧ S.Repr (n + {k}) w := by
-  intro n v hv
-  obtain ⟨w, hw, hrepr⟩ := hadd n {k} v (carrierSmall {carrier} {k}) hv (S.smallIntro {k})
-  refine ⟨w, ?_, hrepr⟩
-  simp only [wFuncN, {name}Code, {name}Host, boxRef, carrierSmall, initLocals,
-    wRunF, popArgs, List.getElem?_cons_zero, List.length, List.take, List.drop,
-    List.reverse, List.replicate, if_true, reduceIte]
-  simp only [carrierSmall] at hw
-  simp [hw]
-
-#print axioms {name}_wasm_certified
-
-/-- Consumer-facing composition: whatever the bytes return represents the
-    model value `n + {k}` (faithfulness law ∘ simulation). -/
-theorem {name}_wasm_faithful
-    (S : ReprSpec {carrier})
-    (add : List WVal → Option WVal)
-    (hadd : ∀ a b va vb, S.Repr a va → S.Repr b vb →
-          ∃ w, add [va, vb] = some w ∧ S.Repr (a + b) w) :
-    ∀ (n : Int) (v : WVal), S.Repr n v →
-      ∃ w m, wFuncN {name}Code ({name}Host add) 1 {self_idx} [v] = some w ∧ S.Repr m w ∧ m = n + {k} :=
-  fun n v hv =>
-    let ⟨w, hrun, hrepr⟩ := {name}_wasm_certified S add hadd n v hv
-    ⟨w, n + {k}, hrun, hrepr, rfl⟩
-
-#print axioms {name}_wasm_faithful
-
--- anti-vacuity: the emitted body actually RUNS on concrete inputs.
-def {name}HostRef : HostTbl := {name}Host (addRef {carrier})
-example :
-    ((wFuncN {name}Code {name}HostRef 4 {self_idx} [carrierSmall {carrier} 3]).bind carrierToInt)
-      = some ({g1}) := by native_decide
-example :
-    ((wFuncN {name}Code {name}HostRef 4 {self_idx} [carrierSmall {carrier} (-5)]).bind carrierToInt)
-      = some ({g2}) := by native_decide
-
-/-- Schema-shaped simulation obligation for `{name}` (composed by the single
-    final theorem). Partial correctness over any fuel and representation. -/
-theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
-  intro S add sub mul stringEq stringConcat toIndex cmp eq hadd hsub hmul hStringEq hStringConcat _hToIndex _hCmp _hEq fuel ns vs w hrepr hrun
-  simp only [{name}Ob, AverCert.Schema.Obligation.holds] at hrun ⊢
-  obtain ⟨hrepr, harity⟩ := hrepr
-  cases hrepr with
-  | nil =>
-      simp at harity
-  | cons hv htail =>
-    rename_i n v ns vs
-    cases htail with
-    | nil =>
-      cases fuel with
-      | zero => simp only [wFuncN, reduceCtorEq] at hrun
-      | succ f =>
-        rcases hc : add [v, carrierSmall {carrier} ({k})] with _ | r
-        · simp [wFuncN, wRunF, {name}Code, {name}Host, boxRef, popArgs, initLocals, hc] at hrun
-        · simp [wFuncN, wRunF, {name}Code, {name}Host, boxRef, popArgs, initLocals, hc] at hrun
-          subst hrun
-          simpa [AverCert.Schema.intRepr] using (hadd n ({k}) v (carrierSmall {carrier} ({k})) r hv (S.smallIntro ({k})) hc).1
-    | cons _ _ =>
-      simp at harity
-"#
     )
 }
 

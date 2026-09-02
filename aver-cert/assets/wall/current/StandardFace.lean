@@ -207,37 +207,6 @@ def constructBinary (carrier structIdx : Nat) (plan : ConstructRawPlan) : FaceSp
     (ConstructVerbatimSoundness.constructModelFields
       ([values.1, values.2] ++ List.replicate 1 .null) plan.fields))
 
-structure IntAddFace where
-  constant : Int
-  boxIdx : Nat
-  addIdx : Nat
-deriving Repr, DecidableEq
-
-def intAddHost (carrier : Nat) (face : IntAddFace) : HostBuilder :=
-  fun add _ _ _ _ _ _ _ fn =>
-    if fn = face.boxIdx then some (1, boxRef carrier)
-    else if fn = face.addIdx then some (2, add)
-    else none
-
-/-- Exact `add(param0, box(k))` classifier. This family intentionally keeps
-    the stronger `List Int`/`ReprAll` face instead of the small-value fragment
-    representation. -/
-def classifyIntAdd (plan : ExprFragmentRawPlan) : Option IntAddFace :=
-  if plan.params = [.intCarrier] && plan.result = .intCarrier &&
-      plan.body.result = 3 then
-    match plan.body.nodes with
-    | [n0, n1, n2, n3] =>
-        match n0.kind, n1.kind, n2.kind, n3.kind with
-        | .local 0, .constI64 constant,
-          .hostCall .box boxIdx [1], .hostCall .add addIdx [0, 2] =>
-            if n0.ty = .intCarrier && n1.ty = .i64 &&
-                n2.ty = .intCarrier && n3.ty = .intCarrier then
-              some { constant := constant, boxIdx := boxIdx, addIdx := addIdx }
-            else none
-        | _, _, _, _ => none
-    | _ => none
-  else none
-
 /-! ### Tag-dispatch face (Option/Result `match` returning an Int constant)
 
 An ADT whose discriminant is a tag FIELD (not a `ref.test` subtype): read the
@@ -397,8 +366,8 @@ Two Int VALUES compared against each other — `a >= b`, `a == b`, and the
 fragment grammar that lowers without a helper: the wasm-gc emitter calls a
 runtime comparison helper and reads its raw `i32` verdict.
 `genericFragmentAllowedFuel` rejects EVERY `.hostCall` node outright, so these
-plans need an exact-pinned face — the same node-by-node discipline
-`classifyIntAdd` uses — and NOT a widened generic gate.
+plans need an exact-pinned face — a node-by-node discipline — and NOT a
+widened generic gate.
 
 Both faces are stated over the SMALL BAND (`intPairSmallBandDomRepr`: each
 argument is the literal `carrierSmall` encoding of an integer in `[-2^63,
@@ -565,60 +534,6 @@ def intCmpBlock (op : IntCmpOp) (helperIdx : Nat) : FragBlock :=
   | .ge => intCmpRelBlock .i32GeS helperIdx
   | .eq => intCmpEqBlock helperIdx
 
-/-- Exact Int-comparison classifier over two Int parameters yielding a Bool.
-    Node ids, declared types, argument lists and the block result are all pinned
-    by the literal patterns; only the operator and the helper index are read out
-    of the plan. -/
-def classifyIntCmpBool (plan : ExprFragmentRawPlan) : Option IntCmpFace :=
-  if plan.params = [.intCarrier, .intCarrier] && plan.result = .boolI32 then
-    match plan.body with
-    | { nodes :=
-          [{ id := 0, ty := .intCarrier, kind := .local 0 },
-           { id := 1, ty := .intCarrier, kind := .local 1 },
-           { id := 2, ty := .boolI32, kind := .hostCall .eq helperIdx [0, 1] }],
-        result := 2 } => some { op := .eq, helperIdx := helperIdx }
-    | { nodes :=
-          [{ id := 0, ty := .intCarrier, kind := .local 0 },
-           { id := 1, ty := .intCarrier, kind := .local 1 },
-           { id := 2, ty := .rawI32, kind := .hostCall .cmp helperIdx [0, 1] },
-           { id := 3, ty := .rawI32, kind := .constI32 0 },
-           { id := 4, ty := .boolI32, kind := .prim prim [2, 3] }],
-        result := 4 } =>
-        match intCmpOfPrim? prim with
-        | some op => some { op := op, helperIdx := helperIdx }
-        | none => none
-    | _ => none
-  else none
-
-/-- Structural content of a fired comparison recognizer: the parameters, the
-    declared result, and the body ARE the pinned shape the face is proven over. -/
-theorem classifyIntCmpBool_spec
-    (plan : ExprFragmentRawPlan) (face : IntCmpFace)
-    (h : classifyIntCmpBool plan = some face) :
-    plan.params = [.intCarrier, .intCarrier] ∧ plan.result = .boolI32 ∧
-      plan.body = intCmpBlock face.op face.helperIdx := by
-  unfold classifyIntCmpBool at h
-  split at h
-  case isFalse => exact absurd h (by simp)
-  case isTrue hcond =>
-    simp only [Bool.and_eq_true, decide_eq_true_eq] at hcond
-    obtain ⟨hparams, hresult⟩ := hcond
-    split at h
-    case h_1 helperIdx heq =>
-      injection h with hface
-      subst hface
-      exact ⟨hparams, hresult, by rw [heq]; rfl⟩
-    case h_2 helperIdx prim heq =>
-      split at h
-      case h_2 => exact absurd h (by simp)
-      case h_1 op hop =>
-        injection h with hface
-        subst hface
-        refine ⟨hparams, hresult, ?_⟩
-        rw [heq]
-        cases prim <;> simp [intCmpOfPrim?] at hop <;> subst hop <;> rfl
-    case h_3 => exact absurd h (by simp)
-
 /-- One arm of the selection: a bare argument read, no box and no host call. -/
 def intSelectArm (localIdx : Nat) : FragBlock :=
   { nodes := [{ id := 0, ty := .intCarrier, kind := .local localIdx }], result := 0 }
@@ -713,19 +628,6 @@ theorem classifyIntSelect_spec
         rw [heq]
         cases prim <;> simp [intCmpOfPrim?] at hop <;> subst hop <;> rfl
     case h_3 => exact absurd h (by simp)
-
-/-- The complete face of an Int comparison: the two represented arguments in,
-    the Boolean the operator denotes out, the single helper slot, and — unlike
-    the `classifyIntAdd` family — the MODEL fixed by the wall rather than
-    declared by the certificate. -/
-def intCmpBoolFace (carrier : Nat) (face : IntCmpFace) : FaceSpec where
-  carrier := carrier
-  Dom := Int × Int
-  Cod := Bool
-  domRepr := intPairSmallBandDomRepr carrier
-  codRepr := boolRepr
-  host := intCmpHost face
-  model? := some (intCmpModel face.op)
 
 /-- The complete face of an Int selection. The codomain relation is the
     ordinary `intRepr`, satisfied by the CHOSEN ARGUMENT's own representation
@@ -994,21 +896,54 @@ def recordComputeNodeOk
    byte-identical copies pinned equal by `rfl`. -/
 export AverCert.WasmSlice (fragNodeComputes)
 
-/-- Classifier of the compute face: every parameter is an opaque record
-    reference, every node is in the admitted set, at least one node computes
-    (`fragNodeComputes` — which also rules the two-node projection faces out),
-    the result is a record/Int/Bool, and every cited user-struct index agrees
-    on ONE pinned index. -/
+/-- Whether the plan speaks about the ONE user struct type at all: an opaque
+    record parameter, an opaque record result, or any node citing a user
+    struct index. A plan for which this is `false` names no record, so the
+    face carries no record declaration and the byte pins below skip the
+    type-section entry — its `structIdx` is the reserved `0` and NO source
+    value of record shape can arise (the domain's parameter-type conjunct
+    admits no `.adtRef` input, and no node produces one). -/
+def recordComputeUsesStruct (plan : ExprFragmentRawPlan) : Bool :=
+  plan.params.contains .adtRef || plan.result == .adtRef ||
+    plan.body.nodes.any (fun n => (fragNodeStructIdx? n.kind).isSome)
+
+/-- Admitted parameter shapes. A record-shaped plan keeps the original
+    all-`.adtRef` list (its nominal signature pin is `k` references to the ONE
+    pinned struct, `WasmSlice.exprRecordComputeTypesMatch`). A plan that names
+    no struct takes SCALAR parameters instead — boxed Int carriers and
+    Booleans, whose domain representation is the same `SRepr` the record
+    leaves already use. Mixing the two is deliberately NOT admitted: the
+    byte-side nominal gate speaks `List.replicate` over one type, so a mixed
+    list has no pin there. -/
+def recordComputeShapeOk (plan : ExprFragmentRawPlan) : Bool :=
+  if recordComputeUsesStruct plan then plan.params.all (· == .adtRef)
+  else plan.params.all (fun ty => ty == .intCarrier || ty == .boolI32)
+
+/-- Classifier of the compute face: the parameter list is one of the two
+    admitted shapes, every node is in the admitted set, at least one node
+    computes (`fragNodeComputes` — which also rules the two-node projection
+    faces out), the result is a record/Int/Bool, and every cited user-struct
+    index agrees on ONE pinned index. A plan that cites no struct at all is
+    admitted with the reserved index `0`, and only when it names no record
+    anywhere (`recordComputeUsesStruct`), so an opaque parameter can never
+    reach a face with no type-section pin. -/
 def classifyRecordCompute
     (hostTable : List (HostRole × Nat)) (plan : ExprFragmentRawPlan) :
     Option RecordComputeFace :=
-  if plan.params.all (· == .adtRef) &&
+  if recordComputeShapeOk plan &&
       plan.body.nodes.all (fun n => recordComputeNodeOk hostTable n.kind) &&
       plan.body.nodes.any fragNodeComputes &&
       (plan.result == .adtRef || plan.result == .intCarrier ||
         plan.result == .boolI32) then
     match plan.body.nodes.filterMap (fun n => fragNodeStructIdx? n.kind) with
-    | [] => none
+    | [] =>
+        if recordComputeUsesStruct plan then none
+        else if RecordComputeBridge.planTypedB 0
+            (fun nodeId =>
+              ((plan.body.nodes[nodeId]?).map (fun n => n.ty)).getD .i64)
+            plan.params plan.body.nodes then
+          some { structIdx := 0 }
+        else none
     | i :: rest =>
         if rest.all (· == i) &&
             RecordComputeBridge.planTypedB i
@@ -1019,15 +954,22 @@ def classifyRecordCompute
         else none
   else none
 
-/-- The declared wasm result type of a compute-face plan: a record result is
-    the pinned struct reference, an Int result the carrier reference, a Bool
-    result the i32. Anything else has no certified signature. -/
+/-- The declared wasm type of a compute-face fragment type — used for the
+    plan's result AND, since scalar parameters joined the face, for each of
+    its parameters: a record is the pinned struct reference, an Int the
+    carrier reference, a Bool the i32. Anything else has no certified
+    signature. -/
 def recordComputeResultValType (carrier structIdx : Nat) :
     FragTy → Option CertDecode.ValType
   | .adtRef => some (AverCert.WasmSlice.nullableRefType structIdx)
   | .intCarrier => some (AverCert.WasmSlice.nullableRefType carrier)
   | .boolI32 => some (.numeric 0x7f)
   | _ => none
+
+/-- The declared wasm parameter list of a compute-face plan, pointwise. -/
+def recordComputeParamValTypes (carrier structIdx : Nat)
+    (params : List FragTy) : Option (List CertDecode.ValType) :=
+  params.mapM (recordComputeResultValType carrier structIdx)
 
 /-- Domain representation of the compute face: pointwise-SRepr inputs whose
     source shapes match the plan's declared parameter types.
@@ -1104,38 +1046,45 @@ def recordComputeDeclaredFace
   claim.obligation.policy = .simulatesModel ∧
   claim.obligation.carrier = claim.carrier ∧
   classifyRecordCompute claim.hostTable plan = some face ∧
-  ∃ (fields : List TypeDecl) (resultTy : CertDecode.ValType),
-    (fields.all fun f => match f with
-      | .intCarrier => true
-      | _ => false) = true ∧
-    fields.length ≠ 0 ∧
-    checkRecordDecl (.record face.structIdx fields) = true ∧
-    CertDecode.carrierState modBytes modLen = some (some claim.carrier) ∧
-    AverCert.WasmSlice.typeSectionMatches
-      (fun entry =>
-        decide (lowerTypeDecl claim.carrier lowerTypeDeclFuel
-          (.record face.structIdx fields) = some entry))
-      modBytes modLen face.structIdx = true ∧
+  CertDecode.carrierState modBytes modLen = some (some claim.carrier) ∧
+  ∃ (fields : List TypeDecl) (paramTys : List CertDecode.ValType)
+    (resultTy : CertDecode.ValType),
+    -- The record declaration and its type-section equality pin are demanded
+    -- exactly when the plan names a record. A plan that names none carries
+    -- the reserved index `0` (`classifyRecordCompute`), and its face never
+    -- reads a struct entry: no parameter, no node and no result is `.adtRef`,
+    -- so no source value of record shape exists for the meaning terms to
+    -- represent.
+    (recordComputeUsesStruct plan = true →
+      (fields.all fun f => match f with
+        | .intCarrier => true
+        | _ => false) = true ∧
+      fields.length ≠ 0 ∧
+      checkRecordDecl (.record face.structIdx fields) = true ∧
+      AverCert.WasmSlice.typeSectionMatches
+        (fun entry =>
+          decide (lowerTypeDecl claim.carrier lowerTypeDeclFuel
+            (.record face.structIdx fields) = some entry))
+        modBytes modLen face.structIdx = true) ∧
+    recordComputeParamValTypes claim.carrier face.structIdx plan.params =
+      some paramTys ∧
     recordComputeResultValType claim.carrier face.structIdx plan.result =
       some resultTy ∧
     AverCert.WasmSlice.funcTypeMatchesExact
-      modBytes modLen claim.exportNameBytes
-      (List.replicate plan.params.length
-        (AverCert.WasmSlice.nullableRefType face.structIdx))
-      [resultTy] = true ∧
+      modBytes modLen claim.exportNameBytes paramTys [resultTy] = true ∧
     (StandardFace.known
       (recordCompute claim.carrier face claim.hostTable plan)).Matches
       claim.obligation
 
 /-- Structural content of a fired compute classifier: the four Bool facts of
-    its admission condition (all-`.adtRef` parameters, every node admitted,
+    its admission condition (an admitted parameter shape, every node admitted,
     at least one computing node, record/Int/Bool result). The pinned-index
     fact is deliberately absent — non-overlap needs only the condition. -/
 theorem classifyRecordCompute_spec
     (hostTable : List (HostRole × Nat)) (plan : ExprFragmentRawPlan)
     (face : RecordComputeFace)
     (h : classifyRecordCompute hostTable plan = some face) :
-    plan.params.all (· == .adtRef) = true ∧
+    recordComputeShapeOk plan = true ∧
     plan.body.nodes.all (fun n => recordComputeNodeOk hostTable n.kind) = true ∧
     plan.body.nodes.any fragNodeComputes = true ∧
     (plan.result == .adtRef || plan.result == .intCarrier ||
@@ -1148,15 +1097,19 @@ theorem classifyRecordCompute_spec
     exact ⟨h1, h2, h3, h4⟩
   case isFalse => exact absurd h (by simp)
 
-/-- An all-`.adtRef` parameter list is never one of the Int-carrier parameter
-    lists the exact-pinned Int classifiers require (an empty list fails all
-    three as well). -/
-theorem allAdtRef_ne_intLists
-    (params : List FragTy)
-    (hAll : params.all (· == .adtRef) = true) :
-    params ≠ [.intCarrier] ∧ params ≠ [.adtRef, .intCarrier] ∧
-      params ≠ [.intCarrier, .intCarrier] := by
-  refine ⟨?_, ?_, ?_⟩ <;> intro hEq <;> rw [hEq] at hAll <;> simp at hAll
+/-- An admitted compute parameter list is never the fused vector-read face's
+    pinned `(vector, index)` pair: that list HAS an `.adtRef`, so the plan
+    names a record and `recordComputeShapeOk` then demands every parameter be
+    `.adtRef` — which its Int-carrier second entry is not. -/
+theorem recordComputeShapeOk_ne_vectorParams
+    (plan : ExprFragmentRawPlan)
+    (hShape : recordComputeShapeOk plan = true) :
+    plan.params ≠ [.adtRef, .intCarrier] := by
+  intro hEq
+  have hUses : recordComputeUsesStruct plan = true := by
+    simp [recordComputeUsesStruct, hEq]
+  rw [recordComputeShapeOk, if_pos hUses, hEq] at hShape
+  simp at hShape
 
 /-- A fired tag-dispatch classifier's body carries an `i32.eq` primitive node
     (the five-node match's `n3`) — a kind the compute face's node admission
@@ -1254,43 +1207,34 @@ noncomputable def symFragmentFace (claim : SymFragmentClaim) : Option StandardFa
       claim.hostTable claim.structTable claim.plan with
   | none => none
   | some plan =>
-      match classifyIntAdd plan with
-      | some face =>
-          some (.known
-            (intList claim.carrier 1 (intAddHost claim.carrier face)))
+      match AverCert.WasmSlice.exprProjectionFace? plan with
+      | some (structIdx, fieldIdx) =>
+          some (.known (projection claim.carrier structIdx fieldIdx))
       | none =>
-          match AverCert.WasmSlice.exprProjectionFace? plan with
-          | some (structIdx, fieldIdx) =>
-              some (.known (projection claim.carrier structIdx fieldIdx))
+          match classifyTagDispatch plan with
+          | some face => some (.known (tagDispatch claim.carrier face))
           | none =>
-              match classifyTagDispatch plan with
-              | some face => some (.known (tagDispatch claim.carrier face))
+              match classifyVectorGetOrDefault plan with
+              | some face =>
+                  some (.known (vectorGetOrDefault claim.carrier face))
               | none =>
-                  match classifyVectorGetOrDefault plan with
+                  match classifyIntSelect plan with
                   | some face =>
-                      some (.known (vectorGetOrDefault claim.carrier face))
+                      some (.known (intSelectFace claim.carrier face))
                   | none =>
-                      match classifyIntCmpBool plan with
-                      | some face =>
-                          some (.known (intCmpBoolFace claim.carrier face))
-                      | none =>
-                          match classifyIntSelect plan with
-                          | some face =>
-                              some (.known (intSelectFace claim.carrier face))
-                          | none =>
-                              if genericFragmentAllowed plan then
-                                some (.known
-                                  (fragment claim.carrier plan.params plan.result))
-                              else none
+                      if genericFragmentAllowed plan then
+                        some (.known
+                          (fragment claim.carrier plan.params plan.result))
+                      else none
 
 /-- No `FaceSpec` branch of the classify chain fires on a record-projection
     plan, so appending the record face on the chain's `none` arm neither
-    shadows nor reorders any existing face. Shape by shape: `classifyIntAdd`
-    needs an `.intCarrier` parameter list, `exprProjectionFace?` an `.adtRef`
-    result, `classifyTagDispatch` a five-node body, `classifyVectorGetOrDefault`
-    a two-parameter list, the two Int comparison classifiers a two-Int-carrier
-    parameter list, and the generic gate forbids `.adtRef` parameters — each
-    contradicted by the recognized record shape. -/
+    shadows nor reorders any existing face. Shape by shape:
+    `exprProjectionFace?` needs an `.adtRef` result, `classifyTagDispatch` a
+    five-node body, `classifyVectorGetOrDefault` a two-parameter list,
+    `classifyIntSelect` a two-Int-carrier parameter list, and the generic gate
+    forbids `.adtRef` parameters — each contradicted by the recognized record
+    shape. -/
 theorem symFragmentFace_none_of_recordProj
     (claim : SymFragmentClaim) (plan : ExprFragmentRawPlan)
     (hEncode : AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan
@@ -1308,9 +1252,6 @@ theorem symFragmentFace_none_of_recordProj
   have hbodyResult : plan.body.result = 1 := by rw [hbody]
   unfold symFragmentFace
   rw [hEncode]
-  have hIntAdd : classifyIntAdd plan = none := by
-    unfold classifyIntAdd
-    simp [hparams]
   have hProjection : AverCert.WasmSlice.exprProjectionFace? plan = none := by
     unfold AverCert.WasmSlice.exprProjectionFace?
     simp [hresultNe]
@@ -1320,28 +1261,24 @@ theorem symFragmentFace_none_of_recordProj
   have hVectorGet : classifyVectorGetOrDefault plan = none := by
     unfold classifyVectorGetOrDefault
     simp [hparams]
-  have hIntCmpBool : classifyIntCmpBool plan = none := by
-    unfold classifyIntCmpBool
-    simp [hparams]
   have hIntSelect : classifyIntSelect plan = none := by
     unfold classifyIntSelect
     simp [hparams]
   have hGeneric : genericFragmentAllowed plan = false := by
     unfold genericFragmentAllowed
     simp [hparams]
-  simp [hIntAdd, hProjection, hTagDispatch, hVectorGet, hIntCmpBool, hIntSelect,
-    hGeneric]
+  simp [hProjection, hTagDispatch, hVectorGet, hIntSelect, hGeneric]
 
 /-- No `FaceSpec` branch of the classify chain fires on a compute-face plan,
     so trying the compute face on the chain's `none` arm neither shadows nor
-    reorders any existing face. Parameter kills: every compute parameter is
-    `.adtRef`, while `classifyIntAdd`, `classifyVectorGetOrDefault` and the
-    two Int comparison classifiers pin Int-carrier parameter lists (an empty
-    list fails all four as well). Body kills: `classifyTagDispatch` needs an
-    `i32.eq` primitive the node admission rejects; `exprProjectionFace?` and
-    the generic walker admit no construction or host call, against the
-    classifier's any-fact; a nonempty all-`.adtRef` parameter list is
-    rejected by the generic gate directly. -/
+    reorders any existing face. Parameter kill: `classifyVectorGetOrDefault`
+    pins the mixed `(record, Int)` list, which no admitted compute shape is
+    (`recordComputeShapeOk_ne_vectorParams`). Body kills:
+    `classifyTagDispatch` needs an `i32.eq` primitive the node admission
+    rejects; `classifyIntSelect` needs an `ifElse` node the node admission
+    rejects; `exprProjectionFace?` and the generic walker admit no
+    construction, host call or sign template, against the classifier's
+    any-fact. -/
 theorem symFragmentFace_none_of_recordCompute
     (claim : SymFragmentClaim) (plan : ExprFragmentRawPlan)
     (hEncode : AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan
@@ -1349,14 +1286,11 @@ theorem symFragmentFace_none_of_recordCompute
     (face : RecordComputeFace)
     (hFace : classifyRecordCompute claim.hostTable plan = some face) :
     symFragmentFace claim = none := by
-  obtain ⟨hparams, hAllOk, hAny, -⟩ :=
+  obtain ⟨hShape, hAllOk, hAny, -⟩ :=
     classifyRecordCompute_spec claim.hostTable plan face hFace
-  obtain ⟨hne1, hne2, hne3⟩ := allAdtRef_ne_intLists plan.params hparams
+  have hneVec := recordComputeShapeOk_ne_vectorParams plan hShape
   unfold symFragmentFace
   rw [hEncode]
-  have hIntAdd : classifyIntAdd plan = none := by
-    unfold classifyIntAdd
-    simp [hne1]
   have hProjection : AverCert.WasmSlice.exprProjectionFace? plan = none := by
     cases hp : AverCert.WasmSlice.exprProjectionFace? plan with
     | none => rfl
@@ -1372,31 +1306,26 @@ theorem symFragmentFace_none_of_recordCompute
             n hMem args)
   have hVectorGet : classifyVectorGetOrDefault plan = none := by
     unfold classifyVectorGetOrDefault
-    simp [hne2]
-  have hIntCmpBool : classifyIntCmpBool plan = none := by
-    unfold classifyIntCmpBool
-    simp [hne3]
+    simp [hneVec]
   have hIntSelect : classifyIntSelect plan = none := by
-    unfold classifyIntSelect
-    simp [hne3]
+    cases ht : classifyIntSelect plan with
+    | none => rfl
+    | some f =>
+        exfalso
+        obtain ⟨-, -, hbody⟩ := classifyIntSelect_spec plan f ht
+        rw [hbody] at hAllOk
+        revert hAllOk
+        cases f.op <;>
+          simp [intSelectBlock, intSelectRelBlock, intSelectEqBlock,
+            recordComputeNodeOk]
   have hGeneric : genericFragmentAllowed plan = false := by
     unfold genericFragmentAllowed
-    cases hps : plan.params with
-    | nil =>
-        cases hw : genericFragmentAllowedFuel (sizeOf plan.body + 1) plan.body
-          with
-        | false => simp [hw]
-        | true =>
-            exact absurd (genericFragmentAllowedFuel_no_compute _ _ hw)
-              (by simp [hAny])
-    | cons p ps =>
-        have hp : p = .adtRef := by
-          rw [hps] at hparams
-          simp at hparams
-          exact hparams.1
-        simp [hp]
-  simp [hIntAdd, hProjection, hTagDispatch, hVectorGet, hIntCmpBool, hIntSelect,
-    hGeneric]
+    cases hw : genericFragmentAllowedFuel (sizeOf plan.body + 1) plan.body with
+    | false => simp [hw]
+    | true =>
+        exact absurd (genericFragmentAllowedFuel_no_compute _ _ hw)
+          (by simp [hAny])
+  simp [hProjection, hTagDispatch, hVectorGet, hIntSelect, hGeneric]
 
 def symFragmentMatches
     (modBytes modLen : Nat)
@@ -1830,14 +1759,12 @@ theorem recordParam_transport
 /-! ### The Int comparison faces: chain selection, lowering, and the two
 template-implies-model theorems
 
-The classifiers fire strictly after every earlier `FaceSpec` branch and are
-mutually exclusive with all of them by PARAMETER LIST alone (`classifyIntAdd`
-takes one Int carrier; the projection, tag-dispatch and fused-read shapes all
-take an `.adtRef`), and with each other by declared RESULT (`.boolI32` versus
-`.intCarrier`). The generic gate below them still rejects both, because it
-rejects every `.hostCall` node.
+The classifier fires strictly after every earlier `FaceSpec` branch and is
+mutually exclusive with all of them by PARAMETER LIST alone (the projection,
+tag-dispatch and fused-read shapes all take an `.adtRef`). The generic gate
+below it still rejects the shape, because it rejects every `.hostCall` node.
 
-The two `simulates_model` theorems are the audited content of this leg: generic
+The `simulates_model` theorems are the audited content of this leg: generic
 over the carrier spec, the helper index, the declared-local count, the code
 table (pinned only at the self entry, exactly what byte acceptance certifies),
 the fuel, and ANY helper obeying the `__aint_cmp` / `__aint_eq` contract,
@@ -1845,41 +1772,15 @@ running the emitted body on the small carriers of two band-bounded integers
 yields a represented model value. Partial correctness — vacuous on trap or fuel
 exhaustion, like `Obligation.holds`. -/
 
-theorem symFragmentFace_intCmpBool
-    (claim : SymFragmentClaim) (plan : ExprFragmentRawPlan) (face : IntCmpFace)
-    (hEncode : AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan
-      claim.hostTable claim.structTable claim.plan = some plan)
-    (hCls : classifyIntCmpBool plan = some face) :
-    symFragmentFace claim = some (.known (intCmpBoolFace claim.carrier face)) := by
-  obtain ⟨hparams, _hresult, _hbody⟩ := classifyIntCmpBool_spec plan face hCls
-  unfold symFragmentFace
-  rw [hEncode]
-  have hIntAdd : classifyIntAdd plan = none := by
-    unfold classifyIntAdd
-    simp [hparams]
-  have hProjection : AverCert.WasmSlice.exprProjectionFace? plan = none := by
-    unfold AverCert.WasmSlice.exprProjectionFace?
-    simp [hparams]
-  have hTagDispatch : classifyTagDispatch plan = none := by
-    unfold classifyTagDispatch
-    simp [hparams]
-  have hVectorGet : classifyVectorGetOrDefault plan = none := by
-    unfold classifyVectorGetOrDefault
-    simp [hparams]
-  simp [hIntAdd, hProjection, hTagDispatch, hVectorGet, hCls]
-
 theorem symFragmentFace_intSelect
     (claim : SymFragmentClaim) (plan : ExprFragmentRawPlan) (face : IntCmpFace)
     (hEncode : AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan
       claim.hostTable claim.structTable claim.plan = some plan)
     (hCls : classifyIntSelect plan = some face) :
     symFragmentFace claim = some (.known (intSelectFace claim.carrier face)) := by
-  obtain ⟨hparams, hresult, _hbody⟩ := classifyIntSelect_spec plan face hCls
+  obtain ⟨hparams, -, _hbody⟩ := classifyIntSelect_spec plan face hCls
   unfold symFragmentFace
   rw [hEncode]
-  have hIntAdd : classifyIntAdd plan = none := by
-    unfold classifyIntAdd
-    simp [hparams]
   have hProjection : AverCert.WasmSlice.exprProjectionFace? plan = none := by
     unfold AverCert.WasmSlice.exprProjectionFace?
     simp [hparams]
@@ -1889,10 +1790,7 @@ theorem symFragmentFace_intSelect
   have hVectorGet : classifyVectorGetOrDefault plan = none := by
     unfold classifyVectorGetOrDefault
     simp [hparams]
-  have hIntCmpBool : classifyIntCmpBool plan = none := by
-    unfold classifyIntCmpBool
-    simp [hresult]
-  simp [hIntAdd, hProjection, hTagDispatch, hVectorGet, hIntCmpBool, hCls]
+  simp [hProjection, hTagDispatch, hVectorGet, hCls]
 
 /-- The carrier binding is NOT optional for either face, and does not depend on
     the host table being non-empty. Both faces pin an `.intCarrier` parameter
@@ -1903,14 +1801,6 @@ theorem symFragmentFace_intSelect
     fires too (the encoder resolves a `hostCall` role only through the table, so
     a plan carrying one cannot come from an empty table), but this statement
     stands without it. -/
-theorem classifyIntCmpBool_forcesCarrierBinding
-    (hostTable : List (HostRole × Nat)) (plan : ExprFragmentRawPlan)
-    (face : IntCmpFace) (h : classifyIntCmpBool plan = some face) :
-    symFragmentCarrierBindingRequired hostTable plan = true := by
-  obtain ⟨hparams, -, -⟩ := classifyIntCmpBool_spec plan face h
-  simp [symFragmentCarrierBindingRequired, fragPlanMentionsIntCarrier, hparams,
-    fragTyIsIntCarrier]
-
 theorem classifyIntSelect_forcesCarrierBinding
     (hostTable : List (HostRole × Nat)) (plan : ExprFragmentRawPlan)
     (face : IntCmpFace) (h : classifyIntSelect plan = some face) :
@@ -1942,24 +1832,6 @@ nullable-carrier-reference value type `63 <s33 carrier>`, never an empty or
 `i32` block-type byte. The wide instantiation exercises the multi-byte
 `uleb32`/`s33` splices that every measured module leaves untouched (all their
 holes are below `0x80`). -/
-
-/-- `nowMs >= deadlineMs` at carrier 2, helper index 9: the 14-byte body. -/
-theorem intCmpBoolBytes_relational :
-    AverCert.PlanBytes.lowerExprFragmentBodyBytes 2
-        { profile := "expr-fragment-v1", params := [.intCarrier, .intCarrier],
-          result := .boolI32, body := intCmpBlock .ge 9 } =
-      some [0x01, 0x01, 0x63, 0x02, 0x20, 0x00, 0x20, 0x01, 0x10, 0x09,
-            0x41, 0x00, 0x4e, 0x0b] := by
-  rfl
-
-/-- `a == b` at carrier 2, helper index 10: the 11-byte body, no tail. -/
-theorem intCmpBoolBytes_equality :
-    AverCert.PlanBytes.lowerExprFragmentBodyBytes 2
-        { profile := "expr-fragment-v1", params := [.intCarrier, .intCarrier],
-          result := .boolI32, body := intCmpBlock .eq 10 } =
-      some [0x01, 0x01, 0x63, 0x02, 0x20, 0x00, 0x20, 0x01, 0x10, 0x0a,
-            0x0b] := by
-  rfl
 
 /-- `match a < b { true -> a; false -> b }` at carrier 2, helper index 9: the
     23-byte body, both arms bare argument reads. -/
@@ -2239,7 +2111,6 @@ theorem intSelect_transport
 
 #print axioms symFragmentFace_none_of_recordProj
 #print axioms recordParam_transport
-#print axioms classifyIntCmpBool_forcesCarrierBinding
 #print axioms classifyIntSelect_forcesCarrierBinding
 #print axioms intCmp_simulates_model
 #print axioms intSelect_simulates_model

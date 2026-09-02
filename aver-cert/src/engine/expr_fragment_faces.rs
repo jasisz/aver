@@ -3,65 +3,6 @@
 // adapter — which gates plan emission on a face existing — and the engine's
 // classifier, so they live in the `plans` layer.
 
-/// The straight-line integer face of a host-call expr fragment: exactly
-/// `add(param0, box(k))` over one Int parameter. This is the only host-call
-/// fragment shape with a rendered proof face today; any other host-call plan
-/// fail-closes classification.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct FragIntAddFace {
-    pub k: i64,
-    pub box_idx: u32,
-    pub add_idx: u32,
-}
-
-pub fn expr_fragment_int_add_face(plan: &ExprFragmentPlan) -> Option<FragIntAddFace> {
-    if plan.params.as_slice() != [FragTy::IntCarrier] || plan.result != FragTy::IntCarrier {
-        return None;
-    }
-    let [n0, n1, n2, n3] = plan.body.nodes.as_slice() else {
-        return None;
-    };
-    if plan.body.result != FragValueId(3) {
-        return None;
-    }
-    let (FragNodeKind::Local { index: 0 }, FragNodeKind::ConstI64(k)) = (&n0.kind, &n1.kind) else {
-        return None;
-    };
-    let FragNodeKind::HostCall {
-        role: FragHostRole::Box,
-        func_idx: box_idx,
-        args: box_args,
-    } = &n2.kind
-    else {
-        return None;
-    };
-    let FragNodeKind::HostCall {
-        role: FragHostRole::Add,
-        func_idx: add_idx,
-        args: add_args,
-    } = &n3.kind
-    else {
-        return None;
-    };
-    if box_args.as_slice() != [FragValueId(1)]
-        || add_args.as_slice() != [FragValueId(0), FragValueId(2)]
-    {
-        return None;
-    }
-    if n0.ty != FragTy::IntCarrier
-        || n1.ty != FragTy::I64
-        || n2.ty != FragTy::IntCarrier
-        || n3.ty != FragTy::IntCarrier
-    {
-        return None;
-    }
-    Some(FragIntAddFace {
-        k: *k,
-        box_idx: *box_idx,
-        add_idx: *add_idx,
-    })
-}
-
 /// The verbatim field-projection face of an ADT-ref expr fragment: exactly
 /// `struct.get ty field∈{0,1}` of the single reference parameter, returned
 /// unchanged. This is the only fragment shape admitting `AdtRef` values today;
@@ -423,18 +364,6 @@ fn frag_int_cmp_prefix(nodes: &[FragNode]) -> Option<(FragIntCmpFace, usize)> {
     }
 }
 
-/// Exact Rust twin of `StandardFace.classifyIntCmpBool`: two Int-carrier
-/// parameters, a Boolean result, and exactly the pinned comparison nodes.
-pub fn expr_fragment_int_cmp_bool_face(plan: &ExprFragmentPlan) -> Option<FragIntCmpFace> {
-    if plan.params.as_slice() != [FragTy::IntCarrier, FragTy::IntCarrier]
-        || plan.result != FragTy::BoolI32
-    {
-        return None;
-    }
-    let (face, len) = frag_int_cmp_prefix(&plan.body.nodes)?;
-    (plan.body.nodes.len() == len && plan.body.result == FragValueId(len - 1)).then_some(face)
-}
-
 /// One arm of the selection: a bare argument read, no box and no host call.
 /// Twin of `StandardFace.intSelectArm`.
 fn frag_int_select_arm(block: &FragBlock, local: u32) -> bool {
@@ -790,17 +719,48 @@ fn frag_node_struct_idx(kind: &FragNodeKind) -> Option<u32> {
     }
 }
 
-/// Twin of the wall's `classifyRecordCompute`: fires only when every
-/// parameter is an opaque record reference, every node is in the admitted
-/// set with host calls citing the byte-derived role table and the sign
-/// template passing the wall's typing pins, at least one node computes
+/// Twin of the wall's `recordComputeUsesStruct`: whether the plan speaks about
+/// the ONE user struct type at all. A plan for which this is false names no
+/// record, carries the reserved struct index `0`, and its face reads no
+/// type-section entry.
+pub fn expr_fragment_plan_uses_struct(plan: &ExprFragmentPlan) -> bool {
+    plan.params.contains(&FragTy::AdtRef)
+        || plan.result == FragTy::AdtRef
+        || plan
+            .body
+            .nodes
+            .iter()
+            .any(|n| frag_node_struct_idx(&n.kind).is_some())
+}
+
+/// Twin of the wall's `recordComputeShapeOk`: a record-shaped plan keeps the
+/// all-`AdtRef` parameter list its nominal signature pin speaks about; a plan
+/// that names no struct takes SCALAR parameters instead. Mixing the two is
+/// deliberately not admitted — the byte-side nominal gate speaks one repeated
+/// type, so a mixed list has no pin there.
+fn record_compute_shape_ok(plan: &ExprFragmentPlan) -> bool {
+    if expr_fragment_plan_uses_struct(plan) {
+        plan.params.iter().all(|ty| *ty == FragTy::AdtRef)
+    } else {
+        plan.params
+            .iter()
+            .all(|ty| matches!(ty, FragTy::IntCarrier | FragTy::BoolI32))
+    }
+}
+
+/// Twin of the wall's `classifyRecordCompute`: fires only when the parameter
+/// list is one of the two admitted shapes, every node is in the admitted set
+/// with host calls citing the byte-derived role table and the sign template
+/// passing the wall's typing pins, at least one node computes
 /// (`frag_node_computes`, which rules the two-node projection faces out), the
-/// result is a record/Int/Bool, and every cited user-struct index agrees.
+/// result is a record/Int/Bool, and every cited user-struct index agrees. A
+/// plan citing no struct at all is admitted with the reserved index `0`, and
+/// only when it names no record anywhere.
 pub fn expr_fragment_record_compute_face(
     plan: &ExprFragmentPlan,
     host_table: &FragHostTable,
 ) -> Option<FragRecordComputeFace> {
-    if !plan.params.iter().all(|ty| *ty == FragTy::AdtRef) {
+    if !record_compute_shape_ok(plan) {
         return None;
     }
     if !plan
@@ -825,7 +785,13 @@ pub fn expr_fragment_record_compute_face(
         .nodes
         .iter()
         .filter_map(|n| frag_node_struct_idx(&n.kind));
-    let first = idxs.next()?;
+    let Some(first) = idxs.next() else {
+        // No node cites a struct: admitted only when the plan names no record
+        // anywhere, so an opaque parameter can never reach a face with no
+        // type-section pin.
+        return (!expr_fragment_plan_uses_struct(plan))
+            .then_some(FragRecordComputeFace { struct_idx: 0 });
+    };
     if idxs.all(|i| i == first) {
         Some(FragRecordComputeFace { struct_idx: first })
     } else {
