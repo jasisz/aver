@@ -1949,9 +1949,12 @@ fn certify_straight_line_fixture_lake_builds_kernel_clean() {
     let combined = lake_build_package(&cert_dir, "emitted cert");
     // Kernel-clean: the certificate theorem's `#print axioms` must show the
     // core whitelist and never `sorryAx`.
+    // `addTwo` certifies through the declared compute face since the
+    // straight-line integer face was folded into it; the package root is the
+    // theorem whose axiom closure matters.
     assert!(
         combined.contains(
-            "addTwo_exprFragmentSemanticBridge' depends on axioms: [propext, Classical.choice, Quot.sound]"
+            "'AverCert.Final.cert' depends on axioms: [propext, Classical.choice, Quot.sound]"
         ),
         "certificate theorem not kernel-clean:\n{combined}"
     );
