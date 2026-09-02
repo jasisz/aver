@@ -105,7 +105,11 @@ The steps are:
    `AverCertChecker.checked`. The checker witness also pins the Lean manifest
    and atomically derived `(export, class)` report entries to the JSON envelope.
 10. Collect the named root's axioms and reject any name outside the whitelist
-    `[propext, Classical.choice, Quot.sound]`.
+    `[propext, Classical.choice, Quot.sound]`. The same witness additionally
+    pins each declared law-claim and each declared plan-equals-source bridge at
+    its manifest statement and logs a per-pin audit line; a pin that does not
+    elaborate declines the package, while a pin whose closure leaves the
+    whitelist loses only its own credit.
 11. Replay the checker module with `lake env leanchecker --fresh`. Only after
     all checks succeed is the human-readable report constructed.
 

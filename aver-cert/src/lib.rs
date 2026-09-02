@@ -6,6 +6,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod bridge_statement;
 pub mod format;
 #[cfg(any(feature = "engine", feature = "verify"))]
 pub mod wall;

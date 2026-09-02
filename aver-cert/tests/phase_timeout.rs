@@ -53,6 +53,7 @@ fn minimal_fixture() -> Fixture {
         r#"{{
   "schema_version": {schema},
   "laws": [],
+  "sourceBridges": [],
   "wasm_sha256": "{hash}",
   "format": {{ "version": {version}, "wall_id": "{wall}" }},
   "artifact_certificate_root": "{root_name}",

@@ -361,8 +361,8 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     );
     assert_eq!(
         manifest["schema_version"].as_u64(),
-        Some(7),
-        "schema 7 adds the law-claims surface on top of the component-envelope binding"
+        Some(8),
+        "schema 8 adds the plan-equals-source bridge surface on top of the law-claims one"
     );
     assert_eq!(
         manifest["target"].as_str(),
@@ -379,7 +379,96 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         Some(aver::codegen::cert::RUNTIME_ABI),
         "the wasm-gc runtime ABI is pinned exactly"
     );
-    assert_eq!(aver::codegen::cert::CERT_SCHEMA_VERSION, 7);
+    assert_eq!(aver::codegen::cert::CERT_SCHEMA_VERSION, 8);
+    // Every export certified through the projection-compute face — the one
+    // face whose obligation model is the PLAN — carries a plan-equals-source
+    // bridge, in obligation order. Move this numerator deliberately: an export
+    // that lands on that face without a bridge is one whose certified model
+    // stays the plan.
+    let compute_face: Vec<&str> = manifest["certified"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|entry| {
+            entry["theorem"].as_str()
+                == Some(aver::codegen::cert::format::RECORD_COMPUTE_DISCHARGE_THEOREM)
+        })
+        .map(|entry| entry["name"].as_str().unwrap())
+        .collect();
+    let bridges = manifest["sourceBridges"].as_array().unwrap();
+    let bridged: Vec<&str> = bridges
+        .iter()
+        .map(|entry| entry["export"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        compute_face.len(),
+        2,
+        "the goals fixture pins how many exports land on the projection-compute face"
+    );
+    assert_eq!(
+        bridged, compute_face,
+        "every projection-compute export must carry a bridge, in obligation order"
+    );
+    // The entry carries STRUCTURE, never statement text: the checker renders
+    // the statement from it. A `statement` key here would be a claim the
+    // package chose its own wording for, which is exactly what this surface
+    // stopped transporting — the exact-object gate below is what enforces it.
+    for entry in bridges {
+        let export = entry["export"].as_str().unwrap();
+        let object = entry.as_object().unwrap();
+        assert_eq!(
+            object.len(),
+            6,
+            "a source-bridge entry is matched exactly: {object:?}"
+        );
+        assert!(
+            !object.contains_key("statement"),
+            "the bridge surface must not transport statement text: {object:?}"
+        );
+        assert_eq!(
+            entry["theorem"].as_str(),
+            Some(format!("AverCert.Bridge.{export}").as_str())
+        );
+        assert_eq!(
+            entry["corollary"].as_str(),
+            Some(format!("AverCert.Bridge.{export}_certified").as_str())
+        );
+        // Every encoder is one of the three closed kinds, and a record names a
+        // `_root_.`-qualified type together with its own accessors.
+        let encoders: Vec<&serde_json::Value> = entry["params"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .chain(std::iter::once(&entry["result"]))
+            .collect();
+        for encoder in encoders {
+            let kind = encoder["kind"].as_str().unwrap();
+            assert!(
+                matches!(kind, "int" | "bool" | "record"),
+                "the encoder kind set is closed: {kind}"
+            );
+            if kind == "record" {
+                let lean_type = encoder["type"].as_str().unwrap();
+                assert!(lean_type.starts_with("_root_."));
+                for field in encoder["fields"].as_array().unwrap() {
+                    let accessor = field.as_str().unwrap();
+                    assert!(
+                        accessor.starts_with(&format!("{lean_type}.")),
+                        "an accessor must be a field of the declared type: {accessor}"
+                    );
+                }
+            }
+        }
+        // The statement the package's own `Bridge.lean` carries is the one the
+        // checker renders from the entry above — the producer writes it through
+        // the same function the verifier pins with.
+        let bridge_lean = std::fs::read_to_string(out_dir.join("cert").join("Bridge.lean"))
+            .expect("a bridged package emits Bridge.lean");
+        assert!(
+            bridge_lean.contains(&format!("_root_.AverCert.Plans.{export}Plan.body")),
+            "the emitted bridge names the export's own plan"
+        );
+    }
     let declared_uncertified = manifest["declaredUncertified"].as_array().unwrap();
     assert_eq!(
         declared_uncertified.len(),

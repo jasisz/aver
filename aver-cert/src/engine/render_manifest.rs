@@ -593,6 +593,34 @@ fn render_final() -> String {
     )
 }
 
+/// One source-value encoder as the manifest transports it: a closed kind tag,
+/// plus — for a record — the `_root_.`-qualified Lean type and its accessors in
+/// declaration order. The checker parses exactly these shapes and refuses any
+/// other kind, so the set of statements a package can be pinned at is the set
+/// this encoding can describe.
+fn json_source_encoder(encoder: &SourceEncoder) -> String {
+    match encoder {
+        SourceEncoder::Int | SourceEncoder::Bool => {
+            format!("{{\"kind\": {}}}", json_str(encoder.kind()))
+        }
+        SourceEncoder::Record {
+            lean_type,
+            accessors,
+        } => {
+            let fields = accessors
+                .iter()
+                .map(|accessor| json_str(accessor))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(
+                "{{\"kind\": {}, \"type\": {}, \"fields\": [{fields}]}}",
+                json_str(encoder.kind()),
+                json_str(lean_type),
+            )
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn render_manifest(
     analysis: &Analysis,
@@ -603,6 +631,9 @@ fn render_manifest(
     abi: &str,
     wasip2_component_envelope: Option<crate::format::Wasip2ComponentEnvelopeDeclaration>,
     law_claims: &[LawClaim],
+    law_bridges: &[Vec<String>],
+    source_bridges: &[SourceBridge],
+    declined_source_bridges: &[(String, String)],
 ) -> String {
     let mut s = String::new();
     let has_total = analysis
@@ -667,14 +698,25 @@ fn render_manifest(
     s.push_str("],\n");
     // Law-claims surface (schema 7): one entry per universal model law, with
     // the verbatim statement the checker-owned witness re-elaborates the
-    // `Laws.lean` corollary at.
+    // `Laws.lean` corollary at. `bridges` (schema 8) names the certified
+    // exports whose plan-equals-source bridges the corollary also conjoins:
+    // every model function the statement mentions, or empty when one of them
+    // has no bridge.
     s.push_str("  \"laws\": [");
     for (i, claim) in law_claims.iter().enumerate() {
         if i > 0 {
             s.push(',');
         }
+        let bridges = law_bridges
+            .get(i)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+            .iter()
+            .map(|export| json_str(export))
+            .collect::<Vec<_>>()
+            .join(", ");
         s.push_str(&format!(
-            "\n    {{\"label\": {}, \"theorem\": {}, \"statement\": {}, \"corollary\": {}}}",
+            "\n    {{\"label\": {}, \"theorem\": {}, \"statement\": {}, \"corollary\": {}, \"bridges\": [{bridges}]}}",
             json_str(&claim.label),
             json_str(&claim.qualified()),
             json_str(&claim.statement),
@@ -682,6 +724,52 @@ fn render_manifest(
         ));
     }
     if !law_claims.is_empty() {
+        s.push_str("\n  ");
+    }
+    s.push_str("],\n");
+    // Plan-equals-source bridge surface (schema 8): one entry per bridged
+    // export, carrying the STRUCTURE the checker renders the pinned statement
+    // from — the plan is the export's, and the encoders are a closed set — so
+    // no statement text this package writes is ever read as a claim.
+    s.push_str("  \"sourceBridges\": [");
+    for (i, bridge) in source_bridges.iter().enumerate() {
+        if i > 0 {
+            s.push(',');
+        }
+        let params = bridge
+            .params
+            .iter()
+            .map(json_source_encoder)
+            .collect::<Vec<_>>()
+            .join(", ");
+        s.push_str(&format!(
+            "\n    {{\"export\": {}, \"theorem\": {}, \"corollary\": {}, \"model\": {}, \"params\": [{params}], \"result\": {}}}",
+            json_str(&bridge.export),
+            json_str(&bridge.theorem),
+            json_str(&bridge.corollary),
+            json_str(&bridge.model),
+            json_source_encoder(&bridge.result),
+        ));
+    }
+    if !source_bridges.is_empty() {
+        s.push_str("\n  ");
+    }
+    s.push_str("],\n");
+    // Declared-only: why a compute-face export carries no bridge. The producer
+    // used to say this on stdout alone, which left the package itself silent
+    // about the export whose model stays the plan. `explain` prints it back.
+    s.push_str("  \"sourceBridgesDeclined\": [");
+    for (i, (export, reason)) in declined_source_bridges.iter().enumerate() {
+        if i > 0 {
+            s.push(',');
+        }
+        s.push_str(&format!(
+            "\n    {{\"export\": {}, \"reason\": {}}}",
+            json_str(export),
+            json_str(reason),
+        ));
+    }
+    if !declined_source_bridges.is_empty() {
         s.push_str("\n  ");
     }
     s.push_str("],\n");

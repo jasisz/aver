@@ -188,6 +188,8 @@ A generated `cert/` directory contains:
 
 - `cert-manifest.json`, a transport and reporting envelope;
 - `Plans.lean`, the sole authoritative plan data;
+- `Laws.lean` and `Bridge.lean` when the package claims laws or
+  plan-equals-source bridges;
 - artifact-specific model, manifest, certificate, and proof modules.
 
 There are no public `fragments/*.plan` sidecars. There is also no
@@ -233,6 +235,36 @@ Lean, and leanchecker subprocess otherwise starts with a cleared environment,
 the exact pinned toolchain, disabled implicit Lake caches, and checker-owned
 temporary paths. Ambient Lean/Lake search paths and toolchain overrides are not
 forwarded.
+
+Exports certified through the projection-compute face are certified against a
+PLAN the compiler derived from your source, and the report line prints that
+plan. Where the package carries a plan-equals-source bridge and the verifier
+credits it, the identification of that plan with the function you wrote is a
+kernel-checked theorem of the package. The verifier does not read the wording
+of that theorem out of the package: the certificate declares the structure of a
+bridge — which export, which source function, and one encoder per argument and
+result out of a closed set — and the verifier writes the statement itself and
+requires the package to prove exactly that. `aver cert check` and `aver cert
+verify` report `source-bridges: N of M credited`, and `aver cert explain`
+prints `model: plan` or `model: plan ≡ <Module>.<fn> (credited source-bridge;
+see SOURCE-BRIDGES)` on each such export, with the rendered statement itself
+under that heading — the credit means that statement is proven without foreign
+axioms, so the statement, encoders included, is what to read. What the bridge
+does not settle is that the model definition it names is your source: that
+definition is emitted by the compiler alongside the certificate, which is the
+same disclosure a law-claim already carries.
+
+A law about bridged functions gets a second corollary that conjoins the law,
+the bytes, and those identities, counted separately as `bridged-laws: N of M
+credited`. The two counters are apart on purpose: a bridge the checker cannot
+finish costs the bridge and the bridged corollary, never the law itself.
+
+An export with no bridge, or with an uncredited one, keeps the older and weaker
+position: that the plan is your function rests on the compiler that derived it.
+The shapes without a bridge today are the ones the bridge encoders do not
+reach — a nested record, a record with a non-Int field, and Float, String or
+ADT arguments and results. `aver cert explain` prints why each such export was
+declined, from the package's own `sourceBridgesDeclined` list.
 
 Some source meaning cannot be reconstructed from WebAssembly alone. In
 particular, ADT domain/representation and model declarations remain explicit

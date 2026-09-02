@@ -82,11 +82,19 @@ fn main() -> ExitCode {
                 summary,
                 faces,
                 laws,
+                bridged_laws,
+                source_bridges,
             }) => {
                 println!("{} {}", "CERTIFIED".green().bold(), summary);
                 println!("  {}", aver_cert::ARTIFACT_DECODE_LINE);
                 for law in laws {
                     println!("  {}", law.yellow());
+                }
+                for law in bridged_laws {
+                    println!("  {}", law.yellow());
+                }
+                for bridge in source_bridges {
+                    println!("  {}", bridge.yellow());
                 }
                 for face in faces {
                     println!("  {face}");
@@ -114,6 +122,8 @@ fn main() -> ExitCode {
                     summary,
                     faces,
                     laws,
+                    bridged_laws,
+                    source_bridges,
                 }) => {
                     println!("{} {}", "CHECKED".cyan().bold(), summary);
                     println!(
@@ -122,6 +132,12 @@ fn main() -> ExitCode {
                     );
                     for law in laws {
                         println!("  {}", law.yellow());
+                    }
+                    for law in bridged_laws {
+                        println!("  {}", law.yellow());
+                    }
+                    for bridge in source_bridges {
+                        println!("  {}", bridge.yellow());
                     }
                     for face in faces {
                         println!("  {face}");

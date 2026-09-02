@@ -39,6 +39,22 @@ struct ModelInfo {
     fns: std::collections::HashMap<String, FnSig>,
     /// Keyed by the qualified Lean name (`P.Ty` inside `namespace P`).
     inductives: std::collections::HashMap<String, InductiveInfo>,
+    /// Record (`structure`) declarations, keyed by the qualified Lean name.
+    /// Read by the plan-equals-source bridge renderer, which needs the source
+    /// field ACCESSORS in declaration order to encode a record argument.
+    structures: std::collections::HashMap<String, StructureInfo>,
+    /// Signatures of PARAMETERLESS model defs (`def zeroFraction : Fraction :=`),
+    /// keyed like `fns`. They are deliberately kept out of `fns`: that map
+    /// backs `model_lean_name`, whose resolution decides which exports survive
+    /// the model-citation gate, so admitting a new shape there would widen the
+    /// certified set of every existing package. The plan-equals-source bridge
+    /// needs only the signature, so it reads both maps and nothing else moves.
+    nullary_fns: std::collections::HashMap<String, FnSig>,
+    /// Flat keys two DIFFERENT parameterless defs claim. Kept apart from
+    /// `ambiguous` for the same reason `nullary_fns` is kept apart from `fns`:
+    /// `model_lean_name` reads `ambiguous`, so recording a nullary collision
+    /// there could turn an export that resolves today into one that declines.
+    nullary_ambiguous: std::collections::HashSet<String>,
     /// Flat forms (dots replaced by underscores) of every dependency namespace.
     /// An export name shaped like `<prefix>_<rest>` for one of these prefixes
     /// may be a dependency function, so its Lean identifier cannot be assumed
@@ -60,6 +76,14 @@ struct FnSig {
 
 struct InductiveInfo {
     ctors: Vec<CtorInfo>,
+}
+
+/// One transpiled `structure` declaration: its fields in DECLARATION order,
+/// each as `(accessor name, type as written)`. Declaration order is the order
+/// the emitter packs the wasm struct in, so it is the order a bridge encoder
+/// must list the record's Int leaves in.
+struct StructureInfo {
+    fields: Vec<(String, String)>,
 }
 
 struct CtorInfo {
@@ -165,6 +189,56 @@ impl ModelInfo {
             .map(|ind| (written.to_string(), ind))
     }
 
+    /// Resolve a type name AS WRITTEN in a model def signature (relative to
+    /// that def's namespace) to the qualified `structure` it denotes. Same
+    /// two-step lookup as [`Self::resolve_inductive`].
+    fn resolve_structure<'a>(
+        &'a self,
+        prefix: &str,
+        written: &str,
+    ) -> Option<(String, &'a StructureInfo)> {
+        if !prefix.is_empty()
+            && let Some(found) = self.structures.get(&format!("{prefix}.{written}"))
+        {
+            return Some((format!("{prefix}.{written}"), found));
+        }
+        self.structures
+            .get(written)
+            .map(|found| (written.to_string(), found))
+    }
+
+    /// Whether `qualified` is the fully qualified name of a def the user model
+    /// modules declare. Read by the law/bridge coverage scan.
+    fn is_model_fn(&self, qualified: &str) -> bool {
+        self.fns
+            .values()
+            .chain(self.nullary_fns.values())
+            .any(|sig| sig.lean_name == qualified)
+    }
+
+    /// Whether a parameterless model def collided on its flat key. Kept for the
+    /// symmetry the bridge gate relies on: an ambiguous nullary key must not
+    /// resolve, and it must not disturb `model_lean_name` either.
+    #[cfg(test)]
+    fn nullary_is_ambiguous(&self, flat: &str) -> bool {
+        self.nullary_ambiguous.contains(flat)
+    }
+
+    /// The parsed signature of the model def a certified export cites, when it
+    /// resolves unambiguously. `None` keeps the caller fail-closed.
+    fn model_fn_sig(&self, name: &str) -> Option<&FnSig> {
+        if self.ambiguous.contains(name) {
+            return None;
+        }
+        self.fns.get(name).or_else(|| {
+            if self.nullary_ambiguous.contains(name) {
+                None
+            } else {
+                self.nullary_fns.get(name)
+            }
+        })
+    }
+
     fn parse_lean(&mut self, content: &str, entry_namespace: Option<&str>) {
         let lines: Vec<&str> = content.lines().collect();
         // Namespace stack: `namespace X` pushes (X may be dotted), a matching
@@ -196,6 +270,44 @@ impl ModelInfo {
                 continue;
             }
             let prefix = ns_stack.join(".");
+            // `structure X where` followed by one indented `field : Type` line
+            // per field, in declaration order. Anything else about the block
+            // (a different header shape, a field line that is not exactly
+            // `name : Type`) ends the field walk, so a shape this parser does
+            // not understand yields a partial or absent record rather than a
+            // wrong one — and the bridge renderer that reads it cross-checks
+            // the field count against the byte-derived record declaration.
+            if let Some(name) = line
+                .strip_prefix("structure ")
+                .and_then(|rest| rest.strip_suffix(" where"))
+                .map(str::trim)
+                .filter(|name| !name.is_empty() && !name.contains(char::is_whitespace))
+            {
+                let qualified = qualify(&prefix, name);
+                i += 1;
+                let mut fields = Vec::new();
+                while i < lines.len() {
+                    let raw = lines[i];
+                    if !raw.starts_with(' ') {
+                        break;
+                    }
+                    let Some((field, ty)) = raw.trim().split_once(" : ") else {
+                        break;
+                    };
+                    let field = field.trim();
+                    let plain_field = !field.is_empty()
+                        && field
+                            .chars()
+                            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '\'');
+                    if !plain_field {
+                        break;
+                    }
+                    fields.push((field.to_string(), ty.trim().to_string()));
+                    i += 1;
+                }
+                self.structures.insert(qualified, StructureInfo { fields });
+                continue;
+            }
             if let Some(name) = line
                 .strip_prefix("inductive ")
                 .and_then(|s| s.split_whitespace().next())
@@ -233,7 +345,7 @@ impl ModelInfo {
             if line.starts_with("def ")
                 && line.contains(" : ")
                 && line.ends_with(":=")
-                && let Some((name, mut sig)) = parse_def_sig(line)
+                && let Some((name, mut sig, nullary)) = parse_def_sig(line)
             {
                 let qualified = qualify(&prefix, &name);
                 let flat = if entry_namespace == Some(prefix.as_str()) {
@@ -247,15 +359,20 @@ impl ModelInfo {
                     i += 1;
                     continue;
                 }
-                match self.fns.get(&flat) {
+                let (table, ambiguous) = if nullary {
+                    (&mut self.nullary_fns, &mut self.nullary_ambiguous)
+                } else {
+                    (&mut self.fns, &mut self.ambiguous)
+                };
+                match table.get(&flat) {
                     Some(existing) if existing.lean_name != sig.lean_name => {
                         // Two distinct qualified names collide on one flat
                         // key: neither may ever resolve (fail-closed).
-                        self.fns.remove(&flat);
-                        self.ambiguous.insert(flat);
+                        table.remove(&flat);
+                        ambiguous.insert(flat);
                     }
                     _ => {
-                        self.fns.insert(flat, sig);
+                        table.insert(flat, sig);
                     }
                 }
             }
@@ -273,15 +390,31 @@ fn qualify(prefix: &str, name: &str) -> String {
 }
 
 /// Parse one single-line def signature. `lean_name`/`prefix` are filled by the
-/// caller, which knows the namespace the line was parsed under.
-fn parse_def_sig(line: &str) -> Option<(String, FnSig)> {
+/// caller, which knows the namespace the line was parsed under. The third
+/// component says whether the def takes NO parameters, which the caller keys a
+/// separate table on — see `ModelInfo::nullary_fns`.
+fn parse_def_sig(line: &str) -> Option<(String, FnSig, bool)> {
     let rest = line.strip_prefix("def ")?;
     let name = rest.split_whitespace().next()?.to_string();
     let after_name = rest[name.len()..].trim();
     let before_assign = after_name.strip_suffix(":=")?.trim();
-    let ret_colon = before_assign.rfind(" : ")?;
-    let params_part = before_assign[..ret_colon].trim();
-    let ret = before_assign[ret_colon + 3..].trim().to_string();
+    // `def f (a : Int) : Int :=` splits at the LAST ` : `; a parameterless
+    // `def zero : Fraction :=` has no such separator and starts at the colon.
+    let (params_part, ret, nullary) = match before_assign.rfind(" : ") {
+        Some(at) => (
+            before_assign[..at].trim(),
+            before_assign[at + 3..].trim().to_string(),
+            false,
+        ),
+        None => (
+            "",
+            before_assign.strip_prefix(':')?.trim().to_string(),
+            true,
+        ),
+    };
+    if ret.is_empty() {
+        return None;
+    }
     let mut params = Vec::new();
     let mut tail = params_part;
     while let Some(start) = tail.find('(') {
@@ -308,6 +441,7 @@ fn parse_def_sig(line: &str) -> Option<(String, FnSig)> {
         }
         tail = &after[end + 1..];
     }
+    let nullary = nullary && params.is_empty();
     Some((
         name.clone(),
         FnSig {
@@ -316,6 +450,7 @@ fn parse_def_sig(line: &str) -> Option<(String, FnSig)> {
             params,
             ret,
         },
+        nullary,
     ))
 }
 
@@ -384,6 +519,74 @@ end Program\n";
             Some("AverList_get"),
             "a flat export must not be shadowed by a prelude namespace"
         );
+    }
+
+    /// The bridge renderer needs a record's field ACCESSORS in declaration
+    /// order, and a parameterless def's return type. Neither may disturb
+    /// `model_lean_name`, whose resolution decides the certified set.
+    #[test]
+    fn structures_and_parameterless_defs_are_read_without_widening_model_names() {
+        // Written as one escaped literal on purpose: a `\`-continued Rust
+        // string eats the following line's indentation, and this parser reads
+        // exactly that indentation to find a structure's field lines.
+        let dep = concat!(
+            "namespace Domain.Rational\n",
+            "structure Fraction where\n",
+            "  top : Int\n",
+            "  bottom : Int\n",
+            "instance : Inhabited Fraction := mk\n",
+            "def zeroFraction  : Fraction :=\n",
+            "  { top := 0, bottom := 1 : Fraction }\n",
+            "def plus (a : Fraction) (b : Fraction) : Fraction :=\n",
+            "  a\n",
+            "end Domain.Rational\n",
+        );
+        let info = super::ModelInfo::from_files(&[
+            (
+                "AverCommon.lean".to_string(),
+                "def unrelated : Int := 0\n".to_string(),
+            ),
+            ("Domain/Rational.lean".to_string(), dep.to_string()),
+            (
+                "lakefile.lean".to_string(),
+                "roots := #[`Main, `AverCommon]\n".to_string(),
+            ),
+        ]);
+
+        let (qualified, record) = info
+            .resolve_structure("Domain.Rational", "Fraction")
+            .expect("the transpiled structure is read");
+        assert_eq!(qualified, "Domain.Rational.Fraction");
+        assert_eq!(
+            record.fields,
+            vec![
+                ("top".to_string(), "Int".to_string()),
+                ("bottom".to_string(), "Int".to_string()),
+            ],
+            "fields must keep declaration order — it is the wasm packing order"
+        );
+
+        let nullary = info
+            .model_fn_sig("Domain_Rational_zeroFraction")
+            .expect("a parameterless def has a readable signature");
+        assert!(nullary.params.is_empty());
+        assert_eq!(nullary.ret, "Fraction");
+        assert_eq!(nullary.lean_name, "Domain.Rational.zeroFraction");
+        assert!(info.is_model_fn("Domain.Rational.zeroFraction"));
+
+        // The regression this guards: reading parameterless defs must NOT make
+        // `model_lean_name` resolve a name it declined before, because that
+        // gate decides which exports survive certification.
+        assert_eq!(
+            info.model_lean_name("Domain_Rational_zeroFraction"),
+            None,
+            "a parameterless def must stay outside the model-citation name space"
+        );
+        assert_eq!(
+            info.model_lean_name("Domain_Rational_plus").as_deref(),
+            Some("Domain.Rational.plus"),
+        );
+        assert!(!info.nullary_is_ambiguous("Domain_Rational_zeroFraction"));
     }
 
     /// A real dependency module DOES define the name space: its namespace is a

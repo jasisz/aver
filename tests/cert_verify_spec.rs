@@ -8259,7 +8259,9 @@ fn cert_tripwire_declines_tampered_int_sign_cmp_plan() {
 /// (`StandardFace.recordComputeDomRepr`). A reader of a verdict has to be told,
 /// so `explain` prints that domain on the export's own line — and only there.
 /// A generic expression fragment carries no such restriction and must show no
-/// such line.
+/// such line. The same block carries the face's certified MODEL: `plan` on its
+/// own, or `plan ≡ <fn>` once a credited plan-equals-source bridge identifies
+/// the two.
 #[test]
 fn explain_states_the_record_compute_faces_certified_domain() {
     if Command::new("lake").arg("--version").output().is_err() {
@@ -8299,15 +8301,41 @@ fn explain_states_the_record_compute_faces_certified_domain() {
     );
     assert!(ok, "k5 explain must accept the certificate:\n{explain}");
 
-    let mut plus_block = explain
+    let plus_block: Vec<&str> = explain
         .split("  Domain_Rational_plus\n")
         .nth(1)
         .expect("explain names the ring's addition export")
         .lines()
-        .take_while(|line| line.starts_with("    "));
+        .take_while(|line| line.starts_with("    "))
+        .collect();
     assert!(
-        plus_block.any(|line| line.trim() == DOMAIN_LINE),
+        plus_block.iter().any(|line| line.trim() == DOMAIN_LINE),
         "the compute face must disclose its certified domain:\n{explain}"
+    );
+    // The same line block says what that face's certified MODEL is. A credited
+    // plan-equals-source bridge is the only thing that turns `plan` into
+    // `plan ≡ <fn>`.
+    assert!(
+        plus_block.iter().any(|line| {
+            line.trim()
+                == "model: plan ≡ Domain.Rational.plus (credited source-bridge; see SOURCE-BRIDGES)"
+        }),
+        "a credited bridge must name the source function on the export's line:\n{explain}"
+    );
+    // The line points at the section rather than calling itself kernel-checked,
+    // because the credit is about the STATEMENT printed there — which `explain`
+    // prints from the text the checker rendered and pinned, never from the
+    // manifest (the manifest has no statement to print).
+    assert!(
+        explain.contains("SOURCE-BRIDGES"),
+        "explain must list the bridges it checked:\n{explain}"
+    );
+    assert!(
+        explain.contains(
+            "_root_.AverCert.StandardFace.recordComputeModel \
+             _root_.AverCert.Plans.Domain_Rational_plusPlan.body"
+        ) && explain.contains("[credited]"),
+        "the rendered statement and its credit must be printed under SOURCE-BRIDGES:\n{explain}"
     );
 
     // Negative half: a genuinely generic expression fragment (`bool_window`'s
@@ -8351,6 +8379,16 @@ fn explain_states_the_record_compute_faces_certified_domain() {
     assert!(
         !explain.contains(DOMAIN_LINE),
         "a generic fragment must not claim the compute face's narrower domain:\n{explain}"
+    );
+    // A face whose obligation already names the source model has nothing for a
+    // bridge to say, so it carries no model line and declares no bridge.
+    assert!(
+        !explain.contains("model: plan"),
+        "a generic fragment's model is not a plan and must show no model line:\n{explain}"
+    );
+    assert!(
+        !explain.contains("SOURCE-BRIDGES"),
+        "a package with no compute-face export declares no bridge:\n{explain}"
     );
 }
 
@@ -8397,10 +8435,20 @@ fn cert_tripwire_declines_tampered_law_claims() {
     let cert = out_dir.join("cert");
     let laws_lean = std::fs::read_to_string(cert.join("Laws.lean")).unwrap();
     let manifest = std::fs::read_to_string(cert.join("cert-manifest.json")).unwrap();
+    // Every k5 law is fully bridged, so each carries TWO corollaries: the law
+    // conjoined with `Holds`, and the `_bridged` one that also conjoins the
+    // plan-equals-source identities. They are kept apart so a bridge that
+    // cannot be closed costs the second and never the first.
     assert_eq!(
         laws_lean.matches("/-- law-claim `").count(),
+        22,
+        "k5 package must carry eleven law corollaries and eleven bridged ones"
+    );
+    assert_eq!(
+        laws_lean.matches("theorem _root_.AverCert.Laws.").count()
+            - laws_lean.matches("_bridged :\n").count(),
         11,
-        "k5 package must carry eleven law corollaries"
+        "eleven of those corollaries are the plain law-claims"
     );
     assert!(
         manifest.contains("\"label\": \"Domain.Rational.isNonNeg.nonNegOfPositive\""),
@@ -8420,6 +8468,10 @@ fn cert_tripwire_declines_tampered_law_claims() {
     assert!(
         !report.contains("law-claim not credited"),
         "a clean package names no uncredited law:\n{report}"
+    );
+    assert!(
+        report.contains("source-bridges: 10 of 10 credited"),
+        "every k5 export must carry a credited plan-equals-source bridge:\n{report}"
     );
 
     // Tamper A: edit one law statement inside the package's `Laws.lean`. The
@@ -8481,16 +8533,26 @@ fn cert_tripwire_declines_tampered_law_claims() {
     // certified are untouched, exactly as `declaredUncertified` leaves the
     // rest of a package standing. A pin that does not elaborate is tampers A
     // and B above, and still declines the whole package.
-    let proof_needle = "⟨_root_.Domain.Rational.plus_law_commutative, _root_.AverCert.Final.cert⟩";
-    assert!(
-        laws_lean.contains(proof_needle),
-        "expected corollary proof term"
-    );
+    // The proof term is an anonymous constructor whose arity follows the
+    // claim's `bridges` list, so the tamper cuts from the law theorem's name to
+    // the closing bracket rather than matching a fixed string.
+    let proof_start = laws_lean
+        .find("⟨_root_.Domain.Rational.plus_law_commutative,")
+        .expect("expected corollary proof term");
+    let proof_end = laws_lean[proof_start..]
+        .find('⟩')
+        .expect("the corollary proof term closes")
+        + proof_start
+        + '⟩'.len_utf8();
     let dir = temp_dir("cert-k5-laws-sorry-tamper");
     copy_dir(&out_dir, &dir);
     std::fs::write(
         dir.join("cert").join("Laws.lean"),
-        laws_lean.replacen(proof_needle, "sorry", 1),
+        format!(
+            "{}sorry{}",
+            &laws_lean[..proof_start],
+            &laws_lean[proof_end..]
+        ),
     )
     .unwrap();
     let (ok, out) = aver_check(&dir.join("main.wasm"), &dir.join("cert"));
@@ -8514,6 +8576,10 @@ fn cert_tripwire_declines_tampered_law_claims() {
         "the uncredited law must be named together with the axiom that sank it:\n{out}"
     );
     assert!(
+        out.contains("source-bridges: 10 of 10 credited"),
+        "a law losing its credit must not take the bridges it cited down:\n{out}"
+    );
+    assert!(
         !out.contains("CERTIFIED"),
         "`check` never says CERTIFIED:\n{out}"
     );
@@ -8526,4 +8592,283 @@ fn cert_tripwire_declines_tampered_law_claims() {
     // audit line is missing, renamed, repeated, or malformed DECLINES the
     // package rather than passing unaudited. Credit is only ever granted by a
     // well-formed `ok` line.
+}
+
+/// The same tripwire for the plan-equals-source bridge surface, on the k5
+/// package whose ten record projection-compute exports are all bridged.
+///
+/// (A) and (B) are the two ways a manifest can try to state something other
+/// than what the package proves, now that the entry carries STRUCTURE and the
+/// checker renders the statement from it: a permuted record accessor list
+/// renders a different claim, so the pin no longer has the package corollary's
+/// type; a smuggled `statement` key, or an encoder kind outside the closed set,
+/// is refused at the manifest gate before Lean runs at all. There is no third
+/// way — a tautology is not expressible, because the left-hand side of the
+/// rendered statement is always the export's own plan.
+///
+/// (C) A bridge proof degraded to `sorry` still elaborates at the rendered
+/// statement, so only its axiom audit fails. It costs the bridge and the
+/// BRIDGED corollary of every law that mentions its function — and nothing
+/// else: the exports keep their verdict and the plain law-claims keep their
+/// credit, which is what keeping `Laws.<c>` and `Laws.<c>_bridged` apart is
+/// for. `isNonNeg` is mentioned by exactly one k5 law, so the two law counters
+/// separate visibly.
+///
+/// (D) A law-claim that declares MORE bridges than its bridged corollary
+/// proves loses the pinned type and declines. Declaring fewer is the opposite
+/// case and deliberately not a decline: the claim is then simply not part of
+/// the bridged surface, and nothing is credited that was not proven.
+///
+/// (E) A composition step the fixed script cannot close falls to `sorry`
+/// instead of failing the build, so a shape the producer guessed wrong about
+/// is a not-credited bridge and never a declined package. `isNonPos` is the one
+/// bridged export no k5 law mentions, which keeps (E)'s law counters full and
+/// isolates the bridge's own credit.
+///
+/// The audit LINES themselves — all three markers — are covered where they are
+/// read, by the parser unit tests in `aver-cert`
+/// (`bridge_audit_without_a_line_declines_instead_of_crediting`,
+/// `bridge_audit_rejects_malformed_and_repeated_lines`,
+/// `bridged_law_pins_are_numbered_over_the_bridged_claims_only`): the witness
+/// is authored inside a temporary build directory this test cannot reach, so
+/// that tamper is unit-level only, exactly as it is for law-claims.
+#[test]
+fn cert_tripwire_declines_tampered_source_bridges() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping source-bridge tamper test: `lake` not available");
+        return;
+    }
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("cert-k5-bridges");
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("projects/k5_fdiv/main.av")
+        .arg("--module-root")
+        .arg("projects/k5_fdiv")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver compile --certify runs");
+    assert!(
+        compile.status.success(),
+        "k5_fdiv compile --certify failed:\n{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let cert = out_dir.join("cert");
+    let bridge_lean = std::fs::read_to_string(cert.join("Bridge.lean")).unwrap();
+    let manifest = std::fs::read_to_string(cert.join("cert-manifest.json")).unwrap();
+    assert_eq!(
+        bridge_lean
+            .matches("/-- plan-equals-source bridge for `")
+            .count(),
+        10,
+        "k5 package must carry ten bridge theorems"
+    );
+    assert!(
+        manifest.contains("\"export\": \"Domain_Rational_isNonPos\""),
+        "the bridge surface must name every certified export"
+    );
+    assert!(
+        !manifest.contains("\"statement\": \"_root_."),
+        "a bridge entry must transport structure, never statement text:\n{manifest}"
+    );
+
+    // Tamper A: permute one record encoder's accessors. The checker renders
+    // `SVal.r [bottom x, top x]` where the package proved `[top x, bottom x]`,
+    // so the pin no longer has the corollary's type.
+    let honest_fields = "\"fields\": [\"_root_.Domain.Rational.Fraction.top\", \
+                         \"_root_.Domain.Rational.Fraction.bottom\"]";
+    assert!(
+        manifest.contains(honest_fields),
+        "expected the Fraction encoder to list its two Int leaves in order"
+    );
+    let permuted_fields = "\"fields\": [\"_root_.Domain.Rational.Fraction.bottom\", \
+                           \"_root_.Domain.Rational.Fraction.top\"]";
+    let dir = temp_dir("cert-k5-bridge-permuted-fields");
+    copy_dir(&out_dir, &dir);
+    std::fs::write(
+        dir.join("cert").join("cert-manifest.json"),
+        manifest.replacen(honest_fields, permuted_fields, 1),
+    )
+    .unwrap();
+    let (ok, out) = aver_check(&dir.join("main.wasm"), &dir.join("cert"));
+    assert!(!ok, "a permuted encoder must be DECLINED:\n{out}");
+    assert!(
+        !out.contains("CERTIFIED"),
+        "a permuted encoder credited:\n{out}"
+    );
+
+    // Tamper B: the two shapes the manifest gate refuses outright, before any
+    // Lean step — a statement smuggled back in beside the structure, and an
+    // encoder kind outside the closed set.
+    for (label, tampered) in [
+        (
+            "a declared statement",
+            manifest.replacen(
+                "{\"export\": \"Domain_Rational_isNonPos\"",
+                "{\"statement\": \"_root_.Domain.Rational.isNonPos = _root_.Domain.Rational.isNonPos\", \
+                 \"export\": \"Domain_Rational_isNonPos\"",
+                1,
+            ),
+        ),
+        (
+            "an unknown encoder kind",
+            manifest.replacen("\"kind\": \"record\"", "\"kind\": \"matrix\"", 1),
+        ),
+    ] {
+        let dir = temp_dir("cert-k5-bridge-manifest-gate");
+        copy_dir(&out_dir, &dir);
+        std::fs::write(dir.join("cert").join("cert-manifest.json"), tampered).unwrap();
+        let (ok, out) = aver_check(&dir.join("main.wasm"), &dir.join("cert"));
+        assert!(!ok, "{label} must be DECLINED:\n{out}");
+        assert!(!out.contains("CERTIFIED"), "{label} credited:\n{out}");
+    }
+
+    // Tamper C: replace one bridge's proof with `sorry`. The theorem still has
+    // the rendered statement, so the pin elaborates and only the axiom audit
+    // fails — and it costs the bridge and the bridged law-claim that mentions
+    // it, never the law-claim itself.
+    let sorried = sorry_out_theorem(
+        &bridge_lean,
+        "_root_.AverCert.Bridge.Domain_Rational_isNonNeg",
+    );
+    let dir = temp_dir("cert-k5-bridge-sorry-tamper");
+    copy_dir(&out_dir, &dir);
+    std::fs::write(dir.join("cert").join("Bridge.lean"), sorried).unwrap();
+    let (ok, out) = aver_check(&dir.join("main.wasm"), &dir.join("cert"));
+    assert!(
+        ok,
+        "a bridge failing only its axiom audit must not sink the exports:\n{out}"
+    );
+    assert!(
+        out.contains("10 checked exports"),
+        "the export verdict must stand beside an uncredited bridge:\n{out}"
+    );
+    assert!(
+        out.contains("source-bridges: 9 of 10 credited"),
+        "the sorry'd bridge must lose exactly its own credit:\n{out}"
+    );
+    assert!(
+        out.contains(
+            "source-bridge not credited: Domain_Rational_isNonNeg \
+             (proof depends on sorryAx)"
+        ),
+        "the uncredited bridge must be named with the axiom that sank it:\n{out}"
+    );
+    // The decoupling this surface exists for: the law about `isNonNeg` is a
+    // claim about the SOURCE model, proved without any bridge, so it keeps its
+    // credit while the bridged corollary that cites the broken bridge loses
+    // exactly one.
+    assert!(
+        out.contains("law-claims: 11 of 11 credited"),
+        "a broken bridge must not cost a law its credit:\n{out}"
+    );
+    assert!(
+        out.contains("bridged-laws: 10 of 11 credited"),
+        "the bridged corollary of the law that mentions it loses credit:\n{out}"
+    );
+    assert!(
+        out.contains(
+            "bridged law-claim not credited: Domain.Rational.isNonNeg.nonNegOfPositive \
+             (proof depends on sorryAx)"
+        ),
+        "the uncredited bridged claim must be named:\n{out}"
+    );
+
+    // Tamper D: widen a law-claim's declared `bridges` list. The checker builds
+    // that law's bridged pin at exactly the declared conjunction, so the
+    // package's `_bridged` corollary — which proves one conjunct FEWER — no
+    // longer has the pinned type. A claim cannot declare more than it proves.
+    //
+    // The other direction is deliberately not a decline: a claim that lists
+    // fewer bridges than its corollary happens to prove is claiming LESS, and
+    // it simply drops out of the bridged surface (`bridged-laws` counts one
+    // less denominator). Nothing is credited that was not proven, which is why
+    // section 4.1 calls this list a producer choice.
+    let at = manifest
+        .find("\"bridges\": [\"")
+        .expect("the first k5 law-claim declares the bridges it conjoins");
+    let end = manifest[at..].find(']').expect("the bridges array closes") + at;
+    let dir = temp_dir("cert-k5-law-bridges-tamper");
+    copy_dir(&out_dir, &dir);
+    std::fs::write(
+        dir.join("cert").join("cert-manifest.json"),
+        format!(
+            "{}{}, \"Domain_Rational_isNonPos\"{}",
+            &manifest[..at],
+            &manifest[at..end],
+            &manifest[end..]
+        ),
+    )
+    .unwrap();
+    let (ok, out) = aver_check(&dir.join("main.wasm"), &dir.join("cert"));
+    assert!(
+        !ok,
+        "a law-claim declaring more bridges than it proves must be DECLINED:\n{out}"
+    );
+    assert!(
+        !out.contains("CERTIFIED"),
+        "an over-declared law-claim surface credited:\n{out}"
+    );
+
+    // Tamper E: the composition step, which has no fixed script that closes
+    // every shape, degraded to `sorry`. The `first | … | sorry` in the emitted
+    // proof is what makes this a not-credited bridge instead of a failed build,
+    // and a failed build would decline the whole package.
+    let sorried = sorry_out_theorem(
+        &bridge_lean,
+        "_root_.AverCert.Bridge.Domain_Rational_isNonPos_sourceModel",
+    );
+    let dir = temp_dir("cert-k5-bridge-composition-tamper");
+    copy_dir(&out_dir, &dir);
+    std::fs::write(dir.join("cert").join("Bridge.lean"), sorried).unwrap();
+    let (ok, out) = aver_check(&dir.join("main.wasm"), &dir.join("cert"));
+    assert!(
+        ok,
+        "a composition step that cannot close must not decline the package:\n{out}"
+    );
+    assert!(
+        out.contains("10 checked exports")
+            && out.contains("source-bridges: 9 of 10 credited")
+            && out.contains(
+                "source-bridge not credited: Domain_Rational_isNonPos \
+                 (proof depends on sorryAx)"
+            ),
+        "the unclosed composition costs exactly its own bridge:\n{out}"
+    );
+    assert!(
+        out.contains("law-claims: 11 of 11 credited")
+            && out.contains("bridged-laws: 11 of 11 credited"),
+        "no k5 law mentions isNonPos, so every law keeps both credits:\n{out}"
+    );
+}
+
+/// Replace one emitted theorem's tactic proof with `sorry`, leaving its
+/// statement — and every other declaration in the file — exactly as emitted.
+/// The theorem is found by its `theorem <name> :` header and ends at the blank
+/// line before the next doc comment.
+fn sorry_out_theorem(lean: &str, name: &str) -> String {
+    let header = format!("theorem {name} :\n");
+    let at = lean
+        .find(&header)
+        .unwrap_or_else(|| panic!("expected the theorem {name}"));
+    let rest = &lean[at..];
+    let assign = rest.find(" := by\n").expect("expected a tactic proof");
+    let end = rest[assign..]
+        .find("\n\n/--")
+        .expect("expected the theorem to end before the next doc comment")
+        + assign;
+    format!(
+        "{}{} := by\n  sorry{}",
+        &lean[..at],
+        &rest[..assign],
+        &rest[end..]
+    )
 }
