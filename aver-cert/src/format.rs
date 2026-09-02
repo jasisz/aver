@@ -141,9 +141,25 @@ pub const CERT_SCHEMA_VERSION: u32 = 7;
 /// Named theorem audited by the checker-owned witness.
 pub const ARTIFACT_CERTIFICATE_ROOT: &str = "AverCert.Artifact.certificate";
 
+/// Discharge theorem the producer names for the record projection-compute
+/// face. Like every `theorem` field it is manifest-declared and informational
+/// (section 4.2) — acceptance consumes the single artifact root, not per-export
+/// theorem names — but it is the one signal on the render side that tells which
+/// certified exports carry that face's NARROWER certified domain, so producer
+/// and verifier share the literal here rather than spelling it twice.
+pub const RECORD_COMPUTE_DISCHARGE_THEOREM: &str =
+    "AcceptanceSoundness.recordCompute_claim_discharges";
+
+/// The domain disclosure `aver-cert explain` prints under a record
+/// projection-compute export. Its content is section 4.3(ii): that face's
+/// `StandardFace.recordComputeDomRepr` requires every Int carrier it is handed
+/// — arguments and record fields alike — to be in the runtime's normal form.
+pub const RECORD_COMPUTE_DOMAIN_LINE: &str =
+    "domain: Int leaves assumed in the runtime's normal form (canonical carriers)";
+
 /// Identity of the exact checker-owned Lean wall shipped by this release.
 pub const CURRENT_WALL_ID: &str =
-    "sha256:15934e0a1871eaf595ce870094863ddb913f0d27fc545cda1ed035c0f66a4529";
+    "sha256:de13be736203a89e772af3b863feb0258798214138cd42a4b03b54e0005e12bd";
 
 /// Complete host-import surface admitted by the wasm-gc certificate format.
 ///

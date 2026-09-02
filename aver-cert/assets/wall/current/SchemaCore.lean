@@ -960,12 +960,23 @@ inductive ReprAll (R : Int → WVal → Prop) : List Int → List WVal → Prop
     (the Int carrier `{i64 small, ref limbs, i32 sign}`). Bundled in the audited
     schema so `Obligation.holds` is self-contained.
 
-    `Canon` is the runtime's NORMAL FORM on carrier words. The emitted runtime
-    routes every carrier it builds through `__aint_normalize` (`wat/normalize.wat`),
-    which fixes the representation choice: a value is `Small` (`limbs = null`)
-    exactly when it fits the i64 band `[-2^63, 2^63)`, and `Big` otherwise, with
-    tight limbs and a non-zero sign. `Canon` names that state abstractly and the
-    two axioms below say only what the helpers need:
+    `Canon` is the runtime's NORMAL FORM on carrier words: a value is `Small`
+    (`limbs = null`) exactly when it fits the i64 band `[-2^63, 2^63)`, and
+    `Big` otherwise, with tight limbs and a non-zero sign. Every carrier the
+    emitted runtime builds is in that form, by TWO mechanisms and not one:
+
+    * the i64 fast paths build a `Small` DIRECTLY with `struct.new` — the box
+      helper `wat/from_i64.wat` is nothing else, and so are the both-`Small`
+      non-overflow arms of `wat/addsub.wat` and `wat/mul.wat`. Those words are
+      normal because the value provably fits the band, not because anything
+      normalised them;
+    * every path that can produce a limb-carrying result ends in the
+      normalisation epilogue (`wat/normalize.wat`, called as `__aint_normalize`
+      or inlined), which strips leading limbs and demotes an in-band magnitude
+      back to `Small`.
+
+    `Canon` names that state abstractly and the two axioms below say only what
+    the helpers need:
 
     * `canonSmall` — the boxing helper's output (a literal small carrier for an
       i64-band value) is canonical;
@@ -1468,8 +1479,10 @@ structure Obligation where
     A NON-canonical operand is OUTSIDE THE CERTIFIED DOMAIN — the same
     epistemic position as `toIndexW`'s `-1` region, stated rather than assumed
     away: the obligation says nothing about it. It is also a state the emitted
-    runtime never builds, because every carrier it produces comes out of
-    `__aint_normalize`. Neither premise demands trap-freedom; a helper that
+    runtime never builds: the i64 fast paths construct an in-band `Small`
+    directly (`wat/from_i64.wat`, and the both-`Small` arms of `wat/addsub.wat`
+    and `wat/mul.wat`), and every arm that can produce limbs ends in the
+    normalisation epilogue (`wat/normalize.wat`). Neither premise demands trap-freedom; a helper that
     returns `none` makes the premise vacuous and the run yields nothing,
     exactly as everywhere else in this denotation. -/
 def Obligation.holds (o : Obligation) : Prop :=

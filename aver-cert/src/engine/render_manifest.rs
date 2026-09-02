@@ -838,7 +838,7 @@ fn render_manifest(
         } else if c.project_face().is_some() {
             "AcceptanceSoundness.fieldProjection_direct_canonical_discharges".to_string()
         } else if c.record_compute_face().is_some() {
-            "AcceptanceSoundness.recordCompute_claim_discharges".to_string()
+            crate::format::RECORD_COMPUTE_DISCHARGE_THEOREM.to_string()
         } else if c.record_param_face().is_some() {
             "AcceptanceSoundness.recordParam_claim_discharges".to_string()
         } else if matches!(c.inner(), Cert::FieldProjection { .. }) {

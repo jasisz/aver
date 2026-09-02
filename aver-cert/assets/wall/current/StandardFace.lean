@@ -1045,13 +1045,26 @@ def recordComputeResultValType (carrier structIdx : Nat) :
 /-- Domain representation of the compute face: pointwise-SRepr inputs whose
     source shapes match the plan's declared parameter types.
 
-    DISCLOSURE: `SRepr` on an Int carrier means REPRESENTED AND CANONICAL, so
-    this face states its claim about inputs (and record fields) that are in the
-    runtime's normal form. That is every value the emitted module can build —
-    each carrier it produces comes out of `__aint_normalize` — but it is an
-    assumption about the inputs all the same, and it is the assumption the
-    structural helpers (`__aint_cmp`, `__aint_eq`) and the inline sign template
-    need to be exact. -/
+    DISCLOSURE — this face's CERTIFIED DOMAIN is narrower than "any represented
+    value". `SRepr` on an Int carrier means REPRESENTED AND CANONICAL, so the
+    claim is stated about inputs, AND about the Int leaves of the record
+    parameters, that are in the runtime's normal form. That is an ASSUMPTION
+    about the words an embedder hands the exported function, not something the
+    certificate derives from the bytes.
+
+    It is true of every value the emitted module builds, by two mechanisms:
+    the i64 fast paths construct an in-band `Small` directly with `struct.new`
+    (`wat/from_i64.wat`, and the both-`Small` non-overflow arms of
+    `wat/addsub.wat` and `wat/mul.wat`), and every arm that can produce limbs
+    ends in the normalisation epilogue (`wat/normalize.wat`, shared as
+    `__aint_normalize` or inlined). So an artifact whose carriers all come out
+    of this runtime satisfies it — but a host that fabricates a carrier word of
+    its own is outside what this obligation says anything about.
+
+    The assumption is what the STRUCTURAL helpers (`__aint_cmp`, `__aint_eq`)
+    and the inline sign template need in order to be exact: all three decide on
+    shape and fields, and only canonicity makes "same shape and same fields"
+    and "same integer" coincide. -/
 def recordComputeDomRepr (carrier structIdx : Nat) (params : List FragTy) :
     CarrierSpec carrier → List RecordComputeBridge.SVal → List WVal → Prop :=
   fun S svs vs =>
