@@ -6,6 +6,7 @@
 //! (`expr_needs_scratch` etc.) survive because they classify pattern
 //! shape, not type.
 
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
 use wasm_encoder::ValType;
@@ -18,7 +19,7 @@ use crate::ir::hir::{
 use crate::types::Type;
 
 use super::super::WasmGcError;
-use super::super::types::{TypeRegistry, aver_to_wasm, struct_ref};
+use super::super::types::{TypeRegistry, aver_to_wasm, record_field_val_type, struct_ref};
 use super::FnMap;
 use super::infer::{
     arm_is_option_pattern_resolved, arm_is_result_pattern_resolved, aver_type_str_of,
@@ -143,6 +144,31 @@ pub(super) struct SlotTable {
     /// pins the artifact hash: a program that only adds would have had its
     /// certificate invalidated by a fix to division it never calls.
     pub(super) aint_operand_scratch: Option<[u32; 3]>,
+    /// Scratch locals for a record literal / `T.update` whose fields are
+    /// WRITTEN in an order other than the declared one. `struct.new`
+    /// consumes its operands in declared order, so the written
+    /// expressions — which must run in the order they appear, the order
+    /// the last-use pass and every other backend assume — are evaluated
+    /// onto the stack first and then parked here until the declared-order
+    /// push. One local per declared field, keyed by the canonical record
+    /// name; the companion map holds the one `(ref null $T)` local a
+    /// partial `T.update` needs for its base.
+    ///
+    /// Allocated LAZILY, at the emit site that first needs them, so a
+    /// program with no reordering write reserves nothing and its bytes are
+    /// untouched — a certificate pins the artifact hash, and reserving a
+    /// local for every record-shaped function would have invalidated every
+    /// existing certificate. The two-pass local discovery in `module.rs`
+    /// (dry-run emit, then `Function::new` with the discovered locals, then
+    /// the real emit) makes lazy allocation safe: both passes walk the same
+    /// MIR body in the same order, so they allocate the same indices.
+    record_field_scratch: RefCell<HashMap<String, Vec<u32>>>,
+    /// The `(ref null $T)` local holding a `T.update` base while the
+    /// overrides are parked — see `record_field_scratch`.
+    record_base_scratch: RefCell<HashMap<String, u32>>,
+    /// Lazily allocated locals, appended after `by_slot` in
+    /// `extra_locals`. Index `i` here is wasm local `by_slot.len() + i`.
+    lazy_locals: RefCell<Vec<ValType>>,
 }
 
 impl SlotTable {
@@ -426,11 +452,66 @@ impl SlotTable {
             validated_effect_wasip2_aint_scratch,
             const_cmp_scratch,
             aint_operand_scratch,
+            record_field_scratch: RefCell::new(HashMap::new()),
+            record_base_scratch: RefCell::new(HashMap::new()),
+            lazy_locals: RefCell::new(Vec::new()),
         })
     }
 
     pub(super) fn extra_locals(&self, params_count: usize) -> Vec<ValType> {
-        self.by_slot.iter().skip(params_count).copied().collect()
+        self.by_slot
+            .iter()
+            .skip(params_count)
+            .copied()
+            .chain(self.lazy_locals.borrow().iter().copied())
+            .collect()
+    }
+
+    /// Reserve (once per fn per record type) one local per declared field
+    /// of `record_name`, typed exactly like the struct field it will be
+    /// pushed into. See `record_field_scratch`.
+    pub(super) fn record_field_scratch(
+        &self,
+        record_name: &str,
+        decl_fields: &[(String, String)],
+        registry: &TypeRegistry,
+    ) -> Result<Vec<u32>, WasmGcError> {
+        if let Some(found) = self.record_field_scratch.borrow().get(record_name) {
+            return Ok(found.clone());
+        }
+        let mut allocated = Vec::with_capacity(decl_fields.len());
+        for (field_name, field_ty) in decl_fields {
+            let ty = record_field_val_type(record_name, field_name, field_ty, registry)?;
+            allocated.push(self.push_lazy_local(ty));
+        }
+        self.record_field_scratch
+            .borrow_mut()
+            .insert(record_name.to_string(), allocated.clone());
+        Ok(allocated)
+    }
+
+    /// Reserve (once per fn per record type) the `(ref null $T)` local a
+    /// partial `T.update` parks its base in. See `record_field_scratch`.
+    pub(super) fn record_base_scratch(
+        &self,
+        record_name: &str,
+        type_idx: u32,
+    ) -> Result<u32, WasmGcError> {
+        if let Some(found) = self.record_base_scratch.borrow().get(record_name) {
+            return Ok(*found);
+        }
+        let idx = self.push_lazy_local(struct_ref(type_idx));
+        self.record_base_scratch
+            .borrow_mut()
+            .insert(record_name.to_string(), idx);
+        Ok(idx)
+    }
+
+    fn push_lazy_local(&self, ty: ValType) -> u32 {
+        let mut lazy = self.lazy_locals.borrow_mut();
+        let idx = (self.by_slot.len() + lazy.len()) as u32;
+        lazy.push(ty);
+        idx
     }
 }
 

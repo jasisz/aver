@@ -29,9 +29,9 @@ use std::collections::HashMap;
 /// Why a single `ResolvedFnDef` failed to lower.
 ///
 /// One variant per source-level reason — the dominant unsupported
-/// shape inside the fn body. Wave PRs sequentially remove
-/// reasons from the live set; once the set is empty the lowerer
-/// is corpus-complete on the shipped examples.
+/// shape inside the fn body. Widening waves removed the shape-specific
+/// reasons one by one; what remains is the defensive set: upstream
+/// pipeline gaps and names the resolver could not classify.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SkipReason {
     /// `ResolvedFnDef.body` had no statements. Frontend should
@@ -51,14 +51,6 @@ pub enum SkipReason {
     /// pattern's preorder binding count. Indicates a resolver /
     /// pattern desync.
     PatternSlotShortfall,
-    /// Built-in constructor *construction* (`Result.Ok(v)`,
-    /// `Option.Some(v)`, …) — wave 3c-i territory. Built-in
-    /// ctors need a typed identity story beyond raw `CtorId`.
-    BuiltinCtorConstruction,
-    /// Built-in constructor *pattern* (`Result.Ok(v) -> ...`,
-    /// `Option.Some(v) -> ...`) — same wave 3c-i territory as
-    /// the construction side.
-    BuiltinCtorPattern,
     /// A constructor whose `CtorId` didn't resolve. Drops the fn
     /// rather than panic on a half-resolved ctor — but never
     /// silently: the resolved body still holds the name and the line,
@@ -71,31 +63,8 @@ pub enum SkipReason {
     /// A call target the resolver could not classify. Same family as
     /// [`Self::UnresolvedCtor`], reported the same way.
     UnsupportedCallee,
-    /// `Record{...}` / `Record{base & ...}` on a built-in type
-    /// (`Http.Response`, `Header`, `__Buffer`, …) with no `TypeId`.
-    /// Wave 3c-i / 3c-iv territory depending on the type.
-    BuiltinRecord,
-    /// `Try` (the `?` propagation node) — wave 3c-ii.
-    UnsupportedTry,
-    /// Tail call — wave 3c-iii.
-    UnsupportedTailCall,
-    /// List literal — wave 3c-iv.
-    UnsupportedList,
-    /// Tuple literal — wave 3c-iv.
-    UnsupportedTuple,
-    /// Map literal — wave 3c-iv.
-    UnsupportedMap,
-    /// Interpolated string — wave 3c-iv.
-    UnsupportedInterpolatedStr,
-    /// `IndependentProduct` (`?!` / `!`) — wave 3c-v.
-    UnsupportedIndependentProduct,
-    /// Unresolved top-level `Ident` that survived past the
-    /// resolver — usually a resolver gap. Drops the fn rather than
-    /// emit a half-resolved name.
-    UnresolvedIdent,
-    /// A `ResolvedExpr` variant the lowerer doesn't recognise at
-    /// all. Should be empty after wave 3c lands — anything
-    /// here points to a missed variant.
+    /// A `ResolvedExpr` variant the lowerer does not recognise at all.
+    /// Anything here points to a missed variant.
     UnsupportedOther,
 }
 
@@ -108,19 +77,8 @@ impl SkipReason {
             Self::MissingResolution => "missing resolution",
             Self::BindingSlotLookupMissing => "binding slot lookup missing",
             Self::PatternSlotShortfall => "pattern slot shortfall",
-            Self::BuiltinCtorConstruction => "built-in ctor construction",
-            Self::BuiltinCtorPattern => "built-in ctor pattern",
             Self::UnresolvedCtor => "unresolved ctor",
             Self::UnsupportedCallee => "unsupported callee",
-            Self::BuiltinRecord => "built-in record type",
-            Self::UnsupportedTry => "unsupported Try (`?`)",
-            Self::UnsupportedTailCall => "unsupported tail call",
-            Self::UnsupportedList => "unsupported list literal",
-            Self::UnsupportedTuple => "unsupported tuple literal",
-            Self::UnsupportedMap => "unsupported map literal",
-            Self::UnsupportedInterpolatedStr => "unsupported interpolated string",
-            Self::UnsupportedIndependentProduct => "unsupported IndependentProduct",
-            Self::UnresolvedIdent => "unresolved Ident (resolver gap)",
             Self::UnsupportedOther => "unsupported (other)",
         }
     }

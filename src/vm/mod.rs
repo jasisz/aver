@@ -11,17 +11,13 @@ mod symbol;
 mod types;
 
 pub use compiler::{
-    compile_program_with_loaded_modules, compile_program_with_mir_fallback,
-    compile_program_with_modules,
+    compile_program, compile_program_with_loaded_modules, compile_program_with_modules,
 };
-/// Phase 4 of #252 — MIR vertical slice for the VM. Re-exported
-/// so tests + future external consumers can reach
-/// `classify_mir_program_coverage` without making the full
-/// `vm::compiler` module public.
+/// The VM's MIR walker, re-exported so tests and external consumers can
+/// name its rejection type without making the whole `vm::compiler`
+/// module public.
 pub mod mir_vm {
-    pub use super::compiler::mir::{
-        MirVmCoverage, MirVmUnsupported, classify_mir_program_coverage,
-    };
+    pub use super::compiler::mir::MirVmUnsupported;
 }
 pub use execute::{
     VM, VmRuntimeOwnershipStats, VmSlotUniquenessStats, grants_the_mirror_could_not_afford,

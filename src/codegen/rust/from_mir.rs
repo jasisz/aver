@@ -3371,7 +3371,20 @@ fn emit_mir_let_chain_flat(
     let mut lines: Vec<String> = Vec::new();
     let mut current = let_node;
     loop {
-        let value = emit_mir_binding_value(&current.value, ctx)?;
+        // Int unboxing: a bare binding holds a native `i64`, so its value
+        // must RENDER raw — `n = 1` is `let n = 1i64;`, not
+        // `AverInt::from_i64(1)`. The rewrite inserts no `Box`/`Unbox`
+        // boundary around a value it already considers raw (an Int literal,
+        // a bare local, arithmetic over them), so this is the only place the
+        // representation can be established. Mirror of the nested
+        // `MirExpr::Let` arm in `emit_mir_expr`; without it a whole-body
+        // `n = 1` chain emitted a boxed value into an `i64` binding and the
+        // generated crate failed to compile.
+        let value = if ctx.bare.is_bare(current.binding) {
+            emit_bare_i64(&current.value).or_else(|| emit_mir_expr(&current.value, ctx))?
+        } else {
+            emit_mir_binding_value(&current.value, ctx)?
+        };
         if current.binding_name.is_empty() {
             // Discarded intermediate (`Stmt::Expr` at non-tail position,
             // or a `_ = effect()` discard binding). No source ident to

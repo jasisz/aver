@@ -151,7 +151,7 @@ fn walk(src: &str, read: &IndexedRead) -> Walk {
     assert!(tc.errors.is_empty(), "typecheck failed: {:?}", tc.errors);
 
     let mut arena = Arena::new();
-    let (code, globals) = vm::compile_program_with_mir_fallback(
+    let (code, globals) = vm::compile_program(
         &result.resolved_items,
         &result.symbol_table,
         &mut arena,
@@ -508,7 +508,7 @@ fn validate(n: i64) -> Validation {
     assert!(tc.errors.is_empty(), "typecheck failed: {:?}", tc.errors);
 
     let mut arena = Arena::new();
-    let (code, globals) = vm::compile_program_with_mir_fallback(
+    let (code, globals) = vm::compile_program(
         &result.resolved_items,
         &result.symbol_table,
         &mut arena,

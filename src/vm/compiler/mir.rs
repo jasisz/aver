@@ -1,44 +1,16 @@
-//! MIR → VM bytecode lowering (Phase 4 vertical slice).
+//! MIR → VM bytecode lowering — the VM's only codegen path.
 //!
-//! Parallel to the existing `super::expr` module which walks
-//! `ResolvedExpr` (HIR), this module walks `crate::ir::mir::MirExpr`
-//! and emits the same opcodes. The point is to prove the VM can
-//! consume MIR identically — same `FnChunk`, same `NanValue`
-//! results on the parity corpus.
-//!
-//! ## Scope (Phase 4 PoC)
-//!
-//! Subset of `MirExpr` covered here:
-//! - `Literal` — same opcodes as `super::expr::compile_literal`.
-//! - `Local(LocalId)` — `LOAD_LOCAL` (no `MOVE_LOCAL` / last-use
-//!   optimization yet; MIR doesn't carry last-use bits at this
-//!   wave).
-//! - `BinOp` — typed dispatch via `emit_binop_typed`; falls back
-//!   to the generic opcode when MIR doesn't carry a type stamp.
-//! - `Neg` — same untyped fallback for now.
-//! - `Let { binding, value, body }` — value first, `STORE_LOCAL`
-//!   into the binding slot, body next; body becomes the fn's
-//!   return value.
-//! - `Call { callee, args }` — `MirCallee::Fn(FnId)` resolves
-//!   through the entry's `SymbolTable` (the same path the HIR
-//!   compiler uses).
-//! - `Return(inner)` — explicit early-return form.
-//!
-//! After Phase 4h, every `MirExpr` variant has walker coverage.
-//! Match accepts the flat-pattern subset (4g-1…5); nested
-//! structural subpatterns inside a Tuple still drop to HIR.
-//! Bytecode parity holds on the generic-emit path; HIR's
-//! specialised opcodes (MATCH_DISPATCH_CONST table fast-path,
-//! per-builtin opcodes like LIST_LEN / MAP_GET / UNWRAP_OR)
-//! produce different bytes but identical runtime — that's
-//! Phase 6 work with type-stamp propagation.
+//! This module walks `crate::ir::mir::MirExpr` and emits the VM's
+//! opcodes. It once ran beside a walker over the resolved HIR, and
+//! rejected a shape by handing it back for that walker to take; the HIR
+//! walker is retired, so every `MirExpr` variant is emitted here and a
+//! shape this module cannot emit is a hard compile error.
 
 use crate::ast::Literal;
 use crate::ast::Spanned;
 use crate::ir::hir::{BuiltinCtor, BuiltinIntrinsic};
 use crate::ir::mir::{
-    LocalId, MirCall, MirCallee, MirCtor, MirExpr, MirFn, MirLet, MirPattern, MirProgram,
-    MirStrPart,
+    LocalId, MirCall, MirCallee, MirCtor, MirExpr, MirFn, MirLet, MirPattern, MirStrPart,
 };
 use crate::nan_value::NanValue;
 use crate::vm::builtin::VmBuiltin;
@@ -49,14 +21,13 @@ use super::resolve_helpers::buffer_intrinsic_opcode;
 
 use super::{CompileError, FnCompiler, operand_u8};
 
-/// Reasons the MIR vertical slice can't compile a given MIR fn yet.
-/// The Phase 4 callers fall back to the HIR path (`super::compile_fn`)
-/// when this fires.
+/// Reasons the walker cannot emit a given MIR fn. Nothing catches these
+/// to try another path: they surface as a compile error.
 #[derive(Debug)]
 pub enum MirVmUnsupported {
-    /// Hit a `MirExpr` variant outside the Phase 4 subset.
+    /// Hit a `MirExpr` shape the walker does not emit.
     UnsupportedExpr(&'static str),
-    /// Callee shape not yet covered (builtin / non-FnId).
+    /// Callee shape the walker does not emit.
     UnsupportedCallee,
     /// Underlying `FnCompiler` reported a compile error mid-emit.
     InnerError(CompileError),
@@ -73,8 +44,7 @@ impl MirVmUnsupported {
     /// pre-checks every lowered top-level expression with
     /// `mir_expr_compilable` before committing to the MIR walk, so this
     /// only fires on the optimistic edge cases `can_compile` reports as
-    /// compilable (e.g. an unknown builtin name) — a real internal error
-    /// rather than a routine fallback.
+    /// compilable (e.g. an unknown builtin name) — a real internal error.
     pub(super) fn into_compile_error(self, context: &str) -> CompileError {
         match self {
             MirVmUnsupported::InnerError(e) => e,
@@ -91,9 +61,8 @@ impl MirVmUnsupported {
 }
 
 /// Walk a `MirExpr` and emit VM bytecode into the supplied
-/// `FnCompiler`. Returns `Err(MirVmUnsupported)` for any MirExpr
-/// variant outside the Phase 4 subset — the caller drops back to
-/// HIR compilation in that case.
+/// `FnCompiler`. `Err(MirVmUnsupported)` names a shape the walker does
+/// not emit; the caller turns it into a compile error.
 pub(super) fn compile_mir_expr(
     fc: &mut FnCompiler<'_>,
     expr: &Spanned<MirExpr>,
@@ -195,8 +164,7 @@ pub(super) fn compile_mir_expr(
                             ),
                         })
                     })?;
-                    // Always plain CALL_KNOWN, matching the HIR walker
-                    // exactly. The owned mask is inert for a known
+                    // Always plain CALL_KNOWN. The owned mask is inert for a known
                     // user-fn call at the call boundary (the callee
                     // derives its parameter ownership from its own alias
                     // analysis, and the runtime reads the trailing owned
@@ -1047,8 +1015,7 @@ pub(super) fn compile_mir_expr(
 
 /// Emit a MIR fn's body into the supplied `FnCompiler` and finish
 /// with `RETURN`. Caller has already constructed `fc` with the
-/// right arity / local_count / local_slots — same path the HIR
-/// compiler takes through `compile_fn_with_scope`.
+/// right arity / local_count / local_slots.
 pub(super) fn compile_mir_fn_body(
     fc: &mut FnCompiler<'_>,
     mir_fn: &MirFn,
@@ -1058,36 +1025,11 @@ pub(super) fn compile_mir_fn_body(
     Ok(())
 }
 
-/// Convenience: walk a `MirProgram` and report which fns the
-/// Phase 4 subset can handle vs which still need HIR fallback.
-/// Useful for parity tests + Phase 4 coverage tracking.
-pub fn classify_mir_program_coverage(mir: &MirProgram) -> MirVmCoverage {
-    let mut covered = 0u32;
-    let mut needs_hir_fallback = 0u32;
-    for mir_fn in mir.fns.values() {
-        if can_compile(&mir_fn.body) {
-            covered += 1;
-        } else {
-            needs_hir_fallback += 1;
-        }
-    }
-    MirVmCoverage {
-        covered,
-        needs_hir_fallback,
-    }
-}
-
-#[derive(Debug, Clone, Copy, Default)]
-pub struct MirVmCoverage {
-    pub covered: u32,
-    pub needs_hir_fallback: u32,
-}
-
-/// Whether the MIR walker can emit bytecode for `expr` without hitting
-/// an `MirVmUnsupported`. Used by `compile_top_level` to pre-check a
-/// batch of lowered top-level value expressions before committing to
-/// the MIR walk, so a mid-emit rejection can't leave half-written
-/// bytecode — it falls back to a clean alternative path instead.
+/// Whether the walker can emit bytecode for `expr` without hitting an
+/// `MirVmUnsupported`. Used by `compile_top_level` to pre-check a batch
+/// of lowered top-level value expressions before committing to the walk,
+/// so a mid-emit rejection reports the offending statement instead of
+/// leaving half-written bytecode behind.
 pub(super) fn mir_expr_compilable(expr: &Spanned<MirExpr>) -> bool {
     can_compile(expr)
 }

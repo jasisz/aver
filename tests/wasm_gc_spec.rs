@@ -167,7 +167,7 @@ fn run_int_on_vm(source: &str) -> i64 {
     }
     let mut arena = Arena::new();
     aver::vm::register_service_types(&mut arena);
-    let (code, globals) = aver::vm::compile_program_with_mir_fallback(
+    let (code, globals) = aver::vm::compile_program(
         &result.resolved_items,
         &result.symbol_table,
         &mut arena,

@@ -50,37 +50,6 @@ fn construct_plan_nlocals(_plan: &ConstructPlan) -> usize {
     1
 }
 
-fn construct_plan_path(name: &str) -> String {
-    format!("fragments/{}.construct-v1.plan", hex(name.as_bytes()))
-}
-
-fn construct_sidecar(name: &str, plan: &ConstructPlan) -> FragmentPlanSidecar {
-    let text = construct_plan_text(plan);
-    FragmentPlanSidecar {
-        path: construct_plan_path(name),
-        sha256: sha256_hex(text.as_bytes()),
-        text,
-    }
-}
-
-fn construct_plan_text(plan: &ConstructPlan) -> String {
-    let mut out = String::new();
-    out.push_str("aver.construct-fragment.plan.v1\n");
-    out.push_str("profile construct-v1\n");
-    out.push_str(&format!("arity {}\n", plan.arity));
-    out.push_str("fields\n");
-    for field in &plan.fields {
-        match field {
-            ConstructFieldPlan::Local(index) => {
-                out.push_str(&format!("  local index={index}\n"));
-            }
-            ConstructFieldPlan::Null => out.push_str("  null\n"),
-        }
-    }
-    out.push_str("end\n");
-    out
-}
-
 fn construct_plan_lean_value(plan: &ConstructPlan) -> String {
     format!(
         "({{ profile := \"construct-v1\", arity := {}, fields := [{}] }} : ConstructRawPlan)",
@@ -115,45 +84,6 @@ fn construct_val_type_lean_value(ty: TyKind) -> Option<String> {
         }
         | TyKind::Other => None,
     }
-}
-
-pub fn parse_construct_plan(text: &str) -> Result<ConstructPlan, String> {
-    let mut lines = text.lines();
-    expect_construct_plan_line(&mut lines, "aver.construct-fragment.plan.v1")?;
-    expect_construct_plan_line(&mut lines, "profile construct-v1")?;
-    let arity = parse_construct_nat_line(&mut lines, "arity")? as usize;
-    expect_construct_plan_line(&mut lines, "fields")?;
-    let mut fields = Vec::new();
-    let mut seen_end = false;
-    for raw in lines.by_ref() {
-        let line = raw.trim();
-        if line == "end" {
-            seen_end = true;
-            break;
-        }
-        if line == "null" {
-            fields.push(ConstructFieldPlan::Null);
-            continue;
-        }
-        if let Some(index) = line.strip_prefix("local index=") {
-            let index = index
-                .parse::<u32>()
-                .map_err(|_| format!("construct plan has invalid local index `{index}`"))?;
-            fields.push(ConstructFieldPlan::Local(index));
-            continue;
-        }
-        return Err(format!("unexpected construct plan line `{line}`"));
-    }
-    if !seen_end {
-        return Err("construct plan is missing `end`".to_string());
-    }
-    if lines.any(|line| !line.trim().is_empty()) {
-        return Err("construct plan has trailing content after `end`".to_string());
-    }
-    Ok(ConstructPlan {
-        arity,
-        fields,
-    })
 }
 
 fn lower_construct_plan(plan: &ConstructPlan, struct_idx: u32) -> Result<Vec<Op>, String> {
@@ -249,52 +179,16 @@ fn check_construct_plan(plan: &ConstructPlan) -> Result<(), String> {
     Ok(())
 }
 
-fn expect_construct_plan_line<'a>(
-    lines: &mut std::str::Lines<'a>,
-    expected: &str,
-) -> Result<(), String> {
-    let actual = lines
-        .next()
-        .ok_or_else(|| format!("expected construct plan line `{expected}`"))?
-        .trim();
-    if actual == expected {
-        Ok(())
-    } else {
-        Err(format!(
-            "expected construct plan line `{expected}`, got `{actual}`"
-        ))
-    }
-}
-
-fn parse_construct_nat_line<'a>(
-    lines: &mut std::str::Lines<'a>,
-    label: &str,
-) -> Result<u32, String> {
-    let raw = lines
-        .next()
-        .ok_or_else(|| format!("expected construct plan `{label}` line"))?
-        .trim();
-    let value = raw
-        .strip_prefix(label)
-        .and_then(|rest| rest.strip_prefix(' '))
-        .ok_or_else(|| format!("expected construct plan `{label}` line, got `{raw}`"))?;
-    value
-        .parse::<u32>()
-        .map_err(|_| format!("construct plan `{label}` is not a u32: `{value}`"))
-}
-
 #[cfg(test)]
 mod construct_plan_tests {
     use super::*;
 
     #[test]
-    fn construct_plan_roundtrips_and_lowers() {
+    fn construct_plan_lowers_to_its_ops_and_code_entry() {
         let plan = ConstructPlan {
             arity: 1,
             fields: vec![ConstructFieldPlan::Local(0)],
         };
-        let text = construct_plan_text(&plan);
-        assert_eq!(parse_construct_plan(&text).unwrap(), plan);
         assert_eq!(
             lower_construct_plan(&plan, 7).unwrap(),
             vec![Op::LocalGet(0), Op::StructNew(7, 1)]
@@ -319,6 +213,5 @@ mod construct_plan_tests {
                 Op::StructNew(25, 2),
             ]
         );
-        assert!(!construct_plan_text(&plan).contains("struct "));
     }
 }

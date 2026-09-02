@@ -171,9 +171,88 @@ pub(crate) fn emit_mir_record_field_value(
     Ok(emitted.map(|_| ()))
 }
 
+/// Declared index of each written field, in WRITTEN order, plus whether
+/// that sequence is already the declared one — the question every
+/// reordering decision below asks. `None` for a field name the record
+/// does not declare; a repeated name counts only on its first write,
+/// because both walks below keep the first `field = value` and drop the
+/// rest.
+fn written_field_order(
+    decl_fields: &[(String, String)],
+    written: &[MirRecordField],
+) -> (Vec<Option<usize>>, bool) {
+    let indices: Vec<Option<usize>> = written
+        .iter()
+        .map(|f| decl_fields.iter().position(|(name, _)| *name == f.name))
+        .collect();
+    let mut in_declared_order = true;
+    let mut seen = vec![false; decl_fields.len()];
+    let mut previous: Option<usize> = None;
+    for index in indices.iter().flatten() {
+        if seen[*index] {
+            continue;
+        }
+        seen[*index] = true;
+        if previous.is_some_and(|p| p >= *index) {
+            in_declared_order = false;
+            break;
+        }
+        previous = Some(*index);
+    }
+    (indices, in_declared_order)
+}
+
+/// Emit one written field value, followed by the carrier narrowing its
+/// declared slot needs. Shared by the declared-order and the
+/// written-order walks so both agree on what a field value IS.
+fn emit_declared_field_value(
+    func: &mut Function,
+    type_name: &str,
+    (decl_name, decl_ty): (&str, &str),
+    value: &Spanned<MirExpr>,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<Option<()>, WasmGcError> {
+    if emit_mir_record_field_value(func, value, decl_ty, slots, ctx)?.is_none() {
+        return Ok(None);
+    }
+    // ETAP-2 multi-field carrier-`i64`: an eligible bounded Int field is
+    // stored as a native `i64`, but the rewrite boxes every `RecordCreate`
+    // field value (`rewrite_boxed`), so the value just emitted is an
+    // `$AverInt`. Narrow it to the i64 the field slot holds via the
+    // construct bridge (`__aint_to_i64_checked`, which can never trap — the
+    // smart-ctor bound proves the fit). The bridge is a no-op when bignum is
+    // off (`Int` is already a scalar i64). Mirrors the single-field carrier
+    // construct bridge, per eligible field.
+    if ctx.registry.is_eligible_carrier_field(type_name, decl_name) {
+        emit_carrier_construct_bridge(func, ctx)?;
+    }
+    Ok(Some(()))
+}
+
+/// Park a run of already-evaluated field values — `written` deep on the
+/// stack, topmost last — into their per-field scratch locals. Drained in
+/// REVERSE so a nested record of the SAME type, which shares these
+/// locals, has finished reading them before the enclosing one writes:
+/// every user expression has already run by the time the first
+/// `local.set` executes.
+fn park_written_values(func: &mut Function, written: &[u32]) {
+    for slot in written.iter().rev() {
+        func.instruction(&Instruction::LocalSet(*slot));
+    }
+}
+
 /// Mirror of `emit_record_create` (emit.rs): a newtype record emits its
 /// single field's value directly; otherwise push every declared field
 /// (in declaration order) and `struct.new $type_idx`.
+///
+/// A literal that WRITES its fields out of declared order evaluates them
+/// in written order — the order the source reads, the order the VM and
+/// the Rust backend run, and the order `src/ir/last_use.rs` assumed when
+/// it turned the final read of a local into a consuming move — parks the
+/// values in scratch locals, and only then pushes them in the declared
+/// order `struct.new` wants. A literal written in declared order keeps
+/// the straight-line walk, so its bytes are unchanged.
 pub(crate) fn emit_mir_record_create(
     func: &mut Function,
     type_name: &str,
@@ -238,28 +317,66 @@ pub(crate) fn emit_mir_record_create(
             "record `{type_name}` missing field list"
         )))?
         .clone();
-    for (decl_name, decl_ty) in &decl_fields {
-        let provided =
-            fields
-                .iter()
-                .find(|f| &f.name == decl_name)
-                .ok_or(WasmGcError::Validation(format!(
-                    "record `{type_name}` missing field `{decl_name}`"
-                )))?;
-        if emit_mir_record_field_value(func, &provided.value, decl_ty, slots, ctx)?.is_none() {
+    let (written_indices, in_declared_order) = written_field_order(&decl_fields, fields);
+    if in_declared_order {
+        for (decl_name, decl_ty) in &decl_fields {
+            let provided =
+                fields
+                    .iter()
+                    .find(|f| &f.name == decl_name)
+                    .ok_or(WasmGcError::Validation(format!(
+                        "record `{type_name}` missing field `{decl_name}`"
+                    )))?;
+            if emit_declared_field_value(
+                func,
+                type_name,
+                (decl_name, decl_ty),
+                &provided.value,
+                slots,
+                ctx,
+            )?
+            .is_none()
+            {
+                return Ok(None);
+            }
+        }
+        func.instruction(&Instruction::StructNew(type_idx));
+        return Ok(Some(()));
+    }
+    // Written out of declared order.
+    let scratch = slots.record_field_scratch(type_name, &decl_fields, ctx.registry)?;
+    let mut filled = vec![false; decl_fields.len()];
+    let mut written_slots: Vec<u32> = Vec::with_capacity(fields.len());
+    for (field, index) in fields.iter().zip(&written_indices) {
+        let Some(index) = *index else { continue };
+        if filled[index] {
+            continue;
+        }
+        filled[index] = true;
+        let (decl_name, decl_ty) = &decl_fields[index];
+        if emit_declared_field_value(
+            func,
+            type_name,
+            (decl_name, decl_ty),
+            &field.value,
+            slots,
+            ctx,
+        )?
+        .is_none()
+        {
             return Ok(None);
         }
-        // ETAP-2 multi-field carrier-`i64`: an eligible bounded Int field is
-        // stored as a native `i64`, but the rewrite boxes every `RecordCreate`
-        // field value (`rewrite_boxed`), so the value just emitted is an
-        // `$AverInt`. Narrow it to the i64 the field slot holds via the
-        // construct bridge (`__aint_to_i64_checked`, which can never trap — the
-        // smart-ctor bound proves the fit). The bridge is a no-op when bignum is
-        // off (`Int` is already a scalar i64). Mirrors the single-field carrier
-        // construct bridge, per eligible field.
-        if ctx.registry.is_eligible_carrier_field(type_name, decl_name) {
-            emit_carrier_construct_bridge(func, ctx)?;
-        }
+        written_slots.push(scratch[index]);
+    }
+    if let Some(missing) = filled.iter().position(|filled| !filled) {
+        return Err(WasmGcError::Validation(format!(
+            "record `{type_name}` missing field `{}`",
+            decl_fields[missing].0
+        )));
+    }
+    park_written_values(func, &written_slots);
+    for slot in &scratch {
+        func.instruction(&Instruction::LocalGet(*slot));
     }
     func.instruction(&Instruction::StructNew(type_idx));
     Ok(Some(()))
@@ -338,39 +455,114 @@ pub(crate) fn emit_mir_record_update(
             "record `{type_name}` missing field list"
         )))?
         .clone();
-    for (decl_name, decl_ty) in &decl_fields {
-        if let Some(override_field) = updates.iter().find(|f| &f.name == decl_name) {
-            if emit_mir_record_field_value(func, &override_field.value, decl_ty, slots, ctx)?
+    let (written_indices, in_declared_order) = written_field_order(&decl_fields, updates);
+    if in_declared_order {
+        for (decl_name, decl_ty) in &decl_fields {
+            if let Some(override_field) = updates.iter().find(|f| &f.name == decl_name) {
+                if emit_declared_field_value(
+                    func,
+                    type_name,
+                    (decl_name, decl_ty),
+                    &override_field.value,
+                    slots,
+                    ctx,
+                )?
                 .is_none()
-            {
-                return Ok(None);
+                {
+                    return Ok(None);
+                }
+            } else {
+                let field_idx = ctx
+                    .registry
+                    .record_field_index(type_name, decl_name)
+                    .ok_or(WasmGcError::Validation(format!(
+                        "record `{type_name}` has no field `{decl_name}` to copy from base"
+                    )))?;
+                if emit_mir_expr(func, base, slots, ctx)?.is_none() {
+                    return Ok(None);
+                }
+                // A COPIED-from-base eligible field is already a native `i64` in
+                // the base struct, so the `struct.get` yields the i64 the new
+                // field slot expects — no bridge needed (the boxed `struct.get`
+                // of an `$AverInt` field stays `$AverInt`, also matching its
+                // slot).
+                func.instruction(&Instruction::StructGet {
+                    struct_type_index: type_idx,
+                    field_index: field_idx,
+                });
             }
-            // ETAP-2 multi-field carrier-`i64`: an OVERRIDE of an eligible
-            // bounded field is a boxed `$AverInt` (the rewrite boxes every
-            // update value) but the field slot is a native `i64` — narrow it via
-            // the construct bridge, exactly like `emit_mir_record_create`.
-            if ctx.registry.is_eligible_carrier_field(type_name, decl_name) {
-                emit_carrier_construct_bridge(func, ctx)?;
-            }
-        } else {
-            let field_idx = ctx
-                .registry
-                .record_field_index(type_name, decl_name)
-                .ok_or(WasmGcError::Validation(format!(
-                    "record `{type_name}` has no field `{decl_name}` to copy from base"
-                )))?;
-            if emit_mir_expr(func, base, slots, ctx)?.is_none() {
-                return Ok(None);
-            }
-            // A COPIED-from-base eligible field is already a native `i64` in the
-            // base struct, so the `struct.get` yields the i64 the new field slot
-            // expects — no bridge needed (the boxed `struct.get` of an
-            // `$AverInt` field stays `$AverInt`, also matching its slot).
-            func.instruction(&Instruction::StructGet {
-                struct_type_index: type_idx,
-                field_index: field_idx,
-            });
         }
+        func.instruction(&Instruction::StructNew(type_idx));
+        return Ok(Some(()));
+    }
+    // Overrides written out of declared order. Evaluate the base first and
+    // then the overrides in written order — the order the VM runs them and
+    // the order `src/ir/last_use.rs` assumed — park every value, and only
+    // then assemble the struct in declared order. A field named twice keeps
+    // the first `field = value` and drops the rest unevaluated, and a name
+    // the record does not declare is skipped, exactly as the declared-order
+    // walk did.
+    let mut overridden = vec![false; decl_fields.len()];
+    let mut written_slots: Vec<u32> = Vec::with_capacity(updates.len());
+    let scratch = slots.record_field_scratch(type_name, &decl_fields, ctx.registry)?;
+    let copies_from_base = {
+        let mut seen = vec![false; decl_fields.len()];
+        for index in written_indices.iter().flatten() {
+            seen[*index] = true;
+        }
+        seen.iter().any(|overridden| !overridden)
+    };
+    let base_slot = if copies_from_base {
+        if emit_mir_expr(func, base, slots, ctx)?.is_none() {
+            return Ok(None);
+        }
+        Some(slots.record_base_scratch(type_name, type_idx)?)
+    } else {
+        None
+    };
+    for (field, index) in updates.iter().zip(&written_indices) {
+        let Some(index) = *index else { continue };
+        if overridden[index] {
+            continue;
+        }
+        overridden[index] = true;
+        let (decl_name, decl_ty) = &decl_fields[index];
+        if emit_declared_field_value(
+            func,
+            type_name,
+            (decl_name, decl_ty),
+            &field.value,
+            slots,
+            ctx,
+        )?
+        .is_none()
+        {
+            return Ok(None);
+        }
+        written_slots.push(scratch[index]);
+    }
+    park_written_values(func, &written_slots);
+    if let Some(base_slot) = base_slot {
+        func.instruction(&Instruction::LocalSet(base_slot));
+    }
+    for (index, (decl_name, _)) in decl_fields.iter().enumerate() {
+        if overridden[index] {
+            func.instruction(&Instruction::LocalGet(scratch[index]));
+            continue;
+        }
+        let field_idx = ctx
+            .registry
+            .record_field_index(type_name, decl_name)
+            .ok_or(WasmGcError::Validation(format!(
+                "record `{type_name}` has no field `{decl_name}` to copy from base"
+            )))?;
+        func.instruction(&Instruction::LocalGet(
+            base_slot.expect("a copied field implies the base was parked"),
+        ));
+        func.instruction(&Instruction::StructGet {
+            struct_type_index: type_idx,
+            field_index: field_idx,
+        });
     }
     func.instruction(&Instruction::StructNew(type_idx));
     Ok(Some(()))

@@ -1133,6 +1133,101 @@ fn run_vm_inline(name: &str, source: &str) -> Result<String, String> {
     out
 }
 
+/// Binding an integer literal to a name is about as ordinary as Aver gets,
+/// and until this was fixed it broke the Rust backend outright: the emitted
+/// crate did not compile.
+///
+/// The bare-i64 rewrite treats an Int literal as already raw and inserts no
+/// representation boundary around it, so codegen is what has to render the
+/// value raw into a bare binding. The nested `Let` arm did; the FLAT
+/// top-level let chain — the shape a whole function body of bindings takes,
+/// and the one the compiler prefers — did not, so it emitted
+/// `let n = AverInt::from_i64(1);` into an `i64` binding and rustc rejected
+/// the crate with E0308.
+///
+/// Each program here is a whole-body let chain over a bare Int binding: the
+/// bare literal, one const-folded from arithmetic, the same binding inside a
+/// helper whose signature is itself bare, and the committed fuzz seed's
+/// `match Option.Some(1)` (which folds to the same binding). The oracle is
+/// the VM.
+#[test]
+fn rust_bare_int_literal_binding_matches_vm() {
+    let cases: &[(&str, &str)] = &[
+        (
+            "bare_int_binding",
+            r#"module BareIntBinding
+    intent = "Bind an integer literal to a name and answer it"
+    effects [Console.print]
+
+fn answer() -> Int
+    ? "The whole body is one binding of a literal."
+    n = 1
+    n
+
+fn main() -> Unit
+    ? "Prints the answer."
+    ! [Console.print]
+    Console.print(String.fromInt(answer()))
+"#,
+        ),
+        (
+            "bare_int_folded",
+            r#"module BareIntFolded
+    intent = "Bind a constant-folded integer to a name and answer it"
+    effects [Console.print]
+
+fn answer() -> Int
+    ? "The initializer folds to a literal before codegen sees it."
+    n = 1 + 2
+    n
+
+fn main() -> Unit
+    ? "Prints the answer."
+    ! [Console.print]
+    Console.print(String.fromInt(answer()))
+"#,
+        ),
+        (
+            "bare_int_from_match",
+            r#"module BareIntFromMatch
+    intent = "Bind an integer that reaches the name through a match"
+    effects [Console.print]
+
+fn answer() -> Int
+    ? "The match folds to the same single bare binding."
+    match Option.Some(1)
+        Option.Some(n) -> n
+        Option.None -> 0
+
+fn main() -> Unit
+    ? "Prints the answer."
+    ! [Console.print]
+    Console.print(String.fromInt(answer()))
+"#,
+        ),
+    ];
+    for (name, src) in cases {
+        let vm = run_vm_inline(name, src).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let rust = build_run_rust_inline(name, src).unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert_eq!(vm, rust, "{name}: Rust backend diverged from the VM");
+    }
+
+    // The reported shape verbatim: no descriptions, no output, `main`
+    // itself returning the bound Int. Nothing is printed, so the whole
+    // assertion is that the emitted crate builds and runs at all.
+    let reported = r#"module P
+
+fn main() -> Int
+    ! []
+    n = 1
+    n
+"#;
+    let vm = run_vm_inline("bare_int_reported", reported).unwrap_or_else(|e| panic!("{e}"));
+    let rust =
+        build_run_rust_inline("bare_int_reported", reported).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(vm, rust, "Rust backend diverged from the VM");
+}
+
 /// Literal smart-constructor discharge on the Rust backend. A call whose
 /// argument is an all-literal list inside the interval the refinement itself
 /// proves types as the refined type and lowers to a direct carrier

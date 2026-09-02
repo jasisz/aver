@@ -1,25 +1,25 @@
-//! Phase 4 of #252 — VM vertical slice on MIR (skeleton PoC).
+//! The VM's MIR walker has no fallback: a shape it cannot emit is a hard
+//! compile error, not a quiet detour to another walker. So the question
+//! these fixtures ask is simply whether each shape compiles.
 //!
-//! This file tests the *coverage classifier* — what fraction of
-//! a MIR program the Phase 4 vertical slice can compile, given
-//! its current `MirExpr` subset (Literal / Local / BinOp / Neg /
-//! Let / Call(Fn) / Return). The actual bytecode emission lives
-//! in `src/vm/compiler/mir.rs`; the per-`FnCompiler` walker is
-//! covered by internal smoke tests that need direct access to
-//! the (private) `ProgramCompiler`.
+//! They were written when the walker covered a subset and a coverage
+//! classifier counted which fns still needed the HIR walker. That walker
+//! is gone, the classifier with it, and each fixture below is one shape
+//! whose arrival in the walker the classifier used to record: plain
+//! arithmetic, a user-fn call, a nested structural subpattern inside a
+//! tuple, and a builtin call.
 //!
-//! Phase 4b will add an end-to-end parity test that runs both
-//! the HIR and MIR bytecode paths through `Vm` and asserts
-//! identical `NanValue` results. That depends on exposing a
-//! public `compile_program_with_mir_fallback` entry, which we
-//! intentionally defer.
+//! Opcode selection is pinned in `tests/mir_vm_codegen.rs`; runtime
+//! results in `tests/hir_mir_differential.rs`.
 
-use aver::ir::mir::lower_program;
 use aver::ir::pipeline::{self, PipelineConfig, TypecheckMode};
+use aver::nan_value::Arena;
 use aver::source::parse_source;
-use aver::vm::mir_vm::classify_mir_program_coverage;
+use aver::vm;
 
-fn lower(source: &str) -> aver::ir::mir::MirProgram {
+/// Compile `source` the way production does. Panics with the compiler's
+/// own message when the walker refuses a shape.
+fn compile(source: &str) -> aver::vm::CodeStore {
     let mut items = parse_source(source).unwrap_or_else(|e| panic!("parse: {e}"));
     let result = pipeline::run(
         &mut items,
@@ -30,72 +30,52 @@ fn lower(source: &str) -> aver::ir::mir::MirProgram {
     );
     let tc = result.typecheck.as_ref().expect("typecheck requested");
     assert!(tc.errors.is_empty(), "typecheck failed: {:?}", tc.errors);
-    lower_program(&result.resolved_items)
+    let mut arena = Arena::new();
+    vm::register_service_types(&mut arena);
+    let (code, _) = vm::compile_program(
+        &result.resolved_items,
+        &result.symbol_table,
+        &mut arena,
+        None,
+    )
+    .unwrap_or_else(|e| panic!("compile: {}", e.msg));
+    code
+}
+
+/// Every fn in `source` has a compiled chunk.
+fn assert_every_fn_compiles(source: &str, names: &[&str]) {
+    let code = compile(source);
+    for name in names {
+        assert!(code.find(name).is_some(), "`{name}` has no compiled chunk");
+    }
 }
 
 #[test]
-fn double_fn_is_phase_4_subset_covered() {
-    // `fn double(x: Int) -> Int = x + x` is the canonical
-    // Phase 4 vertical-slice fixture: one BinOp, two Locals.
-    // Both lower into `MirExpr` variants the VM walker handles.
-    let mir = lower("fn double(x: Int) -> Int\n    x + x\n");
-    let cov = classify_mir_program_coverage(&mir);
-    assert_eq!(
-        cov.covered, 1,
-        "double() should land in the Phase 4 subset: covered={}, needs_hir_fallback={}",
-        cov.covered, cov.needs_hir_fallback
+fn arithmetic_over_locals_compiles() {
+    // `fn double(x: Int) -> Int = x + x`: one BinOp, two Locals.
+    assert_every_fn_compiles("fn double(x: Int) -> Int\n    x + x\n", &["double"]);
+}
+
+#[test]
+fn a_user_fn_call_compiles() {
+    assert_every_fn_compiles(
+        "fn double(x: Int) -> Int\n    x + x\n\nfn quad(y: Int) -> Int\n    double(y + y)\n",
+        &["double", "quad"],
     );
-    assert_eq!(cov.needs_hir_fallback, 0);
 }
 
 #[test]
-fn user_fn_call_lands_in_subset() {
-    // Multi-fn corpus with one user-fn call. `MirExpr::Call`
-    // with `MirCallee::Fn(_)` is in the Phase 4 subset; the
-    // walker emits CALL_KNOWN.
-    let mir =
-        lower("fn double(x: Int) -> Int\n    x + x\n\nfn quad(y: Int) -> Int\n    double(y + y)\n");
-    let cov = classify_mir_program_coverage(&mir);
-    assert_eq!(
-        cov.covered, 2,
-        "both double + quad should be covered: {:?}",
-        cov
-    );
-}
-
-#[test]
-fn nested_tuple_pattern_now_lands_in_subset_after_phase_4i() {
-    // Phase 4i landed cleanup-jump emit for nested structural
-    // subpatterns inside a Tuple. The same fixture that
-    // previously dropped to HIR now lands in `covered`.
-    let mir = lower(
+fn a_nested_structural_subpattern_inside_a_tuple_compiles() {
+    assert_every_fn_compiles(
         "fn double(x: Int) -> Int\n    x + x\n\nfn classify(p: Tuple<List<Int>, Int>) -> Int\n    match p\n        ([], _) -> 0\n        _ -> 1\n",
-    );
-    let cov = classify_mir_program_coverage(&mir);
-    assert_eq!(cov.covered, 2, "both fns now in subset: {:?}", cov);
-    assert_eq!(
-        cov.needs_hir_fallback, 0,
-        "no fns need HIR fallback after 4i: {:?}",
-        cov
+        &["double", "classify"],
     );
 }
 
 #[test]
-fn builtin_call_now_lands_in_subset_after_phase_4e() {
-    // Phase 4e landed `MirCallee::Builtin(_)` → CALL_BUILTIN
-    // dispatch via the VmBuiltin lookup. A fn that uses
-    // `Console.print` (or any builtin in the VmBuiltin::ALL
-    // table) now lands in `covered`. The test was previously
-    // pinned to the opposite — Phase 4d's "falls back to HIR"
-    // — so the assertion is flipped here to track the new
-    // reality.
-    let mir = lower(
+fn a_builtin_call_compiles() {
+    assert_every_fn_compiles(
         "fn print_hello() -> Int\n    ! [Console.print]\n    Console.print(\"hello\")\n    0\n",
-    );
-    let cov = classify_mir_program_coverage(&mir);
-    assert_eq!(
-        cov.covered, 1,
-        "Console.print fn must land in the Phase 4 subset after 4e: {:?}",
-        cov
+        &["print_hello"],
     );
 }

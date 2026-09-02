@@ -9,7 +9,7 @@
 //! where `distance` only reads `.x` / `.y` fields of its param. Without
 //! this pass, every iteration in a hot loop allocates a `Point` struct,
 //! threads it through one fn call, then drops it. Engine GC (wasm-gc)
-//! pays per-allocation cost; arena allocators (VM, legacy WASM) pay
+//! pays per-allocation cost; the VM's arena allocator pays
 //! bump-pointer + tag-bit cost. Both are eliminated when the
 //! constructor never escapes the local frame.
 //!
@@ -50,8 +50,8 @@
 //!
 //! ## Status
 //!
-//! Shared IR pass. Each backend (VM, WASM legacy, WASM-gc, Rust)
-//! benefits because `Expr::RecordCreate` simply disappears from the
+//! Shared IR pass. Every backend (VM, wasm-gc, Rust) benefits,
+//! because `Expr::RecordCreate` simply disappears from the
 //! IR before codegen sees it.
 
 use std::collections::HashMap;

@@ -29,13 +29,12 @@ fn render_certificate(
     }
     for c in &analysis.certs {
         match c.inner() {
-            Cert::Recursive { .. } | Cert::AccumulatorRecursive { .. }
-                if recursion_uses_audited_generic(c) =>
-            {
-                s.push_str(&render_recursion_semantic_bridge(c, model_info))
-            }
+            // `recursion_uses_audited_generic` holds for both variants, so the
+            // audited generic bridge is the only renderer either can take; the
+            // bridge re-asserts that in a debug build. The fuel-ladder renderer
+            // that used to stand behind the guard was unreachable and is gone.
             Cert::Recursive { .. } | Cert::AccumulatorRecursive { .. } => {
-                s.push_str(&render_fueled_recursion_cert(c, model_info))
+                s.push_str(&render_recursion_semantic_bridge(c, model_info))
             }
             // Constructor packs (verbatim and named-ADT) are discharged in
             // `Final.cert`: verbatim packs by the canonical option-(c) leaf,

@@ -1,7 +1,7 @@
 //! Full-pipeline MIR-path golden execution harness.
 //!
 //! MIR is the default (and now only) VM compile path. This compiles
-//! each program through `compile_program_with_mir_fallback` using the
+//! each program through `compile_program` using the
 //! FULL pipeline — crucially including `last_use` — runs the entry fn,
 //! and asserts the VM-observable value against a captured golden. The
 //! goldens were captured while the now-retired HIR walker and the MIR

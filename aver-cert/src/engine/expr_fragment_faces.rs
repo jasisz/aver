@@ -766,7 +766,8 @@ fn record_compute_node_ok(
     }
 }
 
-/// Twin of the wall's `StandardFace.fragNodeComputes`: the nodes that make a
+/// Twin of the wall's `WasmSlice.fragNodeComputes` (which `StandardFace`
+/// exports rather than redefining): the nodes that make a
 /// body COMPUTE rather than merely project. A construction, ANY host call
 /// (`cmp`/`eq` included — they leave the carrier and decide an order), and the
 /// inline sign template, which is the emitter's open-coded comparison of a

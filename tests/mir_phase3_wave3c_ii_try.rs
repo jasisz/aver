@@ -7,12 +7,11 @@
 //! `let x = step()?; body` composes via `Let` wrapping `Try` —
 //! wave 3a's stmt-chain right-fold gives that shape automatically.
 //!
-//! Coverage gate: `SkipReason::UnsupportedTry` must disappear
-//! from `LowerStats.skipped` on the test corpus.
+//! Coverage gate: a `?` in the body must not drop the fn.
 //!
 //! End-to-end: parse → pipeline → lower → dump.
 
-use aver::ir::mir::{SkipReason, lower_program};
+use aver::ir::mir::lower_program;
 use aver::ir::pipeline::{self, PipelineConfig, TypecheckMode};
 use aver::source::parse_source;
 
@@ -48,10 +47,9 @@ fn try_in_tail_position_lowers_to_try_node() {
         dump.contains(")?"),
         "Try should render as inner expr + `?`:\n{dump}"
     );
-    assert_eq!(
-        stats.skipped.get(&SkipReason::UnsupportedTry).copied(),
-        None,
-        "UnsupportedTry must be absent from skipped after wave 3c-ii: {:?}",
+    assert!(
+        stats.skipped.is_empty(),
+        "a `?` body must not drop the fn: {:?}",
         stats.skipped
     );
 }
@@ -91,14 +89,9 @@ fn try_coverage_gate_unsupportedtry_zero_on_corpus() {
     let (_dump, stats) = lower(
         "fn fetch() -> Result<Int, String>\n    Result.Ok(7)\n\nfn relay() -> Result<Int, String>\n    Result.Ok(fetch()?)\n\nfn chain() -> Result<Int, String>\n    x = fetch()?\n    y = fetch()?\n    Result.Ok(x + y)\n",
     );
-    let try_count = stats
-        .skipped
-        .get(&SkipReason::UnsupportedTry)
-        .copied()
-        .unwrap_or(0);
-    assert_eq!(
-        try_count, 0,
-        "UnsupportedTry must be 0 across the corpus after wave 3c-ii: {:?}",
+    assert!(
+        stats.skipped.is_empty(),
+        "no `?` shape may drop across the corpus: {:?}",
         stats.skipped
     );
     assert!(

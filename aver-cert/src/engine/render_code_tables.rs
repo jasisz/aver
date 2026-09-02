@@ -8,17 +8,6 @@ fn lean_int_lit(k: i64) -> String {
     }
 }
 
-/// `i128` variant for anti-vacuity guard values, which can exceed `i64` for a
-/// multiplication recursion (`Int` in Lean is unbounded, so the wide value is a
-/// faithful guard).
-fn lean_int_lit128(k: i128) -> String {
-    if k < 0 {
-        format!("({k})")
-    } else {
-        k.to_string()
-    }
-}
-
 /// The `CodeTbl` VALUE (the `fun fn => ...` lambda, no `def` wrapper) a
 /// certified body decodes to. This is the term the checker splices, verbatim,
 /// into `CheckerWitness.lean` and pins with `rfl` against

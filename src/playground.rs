@@ -10,10 +10,7 @@ use crate::source::{LoadedModule, load_module_tree_from_map, parse_source};
 
 /// Compile Aver source text to WASM bytes via the wasm-gc backend.
 /// Playground exclusively targets wasm-gc since 0.16 (engine GC +
-/// tail calls + factory exports for structured effect returns); the
-/// legacy NaN-boxed emitter and its standalone `aver_runtime.wasm`
-/// sidecar aren't reachable from any browser entry point and aren't
-/// included in the `playground` feature build.
+/// tail calls + factory exports for structured effect returns).
 pub fn compile_to_wasm(source: &str) -> Result<Vec<u8>, String> {
     let mut items = parse_source(source)?;
 

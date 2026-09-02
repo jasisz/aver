@@ -18,8 +18,7 @@ fn compile_vm(src: &str) -> VM {
     let symbols = crate::ir::SymbolTable::build(&items, &[]);
     let resolved = crate::ir::hir::resolve_program(&symbols, &items);
     let (code, globals) =
-        vm::compile_program_with_mir_fallback(&resolved, &symbols, &mut arena, None)
-            .expect("compile failed");
+        vm::compile_program(&resolved, &symbols, &mut arena, None).expect("compile failed");
     VM::new(code, globals, arena)
 }
 
@@ -615,8 +614,7 @@ fn compile_vm_with_ownership(src: &str) -> VM {
     let symbols = crate::ir::SymbolTable::build(&items, &[]);
     let resolved = crate::ir::hir::resolve_program(&symbols, &items);
     let (code, globals) =
-        vm::compile_program_with_mir_fallback(&resolved, &symbols, &mut arena, None)
-            .expect("compile failed");
+        vm::compile_program(&resolved, &symbols, &mut arena, None).expect("compile failed");
     VM::new(code, globals, arena)
 }
 
@@ -836,7 +834,7 @@ fn compile_vm_typechecked(src: &str) -> VM {
     assert!(tc.errors.is_empty(), "typecheck failed: {:?}", tc.errors);
 
     let mut arena = Arena::new();
-    let (code, globals) = vm::compile_program_with_mir_fallback(
+    let (code, globals) = vm::compile_program(
         &result.resolved_items,
         &result.symbol_table,
         &mut arena,

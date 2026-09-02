@@ -4,11 +4,10 @@
 //! element-wise; the outer MIR node preserves the structural
 //! shape so backends pick their build strategy independently.
 //!
-//! Coverage gate: `UnsupportedList` / `UnsupportedTuple` /
-//! `UnsupportedMap` / `UnsupportedInterpolatedStr` all drop out
-//! of `LowerStats.skipped` on the test corpus.
+//! Coverage gate: none of the four collection literals drops the
+//! fn that carries it.
 
-use aver::ir::mir::{SkipReason, lower_program};
+use aver::ir::mir::lower_program;
 use aver::ir::pipeline::{self, PipelineConfig, TypecheckMode};
 use aver::source::parse_source;
 
@@ -33,10 +32,9 @@ fn lower(source: &str) -> (String, aver::ir::mir::LowerStats) {
 fn list_literal_lowers() {
     let (dump, stats) = lower("fn nums() -> List<Int>\n    [1, 2, 3]\n");
     assert!(dump.contains("fn nums"), "fn must lower:\n{dump}");
-    assert_eq!(
-        stats.skipped.get(&SkipReason::UnsupportedList).copied(),
-        None,
-        "UnsupportedList must be absent after wave 3c-iv: {:?}",
+    assert!(
+        stats.skipped.is_empty(),
+        "a list literal must not drop the fn: {:?}",
         stats.skipped
     );
 }
@@ -45,10 +43,9 @@ fn list_literal_lowers() {
 fn tuple_literal_lowers() {
     let (dump, stats) = lower("fn pair() -> Tuple<Int, Int>\n    (1, 2)\n");
     assert!(dump.contains("fn pair"), "fn must lower:\n{dump}");
-    assert_eq!(
-        stats.skipped.get(&SkipReason::UnsupportedTuple).copied(),
-        None,
-        "UnsupportedTuple must be absent after wave 3c-iv: {:?}",
+    assert!(
+        stats.skipped.is_empty(),
+        "a tuple literal must not drop the fn: {:?}",
         stats.skipped
     );
 }
@@ -57,32 +54,23 @@ fn tuple_literal_lowers() {
 fn map_literal_lowers() {
     let (dump, stats) = lower("fn pairs() -> Map<String, Int>\n    {\"a\" => 1, \"b\" => 2}\n");
     assert!(dump.contains("fn pairs"), "fn must lower:\n{dump}");
-    assert_eq!(
-        stats.skipped.get(&SkipReason::UnsupportedMap).copied(),
-        None,
-        "UnsupportedMap must be absent after wave 3c-iv: {:?}",
+    assert!(
+        stats.skipped.is_empty(),
+        "a map literal must not drop the fn: {:?}",
         stats.skipped
     );
 }
 
 #[test]
-fn interpolated_string_skip_reason_never_fires_after_desugar() {
-    // Note: `interp_lower` upstream of MIR desugars `"...{x}..."`
-    // into buffer-build calls before MIR sees the tree, so
-    // `ResolvedExpr::InterpolatedStr` is effectively never reached
-    // by the lowerer. `UnsupportedInterpolatedStr` becomes a
-    // dead `SkipReason` in production — that's expected. The
-    // desugared call chain may still drop the fn through other
-    // reasons (e.g. buffer-build builtin call shape) that future
-    // waves can pick up.
+fn interpolated_string_does_not_drop_its_fn() {
+    // `interp_lower` upstream of MIR desugars `"...{x}..."` into
+    // buffer-build calls before MIR sees the tree, so the lowerer never
+    // meets `ResolvedExpr::InterpolatedStr` itself. What it does meet is
+    // the desugared call chain, and that must lower too.
     let (_dump, stats) = lower("fn greet(name: String) -> String\n    \"hello, {name}!\"\n");
-    assert_eq!(
-        stats
-            .skipped
-            .get(&SkipReason::UnsupportedInterpolatedStr)
-            .copied(),
-        None,
-        "UnsupportedInterpolatedStr must never fire — interp_lower desugars upstream: {:?}",
+    assert!(
+        stats.skipped.is_empty(),
+        "an interpolated string must not drop the fn: {:?}",
         stats.skipped
     );
 }
@@ -91,23 +79,15 @@ fn interpolated_string_skip_reason_never_fires_after_desugar() {
 fn collections_coverage_corpus() {
     // List / Tuple / Map all lower; interpolated string is
     // upstream-desugared so it goes through buffer-build calls
-    // and may drop via other reasons — assert only that the
-    // three direct collection skips are 0.
+    // so it is left out of this fixture.
     let (_dump, stats) = lower(
         "fn a() -> List<Int>\n    [1]\n\nfn b() -> Tuple<Int, Int>\n    (1, 2)\n\nfn c() -> Map<String, Int>\n    {\"k\" => 1}\n",
     );
-    for reason in [
-        SkipReason::UnsupportedList,
-        SkipReason::UnsupportedTuple,
-        SkipReason::UnsupportedMap,
-    ] {
-        assert!(
-            stats.skipped.get(&reason).copied().unwrap_or(0) == 0,
-            "{:?} must be 0 in corpus stats: {:?}",
-            reason,
-            stats.skipped
-        );
-    }
+    assert!(
+        stats.skipped.is_empty(),
+        "no collection literal may drop its fn: {:?}",
+        stats.skipped
+    );
     assert_eq!(
         stats.lowered, 3,
         "all 3 direct-collection fns must lower: {:?}",

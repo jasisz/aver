@@ -1,318 +1,8 @@
-pub struct FragmentPlanCheck {
-    pub sidecar: FragmentPlanSidecar,
-    pub obligation: RederivedObligation,
-    pub canonical_matches_actual: bool,
-    pub mismatch_reason: Option<String>,
-    /// Named runtime contracts this checked plan's obligation consumes (the
-    /// box/add wiring of the straight-line integer face; empty for host-free
-    /// fragments). The verifier merges these with the byte-derived legacy
-    /// contract list, since plan-covered exports are excluded from legacy
-    /// classification.
-    pub runtime_contracts: Vec<String>,
-}
-
-pub fn check_expr_fragment_plan_sidecar(
-    wasm_bytes: &[u8],
-    export_name: &str,
-    plan_text: &str,
-) -> Result<FragmentPlanCheck, String> {
-    let (user_fns, _box_idx, _user_idx_set, carrier, _host_roles, host_table, _struct_field_counts) =
-        disassemble(wasm_bytes)?;
-    let (_func_order, f) = user_fns
-        .iter()
-        .enumerate()
-        .find(|(_, f)| f.name == export_name)
-        .ok_or_else(|| format!("plan names unknown export `{export_name}`"))?;
-    // Zero-arity exports are legitimate compute-face targets (constant
-    // constructors); the per-face parameter checks and the exact nominal
-    // signature pin keep every other family fail-closed.
-    if !frag_calls_resolvable(&f.calls, &host_table) {
-        return Err(format!(
-            "plan for `{export_name}` does not target a non-recursive expr fragment"
-        ));
-    }
-    let carrier = carrier.ok_or_else(|| {
-        format!("plan for `{export_name}` needs the Int carrier type from the wasm module")
-    })?;
-    let params = f
-        .params
-        .iter()
-        .map(|ty| expr_fragment_ty_from_wasm_param(ty, carrier))
-        .collect::<Option<Vec<_>>>()
-        .ok_or_else(|| format!("plan for `{export_name}` has unsupported wasm parameter types"))?;
-    let result = expr_fragment_ty_from_wasm_result(
-        f.result
-            .ok_or_else(|| format!("plan for `{export_name}` targets a function with no result"))?,
-        carrier,
-    )
-    .ok_or_else(|| format!("plan for `{export_name}` has unsupported wasm result type"))?;
-    let mut parser = FragPlanParser::new(plan_text, params.clone(), result);
-    let body = parser.parse()?;
-    let plan = ExprFragmentPlan {
-        params,
-        result,
-        body,
-    };
-    let plan_lean = expr_fragment_plan_lean_value(&plan);
-    let sym_plan = SymPlan::from_expr_fragment_source_subset(&plan);
-    let sym_plan_lean = sym_plan.as_ref().map(sym_plan_lean_value);
-    let sym_plan_sidecar = sym_plan
-        .as_ref()
-        .map(|sym| sym_fragment_sidecar(export_name, sym));
-    let (func_order, cert, sidecar, canonical_matches_actual, mismatch_reason) =
-        check_expr_fragment_plan_object(wasm_bytes, export_name, plan)?;
-    let obligation = RederivedObligation {
-        name: export_name.to_string(),
-        func_order,
-        code: render_code_value(&cert),
-        self_idx: cert.self_idx(),
-        carrier: cert.carrier(),
-        policy: CertificationPolicy::SimulatesModel,
-        termination_witness: None,
-        face: ObligationFace::of_cert(&cert),
-        fragment_type_idx: match cert.inner() {
-            Cert::ExprFragment { type_idx, .. } => Some(*type_idx),
-            _ => None,
-        },
-        fragment_nlocals: match cert.inner() {
-            Cert::ExprFragment { nlocals, .. } => Some(*nlocals as u32),
-            _ => None,
-        },
-        fragment_plan: Some(sidecar.clone()),
-        fragment_plan_lean: Some(plan_lean),
-        fragment_sym_plan: sym_plan_sidecar,
-        fragment_sym_plan_lean: sym_plan_lean,
-        fragment_struct_entries: Vec::new(),
-        fragment_lowered_body_lean: match cert.inner() {
-            Cert::ExprFragment { ops, .. } => Some(render_ops_value(ops)),
-            _ => None,
-        },
-        fragment_lowered_code_entry_lean: match cert.inner() {
-            Cert::ExprFragment { carrier, plan, .. } => {
-                lower_expr_fragment_plan_code_entry_bytes(plan, *carrier)
-                    .ok()
-                    .map(|bytes| render_byte_list(&bytes))
-            }
-            _ => None,
-        },
-        string_concat_plan: None,
-        string_concat_sym_plan: None,
-        string_concat_plan_lean: None,
-        string_concat_sym_plan_lean: None,
-        string_concat_type_idx: None,
-        string_concat_lowered_body_lean: None,
-        string_concat_lowered_code_entry_lean: None,
-        string_concat_result_ty: None,
-        string_concat_container_ty: None,
-        string_concat_func_idx: None,
-        string_eq_plan: None,
-        string_eq_sym_plan: None,
-        string_eq_plan_lean: None,
-        string_eq_sym_plan_lean: None,
-        string_eq_type_idx: None,
-        string_eq_lowered_body_lean: None,
-        string_eq_lowered_code_entry_lean: None,
-        string_eq_string_ty: None,
-        string_eq_func_idx: None,
-        construct_plan: None,
-        construct_sym_plan: None,
-        construct_plan_lean: None,
-        construct_sym_plan_lean: None,
-        construct_type_idx: None,
-        construct_struct_idx: None,
-        construct_field_count: None,
-        construct_elem_ty_lean: None,
-        construct_is_list: false,
-        construct_lowered_body_lean: None,
-        construct_lowered_code_entry_lean: None,
-        recursion_plan_lean: None,
-        recursion_host_table_lean: None,
-        recursion_type_idx: None,
-        recursion_lowered_body_lean: None,
-        recursion_lowered_code_entry_lean: None,
-        mutual_plan_lean: None,
-        mutual_host_table_lean: None,
-        mutual_member_set_lean: None,
-        mutual_type_idx: None,
-        mutual_lowered_body_lean: None,
-        mutual_lowered_code_entry_lean: None,
-        verbatim_plan_lean: None,
-        int_dispatch_plan_lean: None,
-        int_dispatch_host_table_lean: None,
-        field_projection_plan_lean: None,
-        field_projection_struct_idx: None,
-        field_projection_field_count: None,
-        field_projection_result_ty_lean: None,
-        composition_members: Vec::new(),
-        composition_host_table_lean: None,
-        composition_member_names_lean: None,
-    };
-    Ok(FragmentPlanCheck {
-        sidecar,
-        obligation,
-        canonical_matches_actual,
-        mismatch_reason,
-        runtime_contracts: runtime_contracts_for_certs(std::iter::once(&cert)),
-    })
-}
-
-pub fn check_sym_fragment_plan_sidecar(
-    wasm_bytes: &[u8],
-    export_name: &str,
-    plan_text: &str,
-) -> Result<FragmentPlanCheck, String> {
-    let (user_fns, _box_idx, _user_idx_set, carrier, _host_roles, host_table, _struct_field_counts) =
-        disassemble(wasm_bytes)?;
-    let (_func_order, f) = user_fns
-        .iter()
-        .enumerate()
-        .find(|(_, f)| f.name == export_name)
-        .ok_or_else(|| format!("source plan names unknown export `{export_name}`"))?;
-    // Zero-arity exports are legitimate compute-face targets (constant
-    // constructors); the per-face parameter checks and the exact nominal
-    // signature pin keep every other family fail-closed.
-    if !frag_calls_resolvable(&f.calls, &host_table) {
-        return Err(format!(
-            "source plan for `{export_name}` does not target a non-recursive expr fragment"
-        ));
-    }
-    let carrier = carrier.ok_or_else(|| {
-        format!("source plan for `{export_name}` needs the Int carrier type from the wasm module")
-    })?;
-    let frag_params = f
-        .params
-        .iter()
-        .map(|ty| expr_fragment_ty_from_wasm_param(ty, carrier))
-        .collect::<Option<Vec<_>>>()
-        .ok_or_else(|| {
-            format!("source plan for `{export_name}` has unsupported wasm parameter types")
-        })?;
-    let frag_result = expr_fragment_ty_from_wasm_result(
-        f.result.ok_or_else(|| {
-            format!("source plan for `{export_name}` targets a function with no result")
-        })?,
-        carrier,
-    )
-    .ok_or_else(|| format!("source plan for `{export_name}` has unsupported wasm result type"))?;
-    let (params, result) = sym_sidecar_declared_tys(plan_text, &frag_params, frag_result)
-        .map_err(|e| format!("source plan for `{export_name}` {e}"))?;
-    let mut parser = SymPlanParser::new(plan_text, params.clone(), result.clone());
-    let body = parser.parse()?;
-    let sym_plan = SymPlan {
-        params,
-        result,
-        body,
-    };
-    let (func_order, cert, sidecar, canonical_matches_actual, mismatch_reason) =
-        check_sym_fragment_plan_object(wasm_bytes, export_name, sym_plan.clone())?;
-    let Cert::ExprFragment { plan, .. } = cert.inner() else {
-        unreachable!("sym-fragment plan checker must return an expr-fragment cert")
-    };
-    let plan_lean = expr_fragment_plan_lean_value(plan);
-    let sym_plan_lean = sym_plan_lean_value(&sym_plan);
-    let expr_sidecar = expr_fragment_sidecar(export_name, plan);
-    let fragment_struct_entries =
-        expr_fragment_struct_table_entries(&sym_plan, plan).unwrap_or_default();
-    let obligation = RederivedObligation {
-        name: export_name.to_string(),
-        func_order,
-        code: render_code_value(&cert),
-        self_idx: cert.self_idx(),
-        carrier: cert.carrier(),
-        policy: CertificationPolicy::SimulatesModel,
-        termination_witness: None,
-        face: ObligationFace::of_cert(&cert),
-        fragment_type_idx: match cert.inner() {
-            Cert::ExprFragment { type_idx, .. } => Some(*type_idx),
-            _ => None,
-        },
-        fragment_nlocals: match cert.inner() {
-            Cert::ExprFragment { nlocals, .. } => Some(*nlocals as u32),
-            _ => None,
-        },
-        fragment_plan: Some(expr_sidecar),
-        fragment_plan_lean: Some(plan_lean),
-        fragment_sym_plan: Some(sidecar.clone()),
-        fragment_sym_plan_lean: Some(sym_plan_lean),
-        fragment_struct_entries,
-        fragment_lowered_body_lean: match cert.inner() {
-            Cert::ExprFragment { ops, .. } => Some(render_ops_value(ops)),
-            _ => None,
-        },
-        fragment_lowered_code_entry_lean: match cert.inner() {
-            Cert::ExprFragment { carrier, plan, .. } => {
-                lower_expr_fragment_plan_code_entry_bytes(plan, *carrier)
-                    .ok()
-                    .map(|bytes| render_byte_list(&bytes))
-            }
-            _ => None,
-        },
-        string_concat_plan: None,
-        string_concat_sym_plan: None,
-        string_concat_plan_lean: None,
-        string_concat_sym_plan_lean: None,
-        string_concat_type_idx: None,
-        string_concat_lowered_body_lean: None,
-        string_concat_lowered_code_entry_lean: None,
-        string_concat_result_ty: None,
-        string_concat_container_ty: None,
-        string_concat_func_idx: None,
-        string_eq_plan: None,
-        string_eq_sym_plan: None,
-        string_eq_plan_lean: None,
-        string_eq_sym_plan_lean: None,
-        string_eq_type_idx: None,
-        string_eq_lowered_body_lean: None,
-        string_eq_lowered_code_entry_lean: None,
-        string_eq_string_ty: None,
-        string_eq_func_idx: None,
-        construct_plan: None,
-        construct_sym_plan: None,
-        construct_plan_lean: None,
-        construct_sym_plan_lean: None,
-        construct_type_idx: None,
-        construct_struct_idx: None,
-        construct_field_count: None,
-        construct_elem_ty_lean: None,
-        construct_is_list: false,
-        construct_lowered_body_lean: None,
-        construct_lowered_code_entry_lean: None,
-        recursion_plan_lean: None,
-        recursion_host_table_lean: None,
-        recursion_type_idx: None,
-        recursion_lowered_body_lean: None,
-        recursion_lowered_code_entry_lean: None,
-        mutual_plan_lean: None,
-        mutual_host_table_lean: None,
-        mutual_member_set_lean: None,
-        mutual_type_idx: None,
-        mutual_lowered_body_lean: None,
-        mutual_lowered_code_entry_lean: None,
-        verbatim_plan_lean: None,
-        int_dispatch_plan_lean: None,
-        int_dispatch_host_table_lean: None,
-        field_projection_plan_lean: None,
-        field_projection_struct_idx: None,
-        field_projection_field_count: None,
-        field_projection_result_ty_lean: None,
-        composition_members: Vec::new(),
-        composition_host_table_lean: None,
-        composition_member_names_lean: None,
-    };
-    Ok(FragmentPlanCheck {
-        sidecar,
-        obligation,
-        canonical_matches_actual,
-        mismatch_reason,
-        runtime_contracts: runtime_contracts_for_certs(std::iter::once(&cert)),
-    })
-}
-
 fn check_expr_fragment_plan_object(
     wasm_bytes: &[u8],
     export_name: &str,
     plan: ExprFragmentPlan,
-) -> Result<(usize, Cert, FragmentPlanSidecar, bool, Option<String>), String> {
+) -> Result<(usize, Cert, bool, Option<String>), String> {
     let (user_fns, _box_idx, _user_idx_set, carrier, _host_roles, host_table, struct_field_counts) =
         disassemble(wasm_bytes)?;
     let (func_order, f) = user_fns
@@ -440,7 +130,6 @@ fn check_expr_fragment_plan_object(
         plan: plan.clone(),
         ops: canonical_ops,
     };
-    let sidecar = expr_fragment_sidecar(export_name, &plan);
     let mismatch_reason = if ops_match && bytes_match {
         None
     } else {
@@ -453,13 +142,7 @@ fn check_expr_fragment_plan_object(
             )
         ))
     };
-    Ok((
-        func_order,
-        cert,
-        sidecar,
-        ops_match && bytes_match,
-        mismatch_reason,
-    ))
+    Ok((func_order, cert, ops_match && bytes_match, mismatch_reason))
 }
 
 fn expr_fragment_needs_relational_nan_result(plan: &ExprFragmentPlan) -> bool {
@@ -648,7 +331,7 @@ fn check_sym_fragment_plan_object(
     wasm_bytes: &[u8],
     export_name: &str,
     sym_plan: SymPlan,
-) -> Result<(usize, Cert, FragmentPlanSidecar, bool, Option<String>), String> {
+) -> Result<(usize, Cert, bool, Option<String>), String> {
     let (user_fns, _box_idx, _user_idx_set, carrier, _host_roles, host_table, struct_field_counts) =
         disassemble(wasm_bytes)?;
     let (_func_order, f) = user_fns
@@ -695,7 +378,11 @@ fn check_sym_fragment_plan_object(
     if declared_params.as_deref() != Some(frag_params.as_slice()) {
         return Err(format!(
             "source plan for `{export_name}` has params {:?}, but the wasm signature requires source types encoding to {frag_params:?}",
-            sym_ty_tags(&sym_plan.params)
+            sym_plan
+                .params
+                .iter()
+                .map(SymTy::plan_tag)
+                .collect::<Vec<_>>()
         ));
     }
     if sym_plan.result.to_frag_ty() != Some(frag_result) {
@@ -716,7 +403,7 @@ fn check_sym_fragment_plan_object(
     check_sym_plan_named_consistency(&sym_plan)
         .map_err(|e| format!("source plan for `{export_name}`: {e}"))?;
     // Struct bindings are byte-derived per export (the export's own unique
-    // non-carrier struct.get), never taken from the sidecar; encoding under
+    // non-carrier struct.get), never taken from the plan; encoding under
     // this table plus canonical byte equality pins the pairing.
     let struct_table = byte_derived_frag_struct_table(&sym_plan, f, carrier, &struct_field_counts)
         .map_err(|e| format!("source plan for `{export_name}`: {e}"))?;
@@ -725,7 +412,7 @@ fn check_sym_fragment_plan_object(
         .ok_or_else(|| {
             format!("source plan for `{export_name}` cannot be encoded to expr-fragment-v1")
         })?;
-    let (func_order, mut cert, _expr_sidecar, canonical_matches_actual, mismatch_reason) =
+    let (func_order, mut cert, canonical_matches_actual, mismatch_reason) =
         check_expr_fragment_plan_object(wasm_bytes, export_name, plan)?;
     let Cert::ExprFragment {
         source_plan,
@@ -768,7 +455,7 @@ fn check_sym_fragment_plan_object(
         *record_decl = Some((face.struct_idx, leaves));
         *record_compute = Some(face);
     }
-    if record_compute.is_none() && plan_contains_struct_new_sidecar(&plan.body) {
+    if record_compute.is_none() && plan_contains_struct_new(&plan.body) {
         return Err(format!(
             "source plan for `{export_name}` constructs a struct outside the \
              compute face (its record is not a flat all-Int declaration)"
@@ -777,20 +464,13 @@ fn check_sym_fragment_plan_object(
     // Same fail-closed shape for the inline sign template: the compute face is
     // the only face that interprets it, and the generic renderers have no arm
     // for it.
-    if record_compute.is_none() && plan_contains_int_sign_cmp_sidecar(&plan.body) {
+    if record_compute.is_none() && plan_contains_int_sign_cmp(&plan.body) {
         return Err(format!(
             "source plan for `{export_name}` compares a computed Int against a \
              literal outside the compute face"
         ));
     }
-    let sidecar = sym_fragment_sidecar(export_name, &sym_plan);
-    Ok((
-        func_order,
-        cert,
-        sidecar,
-        canonical_matches_actual,
-        mismatch_reason,
-    ))
+    Ok((func_order, cert, canonical_matches_actual, mismatch_reason))
 }
 
 fn byte_match_summary(label: &str, expected: &[u8], actual: &[u8]) -> String {
@@ -818,49 +498,7 @@ fn byte_match_summary(label: &str, expected: &[u8], actual: &[u8]) -> String {
     }
 }
 
-/// Read the self-declared `params`/`result` lines of a sym sidecar and verify
-/// each declared source type ENCODES to the byte-derived wasm representation
-/// type at its position. Scalar positions must round-trip exactly; `AdtRef`
-/// positions adopt the declared String/Named source type (bytes cannot name
-/// it), which the byte-exact gate then pins through the encoded plan.
-fn sym_sidecar_declared_tys(
-    plan_text: &str,
-    frag_params: &[FragTy],
-    frag_result: FragTy,
-) -> Result<(Vec<SymTy>, SymTy), String> {
-    let mut lines = plan_text.lines();
-    let (Some(_header), Some(_profile), Some(params_line), Some(result_line)) =
-        (lines.next(), lines.next(), lines.next(), lines.next())
-    else {
-        return Err("is truncated before its params/result lines".to_string());
-    };
-    let params = parse_sym_plan_params(params_line.trim())?;
-    let result = result_line
-        .trim()
-        .strip_prefix("result ")
-        .and_then(SymTy::from_plan_tag)
-        .ok_or_else(|| format!("has a malformed result line `{}`", result_line.trim()))?;
-    let declared = params
-        .iter()
-        .map(SymTy::to_frag_ty)
-        .collect::<Option<Vec<_>>>();
-    if declared.as_deref() != Some(frag_params) {
-        return Err(format!(
-            "declares params {:?}, but the wasm signature requires source types encoding to {frag_params:?}",
-            sym_ty_tags(&params)
-        ));
-    }
-    if result.to_frag_ty() != Some(frag_result) {
-        return Err(format!(
-            "declares result `{}`, but the wasm signature requires a source type encoding to {frag_result:?}",
-            result.plan_tag()
-        ));
-    }
-    Ok((params, result))
-}
-
-
-fn plan_contains_int_sign_cmp_sidecar(block: &FragBlock) -> bool {
+fn plan_contains_int_sign_cmp(block: &FragBlock) -> bool {
     block.nodes.iter().any(|n| match &n.kind {
         FragNodeKind::IntSignCmp { .. } => true,
         FragNodeKind::If {
@@ -868,14 +506,14 @@ fn plan_contains_int_sign_cmp_sidecar(block: &FragBlock) -> bool {
             else_block,
             ..
         } => {
-            plan_contains_int_sign_cmp_sidecar(then_block)
-                || plan_contains_int_sign_cmp_sidecar(else_block)
+            plan_contains_int_sign_cmp(then_block)
+                || plan_contains_int_sign_cmp(else_block)
         }
         _ => false,
     })
 }
 
-fn plan_contains_struct_new_sidecar(block: &FragBlock) -> bool {
+fn plan_contains_struct_new(block: &FragBlock) -> bool {
     block.nodes.iter().any(|n| match &n.kind {
         FragNodeKind::StructNew { .. } => true,
         FragNodeKind::If {
@@ -883,8 +521,8 @@ fn plan_contains_struct_new_sidecar(block: &FragBlock) -> bool {
             else_block,
             ..
         } => {
-            plan_contains_struct_new_sidecar(then_block)
-                || plan_contains_struct_new_sidecar(else_block)
+            plan_contains_struct_new(then_block)
+                || plan_contains_struct_new(else_block)
         }
         _ => false,
     })

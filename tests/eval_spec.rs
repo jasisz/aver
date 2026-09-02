@@ -182,7 +182,7 @@ fn run_pipeline_lookup(src: &str, var_name: &str, var_type: &str) -> Value {
     assert!(tc.errors.is_empty(), "typecheck failed: {:?}", tc.errors);
 
     let mut arena = Arena::new();
-    let (code, globals) = vm::compile_program_with_mir_fallback(
+    let (code, globals) = vm::compile_program(
         &result.resolved_items,
         &result.symbol_table,
         &mut arena,

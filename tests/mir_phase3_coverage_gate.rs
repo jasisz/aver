@@ -87,10 +87,9 @@ fn fn_value_passing_no_longer_drops() {
          fn callWith(f: Fn(Int) -> Int) -> Int\n    f(3)\n\n\
          fn caller() -> Int\n    callWith(dbl)\n",
     );
-    assert_eq!(
-        stats.skipped.get(&SkipReason::UnresolvedIdent).copied(),
-        None,
-        "fn-value passing must not drop as UnresolvedIdent: {:?}",
+    assert!(
+        stats.skipped.is_empty(),
+        "fn-value passing must not drop the fn: {:?}",
         stats
     );
 }
@@ -111,22 +110,16 @@ fn coverage_ratio_pins_one_for_empty_program() {
 #[test]
 fn wave_3c_i_builtin_ctor_construction_no_longer_drops() {
     // Wave 3c-i landed typed identity for built-in ctors. A fn
-    // whose body is `Result.Ok(x)` now lowers cleanly — its skip
-    // counter for `BuiltinCtorConstruction` must be 0.
+    // whose body is `Result.Ok(x)` now lowers cleanly.
     let stats = lower_stats("fn makes_ok(x: Int) -> Result<Int, String>\n    Result.Ok(x)\n");
     assert_eq!(
         stats.lowered, 1,
         "Result.Ok construction must lower after wave 3c-i: {:?}",
         stats
     );
-    let count = stats
-        .skipped
-        .get(&SkipReason::BuiltinCtorConstruction)
-        .copied()
-        .unwrap_or(0);
-    assert_eq!(
-        count, 0,
-        "BuiltinCtorConstruction must be 0 after wave 3c-i, got {:?}",
+    assert!(
+        stats.skipped.is_empty(),
+        "a built-in ctor construction must not drop the fn: {:?}",
         stats.skipped
     );
 }
@@ -134,13 +127,11 @@ fn wave_3c_i_builtin_ctor_construction_no_longer_drops() {
 #[test]
 fn wave_3c_iv_list_literal_no_longer_drops() {
     // Wave 3c-iv landed list-literal lowering. A fn whose body
-    // is `[1, 2, 3]` now lowers cleanly — `UnsupportedList`
-    // must be 0 (= absent from the skip map).
+    // is `[1, 2, 3]` now lowers cleanly.
     let stats = lower_stats("fn one() -> List<Int>\n    [1, 2, 3]\n");
-    assert_eq!(
-        stats.skipped.get(&SkipReason::UnsupportedList).copied(),
-        None,
-        "UnsupportedList must be absent after wave 3c-iv: {:?}",
+    assert!(
+        stats.skipped.is_empty(),
+        "a list literal must not drop the fn: {:?}",
         stats.skipped
     );
     assert_eq!(stats.lowered, 1, "list-literal fn must lower: {:?}", stats);
@@ -149,12 +140,11 @@ fn wave_3c_iv_list_literal_no_longer_drops() {
 #[test]
 fn wave_3c_iv_tuple_literal_no_longer_drops() {
     // Wave 3c-iv landed tuple-literal lowering. Same shape as the
-    // list assertion above — `UnsupportedTuple` must be 0.
+    // list assertion above.
     let stats = lower_stats("fn pair() -> Tuple<Int, Int>\n    (1, 2)\n");
-    assert_eq!(
-        stats.skipped.get(&SkipReason::UnsupportedTuple).copied(),
-        None,
-        "UnsupportedTuple must be absent after wave 3c-iv: {:?}",
+    assert!(
+        stats.skipped.is_empty(),
+        "a tuple literal must not drop the fn: {:?}",
         stats.skipped
     );
     assert_eq!(stats.lowered, 1, "tuple-literal fn must lower: {:?}", stats);
@@ -206,19 +196,8 @@ fn skip_reason_label_is_human_readable() {
         SkipReason::MissingResolution,
         SkipReason::BindingSlotLookupMissing,
         SkipReason::PatternSlotShortfall,
-        SkipReason::BuiltinCtorConstruction,
-        SkipReason::BuiltinCtorPattern,
         SkipReason::UnresolvedCtor,
         SkipReason::UnsupportedCallee,
-        SkipReason::BuiltinRecord,
-        SkipReason::UnsupportedTry,
-        SkipReason::UnsupportedTailCall,
-        SkipReason::UnsupportedList,
-        SkipReason::UnsupportedTuple,
-        SkipReason::UnsupportedMap,
-        SkipReason::UnsupportedInterpolatedStr,
-        SkipReason::UnsupportedIndependentProduct,
-        SkipReason::UnresolvedIdent,
         SkipReason::UnsupportedOther,
     ] {
         assert!(

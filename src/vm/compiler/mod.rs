@@ -71,29 +71,24 @@ pub fn compile_program_with_loaded_modules(
     )
 }
 
-/// Phase 4b of #252: compile with MIR-first dispatch + HIR
-/// fallback. Per fn: if the fn's body lowers cleanly to MIR
-/// *and* MIR-emit produces bytecode, use that chunk; otherwise
-/// fall back to the existing HIR walker. The fallback is
-/// deliberate — every fn that lands in `MirVmUnsupported`
-/// territory (Match / Try / TailCall / Construct / Record* /
-/// Project / List / Tuple / Map / InterpolatedStr /
-/// IndependentProduct / builtin callees / first-class fn
-/// values) keeps the well-tested HIR shape.
+/// Compile a single-module program to VM bytecode. Every fn is lowered
+/// to MIR and emitted by the MIR walker; a shape the walker cannot emit
+/// is a hard error, not a fallback — the HIR walker it used to fall back
+/// to is gone.
 ///
-/// Same I/O contract as [`compile_program`]; the only
-/// difference is the per-fn dispatch.
-pub fn compile_program_with_mir_fallback(
+/// Same I/O contract as [`compile_program_with_modules`]; the only
+/// difference is where the dependency modules come from.
+pub fn compile_program(
     items: &[ResolvedTopLevel],
     symbols: &SymbolTable,
     arena: &mut Arena,
     analysis: Option<&crate::ir::AnalysisResult>,
 ) -> Result<(CodeStore, Vec<NanValue>), CompileError> {
-    // Single-module MIR-default entry, kept for the parity tests
-    // (`tests/mir_vm_parity.rs`) that exercise the MIR path without a
-    // module root. The optimize pipeline + per-fn MIR dispatch now
-    // live in `compile_program_inner` under `use_mir`, shared with the
-    // module-aware production entry points.
+    // Single-module entry, kept for the parity tests
+    // (`tests/mir_vm_parity.rs`) that exercise the compiler without a
+    // module root. The optimize pipeline + per-fn MIR emit live in
+    // `compile_program_inner`, shared with the module-aware production
+    // entry points.
     compile_program_inner(
         items,
         symbols,
@@ -250,10 +245,9 @@ fn compile_program_inner(
     module_source: ModuleSource<'_>,
     analysis: Option<&crate::ir::AnalysisResult>,
 ) -> Result<(CodeStore, Vec<NanValue>), CompileError> {
-    // MIR-default path. Lower the entry items to MIR and run the
-    // optimize pipeline; the per-fn loop below dispatches each fn
-    // through the MIR walker and falls back to the HIR walker for
-    // shapes outside the MIR subset. Built here — not in the caller —
+    // Lower the entry items to MIR and run the optimize pipeline; the
+    // per-fn loop below emits each fn through the MIR walker, the only
+    // VM codegen path. Built here — not in the caller —
     // so every module-aware entry point shares one pipeline. Order is
     // deliberate: (1) nullary-literal inlining unlocks call-site
     // literals, (2) const-fold collapses literal arithmetic,
@@ -1253,7 +1247,7 @@ pub(super) struct FnCompiler<'a> {
     pub(super) symbol_table: &'a SymbolTable,
     /// Phase 6 wave 11 — the lowered MIR for the current program,
     /// when this `FnCompiler` is running on the MIR walker path
-    /// (`compile_program_with_mir_fallback`). Used by the walker
+    /// (`compile_program`). Used by the walker
     /// to resolve `MirCallee::Builtin(BuiltinId)` back to the
     /// canonical name the VM builtin table keys on. `None` on the
     /// HIR-only path.
@@ -1503,7 +1497,7 @@ impl<'a> FnCompiler<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::{FnCompiler, compile_program_with_mir_fallback};
+    use super::{FnCompiler, compile_program};
     use crate::ir::SymbolTable;
     use crate::ir::hir::resolve_program;
     use crate::nan_value::Arena;
@@ -1529,8 +1523,7 @@ mod tests {
         let resolved = resolve_program(&symbols, &items);
         let mut arena = Arena::new();
         let (code, _globals) =
-            compile_program_with_mir_fallback(&resolved, &symbols, &mut arena, None)
-                .expect("vm compile should pass");
+            compile_program(&resolved, &symbols, &mut arena, None).expect("vm compile should pass");
         code
     }
 

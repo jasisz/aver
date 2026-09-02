@@ -285,8 +285,7 @@ pub fn compile_to_wasm_gc_with_mir_count(
 /// Same as `compile_to_wasm_gc` but exports a JS-callable
 /// `aver_http_handle(method, url, query, body, country) ->
 /// (status, body)` wrapper around the named user fn (whose
-/// signature must be `(HttpRequest) -> Http.Response`). Equivalent
-/// to the legacy backend's `--bridge fetch`.
+/// signature must be `(HttpRequest) -> Http.Response`).
 pub fn compile_to_wasm_gc_with_handler(
     items: &[TopLevel],
     _analysis: Option<&AnalysisResult>,
