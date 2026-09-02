@@ -407,20 +407,21 @@ pub struct CodegenContext {
     /// several times per claim, and a `Vec` would multiply-count.
     pub declined_claims: std::cell::RefCell<std::collections::BTreeMap<String, DeclinedClaim>>,
     /// Every construct the Rust emitter substituted a `compile_error!` for,
-    /// in emit order, as the message it wrote.
+    /// in emit order, as the message it wrote and whose problem it is.
     ///
     /// Same reason as `declined_claims` one field up: the emitter knows it
     /// refused, so it says so here. Re-discovering the refusal by scanning
     /// the generated files for the macro name cannot tell the backend's own
     /// output apart from a program's data — a `String` literal quoting
     /// `compile_error!` is ordinary Aver — and it goes quiet the day the
-    /// wording changes.
+    /// wording changes. The [`CompileErrorCause`] is recorded for the same
+    /// reason and not re-derived from the message text.
     ///
     /// Written by `rust::toplevel::emit_codegen_error_expr` and by the
     /// mutual-TCO block fallback; read out into
     /// [`ProjectOutput::substituted_compile_errors`] at the end of a Rust
     /// transpile.
-    pub substituted_compile_errors: std::cell::RefCell<Vec<String>>,
+    pub substituted_compile_errors: std::cell::RefCell<Vec<SubstitutedCompileError>>,
     /// Verify cases the Rust emitter left out of the generated
     /// `#[cfg(test)]` module because the MIR walker could not render them,
     /// as "`fn` name: reason".
@@ -568,14 +569,44 @@ pub struct UniversalLawClaim {
     pub statement: String,
 }
 
+/// Whose problem a `compile_error!` substitution is.
+///
+/// Both classes wear the same shape in the emitted file, and both make the
+/// crate unbuildable, so `compile` reports both and exits non-zero on
+/// either. They are not the same finding, though: one says the `.av`
+/// source is wrong, the other says this compiler is incomplete. A fuzz
+/// harness must gate on the second and let the first through — a mutated
+/// type name is SUPPOSED to be refused — and the only place that can tell
+/// them apart without guessing from wording is the emitter that made the
+/// substitution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompileErrorCause {
+    /// The program names something that is not in scope where it writes
+    /// it. The message is a user-facing diagnostic; the fix is in the
+    /// source, and refusing was the right answer.
+    Program,
+    /// The backend has no rendering for a construct the program is
+    /// entitled to write. A gap in this compiler.
+    BackendGap,
+}
+
+/// One `compile_error!` a backend substituted for a construct it did not
+/// emit, and why.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubstitutedCompileError {
+    pub cause: CompileErrorCause,
+    /// The sentence written into the generated file.
+    pub message: String,
+}
+
 /// Output files from a codegen backend.
 pub struct ProjectOutput {
     /// Files to write: (relative_path, content).
     pub files: Vec<(String, String)>,
     /// What the backend substituted a `compile_error!` for while producing
-    /// `files`, one message per construct, in emit order. Empty for a
+    /// `files`, one entry per construct, in emit order. Empty for a
     /// backend that has no such construct (Lean, Dafny).
-    pub substituted_compile_errors: Vec<String>,
+    pub substituted_compile_errors: Vec<SubstitutedCompileError>,
     /// Verify cases the backend left out of the generated test module, one
     /// line each. Not a failure — the generated crate builds and its
     /// `cargo test` passes — but the user is told which of their cases the
@@ -613,8 +644,23 @@ impl ProjectOutput {
     /// because both are just text in the same file. Reading the fact from
     /// the emitter that produced it cannot be triggered by program data at
     /// all, and cannot go quiet when someone rewords a message.
-    pub fn generated_compile_errors(&self) -> &[String] {
+    pub fn generated_compile_errors(&self) -> &[SubstitutedCompileError] {
         &self.substituted_compile_errors
+    }
+
+    /// The subset of [`Self::generated_compile_errors`] the backend wrote
+    /// because IT could not render the construct — [`CompileErrorCause::BackendGap`].
+    ///
+    /// This is the half that is a finding rather than a verdict. `aver
+    /// compile` refuses on either class, but a fuzz harness driving mutated
+    /// source must gate on this one alone: a program that names a type
+    /// nobody declared is SUPPOSED to be refused, and treating that
+    /// refusal as a crash buries the coverage gaps under it.
+    pub fn generated_backend_gaps(&self) -> impl Iterator<Item = &str> {
+        self.substituted_compile_errors
+            .iter()
+            .filter(|error| error.cause == CompileErrorCause::BackendGap)
+            .map(|error| error.message.as_str())
     }
 }
 
@@ -1382,7 +1428,7 @@ pub(crate) fn test_module(prefix: &str, depends: &[&str], type_defs: Vec<TypeDef
 
 #[cfg(test)]
 mod project_output_tests {
-    use super::ProjectOutput;
+    use super::{CompileErrorCause, ProjectOutput, SubstitutedCompileError};
 
     fn output(files: &[(&str, &str)]) -> ProjectOutput {
         ProjectOutput::of(
@@ -1403,11 +1449,36 @@ mod project_output_tests {
                 "pub fn added() { compile_error!(\"MIR walker could not render fn `added`\"); }\n",
             ),
         ]);
-        out.substituted_compile_errors = vec!["MIR walker could not render fn `added`".to_string()];
+        out.substituted_compile_errors = vec![SubstitutedCompileError {
+            cause: CompileErrorCause::BackendGap,
+            message: "MIR walker could not render fn `added`".to_string(),
+        }];
         assert_eq!(
             out.generated_compile_errors(),
-            ["MIR walker could not render fn `added`".to_string()]
+            [SubstitutedCompileError {
+                cause: CompileErrorCause::BackendGap,
+                message: "MIR walker could not render fn `added`".to_string(),
+            }]
         );
+        // The gap view is the fuzz gate: this one IS a finding.
+        assert_eq!(
+            out.generated_backend_gaps().collect::<Vec<_>>(),
+            ["MIR walker could not render fn `added`"]
+        );
+    }
+
+    #[test]
+    fn a_program_diagnostic_is_reported_but_is_not_a_backend_gap() {
+        // Both refuse the crate; only one says the compiler is incomplete.
+        let mut out = output(&[("Cargo.toml", "[package]\nname = \"app\"\n")]);
+        out.substituted_compile_errors = vec![SubstitutedCompileError {
+            cause: CompileErrorCause::Program,
+            message: "the entry module, line 4: fn `f` writes the constructor `Nope.Some`, \
+                      but no type `Nope` with a variant `Some` is in scope there"
+                .to_string(),
+        }];
+        assert_eq!(out.generated_compile_errors().len(), 1);
+        assert_eq!(out.generated_backend_gaps().count(), 0);
     }
 
     #[test]

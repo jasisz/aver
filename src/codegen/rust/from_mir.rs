@@ -764,7 +764,10 @@ fn unresolved_packed_carrier(type_name: &str, ctx: &MirEmitCtx<'_>) -> String {
          `depends [...]`"
     );
     match ctx.codegen {
-        Some(codegen) => super::toplevel::emit_codegen_error_expr(codegen, message),
+        // The program wrote a type name that resolves to nothing here, and
+        // the sentence says how to fix the source — a `Program` refusal,
+        // not a gap in this backend.
+        Some(codegen) => super::toplevel::emit_program_refusal_expr(codegen, message),
         None => message,
     }
 }

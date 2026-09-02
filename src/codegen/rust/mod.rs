@@ -685,14 +685,26 @@ fn emit_mutual_tco_block_routed(
         // takes the whole group with it. Report that name rather than the
         // roster: the roster is what the reporter of #1076 was handed, and
         // it points at every function except the one at fault.
-        let message = group_fns
+        let diagnostic = group_fns
             .iter()
             .filter_map(|fd| toplevel::unresolved_name_reason(fd, scope))
-            .next()
-            .unwrap_or_else(|| format!("MIR walker could not render mutual-TCO block [{names}]"));
+            .next();
+        // Same classification rule as `emit_codegen_error_expr`: an
+        // unresolved name is the program's problem, anything else is this
+        // backend's.
+        let (cause, message) = match diagnostic {
+            Some(message) => (crate::codegen::CompileErrorCause::Program, message),
+            None => (
+                crate::codegen::CompileErrorCause::BackendGap,
+                format!("MIR walker could not render mutual-TCO block [{names}]"),
+            ),
+        };
         ctx.substituted_compile_errors
             .borrow_mut()
-            .push(message.clone());
+            .push(crate::codegen::SubstitutedCompileError {
+                cause,
+                message: message.clone(),
+            });
         let helper = syntax::generated_ident(&format!("mutual_tco_block_{group_id}_render_error"));
         format!(
             "{}fn {}() {{ compile_error!({:?}); }}",
@@ -709,9 +721,14 @@ fn missing_resolved_fn_error(fd: &FnDef, scope: Option<&str>, ctx: &CodegenConte
         "Rust codegen requires resolved HIR for function `{qualified}`; \
          all synthesis and rewriting must finish before CodegenContext is built"
     );
+    // A pipeline invariant this backend depends on and did not get — the
+    // program is not at fault.
     ctx.substituted_compile_errors
         .borrow_mut()
-        .push(message.clone());
+        .push(crate::codegen::SubstitutedCompileError {
+            cause: crate::codegen::CompileErrorCause::BackendGap,
+            message: message.clone(),
+        });
     format!("compile_error!({message:?});")
 }
 
@@ -1524,7 +1541,7 @@ fn helper(n: Int) -> Int
         assert!(
             out.generated_compile_errors()
                 .iter()
-                .any(|error| error.contains("resolved HIR for function `helper`")),
+                .any(|error| error.message.contains("resolved HIR for function `helper`")),
             "{:?}",
             out.generated_compile_errors()
         );
