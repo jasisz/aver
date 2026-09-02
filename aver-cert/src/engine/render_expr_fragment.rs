@@ -548,6 +548,31 @@ where
             let e = expr_fragment_bool_expr(else_block, else_block.result, local);
             format!("if ({c}) then ({t}) else ({e})")
         }
+        // The inline sign template IS a `BoolI32` node, so it belongs here and
+        // not in the "not BoolI32" arm below. Its source meaning is the plain
+        // comparison of the operand against the literal — the wall's
+        // `RecordComputeBridge.symIntCmpDenote`. The record-compute face is
+        // the plan itself, so nothing in production reaches this renderer for
+        // this node; keeping the reading honest is what stops a later caller
+        // from getting a wrong-shape panic instead of an expression.
+        FragNodeKind::IntSignCmp {
+            op,
+            constant,
+            value,
+            ..
+        } => {
+            let v = expr_fragment_value_expr(block, *value, local);
+            let k = lean_int_lit(*constant);
+            match op {
+                SymIntCmp::Eq => format!("({v}) = ({k})"),
+                SymIntCmp::Lt => format!("({v}) < ({k})"),
+                SymIntCmp::Le => format!("({v}) <= ({k})"),
+                // Swapped `<=` / `<`, the convention `i64.ge_s` / `i64.gt_s`
+                // already use in this renderer.
+                SymIntCmp::Ge => format!("({k}) <= ({v})"),
+                SymIntCmp::Gt => format!("({k}) < ({v})"),
+            }
+        }
         FragNodeKind::ConstI64(_)
         | FragNodeKind::ConstI32(_)
         | FragNodeKind::ConstF64(_)
@@ -556,8 +581,7 @@ where
         | FragNodeKind::StructGet { .. }
         | FragNodeKind::StructGetUser { .. }
         | FragNodeKind::StructNew { .. }
-        | FragNodeKind::VectorGetOrDefault { .. }
-        | FragNodeKind::IntSignCmp { .. } => unreachable!("node is not BoolI32"),
+        | FragNodeKind::VectorGetOrDefault { .. } => unreachable!("node is not BoolI32"),
     }
 }
 

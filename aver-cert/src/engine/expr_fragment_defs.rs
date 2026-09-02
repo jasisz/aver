@@ -1270,6 +1270,99 @@ mod expr_fragment_sem_ty_tests {
         );
     }
 
+    /// The inline sign template on a computed Int operand, at the one declared
+    /// scratch slot (`params.length`). `op`/`constant`/`scratch`/`value` are all
+    /// plan data, so the text form must round-trip every one of them.
+    fn sign_template_plan(op: SymIntCmp, constant: i64) -> ExprFragmentPlan {
+        ExprFragmentPlan {
+            params: vec![FragTy::IntCarrier],
+            result: FragTy::BoolI32,
+            body: FragBlock {
+                nodes: vec![
+                    FragNode {
+                        id: FragValueId(0),
+                        ty: FragTy::IntCarrier,
+                        kind: FragNodeKind::Local { index: 0 },
+                    },
+                    FragNode {
+                        id: FragValueId(1),
+                        ty: FragTy::BoolI32,
+                        kind: FragNodeKind::IntSignCmp {
+                            op,
+                            constant,
+                            scratch: 1,
+                            value: FragValueId(0),
+                        },
+                    },
+                ],
+                result: FragValueId(1),
+            },
+        }
+    }
+
+    /// The plan-text renderer emits `int.sign_cmp`, so the plan-text parser
+    /// must read it back — including a NEGATIVE literal, whose minus sign is
+    /// the one character an attribute scanner is most likely to drop.
+    #[test]
+    fn sign_template_plan_text_round_trips_through_parser() {
+        for (op, constant) in [
+            (SymIntCmp::Ge, 0_i64),
+            (SymIntCmp::Le, 0),
+            (SymIntCmp::Eq, 7),
+            (SymIntCmp::Lt, -5),
+            (SymIntCmp::Gt, i64::MIN),
+        ] {
+            let plan = sign_template_plan(op, constant);
+            let text = expr_fragment_plan_text(&plan);
+            let mut parser =
+                FragPlanParser::new(&text, vec![FragTy::IntCarrier], FragTy::BoolI32);
+            let body = parser
+                .parse()
+                .unwrap_or_else(|e| panic!("parse sign-template plan: {e}\n{text}"));
+            let reparsed = ExprFragmentPlan {
+                params: vec![FragTy::IntCarrier],
+                result: FragTy::BoolI32,
+                body,
+            };
+            assert_eq!(reparsed, plan, "plan text = {text}");
+        }
+    }
+
+    /// The three typing pins the wall's `nodeTypedB` states for `.intSignCmp`
+    /// are enforced by the plan-text parser too: the operand is an Int carrier,
+    /// the written slot is exactly `params.length`, and the node is Boolean.
+    #[test]
+    fn sign_template_plan_text_rejects_a_slot_that_is_not_the_scratch_local() {
+        let plan = sign_template_plan(SymIntCmp::Ge, 0);
+        let text = expr_fragment_plan_text(&plan).replace("scratch=1", "scratch=0");
+        let mut parser = FragPlanParser::new(&text, vec![FragTy::IntCarrier], FragTy::BoolI32);
+        let error = parser.parse().expect_err("a parameter slot must be refused");
+        assert!(
+            error.contains("declared scratch slot"),
+            "unexpected error: {error}"
+        );
+    }
+
+    /// The sign template IS a Boolean node, so the Boolean renderer must give
+    /// it its source reading (`value op k`) rather than panic with "node is not
+    /// BoolI32".
+    #[test]
+    fn bool_renderer_reads_the_sign_template_instead_of_panicking() {
+        let local = |index: u32, _ty: FragTy| format!("a{index}");
+        for (op, constant, expected) in [
+            (SymIntCmp::Ge, 0_i64, "(0) <= (a0)"),
+            (SymIntCmp::Gt, 0, "(0) < (a0)"),
+            (SymIntCmp::Le, 0, "(a0) <= (0)"),
+            (SymIntCmp::Lt, -5, "(a0) < ((-5))"),
+            (SymIntCmp::Eq, 7, "(a0) = (7)"),
+        ] {
+            let plan = sign_template_plan(op, constant);
+            let rendered =
+                expr_fragment_bool_expr(&plan.body, plan.body.result, &local);
+            assert_eq!(rendered, expected);
+        }
+    }
+
     #[test]
     fn user_struct_projection_plan_text_and_lean_render_the_user_node() {
         let plan = user_name_projection_plan();

@@ -183,6 +183,41 @@ impl<'a> FragPlanParser<'a> {
                 require_plan_ty(id, ty, FragTy::AdtRef)?;
                 FragNodeKind::StructNew { ty_idx, args }
             }
+            // The emitter's inline sign template. Every conjunct here mirrors
+            // the wall's `RecordComputeBridge.nodeTypedB` arm for
+            // `.intSignCmp`: the operand is an Int carrier, the written slot
+            // is the ONE declared scratch local (`params.length`, so the
+            // template can never clobber a parameter), and the node itself is
+            // a Boolean verdict. The i64 band of the literal is carried by the
+            // `i64` type of `constant`, which is exactly the wall's
+            // `PlanCheck.inI64Band` conjunct.
+            "int.sign_cmp" => {
+                let op = plan_attr(id, &attrs, "op")
+                    .ok()
+                    .and_then(SymIntCmp::from_plan_tag)
+                    .ok_or_else(|| {
+                        format!("plan node v{} has unknown sign-template operator", id.0)
+                    })?;
+                let constant = plan_attr_i64(id, &attrs, "constant")?;
+                let scratch = plan_attr_u32(id, &attrs, "scratch")?;
+                let value = plan_attr_value(id, &attrs, "value")?;
+                require_plan_node_ty(nodes, value, FragTy::IntCarrier)?;
+                if scratch as usize != self.params.len() {
+                    return Err(format!(
+                        "plan sign template v{} writes local {scratch}, expected the \
+                         declared scratch slot {}",
+                        id.0,
+                        self.params.len()
+                    ));
+                }
+                require_plan_ty(id, ty, FragTy::BoolI32)?;
+                FragNodeKind::IntSignCmp {
+                    op,
+                    constant,
+                    scratch,
+                    value,
+                }
+            }
             "ref.is_null" => {
                 let value = plan_attr_value(id, &attrs, "value")?;
                 require_plan_node_ty(nodes, value, FragTy::Ref)?;
@@ -442,6 +477,7 @@ fn reject_extra_plan_attrs(
         "struct.get.user" => &["ty", "field", "value"],
         "struct.new" => &["ty", "args"],
         "ref.is_null" => &["value"],
+        "int.sign_cmp" => &["op", "constant", "scratch", "value"],
         "prim" => &["op", "args"],
         "hostcall" => &["role", "func", "args"],
         "vector.get_or_default" => &["arr_ty", "to_index", "box", "default"],
