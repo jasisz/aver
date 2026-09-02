@@ -1569,7 +1569,26 @@ fn validate_source_bridge_candidate(
             display_safe(&bridge.export)
         ));
     }
+    // `model` is a reporting convenience — it is what the export's `explain`
+    // line reads `plan ≡ <model>`. It is not free text: the PINNED statement
+    // must actually name it, so the line can never show a function the checked
+    // claim does not mention. What the claim says about that function is read
+    // from the statement, which `explain` prints beside it.
+    if !statement_names(&bridge.statement, &format!("_root_.{}", bridge.model)) {
+        return Err(format!(
+            "source-bridge `{}` statement does not name its declared model `{}`",
+            display_safe(&bridge.export),
+            display_safe(&bridge.model)
+        ));
+    }
     Ok(bridge)
+}
+
+/// Whether `name` occurs in `statement` as a whole Lean identifier token.
+fn statement_names(statement: &str, name: &str) -> bool {
+    statement
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '\''))
+        .any(|token| token == name)
 }
 
 /// Read the checker witness's per-pin axiom audit back out of its elaboration
@@ -2780,7 +2799,7 @@ mod tests {
             .map(|export| SourceBridgeCandidate {
                 export: (*export).to_string(),
                 theorem: format!("{BRIDGE_NAMESPACE}.{export}"),
-                statement: "_root_.True".to_string(),
+                statement: format!("_root_.Domain.{export} = _root_.Domain.{export}"),
                 corollary: format!("{BRIDGE_NAMESPACE}.{export}{BRIDGE_COROLLARY_SUFFIX}"),
                 model: format!("Domain.{export}"),
             })
@@ -2869,16 +2888,32 @@ mod tests {
         // A statement whose dotted names are not root-qualified would be
         // resolved against whatever namespaces the package declares.
         let mut bare_name = bridge_candidates(&["one"]).pop().unwrap();
-        bare_name.statement = "Domain.Rational.plus = _root_.Domain.Rational.plus".to_string();
+        bare_name.statement = "Domain.Rational.plus = _root_.Domain.one".to_string();
         assert!(validate_source_bridge_candidate(bare_name).is_err());
 
         let mut smuggled = bridge_candidates(&["one"]).pop().unwrap();
-        smuggled.statement = "_root_.True) ∧ (_root_.False".to_string();
+        smuggled.statement = "_root_.Domain.one) ∧ (_root_.False".to_string();
         assert!(validate_source_bridge_candidate(smuggled).is_err());
 
         let mut dotted_export = bridge_candidates(&["one"]).pop().unwrap();
         dotted_export.export = "Domain.one".to_string();
         assert!(validate_source_bridge_candidate(dotted_export).is_err());
+
+        // The reported model must be a name the PINNED statement mentions, so
+        // an export's `plan ≡ <fn>` line cannot show a function the checked
+        // claim never speaks about.
+        let mut lying_model = bridge_candidates(&["one"]).pop().unwrap();
+        lying_model.statement = "_root_.Domain.other = _root_.Domain.other".to_string();
+        assert!(validate_source_bridge_candidate(lying_model).is_err());
+
+        let mut honest_model = bridge_candidates(&["one"]).pop().unwrap();
+        honest_model.statement = "_root_.Domain.one = _root_.Domain.one".to_string();
+        assert!(validate_source_bridge_candidate(honest_model).is_ok());
+
+        // A prefix of a declared name is not that name.
+        let mut prefix_only = bridge_candidates(&["one"]).pop().unwrap();
+        prefix_only.statement = "_root_.Domain.oneMore = _root_.Domain.oneMore".to_string();
+        assert!(validate_source_bridge_candidate(prefix_only).is_err());
     }
 
     #[test]

@@ -380,6 +380,65 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         "the wasm-gc runtime ABI is pinned exactly"
     );
     assert_eq!(aver::codegen::cert::CERT_SCHEMA_VERSION, 8);
+    // Every export certified through the projection-compute face — the one
+    // face whose obligation model is the PLAN — carries a plan-equals-source
+    // bridge, in obligation order. Move this numerator deliberately: an export
+    // that lands on that face without a bridge is one whose certified model
+    // stays the plan.
+    let compute_face: Vec<&str> = manifest["certified"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|entry| {
+            entry["theorem"].as_str()
+                == Some(aver::codegen::cert::format::RECORD_COMPUTE_DISCHARGE_THEOREM)
+        })
+        .map(|entry| entry["name"].as_str().unwrap())
+        .collect();
+    let bridges = manifest["sourceBridges"].as_array().unwrap();
+    let bridged: Vec<&str> = bridges
+        .iter()
+        .map(|entry| entry["export"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        compute_face.len(),
+        2,
+        "the goals fixture pins how many exports land on the projection-compute face"
+    );
+    assert_eq!(
+        bridged, compute_face,
+        "every projection-compute export must carry a bridge, in obligation order"
+    );
+    for entry in bridges {
+        let export = entry["export"].as_str().unwrap();
+        let object = entry.as_object().unwrap();
+        assert_eq!(
+            object.len(),
+            5,
+            "a source-bridge entry is matched exactly: {object:?}"
+        );
+        assert_eq!(
+            entry["theorem"].as_str(),
+            Some(format!("AverCert.Bridge.{export}").as_str())
+        );
+        assert_eq!(
+            entry["corollary"].as_str(),
+            Some(format!("AverCert.Bridge.{export}_certified").as_str())
+        );
+        let statement = entry["statement"].as_str().unwrap();
+        assert!(
+            statement.contains("recordComputeModel")
+                && statement.contains(&format!("Plans.{export}Plan.body")),
+            "a bridge states the plan's model at the encoded arguments: {statement}"
+        );
+        assert!(
+            statement
+                .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '.'))
+                .filter(|token| token.contains('.'))
+                .all(|token| token.starts_with("_root_.")),
+            "a bridge statement is root-qualified throughout: {statement}"
+        );
+    }
     let declared_uncertified = manifest["declaredUncertified"].as_array().unwrap();
     assert_eq!(
         declared_uncertified.len(),

@@ -188,6 +188,8 @@ A generated `cert/` directory contains:
 
 - `cert-manifest.json`, a transport and reporting envelope;
 - `Plans.lean`, the sole authoritative plan data;
+- `Laws.lean` and `Bridge.lean` when the package claims laws or
+  plan-equals-source bridges;
 - artifact-specific model, manifest, certificate, and proof modules.
 
 There are no public `fragments/*.plan` sidecars. There is also no
@@ -233,6 +235,20 @@ Lean, and leanchecker subprocess otherwise starts with a cleared environment,
 the exact pinned toolchain, disabled implicit Lake caches, and checker-owned
 temporary paths. Ambient Lean/Lake search paths and toolchain overrides are not
 forwarded.
+
+Exports certified through the projection-compute face are certified against a
+PLAN the compiler derived from your source, and the report line prints that
+plan. Where the package carries a plan-equals-source bridge and the verifier
+credits it, the identification of that plan with the function you wrote is a
+kernel-checked theorem of the package, re-elaborated at its declared statement
+and axiom-audited like every other claim; `aver cert check` and `aver cert
+verify` report `source-bridges: N of M credited`, and `aver cert explain`
+prints `model: plan` or `model: plan = <Module>.<fn>` on each such export. An
+export with no bridge, or with an uncredited one, keeps the older and weaker
+position: that the plan is your function rests on the compiler that derived it.
+The shapes without a bridge today are the ones the bridge encoders do not
+reach — a nested record, a record with a non-Int field, and Float, String or
+ADT arguments and results.
 
 Some source meaning cannot be reconstructed from WebAssembly alone. In
 particular, ADT domain/representation and model declarations remain explicit

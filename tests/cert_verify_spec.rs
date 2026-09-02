@@ -8257,7 +8257,9 @@ fn cert_tripwire_declines_tampered_int_sign_cmp_plan() {
 /// (`StandardFace.recordComputeDomRepr`). A reader of a verdict has to be told,
 /// so `explain` prints that domain on the export's own line — and only there.
 /// A generic expression fragment carries no such restriction and must show no
-/// such line.
+/// such line. The same block carries the face's certified MODEL: `plan` on its
+/// own, or `plan ≡ <fn>` once a credited plan-equals-source bridge identifies
+/// the two.
 #[test]
 fn explain_states_the_record_compute_faces_certified_domain() {
     if Command::new("lake").arg("--version").output().is_err() {
@@ -8297,15 +8299,29 @@ fn explain_states_the_record_compute_faces_certified_domain() {
     );
     assert!(ok, "k5 explain must accept the certificate:\n{explain}");
 
-    let mut plus_block = explain
+    let plus_block: Vec<&str> = explain
         .split("  Domain_Rational_plus\n")
         .nth(1)
         .expect("explain names the ring's addition export")
         .lines()
-        .take_while(|line| line.starts_with("    "));
+        .take_while(|line| line.starts_with("    "))
+        .collect();
     assert!(
-        plus_block.any(|line| line.trim() == DOMAIN_LINE),
+        plus_block.iter().any(|line| line.trim() == DOMAIN_LINE),
         "the compute face must disclose its certified domain:\n{explain}"
+    );
+    // The same line block says what that face's certified MODEL is. A credited
+    // plan-equals-source bridge is the only thing that turns `plan` into
+    // `plan ≡ <fn>`.
+    assert!(
+        plus_block.iter().any(|line| {
+            line.trim() == "model: plan ≡ Domain.Rational.plus (kernel-checked source-bridge)"
+        }),
+        "a credited bridge must name the source function on the export's line:\n{explain}"
+    );
+    assert!(
+        explain.contains("SOURCE-BRIDGES"),
+        "explain must list the declared bridges:\n{explain}"
     );
 
     // Negative half: a genuinely generic expression fragment (`bool_window`'s
@@ -8349,6 +8365,16 @@ fn explain_states_the_record_compute_faces_certified_domain() {
     assert!(
         !explain.contains(DOMAIN_LINE),
         "a generic fragment must not claim the compute face's narrower domain:\n{explain}"
+    );
+    // A face whose obligation already names the source model has nothing for a
+    // bridge to say, so it carries no model line and declares no bridge.
+    assert!(
+        !explain.contains("model: plan"),
+        "a generic fragment's model is not a plan and must show no model line:\n{explain}"
+    );
+    assert!(
+        !explain.contains("SOURCE-BRIDGES"),
+        "a package with no compute-face export declares no bridge:\n{explain}"
     );
 }
 
@@ -8483,16 +8509,26 @@ fn cert_tripwire_declines_tampered_law_claims() {
     // certified are untouched, exactly as `declaredUncertified` leaves the
     // rest of a package standing. A pin that does not elaborate is tampers A
     // and B above, and still declines the whole package.
-    let proof_needle = "⟨_root_.Domain.Rational.plus_law_commutative, _root_.AverCert.Final.cert⟩";
-    assert!(
-        laws_lean.contains(proof_needle),
-        "expected corollary proof term"
-    );
+    // The proof term is an anonymous constructor whose arity follows the
+    // claim's `bridges` list, so the tamper cuts from the law theorem's name to
+    // the closing bracket rather than matching a fixed string.
+    let proof_start = laws_lean
+        .find("⟨_root_.Domain.Rational.plus_law_commutative,")
+        .expect("expected corollary proof term");
+    let proof_end = laws_lean[proof_start..]
+        .find('⟩')
+        .expect("the corollary proof term closes")
+        + proof_start
+        + '⟩'.len_utf8();
     let dir = temp_dir("cert-k5-laws-sorry-tamper");
     copy_dir(&out_dir, &dir);
     std::fs::write(
         dir.join("cert").join("Laws.lean"),
-        laws_lean.replacen(proof_needle, "sorry", 1),
+        format!(
+            "{}sorry{}",
+            &laws_lean[..proof_start],
+            &laws_lean[proof_end..]
+        ),
     )
     .unwrap();
     let (ok, out) = aver_check(&dir.join("main.wasm"), &dir.join("cert"));
@@ -8514,6 +8550,10 @@ fn cert_tripwire_declines_tampered_law_claims() {
              (proof depends on sorryAx)"
         ),
         "the uncredited law must be named together with the axiom that sank it:\n{out}"
+    );
+    assert!(
+        out.contains("source-bridges: 10 of 10 credited"),
+        "a law losing its credit must not take the bridges it cited down:\n{out}"
     );
     assert!(
         !out.contains("CERTIFIED"),
@@ -8540,8 +8580,10 @@ fn cert_tripwire_declines_tampered_law_claims() {
 /// that bridge loses its credit, the exports and the law-claims beside it keep
 /// theirs. `isNonPos` is the one bridged export no k5 law mentions, which is
 /// what keeps (B)'s law count untouched and isolates the bridge's own credit.
-/// (C), the audit line itself, is covered by the parser unit tests in
-/// `aver-cert` — the witness lives in a build directory this test cannot reach.
+/// (C) A law-claim that declares fewer bridges than its corollary proves loses
+/// the pinned type and declines. The audit LINE itself is covered by the parser
+/// unit tests in `aver-cert` — the witness lives in a build directory this test
+/// cannot reach.
 #[test]
 fn cert_tripwire_declines_tampered_source_bridges() {
     if Command::new("lake").arg("--version").output().is_err() {
@@ -8654,5 +8696,31 @@ fn cert_tripwire_declines_tampered_source_bridges() {
     assert!(
         out.contains("law-claims: 11 of 11 credited"),
         "no k5 law mentions isNonPos, so every law keeps its credit:\n{out}"
+    );
+
+    // Tamper C: shorten a law-claim's declared `bridges` list. The checker
+    // builds that law's pin at exactly the declared conjunction, so the
+    // package corollary — which proves one conjunct more — no longer has the
+    // pinned type. A weakened declared surface is a decline, not a quiet
+    // downgrade of what the package claims.
+    let at = manifest
+        .find("\"bridges\": [\"")
+        .expect("the first k5 law-claim declares the bridges it conjoins");
+    let end = manifest[at..].find(']').expect("the bridges array closes") + at;
+    let dir = temp_dir("cert-k5-law-bridges-tamper");
+    copy_dir(&out_dir, &dir);
+    std::fs::write(
+        dir.join("cert").join("cert-manifest.json"),
+        format!("{}\"bridges\": []{}", &manifest[..at], &manifest[end + 1..]),
+    )
+    .unwrap();
+    let (ok, out) = aver_check(&dir.join("main.wasm"), &dir.join("cert"));
+    assert!(
+        !ok,
+        "a law-claim declaring fewer bridges than it proves must be DECLINED:\n{out}"
+    );
+    assert!(
+        !out.contains("CERTIFIED"),
+        "a weakened law-claim surface credited:\n{out}"
     );
 }

@@ -110,8 +110,6 @@ struct BridgePlan {
     params: Vec<SourceEncoding>,
     /// Result encoding.
     result: SourceEncoding,
-    /// Qualified Lean name of the source function.
-    model: String,
 }
 
 impl BridgePlan {
@@ -135,9 +133,9 @@ impl BridgePlan {
     fn source_call(&self) -> String {
         let args = self.binder_names().join(" ");
         if args.is_empty() {
-            format!("_root_.{}", self.model)
+            format!("_root_.{}", self.bridge.model)
         } else {
-            format!("_root_.{} {args}", self.model)
+            format!("_root_.{} {args}", self.bridge.model)
         }
     }
 }
@@ -199,6 +197,10 @@ fn bridge_survives_checker_gates(bridge: &SourceBridge) -> bool {
     }
     statement_is_single_plain_line(&bridge.statement, MAX_BRIDGE_STATEMENT_LEN)
         && statement_is_root_qualified(&bridge.statement)
+        && bridge
+            .statement
+            .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '\''))
+            .any(|token| token == format!("_root_.{}", bridge.model))
 }
 
 /// Mirror of the checker's root-qualification gate: every dotted name in a
@@ -370,7 +372,6 @@ fn bridge_plan_for(
         obligation_index,
         params,
         result,
-        model: sig.lean_name.clone(),
     };
     bridge_plan.bridge.statement = bridge_statement(&bridge_plan, &format!("{export}Plan"));
     if !bridge_survives_checker_gates(&bridge_plan.bridge) {
@@ -504,7 +505,7 @@ fn render_bridge_lean(plans: &[BridgePlan]) -> String {
         s.push_str("/-- plan-equals-source bridge for `");
         s.push_str(export);
         s.push_str("`: the plan this export's obligation evaluates IS `");
-        s.push_str(&plan.model);
+        s.push_str(&plan.bridge.model);
         s.push_str("`. -/\ntheorem _root_.AverCert.Bridge.");
         s.push_str(export);
         s.push_str(" :\n    ");
@@ -525,7 +526,7 @@ fn render_bridge_lean(plans: &[BridgePlan]) -> String {
         s.push_str("/-- `");
         s.push_str(export);
         s.push_str("`'s obligation with the plan model replaced by `");
-        s.push_str(&plan.model);
+        s.push_str(&plan.bridge.model);
         s.push_str(
             "`:\n    the emitted body, run on a represented argument under the named host\n    \
              contracts, yields a represented result of the SOURCE function. -/\n\
