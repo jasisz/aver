@@ -364,10 +364,10 @@ verify f
         let items = parse_items(
             r#"
 fn low(path: BranchPath, call: Int, min: Int, max: Int) -> Result<Int, String>
-Result.Ok(min)
+    Result.Ok(min)
 
 fn high(path: BranchPath, call: Int, min: Int, max: Int) -> Result<Int, String>
-Result.Ok(max)
+    Result.Ok(max)
 
 fn roll() -> Int
     ! [Random.int]
