@@ -227,6 +227,12 @@ def symPrimResultTy? (nodes : List SymNode) (op : SymPrim) (args : List Nat) :
     unsupported fragment, matching the producer's profile-limit discipline. -/
 abbrev maxFuel : Nat := 10000
 
+/-- Decidable membership of the i64 band `[-2^63, 2^63)`. The sign template's
+    literal must live there: the limb-carrying arm decides on the sign field
+    alone, and that is only exact against a literal the band contains. -/
+def inI64Band (value : Int) : Bool :=
+  decide (-(2 ^ 63 : Int) ≤ value) && decide (value < (2 ^ 63 : Int))
+
 def isByte (n : Nat) : Bool :=
   if n <= 255 then true else false
 
@@ -308,6 +314,16 @@ def checkBlockFuel : Nat → List FragTy → FragBlock → Bool
             if params[0]? = some .adtRef && params[1]? = some .intCarrier then
               some .intCarrier
             else none
+        -- The sign template consumes ONE Int carrier and yields the source
+        -- Boolean. Two pins live here rather than in a face: the scratch slot
+        -- is exactly the one declared local (`params.length`), so the template
+        -- cannot write over a parameter, and the literal must be inside the
+        -- i64 band, which is what makes its limb-carrying arm exact.
+        | .intSignCmp _op constant scratch value =>
+            if hasTy checked value .intCarrier && scratch = params.length &&
+                inI64Band constant then
+              some .boolI32
+            else none
       let rec checkNodes (checked : List FragNode) : List FragNode → Bool
         | [] => true
         | node :: rest =>
@@ -356,8 +372,12 @@ def checkSymBlockFuel : Nat → List SymTy → SymBlock → Bool
         -- fragment the byte gate rejects).
         | .projectField typeName _field fieldTy value =>
             if hasSymTy checked value (.named typeName) then some fieldTy else none
+        -- The operand needs only to be a source Int. A PARAM operand encodes to
+        -- the two-arm expansion over its local slot; anything computed encodes
+        -- to the monolithic `intSignCmp` node, which stashes the value in the
+        -- declared scratch local instead of reading it twice.
         | .intConstCmp _ value _ =>
-            if hasSymTy checked value .int && isSymParam checked value then some .bool else none
+            if hasSymTy checked value .int then some .bool else none
         -- Both operands are ordinary Int VALUES; nothing here demands they be
         -- parameters. The two comparison faces pin the encoded node list
         -- literally to reads of locals 0 and 1, so a comparison of anything
@@ -468,6 +488,7 @@ def blockNeedsRelationalFloatResultFuel : Nat → FragBlock → Bool
         | .selfCall _ _ _ => false
         | .vectorGetOrDefault _ _ _ _ => false
         | .structNew _ _ => false
+        | .intSignCmp _ _ _ _ => false
 
 def exactBitFloatResultAllowed (plan : ExprFragmentRawPlan) : Bool :=
   match plan.result with
@@ -953,10 +974,14 @@ def pushEncodedNode
   let (nodes, id) := appendFragNode st.nodes ty kind
   ({ st with nodes := nodes }, id)
 
+/-- `nparams` is the plan's parameter count, threaded so the sign-template
+    encoding can name the ONE declared scratch local (slot `nparams`); nested
+    blocks share the enclosing plan's parameters, so it is constant. -/
 def encodeSymBlockFuel :
-    Nat → List (HostRole × Nat) → List (String × Nat) → SymBlock → Option FragBlock
-  | 0, _, _, _ => none
-  | fuel + 1, hostTable, structTable, block =>
+    Nat → Nat → List (HostRole × Nat) → List (String × Nat) → SymBlock →
+      Option FragBlock
+  | 0, _, _, _, _ => none
+  | fuel + 1, nparams, hostTable, structTable, block =>
       let encodeNode (st : SymEncodeState) (node : SymNode) : Option SymEncodeState := do
         if node.id = st.symToFrag.length then
           let fragTy ← encodeSymTy? node.ty
@@ -1036,14 +1061,25 @@ def encodeSymBlockFuel :
               else
                 none
           | .intConstCmp op value constant =>
-              let carrier ← encodedValue? st value
-              let index ← sourceParamIndex? block.nodes value
-              let (st, magf) := pushEncodedNode st .ref (.structGet 1 carrier)
-              let (st, isSmall) := pushEncodedNode st .boolI32 (.refIsNull magf)
-              let thenBlock ← encodeIntSmallConstCmpBlock? index op constant
-              let elseBlock ← encodeIntBigConstCmpBlock? index op
-              let (st, id) := pushEncodedNode st .boolI32 (.ifElse isSmall thenBlock elseBlock)
-              some { st with symToFrag := st.symToFrag ++ [id] }
+              -- A PARAM operand keeps the historical two-arm expansion: both
+              -- arms re-read the parameter's local slot, so no scratch is
+              -- needed and the emitted bytes are unchanged. Any COMPUTED
+              -- operand cannot be re-read, so it encodes to the emitter's real
+              -- monolithic template, which stashes the value in the declared
+              -- scratch local (slot `nparams`).
+              let operand ← encodedValue? st value
+              match sourceParamIndex? block.nodes value with
+              | some index =>
+                  let (st, magf) := pushEncodedNode st .ref (.structGet 1 operand)
+                  let (st, isSmall) := pushEncodedNode st .boolI32 (.refIsNull magf)
+                  let thenBlock ← encodeIntSmallConstCmpBlock? index op constant
+                  let elseBlock ← encodeIntBigConstCmpBlock? index op
+                  let (st, id) := pushEncodedNode st .boolI32 (.ifElse isSmall thenBlock elseBlock)
+                  some { st with symToFrag := st.symToFrag ++ [id] }
+              | none =>
+                  let (st, id) := pushEncodedNode st .boolI32
+                    (.intSignCmp op constant nparams operand)
+                  some { st with symToFrag := st.symToFrag ++ [id] }
           | .intCmp op lhs rhs =>
               -- The emitted comparison: read both operands, call the helper the
               -- operator names, and — for the three relational operators —
@@ -1077,14 +1113,14 @@ def encodeSymBlockFuel :
               let (st, tagId) := pushEncodedNode st .rawI32 (.structGetUser tyIdx 0 scrut)
               let (st, kId) := pushEncodedNode st .rawI32 (.constI32 tag)
               let (st, cmpId) := pushEncodedNode st .boolI32 (.prim .i32Eq [tagId, kId])
-              let hitFrag ← encodeSymBlockFuel fuel hostTable structTable hitBlock
-              let missFrag ← encodeSymBlockFuel fuel hostTable structTable missBlock
+              let hitFrag ← encodeSymBlockFuel fuel nparams hostTable structTable hitBlock
+              let missFrag ← encodeSymBlockFuel fuel nparams hostTable structTable missBlock
               let (st, id) := pushEncodedNode st fragTy (.ifElse cmpId hitFrag missFrag)
               some { st with symToFrag := st.symToFrag ++ [id] }
           | .ifElse cond thenBlock elseBlock =>
               let cond ← encodedValue? st cond
-              let thenFrag ← encodeSymBlockFuel fuel hostTable structTable thenBlock
-              let elseFrag ← encodeSymBlockFuel fuel hostTable structTable elseBlock
+              let thenFrag ← encodeSymBlockFuel fuel nparams hostTable structTable thenBlock
+              let elseFrag ← encodeSymBlockFuel fuel nparams hostTable structTable elseBlock
               let (st, id) := pushEncodedNode st fragTy (.ifElse cond thenFrag elseFrag)
               some { st with symToFrag := st.symToFrag ++ [id] }
           | .vectorGetOrDefault typeName default =>
@@ -1113,11 +1149,12 @@ def encodeSymBlockFuel :
       | none => none
 
 def encodeSymBlock?
+    (nparams : Nat)
     (hostTable : List (HostRole × Nat))
     (structTable : List (String × Nat))
     (block : SymBlock) :
     Option FragBlock :=
-  encodeSymBlockFuel maxFuel hostTable structTable block
+  encodeSymBlockFuel maxFuel nparams hostTable structTable block
 
 def encodeSymRawPlanToExprFragmentRawPlan
     (hostTable : List (HostRole × Nat))
@@ -1126,7 +1163,7 @@ def encodeSymRawPlanToExprFragmentRawPlan
     Option ExprFragmentRawPlan :=
   if checkSymRawPlan plan then
     match encodeSymTys? plan.params, encodeSymTy? plan.result,
-          encodeSymBlock? hostTable structTable plan.body with
+          encodeSymBlock? plan.params.length hostTable structTable plan.body with
     | some params, some result, some body =>
         some { profile := "expr-fragment-v1", params := params, result := result, body := body }
     | _, _, _ => none

@@ -215,7 +215,7 @@ theorem {name}_simulates : AverCert.Schema.Obligation.holds {name}Ob := by
         · simp [wFuncN, wRunF, {name}Code, {name}Host, boxRef, popArgs, initLocals, hc] at hrun
         · simp [wFuncN, wRunF, {name}Code, {name}Host, boxRef, popArgs, initLocals, hc] at hrun
           subst hrun
-          simpa [AverCert.Schema.intRepr] using hadd n ({k}) v (carrierSmall {carrier} ({k})) r hv (S.smallIntro ({k})) hc
+          simpa [AverCert.Schema.intRepr] using (hadd n ({k}) v (carrierSmall {carrier} ({k})) r hv (S.smallIntro ({k})) hc).1
     | cons _ _ =>
       simp at harity
 "#
@@ -420,6 +420,9 @@ where
         FragNodeKind::SelfCall { .. } => {
             unreachable!("self-call is rendered by the fuel-recursion face, not the generic value renderer")
         }
+        FragNodeKind::IntSignCmp { .. } => {
+            unreachable!("the sign template is rendered by the record-compute face, not the generic value renderer")
+        }
         FragNodeKind::If {
             cond,
             then_block,
@@ -544,6 +547,31 @@ where
             let t = expr_fragment_bool_expr(then_block, then_block.result, local);
             let e = expr_fragment_bool_expr(else_block, else_block.result, local);
             format!("if ({c}) then ({t}) else ({e})")
+        }
+        // The inline sign template IS a `BoolI32` node, so it belongs here and
+        // not in the "not BoolI32" arm below. Its source meaning is the plain
+        // comparison of the operand against the literal — the wall's
+        // `RecordComputeBridge.symIntCmpDenote`. The record-compute face is
+        // the plan itself, so nothing in production reaches this renderer for
+        // this node; keeping the reading honest is what stops a later caller
+        // from getting a wrong-shape panic instead of an expression.
+        FragNodeKind::IntSignCmp {
+            op,
+            constant,
+            value,
+            ..
+        } => {
+            let v = expr_fragment_value_expr(block, *value, local);
+            let k = lean_int_lit(*constant);
+            match op {
+                SymIntCmp::Eq => format!("({v}) = ({k})"),
+                SymIntCmp::Lt => format!("({v}) < ({k})"),
+                SymIntCmp::Le => format!("({v}) <= ({k})"),
+                // Swapped `<=` / `<`, the convention `i64.ge_s` / `i64.gt_s`
+                // already use in this renderer.
+                SymIntCmp::Ge => format!("({k}) <= ({v})"),
+                SymIntCmp::Gt => format!("({k}) < ({v})"),
+            }
         }
         FragNodeKind::ConstI64(_)
         | FragNodeKind::ConstI32(_)

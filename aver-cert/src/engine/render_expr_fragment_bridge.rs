@@ -315,8 +315,8 @@ theorem {name}_exprFragmentSemanticBridge :
                   CertModule.{name}Code, CertModule.{name}Host, boxRef,
                   popArgs, initLocals, hc, carrierSmall, b32]
               · simpa [AverCert.Schema.intRepr, {model_name}] using
-                  hAdd n ({k}) v (carrierSmall {carrier} ({k})) result hv
-                    (S.smallIntro ({k})) hc
+                  (hAdd n ({k}) v (carrierSmall {carrier} ({k})) result hv
+                    (S.smallIntro ({k})) hc).1
 
 #print axioms {name}_exprFragmentSemanticBridge
 "#

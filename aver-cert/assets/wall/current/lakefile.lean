@@ -8,6 +8,7 @@ package «certprelude» where
 lean_lib «CertPrelude» where
   srcDir := "."
   roots := #[`CertPrelude, `CertPreludeSanity, `CertDecode, `SchemaCore,
+    `SchemaSanity,
     `PlanCheck, `PlanLower, `PlanBytes, `WasmSlice, `Wasip2Envelope,
     `ExprFragmentAccepted,
     `AcceptedArtifactCore, `IntDispatchSoundness, `EnvelopeLowering,

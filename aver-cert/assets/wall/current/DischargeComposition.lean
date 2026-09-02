@@ -236,11 +236,11 @@ def compositionClaimSemanticBridge
     (stringConcat : Nat → List WVal → Option WVal)
     (toIndex cmp eq : List WVal → Option WVal)
     (hAdd : ∀ a b va vb w, S.Repr a va → S.Repr b vb →
-      add [va, vb] = some w → S.Repr (a + b) w)
+      add [va, vb] = some w → S.Repr (a + b) w ∧ S.Canon w)
     (hSub : ∀ a b va vb w, S.Repr a va → S.Repr b vb →
-      sub [va, vb] = some w → S.Repr (a - b) w)
+      sub [va, vb] = some w → S.Repr (a - b) w ∧ S.Canon w)
     (hMul : ∀ a b va vb w, S.Repr a va → S.Repr b vb →
-      mul [va, vb] = some w → S.Repr (a * b) w)
+      mul [va, vb] = some w → S.Repr (a * b) w ∧ S.Canon w)
     (hStringEq : ∀ a b w, stringEq [a, b] = some w →
       w = b32 (stringEqW a b))
     (hStringConcat : ∀ resultTy parts c,
@@ -248,16 +248,12 @@ def compositionClaimSemanticBridge
         stringConcatW resultTy parts = some c)
     (hToIndex : ∀ n v r, S.Repr n v → toIndex [v] = some r →
       r = .i32v (toIndexW n))
-      (hCmp : ∀ k1 k2 r, -(2 ^ 63 : Int) ≤ k1 → k1 < 2 ^ 63 →
-        -(2 ^ 63 : Int) ≤ k2 → k2 < 2 ^ 63 →
-        cmp [carrierSmall claim.obligation.carrier k1,
-             carrierSmall claim.obligation.carrier k2] = some r →
-          r = .i32v (cmpW k1 k2))
-      (hEq : ∀ k1 k2 r, -(2 ^ 63 : Int) ≤ k1 → k1 < 2 ^ 63 →
-        -(2 ^ 63 : Int) ≤ k2 → k2 < 2 ^ 63 →
-        eq [carrierSmall claim.obligation.carrier k1,
-            carrierSmall claim.obligation.carrier k2] = some r →
-          r = .i32v (eqW k1 k2))
+      (hCmp : ∀ a b va vb r, S.Repr a va → S.Repr b vb →
+        S.Canon va → S.Canon vb →
+        cmp [va, vb] = some r → r = .i32v (cmpW a b))
+      (hEq : ∀ a b va vb r, S.Repr a va → S.Repr b vb →
+        S.Canon va → S.Canon vb →
+        eq [va, vb] = some r → r = .i32v (eqW a b))
     (x : claim.obligation.Dom) (vs : List WVal),
     claim.obligation.domRepr S x vs →
     ∃ (n : Int) (v : WVal) (models : String → Int → Int)

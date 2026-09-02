@@ -66,6 +66,37 @@ def vectorGetOrDefaultTemplate
       [.localGet 0, .localGet 1, .call toIndexIdx, .arrayGet arrTy]
       [.i64Const d, .call boxIdx] ]
 
+/-- The emitter's inline sign template for `carrier OP i64-literal`
+    (`from_mir/builtins.rs::emit_aint_cmp_const`), as a `WInstr` list. The
+    operand is consumed off the stack into `scratch`; the `limbs = null` test
+    picks the native i64 compare of the `small` field, and the limb-carrying
+    arm decides on the sign field alone — `eq` needs no field read there at
+    all, because a canonical limb-carrying carrier never equals an i64
+    literal. Holes: `carrier` (the Int carrier struct index), `scratch` (the
+    declared scratch local), `op`, `k`. -/
+def intSignCmpSmallPrim : SymIntCmp → FragPrim
+  | .eq => .i64Eq
+  | .lt => .i64LtS
+  | .le => .i64LeS
+  | .ge => .i64GeS
+  | .gt => .i64GtS
+
+def intSignCmpBigArm (carrier scratch : Nat) : SymIntCmp → List WInstr
+  | .eq => [.i32Const 0]
+  | .lt => [.localGet scratch, .structGet carrier 2, .i32Const 0, .i32LtS]
+  | .le => [.localGet scratch, .structGet carrier 2, .i32Const 0, .i32LtS]
+  | .ge => [.localGet scratch, .structGet carrier 2, .i32Const 0, .i32GtS]
+  | .gt => [.localGet scratch, .structGet carrier 2, .i32Const 0, .i32GtS]
+
+def intSignCmpTemplate (carrier scratch : Nat) (op : SymIntCmp) (k : Int) :
+    List WInstr :=
+  [ .localSet scratch,
+    .localGet scratch, .structGet carrier 1, .refIsNull,
+    .ifElse
+      [.localGet scratch, .structGet carrier 0, .i64Const k,
+        primInstr (intSignCmpSmallPrim op)]
+      (intSignCmpBigArm carrier scratch op) ]
+
 mutual
   def lowerNodesFuel :
       Nat → Nat → List FragNode → List Nat → Option (List WInstr × List Nat)
@@ -135,6 +166,14 @@ mutual
                   some (vectorGetOrDefaultTemplate toIndexIdx boxIdx arrTy default,
                     [node.id])
               | _ => none
+          | .intSignCmp op k scratch value =>
+              -- Monolithic template: pops its one operand off the symbolic
+              -- stack exactly like `refIsNull`, then emits the whole
+              -- stash/branch/compare sequence.
+              match popExpected stack value with
+              | some stack' =>
+                  some (intSignCmpTemplate carrier scratch op k, node.id :: stack')
+              | none => none
         match lowered? with
         | some (instrs, stack') =>
             match lowerNodesFuel fuel carrier rest stack' with

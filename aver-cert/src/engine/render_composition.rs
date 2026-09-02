@@ -416,7 +416,8 @@ fn render_composition_semantic_bridge(
          by simp [CertModule.{name}Host],\n              \
          {direct_body},\n              \
          by rfl,\n              \
-         {} S add sub hAdd hSub\n            \
+         {} S add sub (AverCert.Schema.carrierContract_weaken hAdd)\n                \
+         (AverCert.Schema.carrierContract_weaken hSub)\n            \
          ⟩⟩\n\n\
          #print axioms {name}_compositionSemanticBridge\n",
         lean_str(&direct_callee.name),

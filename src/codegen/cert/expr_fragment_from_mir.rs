@@ -33,6 +33,10 @@ fn expr_fragment_plan_has_face(plan: &ExprFragmentPlan, host_table: &FragHostTab
     // bytes untouched) — the generic renderers have no construction arm.
     let struct_new_ok = record_compute
         || !plan_contains_struct_new(&plan.body);
+    // The inline sign template has the same discipline: only the compute face
+    // interprets it, so a plan carrying it without that face stays unplanned
+    // (bytes untouched) instead of reaching the verifier and declining there.
+    let int_sign_cmp_ok = record_compute || !plan_contains_int_sign_cmp(&plan.body);
     let int_face_ok = plan.result != FragTy::IntCarrier
         || expr_fragment_int_add_face(plan).is_some()
         || tag_dispatch
@@ -54,7 +58,19 @@ fn expr_fragment_plan_has_face(plan: &ExprFragmentPlan, host_table: &FragHostTab
         || vector_get
         || record_proj
         || record_compute;
-    int_face_ok && host_call_face_ok && adt_face_ok && struct_new_ok
+    int_face_ok && host_call_face_ok && adt_face_ok && struct_new_ok && int_sign_cmp_ok
+}
+
+fn plan_contains_int_sign_cmp(block: &FragBlock) -> bool {
+    block.nodes.iter().any(|n| match &n.kind {
+        FragNodeKind::IntSignCmp { .. } => true,
+        FragNodeKind::If {
+            then_block,
+            else_block,
+            ..
+        } => plan_contains_int_sign_cmp(then_block) || plan_contains_int_sign_cmp(else_block),
+        _ => false,
+    })
 }
 
 fn plan_contains_struct_new(block: &FragBlock) -> bool {
@@ -750,20 +766,37 @@ impl<'a, 'e> MirSymPlanBuilder<'a, 'e> {
         )
     }
 
+    /// The emitter specializes EVERY `Int` comparison against an i64 literal
+    /// into its tag-branch template (`from_mir/builtins.rs`), whatever the
+    /// other operand is, so the plan has to describe the same shape for any
+    /// operand — a param operand encodes to the two-arm expansion over its
+    /// local slot, anything computed to the monolithic `intSignCmp`. The
+    /// literal side is probed LEFT FIRST, exactly as the emitter probes it, so
+    /// a comparison of two literals flips the same way on both sides.
     fn int_const_cmp_shape(
         &self,
         binop: &'e crate::ir::mir::MirBinOp,
     ) -> Option<(&'e crate::ast::Spanned<crate::ir::mir::MirExpr>, crate::ast::BinOp, i64, bool)>
     {
-        if let Some(k) = mir_int_literal(&binop.rhs)
-            && self.expr_is_int_param(&binop.lhs)
-        {
-            return Some((&binop.lhs, binop.op, k, false));
+        // The emitter's own gate: only the six comparisons specialize, so
+        // arithmetic against a literal (`0 - a.top`) must fall through to the
+        // ordinary lowering below.
+        if !matches!(
+            binop.op,
+            crate::ast::BinOp::Eq
+                | crate::ast::BinOp::Neq
+                | crate::ast::BinOp::Lt
+                | crate::ast::BinOp::Gt
+                | crate::ast::BinOp::Lte
+                | crate::ast::BinOp::Gte
+        ) {
+            return None;
         }
-        if let Some(k) = mir_int_literal(&binop.lhs)
-            && self.expr_is_int_param(&binop.rhs)
-        {
+        if let Some(k) = mir_int_literal(&binop.lhs) {
             return Some((&binop.rhs, binop.op, k, true));
+        }
+        if let Some(k) = mir_int_literal(&binop.rhs) {
+            return Some((&binop.lhs, binop.op, k, false));
         }
         None
     }

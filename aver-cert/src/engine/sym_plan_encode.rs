@@ -18,13 +18,18 @@ impl SymPrim {
     }
 }
 
+/// `nparams` is the enclosing plan's parameter count, threaded so the sign
+/// template can name the ONE declared scratch local (slot `nparams`); nested
+/// blocks share the enclosing plan's parameters, so it is constant.
 fn expr_fragment_block_from_sym(
     block: &SymBlock,
+    nparams: u32,
     host_table: &FragHostTable,
     struct_table: &FragStructTable,
 ) -> Option<FragBlock> {
     let mut encoder = SymToFragEncoder {
         source_nodes: &block.nodes,
+        nparams,
         host_table,
         struct_table,
         nodes: Vec::new(),
@@ -42,6 +47,7 @@ fn expr_fragment_block_from_sym(
 
 struct SymToFragEncoder<'a> {
     source_nodes: &'a [SymNode],
+    nparams: u32,
     host_table: &'a FragHostTable,
     struct_table: &'a FragStructTable,
     nodes: Vec<FragNode>,
@@ -192,11 +198,13 @@ impl SymToFragEncoder<'_> {
                         cond,
                         then_block: Box::new(expr_fragment_block_from_sym(
                             hit,
+                            self.nparams,
                             self.host_table,
                             self.struct_table,
                         )?),
                         else_block: Box::new(expr_fragment_block_from_sym(
                             miss,
+                            self.nparams,
                             self.host_table,
                             self.struct_table,
                         )?),
@@ -233,11 +241,13 @@ impl SymToFragEncoder<'_> {
                         cond,
                         then_block: Box::new(expr_fragment_block_from_sym(
                             then_block,
+                            self.nparams,
                             self.host_table,
                             self.struct_table,
                         )?),
                         else_block: Box::new(expr_fragment_block_from_sym(
                             else_block,
+                            self.nparams,
                             self.host_table,
                             self.struct_table,
                         )?),
@@ -299,6 +309,12 @@ impl SymToFragEncoder<'_> {
         ))
     }
 
+    /// Twin of the wall's `.intConstCmp` encoder arm. A PARAM operand keeps
+    /// the historical two-arm expansion: both arms re-read the parameter's
+    /// local slot, so no scratch is needed and the emitted bytes are
+    /// unchanged. Any COMPUTED operand cannot be re-read, so it encodes to the
+    /// emitter's real monolithic template (`intSignCmp`), which stashes the
+    /// value in the declared scratch local (slot `nparams`).
     fn encode_int_const_cmp(
         &mut self,
         op: SymIntCmp,
@@ -311,8 +327,19 @@ impl SymToFragEncoder<'_> {
                 ty: SymTy::Int,
                 kind: SymNodeKind::Param { index },
                 ..
-            } => *index,
-            _ => return None,
+            } => Some(*index),
+            _ => None,
+        };
+        let Some(param_index) = param_index else {
+            return Some(self.push_node(
+                FragTy::BoolI32,
+                FragNodeKind::IntSignCmp {
+                    op,
+                    constant,
+                    scratch: self.nparams,
+                    value: carrier,
+                },
+            ));
         };
         let magf = self.push_node(
             FragTy::Ref,

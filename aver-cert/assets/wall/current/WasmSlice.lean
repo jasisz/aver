@@ -525,6 +525,19 @@ def checkFuncTypeExact (params results : List CertDecode.ValType)
   | .plain, .funcType ps rs => decide (ps = params) && decide (rs = results)
   | _, _ => false
 
+/-- The nodes that make a body COMPUTE rather than merely project: a
+    construction, any host call, and the emitter's inline sign template.
+    Byte-for-byte the same predicate as `StandardFace.fragNodeComputes`, which
+    pins the two equal by `rfl` — the nominal-signature gate here and the
+    classifier there must count the same nodes, or a plan could pass one and
+    fail the other. -/
+def fragNodeComputes (n : AverCert.Schema.FragNode) : Bool :=
+  match n.kind with
+  | .structNew _ _ => true
+  | .hostCall _ _ _ => true
+  | .intSignCmp _ _ _ _ => true
+  | _ => false
+
 /-- Byte-level recognizer of the record projection-compute shape (mirror of
     `StandardFace.classifyRecordCompute`'s struct-index core; lives here
     because WasmSlice cannot import StandardFace): every parameter is an
@@ -533,11 +546,7 @@ def checkFuncTypeExact (params results : List CertDecode.ValType)
 def exprRecordComputeStructIdx?
     (plan : AverCert.Schema.ExprFragmentRawPlan) : Option Nat :=
   if plan.params.all (· == .adtRef) &&
-      plan.body.nodes.any (fun n =>
-        match n.kind with
-        | .structNew _ _ => true
-        | .hostCall _ _ _ => true
-        | _ => false) then
+      plan.body.nodes.any fragNodeComputes then
     match plan.body.nodes.filterMap (fun n =>
         match n.kind with
         | .structGetUser tyIdx _ _ => some tyIdx

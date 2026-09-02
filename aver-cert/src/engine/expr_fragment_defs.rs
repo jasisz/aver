@@ -139,18 +139,18 @@ pub enum FragHostRole {
     /// to the `-1` out-of-bounds sentinel. Consumed only inside the monolithic
     /// fused vector-read node, never as a standalone `hostCall`.
     ToIndex,
-    /// The `__aint_cmp` three-way comparison contract: two small-band carriers
+    /// The `__aint_cmp` three-way comparison contract: two CANONICAL carriers
     /// in, the raw `i32` sentinel `-1`/`0`/`1` out. The result is NOT a Boolean
     /// — the emitter always follows the call with `i32.const 0` and a signed
     /// relational operator — so its node type is `RawI32`. The assumed law is
-    /// quantified over literal small carriers only; see section 4.3 of
-    /// `docs/certificate-format.md` for why widening it is unsound.
+    /// quantified over a canonical carrier pair; see section 4.3 of
+    /// `docs/certificate-format.md` for why dropping canonicity is unsound.
     Cmp,
-    /// The `__aint_eq` equality contract: two small-band carriers in, the
+    /// The `__aint_eq` equality contract: two canonical carriers in, the
     /// `0`/`1` wasm Boolean out. Unlike `Cmp` the result IS the source-level
     /// Boolean, so its node type is `BoolI32` and no comparison tail follows.
-    /// Same small-band scoping as `Cmp`, and here the wider form is refutable:
-    /// the helper compares a small against a limb-carrying operand
+    /// Same canonical scoping as `Cmp`, and here the unscoped form is
+    /// refutable: the helper compares a small against a limb-carrying operand
     /// structurally.
     Eq,
 }
@@ -630,6 +630,44 @@ pub enum FragNodeKind {
         ty_idx: u32,
         args: Vec<FragValueId>,
     },
+    /// The emitter's monolithic sign template for comparing a COMPUTED Int
+    /// carrier against an i64 literal without calling `__aint_cmp`
+    /// (`from_mir/builtins.rs::emit_aint_cmp_const`). The operand is popped off
+    /// the stack into `scratch` — the one declared scratch local, pinned to
+    /// `params.length` by the plan checker — and the `limbs = null` test picks
+    /// either the native i64 compare of the `small` field or, for a canonical
+    /// limb-carrying operand, the sign field alone. Twin of
+    /// `FragNodeKind.intSignCmp` (added LAST in the Lean inductive).
+    IntSignCmp {
+        op: SymIntCmp,
+        constant: i64,
+        scratch: u32,
+        value: FragValueId,
+    },
+}
+
+/// The i64 comparison the sign template's SMALL arm performs against the
+/// literal. Twin of `PlanLower.intSignCmpSmallPrim`.
+fn int_sign_cmp_small_prim(op: SymIntCmp) -> FragPrim {
+    match op {
+        SymIntCmp::Eq => FragPrim::I64Eq,
+        SymIntCmp::Lt => FragPrim::I64LtS,
+        SymIntCmp::Le => FragPrim::I64LeS,
+        SymIntCmp::Ge => FragPrim::I64GeS,
+        SymIntCmp::Gt => FragPrim::I64GtS,
+    }
+}
+
+/// The i32 comparison the sign template's LIMB-CARRYING arm performs against
+/// `i32.const 0`, or `None` for equality — which reads no sign field at all,
+/// because a canonical limb-carrying carrier never equals an i64 literal.
+/// Twin of `PlanLower.intSignCmpBigArm`.
+fn int_sign_cmp_sign_prim(op: SymIntCmp) -> Option<FragPrim> {
+    match op {
+        SymIntCmp::Eq => None,
+        SymIntCmp::Lt | SymIntCmp::Le => Some(FragPrim::I32LtS),
+        SymIntCmp::Ge | SymIntCmp::Gt => Some(FragPrim::I32GtS),
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -788,6 +826,16 @@ fn expr_fragment_node_kind_lean_value(kind: &FragNodeKind) -> String {
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
+        FragNodeKind::IntSignCmp {
+            op,
+            constant,
+            scratch,
+            value,
+        } => format!(
+            ".intSignCmp {} ({constant} : Int) {scratch} {}",
+            op.lean_plan_ctor(),
+            value.0
+        ),
         FragNodeKind::Prim { op, args } => format!(
             ".prim {} [{}]",
             op.lean_plan_ctor(),
@@ -892,6 +940,19 @@ fn render_fragment_node_plan(node: &FragNode, indent: usize, out: &mut String) {
             out.push_str(&format!(
                 "struct.new ty={ty_idx} args={}\n",
                 render_fragment_plan_ids(args)
+            ));
+        }
+        FragNodeKind::IntSignCmp {
+            op,
+            constant,
+            scratch,
+            value,
+        } => {
+            out.push_str(&format!(
+                "int.sign_cmp op={} constant={constant} scratch={scratch} \
+                 value=v{}\n",
+                op.plan_tag(),
+                value.0
             ));
         }
         FragNodeKind::Prim { op, args } => {
@@ -1207,6 +1268,99 @@ mod expr_fragment_sem_ty_tests {
             lower_expr_fragment_plan_code_entry_bytes(&reparsed, 18).expect("relower"),
             vec![0x0b, 0x01, 0x01, 0x63, 0x12, 0x20, 0x00, 0xfb, 0x02, 0x0f, 0x00, 0x0b]
         );
+    }
+
+    /// The inline sign template on a computed Int operand, at the one declared
+    /// scratch slot (`params.length`). `op`/`constant`/`scratch`/`value` are all
+    /// plan data, so the text form must round-trip every one of them.
+    fn sign_template_plan(op: SymIntCmp, constant: i64) -> ExprFragmentPlan {
+        ExprFragmentPlan {
+            params: vec![FragTy::IntCarrier],
+            result: FragTy::BoolI32,
+            body: FragBlock {
+                nodes: vec![
+                    FragNode {
+                        id: FragValueId(0),
+                        ty: FragTy::IntCarrier,
+                        kind: FragNodeKind::Local { index: 0 },
+                    },
+                    FragNode {
+                        id: FragValueId(1),
+                        ty: FragTy::BoolI32,
+                        kind: FragNodeKind::IntSignCmp {
+                            op,
+                            constant,
+                            scratch: 1,
+                            value: FragValueId(0),
+                        },
+                    },
+                ],
+                result: FragValueId(1),
+            },
+        }
+    }
+
+    /// The plan-text renderer emits `int.sign_cmp`, so the plan-text parser
+    /// must read it back — including a NEGATIVE literal, whose minus sign is
+    /// the one character an attribute scanner is most likely to drop.
+    #[test]
+    fn sign_template_plan_text_round_trips_through_parser() {
+        for (op, constant) in [
+            (SymIntCmp::Ge, 0_i64),
+            (SymIntCmp::Le, 0),
+            (SymIntCmp::Eq, 7),
+            (SymIntCmp::Lt, -5),
+            (SymIntCmp::Gt, i64::MIN),
+        ] {
+            let plan = sign_template_plan(op, constant);
+            let text = expr_fragment_plan_text(&plan);
+            let mut parser =
+                FragPlanParser::new(&text, vec![FragTy::IntCarrier], FragTy::BoolI32);
+            let body = parser
+                .parse()
+                .unwrap_or_else(|e| panic!("parse sign-template plan: {e}\n{text}"));
+            let reparsed = ExprFragmentPlan {
+                params: vec![FragTy::IntCarrier],
+                result: FragTy::BoolI32,
+                body,
+            };
+            assert_eq!(reparsed, plan, "plan text = {text}");
+        }
+    }
+
+    /// The three typing pins the wall's `nodeTypedB` states for `.intSignCmp`
+    /// are enforced by the plan-text parser too: the operand is an Int carrier,
+    /// the written slot is exactly `params.length`, and the node is Boolean.
+    #[test]
+    fn sign_template_plan_text_rejects_a_slot_that_is_not_the_scratch_local() {
+        let plan = sign_template_plan(SymIntCmp::Ge, 0);
+        let text = expr_fragment_plan_text(&plan).replace("scratch=1", "scratch=0");
+        let mut parser = FragPlanParser::new(&text, vec![FragTy::IntCarrier], FragTy::BoolI32);
+        let error = parser.parse().expect_err("a parameter slot must be refused");
+        assert!(
+            error.contains("declared scratch slot"),
+            "unexpected error: {error}"
+        );
+    }
+
+    /// The sign template IS a Boolean node, so the Boolean renderer must give
+    /// it its source reading (`value op k`) rather than panic with "node is not
+    /// BoolI32".
+    #[test]
+    fn bool_renderer_reads_the_sign_template_instead_of_panicking() {
+        let local = |index: u32, _ty: FragTy| format!("a{index}");
+        for (op, constant, expected) in [
+            (SymIntCmp::Ge, 0_i64, "(0) <= (a0)"),
+            (SymIntCmp::Gt, 0, "(0) < (a0)"),
+            (SymIntCmp::Le, 0, "(a0) <= (0)"),
+            (SymIntCmp::Lt, -5, "(a0) < ((-5))"),
+            (SymIntCmp::Eq, 7, "(a0) = (7)"),
+        ] {
+            let plan = sign_template_plan(op, constant);
+            let rendered =
+                expr_fragment_bool_expr(&plan.body, plan.body.result, &local);
+            assert_eq!(rendered, expected);
+        }
     }
 
     #[test]

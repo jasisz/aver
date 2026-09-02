@@ -50,14 +50,14 @@ pub const CERT_LEVEL: &str = "L1";
 pub const CERT_SCHEMA_VERSION: u32 = crate::format::CERT_SCHEMA_VERSION;
 pub const BOX_CONTRACT: &str = "__rt_aint_from_i64 (box i64 -> carrier)";
 pub const INT_ADD_CONTRACT: &str =
-    "Int.add (carrier add = exact integer addition on represented values)";
+    "Int.add (carrier add = exact integer addition on represented values; result canonical)";
 pub const INT_SUB_CONTRACT: &str =
-    "Int.sub (carrier sub = exact integer subtraction on represented values)";
+    "Int.sub (carrier sub = exact integer subtraction on represented values; result canonical)";
 pub const INT_MUL_CONTRACT: &str =
-    "Int.mul (carrier mul = exact integer multiplication on represented values)";
-pub const INT_ADD_TOTAL_CONTRACT: &str = "Int.add (carrier add = exact integer addition on represented values); total on represented values";
-pub const INT_SUB_TOTAL_CONTRACT: &str = "Int.sub (carrier sub = exact integer subtraction on represented values); total on represented values";
-pub const INT_MUL_TOTAL_CONTRACT: &str = "Int.mul (carrier mul = exact integer multiplication on represented values); total on represented values";
+    "Int.mul (carrier mul = exact integer multiplication on represented values; result canonical)";
+pub const INT_ADD_TOTAL_CONTRACT: &str = "Int.add (carrier add = exact integer addition on represented values; result canonical); total on represented values";
+pub const INT_SUB_TOTAL_CONTRACT: &str = "Int.sub (carrier sub = exact integer subtraction on represented values; result canonical); total on represented values";
+pub const INT_MUL_TOTAL_CONTRACT: &str = "Int.mul (carrier mul = exact integer multiplication on represented values; result canonical); total on represented values";
 pub const STRING_EQ_CONTRACT: &str =
     "String.eq (WVal byte-array equality; non-arrays compare false)";
 pub const STRING_CONCAT_CONTRACT: &str =
@@ -68,9 +68,9 @@ pub const TO_INDEX_CONTRACT: &str =
 /// `ClaimAxes.cmpContract` / `ClaimAxes.eqContract`; `contractsMatch` compares
 /// the manifest list against the wall's own, so a drift here fails closed.
 pub const CMP_CONTRACT: &str =
-    "__aint_cmp (small-band carrier pair -> i32 sign; -1 less, 0 equal, 1 greater)";
+    "__aint_cmp (canonical carrier pair -> i32 sign; -1 less, 0 equal, 1 greater)";
 pub const EQ_CONTRACT: &str =
-    "__aint_eq (small-band carrier pair -> i32 boolean; 1 when equal, else 0)";
+    "__aint_eq (canonical carrier pair -> i32 boolean; 1 when equal, else 0)";
 /// The one approved final-theorem statement line. `aver cert verify` confirms
 /// this exact line is present in `Final.lean` (name + `Holds manifest`), which
 /// is what pins the statement without matching arbitrary Lean syntax.

@@ -63,6 +63,7 @@ const S1_FIXTURES: &[&str] = &[
     "clockrange",
     "compose",
     "f64verbatim",
+    "intcompare",
     "intdispatchgen",
     "letnamed",
     "manytypes",
