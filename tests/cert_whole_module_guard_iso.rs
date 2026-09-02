@@ -3008,22 +3008,26 @@ fn declared_arith_carrier_is_isolated_and_weaken_confirmed() {
     // root list plus `StandardFace` and everything `StandardFace` transitively
     // imports. A `roots` list is NOT auto-extended: a module outside it is not
     // part of the library, so its olean is never built and the import fails,
-    // which is why naming `StandardFace` alone is not enough — nor is the
-    // list that predates the record projection-compute face, whose four
-    // modules `StandardFace` now imports. Twenty-three roots instead of the
-    // wall's full forty keeps the fresh-temp-dir build proportionate. Only files the wall actually EMBEDS may be named: the
-    // staged directory is `wall.sources`, a strict subset of the repository.
+    // which is why naming `StandardFace` alone is not enough, and why a wall
+    // module that gains an import needs its new dependency added here too or
+    // the staged build fails with `unknown module prefix` — the way
+    // `StandardFace`'s `RecordComputeBridge` (and, behind it,
+    // `ExprFragmentSoundness`, `ExprFragmentSemantics` and
+    // `InterpreterSequencing`) did. Twenty-four roots instead of the wall's
+    // full forty-six keeps the fresh-temp-dir build proportionate. Only files
+    // the wall actually EMBEDS may be named: the staged directory is
+    // `wall.sources`, a strict subset of the repository.
     std::fs::write(
         wall_dir.join("lakefile.lean"),
         "import Lake\nopen Lake DSL\n\npackage «avercert» where\n  version := v!\"0.1.0\"\n\n\
          @[default_target]\nlean_lib «AverCert» where\n  srcDir := \".\"\n  \
          roots := #[`CertPrelude, `CertDecode, `SchemaCore, `ArithTemplateDerisk, \
          `PlanCheck, `PlanLower, `PlanBytes, `WasmSlice, `ExprFragmentAccepted, \
+         `ExprFragmentSemantics, `ExprFragmentSoundness, `InterpreterSequencing, \
          `StringSoundness, `Wasip2Envelope, `AcceptedArtifactCore, `ConstructVerbatimSoundness, \
          `DeclaredEnvelopeAcceptTransport, `DeclaredIndexEnvelope, `EnvelopeLowering, \
-         `FieldProjectionSoundness, `IntDispatchSoundness, `WidenedEnvelope, \
-         `ExprFragmentSemantics, `InterpreterSequencing, `ExprFragmentSoundness, \
-         `RecordComputeBridge, `StandardFace]\n",
+         `FieldProjectionSoundness, `IntDispatchSoundness, `RecordComputeBridge, \
+         `WidenedEnvelope, `StandardFace]\n",
     )
     .unwrap();
     let build = Command::new("lake")
@@ -4926,11 +4930,11 @@ fn record_type_declaration_pin_is_isolated_and_weaken_confirmed() {
          @[default_target]\nlean_lib «AverCert» where\n  srcDir := \".\"\n  \
          roots := #[`CertPrelude, `CertDecode, `ArithTemplateDerisk, `SchemaCore, \
          `PlanCheck, `PlanLower, `PlanBytes, `WasmSlice, `ExprFragmentAccepted, \
+         `ExprFragmentSemantics, `ExprFragmentSoundness, `InterpreterSequencing, \
          `Wasip2Envelope, `AcceptedArtifactCore, `IntDispatchSoundness, `EnvelopeLowering, \
          `ConstructVerbatimSoundness, `FieldProjectionSoundness, `StringSoundness, \
-         `WidenedEnvelope, `DeclaredIndexEnvelope, `DeclaredEnvelopeAcceptTransport, \
-         `ExprFragmentSemantics, `InterpreterSequencing, `ExprFragmentSoundness, \
-         `RecordComputeBridge, `StandardFace]\n",
+         `RecordComputeBridge, `WidenedEnvelope, `DeclaredIndexEnvelope, \
+         `DeclaredEnvelopeAcceptTransport, `StandardFace]\n",
     )
     .unwrap();
     let build = Command::new("lake")

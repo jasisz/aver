@@ -108,11 +108,20 @@ jobs:
     # suite is selected exactly once: no overlap (which would double the kernel
     # work) and no gap (which would silently stop running a soundness gate).
     #
-    # Four families are prefix-selected onto dedicated runners because their
+    # Five families are prefix-selected onto dedicated runners because their
     # members are long kernel runs:
     #   * `cert_hostile_model_` (certify) — the hostile obligation-model gates;
     #   * `cert_adt_witness_`   (certify) — one `lake build` of an emitted
     #     certificate per non-recursive ADT fixture, ten of them;
+    #   * `cert_projects_`      (certify) — a whole real project tree certified
+    #     and checked. This is the single longest Lean build in the workflow,
+    #     and it used to share the `rest` lane, where nextest ran it beside
+    #     several other certificate builds; the contention pushed one `lake`
+    #     step past the verifier's 900-second per-phase limit and declined the
+    #     package for a reason that had nothing to do with the certificate. Its
+    #     own lane gives it the runner to itself, and `phase_timeout_secs`
+    #     raises the per-step limit for that lane only, so the fail-closed
+    #     default stays where it is everywhere else;
     #   * `cert_plans_authority_` (verify) — the Plans.lean-authority gates,
     #     one full certificate verification each;
     #   * `cert_tripwire_` (verify) — the tampering classes of `aver cert
@@ -228,10 +237,16 @@ jobs:
 
       - name: Run certification suite lane
         # Filtering happens before slice partitioning. Each family filter (one
-        # of the `cert_hostile_model_`, `cert_adt_witness_`, `cert_tripwire_`
-        # and `cert_plans_authority_` prefixes) and its suite-specific
-        # complement are disjoint and exhaustive.
+        # of the `cert_hostile_model_`, `cert_adt_witness_`, `cert_projects_`,
+        # `cert_tripwire_` and `cert_plans_authority_` prefixes) and its
+        # suite-specific complement are disjoint and exhaustive.
+        #
+        # A lane may raise the verifier's per-Lean-step wall-clock limit
+        # through `phase_timeout_secs`; every other lane keeps the built-in
+        # 900-second default, spelled here so the value in force is visible.
         if: matrix.mode == 'nextest'
+        env:
+          AVER_CERT_PHASE_TIMEOUT_SECS: ${{ matrix.phase_timeout_secs || 900 }}
         run: >-
           cargo nextest run -p aver-lang --features wasm --test ${{ matrix.suite }}
           -E '${{ matrix.filter }}'

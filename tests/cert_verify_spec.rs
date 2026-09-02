@@ -2326,6 +2326,10 @@ fn cert_verify_declines_tampered_array_new_data_operands() {
         report.contains("12 checked exports"),
         "json should certify the widened data-segment functions:\n{report}"
     );
+    assert!(
+        report.contains("law-claims: 10 of 10 credited"),
+        "every json law-claim must pass its per-pin axiom audit:\n{report}"
+    );
 
     let dir = temp_dir("cert-json-data-tamper");
     copy_dir(&out_dir, &dir);
@@ -8342,10 +8346,15 @@ fn explain_states_the_record_compute_faces_certified_domain() {
 }
 
 /// Law-claims pin (schema 7): a clean k5 package carries eleven kernel-checked
-/// law corollaries; the checker-owned witness re-elaborates each corollary at
-/// exactly the manifest-declared statement and audits its axioms. The trio:
-/// a statement edited in `Laws.lean`, a statement edited in the manifest, and
-/// a corollary proof degraded to `sorry` must each be DECLINED.
+/// law corollaries, all credited; the checker-owned witness re-elaborates each
+/// corollary at exactly the manifest-declared statement and audits its axioms.
+///
+/// The two failure modes are deliberately different verdicts. A pin that does
+/// not ELABORATE — a statement edited in `Laws.lean` (A) or in the manifest
+/// (B) — means the declared claim is not what the package proves, and declines
+/// the package. A pin that elaborates but fails its AXIOM AUDIT — a corollary
+/// proof degraded to `sorry` (C) — costs that law its credit and nothing else:
+/// the export verdict and exit code stand.
 #[test]
 fn cert_tripwire_declines_tampered_law_claims() {
     if Command::new("lake").arg("--version").output().is_err() {
@@ -8394,6 +8403,14 @@ fn cert_tripwire_declines_tampered_law_claims() {
     assert!(
         report.contains("10 checked exports"),
         "k5 should keep its ten certified exports:\n{report}"
+    );
+    assert!(
+        report.contains("law-claims: 11 of 11 credited"),
+        "every k5 law must be credited on a clean package:\n{report}"
+    );
+    assert!(
+        !report.contains("law-claim not credited"),
+        "a clean package names no uncredited law:\n{report}"
     );
 
     // Tamper A: edit one law statement inside the package's `Laws.lean`. The
@@ -8449,9 +8466,13 @@ fn cert_tripwire_declines_tampered_law_claims() {
     );
 
     // Tamper C: degrade one corollary proof to `sorry`. The package still
-    // builds and the statement still matches, so only the per-law axiom audit
-    // stands between a sorry and a credited law-claim.
-    let proof_needle = "⟨Domain.Rational.plus_law_commutative, AverCert.Final.cert⟩";
+    // builds and the pin still elaborates at the declared statement, so the
+    // integrity half of the claim holds and only its axiom audit fails. That
+    // costs the LAW its credit and nothing else: the exports the same package
+    // certified are untouched, exactly as `declaredUncertified` leaves the
+    // rest of a package standing. A pin that does not elaborate is tampers A
+    // and B above, and still declines the whole package.
+    let proof_needle = "⟨_root_.Domain.Rational.plus_law_commutative, _root_.AverCert.Final.cert⟩";
     assert!(
         laws_lean.contains(proof_needle),
         "expected corollary proof term"
@@ -8464,14 +8485,36 @@ fn cert_tripwire_declines_tampered_law_claims() {
     )
     .unwrap();
     let (ok, out) = aver_check(&dir.join("main.wasm"), &dir.join("cert"));
-    assert!(!ok, "sorry'd law corollary must be DECLINED:\n{out}");
     assert!(
-        out.contains("non-whitelisted axiom"),
-        "the sorry'd corollary must be caught by the per-law axiom audit, \
-         not by an unrelated build failure:\n{out}"
+        ok,
+        "a law failing only its axiom audit must not sink the exports:\n{out}"
+    );
+    assert!(
+        out.contains("6 checked exports"),
+        "the export verdict must stand unchanged beside an uncredited law:\n{out}"
+    );
+    assert!(
+        out.contains("law-claims: 10 of 11 credited"),
+        "the sorry'd law must lose exactly its own credit:\n{out}"
+    );
+    assert!(
+        out.contains(
+            "law-claim not credited: Domain.Rational.plus.commutative \
+             (proof depends on sorryAx)"
+        ),
+        "the uncredited law must be named together with the axiom that sank it:\n{out}"
     );
     assert!(
         !out.contains("CERTIFIED"),
-        "sorry'd law corollary credited:\n{out}"
+        "`check` never says CERTIFIED:\n{out}"
     );
+
+    // Tamper D — the audit line itself. The witness is checker-authored inside
+    // a temporary build directory the test cannot reach, so the fourth case is
+    // covered where the line is read: `aver-cert`'s parser unit tests
+    // (`law_audit_without_a_line_declines_instead_of_crediting` and
+    // `law_audit_rejects_malformed_and_repeated_lines`) hold that a pin whose
+    // audit line is missing, renamed, repeated, or malformed DECLINES the
+    // package rather than passing unaudited. Credit is only ever granted by a
+    // well-formed `ok` line.
 }

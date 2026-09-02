@@ -17,6 +17,12 @@ use std::path::{Path, PathBuf};
 
 const AXIOM_WHITELIST: [&str; 3] = ["propext", "Classical.choice", "Quot.sound"];
 const CHECKED_ROOT: &str = "AverCertChecker.checked";
+/// Checker-owned name of the law pin for manifest `laws[i]`.
+const LAW_PIN_PREFIX: &str = "AverCertChecker.law_pin_";
+/// Marker of the machine-readable per-pin axiom-audit line the checker-owned
+/// witness logs. Read back from the witness elaboration output only, which
+/// elaborates no package text, so no staged file can forge one.
+const LAW_AUDIT_MARKER: &str = "AVER_LAW_AUDIT";
 const MAX_CANDIDATE_LEN: usize = 200;
 const TOOLCHAIN_ROOTS: [&str; 4] = ["Init", "Lake", "Lean", "Std"];
 const FRESH_REPLAY_ARGS: [&str; 4] = ["env", "leanchecker", "--fresh", "ArtifactCertificate"];
@@ -54,7 +60,12 @@ const CODE_EXEC_TOKENS: [&str; 20] = [
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Verdict {
-    Certified { summary: String, faces: Vec<String> },
+    Certified {
+        summary: String,
+        faces: Vec<String>,
+        /// One line per declared law-claim that was NOT credited.
+        laws: Vec<String>,
+    },
     NoExports(String),
 }
 
@@ -64,7 +75,12 @@ pub enum Verdict {
 /// fresh-environment replay required for certification.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CheckVerdict {
-    Checked { summary: String, faces: Vec<String> },
+    Checked {
+        summary: String,
+        faces: Vec<String>,
+        /// One line per declared law-claim that was NOT credited.
+        laws: Vec<String>,
+    },
     NoExports(String),
 }
 
@@ -90,8 +106,23 @@ struct CertifiedExport {
     manifest_face: String,
 }
 
+/// The outcome of one declared law-claim. A claim whose pin elaborated but
+/// whose axiom closure leaves the whitelist is NOT credited — it is the
+/// law-claim analogue of `declaredUncertified` for exports, and it never moves
+/// the package verdict, which is the exports' alone. A pin that does not
+/// ELABORATE is a different case entirely: it declines the whole package,
+/// because the declared statement then is not what the package proves.
+#[derive(Debug)]
+struct LawOutcome {
+    /// Manifest label of the claim (a plain dotted Lean identifier).
+    label: String,
+    /// Non-whitelisted axioms the pin's proof depends on. Empty means credited.
+    offending: Vec<String>,
+}
+
 struct TrustedReport {
     exports: Vec<CertifiedExport>,
+    laws: Vec<LawOutcome>,
     contracts: Vec<String>,
     target: String,
     profile: String,
@@ -199,6 +230,7 @@ pub fn verify(artifact: &Path, cert_dir: &Path) -> Result<Verdict, String> {
         Ok(Verdict::Certified {
             summary: summary.text,
             faces: summary.faces,
+            laws: summary.uncredited_laws,
         })
     }
 }
@@ -219,6 +251,7 @@ pub fn check(artifact: &Path, cert_dir: &Path) -> Result<CheckVerdict, String> {
         Ok(CheckVerdict::Checked {
             summary: summary.text,
             faces: summary.faces,
+            laws: summary.uncredited_laws,
         })
     }
 }
@@ -226,6 +259,7 @@ pub fn check(artifact: &Path, cert_dir: &Path) -> Result<CheckVerdict, String> {
 struct ReportSummary {
     text: String,
     faces: Vec<String>,
+    uncredited_laws: Vec<String>,
     count: usize,
 }
 
@@ -244,13 +278,37 @@ fn summarize_report(artifact: &Path, report: TrustedReport, status: &'static str
         (false, true) => "L3",
         _ => "L1",
     };
+    // A package with no law-claims prints exactly the line it always printed:
+    // the clause appears only once a claim exists to report on.
+    let law_clause = if report.laws.is_empty() {
+        String::new()
+    } else {
+        let credited = report
+            .laws
+            .iter()
+            .filter(|law| law.offending.is_empty())
+            .count();
+        format!("; law-claims: {credited} of {} credited", report.laws.len())
+    };
     let text = format!(
-        "{} ({} {status} export{}, level {})",
+        "{} ({} {status} export{}, level {}{law_clause})",
         artifact.display(),
         count,
         if count == 1 { "" } else { "s" },
         level,
     );
+    let uncredited_laws = report
+        .laws
+        .iter()
+        .filter(|law| !law.offending.is_empty())
+        .map(|law| {
+            format!(
+                "law-claim not credited: {} (proof depends on {})",
+                display_safe(&law.label),
+                display_safe(&law.offending.join(", ")),
+            )
+        })
+        .collect();
     let faces = report
         .exports
         .into_iter()
@@ -261,7 +319,12 @@ fn summarize_report(artifact: &Path, report: TrustedReport, status: &'static str
             )
         })
         .collect();
-    ReportSummary { text, faces, count }
+    ReportSummary {
+        text,
+        faces,
+        uncredited_laws,
+        count,
+    }
 }
 
 /// Developer-only override naming a locally built parallel replayer.
@@ -428,6 +491,10 @@ fn trusted_check(
             tail(&elaborated.combined, 30)
         ));
     }
+    // Every pin ELABORATED, so every declared statement is exactly what the
+    // package proves. What remains is per-pin credit, read from the witness's
+    // own audit trace: a missing or malformed line is a decline, never credit.
+    let laws = parse_law_audits(&elaborated.combined, &candidates.laws)?;
     if let Some(replay_args) = kernel_replay_args(replay_mode) {
         let replay_args: Vec<&str> = replay_args.iter().map(String::as_str).collect();
         let replayed = run_lake(&lean, &build.path, "final kernel replay", &replay_args)?;
@@ -452,6 +519,7 @@ fn trusted_check(
         .collect();
     Ok(TrustedReport {
         exports,
+        laws,
         contracts: candidates.contracts,
         target: candidates.target,
         profile: candidates.profile,
@@ -590,10 +658,20 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
         .map(|name| format!("`{name}"))
         .collect::<Vec<_>>()
         .join(", ");
-    // Law-claim surface: one type-pinning example per claim (built by
+    // Law-claim surface: one type-pinning theorem per claim (built by
     // concatenation, never `format!`, so statement braces stay inert), the
     // conditional `Laws` import, and the corollary roots the axiom audit
     // walks. All fields were validated by `validate_law_candidate`.
+    //
+    // The statement is re-elaborated inside the model theorem's OWN namespace
+    // — the same context the package's `Laws.lean` uses — because `open
+    // <prefix> in` at root does not reproduce it: inside `namespace Json` the
+    // text `Json.jsonInt` reaches the constructor `Json.Json.jsonInt`, while
+    // at root it reaches the accessor `Json.jsonInt` that `open` only adds an
+    // alias beside. The pins therefore sit OUTSIDE `namespace AverCertChecker`
+    // and name themselves `_root_.AverCertChecker.law_pin_<i>`: nested inside
+    // it the current namespace would be `AverCertChecker.<prefix>`, whose
+    // resolution is not the model's either.
     let law_import = if candidates.laws.is_empty() {
         String::new()
     } else {
@@ -602,25 +680,39 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
     let mut law_pins = String::new();
     for (index, law) in candidates.laws.iter().enumerate() {
         if !law.prefix.is_empty() {
-            law_pins.push_str("open ");
+            law_pins.push_str("namespace ");
             law_pins.push_str(&law.prefix);
-            law_pins.push_str(" in\n");
+            law_pins.push_str("\n\n");
         }
-        law_pins.push_str(&format!("theorem law_pin_{index} :\n    ("));
+        law_pins.push_str(&format!("theorem _root_.{LAW_PIN_PREFIX}{index} :\n    ("));
         law_pins.push_str(&law.statement);
-        law_pins
-            .push_str(") ∧ (AverCert.Schema.Holds AverCert.manifest) :=\n  _root_.AverCert.Laws.");
+        law_pins.push_str(
+            ") ∧ (_root_.AverCert.Schema.Holds _root_.AverCert.manifest) :=\n  _root_.AverCert.Laws.",
+        );
         law_pins.push_str(&law.corollary);
         law_pins.push_str("\n\n");
+        if !law.prefix.is_empty() {
+            law_pins.push_str("end ");
+            law_pins.push_str(&law.prefix);
+            law_pins.push_str("\n\n");
+        }
     }
     // The audit walks the CHECKER-NAMED pins, never the package's bare
     // corollary names: the pin's term cites `_root_.AverCert.Laws.<c>` (so an
     // `open <prefix>`-shadowed decoy cannot be substituted), and auditing
     // `AverCertChecker.law_pin_<i>` covers exactly the closure the pin proved.
     let law_roots = (0..candidates.laws.len())
-        .map(|index| format!("`AverCertChecker.law_pin_{index}"))
+        .map(|index| format!("`{LAW_PIN_PREFIX}{index}"))
         .collect::<Vec<_>>()
         .join(", ");
+    // The two audits are deliberately asymmetric. The accepted-artifact root
+    // THROWS: a non-whitelisted axiom under an export closure is a rejected
+    // certificate. A law pin instead LOGS its result, because a law that fails
+    // only its axiom audit loses its own credit and must not take the exports
+    // down with it — the pin still had to elaborate at the declared statement
+    // to get here, which is the integrity half of the claim. Rust reads the
+    // logged lines back; a pin with no line is a decline, so a parse miss can
+    // never become credit.
     format!(
         "-- Authored by aver-cert; never accepted from the certificate.\n\
          import Lean\n\
@@ -631,8 +723,9 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
          {law_import}\
          import ArtifactCertificate\n\n\
          set_option maxRecDepth 200000\n\n\
-         namespace AverCertChecker\n\n\
+         set_option autoImplicit false\n\n\
          {law_pins}\
+         namespace AverCertChecker\n\n\
          example : AverCert.Artifact.data.modBytes = AverCert.ArtifactBytes.modBytes := rfl\n\
          example : AverCert.Artifact.data.modLen = AverCert.ArtifactBytes.modLen := rfl\n\
          example : AverCert.Artifact.data.manifest = AverCert.manifest := rfl\n\
@@ -666,9 +759,12 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
            let lawRoots : List Lean.Name := [{law_roots}]\n  \
            for lawRoot in lawRoots do\n    \
              let lawAxioms ← Lean.collectAxioms lawRoot\n    \
-             for usedAxiom in lawAxioms do\n      \
-               unless allowed.contains usedAxiom do\n        \
-                 throwError s!\"non-whitelisted axiom in law-claim {{lawRoot}}: {{usedAxiom}}\"\n",
+             let offending := lawAxioms.filter (fun used => not (allowed.contains used))\n    \
+             if offending.isEmpty then\n      \
+               logInfo s!\"{LAW_AUDIT_MARKER} {{lawRoot}} ok\"\n    \
+             else\n      \
+               let names := String.intercalate \",\" (offending.toList.map (fun used => used.toString))\n      \
+               logInfo s!\"{LAW_AUDIT_MARKER} {{lawRoot}} axioms {{names}}\"\n",
         format::ARTIFACT_CERTIFICATE_ROOT,
         candidates.target,
         candidates.profile,
@@ -1159,6 +1255,82 @@ fn validate_law_candidate(mut law: LawCandidate) -> Result<LawCandidate, String>
         .map(|(prefix, _)| prefix.to_string())
         .unwrap_or_default();
     Ok(law)
+}
+
+/// Read the checker witness's per-pin axiom audit back out of its elaboration
+/// output. Exactly one line per declared claim is required, in the grammar the
+/// witness emits:
+///
+/// ```text
+/// AVER_LAW_AUDIT AverCertChecker.law_pin_<i> ok
+/// AVER_LAW_AUDIT AverCertChecker.law_pin_<i> axioms <name>[,<name>...]
+/// ```
+///
+/// Everything else — a missing pin, a repeated pin, an unknown index, a
+/// malformed tail — is an error, which declines the package. Credit is only
+/// ever granted by a well-formed `ok` line, so a Lean version that stopped
+/// logging, a truncated pipe, or a renamed marker costs the claims their
+/// credit instead of handing them credit for free.
+///
+/// The `ok` verdict is a keyword in its own field rather than "no axioms
+/// listed": a user axiom literally named `ok` would otherwise render a
+/// not-credited line that reads exactly like a credited one.
+fn parse_law_audits(output: &str, laws: &[LawCandidate]) -> Result<Vec<LawOutcome>, String> {
+    let mut audited: Vec<Option<Vec<String>>> = vec![None; laws.len()];
+    for line in output.lines() {
+        let Some((_, tail)) = line.split_once(LAW_AUDIT_MARKER) else {
+            continue;
+        };
+        let fields: Vec<&str> = tail.split_whitespace().collect();
+        let malformed = || {
+            format!(
+                "checker witness emitted a malformed law-claim audit line: {}",
+                display_safe(line.trim())
+            )
+        };
+        let (pin, offending): (&str, Vec<String>) = match fields.as_slice() {
+            [pin, "ok"] => (pin, Vec::new()),
+            [pin, "axioms", names] => (pin, names.split(',').map(str::to_string).collect()),
+            _ => return Err(malformed()),
+        };
+        // An empty component means the witness named an axiom it could not
+        // render (or rendered a stray separator); that is not an audit.
+        if offending.iter().any(String::is_empty) {
+            return Err(malformed());
+        }
+        let index = pin
+            .strip_prefix(LAW_PIN_PREFIX)
+            .and_then(|index| index.parse::<usize>().ok())
+            .filter(|index| *index < laws.len())
+            .ok_or_else(|| {
+                format!(
+                    "checker witness audited an unknown law pin `{}`",
+                    display_safe(pin)
+                )
+            })?;
+        if audited[index].is_some() {
+            return Err(format!(
+                "checker witness audited law pin `{}` more than once",
+                display_safe(pin)
+            ));
+        }
+        audited[index] = Some(offending);
+    }
+    let mut outcomes = Vec::with_capacity(laws.len());
+    for (index, (law, audit)) in laws.iter().zip(audited).enumerate() {
+        let offending = audit.ok_or_else(|| {
+            format!(
+                "checker witness reported no axiom audit for law-claim `{}` \
+                 (pin {LAW_PIN_PREFIX}{index}); refusing to credit an unaudited claim",
+                display_safe(&law.label)
+            )
+        })?;
+        outcomes.push(LawOutcome {
+            label: law.label.clone(),
+            offending,
+        });
+    }
+    Ok(outcomes)
 }
 
 fn parse_termination(value: Option<&Value>, export: &str) -> Result<String, String> {
@@ -2076,6 +2248,10 @@ pub fn explain(artifact: &Path, cert_dir: &Path) -> Result<Explanation, String> 
             println!("  {}", label.bold());
             println!("    {statement}");
         }
+        println!(
+            "  these are the DECLARED claims; per-claim credit is decided by \
+             `aver cert check` / `aver cert verify`"
+        );
     }
     if let Some(declined) = manifest.get("source_level_only").and_then(Value::as_array)
         && !declined.is_empty()
@@ -2101,6 +2277,157 @@ pub fn explain(artifact: &Path, cert_dir: &Path) -> Result<Explanation, String> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn law_candidates(labels: &[&str]) -> Vec<LawCandidate> {
+        labels
+            .iter()
+            .map(|label| LawCandidate {
+                label: (*label).to_string(),
+                theorem: format!("Domain.{label}"),
+                statement: "True".to_string(),
+                corollary: label.replace('.', "_"),
+                prefix: "Domain".to_string(),
+            })
+            .collect()
+    }
+
+    fn audit_line(index: usize, verdict: &str) -> String {
+        format!(
+            "CheckerWitness.lean:9:0: info: {LAW_AUDIT_MARKER} {LAW_PIN_PREFIX}{index} {verdict}"
+        )
+    }
+
+    #[test]
+    fn law_audit_credits_only_pins_the_witness_reported_clean() {
+        let laws = law_candidates(&["A.one", "A.two"]);
+        let output = format!(
+            "building CheckerWitness\n{}\n{}\n",
+            audit_line(0, "ok"),
+            audit_line(1, "axioms sorryAx"),
+        );
+        let outcomes = parse_law_audits(&output, &laws).expect("well-formed audit parses");
+        assert_eq!(outcomes.len(), 2);
+        assert_eq!(outcomes[0].label, "A.one");
+        assert!(outcomes[0].offending.is_empty());
+        assert_eq!(outcomes[1].label, "A.two");
+        assert_eq!(outcomes[1].offending, vec!["sorryAx".to_string()]);
+    }
+
+    #[test]
+    fn law_audit_names_every_offending_axiom() {
+        let laws = law_candidates(&["A.one"]);
+        let output = audit_line(0, "axioms sorryAx,Lean.ofReduceBool,Domain.myAxiom");
+        let outcomes = parse_law_audits(&output, &laws).expect("multi-axiom audit parses");
+        assert_eq!(
+            outcomes[0].offending,
+            vec![
+                "sorryAx".to_string(),
+                "Lean.ofReduceBool".to_string(),
+                "Domain.myAxiom".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn law_audit_without_a_line_declines_instead_of_crediting() {
+        let laws = law_candidates(&["A.one", "A.two"]);
+        // Pin 1 never reported: a parse miss must cost the package, never
+        // silently credit the claim.
+        let error = parse_law_audits(&audit_line(0, "ok"), &laws).unwrap_err();
+        assert!(
+            error.contains("no axiom audit for law-claim `A.two`")
+                && error.contains("refusing to credit an unaudited claim"),
+            "the decline names the unaudited claim: {error}"
+        );
+        // A renamed marker reports nothing at all — same decline.
+        let renamed = audit_line(0, "ok").replace(LAW_AUDIT_MARKER, "AVER_LAW_TRACE");
+        assert!(parse_law_audits(&renamed, &law_candidates(&["A.one"])).is_err());
+    }
+
+    #[test]
+    fn law_audit_rejects_malformed_and_repeated_lines() {
+        let laws = law_candidates(&["A.one"]);
+        for bad in [
+            audit_line(0, ""),
+            audit_line(0, "axioms"),
+            audit_line(0, "ok extra"),
+            audit_line(0, "clean"),
+            audit_line(0, "axioms sorryAx,"),
+            audit_line(9, "ok"),
+        ] {
+            assert!(
+                parse_law_audits(&bad, &laws).is_err(),
+                "malformed audit line must decline: {bad}"
+            );
+        }
+        let repeated = format!("{}\n{}\n", audit_line(0, "ok"), audit_line(0, "ok"));
+        let error = parse_law_audits(&repeated, &laws).unwrap_err();
+        assert!(
+            error.contains("more than once"),
+            "a repeated pin declines: {error}"
+        );
+    }
+
+    #[test]
+    fn law_audit_keyword_separates_credit_from_an_axiom_named_ok() {
+        let laws = law_candidates(&["A.one"]);
+        let outcomes = parse_law_audits(&audit_line(0, "axioms ok"), &laws)
+            .expect("an axiom named `ok` still parses");
+        assert_eq!(outcomes[0].offending, vec!["ok".to_string()]);
+    }
+
+    #[test]
+    fn law_clause_is_absent_without_law_claims() {
+        let bare = summarize_report(
+            Path::new("app.wasm"),
+            TrustedReport {
+                exports: Vec::new(),
+                laws: Vec::new(),
+                contracts: Vec::new(),
+                target: String::new(),
+                profile: String::new(),
+                abi: String::new(),
+                artifact_hash: String::new(),
+            },
+            "checked",
+        );
+        assert_eq!(bare.text, "app.wasm (0 checked exports, level L1)");
+        assert!(bare.uncredited_laws.is_empty());
+    }
+
+    #[test]
+    fn law_clause_counts_credit_and_names_the_uncredited() {
+        let summary = summarize_report(
+            Path::new("app.wasm"),
+            TrustedReport {
+                exports: Vec::new(),
+                laws: vec![
+                    LawOutcome {
+                        label: "A.one".to_string(),
+                        offending: Vec::new(),
+                    },
+                    LawOutcome {
+                        label: "A.two".to_string(),
+                        offending: vec!["sorryAx".to_string()],
+                    },
+                ],
+                contracts: Vec::new(),
+                target: String::new(),
+                profile: String::new(),
+                abi: String::new(),
+                artifact_hash: String::new(),
+            },
+            "checked",
+        );
+        assert_eq!(
+            summary.text,
+            "app.wasm (0 checked exports, level L1; law-claims: 1 of 2 credited)"
+        );
+        assert_eq!(
+            summary.uncredited_laws,
+            vec!["law-claim not credited: A.two (proof depends on sorryAx)".to_string()]
+        );
+    }
 
     #[test]
     fn report_face_prints_only_kernel_pinned_facts() {
