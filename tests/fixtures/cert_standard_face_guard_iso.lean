@@ -117,6 +117,7 @@ example : ¬ StandardFace.checkedFaces hostileArtifact := by
       (fun _ => none) (fun _ _ => none) (fun _ => none) (fun _ => none)
       (fun _ => none) %box%).map Prod.fst) hhost
   simp [hostileAddTwoOb, hostileHost, hostileAddTwoClaim,
+    Artifact.symFragmentClaims, StandardFace.recordCompute,
     StandardFace.recordComputeHost, StandardFace.recordComputeSlots] at hslot
 
 -- Role labels cannot be permuted while retaining the same helper indices.
