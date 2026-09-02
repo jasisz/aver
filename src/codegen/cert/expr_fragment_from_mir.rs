@@ -1533,22 +1533,24 @@ mod tests {
         }
     }
 
-    /// `a < b` — one of the shapes the Int comparison face was built for. The
-    /// control for the refusal below: the gate must still admit a host call
-    /// that DOES land on an exact face.
+    /// `a < b` — a scalar-parameter comparison, which the record
+    /// projection-compute face absorbed when the pinned Int-comparison face
+    /// retired. The control for the refusal below: the gate must still admit a
+    /// host call that DOES land on an exact face.
     #[test]
     fn bare_int_value_comparison_still_plans() {
         let mir_fn = int_pair_fn("Bool", binop(BinOp::Lt, int_local(0), int_local(1)), 2);
         let plan = fragment_plan_from_mir_fn(&mir_fn, &|_, _| None, &[])
-            .expect("a bare Int value comparison must plan through the comparison face");
+            .expect("a bare Int value comparison must plan through the compute face");
         let FragmentPlan::Sym(sym) = &plan else {
             panic!("int value comparison should use SymPlan")
         };
+        let table = FragHostTable::placeholder();
         let frag = sym
-            .to_expr_fragment_plan(&FragHostTable::placeholder(), &FragStructTable::default())
+            .to_expr_fragment_plan(&table, &FragStructTable::default())
             .expect("comparison encodes to a representation plan");
         assert!(expr_fragment_plan_has_host_calls(&frag));
-        assert!(expr_fragment_int_cmp_bool_face(&frag).is_some());
+        assert!(expr_fragment_record_compute_face(&frag, &table).is_some());
     }
 
     /// `if a >= 0 { a < b } else { false }` — `validClockValue` after the MIR
@@ -2008,9 +2010,10 @@ mod tests {
     }
 
     #[test]
-    fn let_over_int_add_lowers_through_the_int_add_face() {
+    fn let_over_int_add_lowers_through_the_compute_face() {
         // `m = x + 2; m` — the single read of `m` re-lowers the initializer,
-        // producing exactly the straight-line integer face node order.
+        // producing exactly the add-constant node order the compute face
+        // absorbed from the retired straight-line integer face.
         let body = let_expr(1, binop(BinOp::Add, int_local(0), int_lit(2)), int_local(1));
         let mir_fn = int_param_fn("Int", body, 2);
         let plan = fragment_plan_from_mir_fn(&mir_fn, &|_, _| None, &[]).expect("plan");
@@ -2079,21 +2082,29 @@ mod tests {
     }
 
     #[test]
-    fn computed_alias_is_not_an_int_const_cmp_operand() {
+    fn computed_alias_is_an_int_const_cmp_operand_on_the_compute_face() {
         // `y = x + 2; y > 0` — the alias chain terminates in a COMPUTED
-        // expression, not a param read. PlanCheck's `isSymParam` requires the
-        // comparison operand to be a param read, so the producer must refuse
-        // rather than emit a plan the kernel rejects.
+        // expression, not a param read. The sign template over a computed
+        // carrier is exactly what the record projection-compute face
+        // interprets, and that face now takes scalar parameters, so the shape
+        // plans instead of staying unplanned. (It used to be refused because
+        // no face covered it, not because the plan was ill-formed.)
         let body = let_expr(
             1,
             binop(BinOp::Add, int_local(0), int_lit(2)),
             binop(BinOp::Gt, int_local(1), int_lit(0)),
         );
         let mir_fn = int_param_fn("Bool", body, 2);
-        assert!(
-            fragment_plan_from_mir_fn(&mir_fn, &|_, _| None, &[]).is_none(),
-            "a computed let alias must not become an intConstCmp operand"
-        );
+        let plan = fragment_plan_from_mir_fn(&mir_fn, &|_, _| None, &[])
+            .expect("a computed sign test must plan through the compute face");
+        let FragmentPlan::Sym(sym) = &plan else {
+            panic!("a computed sign test should use SymPlan")
+        };
+        let table = FragHostTable::placeholder();
+        let frag = sym
+            .to_expr_fragment_plan(&table, &FragStructTable::default())
+            .expect("the sign test encodes to a representation plan");
+        assert!(expr_fragment_record_compute_face(&frag, &table).is_some());
     }
 
     #[test]

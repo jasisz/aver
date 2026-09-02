@@ -134,9 +134,6 @@ theorem {name}_simulates : AverCert.Schema.Obligation.holds AverCert.{name}Ob :=
     )
 }
 
-/// The straight-line integer proof face for a host-call expr fragment
-/// `add(param0, box(k))`: the SAME theorem shapes (and closer) the legacy
-
 fn expr_fragment_cod_repr(ty: FragTy) -> &'static str {
     match ty {
         FragTy::F64 => "AverCert.Schema.floatBitsRepr",
