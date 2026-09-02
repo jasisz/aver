@@ -217,48 +217,47 @@ mod tests {
         );
     }
 
+    /// The migration off legacy service builtins is a property, not a list:
+    /// no operation of any registered standard capability may also be a
+    /// compiler builtin. A builtin row is a second declaration of a name the
+    /// `.av` contract already owns, and two declarations can disagree about
+    /// arity, types, or effects.
+    ///
+    /// This used to be a hand-written roster of the twenty-five operations
+    /// that were migrated at the time. A roster only covers the names on it:
+    /// an eleventh capability, or a new operation on an existing one, could
+    /// reintroduce exactly the duplication the migration removed and the
+    /// guard would report success. The roster is now the registry.
     #[test]
-    fn migrated_service_surface_is_exactly_source_owned() {
-        let registry = crate::stdlib::standard_capability_registry_ref();
-        let migrated = registry
-            .operations()
-            .filter(|operation| {
-                matches!(
-                    operation.module.as_str(),
-                    "Args" | "Console" | "Env" | "Http" | "Terminal"
-                )
-            })
-            .map(|operation| operation.canonical_name.as_str())
+    fn no_standard_capability_operation_is_also_a_compiler_builtin() {
+        let vm_rows = crate::vm::builtin::VmBuiltin::ALL
+            .iter()
+            .map(|builtin| builtin.name())
             .collect::<std::collections::BTreeSet<_>>();
-        let expected = [
-            "Args.get",
-            "Console.error",
-            "Console.print",
-            "Console.readLine",
-            "Console.warn",
-            "Env.get",
-            "Env.set",
-            "Http.delete",
-            "Http.get",
-            "Http.head",
-            "Http.patch",
-            "Http.post",
-            "Http.put",
-            "Terminal.clear",
-            "Terminal.disableRawMode",
-            "Terminal.enableRawMode",
-            "Terminal.flush",
-            "Terminal.hideCursor",
-            "Terminal.moveTo",
-            "Terminal.print",
-            "Terminal.readKey",
-            "Terminal.resetColor",
-            "Terminal.setColor",
-            "Terminal.showCursor",
-            "Terminal.size",
-        ]
-        .into_iter()
-        .collect::<std::collections::BTreeSet<_>>();
-        assert_eq!(migrated, expected);
+        let checker_rows = crate::types::checker::builtin_signature_names();
+
+        let mut duplicated = Vec::new();
+        let mut operations = 0;
+        for operation in crate::stdlib::standard_capability_registry_ref().operations() {
+            operations += 1;
+            let name = operation.canonical_name.as_str();
+            if vm_rows.contains(name) {
+                duplicated.push(format!("{name} also has a `vm_builtins!` row"));
+            }
+            if checker_rows.contains(name) {
+                duplicated.push(format!(
+                    "{name} also has a signature in `checker/builtins.rs`"
+                ));
+            }
+        }
+        assert!(
+            operations > 0,
+            "the standard capability registry declared no operations at all"
+        );
+        assert!(
+            duplicated.is_empty(),
+            "standard capability operations declared a second time as compiler \
+             builtins: {duplicated:?}"
+        );
     }
 }

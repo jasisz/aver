@@ -17,6 +17,8 @@ use crate::ast::{
 use crate::ir::{FnId, FnKey, SymbolTable, TypeId, TypeKey};
 
 mod builtins;
+#[cfg(test)]
+pub(crate) use builtins::builtin_signature_names;
 mod check;
 pub mod effect_classification;
 pub mod effect_lifting;

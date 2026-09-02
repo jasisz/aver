@@ -1,5 +1,20 @@
 use super::*;
 
+/// Every dotted name the compiler registers a builtin signature under.
+///
+/// A standard capability operation must never appear here. Its signature is
+/// owned by the `.av` contract, and a second Rust-side declaration of the
+/// same name is a copy that can disagree with it — which is what the
+/// migration off legacy service builtins removed.
+#[cfg(test)]
+pub(crate) fn builtin_signature_names() -> std::collections::BTreeSet<String> {
+    TypeChecker::new_with_symbols(SymbolTable::default())
+        .extra_sigs
+        .keys()
+        .cloned()
+        .collect()
+}
+
 impl TypeChecker {
     pub(super) fn register_builtins(&mut self) {
         // No flat builtins — all functions live in namespaces.
