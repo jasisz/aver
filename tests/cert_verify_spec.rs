@@ -2302,9 +2302,11 @@ fn cert_verify_declines_tampered_array_new_data_operands() {
     // (`empty`, `len`, `concat`, `take`, `drop`), while lowering the JSON
     // parser's `String.firstCodePoint` calls added four `__code` workers. None
     // of those nine functions carries an artifact claim, so the denominator is
-    // now 142 while the certified numerator remains 12.
+    // now 141: `combineSurrogates` moved from the denominator into the
+    // numerator (13) when the record projection-compute face gained scalar
+    // parameters and absorbed the retired straight-line integer face.
     assert!(
-        compile_report.contains("(12 certified, 142 source-level-only)"),
+        compile_report.contains("(13 certified, 141 source-level-only)"),
         "json certificate KPI denominator changed:
 {compile_report}"
     );
@@ -4274,7 +4276,8 @@ fn cert_goals_layout(out_dir: &Path) -> CertGoalsLayout {
         calls.len(),
         2,
         "`addTwo` in {FIXTURE} must still be the `add(param0, box(k))` shape the \
-         intAdd standard face classifies; it now calls {calls:?}"
+         record projection-compute face classifies over a scalar Int \
+         parameter; it now calls {calls:?}"
     );
     let (body_box_idx, body_add_idx) = (calls[0], calls[1]);
 
@@ -8305,14 +8308,18 @@ fn explain_states_the_record_compute_faces_certified_domain() {
         "the compute face must disclose its certified domain:\n{explain}"
     );
 
-    // Negative half: a generic expression fragment (`certprobe`'s `addTwo`,
-    // Int carriers in and out, no record parameter) is unconditional over
-    // represented carriers, so it must carry no domain line at all.
-    let probe_dir = temp_dir("cert-certprobe-explain-domain");
+    // Negative half: a genuinely generic expression fragment (`bool_window`'s
+    // `inWindow`, Int carriers in and a Bool out, no host call and no record
+    // parameter) is unconditional over represented carriers, so it must carry
+    // no domain line at all. `certprobe`'s exports are NOT the control any
+    // more: a scalar-parameter arithmetic or comparison body is a compute
+    // claim since the straight-line integer and Int-comparison faces retired
+    // into the declared face.
+    let probe_dir = temp_dir("cert-boolwindow-explain-domain");
     let compile = aver_command()
         .current_dir(&repo_root)
         .arg("compile")
-        .arg("tools/certkit/fixtures/certprobe.av")
+        .arg("tools/certkit/fixtures/bool_window.av")
         .arg("--target")
         .arg("wasm-gc")
         .arg("--certify")
@@ -8322,22 +8329,22 @@ fn explain_states_the_record_compute_faces_certified_domain() {
         .expect("aver compile --certify runs");
     assert!(
         compile.status.success(),
-        "certprobe compile --certify failed:\n{}{}",
+        "bool_window compile --certify failed:\n{}{}",
         String::from_utf8_lossy(&compile.stdout),
         String::from_utf8_lossy(&compile.stderr)
     );
     let (ok, explain) = aver_cert(
         &["explain"],
-        &probe_dir.join("certprobe.wasm"),
+        &probe_dir.join("bool_window.wasm"),
         &probe_dir.join("cert"),
     );
     assert!(
         ok,
-        "certprobe explain must accept the certificate:\n{explain}"
+        "bool_window explain must accept the certificate:\n{explain}"
     );
     assert!(
-        explain.contains("addTwo"),
-        "certprobe explain lost its generic fragment export:\n{explain}"
+        explain.contains("inWindow"),
+        "bool_window explain lost its generic fragment export:\n{explain}"
     );
     assert!(
         !explain.contains(DOMAIN_LINE),

@@ -309,14 +309,15 @@ fn model_citation_names(c: &Cert) -> Vec<String> {
         Cert::Composition { name, closure, .. } => std::iter::once(name.clone())
             .chain(closure.iter().map(|entry| entry.name.clone()))
             .collect(),
-        // Audited integer/Bool fragments (including the straight-line add
-        // face) state `model := <source fn>`; plan-modeled (float) fragments
-        // cite no model name. The two Int comparison faces are wall-modeled —
-        // `intCmpModel`/`intSelectModel` name no source function — so they cite
-        // nothing either, even though their types sit inside the audited gate.
+        // Audited integer/Bool fragments state `model := <source fn>`;
+        // plan-modeled (float) fragments cite no model name. The Int selection
+        // face is wall-modeled (`intSelectModel` names no source function) and
+        // the compute face IS the plan (`recordComputeModel`), so both cite
+        // nothing even though their types sit inside the audited gate.
         Cert::ExprFragment { name, .. }
             if c.int_cmp_face().is_none()
-                && (expr_fragment_uses_audited_generic(c) || c.int_add_face().is_some()) =>
+                && c.record_compute_face().is_none()
+                && expr_fragment_uses_audited_generic(c) =>
         {
             vec![name.clone()]
         }
@@ -385,11 +386,6 @@ fn runtime_contracts_for_certs<'a>(certs: impl IntoIterator<Item = &'a Cert>) ->
             has_add_total = true;
             has_sub_total = true;
             has_mul_total |= c.requires_mul_totality();
-        }
-        if c.int_add_face().is_some() {
-            has_box = true;
-            has_add = true;
-            continue;
         }
         if c.record_compute_face().is_some() {
             // Twin of the wall's `useSymFragment` role accounting: disclose

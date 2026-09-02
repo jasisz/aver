@@ -1,12 +1,13 @@
 /// Whether a representation plan has a rendered proof face. `IntCarrier`
-/// results are admitted ONLY through the exact straight-line integer face
-/// (`add(param0, box(k))`): a bare Int passthrough or any other
-/// carrier-returning shape has no coherent face yet (its `Cod` would read as
-/// `Int` while `codRepr` falls to the verbatim `WVal` relation), so it must
-/// never be selected here nor accepted by the verifier. Likewise, `AdtRef`
-/// values are admitted ONLY through the exact field-projection face: any other
-/// ADT-ref plan (a bare reference passthrough, a projection chain) stays
-/// unplanned here and declines fail-closed at the verifier.
+/// results are admitted ONLY through an exact face — today the record
+/// projection-compute face (whose meaning IS the plan) or one of the pinned
+/// shapes below: a bare Int passthrough or any other carrier-returning shape
+/// has no coherent face yet (its `Cod` would read as `Int` while `codRepr`
+/// falls to the verbatim `WVal` relation), so it must never be selected here
+/// nor accepted by the verifier. Likewise, `AdtRef` values are admitted ONLY
+/// through the exact field-projection face: any other ADT-ref plan (a bare
+/// reference passthrough, a projection chain) stays unplanned here and
+/// declines fail-closed at the verifier.
 ///
 /// Host CALLS carry the same discipline, and it is a separate condition from
 /// the result type: a plan may call `__aint_cmp` and still return `boolI32`,
@@ -22,10 +23,9 @@ fn expr_fragment_plan_has_face(plan: &ExprFragmentPlan, host_table: &FragHostTab
     let tag_dispatch = expr_fragment_is_tag_dispatch(plan);
     let vector_get = expr_fragment_vector_get_face(plan).is_some();
     let record_proj = expr_fragment_record_proj_face(plan).is_some();
-    // The Int comparison faces call a runtime helper, and the selection face
-    // additionally returns an Int carrier; its result is a passthrough of an
-    // input local rather than a fresh box.
-    let int_cmp_bool = expr_fragment_int_cmp_bool_face(plan).is_some();
+    // The Int selection face calls a runtime helper and returns an Int
+    // carrier; its result is a passthrough of an input local rather than a
+    // fresh box.
     let int_select = expr_fragment_int_select_face(plan).is_some();
     let record_compute = expr_fragment_record_compute_face(plan, host_table).is_some();
     // Construction is certified ONLY through the compute face: a plan that
@@ -38,18 +38,15 @@ fn expr_fragment_plan_has_face(plan: &ExprFragmentPlan, host_table: &FragHostTab
     // (bytes untouched) instead of reaching the verifier and declining there.
     let int_sign_cmp_ok = record_compute || !plan_contains_int_sign_cmp(&plan.body);
     let int_face_ok = plan.result != FragTy::IntCarrier
-        || expr_fragment_int_add_face(plan).is_some()
         || tag_dispatch
         || vector_get
         || record_proj
         || int_select
         || record_compute;
     let host_call_face_ok = !expr_fragment_plan_has_host_calls(plan)
-        || expr_fragment_int_add_face(plan).is_some()
         || tag_dispatch
         || vector_get
         || record_proj
-        || int_cmp_bool
         || int_select
         || record_compute;
     let adt_face_ok = !expr_fragment_plan_touches_adt_ref(plan)

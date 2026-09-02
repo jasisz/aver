@@ -84,17 +84,6 @@ impl Cert {
         }
     }
 
-    /// The straight-line integer face of a host-call expr fragment, when this
-    /// cert is an `ExprFragment` whose plan is exactly `add(param0, box(k))`.
-    /// Renderers branch on this to state the full-strength integer obligation
-    /// and proof (no weakening).
-    fn int_add_face(&self) -> Option<FragIntAddFace> {
-        match self.inner() {
-            Cert::ExprFragment { plan, .. } => expr_fragment_int_add_face(plan),
-            _ => None,
-        }
-    }
-
     /// The verbatim field-projection face of an ADT-ref expr fragment, when
     /// this cert is an `ExprFragment` whose plan is exactly `struct.get ty
     /// field∈{0,1}` of the single reference parameter. Renderers branch on
@@ -166,20 +155,12 @@ impl Cert {
         }
     }
 
-    /// The Int value-versus-value comparison face (`a >= b`, `a == b`), when
+    /// The Int selection face (`match a < b { true -> a; false -> b }`), when
     /// this cert is an `ExprFragment` whose plan is exactly the pinned
-    /// comparison node list. The wall fixes the whole meaning of this face —
+    /// selection node list. The wall fixes the whole meaning of this face —
     /// domain, codomain, both representation relations, the single host slot
-    /// AND the model — so renderers emit no bespoke proof for it.
-    fn int_cmp_bool_face(&self) -> Option<FragIntCmpFace> {
-        match self.inner() {
-            Cert::ExprFragment { plan, .. } => expr_fragment_int_cmp_bool_face(plan),
-            _ => None,
-        }
-    }
-
-    /// The Int selection face (`match a < b { true -> a; false -> b }`), the
-    /// same way. Its result is a passthrough of an input local.
+    /// AND the model — so renderers emit no bespoke proof for it. Its result
+    /// is a passthrough of an input local.
     fn int_select_face(&self) -> Option<FragIntCmpFace> {
         match self.inner() {
             Cert::ExprFragment { plan, .. } => expr_fragment_int_select_face(plan),
@@ -187,10 +168,10 @@ impl Cert {
         }
     }
 
-    /// Either comparison face, for the many sites that only need to know that
-    /// the wall owns this claim's meaning.
+    /// The comparison face, for the sites that only need to know that the wall
+    /// owns this claim's meaning.
     fn int_cmp_face(&self) -> Option<FragIntCmpFace> {
-        self.int_cmp_bool_face().or_else(|| self.int_select_face())
+        self.int_select_face()
     }
 
     fn name(&self) -> &str {
@@ -283,9 +264,6 @@ impl Cert {
     }
     /// The Lean expression for the model this export simulates.
     fn model_expr(&self, model_info: &ModelInfo) -> String {
-        if let Some(face) = self.int_add_face() {
-            return format!("fun ns => ns.headD 0 + ({})", face.k);
-        }
         match self.inner() {
             Cert::Recursive { .. }
             | Cert::Composition { .. }
@@ -314,10 +292,6 @@ impl Cert {
     /// (`add → sub → mul → stringEq → HostTbl`). Every named host keeps its own arity; this
     /// wraps it to the obligation shape, ignoring the contracts it does not wire.
     fn host_expr(&self) -> String {
-        if let Some(_face) = self.int_add_face() {
-            let name = self.name();
-            return format!("fun add _ _ _ _ _ _ _ => CertModule.{name}Host add");
-        }
         if let Some(face) = self.tag_dispatch_face() {
             return format!(
                 "AverCert.StandardFace.tagDispatchHost {} {}",
@@ -391,9 +365,6 @@ impl Cert {
     /// rendered ASCII-safe.
     fn source_dom_cod(&self, model_info: &ModelInfo) -> (String, String) {
         let ascii = |s: &str| ascii_type_name(s);
-        if self.int_add_face().is_some() {
-            return ("List Int".to_string(), "Int".to_string());
-        }
         if self.project_face().is_some() {
             return ("WVal x WVal".to_string(), "WVal".to_string());
         }
@@ -402,9 +373,6 @@ impl Cert {
         }
         if self.vector_get_face().is_some() {
             return ("List Int x Int".to_string(), "Int".to_string());
-        }
-        if self.int_cmp_bool_face().is_some() {
-            return ("Int x Int".to_string(), "Bool".to_string());
         }
         if self.int_select_face().is_some() {
             return ("Int x Int".to_string(), "Int".to_string());

@@ -383,7 +383,7 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     let declared_uncertified = manifest["declaredUncertified"].as_array().unwrap();
     assert_eq!(
         declared_uncertified.len(),
-        17,
+        16,
         "all 43 module exports must be certified or explicitly declared"
     );
     assert!(declared_uncertified.iter().all(|entry| {
@@ -1059,8 +1059,10 @@ fn certify_goal_matrix_lands_acceptance_wall_kernel_clean() {
         ),
         "field-projection-faced expr claim must use its audited generic:\n{artifact_lean}"
     );
+    // `addTwo` and `double` are absent by design: a scalar-parameter compute
+    // plan routes through the wall's record projection-compute face, which
+    // carries no producer semantic bridge at all.
     for (name, bridge_kind) in [
-        ("addTwo", "exprFragmentSemanticBridge"),
         ("inAsciiDigit", "exprFragmentSemanticBridge"),
         ("intLessZero", "exprFragmentSemanticBridge"),
         ("intEqZero", "exprFragmentSemanticBridge"),
@@ -3865,7 +3867,11 @@ fn certify_add_one_output_is_unchanged_when_the_int_helper_is_present() {
     )
     .expect("manifest is valid JSON");
 
-    // The certified entry, byte for byte the pre-change classification.
+    // The certified entry. `dom`/`theorem` moved deliberately when the
+    // straight-line integer face retired into the record projection-compute
+    // face: `addOne` is a scalar-parameter compute claim, its model IS the
+    // checked plan, and its domain is one canonical carrier rather than a
+    // represented `List Int`.
     assert_eq!(
         manifest["certified"],
         serde_json::json!([{
@@ -3873,9 +3879,9 @@ fn certify_add_one_output_is_unchanged_when_the_int_helper_is_present() {
             "class": "expr-fragment-v1",
             "policy": "simulatesModel",
             "level": "L1",
-            "dom": "List Int",
+            "dom": "Int",
             "cod": "Int",
-            "theorem": "AcceptanceSoundness.exprFragment_claim_discharges",
+            "theorem": "AcceptanceSoundness.recordCompute_claim_discharges",
         }]),
         "the add_one certification must be unchanged by the optional-helper handling"
     );

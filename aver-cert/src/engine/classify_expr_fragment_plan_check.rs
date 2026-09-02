@@ -49,14 +49,11 @@ fn check_expr_fragment_plan_object(
     let tag_dispatch = expr_fragment_is_tag_dispatch(&plan);
     let vector_get = expr_fragment_vector_get_face(&plan).is_some();
     let record_proj = expr_fragment_record_proj_face(&plan).is_some();
-    // Both Int comparison faces call a runtime helper, and the selection face
-    // additionally returns an Int carrier, so each would trip the gate below
-    // without its own admission.
-    let int_cmp = expr_fragment_int_cmp_bool_face(&plan).is_some()
-        || expr_fragment_int_select_face(&plan).is_some();
+    // The Int selection face calls a runtime helper and returns an Int
+    // carrier, so it would trip the gate below without its own admission.
+    let int_cmp = expr_fragment_int_select_face(&plan).is_some();
     let record_compute = expr_fragment_record_compute_face(&plan, &host_table).is_some();
     if (expr_fragment_plan_has_host_calls(&plan) || plan.result == FragTy::IntCarrier)
-        && expr_fragment_int_add_face(&plan).is_none()
         && !tag_dispatch
         && !vector_get
         && !record_proj
@@ -65,9 +62,9 @@ fn check_expr_fragment_plan_object(
     {
         return Err(format!(
             "plan for `{export_name}` has no rendered proof face: Int-carrier results \
-             and runtime host calls are supported only through the straight-line \
-             integer, tag-dispatch, fused vector-read, record field-read, Int \
-             comparison, or Int selection face"
+             and runtime host calls are supported only through the tag-dispatch, \
+             fused vector-read, record field-read, Int selection, or record \
+             projection-compute face"
         ));
     }
     // Face-gated AdtRef admission (the FIX-1 pattern): plans touching opaque
@@ -449,11 +446,22 @@ fn check_sym_fragment_plan_object(
     // stays on the source-level-only route (no error — the face is optional).
     if record_compute.is_none()
         && let Some(face) = expr_fragment_record_compute_face(plan, &host_table)
-        && let Some(leaves) = record_leaves_from_bytes(wasm_bytes, *carrier, face.struct_idx)
-        && leaves.iter().all(|l| matches!(l, RecordLeaf::IntCarrier))
     {
-        *record_decl = Some((face.struct_idx, leaves));
-        *record_compute = Some(face);
+        if expr_fragment_plan_uses_struct(plan) {
+            // A record-shaped plan carries its declaration: the wall pins the
+            // type-section entry at the cited index by equality against it.
+            if let Some(leaves) = record_leaves_from_bytes(wasm_bytes, *carrier, face.struct_idx)
+                && leaves.iter().all(|l| matches!(l, RecordLeaf::IntCarrier))
+            {
+                *record_decl = Some((face.struct_idx, leaves));
+                *record_compute = Some(face);
+            }
+        } else {
+            // A scalar-parameter plan names no record at all; the face's
+            // reserved index `0` reads no type-section entry, and the wall's
+            // declared face demands none.
+            *record_compute = Some(face);
+        }
     }
     if record_compute.is_none() && plan_contains_struct_new(&plan.body) {
         return Err(format!(

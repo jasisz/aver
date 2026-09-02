@@ -9,8 +9,9 @@ set_option maxRecDepth 300000
 -- `standard_face_host_guard_is_isolating` in `tests/cert_verify_spec.rs`
 -- reads them back out of the artifact it just compiled and substitutes them
 -- here, so no module layout index may ever be written down as a literal. The
--- one bare number in a face below is the arity of the `intAdd` family, which
--- `StandardFace.classifyIntAdd` pins to a single carrier parameter.
+-- one bare number in the face below is the compute face's RESERVED struct
+-- index `0`: `addTwo` names no record, so its face carries no type-section
+-- entry and that index is not a module layout index at all.
 
 def hostileHost : AverCert.StandardFace.HostBuilder :=
   fun _ _ _ _ _ _ _ _ _ => none
@@ -96,23 +97,27 @@ example : acceptedWithoutStandardFaces hostileArtifact := by
     exact hfragments
 
 -- The new guard rejects the same mutation by comparing the complete host
--- builder. Looking only at the box slot is enough to expose the contradiction.
+-- builder. `addTwo` is a SCALAR-parameter compute plan: every `FaceSpec`
+-- branch of `symFragmentFace` declines it (`symFragmentFace_none_of_recordCompute`),
+-- so its only route is the declared record projection-compute face, whose
+-- `Matches` conjunct pins the whole host builder just as the retired
+-- straight-line face did. Looking only at the box slot is enough to expose
+-- the contradiction.
 example : ¬ StandardFace.checkedFaces hostileArtifact := by
   intro hfaces
   have hfirst := hfaces.2.1.1
-  have hface := hfirst.2
-  change (StandardFace.StandardFace.known
-    (StandardFace.intList %carrier% 1
-      (StandardFace.intAddHost %carrier%
-        ({ constant := %addConstant%, boxIdx := %box%, addIdx := %add% } :
-          StandardFace.IntAddFace)))).Matches hostileAddTwoOb at hface
-  have hhost := hface.2.2.2.2.2.1
+  have hface : StandardFace.recordComputeDeclaredFace
+      AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen
+      hostileAddTwoClaim AverCert.Plans.addTwoPlan { structIdx := 0 } :=
+    hfirst.2
+  obtain ⟨-, -, -, -, -, -, -, -, -, -, -, hMatches⟩ := hface
+  have hhost := hMatches.2.2.2.2.2.1
   have hslot := congrArg
     (fun host => (host (fun _ => none) (fun _ => none) (fun _ => none)
       (fun _ => none) (fun _ _ => none) (fun _ => none) (fun _ => none)
       (fun _ => none) %box%).map Prod.fst) hhost
-  simp [hostileAddTwoOb, hostileHost, StandardFace.intList,
-    StandardFace.intAddHost] at hslot
+  simp [hostileAddTwoOb, hostileHost, hostileAddTwoClaim,
+    StandardFace.recordComputeHost, StandardFace.recordComputeSlots] at hslot
 
 -- Role labels cannot be permuted while retaining the same helper indices.
 example : StandardFace.hostTableBound manifest.subject.hostRoles

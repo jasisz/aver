@@ -1,24 +1,5 @@
 fn render_obligation_def(c: &Cert, model_info: &ModelInfo, host_table_lean: &str) -> String {
     let name = c.name();
-    // A host-call expr fragment with the straight-line integer face states the
-    // SAME full-strength obligation the legacy straight-line class shipped:
-    // any representation in, represented `n + k` out, under the add contract.
-    if c.int_add_face().is_some() {
-        let host = c.host_expr();
-        return format!(
-            "abbrev {name}Ob : Schema.Obligation :=\n  \
-             {{ export_ := \"{name}\", policy := .simulatesModel, carrier := {carrier},\n    \
-             code := CertModule.{name}Code, host := {host}, self := {self_idx},\n    \
-             Dom := List Int, Cod := Int,\n    \
-             domRepr := fun S ns vs => ReprAll S.Repr ns vs ∧ ns.length = {arity},\n    \
-             codRepr := fun S n w => intRepr S n w,\n    \
-             model := fun ns => {model_name} (ns.headD 0) }}\n\n",
-            carrier = c.carrier(),
-            self_idx = c.self_idx(),
-            arity = c.arity(),
-            model_name = c.model_lean_name(model_info),
-        );
-    }
     if let Some(face) = c.tag_dispatch_face() {
         return format!(
             "abbrev {name}Ob : Schema.Obligation :=\n  \
@@ -56,24 +37,9 @@ fn render_obligation_def(c: &Cert, model_info: &ModelInfo, host_table_lean: &str
             d = face.default,
         );
     }
-    // The two Int comparison faces: every meaning field is a wall term the
-    // checked face pins by `HEq` — the model included. Nothing here is read
-    // from the source model, which is why these claims cite no model name.
-    if let Some(face) = c.int_cmp_bool_face() {
-        return format!(
-            "abbrev {name}Ob : Schema.Obligation :=\n  \
-             {{ export_ := \"{name}\", policy := .simulatesModel, carrier := {carrier},\n    \
-             code := CertModule.{name}Code, host := {host}, self := {self_idx},\n    \
-             Dom := Int × Int, Cod := Bool,\n    \
-             domRepr := AverCert.StandardFace.intPairSmallBandDomRepr {carrier},\n    \
-             codRepr := boolRepr,\n    \
-             model := AverCert.StandardFace.intCmpModel {op} }}\n\n",
-            carrier = c.carrier(),
-            host = c.host_expr(),
-            self_idx = c.self_idx(),
-            op = face.op.lean_ctor(),
-        );
-    }
+    // The Int selection face: every meaning field is a wall term the checked
+    // face pins by `HEq` — the model included. Nothing here is read from the
+    // source model, which is why these claims cite no model name.
     if let Some(face) = c.int_select_face() {
         return format!(
             "abbrev {name}Ob : Schema.Obligation :=\n  \
@@ -827,18 +793,19 @@ fn render_manifest(
         };
         let theorem = if matches!(c.inner(), Cert::Composition { .. }) {
             "AcceptanceSoundness.composition_claim_discharges_with_bridge".to_string()
-        } else if c.int_cmp_bool_face().is_some() {
-            "AcceptanceSoundness.intCmpBool_claim_discharges".to_string()
         } else if c.int_select_face().is_some() {
             "AcceptanceSoundness.intSelect_claim_discharges".to_string()
+        } else if c.record_compute_face().is_some() {
+            // Ahead of the audited-generic test: a scalar-parameter compute
+            // plan has Int/Bool source types but a plan the generic fragment
+            // grammar refuses, so the compute face owns it.
+            crate::format::RECORD_COMPUTE_DISCHARGE_THEOREM.to_string()
         } else if expr_fragment_uses_audited_generic(c) {
             "AcceptanceSoundness.exprFragment_claim_discharges".to_string()
         } else if c.vector_get_face().is_some() {
             "AverCert.StandardFace.vectorGetOrDefault_simulates_model".to_string()
         } else if c.project_face().is_some() {
             "AcceptanceSoundness.fieldProjection_direct_canonical_discharges".to_string()
-        } else if c.record_compute_face().is_some() {
-            crate::format::RECORD_COMPUTE_DISCHARGE_THEOREM.to_string()
         } else if c.record_param_face().is_some() {
             "AcceptanceSoundness.recordParam_claim_discharges".to_string()
         } else if matches!(c.inner(), Cert::FieldProjection { .. }) {

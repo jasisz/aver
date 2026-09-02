@@ -158,7 +158,7 @@ The current schema admits these fail-closed families:
 
 | Manifest class | Certified shape |
 |---|---|
-| `expr-fragment-v1` | Source-projectable scalar and representation fragments with canonical lowering |
+| `expr-fragment-v1` | Source-projectable scalar and representation fragments with canonical lowering. Bodies that call a runtime helper or return an Int carrier route through the record projection-compute face, whose model IS the checked plan; its certified domain assumes canonical carriers (see [certificate-format.md](certificate-format.md) §4.3). |
 | `verbatim-string-eq` | Audited `String.eq` leaf |
 | `verbatim-string-concat` | Audited `String.concat` leaf |
 | `adt-constructor` | Admitted user-ADT constructor shapes |

@@ -5,7 +5,7 @@ expression: golden
 == cert-manifest.json ==
 {
   "schema_version": 7,
-  "format": {"version": 1, "wall_id": "sha256:4331f2e67c965b3c6aca0121a1d46406f3a8a084fe80deecc8d8745df56f9e3f"},
+  "format": {"version": 1, "wall_id": "sha256:aaa3bf6faf4ef6a2e84074c86bb4ee3a5d108e3030a42f5e682e1b4c108d69fe"},
   "wasm": "add_one.wasm",
   "wasm_sha256": "5f41ddfa9a5a395546d0c21e00c232be77e330ea587b2666456f0488ff0450c9",
   "target": "wasm-gc",
@@ -38,7 +38,7 @@ expression: golden
   "hostRoleTable": {"box": 6, "add": 7, "mul": 9, "sub": 8, "toIndex": 18, "cmp": null, "eq": null},
   "stringHostRoles": [],
   "certified": [
-    {"name": "addOne", "class": "expr-fragment-v1", "policy": "simulatesModel", "level": "L1", "dom": "List Int", "cod": "Int", "theorem": "AcceptanceSoundness.exprFragment_claim_discharges"}
+    {"name": "addOne", "class": "expr-fragment-v1", "policy": "simulatesModel", "level": "L1", "dom": "Int", "cod": "Int", "theorem": "AcceptanceSoundness.recordCompute_claim_discharges"}
   ],
   "source_level_only": []
 }
@@ -65,11 +65,11 @@ open AverCert.Schema CertPrelude
 
 abbrev addOneOb : Schema.Obligation :=
   { export_ := "addOne", policy := .simulatesModel, carrier := 2,
-    code := CertModule.addOneCode, host := fun add _ _ _ _ _ _ _ => CertModule.addOneHost add, self := 1,
-    Dom := List Int, Cod := Int,
-    domRepr := fun S ns vs => ReprAll S.Repr ns vs ∧ ns.length = 1,
-    codRepr := fun S n w => intRepr S n w,
-    model := fun ns => CertificateHello.addOne (ns.headD 0) }
+    code := CertModule.addOneCode, host := AverCert.StandardFace.recordComputeHost 2 [(.box, 6), (.add, 7), (.mul, 9), (.sub, 8), (.toIndex, 18)], self := 1,
+    Dom := List RecordComputeBridge.SVal, Cod := Option RecordComputeBridge.SVal,
+    domRepr := AverCert.StandardFace.recordComputeDomRepr 2 0 Plans.addOnePlan.params,
+    codRepr := AverCert.StandardFace.recordComputeCodRepr 2 0,
+    model := AverCert.StandardFace.recordComputeModel Plans.addOnePlan.body }
 
 def manifest : Schema.Manifest :=
   { subject :=
@@ -163,5 +163,8 @@ example : AverCert.ExprFragmentAccepted.accepted AverCert.ArtifactBytes.modBytes
   [.localGet 0, .i64Const (1), .call 6, .call 7]
   [13, 1, 1, 99, 2, 32, 0, 66, 1, 16, 6, 16, 7, 11]
   ({ funcIdx := 1, typeIdx := 4, codeEntry := [13, 1, 1, 99, 2, 32, 0, 66, 1, 16, 6, 16, 7, 11] } : AverCert.WasmSlice.FuncBinding) := by dsimp [AverCert.ExprFragmentAccepted.accepted]; exact ⟨rfl, rfl, rfl, rfl⟩
+
+/-- `addOne` names no record; the declared face's declaration slot is empty. -/
+def addOneRecordFields : List TypeDecl := []
 
 end AverCert.Plans
