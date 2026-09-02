@@ -1,0 +1,32 @@
+module BoolMatchNamedDefaultApp
+    intent =
+        "Prints results of bool matches whose second arm names the matched value."
+    exposes [abs, describe]
+    effects [Console.print]
+
+fn abs(x: Int) -> Int
+    ? "Absolute value — the catch-all arm names a value it never reads."
+    match x < 0
+        true -> -x
+        otherwise -> x
+
+verify abs
+    abs(-7) => 7
+    abs(0) => 0
+    abs(7) => 7
+
+fn describe(x: Int) -> String
+    ? "Reports the sign — the catch-all arm reads the value bound to its own name."
+    match x > 0
+        true -> "positive"
+        notPositive -> "not positive, and the binder says {notPositive}"
+
+verify describe
+    describe(3) => "positive"
+    describe(-3) => "not positive, and the binder says false"
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("{abs(-7)} {abs(0)} {abs(7)}")
+    Console.print(describe(3))
+    Console.print(describe(-3))

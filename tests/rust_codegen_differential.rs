@@ -405,6 +405,30 @@ fn fused_stdlib_hex_decoding_matches_between_rust_and_vm() {
         .unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// A two-arm bool `match` whose default arm NAMES the matched value
+/// (`other -> …`) instead of spelling `false` or `_`.
+///
+/// The MIR pass that turns a bool match into `IfThenElse` used to
+/// recognise only `false` and `_` in that slot, so the named form
+/// reached the backends as a live `Match` — and every backend answers
+/// that differently: the VM ran it, wasm-gc emitted a module that
+/// trapped on `unreachable`, and the Rust walker substituted
+/// `compile_error!("MIR walker could not render fn …")`. Three answers
+/// for one program is what makes this a build-and-run case rather than
+/// a `cargo check` one: the Rust half only proves itself against a VM
+/// run of the same source.
+///
+/// The fixture carries both halves of the rewrite, because they fail
+/// apart: `abs` never reads its binder (the reinstated `let` must be
+/// dead-code-eliminated, and a wrong constant there would go unnoticed),
+/// while `describe` prints its binder — pinning the value the arm binds
+/// as `false`, not a second evaluation of the subject.
+#[test]
+fn bool_match_named_default_arm_matches_between_rust_and_vm() {
+    assert_plain_parity("tests/fixtures/bool_match_named_default_app.av", None)
+        .unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// A type declared in a module nobody imports must not reach the code the
 /// other modules generate.
 ///

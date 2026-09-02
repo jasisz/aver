@@ -61,6 +61,29 @@ impl Parser {
             }
         }
 
+        // Aver has no bodiless function: a signature alone declares
+        // nothing anyone can call, and every later stage assumes a value
+        // to lower. Left to run, it reaches the backends as an
+        // unlowerable shape and they answer with an internal error
+        // ("fn `f` did not lower to MIR") or a `compile_error!`
+        // placeholder — a compiler bug report for what is a two-word
+        // source mistake. It is a mistake worth naming precisely,
+        // because the ways to make it do not look alike: no indented
+        // block at all, a block holding only `?` / `!` lines, or —
+        // the one that reads as a body but is not — anything left on
+        // the signature line, where `fn main() []` puts the effect list
+        // in `! [...]`'s place and `fn f() 1 + 2` forgets the newline.
+        if body_stmts.is_empty() {
+            return Err(ParseError::Error {
+                msg: format!(
+                    "Function '{}' has no body. Write the body as an indented line under the signature (effects go in `! [...]`).",
+                    name
+                ),
+                line: fn_line,
+                col: 1,
+            });
+        }
+
         Ok(FnDef {
             name,
             line: fn_line,

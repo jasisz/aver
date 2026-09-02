@@ -1457,6 +1457,42 @@ fn eq_shorthand_on_fn_header_is_parse_error() {
     );
 }
 
+/// A function with no body is refused here, at the signature that is
+/// missing it — not by a backend hundreds of stages later.
+///
+/// The four sources below all reach the same empty `FnBody::Block`, and
+/// none of them looks empty to the person who typed it: `fn f()` alone
+/// ran off the end of the file, `fn f() []` put the effect list where
+/// `! [...]` belongs, `fn f() 1 + 2` forgot the newline, and the last
+/// one indented `?` and `!` but never the expression. Left to run, the
+/// shape reaches the VM as `internal error: fn 'f' did not lower to
+/// MIR` and the Rust backend as a `compile_error!` placeholder — two
+/// compiler bug reports for one source mistake.
+#[test]
+fn fn_without_a_body_is_parse_error() {
+    for src in [
+        "fn f()\n",
+        "fn f() []\n    1\n",
+        "fn f() 1 + 2\n",
+        "fn f() -> Int\n    ? \"doc\"\n    ! []\n",
+    ] {
+        let msg = parse_error(src);
+        assert!(
+            msg.contains("Function 'f' has no body"),
+            "unexpected parse error for {src:?}: {msg}"
+        );
+    }
+}
+
+/// The error points at the signature line, not at whatever token the
+/// parser happened to stop on — which for a bodiless `fn` is the next
+/// item, or the end of the file.
+#[test]
+fn fn_without_a_body_reports_the_signature_line() {
+    let msg = parse_error("module M\n    intent = \"x\"\n\nfn f()\n\nfn g() -> Int\n    1\n");
+    assert!(msg.contains("[4:1]"), "expected line 4, got: {msg}");
+}
+
 #[test]
 fn lambda_syntax_shows_actionable_error() {
     let src = "fn apply(f: Fn(Int) -> Bool, x: Int) -> Bool\n    f(x)\nfn main() -> Bool\n    apply(fn(x: Int) -> Bool\n        x > 1, 1)\n";
