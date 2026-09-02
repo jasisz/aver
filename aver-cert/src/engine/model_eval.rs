@@ -29,15 +29,6 @@ fn eval_body_recursion(
     }
 }
 
-/// `f n acc = if n≤0 then acc else f (n-1) (acc + n)` (accumulator tail recursion).
-fn eval_accumulator(n: i64, acc: i64) -> i64 {
-    if n <= 0 {
-        acc
-    } else {
-        eval_accumulator(n - 1, acc + n)
-    }
-}
-
 #[derive(Default)]
 struct ModelInfo {
     /// Keyed by the FLAT (wasm-export-space) name: for a def inside
