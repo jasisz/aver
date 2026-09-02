@@ -4150,8 +4150,8 @@ fn prepare_codegen_output(
             )
             .red()
         );
-        for message in unrenderable {
-            eprintln!("  {}", message.dimmed());
+        for error in unrenderable {
+            eprintln!("  {}", error.message.dimmed());
         }
         eprintln!(
             "{}",

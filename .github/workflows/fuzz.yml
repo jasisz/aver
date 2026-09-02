@@ -373,26 +373,9 @@ jobs:
           fi
           echo "::endgroup::"
 
-      - name: Rust codegen oracle (bounded real rustc)
-        if: matrix.target == 'fuzz_codegen_rust'
-        # AFL's hot loop emits projects in-process. Spawning Cargo for every
-        # mutation would collapse throughput, so ask the public `--check`
-        # gate about a deterministic sample of accepted queue entries after
-        # the campaign. The committed corpus is a fallback that guarantees
-        # the oracle still has valid seeds if AFL exits before writing a
-        # usable queue. One shared target amortises aver-rt and dependencies.
-        run: |
-          cargo build --locked --bin aver
-          python3 tools/validate_rust_fuzz_corpus.py \
-            --aver target/debug/aver \
-            --corpus fuzz/corpus/parser \
-            --corpus fuzz/out/fuzz_codegen_rust/default/queue \
-            --limit 24 \
-            --max-candidates 256 \
-            --target-dir target/rust-fuzz-oracle
-
       - name: Summarise findings
         working-directory: fuzz
+        if: always()
         # Crash-only failure policy. AFL "hangs" are wall-clock
         # timeouts — anything taking longer than ~1s. In a wasmtime
         # + cranelift pipeline that occasionally cold-starts a JIT,
@@ -421,6 +404,27 @@ jobs:
           if [ "${#crashes[@]}" -gt 0 ]; then
             exit 1
           fi
+
+      - name: Rust codegen oracle (bounded real rustc)
+        # `always()`: the crash gate above exits 1 on any saved crash, and a
+        # skipped oracle would then hide whether real rustc also has
+        # something to say. Both signals are reported on every run.
+        if: always() && matrix.target == 'fuzz_codegen_rust'
+        # AFL's hot loop emits projects in-process. Spawning Cargo for every
+        # mutation would collapse throughput, so ask the public `--check`
+        # gate about a deterministic sample of accepted queue entries after
+        # the campaign. The committed corpus is a fallback that guarantees
+        # the oracle still has valid seeds if AFL exits before writing a
+        # usable queue. One shared target amortises aver-rt and dependencies.
+        run: |
+          cargo build --locked --bin aver
+          python3 tools/validate_rust_fuzz_corpus.py \
+            --aver target/debug/aver \
+            --corpus fuzz/corpus/parser \
+            --corpus fuzz/out/fuzz_codegen_rust/default/queue \
+            --limit 24 \
+            --max-candidates 256 \
+            --target-dir target/rust-fuzz-oracle
 
       - name: Pack AFL output
         # AFL filenames contain `:` characters that

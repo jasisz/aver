@@ -95,10 +95,12 @@ fn divisor_proven_nonzero(rhs: &Spanned<MirExpr>) -> bool {
 
 /// Conservative purity classification — `true` means the
 /// expression has no observable side effect AND cannot diverge
-/// or raise. Exported `pub(super)` so the algebraic pass can
-/// reuse it for `x * 0` (only collapse when the surviving
-/// operand is pure).
-pub(super) fn is_pure(expr: &Spanned<MirExpr>) -> bool {
+/// or raise. Public so the algebraic pass can reuse it for
+/// `x * 0` (only collapse when the surviving operand is pure),
+/// and so the Rust emitter can apply the SAME rule to the
+/// module-level statement chain, which is lowered value-by-value
+/// outside `MirProgram.fns` and so never reaches [`dead_code`].
+pub fn is_pure(expr: &Spanned<MirExpr>) -> bool {
     match &expr.node {
         MirExpr::Literal(_) | MirExpr::Local(_) | MirExpr::FnValue(_) => true,
         MirExpr::Neg(inner) => is_pure(inner),

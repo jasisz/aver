@@ -8,7 +8,7 @@ use super::representation::{
 };
 use super::types::type_annotation_to_rust_scoped;
 use crate::ast::*;
-use crate::codegen::CodegenContext;
+use crate::codegen::{CodegenContext, CompileErrorCause, SubstitutedCompileError};
 use crate::ir::thin_kind_is_parent_thin_candidate;
 use crate::types::{Type, parse_type_str};
 /// Top-level Aver items → Rust items (structs, enums, functions, tests).
@@ -574,9 +574,8 @@ fn emit_fn_def_with_visibility(
                     "    {}",
                     emit_codegen_error_expr(
                         ctx,
-                        unresolved_name_reason(resolved_fd, scope).unwrap_or_else(|| {
-                            format!("MIR walker could not render guest-entry fn `{}`", fd.name)
-                        }),
+                        unresolved_name_reason(resolved_fd, scope),
+                        || format!("MIR walker could not render guest-entry fn `{}`", fd.name),
                     )
                 )
             });
@@ -693,9 +692,8 @@ fn emit_fn_def_with_visibility(
                     ret_type,
                     emit_codegen_error_expr(
                         ctx,
-                        unresolved_name_reason(resolved_fd, scope).unwrap_or_else(|| {
-                            format!("MIR walker could not render self-TCO fn `{}`", fd.name)
-                        }),
+                        unresolved_name_reason(resolved_fd, scope),
+                        || format!("MIR walker could not render self-TCO fn `{}`", fd.name),
                     )
                 )
             });
@@ -723,9 +721,8 @@ fn emit_fn_def_with_visibility(
                     "    {}",
                     emit_codegen_error_expr(
                         ctx,
-                        unresolved_name_reason(resolved_fd, scope).unwrap_or_else(|| {
-                            format!("MIR walker could not render fn `{}`", fd.name)
-                        }),
+                        unresolved_name_reason(resolved_fd, scope),
+                        || format!("MIR walker could not render fn `{}`", fd.name),
                     )
                 )
             });
@@ -1307,31 +1304,51 @@ fn emit_main_with_visibility(
             resolved
                 .iter()
                 .map(|value| {
-                    let reason = crate::ir::hir::collect_unresolved_in_value(value)
+                    let diagnostic = crate::ir::hir::collect_unresolved_in_value(value)
                         .first()
                         .map(|first| {
                             first.explain(
                                 "a top-level statement",
                                 &first.at_module(ectx.current_module_scope.as_deref()),
                             )
-                        })
-                        .unwrap_or_else(|| {
-                            "MIR walker could not render a top-level statement".to_string()
                         });
-                    emit_codegen_error_expr(ctx, reason)
+                    // A refusal is never dead: it has to reach the reader.
+                    super::from_mir::TopStmtValue {
+                        value: emit_codegen_error_expr(ctx, diagnostic, || {
+                            "MIR walker could not render a top-level statement".to_string()
+                        }),
+                        pure: false,
+                    }
                 })
                 .collect()
         });
-        for (stmt, value) in top_stmts.iter().zip(values.iter()) {
+        for (stmt, rendered) in top_stmts.iter().zip(values.iter()) {
             // Same templating as the MIR fn-body let-chain: `Binding` → a
             // named `let`, `Expr` → a discarded statement.
-            let rendered = match stmt {
+            let line = match stmt {
                 Stmt::Binding(name, _, _) => {
-                    format!("let {} = {};", explicit_binding_pattern(name), value)
+                    format!(
+                        "let {} = {};",
+                        explicit_binding_pattern(name),
+                        rendered.value
+                    )
                 }
-                Stmt::Expr(_) => format!("{};", value),
+                // A bare expression statement binds nothing, so a value with
+                // no observable effect is DEAD — and dropping it is what the
+                // same statement inside a fn body already gets: the body
+                // lowers to a `Let` chain and MIR's DCE elides
+                // `let <unread> = <pure>; body`. Module-level statements are
+                // lowered one value at a time, outside `MirProgram.fns`, so
+                // that pass never sees them. Emitting them anyway is not a
+                // harmless difference: `Result.Err` alone under a `module M`
+                // is a `Project` over a `FnValue`, which renders as the Rust
+                // field access `Result.Err;` — E0423, a namespace is not a
+                // value — while the identical statement in a fn body was
+                // dropped before any emitter saw it.
+                Stmt::Expr(_) if rendered.pure => continue,
+                Stmt::Expr(_) => format!("{};", rendered.value),
             };
-            writeln!(out, "{}{}", indent, rendered).unwrap();
+            writeln!(out, "{}{}", indent, line).unwrap();
         }
     }
 
@@ -1355,10 +1372,8 @@ fn emit_main_with_visibility(
                             .and_then(|fn_id| ctx.resolved_program.fn_by_id(fn_id))
                             .and_then(|fd| {
                                 unresolved_name_reason(fd, ectx.current_module_scope.as_deref())
-                            })
-                            .unwrap_or_else(|| {
-                                "MIR walker could not render the `main` fn body".to_string()
                             }),
+                        || "MIR walker could not render the `main` fn body".to_string(),
                     )
                 )
             });
@@ -1451,13 +1466,41 @@ pub(super) fn unresolved_name_reason(
     ))
 }
 
-pub(super) fn emit_codegen_error_expr(ctx: &CodegenContext, message: String) -> String {
+/// Write a `compile_error!` in place of a construct, and record on the
+/// context that the emitter refused — with whose problem it is.
+///
+/// `diagnostic` is the user-facing sentence when the PROGRAM is at fault
+/// (an unresolved name, from `unresolved_name_reason`); `gap` names the
+/// construct when it is not, i.e. when this backend simply has no
+/// rendering for it. Which of the two produced the message IS the
+/// classification, so it is taken here rather than passed separately and
+/// kept in sync by hand — and never re-derived from the wording, which is
+/// the recovery [`crate::codegen::CodegenContext::substituted_compile_errors`]
+/// exists to avoid.
+pub(super) fn emit_codegen_error_expr(
+    ctx: &CodegenContext,
+    diagnostic: Option<String>,
+    gap: impl FnOnce() -> String,
+) -> String {
+    let (cause, message) = match diagnostic {
+        Some(message) => (CompileErrorCause::Program, message),
+        None => (CompileErrorCause::BackendGap, gap()),
+    };
     let message_lit = format!("{:?}", message);
-    ctx.substituted_compile_errors.borrow_mut().push(message);
+    ctx.substituted_compile_errors
+        .borrow_mut()
+        .push(SubstitutedCompileError { cause, message });
     format!(
         "{{ compile_error!({}); unreachable!(\"unreachable after compile_error\") }}",
         message_lit
     )
+}
+
+/// [`emit_codegen_error_expr`] where the refusal is always the program's:
+/// the caller already holds the diagnostic and there is no gap branch to
+/// fall back to.
+pub(super) fn emit_program_refusal_expr(ctx: &CodegenContext, diagnostic: String) -> String {
+    emit_codegen_error_expr(ctx, Some(diagnostic), String::new)
 }
 
 /// True when a verify case is a verify-only Oracle/trace shape that the
@@ -1690,12 +1733,28 @@ mod tests {
         // --target rust` reads THIS, not the files it just wrote: a program
         // is free to carry the text `compile_error!` in a string, and a scan
         // of the output cannot tell that apart from a refusal.
+        // The cause is recorded the same way and for the same reason:
+        // which branch produced the sentence is not recoverable from the
+        // sentence.
         let ctx = empty_ctx();
-        let emitted = emit_codegen_error_expr(&ctx, "could not render fn `f`".to_string());
+        let emitted = emit_codegen_error_expr(&ctx, None, || "could not render fn `f`".to_string());
         assert!(emitted.contains("compile_error!"));
         assert_eq!(
             *ctx.substituted_compile_errors.borrow(),
-            vec!["could not render fn `f`".to_string()]
+            vec![SubstitutedCompileError {
+                cause: CompileErrorCause::BackendGap,
+                message: "could not render fn `f`".to_string(),
+            }]
+        );
+
+        let ctx = empty_ctx();
+        emit_program_refusal_expr(&ctx, "fn `f` calls `Nope.thing`".to_string());
+        assert_eq!(
+            *ctx.substituted_compile_errors.borrow(),
+            vec![SubstitutedCompileError {
+                cause: CompileErrorCause::Program,
+                message: "fn `f` calls `Nope.thing`".to_string(),
+            }]
         );
     }
 

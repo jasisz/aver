@@ -764,7 +764,10 @@ fn unresolved_packed_carrier(type_name: &str, ctx: &MirEmitCtx<'_>) -> String {
          `depends [...]`"
     );
     match ctx.codegen {
-        Some(codegen) => super::toplevel::emit_codegen_error_expr(codegen, message),
+        // The program wrote a type name that resolves to nothing here, and
+        // the sentence says how to fix the source — a `Program` refusal,
+        // not a gap in this backend.
+        Some(codegen) => super::toplevel::emit_program_refusal_expr(codegen, message),
         None => message,
     }
 }
@@ -2167,6 +2170,23 @@ pub(super) fn emit_mir_guest_entry_body(
     emit_mir_fn_body(&mir_fn.body, &emit_ctx)
 }
 
+/// One rendered top-level statement value, and the one fact about it the
+/// caller cannot see from the emitted string.
+pub(super) struct TopStmtValue {
+    /// The rendered Rust expression.
+    pub value: String,
+    /// `true` when the MIR value has no observable effect and cannot trap
+    /// — the SAME classification
+    /// [`crate::ir::mir::optimize::dead_code::is_pure`] applies inside a
+    /// fn body. A fn body's statement chain lowers to a `Let` chain that
+    /// the DCE pass then walks, so a pure value bound to a name nothing
+    /// reads is gone before any emitter sees it. Module-level statements
+    /// are lowered one value at a time, outside `MirProgram.fns`, so DCE
+    /// never runs on them: without this flag the caller has no way to
+    /// apply the same rule and the two positions diverge.
+    pub pure: bool,
+}
+
 /// Render every **top-level statement value** through the MIR walker,
 /// all-or-nothing. Free-standing module-scope statements (`x = expr` / a
 /// bare `expr`) belong to no `ResolvedFnDef`, so this mirrors the VM
@@ -2179,8 +2199,8 @@ pub(super) fn emit_mir_guest_entry_body(
 /// half-written main body (exactly what the VM `compile_top_level` does
 /// with `mir_expr_compilable`).
 ///
-/// Returns the rendered value strings in statement order on full success
-/// (the caller wraps each in the explicit `let {name} @ _ = …;` /
+/// Returns the rendered values in statement order on full success (the
+/// caller wraps each in the explicit `let {name} @ _ = …;` /
 /// bare-expr-discard
 /// `…;` templating), or `None` if there's no MIR program or ANY
 /// statement falls outside the lowerable / renderable subset — the
@@ -2189,7 +2209,7 @@ pub(super) fn emit_mir_guest_entry_body(
 pub(super) fn emit_mir_top_stmt_values(
     resolved_values: &[&Spanned<crate::ir::hir::ResolvedExpr>],
     ctx: &CodegenContext,
-) -> Option<Vec<String>> {
+) -> Option<Vec<TopStmtValue>> {
     let base = ctx.mir_program.as_ref()?;
     // One clone shared across every statement: the lowerer grows its
     // builtin / instantiation tables in place, so all the `Call(Builtin)`
@@ -2207,7 +2227,12 @@ pub(super) fn emit_mir_top_stmt_values(
     // rather than leaving a half-MIR / half-HIR main body.
     lowered
         .iter()
-        .map(|low| emit_mir_expr(low, &emit_ctx))
+        .map(|low| {
+            Some(TopStmtValue {
+                value: emit_mir_expr(low, &emit_ctx)?,
+                pure: crate::ir::mir::optimize::dead_code::is_pure(low),
+            })
+        })
         .collect::<Option<Vec<_>>>()
 }
 

@@ -12,6 +12,17 @@
 // sample of this target's evolved queue and replays it through
 // `aver compile --target rust --check`. Splitting the two loops preserves AFL
 // throughput while retaining a real rustc oracle.
+//
+// What counts as a finding: a `compile_error!` substitution is the emitter
+// refusing to render a construct, and two different things wear that shape.
+// One says the PROGRAM is wrong — "fn `sumTree` writes the constructor
+// `Tyac.Node`, but no type `Tyac` … is in scope there" — which is the
+// CORRECT output for a byte the mutator flipped inside a type name, and
+// aborting on it buries the other class under dozens of copies of the same
+// non-bug. The other says this BACKEND is incomplete ("MIR walker could not
+// render fn `abs`"), and that is the finding. `generated_backend_gaps()` is
+// the emitter's own record of which is which — never a scan of the wording,
+// which would go quiet the day a message is reworded.
 
 #[path = "common.rs"]
 mod common;
@@ -110,8 +121,15 @@ fn main() {
         );
         let output = aver::codegen::rust::transpile(&mut ctx);
 
-        if !output.generated_compile_errors().is_empty() {
+        let gaps: Vec<&str> = output.generated_backend_gaps().collect();
+        if !gaps.is_empty() {
+            eprintln!("codegen_rust: backend could not render: {gaps:?}");
             std::process::abort();
+        }
+        // A program the emitter refused with a diagnostic produces no crate
+        // to check the shape of; that is the refusal working, not a finding.
+        if !output.generated_compile_errors().is_empty() {
+            return;
         }
         let has_manifest = output.files.iter().any(|(path, _)| path == "Cargo.toml");
         let has_entry = output
