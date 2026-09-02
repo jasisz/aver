@@ -6048,6 +6048,78 @@ fn main() -> Int
     result.unwrap_or_else(|error| panic!("{error}"));
 }
 
+/// A bare namespace reference written as a MODULE-LEVEL statement is dead
+/// code, exactly as it is inside a fn body.
+///
+/// `Vector.set` alone on a line is legal Aver — see
+/// `tests/regressions/parser/bare_namespace_method_ref.av`, where it sits
+/// in a fn body and the program runs. In a body the statement chain lowers
+/// to a MIR `Let` chain and the DCE pass elides `let <unread> = <pure>;`
+/// before any emitter sees it. Module-level statements are lowered one
+/// value at a time, outside `MirProgram.fns`, so DCE never ran on them and
+/// the Rust emitter rendered the `Project` over a `FnValue` verbatim:
+/// `Result.Err;`, a field access on a namespace, E0423. `aver check` said
+/// ✓ and the failure surfaced only at `cargo build` of the emitted crate.
+/// `fuzz_codegen_rust` found the 20-byte `module M\n\nResult.Err`.
+#[test]
+fn a_module_level_bare_namespace_reference_is_dead_code_not_a_field_access() {
+    let ws = temp_dir("module_level_bare_namespace");
+    let entry = ws.join("main.av");
+    fs::write(
+        &entry,
+        r#"module M
+    intent = "Bare namespace references at module level are no-ops."
+    effects []
+
+Result.Err
+String.len
+Option.None
+
+fn value() -> Int
+    ? "Give the crate something to emit besides the dead statements."
+    7
+"#,
+    )
+    .expect("write bare-namespace entry");
+
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let shared_target = shared_target_dir();
+    let shared_target = shared_target
+        .to_str()
+        .expect("shared Cargo target path should be UTF-8");
+
+    let result = (|| -> Result<(), String> {
+        // The VM already treats the three statements as no-ops; Rust must
+        // agree, and `--check` is rustc's own verdict on the emitted crate.
+        run_vm(&entry, Some(&ws))?;
+        compile_rust_env(
+            &entry,
+            &project,
+            "module_level_bare_namespace",
+            Some(&ws),
+            &["--check"],
+            &[
+                ("CARGO_TARGET_DIR", shared_target),
+                ("CARGO_NET_OFFLINE", "true"),
+            ],
+        )?;
+        let entry_rs = fs::read_to_string(project.join("src/aver_generated/entry/mod.rs"))
+            .map_err(|e| format!("read generated entry module: {e}"))?;
+        for namespace in ["Result.Err", "String.len", "Option.None"] {
+            if entry_rs.contains(namespace) {
+                return Err(format!(
+                    "emitted `{namespace}` as a Rust field access on a namespace:\n{entry_rs}"
+                ));
+            }
+        }
+        Ok(())
+    })();
+
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|error| panic!("{error}"));
+}
+
 // ─── Mode (h): Int.fromString / Float.fromString Err-message bytes ────────
 //
 // `Int.fromString` / `Float.fromString` return a `Result<_, String>`.

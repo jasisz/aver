@@ -1318,20 +1318,41 @@ fn emit_main_with_visibility(
                         .unwrap_or_else(|| {
                             "MIR walker could not render a top-level statement".to_string()
                         });
-                    emit_codegen_error_expr(ctx, reason)
+                    // A refusal is never dead: it has to reach the reader.
+                    super::from_mir::TopStmtValue {
+                        value: emit_codegen_error_expr(ctx, reason),
+                        pure: false,
+                    }
                 })
                 .collect()
         });
-        for (stmt, value) in top_stmts.iter().zip(values.iter()) {
+        for (stmt, rendered) in top_stmts.iter().zip(values.iter()) {
             // Same templating as the MIR fn-body let-chain: `Binding` → a
             // named `let`, `Expr` → a discarded statement.
-            let rendered = match stmt {
+            let line = match stmt {
                 Stmt::Binding(name, _, _) => {
-                    format!("let {} = {};", explicit_binding_pattern(name), value)
+                    format!(
+                        "let {} = {};",
+                        explicit_binding_pattern(name),
+                        rendered.value
+                    )
                 }
-                Stmt::Expr(_) => format!("{};", value),
+                // A bare expression statement binds nothing, so a value with
+                // no observable effect is DEAD — and dropping it is what the
+                // same statement inside a fn body already gets: the body
+                // lowers to a `Let` chain and MIR's DCE elides
+                // `let <unread> = <pure>; body`. Module-level statements are
+                // lowered one value at a time, outside `MirProgram.fns`, so
+                // that pass never sees them. Emitting them anyway is not a
+                // harmless difference: `Result.Err` alone under a `module M`
+                // is a `Project` over a `FnValue`, which renders as the Rust
+                // field access `Result.Err;` — E0423, a namespace is not a
+                // value — while the identical statement in a fn body was
+                // dropped before any emitter saw it.
+                Stmt::Expr(_) if rendered.pure => continue,
+                Stmt::Expr(_) => format!("{};", rendered.value),
             };
-            writeln!(out, "{}{}", indent, rendered).unwrap();
+            writeln!(out, "{}{}", indent, line).unwrap();
         }
     }
 
