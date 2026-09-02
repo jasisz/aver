@@ -1707,6 +1707,36 @@ impl VM {
                     self.stack.push(NanValue::new_record(idx));
                 }
 
+                RECORD_NEW_INDEXED => {
+                    let type_id = read_u16!(code, ip) as u32;
+                    let count = read_u8!(code, ip) as usize;
+                    let field_indices_start = ip;
+                    ip += count;
+
+                    let start = self
+                        .stack
+                        .len()
+                        .checked_sub(count)
+                        .ok_or(VmError::StackUnderflow)?;
+                    // Stack order is source order; the index list permutes it
+                    // back to the declared order the arena stores.
+                    let mut fields: Vec<NanValue> = vec![NanValue::UNIT; count];
+                    for offset in 0..count {
+                        let field_idx = code[field_indices_start + offset] as usize;
+                        if field_idx >= count {
+                            return Err(VmError::runtime("record literal field out of bounds"));
+                        }
+                        fields[field_idx] = self.stack[start + offset];
+                    }
+                    self.stack.truncate(start);
+                    let idx = self
+                        .arena
+                        .with_alloc_space(self.next_value_alloc_space(code, ip), |arena| {
+                            arena.push_record(type_id, fields)
+                        });
+                    self.stack.push(NanValue::new_record(idx));
+                }
+
                 RECORD_GET => {
                     let field_idx = read_u8!(code, ip) as usize;
                     let record = self.stack.pop().ok_or(VmError::StackUnderflow)?;

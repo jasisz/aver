@@ -162,6 +162,41 @@ fn run_program_lookup(src: &str, var_name: &str) -> Value {
     result.to_value(&machine.arena)
 }
 
+/// Same as `run_program_lookup`, but through the production pipeline.
+///
+/// `vm_compile` runs only `tco` + name resolution, so the analysis
+/// passes never fire. Anything that depends on one of them — notably
+/// the `last_use` marks the VM turns into `MOVE_LOCAL` — is invisible
+/// to the plain helper and needs this one.
+fn run_pipeline_lookup(src: &str, var_name: &str, var_type: &str) -> Value {
+    let full = format!("{src}\nfn test__get() -> {var_type}\n    {var_name}\n");
+    let mut items = aver::source::parse_source(&full).expect("parse failed");
+    let result = aver::ir::pipeline::run(
+        &mut items,
+        aver::ir::pipeline::PipelineConfig {
+            typecheck: Some(aver::ir::pipeline::TypecheckMode::Full { base_dir: None }),
+            ..Default::default()
+        },
+    );
+    let tc = result.typecheck.as_ref().expect("typecheck requested");
+    assert!(tc.errors.is_empty(), "typecheck failed: {:?}", tc.errors);
+
+    let mut arena = Arena::new();
+    let (code, globals) = vm::compile_program_with_mir_fallback(
+        &result.resolved_items,
+        &result.symbol_table,
+        &mut arena,
+        None,
+    )
+    .expect("compile failed");
+    let mut machine = vm::VM::new(code, globals, arena);
+    machine.run_top_level().expect("top-level failed");
+    machine
+        .run_named_function("test__get", &[])
+        .expect("lookup failed")
+        .to_value(&machine.arena)
+}
+
 /// Call a function with allowed effects set (for effectful tests).
 /// `run_named_function` automatically sets the allowed effects from the compiled
 /// function's declared effects, so no manual setup is needed.
@@ -4145,6 +4180,148 @@ updated = User.update(u, age = 99)
             assert_eq!(fields[1], ("age".to_string(), Value::int(99)));
         }
         other => panic!("expected Record, got {:?}", other),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Record field evaluation order (#1240)
+//
+// The last-use analysis decides which read of a local may consume it
+// (`MOVE_LOCAL`, which empties the slot) by walking a record literal's
+// fields in *source* order. The VM used to evaluate them in *declared*
+// order instead, so a field written late but declared early ran its
+// consuming read first and left a later field reading `Unit`.
+// ---------------------------------------------------------------------------
+
+/// Records and helpers shared by the field-order regressions: `Box`
+/// declares `items` before `state`, and both reported programs write
+/// `state` first.
+const FIELD_ORDER_PRELUDE: &str = r#"
+record Draw
+    value: Float
+    state: Int
+
+record Box
+    items: List<Float>
+    state: Int
+
+fn next(state: Int) -> Draw
+    Draw(value = 1.5, state = state + 1)
+
+fn combine(x: Float, y: Float) -> Float
+    x + y
+"#;
+
+/// Assert the reported program's answer: `state = 2`, one item.
+fn assert_box_state_two_with_one_item(out: &Value) {
+    match out {
+        Value::Record { type_name, fields } => {
+            assert_eq!(type_name, "Box");
+            assert_eq!(fields[1].0, "state");
+            assert_eq!(fields[1].1, Value::int(2), "state field");
+            assert_eq!(fields[0].0, "items");
+            let items = list_to_vec(&fields[0].1).expect("items must be a list");
+            assert_eq!(items.len(), 1, "items = {:?}", items);
+        }
+        other => panic!("expected Box record, got {:?}", other),
+    }
+}
+
+#[test]
+fn record_update_evaluates_fields_in_source_order() {
+    let src = format!(
+        "{FIELD_ORDER_PRELUDE}
+fn add(box: Box) -> Box
+    p = next(box.state)
+    q = next(p.state)
+    Box.update(box, state = q.state, items = List.prepend(combine(p.value, q.value), box.items))
+
+out = add(Box(items = [], state = 0))
+"
+    );
+    assert_box_state_two_with_one_item(&run_pipeline_lookup(&src, "out", "Box"));
+}
+
+#[test]
+fn record_create_evaluates_fields_in_source_order() {
+    let src = format!(
+        "{FIELD_ORDER_PRELUDE}
+fn add(box: Box) -> Box
+    p = next(box.state)
+    q = next(p.state)
+    Box(state = q.state, items = List.prepend(combine(p.value, q.value), box.items))
+
+out = add(Box(items = [], state = 0))
+"
+    );
+    assert_box_state_two_with_one_item(&run_pipeline_lookup(&src, "out", "Box"));
+}
+
+#[test]
+fn record_update_with_list_concat_evaluates_fields_in_source_order() {
+    let src = format!(
+        "{FIELD_ORDER_PRELUDE}
+fn add(box: Box) -> Box
+    p = next(box.state)
+    q = next(p.state)
+    Box.update(box, state = q.state, items = List.concat(box.items, [combine(p.value, q.value)]))
+
+out = add(Box(items = [], state = 0))
+"
+    );
+    assert_box_state_two_with_one_item(&run_pipeline_lookup(&src, "out", "Box"));
+}
+
+#[test]
+fn record_field_read_before_a_later_fields_consuming_read() {
+    // Smallest shape that trips the bug: `b` is read by the scalar
+    // field (written first, declared second) and again by the list
+    // field (written second, declared first). Only the second read is
+    // the last one, so only it may consume the slot.
+    let src = r#"
+record Cell
+    items: List<Int>
+    tag: Int
+
+fn wrap(n: Int) -> List<Int>
+    [n]
+
+fn build(seed: Int) -> Cell
+    a = seed + 1
+    b = a + 1
+    Cell(tag = b, items = wrap(b))
+
+cell = build(0)
+"#;
+    match run_pipeline_lookup(src, "cell", "Cell") {
+        Value::Record { fields, .. } => {
+            assert_eq!(fields[1], ("tag".to_string(), Value::int(2)));
+            let items = list_to_vec(&fields[0].1).expect("items must be a list");
+            assert_eq!(items, vec![Value::int(2)]);
+        }
+        other => panic!("expected Cell record, got {:?}", other),
+    }
+}
+
+#[test]
+fn record_update_repeating_a_field_keeps_the_first_value() {
+    // The parser accepts a field named twice in one update. The
+    // declared-order walk used to pick the first `field = value` and
+    // never evaluate the rest; the source-order walk keeps that.
+    let src = r#"
+record P
+    x: Int
+    y: Int
+
+p = P(x = 1, y = 2)
+q = P.update(p, x = 10, x = 20)
+"#;
+    match run_pipeline_lookup(src, "q", "P") {
+        Value::Record { fields, .. } => {
+            assert_eq!(fields[0], ("x".to_string(), Value::int(10)));
+            assert_eq!(fields[1], ("y".to_string(), Value::int(2)));
+        }
+        other => panic!("expected P record, got {:?}", other),
     }
 }
 

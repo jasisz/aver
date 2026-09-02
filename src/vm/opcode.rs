@@ -204,7 +204,22 @@ pub const LIST_CONS: u8 = 0x61;
 pub const LIST_NEW: u8 = 0x62; // count:u32
 
 /// Pop `count` field values, push a new record with `type_id`.
+///
+/// The values sit on the stack in the record's declared field order.
 pub const RECORD_NEW: u8 = 0x63; // type_id:u16, count:u8
+
+/// Pop `count` field values, push a new record with `type_id`, placing the
+/// `k`-th popped value at declared field index `field_idx[k]`.
+///
+/// This is `RECORD_NEW` for a literal whose fields are *written* in an order
+/// other than the declared one. The compiler evaluates field expressions in
+/// source order — the order the last-use analysis assumed when it decided
+/// which reads may consume (`MOVE_LOCAL`) their local — and the index list
+/// carries the permutation back to declaration order. Every declared field
+/// appears exactly once, so `count` equals the record's field count.
+///
+/// Stack: `[..., value_0, ..., value_count-1] -> [..., record]`
+pub const RECORD_NEW_INDEXED: u8 = 0x87; // type_id:u16, count:u8, field_idx[count]:u8
 
 /// Pop record, push `fields[field_idx]` (compile-time resolved index).
 pub const RECORD_GET: u8 = 0x64; // field_idx:u8
@@ -640,6 +655,7 @@ pub fn opcode_name(op: u8) -> &'static str {
         LIST_CONS => "LIST_CONS",
         LIST_NEW => "LIST_NEW",
         RECORD_NEW => "RECORD_NEW",
+        RECORD_NEW_INDEXED => "RECORD_NEW_INDEXED",
         STORE_GLOBAL => "STORE_GLOBAL",
         RECORD_GET => "RECORD_GET",
         RECORD_GET_NAMED => "RECORD_GET_NAMED",
@@ -832,7 +848,7 @@ pub fn opcode_operand_width(op: u8, code: &[u8], ip: usize) -> usize {
             let entry_size = if op == MATCH_DISPATCH { 11 } else { 17 };
             3 + count * entry_size
         }
-        RECORD_UPDATE if ip + 2 < code.len() => 3 + code[ip + 2] as usize,
+        RECORD_UPDATE | RECORD_NEW_INDEXED if ip + 2 < code.len() => 3 + code[ip + 2] as usize,
         // CALL_PAR count:u8 unwrap:u8 [argc:u8 × count]
         CALL_PAR if ip < code.len() => {
             let count = code[ip] as usize;
