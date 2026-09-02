@@ -1,9 +1,10 @@
 module IntCompare
     intent =
         "Certify fixture for the comparison half of the record"
-        "projection-compute face: the sign template on a computed product,"
-        "the three-way helper with a relational tail, and the equality helper."
-    exposes [Ratio, isNonNeg, isNonPos, below, sameValue]
+        "projection-compute face: the sign template on a computed product"
+        "and on a bare field, the three-way helper with a relational tail,"
+        "and the equality helper."
+    exposes [Ratio, isNonNeg, isNonPos, isNonNegField, below, sameValue]
     effects []
 
 record Ratio
@@ -43,3 +44,12 @@ fn sameValue(a: Ratio, b: Ratio) -> Bool
 verify sameValue
     sameValue(Ratio(top = 1, bottom = 2), Ratio(top = 2, bottom = 4)) => true
     sameValue(Ratio(top = 1, bottom = 2), Ratio(top = 2, bottom = 3)) => false
+
+fn isNonNegField(a: Ratio) -> Bool
+    ? "The sign template on a projected field, with no host call anywhere in the body — the shape the compute face used to miss."
+    a.top >= 0
+
+verify isNonNegField
+    isNonNegField(Ratio(top = 3, bottom = 4)) => true
+    isNonNegField(Ratio(top = 0, bottom = 4)) => true
+    isNonNegField(Ratio(top = -3, bottom = 4)) => false

@@ -1007,6 +1007,13 @@ def fragNodeComputes (n : FragNode) : Bool :=
   | .intSignCmp _ _ _ _ => true
   | _ => false
 
+/-- Drift tripwire. The NOMINAL-SIGNATURE gate
+    (`WasmSlice.exprRecordComputeStructIdx?`) selects the compute shape with its
+    own copy of this predicate. If the two ever disagree, a plan passes one gate
+    and fails the other — which is exactly how the projection-only sign test
+    first showed up. -/
+example : fragNodeComputes = AverCert.WasmSlice.fragNodeComputes := rfl
+
 /-- Classifier of the compute face: every parameter is an opaque record
     reference, every node is in the admitted set, at least one node computes
     (`fragNodeComputes` — which also rules the two-node projection faces out),
