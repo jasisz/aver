@@ -8419,6 +8419,10 @@ fn cert_tripwire_declines_tampered_law_claims() {
         !report.contains("law-claim not credited"),
         "a clean package names no uncredited law:\n{report}"
     );
+    assert!(
+        report.contains("source-bridges: 10 of 10 credited"),
+        "every k5 export must carry a credited plan-equals-source bridge:\n{report}"
+    );
 
     // Tamper A: edit one law statement inside the package's `Laws.lean`. The
     // corollary no longer has the declared type, so the package build (or the
@@ -8524,4 +8528,131 @@ fn cert_tripwire_declines_tampered_law_claims() {
     // audit line is missing, renamed, repeated, or malformed DECLINES the
     // package rather than passing unaudited. Credit is only ever granted by a
     // well-formed `ok` line.
+}
+
+/// The same tripwire for the plan-equals-source bridge surface, on the k5
+/// package whose ten record projection-compute exports are all bridged.
+///
+/// (A) A bridge statement edited in the manifest is a pin that no longer has
+/// the package corollary's type: the declared identity is not what the package
+/// proves, and the package is DECLINED. (B) A bridge proof degraded to `sorry`
+/// still elaborates at the declared statement, so only its axiom audit fails —
+/// that bridge loses its credit, the exports and the law-claims beside it keep
+/// theirs. `isNonPos` is the one bridged export no k5 law mentions, which is
+/// what keeps (B)'s law count untouched and isolates the bridge's own credit.
+/// (C), the audit line itself, is covered by the parser unit tests in
+/// `aver-cert` — the witness lives in a build directory this test cannot reach.
+#[test]
+fn cert_tripwire_declines_tampered_source_bridges() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping source-bridge tamper test: `lake` not available");
+        return;
+    }
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("cert-k5-bridges");
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("projects/k5_fdiv/main.av")
+        .arg("--module-root")
+        .arg("projects/k5_fdiv")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver compile --certify runs");
+    assert!(
+        compile.status.success(),
+        "k5_fdiv compile --certify failed:\n{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let cert = out_dir.join("cert");
+    let bridge_lean = std::fs::read_to_string(cert.join("Bridge.lean")).unwrap();
+    let manifest = std::fs::read_to_string(cert.join("cert-manifest.json")).unwrap();
+    assert_eq!(
+        bridge_lean
+            .matches("/-- plan-equals-source bridge for `")
+            .count(),
+        10,
+        "k5 package must carry ten bridge theorems"
+    );
+    assert!(
+        manifest.contains("\"export\": \"Domain_Rational_isNonPos\""),
+        "the bridge surface must name every certified export"
+    );
+
+    // Tamper A: point one declared statement at a different source function.
+    // The pin no longer has the package corollary's type, so it cannot
+    // elaborate — the declared identity is not what the package proves.
+    let needle = "_root_.Domain.Rational.isNonPos x0";
+    assert_eq!(
+        manifest.matches(needle).count(),
+        1,
+        "expected exactly one isNonPos bridge statement in the manifest"
+    );
+    let dir = temp_dir("cert-k5-bridge-manifest-tamper");
+    copy_dir(&out_dir, &dir);
+    std::fs::write(
+        dir.join("cert").join("cert-manifest.json"),
+        manifest.replacen(needle, "_root_.Domain.Rational.isNonNeg x0", 1),
+    )
+    .unwrap();
+    let (ok, out) = aver_check(&dir.join("main.wasm"), &dir.join("cert"));
+    assert!(!ok, "a tampered bridge statement must be DECLINED:\n{out}");
+    assert!(
+        !out.contains("CERTIFIED"),
+        "tampered manifest bridge credited:\n{out}"
+    );
+
+    // Tamper B: replace one bridge's proof with `sorry`. The theorem still has
+    // the declared statement, so the pin elaborates and only the axiom audit
+    // fails.
+    let header = "theorem _root_.AverCert.Bridge.Domain_Rational_isNonPos :\n";
+    let at = bridge_lean
+        .find(header)
+        .expect("expected the isNonPos bridge theorem");
+    let rest = &bridge_lean[at..];
+    let assign = rest.find(" := by\n").expect("expected the bridge proof");
+    let end = rest[assign..]
+        .find("\n\n/--")
+        .expect("expected the theorem to end before the next doc comment")
+        + assign;
+    let tampered = format!(
+        "{}{} := by\n  sorry{}",
+        &bridge_lean[..at],
+        &rest[..assign],
+        &rest[end..]
+    );
+    let dir = temp_dir("cert-k5-bridge-sorry-tamper");
+    copy_dir(&out_dir, &dir);
+    std::fs::write(dir.join("cert").join("Bridge.lean"), tampered).unwrap();
+    let (ok, out) = aver_check(&dir.join("main.wasm"), &dir.join("cert"));
+    assert!(
+        ok,
+        "a bridge failing only its axiom audit must not sink the exports:\n{out}"
+    );
+    assert!(
+        out.contains("10 checked exports"),
+        "the export verdict must stand beside an uncredited bridge:\n{out}"
+    );
+    assert!(
+        out.contains("source-bridges: 9 of 10 credited"),
+        "the sorry'd bridge must lose exactly its own credit:\n{out}"
+    );
+    assert!(
+        out.contains(
+            "source-bridge not credited: Domain_Rational_isNonPos \
+             (proof depends on sorryAx)"
+        ),
+        "the uncredited bridge must be named with the axiom that sank it:\n{out}"
+    );
+    assert!(
+        out.contains("law-claims: 11 of 11 credited"),
+        "no k5 law mentions isNonPos, so every law keeps its credit:\n{out}"
+    );
 }

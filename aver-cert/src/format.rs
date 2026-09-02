@@ -135,7 +135,13 @@ impl Wasip2ComponentEnvelopeDeclaration {
 /// names a universal law theorem of the model modules together with its
 /// verbatim statement and its `Laws.lean` corollary, and the checker-owned
 /// witness re-elaborates every corollary at exactly the declared statement
-/// and audits its axioms against the kernel whitelist.
+/// and audits its axioms against the kernel whitelist. Version 8 added the
+/// required top-level `sourceBridges` array and the required `bridges` key on
+/// every `laws` entry — the plan-equals-source surface: one entry per export
+/// whose obligation model is the declared plan, naming the theorem that
+/// identifies that plan with the transpiled source function, its verbatim
+/// statement, and the corollary conjoining it with `Holds`, pinned and
+/// axiom-audited exactly the way a law-claim is.
 pub const CERT_SCHEMA_VERSION: u32 = 8;
 
 /// Named theorem audited by the checker-owned witness.
@@ -480,7 +486,7 @@ mod tests {
         );
         assert_eq!(WASIP2_COMPONENT_ENVELOPE_SUFFIX_LEN_FIELD, "suffix_len");
         assert_eq!(WASIP2_COMPONENT_ENVELOPE_KIND, "prefix-core-suffix/v1");
-        assert_eq!(CERT_SCHEMA_VERSION, 7);
+        assert_eq!(CERT_SCHEMA_VERSION, 8);
     }
 
     #[test]

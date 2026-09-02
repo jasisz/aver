@@ -2774,6 +2774,150 @@ mod tests {
         assert_eq!(outcomes[0].offending, vec!["ok".to_string()]);
     }
 
+    fn bridge_candidates(exports: &[&str]) -> Vec<SourceBridgeCandidate> {
+        exports
+            .iter()
+            .map(|export| SourceBridgeCandidate {
+                export: (*export).to_string(),
+                theorem: format!("{BRIDGE_NAMESPACE}.{export}"),
+                statement: "_root_.True".to_string(),
+                corollary: format!("{BRIDGE_NAMESPACE}.{export}{BRIDGE_COROLLARY_SUFFIX}"),
+                model: format!("Domain.{export}"),
+            })
+            .collect()
+    }
+
+    fn bridge_audit_line(index: usize, verdict: &str) -> String {
+        format!(
+            "CheckerWitness.lean:9:0: info: {BRIDGE_AUDIT_MARKER} \
+             {BRIDGE_PIN_PREFIX}{index} {verdict}"
+        )
+    }
+
+    #[test]
+    fn bridge_audit_credits_only_pins_the_witness_reported_clean() {
+        let bridges = bridge_candidates(&["one", "two"]);
+        let output = format!(
+            "building CheckerWitness\n{}\n{}\n",
+            bridge_audit_line(0, "ok"),
+            bridge_audit_line(1, "axioms sorryAx"),
+        );
+        let outcomes = parse_bridge_audits(&output, &bridges).expect("well-formed audit parses");
+        assert_eq!(outcomes.len(), 2);
+        assert!(outcomes[0].offending.is_empty());
+        assert_eq!(outcomes[1].export, "two");
+        assert_eq!(outcomes[1].offending, vec!["sorryAx".to_string()]);
+    }
+
+    #[test]
+    fn bridge_audit_without_a_line_declines_instead_of_crediting() {
+        let bridges = bridge_candidates(&["one", "two"]);
+        let error = parse_bridge_audits(&bridge_audit_line(0, "ok"), &bridges).unwrap_err();
+        assert!(
+            error.contains("no axiom audit for source-bridge `two`")
+                && error.contains("refusing to credit an unaudited bridge"),
+            "the decline names the unaudited bridge: {error}"
+        );
+        // A renamed marker reports nothing at all — same decline. The law
+        // marker in particular must not be read as a bridge audit.
+        let renamed = bridge_audit_line(0, "ok").replace(BRIDGE_AUDIT_MARKER, LAW_AUDIT_MARKER);
+        assert!(parse_bridge_audits(&renamed, &bridge_candidates(&["one"])).is_err());
+    }
+
+    #[test]
+    fn bridge_audit_rejects_malformed_and_repeated_lines() {
+        let bridges = bridge_candidates(&["one"]);
+        for bad in [
+            bridge_audit_line(0, ""),
+            bridge_audit_line(0, "axioms"),
+            bridge_audit_line(0, "ok extra"),
+            bridge_audit_line(0, "clean"),
+            bridge_audit_line(0, "axioms sorryAx,"),
+            bridge_audit_line(9, "ok"),
+        ] {
+            assert!(
+                parse_bridge_audits(&bad, &bridges).is_err(),
+                "malformed audit line must decline: {bad}"
+            );
+        }
+        let repeated = format!(
+            "{}\n{}\n",
+            bridge_audit_line(0, "ok"),
+            bridge_audit_line(0, "ok")
+        );
+        assert!(
+            parse_bridge_audits(&repeated, &bridges)
+                .unwrap_err()
+                .contains("more than once"),
+            "a repeated pin declines"
+        );
+    }
+
+    #[test]
+    fn bridge_candidate_gate_pins_the_two_declaration_names_and_root_qualification() {
+        let good = bridge_candidates(&["one"]).pop().unwrap();
+        assert!(validate_source_bridge_candidate(good).is_ok());
+
+        let mut wrong_theorem = bridge_candidates(&["one"]).pop().unwrap();
+        wrong_theorem.theorem = "AverCert.Laws.one".to_string();
+        assert!(validate_source_bridge_candidate(wrong_theorem).is_err());
+
+        let mut wrong_corollary = bridge_candidates(&["one"]).pop().unwrap();
+        wrong_corollary.corollary = "AverCert.Bridge.one".to_string();
+        assert!(validate_source_bridge_candidate(wrong_corollary).is_err());
+
+        // A statement whose dotted names are not root-qualified would be
+        // resolved against whatever namespaces the package declares.
+        let mut bare_name = bridge_candidates(&["one"]).pop().unwrap();
+        bare_name.statement = "Domain.Rational.plus = _root_.Domain.Rational.plus".to_string();
+        assert!(validate_source_bridge_candidate(bare_name).is_err());
+
+        let mut smuggled = bridge_candidates(&["one"]).pop().unwrap();
+        smuggled.statement = "_root_.True) ∧ (_root_.False".to_string();
+        assert!(validate_source_bridge_candidate(smuggled).is_err());
+
+        let mut dotted_export = bridge_candidates(&["one"]).pop().unwrap();
+        dotted_export.export = "Domain.one".to_string();
+        assert!(validate_source_bridge_candidate(dotted_export).is_err());
+    }
+
+    #[test]
+    fn bridge_clause_counts_credit_and_names_the_uncredited() {
+        let summary = summarize_report(
+            Path::new("app.wasm"),
+            TrustedReport {
+                exports: Vec::new(),
+                laws: Vec::new(),
+                source_bridges: vec![
+                    BridgeOutcome {
+                        export: "one".to_string(),
+                        model: "Domain.one".to_string(),
+                        offending: Vec::new(),
+                    },
+                    BridgeOutcome {
+                        export: "two".to_string(),
+                        model: "Domain.two".to_string(),
+                        offending: vec!["sorryAx".to_string()],
+                    },
+                ],
+                contracts: Vec::new(),
+                target: String::new(),
+                profile: String::new(),
+                abi: String::new(),
+                artifact_hash: String::new(),
+            },
+            "checked",
+        );
+        assert_eq!(
+            summary.text,
+            "app.wasm (0 checked exports, level L1; source-bridges: 1 of 2 credited)"
+        );
+        assert_eq!(
+            summary.uncredited_bridges,
+            vec!["source-bridge not credited: two (proof depends on sorryAx)".to_string()]
+        );
+    }
+
     #[test]
     fn law_clause_is_absent_without_law_claims() {
         let bare = summarize_report(

@@ -4,7 +4,7 @@ expression: golden
 ---
 == cert-manifest.json ==
 {
-  "schema_version": 7,
+  "schema_version": 8,
   "format": {"version": 1, "wall_id": "sha256:aaa3bf6faf4ef6a2e84074c86bb4ee3a5d108e3030a42f5e682e1b4c108d69fe"},
   "wasm": "add_one.wasm",
   "wasm_sha256": "5f41ddfa9a5a395546d0c21e00c232be77e330ea587b2666456f0488ff0450c9",
@@ -20,6 +20,9 @@ expression: golden
     "Int.add (carrier add = exact integer addition on represented values; result canonical)"
   ],
   "laws": [],
+  "sourceBridges": [
+    {"export": "addOne", "theorem": "AverCert.Bridge.addOne", "statement": "∀ (x0 : Int), _root_.AverCert.StandardFace.recordComputeModel _root_.AverCert.Plans.addOnePlan.body [_root_.RecordComputeBridge.SVal.i (x0)] = _root_.Option.some (_root_.RecordComputeBridge.SVal.i (_root_.CertificateHello.addOne x0))", "corollary": "AverCert.Bridge.addOne_certified", "model": "CertificateHello.addOne"}
+  ],
   "declaredUncertified": [
     {"name": "_start", "reason": "module export is outside the claimed certification obligations"},
     {"name": "__rt_string_from_lm", "reason": "module export is outside the claimed certification obligations"},
