@@ -1,0 +1,15 @@
+# Talos bridge — audit project (see README.md). NOT part of the wall, NOT
+# shipped, NOT read by the verifier. Talos is a monorepo; its Lean package
+# is `interpreter/`, hence `subDir`. Mathlib comes transitively from Talos.
+name = "bridge-talos"
+version = "0.1.0"
+defaultTargets = ["Bridge"]
+
+[[require]]
+name = "Interpreter"
+git = "https://github.com/cajal-technologies/talos.git"
+rev = "6fd26867bc11b57f5f18c2ca834195d055e14d69"
+subDir = "interpreter"
+
+[[lean_lib]]
+name = "Bridge"
