@@ -208,12 +208,11 @@ fn written_field_order(
 fn emit_declared_field_value(
     func: &mut Function,
     type_name: &str,
-    decl_field: &(String, String),
+    (decl_name, decl_ty): (&str, &str),
     value: &Spanned<MirExpr>,
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<Option<()>, WasmGcError> {
-    let (decl_name, decl_ty) = decl_field;
     if emit_mir_record_field_value(func, value, decl_ty, slots, ctx)?.is_none() {
         return Ok(None);
     }
@@ -331,7 +330,7 @@ pub(crate) fn emit_mir_record_create(
             if emit_declared_field_value(
                 func,
                 type_name,
-                &(decl_name.clone(), decl_ty.clone()),
+                (decl_name, decl_ty),
                 &provided.value,
                 slots,
                 ctx,
@@ -354,10 +353,11 @@ pub(crate) fn emit_mir_record_create(
             continue;
         }
         filled[index] = true;
+        let (decl_name, decl_ty) = &decl_fields[index];
         if emit_declared_field_value(
             func,
             type_name,
-            &decl_fields[index],
+            (decl_name, decl_ty),
             &field.value,
             slots,
             ctx,
@@ -462,7 +462,7 @@ pub(crate) fn emit_mir_record_update(
                 if emit_declared_field_value(
                     func,
                     type_name,
-                    &(decl_name.clone(), decl_ty.clone()),
+                    (decl_name, decl_ty),
                     &override_field.value,
                     slots,
                     ctx,
@@ -526,10 +526,11 @@ pub(crate) fn emit_mir_record_update(
             continue;
         }
         overridden[index] = true;
+        let (decl_name, decl_ty) = &decl_fields[index];
         if emit_declared_field_value(
             func,
             type_name,
-            &decl_fields[index],
+            (decl_name, decl_ty),
             &field.value,
             slots,
             ctx,
