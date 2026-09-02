@@ -415,3 +415,100 @@ def checkRecordDecl : TypeDecl → Bool
   | .floatScalar => false
   | .variant _ _ _ => false
 end AverCert.Schema
+
+/-!
+## Verbatim fragments used by the `envOfClaim` composition lemma
+
+`CertDecode` type-section shapes (CertDecode.lean lines 160–197), the wall's
+lowering of a certified record declaration to its type-section entry
+(SchemaCore.lean lines 1132–1152, the entry `StandardFace` pins by equality
+through `WasmSlice.typeSectionMatches`), and the host-role lookup the plan
+encoder resolves roles with (PlanCheck.lean lines 869–876). Same wall id.
+
+Check with:
+`diff <(sed -n '160,197p' aver-cert/assets/wall/current/CertDecode.lean) <(sed -n '/^namespace CertDecode$/,/^end CertDecode$/p' aver-cert/assets/bridge-talos/Bridge/AverMin.lean | sed '1d;$d')`
+`diff <(sed -n '1132,1152p' aver-cert/assets/wall/current/SchemaCore.lean) <(sed -n '/^namespace AverCert.Schema.Lowering$/,/^end AverCert.Schema.Lowering$/p' aver-cert/assets/bridge-talos/Bridge/AverMin.lean | sed '1d;$d;/^open AverCert.Schema$/d')`
+`diff <(sed -n '869,876p' aver-cert/assets/wall/current/PlanCheck.lean) <(sed -n '/^namespace AverCert.PlanCheck$/,/^end AverCert.PlanCheck$/p' aver-cert/assets/bridge-talos/Bridge/AverMin.lean | sed '1d;$d;/^open AverCert.Schema$/d')`
+
+(The lowering lines are wrapped in the sub-namespace `AverCert.Schema.Lowering`
+only so that this file can `open AverCert.Schema` for `TypeDecl`; the wall
+declares them directly in `AverCert.Schema`.)
+-/
+
+namespace CertDecode
+
+/-- Exact wasm value-type form admitted by this certificate profile. Tags are
+    retained because nullability (`0x63`/`0x64`) and abstract shorthands are
+    byte-significant even when a downstream projection ignores the detail. -/
+inductive ValType
+  | numeric (tag : Nat)
+  | abstract (tag : Nat)
+  | ref (tag : Nat) (heap : Int)
+deriving Repr, DecidableEq
+
+inductive StorageType
+  | packed (tag : Nat)
+  | val (type : ValType)
+deriving Repr, DecidableEq
+
+structure FieldType where
+  storage : StorageType
+  mutability : Nat
+deriving Repr, DecidableEq
+
+inductive CompositeType
+  | funcType (params results : List ValType)
+  | structType (fields : List FieldType)
+  | arrayType (field : FieldType)
+deriving Repr, DecidableEq
+
+inductive SubtypeForm
+  | plain
+  | sub (supertypes : List Nat)
+  | subFinal (supertypes : List Nat)
+deriving Repr, DecidableEq
+
+/-- One flattened subtype in absolute type-index order. -/
+structure TypeEntry where
+  form : SubtypeForm
+  composite : CompositeType
+deriving Repr, DecidableEq
+
+end CertDecode
+
+namespace AverCert.Schema.Lowering
+open AverCert.Schema
+/-- The wasm-gc field storage a scalar leaf lowers to. `intCarrier` is a
+    nullable reference to the module's Int carrier struct index `C`; `boolScalar`
+    is `i32`; `floatScalar` is `f64`. Record fields are IMMUTABLE (`mutability
+    0`), unlike the carrier's own mutable fields. Non-scalar leaves fail closed. -/
+def lowerScalarStorage (C : Nat) : TypeDecl → Option CertDecode.FieldType
+  | .intCarrier => some ⟨.val (.ref 0x63 (Int.ofNat C)), 0⟩
+  | .boolScalar => some ⟨.val (.numeric 0x7f), 0⟩
+  | .floatScalar => some ⟨.val (.numeric 0x7c), 0⟩
+  | _ => none
+
+/-- Lower a Plan type declaration to its expected wasm-gc type-section entry.
+    Stage 1: a `record` becomes a `.plain` struct whose fields are the pointwise
+    scalar-storage lowering of its source-order fields; a field that is not a
+    scalar leaf makes the whole `mapM` fail closed. `fuel` is the recursion floor
+    for future nested records; at `0`, and for every non-record declaration, the
+    lowering returns `none` (fail-closed). -/
+def lowerTypeDecl (C : Nat) : Nat → TypeDecl → Option CertDecode.TypeEntry
+  | 0, _ => none
+  | _fuel + 1, .record _idx fields =>
+      (fields.mapM (lowerScalarStorage C)).map (fun fts => ⟨.plain, .structType fts⟩)
+  | _fuel + 1, _ => none
+end AverCert.Schema.Lowering
+
+namespace AverCert.PlanCheck
+open AverCert.Schema
+/-- Look up the resolved wasm function index for one host role in the
+    byte-derived role table an artifact claim carries. A role the table lacks
+    fail-closes the encoding (`none`). -/
+def hostRoleIdx? (hostTable : List (HostRole × Nat)) (role : HostRole) : Option Nat :=
+  match hostTable with
+  | [] => none
+  | (r, idx) :: rest => if r = role then some idx else hostRoleIdx? rest role
+
+end AverCert.PlanCheck

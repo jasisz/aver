@@ -144,7 +144,7 @@ theorem initSingleModuleConfig_synth (env : TranslateEnv) (paramSorts : List STy
   have ht : List.take args.length args.reverse = args.reverse := by
     simpa using List.take_length (l := args.reverse)
   have hd : List.drop args.length args.reverse = [] := by
-    simpa using List.drop_length (l := args.reverse)
+    simp
   simp only [initSingleModuleConfig, initConfig, synthModule_imports_length, Nat.lt_irrefl,
     if_false, Nat.sub_self, synthModule_funcs_getElem?, hnp, ht, hd, List.reverse_reverse]
   rfl

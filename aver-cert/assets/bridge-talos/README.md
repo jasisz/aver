@@ -51,6 +51,7 @@ network needs after `lake update`.
 | `Bridge/Config.lean` | synthetic module (one function, host slots as imports, declared struct types), initial configuration, the `HostSimulation` assumption |
 | `Bridge/HostCall.lean` | spike (a): `bridge_hostCall` — a wall `call` of a host slot is one Talos `callHostReturn` step |
 | `Bridge/IfElse.lean` | spike (b): `bridge_ifElse` — a wall `ifElse` is `Step.iff`, the branch, `Step.exitControl` |
+| `Bridge/EnvOfClaim.lean` | spike (c): `envOfClaim` is a projection of the declared envelope (host half, struct half), the k5 instance |
 
 ## Log
 
@@ -90,3 +91,19 @@ network needs after `lake update`.
   hypothesis in the shape of the whole-list lemma (`BranchSim`), so nested `ifElse`
   is the same lemma one level down; the wall-side condition is `BranchPushesOne`,
   which `typed_run` supplies for typed branches.
+- **Step 7 — spike (c), `EnvOfClaim.lean`.** CLOSED in one round (0.3 s). Host half:
+  every import of the synthetic module is an entry of the claim's host-role table with
+  the role's fixed signature (`envOfClaim_import_role`), and the index the wall's own
+  `hostRoleIdx?` resolves a role to is that import (`hostRoleIdx?_slotLookup`, needs
+  distinct indices in the table). Struct half: the environment's field sorts for a
+  certified record are the sort projection of exactly the type-section entry
+  `lowerTypeDecl` produces — the entry `StandardFace` pins by equality
+  (`declEntry?_lowerTypeDecl`). No byte is read. WHAT THE ENVELOPE LACKS: a
+  symbolic-fragment claim names user structs only by `structTable` (name → index);
+  the field layout of a struct index comes from a SEPARATE `typedecl-v1` record claim
+  of the same certificate (k5: `Fraction` = index 0 from the `zeroFraction`/
+  `oneFraction` record declarations), so `envOfClaim` takes the certificate's record
+  declarations as an input; a struct index cited by a compute plan and by no record
+  claim has no declared layout and `translate` refuses its `structNew`. Also erased but
+  harmless: `if` block types (inert for `Step`), local types (fixed by
+  `PlanBytes.singleCarrierLocalBodyBytes`: one nullable carrier reference).
