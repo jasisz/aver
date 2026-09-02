@@ -409,13 +409,21 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         bridged, compute_face,
         "every projection-compute export must carry a bridge, in obligation order"
     );
+    // The entry carries STRUCTURE, never statement text: the checker renders
+    // the statement from it. A `statement` key here would be a claim the
+    // package chose its own wording for, which is exactly what this surface
+    // stopped transporting — the exact-object gate below is what enforces it.
     for entry in bridges {
         let export = entry["export"].as_str().unwrap();
         let object = entry.as_object().unwrap();
         assert_eq!(
             object.len(),
-            5,
+            6,
             "a source-bridge entry is matched exactly: {object:?}"
+        );
+        assert!(
+            !object.contains_key("statement"),
+            "the bridge surface must not transport statement text: {object:?}"
         );
         assert_eq!(
             entry["theorem"].as_str(),
@@ -425,18 +433,40 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
             entry["corollary"].as_str(),
             Some(format!("AverCert.Bridge.{export}_certified").as_str())
         );
-        let statement = entry["statement"].as_str().unwrap();
+        // Every encoder is one of the three closed kinds, and a record names a
+        // `_root_.`-qualified type together with its own accessors.
+        let encoders: Vec<&serde_json::Value> = entry["params"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .chain(std::iter::once(&entry["result"]))
+            .collect();
+        for encoder in encoders {
+            let kind = encoder["kind"].as_str().unwrap();
+            assert!(
+                matches!(kind, "int" | "bool" | "record"),
+                "the encoder kind set is closed: {kind}"
+            );
+            if kind == "record" {
+                let lean_type = encoder["type"].as_str().unwrap();
+                assert!(lean_type.starts_with("_root_."));
+                for field in encoder["fields"].as_array().unwrap() {
+                    let accessor = field.as_str().unwrap();
+                    assert!(
+                        accessor.starts_with(&format!("{lean_type}.")),
+                        "an accessor must be a field of the declared type: {accessor}"
+                    );
+                }
+            }
+        }
+        // The statement the package's own `Bridge.lean` carries is the one the
+        // checker renders from the entry above — the producer writes it through
+        // the same function the verifier pins with.
+        let bridge_lean = std::fs::read_to_string(out_dir.join("cert").join("Bridge.lean"))
+            .expect("a bridged package emits Bridge.lean");
         assert!(
-            statement.contains("recordComputeModel")
-                && statement.contains(&format!("Plans.{export}Plan.body")),
-            "a bridge states the plan's model at the encoded arguments: {statement}"
-        );
-        assert!(
-            statement
-                .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '.'))
-                .filter(|token| token.contains('.'))
-                .all(|token| token.starts_with("_root_.")),
-            "a bridge statement is root-qualified throughout: {statement}"
+            bridge_lean.contains(&format!("_root_.AverCert.Plans.{export}Plan.body")),
+            "the emitted bridge names the export's own plan"
         );
     }
     let declared_uncertified = manifest["declaredUncertified"].as_array().unwrap();

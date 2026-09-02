@@ -139,9 +139,16 @@ impl Wasip2ComponentEnvelopeDeclaration {
 /// required top-level `sourceBridges` array and the required `bridges` key on
 /// every `laws` entry — the plan-equals-source surface: one entry per export
 /// whose obligation model is the declared plan, naming the theorem that
-/// identifies that plan with the transpiled source function, its verbatim
-/// statement, and the corollary conjoining it with `Holds`, pinned and
-/// axiom-audited exactly the way a law-claim is.
+/// identifies that plan with the transpiled source function, the STRUCTURE the
+/// checker renders that theorem's statement from (the export, the source
+/// function, and one closed-form encoder per parameter and result), and the
+/// corollary conjoining it with `Holds`, pinned and axiom-audited exactly the
+/// way a law-claim is. A bridge entry carries no statement TEXT: a declared
+/// statement need only pass the syntactic gates to be credited, and a
+/// tautology passes all of them, so the checker writes the statement instead.
+/// A law-claim listing bridges carries a second corollary conjoining them,
+/// pinned apart from its own so an unfinished bridge cannot cost the law its
+/// credit.
 pub const CERT_SCHEMA_VERSION: u32 = 8;
 
 /// Named theorem audited by the checker-owned witness.

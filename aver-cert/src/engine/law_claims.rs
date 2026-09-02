@@ -40,7 +40,24 @@ impl LawClaim {
     pub fn corollary(&self) -> String {
         self.label.replace('.', "_")
     }
+
+    /// Name of this claim's BRIDGED corollary, emitted beside the plain one
+    /// when every model function the statement mentions carries a bridge.
+    ///
+    /// The two are separate declarations on purpose. The plain corollary says
+    /// the law holds of the source model and the bytes simulate the plan; the
+    /// bridged one additionally says the plan IS that source model. A bridge
+    /// whose script falls to `sorry` therefore costs the bridge and this
+    /// corollary, and leaves the plain law's credit exactly where it was.
+    pub fn bridged_corollary(&self) -> String {
+        format!("{}{LAW_BRIDGED_COROLLARY_SUFFIX}", self.corollary())
+    }
 }
+
+/// The suffix the bridged corollary carries over the plain one. Checker-owned
+/// in the sense that matters: the manifest never declares this name, both sides
+/// derive it from the claim's label.
+pub const LAW_BRIDGED_COROLLARY_SUFFIX: &str = "_bridged";
 
 /// Mirror of the checker's `validate_law_candidate` gates, kept as a
 /// DEFENSIVE check on the rendered statement even though the claim now arrives
@@ -142,11 +159,19 @@ pub fn admit_law_claims(claims: Vec<LawClaim>) -> (Vec<LawClaim>, Vec<(String, S
 ///
 /// `bridge_statements` carries, per claim, the plan-equals-source bridge
 /// statements of every model function that claim's statement mentions — empty
-/// when some mentioned function has no bridge, in which case the corollary is
-/// exactly the two-conjunct one this surface has always emitted. When they are
-/// all bridged the corollary conjoins them too, so a single kernel-checked
-/// name says: this law holds of the source function, the bytes simulate the
-/// plan, AND the plan IS that source function.
+/// when some mentioned function has no bridge.
+///
+/// A claim whose functions are all bridged gets a SECOND corollary,
+/// `AverCert.Laws.<c>_bridged`, which conjoins those bridge statements after
+/// `Holds`: one kernel-checked name saying this law holds of the source
+/// function, the bytes simulate the plan, AND the plan IS that source function.
+/// The two are deliberately separate declarations rather than one wider
+/// corollary. A bridge whose fixed tactic script falls to `sorry` taints
+/// everything that cites it, so folding the bridges into `Laws.<c>` made one
+/// unfinished bridge remove the credit of every law that merely mentions the
+/// function — a claim about the SOURCE model, which the bridge has no part in
+/// proving. Split, a `sorry` in a bridge costs the bridge and the bridged
+/// corollary, and the plain law keeps its credit.
 pub fn render_laws_lean(claims: &[LawClaim], bridge_statements: &[Vec<(String, String)>]) -> String {
     let any_bridged = bridge_statements.iter().any(|entry| !entry.is_empty());
     let mut s = String::new();
@@ -155,7 +180,9 @@ pub fn render_laws_lean(claims: &[LawClaim], bridge_statements: &[Vec<(String, S
          -- law of the model modules with the artifact-level `Holds` fact, so a\n\
          -- single kernel-checked name ties the law to exactly the certified bytes.\n\
          -- A law whose every mentioned function carries a plan-equals-source\n\
-         -- bridge conjoins those bridges as well.\n\
+         -- bridge gets a second `_bridged` corollary conjoining those bridges,\n\
+         -- kept apart from the law's own so an unfinished bridge cannot cost\n\
+         -- the law its credit.\n\
          -- Each statement is elaborated inside the namespace its model theorem was\n\
          -- emitted in, so the claim text means there what it means in the model.\n\
          import Manifest\n\
@@ -183,21 +210,35 @@ pub fn render_laws_lean(claims: &[LawClaim], bridge_statements: &[Vec<(String, S
         s.push_str(&claim.corollary());
         s.push_str(" :\n    (");
         s.push_str(&claim.statement);
-        s.push_str(") ∧ (_root_.AverCert.Schema.Holds _root_.AverCert.manifest)");
-        for (_, statement) in bridges {
-            s.push_str(" ∧\n      (");
-            s.push_str(statement);
-            s.push(')');
-        }
-        s.push_str(" :=\n  ⟨_root_.");
+        s.push_str(") ∧ (_root_.AverCert.Schema.Holds _root_.AverCert.manifest) :=\n  ⟨_root_.");
         s.push_str(&claim.qualified());
-        s.push_str(", _root_.AverCert.Final.cert");
-        for (corollary, _) in bridges {
-            s.push_str(",\n    (_root_.");
-            s.push_str(corollary);
-            s.push_str(").1");
+        s.push_str(", _root_.AverCert.Final.cert⟩\n\n");
+        if !bridges.is_empty() {
+            s.push_str("/-- law-claim `");
+            s.push_str(&claim.label);
+            s.push_str("`, with the plan-equals-source identity of every model\n    \
+                        function it mentions. Separate from the corollary above so an\n    \
+                        unfinished bridge costs this claim and not the law itself. -/\n\
+                        theorem _root_.AverCert.Laws.");
+            s.push_str(&claim.bridged_corollary());
+            s.push_str(" :\n    (");
+            s.push_str(&claim.statement);
+            s.push_str(") ∧ (_root_.AverCert.Schema.Holds _root_.AverCert.manifest)");
+            for (_, statement) in bridges {
+                s.push_str(" ∧\n      (");
+                s.push_str(statement);
+                s.push(')');
+            }
+            s.push_str(" :=\n  ⟨_root_.");
+            s.push_str(&claim.qualified());
+            s.push_str(", _root_.AverCert.Final.cert");
+            for (corollary, _) in bridges {
+                s.push_str(",\n    (_root_.");
+                s.push_str(corollary);
+                s.push_str(").1");
+            }
+            s.push_str("⟩\n\n");
         }
-        s.push_str("⟩\n\n");
         if !claim.prefix.is_empty() {
             s.push_str("end ");
             s.push_str(&claim.prefix);

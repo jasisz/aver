@@ -11,21 +11,41 @@
 // One theorem per bridged export now does, at exactly the encoders the face's
 // representation relation uses.
 
+// The statement itself is rendered — here and in the checker — by the module
+// both features share, so the emitted `Bridge.lean` and the checker's pin are
+// the same text by construction rather than by comparison.
+use crate::bridge_statement::{
+    MAX_BRIDGE_STATEMENT_LEN, ROOT_PREFIX, SourceEncoder, binder_names, encoded_args,
+    is_plain_dotted_name, render_bridge_statement, source_call, statement_is_root_qualified,
+    statement_is_single_plain_line,
+};
+
 /// One declared plan-equals-source bridge, as the manifest transports it.
+///
+/// The manifest carries STRUCTURE, never the statement text: the checker
+/// renders the statement from `(export, model, params, result)` with
+/// [`crate::bridge_statement::render_bridge_statement`] and pins the package's
+/// corollary at exactly that type. The producer writes the same rendered text
+/// into `Bridge.lean` through the same function, so the two agree by
+/// construction. A package cannot declare a statement of its own choosing — a
+/// tautology, another export's plan, a permuted accessor list — because no
+/// statement it writes is ever read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceBridge {
     /// The certified export this bridge is about (`Domain_Rational_plus`).
     pub export: String,
     /// Fully qualified name of the package's bridge theorem.
     pub theorem: String,
-    /// The bridge theorem's universal statement, on one line.
-    pub statement: String,
     /// Fully qualified name of the package's corollary, which conjoins the
     /// bridge with the artifact-level `Holds` fact.
     pub corollary: String,
     /// Fully qualified Lean name of the source function the bridge identifies
     /// the plan with. Reported by `explain`; never on the verdict line.
     pub model: String,
+    /// Parameter encoders in declaration order.
+    pub params: Vec<SourceEncoder>,
+    /// Result encoder.
+    pub result: SourceEncoder,
 }
 
 /// Lean namespace every bridge theorem, corollary and helper lemma lives in.
@@ -44,58 +64,23 @@ impl SourceBridge {
     pub fn corollary_name(export: &str) -> String {
         format!("{BRIDGE_NAMESPACE}.{export}{BRIDGE_COROLLARY_SUFFIX}")
     }
+
+    /// The statement this bridge makes, rendered from its declared structure by
+    /// the module producer and checker share.
+    pub fn statement(&self) -> String {
+        render_bridge_statement(&self.export, &self.model, &self.params, &self.result)
+    }
 }
 
-/// How one source value of the face's admitted shapes is encoded as the wall's
-/// `RecordComputeBridge.SVal`. These are the ONLY three shapes the v1
-/// projection-compute face carries; anything else (a nested record, a record
-/// with a non-Int field, a Float or String leaf) has no `SVal` image and gets
-/// no bridge rather than an invented encoding.
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum SourceEncoding {
-    Int,
-    Bool,
-    /// A record whose fields are all Ints, as `(qualified type, accessors in
-    /// declaration order)`.
-    Record(String, Vec<String>),
-}
-
-impl SourceEncoding {
-    /// `SVal` term for the source value `value` (already a Lean term).
-    fn encode(&self, value: &str) -> String {
-        match self {
-            SourceEncoding::Int => format!("_root_.RecordComputeBridge.SVal.i ({value})"),
-            SourceEncoding::Bool => format!("_root_.RecordComputeBridge.SVal.b ({value})"),
-            SourceEncoding::Record(ty, fields) => {
-                let leaves = fields
-                    .iter()
-                    .map(|field| format!("_root_.{ty}.{field} ({value})"))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                format!("_root_.RecordComputeBridge.SVal.r [{leaves}]")
-            }
-        }
-    }
-
-    /// The source Lean type this encoding is for.
-    fn lean_type(&self) -> String {
-        match self {
-            SourceEncoding::Int => "Int".to_string(),
-            SourceEncoding::Bool => "Bool".to_string(),
-            SourceEncoding::Record(ty, _) => format!("_root_.{ty}"),
-        }
-    }
-
-    /// Whether this encoding is the source image of the plan-level type the
-    /// byte-checked face carries at the same position.
-    fn matches(&self, ty: FragTy) -> bool {
-        matches!(
-            (self, ty),
-            (SourceEncoding::Int, FragTy::IntCarrier)
-                | (SourceEncoding::Bool, FragTy::BoolI32)
-                | (SourceEncoding::Record(_, _), FragTy::AdtRef)
-        )
-    }
+/// Whether an encoder is the source image of the plan-level type the
+/// byte-checked face carries at the same position.
+fn encoder_matches(encoder: &SourceEncoder, ty: FragTy) -> bool {
+    matches!(
+        (encoder, ty),
+        (SourceEncoder::Int, FragTy::IntCarrier)
+            | (SourceEncoder::Bool, FragTy::BoolI32)
+            | (SourceEncoder::Record { .. }, FragTy::AdtRef)
+    )
 }
 
 /// Everything the renderer needs for one bridged export. The manifest-facing
@@ -106,64 +91,6 @@ struct BridgePlan {
     /// Index of this export's obligation in `manifest.obligations`, which is
     /// how the corollary reaches `<name>Ob.holds` out of `HoldsCore`.
     obligation_index: usize,
-    /// Parameter encodings in declaration order.
-    params: Vec<SourceEncoding>,
-    /// Result encoding.
-    result: SourceEncoding,
-}
-
-impl BridgePlan {
-    fn binder_names(&self) -> Vec<String> {
-        (0..self.params.len()).map(|i| format!("x{i}")).collect()
-    }
-
-    /// `[enc x0, enc x1, …]` — the encoded argument list.
-    fn encoded_args(&self) -> String {
-        let encoded = self
-            .params
-            .iter()
-            .enumerate()
-            .map(|(index, encoding)| encoding.encode(&format!("x{index}")))
-            .collect::<Vec<_>>()
-            .join(", ");
-        format!("[{encoded}]")
-    }
-
-    /// `<Module>.<fn> x0 x1` — the source call.
-    fn source_call(&self) -> String {
-        let args = self.binder_names().join(" ");
-        if args.is_empty() {
-            format!("_root_.{}", self.bridge.model)
-        } else {
-            format!("_root_.{} {args}", self.bridge.model)
-        }
-    }
-}
-
-/// The bridge statement for a plan: the plan's model evaluated at the encoded
-/// arguments is the encoded source result. Fully `_root_.`-qualified so the
-/// text means the same in the package's `Bridge.lean` and in the
-/// checker-authored pin, whatever namespaces the package declares.
-fn bridge_statement(plan: &BridgePlan, plan_def: &str) -> String {
-    let binders = plan
-        .params
-        .iter()
-        .enumerate()
-        .map(|(index, encoding)| format!("(x{index} : {})", encoding.lean_type()))
-        .collect::<Vec<_>>()
-        .join(" ");
-    let quantifier = if binders.is_empty() {
-        String::new()
-    } else {
-        format!("∀ {binders}, ")
-    };
-    format!(
-        "{quantifier}_root_.AverCert.StandardFace.recordComputeModel \
-         _root_.AverCert.Plans.{plan_def}.body {} = \
-         _root_.Option.some ({})",
-        plan.encoded_args(),
-        plan.result.encode(&plan.source_call()),
-    )
 }
 
 /// Mirror of the checker's `validate_source_bridge_candidate`, kept as a
@@ -173,20 +100,11 @@ fn bridge_statement(plan: &BridgePlan, plan_def: &str) -> String {
 /// declared. Declining a bridge is fail-closed — the export stays certified,
 /// its model just stays the plan.
 fn bridge_survives_checker_gates(bridge: &SourceBridge) -> bool {
-    let plain_dotted = |value: &str| {
-        !value.is_empty()
-            && value.len() <= MAX_BRIDGE_NAME_LEN
-            && value.split('.').all(|segment| {
-                let mut chars = segment.chars();
-                matches!(chars.next(), Some(first) if first.is_ascii_alphabetic() || first == '_')
-                    && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
-            })
-    };
-    if !plain_dotted(&bridge.export)
+    if !is_plain_dotted_name(&bridge.export)
         || bridge.export.contains('.')
-        || !plain_dotted(&bridge.theorem)
-        || !plain_dotted(&bridge.corollary)
-        || !plain_dotted(&bridge.model)
+        || !is_plain_dotted_name(&bridge.theorem)
+        || !is_plain_dotted_name(&bridge.corollary)
+        || !is_plain_dotted_name(&bridge.model)
     {
         return false;
     }
@@ -195,73 +113,30 @@ fn bridge_survives_checker_gates(bridge: &SourceBridge) -> bool {
     {
         return false;
     }
-    statement_is_single_plain_line(&bridge.statement, MAX_BRIDGE_STATEMENT_LEN)
-        && statement_is_root_qualified(&bridge.statement)
-        && bridge
-            .statement
-            .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '\''))
-            .any(|token| token == format!("_root_.{}", bridge.model))
-}
-
-/// Mirror of the checker's root-qualification gate: every dotted name in a
-/// bridge statement must be spelled `_root_.`-first, because the checker's pin
-/// elaborates the statement at the root namespace with no `open`.
-fn statement_is_root_qualified(statement: &str) -> bool {
-    statement
-        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '\''))
-        .filter(|token| token.contains('.'))
-        .all(|token| token.starts_with("_root_."))
-}
-
-/// Longest name and statement the bridge surface transports. The statement cap
-/// is the law surface's, for the same reason: it bounds what the anti-injection
-/// gate has to police in one `example` type.
-pub const MAX_BRIDGE_NAME_LEN: usize = 200;
-pub const MAX_BRIDGE_STATEMENT_LEN: usize = 2000;
-
-/// The statement gate both the producer and the checker apply: one plain
-/// term-position line, with balanced delimiters so it cannot escape the single
-/// `(...)` the pin wraps it in.
-pub fn statement_is_single_plain_line(statement: &str, max_len: usize) -> bool {
-    if statement.is_empty()
-        || statement.len() > max_len
-        || statement.chars().any(char::is_control)
-        || statement.contains(":=")
-        || statement.contains("--")
-        || statement.contains("/-")
+    if !bridge
+        .params
+        .iter()
+        .chain(std::iter::once(&bridge.result))
+        .all(SourceEncoder::is_well_formed)
     {
         return false;
     }
-    let mut depth: Vec<char> = Vec::new();
-    for character in statement.chars() {
-        let matched = match character {
-            '(' | '[' | '{' | '⟨' => {
-                depth.push(character);
-                true
-            }
-            ')' => depth.pop() == Some('('),
-            ']' => depth.pop() == Some('['),
-            '}' => depth.pop() == Some('{'),
-            '⟩' => depth.pop() == Some('⟨'),
-            _ => true,
-        };
-        if !matched {
-            return false;
-        }
-    }
-    depth.is_empty()
+    let statement = bridge.statement();
+    statement_is_single_plain_line(&statement, MAX_BRIDGE_STATEMENT_LEN)
+        && statement_is_root_qualified(&statement)
 }
 
-/// The source encoding a written model type denotes, or `None` when the type
-/// has no `SVal` image in the v1 face.
+/// The source encoder a written model type denotes, or `None` when the type
+/// has no `SVal` image in the v1 face. Names come out `_root_.`-qualified,
+/// which is the form the manifest carries and the renderer splices verbatim.
 fn source_encoding(
     model_info: &ModelInfo,
     prefix: &str,
     written: &str,
-) -> Option<SourceEncoding> {
+) -> Option<SourceEncoder> {
     match written {
-        "Int" => Some(SourceEncoding::Int),
-        "Bool" => Some(SourceEncoding::Bool),
+        "Int" => Some(SourceEncoder::Int),
+        "Bool" => Some(SourceEncoder::Bool),
         _ => {
             let (qualified, info) = model_info.resolve_structure(prefix, written)?;
             // Only an all-Int record has an `SVal.r` image: `takeInts` pops
@@ -270,10 +145,16 @@ fn source_encoding(
             if info.fields.is_empty() || info.fields.iter().any(|(_, ty)| ty != "Int") {
                 return None;
             }
-            Some(SourceEncoding::Record(
-                qualified,
-                info.fields.iter().map(|(name, _)| name.clone()).collect(),
-            ))
+            let lean_type = format!("{ROOT_PREFIX}{qualified}");
+            let accessors = info
+                .fields
+                .iter()
+                .map(|(name, _)| format!("{lean_type}.{name}"))
+                .collect();
+            Some(SourceEncoder::Record {
+                lean_type,
+                accessors,
+            })
         }
     }
 }
@@ -316,7 +197,7 @@ fn bridge_plan_for(
                  encoding in this face (only Int, Bool and all-Int records do)"
             ));
         };
-        if !encoding.matches(plan.params[index]) {
+        if !encoder_matches(&encoding, plan.params[index]) {
             return Err(format!(
                 "parameter {index} source type `{written}` does not match the plan's type"
             ));
@@ -330,7 +211,7 @@ fn bridge_plan_for(
             sig.ret
         ));
     };
-    if !result.matches(plan.result) {
+    if !encoder_matches(&result, plan.result) {
         return Err(format!(
             "result source type `{}` does not match the plan's type",
             sig.ret
@@ -343,7 +224,7 @@ fn bridge_plan_for(
         .iter()
         .chain(std::iter::once(&result))
         .filter_map(|encoding| match encoding {
-            SourceEncoding::Record(_, fields) => Some(fields.len()),
+            SourceEncoder::Record { accessors, .. } => Some(accessors.len()),
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -361,19 +242,17 @@ fn bridge_plan_for(
             ));
         }
     }
-    let mut bridge_plan = BridgePlan {
+    let bridge_plan = BridgePlan {
         bridge: SourceBridge {
             theorem: SourceBridge::theorem_name(&export),
             corollary: SourceBridge::corollary_name(&export),
-            statement: String::new(),
             model: sig.lean_name.clone(),
             export: export.clone(),
+            params,
+            result,
         },
         obligation_index,
-        params,
-        result,
     };
-    bridge_plan.bridge.statement = bridge_statement(&bridge_plan, &format!("{export}Plan"));
     if !bridge_survives_checker_gates(&bridge_plan.bridge) {
         return Err(
             "statement or identifiers would be refused by the checker's source-bridge gates".into(),
@@ -464,6 +343,14 @@ fn render_bridge_lean(plans: &[BridgePlan]) -> String {
          import Final\n\n\
          set_option autoImplicit false\n\n\
          set_option maxRecDepth 200000\n\n\
+         -- Two explicit heartbeat budgets rather than the ambient default.\n\
+         -- Each fallible step below runs under the SMALLER inner cap while the\n\
+         -- declaration as a whole carries this larger one, so a step that\n\
+         -- gives up leaves headroom for the `first | … | sorry` beside it to\n\
+         -- close the goal — a NOT-CREDITED bridge instead of a failed build,\n\
+         -- which would decline the whole package. Heartbeats are counted from\n\
+         -- the start of each declaration, so the headroom is per theorem.\n\
+         set_option maxHeartbeats 4000000\n\n\
          /-- `__aint_cmp`'s three-way verdict decides the source strict order. -/\n\
          theorem AverCert.Bridge.cmpLtDecide (a b : Int) :\n    \
            decide (_root_.CertPrelude.cmpW a b < 0) = decide (a < b) := by\n  \
@@ -477,7 +364,10 @@ fn render_bridge_lean(plans: &[BridgePlan]) -> String {
     );
     for plan in plans {
         let export = &plan.bridge.export;
-        let binders = plan.binder_names().join(" ");
+        let params = &plan.bridge.params;
+        let statement = plan.bridge.statement();
+        let encoded_args = encoded_args(params);
+        let binders = binder_names(params.len()).join(" ");
         let intro = if binders.is_empty() {
             String::new()
         } else {
@@ -488,11 +378,10 @@ fn render_bridge_lean(plans: &[BridgePlan]) -> String {
         } else {
             format!("_root_.AverCert.Bridge.{export} {binders}")
         };
-        let source_binders = plan
-            .params
+        let source_binders = params
             .iter()
             .enumerate()
-            .map(|(index, encoding)| format!("(x{index} : {}) ", encoding.lean_type()))
+            .map(|(index, encoder)| format!("(x{index} : {}) ", encoder.binder_type()))
             .collect::<String>();
         let applied_binders = if binders.is_empty() {
             String::new()
@@ -509,12 +398,12 @@ fn render_bridge_lean(plans: &[BridgePlan]) -> String {
         s.push_str("`. -/\ntheorem _root_.AverCert.Bridge.");
         s.push_str(export);
         s.push_str(" :\n    ");
-        s.push_str(&plan.bridge.statement);
+        s.push_str(&statement);
         s.push_str(" := by\n");
         s.push_str(&intro);
         s.push_str(
             "  first\n    \
-             | rfl\n    \
+             | (set_option maxHeartbeats 1000000 in rfl)\n    \
              | exact congrArg (fun v => _root_.Option.some (_root_.RecordComputeBridge.SVal.b v))\n        \
                  (_root_.AverCert.Bridge.cmpLtDecide _ _)\n    \
              | exact congrArg (fun v => _root_.Option.some (_root_.RecordComputeBridge.SVal.b v))\n        \
@@ -547,7 +436,7 @@ fn render_bridge_lean(plans: &[BridgePlan]) -> String {
         s.push_str("(vs : List _root_.CertPrelude.WVal) (w : _root_.CertPrelude.WVal),\n        _root_.AverCert.");
         s.push_str(export);
         s.push_str("Ob.domRepr S ");
-        s.push_str(&plan.encoded_args());
+        s.push_str(&encoded_args);
         s.push_str(" vs →\n        _root_.CertPrelude.wFuncN _root_.AverCert.");
         s.push_str(export);
         s.push_str("Ob.code (_root_.AverCert.");
@@ -557,7 +446,12 @@ fn render_bridge_lean(plans: &[BridgePlan]) -> String {
         s.push_str("Ob.self vs = _root_.Option.some w →\n        _root_.AverCert.");
         s.push_str(export);
         s.push_str("Ob.codRepr S (_root_.Option.some (");
-        s.push_str(&plan.result.encode(&plan.source_call()));
+        s.push_str(
+            &plan
+                .bridge
+                .result
+                .encode(&source_call(&plan.bridge.model, params.len())),
+        );
         s.push_str(")) w)\n    ∧ (_root_.AverCert.Schema.Holds _root_.AverCert.manifest) := by\n  \
                     refine ⟨?_, _root_.AverCert.Final.cert⟩\n  intro ");
         s.push_str(BRIDGE_HOST_BINDERS);
@@ -572,12 +466,20 @@ fn render_bridge_lean(plans: &[BridgePlan]) -> String {
         s.push_str(")\n  have hSim := hHolds ");
         s.push_str(BRIDGE_HOST_BINDERS);
         s.push_str(" fuel ");
-        s.push_str(&plan.encoded_args());
-        s.push_str(" vs w hDom hRun\n  simpa only [_root_.AverCert.");
+        s.push_str(&encoded_args);
+        // The composition step is the one place a shape the fixed script does
+        // not close could otherwise fail the BUILD, and a failed build declines
+        // the whole package. Wrapping it in `first | … | sorry` turns that into
+        // a not-credited bridge: the `sorry` flows into `_certified.2` through
+        // `_sourceModel`, so it costs this bridge its credit and nothing else.
+        s.push_str(
+            " vs w hDom hRun\n  first\n    \
+             | (set_option maxHeartbeats 1000000 in simpa only [_root_.AverCert.",
+        );
         s.push_str(export);
         s.push_str("Ob, ");
         s.push_str(&bridge_at);
-        s.push_str("] using hSim\n\n");
+        s.push_str("] using hSim)\n    | sorry\n\n");
         s.push_str("/-- The claim the manifest names: the bridge conjoined with the\n    \
                     artifact-level `Holds` fact, so one kernel-checked name ties the\n    \
                     plan-equals-source identity to exactly the certified bytes. -/\n\
@@ -585,7 +487,7 @@ fn render_bridge_lean(plans: &[BridgePlan]) -> String {
         s.push_str(export);
         s.push_str(BRIDGE_COROLLARY_SUFFIX);
         s.push_str(" :\n    (");
-        s.push_str(&plan.bridge.statement);
+        s.push_str(&statement);
         s.push_str(") ∧ (_root_.AverCert.Schema.Holds _root_.AverCert.manifest) :=\n  ⟨_root_.AverCert.Bridge.");
         s.push_str(export);
         s.push_str(", (_root_.AverCert.Bridge.");

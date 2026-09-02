@@ -323,7 +323,7 @@ pub fn write_project(
                 .map(|index| {
                     (
                         source_bridges[*index].corollary.clone(),
-                        source_bridges[*index].statement.clone(),
+                        source_bridges[*index].statement(),
                     )
                 })
                 .collect()
@@ -358,6 +358,7 @@ pub fn write_project(
             &law_claims,
             &law_bridge_exports,
             &source_bridges,
+            &declined_source_bridges,
         ),
     )
     .map_err(|e| format!("write manifest: {e}"))?;

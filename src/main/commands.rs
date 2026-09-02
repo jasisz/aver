@@ -6923,7 +6923,9 @@ fn emit_artifact_certificate(
     }
     // Same treatment for a record projection-compute export whose plan the
     // producer could not identify with a source function: the export stays
-    // certified, its certified model just stays the plan.
+    // certified, its certified model just stays the plan. The same list also
+    // goes into the package as `sourceBridgesDeclined`, so the reason survives
+    // this terminal and `aver cert explain` can print it back.
     for (export, reason) in &declines.source_bridges {
         println!("    source-bridge declined: {export} — {reason}");
     }

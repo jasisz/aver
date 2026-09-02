@@ -21,8 +21,9 @@ expression: golden
   ],
   "laws": [],
   "sourceBridges": [
-    {"export": "addOne", "theorem": "AverCert.Bridge.addOne", "statement": "∀ (x0 : Int), _root_.AverCert.StandardFace.recordComputeModel _root_.AverCert.Plans.addOnePlan.body [_root_.RecordComputeBridge.SVal.i (x0)] = _root_.Option.some (_root_.RecordComputeBridge.SVal.i (_root_.CertificateHello.addOne x0))", "corollary": "AverCert.Bridge.addOne_certified", "model": "CertificateHello.addOne"}
+    {"export": "addOne", "theorem": "AverCert.Bridge.addOne", "corollary": "AverCert.Bridge.addOne_certified", "model": "CertificateHello.addOne", "params": [{"kind": "int"}], "result": {"kind": "int"}}
   ],
+  "sourceBridgesDeclined": [],
   "declaredUncertified": [
     {"name": "_start", "reason": "module export is outside the claimed certification obligations"},
     {"name": "__rt_string_from_lm", "reason": "module export is outside the claimed certification obligations"},

@@ -21,6 +21,7 @@ expression: golden
   ],
   "laws": [],
   "sourceBridges": [],
+  "sourceBridgesDeclined": [],
   "declaredUncertified": [
     {"name": "wasi:cli/run@0.2.4#run", "reason": "body does not match a carrier-free certified template, and the module has no Int carrier host helpers (`__rt_aint_from_i64`); integer-family certification requires the Int carrier"},
     {"name": "main", "reason": "body does not match a carrier-free certified template, and the module has no Int carrier host helpers (`__rt_aint_from_i64`); integer-family certification requires the Int carrier"},

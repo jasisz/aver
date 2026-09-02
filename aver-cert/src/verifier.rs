@@ -6,6 +6,10 @@
 //! every accepted claim to the bytes and derives its standard face, policy,
 //! termination witness, host table, and runtime contracts.
 
+use crate::bridge_statement::{
+    self, MAX_BRIDGE_STATEMENT_LEN, SourceEncoder, render_bridge_statement,
+    statement_is_root_qualified,
+};
 use crate::cache::{ArtifactBuildCache, KeyMaterial as ArtifactCacheKeyMaterial};
 use crate::lean_process::LeanRunner;
 use crate::prelude_cache::PristineWallCache;
@@ -23,6 +27,15 @@ const LAW_PIN_PREFIX: &str = "AverCertChecker.law_pin_";
 /// witness logs. Read back from the witness elaboration output only, which
 /// elaborates no package text, so no staged file can forge one.
 const LAW_AUDIT_MARKER: &str = "AVER_LAW_AUDIT";
+/// Checker-owned name of the pin for the BRIDGED corollary of a law-claim that
+/// declares bridges, indexed over the bridged claims in manifest order.
+const BRIDGED_LAW_PIN_PREFIX: &str = "AverCertChecker.bridged_law_pin_";
+/// Marker of the per-bridged-claim axiom-audit line. Distinct from both other
+/// markers as a whole string, so no line of one surface can be read as another.
+const LAW_BRIDGE_AUDIT_MARKER: &str = "AVER_LAW_BRIDGE_AUDIT";
+/// Suffix the package's bridged law corollary carries over the plain one. The
+/// manifest never declares it; both sides derive it from the claim's label.
+const LAW_BRIDGED_COROLLARY_SUFFIX: &str = "_bridged";
 /// Checker-owned name of the pin for manifest `sourceBridges[i]`.
 const BRIDGE_PIN_PREFIX: &str = "AverCertChecker.bridge_pin_";
 /// Marker of the per-bridge axiom-audit line, read back exactly like the
@@ -75,6 +88,10 @@ pub enum Verdict {
         faces: Vec<String>,
         /// One line per declared law-claim that was NOT credited.
         laws: Vec<String>,
+        /// One line per bridged law-claim whose bridged corollary was NOT
+        /// credited. Independent of `laws`: the law itself can stand while the
+        /// identity of the plan with its source function does not.
+        bridged_laws: Vec<String>,
         /// One line per declared source-bridge that was NOT credited.
         source_bridges: Vec<String>,
     },
@@ -92,6 +109,10 @@ pub enum CheckVerdict {
         faces: Vec<String>,
         /// One line per declared law-claim that was NOT credited.
         laws: Vec<String>,
+        /// One line per bridged law-claim whose bridged corollary was NOT
+        /// credited. Independent of `laws`: the law itself can stand while the
+        /// identity of the plan with its source function does not.
+        bridged_laws: Vec<String>,
         /// One line per declared source-bridge that was NOT credited.
         source_bridges: Vec<String>,
     },
@@ -149,6 +170,10 @@ struct BridgeOutcome {
     export: String,
     /// Source function the bridge identifies the plan with.
     model: String,
+    /// The statement the CHECKER rendered from the declared structure and
+    /// pinned the package's corollary at. `explain` prints this, never text the
+    /// package supplied.
+    statement: String,
     /// Non-whitelisted axioms the pin's proof depends on. Empty means credited.
     offending: Vec<String>,
 }
@@ -156,6 +181,10 @@ struct BridgeOutcome {
 struct TrustedReport {
     exports: Vec<CertifiedExport>,
     laws: Vec<LawOutcome>,
+    /// One outcome per law-claim that declares bridges, in manifest order.
+    /// Reported as its own counter: a bridge that fails its axiom audit costs
+    /// this claim, never the plain law beside it.
+    bridged_laws: Vec<LawOutcome>,
     source_bridges: Vec<BridgeOutcome>,
     contracts: Vec<String>,
     target: String,
@@ -245,22 +274,27 @@ struct LawCandidate {
     bridges: Vec<usize>,
 }
 
-/// One manifest source-bridge: the checker-owned witness re-elaborates the
-/// package's corollary at exactly this declared statement conjoined with
-/// `Holds`, and audits its axioms.
+/// One manifest source-bridge, as the manifest declares it: STRUCTURE, never
+/// statement text.
+///
+/// The checker renders the statement itself from `(export, model, params,
+/// result)` and re-elaborates the package's corollary at exactly that type. A
+/// package therefore cannot choose what its bridge says — only which of the
+/// statements this checker can render it is claiming — so a tautology, a
+/// pointer at another export's plan, or a permuted accessor list is not a
+/// weaker credited claim but a pin that does not elaborate.
 struct SourceBridgeCandidate {
-    /// Certified export the bridge is about.
+    /// Certified export the bridge is about, and the plan the statement names.
     export: String,
-    /// Fully qualified package bridge theorem (`AverCert.Bridge.<export>`).
-    /// Declared for the report; the pin cites the corollary.
-    theorem: String,
-    /// Verbatim single-line statement identifying the plan model with the
-    /// source function.
-    statement: String,
     /// Fully qualified corollary (`AverCert.Bridge.<export>_certified`).
     corollary: String,
     /// Fully qualified source function the bridge identifies the plan with.
     model: String,
+    /// The statement the checker RENDERED from the declared `(export, model,
+    /// params, result)`. Nothing in the manifest contributes to it beyond
+    /// those; the declared `theorem` name is checked and then discarded,
+    /// because the pin cites the corollary.
+    statement: String,
 }
 
 struct Candidates {
@@ -289,6 +323,7 @@ pub fn verify(artifact: &Path, cert_dir: &Path) -> Result<Verdict, String> {
             summary: summary.text,
             faces: summary.faces,
             laws: summary.uncredited_laws,
+            bridged_laws: summary.uncredited_bridged_laws,
             source_bridges: summary.uncredited_bridges,
         })
     }
@@ -311,6 +346,7 @@ pub fn check(artifact: &Path, cert_dir: &Path) -> Result<CheckVerdict, String> {
             summary: summary.text,
             faces: summary.faces,
             laws: summary.uncredited_laws,
+            bridged_laws: summary.uncredited_bridged_laws,
             source_bridges: summary.uncredited_bridges,
         })
     }
@@ -320,6 +356,7 @@ struct ReportSummary {
     text: String,
     faces: Vec<String>,
     uncredited_laws: Vec<String>,
+    uncredited_bridged_laws: Vec<String>,
     uncredited_bridges: Vec<String>,
     count: usize,
 }
@@ -351,6 +388,23 @@ fn summarize_report(artifact: &Path, report: TrustedReport, status: &'static str
             .count();
         format!("; law-claims: {credited} of {} credited", report.laws.len())
     };
+    // The bridged half of the law surface is a counter of its own, and appears
+    // only when some claim is bridged. Keeping it apart from `law-claims` is
+    // the point: a bridge that loses its axiom audit moves this number and
+    // leaves the one above it alone.
+    let bridged_law_clause = if report.bridged_laws.is_empty() {
+        String::new()
+    } else {
+        let credited = report
+            .bridged_laws
+            .iter()
+            .filter(|law| law.offending.is_empty())
+            .count();
+        format!(
+            "; bridged-laws: {credited} of {} credited",
+            report.bridged_laws.len()
+        )
+    };
     // Same rule for the bridge surface: a package that declares none prints
     // exactly the line it always printed.
     let bridge_clause = if report.source_bridges.is_empty() {
@@ -367,7 +421,7 @@ fn summarize_report(artifact: &Path, report: TrustedReport, status: &'static str
         )
     };
     let text = format!(
-        "{} ({} {status} export{}, level {}{law_clause}{bridge_clause})",
+        "{} ({} {status} export{}, level {}{law_clause}{bridged_law_clause}{bridge_clause})",
         artifact.display(),
         count,
         if count == 1 { "" } else { "s" },
@@ -380,6 +434,18 @@ fn summarize_report(artifact: &Path, report: TrustedReport, status: &'static str
         .map(|law| {
             format!(
                 "law-claim not credited: {} (proof depends on {})",
+                display_safe(&law.label),
+                display_safe(&law.offending.join(", ")),
+            )
+        })
+        .collect();
+    let uncredited_bridged_laws = report
+        .bridged_laws
+        .iter()
+        .filter(|law| !law.offending.is_empty())
+        .map(|law| {
+            format!(
+                "bridged law-claim not credited: {} (proof depends on {})",
                 display_safe(&law.label),
                 display_safe(&law.offending.join(", ")),
             )
@@ -411,6 +477,7 @@ fn summarize_report(artifact: &Path, report: TrustedReport, status: &'static str
         text,
         faces,
         uncredited_laws,
+        uncredited_bridged_laws,
         uncredited_bridges,
         count,
     }
@@ -584,6 +651,7 @@ fn trusted_check(
     // package proves. What remains is per-pin credit, read from the witness's
     // own audit trace: a missing or malformed line is a decline, never credit.
     let laws = parse_law_audits(&elaborated.combined, &candidates.laws)?;
+    let bridged_laws = parse_bridged_law_audits(&elaborated.combined, &candidates.laws)?;
     let source_bridges = parse_bridge_audits(&elaborated.combined, &candidates.source_bridges)?;
     if let Some(replay_args) = kernel_replay_args(replay_mode) {
         let replay_args: Vec<&str> = replay_args.iter().map(String::as_str).collect();
@@ -611,6 +679,7 @@ fn trusted_check(
     Ok(TrustedReport {
         exports,
         laws,
+        bridged_laws,
         source_bridges,
         contracts: candidates.contracts,
         target: candidates.target,
@@ -653,6 +722,12 @@ fn report_face(candidate: &CertifiedCandidate) -> String {
 /// model is the transpiled source function at the face's own encoders. An
 /// uncredited bridge says `plan` exactly like no bridge at all; credit is never
 /// granted on a declaration.
+///
+/// The line points at SOURCE-BRIDGES rather than calling itself kernel-checked
+/// on its own. What the credit means is that the rendered statement printed
+/// there is proven without foreign axioms, and that statement — its encoders
+/// included — is what a reader has to read. A name plus a tick is not the
+/// claim.
 fn certified_model_line(
     candidate: &CertifiedCandidate,
     bridges: &[BridgeOutcome],
@@ -663,7 +738,7 @@ fn certified_model_line(
         .find(|bridge| bridge.export == candidate.name && bridge.offending.is_empty());
     Some(match credited {
         Some(bridge) => format!(
-            "model: plan ≡ {} (kernel-checked source-bridge)",
+            "model: plan ≡ {} (credited source-bridge; see SOURCE-BRIDGES)",
             display_safe(&bridge.model)
         ),
         None => "model: plan".to_string(),
@@ -700,7 +775,21 @@ fn record_compute_domain(candidate: &CertifiedCandidate) -> Option<&'static str>
     }
 }
 
+/// Indices of the law-claims that declare bridges, in manifest order.
+///
+/// The witness numbers `bridged_law_pin_<j>` over this list and the readback of
+/// its audit lines is keyed on the same list, so the pin numbering and the
+/// reported outcomes cannot drift apart.
+fn bridged_law_indices(laws: &[LawCandidate]) -> Vec<usize> {
+    laws.iter()
+        .enumerate()
+        .filter(|(_, law)| !law.bridges.is_empty())
+        .map(|(index, _)| index)
+        .collect()
+}
+
 fn checker_witness(sha: &str, candidates: &Candidates) -> String {
+    let bridged_law_indices = bridged_law_indices(&candidates.laws);
     let names = lean_str_list(
         &candidates
             .certified
@@ -800,7 +889,16 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
     } else {
         "import Bridge\n".to_string()
     };
+    //
+    // A law that declares bridges gets a SECOND pin, at the package's
+    // `_bridged` corollary, carrying those bridge statements as further
+    // conjuncts. The two are kept apart because their failure modes must be:
+    // conjoined into one pin, a bridge whose script fell to `sorry` put
+    // `sorryAx` into the closure of every law that merely MENTIONS its
+    // function, and removed the credit of a claim about the source model that
+    // the bridge plays no part in proving.
     let mut law_pins = String::new();
+    let mut bridged_law_root_names = String::new();
     for (index, law) in candidates.laws.iter().enumerate() {
         if !law.prefix.is_empty() {
             law_pins.push_str("namespace ");
@@ -810,24 +908,40 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
         law_pins.push_str(&format!("theorem _root_.{LAW_PIN_PREFIX}{index} :\n    ("));
         law_pins.push_str(&law.statement);
         law_pins.push_str(") ∧ (_root_.AverCert.Schema.Holds _root_.AverCert.manifest)");
-        // A fully bridged law declares the plan-equals-source identity of every
-        // model function it mentions as further conjuncts, in the manifest's
-        // order. The pin's TYPE therefore forces the package corollary to prove
-        // all of them, and the audit that follows walks that whole closure.
-        for bridge in &law.bridges {
-            law_pins.push_str(" ∧\n      (");
-            law_pins.push_str(&candidates.source_bridges[*bridge].statement);
-            law_pins.push(')');
-        }
         law_pins.push_str(" :=\n  _root_.AverCert.Laws.");
         law_pins.push_str(&law.corollary);
         law_pins.push_str("\n\n");
+        if !law.bridges.is_empty() {
+            let bridged_index = bridged_law_indices
+                .iter()
+                .position(|at| *at == index)
+                .expect("every bridged law is enumerated");
+            law_pins.push_str(&format!(
+                "theorem _root_.{BRIDGED_LAW_PIN_PREFIX}{bridged_index} :\n    ("
+            ));
+            law_pins.push_str(&law.statement);
+            law_pins.push_str(") ∧ (_root_.AverCert.Schema.Holds _root_.AverCert.manifest)");
+            // The declared bridges, in the manifest's order. The pin's TYPE
+            // forces the package's `_bridged` corollary to prove all of them,
+            // and the audit that follows walks that whole closure.
+            for bridge in &law.bridges {
+                law_pins.push_str(" ∧\n      (");
+                law_pins.push_str(&candidates.source_bridges[*bridge].statement);
+                law_pins.push(')');
+            }
+            law_pins.push_str(" :=\n  _root_.AverCert.Laws.");
+            law_pins.push_str(&law.corollary);
+            law_pins.push_str(LAW_BRIDGED_COROLLARY_SUFFIX);
+            law_pins.push_str("\n\n");
+            bridged_law_root_names.push_str(&format!("`{BRIDGED_LAW_PIN_PREFIX}{bridged_index}, "));
+        }
         if !law.prefix.is_empty() {
             law_pins.push_str("end ");
             law_pins.push_str(&law.prefix);
             law_pins.push_str("\n\n");
         }
     }
+    let bridged_law_roots = bridged_law_root_names.trim_end_matches(", ").to_string();
     // Bridge pins need no namespace context: a bridge statement is rendered
     // fully `_root_`-qualified by the producer and validated to be so here, so
     // it means the same at the root as it does in the package's `Bridge.lean`.
@@ -916,6 +1030,15 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
              else\n      \
                let names := String.intercalate \",\" (offending.toList.map (fun used => used.toString))\n      \
                logInfo s!\"{LAW_AUDIT_MARKER} {{lawRoot}} axioms {{names}}\"\n  \
+           let bridgedLawRoots : List Lean.Name := [{bridged_law_roots}]\n  \
+           for bridgedLawRoot in bridgedLawRoots do\n    \
+             let bridgedLawAxioms ← Lean.collectAxioms bridgedLawRoot\n    \
+             let offending := bridgedLawAxioms.filter (fun used => not (allowed.contains used))\n    \
+             if offending.isEmpty then\n      \
+               logInfo s!\"{LAW_BRIDGE_AUDIT_MARKER} {{bridgedLawRoot}} ok\"\n    \
+             else\n      \
+               let names := String.intercalate \",\" (offending.toList.map (fun used => used.toString))\n      \
+               logInfo s!\"{LAW_BRIDGE_AUDIT_MARKER} {{bridgedLawRoot}} axioms {{names}}\"\n  \
            let bridgeRoots : List Lean.Name := [{bridge_roots}]\n  \
            for bridgeRoot in bridgeRoots do\n    \
              let bridgeAxioms ← Lean.collectAxioms bridgeRoot\n    \
@@ -1222,14 +1345,32 @@ fn read_candidates(
         exact_object_fields(
             entry,
             &context,
-            &["export", "theorem", "statement", "corollary", "model"],
+            &[
+                "export",
+                "theorem",
+                "corollary",
+                "model",
+                "params",
+                "result",
+            ],
         )?;
-        let bridge = SourceBridgeCandidate {
+        let declared_params = entry["params"]
+            .as_array()
+            .ok_or_else(|| format!("cert-manifest.json `{context}.params` is not an array"))?;
+        let mut params = Vec::with_capacity(declared_params.len());
+        for (position, declared) in declared_params.iter().enumerate() {
+            params.push(read_source_encoder(
+                declared,
+                &format!("{context}.params[{position}]"),
+            )?);
+        }
+        let bridge = RawSourceBridge {
             export: required_string(entry, "export", &context)?,
             theorem: required_string(entry, "theorem", &context)?,
-            statement: required_string(entry, "statement", &context)?,
             corollary: required_string(entry, "corollary", &context)?,
             model: required_string(entry, "model", &context)?,
+            params,
+            result: read_source_encoder(&entry["result"], &format!("{context}.result"))?,
         };
         let bridge = validate_source_bridge_candidate(bridge)?;
         if !certified_names.contains(&bridge.export.as_str()) {
@@ -1461,7 +1602,7 @@ fn validate_law_candidate(mut law: LawCandidate) -> Result<LawCandidate, String>
 
 /// Longest statement any pinned claim surface transports. It bounds what the
 /// anti-injection gate has to police inside one pinned type.
-const MAX_STATEMENT_LEN: usize = 2000;
+const MAX_STATEMENT_LEN: usize = MAX_BRIDGE_STATEMENT_LEN;
 
 /// The statement gate every pinned claim surface applies: one plain
 /// term-position line — no newline or other control character, no `:=`, no
@@ -1471,60 +1612,34 @@ const MAX_STATEMENT_LEN: usize = 2000;
 /// one `(...)`, so a statement whose delimiters close more than they open could
 /// escape that wrapping and re-associate the pin's `∧ Holds` conjunct.
 fn statement_is_single_plain_line(statement: &str) -> bool {
-    if statement.is_empty()
-        || statement.len() > MAX_STATEMENT_LEN
-        || statement.chars().any(char::is_control)
-        || statement.contains(":=")
-        || statement.contains("--")
-        || statement.contains("/-")
-    {
-        return false;
-    }
-    let mut depth: Vec<char> = Vec::new();
-    for character in statement.chars() {
-        let matched = match character {
-            '(' | '[' | '{' | '⟨' => {
-                depth.push(character);
-                true
-            }
-            ')' => depth.pop() == Some('('),
-            ']' => depth.pop() == Some('['),
-            '}' => depth.pop() == Some('{'),
-            '⟩' => depth.pop() == Some('⟨'),
-            _ => true,
-        };
-        if !matched {
-            return false;
-        }
-    }
-    depth.is_empty()
+    bridge_statement::statement_is_single_plain_line(statement, MAX_STATEMENT_LEN)
 }
 
-/// Whether every dotted name in a statement is spelled `_root_.`-first.
+/// The raw structure of one manifest `sourceBridges[i]` entry, before the
+/// checker renders its statement.
+struct RawSourceBridge {
+    export: String,
+    theorem: String,
+    corollary: String,
+    model: String,
+    params: Vec<SourceEncoder>,
+    result: SourceEncoder,
+}
+
+/// Turn one manifest source-bridge entry into the candidate the witness pins,
+/// RENDERING its statement rather than accepting one.
 ///
-/// A bridge pin elaborates at the ROOT namespace with no `open`, so an
-/// unqualified dotted name in its statement would be resolved against whatever
-/// the package's own namespaces declare. Requiring the root prefix on every
-/// dotted token makes the pinned statement mean exactly one thing regardless of
-/// the package. Undotted tokens are binders and keywords and are left alone.
-fn statement_is_root_qualified(statement: &str) -> bool {
-    statement
-        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '\''))
-        .filter(|token| token.contains('.'))
-        .all(|token| token.starts_with("_root_."))
-}
-
-/// Validate one manifest source-bridge before any of its fields reach the
-/// checker-authored Lean witness. The export must be a plain identifier, the
-/// theorem and corollary must be exactly the two names this surface defines
-/// for that export (so a bridge entry can never point the pin at some other
-/// declaration), and the statement must pass the same single-plain-line gate a
-/// law statement does. On top of that a bridge statement must be fully
-/// `_root_`-qualified: the pin elaborates at the ROOT namespace, and the
-/// producer renders it that way, so a statement carrying a bare dotted name
-/// would be resolved by whatever the package's namespaces happen to declare.
+/// This is the whole difference between a bridge that means something and a
+/// bridge that only looks like it does. A statement read out of the manifest
+/// need only satisfy the gates to be pinned and credited — and `_root_.M.f x =
+/// _root_.M.f x` satisfies every one of them while proving nothing. So the
+/// manifest declares structure and the checker renders the text: the export
+/// fixes the plan, the closed encoder set fixes the representation, and the
+/// only freedom a package has is which of the statements this checker can write
+/// it claims. The gates below still run — on the RENDERED text — because they
+/// are what makes the pin's shape independent of any future encoder.
 fn validate_source_bridge_candidate(
-    bridge: SourceBridgeCandidate,
+    bridge: RawSourceBridge,
 ) -> Result<SourceBridgeCandidate, String> {
     let plain = |value: &str| {
         !value.is_empty()
@@ -1557,38 +1672,103 @@ fn validate_source_bridge_candidate(
             display_safe(&bridge.export)
         ));
     }
-    if !statement_is_single_plain_line(&bridge.statement) {
+    // Every name an encoder splices into the rendered statement must be a
+    // `_root_.`-qualified plain identifier, and a record's accessors must be
+    // fields OF the type it declares. The renderer copies them verbatim.
+    for (position, encoder) in bridge
+        .params
+        .iter()
+        .chain(std::iter::once(&bridge.result))
+        .enumerate()
+    {
+        if !encoder.is_well_formed() {
+            let what = if position < bridge.params.len() {
+                format!("parameter {position}")
+            } else {
+                "result".to_string()
+            };
+            return Err(format!(
+                "source-bridge `{}` {what} encoder does not name a `_root_`-qualified type \
+                 and its own accessors",
+                display_safe(&bridge.export)
+            ));
+        }
+    }
+    let statement = render_bridge_statement(
+        &bridge.export,
+        &bridge.model,
+        &bridge.params,
+        &bridge.result,
+    );
+    if !statement_is_single_plain_line(&statement) {
         return Err(format!(
-            "source-bridge `{}` statement is not a single plain term-position line",
+            "source-bridge `{}` renders a statement that is not a single plain \
+             term-position line",
             display_safe(&bridge.export)
         ));
     }
-    if !statement_is_root_qualified(&bridge.statement) {
+    if !statement_is_root_qualified(&statement) {
         return Err(format!(
-            "source-bridge `{}` statement names something that is not `_root_`-qualified",
+            "source-bridge `{}` renders a statement naming something that is not \
+             `_root_`-qualified",
             display_safe(&bridge.export)
         ));
     }
-    // `model` is a reporting convenience — it is what the export's `explain`
-    // line reads `plan ≡ <model>`. It is not free text: the PINNED statement
-    // must actually name it, so the line can never show a function the checked
-    // claim does not mention. What the claim says about that function is read
-    // from the statement, which `explain` prints beside it.
-    if !statement_names(&bridge.statement, &format!("_root_.{}", bridge.model)) {
-        return Err(format!(
-            "source-bridge `{}` statement does not name its declared model `{}`",
-            display_safe(&bridge.export),
-            display_safe(&bridge.model)
-        ));
-    }
-    Ok(bridge)
+    Ok(SourceBridgeCandidate {
+        export: bridge.export,
+        corollary: bridge.corollary,
+        model: bridge.model,
+        statement,
+    })
 }
 
-/// Whether `name` occurs in `statement` as a whole Lean identifier token.
-fn statement_names(statement: &str, name: &str) -> bool {
-    statement
-        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '\''))
-        .any(|token| token == name)
+/// Read one declared encoder. The kind set is CLOSED and matched exactly, so an
+/// unknown kind — or a record entry missing its type or accessors — declines the
+/// package instead of being rendered into some default shape.
+fn read_source_encoder(value: &Value, context: &str) -> Result<SourceEncoder, String> {
+    let kind = value
+        .get(bridge_statement::ENCODER_KIND_KEY)
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("cert-manifest.json `{context}.kind` is not a string"))?;
+    match kind {
+        bridge_statement::ENCODER_KIND_INT => {
+            exact_object_fields(value, context, &[bridge_statement::ENCODER_KIND_KEY])?;
+            Ok(SourceEncoder::Int)
+        }
+        bridge_statement::ENCODER_KIND_BOOL => {
+            exact_object_fields(value, context, &[bridge_statement::ENCODER_KIND_KEY])?;
+            Ok(SourceEncoder::Bool)
+        }
+        bridge_statement::ENCODER_KIND_RECORD => {
+            exact_object_fields(
+                value,
+                context,
+                &[
+                    bridge_statement::ENCODER_KIND_KEY,
+                    bridge_statement::ENCODER_TYPE_KEY,
+                    bridge_statement::ENCODER_FIELDS_KEY,
+                ],
+            )?;
+            let lean_type = required_string(value, bridge_statement::ENCODER_TYPE_KEY, context)?;
+            let declared = value[bridge_statement::ENCODER_FIELDS_KEY]
+                .as_array()
+                .ok_or_else(|| format!("cert-manifest.json `{context}.fields` is not an array"))?;
+            let mut accessors = Vec::with_capacity(declared.len());
+            for field in declared {
+                accessors.push(field.as_str().map(str::to_string).ok_or_else(|| {
+                    format!("cert-manifest.json `{context}.fields[]` is not a string")
+                })?);
+            }
+            Ok(SourceEncoder::Record {
+                lean_type,
+                accessors,
+            })
+        }
+        other => Err(format!(
+            "cert-manifest.json `{context}` declares unknown source-bridge encoder kind `{}`",
+            display_safe(other)
+        )),
+    }
 }
 
 /// Read the checker witness's per-pin axiom audit back out of its elaboration
@@ -1634,6 +1814,42 @@ fn parse_law_audits(output: &str, laws: &[LawCandidate]) -> Result<Vec<LawOutcom
     Ok(outcomes)
 }
 
+/// The bridged-corollary twin of [`parse_law_audits`], over the law-claims that
+/// declare bridges. Same fail-closed rule: only a well-formed `ok` line credits.
+///
+/// This surface exists so that a bridge losing its axiom audit costs exactly
+/// this claim — the law's own pin above is proved without any bridge, so it
+/// keeps its credit whatever the bridges do.
+fn parse_bridged_law_audits(
+    output: &str,
+    laws: &[LawCandidate],
+) -> Result<Vec<LawOutcome>, String> {
+    let bridged = bridged_law_indices(laws);
+    let audited = parse_pin_audits(
+        output,
+        LAW_BRIDGE_AUDIT_MARKER,
+        BRIDGED_LAW_PIN_PREFIX,
+        "bridged law-claim",
+        bridged.len(),
+    )?;
+    let mut outcomes = Vec::with_capacity(bridged.len());
+    for (position, (at, audit)) in bridged.into_iter().zip(audited).enumerate() {
+        let law = &laws[at];
+        let offending = audit.ok_or_else(|| {
+            format!(
+                "checker witness reported no axiom audit for bridged law-claim `{}` \
+                 (pin {BRIDGED_LAW_PIN_PREFIX}{position}); refusing to credit an unaudited claim",
+                display_safe(&law.label)
+            )
+        })?;
+        outcomes.push(LawOutcome {
+            label: law.label.clone(),
+            offending,
+        });
+    }
+    Ok(outcomes)
+}
+
 /// The source-bridge twin of [`parse_law_audits`], on the bridge marker and
 /// pin names. Same fail-closed rule: only a well-formed `ok` line credits.
 fn parse_bridge_audits(
@@ -1659,6 +1875,7 @@ fn parse_bridge_audits(
         outcomes.push(BridgeOutcome {
             export: bridge.export.clone(),
             model: bridge.model.clone(),
+            statement: bridge.statement.clone(),
             offending,
         });
     }
@@ -2640,34 +2857,60 @@ pub fn explain(artifact: &Path, cert_dir: &Path) -> Result<Explanation, String> 
              `aver cert check` / `aver cert verify`"
         );
     }
-    if let Some(bridges) = manifest.get("sourceBridges").and_then(Value::as_array)
-        && !bridges.is_empty()
-    {
+    // The bridge statements come from the report, not from a manifest read:
+    // the manifest carries structure, and the text below is exactly what the
+    // checker rendered from it and pinned the package's corollary at.
+    if !report.source_bridges.is_empty() {
         println!("\n{}", "SOURCE-BRIDGES".green().bold());
-        for entry in bridges {
+        for bridge in &report.source_bridges {
+            let credit = if bridge.offending.is_empty() {
+                "credited".to_string()
+            } else {
+                format!(
+                    "NOT credited (proof depends on {})",
+                    display_safe(&bridge.offending.join(", "))
+                )
+            };
+            println!(
+                "  {}  ≡ {}  [{credit}]",
+                display_safe(&bridge.export).bold(),
+                display_safe(&bridge.model)
+            );
+            println!("    {}", display_safe(&bridge.statement));
+        }
+        println!(
+            "  the statement under each bridge is RENDERED BY THE CHECKER from the \
+             manifest's declared structure, never read from the package; a credited \
+             bridge is one whose proof of exactly that statement uses no axiom \
+             outside the kernel whitelist"
+        );
+    }
+    // Declared-only, like `source_level_only`: why a compute-face export got no
+    // bridge at all. The producer's reason used to live on its stdout, which
+    // left the package silent about the export whose model stays the plan.
+    if let Some(declined) = manifest
+        .get("sourceBridgesDeclined")
+        .and_then(Value::as_array)
+        && !declined.is_empty()
+    {
+        println!(
+            "\n{}",
+            "SOURCE-BRIDGES DECLINED (informational)".yellow().bold()
+        );
+        for entry in declined {
             let export = entry
                 .get("export")
                 .and_then(Value::as_str)
                 .map(display_safe)
                 .unwrap_or_else(|| "<unknown>".to_string());
-            let model = entry
-                .get("model")
+            let reason = entry
+                .get("reason")
                 .and_then(Value::as_str)
                 .map(display_safe)
-                .unwrap_or_else(|| "<unknown>".to_string());
-            let statement = entry
-                .get("statement")
-                .and_then(Value::as_str)
-                .map(display_safe)
-                .unwrap_or_else(|| "<unknown>".to_string());
-            println!("  {}  ≡ {model}", export.bold());
-            println!("    {statement}");
+                .unwrap_or_else(|| "unspecified".to_string());
+            println!("  {export}: {reason}");
         }
-        println!(
-            "  these are the DECLARED bridges; per-bridge credit is decided by \
-             `aver cert check` / `aver cert verify`, and only a credited bridge \
-             turns an export's model line into `plan ≡ <fn>`"
-        );
+        println!("  these exports keep `model: plan`; the reasons are declared, not checked");
     }
     if let Some(declined) = manifest.get("source_level_only").and_then(Value::as_array)
         && !declined.is_empty()
@@ -2793,15 +3036,35 @@ mod tests {
         assert_eq!(outcomes[0].offending, vec!["ok".to_string()]);
     }
 
+    /// One declared bridge entry, as the manifest transports it: structure
+    /// only. There is no statement field to set — that is the point.
+    fn raw_bridge(export: &str) -> RawSourceBridge {
+        RawSourceBridge {
+            export: export.to_string(),
+            theorem: format!("{BRIDGE_NAMESPACE}.{export}"),
+            corollary: format!("{BRIDGE_NAMESPACE}.{export}{BRIDGE_COROLLARY_SUFFIX}"),
+            model: format!("Domain.{export}"),
+            params: vec![SourceEncoder::Int],
+            result: SourceEncoder::Int,
+        }
+    }
+
+    fn fraction_encoder() -> SourceEncoder {
+        SourceEncoder::Record {
+            lean_type: "_root_.Domain.Fraction".to_string(),
+            accessors: vec![
+                "_root_.Domain.Fraction.top".to_string(),
+                "_root_.Domain.Fraction.bottom".to_string(),
+            ],
+        }
+    }
+
     fn bridge_candidates(exports: &[&str]) -> Vec<SourceBridgeCandidate> {
         exports
             .iter()
-            .map(|export| SourceBridgeCandidate {
-                export: (*export).to_string(),
-                theorem: format!("{BRIDGE_NAMESPACE}.{export}"),
-                statement: format!("_root_.Domain.{export} = _root_.Domain.{export}"),
-                corollary: format!("{BRIDGE_NAMESPACE}.{export}{BRIDGE_COROLLARY_SUFFIX}"),
-                model: format!("Domain.{export}"),
+            .map(|export| {
+                validate_source_bridge_candidate(raw_bridge(export))
+                    .expect("an honest bridge entry validates")
             })
             .collect()
     }
@@ -2873,47 +3136,166 @@ mod tests {
     }
 
     #[test]
-    fn bridge_candidate_gate_pins_the_two_declaration_names_and_root_qualification() {
-        let good = bridge_candidates(&["one"]).pop().unwrap();
-        assert!(validate_source_bridge_candidate(good).is_ok());
+    fn bridge_candidate_gate_pins_the_two_declaration_names_and_the_encoders() {
+        assert!(validate_source_bridge_candidate(raw_bridge("one")).is_ok());
 
-        let mut wrong_theorem = bridge_candidates(&["one"]).pop().unwrap();
+        let mut wrong_theorem = raw_bridge("one");
         wrong_theorem.theorem = "AverCert.Laws.one".to_string();
         assert!(validate_source_bridge_candidate(wrong_theorem).is_err());
 
-        let mut wrong_corollary = bridge_candidates(&["one"]).pop().unwrap();
+        let mut wrong_corollary = raw_bridge("one");
         wrong_corollary.corollary = "AverCert.Bridge.one".to_string();
         assert!(validate_source_bridge_candidate(wrong_corollary).is_err());
 
-        // A statement whose dotted names are not root-qualified would be
-        // resolved against whatever namespaces the package declares.
-        let mut bare_name = bridge_candidates(&["one"]).pop().unwrap();
-        bare_name.statement = "Domain.Rational.plus = _root_.Domain.one".to_string();
-        assert!(validate_source_bridge_candidate(bare_name).is_err());
-
-        let mut smuggled = bridge_candidates(&["one"]).pop().unwrap();
-        smuggled.statement = "_root_.Domain.one) ∧ (_root_.False".to_string();
-        assert!(validate_source_bridge_candidate(smuggled).is_err());
-
-        let mut dotted_export = bridge_candidates(&["one"]).pop().unwrap();
+        let mut dotted_export = raw_bridge("one");
         dotted_export.export = "Domain.one".to_string();
         assert!(validate_source_bridge_candidate(dotted_export).is_err());
 
-        // The reported model must be a name the PINNED statement mentions, so
-        // an export's `plan ≡ <fn>` line cannot show a function the checked
-        // claim never speaks about.
-        let mut lying_model = bridge_candidates(&["one"]).pop().unwrap();
-        lying_model.statement = "_root_.Domain.other = _root_.Domain.other".to_string();
-        assert!(validate_source_bridge_candidate(lying_model).is_err());
+        let mut bad_model = raw_bridge("one");
+        bad_model.model = "Domain one".to_string();
+        assert!(validate_source_bridge_candidate(bad_model).is_err());
 
-        let mut honest_model = bridge_candidates(&["one"]).pop().unwrap();
-        honest_model.statement = "_root_.Domain.one = _root_.Domain.one".to_string();
-        assert!(validate_source_bridge_candidate(honest_model).is_ok());
+        // An encoder whose names are not `_root_.`-qualified would be resolved
+        // against whatever namespaces the package declares.
+        let mut bare_names = raw_bridge("one");
+        bare_names.result = SourceEncoder::Record {
+            lean_type: "Domain.Fraction".to_string(),
+            accessors: vec!["Domain.Fraction.top".to_string()],
+        };
+        assert!(validate_source_bridge_candidate(bare_names).is_err());
 
-        // A prefix of a declared name is not that name.
-        let mut prefix_only = bridge_candidates(&["one"]).pop().unwrap();
-        prefix_only.statement = "_root_.Domain.oneMore = _root_.Domain.oneMore".to_string();
-        assert!(validate_source_bridge_candidate(prefix_only).is_err());
+        // An accessor of some other type is not a field of the declared one.
+        let mut foreign_accessor = raw_bridge("one");
+        foreign_accessor.result = SourceEncoder::Record {
+            lean_type: "_root_.Domain.Fraction".to_string(),
+            accessors: vec!["_root_.Other.Record.top".to_string()],
+        };
+        assert!(validate_source_bridge_candidate(foreign_accessor).is_err());
+    }
+
+    /// The defect this surface was reshaped to close: a package used to declare
+    /// its bridge statement as text, so `_root_.M.f x = _root_.M.f x` passed
+    /// every gate, elaborated, audited clean, and printed `model: plan ≡ M.f`.
+    /// The manifest now carries structure and the CHECKER writes the text, so
+    /// the left-hand side is always the export's own plan and no entry can
+    /// state an identity between a function and itself.
+    #[test]
+    fn a_bridge_statement_is_rendered_by_the_checker_not_declared() {
+        let mut entry = raw_bridge("Domain_Rational_plus");
+        entry.model = "Domain.Rational.plus".to_string();
+        entry.params = vec![fraction_encoder(), fraction_encoder()];
+        entry.result = fraction_encoder();
+        let candidate = validate_source_bridge_candidate(entry).expect("an honest entry validates");
+        assert_eq!(
+            candidate.statement,
+            render_bridge_statement(
+                "Domain_Rational_plus",
+                "Domain.Rational.plus",
+                &[fraction_encoder(), fraction_encoder()],
+                &fraction_encoder(),
+            ),
+            "the pinned statement is the renderer's output and nothing else"
+        );
+        assert!(
+            candidate.statement.starts_with('∀')
+                && candidate.statement.contains(
+                    "_root_.AverCert.StandardFace.recordComputeModel \
+                     _root_.AverCert.Plans.Domain_Rational_plusPlan.body"
+                ),
+            "the claim's left-hand side is the export's own plan: {}",
+            candidate.statement
+        );
+        // Naming a different export renders a different claim, so the pin no
+        // longer has the package corollary's type — a decline, not a credit.
+        let mut renamed = raw_bridge("Domain_Rational_minus");
+        renamed.model = "Domain.Rational.plus".to_string();
+        renamed.params = vec![fraction_encoder(), fraction_encoder()];
+        renamed.result = fraction_encoder();
+        let renamed = validate_source_bridge_candidate(renamed).expect("it still validates");
+        assert_ne!(renamed.statement, candidate.statement);
+        // So does permuting a record's accessors.
+        let permuted = SourceEncoder::Record {
+            lean_type: "_root_.Domain.Fraction".to_string(),
+            accessors: vec![
+                "_root_.Domain.Fraction.bottom".to_string(),
+                "_root_.Domain.Fraction.top".to_string(),
+            ],
+        };
+        let mut swapped = raw_bridge("Domain_Rational_plus");
+        swapped.model = "Domain.Rational.plus".to_string();
+        swapped.params = vec![permuted, fraction_encoder()];
+        swapped.result = fraction_encoder();
+        let swapped = validate_source_bridge_candidate(swapped).expect("it still validates");
+        assert_ne!(swapped.statement, candidate.statement);
+    }
+
+    /// The encoder set is closed, and each kind's object is matched exactly.
+    /// An unknown kind is a decline, never a default shape.
+    #[test]
+    fn bridge_encoder_kinds_outside_the_closed_set_decline() {
+        assert_eq!(
+            read_source_encoder(&serde_json::json!({"kind": "int"}), "e").unwrap(),
+            SourceEncoder::Int
+        );
+        assert_eq!(
+            read_source_encoder(&serde_json::json!({"kind": "bool"}), "e").unwrap(),
+            SourceEncoder::Bool
+        );
+        assert_eq!(
+            read_source_encoder(
+                &serde_json::json!({
+                    "kind": "record",
+                    "type": "_root_.Domain.Fraction",
+                    "fields": ["_root_.Domain.Fraction.top"],
+                }),
+                "e"
+            )
+            .unwrap(),
+            SourceEncoder::Record {
+                lean_type: "_root_.Domain.Fraction".to_string(),
+                accessors: vec!["_root_.Domain.Fraction.top".to_string()],
+            }
+        );
+        for bad in [
+            serde_json::json!({"kind": "float"}),
+            serde_json::json!({"kind": "string"}),
+            serde_json::json!({}),
+            serde_json::json!({"kind": "int", "type": "_root_.Domain.Fraction"}),
+            serde_json::json!({"kind": "record", "type": "_root_.Domain.Fraction"}),
+            serde_json::json!({"kind": "record", "type": "_root_.Domain.Fraction", "fields": "top"}),
+            serde_json::json!({"kind": "record", "type": "_root_.Domain.Fraction", "fields": [7]}),
+        ] {
+            assert!(
+                read_source_encoder(&bad, "e").is_err(),
+                "an encoder outside the closed set must decline: {bad}"
+            );
+        }
+    }
+
+    /// The manifest entry is matched exactly, so a package cannot smuggle a
+    /// statement of its own back in beside the structure.
+    #[test]
+    fn a_bridge_entry_carrying_a_statement_field_declines() {
+        let fields = [
+            "export",
+            "theorem",
+            "corollary",
+            "model",
+            "params",
+            "result",
+        ];
+        let honest = serde_json::json!({
+            "export": "one",
+            "theorem": "AverCert.Bridge.one",
+            "corollary": "AverCert.Bridge.one_certified",
+            "model": "Domain.one",
+            "params": [],
+            "result": {"kind": "int"},
+        });
+        assert!(exact_object_fields(&honest, "sourceBridges[0]", &fields).is_ok());
+        let mut smuggled = honest.clone();
+        smuggled["statement"] = serde_json::json!("_root_.Domain.one = _root_.Domain.one");
+        assert!(exact_object_fields(&smuggled, "sourceBridges[0]", &fields).is_err());
     }
 
     #[test]
@@ -2923,15 +3305,18 @@ mod tests {
             TrustedReport {
                 exports: Vec::new(),
                 laws: Vec::new(),
+                bridged_laws: Vec::new(),
                 source_bridges: vec![
                     BridgeOutcome {
                         export: "one".to_string(),
                         model: "Domain.one".to_string(),
+                        statement: "_root_.One".to_string(),
                         offending: Vec::new(),
                     },
                     BridgeOutcome {
                         export: "two".to_string(),
                         model: "Domain.two".to_string(),
+                        statement: "_root_.Two".to_string(),
                         offending: vec!["sorryAx".to_string()],
                     },
                 ],
@@ -2960,6 +3345,7 @@ mod tests {
             TrustedReport {
                 exports: Vec::new(),
                 laws: Vec::new(),
+                bridged_laws: Vec::new(),
                 source_bridges: Vec::new(),
                 contracts: Vec::new(),
                 target: String::new(),
@@ -2989,6 +3375,7 @@ mod tests {
                         offending: vec!["sorryAx".to_string()],
                     },
                 ],
+                bridged_laws: Vec::new(),
                 source_bridges: Vec::new(),
                 contracts: Vec::new(),
                 target: String::new(),
@@ -3006,6 +3393,87 @@ mod tests {
             summary.uncredited_laws,
             vec!["law-claim not credited: A.two (proof depends on sorryAx)".to_string()]
         );
+    }
+
+    /// The decoupling this surface exists for, at the reporting layer: the two
+    /// counters move independently, and an uncredited BRIDGED claim never
+    /// removes credit from the plain law of the same label.
+    #[test]
+    fn bridged_law_clause_is_counted_apart_from_the_law_clause() {
+        let summary = summarize_report(
+            Path::new("app.wasm"),
+            TrustedReport {
+                exports: Vec::new(),
+                laws: vec![
+                    LawOutcome {
+                        label: "A.one".to_string(),
+                        offending: Vec::new(),
+                    },
+                    LawOutcome {
+                        label: "A.two".to_string(),
+                        offending: Vec::new(),
+                    },
+                ],
+                bridged_laws: vec![
+                    LawOutcome {
+                        label: "A.one".to_string(),
+                        offending: Vec::new(),
+                    },
+                    LawOutcome {
+                        label: "A.two".to_string(),
+                        offending: vec!["sorryAx".to_string()],
+                    },
+                ],
+                source_bridges: Vec::new(),
+                contracts: Vec::new(),
+                target: String::new(),
+                profile: String::new(),
+                abi: String::new(),
+                artifact_hash: String::new(),
+            },
+            "checked",
+        );
+        assert_eq!(
+            summary.text,
+            "app.wasm (0 checked exports, level L1; law-claims: 2 of 2 credited; \
+             bridged-laws: 1 of 2 credited)"
+        );
+        assert!(summary.uncredited_laws.is_empty());
+        assert_eq!(
+            summary.uncredited_bridged_laws,
+            vec!["bridged law-claim not credited: A.two (proof depends on sorryAx)".to_string()]
+        );
+    }
+
+    /// The bridged pins are numbered over the BRIDGED claims, not over all of
+    /// them, so the audit readback and the witness agree on which pin is whose.
+    #[test]
+    fn bridged_law_pins_are_numbered_over_the_bridged_claims_only() {
+        let mut laws = law_candidates(&["A.one", "A.two", "A.three"]);
+        laws[1].bridges = vec![0];
+        laws[2].bridges = vec![0];
+        assert_eq!(bridged_law_indices(&laws), vec![1, 2]);
+        let line = |index: usize, verdict: &str| {
+            format!(
+                "CheckerWitness.lean:9:0: info: {LAW_BRIDGE_AUDIT_MARKER} \
+                 {BRIDGED_LAW_PIN_PREFIX}{index} {verdict}"
+            )
+        };
+        let outcomes = parse_bridged_law_audits(
+            &format!("{}\n{}\n", line(0, "ok"), line(1, "axioms sorryAx")),
+            &laws,
+        )
+        .expect("well-formed audit parses");
+        assert_eq!(outcomes.len(), 2);
+        assert_eq!(outcomes[0].label, "A.two");
+        assert!(outcomes[0].offending.is_empty());
+        assert_eq!(outcomes[1].label, "A.three");
+        assert_eq!(outcomes[1].offending, vec!["sorryAx".to_string()]);
+        // A missing line declines rather than crediting an unaudited claim,
+        // and the plain law marker must not be read as a bridged-law audit.
+        assert!(parse_bridged_law_audits(&line(0, "ok"), &laws).is_err());
+        let renamed = line(0, "ok").replace(LAW_BRIDGE_AUDIT_MARKER, LAW_AUDIT_MARKER);
+        assert!(parse_bridged_law_audits(&format!("{renamed}\n{}", line(1, "ok")), &laws).is_err());
     }
 
     #[test]
