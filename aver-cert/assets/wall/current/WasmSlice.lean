@@ -525,12 +525,24 @@ def checkFuncTypeExact (params results : List CertDecode.ValType)
   | .plain, .funcType ps rs => decide (ps = params) && decide (rs = results)
   | _, _ => false
 
-/-- The nodes that make a body COMPUTE rather than merely project: a
-    construction, any host call, and the emitter's inline sign template.
-    Byte-for-byte the same predicate as `StandardFace.fragNodeComputes`, which
-    pins the two equal by `rfl` — the nominal-signature gate here and the
-    classifier there must count the same nodes, or a plan could pass one and
-    fail the other. -/
+/-- The nodes that make a body COMPUTE rather than merely PROJECT — the
+    any-fact of both the nominal-signature gate below and
+    `StandardFace.classifyRecordCompute`, which exports this name rather than
+    keeping a second copy: the two must count the same nodes, or a plan could
+    pass one gate and fail the other.
+
+    Three kinds qualify: a construction, ANY host call (`cmp` and `eq`
+    included — they leave the carrier and decide an order), and the inline
+    sign template, which is the emitter's open-coded comparison of a computed
+    carrier against a literal and is therefore exactly as computing as the
+    `cmp` call it replaces.
+
+    Leaving `.intSignCmp` out was a SILENT non-admission: a projection-only
+    sign test (`f.num >= 0`, no host call anywhere in the body) matched
+    neither the two-node projection face nor the compute face, so the producer
+    emitted no plan at all and the export dropped to source-level-only with no
+    stated reason. The two-node projection faces stay ruled out because their
+    bodies carry none of the three. -/
 def fragNodeComputes (n : AverCert.Schema.FragNode) : Bool :=
   match n.kind with
   | .structNew _ _ => true

@@ -986,33 +986,13 @@ def recordComputeNodeOk
           | _ => false)
   | _ => false
 
-/-- The nodes that make a body COMPUTE rather than merely PROJECT — the
-    classifier's any-fact, named so the non-overlap lemmas below can cite one
-    term. Three kinds qualify: a construction, ANY host call (`cmp` and `eq`
-    included — they leave the carrier and decide an order), and the inline
-    sign template, which is the emitter's open-coded comparison of a computed
-    carrier against a literal and is therefore exactly as computing as the
-    `cmp` call it replaces.
-
-    Leaving `.intSignCmp` out was a SILENT non-admission: a projection-only
-    sign test (`f.num >= 0`, no host call anywhere in the body) matched
-    neither the two-node projection face nor the compute face, so the producer
-    emitted no plan at all and the export dropped to source-level-only with no
-    stated reason. The two-node projection faces stay ruled out because their
-    bodies carry none of the three. -/
-def fragNodeComputes (n : FragNode) : Bool :=
-  match n.kind with
-  | .structNew _ _ => true
-  | .hostCall _ _ _ => true
-  | .intSignCmp _ _ _ _ => true
-  | _ => false
-
-/-- Drift tripwire. The NOMINAL-SIGNATURE gate
-    (`WasmSlice.exprRecordComputeStructIdx?`) selects the compute shape with its
-    own copy of this predicate. If the two ever disagree, a plan passes one gate
-    and fails the other — which is exactly how the projection-only sign test
-    first showed up. -/
-example : fragNodeComputes = AverCert.WasmSlice.fragNodeComputes := rfl
+/- The classifier below and the NOMINAL-SIGNATURE gate
+   (`WasmSlice.exprRecordComputeStructIdx?`) must count the same nodes as
+   computing, or a plan passes one gate and fails the other — which is exactly
+   how the projection-only sign test first showed up. There is one definition,
+   in `WasmSlice`, and this face uses it under its own name. It used to be two
+   byte-identical copies pinned equal by `rfl`. -/
+export AverCert.WasmSlice (fragNodeComputes)
 
 /-- Classifier of the compute face: every parameter is an opaque record
     reference, every node is in the admitted set, at least one node computes
