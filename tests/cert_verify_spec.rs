@@ -622,11 +622,13 @@ fn cert_verify_accepts_nested_module_certificate() {
     );
     assert!(report.contains("CERTIFIED"), "missing CERTIFIED:\n{report}");
     assert!(
-        report.contains("3 certified exports"),
-        "expected the entry export and both nested-module exports:\n{report}"
+        report.contains("4 certified exports"),
+        "expected the entry export and all three nested-module exports:\n{report}"
     );
     assert!(
-        report.contains("Nested_Deep_Util_bump") && report.contains("Nested_Deep_Util_tally"),
+        report.contains("Nested_Deep_Util_combine")
+            && report.contains("Nested_Deep_Util_bump")
+            && report.contains("Nested_Deep_Util_tally"),
         "the exports whose models live in the nested module must certify:\n{report}"
     );
 }

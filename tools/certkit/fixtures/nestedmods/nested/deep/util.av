@@ -1,14 +1,16 @@
 module Util
     exposes [combine, bump, tally]
     intent =
-        "Nested dependency for the certificate staging fixture. `combine`"
-        "takes two arguments on purpose: it stays outside the certified"
-        "templates, so the package always carries a declined dependency"
-        "function. `bump` is deliberately CERTIFIABLE (straight-line n + 2):"
-        "its wasm export is the flattened `Nested_Deep_Util_bump`, while its"
-        "Lean model lives inside `namespace Nested.Deep.Util` in the nested"
-        "model file (Nested/Deep/Util.lean) — so the generated certificate"
-        "must cite the model by its qualified name for the package to build."
+        "Nested dependency for the certificate staging fixture. `combine` and"
+        "`bump` are straight-line integer arithmetic, so both certify through"
+        "the declared compute face, whose obligation model is the emitted plan"
+        "keyed by the flattened export name. `tally` is single-argument self"
+        "recursion, so its obligation names a model LEAF: its wasm export is"
+        "the flattened `Nested_Deep_Util_tally`, while its Lean model lives"
+        "inside `namespace Nested.Deep.Util` in the nested model file"
+        "(Nested/Deep/Util.lean) — so the generated certificate must cite that"
+        "model, and its fuel form, by the qualified name for the package to"
+        "build."
     effects []
 
 fn combine(a: Int, b: Int) -> Int

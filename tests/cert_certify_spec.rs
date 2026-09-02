@@ -4064,11 +4064,13 @@ fn certify_nested_module_models_close_end_to_end() {
         "nestedmods --certify failed:\n{report}"
     );
     assert!(
-        report.contains("3 certified"),
-        "nestedmods must certify the entry export and both nested-module exports:\n{report}"
+        report.contains("4 certified"),
+        "nestedmods must certify the entry export and all three nested-module exports:\n{report}"
     );
     assert!(
-        report.contains("Nested_Deep_Util_bump") && report.contains("Nested_Deep_Util_tally"),
+        report.contains("Nested_Deep_Util_combine")
+            && report.contains("Nested_Deep_Util_bump")
+            && report.contains("Nested_Deep_Util_tally"),
         "nestedmods must certify the exports whose models live in the nested module:\n{report}"
     );
 
@@ -4093,22 +4095,29 @@ fn certify_nested_module_models_close_end_to_end() {
             "{file} must not emit a path-shaped import line:\n{contents}"
         );
     }
-    // The nested-module export's obligation must cite its model by the
-    // QUALIFIED name the model file declares (inside `namespace
+    // A nested-module export whose obligation names a model LEAF must name it
+    // by the QUALIFIED name the model file declares (inside `namespace
     // Nested.Deep.Util`), never by the flattened wasm export name — the
     // flattened form is not a Lean identifier in the model and fails the
-    // package build.
+    // package build. `tally` is the export that still carries this: `combine`
+    // and `bump` certify through the declared compute face, whose model is the
+    // emitted plan and names no model leaf at all, so their side of the rule is
+    // that the plan is keyed by the flattened name the plan file declares.
     let manifest_lean =
         std::fs::read_to_string(cert_dir.join("Manifest.lean")).expect("Manifest.lean exists");
     assert!(
-        manifest_lean.contains("model := fun ns => Nested.Deep.Util.bump (ns.headD 0)")
-            && manifest_lean.contains("model := fun ns => Nested.Deep.Util.tally (ns.headD 0)"),
-        "each nested export's obligation must cite the qualified model name:\n{manifest_lean}"
+        manifest_lean.contains("model := fun ns => Nested.Deep.Util.tally (ns.headD 0)"),
+        "the nested export that names a model leaf must cite the qualified name:\n{manifest_lean}"
     );
     assert!(
-        !manifest_lean.contains("model := fun ns => Nested_Deep_Util_bump")
-            && !manifest_lean.contains("model := fun ns => Nested_Deep_Util_tally"),
+        !manifest_lean.contains("model := fun ns => Nested_Deep_Util_tally"),
         "the obligation must never cite the flattened export name as the model:\n{manifest_lean}"
+    );
+    assert!(
+        manifest_lean.contains(
+            "model := AverCert.StandardFace.recordComputeModel Plans.Nested_Deep_Util_bumpPlan.body"
+        ),
+        "the nested compute-face export must cite its emitted plan:\n{manifest_lean}"
     );
     // The nested recursion bridge must also cite the model's qualified fuel
     // form (`Nested.Deep.Util.tally__fuel`), never a flattened one.
