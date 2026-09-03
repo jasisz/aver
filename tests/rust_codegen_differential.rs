@@ -3061,67 +3061,6 @@ fn main() -> Unit
     );
 }
 
-/// The `Vector` half of the same class — the other collection `own_param`
-/// can graduate. `keepLonger` hands back one of its argument vectors
-/// straight into `overwrite`, which writes over every position, and `run`
-/// reads position 0 of its own vector afterwards.
-///
-/// Full tier: the `Map` sibling above already carries the class through the
-/// emitted-project path, and the cheap in-process pins cover the arm, so a
-/// second `cargo build` does not belong in the default tier.
-#[test]
-#[ignore = "full tier: cargo build wall-time; set AVER_RUST_DIFF_FULL=1 and run with --ignored"]
-fn rust_fn_result_argument_keeps_the_callers_vector_intact() {
-    if std::env::var("AVER_RUST_DIFF_FULL").is_err() {
-        eprintln!(
-            "skipping the Vector half of the call-result ownership class — \
-             set AVER_RUST_DIFF_FULL=1 (the Map half runs in the default tier, \
-             and the in-process pins in own_param_graduation cover the arm)"
-        );
-        return;
-    }
-
-    let src = r#"module OwnedFnResultVector
-    intent = "A helper's Vector result flows straight into another call while the caller keeps its own vector"
-    depends []
-    effects [Console.print]
-
-fn keepLonger(a: Vector<Int>, b: Vector<Int>) -> Vector<Int>
-    ? "Returns one of its arguments, so the result shares a caller value."
-    match Vector.len(a) >= Vector.len(b)
-        true -> a
-        false -> b
-
-fn overwrite(v: Vector<Int>, i: Int, n: Int) -> Int
-    ? "Threads the vector linearly, writing i*i at every position."
-    match i == n
-        true -> Vector.len(v)
-        false -> overwrite(Option.withDefault(Vector.set(v, i, i * i), v), i + 1, n)
-
-fn run() -> String
-    ? "Pass a call result straight into another call, then read the original."
-    base = Option.withDefault(Vector.set(Vector.new(4, 0), 0, 7), Vector.new(4, 0))
-    touched = overwrite(keepLonger(base, Vector.new(2, 0)), 0, 4)
-    "{touched} {Option.withDefault(Vector.get(base, 0), 0 - 1)}"
-
-fn main() -> Unit
-    ! [Console.print]
-    Console.print(run())
-"#;
-    // 4 positions overwritten, and `base` still reads 7 at position 0.
-    let expected = "4 7";
-    let vm = run_vm_inline("own_fn_result_vector", src).expect("vm run");
-    let rust = build_run_rust_inline("own_fn_result_vector", src).expect("rust build+run");
-    assert_eq!(
-        vm, expected,
-        "the vector the caller kept was mutated through a call result"
-    );
-    assert_eq!(
-        rust, vm,
-        "Rust diverged from VM — a call result was treated as a uniquely-owned vector"
-    );
-}
-
 /// Nested-tuple Int-literal match on the RUST backend. After the
 /// `Int -> AverInt` migration an `AverInt` can't be a Rust `match` pattern,
 /// so Int-literal arms lower to an if/else-if equality-guard chain. That
@@ -3502,6 +3441,15 @@ fn main() -> Result<Unit, String>
 "#;
 
 fn write_runtime_disk_policy(dir: &Path, allowed_path: &str) {
+    fs::create_dir_all(dir).expect("create policy dir");
+    fs::write(
+        dir.join("aver.toml"),
+        format!("[effects.Disk]\npaths = [{allowed_path:?}]\n"),
+    )
+    .expect("write aver.toml");
+}
+
+fn write_embedded_disk_policy(dir: &Path, allowed_path: &str) {
     fs::create_dir_all(dir).expect("create policy dir");
     fs::write(
         dir.join("aver.toml"),
@@ -4050,404 +3998,6 @@ fn record_replay_roundtrips_effects_through_invoke_wrapper() {
 
     let _ = fs::remove_dir_all(&ws);
     result.unwrap_or_else(|e| panic!("{e}"));
-}
-
-// ─── Mode (d): effectful security probe ──────────────────────────────────
-//
-// SECURITY-SENSITIVE. The MIR walker OWNS effectful builtin emission
-// (replay / policy / bare framing) — it is the sole codegen path now. A
-// dropped wrapper there silently disables aver.toml DENY enforcement or
-// record/replay capture — and it's invisible to rustc, to coverage, and
-// to happy-path stdout. These probes build + RUN the binary and assert
-// the policy is actually enforced / the effect is actually captured, so
-// a dropped MIR wrapper reaches the built binary and the probe catches it.
-//
-// An effect probe cannot use the `mir_lowered_count(...)` guard. Every fn
-// in one calls a builtin, and the coverage walk behind
-// `--explain-mir-coverage` reports every `Call(Builtin)` as a fallback
-// (its `for_test` ctx carries an empty builtin table), so the guard reads
-// zero on a program the production path emits fine — it can only ever
-// fail. What proves the wrapper was emitted is the structural tripwire on
-// the emitted Rust plus the deny / capture run below.
-
-/// Single-fn Disk-write program for the embedded-policy probe. The
-/// write rides a helper fn (`writeIt`) that is a single-expr body, so the
-/// `aver_policy::check_disk` wrapper is emitted by the MIR walker.
-/// `__PATH__` is substituted at test time.
-const MIR_DISK_WRITE_PROBE: &str = r#"module MirDiskProbe
-    intent =
-        "Writes one file then prints DONE. Probes the MIR-emitted policy"
-        "wrapper: under a deny policy the write must be rejected at runtime."
-    effects [Console, Disk]
-
-fn writeIt(path: String) -> Result<Unit, String>
-    ? "Writes a fixed payload to the given path."
-    ! [Disk.writeText]
-    Disk.writeText(path, "payload")
-
-fn main() -> Result<Unit, String>
-    ! [Console.print, Disk.writeText]
-    written = writeIt("__PATH__")?
-    shown = Console.print("DONE")
-    Result.Ok(Unit)
-"#;
-
-fn write_embedded_disk_policy(dir: &Path, allowed_path: &str) {
-    fs::create_dir_all(dir).expect("create policy dir");
-    fs::write(
-        dir.join("aver.toml"),
-        format!("[effects.Disk]\npaths = [{allowed_path:?}]\n"),
-    )
-    .expect("write aver.toml");
-}
-
-#[test]
-#[ignore = "full tier: cargo build wall-time; set AVER_RUST_DIFF_FULL=1 and run with --include-ignored"]
-fn mir_forced_embedded_policy_rejects_denied_disk_write() {
-    if std::env::var("AVER_RUST_DIFF_FULL").is_err() {
-        eprintln!("skipping MIR-forced policy probe — set AVER_RUST_DIFF_FULL=1");
-        return;
-    }
-
-    let ws = temp_dir("mir-deny");
-    // The embedded aver.toml is read from the module root at compile
-    // time, so the source + the deny aver.toml share a dir.
-    let proj_root = ws.join("src-root");
-    fs::create_dir_all(&proj_root).expect("create src root");
-    let out_path = ws.join("out.txt");
-    let src = proj_root.join("disk_probe.av");
-    fs::write(
-        &src,
-        MIR_DISK_WRITE_PROBE.replace("__PATH__", &aver_path_literal(&out_path)),
-    )
-    .expect("write probe source");
-
-    let result = (|| -> Result<(), String> {
-        // (0) NOTE: no `mir_lowered_count` guard here. Both fns in this
-        // probe call host-backed operations (provider-bound `Disk.writeText`
-        // and builtin `Console.print`), and the coverage walk behind
-        // `--explain-mir-coverage` lacks the production capability/builtin
-        // tables. It can therefore report these calls as fallbacks even
-        // though the production path emits both fns fine. A
-        // guard on that number cannot pass on an effect probe; it only
-        // short-circuited the deny/allow assertions below, which is the
-        // whole point of the test. The structural tripwire (the emitted
-        // Rust must carry the `aver_policy::check_disk` wrapper) plus the
-        // deny/allow runs are the real "the MIR walker emitted this
-        // effect" evidence.
-
-        // (1) DENY: embed an aver.toml whose allow-list names a
-        // DIFFERENT path → the write to out.txt is denied at compile-
-        // baked policy. The MIR walker emits the `aver_policy::check_disk`
-        // wrapper, then build + run.
-        write_embedded_disk_policy(&proj_root, "/aver/nonexistent/allowed/only");
-        let project = ws.join("project-deny");
-        fs::create_dir_all(&project).expect("create project dir");
-        let name = "mir_deny_disk_probe";
-        compile_rust_env(
-            &src,
-            &project,
-            name,
-            Some(&proj_root),
-            &["--policy", "embed"],
-            &[],
-        )?;
-        // Sanity: the emitted source must carry the MIR-emitted policy
-        // wrapper. (If a future refactor drops it, the run-time assert
-        // below is the real gate; this is a fast structural tripwire.)
-        let emitted = fs::read_to_string(
-            project
-                .join("src")
-                .join("aver_generated")
-                .join("entry")
-                .join("mod.rs"),
-        )
-        .map_err(|e| format!("read emitted module: {e}"))?;
-        if !emitted.contains("aver_policy::check_disk") {
-            return Err(format!(
-                "emitted Rust is missing the `aver_policy::check_disk` wrapper — \
-                 the MIR effectful policy wrap was dropped:\n{emitted}"
-            ));
-        }
-
-        let bin = cargo_build(&project, name)?;
-        let denied = Command::new(&bin)
-            .output()
-            .map_err(|e| format!("run denied binary: {e}"))?;
-        if denied.status.success() {
-            return Err(format!(
-                "deny run unexpectedly SUCCEEDED — the MIR-emitted policy wrapper \
-                 was not enforced:\n{}",
-                format_output(&denied)
-            ));
-        }
-        let denied_stderr = String::from_utf8_lossy(&denied.stderr);
-        if !denied_stderr.contains("denied by aver.toml policy") {
-            return Err(format!(
-                "deny run failed for the wrong reason (expected a policy \
-                 violation):\n{}",
-                format_output(&denied)
-            ));
-        }
-        if out_path.exists() {
-            return Err(format!(
-                "deny run wrote {} despite the deny policy — the MIR-emitted \
-                 check ran AFTER the effect (or not at all)",
-                out_path.display()
-            ));
-        }
-
-        // (2) ALLOW: re-embed an aver.toml whose allow-list names the
-        // real write path → the write is permitted. Proves the deny in
-        // (1) was the policy, not an unconditional failure.
-        write_embedded_disk_policy(&proj_root, &out_path.to_string_lossy());
-        let project_allow = ws.join("project-allow");
-        fs::create_dir_all(&project_allow).expect("create allow project dir");
-        let name_allow = "mir_allow_disk_probe";
-        compile_rust_env(
-            &src,
-            &project_allow,
-            name_allow,
-            Some(&proj_root),
-            &["--policy", "embed"],
-            &[],
-        )?;
-        let bin_allow = cargo_build(&project_allow, name_allow)?;
-        let allowed = Command::new(&bin_allow)
-            .output()
-            .map_err(|e| format!("run allowed binary: {e}"))?;
-        if !allowed.status.success() {
-            return Err(format!(
-                "allow run failed — the probe should succeed when the write path \
-                 is permitted:\n{}",
-                format_output(&allowed)
-            ));
-        }
-        if !out_path.exists() {
-            return Err(format!(
-                "allow run did not write {} — the effect was suppressed even \
-                 though the policy allowed it",
-                out_path.display()
-            ));
-        }
-        if !String::from_utf8_lossy(&allowed.stdout).contains("DONE") {
-            return Err(format!(
-                "allow run did not print DONE:\n{}",
-                format_output(&allowed)
-            ));
-        }
-        Ok(())
-    })();
-
-    let _ = fs::remove_dir_all(&ws);
-    result.unwrap_or_else(|e| panic!("{e}"));
-}
-
-/// Reads a file, then echoes its contents via Console.print — same
-/// shape as `READ_ECHO_PROBE`. The MIR walker (the sole codegen path)
-/// emits the `aver_replay::invoke_effect` reroute for BOTH effects.
-/// `__PATH__` is substituted at test time.
-const MIR_READ_ECHO_PROBE: &str = r#"module MirRwProbe
-    intent =
-        "Reads a file and echoes its contents. The record captures the read"
-        "result; replay serves it back. Probes the MIR-emitted replay wrapper."
-    effects [Console, Disk]
-
-fn readIt(path: String) -> Result<String, String>
-    ? "Reads the file at the given path."
-    ! [Disk.readText]
-    Disk.readText(path)
-
-fn main() -> Result<Unit, String>
-    ! [Console.print, Disk.readText]
-    content = readIt("__PATH__")?
-    shown = Console.print("READ:{content}")
-    Result.Ok(Unit)
-"#;
-
-#[test]
-#[ignore = "full tier: cargo build wall-time; set AVER_RUST_DIFF_FULL=1 and run with --include-ignored"]
-fn mir_forced_record_replay_captures_effects_through_invoke_wrapper() {
-    if std::env::var("AVER_RUST_DIFF_FULL").is_err() {
-        eprintln!("skipping MIR-forced replay probe — set AVER_RUST_DIFF_FULL=1");
-        return;
-    }
-
-    let ws = temp_dir("mir-replay");
-    let data_path = ws.join("data.txt");
-    fs::write(&data_path, "recorded-bytes").expect("write probe data");
-    let src = ws.join("rw_probe.av");
-    fs::write(
-        &src,
-        MIR_READ_ECHO_PROBE.replace("__PATH__", &aver_path_literal(&data_path)),
-    )
-    .expect("write probe source");
-
-    let project = ws.join("project");
-    fs::create_dir_all(&project).expect("create project dir");
-    let name = "mir_rw_probe";
-
-    let result = (|| -> Result<(), String> {
-        // No `mir_lowered_count` guard here for the same reason as the disk
-        // probe above: every fn in this probe calls a builtin, so the guard
-        // can only ever fail. The structural tripwire on the emitted Rust
-        // plus the capture run below are what prove the reroute was emitted.
-        compile_rust_env(&src, &project, name, None, &["--with-replay"], &[])?;
-
-        // Structural tripwire: the emitted Rust must carry the MIR-
-        // emitted `invoke_effect` reroute for the read.
-        let emitted = fs::read_to_string(
-            project
-                .join("src")
-                .join("aver_generated")
-                .join("entry")
-                .join("mod.rs"),
-        )
-        .map_err(|e| format!("read emitted module: {e}"))?;
-        if !emitted.contains("aver_replay::invoke_effect") {
-            return Err(format!(
-                "emitted Rust is missing the `aver_replay::invoke_effect` reroute — \
-                 the MIR effectful replay wrap was dropped:\n{emitted}"
-            ));
-        }
-
-        let bin = cargo_build(&project, name)?;
-
-        // (1) RECORD: run live, capturing the effects into a session.
-        let session = ws.join("session.json");
-        let recorded = Command::new(&bin)
-            .env("AVER_REPLAY_RECORD", &session)
-            .output()
-            .map_err(|e| format!("run record binary: {e}"))?;
-        if !recorded.status.success() {
-            return Err(format!("record run failed:\n{}", format_output(&recorded)));
-        }
-        if !String::from_utf8_lossy(&recorded.stdout).contains("READ:recorded-bytes") {
-            return Err(format!(
-                "record run did not echo the read bytes (live read broken):\n{}",
-                format_output(&recorded)
-            ));
-        }
-        if !session.exists() {
-            return Err("record run did not write the session JSON".to_string());
-        }
-
-        // BOTH effects must be captured through invoke_effect — a
-        // dropped MIR replay wrapper makes one (or both) vanish.
-        let session_json = fs::read_to_string(&session).expect("read session");
-        if !session_json.contains("\"Disk.readText\"") {
-            return Err(format!(
-                "session is missing the Disk.readText effect — the MIR replay \
-                 wrapper was dropped on the read:\n{session_json}"
-            ));
-        }
-        if !session_json.contains("\"Console.print\"") {
-            return Err(format!(
-                "session is missing the Console.print effect — the MIR replay \
-                 wrapper was dropped on the print:\n{session_json}"
-            ));
-        }
-        if !session_json.contains("READ:recorded-bytes") {
-            return Err(format!(
-                "session does not carry the woven read result in the Console.print \
-                 arg — per-effect arg-json shape is wrong:\n{session_json}"
-            ));
-        }
-
-        // (2) REPLAY: mutate the data file so a LIVE read would differ,
-        // then replay. Replay must serve the recorded bytes (not re-read
-        // the mutated file) and roundtrip without a position mismatch.
-        fs::write(&data_path, "MUTATED-ON-DISK").expect("mutate data file");
-        let replayed = Command::new(&bin)
-            .env("AVER_REPLAY_REPLAY", &session)
-            .output()
-            .map_err(|e| format!("run replay binary: {e}"))?;
-        if !replayed.status.success() {
-            return Err(format!(
-                "replay run failed — the recorded session did not roundtrip (a \
-                 dropped or mis-ordered MIR invoke_effect reroute trips a position \
-                 mismatch here):\n{}",
-                format_output(&replayed)
-            ));
-        }
-        Ok(())
-    })();
-
-    let _ = fs::remove_dir_all(&ws);
-    result.unwrap_or_else(|e| panic!("{e}"));
-}
-
-// ─── Full tier (env-gated, #[ignore]) ───────────────────────────────────
-
-/// Every single-file example with deterministic, build-and-run-able
-/// behavior (Console-only or pure — no Time / Random / Http / Tcp /
-/// Terminal, no interactive loop). Plain-parity tier.
-const FULL_SINGLE_FILE: &[&str] = &[
-    "examples/core/calculator.av",
-    "examples/core/hello.av",
-    "examples/core/lambda.av",
-    "examples/core/lists.av",
-    "examples/core/order_total.av",
-    "examples/core/result_chain.av",
-    "examples/core/result_pipeline.av",
-    "examples/core/shapes.av",
-    "examples/core/temperature.av",
-    "examples/core/user_record.av",
-    "examples/data/fibonacci.av",
-    "examples/data/list_length_fold.av",
-    "examples/data/map.av",
-    "examples/data/quicksort.av",
-    "examples/data/red_black_tree.av",
-    "examples/data/rle.av",
-    "examples/data/sum_acc.av",
-];
-
-/// Multi-module (`depends`) examples — (entry file, module root).
-/// These exercise the cross-module path-mangling the Rust backend
-/// emits (the `crate::aver_generated::<dep>::*` references). The games
-/// are excluded: they're interactive Terminal loops, not batch
-/// programs with deterministic stdout.
-const FULL_MULTI_MODULE: &[(&str, &str)] = &[
-    ("examples/modules/app.av", "examples"),
-    ("examples/modules/pricing_app.av", "examples"),
-];
-
-#[test]
-#[ignore = "full tier: minutes of build wall-time; set AVER_RUST_DIFF_FULL=1 and run with --ignored"]
-fn full_plain_stdout_parity_with_vm() {
-    if std::env::var("AVER_RUST_DIFF_FULL").is_err() {
-        eprintln!(
-            "skipping full tier — set AVER_RUST_DIFF_FULL=1 to run \
-             (single-file + multi-module plain parity over the corpus)"
-        );
-        return;
-    }
-
-    let mut failures = Vec::new();
-    let mut passed = 0usize;
-
-    for relative in FULL_SINGLE_FILE {
-        match assert_plain_parity(relative, None) {
-            Ok(()) => passed += 1,
-            Err(e) => failures.push(e),
-        }
-    }
-    for (relative, root) in FULL_MULTI_MODULE {
-        match assert_plain_parity(relative, Some(root)) {
-            Ok(()) => passed += 1,
-            Err(e) => failures.push(e),
-        }
-    }
-
-    let total = FULL_SINGLE_FILE.len() + FULL_MULTI_MODULE.len();
-    eprintln!("full_plain_stdout_parity_with_vm: {passed}/{total} passed");
-    assert!(
-        failures.is_empty(),
-        "{} of {} full-tier examples failed plain parity:\n  - {}",
-        failures.len(),
-        total,
-        failures.join("\n  - ")
-    );
 }
 
 // ─── Mode (e): MIR-synthesized TCO (Wave 5) ──────────────────────────────
@@ -6619,14 +6169,14 @@ fn oracle_shape_examples_build_clean_on_rust() {
     );
 }
 
-// ─── Forced-MIR full-corpus run-parity tier (env-gated) ──────────────────
+// ─── Full-corpus run-parity tier (env-gated) ──────────────────────────────
 
-/// Single-file examples that build + run deterministically under
-/// forced-MIR (Console-only or pure — no live Time / Random / Http / Tcp /
-/// Terminal in the run path, no interactive loop). Empirically verified
-/// to build + run with VM parity under all four MIR flags. This is the
-/// honest buildable denominator: the BranchPath set is excluded above.
-const FORCED_MIR_SINGLE_FILE: &[&str] = &[
+/// Single-file examples that build + run deterministically (Console-only
+/// or pure — no live Time / Random / Http / Tcp / Terminal in the run
+/// path, no interactive loop). Empirically verified to build + run with
+/// VM parity. This is the honest buildable denominator: the BranchPath
+/// set is excluded above.
+const FULL_SINGLE_FILE: &[&str] = &[
     "examples/core/calculator.av",
     "examples/core/hello.av",
     "examples/core/lambda.av",
@@ -6653,7 +6203,7 @@ const FORCED_MIR_SINGLE_FILE: &[&str] = &[
     "examples/data/json.av",
     // Pure / proof-shaped formal examples that DO build + run in Rust
     // (they never reach the Oracle / trace runtime API, so no BranchPath
-    // gap). Empirically VM-parity under forced-MIR (graduated 2/4/6/2).
+    // gap). Empirically VM-parity (graduated 2/4/6/2).
     "examples/formal/file_store_pure_core.av",
     "examples/formal/spec_laws.av",
     "examples/formal/law_auto.av",
@@ -6667,7 +6217,7 @@ const FORCED_MIR_SINGLE_FILE: &[&str] = &[
 /// Terminal loop (Terminal is host territory + no deterministic batch
 /// stdout), so they are neither buildable in Rust nor run-parity
 /// candidates.
-const FORCED_MIR_MULTI_MODULE: &[(&str, &str)] = &[
+const FULL_MULTI_MODULE: &[(&str, &str)] = &[
     ("examples/modules/app.av", "examples"),
     ("examples/modules/app_dot.av", "examples"),
     ("examples/modules/pricing_app.av", "examples"),
@@ -6675,12 +6225,12 @@ const FORCED_MIR_MULTI_MODULE: &[(&str, &str)] = &[
 
 #[test]
 #[ignore = "full tier: minutes of build wall-time; set AVER_RUST_DIFF_FULL=1 and run with --ignored"]
-fn forced_mir_full_corpus_parity_with_vm() {
+fn full_corpus_parity_with_vm() {
     if std::env::var("AVER_RUST_DIFF_FULL").is_err() {
         eprintln!(
-            "skipping forced-MIR full-corpus tier — set AVER_RUST_DIFF_FULL=1 to run \
-             (all four MIR flags; single-file + multi-module run-parity over the \
-             buildable corpus, with the graduated>0 guard)"
+            "skipping full-corpus tier — set AVER_RUST_DIFF_FULL=1 to run \
+             (single-file + multi-module run-parity over the buildable \
+             corpus, with the graduated>0 guard)"
         );
         return;
     }
@@ -6688,26 +6238,24 @@ fn forced_mir_full_corpus_parity_with_vm() {
     let mut failures = Vec::new();
     let mut passed = 0usize;
 
-    for relative in FORCED_MIR_SINGLE_FILE {
+    for relative in FULL_SINGLE_FILE {
         match assert_forced_mir_parity(relative, None) {
             Ok(()) => passed += 1,
             Err(e) => failures.push(e),
         }
     }
-    for (relative, root) in FORCED_MIR_MULTI_MODULE {
+    for (relative, root) in FULL_MULTI_MODULE {
         match assert_forced_mir_parity(relative, Some(root)) {
             Ok(()) => passed += 1,
             Err(e) => failures.push(e),
         }
     }
 
-    let total = FORCED_MIR_SINGLE_FILE.len() + FORCED_MIR_MULTI_MODULE.len();
-    eprintln!(
-        "forced_mir_full_corpus_parity_with_vm: {passed}/{total} passed (all four MIR flags)"
-    );
+    let total = FULL_SINGLE_FILE.len() + FULL_MULTI_MODULE.len();
+    eprintln!("full_corpus_parity_with_vm: {passed}/{total} passed");
     assert!(
         failures.is_empty(),
-        "{} of {} forced-MIR corpus examples failed parity:\n  - {}",
+        "{} of {} corpus examples failed parity:\n  - {}",
         failures.len(),
         total,
         failures.join("\n  - ")
