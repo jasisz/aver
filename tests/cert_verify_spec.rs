@@ -78,6 +78,11 @@
 //! skipped when `lake` is unavailable, mirroring `cert_certify_spec.rs`.
 #![cfg(feature = "wasm")]
 
+#[path = "support/aver_cmd.rs"]
+mod aver_cmd;
+
+use aver_cmd::aver_command;
+
 #[path = "support/cert_wall.rs"]
 mod cert_wall;
 #[path = "support/scratch_dir.rs"]
@@ -99,19 +104,6 @@ fn copy_dir(src: &Path, dst: &Path) {
             std::fs::copy(entry.path(), &to).unwrap();
         }
     }
-}
-
-fn aver_command() -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_aver"));
-    command.env(
-        "AVER_CERT_PRELUDE_CACHE",
-        std::env::temp_dir().join("aver-cert-prelude-store"),
-    );
-    command.env(
-        "AVER_CERT_DATA_CACHE",
-        std::env::temp_dir().join("aver-cert-data-store"),
-    );
-    command
 }
 
 fn lake_for_cert(cert_dir: &Path) -> Command {

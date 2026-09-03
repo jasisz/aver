@@ -10,13 +10,14 @@
 //! jasisz/aver#1076: `verify` refused a function in another file with an
 //! `internal error`, and `check` passed.
 
+#[path = "support/aver_cmd.rs"]
+mod aver_cmd;
+
+use aver_cmd::aver_bin;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-
-fn aver_bin() -> &'static str {
-    env!("CARGO_BIN_EXE_aver")
-}
 
 fn temp_dir(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("aver-entry-scope-{tag}-{}", std::process::id()));

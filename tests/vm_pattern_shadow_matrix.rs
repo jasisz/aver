@@ -35,21 +35,18 @@
 
 #![cfg(feature = "runtime")]
 
+#[path = "support/aver_cmd.rs"]
+mod aver_cmd;
+
+use aver_cmd::{aver_bin, cleanup, format_output, repo_root};
+
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 static UNIQUE: AtomicU64 = AtomicU64::new(0);
-
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
-
-fn aver_bin() -> &'static str {
-    env!("CARGO_BIN_EXE_aver")
-}
 
 fn temp_module(prefix: &str, source: &str) -> PathBuf {
     let nanos = SystemTime::now()
@@ -62,19 +59,6 @@ fn temp_module(prefix: &str, source: &str) -> PathBuf {
     let path = dir.join("main.av");
     fs::write(&path, source).expect("write temp module source");
     path
-}
-
-fn cleanup(path: &Path) {
-    let _ = fs::remove_dir_all(path.parent().expect("temp module has parent"));
-}
-
-fn format_output(out: &std::process::Output) -> String {
-    format!(
-        "status: {}\nstdout:\n{}\nstderr:\n{}",
-        out.status,
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr),
-    )
 }
 
 fn run_vm(prefix: &str, source: &str) -> String {

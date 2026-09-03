@@ -30,7 +30,12 @@
 
 #![cfg(feature = "wasm")]
 
-use std::path::{Path, PathBuf};
+#[path = "support/aver_cmd.rs"]
+mod aver_cmd;
+
+use aver_cmd::cleanup;
+
+use std::path::PathBuf;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -119,10 +124,6 @@ fn temp_module(prefix: &str, source: &str) -> PathBuf {
     let path = dir.join("main.av");
     std::fs::write(&path, source).expect("write temp module source");
     path
-}
-
-fn cleanup(path: &Path) {
-    let _ = std::fs::remove_dir_all(path.parent().expect("temp module has parent"));
 }
 
 /// Run `source` on the wasm-gc backend (`aver run --wasm-gc`) and return

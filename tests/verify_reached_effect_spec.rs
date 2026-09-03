@@ -1,12 +1,13 @@
 //! Plain verify cases may call an effect-declaring function, but they may not
 //! cross an unstubbed effect boundary.
 
+#[path = "support/aver_cmd.rs"]
+mod aver_cmd;
+
+use aver_cmd::aver_bin;
+
 use std::fs;
 use std::process::{Command, Output};
-
-fn aver_bin() -> &'static str {
-    env!("CARGO_BIN_EXE_aver")
-}
 
 fn command_report(output: &Output) -> String {
     format!(

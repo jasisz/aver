@@ -17,15 +17,16 @@
 //! iterates.
 #![cfg(feature = "runtime")]
 
+#[path = "support/aver_cmd.rs"]
+mod aver_cmd;
+
+use aver_cmd::repo_root;
+
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const NO_ORDER: &str = "the key type has to order";
-
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
 
 fn temp_dir(prefix: &str) -> PathBuf {
     let nanos = SystemTime::now()

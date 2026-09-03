@@ -24,6 +24,11 @@
 //!    type-check, while execution without a provider fails at the exact
 //!    operation boundary.
 
+#[path = "support/aver_cmd.rs"]
+mod aver_cmd;
+
+use aver_cmd::aver_bin;
+
 use std::fs;
 use std::process::Command;
 
@@ -50,10 +55,6 @@ fn parse_error(src: &str) -> String {
         .parse()
         .expect_err("expected a parse error")
         .to_string()
-}
-
-fn aver_bin() -> &'static str {
-    env!("CARGO_BIN_EXE_aver")
 }
 
 fn tool_available(name: &str) -> bool {

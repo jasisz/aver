@@ -1,5 +1,10 @@
 //! Missing custom providers fail only concrete verify cases that dispatch them.
 
+#[path = "support/aver_cmd.rs"]
+mod aver_cmd;
+
+use aver_cmd::aver_bin;
+
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Output};
@@ -89,10 +94,6 @@ verify doubled
     given probe: Sub.Probe.answer = [fixtureAnswer]
     doubled(2) => 204
 ";
-
-fn aver_bin() -> &'static str {
-    env!("CARGO_BIN_EXE_aver")
-}
 
 fn command_report(output: &Output) -> String {
     format!(

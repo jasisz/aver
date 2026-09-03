@@ -12,13 +12,14 @@
 //! The gate regenerates into a temporary tree — a copy of only the inputs the
 //! script reads — and byte-compares. The worktree is never written to.
 
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::Command;
+#[path = "support/aver_cmd.rs"]
+mod aver_cmd;
 
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
+use aver_cmd::repo_root;
+
+use std::fs;
+use std::path::Path;
+use std::process::Command;
 
 /// Everything `build_llms.sh` reads, as paths relative to the repository root.
 const SCRIPT_INPUTS: &[&str] = &[
