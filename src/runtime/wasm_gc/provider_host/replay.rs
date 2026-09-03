@@ -544,9 +544,7 @@ fn decode_json_bytes(json: &JsonValue) -> Result<ProviderValue, String> {
         let JsonValue::Number(n) = value else {
             return Err("recorded Bytes contains a non-integer octet".into());
         };
-        let value = n
-            .as_i64()
-            .ok_or("recorded Bytes octet is out of range")?;
+        let value = n.as_i64().ok_or("recorded Bytes octet is out of range")?;
         bytes.push(u8::try_from(value).map_err(|_| "recorded Bytes octet is out of range")?);
     }
     Ok(ProviderValue::Bytes(bytes))

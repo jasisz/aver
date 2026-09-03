@@ -7768,7 +7768,9 @@ fn allocate_result_pair(
     *next_type_idx += 1;
     *next_fn_idx += 1;
 
-    types.ty().function(err_params.iter().copied(), [result_ref]);
+    types
+        .ty()
+        .function(err_params.iter().copied(), [result_ref]);
     *err_slot = Some(FactorySlot {
         type_idx: *next_type_idx,
         fn_idx: *next_fn_idx,
@@ -8804,7 +8806,9 @@ impl FactoryExports {
             codes.function(&emit_factory_result_ok(
                 registry,
                 "Result<Option<String>,String>",
-                registry.string_array_type_idx.expect("checked at allocation"),
+                registry
+                    .string_array_type_idx
+                    .expect("checked at allocation"),
             )?);
         }
         if self.result_option_string_string_err.is_some() {
@@ -8823,7 +8827,9 @@ impl FactoryExports {
             codes.function(&emit_factory_result_ok(
                 registry,
                 "Result<Terminal.Size,String>",
-                registry.string_array_type_idx.expect("checked at allocation"),
+                registry
+                    .string_array_type_idx
+                    .expect("checked at allocation"),
             )?);
         }
         if self.result_terminal_size_string_err.is_some() {
@@ -8839,21 +8845,27 @@ impl FactoryExports {
             codes.function(&emit_factory_result_ok(
                 registry,
                 "Result<String,String>",
-                registry.string_array_type_idx.expect("checked at allocation"),
+                registry
+                    .string_array_type_idx
+                    .expect("checked at allocation"),
             )?);
         }
         if self.result_string_string_err.is_some() {
             codes.function(&emit_factory_result_err(
                 registry,
                 "Result<String,String>",
-                registry.string_array_type_idx.expect("checked at allocation"),
+                registry
+                    .string_array_type_idx
+                    .expect("checked at allocation"),
             )?);
         }
         if self.result_int_string_ok.is_some() {
             codes.function(&emit_factory_result_ok(
                 registry,
                 "Result<Int,String>",
-                registry.string_array_type_idx.expect("checked at allocation"),
+                registry
+                    .string_array_type_idx
+                    .expect("checked at allocation"),
             )?);
         }
         if self.result_int_string_err.is_some() {
@@ -8947,7 +8959,9 @@ impl FactoryExports {
             codes.function(&emit_factory_result_ok(
                 registry,
                 "Result<Tcp.Connection,String>",
-                registry.string_array_type_idx.expect("checked at allocation"),
+                registry
+                    .string_array_type_idx
+                    .expect("checked at allocation"),
             )?);
         }
         if self.result_tcp_connection_string_err.is_some() {
@@ -8966,7 +8980,9 @@ impl FactoryExports {
             codes.function(&emit_factory_result_ok(
                 registry,
                 "Result<Http.Response,String>",
-                registry.string_array_type_idx.expect("checked at allocation"),
+                registry
+                    .string_array_type_idx
+                    .expect("checked at allocation"),
             )?);
         }
         if self.result_http_response_string_err.is_some() {
@@ -8985,7 +9001,9 @@ impl FactoryExports {
             codes.function(&emit_factory_result_ok(
                 registry,
                 "Result<List<String>,String>",
-                registry.string_array_type_idx.expect("checked at allocation"),
+                registry
+                    .string_array_type_idx
+                    .expect("checked at allocation"),
             )?);
         }
         if self.result_list_string_string_err.is_some() {
@@ -9031,7 +9049,9 @@ impl FactoryExports {
             codes.function(&emit_factory_result_ok(
                 registry,
                 "Result<List<Int>,String>",
-                registry.string_array_type_idx.expect("checked at allocation"),
+                registry
+                    .string_array_type_idx
+                    .expect("checked at allocation"),
             )?);
         }
         if self.result_list_int_string_err.is_some() {

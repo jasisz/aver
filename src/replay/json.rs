@@ -73,8 +73,8 @@ fn number_to_value(n: &Number) -> Result<Value, String> {
     if let Some(i) = n.as_i64() {
         Ok(Value::int(i))
     } else if let Some(u) = n.as_u64() {
-        let i = i64::try_from(u)
-            .map_err(|_| format!("JSON integer {} is out of range for i64", u))?;
+        let i =
+            i64::try_from(u).map_err(|_| format!("JSON integer {} is out of range for i64", u))?;
         Ok(Value::int(i))
     } else if let Some(f) = n.as_f64() {
         Ok(Value::Float(f))

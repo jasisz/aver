@@ -1603,7 +1603,12 @@ fn main() -> Int
 ",
     )
     .expect("write main.av");
-    let mut session = recording(&dir, "Clock.now", JsonValue::from(123), JsonValue::from(123));
+    let mut session = recording(
+        &dir,
+        "Clock.now",
+        JsonValue::from(123),
+        JsonValue::from(123),
+    );
     session.capabilities = provenance("Clock", VALID_EFFECT_CAPABILITY);
     fs::write(
         dir.join("recorded.json"),

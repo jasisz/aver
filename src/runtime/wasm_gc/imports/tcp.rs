@@ -743,10 +743,10 @@ fn decode_result_option_tcp_connection(
                         Some(aver::replay::JsonValue::String(host)) => host.clone(),
                         _ => String::new(),
                     };
-                    let port = match fields.get("port").and_then(|v| v.as_i64()) {
-                        Some(port) => port,
-                        _ => 0,
-                    };
+                    let port = fields
+                        .get("port")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or_default();
                     let id = lm_string_from_host(caller, &id)?;
                     let host = lm_string_from_host(caller, &host)?;
                     let connection = host_tcp_connection_make(caller, id, host, port)?;
