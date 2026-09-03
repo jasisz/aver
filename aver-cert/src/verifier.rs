@@ -46,7 +46,6 @@ const BRIDGE_AUDIT_MARKER: &str = "AVER_BRIDGE_AUDIT";
 /// entry can only ever name the two declarations this surface defines.
 const BRIDGE_NAMESPACE: &str = "AverCert.Bridge";
 const BRIDGE_COROLLARY_SUFFIX: &str = "_certified";
-const MAX_CANDIDATE_LEN: usize = 200;
 const TOOLCHAIN_ROOTS: [&str; 4] = ["Init", "Lake", "Lean", "Std"];
 const FRESH_REPLAY_ARGS: [&str; 4] = ["env", "leanchecker", "--fresh", "ArtifactCertificate"];
 /// User-facing name of the `lake build` step in timeout and failure messages.
@@ -1643,7 +1642,7 @@ fn validate_source_bridge_candidate(
 ) -> Result<SourceBridgeCandidate, String> {
     let plain = |value: &str| {
         !value.is_empty()
-            && value.len() <= MAX_CANDIDATE_LEN
+            && value.len() <= crate::format::MAX_CANDIDATE_LEN
             && value.split('.').all(|segment| {
                 let mut chars = segment.chars();
                 matches!(chars.next(), Some(first) if first.is_ascii_alphabetic() || first == '_')
@@ -2050,7 +2049,7 @@ fn gate_candidates(candidates: &Candidates) -> Result<(), String> {
 }
 
 fn gate_candidate(kind: &str, value: &str) -> Result<(), String> {
-    let safe = value.len() <= MAX_CANDIDATE_LEN
+    let safe = value.len() <= crate::format::MAX_CANDIDATE_LEN
         && value
             .bytes()
             .all(|byte| (0x20..=0x7e).contains(&byte) && byte != b'"' && byte != b'\\');

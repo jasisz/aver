@@ -260,8 +260,9 @@ fn check_sym_block_projection_owners(block: &SymBlock) -> Result<(), String> {
                 let got = block.nodes.get(value.0).map(|n| n.ty.clone());
                 if got != Some(SymTy::Named(type_name.clone())) {
                     return Err(format!(
-                        "project.field v{} claims owner type `{type_name}`, but its value is declared `{}`",
+                        "project.field v{} claims owner type `{}`, but its value is declared `{}`",
                         node.id.0,
+                        SymTy::display_source_type_name(type_name),
                         got.map(|ty| ty.plan_tag()).unwrap_or_else(|| "<missing>".to_string())
                     ));
                 }
@@ -310,7 +311,8 @@ fn check_sym_plan_named_consistency(plan: &SymPlan) -> Result<(), String> {
     for name in &used {
         if !owners.contains(name) {
             return Err(format!(
-                "source type `{name}` is never projected, so no byte-derived struct binding anchors it"
+                "source type `{}` is never projected, so no byte-derived struct binding anchors it",
+                SymTy::display_source_type_name(name)
             ));
         }
     }

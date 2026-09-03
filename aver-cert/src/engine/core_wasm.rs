@@ -48,8 +48,15 @@ struct UserFn {
 enum ValShape {
     /// A reference to the Int carrier struct: a boxed `Int`.
     Int,
-    /// A reference to a string byte-array type: a `String`.
+    /// A reference to the module's `String` byte-array type.
     Str,
+    /// A reference to a packed byte-array type that is NOT the module's
+    /// `String` carrier. The backend gives a byte-sequence record — an
+    /// `exposes opaque` `Bytes` and its kin — the same `(array (mut i8))`
+    /// representation `String` has, so the wasm type alone does not separate
+    /// them; the module's own `__rt_string_to_lm` bridge export names which
+    /// array type is the string one, and everything else packed is this.
+    BytePayload,
     /// Any other reference: a user record, variant or list value.
     UserRef,
     /// A bare machine scalar (`i64`, `i32`, `f64`) — `Int` in unboxed form,
@@ -65,13 +72,17 @@ impl ValShape {
     /// the fragment's native vocabulary; everything else is only ever read or
     /// built by one of the specific ADT/String templates.
     fn outside_scalar_fragment(self) -> bool {
-        matches!(self, ValShape::Str | ValShape::UserRef | ValShape::Raw)
+        matches!(
+            self,
+            ValShape::Str | ValShape::BytePayload | ValShape::UserRef | ValShape::Raw
+        )
     }
 
     fn describe(self) -> &'static str {
         match self {
             ValShape::Int => "an Int",
             ValShape::Str => "a String",
+            ValShape::BytePayload => "an opaque byte-sequence record",
             ValShape::UserRef => "a user record, variant or list value",
             ValShape::Scalar => "a machine scalar",
             ValShape::Raw => "a wasm type the certified fragment does not model",

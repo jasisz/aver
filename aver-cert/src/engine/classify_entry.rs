@@ -70,10 +70,21 @@ fn classify_without_expr_fragment(
     //      of reach whatever this one export looks like.
     //   3. what the export DECLARES — parameter shapes, then result shapes.
     //      No rewrite of a body removes a String parameter or a record result.
-    //   4. what the body USES: control flow, then instructions outside the
-    //      opcode vocabulary.
-    //   5. what the body CALLS, which the composition and mutual-recursion
+    //   4. what the body CALLS, which the composition and mutual-recursion
     //      routes above do cover in specific shapes.
+    //   5. what the body USES: control flow, then instructions outside the
+    //      opcode vocabulary.
+    //
+    //      A call to another user function outranks both, because it EXPLAINS
+    //      them: the call is lowered with the operand shuffling and comparison
+    //      instructions the certified fragment has no opcode for, so naming an
+    //      instruction points the reader at a symptom. `Domain_Time_validDay`
+    //      (`day <= maxDay` where `maxDay = daysInMonth(month, year)`) was
+    //      declined for "the wasm instruction `I32LeS`" while the fact that
+    //      decides it is the call to `daysInMonth`. The two are not reported
+    //      together: a reason is a transported display string on the format's
+    //      candidate budget, and both clauses plus a real export name do not
+    //      fit inside it.
     //   6. the arity-shaped template misses, LAST. A parameter count is only
     //      ever the blocker once nothing else is, and reporting it first said
     //      "unsupported signature" to hundreds of exports whose signature was
@@ -137,6 +148,26 @@ fn classify_without_expr_fragment(
             shape.describe()
         ));
     }
+    let called_user_idx = f
+        .calls
+        .iter()
+        .find(|c| **c != f.wasm_idx && user_idx_set.contains(c));
+    if let Some(called) = called_user_idx {
+        // Name the callee when the finished reason fits the format's candidate
+        // budget. A reason is a transported display string gated on that
+        // length, so a long export name degrades to the callee-free wording
+        // rather than producing a reason the verifier refuses to print.
+        let named = fns.get(called).map(|callee| {
+            format!(
+                "calls the user function `{}`; only the composition and mutual-recursion templates cross function boundaries, and this body fits neither",
+                callee.name
+            )
+        });
+        return Err(match named {
+            Some(reason) if reason.len() <= crate::format::MAX_CANDIDATE_LEN => reason,
+            _ => "calls other user functions; only the composition and mutual-recursion templates cross function boundaries, and this body fits neither".to_string(),
+        });
+    }
     if f.has_loop_or_branch {
         return Err(
             "body uses loops/branches outside the certified straight-line/recursive fragment"
@@ -150,16 +181,6 @@ fn classify_without_expr_fragment(
             ),
             None => "body uses wasm instructions outside the certified fragment".to_string(),
         });
-    }
-    let calls_other_user = f
-        .calls
-        .iter()
-        .any(|c| *c != f.wasm_idx && user_idx_set.contains(c));
-    if calls_other_user {
-        return Err(
-            "calls other user functions; only the composition and mutual-recursion templates cross function boundaries, and this body fits neither"
-                .to_string(),
-        );
     }
     // Only now can a parameter count be the honest answer: the signature is
     // scalar, the body is pure straight-line code that calls nobody, and still

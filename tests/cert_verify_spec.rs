@@ -2804,8 +2804,11 @@ fn cert_plans_authority_declines_tampered_lean_raw_plan() {
     );
 }
 
-/// The code-entry byte pin in `Plans.lean` is checked against the module, so a
-/// single flipped opcode byte in that pin must be DECLINED.
+/// The pinned code-entry bytes of a plan are checked against the module, so a
+/// single flipped opcode byte in that pin must be DECLINED. The pin is a named
+/// `ByteSeq` constant in `Artifact.lean` — `Plans.lean` no longer restates it
+/// (format spec section 2.2) — so the tamper looks for the bytes wherever the
+/// package carries them.
 #[test]
 fn cert_plans_authority_declines_tampered_code_entry_byte_pin() {
     let Some(out_dir) = plans_authority_baseline("cert-plans-authority-lean-bytes-tamper") else {
@@ -2816,21 +2819,15 @@ fn cert_plans_authority_declines_tampered_code_entry_byte_pin() {
     copy_dir(&out_dir, &lean_bytes_tamper_dir);
     let lean_bytes_tamper_wasm = lean_bytes_tamper_dir.join("cert_goals.wasm");
     let lean_bytes_tamper_cert = lean_bytes_tamper_dir.join("cert");
-    let plans_lean = lean_bytes_tamper_cert.join("Plans.lean");
-    let plans_text = std::fs::read_to_string(&plans_lean).unwrap();
-    let honest_bytes =
-        "some [18, 1, 1, 99, 23, 32, 0, 32, 1, 101, 4, 127, 65, 1, 5, 65, 0, 11, 11]";
-    let tampered_bytes =
-        "some [18, 1, 1, 99, 23, 32, 0, 32, 1, 102, 4, 127, 65, 1, 5, 65, 0, 11, 11]";
+    let honest_bytes = "[18, 1, 1, 99, 23, 32, 0, 32, 1, 101, 4, 127, 65, 1, 5, 65, 0, 11, 11]";
+    let tampered_bytes = "[18, 1, 1, 99, 23, 32, 0, 32, 1, 102, 4, 127, 65, 1, 5, 65, 0, 11, 11]";
     assert!(
-        plans_text.contains(honest_bytes),
-        "Plans.lean floatLeGoal byte pin changed"
+        package_lean_text(&lean_bytes_tamper_cert).contains(honest_bytes),
+        "floatLeGoal byte pin changed"
     );
-    std::fs::write(
-        &plans_lean,
-        plans_text.replacen(honest_bytes, tampered_bytes, 1),
-    )
-    .unwrap();
+    tamper_cert_lean_files(&lean_bytes_tamper_cert, "code-entry byte pin", &|text| {
+        text.replacen(honest_bytes, tampered_bytes, 1)
+    });
 
     let (ok, out) = aver_check(&lean_bytes_tamper_wasm, &lean_bytes_tamper_cert);
     assert!(
@@ -2849,7 +2846,10 @@ fn cert_plans_authority_declines_tampered_code_entry_byte_pin() {
 
 /// The `WasmSlice` byte-origin pin ties the plan's bytes to their position in
 /// the module, so flipping a byte in that exact-slice argument must be
-/// DECLINED.
+/// DECLINED. The argument is the package's named code-entry constant, so the
+/// tamper inlines a one-byte-off literal in its place on the
+/// `exactFuncBindingForExport` leaf alone; the lowering pin beside it keeps
+/// the honest constant and stays green, which is what isolates this pin.
 #[test]
 fn cert_plans_authority_declines_tampered_wasm_slice_byte_origin_pin() {
     let Some(out_dir) = plans_authority_baseline("cert-plans-authority-lean-slice-tamper") else {
@@ -2860,18 +2860,29 @@ fn cert_plans_authority_declines_tampered_wasm_slice_byte_origin_pin() {
     copy_dir(&out_dir, &lean_slice_tamper_dir);
     let lean_slice_tamper_wasm = lean_slice_tamper_dir.join("cert_goals.wasm");
     let lean_slice_tamper_cert = lean_slice_tamper_dir.join("cert");
-    let plans_lean = lean_slice_tamper_cert.join("Plans.lean");
-    let plans_text = std::fs::read_to_string(&plans_lean).unwrap();
-    let honest_exact_arg =
-        "[18, 1, 1, 99, 23, 32, 0, 32, 1, 101, 4, 127, 65, 1, 5, 65, 0, 11, 11] =\n";
-    let slice_tampered_exact_arg =
-        "[18, 1, 1, 99, 23, 32, 0, 32, 1, 102, 4, 127, 65, 1, 5, 65, 0, 11, 11] =\n";
+    let honest_bytes = "[18, 1, 1, 99, 23, 32, 0, 32, 1, 101, 4, 127, 65, 1, 5, 65, 0, 11, 11]";
+    let slice_tampered_bytes =
+        "[18, 1, 1, 99, 23, 32, 0, 32, 1, 102, 4, 127, 65, 1, 5, 65, 0, 11, 11]";
+    let package = package_lean_text(&lean_slice_tamper_cert);
+    let pin_def = package
+        .lines()
+        .find(|line| line.starts_with("def ") && line.ends_with(&format!(":= {honest_bytes}")))
+        .expect("the package pins floatLeGoal's exact code-entry bytes as a named constant");
+    let pin_name = pin_def["def ".len()..]
+        .split_whitespace()
+        .next()
+        .expect("the byte pin has a name");
+    let honest_exact_arg = format!("] {pin_name} = some ");
+    let slice_tampered_exact_arg = format!("] {slice_tampered_bytes} = some ");
     assert!(
-        plans_text.contains(honest_exact_arg),
-        "Plans.lean should contain the exact WasmSlice floatLeGoal byte pin"
+        package.lines().any(|line| {
+            line.contains("WasmSlice.exactFuncBindingForExport") && line.contains(&honest_exact_arg)
+        }) && package.matches(&honest_exact_arg).count() == 1,
+        "the package should feed the floatLeGoal byte pin to exactly one WasmSlice byte-origin pin"
     );
-    let tampered_exact = plans_text.replacen(honest_exact_arg, slice_tampered_exact_arg, 1);
-    std::fs::write(&plans_lean, tampered_exact).unwrap();
+    tamper_cert_lean_files(&lean_slice_tamper_cert, "wasm-slice byte origin", &|text| {
+        text.replacen(&honest_exact_arg, &slice_tampered_exact_arg, 1)
+    });
 
     let (ok, out) = aver_check(&lean_slice_tamper_wasm, &lean_slice_tamper_cert);
     assert!(
@@ -2881,10 +2892,10 @@ fn cert_plans_authority_declines_tampered_wasm_slice_byte_origin_pin() {
     // A false `rfl` over the full `ArtifactBytes.modBytes` numeral can fail
     // either as a normal `WasmSlice.exactFuncBindingForExport` type mismatch or as a
     // Lean stack overflow while reducing the huge byte list. Both are
-    // fail-closed build failures for this untrusted emitted audit example.
+    // fail-closed build failures for this untrusted emitted leaf.
     assert!(
         out.contains("WasmSlice.exactFuncBindingForExport")
-            || (out.contains("Plans") && out.contains("Stack overflow")),
+            || (out.contains("Artifact") && out.contains("Stack overflow")),
         "wrong reason for Lean WasmSlice byte-origin pin tamper:\n{out}"
     );
     assert!(
@@ -2990,15 +3001,14 @@ fn cert_verify_declines_expr_fragment_bad_bool01_raw_plan() {
     );
     // PlanCheck rejects the ill-typed Bool01 node (`constI32` is inferred
     // `rawI32`; `sameTy` fails against the declared `boolI32`), so the
-    // Plans.lean examples fail to elaborate. The verify report keeps only the
-    // tail of the lake output (`tail(.., 20)` in the standalone verifier), so the earliest
-    // error (the `checkExprFragmentRawPlan` example) can be cut when the later
-    // byte-pin errors fill the tail — accept either attribution of the same
-    // fail-closed Plans.lean build failure.
+    // `Artifact.lean` leaves that check and lower `AverCert.Plans.floatLeGoalPlan`
+    // fail to elaborate. Which error of that cascade names
+    // `checkExprFragmentRawPlan` outright is Lean's choice, so accept either
+    // attribution of the same fail-closed build failure on the plan data.
     assert!(
         out.contains("did not build")
             && (out.contains("checkExprFragmentRawPlan") || out.contains("Plans")),
-        "bad Bool01 raw plan should fail the Plans.lean checks:
+        "bad Bool01 raw plan should fail the plan-data checks:
 {out}"
     );
     assert!(
@@ -5897,7 +5907,7 @@ fn emitted_lean_def(src: &str, name: &str, ty: &str) -> String {
 
 /// The text the producer wrote between `head` and `tail` on one line of an
 /// emitted Lean source — used to read back the byte-derived arguments (carrier,
-/// member set, host-role table) it threads into its own examples.
+/// member set, host-role table) it threads into its own acceptance leaves.
 fn emitted_lean_args(src: &str, head: &str, tail: &str) -> String {
     let line = src
         .lines()
@@ -5979,23 +5989,25 @@ fn mutual_scc_kernel_guards_are_isolating() {
     assert!(honest_build.status.success(), "honest cert must lake-build");
 
     // Everything the assertions below talk about is read back out of the cert
-    // the producer just wrote: `isEven`'s emitted mutual plan, and the
-    // byte-derived binding context (carrier, SCC member set, box/sub role table)
-    // the producer threads into its own shape example. Nothing is restated by
-    // hand, so a producer-side shape change lands here instead of sliding past a
-    // stale copy.
+    // the producer just wrote: `isEven`'s emitted mutual plan (`Plans.lean`),
+    // and the byte-derived binding context (carrier, SCC member set, box/sub
+    // role table) the producer threads into its own byte-lowering and shape
+    // leaves (`Artifact.lean` and `Certificate.lean` state the same pair, so
+    // the first line found is as good as any). Nothing is restated by hand, so
+    // a producer-side shape change lands here instead of sliding past a stale
+    // copy.
     const PLAN: &str = "isEvenMutualPlan";
-    let plans = std::fs::read_to_string(cert.join("Plans.lean")).unwrap();
-    let honest = emitted_lean_def(&plans, PLAN, "MutualRawPlan");
+    let package = package_lean_text(&cert);
+    let honest = emitted_lean_def(&package, PLAN, "MutualRawPlan");
     let carrier = emitted_lean_args(
-        &plans,
-        "example : AverCert.PlanBytes.lowerMutualCodeEntry ",
-        &format!(" {PLAN} ="),
+        &package,
+        "AverCert.PlanBytes.lowerMutualCodeEntry ",
+        &format!(" AverCert.Plans.{PLAN} ="),
     );
     let context = emitted_lean_args(
-        &plans,
-        "example : AverCert.PlanCheck.checkMutualPlanShape ",
-        &format!(" {PLAN} = true := rfl"),
+        &package,
+        "AverCert.PlanCheck.checkMutualPlanShape ",
+        &format!(" AverCert.Plans.{PLAN} = true"),
     );
     // `<memberSet> <hostTable>`; the member set is a flat `List Nat`, so its
     // closing bracket is the first one in the pair.
@@ -6114,7 +6126,7 @@ fn mutual_scc_kernel_guards_are_isolating() {
 /// canonically lowers to the export's real code-entry bytes. For verbatim
 /// `Cod := WVal` matches there are NO host/self calls to bind, so the
 /// byte-equality gate is the WHOLE soundness binding: both the shipped
-/// `Plans.lean` `lowerVerbatimCodeEntry`/`exactFuncBindingForExport` `rfl` pins and the
+/// `Artifact.lean` `lowerVerbatimCodeEntry`/`exactFuncBindingForExport` `rfl` pins and the
 /// checker's `manifest.verbatimPlans` `rfl` pin reject the tampered plan. The
 /// `GuardIso.lean` block below isolates each vector by proving in-kernel
 /// (`by decide`) that its lowered code entry diverges from the honest one — the
@@ -6838,7 +6850,7 @@ example : PlanCheck.checkConstructRawPlan
 /// only (the byte-derived role table parameterizes the lowerers), so every
 /// semantic field of the plan — tags, arm order, roles, constants, operand
 /// order, and the default — reaches the lowered bytes and is caught by the
-/// byte-equality gate: both the shipped `Plans.lean`
+/// byte-equality gate: both the shipped `Artifact.lean`
 /// `lowerIntDispatchCodeEntry`/`exactFuncBindingForExport` `rfl` pins and the
 /// checker's `manifest.intDispatchPlans` `rfl` pin reject the tampered plan.
 /// The `GuardIso.lean` block below isolates each byte-reaching vector by
@@ -6973,7 +6985,8 @@ fn cert_verify_declines_tampered_int_dispatch_plan() {
 
     // (i) ROLE/TABLE PERMUTATION vector: swap the two arm roles in the plan AND
     // permute the claimed host-role table consistently, in every surface the
-    // artifact ships (Plans.lean pins + the Artifact.lean claim). The pair
+    // artifact ships (the `Plans.lean` plan, the `Artifact.lean` claim and the
+    // leaves that lower the plan under the table). The pair
     // lowers byte-identically and the table stays distinct, so the byte gate,
     // the structural checker and the distinctness guard are all blind — only
     // the host-builder equality bind rejects it. The host-table declared-type
@@ -6984,33 +6997,21 @@ fn cert_verify_declines_tampered_int_dispatch_plan() {
     {
         let dir = temp_dir("cert-int-dispatch-role-permutation");
         copy_dir(&out_dir, &dir);
-        let plans = dir.join("cert").join("Plans.lean");
-        let src = std::fs::read_to_string(&plans).unwrap();
+        let package = package_lean_text(&dir.join("cert"));
         assert!(
-            src.contains("(.hostOp .sub (0) true)")
-                && src.contains("(.hostOp .add (9) false)")
-                && src.contains("[(.box, 7), (.add, 8), (.sub, 9)]"),
-            "intdispatchgen Plans.lean gauge shape changed; update the test"
+            package.contains("(.hostOp .sub (0) true)")
+                && package.contains("(.hostOp .add (9) false)")
+                && package.contains("hostTable := [(.box, 7), (.add, 8), (.sub, 9)]"),
+            "intdispatchgen gauge plan or claim shape changed; update the test"
         );
-        let src = src
-            .replace("(.hostOp .sub (0) true)", "(.hostOp .add (0) true)")
-            .replace("(.hostOp .add (9) false)", "(.hostOp .sub (9) false)")
-            .replace(
-                "[(.box, 7), (.add, 8), (.sub, 9)]",
-                "[(.box, 7), (.add, 9), (.sub, 8)]",
-            );
-        std::fs::write(&plans, src).unwrap();
-        let artifact = dir.join("cert").join("Artifact.lean");
-        let src = std::fs::read_to_string(&artifact).unwrap();
-        assert!(
-            src.contains("hostTable := [(.box, 7), (.add, 8), (.sub, 9)]"),
-            "intdispatchgen Artifact.lean gauge claim shape changed; update the test"
-        );
-        let src = src.replace(
-            "hostTable := [(.box, 7), (.add, 8), (.sub, 9)]",
-            "hostTable := [(.box, 7), (.add, 9), (.sub, 8)]",
-        );
-        std::fs::write(&artifact, src).unwrap();
+        tamper_cert_lean_files(&dir.join("cert"), "role/table permutation", &|src| {
+            src.replace("(.hostOp .sub (0) true)", "(.hostOp .add (0) true)")
+                .replace("(.hostOp .add (9) false)", "(.hostOp .sub (9) false)")
+                .replace(
+                    "[(.box, 7), (.add, 8), (.sub, 9)]",
+                    "[(.box, 7), (.add, 9), (.sub, 8)]",
+                )
+        });
         let (ok, report) = aver_check(&dir.join("intdispatchgen.wasm"), &dir.join("cert"));
         assert!(!ok, "role/table permutation must be DECLINED:\n{report}");
     }
@@ -7718,14 +7719,12 @@ fn cert_verify_accepts_fused_vector_read_and_declines_three_tampers() {
     let box_idx: u32 = holes.next().unwrap().parse().expect("box hole");
     assert_ne!(to_index_idx, box_idx, "helper roles must be distinct");
 
+    // The plan nodes live in `Plans.lean` and the struct table in the
+    // `Artifact.lean` claim, so each edit ranges over the whole package.
     let tamper = |name: &str, edit: &dyn Fn(&str) -> String| {
         let dir = temp_dir(&format!("cert-fused-vector-read-{name}"));
         copy_dir(&out_dir, &dir);
-        let plans = dir.join("cert").join("Plans.lean");
-        let text = std::fs::read_to_string(&plans).unwrap();
-        let edited = edit(&text);
-        assert_ne!(text, edited, "tamper `{name}` must change Plans.lean");
-        std::fs::write(&plans, edited).unwrap();
+        tamper_cert_lean_files(&dir.join("cert"), name, edit);
         let (ok, out) = aver_verify(&dir.join("cell_at.wasm"), &dir.join("cert"));
         assert!(!ok, "tamper `{name}` must be DECLINED:\n{out}");
         assert!(
@@ -7855,18 +7854,69 @@ fn cert_verify_certifies_the_five_int_comparison_witnesses() {
 /// re-credit. Each is DECLINED instead, because the role indices are derived
 /// from the module's export section and the lowered bytes are pinned to the
 /// module's own code section.
-/// Read one host role's resolved function index out of the public plan data,
-/// so tampers stay robust to shifting module indices.
-fn plan_role_index(plans_text: &str, marker: &str) -> u32 {
-    let at = plans_text
-        .find(marker)
-        .unwrap_or_else(|| panic!("Plans.lean carries `{marker}`"));
-    plans_text[at + marker.len()..]
+/// Every `.lean` file the producer wrote into a package directory, sorted, as
+/// (path, contents). Acceptance is indifferent to which file carries which
+/// value (format spec section 2.2), so a tamper that keys on a value must look
+/// for it across the package rather than in one file by name.
+fn cert_lean_files(cert_dir: &std::path::Path) -> Vec<(PathBuf, String)> {
+    let mut files: Vec<PathBuf> = std::fs::read_dir(cert_dir)
+        .expect("the package directory is readable")
+        .filter_map(|entry| entry.ok().map(|e| e.path()))
+        .filter(|path| path.extension().is_some_and(|ext| ext == "lean"))
+        .collect();
+    files.sort();
+    files
+        .into_iter()
+        .map(|path| {
+            let text = std::fs::read_to_string(&path).expect("a package file is readable");
+            (path, text)
+        })
+        .collect()
+}
+
+/// Every emitted `.lean` file of a package, concatenated in filename order:
+/// the text to search when a test keys on a value acceptance reads, since the
+/// format does not say which file carries it.
+fn package_lean_text(cert_dir: &std::path::Path) -> String {
+    cert_lean_files(cert_dir)
+        .into_iter()
+        .map(|(_, text)| text)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Read one host role's resolved function index out of the package's own data,
+/// so tampers stay robust both to shifting module indices and to which emitted
+/// file carries the role table.
+fn cert_role_index(cert_dir: &std::path::Path, marker: &str) -> u32 {
+    let (_, text, at) = cert_lean_files(cert_dir)
+        .into_iter()
+        .find_map(|(path, text)| text.find(marker).map(|at| (path, text, at)))
+        .unwrap_or_else(|| panic!("the package carries `{marker}` in some emitted file"));
+    text[at + marker.len()..]
         .split(|c: char| !c.is_ascii_digit())
         .find(|s| !s.is_empty())
         .expect("an index follows the marker")
         .parse()
         .expect("the index parses")
+}
+
+/// Apply one textual tamper to every emitted `.lean` file of a package,
+/// returning how many files it changed. Panics when it changed none: a tamper
+/// that edits nothing proves nothing.
+fn tamper_cert_lean_files(cert_dir: &std::path::Path, name: &str, edit: &dyn Fn(&str) -> String) {
+    let mut changed = 0usize;
+    for (path, text) in cert_lean_files(cert_dir) {
+        let edited = edit(&text);
+        if edited != text {
+            std::fs::write(&path, edited).expect("the package file is writable");
+            changed += 1;
+        }
+    }
+    assert!(
+        changed > 0,
+        "tamper `{name}` must change at least one emitted package file"
+    );
 }
 
 #[test]
@@ -7899,21 +7949,23 @@ fn cert_verify_declines_int_comparison_role_tampers() {
     let (ok, report) = aver_verify(&wasm, &cert);
     assert!(ok, "the honest control must verify CERTIFIED:\n{report}");
 
-    // Recover the two helper indices from the public plan data so the tampers
-    // stay robust to shifting module indices.
+    // Recover the two helper indices from the package's own data so the tampers
+    // stay robust to shifting module indices. The role table travels in the
+    // files acceptance reads (`Artifact.lean`, `Manifest.lean`), so the lookup
+    // and the edits below both range over the whole emitted package.
     let plans_text = std::fs::read_to_string(cert.join("Plans.lean")).unwrap();
-    let cmp_idx = plan_role_index(&plans_text, "(.cmp, ");
-    let eq_idx = plan_role_index(&plans_text, "(.eq, ");
+    let cmp_idx = cert_role_index(&cert, "(.cmp, ");
+    let eq_idx = cert_role_index(&cert, "(.eq, ");
     assert_ne!(cmp_idx, eq_idx, "the two helper roles must be distinct");
+    assert!(
+        plans_text.contains(&format!(".hostCall .cmp {cmp_idx} ")),
+        "the comparison plan must cite the role table's own cmp index:\n{plans_text}"
+    );
 
     let tamper = |name: &str, edit: &dyn Fn(&str) -> String| {
         let dir = temp_dir(&format!("cert-intcmp-tamper-{name}"));
         copy_dir(&out_dir, &dir);
-        let plans = dir.join("cert").join("Plans.lean");
-        let text = std::fs::read_to_string(&plans).unwrap();
-        let edited = edit(&text);
-        assert_ne!(text, edited, "tamper `{name}` must change Plans.lean");
-        std::fs::write(&plans, edited).unwrap();
+        tamper_cert_lean_files(&dir.join("cert"), name, edit);
         let (ok, out) = aver_verify(&dir.join("int_comparison_laws.wasm"), &dir.join("cert"));
         assert!(!ok, "tamper `{name}` must be DECLINED:\n{out}");
         assert!(
@@ -8127,8 +8179,8 @@ fn cert_tripwire_declines_tampered_int_sign_cmp_plan() {
         "intcompare should certify all five comparisons:\n{report}"
     );
 
-    let cmp_idx = plan_role_index(&plans_text, "(.cmp, ");
-    let eq_idx = plan_role_index(&plans_text, "(.eq, ");
+    let cmp_idx = cert_role_index(&cert, "(.cmp, ");
+    let eq_idx = cert_role_index(&cert, "(.eq, ");
     assert_ne!(cmp_idx, eq_idx, "the two helper roles must be distinct");
 
     // `expect_pins` are Lean-level pin names the decline report must name;
@@ -8138,11 +8190,7 @@ fn cert_tripwire_declines_tampered_int_sign_cmp_plan() {
         |name: &str, edit: &dyn Fn(&str) -> String, expect_pins: &[&str], absent_pins: &[&str]| {
             let dir = temp_dir(&format!("cert-intcompare-tamper-{name}"));
             copy_dir(&out_dir, &dir);
-            let plans = dir.join("cert").join("Plans.lean");
-            let text = std::fs::read_to_string(&plans).unwrap();
-            let edited = edit(&text);
-            assert_ne!(text, edited, "tamper `{name}` must change Plans.lean");
-            std::fs::write(&plans, edited).unwrap();
+            tamper_cert_lean_files(&dir.join("cert"), name, edit);
             let (ok, out) = aver_check(&dir.join("intcompare.wasm"), &dir.join("cert"));
             assert!(!ok, "tamper `{name}` must be DECLINED:\n{out}");
             assert!(
@@ -8214,8 +8262,19 @@ fn cert_tripwire_declines_tampered_int_sign_cmp_plan() {
 
     // (4) Swap which exported helper each comparison role names. Both helpers
     //     declare the same function type, so only the export-name binding
-    //     objects — and it is what drives the audited encoder, which is
-    //     exactly why the re-encoding equality is the pin that fires.
+    //     objects — and it is what drives the audited encoder.
+    //
+    //     No pin name is asserted here, and that is a deliberate weakening of
+    //     what this case used to check. The role table used to be duplicated
+    //     into `Plans.lean`'s emitted `encodeSymRawPlanToExprFragmentRawPlan`
+    //     example, so this edit reached that example's `rfl` first and the
+    //     decline named it. The examples are no longer emitted (the packages
+    //     they broke were unbuildable, see the format spec section 2.2), so the
+    //     same edit now lands only on the role table acceptance itself reads,
+    //     in `Artifact.lean` and `Manifest.lean`. It is still DECLINED — the
+    //     assertions above are what this case now guarantees — but the decline
+    //     arrives from the acceptance build rather than from a named pin, and
+    //     re-authoring it to name one again is open work.
     tamper(
         "cmp-eq-role-swap",
         &|text| {
@@ -8223,7 +8282,7 @@ fn cert_tripwire_declines_tampered_int_sign_cmp_plan() {
                 .replace(&format!("(.eq, {eq_idx})"), &format!("(.eq, {cmp_idx})"))
                 .replace("(.cmp, __SWAP__)", &format!("(.cmp, {eq_idx})"))
         },
-        &["encodeSymRawPlanToExprFragmentRawPlan"],
+        &[],
         &[],
     );
 
@@ -8239,6 +8298,11 @@ fn cert_tripwire_declines_tampered_int_sign_cmp_plan() {
         &|text| {
             let sym = ".intConstCmp .ge 4 (0 : Int)";
             let frag = ".intSignCmp .ge (0 : Int) 1 4";
+            // The edit visits every emitted file; only the one carrying the
+            // two plan definitions is touched, and there each node is unique.
+            if !text.contains(sym) && !text.contains(frag) {
+                return text.to_string();
+            }
             assert_eq!(text.matches(sym).count(), 1, "isNonNeg sym node is unique");
             assert_eq!(
                 text.matches(frag).count(),
