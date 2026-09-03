@@ -1792,4 +1792,36 @@ mod decline_reason_tests {
             );
         }
     }
+
+    /// A producer-asserted source type name reaches this reason as untrusted
+    /// display text, and one of the producer's feeds spells types with the Rust
+    /// `Debug` derive of the Aver compiler's own type representation. That
+    /// spelling must be rendered as the Aver type it stands for rather than
+    /// echoed at the reader.
+    #[test]
+    fn a_debug_rendered_type_name_is_shown_as_the_aver_type() {
+        use super::SymTy;
+        assert_eq!(
+            SymTy::display_source_type_name(
+                "List(Named { id: Some(TypeId(13874036260092058374)), name: \"TaskEventRecord\" })"
+            ),
+            "List<TaskEventRecord>"
+        );
+        assert_eq!(
+            SymTy::display_source_type_name("Map(Str, Named { id: None, name: \"Task\" })"),
+            "Map<String, Task>"
+        );
+        assert_eq!(
+            SymTy::display_source_type_name("Tuple([Int, Bool])"),
+            "Tuple<Int, Bool>"
+        );
+        assert_eq!(
+            SymTy::display_source_type_name("Named { id: None, name: \"Task\" }"),
+            "Task"
+        );
+        // Names already written in Aver surface syntax pass through untouched.
+        for name in ["Task", "List<Int>", "Map<String, Task>"] {
+            assert_eq!(SymTy::display_source_type_name(name), name);
+        }
+    }
 }

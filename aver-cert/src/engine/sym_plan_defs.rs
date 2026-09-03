@@ -32,6 +32,24 @@ impl SymTy {
         }
     }
 
+    /// The Aver surface spelling of a producer-asserted source type name, for
+    /// decline reasons only.
+    ///
+    /// A `named:` name is untrusted producer text (see the note on
+    /// `check_sym_plan_named_consistency`): nothing is admitted or refused on
+    /// its spelling, so this rendering can only make a message clearer, never
+    /// certify anything, and the anchor rule keeps comparing the RAW name. The
+    /// rendering exists because one of the producer's two feeds spells a type
+    /// with the Rust `Debug` derive of the Aver compiler's own type
+    /// representation (`aver`'s `mir::lower` stores `format!("{ty:?}")`), so a
+    /// name can arrive as `List(Named { id: Some(TypeId(…)), name: "Task" })`.
+    /// Echoing that into a reason leaks a foreign implementation detail at the
+    /// reader; `List<Task>` is the same fact in the language the reason is
+    /// about. A name that is not such a rendering is returned unchanged.
+    pub fn display_source_type_name(name: &str) -> String {
+        aver_name_from_debug_rendering(name).unwrap_or_else(|| name.to_string())
+    }
+
     fn from_frag_ty(value: FragTy) -> Option<Self> {
         match value {
             FragTy::F64 => Some(SymTy::Float),
@@ -70,6 +88,76 @@ impl SymTy {
         }
     }
 
+}
+
+/// Render the Rust `Debug` derive of the Aver compiler's type representation as
+/// the Aver surface type name it stands for, mirroring that compiler's own
+/// `Type::display`: `Named { id: …, name: "T" }` is `T`, `List(Str)` is
+/// `List<String>`, `Tuple([Int, Bool])` is `Tuple<Int, Bool>`.
+///
+/// `None` for anything this renderer does not recognise — including every name
+/// that is already Aver surface syntax, which is the common case and must pass
+/// through untouched. Display only; see `SymTy::display_source_type_name`.
+fn aver_name_from_debug_rendering(name: &str) -> Option<String> {
+    let name = name.trim();
+    match name {
+        "Int" | "Bool" | "Float" | "Unit" => return Some(name.to_string()),
+        "Str" => return Some("String".to_string()),
+        _ => {}
+    }
+    // `Named { id: <anything>, name: "T" }` — the only variant with a payload
+    // the derive prints as a struct.
+    if let Some(rest) = name.strip_prefix("Named {").and_then(|r| r.strip_suffix('}')) {
+        let at = rest.find("name: \"")?;
+        let after = rest.get(at + 7..)?;
+        let inner = after.get(..after.find('"')?)?;
+        if inner.is_empty() || inner.chars().any(char::is_whitespace) || inner.contains('=') {
+            return None;
+        }
+        return Some(inner.to_string());
+    }
+    // `Ctor(arg, …)` — every parameterised variant.
+    let open = name.find('(')?;
+    let ctor = name.get(..open)?;
+    if ctor.is_empty() || !ctor.chars().all(|ch| ch.is_ascii_alphanumeric()) {
+        return None;
+    }
+    let inner = name.get(open + 1..)?.strip_suffix(')')?.trim();
+    // `Tuple` carries a `Vec`, so the derive brackets its arguments.
+    let inner = inner
+        .strip_prefix('[')
+        .and_then(|rest| rest.strip_suffix(']'))
+        .unwrap_or(inner);
+    let args = split_debug_args(inner)
+        .into_iter()
+        .map(aver_name_from_debug_rendering)
+        .collect::<Option<Vec<_>>>()?;
+    if args.is_empty() {
+        return None;
+    }
+    Some(format!("{ctor}<{}>", args.join(", ")))
+}
+
+/// Split a `Debug` argument list on its top-level commas. Every bracket kind
+/// opens nesting, so the comma inside `Named { id: Some(TypeId(1)), name: "T" }`
+/// does not split the list.
+fn split_debug_args(value: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut depth = 0i32;
+    let mut start = 0usize;
+    for (at, ch) in value.char_indices() {
+        match ch {
+            '(' | '<' | '[' | '{' => depth += 1,
+            ')' | '>' | ']' | '}' => depth -= 1,
+            ',' if depth == 0 => {
+                parts.push(value[start..at].trim());
+                start = at + ch.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    parts.push(value[start..].trim());
+    parts
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
