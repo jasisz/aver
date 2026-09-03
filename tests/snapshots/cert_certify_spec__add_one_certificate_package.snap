@@ -133,41 +133,6 @@ acceptance prefers this claim when the fragment has a direct
 Aver-level meaning; the encoder below still binds it to `addOnePlan`. -/
 def addOneSymPlan : SymRawPlan := { profile := "sym-fragment-v1", params := [.int], result := .int, body := ({ nodes := [{ id := 0, ty := .int, kind := .param 0 }, { id := 1, ty := .int, kind := .constInt (1 : Int) }, { id := 2, ty := .int, kind := .prim .intAdd [0, 1] }], result := 2 } : SymBlock) }
 
-/-- The audited Lean-side source-plan checker accepts `addOne`'s `SymPlan`. -/
-example : AverCert.PlanCheck.checkSymRawPlan addOneSymPlan = true := rfl
-
-/-- The audited Lean-side source encoder maps `addOne`'s `SymPlan`,
-under the byte-derived host-role and struct tables, to the
-representation plan that is bound to bytes below. -/
-example : AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan [(.box, 6), (.add, 7), (.mul, 9), (.sub, 8), (.toIndex, 18)] [] addOneSymPlan =
-  some addOnePlan := rfl
-
-/-- The audited Lean-side structural checker accepts `addOne`'s raw plan. -/
-example : AverCert.PlanCheck.checkExprFragmentRawPlan addOnePlan = true := rfl
-
-/-- The audited Lean-side canonical lowerer maps `addOne`'s raw plan
-to the same instruction body emitted in `Module.lean`. -/
-example : (CertModule.addOneCode 1).map (fun c => c.body) =
-  AverCert.PlanLower.lowerExprFragmentBody 2 addOnePlan := rfl
-
-/-- The audited Lean-side byte lowerer maps `addOne`'s raw plan
-to the exact canonical code-entry bytes. -/
-example : AverCert.PlanBytes.lowerExprFragmentCodeEntry 2 addOnePlan =
-  some [13, 1, 1, 99, 2, 32, 0, 66, 1, 16, 6, 16, 7, 11] := rfl
-
-/-- The audited Lean-side Wasm slicer binds `addOne` to its function
-index, type index and exact expected code-entry bytes. -/
-example : AverCert.WasmSlice.exactFuncBindingForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen [97, 100, 100, 79, 110, 101] [13, 1, 1, 99, 2, 32, 0, 66, 1, 16, 6, 16, 7, 11] =
-  some ({ funcIdx := 1, typeIdx := 4, codeEntry := [13, 1, 1, 99, 2, 32, 0, 66, 1, 16, 6, 16, 7, 11] } : AverCert.WasmSlice.FuncBinding) := rfl
-
-/-- The audited Lean-side expr-fragment acceptance predicate aggregates
-plan checking, semantic lowering, byte lowering and byte-origin binding. -/
-example : AverCert.ExprFragmentAccepted.accepted AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen
-  [97, 100, 100, 79, 110, 101] 2 addOnePlan
-  [.localGet 0, .i64Const (1), .call 6, .call 7]
-  [13, 1, 1, 99, 2, 32, 0, 66, 1, 16, 6, 16, 7, 11]
-  ({ funcIdx := 1, typeIdx := 4, codeEntry := [13, 1, 1, 99, 2, 32, 0, 66, 1, 16, 6, 16, 7, 11] } : AverCert.WasmSlice.FuncBinding) := by dsimp [AverCert.ExprFragmentAccepted.accepted]; exact ⟨rfl, rfl, rfl, rfl⟩
-
 /-- `addOne` names no record; the declared face's declaration slot is empty. -/
 def addOneRecordFields : List TypeDecl := []
 

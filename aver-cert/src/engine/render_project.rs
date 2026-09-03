@@ -236,7 +236,12 @@ pub fn write_project(
     write(
         &cert_dir,
         "Plans.lean",
-        &render_expr_fragment_plans(analysis, &model_info, &host_table_lean, &struct_table_lean),
+        &without_plan_examples(&render_expr_fragment_plans(
+            analysis,
+            &model_info,
+            &host_table_lean,
+            &struct_table_lean,
+        )),
     )?;
     write(
         &cert_dir,
@@ -417,6 +422,57 @@ fn emit_frag_struct_table_lean(analysis: &Analysis) -> Result<String, String> {
         }
     }
     frag_struct_table_lean_from_entries(entries.iter())
+}
+
+/// Drop the anonymous `example` declarations from a rendered `Plans.lean`.
+///
+/// `Plans.lean` carries two kinds of top-level declaration: the plan `def`s,
+/// which `Manifest.lean`, `Artifact.lean` and `Certificate.lean` reference by
+/// name and which acceptance therefore rests on, and `example`s that re-state
+/// — through the same audited checkers, encoders, lowerers and byte slicer —
+/// equalities the acceptance predicates already state themselves. The examples
+/// are anonymous, so nothing can cite them; they were an early-failure signal
+/// for the producer, never part of the verdict (see docs/certificate-format.md
+/// section 2.2, "`Plans.lean` is not load-bearing").
+///
+/// They are also the package's elaboration cost. Each byte-slicer example
+/// re-runs `exactFuncBindingForExport` over the whole module, and past roughly
+/// a hundred kilobytes of wasm that exhausts Lean's per-declaration heartbeat
+/// budget — `workflow_engine` built a package no verifier could check, failing
+/// on eight `Plans.lean` timeouts while every predicate the verdict rests on
+/// was fine.
+///
+/// The filter is fail-safe toward KEEPING: a blank-line-separated block is
+/// dropped only when it opens a top-level `example` and carries no other
+/// top-level declaration, so a block this renderer does not expect survives
+/// verbatim.
+fn without_plan_examples(rendered: &str) -> String {
+    /// Top-level keywords whose declaration must never be dropped.
+    const KEEP: [&str; 9] = [
+        "def ",
+        "abbrev ",
+        "theorem ",
+        "instance ",
+        "namespace ",
+        "end ",
+        "open ",
+        "import ",
+        "set_option ",
+    ];
+    let mut kept: Vec<&str> = Vec::new();
+    for block in rendered.split("\n\n") {
+        let opens_example = block
+            .lines()
+            .any(|line| line.starts_with("example ") || line.starts_with("example:"));
+        let carries_other = block
+            .lines()
+            .any(|line| KEEP.iter().any(|kw| line.starts_with(kw)));
+        if opens_example && !carries_other {
+            continue;
+        }
+        kept.push(block);
+    }
+    kept.join("\n\n")
 }
 
 fn render_expr_fragment_plans(
@@ -3747,5 +3803,57 @@ mod render_project_tests {
         assert!(model_root_from_stem("Apps/../Store").is_err());
         assert!(model_root_from_stem("Apps/Bad Name").is_err());
         assert!(model_root_from_stem("").is_err());
+    }
+
+    /// The plan `def`s carry the package's authority and every other emitted
+    /// file cites them by name; the `example`s are anonymous restatements of
+    /// equalities the acceptance predicates already state. Only the latter go.
+    #[test]
+    fn plan_examples_are_dropped_and_plan_definitions_are_not() {
+        let rendered = "\
+import Schema
+
+set_option maxRecDepth 200000
+
+namespace AverCert.Plans
+
+/-- Byte-derived plan for `f`. -/
+def fPlan : ExprFragmentRawPlan := { profile := \"v1\" }
+
+/-- The audited checker accepts `f`'s plan. -/
+example : AverCert.PlanCheck.checkExprFragmentRawPlan fPlan = true := rfl
+
+/-- The Wasm slicer finds `f`'s export binding. -/
+example : (AverCert.WasmSlice.exactFuncBindingForExport modBytes modLen [102] c) =
+  some binding := rfl
+
+/-- Byte-derived plan for `g`. -/
+def gPlan : ExprFragmentRawPlan := { profile := \"v1\" }
+
+end AverCert.Plans
+";
+        let filtered = super::without_plan_examples(rendered);
+        assert!(!filtered.contains("example"), "no example survives:\n{filtered}");
+        assert!(!filtered.contains("audited checker accepts"));
+        assert!(!filtered.contains("Wasm slicer finds"));
+        for kept in [
+            "import Schema",
+            "set_option maxRecDepth 200000",
+            "namespace AverCert.Plans",
+            "/-- Byte-derived plan for `f`. -/\ndef fPlan : ExprFragmentRawPlan := { profile := \"v1\" }",
+            "/-- Byte-derived plan for `g`. -/\ndef gPlan : ExprFragmentRawPlan := { profile := \"v1\" }",
+            "end AverCert.Plans",
+        ] {
+            assert!(filtered.contains(kept), "`{kept}` must survive:\n{filtered}");
+        }
+    }
+
+    /// The filter is fail-safe toward keeping: a block that carries a real
+    /// declaration alongside the word `example` is not this renderer's shape,
+    /// and survives verbatim rather than being guessed away.
+    #[test]
+    fn a_block_carrying_a_declaration_survives() {
+        let rendered = "def keepMe : Nat := 1\nexample : keepMe = 1 := rfl\n";
+        assert_eq!(super::without_plan_examples(rendered), rendered);
     }
 }

@@ -138,6 +138,17 @@ fn assert_plans_lean_is_the_only_public_plan_data(
         cert_dir.join("Plans.lean").is_file(),
         "Plans.lean must be the package's authoritative plan DATA"
     );
+    // DATA and nothing else. The anonymous `example`s that used to restate each
+    // plan's passage through the audited checkers, lowerers and byte slicer are
+    // redundant with the acceptance predicates, and `Plans.lean` — unlike
+    // `Artifact.lean` and `Certificate.lean` — raises no heartbeat budget, so on
+    // a large module they were the only declarations that could fail the build.
+    let plans_lean =
+        std::fs::read_to_string(cert_dir.join("Plans.lean")).expect("Plans.lean exists");
+    assert!(
+        !plans_lean.contains("\nexample "),
+        "Plans.lean must carry plan DATA and no example declarations:\n{plans_lean}"
+    );
     assert!(
         !cert_dir.join("ArtifactBytes.lean").exists(),
         "ArtifactBytes.lean is checker-generated from Wasm, not public package DATA"
@@ -831,10 +842,9 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         "userName SymPlan should expose the source-level field projection:\n{plans_lean}"
     );
     assert!(
-        plans_lean.contains("[(\"User\", ")
-            && plans_lean.contains(" userNameSymPlan =\n  some userNamePlan := rfl"),
-        "userName SymPlan should encode, under the byte-derived host-role and struct \
-         tables, to the byte-bound ExprFragment plan:\n{plans_lean}"
+        plans_lean.contains("def userNamePlan : ExprFragmentRawPlan"),
+        "userName SymPlan should sit beside the byte-bound ExprFragment plan the \
+         encoder maps it to:\n{plans_lean}"
     );
     assert!(
         plans_lean.contains("def mkOpConstructSymPlan : SymRawPlan"),
@@ -850,24 +860,11 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         ),
         "mkOp should render its concrete target-bound constructor DATA in Plans.lean:\n{plans_lean}"
     );
-    assert!(
-        plans_lean.contains("checkConstructRawPlan mkOpConstructPlan = true := rfl"),
-        "mkOp construct plan should pass the Lean-side target checker:\n{plans_lean}"
-    );
-    assert!(
-        plans_lean.contains(
-            "constructPlanMatchesSymRawPlan\n  mkOpConstructSymPlan mkOpConstructPlan = true := rfl"
-        ),
-        "mkOp source construct plan should match the target-bound construct plan:\n{plans_lean}"
-    );
-    assert!(
-        plans_lean.contains("] mkOpConstructSymPlan = none := rfl"),
-        "construct SymPlan should remain outside the expr-fragment encoder:\n{plans_lean}"
-    );
-    assert!(
-        plans_lean.contains("lowerConstructCodeEntry 23 1 mkOpConstructPlan =\n  some [10, 1, 1, 99, 23, 32, 0, 251, 0, 1, 11] := rfl"),
-        "mkOp construct plan should lower to the exact code-entry bytes:\n{plans_lean}"
-    );
+    // The four facts this used to grep out of `Plans.lean` — that the construct
+    // plan passes the Lean-side checker, matches its SymPlan, stays outside the
+    // expr-fragment encoder, and lowers to those exact code-entry bytes — are
+    // no longer restated there. They are what acceptance itself proves, and the
+    // `check_certificate` call below is what makes them load-bearing.
     let mkop_entry = manifest["certified"]
         .as_array()
         .unwrap()
@@ -2628,16 +2625,10 @@ fn certify_string_eq_host_contract_lake_builds_kernel_clean() {
             && plans_lean.contains("default := .input"),
         "String.eq target plan DATA should preserve its byte/data-segment bindings:\n{plans_lean}"
     );
-    assert!(
-        plans_lean.contains("stringEqPlanMatchesSymRawPlan")
-            && plans_lean
-                .contains("quoteOrSelfStringEqSymPlan quoteOrSelfStringEqPlan = true := rfl"),
-        "String.eq SymPlan should be matched to the byte-bound equality plan:\n{plans_lean}"
-    );
-    assert!(
-        plans_lean.contains("checkStringEqRawPlan quoteOrSelfStringEqPlan = true := rfl"),
-        "String.eq Lean plan should be checked by the Lean-side structural checker:\n{plans_lean}"
-    );
+    // That the SymPlan matches the byte-bound equality plan and that the plan
+    // passes the Lean-side structural checker are no longer restated in
+    // `Plans.lean`; the acceptance predicates state them, so the manifest pins
+    // below plus `check_certificate` are what carry those facts.
     let manifest_lean =
         std::fs::read_to_string(cert_dir.join("Manifest.lean")).expect("Manifest.lean exists");
     assert!(
@@ -2778,15 +2769,10 @@ fn certify_string_concat_host_contract_lake_builds_kernel_clean() {
             && plans_lean.contains(".prim .stringConcat [0, 1]"),
         "String.concat SymPlan should expose source-level string concat:\n{plans_lean}"
     );
-    assert!(
-        plans_lean.contains("checkSymRawPlan shoutStringConcatSymPlan = true := rfl"),
-        "String.concat SymPlan should be checked by the Lean-side source checker:\n{plans_lean}"
-    );
-    assert!(
-        plans_lean.contains("stringConcatPlanMatchesSymRawPlan")
-            && plans_lean.contains("shoutStringConcatSymPlan shoutStringConcatPlan = true := rfl"),
-        "String.concat SymPlan should be matched to the byte-bound concat plan:\n{plans_lean}"
-    );
+    // The source checker's verdict on the SymPlan and its match to the
+    // byte-bound concat plan are no longer restated in `Plans.lean` — the
+    // acceptance predicates state them, and `check_certificate` is what makes
+    // them load-bearing.
     assert!(
         plans_lean.contains("def shoutStringConcatPlan : StringConcatRawPlan"),
         "String.concat cert should render a Lean-data StringConcatRawPlan:\n{plans_lean}"
@@ -2794,10 +2780,6 @@ fn certify_string_concat_host_contract_lake_builds_kernel_clean() {
     assert!(
         plans_lean.contains("suffixes := [({ dataIdx := 0, bytes := [33] } : StringConcatChunk)]"),
         "String.concat Lean plan should expose the literal suffix bytes and data segment binding:\n{plans_lean}"
-    );
-    assert!(
-        plans_lean.contains("checkStringConcatRawPlan shoutStringConcatPlan = true := rfl"),
-        "String.concat Lean plan should be checked by the Lean-side structural checker:\n{plans_lean}"
     );
     let manifest_lean =
         std::fs::read_to_string(cert_dir.join("Manifest.lean")).expect("Manifest.lean exists");
