@@ -3548,8 +3548,8 @@ pub(super) fn emit_mir_tco_fn(
 
     // Borrow policy: no borrow-by-default (owned `mut` params), rc
     // params wrapped (`(*x).clone()` on read). Mirror of
-    // `emit_tco_fn`'s `build_fn_ectx_no_borrow_from_resolved` +
-    // `with_rc_wrapped`.
+    // `emit_tco_fn`'s `build_fn_ectx_no_borrow_from_resolved` and its
+    // Rc-wrapped-parameter policy.
     let mut policy = MirFnEmitPolicy::from_resolved(resolved_fd, scope, /* borrow */ false);
     policy.rc_wrapped = rc_names.clone();
     // own_param-proven collection params are already `mut`-owned in the
@@ -4265,8 +4265,8 @@ fn emit_mir_trampoline_tail_expr(
 
 // ── MIR-side borrow / clone machinery ───────────────────────────────────
 //
-// Mirror of the HIR walker's `expr_skip_clone` / `maybe_clone` /
-// `clone_arg` / `borrow_arg` (emit_ctx.rs + expr.rs), keyed off
+// Mirror of the HIR walker's skip-clone / `maybe_clone` /
+// `clone_arg` / `borrow_arg` policy (emit_ctx.rs + expr.rs), keyed off
 // `MirLocal` (slot + `last_use` + source `name`) instead of
 // `ResolvedExpr::Resolved`. The covered arms route every arg /
 // field / element / base through these so their output matches HIR

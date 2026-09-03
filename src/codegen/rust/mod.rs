@@ -92,19 +92,6 @@ pub fn transpile(ctx: &mut CodegenContext) -> ProjectOutput {
     transpile_project(ctx, required, composition::ProviderComposition::default())
 }
 
-#[cfg(feature = "runtime")]
-pub fn transpile_with_provider_manifest(
-    ctx: &mut CodegenContext,
-    manifest: Option<&crate::config::ProviderPackageManifest>,
-) -> Result<ProjectOutput, String> {
-    let known_capabilities = ctx
-        .capabilities
-        .contracts()
-        .map(|contract| contract.module.clone())
-        .collect();
-    transpile_with_provider_manifest_for_project(ctx, manifest, &known_capabilities)
-}
-
 /// Transpile one entry program using a provider manifest owned by its whole
 /// project. Bindings known to the project but unreachable from this program
 /// remain inactive and are not emitted as Cargo dependencies.

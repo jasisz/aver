@@ -323,16 +323,6 @@ pub fn needed_helpers(body: &str, force_all: bool) -> Vec<&'static BuiltinHelper
     selected
 }
 
-/// Convenience: just the keys, in emission order. Currently used
-/// only by tests; backends call `needed_helpers` directly.
-#[allow(dead_code)]
-pub fn needed_keys(body: &str, force_all: bool) -> Vec<&'static str> {
-    needed_helpers(body, force_all)
-        .iter()
-        .map(|h| h.key)
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -346,7 +336,10 @@ mod tests {
     fn body_with_aver_digits_pulls_numeric_parse_with_result_dep() {
         // NumericParse depends on ResultDatatype (Dafny's IntFromString
         // returns Result).
-        let keys = needed_keys("foo AverDigits.bar baz", false);
+        let keys = needed_helpers("foo AverDigits.bar baz", false)
+            .iter()
+            .map(|h| h.key)
+            .collect::<Vec<_>>();
         assert_eq!(keys, vec!["ResultDatatype", "NumericParse"]);
     }
 
@@ -356,7 +349,10 @@ mod tests {
         // `StringHadd` instance bundle gets pulled in alongside.
         // StringHelpers also depends on OptionDatatype, which is emitted
         // before StringHelpers (deps go first).
-        let keys = needed_keys("...String.charAt s 0...", false);
+        let keys = needed_helpers("...String.charAt s 0...", false)
+            .iter()
+            .map(|h| h.key)
+            .collect::<Vec<_>>();
         assert_eq!(
             keys,
             vec![
@@ -370,7 +366,10 @@ mod tests {
 
     #[test]
     fn body_with_branch_path_pulls_branch_path_and_its_deps() {
-        let keys = needed_keys("rollOnce BranchPath.Root rnd", false);
+        let keys = needed_helpers("rollOnce BranchPath.Root rnd", false)
+            .iter()
+            .map(|h| h.key)
+            .collect::<Vec<_>>();
         // BranchPath depends on NumericParse and BranchPathDatatype.
         // NumericParse in turn depends on ResultDatatype.
         assert_eq!(
@@ -390,7 +389,10 @@ mod tests {
         // declared dependencies. The exact set is a conjunction of:
         // explicit token matches + transitive deps.
         let body = "AverDigits. String.charAt String.firstCodePointAv AverList. averStringPosFuel BranchPath";
-        let keys = needed_keys(body, false);
+        let keys = needed_helpers(body, false)
+            .iter()
+            .map(|h| h.key)
+            .collect::<Vec<_>>();
         assert_eq!(
             keys,
             vec![
@@ -410,7 +412,10 @@ mod tests {
 
     #[test]
     fn force_all_returns_every_helper() {
-        let keys = needed_keys("", true);
+        let keys = needed_helpers("", true)
+            .iter()
+            .map(|h| h.key)
+            .collect::<Vec<_>>();
         // BranchPath depends on NumericParse so NumericParse comes
         // first; the rest follow declaration order.
         assert_eq!(
@@ -441,7 +446,10 @@ mod tests {
         // No Float / Except / String tokens — the instance bundles
         // shouldn't be requested.
         let body = "def absVal (x : Int) : Int := if x < 0 then -x else x";
-        let keys = needed_keys(body, false);
+        let keys = needed_helpers(body, false)
+            .iter()
+            .map(|h| h.key)
+            .collect::<Vec<_>>();
         assert!(!keys.contains(&"FloatInstances"));
         assert!(!keys.contains(&"ExceptInstances"));
         assert!(!keys.contains(&"StringHadd"));
@@ -450,7 +458,11 @@ mod tests {
     #[test]
     fn body_with_float_pulls_float_instances() {
         let body = "def f (x : Float) : Float := x + 1.0";
-        assert!(needed_keys(body, false).contains(&"FloatInstances"));
+        let keys = needed_helpers(body, false)
+            .iter()
+            .map(|h| h.key)
+            .collect::<Vec<_>>();
+        assert!(keys.contains(&"FloatInstances"));
     }
 
     #[test]
