@@ -1824,4 +1824,52 @@ mod decline_reason_tests {
             assert_eq!(SymTy::display_source_type_name(name), name);
         }
     }
+
+    /// A body that calls another user function is refused for THAT, not for an
+    /// instruction: the call is what pulled the uncertifiable instructions in,
+    /// so naming `I32LeS` pointed the reader at a symptom. The callee is named,
+    /// and the reason still fits the format's candidate budget.
+    #[test]
+    fn a_user_call_is_reported_before_the_instruction_it_explains() {
+        let bytes = wat::parse_str(
+            r#"(module
+  (type $mag (array (mut i64)))
+  (type $aint (struct (field (mut i64)) (field (mut (ref null $mag))) (field (mut i32))))
+  (func $box (param i64) (result (ref null $aint))
+    local.get 0
+    ref.null $mag
+    i32.const 0
+    struct.new $aint)
+  (func $days_in_month (param (ref null $aint)) (result i32)
+    local.get 0
+    struct.get $aint 2)
+  (func $valid_day (param (ref null $aint)) (result i32)
+    local.get 0
+    call $days_in_month
+    local.get 0
+    struct.get $aint 2
+    i32.le_s)
+  (export "__rt_aint_from_i64" (func $box))
+  (export "daysInMonth" (func $days_in_month))
+  (export "validDay" (func $valid_day))
+)"#,
+        )
+        .expect("user-call module WAT parses");
+
+        let reason = decline_reason(&bytes, "validDay");
+        assert!(
+            reason.starts_with("calls the user function `daysInMonth`"),
+            "the call is the reason, and the callee is named: {reason}"
+        );
+        assert!(
+            !reason.contains("I32LeS"),
+            "the instruction the call pulled in must not be the reason: {reason}"
+        );
+        assert!(
+            reason.len() <= crate::format::MAX_CANDIDATE_LEN,
+            "a decline reason must fit the transported-candidate budget: {} > {}",
+            reason.len(),
+            crate::format::MAX_CANDIDATE_LEN
+        );
+    }
 }
