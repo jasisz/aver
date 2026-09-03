@@ -47,7 +47,7 @@ impl SymTy {
     /// reader; `List<Task>` is the same fact in the language the reason is
     /// about. A name that is not such a rendering is returned unchanged.
     pub fn display_source_type_name(name: &str) -> String {
-        aver_name_from_debug_rendering(name).unwrap_or_else(|| name.to_string())
+        aver_name_from_debug_rendering(name, 0).unwrap_or_else(|| name.to_string())
     }
 
     fn from_frag_ty(value: FragTy) -> Option<Self> {
@@ -90,6 +90,11 @@ impl SymTy {
 
 }
 
+/// Nesting a source type name may carry before the display renderer gives up
+/// and shows it verbatim. A name is producer text of unbounded length, and
+/// this renderer walks it recursively; real Aver types nest a handful deep.
+const MAX_TYPE_RENDER_DEPTH: usize = 16;
+
 /// Render the Rust `Debug` derive of the Aver compiler's type representation as
 /// the Aver surface type name it stands for, mirroring that compiler's own
 /// `Type::display`: `Named { id: …, name: "T" }` is `T`, `List(Str)` is
@@ -97,8 +102,12 @@ impl SymTy {
 ///
 /// `None` for anything this renderer does not recognise — including every name
 /// that is already Aver surface syntax, which is the common case and must pass
-/// through untouched. Display only; see `SymTy::display_source_type_name`.
-fn aver_name_from_debug_rendering(name: &str) -> Option<String> {
+/// through untouched, and any nesting past [`MAX_TYPE_RENDER_DEPTH`]. Display
+/// only; see `SymTy::display_source_type_name`.
+fn aver_name_from_debug_rendering(name: &str, depth: usize) -> Option<String> {
+    if depth > MAX_TYPE_RENDER_DEPTH {
+        return None;
+    }
     let name = name.trim();
     match name {
         "Int" | "Bool" | "Float" | "Unit" => return Some(name.to_string()),
@@ -130,7 +139,7 @@ fn aver_name_from_debug_rendering(name: &str) -> Option<String> {
         .unwrap_or(inner);
     let args = split_debug_args(inner)
         .into_iter()
-        .map(aver_name_from_debug_rendering)
+        .map(|arg| aver_name_from_debug_rendering(arg, depth + 1))
         .collect::<Option<Vec<_>>>()?;
     if args.is_empty() {
         return None;
