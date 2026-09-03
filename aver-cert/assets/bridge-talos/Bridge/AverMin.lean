@@ -16,7 +16,8 @@ Nothing is trimmed: the copy carries every `WInstr` constructor and every
 copied: neither is read by the bridge.
 
 Check the copy with:
-`diff <(sed -n 78,395p aver-cert/assets/wall/current/CertPrelude.lean) <(sed -n '/^namespace CertPrelude$/,/^end CertPrelude$/p' aver-cert/assets/bridge-talos/Bridge/AverMin.lean | sed '1d;$d')`
+`diff <(sed -n 78,395p aver-cert/assets/wall/current/CertPrelude.lean) <(sed -n '/^namespace CertPrelude$/,/^end CertPrelude$/p' aver-cert/assets/bridge-talos/Bridge/AverMin.lean | sed '1d;$d' | head -n 318)`
+(the file has a second, smaller `CertPrelude` block further down — `-- BEGIN CertPrelude fragment 2` — with its own check)
 -/
 
 namespace CertPrelude

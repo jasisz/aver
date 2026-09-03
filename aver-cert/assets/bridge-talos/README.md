@@ -37,10 +37,14 @@ LEAN_NUM_THREADS=6 lake build Interpreter.Wasm.SmallStep   # Talos, ~4 min on 6 
 LEAN_NUM_THREADS=6 lake build   # the bridge itself, seconds
 ```
 
-`.lake/` is ignored and is large (about 7.5 GB, almost all Mathlib). The build has no
-network needs after `lake update`. A clean build of the bridge modules alone takes about
-ten seconds; `lake build Bridge.Axioms` prints the axiom audit, `lake build Bridge.Smoke`
-the smoke comparison.
+`.lake/` is ignored and is large (about 7.6 GB, almost all Mathlib; the bridge's own
+`.lake/build` is 28 MB). The build has no network needs after `lake update`. A clean build
+of the bridge modules alone takes about ten seconds (9.8 s wall on 6 threads, 18 modules;
+`AverMin` 2.5 s, `Coverage` 1.4 s, `Bridge` 1.1 s, everything else under a second);
+`lake build Bridge.Axioms` prints the axiom audit, `lake build Bridge.Smoke` the smoke
+comparison, `lake build Bridge.Tripwire` the profile enumeration. The files written after
+the first experiment (`Coverage`, `Tripwire`, `Contracts`, `Adapter`, `Accepted`, `Smoke`)
+set `autoImplicit false`; the earlier ones do not yet.
 
 ## Layout
 
@@ -60,8 +64,9 @@ the smoke comparison.
 | `Bridge/Tripwire.lean` | fail-closed enumeration: `wInstrInProfile` (every `WInstr` constructor) with `translate_eq_none_of_out`, and 27 checked sample plans, one per `FragNodeKind` constructor, lowered by the wall and translated (`#eval` fails the build on disagreement) |
 | `Bridge/Contracts.lean` | `HostSorts_of_contracts`: `HostSorts` for the compute face's real host table (`StandardFace.recordComputeSlots`) from the five `Obligation.holds` contract hypotheses (`ComputeContracts`, verbatim) and distinct indices; `hostTableBound_nodup`: the `Nodup` the host half needs is the claim check's `hostTableIndicesDistinct` |
 | `Bridge/Adapter.lean` | the concrete Talos host: `adapterEnv` reads each slot's arguments back along their sorts, applies the wall's abstract contract function, reifies the result into the heap; `HostSimulation_adapter` (any machine-shaped table) and `HostSimulation_recordCompute` (the compute face's `recordComputeSlots` under the contracts) |
+| `Bridge/Accepted.lean` | the composition sentence (brief §9 (4)): `planInProfile_of_recordCompute` (a plan the compute-face classifier admits is in the profile relative to `envOfClaim`) and `recordCompute_terminatesWith` (over the declared envelope of an accepted record projection-compute claim, the Talos configuration is `synthModule (envOfClaim …) … (translation of the lowered body)` with the adapter host, and a successful `wFuncN` run terminates in Talos related); the three hypotheses the envelope lacks are named in its header |
 | `Bridge/Axioms.lean` | `#print axioms` of every theorem (all `[propext, Classical.choice, Quot.sound]` or fewer) |
-| `Bridge/Smoke.lean` | k5 `plus`/`isNonNeg`/`lessThan` bodies through `wFuncN` and through `translate` + Talos `runSteps`, results compared (not part of the proof) |
+| `Bridge/Smoke.lean` | the k5 claims' PLANS (verbatim from the certificate package) lowered by the wall, translated over `envOfClaim`, run in Talos with the adapter host over the reference faces and compared with `wFuncN`; the declared-data hypotheses of `recordCompute_terminatesWith` evaluated on the k5 data (not part of the proof) |
 
 ## Log
 
@@ -209,6 +214,39 @@ the smoke comparison.
   limbs are `(array (mut i32))`). The abstract `HostSimulation` stays the theorem's
   interface; `HostSimulation.invoke` carries the `Sorted` premise since Step 11.
   Elaboration: `Adapter.lean` 0.5 s; axioms `[propext, Classical.choice, Quot.sound]`.
+- **Step 13 — composition over the accepted artifact, `Accepted.lean` (brief §9 (4)).**
+  CLOSED, with three named extra hypotheses. Hypotheses taken in the wall's own shapes
+  (verbatim in `AverMin.lean`): `hostTableBound roles ht`, the classifier's three Bool
+  facts (`recordComputeNodeOk` on every node, every cited struct index is the face's,
+  `planTypedB`), `params` all `adtRef`, an all-Int non-empty `checkRecordDecl` record
+  declaration at the face's index (the declaration `typeSectionMatches` pins), and
+  `lowerExprFragmentBody carrier plan = some body`. `planInProfile_of_recordCompute`
+  derives the profile predicate node by node (the host half via `hostRoleIdx?_slotLookup`
+  with the claim check's `Nodup`; the only `.i64`-typed nodes of an admitted plan are
+  `constI64` literals, so `box` boxes a literal; the struct half from the record
+  declaration), and `recordCompute_terminatesWith` composes it with `coverage_envOfClaim`,
+  `HostSorts_of_contracts`, `HostSimulation_recordCompute` and `wFuncN_terminatesWith`:
+  the Talos configuration is exactly `synthModule (envOfClaim ht C [.record structIdx
+  fields]) (params.map sortOfFragTy) t 1 body'` with `translateList … body = some body'`
+  and the adapter host, and `envOfClaim` consumes nothing but the role table, the carrier
+  index and the pinned record declaration. WHAT THE DECLARED ENVELOPE LACKS (stated, not
+  invented): (1) the band of `constI32` literals — `recordComputeNodeOk` pins `constI64`
+  and the sign literal only; (2) struct ARITY agreement — `structNew`'s operand count
+  and `structGetUser`'s field index against the declaration's field count (both
+  byte-pinned separately, never related: a mismatch is invalid wasm the wall does not
+  validate) — this is the envelope gap of brief §9 made precise; (3) `structIdx ≠ carrier`
+  (byte-derived from the two entries' shapes, not declared). Elaboration 0.7 s; axioms
+  `[propext, Classical.choice, Quot.sound]`.
+- **Step 14 — smoke through the claim path, `Smoke.lean`.** The three k5 plans verbatim
+  from the certificate package (`scratchpad/k5b/cert/Plans.lean`, not in the repo),
+  lowered by `lowerExprFragmentBody 3` (equal to the package's `Module.lean` bodies,
+  checked), translated over `k5Env = envOfClaim k5HostTable 3 [Fraction]`, run in Talos
+  with `adapterEnv` over `recordComputeSlots 3 … k5HostTable` wired to the small-int
+  reference faces: `plus(1/2,1/3)` = 5/6 (18 Talos steps), `plus(7/9,-2/5)` = 17/45 (18),
+  `isNonNeg` on 1/2, -3/4, 0/1 (16 each), `lessThan` both ways (26 each) — 7/7 agree with
+  `wFuncN`; and all 12 declared-data hypotheses of `recordCompute_terminatesWith`
+  (including the three extra ones) evaluate to `true` on `plus`, `lessThan`, `isNonNeg`.
+  Elaboration 0.6 s.
 - **Step 9 — smoke, `Smoke.lean`.** The three k5 bodies (verbatim `WCode` from the
   package's `Module.lean`) agree between `wFuncN` (small-int faces) and Talos
   (`translate` + `runSteps`, heap host): `plus(1/2,1/3)` = 5/6 (18 Talos steps),
@@ -216,18 +254,24 @@ the smoke comparison.
 
 ## What is NOT proved here (the list, not an estimate)
 
-1. ~~Coverage lemma~~ — DONE (Step 10, `Coverage.lean`). What remains open there is
-   the profile predicate's struct half: `nodeInProfile` demands, for `structNew`/
-   `structGetUser`, a declared struct entry agreeing with the node's types; deriving
-   it from the accepted artifact is item 4.
-2. ~~`HostSorts` from the wall's contracts~~ — DONE (Step 11, `Contracts.lean`): the sorts
-   carry representation (`STy.car`), and `HostSorts_of_contracts` discharges `HostSorts`
-   from the verbatim `Obligation.holds` hypotheses for `recordComputeSlots`.
-3. ~~`HostSimulation` for a concrete host~~ — DONE (Step 12, `Adapter.lean`), with the
-   representation premise `CarrierMachine S` stated and reported.
-4. **Composition with the byte pins**: `envOfClaim` is shown to be a projection of the
-   declared data; connecting `translate (envOfClaim …) (lower plan)` to "these bytes" is
-   the existing `PlanBytes` + `typeSectionMatches` + `hostTableBound` pins composed with
-   spike (c)'s two lemmas — a statement over `AcceptedArtifact`, not written here.
-5. ~~Distinct host indices~~ — DONE (Step 11): `hostTableBound_nodup` — it is the claim
-   check's own `hostTableIndicesDistinct` (`StandardFace.hostTableBound`'s first conjunct).
+Items 1–5 of the first experiment are closed (Steps 10–13). What the export theorem still
+takes as a premise, and where each premise comes from:
+
+1. **The wall's contracts** — `ComputeContracts S add sub mul cmp eq`, verbatim the five
+   arithmetic/comparison hypotheses of `Obligation.holds`. As in the wall: assumed runtime
+   laws, validated empirically (`tests/cert_intcmp_differential.rs`). Phase 3 territory.
+2. **`CarrierMachine S`** — the carrier specification's words are wasm words (in-band
+   `i64` small and `i32` sign, limbs `null` or an array of in-band `i32` words). A premise
+   about the representation `Obligation.holds` abstracts over; the runtime's satisfies it.
+   Without it no Talos value relates to a represented word at all.
+3. **The three envelope hypotheses of `Accepted.lean`** — `constI32` band, struct arity
+   agreement, `structIdx ≠ carrier`. Byte-derivable in principle, not declared; the
+   arity one is the real gap (a mismatch is invalid wasm the wall never validates).
+4. **Sorted arguments** — `Sorted env S vs (params.map sortOfFragTy)`: records whose Int
+   fields are represented canonical carriers. The wall's `recordComputeDomRepr`
+   (`SReprAll`) says exactly that; the one-line bridge `SRepr → HasSort` is not written.
+5. **The pins are consumed as declared data.** `typeSectionMatches`, `PlanBytes`,
+   `carrierState` bind the declaration, the body and the carrier index to the bytes; the
+   bridge reads the declaration, the lowered body and the index, never a byte. The
+   composition sentence therefore says: the Talos module the theorem is about is built
+   from exactly what those pins pin — not that Talos has decoded the artifact.

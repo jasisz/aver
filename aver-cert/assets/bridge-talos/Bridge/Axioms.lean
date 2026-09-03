@@ -3,6 +3,7 @@ import Bridge.EnvOfClaim
 import Bridge.Coverage
 import Bridge.Contracts
 import Bridge.Adapter
+import Bridge.Accepted
 import Bridge.Tripwire
 
 /-!
@@ -39,3 +40,5 @@ statements, never axioms. `lake build Bridge.Axioms` prints the lists.
 #print axioms Bridge.readArg_of_R
 #print axioms Bridge.HostSimulation_adapter
 #print axioms Bridge.HostSimulation_recordCompute
+#print axioms Bridge.planInProfile_of_recordCompute
+#print axioms Bridge.recordCompute_terminatesWith
