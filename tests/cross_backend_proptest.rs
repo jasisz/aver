@@ -29,7 +29,7 @@
 #[path = "support/aver_cmd.rs"]
 mod aver_cmd;
 
-use aver_cmd::{format_output, cleanup, temp_module};
+use aver_cmd::{cleanup, format_output, temp_module};
 
 use std::fs;
 use std::path::PathBuf;

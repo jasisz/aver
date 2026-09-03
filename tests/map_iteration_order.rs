@@ -15,7 +15,7 @@
 #[path = "support/aver_cmd.rs"]
 mod aver_cmd;
 
-use aver_cmd::{repo_root, format_output};
+use aver_cmd::{format_output, repo_root};
 
 use std::path::PathBuf;
 use std::process::Command;

@@ -25,7 +25,7 @@
 #[path = "support/aver_cmd.rs"]
 mod aver_cmd;
 
-use aver_cmd::{repo_root, format_output};
+use aver_cmd::{format_output, repo_root};
 
 mod support {
     pub mod scratch_dir;
