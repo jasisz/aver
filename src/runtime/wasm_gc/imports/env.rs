@@ -2,10 +2,15 @@
 //! process environment.
 
 use super::super::RunWasmGcHost;
-use super::super::decode::{decode_result_unit, decode_string};
-use super::factories::{host_result_err_unit_string, host_result_ok_unit};
-use super::lm::{lm_string_from_host, lm_string_to_host};
-use super::replay_glue::{json_err, json_ok, record_effect_if_recording, try_replay};
+use super::super::decode::{decode_option_string, decode_result_unit};
+use super::factories::{
+    host_option_string_none, host_option_string_some, host_result_err_unit_string,
+    host_result_ok_unit,
+};
+use super::lm::lm_string_to_host;
+use super::replay_glue::{
+    json_err, json_none, json_ok, json_some, record_effect_if_recording, try_replay,
+};
 
 pub(super) fn dispatch(
     name: &str,
@@ -20,20 +25,18 @@ pub(super) fn dispatch(
             let name = lm_string_to_host(caller, params.first())?.unwrap_or_default();
             let args = vec![aver::replay::JsonValue::String(name.clone())];
             if let Some(cached) = try_replay(caller, "Env.get", args.clone())? {
-                let r = decode_string(caller, &cached)?;
-                results[0] = Val::AnyRef(r);
+                results[0] = Val::AnyRef(decode_option_string(caller, &cached)?);
                 return Ok(true);
             }
-            let value = aver_rt::env_get(&name).unwrap_or_default();
-            let r = lm_string_from_host(caller, &value)?;
-            results[0] = Val::AnyRef(r);
-            record_effect_if_recording(
-                caller,
-                "Env.get",
-                args,
-                aver::replay::JsonValue::String(value),
-                caller_fn,
-            );
+            let (result, outcome) = match aver_rt::env_get(&name) {
+                Some(value) => (
+                    host_option_string_some(caller, &value)?,
+                    json_some(aver::replay::JsonValue::String(value)),
+                ),
+                None => (host_option_string_none(caller)?, json_none()),
+            };
+            results[0] = Val::AnyRef(result);
+            record_effect_if_recording(caller, "Env.get", args, outcome, caller_fn);
             Ok(true)
         }
         "env_set" => {

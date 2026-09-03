@@ -78,6 +78,104 @@ fn wasm_gc_console_print_writes_to_capture_buffer() {
 }
 
 #[test]
+fn wasm_gc_env_get_preserves_option_across_a_named_function() {
+    const SOURCE: &str = r#"module EnvOption
+    intent = "Exercise present and missing environment values through one helper."
+    effects [Console.print, Env.get]
+
+fn stateOf(value: Option<String>) -> String
+    match value
+        Option.Some(_) -> "some"
+        Option.None -> "none"
+
+fn main() -> Unit
+    ! [Console.print, Env.get]
+    present = stateOf(Env.get("PATH"))
+    missing = stateOf(Env.get("AVER_ISSUE_1255_DEFINITELY_MISSING_6C64A1"))
+    Console.print("{present},{missing}")
+"#;
+    let mut lexer = aver::lexer::Lexer::new(SOURCE);
+    let tokens = lexer.tokenize().expect("lex");
+    let mut parser = aver::parser::Parser::new(tokens);
+    let mut items = parser.parse().expect("parse");
+    let result = aver::ir::pipeline::run(
+        &mut items,
+        PipelineConfig {
+            typecheck: Some(TypecheckMode::Full { base_dir: None }),
+            ..Default::default()
+        },
+    );
+
+    let (run_res, stdout, stderr) = aver::services::console::capture_output(|| {
+        aver::runtime::wasm_gc::run_in_process(
+            &items,
+            result.analysis.as_ref(),
+            aver::runtime::wasm_gc::RunConfig {
+                mode: aver::runtime::wasm_gc::EffectMode::Record,
+                ..Default::default()
+            },
+        )
+    });
+
+    let outcome = run_res.expect("Env.get Option<String> must execute without a wasm type trap");
+    assert_eq!(stdout, b"some,none\n");
+    assert!(stderr.is_empty());
+
+    let effects = outcome
+        .recorded_effects
+        .expect("record mode must return the captured effects");
+    let env_outcomes = effects
+        .iter()
+        .filter(|effect| effect.effect_type == "Env.get")
+        .map(|effect| &effect.outcome)
+        .collect::<Vec<_>>();
+    assert_eq!(env_outcomes.len(), 2);
+    match env_outcomes[0] {
+        aver::replay::RecordedOutcome::Value(value) => {
+            assert!(value.get("$some").is_some_and(|inner| inner.is_string()));
+        }
+        other => panic!("present Env.get recorded the wrong outcome: {other:?}"),
+    }
+    match env_outcomes[1] {
+        aver::replay::RecordedOutcome::Value(value) => {
+            assert_eq!(value.get("$none"), Some(&serde_json::Value::Bool(true)));
+        }
+        other => panic!("missing Env.get recorded the wrong outcome: {other:?}"),
+    }
+
+    let recording = aver::replay::SessionRecording {
+        schema_version: 1,
+        request_id: "env-option-test".to_string(),
+        timestamp: String::new(),
+        program_file: String::new(),
+        module_root: String::new(),
+        entry_fn: "main".to_string(),
+        input: aver::replay::JsonValue::Null,
+        capabilities: Vec::new(),
+        effects,
+        output: aver::replay::RecordedOutcome::Value(outcome.output),
+    };
+    let (replay_res, replay_stdout, replay_stderr) =
+        aver::services::console::capture_output(|| {
+            aver::runtime::wasm_gc::run_in_process(
+                &items,
+                result.analysis.as_ref(),
+                aver::runtime::wasm_gc::RunConfig {
+                    mode: aver::runtime::wasm_gc::EffectMode::Replay(Box::new(recording), true),
+                    ..Default::default()
+                },
+            )
+        });
+    let replayed = replay_res.expect("recorded Env.get Options must decode during replay");
+    assert_eq!(replayed.effects_consumed, replayed.effects_total);
+    assert!(
+        replay_stdout.is_empty(),
+        "replay must suppress Console.print"
+    );
+    assert!(replay_stderr.is_empty());
+}
+
+#[test]
 fn wasm_gc_runtime_pipeline_lowers_string_join_builder() {
     const SOURCE: &str = r#"module Builder
     intent =

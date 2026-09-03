@@ -401,13 +401,11 @@ pub(super) struct Wasip2Lowering {
     /// `Some(...)` when `Env.get` is registered.
     pub(super) get_environment_fn_idx: Option<u32>,
     /// `__rt_canonical_env_lookup(retptr, key_ptr, key_len) ->
-    /// String` helper wasm fn idx. Walks the canonical-ABI
+    /// Option<String>` helper wasm fn idx. Walks the canonical-ABI
     /// lowered `list<tuple<string, string>>` at retptr,
     /// linear-searches for an entry whose key matches the
-    /// caller-supplied LM byte range, and materialises the
-    /// matching value as a fresh GC `(array i8)`. Returns an
-    /// empty `(array i8)` when no match — preserves Aver
-    /// `Env.get(name) -> String` semantics (no Option/Result).
+    /// caller-supplied LM byte range, and materialises the canonical
+    /// Option wrapper, preserving missing versus present-empty values.
     pub(super) env_get_lookup_fn_idx: Option<u32>,
     /// Phase 1.4b — `__rt_format_iso8601(secs i64, nanos i32) ->
     /// ref null $string` helper wasm fn idx. Pure-compute helper

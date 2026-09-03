@@ -541,13 +541,30 @@ export class AverBrowserHost {
                     );
                 },
                 env_get: (nameRef, callerIdx) => {
+                    const exports = this.instance.exports;
                     const name = this.averToJs(nameRef);
+                    let outcome = { $none: true };
                     return this.recordOrDispatch(
                         "Env.get",
                         [name],
-                        () => this.jsToAver(this.environment.get(name) ?? ""),
-                        (json) => this.jsToAver(json ?? ""),
-                        () => this.environment.get(name) ?? "",
+                        () => {
+                            const value = this.environment.get(name);
+                            if (value === undefined) {
+                                outcome = { $none: true };
+                                return exports.__rt_option_string_none();
+                            }
+                            outcome = { $some: value };
+                            return exports.__rt_option_string_some(this.jsToAver(value));
+                        },
+                        (json) => {
+                            if (json && typeof json === "object" && "$some" in json) {
+                                return exports.__rt_option_string_some(
+                                    this.jsToAver(json.$some ?? ""),
+                                );
+                            }
+                            return exports.__rt_option_string_none();
+                        },
+                        () => outcome,
                         this.callerFnFromIdx(callerIdx),
                     );
                 },

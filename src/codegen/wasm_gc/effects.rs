@@ -75,8 +75,8 @@ pub(super) enum EffectName {
     HttpAddRequestHeader,
     /// `() -> Unit`.
     HttpClearRequestHeaders,
-    /// `(name: String) -> String` — Workers env binding lookup;
-    /// returns empty string when the binding is absent.
+    /// `(name: String) -> Option<String>` — environment lookup;
+    /// preserves absence separately from a present empty string.
     EnvGet,
     /// `(name: String, value: String) -> Result<Unit, String>` — no-op Ok on
     /// Workers (env is read-only); hosted runtimes report write failures.
@@ -709,11 +709,10 @@ impl EffectName {
             | Self::ProviderContractViolation => Ok(vec![]),
             Self::TimeUnixMs => Ok(vec![ValType::I64]),
             Self::ProcessStopRequested => Ok(vec![ValType::I32]),
-            Self::RequestMethod
-            | Self::RequestUrl
-            | Self::RequestQuery
-            | Self::RequestBody
-            | Self::EnvGet => Ok(vec![string_ref_ty(registry)?]),
+            Self::RequestMethod | Self::RequestUrl | Self::RequestQuery | Self::RequestBody => {
+                Ok(vec![string_ref_ty(registry)?])
+            }
+            Self::EnvGet => Ok(vec![option_ref_ty(registry, "Option<String>")?]),
             Self::RequestHeadersLoad => Ok(vec![map_string_list_string_ref_ty(registry)?]),
             Self::ResponseText
             | Self::ResponseSetHeader
@@ -918,6 +917,19 @@ mod certificate_format_tests {
             );
         }
     }
+}
+
+fn option_ref_ty(registry: &TypeRegistry, canonical: &str) -> Result<ValType, WasmGcError> {
+    let idx = registry
+        .option_type_idx(canonical)
+        .ok_or(WasmGcError::Validation(format!(
+            "effect requires `{canonical}` slot but none was registered (available: {:?})",
+            registry.option_order
+        )))?;
+    Ok(ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(idx),
+    }))
 }
 
 fn result_ref_ty(registry: &TypeRegistry, canonical: &str) -> Result<ValType, WasmGcError> {
