@@ -1672,3 +1672,124 @@ fn userName(u: User) -> String
         );
     }
 }
+
+#[cfg(test)]
+mod decline_reason_tests {
+    /// A module carrying BOTH packed byte-array types: the `String` carrier the
+    /// runtime string bridge names, and a second one standing for a
+    /// byte-sequence record such as `stdlib/bytes.av`'s `exposes opaque Bytes`.
+    /// The two are indistinguishable by wasm type, which is exactly why the
+    /// decline reason used to call `Bytes_octets`'s parameter a String.
+    const TWO_PACKED_ARRAYS_WAT: &str = r#"(module
+  (type $mag (array (mut i64)))
+  (type $aint (struct (field (mut i64)) (field (mut (ref null $mag))) (field (mut i32))))
+  (type $str (array (mut i8)))
+  (type $bytes (array (mut i8)))
+  (func $box (param i64) (result (ref null $aint))
+    local.get 0
+    ref.null $mag
+    i32.const 0
+    struct.new $aint)
+  (func $string_to_lm (param (ref null $str)) (result i32)
+    local.get 0
+    array.len)
+  (func $on_string (param (ref null $str)) (result (ref null $aint))
+    local.get 0
+    array.len
+    i64.extend_i32_u
+    call $box)
+  (func $on_bytes (param (ref null $bytes)) (result (ref null $aint))
+    local.get 0
+    array.len
+    i64.extend_i32_u
+    call $box)
+  (func $make_bytes (result (ref null $bytes))
+    i32.const 0
+    array.new_default $bytes)
+  (export "__rt_aint_from_i64" (func $box))
+  (export "__rt_string_to_lm" (func $string_to_lm))
+  (export "onString" (func $on_string))
+  (export "onBytes" (func $on_bytes))
+  (export "makeBytes" (func $make_bytes))
+)"#;
+
+    fn decline_reason(bytes: &[u8], export: &str) -> String {
+        super::analyze(bytes, &[])
+            .expect("module must analyze, not abort")
+            .declined()
+            .iter()
+            .find(|(name, _)| name == export)
+            .map(|(_, reason)| reason.clone())
+            .unwrap_or_else(|| panic!("`{export}` must be declared uncertified"))
+    }
+
+    /// The packed byte-array representation is shared by `String` and by every
+    /// byte-sequence record, so the wasm type alone cannot name the source
+    /// shape. The module's own `__rt_string_to_lm` export names which array
+    /// type is the string one; the other must NOT be reported as a String, in
+    /// either the parameter or the result reason.
+    #[test]
+    fn a_packed_byte_record_is_not_reported_as_a_string() {
+        let bytes = wat::parse_str(TWO_PACKED_ARRAYS_WAT).expect("two-array module WAT parses");
+
+        let on_string = decline_reason(&bytes, "onString");
+        assert!(
+            on_string.contains("parameter 1 is a String"),
+            "the bridge-named array type is still a String: {on_string}"
+        );
+
+        let on_bytes = decline_reason(&bytes, "onBytes");
+        assert!(
+            !on_bytes.contains("a String"),
+            "a packed byte record must not be called a String: {on_bytes}"
+        );
+        assert!(
+            on_bytes.contains("parameter 1 is an opaque byte-sequence record"),
+            "the packed byte record's own shape must be named: {on_bytes}"
+        );
+
+        let make_bytes = decline_reason(&bytes, "makeBytes");
+        assert!(
+            !make_bytes.contains("a String"),
+            "a packed byte record result must not be called a String: {make_bytes}"
+        );
+        assert!(
+            make_bytes.contains("returns an opaque byte-sequence record"),
+            "the packed byte record result shape must be named: {make_bytes}"
+        );
+    }
+
+    /// Without the string bridge no array type is named, so nothing is
+    /// reclassified and every packed array keeps reading as a `String` — the
+    /// pre-existing answer. The refinement must never guess.
+    #[test]
+    fn packed_arrays_stay_strings_when_no_bridge_names_one() {
+        let no_bridge =
+            TWO_PACKED_ARRAYS_WAT.replace("  (export \"__rt_string_to_lm\" (func $string_to_lm))\n", "");
+        let bytes = wat::parse_str(&no_bridge).expect("bridge-less module WAT parses");
+        let on_bytes = decline_reason(&bytes, "onBytes");
+        assert!(
+            on_bytes.contains("parameter 1 is a String"),
+            "with no bridge to name the string array, the old answer stands: {on_bytes}"
+        );
+    }
+
+    /// Every decline reason is a transported display string the verifier gates
+    /// on length before printing it, so a reason that outgrows the budget makes
+    /// the whole package stop checking. The two reasons this change lengthened
+    /// — the named callee and the byte-sequence shape — are checked against the
+    /// budget at their realistic worst case.
+    #[test]
+    fn lengthened_decline_reasons_fit_the_candidate_budget() {
+        let bytes = wat::parse_str(TWO_PACKED_ARRAYS_WAT).expect("two-array module WAT parses");
+        for export in ["onString", "onBytes", "makeBytes"] {
+            let reason = decline_reason(&bytes, export);
+            assert!(
+                reason.len() <= crate::format::MAX_CANDIDATE_LEN,
+                "`{export}` reason is {} bytes, over the {} budget: {reason}",
+                reason.len(),
+                crate::format::MAX_CANDIDATE_LEN
+            );
+        }
+    }
+}

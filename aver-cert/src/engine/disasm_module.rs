@@ -739,11 +739,36 @@ fn disassemble(wasm_bytes: &[u8]) -> Result<DisasmResult, String> {
         }
     };
 
+    // Which `(array (mut i8))` type is this module's `String`. A byte-sequence
+    // record — the `exposes opaque` `Bytes` of `stdlib/bytes.av` above all —
+    // gets the SAME packed representation `String` gets, so the wasm type alone
+    // does not separate the two and calling every packed array a `String` told
+    // `Bytes_octets(bytes: Bytes)` that its parameter was a String. The module's
+    // own string bridge names the string one: `__rt_string_to_lm` takes exactly
+    // that array type. When the bridge is absent nothing is named and every
+    // packed array keeps reading as `String`, as before. Diagnostic only.
+    let string_array_type = exports
+        .iter()
+        .find(|(n, _)| n == "__rt_string_to_lm")
+        .and_then(|(_, idx)| idx.checked_sub(num_imported_funcs))
+        .and_then(|def_idx| func_type_idx.get(def_idx as usize))
+        .and_then(|ti| type_sigs.get(ti))
+        .and_then(|(params, _)| match params.as_slice() {
+            [TyKind::Ref { idx, .. }] => Some(*idx),
+            _ => None,
+        })
+        .filter(|idx| string_byte_array_types.contains(idx));
+
     // Resolve one declared wasm type against this module's own type section so
     // a decline reason can name the source-level shape. Diagnostic only.
     let value_shape = |ty: &TyKind| match ty {
         TyKind::Ref { idx, .. } if Some(*idx) == carrier => ValShape::Int,
-        TyKind::Ref { idx, .. } if string_byte_array_types.contains(idx) => ValShape::Str,
+        TyKind::Ref { idx, .. } if string_byte_array_types.contains(idx) => {
+            match string_array_type {
+                Some(string_ty) if string_ty != *idx => ValShape::BytePayload,
+                _ => ValShape::Str,
+            }
+        }
         TyKind::Ref { .. } | TyKind::Eqref => ValShape::UserRef,
         TyKind::I64 | TyKind::I32 | TyKind::F64 => ValShape::Scalar,
         TyKind::Other => ValShape::Raw,
