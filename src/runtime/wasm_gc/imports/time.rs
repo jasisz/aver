@@ -36,7 +36,7 @@ pub(super) fn dispatch(
         }
         "time_unix_ms" => {
             if let Some(cached) = try_replay(caller, "Time.unixMs", vec![])? {
-                let aver::replay::JsonValue::Int(ms) = cached else {
+                let Some(ms) = cached.as_i64() else {
                     return Err(wasmtime::Error::msg(
                         "replay Time.unixMs: trace value is not an Int",
                     ));
@@ -52,7 +52,7 @@ pub(super) fn dispatch(
                 caller,
                 "Time.unixMs",
                 vec![],
-                aver::replay::JsonValue::Int(ms),
+                aver::replay::JsonValue::from(ms),
                 caller_fn,
             );
             Ok(true)

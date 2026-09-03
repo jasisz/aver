@@ -59,7 +59,7 @@ pub(super) fn wrap_marker(
     marker: &str,
     payload: aver::replay::JsonValue,
 ) -> aver::replay::JsonValue {
-    let mut obj = std::collections::BTreeMap::new();
+    let mut obj = serde_json::Map::new();
     obj.insert(marker.to_string(), payload);
     aver::replay::JsonValue::Object(obj)
 }
@@ -75,8 +75,8 @@ pub(crate) fn decode_val_typed(
     use wasmtime::Val;
     match (ty, val) {
         (Type::Unit, _) => Ok(JsonValue::Null),
-        (Type::Int, Val::I64(n)) => Ok(JsonValue::Int(*n)),
-        (Type::Int, Val::I32(n)) => Ok(JsonValue::Int(*n as i64)),
+        (Type::Int, Val::I64(n)) => Ok(JsonValue::from(*n)),
+        (Type::Int, Val::I32(n)) => Ok(JsonValue::from(*n as i64)),
         // `Int = ℤ`: `Int` lowers to the `(ref null $AverInt)` carrier, so
         // `main () -> Int` returns a struct ref. Read the Small value out
         // of `$small` (field 0) when `$magf` (field 1) is null. A Big
@@ -93,7 +93,7 @@ pub(crate) fn decode_val_typed(
             }
             match &fields[1] {
                 Val::AnyRef(None) => match &fields[0] {
-                    Val::I64(n) => Ok(JsonValue::Int(*n)),
+                    Val::I64(n) => Ok(JsonValue::from(*n)),
                     other => Err(format!("Int carrier $small was not i64: {other:?}")),
                 },
                 _ => Err("Int main return is a Big value, which exceeds the \
@@ -101,8 +101,15 @@ pub(crate) fn decode_val_typed(
                     .to_string()),
             }
         }
-        (Type::Float, Val::F64(b)) => Ok(JsonValue::Float(f64::from_bits(*b))),
-        (Type::Float, Val::F32(b)) => Ok(JsonValue::Float(f32::from_bits(*b) as f64)),
+        // `JsonValue::from(f64)` maps a non-finite float to `Value::Null`
+        // (`serde_json::Number` cannot represent NaN/±inf at all — the
+        // hand-rolled codec this replaced stored the raw bit pattern in
+        // its `Float` variant but would itself have produced invalid
+        // JSON text trying to write one out). A wasm `main` returning a
+        // literal NaN/inf `Float` is not a case any replay fixture or
+        // test exercises.
+        (Type::Float, Val::F64(b)) => Ok(JsonValue::from(f64::from_bits(*b))),
+        (Type::Float, Val::F32(b)) => Ok(JsonValue::from(f32::from_bits(*b) as f64)),
         (Type::Bool, Val::I32(n)) => Ok(JsonValue::Bool(*n != 0)),
         (Type::Str, Val::AnyRef(opt)) => match opt {
             None => Ok(JsonValue::String(String::new())),
@@ -495,12 +502,13 @@ pub(crate) fn decode_result_bytes(
             };
             let ints: Vec<i64> = items
                 .iter()
-                .map(|v| match v {
-                    aver::replay::JsonValue::Int(n) => Ok(*n),
-                    other => Err(wasmtime::Error::msg(format!(
-                        "replay decode Bytes.values: element is {:?}",
-                        other
-                    ))),
+                .map(|v| {
+                    v.as_i64().ok_or_else(|| {
+                        wasmtime::Error::msg(format!(
+                            "replay decode Bytes.values: element is {:?}",
+                            v
+                        ))
+                    })
                 })
                 .collect::<Result<_, _>>()?;
             host_result_ok_bytes(caller, &ints)
@@ -517,12 +525,20 @@ pub(crate) fn decode_result_int(
     json: &aver::replay::JsonValue,
 ) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
     let (marker, inner) = expect_marker(json, &["$ok", "$err"])?;
-    match (marker, inner) {
-        ("$ok", aver::replay::JsonValue::Int(value)) => host_result_ok_int(caller, *value),
-        ("$err", aver::replay::JsonValue::String(message)) => host_result_err_int(caller, message),
-        _ => Err(wasmtime::Error::msg(
-            "replay decode Result<Int, String>: unexpected payload",
-        )),
+    match marker {
+        "$ok" => match inner.as_i64() {
+            Some(value) => host_result_ok_int(caller, value),
+            None => Err(wasmtime::Error::msg(
+                "replay decode Result<Int, String>: unexpected payload",
+            )),
+        },
+        "$err" => match inner {
+            aver::replay::JsonValue::String(message) => host_result_err_int(caller, message),
+            _ => Err(wasmtime::Error::msg(
+                "replay decode Result<Int, String>: unexpected payload",
+            )),
+        },
+        _ => unreachable!(),
     }
 }
 
@@ -534,16 +550,16 @@ pub(crate) fn decode_result_terminal_size(
     match (marker, inner) {
         ("$ok", value) => {
             let fields = expect_record(value, "Terminal.Size")?;
-            let width = match fields.get("width") {
-                Some(aver::replay::JsonValue::Int(value)) => *value,
+            let width = match fields.get("width").and_then(|v| v.as_i64()) {
+                Some(value) => value,
                 _ => {
                     return Err(wasmtime::Error::msg(
                         "replay decode Terminal.Size: missing Int width",
                     ));
                 }
             };
-            let height = match fields.get("height") {
-                Some(aver::replay::JsonValue::Int(value)) => *value,
+            let height = match fields.get("height").and_then(|v| v.as_i64()) {
+                Some(value) => value,
                 _ => {
                     return Err(wasmtime::Error::msg(
                         "replay decode Terminal.Size: missing Int height",
@@ -616,10 +632,7 @@ pub(crate) fn decode_result_http_response(
         },
         "$ok" => {
             let fields = expect_record(inner, "Http.Response")?;
-            let status = match fields.get("status") {
-                Some(aver::replay::JsonValue::Int(n)) => *n,
-                _ => 0,
-            };
+            let status = fields.get("status").and_then(|v| v.as_i64()).unwrap_or(0);
             let body = match fields.get("body") {
                 Some(aver::replay::JsonValue::String(s)) => s.clone(),
                 _ => String::new(),
@@ -656,10 +669,7 @@ pub(crate) fn decode_result_tcp_connection(
                 Some(aver::replay::JsonValue::String(s)) => s.clone(),
                 _ => String::new(),
             };
-            let port = match fields.get("port") {
-                Some(aver::replay::JsonValue::Int(n)) => *n,
-                _ => 0,
-            };
+            let port = fields.get("port").and_then(|v| v.as_i64()).unwrap_or(0);
             let id_ref = lm_string_from_host(caller, &id)?;
             let host_ref = lm_string_from_host(caller, &host)?;
             let rec_ref = host_tcp_connection_make(caller, id_ref, host_ref, port)?;
@@ -717,7 +727,7 @@ pub(super) fn expect_marker<'a>(
 pub(super) fn expect_record<'a>(
     json: &'a aver::replay::JsonValue,
     expected_type: &str,
-) -> Result<&'a std::collections::BTreeMap<String, aver::replay::JsonValue>, wasmtime::Error> {
+) -> Result<&'a serde_json::Map<String, aver::replay::JsonValue>, wasmtime::Error> {
     let (marker, payload) = expect_marker(json, &["$record"])?;
     debug_assert_eq!(marker, "$record");
     let aver::replay::JsonValue::Object(payload) = payload else {

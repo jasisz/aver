@@ -1,39 +1,35 @@
-use std::collections::{BTreeMap, HashMap};
-use std::fmt::Write as _;
+use std::collections::HashMap;
+
+use serde_json::{Map, Number};
 
 use crate::value::{Value, aver_repr, list_from_vec, list_view};
 
-mod parser;
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum JsonValue {
-    Null,
-    Bool(bool),
-    Int(i64),
-    Float(f64),
-    String(String),
-    Array(Vec<JsonValue>),
-    Object(BTreeMap<String, JsonValue>),
-}
+/// The replay-trace JSON representation. This used to be a hand-rolled
+/// recursive-descent parser + writer (`src/replay/json/parser.rs` plus
+/// the writers at the bottom of this file); both duplicated the
+/// unconditional `serde_json` dependency the rest of the crate already
+/// carries (`src/replay/session.rs` parses/writes session recordings
+/// with `serde_json` directly, and `src/self_host/replay_support.rs`
+/// speaks the same marker scheme over `serde_json::Value`). What
+/// remains below — `value_to_json`/`json_to_value`, the `$ok`/`$err`/…
+/// marker codec, `first_diff_path` — is the Aver runtime `Value` <->
+/// JSON bridge; `serde_json` has no notion of that.
+pub type JsonValue = serde_json::Value;
 
 pub fn parse_json(input: &str) -> Result<JsonValue, String> {
-    parser::parse_json(input)
+    serde_json::from_str(input).map_err(|e| format!("JSON parse error: {e}"))
 }
 
 pub fn json_to_string(value: &JsonValue) -> String {
-    let mut out = String::new();
-    write_json_compact(&mut out, value);
-    out
+    value.to_string()
 }
 
 pub fn format_json(value: &JsonValue) -> String {
-    let mut out = String::new();
-    write_json_pretty(&mut out, value, 0);
-    out
+    serde_json::to_string_pretty(value).expect("JSON value always serializes")
 }
 
 fn get_required<'a>(
-    obj: &'a BTreeMap<String, JsonValue>,
+    obj: &'a Map<String, JsonValue>,
     key: &str,
     path: &str,
 ) -> Result<&'a JsonValue, String> {
@@ -44,7 +40,7 @@ fn get_required<'a>(
 fn expect_object<'a>(
     value: &'a JsonValue,
     path: &str,
-) -> Result<&'a BTreeMap<String, JsonValue>, String> {
+) -> Result<&'a Map<String, JsonValue>, String> {
     match value {
         JsonValue::Object(obj) => Ok(obj),
         _ => Err(format!("{} must be an object", path)),
@@ -62,6 +58,28 @@ fn parse_string<'a>(value: &'a JsonValue, path: &str) -> Result<&'a str, String>
     match value {
         JsonValue::String(s) => Ok(s),
         _ => Err(format!("{} must be a string", path)),
+    }
+}
+
+/// The Aver replay codec's fail-closed rule for JSON numbers: an
+/// integer literal decodes as `Value::Int` when it fits `i64`, errors
+/// when it is a positive integer that fits `u64` but not `i64`
+/// (matching the hand-rolled parser's old `"integer out of i64
+/// range"` guard and `src/replay/session.rs`'s pre-existing check of
+/// the same shape), and otherwise decodes as `Value::Float` — the
+/// same fallback `serde_json` itself takes for a digit string too
+/// large to hold exactly as `i64`/`u64`.
+fn number_to_value(n: &Number) -> Result<Value, String> {
+    if let Some(i) = n.as_i64() {
+        Ok(Value::int(i))
+    } else if let Some(u) = n.as_u64() {
+        let i = i64::try_from(u)
+            .map_err(|_| format!("JSON integer {} is out of range for i64", u))?;
+        Ok(Value::int(i))
+    } else if let Some(f) = n.as_f64() {
+        Ok(Value::Float(f))
+    } else {
+        Err(format!("unsupported JSON number: {}", n))
     }
 }
 
@@ -89,13 +107,15 @@ pub fn value_to_json(value: &Value) -> Result<JsonValue, String> {
     match value {
         Value::Int(i) => i
             .to_i64()
-            .map(JsonValue::Int)
+            .map(|n| JsonValue::Number(n.into()))
             .ok_or_else(|| "cannot serialize an integer outside the 64-bit JSON range".to_string()),
         Value::Float(f) => {
             if !f.is_finite() {
                 return Err("cannot serialize non-finite float (NaN/inf)".to_string());
             }
-            Ok(JsonValue::Float(*f))
+            Ok(JsonValue::Number(
+                Number::from_f64(*f).expect("checked finite above"),
+            ))
         }
         Value::Str(s) => Ok(JsonValue::String(s.clone())),
         Value::Bool(b) => Ok(JsonValue::Bool(*b)),
@@ -114,7 +134,7 @@ pub fn value_to_json(value: &Value) -> Result<JsonValue, String> {
         }
         Value::Map(entries) => {
             if entries.keys().all(|k| matches!(k, Value::Str(_))) {
-                let mut obj = BTreeMap::new();
+                let mut obj = Map::new();
                 for (k, v) in entries {
                     let Value::Str(key) = k else {
                         unreachable!("checked above");
@@ -131,11 +151,11 @@ pub fn value_to_json(value: &Value) -> Result<JsonValue, String> {
             }
         }
         Value::Record { type_name, fields } => {
-            let mut fields_obj = BTreeMap::new();
+            let mut fields_obj = Map::new();
             for (name, field_value) in fields.iter() {
                 fields_obj.insert(name.clone(), value_to_json(field_value)?);
             }
-            let mut payload = BTreeMap::new();
+            let mut payload = Map::new();
             payload.insert("type".to_string(), JsonValue::String(type_name.clone()));
             payload.insert("fields".to_string(), JsonValue::Object(fields_obj));
             Ok(wrap_marker("$record", JsonValue::Object(payload)))
@@ -149,7 +169,7 @@ pub fn value_to_json(value: &Value) -> Result<JsonValue, String> {
             for field in fields.iter() {
                 field_vals.push(value_to_json(field)?);
             }
-            let mut payload = BTreeMap::new();
+            let mut payload = Map::new();
             payload.insert("type".to_string(), JsonValue::String(type_name.clone()));
             payload.insert("name".to_string(), JsonValue::String(variant.clone()));
             payload.insert("fields".to_string(), JsonValue::Array(field_vals));
@@ -163,7 +183,7 @@ pub fn value_to_json(value: &Value) -> Result<JsonValue, String> {
             Ok(wrap_marker("$vector", JsonValue::Array(arr)))
         }
         Value::CapabilityResource(handle) => {
-            let mut payload = BTreeMap::new();
+            let mut payload = Map::new();
             payload.insert(
                 "type".to_string(),
                 JsonValue::String(handle.type_name().to_string()),
@@ -191,8 +211,7 @@ pub fn json_to_value(json: &JsonValue) -> Result<Value, String> {
     match json {
         JsonValue::Null => Ok(Value::Unit),
         JsonValue::Bool(b) => Ok(Value::Bool(*b)),
-        JsonValue::Int(i) => Ok(Value::int(*i)),
-        JsonValue::Float(f) => Ok(Value::Float(*f)),
+        JsonValue::Number(n) => number_to_value(n),
         JsonValue::String(s) => Ok(Value::Str(s.clone())),
         JsonValue::Array(items) => {
             let mut out = Vec::with_capacity(items.len());
@@ -222,7 +241,7 @@ pub fn value_to_json_lossy(value: &Value) -> JsonValue {
     match value_to_json(value) {
         Ok(v) => v,
         Err(_) => {
-            let mut obj = BTreeMap::new();
+            let mut obj = Map::new();
             obj.insert("$opaque".to_string(), JsonValue::String(aver_repr(value)));
             JsonValue::Object(obj)
         }
@@ -230,12 +249,12 @@ pub fn value_to_json_lossy(value: &Value) -> JsonValue {
 }
 
 fn wrap_marker(name: &str, value: JsonValue) -> JsonValue {
-    let mut obj = BTreeMap::new();
+    let mut obj = Map::new();
     obj.insert(name.to_string(), value);
     JsonValue::Object(obj)
 }
 
-fn marker_single_key(obj: &BTreeMap<String, JsonValue>) -> Option<(&str, &JsonValue)> {
+fn marker_single_key(obj: &Map<String, JsonValue>) -> Option<(&str, &JsonValue)> {
     if obj.len() != 1 {
         return None;
     }
@@ -409,115 +428,4 @@ fn first_diff_path_inner(expected: &JsonValue, got: &JsonValue, path: &str) -> O
             }
         }
     }
-}
-
-fn write_json_compact(out: &mut String, value: &JsonValue) {
-    match value {
-        JsonValue::Null => out.push_str("null"),
-        JsonValue::Bool(true) => out.push_str("true"),
-        JsonValue::Bool(false) => out.push_str("false"),
-        JsonValue::Int(i) => {
-            let _ = write!(out, "{}", i);
-        }
-        JsonValue::Float(f) => out.push_str(&format_float(*f)),
-        JsonValue::String(s) => write_json_string(out, s),
-        JsonValue::Array(arr) => {
-            out.push('[');
-            for (idx, item) in arr.iter().enumerate() {
-                if idx > 0 {
-                    out.push(',');
-                }
-                write_json_compact(out, item);
-            }
-            out.push(']');
-        }
-        JsonValue::Object(obj) => {
-            out.push('{');
-            for (idx, (k, v)) in obj.iter().enumerate() {
-                if idx > 0 {
-                    out.push(',');
-                }
-                write_json_string(out, k);
-                out.push(':');
-                write_json_compact(out, v);
-            }
-            out.push('}');
-        }
-    }
-}
-
-fn write_json_pretty(out: &mut String, value: &JsonValue, indent: usize) {
-    match value {
-        JsonValue::Array(arr) => {
-            if arr.is_empty() {
-                out.push_str("[]");
-                return;
-            }
-            out.push_str("[\n");
-            for (idx, item) in arr.iter().enumerate() {
-                push_indent(out, indent + 2);
-                write_json_pretty(out, item, indent + 2);
-                if idx + 1 < arr.len() {
-                    out.push(',');
-                }
-                out.push('\n');
-            }
-            push_indent(out, indent);
-            out.push(']');
-        }
-        JsonValue::Object(obj) => {
-            if obj.is_empty() {
-                out.push_str("{}");
-                return;
-            }
-            out.push_str("{\n");
-            for (idx, (k, v)) in obj.iter().enumerate() {
-                push_indent(out, indent + 2);
-                write_json_string(out, k);
-                out.push_str(": ");
-                write_json_pretty(out, v, indent + 2);
-                if idx + 1 < obj.len() {
-                    out.push(',');
-                }
-                out.push('\n');
-            }
-            push_indent(out, indent);
-            out.push('}');
-        }
-        _ => write_json_compact(out, value),
-    }
-}
-
-fn push_indent(out: &mut String, indent: usize) {
-    for _ in 0..indent {
-        out.push(' ');
-    }
-}
-
-fn write_json_string(out: &mut String, s: &str) {
-    out.push('"');
-    for ch in s.chars() {
-        match ch {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            '\u{08}' => out.push_str("\\b"),
-            '\u{0C}' => out.push_str("\\f"),
-            c if c < '\u{20}' => {
-                let _ = write!(out, "\\u{:04X}", c as u32);
-            }
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-}
-
-fn format_float(f: f64) -> String {
-    let mut s = format!("{}", f);
-    if !s.contains('.') && !s.contains('e') && !s.contains('E') {
-        s.push_str(".0");
-    }
-    s
 }

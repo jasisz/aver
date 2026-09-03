@@ -194,7 +194,7 @@ fn wasm_gc_replay_reports_discharged_provider_error_before_trapping() {
         .iter_mut()
         .find(|effect| effect.effect_type == "Time.sleep")
         .expect("Time.sleep effect record");
-    let mut marker = std::collections::BTreeMap::new();
+    let mut marker = serde_json::Map::new();
     marker.insert(
         "$err".to_string(),
         aver::replay::JsonValue::String("hostile replay provider".to_string()),

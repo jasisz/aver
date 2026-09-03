@@ -17,7 +17,7 @@ pub(super) fn dispatch(
     match name {
         "args_len" => {
             if let Some(cached) = try_replay(caller, "Args.len", vec![])? {
-                let aver::replay::JsonValue::Int(n) = cached else {
+                let Some(n) = cached.as_i64() else {
                     return Err(wasmtime::Error::msg("replay Args.len: not an Int"));
                 };
                 results[0] = Val::I64(n);
@@ -29,7 +29,7 @@ pub(super) fn dispatch(
                 caller,
                 "Args.len",
                 vec![],
-                aver::replay::JsonValue::Int(n),
+                aver::replay::JsonValue::from(n),
                 caller_fn,
             );
             Ok(true)
@@ -40,7 +40,7 @@ pub(super) fn dispatch(
                 _ => 0,
             };
             if let Some(cached) =
-                try_replay(caller, "Args.get", vec![aver::replay::JsonValue::Int(idx)])?
+                try_replay(caller, "Args.get", vec![aver::replay::JsonValue::from(idx)])?
             {
                 let r = decode_string(caller, &cached)?;
                 results[0] = Val::AnyRef(r);
@@ -57,7 +57,7 @@ pub(super) fn dispatch(
             record_effect_if_recording(
                 caller,
                 "Args.get",
-                vec![aver::replay::JsonValue::Int(idx)],
+                vec![aver::replay::JsonValue::from(idx)],
                 aver::replay::JsonValue::String(text),
                 caller_fn,
             );

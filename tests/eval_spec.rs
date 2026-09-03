@@ -3583,7 +3583,7 @@ fn mySum(n: Int) -> Int
 mod replay_tests {
     use super::*;
     use aver::replay::{EffectRecord, JsonValue, RecordedOutcome, json_to_value, value_to_json};
-    use std::collections::BTreeMap;
+    use serde_json::Map;
 
     /// Build a VM from source — run_named_function auto-sets allowed effects.
     fn vm_build_with_effects(src: &str) -> vm::VM {
@@ -3909,7 +3909,7 @@ fn check() -> Bool
     Disk.exists("/tmp/x")
 "#;
         let mut machine = vm_build_with_effects(src);
-        let mut outcome = BTreeMap::new();
+        let mut outcome = Map::new();
         outcome.insert("$ok".to_string(), JsonValue::String("x".to_string()));
         machine.start_replay(
             vec![EffectRecord {

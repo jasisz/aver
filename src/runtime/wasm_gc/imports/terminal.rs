@@ -198,8 +198,8 @@ pub(super) fn dispatch(
                     let value = json_record(
                         "Terminal.Size",
                         vec![
-                            ("width", aver::replay::JsonValue::Int(width)),
-                            ("height", aver::replay::JsonValue::Int(height)),
+                            ("width", aver::replay::JsonValue::from(width)),
+                            ("height", aver::replay::JsonValue::from(height)),
                         ],
                     );
                     (

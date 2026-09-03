@@ -107,7 +107,7 @@ src/
   resolver.rs         — Compile-time variable resolution: Ident → Resolved(slot).
 
   replay/             — Deterministic replay runtime:
-                        json.rs    — JSON parser/formatter + Value↔JSON roundtrip
+                        json.rs    — Value↔JSON marker codec over serde_json::Value
                         session.rs — EffectRecord / SessionRecording encoding
 
   vm/                 — Bytecode compiler + virtual machine:

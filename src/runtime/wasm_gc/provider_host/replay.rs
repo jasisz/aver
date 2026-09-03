@@ -1,6 +1,6 @@
 //! Stable replay JSON bridge for values crossing a custom provider import.
 
-use std::collections::BTreeMap;
+use serde_json::{Map, Number};
 
 use aver::ast::{Type, TypeDef};
 use aver::provider::{ProviderRegistry, ProviderResource, ProviderValue};
@@ -30,14 +30,14 @@ pub(super) fn provider_values_to_json_lossy(
 }
 
 fn opaque_json(value: &ProviderValue) -> JsonValue {
-    JsonValue::Object(BTreeMap::from([(
+    JsonValue::Object(Map::from_iter([(
         "$opaque".to_string(),
         JsonValue::String(value.shape()),
     )]))
 }
 
 fn marker(name: &str, value: JsonValue) -> JsonValue {
-    JsonValue::Object(BTreeMap::from([(name.to_string(), value)]))
+    JsonValue::Object(Map::from_iter([(name.to_string(), value)]))
 }
 
 pub(super) fn provider_value_to_json(
@@ -49,23 +49,25 @@ pub(super) fn provider_value_to_json(
     match value {
         ProviderValue::Int(value) => value
             .to_i64()
-            .map(JsonValue::Int)
+            .map(|n| JsonValue::Number(n.into()))
             .ok_or_else(|| "cannot serialize an integer outside the 64-bit JSON range".into()),
-        ProviderValue::Float(value) if value.is_finite() => Ok(JsonValue::Float(*value)),
+        ProviderValue::Float(value) if value.is_finite() => Ok(JsonValue::Number(
+            Number::from_f64(*value).expect("checked finite above"),
+        )),
         ProviderValue::Float(_) => Err("cannot serialize non-finite float".into()),
         ProviderValue::String(value) => Ok(JsonValue::String(value.clone())),
         ProviderValue::Bytes(bytes) => Ok(marker(
             "$record",
-            JsonValue::Object(BTreeMap::from([
+            JsonValue::Object(Map::from_iter([
                 ("type".into(), JsonValue::String("Bytes".into())),
                 (
                     "fields".into(),
-                    JsonValue::Object(BTreeMap::from([(
+                    JsonValue::Object(Map::from_iter([(
                         "values".into(),
                         JsonValue::Array(
                             bytes
                                 .iter()
-                                .map(|byte| JsonValue::Int(i64::from(*byte)))
+                                .map(|byte| JsonValue::from(i64::from(*byte)))
                                 .collect(),
                         ),
                     )])),
@@ -194,7 +196,7 @@ pub(super) fn provider_value_to_json(
                 .collect::<Result<_, String>>()?;
             Ok(marker(
                 "$record",
-                JsonValue::Object(BTreeMap::from([
+                JsonValue::Object(Map::from_iter([
                     ("type".into(), JsonValue::String(type_name.clone())),
                     ("fields".into(), JsonValue::Object(fields)),
                 ])),
@@ -229,7 +231,7 @@ pub(super) fn provider_value_to_json(
                 .collect::<Result<_, _>>()?;
             Ok(marker(
                 "$variant",
-                JsonValue::Object(BTreeMap::from([
+                JsonValue::Object(Map::from_iter([
                     ("type".into(), JsonValue::String(type_name.clone())),
                     ("name".into(), JsonValue::String(variant.clone())),
                     ("fields".into(), JsonValue::Array(fields)),
@@ -253,7 +255,7 @@ pub(super) fn provider_value_to_json(
                 .map_or(resource.id(), |token| token.0);
             Ok(marker(
                 "$capabilityResource",
-                JsonValue::Object(BTreeMap::from([
+                JsonValue::Object(Map::from_iter([
                     ("type".into(), JsonValue::String(type_name)),
                     ("trace".into(), JsonValue::String(trace.to_string())),
                 ])),
@@ -288,9 +290,22 @@ pub(super) fn provider_value_from_json(
     providers: &ProviderRegistry,
 ) -> Result<ProviderValue, String> {
     match (ty, json) {
-        (Type::Int, JsonValue::Int(value)) => Ok(ProviderValue::Int((*value).into())),
-        (Type::Float, JsonValue::Float(value)) => Ok(ProviderValue::Float(*value)),
-        (Type::Float, JsonValue::Int(value)) => Ok(ProviderValue::Float(*value as f64)),
+        (Type::Int, JsonValue::Number(n)) => {
+            let value = n
+                .as_i64()
+                .ok_or_else(|| format!("recorded Int {n} is out of i64 range"))?;
+            Ok(ProviderValue::Int(value.into()))
+        }
+        // Lenient on the wire: a Float field accepts either a decimal
+        // literal (`1.5`) or a bare integer literal (`1`) — `as_f64`
+        // covers both, matching the old hand-rolled codec's separate
+        // `JsonValue::Float`/`JsonValue::Int` arms here.
+        (Type::Float, JsonValue::Number(n)) => {
+            let value = n
+                .as_f64()
+                .ok_or_else(|| format!("recorded Float {n} has no f64 representation"))?;
+            Ok(ProviderValue::Float(value))
+        }
         (Type::Str, JsonValue::String(value)) => Ok(ProviderValue::String(value.clone())),
         (Type::Bool, JsonValue::Bool(value)) => Ok(ProviderValue::Bool(*value)),
         (Type::Unit, JsonValue::Null) => Ok(ProviderValue::Unit),
@@ -526,10 +541,13 @@ fn decode_json_bytes(json: &JsonValue) -> Result<ProviderValue, String> {
     let values = json_array(fields.get("values"), "Bytes.values")?;
     let mut bytes = Vec::with_capacity(values.len());
     for value in values {
-        let JsonValue::Int(value) = value else {
+        let JsonValue::Number(n) = value else {
             return Err("recorded Bytes contains a non-integer octet".into());
         };
-        bytes.push(u8::try_from(*value).map_err(|_| "recorded Bytes octet is out of range")?);
+        let value = n
+            .as_i64()
+            .ok_or("recorded Bytes octet is out of range")?;
+        bytes.push(u8::try_from(value).map_err(|_| "recorded Bytes octet is out of range")?);
     }
     Ok(ProviderValue::Bytes(bytes))
 }
@@ -551,7 +569,7 @@ fn json_array<'a>(value: Option<&'a JsonValue>, path: &str) -> Result<&'a [JsonV
 fn json_object<'a>(
     value: Option<&'a JsonValue>,
     path: &str,
-) -> Result<&'a BTreeMap<String, JsonValue>, String> {
+) -> Result<&'a Map<String, JsonValue>, String> {
     match value {
         Some(JsonValue::Object(values)) => Ok(values),
         _ => Err(format!("{path} is not an object")),

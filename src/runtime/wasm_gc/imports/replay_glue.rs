@@ -69,7 +69,7 @@ pub(crate) fn try_replay(
 /// shape (`{"$ok": <inner>}`) matches `replay::value_to_json` so VM
 /// and wasm-gc traces stay byte-identical for the same effect.
 pub(crate) fn json_ok(inner: aver::replay::JsonValue) -> aver::replay::JsonValue {
-    let mut obj = std::collections::BTreeMap::new();
+    let mut obj = serde_json::Map::new();
     obj.insert("$ok".to_string(), inner);
     aver::replay::JsonValue::Object(obj)
 }
@@ -79,7 +79,7 @@ pub(crate) fn json_ok(inner: aver::replay::JsonValue) -> aver::replay::JsonValue
 /// emit today carries `String` errors, matching the
 /// `aver_rt::*` Rust signatures.
 pub(crate) fn json_err(msg: &str) -> aver::replay::JsonValue {
-    let mut obj = std::collections::BTreeMap::new();
+    let mut obj = serde_json::Map::new();
     obj.insert(
         "$err".to_string(),
         aver::replay::JsonValue::String(msg.to_string()),
@@ -89,14 +89,14 @@ pub(crate) fn json_err(msg: &str) -> aver::replay::JsonValue {
 
 /// Build the recorder-side JSON for an Aver `Option.Some(inner)`.
 pub(crate) fn json_some(inner: aver::replay::JsonValue) -> aver::replay::JsonValue {
-    let mut obj = std::collections::BTreeMap::new();
+    let mut obj = serde_json::Map::new();
     obj.insert("$some".to_string(), inner);
     aver::replay::JsonValue::Object(obj)
 }
 
 /// Build the recorder-side JSON for an Aver `Option.None`.
 pub(crate) fn json_none() -> aver::replay::JsonValue {
-    let mut obj = std::collections::BTreeMap::new();
+    let mut obj = serde_json::Map::new();
     obj.insert("$none".to_string(), aver::replay::JsonValue::Bool(true));
     aver::replay::JsonValue::Object(obj)
 }
@@ -108,11 +108,11 @@ pub(crate) fn json_record(
     type_name: &str,
     fields: Vec<(&str, aver::replay::JsonValue)>,
 ) -> aver::replay::JsonValue {
-    let mut fields_obj = std::collections::BTreeMap::new();
+    let mut fields_obj = serde_json::Map::new();
     for (k, v) in fields {
         fields_obj.insert(k.to_string(), v);
     }
-    let mut payload = std::collections::BTreeMap::new();
+    let mut payload = serde_json::Map::new();
     payload.insert(
         "type".to_string(),
         aver::replay::JsonValue::String(type_name.to_string()),
@@ -121,7 +121,7 @@ pub(crate) fn json_record(
         "fields".to_string(),
         aver::replay::JsonValue::Object(fields_obj),
     );
-    let mut wrapper = std::collections::BTreeMap::new();
+    let mut wrapper = serde_json::Map::new();
     wrapper.insert(
         "$record".to_string(),
         aver::replay::JsonValue::Object(payload),
