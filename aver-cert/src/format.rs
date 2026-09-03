@@ -151,6 +151,15 @@ impl Wasip2ComponentEnvelopeDeclaration {
 /// credit.
 pub const CERT_SCHEMA_VERSION: u32 = 8;
 
+/// Longest a transported display string may be. Every declared-only candidate
+/// the manifest carries — export names, class and domain labels, runtime
+/// contracts, capability names, and the declared-uncertified reasons — is
+/// gated on this length and on the printable ASCII subset before a verdict
+/// prints it. The engine that WRITES a decline reason shares the constant with
+/// the verifier that gates it, so a reason can never grow past the point where
+/// the package stops checking.
+pub const MAX_CANDIDATE_LEN: usize = 200;
+
 /// Named theorem audited by the checker-owned witness.
 pub const ARTIFACT_CERTIFICATE_ROOT: &str = "AverCert.Artifact.certificate";
 
