@@ -1,10 +1,11 @@
+#[path = "support/aver_cmd.rs"]
+mod aver_cmd;
+
+use aver_cmd::aver_bin;
+
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
-
-fn aver_bin() -> &'static str {
-    env!("CARGO_BIN_EXE_aver")
-}
 
 fn fixture_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/capability_manifest")

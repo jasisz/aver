@@ -32,6 +32,11 @@
 //! `python3` is unavailable, mirroring `cert_verify_spec.rs`.
 #![cfg(feature = "wasm")]
 
+#[path = "support/aver_cmd.rs"]
+mod aver_cmd;
+
+use aver_cmd::aver_command;
+
 #[path = "support/scratch_dir.rs"]
 mod scratch_dir;
 
@@ -195,19 +200,6 @@ fn lake_available() -> bool {
 
 fn python_available() -> bool {
     Command::new("python3").arg("--version").output().is_ok()
-}
-
-fn aver_command() -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_aver"));
-    command.env(
-        "AVER_CERT_PRELUDE_CACHE",
-        std::env::temp_dir().join("aver-cert-prelude-store"),
-    );
-    command.env(
-        "AVER_CERT_DATA_CACHE",
-        std::env::temp_dir().join("aver-cert-data-store"),
-    );
-    command
 }
 
 /// Copy the decoder prelude sources into a fresh temp dir and `lake build` them

@@ -45,6 +45,11 @@
 //! Every program below prints a final `reached the end` marker, and the ones
 //! that stay on their feet pin what each intermediate step printed.
 
+#[path = "support/aver_cmd.rs"]
+mod aver_cmd;
+
+use aver_cmd::format_output;
+
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -60,15 +65,6 @@ fn temp_module(prefix: &str, source: &str) -> PathBuf {
     let path = dir.join("main.av");
     fs::write(&path, source).expect("write temp module source");
     path
-}
-
-fn format_output(out: &std::process::Output) -> String {
-    format!(
-        "status: {}\nstdout:\n{}\nstderr:\n{}",
-        out.status,
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr),
-    )
 }
 
 fn run(prefix: &str, source: &str, extra: &[&str]) -> String {

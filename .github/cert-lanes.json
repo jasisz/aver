@@ -98,8 +98,24 @@
   },
   {
     "suite": "cert_whole_module_guard_iso",
-    "lane": "",
-    "mode": "cargo"
+    "lane": "guard-iso-1/3",
+    "mode": "nextest",
+    "filter": "all()",
+    "partition": "1/3"
+  },
+  {
+    "suite": "cert_whole_module_guard_iso",
+    "lane": "guard-iso-2/3",
+    "mode": "nextest",
+    "filter": "all()",
+    "partition": "2/3"
+  },
+  {
+    "suite": "cert_whole_module_guard_iso",
+    "lane": "guard-iso-3/3",
+    "mode": "nextest",
+    "filter": "all()",
+    "partition": "3/3"
   },
   {
     "suite": "cert_verify_spec",

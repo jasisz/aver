@@ -30,6 +30,11 @@
 
 #![cfg(feature = "runtime")]
 
+#[path = "support/aver_cmd.rs"]
+mod aver_cmd;
+
+use aver_cmd::format_output;
+
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -55,15 +60,6 @@ fn temp_output_dir(prefix: &str) -> PathBuf {
         .map(|d| d.as_nanos())
         .unwrap_or(0);
     std::env::temp_dir().join(format!("{prefix}-{nanos}"))
-}
-
-fn format_output(output: &std::process::Output) -> String {
-    format!(
-        "status: {}\nstdout:\n{}\nstderr:\n{}",
-        output.status,
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    )
 }
 
 /// Reusable target directory for `cargo check` across all examples.

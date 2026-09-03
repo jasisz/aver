@@ -3,12 +3,13 @@
 //! 1 = at least one file under a glob has nearest-layer disagreeing
 //!     with the declared layer.
 
+#[path = "support/aver_cmd.rs"]
+mod aver_cmd;
+
+use aver_cmd::aver_bin;
+
 use std::fs;
 use std::process::Command;
-
-fn aver_bin() -> &'static str {
-    env!("CARGO_BIN_EXE_aver")
-}
 
 fn temp_dir(tag: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("aver-shape-lint-{tag}-{}", std::process::id()));

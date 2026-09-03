@@ -7,22 +7,14 @@
 //! `AGENTS.md` keeps every byte outside its marked section), and running the
 //! command twice leaves the tree exactly as the first run left it.
 
+#[path = "support/aver_cmd.rs"]
+mod aver_cmd;
+
+use aver_cmd::{aver_bin, format_output};
+
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Output};
-
-fn aver_bin() -> &'static str {
-    env!("CARGO_BIN_EXE_aver")
-}
-
-fn format_output(output: &Output) -> String {
-    format!(
-        "status: {}\nstdout:\n{}\nstderr:\n{}",
-        output.status,
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    )
-}
 
 /// Run `aver agent-connect <args>` with `cwd` as the working directory and
 /// `home` as `$HOME`, so nothing escapes into the developer's real setup.

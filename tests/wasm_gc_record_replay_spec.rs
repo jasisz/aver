@@ -31,6 +31,11 @@
 //! - Batch replay (`aver replay --wasm-gc <dir>`) keeps iterating
 //!   past a bad recording instead of `process::exit`-ing.
 
+#[path = "support/aver_cmd.rs"]
+mod aver_cmd;
+
+use aver_cmd::format_output;
+
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -50,15 +55,6 @@ fn write_program(dir: &std::path::Path, name: &str, source: &str) -> PathBuf {
     let path = dir.join(name);
     fs::write(&path, source).expect("write temp program");
     path
-}
-
-fn format_output(output: &std::process::Output) -> String {
-    format!(
-        "status: {}\nstdout:\n{}\nstderr:\n{}",
-        output.status,
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    )
 }
 
 fn record_via_cli(prog: &PathBuf, rec_dir: &PathBuf) -> PathBuf {

@@ -1,22 +1,21 @@
-//! Phase 3 → 4 coverage gate of #252.
+//! `LowerStats` / `SkipReason` plumbing tests (originally the Phase 3 →
+//! 4 coverage gate of #252).
 //!
-//! Until the lowerer covers every `ResolvedExpr` shape, fns with
-//! unsupported constructs get dropped from `MirProgram.fns`. The
-//! drop is silent at the call-site level — `MirProgram::dump()`
-//! still renders cleanly for the lowered subset. That's a trap:
-//! Phase 4 (VM slice) could land thinking everything is wired
-//! when in fact 60% of the corpus silently disappeared.
+//! The per-wave lowering suites (`tests/mir_phase3_wave*.rs`) now cover
+//! every ordinary shape directly and clean-typechecking Aver no longer
+//! produces any `SkipReason` at all (see `src/ir/mir/stats.rs`), so the
+//! corpus-conservation and per-shape "still lowers" tests this file
+//! used to carry were exact duplicates of assertions already made,
+//! more strongly, by those wave suites — removed below with pointers to
+//! their replacements.
 //!
-//! `MirProgram.stats` is the gate. Every wave PR can prove:
-//! 1. **Conservation** — `lowered + sum(skipped) == total fns seen`.
-//! 2. **Attribution** — each dropped fn names a single dominant
-//!    `SkipReason`.
-//! 3. **Direction** — newly-supported variants disappear from the
-//!    `skipped` map; nothing previously supported regresses.
-//!
-//! These tests pin those invariants on a mix of supported + each
-//! flavour of unsupported construct. Phase 4 gate adds a corpus-
-//! wide `coverage_ratio() ≥ X%` floor on the shipped examples.
+//! What's left genuinely exercises live code that has no other test:
+//! the `total == 0` convention on `LowerStats::coverage_ratio()` (feeds
+//! `aver compile --explain-mir-coverage`, see
+//! `tests/explain_mir_coverage_spec.rs`), and the sort/label behaviour
+//! of `LowerStats::skipped_sorted()` / `SkipReason::label()`, both
+//! called from the same `--explain-mir-coverage` renderer in
+//! `src/main/commands.rs`.
 
 use aver::ir::mir::{SkipReason, lower_program};
 use aver::ir::pipeline::{self, PipelineConfig, TypecheckMode};
@@ -36,63 +35,12 @@ fn lower_stats(source: &str) -> aver::ir::mir::LowerStats {
     lower_program(&result.resolved_items).stats
 }
 
-#[test]
-fn conservation_lowered_plus_skipped_equals_total() {
-    // `dbl`, `callWith`, and `caller` all lower now: `callWith` calls
-    // its `Fn(..)` param via the CALL_VALUE path, and `caller` PASSES a
-    // fn as a value (`callWith(dbl)` → `dbl`), which the lowerer now
-    // carries as `MirExpr::FnValue` instead of bouncing. Fn-value
-    // passing was the last corpus-relevant drop shape; with it closed,
-    // a clean-typechecking program has no un-lowered shapes among
-    // ordinary Aver. The conservation invariant still holds:
-    // `lowered + skipped == total`, now with `skipped == 0`.
-    //
-    // List / Tuple / Map / Result.Ok / interpolation / nullary-ctor-in-
-    // value-position / first-class-fn *calls* / fn-value *passing* all
-    // lower now — none survive as drop fixtures here.
-    let stats = lower_stats(
-        "fn dbl(n: Int) -> Int\n    n + n\n\n\
-         fn callWith(f: Fn(Int) -> Int) -> Int\n    f(3)\n\n\
-         fn caller() -> Int\n    callWith(dbl)\n",
-    );
-    assert_eq!(
-        stats.total(),
-        3,
-        "expected 3 fns seen, got {}: {:?}",
-        stats.total(),
-        stats
-    );
-    assert_eq!(
-        stats.lowered, 3,
-        "all three fns must lower (fn-value passing now carries as FnValue): {:?}",
-        stats
-    );
-    assert_eq!(
-        stats.skipped.values().sum::<u32>(),
-        0,
-        "no fn drops — fn-value passing lowers via MirExpr::FnValue: {:?}",
-        stats
-    );
-}
-
-#[test]
-fn fn_value_passing_no_longer_drops() {
-    // `callWith(dbl)` passes the top-level fn `dbl` by bare ident into a
-    // higher-order fn. Before `MirExpr::FnValue` this resolved to a bare
-    // `ResolvedExpr::Ident` the lowerer dropped as `UnresolvedIdent`;
-    // now it lowers and the VM walker resolves the symbol via the shared
-    // `compile_ident` path. The `UnresolvedIdent` skip counter must be 0.
-    let stats = lower_stats(
-        "fn dbl(n: Int) -> Int\n    n + n\n\n\
-         fn callWith(f: Fn(Int) -> Int) -> Int\n    f(3)\n\n\
-         fn caller() -> Int\n    callWith(dbl)\n",
-    );
-    assert!(
-        stats.skipped.is_empty(),
-        "fn-value passing must not drop the fn: {:?}",
-        stats
-    );
-}
+// `conservation_lowered_plus_skipped_equals_total` and
+// `fn_value_passing_no_longer_drops` used to pin the `dbl` / `callWith`
+// / `caller` fn-value-passing fixture here; removed as exact-fixture
+// duplicates of `tests/mir_phase3_wave1_lowering.rs::lowers_fn_value_passing`,
+// which checks the same corpus with a stronger (structural, not just
+// skip-count) assertion.
 
 #[test]
 fn coverage_ratio_pins_one_for_empty_program() {
@@ -107,48 +55,14 @@ fn coverage_ratio_pins_one_for_empty_program() {
     );
 }
 
-#[test]
-fn wave_3c_i_builtin_ctor_construction_no_longer_drops() {
-    // Wave 3c-i landed typed identity for built-in ctors. A fn
-    // whose body is `Result.Ok(x)` now lowers cleanly.
-    let stats = lower_stats("fn makes_ok(x: Int) -> Result<Int, String>\n    Result.Ok(x)\n");
-    assert_eq!(
-        stats.lowered, 1,
-        "Result.Ok construction must lower after wave 3c-i: {:?}",
-        stats
-    );
-    assert!(
-        stats.skipped.is_empty(),
-        "a built-in ctor construction must not drop the fn: {:?}",
-        stats.skipped
-    );
-}
-
-#[test]
-fn wave_3c_iv_list_literal_no_longer_drops() {
-    // Wave 3c-iv landed list-literal lowering. A fn whose body
-    // is `[1, 2, 3]` now lowers cleanly.
-    let stats = lower_stats("fn one() -> List<Int>\n    [1, 2, 3]\n");
-    assert!(
-        stats.skipped.is_empty(),
-        "a list literal must not drop the fn: {:?}",
-        stats.skipped
-    );
-    assert_eq!(stats.lowered, 1, "list-literal fn must lower: {:?}", stats);
-}
-
-#[test]
-fn wave_3c_iv_tuple_literal_no_longer_drops() {
-    // Wave 3c-iv landed tuple-literal lowering. Same shape as the
-    // list assertion above.
-    let stats = lower_stats("fn pair() -> Tuple<Int, Int>\n    (1, 2)\n");
-    assert!(
-        stats.skipped.is_empty(),
-        "a tuple literal must not drop the fn: {:?}",
-        stats.skipped
-    );
-    assert_eq!(stats.lowered, 1, "tuple-literal fn must lower: {:?}", stats);
-}
+// `wave_3c_i_builtin_ctor_construction_no_longer_drops`,
+// `wave_3c_iv_list_literal_no_longer_drops` and
+// `wave_3c_iv_tuple_literal_no_longer_drops` used to pin the same
+// `Result.Ok(x)` / `[1, 2, 3]` / `(1, 2)` fixtures already covered,
+// with a stronger structural assertion, by
+// `tests/mir_phase3_wave3c_i_builtin_ctors.rs::result_ok_construction_renders_with_canonical_name`
+// and `tests/mir_phase3_wave3c_iv_collections.rs::{list_literal_lowers,tuple_literal_lowers}`;
+// removed as duplicates.
 
 #[test]
 fn skipped_sorted_is_stable() {
