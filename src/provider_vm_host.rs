@@ -15,13 +15,19 @@ use sha2::{Digest, Sha256};
 use crate::codegen::rust::composition::{ProviderComposition, ProviderCompositionSource};
 use crate::toolchain_source::ToolchainSource;
 
-const HOST_SCHEMA: &str = "aver-provider-vm-host-v6";
+const HOST_SCHEMA: &str = "aver-provider-vm-host-v8";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ProviderHostBackend {
     Vm,
     WasmGc,
     Wasip2,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HostBuildProfile {
+    Iteration,
+    Release,
 }
 
 /// Build (once) and run the host for `composition`. `project_root` is the
@@ -33,28 +39,82 @@ pub(crate) fn run_cached_host(
     backend: ProviderHostBackend,
     project_root: &Path,
 ) -> Result<ExitStatus, String> {
+    run_cached_host_with_profile(
+        raw_args,
+        composition,
+        backend,
+        project_root,
+        HostBuildProfile::Iteration,
+    )
+}
+
+/// Build the provider-linked host as a deployable native executable, then run
+/// the compile command inside it. The command can copy its own executable into
+/// the Wasmtime pack, so the delivered host contains the exact bindings that
+/// were checked before Cargo ran.
+pub(crate) fn run_cached_pack_host(
+    raw_args: &[OsString],
+    composition: &ProviderComposition,
+    project_root: &Path,
+) -> Result<ExitStatus, String> {
+    run_cached_host_with_profile(
+        raw_args,
+        composition,
+        ProviderHostBackend::WasmGc,
+        project_root,
+        HostBuildProfile::Release,
+    )
+}
+
+fn run_cached_host_with_profile(
+    raw_args: &[OsString],
+    composition: &ProviderComposition,
+    backend: ProviderHostBackend,
+    project_root: &Path,
+    profile: HostBuildProfile,
+) -> Result<ExitStatus, String> {
     let source = render_host_source(composition);
+    let bundle_source = render_bundle_host_source(composition);
     let dependency_lines = render_dependency_lines(composition, backend)?;
     let runtime_identity = host_runtime_identity()?;
-    let key = host_key(&source, &dependency_lines, &runtime_identity);
+    let source_identity = format!("{source}\n{bundle_source}");
+    let key = host_key(&source_identity, &dependency_lines, &runtime_identity);
     let binary_name = format!("aver-provider-host-{}", &key[..16]);
+    let bundle_binary_name = format!("aver-wasmtime-host-{}", &key[..16]);
     let cache = cache_root()?;
     let project = cache.join("projects").join(&key);
     let target = cache.join("target");
     let cargo_toml = render_cargo_toml(&binary_name, &dependency_lines);
+    let profile_dir = match profile {
+        HostBuildProfile::Iteration => "debug",
+        HostBuildProfile::Release => "release",
+    };
     let binary =
         target
-            .join("debug")
+            .join(profile_dir)
             .join(format!("{}{}", binary_name, std::env::consts::EXE_SUFFIX));
-    let state_file = project.join("build-input-state");
+    let bundle_binary = target.join(profile_dir).join(format!(
+        "{}{}",
+        bundle_binary_name,
+        std::env::consts::EXE_SUFFIX
+    ));
+    let state_file = project.join(format!("build-input-state-{profile_dir}"));
 
     write_if_changed(&project.join("Cargo.toml"), &cargo_toml)?;
     write_if_changed(&project.join("src/main.rs"), &source)?;
+    write_if_changed(
+        &project
+            .join("src/bin")
+            .join(format!("{bundle_binary_name}.rs")),
+        &bundle_source,
+    )?;
 
     let input_state = build_input_state(composition)?;
     let cached_state = std::fs::read_to_string(&state_file).ok();
-    if !binary.is_file() || cached_state.as_deref() != Some(&input_state) {
-        let action = if binary.is_file() {
+    let artifacts_present = binary.is_file()
+        && (!matches!(profile, HostBuildProfile::Release) || bundle_binary.is_file());
+    if !artifacts_present || cached_state.as_deref() != Some(&input_state) {
+        let action = if artifacts_present {
             "Rebuilding"
         } else {
             "Building"
@@ -75,6 +135,11 @@ pub(crate) fn run_cached_host(
             })
             .collect::<Vec<_>>()
             .join(", ");
+        let packages = if packages.is_empty() {
+            "standard wasm-gc providers".to_string()
+        } else {
+            packages
+        };
         eprintln!(
             "{action} provider host for {packages} (cached at {})...",
             project.display()
@@ -83,6 +148,16 @@ pub(crate) fn run_cached_host(
         let status = Command::new(cargo)
             .arg("build")
             .arg("--quiet")
+            .args(matches!(profile, HostBuildProfile::Release).then_some("--release"))
+            .args(match profile {
+                HostBuildProfile::Iteration => vec!["--bin", binary_name.as_str()],
+                HostBuildProfile::Release => vec![
+                    "--bin",
+                    binary_name.as_str(),
+                    "--bin",
+                    bundle_binary_name.as_str(),
+                ],
+            })
             .current_dir(&project)
             .env("CARGO_TARGET_DIR", &target)
             .status()
@@ -103,15 +178,23 @@ pub(crate) fn run_cached_host(
         ));
     }
 
-    Command::new(&binary)
-        .args(raw_args.iter().skip(1))
-        .status()
-        .map_err(|error| {
-            format!(
-                "failed to start cached provider host '{}': {error}",
-                binary.display()
-            )
-        })
+    let mut command = Command::new(&binary);
+    command.args(raw_args.iter().skip(1));
+    if matches!(profile, HostBuildProfile::Release) {
+        if !bundle_binary.is_file() {
+            return Err(format!(
+                "provider host build succeeded but bundle binary '{}' is missing",
+                bundle_binary.display()
+            ));
+        }
+        command.env("AVER_WASMTIME_PACK_HOST", &bundle_binary);
+    }
+    command.status().map_err(|error| {
+        format!(
+            "failed to start cached provider host '{}': {error}",
+            binary.display()
+        )
+    })
 }
 
 /// Where a provider package comes from, for a reader of the project: a path
@@ -282,6 +365,18 @@ fn render_host_source(composition: &ProviderComposition) -> String {
     )
 }
 
+fn render_bundle_host_source(composition: &ProviderComposition) -> String {
+    let factories = composition
+        .bindings
+        .iter()
+        .map(|binding| format!("        {},", binding.factory_call()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "fn main() {{\n    if let Err(error) = aver::runtime::wasm_gc::run_bundle_from_current_exe(vec![\n{factories}\n    ]) {{\n        eprintln!(\"{{error}}\");\n        std::process::exit(1);\n    }}\n}}\n"
+    )
+}
+
 fn render_dependency_lines(
     composition: &ProviderComposition,
     backend: ProviderHostBackend,
@@ -305,7 +400,7 @@ fn aver_dependency_line(backend: ProviderHostBackend) -> Result<String, String> 
 
 fn render_cargo_toml(binary_name: &str, dependencies: &[String]) -> String {
     format!(
-        "[package]\nname = {}\nversion = \"0.0.0\"\nedition = \"2024\"\npublish = false\n\n[dependencies]\n{}\n\n[profile.dev]\ndebug = 0\n\n[profile.dev.package.\"*\"]\nopt-level = 2\n",
+        "[package]\nname = {}\nversion = \"0.0.0\"\nedition = \"2024\"\npublish = false\n\n[dependencies]\n{}\n\n[profile.dev]\ndebug = 0\n\n[profile.dev.package.\"*\"]\nopt-level = 2\n\n[profile.release]\nlto = \"thin\"\ncodegen-units = 1\npanic = \"abort\"\nstrip = true\n",
         toml_string(binary_name),
         dependencies.join("\n")
     )
@@ -438,6 +533,11 @@ mod tests {
                 .unwrap();
         assert_eq!(render_host_source(&one), render_host_source(&two));
         assert_eq!(
+            render_bundle_host_source(&one),
+            render_bundle_host_source(&two)
+        );
+        assert!(render_bundle_host_source(&one).contains("run_bundle_from_current_exe"));
+        assert_eq!(
             render_dependency_lines(&one, ProviderHostBackend::Vm).unwrap(),
             render_dependency_lines(&two, ProviderHostBackend::Vm).unwrap()
         );
@@ -507,5 +607,8 @@ mod tests {
             &["aver = { version = \"=1.2.3\" }".to_string()],
         );
         assert!(manifest.contains("[profile.dev.package.\"*\"]\nopt-level = 2"));
+        assert!(manifest.contains("[profile.release]\nlto = \"thin\""));
+        assert!(manifest.contains("panic = \"abort\""));
+        assert!(manifest.contains("strip = true"));
     }
 }

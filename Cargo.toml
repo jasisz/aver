@@ -87,7 +87,7 @@ certify = ["wasm-compile", "aver-cert/producer"]
 # to WIT/WASI imports — there is no preview1 ABI to preserve. See
 # docs/wasip2.md for the contract and feedback_aver_no_preview1_adapter
 # for the architectural rationale.
-wasip2 = ["wasm-compile", "dep:wit-component", "dep:wit-encoder", "dep:wit-parser", "dep:wasmtime", "dep:wasmtime-wasi", "dep:wasmtime-wasi-http"]
+wasip2 = ["wasm-compile", "dep:wit-component", "dep:wit-encoder", "dep:wit-parser", "dep:wasmtime", "wasmtime/component-model", "wasmtime/component-model-async", "dep:wasmtime-wasi", "dep:wasmtime-wasi-http"]
 playground = ["wasm-compile", "dep:wasm-bindgen", "runtime", "tty-render"]
 
 [dependencies]
@@ -115,7 +115,10 @@ sha2 = "0.10"
 # 1 MiB hex-decode benchmark the DRC collector is ~13x slower
 # than copying (~5.5s vs ~0.42s), so the collector choice is
 # load-bearing for `aver run --wasm-gc` / `--wasip2` throughput.
-wasmtime = { version = "48.0.1", optional = true, default-features = false, features = ["cache", "cranelift", "runtime", "gc", "gc-copying", "component-model", "component-model-async"] }
+# Component Model and async support belong to the `wasip2` feature above;
+# keeping them out of plain `wasm` also keeps self-contained wasm-gc hosts
+# from carrying a deployment surface they cannot use.
+wasmtime = { version = "48.0.1", optional = true, default-features = false, features = ["cache", "cranelift", "runtime", "gc", "gc-copying"] }
 wasmtime-wasi = { version = "48.0.1", optional = true }
 wasmtime-wasi-http = { version = "48.0.1", optional = true }
 wat = { version = "1", optional = true }
