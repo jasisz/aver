@@ -14,7 +14,6 @@
 //!
 //!   `[no_alloc]`      — proven not to allocate under the configured policy
 //!   `[locals=N]`      — resolver's `local_count`
-//!   `[body=kind]`     — body shape from the thin-body classifier
 //!
 //! Expression rendering reuses `checker::verify::expr_to_str`. Top-level
 //! scaffolding (fn signatures, stmt list, type defs, module headers) lives
@@ -25,7 +24,7 @@ use std::fmt::Write;
 
 use crate::ast::{FnBody, FnDef, Stmt, TopLevel, TypeDef};
 use crate::checker::expr_to_str;
-use crate::ir::{AnalysisResult, BodyShape, FnAnalysis, ThinKind};
+use crate::ir::{AnalysisResult, FnAnalysis};
 
 /// Render every top-level item in `items`, separated by blank lines.
 /// Pass `analysis: None` for dumps before the `Analyze` stage has run
@@ -135,8 +134,11 @@ fn dump_fndef(fd: &FnDef, out: &mut String, fn_analysis: Option<&FnAnalysis>) {
                     tags.push("recursive".to_string());
                 }
             }
-            tags.push(body_shape_tag(a.body_shape, a.thin_kind));
-            format!("  [{}]", tags.join(", "))
+            if tags.is_empty() {
+                String::new()
+            } else {
+                format!("  [{}]", tags.join(", "))
+            }
         }
     };
 
@@ -154,32 +156,6 @@ fn dump_fndef(fd: &FnDef, out: &mut String, fn_analysis: Option<&FnAnalysis>) {
     let FnBody::Block(stmts) = fd.body.as_ref();
     for stmt in stmts {
         dump_stmt(stmt, 1, out);
-    }
-}
-
-fn body_shape_tag(shape: BodyShape, thin_kind: Option<ThinKind>) -> String {
-    let kind_suffix = thin_kind.map(thin_kind_label).unwrap_or("");
-    let kind_part = if kind_suffix.is_empty() {
-        String::new()
-    } else {
-        format!(" ({})", kind_suffix)
-    };
-    match shape {
-        BodyShape::LeafExpr => format!("body=leaf-expr{}", kind_part),
-        BodyShape::SingleExpr => format!("body=single-expr{}", kind_part),
-        BodyShape::Block(n) => format!("body=block:{}{}", n, kind_part),
-        BodyShape::Unclassified(1) => "body=single-expr".to_string(),
-        BodyShape::Unclassified(n) => format!("body=block:{}", n),
-    }
-}
-
-fn thin_kind_label(kind: ThinKind) -> &'static str {
-    match kind {
-        ThinKind::Leaf => "leaf",
-        ThinKind::Direct => "direct",
-        ThinKind::Forward => "forward",
-        ThinKind::Dispatch => "dispatch",
-        ThinKind::Tail => "tail",
     }
 }
 

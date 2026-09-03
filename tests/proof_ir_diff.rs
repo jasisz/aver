@@ -55,7 +55,6 @@ fn build_ctx(src: &str) -> CodegenContext {
             run_build_symbols: true,
             dep_modules: &[],
             alloc_policy: None,
-            call_ctx: None,
             on_after_pass: None,
         },
     );
@@ -119,7 +118,6 @@ fn build_ctx_with_modules(entry_src: &str, deps: &[(&str, &str)]) -> CodegenCont
             run_build_symbols: true,
             dep_modules: &modules,
             alloc_policy: None,
-            call_ctx: None,
             on_after_pass: None,
         },
     );
@@ -483,7 +481,6 @@ fn persisted_classification_equals_explain_passes_interval_analysis() {
             run_build_symbols: true,
             dep_modules: &[],
             alloc_policy: None,
-            call_ctx: None,
             on_after_pass: None,
         },
     );

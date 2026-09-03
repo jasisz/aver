@@ -120,7 +120,6 @@ fn ctx_from_source(source: &str, project_name: &str) -> CodegenContext {
             run_build_symbols: true,
             dep_modules: &[],
             alloc_policy: None,
-            call_ctx: None,
             on_after_pass: None,
         },
     );

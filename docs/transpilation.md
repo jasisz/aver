@@ -48,7 +48,7 @@ The compiler runs IR transforms in a fixed stage order (see `src/ir/pipeline.rs`
 | `byte_sink` | wasm-gc/wasip2's byte-only gate: run complete list-build detection on a copy, then replay from pristine IR and commit only variants retargeted to `__byt_*`; generic `__lst_*` never reaches those backends |
 | `resolve`      | `Expr::Ident` → `<name>` (resolved slot), `<resolved>` collapse for unknown |
 | `last_use`     | Final references annotated as `<name:last>` so backends MOVE instead of COPY |
-| `analyze`      | FnDef headers gain fact tags `[no_alloc, locals=N, recursive×N, body=…]`    |
+| `analyze`      | FnDef headers gain fact tags `[no_alloc, locals=N, recursive×N]`    |
 
 ### `--explain-passes` — per-pass diagnostic report
 

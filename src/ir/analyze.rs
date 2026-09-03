@@ -1,21 +1,20 @@
-//! IR-level analysis pass — derives policy-independent (body classification,
-//! locals count) and policy-parametrized (alloc info) facts about each
-//! `FnDef`. Runs as the last stage of the canonical pipeline so consumers
-//! (codegen, dump, future inliner) can read derived metadata from one
-//! place instead of recomputing it.
+//! IR-level analysis pass — derives policy-independent (locals count) and
+//! policy-parametrized (alloc info) facts about each `FnDef`. Runs as the
+//! last stage of the canonical pipeline so consumers (codegen, dump, future
+//! inliner) can read derived metadata from one place instead of
+//! recomputing it.
 //!
 //! Why a unified analysis stage instead of ad-hoc calls scattered through
 //! VM compilation and WASM emission: every backend that wanted "is this
-//! fn no-alloc" or "what's its body shape" had its own call into
-//! `compute_alloc_info` / `classify_thin_fn_def`. Same input, same
-//! computation, repeated. Centralising means: one walk per program, one
-//! place to extend with new analyses, and `aver compile --emit-ir` /
+//! fn no-alloc" had its own call into `compute_alloc_info`. Same input,
+//! same computation, repeated. Centralising means: one walk per program,
+//! one place to extend with new analyses, and `aver compile --emit-ir` /
 //! `--explain-passes` see the same numbers the codegen does.
 //!
 //! Backend-specific bits stay backend-specific: `AllocPolicy` is provided
 //! by the caller (`NeutralAllocPolicy`, or the dump's
-//! conservative `DumpAllocPolicy`). Policy-independent facts (`body_shape`,
-//! `thin_kind`, `local_count`) are computed unconditionally.
+//! conservative `DumpAllocPolicy`). Policy-independent facts (`local_count`)
+//! are computed unconditionally.
 //!
 //! ## Scope: per-module by design (Aver module DAG invariant)
 //!
@@ -48,11 +47,9 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::ast::{FnBody, FnDef, TopLevel};
+use crate::ast::{FnDef, TopLevel};
 use crate::call_graph::{find_recursive_fns, tailcall_scc_components};
-use crate::ir::{
-    AllocPolicy, BodyExprPlan, BodyPlan, CallLowerCtx, ThinKind, classify_thin_fn_def,
-};
+use crate::ir::AllocPolicy;
 
 /// Backend-neutral allocation policy useful for diagnostic dumps. Mirrors
 /// the VM/WASM "pure non-alloc builtins" whitelist exactly so the
@@ -134,8 +131,6 @@ pub struct FnAnalysis {
     /// `Some(true)` = proven to allocate under the supplied `AllocPolicy`;
     /// `Some(false)` = proven not to; `None` = no policy was configured.
     pub allocates: Option<bool>,
-    pub thin_kind: Option<ThinKind>,
-    pub body_shape: BodyShape,
     pub local_count: Option<u16>,
     /// `true` if this fn participates in a mutual-TCO SCC (not a singleton
     /// self-recursive fn — those are plain TCO and don't need trampoline
@@ -149,30 +144,10 @@ pub struct FnAnalysis {
     pub recursive_call_count: usize,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BodyShape {
-    /// `BodyPlan::SingleExpr` whose head is a leaf op (literal, ident,
-    /// resolved local, etc.) — the fastest possible body shape.
-    LeafExpr,
-    /// `BodyPlan::SingleExpr` of any other kind (call, match, ctor, …).
-    SingleExpr,
-    /// `BodyPlan::Block { stmts: N, .. }` — a multi-stmt block (let
-    /// bindings + tail expr).
-    Block(usize),
-    /// Body didn't match any of the classifier's recognised shapes;
-    /// usually means the body is a `match` or some other top-level
-    /// expression the thin-body classifier doesn't model.
-    Unclassified(usize),
-}
-
 /// Run the analysis on all `TopLevel::FnDef` items in `items`. The
 /// `alloc_policy` is optional — when `None`, `FnAnalysis::allocates`
 /// stays `None` for every fn (every other field is still computed).
-pub fn analyze(
-    items: &[TopLevel],
-    alloc_policy: Option<&dyn AllocPolicy>,
-    ctx: &impl CallLowerCtx,
-) -> AnalysisResult {
+pub fn analyze(items: &[TopLevel], alloc_policy: Option<&dyn AllocPolicy>) -> AnalysisResult {
     let fn_defs: Vec<&FnDef> = items
         .iter()
         .filter_map(|i| match i {
@@ -223,22 +198,8 @@ pub fn analyze(
 
     let mut fn_analyses: HashMap<String, FnAnalysis> = HashMap::with_capacity(fn_defs.len());
     for fd in &fn_defs {
-        let plan = classify_thin_fn_def(fd, ctx);
-        let body_shape = match &plan {
-            Some(p) => match &p.body {
-                BodyPlan::SingleExpr(BodyExprPlan::Leaf(_)) => BodyShape::LeafExpr,
-                BodyPlan::SingleExpr(_) => BodyShape::SingleExpr,
-                BodyPlan::Block { stmts, .. } => BodyShape::Block(stmts.len()),
-            },
-            None => {
-                let FnBody::Block(stmts) = fd.body.as_ref();
-                BodyShape::Unclassified(stmts.len())
-            }
-        };
         let analysis = FnAnalysis {
             allocates: alloc_info.as_ref().and_then(|m| m.get(&fd.name).copied()),
-            thin_kind: plan.as_ref().map(|p| p.kind),
-            body_shape,
             local_count: fd.resolution.as_ref().map(|r| r.local_count),
             mutual_tco_member: mutual_tco_set.contains(&fd.name),
             recursive: recursive_set.contains(&fd.name),

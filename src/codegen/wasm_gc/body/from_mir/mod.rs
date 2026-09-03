@@ -54,7 +54,7 @@
 //! Each submodule documents the exact `emit_expr` helper it mirrors and
 //! the shapes that still fall back to the `ResolvedExpr` emitter.
 
-pub(super) use std::collections::{HashMap, HashSet};
+pub(super) use std::collections::HashMap;
 
 pub(super) use wasm_encoder::{Function, Instruction, ValType};
 
@@ -62,7 +62,7 @@ pub(super) use crate::ast::Spanned;
 pub(super) use crate::ast::{BinOp, Literal};
 pub(super) use crate::ir::CtorId;
 pub(super) use crate::ir::SymbolTable;
-pub(super) use crate::ir::hir::{ResolvedFnBody, ResolvedFnDef, ResolvedStmt};
+pub(super) use crate::ir::hir::ResolvedFnDef;
 pub(super) use crate::ir::mir::{
     BuiltinCtor, MirCallee, MirCtor, MirExpr, MirFn, MirIndependentProduct, MirMatch, MirMatchArm,
     MirPattern, MirProgram, MirRecordField, MirStrPart,
@@ -369,21 +369,6 @@ pub(crate) fn emit_fn_body_via_mir(
     let slots = SlotTable::build_for_fn(rfd, registry, fn_map, &mir_fn.repr)?;
     let return_type_str = rfd.return_type.display();
 
-    // Precollect every `let`-bound name (mirror of `emit_fn_body`) so
-    // `CallLowerCtx::is_local_value` recognises locals without a
-    // parallel type table. Source it from the HIR `rfd`, NOT from
-    // `mir_fn` — `EmitCtx` is shared with the `ResolvedExpr` emitter and
-    // its recognition (`classify_leaf_op` / `classify_call_plan`) keys
-    // off resolver-assigned names, so this set must stay HIR-sourced —
-    // do not repopulate it from `MirExpr`.
-    let ResolvedFnBody::Block(stmts) = rfd.body.as_ref();
-    let mut binding_names: HashSet<String> = HashSet::new();
-    for s in stmts {
-        if let ResolvedStmt::Binding { name, .. } = s {
-            binding_names.insert(name.clone());
-        }
-    }
-
     let ctx = EmitCtx {
         fn_map,
         self_wasm_idx,
@@ -402,7 +387,6 @@ pub(crate) fn emit_fn_body_via_mir(
         // wired), so every slot stays boxed.
         repr: &mir_fn.repr,
         params: &rfd.params,
-        binding_names: &binding_names,
         effect_idx_lookup,
         caller_fn_collector,
         wasip2_lowering,
