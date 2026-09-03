@@ -174,7 +174,7 @@ fn run_one_vm(
 
 #[cfg(feature = "wasm")]
 fn run_wasm_gc(manifest: &Manifest) -> Result<BenchReport, RunError> {
-    use wasmtime::{Config, Engine, Module, Store};
+    use wasmtime::{Engine, Module, Store};
 
     // Compile once. We shell out to `aver compile --target=wasm-gc`
     // so the produced bytes are identical to what users get — bench
@@ -210,33 +210,9 @@ fn run_wasm_gc(manifest: &Manifest) -> Result<BenchReport, RunError> {
     let bytes = std::fs::read(&wasm_path)
         .map_err(|e| RunError::Setup(format!("read {}: {}", wasm_path.display(), e)))?;
 
-    // Engine config: enable GC + tail calls. wasmtime defaults vary
-    // by version; pin them on so the bench doesn't depend on cwd or
-    // env vars. Multi-value, bulk memory, etc. are commonly default-
-    // on but we set them explicitly to match the CLI's `--wasm gc
-    // --wasm tail-call` shape.
-    let mut config = Config::new();
-    // Match the wasmtime CLI's `--wasm gc --wasm tail-call` runtime
-    // configuration. `wasm_gc` requires the cranelift backend to know
-    // about gc; `wasm_function_references` is a transitive dep of GC;
-    // `wasm_tail_call` enables `return_call(_indirect)` execution.
-    // `cranelift_opt_level(Speed)` matches the CLI's default which
-    // turns on the codegen paths that handle ref.cast properly.
-    config.wasm_gc(true);
-    config.wasm_tail_call(true);
-    config.wasm_function_references(true);
-    config.wasm_reference_types(true);
-    config.wasm_multi_value(true);
-    config.wasm_bulk_memory(true);
-    config.cranelift_opt_level(wasmtime::OptLevel::Speed);
-    // Be generous with wasm stack — tail-call return_call should
-    // not need extra room, but if cranelift generates a regular
-    // call we don't want to fail at 10K iterations. Default is
-    // 1MB; bump to 8MB.
-    config.max_wasm_stack(8 * 1024 * 1024);
-    // `component-model-async` (pulled in by the `wasip2` feature)
-    // enforces `max_wasm_stack <= async_stack_size` at Engine::new.
-    config.async_stack_size(12 * 1024 * 1024);
+    // Bench the same engine shape as `aver run --wasm-gc`; otherwise a
+    // collector or stack tuning can make the benchmark describe another host.
+    let config = crate::runtime::wasmtime_gc_engine_config();
     let engine = Engine::new(&config)
         .map_err(|e| RunError::Setup(format!("wasmtime engine config: {}", e)))?;
     let module = Module::new(&engine, &bytes)

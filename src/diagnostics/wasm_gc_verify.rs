@@ -525,17 +525,9 @@ fn run_verify_cases_in_wasmtime(
     budgets: &[CaseBudget],
     raised_by: &[Option<String>],
 ) -> Result<Vec<VerifyResult>, String> {
-    use wasmtime::{
-        Caller, Config, Engine, ExternType, FuncType, Linker, Module, Store, Val, ValType,
-    };
+    use wasmtime::{Caller, Engine, ExternType, FuncType, Linker, Module, Store, Val, ValType};
 
-    let mut config = Config::new();
-    config.wasm_gc(true);
-    config.wasm_tail_call(true);
-    config.wasm_function_references(true);
-    config.wasm_reference_types(true);
-    config.wasm_multi_value(true);
-    config.wasm_bulk_memory(true);
+    let mut config = crate::runtime::wasmtime_gc_engine_config();
     // Mirror the VM-side `step_limit` cap: per-case fuel budget so a
     // tail-recursive user fn (AFL byte-havoc favourite) bails as a
     // `RuntimeError` instead of pinning wasmtime. Reset before every

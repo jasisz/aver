@@ -231,7 +231,7 @@ fn run_component(
     providers: &aver::provider::ProviderRegistry,
 ) -> wasmtime::Result<()> {
     use wasmtime::component::{Component, Linker, ResourceTable};
-    use wasmtime::{Cache, Config, Engine, Store};
+    use wasmtime::{Cache, Engine, Store};
     use wasmtime_wasi::p2::bindings::sync::Command;
     use wasmtime_wasi::{FsPerms, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
     use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpCtxView, WasiHttpView};
@@ -241,10 +241,8 @@ fn run_component(
     // execute. Sync mode keeps Phase 1.7 simple — wasmtime-wasi has
     // both sync and async paths; sync is the right shape for a CLI
     // command that doesn't need to interleave I/O.
-    let mut config = Config::new();
+    let mut config = aver::runtime::wasmtime_gc_engine_config();
     config.wasm_component_model(true);
-    config.wasm_gc(true);
-    config.wasm_function_references(true);
     // Match the embedded wasm-gc runner: the component bytes and engine
     // settings form Wasmtime's cache key, so repeat source runs skip Cranelift
     // while changed programs and configurations miss safely.
