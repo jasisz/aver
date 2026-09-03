@@ -87,6 +87,9 @@ pub struct RunConfig {
     /// `flatten_multimodule` when the caller flattened a multi-module
     /// program. Empty for single-file programs (the fuzz harness path).
     pub type_aliases: std::collections::HashMap<String, String>,
+    /// Optional Binaryen post-pass applied to the exact bytes before Wasmtime
+    /// compiles them. `None` preserves the direct emitter-to-engine path.
+    pub optimization: Option<aver::codegen::wasm_gc::OptimizationMode>,
     /// Internal differential hook. Production callers keep this `true`;
     /// representation tests set it to `false` to exercise boxed sequences.
     #[doc(hidden)]
@@ -104,6 +107,7 @@ impl Default for RunConfig {
             mode: EffectMode::default(),
             tcp_settings: aver_rt::tcp::TcpSettings::default(),
             type_aliases: std::collections::HashMap::new(),
+            optimization: None,
             packed_sequences_enabled: true,
             custom_providers: None,
         }
@@ -188,6 +192,11 @@ pub fn run_in_process(
     }
     .map(|out| out.bytes)
     .map_err(|e| format!("{e}"))?;
+    let bytes = match config.optimization {
+        Some(mode) => aver::codegen::wasm_gc::optimize_bytes(&bytes, mode)
+            .map_err(|e| format!("WASM optimization error: {e}"))?,
+        None => bytes,
+    };
 
     let entry_fn_name: &str = config
         .entry_info

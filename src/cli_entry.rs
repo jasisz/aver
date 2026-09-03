@@ -109,6 +109,7 @@ fn main_impl(
             self_host,
             profile,
             wasm_gc,
+            optimize,
             test_boxed_sequences,
             wasip2,
             program_args,
@@ -170,6 +171,7 @@ fn main_impl(
                         program_args.clone(),
                         record.as_deref(),
                         None,
+                        *optimize,
                         *test_boxed_sequences,
                         provider_bindings,
                     );
@@ -184,6 +186,7 @@ fn main_impl(
                             program_args.clone(),
                             record.as_deref(),
                             Some(expr_src.as_str()),
+                            *optimize,
                             *test_boxed_sequences,
                             provider_bindings,
                         );

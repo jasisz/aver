@@ -65,10 +65,7 @@ pub(super) enum DeployPreset {
 }
 
 /// Optional post-pass optimization mode for generated WASM modules.
-/// Triggers a multi-stage pipeline (wasm-metadce → wasm-opt with
-/// converge + strip-producers + strip-target-features), so the flag
-/// is `--optimize` rather than `--wasm-opt` — it does more than just
-/// invoking the `wasm-opt` binary.
+/// Runs Binaryen to a fixed point and strips producer/target metadata.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 pub(super) enum WasmOptMode {
     /// Optimize for runtime speed.
@@ -77,6 +74,16 @@ pub(super) enum WasmOptMode {
     /// Optimize aggressively for binary size.
     #[value(name = "size")]
     Oz,
+}
+
+#[cfg(feature = "wasm")]
+impl WasmOptMode {
+    pub(super) const fn codegen_mode(self) -> aver::codegen::wasm_gc::OptimizationMode {
+        match self {
+            Self::O3 => aver::codegen::wasm_gc::OptimizationMode::Speed,
+            Self::Oz => aver::codegen::wasm_gc::OptimizationMode::Size,
+        }
+    }
 }
 
 /// Compile target language.
@@ -233,6 +240,10 @@ pub(super) enum Commands {
         /// `aver/*` import ABI.
         #[arg(long = "wasm-gc", conflicts_with_all = ["self_host", "profile", "wasip2"])]
         wasm_gc: bool,
+        /// Post-process the generated in-memory wasm-gc module before Wasmtime
+        /// instantiates it. Uses the same Binaryen pipeline as `compile`.
+        #[arg(long, value_enum, requires = "wasm_gc")]
+        optimize: Option<WasmOptMode>,
         /// Internal representation-differential hook used by backend tests.
         #[arg(long = "test-boxed-sequences", hide = true, requires = "wasm_gc")]
         test_boxed_sequences: bool,
@@ -482,8 +493,8 @@ pub(super) enum Commands {
         /// compile-rejected in 0.18 unless ready.
         #[arg(long, value_enum, default_value = "wasi:cli/command")]
         world: Wasip2World,
-        /// Post-process generated WASM through a multi-stage size/speed
-        /// pipeline (wasm-metadce → wasm-opt --converge --strip-*).
+        /// Post-process generated WASM through a fixed-point Binaryen
+        /// size/speed pipeline (`wasm-opt --converge --strip-*`).
         /// Pass `size` for aggressive size reduction (`-Oz`) or `speed`
         /// for runtime tuning (`-O3`).
         #[arg(long, value_enum)]
@@ -1047,6 +1058,41 @@ mod tests {
             }
             _ => panic!("expected compile command"),
         }
+    }
+
+    #[test]
+    fn run_wasm_gc_accepts_optimize() {
+        let cli = Cli::parse_from([
+            "aver",
+            "run",
+            "examples/core/hello.av",
+            "--wasm-gc",
+            "--optimize",
+            "speed",
+        ]);
+        match cli.command {
+            Commands::Run {
+                wasm_gc, optimize, ..
+            } => {
+                assert!(wasm_gc);
+                assert_eq!(optimize, Some(WasmOptMode::O3));
+            }
+            _ => panic!("expected run command"),
+        }
+    }
+
+    #[test]
+    fn run_optimize_requires_wasm_gc() {
+        assert!(
+            Cli::try_parse_from([
+                "aver",
+                "run",
+                "examples/core/hello.av",
+                "--optimize",
+                "speed",
+            ])
+            .is_err()
+        );
     }
 
     #[test]

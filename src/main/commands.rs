@@ -7373,10 +7373,25 @@ fn finalize_wasm_artifact(
     let mut compile_suffix = String::new();
     if let Some(mode) = optimize {
         warn_optimize_drops_capacity_names(wasm_file);
-        final_size = run_optimize_pipeline(wasm_file, mode).unwrap_or_else(|err| {
-            eprintln!("{}", err.red());
-            process::exit(1);
-        });
+        let report = aver::codegen::wasm_gc::optimize_artifact(wasm_file, mode.codegen_mode())
+            .unwrap_or_else(|err| {
+                eprintln!("{}", err.red());
+                process::exit(1);
+            });
+        final_size = report.output_size;
+        let size_delta = if report.input_size == report.output_size {
+            "(no size change)".to_string()
+        } else {
+            format!("from {}", format_byte_size(report.input_size))
+        };
+        let opt_summary = format!("for {} {}", mode.codegen_mode().label(), size_delta);
+        println!(
+            "{} {} → {} ({})",
+            "Optimized".green().bold(),
+            wasm_file.display(),
+            format_byte_size(report.output_size),
+            opt_summary
+        );
         compile_suffix = format!(", optimized for {}", optimize_label(mode));
     }
     (final_size, compile_suffix)
@@ -7407,108 +7422,7 @@ fn warn_optimize_drops_capacity_names(wasm_file: &Path) {
 
 #[cfg(feature = "wasm")]
 fn optimize_label(mode: super::cli::WasmOptMode) -> &'static str {
-    match mode {
-        super::cli::WasmOptMode::O3 => "speed",
-        super::cli::WasmOptMode::Oz => "size",
-    }
-}
-
-/// `--optimize` post-pass for wasm-gc artifacts. Skips wasm-metadce —
-/// factory exports + `__rt_*` LM transport helpers are host-callable
-/// roots and a metadce graph would have to enumerate every conditional
-/// export by hand. `wasm-opt -Oz` keeps the export surface and converges
-/// on a smaller body — that's where the per-instantiation helpers (Map
-/// probes, List ops, eq helpers) shrink when unreachable.
-#[cfg(feature = "wasm")]
-fn run_optimize_pipeline(wasm_file: &Path, mode: super::cli::WasmOptMode) -> Result<u64, String> {
-    let input_size = std::fs::metadata(wasm_file)
-        .map(|meta| meta.len())
-        .map_err(|e| format!("Failed to stat {}: {}", wasm_file.display(), e))?;
-    let stage1_file = wasm_file.with_extension("dce.wasm");
-    let optimized_file = wasm_file.with_extension("opt.wasm");
-    let opt_flag = match mode {
-        super::cli::WasmOptMode::O3 => "-O3",
-        super::cli::WasmOptMode::Oz => "-Oz",
-    };
-
-    std::fs::copy(wasm_file, &stage1_file)
-        .map_err(|e| format!("Failed to stage wasm for opt: {}", e))?;
-
-    // Aggressive optimization with --converge (run passes to
-    // fixed point) and metadata strip. -Oz already drops the name
-    // section — `warn_optimize_drops_capacity_names` says so when that
-    // costs the map capacity trap its name; --strip-producers and
-    // --strip-target-features remove sections that survive otherwise
-    // and bloat merged artifacts.
-    let output = std::process::Command::new("wasm-opt")
-        .arg(opt_flag)
-        .arg("--converge")
-        .arg("--strip-producers")
-        .arg("--strip-target-features")
-        .arg("--enable-bulk-memory")
-        .arg("--enable-multivalue")
-        .arg("--enable-tail-call")
-        .arg("--enable-gc")
-        .arg("--enable-reference-types")
-        // The bignum f64->Int helper emits `i64.trunc_sat_f64_u` (exact integer
-        // over the full f64 range); `--strip-target-features` above drops the
-        // feature section, so wasm-opt must be told this proposal is allowed or
-        // it rejects the input. Every wasm-gc target engine (Chrome 119+ / FF
-        // 120+ / Safari 18.2+ / wasmtime / Node 22+) supports it.
-        .arg("--enable-nontrapping-float-to-int")
-        .arg(&stage1_file)
-        .arg("-o")
-        .arg(&optimized_file)
-        .output()
-        .map_err(|e| {
-            let _ = std::fs::remove_file(&stage1_file);
-            format!(
-                "Failed to run wasm-opt {} for {}: {}. Install binaryen or compile without --optimize.",
-                opt_flag,
-                wasm_file.display(),
-                e
-            )
-        })?;
-
-    let _ = std::fs::remove_file(&stage1_file);
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let _ = std::fs::remove_file(&optimized_file);
-        return Err(format!(
-            "wasm-opt {} failed for {}: {}",
-            opt_flag,
-            wasm_file.display(),
-            stderr.trim()
-        ));
-    }
-
-    std::fs::rename(&optimized_file, wasm_file).map_err(|e| {
-        format!(
-            "Failed to replace {} with wasm-opt output: {}",
-            wasm_file.display(),
-            e
-        )
-    })?;
-
-    let output_size = std::fs::metadata(wasm_file)
-        .map(|meta| meta.len())
-        .map_err(|e| format!("Failed to stat optimized {}: {}", wasm_file.display(), e))?;
-    let size_delta = if input_size == output_size {
-        "(no size change)".to_string()
-    } else {
-        format!("from {}", format_byte_size(input_size))
-    };
-    let opt_summary = format!("for {} {}", optimize_label(mode), size_delta);
-    println!(
-        "{} {} → {} ({})",
-        "Optimized".green().bold(),
-        wasm_file.display(),
-        format_byte_size(output_size),
-        opt_summary
-    );
-
-    Ok(output_size)
+    mode.codegen_mode().label()
 }
 
 pub(super) struct CompileOptions<'a> {

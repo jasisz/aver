@@ -47,12 +47,14 @@ pub(super) struct RunOutcome {
     pub args_diff_count: usize,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn cmd_run_wasm_gc(
     file: &str,
     module_root_override: Option<&str>,
     program_args: Vec<String>,
     record_dir: Option<&str>,
     entry_expr: Option<&str>,
+    optimization: Option<super::cli::WasmOptMode>,
     test_boxed_sequences: bool,
     provider_bindings: &[aver::provider::ProviderBinding],
 ) {
@@ -79,6 +81,7 @@ pub(super) fn cmd_run_wasm_gc(
             mode,
             entry_info,
             record_dir,
+            optimization.map(super::cli::WasmOptMode::codegen_mode),
             !test_boxed_sequences,
             provider_bindings,
         );
@@ -91,6 +94,7 @@ pub(super) fn cmd_run_wasm_gc(
             program_args,
             record_dir,
             entry_expr,
+            optimization,
             test_boxed_sequences,
             provider_bindings,
         );
@@ -112,6 +116,7 @@ pub(super) fn cmd_run_wasm_gc_with_mode(
     mode: rt::EffectMode,
     entry_info: Option<(String, Vec<aver::value::Value>)>,
     record_dir: Option<&str>,
+    optimization: Option<aver::codegen::wasm_gc::OptimizationMode>,
     packed_sequences_enabled: bool,
     provider_bindings: &[aver::provider::ProviderBinding],
 ) {
@@ -122,6 +127,7 @@ pub(super) fn cmd_run_wasm_gc_with_mode(
         mode,
         entry_info,
         record_dir,
+        optimization,
         packed_sequences_enabled,
         provider_bindings,
     ) {
@@ -144,6 +150,7 @@ pub(super) fn try_run_wasm_gc(
     mode: rt::EffectMode,
     entry_info: Option<(String, Vec<aver::value::Value>)>,
     record_dir: Option<&str>,
+    optimization: Option<aver::codegen::wasm_gc::OptimizationMode>,
     packed_sequences_enabled: bool,
     provider_bindings: &[aver::provider::ProviderBinding],
 ) -> Result<rt::RunOutcome, String> {
@@ -282,6 +289,7 @@ pub(super) fn try_run_wasm_gc(
             mode,
             tcp_settings,
             type_aliases,
+            optimization,
             packed_sequences_enabled,
             custom_providers: Some(rt::CustomProviderConfig {
                 plan: custom_plan.clone(),

@@ -57,3 +57,26 @@ fn wasm_gc_optimize_handles_trunc_sat_from_bignum_prelude() {
          stdout:\n{stdout}\nstderr:\n{stderr}"
     );
 }
+
+#[test]
+fn wasm_gc_run_can_optimize_in_memory_before_wasmtime() {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let hello = repo_root.join("examples/core/hello.av");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_aver"))
+        .current_dir(&repo_root)
+        .arg("run")
+        .arg(&hello)
+        .arg("--wasm-gc")
+        .arg("--optimize")
+        .arg("speed")
+        .output()
+        .expect("aver run executes");
+
+    assert!(
+        output.status.success(),
+        "`aver run --wasm-gc --optimize speed` failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
