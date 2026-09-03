@@ -200,8 +200,6 @@ pub enum VmError {
     Runtime { msg: String, line: u16 },
     /// Type error (e.g. adding int + string).
     Type { msg: String, line: u16 },
-    /// Non-exhaustive match at source line.
-    MatchFail(u16),
     /// Stack underflow (bug in compiler).
     StackUnderflow,
     /// Dispatched opcode count exceeded `VM::step_limit`. Carries the
@@ -256,7 +254,6 @@ impl std::fmt::Display for VmError {
                 write!(f, "Type error [line {}]: {}", line, msg)
             }
             VmError::Type { msg, .. } => write!(f, "Type error: {}", msg),
-            VmError::MatchFail(line) => write!(f, "Non-exhaustive match at line {}", line),
             VmError::StackUnderflow => write!(f, "Internal error: stack underflow"),
             VmError::StepLimit { limit, line } if *line > 0 => write!(
                 f,

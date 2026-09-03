@@ -4,7 +4,6 @@
 /// `ResolvedExpr::Resolved` nodes (set by `ir::last_use` and lifted by the
 /// resolver pass), NOT from name-based liveness sets. EmitCtx provides
 /// only Rust-specific policy: Copy types, borrow semantics, Rc wrapping.
-use crate::ir::hir::ResolvedExpr;
 use crate::types::Type;
 use std::collections::{HashMap, HashSet};
 
@@ -83,68 +82,6 @@ impl EmitCtx {
     /// Is this variable a borrowed parameter (`&T` from borrow-by-default)?
     pub fn is_borrowed_param(&self, name: &str) -> bool {
         self.borrowed_params.contains(name)
-    }
-
-    /// Create a context with specified Rc-wrapped parameters (TCO pass-through).
-    pub fn with_rc_wrapped(&self, rc: HashSet<String>) -> Self {
-        EmitCtx {
-            local_types: self.local_types.clone(),
-            rc_wrapped: rc,
-            borrowed_params: self.borrowed_params.clone(),
-            current_module_scope: self.current_module_scope.clone(),
-        }
-    }
-}
-
-// ── Expression-level move/clone decisions ───────────────────────────────
-
-/// Can this expression be moved (not cloned)?
-/// Checks `last_use` on Resolved nodes; Ident without local_types entry
-/// is treated as a global (always moveable).
-pub fn expr_can_move(expr: &ResolvedExpr) -> bool {
-    match expr {
-        ResolvedExpr::Resolved { last_use, .. } => last_use.0,
-        ResolvedExpr::Ident(_) => true, // globals/namespaces never need clone
-        _ => false,
-    }
-}
-
-/// Should `.clone()` be skipped for this expression?
-/// True for: Copy types, last-use locals, globals/namespaces.
-/// False for: rc_wrapped, borrowed_params (need special clone paths).
-///
-/// For `ResolvedExpr::Ident`: in Rust codegen, Ident is used for both
-/// globals AND locals (resolver still leaves bare globals as Ident).
-/// Check ectx to distinguish:
-/// - If name is in local_types → local/param, apply rc_wrapped/borrowed checks
-/// - If name is NOT in local_types → global/namespace, skip clone
-pub fn expr_skip_clone(expr: &ResolvedExpr, ectx: &EmitCtx) -> bool {
-    match expr {
-        ResolvedExpr::Resolved { name, last_use, .. } => {
-            if ectx.rc_wrapped.contains(name.as_str()) {
-                return false;
-            }
-            if ectx.borrowed_params.contains(name.as_str()) {
-                return false;
-            }
-            last_use.0 || ectx.is_copy(name)
-        }
-        ResolvedExpr::Ident(name) => {
-            // If not a known local, treat as global/namespace — skip clone
-            if !ectx.local_types.contains_key(name.as_str()) {
-                return true;
-            }
-            // Known local: check special categories
-            if ectx.rc_wrapped.contains(name.as_str()) {
-                return false;
-            }
-            if ectx.borrowed_params.contains(name.as_str()) {
-                return false;
-            }
-            // Without last_use info, only skip for Copy types
-            ectx.is_copy(name)
-        }
-        _ => false,
     }
 }
 

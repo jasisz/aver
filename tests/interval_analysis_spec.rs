@@ -45,7 +45,6 @@ fn analyze_src(src: &str) -> IntervalAnalysisResult {
             run_build_symbols: true,
             dep_modules: &[],
             alloc_policy: None,
-            call_ctx: None,
             on_after_pass: None,
         },
     );

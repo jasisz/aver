@@ -15,10 +15,6 @@
 //! STRUCTURALLY (pick a child, re-print), never by text surgery; the only thing
 //! that still has to consult Lean is *which* branch won — and that is one
 //! instrumented `lake build`, not a parser.
-// Foundation module: the type + printer land first, then the ~18 `first | …`
-// emit sites migrate onto it and `--minimize` consumes it. Allow dead_code
-// until those consumers are wired (next slice).
-#![allow(dead_code)]
 
 use std::collections::BTreeMap;
 
@@ -60,16 +56,6 @@ impl Tactic {
     /// gain anything for `--minimize`.
     pub fn raw(lines: Vec<String>) -> Tactic {
         Tactic::Seq(lines.into_iter().map(Tactic::Leaf).collect())
-    }
-
-    /// Like [`raw`](Self::raw) but first strips the lines' common leading
-    /// indent (keeping relative nesting). Use when wrapping already-rendered
-    /// lines as a [`Tactic::First`] BRANCH: a branch is re-based under its `| (`
-    /// at render time, and when `--minimize` collapses the portfolio the branch
-    /// is promoted flush with its new siblings — both want it authored at its
-    /// own zero indent, not carrying the caller's baked 2-space.
-    pub fn raw_dedented(lines: Vec<String>) -> Tactic {
-        Tactic::raw(relative_dedent(&lines))
     }
 
     /// Render to the proof-body lines that follow `:= by` (the caller supplies
@@ -192,52 +178,6 @@ impl Tactic {
                 }
                 out
             }
-        }
-    }
-
-    /// The `--minimize` primitive: walk the tree, and for each [`Tactic::First`]
-    /// ask `pick` which branch won (by the branch list); `Some(i)` collapses the
-    /// portfolio to branch `i` (recursively minimized), `None` keeps it intact.
-    /// `pick` is fed the [`Tactic::First`] nodes in pre-order, so a marker pass
-    /// that numbered them in the same order can answer by index.
-    pub fn collapse_firsts(self, pick: &mut impl FnMut(&[Tactic]) -> Option<usize>) -> Tactic {
-        match self {
-            leaf @ (Tactic::Leaf(_) | Tactic::Sorry) => leaf,
-            Tactic::Seq(steps) => {
-                Tactic::Seq(steps.into_iter().map(|t| t.collapse_firsts(pick)).collect())
-            }
-            Tactic::First(branches) => match pick(&branches) {
-                Some(i) if i < branches.len() => {
-                    branches.into_iter().nth(i).unwrap().collapse_firsts(pick)
-                }
-                _ => Tactic::First(
-                    branches
-                        .into_iter()
-                        .map(|t| t.collapse_firsts(pick))
-                        .collect(),
-                ),
-            },
-            Tactic::Induction { target, arms } => Tactic::Induction {
-                target,
-                arms: arms
-                    .into_iter()
-                    .map(|a| InductionArm {
-                        pattern: a.pattern,
-                        body: a.body.collapse_firsts(pick),
-                    })
-                    .collect(),
-            },
-        }
-    }
-
-    /// Count of [`Tactic::First`] nodes, in pre-order — the number of marker
-    /// sites the instrument pass will emit and the winner pass will read back.
-    pub fn first_count(&self) -> usize {
-        match self {
-            Tactic::Leaf(_) | Tactic::Sorry => 0,
-            Tactic::Seq(ts) => ts.iter().map(Tactic::first_count).sum(),
-            Tactic::First(bs) => 1 + bs.iter().map(Tactic::first_count).sum::<usize>(),
-            Tactic::Induction { arms, .. } => arms.iter().map(|a| a.body.first_count()).sum(),
         }
     }
 
@@ -716,21 +656,6 @@ mod tests {
     }
 
     #[test]
-    fn first_count_is_preorder_total() {
-        let t = Tactic::Seq(vec![
-            Tactic::First(vec![leaf("a"), Tactic::Sorry]),
-            Tactic::Induction {
-                target: "xs".to_string(),
-                arms: vec![InductionArm {
-                    pattern: "cons h t".to_string(),
-                    body: Tactic::First(vec![leaf("b"), leaf("c")]),
-                }],
-            },
-        ]);
-        assert_eq!(t.first_count(), 2);
-    }
-
-    #[test]
     fn render_body_is_byte_identical_for_baked_raw() {
         // A `raw`-migrated body carries the legacy baked 2-space indent (with a
         // deeper 4-space continuation). `render_body` strips the common 2 and
@@ -775,25 +700,6 @@ mod tests {
                 "    sorry".to_string(),
                 "  )".to_string(),
             ]
-        );
-    }
-
-    #[test]
-    fn collapse_firsts_picks_the_winning_branch() {
-        // Minimize: pick branch 0 of every First — drops the alternation + sorry.
-        let t = Tactic::Seq(vec![
-            leaf("intro a b"),
-            Tactic::First(vec![
-                leaf("the_winner <;> omega"),
-                leaf("loser"),
-                Tactic::Sorry,
-            ]),
-        ]);
-        let mut pick = |_branches: &[Tactic]| Some(0usize);
-        let minimized = t.collapse_firsts(&mut pick);
-        assert_eq!(
-            minimized.render(),
-            vec!["intro a b".to_string(), "the_winner <;> omega".to_string()]
         );
     }
 
@@ -931,7 +837,7 @@ warning: declaration uses 'sorry'
                 leaf("intro a b"),
                 Tactic::First(vec![
                     leaf("grind [f]; done"),
-                    Tactic::raw_dedented(vec!["  simp [f]".to_string(), "  sorry".to_string()]),
+                    Tactic::raw(vec!["simp [f]".to_string(), "sorry".to_string()]),
                 ]),
             ])
         };

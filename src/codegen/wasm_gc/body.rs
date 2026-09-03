@@ -22,11 +22,10 @@
 //! `wasm_type_of`). Missing `ty()` panics — that's a typecheck or
 //! synthesizer bug, not a recoverable codegen condition.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use super::types::TypeRegistry;
 
-use crate::ir::CallLowerCtx;
 use crate::ir::SymbolTable;
 use crate::types::Type;
 
@@ -275,16 +274,11 @@ pub(super) struct EmitCtx<'a> {
     /// unboxing seam is installed but inert until 2b wires the rewrite.
     #[allow(dead_code)]
     pub(super) repr: &'a crate::ir::mir::MirFnRepr,
-    /// Param name → resolved aver type. Used by `CallLowerCtx` for
-    /// local-name recognition; the typed-AST refactor (Step 3) made
-    /// the *type* portion redundant for emit, but the param list is
-    /// still the source of truth for "is this name a param?".
+    /// Param name → resolved aver type. The typed-AST refactor (Step 3)
+    /// made the *type* portion redundant for emit, but the param list is
+    /// still the source of truth for "is this name a param?" (used by
+    /// `fn_param_fn_sig` to look up `Fn`-typed param call sites).
     pub(super) params: &'a [(String, Type)],
-    /// Set of `let`-bound local names (no type information attached —
-    /// types come from `Spanned::ty()` at the use site). Powers
-    /// `CallLowerCtx::is_local_value` for the shared IR-level shape
-    /// recognition.
-    pub(super) binding_names: &'a HashSet<String>,
     /// Effect canonical name → wasm fn idx. Body emit reaches into
     /// this for the structural-scope markers around `?!` /
     /// `!` (`__record_enter_group`, `__record_set_branch`,
@@ -667,32 +661,5 @@ impl<'a> EmitCtx<'a> {
         self.mir_program
             .and_then(|p| p.fn_by_id(target))
             .is_some_and(|f| f.repr.param_is_bare(i))
-    }
-}
-
-/// `CallLowerCtx` impl so the shared IR-level shape recognition
-/// (`classify_leaf_op`, `classify_call_plan`) can be reused here
-/// instead of each backend re-implementing the same patterns. Wasm-gc
-/// is single-module today so module resolution returns None; the
-/// other two predicates fall out of the registry + binding/param
-/// tables we already maintain.
-impl<'a> CallLowerCtx for EmitCtx<'a> {
-    fn is_local_value(&self, name: &str) -> bool {
-        self.params.iter().any(|(n, _)| n == name) || self.binding_names.contains(name)
-    }
-
-    fn is_user_type(&self, name: &str) -> bool {
-        self.registry.records.contains_key(name)
-            || self.registry.variants.contains_key(name)
-            || self
-                .registry
-                .variants
-                .values()
-                .flat_map(|vs| vs.iter())
-                .any(|info| info.parent == name)
-    }
-
-    fn resolve_module_call<'b>(&self, _dotted: &'b str) -> Option<(&'b str, &'b str)> {
-        None
     }
 }

@@ -20,6 +20,10 @@ tools/wasm-runner/target/
 # workspace; the `out/` queue regenerates from the committed corpus.
 fuzz/target/
 fuzz/out/
+# Lockfiles for the two stand-alone fuzz crates: nothing enforces them
+# (builds are unlocked), so tracking them only pins a stale snapshot.
+fuzz/Cargo.lock
+fuzz/mutator/Cargo.lock
 
 # editor / OS junk
 .DS_Store
@@ -41,3 +45,8 @@ examples/data/shape.png
 # `aver proof` default and ad-hoc output dirs — debug artifacts, never tracked.
 /out/
 /o2/
+
+# `aver context --output` exports — regenerable showcase output, not enforced
+# for freshness against the sources they describe.
+projects/*/CONTEXT.json
+projects/*/CONTEXT.md

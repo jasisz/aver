@@ -40,7 +40,7 @@
 //!   flatten resolver rebuild to a first-class backend-link stage.
 //!   The pipeline stays module-aware; wasm-gc owns its single-
 //!   module link view as a legal codegen concept, not a transitional
-//!   hack. `fn_def_by_id(FnId)` mirrors the FnId-keyed pattern
+//!   hack. Its resolved `SymbolTable` mirrors the FnId-keyed pattern
 //!   from PR 9.3a.
 //! - **PR 9.3c** — [`body::FnMap`] keyed by `FnId` only (was
 //!   `by_name: HashMap<String, FnEntry>` pre-9.3c). `Call(Fn(id))`
@@ -163,8 +163,9 @@ pub struct WasmGcCompileOutput {
 /// shared one.
 ///
 /// **What this means for identity safety**: post-flatten lookups
-/// inside the backend go through `WasmGcLinkedView::fn_def_by_id`
-/// (opaque `FnId`), not bare-name walks over the flattened items.
+/// inside the backend go through the link view's resolved
+/// `SymbolTable` and [`body::FnMap`] (opaque `FnId`), not bare-name
+/// walks over the flattened items.
 /// Cross-module same-bare-name fns get distinct `FnId`s by virtue
 /// of the prefix-mangle, and the link view's resolver pass
 /// canonicalises them.
@@ -257,53 +258,7 @@ pub fn compile_to_wasm_gc_flattened_with_capabilities(
     })
 }
 
-/// `compile_to_wasm_gc` returning the MIR-coverage count alongside the
-/// module bytes. MIR is the only codegen path; the count is how many
-/// fns the MIR body emitter actually rendered (the real
-/// `emit_fn_body_via_mir` Some/None decision, not the structural
-/// coverage predicate). Fns it doesn't cover get an `unreachable`
-/// trap-stub body. The single-file differential test uses this to hold
-/// a coverage floor — a covered construct silently regressing to a trap
-/// stub drops the count below the floor and fails CI.
-#[doc(hidden)]
-pub fn compile_to_wasm_gc_with_mir_count(
-    items: &[TopLevel],
-    _analysis: Option<&AnalysisResult>,
-) -> Result<(Vec<u8>, usize), WasmGcError> {
-    module::emit_module_with(
-        items,
-        None,
-        TargetMode::AverBridge,
-        &HashMap::new(),
-        None,
-        None,
-        true,
-    )
-    .map(|(bytes, mir_count, _)| (bytes, mir_count))
-}
-
-/// Same as `compile_to_wasm_gc` but exports a JS-callable
-/// `aver_http_handle(method, url, query, body, country) ->
-/// (status, body)` wrapper around the named user fn (whose
-/// signature must be `(HttpRequest) -> Http.Response`).
-pub fn compile_to_wasm_gc_with_handler(
-    items: &[TopLevel],
-    _analysis: Option<&AnalysisResult>,
-    handler: Option<&str>,
-) -> Result<Vec<u8>, WasmGcError> {
-    module::emit_module_with(
-        items,
-        handler,
-        TargetMode::AverBridge,
-        &HashMap::new(),
-        None,
-        None,
-        true,
-    )
-    .map(|(bytes, _, _)| bytes)
-}
-
-/// Same bytes as [`compile_to_wasm_gc_with_handler`], plus the expression
+/// Same bytes as [`compile_to_wasm_gc`], plus the expression
 /// fragment plans that were actually used to emit certified plan-first islands.
 pub fn compile_to_wasm_gc_with_handler_and_cert_plans(
     items: &[TopLevel],
@@ -345,36 +300,6 @@ pub fn compile_to_wasm_gc_for_wasip2(
     module::emit_module_with(
         items,
         None,
-        TargetMode::Wasip2,
-        &HashMap::new(),
-        None,
-        None,
-        true,
-    )
-    .map(|(bytes, _, _)| bytes)
-}
-
-/// `--target wasip2 --world wasi:http/proxy` entry — Phase 3 / 0.19.
-/// `handler` names the user-source fn `(HttpRequest) -> Http.Response`
-/// explicitly selected by the CLI. The wasm-gc emitter swaps
-/// the `wasi:cli/run` entry-point for `wasi:http/incoming-handler#
-/// handle`, decodes the host-supplied incoming-request resource into
-/// an Aver `HttpRequest`, runs `handler`, encodes the returned
-/// `Http.Response` into an outgoing-response, and calls
-/// `response-outparam.set` — the host (`wasmtime serve` / Spin /
-/// wasmCloud) then writes the response bytes back to the client.
-///
-/// `main` still gets emitted as a regular wasm fn but is never
-/// invoked at runtime (the proxy world has no `_start`). The host's
-/// listener configuration decides the bind socket.
-pub fn compile_to_wasm_gc_for_wasip2_with_handler(
-    items: &[TopLevel],
-    _analysis: Option<&AnalysisResult>,
-    handler: &str,
-) -> Result<Vec<u8>, WasmGcError> {
-    module::emit_module_with(
-        items,
-        Some(handler),
         TargetMode::Wasip2,
         &HashMap::new(),
         None,

@@ -221,17 +221,6 @@ fn convert_tcp_connection(c: aver_rt::TcpConnection) -> Tcp_Connection {
         port: aver_rt::AverInt::from_i64(c.port),
     }
 }
-/// Surface (`AverInt` port) -> host `aver_rt::TcpConnection` (`i64` port),
-/// applied before `Tcp.writeLine`/`writeBytes`/`readLine`/`readBytes`/`close`. The host keeps live
-/// sockets in a thread-local keyed by `id`, so rebuilding the host record
-/// from the surface fields is enough to find the connection.
-pub fn tcp_connection_to_host(c: &Tcp_Connection) -> aver_rt::TcpConnection {
-    aver_rt::TcpConnection {
-        id: c.id.clone(),
-        host: c.host.clone(),
-        port: c.port.to_i64().unwrap_or(0),
-    }
-}
 /// `Tcp.connect` (and friends) return the host struct as `Result<_, String>`;
 /// the `.into_aver()` post-step lands the surface `Tcp_Connection` + AverStr
 /// error. Lives here (gated on Tcp usage) so the base runtime never names the

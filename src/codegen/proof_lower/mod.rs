@@ -337,19 +337,6 @@ impl<'a> ProofLowerInputs<'a> {
         })
     }
 
-    /// Resolve a source call through the canonical symbol table, then recover
-    /// the exact AST declaration that owns the resulting [`crate::ir::FnId`].
-    ///
-    /// Shape recognizers intentionally inspect source AST, but the choice of
-    /// *which* declaration to inspect is identity-sensitive. Keeping that
-    /// lookup here prevents proof lowering from repeating the old backend
-    /// mistake where two same-bare-name functions in different modules could
-    /// share whichever declaration a linear walk found first.
-    pub fn find_fn_def_in_scope(&self, call_name: &str, scope: Option<&str>) -> Option<&'a FnDef> {
-        let id = self.symbol_table.resolve_fn_id_in(call_name, scope)?;
-        self.find_fn_def_by_id(id)
-    }
-
     /// Recover the exact source declaration for an already-resolved function.
     /// Shape discovery remains AST-based, while declaration selection stays
     /// entirely on the typed identity path.

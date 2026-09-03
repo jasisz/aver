@@ -33,26 +33,14 @@
 //!   prefixed.
 //! - **Output:** [`WasmGcLinkedView`] holding the flattened-scope
 //!   [`SymbolTable`] plus one [`ResolvedFnDef`] per source `FnDef`,
-//!   indexable by stable [`FnId`].
-//!
-//! ## Why FnId lookup, not bare name
-//!
-//! Pre-PR-9.3a the codegen `CodegenContext::resolve_fn_def` flat-
-//! searched resolved tables by `rfd.name == fd.name`. Post-flatten
-//! that happens to work in wasm-gc because every name is prefixed.
-//! [`fn_def_by_id`] keys by `FnId` instead so the pattern doesn't
-//! depend on flatten's name-uniqueness side effect — the link stage
-//! still rewrites names, but the identity layer stays robust.
+//!   in the same source-position order the caller's `&FnDef` slice
+//!   iterates (so positional indexing lines up).
 //!
 //! [`flatten_multimodule`]: super::flatten::flatten_multimodule
 //! [`SymbolTable`]: crate::ir::SymbolTable
 //! [`ResolvedFnDef`]: crate::ir::hir::ResolvedFnDef
-//! [`FnId`]: crate::ir::FnId
-
-use std::collections::HashMap;
 
 use crate::ast::{FnDef, TopLevel};
-use crate::ir::FnId;
 use crate::ir::SymbolTable;
 use crate::ir::hir::{ResolvedFnDef, resolve_fn_def_external};
 
@@ -71,11 +59,6 @@ pub(super) struct WasmGcLinkedView {
     /// (`resolved_fn_defs[i]`) lines up with the `i`-th
     /// `&FnDef` the caller iterates.
     pub(super) resolved_fn_defs: Vec<ResolvedFnDef>,
-    /// `FnId → resolved_fn_defs index` for O(1) lookup by stable
-    /// identity. Built once during [`Self::build`]; mirrors the
-    /// FnKey/FnId-keyed pattern in
-    /// [`crate::codegen::CodegenContext::resolve_fn_def`] (PR 9.3a).
-    fn_id_to_idx: HashMap<FnId, usize>,
 }
 
 impl WasmGcLinkedView {
@@ -122,26 +105,9 @@ impl WasmGcLinkedView {
                 fn_defs.len()
             )));
         }
-        let fn_id_to_idx: HashMap<FnId, usize> = resolved_fn_defs
-            .iter()
-            .enumerate()
-            .map(|(i, rfd)| (rfd.fn_id, i))
-            .collect();
         Ok(Self {
             symbol_table,
             resolved_fn_defs,
-            fn_id_to_idx,
         })
-    }
-
-    /// Stable identity lookup — preferred over the linear
-    /// `resolved_fn_defs.iter().find(|rfd| rfd.name == ...)` shape.
-    /// Returns `None` for FnIds the resolver pass didn't lift,
-    /// which today only happens on typecheck-rejected programs.
-    #[allow(dead_code)]
-    pub(super) fn fn_def_by_id(&self, fn_id: FnId) -> Option<&ResolvedFnDef> {
-        self.fn_id_to_idx
-            .get(&fn_id)
-            .map(|&i| &self.resolved_fn_defs[i])
     }
 }

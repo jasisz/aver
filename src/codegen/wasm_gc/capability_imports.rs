@@ -102,12 +102,4 @@ impl CapabilityImportRegistry {
             })
             .collect()
     }
-
-    #[cfg(test)]
-    pub(super) fn import_pairs(&self) -> Vec<(String, String)> {
-        self.order
-            .iter()
-            .map(|import| (import.module_name.clone(), import.field_name.clone()))
-            .collect()
-    }
 }

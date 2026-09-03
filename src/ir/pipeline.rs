@@ -40,7 +40,7 @@ use crate::ir::buffer_build::{BufferBuildPassReport, ListBuildPassReport};
 use crate::ir::chars_fusion::CharsFusionPassReport;
 use crate::ir::pass_diag::{self, CountsByFn};
 use crate::ir::string_index::StringIndexPassReport;
-use crate::ir::{AllocPolicy, AnalysisResult, CallLowerCtx};
+use crate::ir::{AllocPolicy, AnalysisResult};
 use crate::source::LoadedModule;
 use crate::types::checker::{
     TypeCheckResult, run_type_check_full, run_type_check_full_self_host,
@@ -305,11 +305,6 @@ pub struct PipelineConfig<'a> {
     /// in mind can pass `None` or use the dump module's conservative
     /// default.
     pub alloc_policy: Option<&'a dyn AllocPolicy>,
-    /// `CallLowerCtx` for the body classifier. `None` uses a conservative
-    /// stub that knows nothing about local symbols / module paths — fine
-    /// for diagnostic dumps; codegen pipelines should pass a real ctx so
-    /// the classifier returns its full set of body shapes.
-    pub call_ctx: Option<&'a dyn CallLowerCtx>,
     /// Hook fired after every stage that ran.
     pub on_after_pass: Option<AfterPassHook<'a>>,
 }
@@ -339,7 +334,6 @@ impl<'a> Default for PipelineConfig<'a> {
             run_build_symbols: false,
             dep_modules: &[],
             alloc_policy: None,
-            call_ctx: None,
             on_after_pass: None,
         }
     }
@@ -960,14 +954,7 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
     }
 
     if cfg.run_analyze {
-        // The body classifier needs a `CallLowerCtx`. When no real ctx is
-        // configured we use `StubCallCtx`, which under-classifies `direct`
-        // shapes (a body that calls a fn whose name looks like a local
-        // gets seen as a generic call). Acceptable for `--emit-ir` dumps;
-        // codegen pipelines should plumb a real ctx through `cfg.call_ctx`
-        // once the inliner needs accurate body shape data.
-        let adapter = CallCtxAdapter(cfg.call_ctx);
-        let analysis = crate::ir::analyze(items, cfg.alloc_policy, &adapter);
+        let analysis = crate::ir::analyze(items, cfg.alloc_policy);
         result.pass_diagnostics.push(diag_for_analyze(&analysis));
         result.analysis = Some(analysis);
         fire(&mut cfg, PipelineStage::Analyze, items);
@@ -1052,10 +1039,9 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
         if cfg.run_resolve {
             resolve(&mut proof_items);
         }
-        let proof_analysis = cfg.run_analyze.then(|| {
-            let adapter = CallCtxAdapter(cfg.call_ctx);
-            crate::ir::analyze(&proof_items, cfg.alloc_policy, &adapter)
-        });
+        let proof_analysis = cfg
+            .run_analyze
+            .then(|| crate::ir::analyze(&proof_items, cfg.alloc_policy));
         if cfg.run_escape {
             crate::ir::escape::run(&mut proof_items);
         }
@@ -1173,24 +1159,6 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
     }
 
     result
-}
-
-/// Bridges the trait-object `cfg.call_ctx: Option<&dyn CallLowerCtx>`
-/// into the generic-impl world that the IR classifiers (`classify_call_plan`,
-/// `classify_thin_fn_def`, …) expect (`&impl CallLowerCtx`). When the
-/// option is `None` every method returns the conservative answer.
-struct CallCtxAdapter<'a>(Option<&'a dyn CallLowerCtx>);
-
-impl<'a> CallLowerCtx for CallCtxAdapter<'a> {
-    fn is_local_value(&self, name: &str) -> bool {
-        self.0.is_some_and(|c| c.is_local_value(name))
-    }
-    fn is_user_type(&self, name: &str) -> bool {
-        self.0.is_some_and(|c| c.is_user_type(name))
-    }
-    fn resolve_module_call<'b>(&self, dotted: &'b str) -> Option<(&'b str, &'b str)> {
-        self.0.and_then(|c| c.resolve_module_call(dotted))
-    }
 }
 
 fn fire(cfg: &mut PipelineConfig<'_>, stage: PipelineStage, items: &[TopLevel]) {

@@ -4912,10 +4912,10 @@ fn pseudo_carrier_record_module(age_ref: u8) -> Vec<u8> {
 /// face's pin/param/carrier conjuncts over the real compiled module through the
 /// `cert_whole_module_guard_iso` lane. The accepted/discharge level of the
 /// record route (`symFragmentMatches` record branch + `recordParam_claim_
-/// discharges`) is exercised only by the orphan fixture
-/// `aver-cert/tests/fixtures/PersonBeachhead.lean` (no harness compiles it) and
-/// awaits the record producer leg; that end-to-end gap is recorded here, not
-/// silently closed.
+/// discharges`) was previously exercised only by the hand-checked, unbuilt
+/// fixture `PersonBeachhead.lean` (removed as dead test material — no
+/// harness ever compiled it) and still awaits the record producer leg; that
+/// end-to-end gap is recorded here, not silently closed.
 #[test]
 fn record_type_declaration_pin_is_isolated_and_weaken_confirmed() {
     if Command::new("lake").arg("--version").output().is_err() {

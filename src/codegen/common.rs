@@ -636,8 +636,8 @@ pub fn strip_refinement_wrappers(
 /// Swap a comparison BinOp's operands canonically: `a OP b` ≡ `b OP' a`
 /// where OP' is the commutator-flipped op (`Lt ↔ Gt`, `Lte ↔ Gte`,
 /// `Eq` and `Neq` symmetric). Returns `None` for non-comparator BinOps.
-/// Used by `predicate_syntactic_eq` so `0 <= a` matches `a >= 0` for the
-/// `when`-vs-refinement-invariant check.
+/// Used by `predicate_syntactic_eq_resolved` so `0 <= a` matches `a >= 0`
+/// for the `when`-vs-refinement-invariant check.
 pub fn swap_comparison_operands_op(op: &crate::ast::BinOp) -> Option<crate::ast::BinOp> {
     use crate::ast::BinOp::*;
     match op {
@@ -672,55 +672,7 @@ pub fn canonicalize_comparison(e: &Spanned<Expr>) -> Spanned<Expr> {
     e.clone()
 }
 
-/// Structural equality on Aver predicate expressions with commutator
-/// relaxation: at every `BinOp` comparator node, allow the operands +
-/// operator to be swapped. Both `a >= 0` and `0 <= a` compare equal,
-/// recursively. Non-comparator BinOps (`Add`, `Sub`, ...) and other
-/// `Expr` variants fall through to the derived `PartialEq` on
-/// `Spanned<Expr>` (which compares `.node` only — line numbers don't
-/// participate). Used by the `when`-vs-refinement-invariant identity
-/// check so a redundantly-written user `when` gets recognised even when
-/// the operand order doesn't match the smart constructor's predicate
-/// verbatim.
-pub fn predicate_syntactic_eq(a: &Spanned<Expr>, b: &Spanned<Expr>) -> bool {
-    match (&a.node, &b.node) {
-        (Expr::BinOp(op_a, la, ra), Expr::BinOp(op_b, lb, rb)) => {
-            if op_a == op_b && predicate_syntactic_eq(la, lb) && predicate_syntactic_eq(ra, rb) {
-                return true;
-            }
-            if let Some(swapped) = swap_comparison_operands_op(op_a)
-                && &swapped == op_b
-                && predicate_syntactic_eq(la, rb)
-                && predicate_syntactic_eq(ra, lb)
-            {
-                return true;
-            }
-            false
-        }
-        _ => a.node == b.node,
-    }
-}
-
-/// Flatten a chain of `Bool.and(a, b)` calls into the flat list of
-/// leaf predicates. Aver's `when a >= 0` / `when b >= 0` syntax folds
-/// multiple `when` lines into nested `Bool.and(prev, next)` at parse
-/// time (see `parser/blocks.rs`'s law-block loop), so the predicate
-/// arrives at codegen as `Bool.and(Bool.and(p1, p2), p3)`. Identity
-/// checks against per-given refinement invariants need the flat shape.
-pub fn flatten_bool_and_conjuncts(expr: &Spanned<Expr>) -> Vec<Spanned<Expr>> {
-    if let Expr::FnCall(callee, args) = &expr.node
-        && args.len() == 2
-        && let Some(name) = expr_to_dotted_name(&callee.node)
-        && name == "Bool.and"
-    {
-        let mut out = flatten_bool_and_conjuncts(&args[0]);
-        out.extend(flatten_bool_and_conjuncts(&args[1]));
-        return out;
-    }
-    vec![expr.clone()]
-}
-
-/// `ResolvedExpr` mirror of [`flatten_bool_and_conjuncts`]. After the
+/// `ResolvedExpr` mirror of the flat-conjunct split over raw `Expr`. After the
 /// resolver lifts `Bool.and(a, b)` into
 /// `ResolvedExpr::Call(ResolvedCallee::Builtin("Bool.and"), args)`,
 /// the same recursive split holds.
@@ -739,7 +691,13 @@ pub fn flatten_bool_and_conjuncts_resolved(
     vec![expr.clone()]
 }
 
-/// `ResolvedExpr` mirror of [`predicate_syntactic_eq`].
+/// Structural equality on resolved predicate expressions with commutator
+/// relaxation: at every `BinOp` comparator node, allow the operands +
+/// operator to be swapped. Both `a >= 0` and `0 <= a` compare equal,
+/// recursively. Used by the `when`-vs-refinement-invariant identity
+/// check so a redundantly-written user `when` gets recognised even when
+/// the operand order doesn't match the smart constructor's predicate
+/// verbatim.
 pub fn predicate_syntactic_eq_resolved(
     a: &Spanned<crate::ir::hir::ResolvedExpr>,
     b: &Spanned<crate::ir::hir::ResolvedExpr>,
@@ -991,7 +949,7 @@ pub fn substitute_ident_in_expr(expr: &Spanned<Expr>, from: &str, to: &str) -> S
 /// Same `Spanned<Expr>`-as-predicate path opaque smart constructors
 /// already use — `refinement_info_for` provides the invariant, the
 /// substitution maps the smart constructor's param name into the
-/// given's variable space, and `predicate_syntactic_eq` does the
+/// given's variable space, and `predicate_syntactic_eq_resolved` does the
 /// commutator-relaxed compare. No new representation, no parallel
 /// emitter.
 pub fn when_is_redundant_with_refinement_lifts(
@@ -1210,68 +1168,6 @@ pub fn find_refined_type_for_named<'a>(
     }
 }
 
-/// Scope-aware fn-contract resolver. `scope = Some(prefix)` directs
-/// bare-name lookups to that module's slot before falling back to
-/// entry / module-walk. Mirror of `find_refined_type_scoped` for fn
-/// contracts — without it, two modules with same-bare-name
-/// recursive fns silently merge under whichever module-walk hit
-/// first.
-///
-/// Prefer `find_fn_contract_for_fn` whenever you have a `&FnDef` in
-/// hand: it resolves identity by pointer-eq against
-/// `ctx.modules[*].fn_defs` and avoids the bare-name footgun this
-/// scoped lookup still inherits from string-based call sites.
-pub fn find_fn_contract_scoped<'a>(
-    ctx: &'a CodegenContext,
-    name: &str,
-    scope: Option<&str>,
-) -> Option<&'a crate::ir::proof_ir::FnContract> {
-    // Round-7: `ProofIR.fn_contracts` is keyed by opaque `FnId`
-    // after the phase-E migration. Resolve `name` → `FnKey` →
-    // `FnId` through the symbol table, then look up the contract.
-    // Without a symbol table (legacy callers that haven't enabled
-    // `run_build_symbols`) this returns `None`, which the
-    // downstream emit path treats the same as "no contract" — the
-    // table is part of every production build flow.
-    let symbols = &ctx.symbol_table;
-    let bare = name.rsplit('.').next().unwrap_or(name);
-    let name_is_already_qualified = name.contains('.');
-    let try_key = |key: crate::ir::FnKey| -> Option<&'a crate::ir::proof_ir::FnContract> {
-        let id = symbols.fn_id_of(&key)?;
-        ctx.proof_ir.fn_contracts.get(&id)
-    };
-    if let Some(prefix) = scope
-        && !name_is_already_qualified
-        && let Some(c) = try_key(crate::ir::FnKey::in_module(prefix.to_string(), bare))
-    {
-        return Some(c);
-    }
-    let direct_key =
-        if name_is_already_qualified && let Some((prefix, bare_part)) = name.rsplit_once('.') {
-            crate::ir::FnKey::in_module(prefix.to_string(), bare_part)
-        } else {
-            crate::ir::FnKey::entry(name)
-        };
-    if let Some(c) = try_key(direct_key) {
-        return Some(c);
-    }
-    for m in &ctx.modules {
-        for fd in &m.fn_defs {
-            if fd.name == bare
-                && let Some(c) = try_key(crate::ir::FnKey::in_module(m.prefix.clone(), bare))
-            {
-                return Some(c);
-            }
-        }
-    }
-    None
-}
-
-/// Scoped membership check.
-pub fn fn_contract_exists_scoped(ctx: &CodegenContext, name: &str, scope: Option<&str>) -> bool {
-    find_fn_contract_scoped(ctx, name, scope).is_some()
-}
-
 /// Round-7: build a [`crate::ir::FnKey`] from a borrowed `&FnDef`.
 /// The owning module is resolved by pointer-comparison against
 /// `ctx.modules[*].fn_defs` (entry items and synthesized variants fall
@@ -1385,11 +1281,11 @@ pub fn fn_owning_scope_for<'a>(ctx: &'a CodegenContext, fd: &FnDef) -> Option<&'
     None
 }
 
-/// Convenience: [`find_fn_contract_scoped`] with the scope resolved
-/// by pointer-eq against `ctx.modules`. Use this from emit sites
-/// that have `&FnDef` in hand — never the bare-name variant — so a
-/// module-owned recursive fn always resolves to its OWN canonical
-/// slot, even if another module exports a same-bare-name fn.
+/// Resolve a fn contract with the scope resolved by pointer-eq
+/// against `ctx.modules`. Use this from emit sites that have
+/// `&FnDef` in hand — never a bare-name lookup — so a module-owned
+/// recursive fn always resolves to its OWN canonical slot, even if
+/// another module exports a same-bare-name fn.
 pub fn find_fn_contract_for_fn<'a>(
     ctx: &'a CodegenContext,
     fd: &FnDef,
@@ -1556,25 +1452,10 @@ pub fn find_refined_type_with_key_scoped<'a>(
 
 /// Same resolution shape as [`find_refined_type`] but driven by the
 /// in-flight `refined_types` map plus dep-module list — used inside
-/// `proof_lower` where there is no `CodegenContext` yet. Resolves
-/// `name` → `TypeKey` → opaque `TypeId` through the supplied symbol
-/// table, then looks up the decl by id.
-pub fn resolve_refined_type_in<'a>(
-    refined_types: &'a std::collections::HashMap<
-        crate::ir::TypeId,
-        crate::ir::proof_ir::RefinedTypeDecl,
-    >,
-    symbols: &crate::ir::SymbolTable,
-    modules: &[crate::codegen::ModuleInfo],
-    name: &str,
-) -> Option<&'a crate::ir::proof_ir::RefinedTypeDecl> {
-    resolve_refined_type_in_with_key(refined_types, symbols, modules, name).map(|(_, d)| d)
-}
-
-/// Same as [`resolve_refined_type_in`] but returns the canonical
-/// `TypeId` paired with the decl — used by IR-internal callers
-/// (the proof-lower side `walk_for_refinement_carrier`) so they
-/// thread the opaque identity through downstream comparisons
+/// `proof_lower` where there is no `CodegenContext` yet. Returns the
+/// canonical `TypeId` paired with the decl — used by IR-internal
+/// callers (the proof-lower side `walk_for_refinement_carrier`) so
+/// they thread the opaque identity through downstream comparisons
 /// without re-introducing bare-name heuristics.
 pub fn resolve_refined_type_in_with_key<'a>(
     refined_types: &'a std::collections::HashMap<
@@ -3326,10 +3207,6 @@ pub(crate) fn expr_to_dotted_name(expr: &Expr) -> Option<String> {
 ///
 /// - `LemmaBinding` — use the lemma-local identifier (`rnd`), matching
 ///   the `given` name. Correct for the universal lemma body.
-/// - `SampleValue` — use the first Explicit domain value (the stub
-///   fn's identifier, e.g. `stubConst`). Correct for the concrete
-///   sample assertions where there's no lemma binding in scope and a
-///   single domain value.
 /// - `SampleCaseBinding(case_bindings)` — use the per-case binding
 ///   value (by `given.name`). Correct for sample theorems when the
 ///   domain has multiple values and each case substitutes a
@@ -3347,8 +3224,6 @@ pub(crate) enum OracleInjectionMode<'a> {
     /// over functions); the bound is enforced via `requires` on the
     /// emitted lemma instead.
     LemmaBindingProjected,
-    #[allow(dead_code)]
-    SampleValue,
     SampleCaseBinding(&'a [(String, crate::ast::Spanned<Expr>)]),
 }
 
@@ -3388,8 +3263,6 @@ pub(crate) fn rewrite_effectful_calls_in_law_with_registry<'fd, F>(
 where
     F: Fn(&str) -> Option<&'fd crate::ast::FnDef> + Copy,
 {
-    use crate::ast::{Spanned, VerifyGivenDomain};
-
     let injection_by_effect: std::collections::HashMap<String, Spanned<Expr>> = law
         .givens
         .iter()
@@ -3408,10 +3281,6 @@ where
                     // val), val)` for refs the injection wraps.
                     Spanned::new(Expr::Ident(g.name.clone()), expr.line)
                 }
-                OracleInjectionMode::SampleValue => match &g.domain {
-                    VerifyGivenDomain::Explicit(vals) => vals.first().cloned()?,
-                    _ => return None,
-                },
                 OracleInjectionMode::SampleCaseBinding(case_bindings) => case_bindings
                     .iter()
                     .find(|(name, _)| name == &g.name)
@@ -4164,11 +4033,13 @@ mod tests {
         refined_types.insert(b_id, make_decl("b", 10));
 
         // Fully-qualified lookups hit the exact slot.
-        let a = resolve_refined_type_in(&refined_types, &symbols, &modules, "A.Natural")
+        let a = resolve_refined_type_in_with_key(&refined_types, &symbols, &modules, "A.Natural")
+            .map(|(_, d)| d)
             .expect("A.Natural canonical lookup");
         assert_eq!(a.predicate_param, "a");
         assert_eq!(a.witness.as_deref(), Some("0"));
-        let b = resolve_refined_type_in(&refined_types, &symbols, &modules, "B.Natural")
+        let b = resolve_refined_type_in_with_key(&refined_types, &symbols, &modules, "B.Natural")
+            .map(|(_, d)| d)
             .expect("B.Natural canonical lookup");
         assert_eq!(b.predicate_param, "b");
         assert_eq!(b.witness.as_deref(), Some("10"));
@@ -4176,7 +4047,8 @@ mod tests {
         // Bare lookup finds *something* (module-walk first match) —
         // the typechecker prevents mixed usage upstream, so the
         // observed ordering is the order modules walk.
-        let bare = resolve_refined_type_in(&refined_types, &symbols, &modules, "Natural")
+        let bare = resolve_refined_type_in_with_key(&refined_types, &symbols, &modules, "Natural")
+            .map(|(_, d)| d)
             .expect("bare Natural resolves via module walk");
         assert!(
             bare.predicate_param == "a" || bare.predicate_param == "b",
@@ -4185,7 +4057,11 @@ mod tests {
 
         // No-module-owner lookup misses — i.e. a bare name that
         // wasn't declared in any module is None, not "first in map".
-        assert!(resolve_refined_type_in(&refined_types, &symbols, &modules, "Unrelated").is_none());
+        assert!(
+            resolve_refined_type_in_with_key(&refined_types, &symbols, &modules, "Unrelated")
+                .map(|(_, d)| d)
+                .is_none()
+        );
     }
 
     #[test]

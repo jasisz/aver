@@ -531,8 +531,8 @@ pub(crate) fn emit_mir_option_with_default(
     }
 
     // Fused shapes — only when the option-producing arg is the specific
-    // builtin call the oracle's `classify_leaf_op` / `Map.get` checks key
-    // off. Anything else falls through to the boxed `Option<T>` unwrap.
+    // `Map.get` builtin call the oracle checks key off. Anything else
+    // falls through to the boxed `Option<T>` unwrap.
     if let MirExpr::Call(inner_sp) = &opt_arg.node
         && let MirCallee::Builtin(inner_id) = inner_sp.node.callee
         && let Some(inner_dotted) = ctx.mir_builtins.and_then(|n| n.get(inner_id.0 as usize))

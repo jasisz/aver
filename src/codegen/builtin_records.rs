@@ -38,26 +38,6 @@ pub enum BuiltinType {
     MapStrListStr,
 }
 
-impl BuiltinType {
-    /// Convert to the Aver type-system representation (used by the
-    /// WASM and proof backends for type inference of field accesses).
-    #[allow(dead_code)] // consumed by `wasm` feature only
-    pub fn as_aver_type(&self) -> crate::types::Type {
-        use crate::types::Type;
-        match self {
-            BuiltinType::Int => Type::Int,
-            BuiltinType::Str => Type::Str,
-            BuiltinType::Bool => Type::Bool,
-            BuiltinType::Float => Type::Float,
-            BuiltinType::ListOf(name) => Type::List(Box::new(Type::named(*name))),
-            BuiltinType::MapStrListStr => Type::Map(
-                Box::new(Type::Str),
-                Box::new(Type::List(Box::new(Type::Str))),
-            ),
-        }
-    }
-}
-
 /// Description of a built-in record type. `aver_name` is the dotted
 /// or undotted name as it appears in Aver source (`Tcp.Connection`,
 /// `HttpRequest`). Backends derive their identifier by replacing

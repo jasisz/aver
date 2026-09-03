@@ -12,7 +12,6 @@ pub mod identity;
 mod interp_lower;
 pub mod interval;
 pub mod last_use;
-mod leaf;
 mod matches;
 /// Core MIR — executable middle-end. Phase 1 of #252 (the 0.24
 /// epic) is doc-only; see `src/ir/mir/mod.rs` for the overview and
@@ -25,7 +24,7 @@ mod string_index;
 pub mod symbol_table;
 pub mod vars;
 
-pub use analyze::{AnalysisResult, BodyShape, FnAnalysis, NeutralAllocPolicy, analyze};
+pub use analyze::{AnalysisResult, FnAnalysis, NeutralAllocPolicy, analyze};
 pub(crate) use buffer_build::{
     INTERNAL_BUFFER_TYPE, INTERNAL_BYTE_BUILDER_TYPE, INTERNAL_BYTE_PAYLOAD_TYPE,
 };
@@ -50,11 +49,7 @@ pub use symbol_table::{CtorEntry, FnEntry, ModuleEntry, SymbolTable, TypeEntry};
 pub use alloc_info::{
     AllocPolicy, compute_alloc_info, count_alloc_sites_in_fn, count_alloc_sites_in_program,
 };
-pub use body::{
-    BodyBindingPlan, BodyExprPlan, BodyPlan, ThinBodyCtx, ThinBodyPlan, ThinKind,
-    classify_body_expr_plan, classify_body_plan, classify_thin_body_plan, classify_thin_fn_def,
-    thin_body_plan_is_parent_thin_candidate, thin_kind_is_parent_thin_candidate,
-};
+pub use body::{ThinKind, thin_kind_is_parent_thin_candidate};
 pub use buffer_build::{
     BufferBuildPassReport, BufferBuildShape, ByteSinkDecline, ConsumerKind, FusionSite,
     ListBuildDecline, ListBuildKind, ListBuildPassReport, ListBuildShape,
@@ -62,24 +57,16 @@ pub use buffer_build::{
     run_buffer_build_pass, run_byte_sink_pass, run_list_build_pass, synthesize_buffered_variants,
 };
 pub use calls::{
-    CallLowerCtx, CallPlan, ForwardArg, ForwardCallPlan, SemanticCallee, SemanticConstructor,
-    TailCallPlan, WrapperKind, classify_call_plan, classify_callee, classify_constructor_name,
-    classify_forward_call_parts, classify_forward_call_plan, classify_forward_fn_body,
-    classify_tail_call_plan, expr_to_dotted_name, is_builtin_namespace,
+    CallPlan, SemanticConstructor, WrapperKind, expr_to_dotted_name, is_builtin_namespace,
 };
 pub use chars_fusion::{
     CharsFusionDecline, CharsFusionPassReport, has_fusable_shape, run_chars_fusion_pass,
 };
 pub use interp_lower::lower_interpolation_pass;
-pub use leaf::{LeafOp, classify_leaf_op};
 pub use matches::{
-    BoolCompareOp, BoolMatchShape, BoolSubjectPlan, DispatchArmPlan, DispatchBindingPlan,
-    DispatchDefaultPlan, DispatchLiteral, DispatchTableShape, ListMatchShape, MatchDispatchPlan,
-    SemanticDispatchPattern, classify_bool_match_shape, classify_bool_match_shape_from_patterns,
-    classify_bool_subject_plan, classify_dispatch_pattern, classify_dispatch_table_shape,
-    classify_dispatch_table_shape_from_patterns, classify_list_match_shape,
-    classify_list_match_shape_from_patterns, classify_match_dispatch_plan,
-    classify_match_dispatch_plan_from_patterns,
+    BoolCompareOp, BoolMatchShape, DispatchArmPlan, DispatchBindingPlan, DispatchDefaultPlan,
+    DispatchLiteral, DispatchTableShape, ListMatchShape, MatchDispatchPlan,
+    SemanticDispatchPattern,
 };
 
 #[cfg(test)]

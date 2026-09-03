@@ -65,11 +65,6 @@ fn self_host_runtime_state(fd: &FnDef) -> Option<(String, String)> {
 }
 
 /// Emit a Rust struct or enum from an Aver TypeDef.
-#[allow(dead_code)]
-pub fn emit_type_def(td: &TypeDef, ctx: &CodegenContext) -> String {
-    emit_type_def_with_visibility(td, false, ctx)
-}
-
 pub fn emit_public_type_def(td: &TypeDef, ctx: &CodegenContext) -> String {
     emit_type_def_with_visibility(td, true, ctx)
 }
@@ -433,16 +428,6 @@ fn build_fn_ectx_no_borrow_from_resolved(
 /// module (`module.fn_defs`), `None` for the entry module. The caller has
 /// already selected `resolved_fd` by `FnId`, so scope is emission metadata,
 /// never resolver input.
-#[allow(dead_code)]
-pub fn emit_fn_def(
-    fd: &FnDef,
-    resolved_fd: &crate::ir::hir::ResolvedFnDef,
-    ctx: &CodegenContext,
-    scope: Option<&str>,
-) -> String {
-    emit_fn_def_with_visibility(fd, resolved_fd, ctx, scope, false)
-}
-
 pub fn emit_public_fn_def(
     fd: &FnDef,
     resolved_fd: &crate::ir::hir::ResolvedFnDef,

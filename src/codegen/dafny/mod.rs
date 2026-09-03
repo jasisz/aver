@@ -1193,7 +1193,6 @@ mod tests {
                 run_build_symbols: true,
                 dep_modules: &[],
                 alloc_policy: None,
-                call_ctx: None,
                 on_after_pass: None,
             },
         );

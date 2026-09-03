@@ -88,7 +88,7 @@ const S1_FIXTURES: &[&str] = &[
     "widenedmatch",
 ];
 
-/// The 39 measured user-code opcode mnemonics (mirrors `diff_harness.py`).
+/// The 39 measured user-code opcode mnemonics (mirrors `decode_ref.py`).
 const ALL_OPCODES: &[&str] = &[
     "array.new_data",
     "array.new_fixed",

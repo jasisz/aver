@@ -1,23 +1,19 @@
 //! Shared structural classifiers over [`ResolvedExpr`] /
 //! [`ResolvedPattern`].
 //!
-//! The shared IR classifiers in `crate::ir::{calls, leaf, matches,
-//! body}` still operate on the pre-Phase-E `Expr` shape — they're
-//! consumed by the backends that haven't migrated yet (wasm-gc,
-//! Lean, Dafny, self-host). The VM compiler (#147 phase E PR 7) and
-//! the Rust codegen (#147 phase E PR 8) consume `ResolvedExpr` /
-//! `ResolvedPattern` directly, so they share this module's
-//! classifiers instead of threading a `&Expr` conversion through
-//! every fast path.
+//! The VM compiler (#147 phase E PR 7) and the Rust codegen (#147
+//! phase E PR 8) consume `ResolvedExpr` / `ResolvedPattern`
+//! directly, so they share this module's classifiers instead of
+//! threading a `&Expr` conversion through every fast path.
 //!
-//! These mirror the IR classifiers' optimisation menu 1-for-1
-//! (`Vector.get` → `LeafOp::FieldAccess`, dispatch-table arms →
-//! `MATCH_DISPATCH`, etc.) so the bytecode / Rust source the
-//! backends emit is byte-identical to the pre-migration build.
-//! The IR classifiers stay the source of truth for the recognised
-//! shapes; this file re-encodes that menu against the resolved AST
-//! without re-doing the identity work the resolver pass already
-//! finished.
+//! These recognize the same optimisation menu the pre-Phase-E `Expr`
+//! classifiers did (`Vector.get` → `ResolvedLeafOp::FieldAccess`,
+//! dispatch-table arms → `MATCH_DISPATCH`, etc.) so the bytecode /
+//! Rust source the backends emit is byte-identical to the
+//! pre-migration build. wasm-gc dropped its last consumer of the
+//! pre-Phase-E `Expr` classifiers when the HIR walker retired
+//! (#384); this module is now the only source of truth for the
+//! recognised shapes.
 
 use crate::ast::{Literal, Spanned};
 use crate::ir::hir::{
@@ -30,13 +26,13 @@ use crate::ir::{
     SemanticDispatchPattern, WrapperKind,
 };
 
-/// Mirror of [`crate::ir::LeafOp`] keyed against `ResolvedExpr`.
+/// Small expression-shaped leaf operations, keyed against `ResolvedExpr`.
 ///
 /// Each variant's fields are deliberately preserved (even when the
 /// VM compiler currently consumes the leaf by walking the original
 /// `ResolvedExpr` instead of these borrows) — keeps the shape
-/// documentation aligned with `crate::ir::LeafOp` for cross-reading
-/// and leaves room for future consumers that prefer the typed
+/// documented for cross-reading and leaves room for future
+/// consumers that prefer the typed
 /// borrows over re-walking. Suppress the dead-code lint at the type
 /// level rather than per-field so the docs stay flat.
 #[allow(dead_code)]
@@ -90,8 +86,7 @@ pub enum ResolvedLeafOp<'a> {
     StaticRef(String),
 }
 
-/// Bool-subject classifier output, mirror of
-/// [`crate::ir::BoolSubjectPlan`].
+/// Bool-subject classifier output.
 #[allow(dead_code)]
 pub enum ResolvedBoolSubjectPlan<'a> {
     Expr(&'a ResolvedExpr),
@@ -119,8 +114,7 @@ pub enum ForwardSlot {
     Local { slot: u16 },
 }
 
-/// Recognise an expression as one of the fused leaf shapes.
-/// Mirrors [`crate::ir::classify_leaf_op`] structurally; identity
+/// Recognise an expression as one of the fused leaf shapes. Identity
 /// classification (`Builtin` / `Fn` / ...) is read directly off
 /// [`ResolvedCallee`] instead of re-derived from a string.
 pub fn classify_leaf_op_resolved<'a>(
@@ -374,7 +368,7 @@ pub fn classify_bool_subject_plan_resolved(subject: &ResolvedExpr) -> ResolvedBo
 }
 
 /// Classify a single arm pattern as dispatchable in the VM's
-/// MATCH_DISPATCH table. Mirrors [`crate::ir::classify_dispatch_pattern`].
+/// MATCH_DISPATCH table.
 pub fn classify_dispatch_pattern_resolved(
     pattern: &ResolvedPattern,
 ) -> Option<SemanticDispatchPattern> {
@@ -407,7 +401,7 @@ pub fn classify_dispatch_pattern_resolved(
     }
 }
 
-/// Mirror of [`crate::ir::classify_list_match_shape`] / `_from_patterns`.
+/// Recognise a two-arm `EmptyList` / `Cons` match as list-dispatchable.
 pub fn classify_list_match_shape_resolved(arms: &[ResolvedMatchArm]) -> Option<ListMatchShape> {
     if arms.len() != 2 {
         return None;
@@ -425,7 +419,7 @@ pub fn classify_list_match_shape_resolved(arms: &[ResolvedMatchArm]) -> Option<L
     }
 }
 
-/// Mirror of [`crate::ir::classify_bool_match_shape`] / `_from_patterns`.
+/// Recognise a two-arm `true` / `false` match as bool-dispatchable.
 pub fn classify_bool_match_shape_resolved(arms: &[ResolvedMatchArm]) -> Option<BoolMatchShape> {
     if arms.len() != 2 {
         return None;
@@ -455,8 +449,8 @@ pub fn classify_bool_match_shape_resolved(arms: &[ResolvedMatchArm]) -> Option<B
     }
 }
 
-/// Mirror of [`crate::ir::classify_dispatch_table_shape`] /
-/// `_from_patterns`.
+/// Recognise a match's arms as a dispatch table (literal / ctor-tag arms
+/// plus an optional default).
 pub fn classify_dispatch_table_shape_resolved(
     arms: &[ResolvedMatchArm],
 ) -> Option<DispatchTableShape> {
@@ -505,8 +499,8 @@ pub fn classify_dispatch_table_shape_resolved(
     })
 }
 
-/// Mirror of [`crate::ir::classify_match_dispatch_plan`] /
-/// `_from_patterns`.
+/// Classify a match's arms as one of the recognised dispatch shapes
+/// (bool, list, or table), trying each in turn.
 pub fn classify_match_dispatch_plan_resolved(
     arms: &[ResolvedMatchArm],
 ) -> Option<MatchDispatchPlan> {
@@ -616,7 +610,8 @@ fn classify_forward_arg_resolved(expr: &crate::ast::Spanned<ResolvedExpr>) -> Op
 
 pub use crate::ir::body::ThinKind;
 
-/// Resolved-form mirror of [`crate::ir::BodyExprPlan`].
+/// A function body's tail (or a binding's) expression, classified into
+/// the recognised shapes.
 pub enum ResolvedBodyExprPlan<'a> {
     Expr(&'a ResolvedExpr),
     Leaf(ResolvedLeafOp<'a>),
@@ -627,13 +622,14 @@ pub enum ResolvedBodyExprPlan<'a> {
     ForwardCall(ResolvedForwardCallPlan<'a>),
 }
 
-/// Resolved-form mirror of [`crate::ir::BodyBindingPlan`].
+/// One `let`-binding's name and classified expression.
 pub struct ResolvedBodyBindingPlan<'a> {
     pub name: &'a str,
     pub expr: ResolvedBodyExprPlan<'a>,
 }
 
-/// Resolved-form mirror of [`crate::ir::BodyPlan`].
+/// A classified function body: either a single tail expression, or a
+/// block of bindings ending in a tail expression.
 pub enum ResolvedBodyPlan<'a> {
     SingleExpr(ResolvedBodyExprPlan<'a>),
     Block {
@@ -643,7 +639,7 @@ pub enum ResolvedBodyPlan<'a> {
     },
 }
 
-/// Resolved-form mirror of [`crate::ir::ThinBodyPlan`]. `params` mirrors
+/// A classified thin-function body plus its `ThinKind`. `params` mirrors
 /// `ResolvedFnDef::params` shape so consumers that look at param types
 /// see the resolved [`crate::ast::Type`] form rather than the source
 /// annotation string.
