@@ -94,7 +94,7 @@ define_wasip2_import_slots! {
     /// list-returning via retptr (8 bytes: list_ptr + list_len);
     /// each entry is a flattened tuple — 16 bytes packed
     /// `(key_ptr i32, key_len i32, val_ptr i32, val_len i32)`.
-    /// Phase 1.3.3 drives `Env.get(name) -> String` via a
+    /// Phase 1.3.3 drives `Env.get(name) -> Option<String>` via a
     /// linear-search lookup helper.
     CliEnvironmentGetEnvironment,
     /// `wasi:cli/stdin.get-stdin: func() -> input-stream`.

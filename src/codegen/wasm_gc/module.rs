@@ -1297,10 +1297,8 @@ pub(super) fn emit_module_with(
     //     `list<tuple<string, string>>` retptr that
     //     `wasi:cli/environment.get-environment` writes to.
     //     Signature: `(retptr i32, key_ptr i32, key_len i32) ->
-    //     ref null $string`. Returns the matching value as a
-    //     fresh GC `(array i8)`, or an empty array when no key
-    //     matches — preserves Aver's `Env.get(name) -> String`
-    //     no-Option semantics.
+    //     ref null $option_string`. Returns the matching value in
+    //     Option.Some, or Option.None when no key matches.
     // Phase 1.4b — `__rt_format_iso8601(secs i64, nanos i32) ->
     // Phase 1.3.4 — `__rt_console_read_line() ->
     // Result<String, String>` body. Caches `wasi:cli/stdin.get-stdin`
@@ -7564,7 +7562,7 @@ fn emit_list_string_cons(registry: &TypeRegistry) -> Result<wasm_encoder::Functi
 #[derive(Default)]
 struct FactoryExports {
     /// `__rt_option_string_some(s)` / `__rt_option_string_none()` —
-    /// emitted when `Terminal.readKey` is registered.
+    /// emitted when `Env.get` or `Terminal.readKey` is registered.
     opt_string_some: Option<FactorySlot>,
     opt_string_none: Option<FactorySlot>,
     /// `Terminal.readKey` host/replay builders for
@@ -7792,20 +7790,25 @@ fn allocate_factory_exports(
         ..FactoryExports::default()
     };
 
-    // Option<String> factories — driven by `Terminal.readKey`.
-    if effect_registry
+    let needs_option_string = effect_registry
         .iter()
-        .any(|e| e == EffectName::TerminalReadKey)
-    {
+        .any(|e| matches!(e, EffectName::EnvGet | EffectName::TerminalReadKey));
+    let needs_result_option_string = effect_registry
+        .iter()
+        .any(|e| e == EffectName::TerminalReadKey);
+
+    // Direct Option<String> factories — both Env.get and Terminal.readKey's
+    // nested result need the host to materialise the canonical guest wrapper.
+    if needs_option_string {
         let opt_idx = registry
             .option_type_idx("Option<String>")
             .ok_or(WasmGcError::Validation(
-                "Terminal.readKey factory requires Option<String> slot".into(),
+                "Option<String>-returning effect requires its registry slot".into(),
             ))?;
         let s_idx = registry
             .string_array_type_idx
             .ok_or(WasmGcError::Validation(
-                "Terminal.readKey factory requires String slot".into(),
+                "Option<String>-returning effect requires the String slot".into(),
             ))?;
         let s_ref = ref_null(s_idx);
         let opt_ref = ref_null(opt_idx);
@@ -7825,20 +7828,28 @@ fn allocate_factory_exports(
         });
         *next_type_idx += 1;
         *next_fn_idx += 1;
+    }
 
+    // Only Terminal.readKey wraps Option<String> in Result<_, String>.
+    if needs_result_option_string {
+        let opt_idx = registry
+            .option_type_idx("Option<String>")
+            .expect("checked while allocating direct Option<String> factories");
+        let s_idx = registry
+            .string_array_type_idx
+            .expect("checked while allocating direct Option<String> factories");
         let result_idx = registry
             .result_type_idx("Result<Option<String>,String>")
             .ok_or(WasmGcError::Validation(
                 "Terminal.readKey factory requires Result<Option<String>,String> slot".into(),
             ))?;
-        let result_ref = ref_null(result_idx);
         allocate_result_pair(
             types,
             next_type_idx,
             next_fn_idx,
-            &[opt_ref],
-            &[s_ref],
-            result_ref,
+            &[ref_null(opt_idx)],
+            &[ref_null(s_idx)],
+            ref_null(result_idx),
             &mut fx.result_option_string_string_ok,
             &mut fx.result_option_string_string_err,
         );

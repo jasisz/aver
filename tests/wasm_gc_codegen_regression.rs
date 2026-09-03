@@ -1003,6 +1003,33 @@ fn main()
     );
 }
 
+/// Regression for #1255: the host import for `Env.get` must return the same
+/// canonical `Option<String>` ref that user-function signatures use. Returning
+/// a bare String happened to work only while the value was consumed inline;
+/// crossing this named call boundary exposed the mismatched concrete GC refs.
+#[test]
+fn env_get_option_crosses_a_named_function_boundary() {
+    assert_compiles_and_validates(
+        r#"module Main
+    intent = "Env.get and a helper that takes Option<String>."
+    exposes [main]
+    effects [Console.print, Env.get]
+
+fn nameOf(held: Option<String>) -> String
+    ? "Whatever it held."
+    Option.withDefault(held, "unset")
+
+verify nameOf
+    nameOf(Option.None) => "unset"
+
+fn main() -> Unit
+    ? "One call."
+    ! [Console.print, Env.get]
+    Console.print(nameOf(Env.get("X")))
+"#,
+    );
+}
+
 /// Regression for #1084: flattening rewrites an entry signature from the
 /// dependency-qualified spelling to the linked type name. The wasm function
 /// type and the MIR body must read the same post-link identity.

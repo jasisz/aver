@@ -83,11 +83,9 @@ function decodeKeyCode(code) {
 /// cross via the LM transport (`__rt_string_from_lm` / `_to_lm` —
 /// host writes UTF-8 bytes into linear memory, calls a getter that
 /// materialises the bytes as a wasm-gc `(array i8)` ref, and vice
-/// versa). Structured returns (`Option<String>`, `Result<String,String>`,
-/// `Terminal.Size`) are constructed via wasm-owned factory exports
-/// (`__rt_option_string_some/none`, `__rt_result_string_string_ok/err`,
-/// `__rt_record_terminal_size_make`) — JS can't build wasm-gc structs
-/// directly so the binary exports per-type constructors.
+/// versa). Structured returns (`Option<String>`, `Result<_,String>`,
+/// `Terminal.Size`) are constructed via wasm-owned factory exports — JS can't
+/// build wasm-gc structs directly, so the binary exports per-type constructors.
 export class AverBrowserHost {
     constructor(postMessageFn) {
         this.post = postMessageFn;
@@ -541,13 +539,23 @@ export class AverBrowserHost {
                     );
                 },
                 env_get: (nameRef, callerIdx) => {
+                    const exports = this.instance.exports;
                     const name = this.averToJs(nameRef);
+                    let outcome = { $none: true };
                     return this.recordOrDispatch(
                         "Env.get",
                         [name],
-                        () => this.jsToAver(this.environment.get(name) ?? ""),
-                        (json) => this.jsToAver(json ?? ""),
-                        () => this.environment.get(name) ?? "",
+                        () => {
+                            const value = this.environment.get(name);
+                            if (value === undefined) {
+                                outcome = { $none: true };
+                                return exports.__rt_option_string_none();
+                            }
+                            outcome = { $some: value };
+                            return exports.__rt_option_string_some(this.jsToAver(value));
+                        },
+                        (json) => this.decodeOptionStringMarker(json),
+                        () => outcome,
                         this.callerFnFromIdx(callerIdx),
                     );
                 },
@@ -592,37 +600,31 @@ export class AverBrowserHost {
                 float_atan2: (y, x, _callerIdx) => Math.atan2(y, x),
                 float_pow: (b, e, _callerIdx) => Math.pow(b, e),
                 terminal_enable_raw_mode: (callerIdx) =>
-                    this.recordOrDispatch(
+                    this.dispatchResultUnitEffect(
                         "Terminal.enableRawMode",
                         [],
+                        callerIdx,
                         () => {
                             this.rawMode = true;
                             this.post({ type: "raw-mode", enabled: true });
                         },
-                        () => undefined,
-                        () => null,
-                        this.callerFnFromIdx(callerIdx),
                     ),
                 terminal_disable_raw_mode: (callerIdx) =>
-                    this.recordOrDispatch(
+                    this.dispatchResultUnitEffect(
                         "Terminal.disableRawMode",
                         [],
+                        callerIdx,
                         () => {
                             this.rawMode = false;
                             this.post({ type: "raw-mode", enabled: false });
                         },
-                        () => undefined,
-                        () => null,
-                        this.callerFnFromIdx(callerIdx),
                     ),
                 terminal_clear: (callerIdx) =>
-                    this.recordOrDispatch(
+                    this.dispatchResultUnitEffect(
                         "Terminal.clear",
                         [],
+                        callerIdx,
                         () => this.terminal.clear(),
-                        () => undefined,
-                        () => null,
-                        this.callerFnFromIdx(callerIdx),
                     ),
                 terminal_move_to: (xRef, yRef, callerIdx) => {
                     const exports = this.instance.exports;
@@ -640,76 +642,73 @@ export class AverBrowserHost {
                     }
                     const xi = Number(x);
                     const yi = Number(y);
-                    return this.recordOrDispatch(
+                    return this.dispatchResultUnitEffect(
                         "Terminal.moveTo",
                         [xi, yi],
-                        () => {
-                            this.terminal.moveTo(xi, yi);
-                            return exports.__rt_result_unit_string_ok();
-                        },
-                        (json) => this.decodeResultUnitMarker(json),
-                        () => ({ $ok: null }),
-                        this.callerFnFromIdx(callerIdx),
+                        callerIdx,
+                        () => this.terminal.moveTo(xi, yi),
                     );
                 },
                 terminal_print: (sref, callerIdx) => {
                     const text = this.averToJs(sref);
-                    this.recordOrDispatch(
+                    return this.dispatchResultUnitEffect(
                         "Terminal.print",
                         [text],
+                        callerIdx,
                         () => this.terminal.print(text),
-                        () => undefined,
-                        () => null,
-                        this.callerFnFromIdx(callerIdx),
                     );
                 },
                 terminal_set_color: (sref, callerIdx) => {
                     const color = this.averToJs(sref);
-                    this.recordOrDispatch(
+                    return this.dispatchResultUnitEffect(
                         "Terminal.setColor",
                         [color],
+                        callerIdx,
                         () =>
                             this.terminal.setColor(
                                 COLOR_NAMES.has(color) ? color : "default",
                             ),
-                        () => undefined,
-                        () => null,
-                        this.callerFnFromIdx(callerIdx),
                     );
                 },
                 terminal_reset_color: (callerIdx) =>
-                    this.recordOrDispatch(
+                    this.dispatchResultUnitEffect(
                         "Terminal.resetColor",
                         [],
+                        callerIdx,
                         () => this.terminal.resetColor(),
-                        () => undefined,
-                        () => null,
-                        this.callerFnFromIdx(callerIdx),
                     ),
                 terminal_read_key: (callerIdx) => {
                     const exports = this.instance.exports;
+                    let outcome = null;
                     return this.recordOrDispatch(
                         "Terminal.readKey",
                         [],
                         () => {
-                            const key = this.dequeueKey();
-                            if (!key) return exports.__rt_option_string_none();
-                            return exports.__rt_option_string_some(this.jsToAver(key));
-                        },
-                        (json) => {
-                            if (json && typeof json === "object" && "$some" in json) {
-                                return exports.__rt_option_string_some(
-                                    this.jsToAver(json.$some ?? ""),
+                            try {
+                                const key = this.dequeueKey();
+                                let option = exports.__rt_option_string_none();
+                                if (key) {
+                                    option = exports.__rt_option_string_some(
+                                        this.jsToAver(key),
+                                    );
+                                }
+                                outcome = {
+                                    $ok: key ? { $some: key } : { $none: true },
+                                };
+                                return exports.__rt_result_option_string_string_ok(
+                                    option,
+                                );
+                            } catch (err) {
+                                const message =
+                                    err instanceof Error ? err.message : String(err);
+                                outcome = { $err: message };
+                                return exports.__rt_result_option_string_string_err(
+                                    this.jsToAver(message),
                                 );
                             }
-                            return exports.__rt_option_string_none();
                         },
-                        (_ref) => {
-                            const head = this.keyQueue[0];
-                            return head
-                                ? { $some: head }
-                                : { $none: true };
-                        },
+                        (json) => this.decodeResultOptionStringMarker(json),
+                        () => outcome,
                         this.callerFnFromIdx(callerIdx),
                     );
                 },
@@ -752,31 +751,25 @@ export class AverBrowserHost {
                     );
                 },
                 terminal_hide_cursor: (callerIdx) =>
-                    this.recordOrDispatch(
+                    this.dispatchResultUnitEffect(
                         "Terminal.hideCursor",
                         [],
+                        callerIdx,
                         () => this.terminal.hideCursor(),
-                        () => undefined,
-                        () => null,
-                        this.callerFnFromIdx(callerIdx),
                     ),
                 terminal_show_cursor: (callerIdx) =>
-                    this.recordOrDispatch(
+                    this.dispatchResultUnitEffect(
                         "Terminal.showCursor",
                         [],
+                        callerIdx,
                         () => this.terminal.showCursor(),
-                        () => undefined,
-                        () => null,
-                        this.callerFnFromIdx(callerIdx),
                     ),
                 terminal_flush: (callerIdx) =>
-                    this.recordOrDispatch(
+                    this.dispatchResultUnitEffect(
                         "Terminal.flush",
                         [],
+                        callerIdx,
                         () => this.postTerminalSnapshot(),
-                        () => undefined,
-                        () => null,
-                        this.callerFnFromIdx(callerIdx),
                     ),
                 // Independent-product structural-scope markers — same
                 // contract the wasm-gc CLI host enforces. Trailing
@@ -814,6 +807,31 @@ export class AverBrowserHost {
         return exports.__rt_result_string_string_ok(this.jsToAver(""));
     }
 
+    dispatchResultUnitEffect(effectType, args, callerIdx, realCall) {
+        const exports = this.instance.exports;
+        let outcome = null;
+        return this.recordOrDispatch(
+            effectType,
+            args,
+            () => {
+                try {
+                    realCall();
+                    outcome = { $ok: null };
+                    return exports.__rt_result_unit_string_ok();
+                } catch (err) {
+                    const message = err instanceof Error ? err.message : String(err);
+                    outcome = { $err: message };
+                    return exports.__rt_result_unit_string_err(
+                        this.jsToAver(message),
+                    );
+                }
+            },
+            (json) => this.decodeResultUnitMarker(json),
+            () => outcome,
+            this.callerFnFromIdx(callerIdx),
+        );
+    }
+
     decodeResultUnitMarker(json) {
         const exports = this.instance.exports;
         if (json && typeof json === "object" && "$err" in json) {
@@ -822,6 +840,27 @@ export class AverBrowserHost {
             );
         }
         return exports.__rt_result_unit_string_ok();
+    }
+
+    decodeOptionStringMarker(json) {
+        const exports = this.instance.exports;
+        if (json && typeof json === "object" && "$some" in json) {
+            return exports.__rt_option_string_some(
+                this.jsToAver(json.$some ?? ""),
+            );
+        }
+        return exports.__rt_option_string_none();
+    }
+
+    decodeResultOptionStringMarker(json) {
+        const exports = this.instance.exports;
+        if (json && typeof json === "object" && "$err" in json) {
+            return exports.__rt_result_option_string_string_err(
+                this.jsToAver(json.$err ?? ""),
+            );
+        }
+        const option = this.decodeOptionStringMarker(json?.$ok);
+        return exports.__rt_result_option_string_string_ok(option);
     }
 
     decodeResultIntMarker(json) {
