@@ -68,6 +68,7 @@ mod flatten;
 mod lists;
 mod maps;
 mod module;
+mod optimize;
 mod packed_sequences;
 #[cfg(test)]
 mod tests;
@@ -90,6 +91,7 @@ pub use capability_plan::{
     CapabilityWasmGcInterfacePlan, CapabilityWasmGcOperationPlan, CapabilityWasmGcPlan,
 };
 pub use flatten::{CapabilityFunctionSurface, flatten_multimodule};
+pub use optimize::{OptimizationMode, OptimizationReport, optimize_artifact, optimize_bytes};
 
 /// Backend lowering mode — selects the host-bridge shape the wasm-gc
 /// emitter targets.

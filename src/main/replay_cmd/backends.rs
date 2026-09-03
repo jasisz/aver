@@ -271,6 +271,7 @@ pub(super) fn run_wasm_gc_replay(
         mode,
         entry_info,
         None,
+        None,
         true,
         provider_bindings,
     )?;
