@@ -3693,7 +3693,7 @@ fn certify_declines_name_the_blocker_that_actually_applies() {
         ),
         (
             "fib",
-            "calls other user functions; only the composition and mutual-recursion \
+            "calls the user function `fibTR`; only the composition and mutual-recursion \
              templates cross function boundaries, and this body fits neither",
         ),
     ] {

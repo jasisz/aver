@@ -8288,6 +8288,11 @@ fn cert_tripwire_declines_tampered_int_sign_cmp_plan() {
         &|text| {
             let sym = ".intConstCmp .ge 4 (0 : Int)";
             let frag = ".intSignCmp .ge (0 : Int) 1 4";
+            // The edit visits every emitted file; only the one carrying the
+            // two plan definitions is touched, and there each node is unique.
+            if !text.contains(sym) && !text.contains(frag) {
+                return text.to_string();
+            }
             assert_eq!(text.matches(sym).count(), 1, "isNonNeg sym node is unique");
             assert_eq!(
                 text.matches(frag).count(),
