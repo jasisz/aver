@@ -10,17 +10,14 @@
 //! where a real `cargo build` settles it. What is here is the CLI contract:
 //! a clean compile, and the two ways this can legitimately fail.
 
+#[path = "support/aver_cmd.rs"]
+mod aver_cmd;
+
+use aver_cmd::{aver_bin, repo_root};
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-
-fn aver_bin() -> &'static str {
-    env!("CARGO_BIN_EXE_aver")
-}
-
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
 
 fn temp_dir(tag: &str) -> PathBuf {
     let dir =

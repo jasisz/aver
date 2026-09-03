@@ -1,15 +1,16 @@
 //! End-to-end contract for explicit native provider package composition.
 
+#[path = "support/aver_cmd.rs"]
+mod aver_cmd;
+
+use aver_cmd::aver_bin;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 const SHAPES_SOURCE: &str = include_str!("fixtures/native_provider_composed/Shapes.av");
 const MAIN_SOURCE: &str = include_str!("fixtures/native_provider_composed/main.av");
-
-fn aver_bin() -> &'static str {
-    env!("CARGO_BIN_EXE_aver")
-}
 
 fn fixture_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/native_provider_composed")

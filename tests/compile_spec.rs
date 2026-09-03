@@ -1,3 +1,8 @@
+#[path = "support/aver_cmd.rs"]
+mod aver_cmd;
+
+use aver_cmd::format_output;
+
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -13,15 +18,6 @@ fn temp_output_dir(prefix: &str) -> PathBuf {
         .map(|d| d.as_nanos())
         .unwrap_or(0);
     std::env::temp_dir().join(format!("{prefix}-{nanos}"))
-}
-
-fn format_output(output: &std::process::Output) -> String {
-    format!(
-        "status: {}\nstdout:\n{}\nstderr:\n{}",
-        output.status,
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    )
 }
 
 fn aver_string_literal(path: &Path) -> String {

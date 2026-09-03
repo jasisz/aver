@@ -28,18 +28,15 @@
 
 #![cfg(feature = "runtime")]
 
+#[path = "support/aver_cmd.rs"]
+mod aver_cmd;
+
+use aver_cmd::{aver_bin, repo_root, format_output};
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
-
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
-
-fn aver_bin() -> &'static str {
-    env!("CARGO_BIN_EXE_aver")
-}
 
 fn temp_dir(prefix: &str) -> PathBuf {
     let nanos = SystemTime::now()
@@ -49,15 +46,6 @@ fn temp_dir(prefix: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("aver-self-host-regen-{prefix}-{nanos}"));
     fs::create_dir_all(&dir).expect("create temp dir");
     dir
-}
-
-fn format_output(output: &std::process::Output) -> String {
-    format!(
-        "status: {}\nstdout:\n{}\nstderr:\n{}",
-        output.status,
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    )
 }
 
 /// Corpus programs to run through the regenerated CLI, asserting

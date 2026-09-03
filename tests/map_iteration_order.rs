@@ -12,6 +12,11 @@
 //! compared the value sequence across two backends or across two runs.
 #![cfg(feature = "runtime")]
 
+#[path = "support/aver_cmd.rs"]
+mod aver_cmd;
+
+use aver_cmd::{repo_root, format_output};
+
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -32,25 +37,12 @@ const FN_PARAM_FIXTURE: &str = "tests/fixtures/map_order_fn_param.av";
 const SHADOWED_GIVEN_FIXTURE: &str = "tests/fixtures/map_order_shadowed_given.av";
 const READER_NAMED_GIVEN_FIXTURE: &str = "tests/fixtures/map_order_given_named_after_reader.av";
 
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
-
 fn temp_output_dir(prefix: &str) -> PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
     std::env::temp_dir().join(format!("{prefix}-{nanos}"))
-}
-
-fn format_output(out: &std::process::Output) -> String {
-    format!(
-        "status: {}\nstdout:\n{}\nstderr:\n{}",
-        out.status,
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr),
-    )
 }
 
 fn run_aver(args: &[&str]) -> std::process::Output {

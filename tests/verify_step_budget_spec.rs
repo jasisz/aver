@@ -22,27 +22,19 @@
 //!    back to the expected expression the author wrote.
 #![cfg(feature = "runtime")]
 
+#[path = "support/aver_cmd.rs"]
+mod aver_cmd;
+
+use aver_cmd::{repo_root, format_output};
+
 mod support {
     pub mod scratch_dir;
 }
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 use support::scratch_dir::{ScratchDir, temp_dir};
-
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
-
-fn format_output(out: &std::process::Output) -> String {
-    format!(
-        "status: {}\nstdout:\n{}\nstderr:\n{}",
-        out.status,
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr),
-    )
-}
 
 /// Stage one fixture module plus an `aver.toml` in a fresh project directory.
 /// Each test writes its own config, because the config is the subject.

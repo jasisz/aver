@@ -30,35 +30,13 @@
 
 #![cfg(feature = "wasm")]
 
-use std::fs;
+#[path = "support/aver_cmd.rs"]
+mod aver_cmd;
+
+use aver_cmd::{format_output, cleanup, temp_module};
+
 use std::path::PathBuf;
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
-
-fn temp_module(prefix: &str, source: &str) -> PathBuf {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system time before unix epoch")
-        .as_nanos();
-    let dir = std::env::temp_dir().join(format!("{}-{}", prefix, nanos));
-    fs::create_dir_all(&dir).expect("create temp dir");
-    let path = dir.join("main.av");
-    fs::write(&path, source).expect("write temp module source");
-    path
-}
-
-fn cleanup(path: &std::path::Path) {
-    let _ = fs::remove_dir_all(path.parent().expect("temp module has parent"));
-}
-
-fn format_output(out: &std::process::Output) -> String {
-    format!(
-        "status: {}\nstdout:\n{}\nstderr:\n{}",
-        out.status,
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr),
-    )
-}
 
 /// Run one cell program through the real CLI on the given backend
 /// flags, returning trimmed stdout.

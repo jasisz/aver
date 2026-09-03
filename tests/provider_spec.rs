@@ -1,5 +1,10 @@
 //! Public embedding and VM conformance tests for typed capability providers.
 
+#[path = "support/aver_cmd.rs"]
+mod aver_cmd;
+
+use aver_cmd::aver_bin;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -1420,10 +1425,6 @@ fn main() -> Int
     replay_vm
         .ensure_replay_consumed()
         .expect("both events consumed");
-}
-
-fn aver_bin() -> &'static str {
-    env!("CARGO_BIN_EXE_aver")
 }
 
 fn standard_capability_target_fixture() -> PathBuf {

@@ -8,8 +8,13 @@
 //! while backends with no provider adapter refuse instead of running without
 //! the configured implementation.
 
+#[path = "support/aver_cmd.rs"]
+mod aver_cmd;
+
+use aver_cmd::{aver_bin, repo_root};
+
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Output};
 
 const SHAPES_SOURCE: &str = include_str!("fixtures/native_provider_composed/Shapes.av");
@@ -38,14 +43,6 @@ const REPLAY_WASM_SOURCE: &str = include_str!("fixtures/native_provider_replay/w
 const PROBE_SOURCE: &str = "module Probe\n    intent = \"Exercise an entry program smaller than the project manifest.\"\n\nfn main() -> Unit\n    Unit\n";
 /// An entry with no provider call of its own, over a module that has them.
 const THIN_SOURCE: &str = "module Thin\n    intent = \"Audit a thin entry whose dependency reaches the bound capability.\"\n    depends [Composed]\n\nfn main() -> Result<Unit, String>\n    ? \"Delegate to the composed module.\"\n    Composed.main()\n";
-
-fn aver_bin() -> &'static str {
-    env!("CARGO_BIN_EXE_aver")
-}
-
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
 
 fn report(output: &Output) -> String {
     format!(

@@ -1,13 +1,14 @@
 //! Contract-v1 must reject imported named boundary types before publishing a
 //! descriptor or attempting to bind a provider.
 
+#[path = "support/aver_cmd.rs"]
+mod aver_cmd;
+
+use aver_cmd::aver_bin;
+
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Output};
-
-fn aver_bin() -> &'static str {
-    env!("CARGO_BIN_EXE_aver")
-}
 
 fn command_report(output: &Output) -> String {
     format!(

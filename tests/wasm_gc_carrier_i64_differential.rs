@@ -21,25 +21,13 @@
 
 #![cfg(feature = "wasm")]
 
+#[path = "support/aver_cmd.rs"]
+mod aver_cmd;
+
+use aver_cmd::{cleanup, temp_module};
+
 use std::path::PathBuf;
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
-
-fn temp_module(prefix: &str, source: &str) -> PathBuf {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system time before unix epoch")
-        .as_nanos();
-    let dir = std::env::temp_dir().join(format!("{prefix}-{nanos}"));
-    std::fs::create_dir_all(&dir).expect("create temp dir");
-    let path = dir.join("main.av");
-    std::fs::write(&path, source).expect("write temp module source");
-    path
-}
-
-fn cleanup(path: &std::path::Path) {
-    let _ = std::fs::remove_dir_all(path.parent().expect("temp module has parent"));
-}
 
 /// Run `source` on the VM (`wasm_gc = false`) or wasm-gc (`true`).
 /// `no_carrier` sets `AVER_NO_CARRIER_I64=1` so the wasm-gc backend keeps
