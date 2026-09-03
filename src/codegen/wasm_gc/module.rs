@@ -7743,6 +7743,40 @@ fn allocate_resource_result_factories(
     Ok(())
 }
 
+/// Slot allocation for a `Result<T, String>` ok/err factory pair. Every
+/// such pair shares the same allocation shape — one type + fn slot for
+/// `Ok(payload) -> Result`, one for `Err(String) -> Result` — even where
+/// the emitted body isn't uniform enough to share an emitter (e.g. the
+/// `Unit` and `Bytes` Ok arms). Order matches the historical per-pair
+/// inline blocks exactly: Ok slot first, then Err slot.
+#[allow(clippy::too_many_arguments)]
+fn allocate_result_pair(
+    types: &mut TypeSection,
+    next_type_idx: &mut u32,
+    next_fn_idx: &mut u32,
+    ok_params: &[ValType],
+    err_params: &[ValType],
+    result_ref: ValType,
+    ok_slot: &mut Option<FactorySlot>,
+    err_slot: &mut Option<FactorySlot>,
+) {
+    types.ty().function(ok_params.iter().copied(), [result_ref]);
+    *ok_slot = Some(FactorySlot {
+        type_idx: *next_type_idx,
+        fn_idx: *next_fn_idx,
+    });
+    *next_type_idx += 1;
+    *next_fn_idx += 1;
+
+    types.ty().function(err_params.iter().copied(), [result_ref]);
+    *err_slot = Some(FactorySlot {
+        type_idx: *next_type_idx,
+        fn_idx: *next_fn_idx,
+    });
+    *next_type_idx += 1;
+    *next_fn_idx += 1;
+}
+
 fn allocate_factory_exports(
     types: &mut TypeSection,
     next_type_idx: &mut u32,
@@ -7796,21 +7830,16 @@ fn allocate_factory_exports(
                 "Terminal.readKey factory requires Result<Option<String>,String> slot".into(),
             ))?;
         let result_ref = ref_null(result_idx);
-        types.ty().function([opt_ref], [result_ref]);
-        fx.result_option_string_string_ok = Some(FactorySlot {
-            type_idx: *next_type_idx,
-            fn_idx: *next_fn_idx,
-        });
-        *next_type_idx += 1;
-        *next_fn_idx += 1;
-
-        types.ty().function([s_ref], [result_ref]);
-        fx.result_option_string_string_err = Some(FactorySlot {
-            type_idx: *next_type_idx,
-            fn_idx: *next_fn_idx,
-        });
-        *next_type_idx += 1;
-        *next_fn_idx += 1;
+        allocate_result_pair(
+            types,
+            next_type_idx,
+            next_fn_idx,
+            &[opt_ref],
+            &[s_ref],
+            result_ref,
+            &mut fx.result_option_string_string_ok,
+            &mut fx.result_option_string_string_err,
+        );
     }
 
     // Terminal.Size record factory — driven by `Terminal.size`.
@@ -7843,20 +7872,16 @@ fn allocate_factory_exports(
                 "Terminal.size Result factory requires String slot".into(),
             ))?;
         let result_ref = ref_null(result_idx);
-        types.ty().function([rec_ref], [result_ref]);
-        fx.result_terminal_size_string_ok = Some(FactorySlot {
-            type_idx: *next_type_idx,
-            fn_idx: *next_fn_idx,
-        });
-        *next_type_idx += 1;
-        *next_fn_idx += 1;
-        types.ty().function([ref_null(string_idx)], [result_ref]);
-        fx.result_terminal_size_string_err = Some(FactorySlot {
-            type_idx: *next_type_idx,
-            fn_idx: *next_fn_idx,
-        });
-        *next_type_idx += 1;
-        *next_fn_idx += 1;
+        allocate_result_pair(
+            types,
+            next_type_idx,
+            next_fn_idx,
+            &[rec_ref],
+            &[ref_null(string_idx)],
+            result_ref,
+            &mut fx.result_terminal_size_string_ok,
+            &mut fx.result_terminal_size_string_err,
+        );
     }
 
     // Result<String,String> factories — driven by any effect whose
@@ -7887,21 +7912,16 @@ fn allocate_factory_exports(
         let s_ref = ref_null(s_idx);
         let res_ref = ref_null(res_idx);
 
-        types.ty().function([s_ref], [res_ref]);
-        fx.result_string_string_ok = Some(FactorySlot {
-            type_idx: *next_type_idx,
-            fn_idx: *next_fn_idx,
-        });
-        *next_type_idx += 1;
-        *next_fn_idx += 1;
-
-        types.ty().function([s_ref], [res_ref]);
-        fx.result_string_string_err = Some(FactorySlot {
-            type_idx: *next_type_idx,
-            fn_idx: *next_fn_idx,
-        });
-        *next_type_idx += 1;
-        *next_fn_idx += 1;
+        allocate_result_pair(
+            types,
+            next_type_idx,
+            next_fn_idx,
+            &[s_ref],
+            &[s_ref],
+            res_ref,
+            &mut fx.result_string_string_ok,
+            &mut fx.result_string_string_err,
+        );
     }
 
     if effect_registry
@@ -7923,20 +7943,16 @@ fn allocate_factory_exports(
                 "Result<Int,String> effect factory requires String slot".into(),
             ))?;
         let result_ref = ref_null(result_idx);
-        types.ty().function([ref_null(int_idx)], [result_ref]);
-        fx.result_int_string_ok = Some(FactorySlot {
-            type_idx: *next_type_idx,
-            fn_idx: *next_fn_idx,
-        });
-        *next_type_idx += 1;
-        *next_fn_idx += 1;
-        types.ty().function([ref_null(string_idx)], [result_ref]);
-        fx.result_int_string_err = Some(FactorySlot {
-            type_idx: *next_type_idx,
-            fn_idx: *next_fn_idx,
-        });
-        *next_type_idx += 1;
-        *next_fn_idx += 1;
+        allocate_result_pair(
+            types,
+            next_type_idx,
+            next_fn_idx,
+            &[ref_null(int_idx)],
+            &[ref_null(string_idx)],
+            result_ref,
+            &mut fx.result_int_string_ok,
+            &mut fx.result_int_string_err,
+        );
     }
 
     // Result<Unit, String> factories — Disk.{writeText, appendText,
@@ -7992,21 +8008,16 @@ fn allocate_factory_exports(
         let s_ref = ref_null(s_idx);
         let res_ref = ref_null(res_idx);
 
-        types.ty().function([], [res_ref]);
-        fx.result_unit_string_ok = Some(FactorySlot {
-            type_idx: *next_type_idx,
-            fn_idx: *next_fn_idx,
-        });
-        *next_type_idx += 1;
-        *next_fn_idx += 1;
-
-        types.ty().function([s_ref], [res_ref]);
-        fx.result_unit_string_err = Some(FactorySlot {
-            type_idx: *next_type_idx,
-            fn_idx: *next_fn_idx,
-        });
-        *next_type_idx += 1;
-        *next_fn_idx += 1;
+        allocate_result_pair(
+            types,
+            next_type_idx,
+            next_fn_idx,
+            &[],
+            &[s_ref],
+            res_ref,
+            &mut fx.result_unit_string_ok,
+            &mut fx.result_unit_string_err,
+        );
     }
 
     // Tcp.Connection record + Result<Tcp.Connection, String> — driven
@@ -8281,21 +8292,16 @@ fn allocate_factory_exports(
         let rec_ref = ref_null(rec_idx);
         let res_ref = ref_null(res_idx);
 
-        types.ty().function([rec_ref], [res_ref]);
-        fx.result_tcp_connection_string_ok = Some(FactorySlot {
-            type_idx: *next_type_idx,
-            fn_idx: *next_fn_idx,
-        });
-        *next_type_idx += 1;
-        *next_fn_idx += 1;
-
-        types.ty().function([s_ref], [res_ref]);
-        fx.result_tcp_connection_string_err = Some(FactorySlot {
-            type_idx: *next_type_idx,
-            fn_idx: *next_fn_idx,
-        });
-        *next_type_idx += 1;
-        *next_fn_idx += 1;
+        allocate_result_pair(
+            types,
+            next_type_idx,
+            next_fn_idx,
+            &[rec_ref],
+            &[s_ref],
+            res_ref,
+            &mut fx.result_tcp_connection_string_ok,
+            &mut fx.result_tcp_connection_string_err,
+        );
     }
 
     // HTTP response factories — driven by any verb effect.
@@ -8350,21 +8356,16 @@ fn allocate_factory_exports(
         *next_type_idx += 1;
         *next_fn_idx += 1;
 
-        types.ty().function([rec_ref], [res_ref]);
-        fx.result_http_response_string_ok = Some(FactorySlot {
-            type_idx: *next_type_idx,
-            fn_idx: *next_fn_idx,
-        });
-        *next_type_idx += 1;
-        *next_fn_idx += 1;
-
-        types.ty().function([s_ref], [res_ref]);
-        fx.result_http_response_string_err = Some(FactorySlot {
-            type_idx: *next_type_idx,
-            fn_idx: *next_fn_idx,
-        });
-        *next_type_idx += 1;
-        *next_fn_idx += 1;
+        allocate_result_pair(
+            types,
+            next_type_idx,
+            next_fn_idx,
+            &[rec_ref],
+            &[s_ref],
+            res_ref,
+            &mut fx.result_http_response_string_ok,
+            &mut fx.result_http_response_string_err,
+        );
 
         types.ty().function([], [map_ref]);
         fx.map_string_list_string_empty = Some(FactorySlot {
@@ -8400,21 +8401,16 @@ fn allocate_factory_exports(
         let list_ref = ref_null(list_idx);
         let res_ref = ref_null(res_idx);
 
-        types.ty().function([list_ref], [res_ref]);
-        fx.result_list_string_string_ok = Some(FactorySlot {
-            type_idx: *next_type_idx,
-            fn_idx: *next_fn_idx,
-        });
-        *next_type_idx += 1;
-        *next_fn_idx += 1;
-
-        types.ty().function([s_ref], [res_ref]);
-        fx.result_list_string_string_err = Some(FactorySlot {
-            type_idx: *next_type_idx,
-            fn_idx: *next_fn_idx,
-        });
-        *next_type_idx += 1;
-        *next_fn_idx += 1;
+        allocate_result_pair(
+            types,
+            next_type_idx,
+            next_fn_idx,
+            &[list_ref],
+            &[s_ref],
+            res_ref,
+            &mut fx.result_list_string_string_ok,
+            &mut fx.result_list_string_string_err,
+        );
 
         types.ty().function([s_ref, list_ref], [list_ref]);
         fx.list_string_cons = Some(FactorySlot {
@@ -8476,21 +8472,16 @@ fn allocate_factory_exports(
         let int_ref = ref_null(int_idx);
         let s_ref = ref_null(s_idx);
 
-        types.ty().function([list_ref], [res_ref]);
-        fx.result_bytes_string_ok = Some(FactorySlot {
-            type_idx: *next_type_idx,
-            fn_idx: *next_fn_idx,
-        });
-        *next_type_idx += 1;
-        *next_fn_idx += 1;
-
-        types.ty().function([s_ref], [res_ref]);
-        fx.result_bytes_string_err = Some(FactorySlot {
-            type_idx: *next_type_idx,
-            fn_idx: *next_fn_idx,
-        });
-        *next_type_idx += 1;
-        *next_fn_idx += 1;
+        allocate_result_pair(
+            types,
+            next_type_idx,
+            next_fn_idx,
+            &[list_ref],
+            &[s_ref],
+            res_ref,
+            &mut fx.result_bytes_string_ok,
+            &mut fx.result_bytes_string_err,
+        );
 
         types.ty().function([int_ref, list_ref], [list_ref]);
         fx.list_int_cons = Some(FactorySlot {
@@ -8555,21 +8546,16 @@ fn allocate_factory_exports(
             *next_fn_idx += 1;
         }
 
-        types.ty().function([list_ref], [result_ref]);
-        fx.result_list_int_string_ok = Some(FactorySlot {
-            type_idx: *next_type_idx,
-            fn_idx: *next_fn_idx,
-        });
-        *next_type_idx += 1;
-        *next_fn_idx += 1;
-
-        types.ty().function([string_ref], [result_ref]);
-        fx.result_list_int_string_err = Some(FactorySlot {
-            type_idx: *next_type_idx,
-            fn_idx: *next_fn_idx,
-        });
-        *next_type_idx += 1;
-        *next_fn_idx += 1;
+        allocate_result_pair(
+            types,
+            next_type_idx,
+            next_fn_idx,
+            &[list_ref],
+            &[string_ref],
+            result_ref,
+            &mut fx.result_list_int_string_ok,
+            &mut fx.result_list_int_string_err,
+        );
     }
 
     Ok(fx)
@@ -8815,31 +8801,67 @@ impl FactoryExports {
             codes.function(&emit_factory_option_string_none(registry)?);
         }
         if self.result_option_string_string_ok.is_some() {
-            codes.function(&emit_factory_result_option_string_string_ok(registry)?);
+            codes.function(&emit_factory_result_ok(
+                registry,
+                "Result<Option<String>,String>",
+                registry.string_array_type_idx.expect("checked at allocation"),
+            )?);
         }
         if self.result_option_string_string_err.is_some() {
-            codes.function(&emit_factory_result_option_string_string_err(registry)?);
+            codes.function(&emit_factory_result_err(
+                registry,
+                "Result<Option<String>,String>",
+                registry
+                    .option_type_idx("Option<String>")
+                    .expect("checked at allocation"),
+            )?);
         }
         if self.terminal_size_make.is_some() {
             codes.function(&emit_factory_terminal_size_make(registry)?);
         }
         if self.result_terminal_size_string_ok.is_some() {
-            codes.function(&emit_factory_result_terminal_size_string_ok(registry)?);
+            codes.function(&emit_factory_result_ok(
+                registry,
+                "Result<Terminal.Size,String>",
+                registry.string_array_type_idx.expect("checked at allocation"),
+            )?);
         }
         if self.result_terminal_size_string_err.is_some() {
-            codes.function(&emit_factory_result_terminal_size_string_err(registry)?);
+            codes.function(&emit_factory_result_err(
+                registry,
+                "Result<Terminal.Size,String>",
+                registry
+                    .record_type_idx("Terminal.Size")
+                    .expect("checked at allocation"),
+            )?);
         }
         if self.result_string_string_ok.is_some() {
-            codes.function(&emit_factory_result_string_string_ok(registry)?);
+            codes.function(&emit_factory_result_ok(
+                registry,
+                "Result<String,String>",
+                registry.string_array_type_idx.expect("checked at allocation"),
+            )?);
         }
         if self.result_string_string_err.is_some() {
-            codes.function(&emit_factory_result_string_string_err(registry)?);
+            codes.function(&emit_factory_result_err(
+                registry,
+                "Result<String,String>",
+                registry.string_array_type_idx.expect("checked at allocation"),
+            )?);
         }
         if self.result_int_string_ok.is_some() {
-            codes.function(&emit_factory_result_int_string_ok(registry)?);
+            codes.function(&emit_factory_result_ok(
+                registry,
+                "Result<Int,String>",
+                registry.string_array_type_idx.expect("checked at allocation"),
+            )?);
         }
         if self.result_int_string_err.is_some() {
-            codes.function(&emit_factory_result_int_string_err(registry)?);
+            codes.function(&emit_factory_result_err(
+                registry,
+                "Result<Int,String>",
+                registry.aint_struct_idx.expect("checked at allocation"),
+            )?);
         }
         if self.result_unit_string_ok.is_some() {
             codes.function(&emit_factory_result_unit_string_ok(registry)?);
@@ -8913,33 +8935,67 @@ impl FactoryExports {
             )?);
         }
         if self.result_option_tcp_connection_string_err.is_some() {
-            codes.function(&emit_factory_result_option_tcp_connection_string_err(
+            codes.function(&emit_factory_result_err(
                 registry,
+                "Result<Option<Tcp.Connection>,String>",
+                registry
+                    .option_type_idx("Option<Tcp.Connection>")
+                    .expect("checked at allocation"),
             )?);
         }
         if self.result_tcp_connection_string_ok.is_some() {
-            codes.function(&emit_factory_result_tcp_connection_string_ok(registry)?);
+            codes.function(&emit_factory_result_ok(
+                registry,
+                "Result<Tcp.Connection,String>",
+                registry.string_array_type_idx.expect("checked at allocation"),
+            )?);
         }
         if self.result_tcp_connection_string_err.is_some() {
-            codes.function(&emit_factory_result_tcp_connection_string_err(registry)?);
+            codes.function(&emit_factory_result_err(
+                registry,
+                "Result<Tcp.Connection,String>",
+                registry
+                    .record_type_idx("Tcp.Connection")
+                    .expect("checked at allocation"),
+            )?);
         }
         if self.http_response_make.is_some() {
             codes.function(&emit_factory_http_response_make(registry)?);
         }
         if self.result_http_response_string_ok.is_some() {
-            codes.function(&emit_factory_result_http_response_string_ok(registry)?);
+            codes.function(&emit_factory_result_ok(
+                registry,
+                "Result<Http.Response,String>",
+                registry.string_array_type_idx.expect("checked at allocation"),
+            )?);
         }
         if self.result_http_response_string_err.is_some() {
-            codes.function(&emit_factory_result_http_response_string_err(registry)?);
+            codes.function(&emit_factory_result_err(
+                registry,
+                "Result<Http.Response,String>",
+                registry
+                    .record_type_idx("Http.Response")
+                    .expect("checked at allocation"),
+            )?);
         }
         if self.map_string_list_string_empty.is_some() {
             codes.function(&emit_factory_map_string_list_string_empty(registry)?);
         }
         if self.result_list_string_string_ok.is_some() {
-            codes.function(&emit_factory_result_list_string_string_ok(registry)?);
+            codes.function(&emit_factory_result_ok(
+                registry,
+                "Result<List<String>,String>",
+                registry.string_array_type_idx.expect("checked at allocation"),
+            )?);
         }
         if self.result_list_string_string_err.is_some() {
-            codes.function(&emit_factory_result_list_string_string_err(registry)?);
+            codes.function(&emit_factory_result_err(
+                registry,
+                "Result<List<String>,String>",
+                registry
+                    .list_type_idx("List<String>")
+                    .expect("checked at allocation"),
+            )?);
         }
         if self.list_string_cons.is_some() {
             codes.function(&emit_factory_list_string_cons(registry)?);
@@ -8954,7 +9010,16 @@ impl FactoryExports {
             )?);
         }
         if self.result_bytes_string_err.is_some() {
-            codes.function(&emit_factory_result_bytes_string_err(registry)?);
+            let bytes_idx = registry
+                .packed_sequence("Bytes")
+                .map(|packed| packed.type_idx)
+                .or_else(|| registry.record_type_idx("Bytes"))
+                .expect("checked at allocation");
+            codes.function(&emit_factory_result_err(
+                registry,
+                "Result<Bytes,String>",
+                bytes_idx,
+            )?);
         }
         if self.list_int_cons.is_some() {
             codes.function(&emit_factory_list_int_cons(registry)?);
@@ -8963,10 +9028,20 @@ impl FactoryExports {
             codes.function(&emit_factory_list_int_nil(registry)?);
         }
         if self.result_list_int_string_ok.is_some() {
-            codes.function(&emit_factory_result_list_int_string_ok(registry)?);
+            codes.function(&emit_factory_result_ok(
+                registry,
+                "Result<List<Int>,String>",
+                registry.string_array_type_idx.expect("checked at allocation"),
+            )?);
         }
         if self.result_list_int_string_err.is_some() {
-            codes.function(&emit_factory_result_list_int_string_err(registry)?);
+            codes.function(&emit_factory_result_err(
+                registry,
+                "Result<List<Int>,String>",
+                registry
+                    .list_type_idx("List<Int>")
+                    .expect("checked at allocation"),
+            )?);
         }
         Ok(())
     }
@@ -9024,6 +9099,52 @@ impl FactoryExports {
     }
 }
 
+/// `Result<T, String>::Ok(payload)` body for the family of factories whose
+/// Ok arm is exactly `tag=1, payload=arg0, E=null(err_null_idx)` — the
+/// shape shared by every uniform Result pair (see `allocate_result_pair`).
+/// Bespoke Ok arms (Unit's i32 placeholder, Bytes' pack call, the
+/// resource/Option wrappers) stay as their own `emit_factory_*` fns.
+fn emit_factory_result_ok(
+    registry: &TypeRegistry,
+    result: &str,
+    err_null_idx: u32,
+) -> Result<wasm_encoder::Function, WasmGcError> {
+    let result_idx = registry
+        .result_type_idx(result)
+        .expect("checked at allocation");
+    let mut f = Function::new([]);
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
+        err_null_idx,
+    )));
+    f.instruction(&Instruction::StructNew(result_idx));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+/// `Result<T, String>::Err(msg)` body for the family of factories whose
+/// Err arm is exactly `tag=0, T=null(ok_null_idx), payload=arg0` — see
+/// `emit_factory_result_ok` above.
+fn emit_factory_result_err(
+    registry: &TypeRegistry,
+    result: &str,
+    ok_null_idx: u32,
+) -> Result<wasm_encoder::Function, WasmGcError> {
+    let result_idx = registry
+        .result_type_idx(result)
+        .expect("checked at allocation");
+    let mut f = Function::new([]);
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
+        ok_null_idx,
+    )));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructNew(result_idx));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
 fn emit_factory_option_string_some(
     registry: &TypeRegistry,
 ) -> Result<wasm_encoder::Function, WasmGcError> {
@@ -9057,46 +9178,6 @@ fn emit_factory_option_string_none(
     Ok(f)
 }
 
-fn emit_factory_result_option_string_string_ok(
-    registry: &TypeRegistry,
-) -> Result<wasm_encoder::Function, WasmGcError> {
-    let result_idx = registry
-        .result_type_idx("Result<Option<String>,String>")
-        .expect("checked at allocation");
-    let string_idx = registry
-        .string_array_type_idx
-        .expect("checked at allocation");
-    let mut f = Function::new([]);
-    f.instruction(&Instruction::I32Const(1));
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
-        string_idx,
-    )));
-    f.instruction(&Instruction::StructNew(result_idx));
-    f.instruction(&Instruction::End);
-    Ok(f)
-}
-
-fn emit_factory_result_option_string_string_err(
-    registry: &TypeRegistry,
-) -> Result<wasm_encoder::Function, WasmGcError> {
-    let result_idx = registry
-        .result_type_idx("Result<Option<String>,String>")
-        .expect("checked at allocation");
-    let option_idx = registry
-        .option_type_idx("Option<String>")
-        .expect("checked at allocation");
-    let mut f = Function::new([]);
-    f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
-        option_idx,
-    )));
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::StructNew(result_idx));
-    f.instruction(&Instruction::End);
-    Ok(f)
-}
-
 fn emit_factory_terminal_size_make(
     registry: &TypeRegistry,
 ) -> Result<wasm_encoder::Function, WasmGcError> {
@@ -9123,127 +9204,6 @@ fn emit_factory_terminal_size_make(
     f.instruction(&Instruction::LocalGet(1));
     lift(&mut f)?;
     f.instruction(&Instruction::StructNew(rec_idx));
-    f.instruction(&Instruction::End);
-    Ok(f)
-}
-
-fn emit_factory_result_terminal_size_string_ok(
-    registry: &TypeRegistry,
-) -> Result<wasm_encoder::Function, WasmGcError> {
-    let result_idx = registry
-        .result_type_idx("Result<Terminal.Size,String>")
-        .expect("checked at allocation");
-    let string_idx = registry
-        .string_array_type_idx
-        .expect("checked at allocation");
-    let mut f = Function::new([]);
-    f.instruction(&Instruction::I32Const(1));
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
-        string_idx,
-    )));
-    f.instruction(&Instruction::StructNew(result_idx));
-    f.instruction(&Instruction::End);
-    Ok(f)
-}
-
-fn emit_factory_result_terminal_size_string_err(
-    registry: &TypeRegistry,
-) -> Result<wasm_encoder::Function, WasmGcError> {
-    let result_idx = registry
-        .result_type_idx("Result<Terminal.Size,String>")
-        .expect("checked at allocation");
-    let record_idx = registry
-        .record_type_idx("Terminal.Size")
-        .expect("checked at allocation");
-    let mut f = Function::new([]);
-    f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
-        record_idx,
-    )));
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::StructNew(result_idx));
-    f.instruction(&Instruction::End);
-    Ok(f)
-}
-
-fn emit_factory_result_string_string_ok(
-    registry: &TypeRegistry,
-) -> Result<wasm_encoder::Function, WasmGcError> {
-    let res_idx = registry
-        .result_type_idx("Result<String,String>")
-        .expect("checked at allocation");
-    let s_idx = registry
-        .string_array_type_idx
-        .expect("checked at allocation");
-    let mut f = Function::new([]);
-    // Result layout matches `emit_result_constructor`: tag, T, E.
-    // Ok: tag=1, payload=arg, E=null.
-    f.instruction(&Instruction::I32Const(1));
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
-        s_idx,
-    )));
-    f.instruction(&Instruction::StructNew(res_idx));
-    f.instruction(&Instruction::End);
-    Ok(f)
-}
-
-fn emit_factory_result_string_string_err(
-    registry: &TypeRegistry,
-) -> Result<wasm_encoder::Function, WasmGcError> {
-    let res_idx = registry
-        .result_type_idx("Result<String,String>")
-        .expect("checked at allocation");
-    let s_idx = registry
-        .string_array_type_idx
-        .expect("checked at allocation");
-    let mut f = Function::new([]);
-    // Err: tag=0, T=null, payload=arg.
-    f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
-        s_idx,
-    )));
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::StructNew(res_idx));
-    f.instruction(&Instruction::End);
-    Ok(f)
-}
-
-fn emit_factory_result_int_string_ok(
-    registry: &TypeRegistry,
-) -> Result<wasm_encoder::Function, WasmGcError> {
-    let result_idx = registry
-        .result_type_idx("Result<Int,String>")
-        .expect("checked at allocation");
-    let string_idx = registry
-        .string_array_type_idx
-        .expect("checked at allocation");
-    let mut f = Function::new([]);
-    f.instruction(&Instruction::I32Const(1));
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
-        string_idx,
-    )));
-    f.instruction(&Instruction::StructNew(result_idx));
-    f.instruction(&Instruction::End);
-    Ok(f)
-}
-
-fn emit_factory_result_int_string_err(
-    registry: &TypeRegistry,
-) -> Result<wasm_encoder::Function, WasmGcError> {
-    let result_idx = registry
-        .result_type_idx("Result<Int,String>")
-        .expect("checked at allocation");
-    let int_idx = registry.aint_struct_idx.expect("checked at allocation");
-    let mut f = Function::new([]);
-    f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
-        int_idx,
-    )));
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::StructNew(result_idx));
     f.instruction(&Instruction::End);
     Ok(f)
 }
@@ -9285,88 +9245,6 @@ fn emit_factory_result_unit_string_err(
     f.instruction(&Instruction::StructNew(res_idx));
     f.instruction(&Instruction::End);
     Ok(f)
-}
-
-fn emit_factory_result_list_string_string_ok(
-    registry: &TypeRegistry,
-) -> Result<wasm_encoder::Function, WasmGcError> {
-    let res_idx = registry
-        .result_type_idx("Result<List<String>,String>")
-        .expect("checked at allocation");
-    let s_idx = registry
-        .string_array_type_idx
-        .expect("checked at allocation");
-    let mut f = Function::new([]);
-    // tag=1, T=arg (List<String> ref), E=null
-    f.instruction(&Instruction::I32Const(1));
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
-        s_idx,
-    )));
-    f.instruction(&Instruction::StructNew(res_idx));
-    f.instruction(&Instruction::End);
-    Ok(f)
-}
-
-fn emit_factory_result_list_string_string_err(
-    registry: &TypeRegistry,
-) -> Result<wasm_encoder::Function, WasmGcError> {
-    let res_idx = registry
-        .result_type_idx("Result<List<String>,String>")
-        .expect("checked at allocation");
-    let list_idx = registry
-        .list_type_idx("List<String>")
-        .expect("checked at allocation");
-    let mut f = Function::new([]);
-    // tag=0, T=null List<String>, E=arg
-    f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
-        list_idx,
-    )));
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::StructNew(res_idx));
-    f.instruction(&Instruction::End);
-    Ok(f)
-}
-
-fn emit_factory_result_list_int_string_ok(
-    registry: &TypeRegistry,
-) -> Result<wasm_encoder::Function, WasmGcError> {
-    let result_idx = registry
-        .result_type_idx("Result<List<Int>,String>")
-        .expect("checked at allocation");
-    let string_idx = registry
-        .string_array_type_idx
-        .expect("checked at allocation");
-    let mut function = Function::new([]);
-    function.instruction(&Instruction::I32Const(1));
-    function.instruction(&Instruction::LocalGet(0));
-    function.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
-        string_idx,
-    )));
-    function.instruction(&Instruction::StructNew(result_idx));
-    function.instruction(&Instruction::End);
-    Ok(function)
-}
-
-fn emit_factory_result_list_int_string_err(
-    registry: &TypeRegistry,
-) -> Result<wasm_encoder::Function, WasmGcError> {
-    let result_idx = registry
-        .result_type_idx("Result<List<Int>,String>")
-        .expect("checked at allocation");
-    let list_idx = registry
-        .list_type_idx("List<Int>")
-        .expect("checked at allocation");
-    let mut function = Function::new([]);
-    function.instruction(&Instruction::I32Const(0));
-    function.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
-        list_idx,
-    )));
-    function.instruction(&Instruction::LocalGet(0));
-    function.instruction(&Instruction::StructNew(result_idx));
-    function.instruction(&Instruction::End);
-    Ok(function)
 }
 
 /// `__rt_list_string_cons(head, tail) -> List<String>`. Same struct
@@ -9423,28 +9301,6 @@ fn emit_factory_result_bytes_string_ok(
     f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
         s_idx,
     )));
-    f.instruction(&Instruction::StructNew(res_idx));
-    f.instruction(&Instruction::End);
-    Ok(f)
-}
-
-fn emit_factory_result_bytes_string_err(
-    registry: &TypeRegistry,
-) -> Result<wasm_encoder::Function, WasmGcError> {
-    let res_idx = registry
-        .result_type_idx("Result<Bytes,String>")
-        .expect("checked at allocation");
-    let bytes_idx = registry
-        .packed_sequence("Bytes")
-        .map(|packed| packed.type_idx)
-        .or_else(|| registry.record_type_idx("Bytes"))
-        .expect("checked at allocation");
-    let mut f = Function::new([]);
-    f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
-        bytes_idx,
-    )));
-    f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::StructNew(res_idx));
     f.instruction(&Instruction::End);
     Ok(f)
@@ -9820,64 +9676,6 @@ fn emit_factory_result_option_tcp_connection_string_none(
     Ok(f)
 }
 
-fn emit_factory_result_option_tcp_connection_string_err(
-    registry: &TypeRegistry,
-) -> Result<wasm_encoder::Function, WasmGcError> {
-    let option_idx = registry
-        .option_type_idx("Option<Tcp.Connection>")
-        .expect("checked at allocation");
-    let result_idx = registry
-        .result_type_idx("Result<Option<Tcp.Connection>,String>")
-        .expect("checked at allocation");
-    let mut f = Function::new([]);
-    f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::RefNull(HeapType::Concrete(option_idx)));
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::StructNew(result_idx));
-    f.instruction(&Instruction::End);
-    Ok(f)
-}
-
-fn emit_factory_result_tcp_connection_string_ok(
-    registry: &TypeRegistry,
-) -> Result<wasm_encoder::Function, WasmGcError> {
-    let res_idx = registry
-        .result_type_idx("Result<Tcp.Connection,String>")
-        .expect("checked at allocation");
-    let s_idx = registry
-        .string_array_type_idx
-        .expect("checked at allocation");
-    let mut f = Function::new([]);
-    f.instruction(&Instruction::I32Const(1));
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
-        s_idx,
-    )));
-    f.instruction(&Instruction::StructNew(res_idx));
-    f.instruction(&Instruction::End);
-    Ok(f)
-}
-
-fn emit_factory_result_tcp_connection_string_err(
-    registry: &TypeRegistry,
-) -> Result<wasm_encoder::Function, WasmGcError> {
-    let res_idx = registry
-        .result_type_idx("Result<Tcp.Connection,String>")
-        .expect("checked at allocation");
-    let rec_idx = registry
-        .record_type_idx("Tcp.Connection")
-        .expect("checked at allocation");
-    let mut f = Function::new([]);
-    f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
-        rec_idx,
-    )));
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::StructNew(res_idx));
-    f.instruction(&Instruction::End);
-    Ok(f)
-}
-
 /// `Http.Response { status, body, headers }` factory.
 fn emit_factory_http_response_make(
     registry: &TypeRegistry,
@@ -9901,46 +9699,6 @@ fn emit_factory_http_response_make(
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::StructNew(rec_idx));
-    f.instruction(&Instruction::End);
-    Ok(f)
-}
-
-fn emit_factory_result_http_response_string_ok(
-    registry: &TypeRegistry,
-) -> Result<wasm_encoder::Function, WasmGcError> {
-    let res_idx = registry
-        .result_type_idx("Result<Http.Response,String>")
-        .expect("checked at allocation");
-    let s_idx = registry
-        .string_array_type_idx
-        .expect("checked at allocation");
-    let mut f = Function::new([]);
-    f.instruction(&Instruction::I32Const(1));
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
-        s_idx,
-    )));
-    f.instruction(&Instruction::StructNew(res_idx));
-    f.instruction(&Instruction::End);
-    Ok(f)
-}
-
-fn emit_factory_result_http_response_string_err(
-    registry: &TypeRegistry,
-) -> Result<wasm_encoder::Function, WasmGcError> {
-    let res_idx = registry
-        .result_type_idx("Result<Http.Response,String>")
-        .expect("checked at allocation");
-    let rec_idx = registry
-        .record_type_idx("Http.Response")
-        .expect("checked at allocation");
-    let mut f = Function::new([]);
-    f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
-        rec_idx,
-    )));
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::StructNew(res_idx));
     f.instruction(&Instruction::End);
     Ok(f)
 }
