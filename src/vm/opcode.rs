@@ -5,9 +5,6 @@
 
 // -- Stack / locals ----------------------------------------------------------
 
-/// No-op, used as padding after superinstruction fusion.
-pub const NOP: u8 = 0x00;
-
 /// Push `stack[bp + slot]` onto the operand stack.
 pub const LOAD_LOCAL: u8 = 0x01; // slot:u8
 
@@ -56,9 +53,6 @@ pub const MUL: u8 = 0x12;
 
 /// Pop b, pop a, push a / b.
 pub const DIV: u8 = 0x13;
-
-/// Pop b, pop a, push a % b.
-pub const MOD: u8 = 0x14;
 
 /// Pop a, push -a.
 pub const NEG: u8 = 0x15;
@@ -221,9 +215,6 @@ pub const RECORD_NEW: u8 = 0x63; // type_id:u16, count:u8
 /// Stack: `[..., value_0, ..., value_count-1] -> [..., record]`
 pub const RECORD_NEW_INDEXED: u8 = 0x87; // type_id:u16, count:u8, field_idx[count]:u8
 
-/// Pop record, push `fields[field_idx]` (compile-time resolved index).
-pub const RECORD_GET: u8 = 0x64; // field_idx:u8
-
 /// Pop record, lookup field by interned field symbol, push value.
 pub const RECORD_GET_NAMED: u8 = 0x67; // field_symbol_id:u32
 
@@ -274,9 +265,6 @@ pub const LIST_PREPEND: u8 = 0x6E;
 
 // -- Pattern matching --------------------------------------------------------
 
-/// Peek top: if NaN tag != expected, ip += fail_offset.
-pub const MATCH_TAG: u8 = 0x70; // expected_tag:u8, fail_offset:i16
-
 /// Peek top (must be variant): if variant_id != expected, ip += fail_offset.
 pub const MATCH_VARIANT: u8 = 0x71; // ctor_id:u16, fail_offset:i16
 
@@ -302,9 +290,6 @@ pub const MATCH_TUPLE: u8 = 0x78; // count:u8, fail_offset:i16
 
 /// Peek top tuple, push `items[item_idx]` (non-destructive).
 pub const EXTRACT_TUPLE_ITEM: u8 = 0x79; // item_idx:u8
-
-/// Non-exhaustive match error at source line.
-pub const MATCH_FAIL: u8 = 0x77; // line:u16
 
 /// Unified prefix/exact dispatch on NanValue bits.
 ///
@@ -627,7 +612,6 @@ pub fn opcode_name(op: u8) -> &'static str {
         SUB => "SUB",
         MUL => "MUL",
         DIV => "DIV",
-        MOD => "MOD",
         NEG => "NEG",
         NEG_INT => "NEG_INT",
         NEG_FLOAT => "NEG_FLOAT",
@@ -657,7 +641,6 @@ pub fn opcode_name(op: u8) -> &'static str {
         RECORD_NEW => "RECORD_NEW",
         RECORD_NEW_INDEXED => "RECORD_NEW_INDEXED",
         STORE_GLOBAL => "STORE_GLOBAL",
-        RECORD_GET => "RECORD_GET",
         RECORD_GET_NAMED => "RECORD_GET_NAMED",
         RECORD_TAKE_NAMED => "RECORD_TAKE_NAMED",
         VARIANT_NEW => "VARIANT_NEW",
@@ -667,7 +650,6 @@ pub fn opcode_name(op: u8) -> &'static str {
         PROPAGATE_ERR => "PROPAGATE_ERR",
         LIST_LEN => "LIST_LEN",
         LIST_PREPEND => "LIST_PREPEND",
-        MATCH_TAG => "MATCH_TAG",
         MATCH_VARIANT => "MATCH_VARIANT",
         MATCH_UNWRAP => "MATCH_UNWRAP",
         MATCH_INT_LITERAL => "MATCH_INT_LITERAL",
@@ -677,7 +659,6 @@ pub fn opcode_name(op: u8) -> &'static str {
         EXTRACT_FIELD => "EXTRACT_FIELD",
         MATCH_TUPLE => "MATCH_TUPLE",
         EXTRACT_TUPLE_ITEM => "EXTRACT_TUPLE_ITEM",
-        MATCH_FAIL => "MATCH_FAIL",
         MATCH_DISPATCH => "MATCH_DISPATCH",
         MATCH_DISPATCH_CONST => "MATCH_DISPATCH_CONST",
         TAIL_CALL_SELF_THIN => "TAIL_CALL_SELF_THIN",
@@ -723,7 +704,6 @@ pub fn opcode_name(op: u8) -> &'static str {
         BRANCH_PATH_PARSE_LITERAL => "BRANCH_PATH_PARSE_LITERAL",
         RESULT_PROVEN => "RESULT_PROVEN",
         CALL_PAR => "CALL_PAR",
-        NOP => "NOP",
         _ => "UNKNOWN",
     }
 }
@@ -749,7 +729,6 @@ pub fn opcode_operand_width(op: u8, code: &[u8], ip: usize) -> usize {
         | SUB
         | MUL
         | DIV
-        | MOD
         | NEG
         | NEG_INT
         | NEG_FLOAT
@@ -805,16 +784,15 @@ pub fn opcode_operand_width(op: u8, code: &[u8], ip: usize) -> usize {
         | VECTOR_NEW_LITERAL
         | BRANCH_PATH_CHILD_LITERAL
         | BRANCH_PATH_PARSE_LITERAL
-        | RESULT_PROVEN
-        | NOP => 0,
+        | RESULT_PROVEN => 0,
 
         // 1-byte
-        LOAD_LOCAL | MOVE_LOCAL | STORE_LOCAL | CALL_VALUE | RECORD_GET | EXTRACT_FIELD
-        | EXTRACT_TUPLE_ITEM | WRAP => 1,
+        LOAD_LOCAL | MOVE_LOCAL | STORE_LOCAL | CALL_VALUE | EXTRACT_FIELD | EXTRACT_TUPLE_ITEM
+        | WRAP => 1,
 
         // 2-byte (u16 or u8+u8)
-        LOAD_CONST | LOAD_GLOBAL | STORE_GLOBAL | JUMP | JUMP_IF_FALSE | MATCH_FAIL | MATCH_NIL
-        | MATCH_CONS | LOAD_LOCAL_2 | VECTOR_GET_OR | TAIL_CALL_SELF | TAIL_CALL_SELF_THIN => 2,
+        LOAD_CONST | LOAD_GLOBAL | STORE_GLOBAL | JUMP | JUMP_IF_FALSE | MATCH_NIL | MATCH_CONS
+        | LOAD_LOCAL_2 | VECTOR_GET_OR | TAIL_CALL_SELF | TAIL_CALL_SELF_THIN => 2,
 
         // owned:u8 + target_slot:u8. The slot is the target's own local cell,
         // which the runtime fence must exempt: the fusion deletes the
@@ -824,8 +802,7 @@ pub fn opcode_operand_width(op: u8, code: &[u8], ip: usize) -> usize {
         VECTOR_SET_OR_KEEP => 2,
 
         // 3-byte
-        CALL_KNOWN | CALL_LEAF | MATCH_TAG | MATCH_UNWRAP | MATCH_TUPLE | RECORD_NEW
-        | LOAD_LOCAL_CONST => 3,
+        CALL_KNOWN | CALL_LEAF | MATCH_UNWRAP | MATCH_TUPLE | RECORD_NEW | LOAD_LOCAL_CONST => 3,
 
         // 4-byte
         CALL_KNOWN_OWNED | TAIL_CALL_KNOWN => 4, // fn_id:u16 + argc:u8 + owned:u8

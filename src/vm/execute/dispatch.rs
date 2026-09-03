@@ -217,8 +217,6 @@ impl VM {
             }
 
             match op {
-                NOP => {}
-
                 LOAD_LOCAL => {
                     let slot = read_u8!(code, ip) as usize;
                     self.stack.push(self.stack[bp + slot]);
@@ -367,12 +365,6 @@ impl VM {
                     let b = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let r = self.arith_div(a, b)?;
-                    self.stack.push(r);
-                }
-                MOD => {
-                    let b = self.stack.pop().ok_or(VmError::StackUnderflow)?;
-                    let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
-                    let r = self.arith_mod(a, b)?;
                     self.stack.push(r);
                 }
                 NEG => {
@@ -1737,21 +1729,6 @@ impl VM {
                     self.stack.push(NanValue::new_record(idx));
                 }
 
-                RECORD_GET => {
-                    let field_idx = read_u8!(code, ip) as usize;
-                    let record = self.stack.pop().ok_or(VmError::StackUnderflow)?;
-                    if record.is_record() {
-                        let (_, fields) = self.arena.get_record(record.arena_index());
-                        if field_idx < fields.len() {
-                            self.stack.push(fields[field_idx]);
-                        } else {
-                            return Err(VmError::runtime("field index out of bounds"));
-                        }
-                    } else {
-                        return Err(VmError::type_err("RECORD_GET on non-record"));
-                    }
-                }
-
                 RECORD_GET_NAMED | RECORD_TAKE_NAMED => {
                     let field_symbol_id = read_u32!(code, ip);
 
@@ -1875,15 +1852,6 @@ impl VM {
                         },
                     )?;
                     self.stack.push(wrapped);
-                }
-
-                MATCH_TAG => {
-                    let expected_tag = read_u8!(code, ip);
-                    let offset = read_i16!(code, ip);
-                    let top = *self.stack.last().ok_or(VmError::StackUnderflow)?;
-                    if self.nan_tag(top) != expected_tag {
-                        ip = (ip as isize + offset as isize) as usize;
-                    }
                 }
 
                 MATCH_VARIANT => {
@@ -2679,11 +2647,6 @@ impl VM {
                         return Err(VmError::runtime("tuple index out of bounds"));
                     }
                     self.stack.push(items[item_idx]);
-                }
-
-                MATCH_FAIL => {
-                    let line = read_u16!(code, ip);
-                    return Err(VmError::MatchFail(line));
                 }
 
                 MATCH_DISPATCH => {

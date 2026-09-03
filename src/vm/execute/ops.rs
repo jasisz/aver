@@ -18,13 +18,6 @@ impl VM {
         })
     }
 
-    pub(super) fn nan_tag(&self, val: NanValue) -> u8 {
-        if val.is_float() {
-            return 0xFF;
-        }
-        ((val.bits() >> 46) & 0xF) as u8
-    }
-
     pub(super) fn decode_vm_fn_ref(
         &self,
         val: NanValue,
@@ -227,25 +220,6 @@ impl VM {
         } else {
             Err(VmError::type_err(format!(
                 "cannot divide {} and {}",
-                self.value_type_name(a),
-                self.value_type_name(b)
-            )))
-        }
-    }
-
-    pub(super) fn arith_mod(&mut self, a: NanValue, b: NanValue) -> Result<NanValue, VmError> {
-        if a.is_int() && b.is_int() {
-            // Truncating remainder over ℤ (the raw `%` operator).
-            match a
-                .as_aver_int(&self.arena)
-                .rem_trunc(&b.as_aver_int(&self.arena))
-            {
-                Some(r) => Ok(NanValue::from_aver_int(r, &mut self.arena)),
-                None => Err(VmError::runtime("modulo by zero")),
-            }
-        } else {
-            Err(VmError::type_err(format!(
-                "cannot modulo {} and {}",
                 self.value_type_name(a),
                 self.value_type_name(b)
             )))
