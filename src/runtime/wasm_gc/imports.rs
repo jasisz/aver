@@ -108,6 +108,8 @@ pub(super) fn dispatch_aver_import(
     };
     let params = real_params;
 
+    enforce_runtime_policy(name, caller, params)?;
+
     if args::dispatch(name, caller, params, results, caller_fn_ref)? {
         return Ok(true);
     }
@@ -152,4 +154,58 @@ pub(super) fn dispatch_aver_import(
         "http_patch" => http_body_dispatch(caller, params, results, HttpVerb::Patch, caller_fn_ref),
         _ => Ok(false),
     }
+}
+
+/// Apply the same project allow lists as the bytecode VM before a live host
+/// effect. Replay consumes recorded outcomes and deliberately bypasses policy,
+/// matching `vm::runtime::check_runtime_policy`.
+fn enforce_runtime_policy(
+    import_name: &str,
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    params: &[wasmtime::Val],
+) -> Result<(), wasmtime::Error> {
+    if caller
+        .data()
+        .recorder
+        .as_ref()
+        .is_some_and(|state| state.mode() == aver::replay::EffectReplayMode::Replay)
+    {
+        return Ok(());
+    }
+    let (effect, kind) = match import_name {
+        "http_get" => ("Http.get", "http"),
+        "http_head" => ("Http.head", "http"),
+        "http_delete" => ("Http.delete", "http"),
+        "http_post" => ("Http.post", "http"),
+        "http_put" => ("Http.put", "http"),
+        "http_patch" => ("Http.patch", "http"),
+        "disk_read_text" => ("Disk.readText", "disk"),
+        "disk_write_text" => ("Disk.writeText", "disk"),
+        "disk_append_text" => ("Disk.appendText", "disk"),
+        "disk_read_bytes" => ("Disk.readBytes", "disk"),
+        "disk_read_bytes_at" => ("Disk.readBytesAt", "disk"),
+        "disk_write_bytes" => ("Disk.writeBytes", "disk"),
+        "disk_append_bytes" => ("Disk.appendBytes", "disk"),
+        "disk_size" => ("Disk.size", "disk"),
+        "disk_exists" => ("Disk.exists", "disk"),
+        "disk_delete" => ("Disk.delete", "disk"),
+        "disk_delete_dir" => ("Disk.deleteDir", "disk"),
+        "disk_list_dir" => ("Disk.listDir", "disk"),
+        "disk_make_dir" => ("Disk.makeDir", "disk"),
+        "disk_sync" => ("Disk.sync", "disk"),
+        "env_get" => ("Env.get", "env"),
+        "env_set" => ("Env.set", "env"),
+        _ => return Ok(()),
+    };
+    let value = lm::lm_string_to_host(caller, params.first())?.unwrap_or_default();
+    let Some(config) = caller.data().project_config.as_ref() else {
+        return Ok(());
+    };
+    let result = match kind {
+        "http" => config.check_http_host(effect, &value),
+        "disk" => config.check_disk_path(effect, &value),
+        "env" => config.check_env_key(effect, &value),
+        _ => unreachable!(),
+    };
+    result.map_err(wasmtime::Error::msg)
 }

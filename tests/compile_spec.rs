@@ -1,7 +1,7 @@
 #[path = "support/aver_cmd.rs"]
 mod aver_cmd;
 
-use aver_cmd::format_output;
+use aver_cmd::{aver_bin, format_output};
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -41,6 +41,45 @@ fn marker_count(path: &Path) -> usize {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => 0,
         Err(err) => panic!("failed to read {}: {}", path.display(), err),
     }
+}
+
+#[cfg(feature = "wasm")]
+#[test]
+fn embedded_wasmtime_enforces_the_project_disk_policy() {
+    let root = tempfile::tempdir().expect("wasm-gc policy project");
+    let source = root.path().join("main.av");
+    fs::write(
+        &source,
+        r#"module Main
+    intent = "Prove the embedded Wasmtime host applies aver.toml."
+    effects [Disk.exists]
+
+fn main() -> Bool
+    ! [Disk.exists]
+    Disk.exists("./blocked.txt")
+"#,
+    )
+    .expect("write policy program");
+    fs::write(
+        root.path().join("aver.toml"),
+        "[effects.Disk]\npaths = [\"./allowed/**\"]\n",
+    )
+    .expect("write runtime policy");
+
+    let output = Command::new(aver_bin())
+        .arg("run")
+        .arg(&source)
+        .arg("--module-root")
+        .arg(root.path())
+        .arg("--wasm-gc")
+        .output()
+        .expect("run wasm-gc policy program");
+    assert!(!output.status.success(), "{}", format_output(&output));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("denied by aver.toml policy"),
+        "{}",
+        format_output(&output)
+    );
 }
 
 fn generated_file_mtimes(root: &Path) -> BTreeMap<PathBuf, SystemTime> {

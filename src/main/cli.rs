@@ -46,6 +46,9 @@ pub(super) enum DeployPack {
     None,
     /// Emit `worker.js` + `wrangler.toml` for `wrangler deploy`.
     Cloudflare,
+    /// Emit a native Wasmtime host, the wasm-gc module, and a manifest.
+    /// The destination needs neither Aver nor Cargo at run time.
+    Wasmtime,
 }
 
 /// One-flag UX shortcut that expands to a `(target, pack)` preset.
@@ -465,10 +468,9 @@ pub(super) enum Commands {
         /// Emit extra self-host-only runtime glue for the evaluator's FnStore
         #[arg(long)]
         with_self_host_support: bool,
-        /// Deployment bundle pack — drops extra files (worker.js,
-        /// wrangler.toml, …) next to user.wasm so the build is one
-        /// platform-CLI command away from running. Independent of
-        /// `--target`.
+        /// Deployment bundle pack — drops a platform bootstrap or native
+        /// Wasmtime host next to the wasm-gc artifact. Independent of
+        /// `--target`; each pack validates the target it supports.
         #[arg(long, value_enum)]
         pack: Option<DeployPack>,
         /// One-flag preset that expands to a `(target, pack)` pair.
@@ -1055,6 +1057,26 @@ mod tests {
             } => {
                 assert_eq!(target, CompileTarget::WasmGc);
                 assert_eq!(optimize, Some(WasmOptMode::Oz));
+            }
+            _ => panic!("expected compile command"),
+        }
+    }
+
+    #[test]
+    fn compile_accepts_self_contained_wasmtime_pack() {
+        let cli = Cli::parse_from([
+            "aver",
+            "compile",
+            "examples/core/hello.av",
+            "--target",
+            "wasm-gc",
+            "--pack",
+            "wasmtime",
+        ]);
+        match cli.command {
+            Commands::Compile { target, pack, .. } => {
+                assert_eq!(target, CompileTarget::WasmGc);
+                assert_eq!(pack, Some(DeployPack::Wasmtime));
             }
             _ => panic!("expected compile command"),
         }

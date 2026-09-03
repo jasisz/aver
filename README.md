@@ -266,6 +266,10 @@ aver compile hello.av --target wasm-gc
 # Run through embedded wasmtime (uses the same wasm-gc emit path)
 aver run hello.av --wasm-gc
 
+# Carry that Wasmtime host with the program; the destination needs no Aver
+aver compile hello.av --target wasm-gc --pack wasmtime -o out/
+./out/aver-wasmtime-host some-arg
+
 # WASI 0.2 / Component Model output (wasmtime, Spin, NGINX Unit, etc.)
 aver compile hello.av --target wasip2
 
@@ -279,6 +283,12 @@ Firefox 120+ / Safari 18.2+ / wasmtime 25+ / Node 22+ / Workers).
 pre-2024 NaN-boxed wasm32 backend (`--target wasm` + `--bridge`)
 was dropped in 0.18 — see [`docs/effects.md`](docs/effects.md) and
 [`docs/wasip2.md`](docs/wasip2.md) for the supported deployment surfaces.
+The Wasmtime pack is a native directory bundle containing the wasm-gc module,
+an exact manifest, and a stripped `aver-wasmtime-host` executable with the
+engine and the project's configured providers linked in. Only the build
+machine needs Aver, Cargo, and provider sources; the destination needs the
+three bundle files and a matching OS/architecture. See
+[`docs/wasmtime-pack.md`](docs/wasmtime-pack.md).
 Custom capabilities whose complete contract uses only `Unit`, `Bool`, `Float`,
 and `String` compile to typed wasip2 component imports. They are host-bound: an
 external Component Model host may provide the generated interface directly, or

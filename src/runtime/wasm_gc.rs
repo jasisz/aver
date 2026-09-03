@@ -83,6 +83,8 @@ pub struct RunConfig {
     pub mode: EffectMode,
     /// Deployment settings for the native Tcp host bridge.
     pub tcp_settings: aver_rt::tcp::TcpSettings,
+    /// Runtime allow-list policy loaded from the project or bundle manifest.
+    pub project_config: Option<aver::config::ProjectConfig>,
     /// Identity-preserving qualified type-name aliases returned by
     /// `flatten_multimodule` when the caller flattened a multi-module
     /// program. Empty for single-file programs (the fuzz harness path).
@@ -106,6 +108,7 @@ impl Default for RunConfig {
             entry_info: None,
             mode: EffectMode::default(),
             tcp_settings: aver_rt::tcp::TcpSettings::default(),
+            project_config: None,
             type_aliases: std::collections::HashMap::new(),
             optimization: None,
             packed_sequences_enabled: true,
@@ -151,6 +154,8 @@ pub struct RunWasmGcHost {
     pub caller_fn_table: Vec<String>,
     /// Settings applied by the native host implementation of Tcp imports.
     pub tcp_settings: aver_rt::tcp::TcpSettings,
+    /// Effect allow-list policy. Replay bypasses it exactly like the VM.
+    pub project_config: Option<aver::config::ProjectConfig>,
 }
 
 /// Compile `items` to wasm-gc bytes, instantiate inside an embedded
@@ -209,6 +214,7 @@ pub fn run_in_process(
         &config.program_args,
         &config.mode,
         config.tcp_settings,
+        config.project_config,
         config.entry_info.as_ref(),
         &return_ty,
         config.custom_providers.as_ref(),
@@ -302,11 +308,12 @@ fn find_fn_return_type(items: &[TopLevel], name: &str) -> Type {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn run_wasm_gc_with_host(
+pub(super) fn run_wasm_gc_with_host(
     wasm_bytes: &[u8],
     program_args: &[String],
     mode: &EffectMode,
     tcp_settings: aver_rt::tcp::TcpSettings,
+    project_config: Option<aver::config::ProjectConfig>,
     entry_info: Option<&(String, Vec<Value>)>,
     return_ty: &Type,
     custom_providers: Option<&CustomProviderConfig>,
@@ -346,6 +353,7 @@ fn run_wasm_gc_with_host(
             recorder: recorder.take(),
             caller_fn_table: Vec::new(),
             tcp_settings,
+            project_config,
         },
     );
     let mut linker: Linker<RunWasmGcHost> = Linker::new(&engine);
@@ -523,6 +531,9 @@ fn run_wasm_gc_with_host(
     })
 }
 
+mod bundle;
 mod decode;
 mod imports;
 mod provider_host;
+
+pub use bundle::{BundleManifestInput, manifest_json, run_bundle_from_current_exe};

@@ -157,11 +157,13 @@ pub(super) fn try_run_wasm_gc(
     use aver::ir::{NeutralAllocPolicy, PipelineConfig, TypecheckMode};
 
     let module_root = resolve_module_root(module_root_override);
-    let tcp_settings =
-        aver::config::ProjectConfig::load_from_dir(std::path::Path::new(&module_root))?
-            .map_or_else(aver_rt::tcp::TcpSettings::default, |config| {
-                config.tcp_settings.native()
-            });
+    let project_config =
+        aver::config::ProjectConfig::load_from_dir(std::path::Path::new(&module_root))?;
+    let tcp_settings = project_config
+        .as_ref()
+        .map_or_else(aver_rt::tcp::TcpSettings::default, |config| {
+            config.tcp_settings.native()
+        });
     let source = read_file(file)?;
     let mut items = parse_file(&source, &module_root, file)?;
     let mut dependency_lowering = super::commands::DepLowering::STRING_TRAVERSAL;
@@ -288,6 +290,7 @@ pub(super) fn try_run_wasm_gc(
             entry_info: entry_info.clone(),
             mode,
             tcp_settings,
+            project_config,
             type_aliases,
             optimization,
             packed_sequences_enabled,

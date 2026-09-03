@@ -31,6 +31,41 @@ pub(super) fn run_if_requested(
     command: &Commands,
     raw_args: &[OsString],
 ) -> Option<Result<ExitStatus, String>> {
+    if let Commands::Compile {
+        file,
+        module_root,
+        target: super::cli::CompileTarget::WasmGc,
+        pack: Some(super::cli::DeployPack::Wasmtime),
+        preset: None,
+        ..
+    } = command
+    {
+        let module_root = super::shared::resolve_module_root(module_root.as_deref());
+        let config = match aver::config::ProjectConfig::load_from_dir(Path::new(&module_root)) {
+            Ok(config) => config,
+            Err(error) => return Some(Err(error)),
+        };
+        let composition = match config.and_then(|config| config.provider_manifest) {
+            Some(manifest) => {
+                match plan_for_programs(std::slice::from_ref(file), &module_root, &manifest) {
+                    Ok(plan) => plan.composition,
+                    Err(error) => return Some(Err(error)),
+                }
+            }
+            None => rust_codegen::composition::ProviderComposition::default(),
+        };
+        if let Some(error) =
+            wasm_gc_standard_override_error(&composition, "compile", file, &module_root)
+        {
+            return Some(Err(error));
+        }
+        return Some(crate::provider_vm_host::run_cached_pack_host(
+            raw_args,
+            &composition,
+            Path::new(&module_root),
+        ));
+    }
+
     if let Commands::Replay {
         recording,
         wasm_gc: true,

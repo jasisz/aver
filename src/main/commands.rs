@@ -6463,7 +6463,18 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
         optimize,
         certify,
         packed_sequences_enabled,
+        provider_bindings,
     } = opts;
+
+    if !matches!(pack, None | Some(super::cli::DeployPack::None))
+        && !matches!(target, super::cli::CompileTarget::WasmGc)
+    {
+        eprintln!(
+            "{}",
+            "--pack requires --target wasm-gc (or use --preset cloudflare)".red()
+        );
+        process::exit(1);
+    }
 
     // `--certify` needs the certificate engine (feature `certify`, part of
     // `--features wasm`). Reject the flag before any target dispatch, so a
@@ -6510,12 +6521,20 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
                 pack,
                 certify,
                 packed_sequences_enabled,
+                provider_bindings,
             );
             return;
         }
         #[cfg(not(feature = "wasm"))]
         {
-            let _ = (handler, optimize, pack, certify, packed_sequences_enabled);
+            let _ = (
+                handler,
+                optimize,
+                pack,
+                certify,
+                packed_sequences_enabled,
+                provider_bindings,
+            );
             eprintln!(
                 "{}",
                 "WASM target requires --features wasm (rebuild with: \
@@ -6641,6 +6660,7 @@ fn cmd_compile_wasm_gc(
     pack: Option<super::cli::DeployPack>,
     certify: bool,
     packed_sequences_enabled: bool,
+    provider_bindings: &[aver::provider::ProviderBinding],
 ) {
     use aver::codegen::wasm_gc;
 
@@ -6745,6 +6765,13 @@ fn cmd_compile_wasm_gc(
             );
             process::exit(1);
         });
+    if matches!(pack, Some(super::cli::DeployPack::Wasmtime)) && handler.is_some() {
+        eprintln!(
+            "{}",
+            "--pack wasmtime runs the program's `main`; it cannot be combined with --handler".red()
+        );
+        process::exit(1);
+    }
     let type_aliases = flatten_multimodule(&mut items, &dep_modules, capabilities);
     // Re-run resolver after flatten so dep fns get a FnResolution
     // (slot_types). Entry items already had one from `pipeline::run`
@@ -6835,6 +6862,24 @@ fn cmd_compile_wasm_gc(
             process::exit(1);
         }
     }
+    if let Some(super::cli::DeployPack::Wasmtime) = pack
+        && let Err(error) = emit_wasmtime_pack(
+            out_path,
+            &wasm_file,
+            &items,
+            capabilities,
+            &required,
+            &capability_wasm_gc_plan,
+            &prepared_deps.sources,
+            &module_root,
+            provider_bindings,
+            optimize,
+            certify,
+        )
+    {
+        eprintln!("{}", error.red());
+        process::exit(1);
+    }
     // Deployment pack — drops platform-specific bootstrap files
     // next to the wasm-gc artifact. Same call site as the legacy
     // backend; the worker.js template is wasm-gc-aware (LM string
@@ -6842,6 +6887,185 @@ fn cmd_compile_wasm_gc(
     if let Some(super::cli::DeployPack::Cloudflare) = pack {
         emit_cloudflare_pack(out_path, &wasm_name, &wasm_file);
     }
+}
+
+#[cfg(feature = "wasm")]
+#[allow(clippy::too_many_arguments)]
+fn emit_wasmtime_pack(
+    out_path: &Path,
+    wasm_file: &Path,
+    items: &[TopLevel],
+    capabilities: &aver::capability::CapabilityRegistry,
+    required: &std::collections::BTreeSet<String>,
+    custom_plan: &aver::codegen::wasm_gc::CapabilityWasmGcPlan,
+    capability_sources: &std::collections::BTreeMap<String, String>,
+    module_root: &str,
+    provider_bindings: &[aver::provider::ProviderBinding],
+    optimize: Option<super::cli::WasmOptMode>,
+    certify: bool,
+) -> Result<(), String> {
+    let standard = aver::stdlib::standard_capability_registry_ref();
+    if let Some(binding) = provider_bindings
+        .iter()
+        .find(|binding| standard.contract(binding.capability()).is_some())
+    {
+        return Err(format!(
+            "error[capability-provider-runner-adapter-unavailable]: a Wasmtime pack cannot replace standard capability '{}' with provider '{}' because standard wasm-gc imports use the compiler-shipped adapter",
+            binding.capability(),
+            binding.provider_identity()
+        ));
+    }
+    let providers = aver::provider::ProviderRegistry::for_program_with_bindings(
+        capabilities.clone(),
+        provider_bindings.iter().cloned(),
+    )?;
+    providers.preflight(required.iter().map(String::as_str))?;
+
+    let return_type = items
+        .iter()
+        .find_map(|item| match item {
+            TopLevel::FnDef(function) if function.name == "main" => {
+                Some(aver::types::parse_type_str(&function.return_type))
+            }
+            _ => None,
+        })
+        .ok_or_else(|| {
+            "error[wasmtime-bundle-entry]: --pack wasmtime requires a top-level fn main()"
+                .to_string()
+        })?;
+    let wasm_bytes = std::fs::read(wasm_file)
+        .map_err(|error| format!("read final wasm '{}': {error}", wasm_file.display()))?;
+    let artifact_file = wasm_file
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| "generated wasm file name is not valid UTF-8".to_string())?;
+    let project_config = aver::config::ProjectConfig::load_from_dir(Path::new(module_root))?;
+    let runtime_policy_toml = render_wasmtime_runtime_policy(project_config.as_ref())?;
+    let manifest =
+        aver::runtime::wasm_gc::manifest_json(aver::runtime::wasm_gc::BundleManifestInput {
+            artifact_file,
+            wasm_bytes: &wasm_bytes,
+            return_type: &return_type,
+            capabilities,
+            required_operations: required,
+            custom_plan,
+            capability_sources,
+            providers: &providers,
+            runtime_policy_toml: &runtime_policy_toml,
+            optimization: match optimize {
+                Some(super::cli::WasmOptMode::O3) => "speed",
+                Some(super::cli::WasmOptMode::Oz) => "size",
+                None => "none",
+            },
+            certified: certify,
+        })?;
+
+    let host_name = format!("aver-wasmtime-host{}", std::env::consts::EXE_SUFFIX);
+    let host_file = out_path.join(&host_name);
+    let pack_host = std::env::var_os("AVER_WASMTIME_PACK_HOST")
+        .map(PathBuf::from)
+        .ok_or_else(|| {
+            "error[wasmtime-bundle-host]: pack compilation did not run inside the cached provider host"
+                .to_string()
+        })?;
+    std::fs::copy(&pack_host, &host_file).map_err(|error| {
+        format!(
+            "copy Wasmtime host '{}' to '{}': {error}",
+            pack_host.display(),
+            host_file.display()
+        )
+    })?;
+    let manifest_file = out_path.join("manifest.json");
+    std::fs::write(&manifest_file, manifest)
+        .map_err(|error| format!("write '{}': {error}", manifest_file.display()))?;
+    println!(
+        "{} wasmtime pack → {}, {}",
+        "•".cyan(),
+        host_file.display().to_string().cyan(),
+        manifest_file.display().to_string().cyan()
+    );
+    Ok(())
+}
+
+#[cfg(feature = "wasm")]
+fn render_wasmtime_runtime_policy(
+    config: Option<&aver::config::ProjectConfig>,
+) -> Result<String, String> {
+    let mut effects = toml::map::Map::new();
+    if let Some(config) = config {
+        let mut names = config.effect_policies.keys().collect::<Vec<_>>();
+        names.sort();
+        for name in names {
+            let policy = &config.effect_policies[name];
+            let mut table = toml::map::Map::new();
+            if !policy.hosts.is_empty() {
+                table.insert(
+                    "hosts".to_string(),
+                    toml::Value::Array(
+                        policy
+                            .hosts
+                            .iter()
+                            .cloned()
+                            .map(toml::Value::String)
+                            .collect(),
+                    ),
+                );
+            }
+            if !policy.paths.is_empty() {
+                table.insert(
+                    "paths".to_string(),
+                    toml::Value::Array(
+                        policy
+                            .paths
+                            .iter()
+                            .cloned()
+                            .map(toml::Value::String)
+                            .collect(),
+                    ),
+                );
+            }
+            if !policy.keys.is_empty() {
+                table.insert(
+                    "keys".to_string(),
+                    toml::Value::Array(
+                        policy
+                            .keys
+                            .iter()
+                            .cloned()
+                            .map(toml::Value::String)
+                            .collect(),
+                    ),
+                );
+            }
+            if !table.is_empty() {
+                effects.insert(name.clone(), toml::Value::Table(table));
+            }
+        }
+        let tcp = config.tcp_settings;
+        let table = effects
+            .entry("Tcp".to_string())
+            .or_insert_with(|| toml::Value::Table(toml::map::Map::new()))
+            .as_table_mut()
+            .expect("runtime policy owns the Tcp table");
+        table.insert(
+            "connect_timeout_secs".to_string(),
+            toml::Value::Integer(tcp.connect_timeout_secs as i64),
+        );
+        table.insert(
+            "request_idle_timeout_secs".to_string(),
+            toml::Value::Integer(tcp.request_idle_timeout_secs as i64),
+        );
+        table.insert(
+            "max_connections".to_string(),
+            toml::Value::Integer(tcp.max_connections as i64),
+        );
+    }
+    let mut root = toml::map::Map::new();
+    if !effects.is_empty() {
+        root.insert("effects".to_string(), toml::Value::Table(effects));
+    }
+    toml::to_string(&toml::Value::Table(root))
+        .map_err(|error| format!("serialize Wasmtime runtime policy: {error}"))
 }
 
 /// Emit the Stage-B artifact certificate: classify the emitted module,
@@ -7442,6 +7666,7 @@ pub(super) struct CompileOptions<'a> {
     pub(super) optimize: Option<super::cli::WasmOptMode>,
     pub(super) certify: bool,
     pub(super) packed_sequences_enabled: bool,
+    pub(super) provider_bindings: &'a [aver::provider::ProviderBinding],
 }
 
 /// Load hand-proof SIDECARS for `file`'s project and `backend` into the
@@ -11744,6 +11969,11 @@ pub(super) struct DepLowering {
 pub(super) struct PreparedCompileDeps {
     pub(super) modules: Vec<ModuleInfo>,
     pub(super) loaded: Vec<LoadedModule>,
+    /// Pristine dependency sources keyed by their qualified module name. A
+    /// Wasmtime pack carries the custom capability contracts as ABI metadata,
+    /// so its host can recompute their hashes without the project tree.
+    #[cfg_attr(not(feature = "wasm"), allow(dead_code))]
+    pub(super) sources: std::collections::BTreeMap<String, String>,
 }
 
 impl DepLowering {
@@ -11849,6 +12079,11 @@ pub(super) fn load_compile_deps_prepared(
         }
     }
 
+    let sources = program
+        .dependencies()
+        .iter()
+        .map(|module| (module.dep_name.clone(), module.source.clone()))
+        .collect();
     let mut modules = Vec::with_capacity(program.dependencies().len());
     for module in program.dependencies() {
         let loaded = program
@@ -11904,7 +12139,11 @@ pub(super) fn load_compile_deps_prepared(
     let loaded = program
         .loaded_dependencies_for(program.entry())
         .unwrap_or_else(|error| fail(error.to_string()));
-    PreparedCompileDeps { modules, loaded }
+    PreparedCompileDeps {
+        modules,
+        loaded,
+        sources,
+    }
 }
 
 #[cfg(test)]

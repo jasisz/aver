@@ -458,6 +458,7 @@ fn main_impl(
                 optimize: *optimize,
                 certify: *certify,
                 packed_sequences_enabled: !*test_boxed_sequences,
+                provider_bindings,
             });
         }
         Commands::Why {
