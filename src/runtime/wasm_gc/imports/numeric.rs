@@ -44,7 +44,7 @@ pub(super) fn dispatch(
                             .expect("Random.int result lies inside machine-range bounds");
                         (
                             host_result_ok_int(caller, value)?,
-                            json_ok(aver::replay::JsonValue::Int(value)),
+                            json_ok(aver::replay::JsonValue::from(value)),
                         )
                     }
                     Err(fault) => (
@@ -58,7 +58,7 @@ pub(super) fn dispatch(
         }
         "random_float" => {
             if let Some(cached) = try_replay(caller, "Random.float", vec![])? {
-                let aver::replay::JsonValue::Float(f) = cached else {
+                let Some(f) = cached.as_f64() else {
                     return Err(wasmtime::Error::msg(
                         "replay Random.float: trace value is not a Float",
                     ));
@@ -72,7 +72,7 @@ pub(super) fn dispatch(
                 caller,
                 "Random.float",
                 vec![],
-                aver::replay::JsonValue::Float(f),
+                aver::replay::JsonValue::from(f),
                 caller_fn,
             );
             Ok(true)

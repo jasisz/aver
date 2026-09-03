@@ -1,7 +1,5 @@
-use std::collections::BTreeMap;
-
 use serde::{Deserialize, Serialize};
-use serde_json::Value as SerdeJsonValue;
+use serde_json::{Map, Value as SerdeJsonValue};
 
 use super::json::JsonValue;
 
@@ -222,57 +220,46 @@ fn outcome_from_serde(outcome: SerdeRecordedOutcome) -> Result<RecordedOutcome, 
     }
 }
 
+// `JsonValue` (the replay `Value` <-> JSON marker codec's type,
+// `src/replay/json.rs`) and `SerdeJsonValue` are now both plain
+// `serde_json::Value` — the hand-rolled `JsonValue` enum this module
+// used to bridge to/from is gone. `json_value_to_serde` is therefore
+// a plain clone; `serde_to_json_value` still earns its keep as a
+// validating identity transform: `serde_json::Value` alone accepts a
+// JSON integer up to `u64::MAX`, but the replay-trace integer format
+// is `i64` (matching `json::json_to_value`'s own number guard), so a
+// freshly-deserialized recording rejects a positive integer that
+// fits `u64` but not `i64` instead of silently accepting it.
+
 fn json_value_to_serde(value: &JsonValue) -> SerdeJsonValue {
-    match value {
-        JsonValue::Null => SerdeJsonValue::Null,
-        JsonValue::Bool(b) => SerdeJsonValue::Bool(*b),
-        JsonValue::Int(i) => SerdeJsonValue::Number((*i).into()),
-        JsonValue::Float(f) => SerdeJsonValue::Number(
-            serde_json::Number::from_f64(*f).expect("replay JSON cannot encode non-finite floats"),
-        ),
-        JsonValue::String(s) => SerdeJsonValue::String(s.clone()),
-        JsonValue::Array(items) => {
-            SerdeJsonValue::Array(items.iter().map(json_value_to_serde).collect())
-        }
-        JsonValue::Object(obj) => SerdeJsonValue::Object(
-            obj.iter()
-                .map(|(k, v)| (k.clone(), json_value_to_serde(v)))
-                .collect(),
-        ),
-    }
+    value.clone()
 }
 
 fn serde_to_json_value(value: SerdeJsonValue) -> Result<JsonValue, String> {
     match value {
-        SerdeJsonValue::Null => Ok(JsonValue::Null),
-        SerdeJsonValue::Bool(b) => Ok(JsonValue::Bool(b)),
         SerdeJsonValue::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                Ok(JsonValue::Int(i))
-            } else if let Some(u) = n.as_u64() {
-                let i = i64::try_from(u)
+            if n.as_i64().is_none()
+                && let Some(u) = n.as_u64()
+            {
+                i64::try_from(u)
                     .map_err(|_| format!("JSON integer {} is out of range for i64", u))?;
-                Ok(JsonValue::Int(i))
-            } else if let Some(f) = n.as_f64() {
-                Ok(JsonValue::Float(f))
-            } else {
-                Err(format!("unsupported JSON number: {}", n))
             }
+            Ok(SerdeJsonValue::Number(n))
         }
-        SerdeJsonValue::String(s) => Ok(JsonValue::String(s)),
-        SerdeJsonValue::Array(items) => Ok(JsonValue::Array(
+        SerdeJsonValue::Array(items) => Ok(SerdeJsonValue::Array(
             items
                 .into_iter()
                 .map(serde_to_json_value)
                 .collect::<Result<Vec<_>, _>>()?,
         )),
         SerdeJsonValue::Object(obj) => {
-            let mut out = BTreeMap::new();
+            let mut out = Map::new();
             for (key, value) in obj {
                 out.insert(key, serde_to_json_value(value)?);
             }
-            Ok(JsonValue::Object(out))
+            Ok(SerdeJsonValue::Object(out))
         }
+        other => Ok(other),
     }
 }
 
@@ -358,7 +345,7 @@ mod tests {
         );
         assert_eq!(
             recording.output,
-            RecordedOutcome::Value(JsonValue::Object(BTreeMap::from([(
+            RecordedOutcome::Value(JsonValue::Object(Map::from_iter([(
                 "ok".to_string(),
                 JsonValue::Bool(true),
             )])))

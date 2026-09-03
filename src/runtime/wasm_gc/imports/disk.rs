@@ -23,7 +23,7 @@ fn bytes_json(bytes: &[u8]) -> aver::replay::JsonValue {
                 bytes
                     .iter()
                     .copied()
-                    .map(|byte| aver::replay::JsonValue::Int(i64::from(byte)))
+                    .map(|byte| aver::replay::JsonValue::from(i64::from(byte)))
                     .collect(),
             ),
         )],
@@ -32,9 +32,9 @@ fn bytes_json(bytes: &[u8]) -> aver::replay::JsonValue {
 
 fn guest_int_json(value: &super::tcp::GuestInt) -> aver::replay::JsonValue {
     match value.value {
-        Some(value) => aver::replay::JsonValue::Int(value),
+        Some(value) => aver::replay::JsonValue::from(value),
         None => {
-            let mut opaque = std::collections::BTreeMap::new();
+            let mut opaque = serde_json::Map::new();
             opaque.insert(
                 "$opaque".to_string(),
                 aver::replay::JsonValue::String(value.display.clone()),
@@ -183,7 +183,7 @@ pub(super) fn dispatch(
             let (result_ref, outcome) = match measured {
                 Ok(size) => (
                     host_result_ok_int(caller, size)?,
-                    json_ok(aver::replay::JsonValue::Int(size)),
+                    json_ok(aver::replay::JsonValue::from(size)),
                 ),
                 Err(error) => (host_result_err_int(caller, &error)?, json_err(&error)),
             };

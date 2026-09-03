@@ -428,7 +428,7 @@ mod tests {
         }
 
         let single = encode_entry_args(&[Value::int(5)]).unwrap();
-        assert!(matches!(single, JsonValue::Int(5)), "got: {:?}", single);
+        assert_eq!(single.as_i64(), Some(5), "got: {:?}", single);
 
         let multi = encode_entry_args(&[Value::int(1), Value::Str("x".into())]).unwrap();
         assert!(

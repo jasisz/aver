@@ -40,7 +40,7 @@ pub(super) fn dispatch(
             let port = params.get(1).and_then(val_i64).unwrap_or(0);
             let args = vec![
                 aver::replay::JsonValue::String(host.clone()),
-                aver::replay::JsonValue::Int(port),
+                aver::replay::JsonValue::from(port),
             ];
             if let Some(cached) = try_replay(caller, "Tcp.connect", args.clone())? {
                 let r = decode_result_tcp_connection(caller, &cached)?;
@@ -65,7 +65,7 @@ pub(super) fn dispatch(
                                     "host",
                                     aver::replay::JsonValue::String(conn.host.as_ref().to_string()),
                                 ),
-                                ("port", aver::replay::JsonValue::Int(conn.port)),
+                                ("port", aver::replay::JsonValue::from(conn.port)),
                             ],
                         );
                         (
@@ -271,7 +271,7 @@ pub(super) fn dispatch(
                 vec![
                     ("id", aver::replay::JsonValue::String(id.clone())),
                     ("host", aver::replay::JsonValue::String(String::new())),
-                    ("port", aver::replay::JsonValue::Int(0)),
+                    ("port", aver::replay::JsonValue::from(0)),
                 ],
             );
             let args = vec![
@@ -306,7 +306,7 @@ pub(super) fn dispatch(
                 vec![
                     ("id", aver::replay::JsonValue::String(id.clone())),
                     ("host", aver::replay::JsonValue::String(String::new())),
-                    ("port", aver::replay::JsonValue::Int(0)),
+                    ("port", aver::replay::JsonValue::from(0)),
                 ],
             );
             let (payload, payload_json) =
@@ -349,7 +349,7 @@ pub(super) fn dispatch(
                 vec![
                     ("id", aver::replay::JsonValue::String(id.clone())),
                     ("host", aver::replay::JsonValue::String(String::new())),
-                    ("port", aver::replay::JsonValue::Int(0)),
+                    ("port", aver::replay::JsonValue::from(0)),
                 ],
             );
             let args = vec![conn_arg];
@@ -381,7 +381,7 @@ pub(super) fn dispatch(
                 vec![
                     ("id", aver::replay::JsonValue::String(id.clone())),
                     ("host", aver::replay::JsonValue::String(String::new())),
-                    ("port", aver::replay::JsonValue::Int(0)),
+                    ("port", aver::replay::JsonValue::from(0)),
                 ],
             );
             let count = params
@@ -389,9 +389,9 @@ pub(super) fn dispatch(
                 .ok_or_else(|| wasmtime::Error::msg("Tcp.readBytes: missing count"))?;
             let count = decode_guest_int(caller, count, "Tcp.readBytes: malformed count carrier")?;
             let count_json = match count.value {
-                Some(value) => aver::replay::JsonValue::Int(value),
+                Some(value) => aver::replay::JsonValue::from(value),
                 None => {
-                    let mut opaque = std::collections::BTreeMap::new();
+                    let mut opaque = serde_json::Map::new();
                     opaque.insert(
                         "$opaque".to_string(),
                         aver::replay::JsonValue::String(count.display.clone()),
@@ -423,7 +423,7 @@ pub(super) fn dispatch(
                     let json = ints
                         .iter()
                         .copied()
-                        .map(aver::replay::JsonValue::Int)
+                        .map(aver::replay::JsonValue::from)
                         .collect();
                     (
                         host_result_ok_bytes(caller, &ints)?,
@@ -481,7 +481,7 @@ pub(super) fn dispatch(
                 vec![
                     ("id", aver::replay::JsonValue::String(id.clone())),
                     ("host", aver::replay::JsonValue::String(String::new())),
-                    ("port", aver::replay::JsonValue::Int(0)),
+                    ("port", aver::replay::JsonValue::from(0)),
                 ],
             );
             let args = vec![conn_arg];
@@ -548,7 +548,7 @@ pub(super) fn dispatch(
             let msg = lm_string_to_host(caller, params.get(2))?.unwrap_or_default();
             let args = vec![
                 aver::replay::JsonValue::String(host.clone()),
-                aver::replay::JsonValue::Int(port),
+                aver::replay::JsonValue::from(port),
                 aver::replay::JsonValue::String(msg.clone()),
             ];
             if let Some(cached) = try_replay(caller, "Tcp.send", args.clone())? {
@@ -575,7 +575,7 @@ pub(super) fn dispatch(
                 decode_byte_payload(caller, params.get(2), "Tcp.sendBytes")?;
             let args = vec![
                 aver::replay::JsonValue::String(host.clone()),
-                aver::replay::JsonValue::Int(port),
+                aver::replay::JsonValue::from(port),
                 payload_json,
             ];
             if let Some(cached) = try_replay(caller, "Tcp.sendBytes", args.clone())? {
@@ -596,7 +596,7 @@ pub(super) fn dispatch(
                         let json = ints
                             .iter()
                             .copied()
-                            .map(aver::replay::JsonValue::Int)
+                            .map(aver::replay::JsonValue::from)
                             .collect();
                         (
                             host_result_ok_bytes(caller, &ints)?,
@@ -618,7 +618,7 @@ pub(super) fn dispatch(
             let port = params.get(1).and_then(val_i64).unwrap_or(0);
             let args = vec![
                 aver::replay::JsonValue::String(host.clone()),
-                aver::replay::JsonValue::Int(port),
+                aver::replay::JsonValue::from(port),
             ];
             if let Some(cached) = try_replay(caller, "Tcp.ping", args.clone())? {
                 let r = decode_result_unit(caller, &cached)?;
@@ -647,7 +647,7 @@ fn json_connection(id: &str) -> aver::replay::JsonValue {
         vec![
             ("id", aver::replay::JsonValue::String(id.to_string())),
             ("host", aver::replay::JsonValue::String(String::new())),
-            ("port", aver::replay::JsonValue::Int(0)),
+            ("port", aver::replay::JsonValue::from(0)),
         ],
     )
 }
@@ -743,10 +743,10 @@ fn decode_result_option_tcp_connection(
                         Some(aver::replay::JsonValue::String(host)) => host.clone(),
                         _ => String::new(),
                     };
-                    let port = match fields.get("port") {
-                        Some(aver::replay::JsonValue::Int(port)) => *port,
-                        _ => 0,
-                    };
+                    let port = fields
+                        .get("port")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or_default();
                     let id = lm_string_from_host(caller, &id)?;
                     let host = lm_string_from_host(caller, &host)?;
                     let connection = host_tcp_connection_make(caller, id, host, port)?;
@@ -785,7 +785,7 @@ fn option_connection_outcome(
                         "host",
                         aver::replay::JsonValue::String(connection.host.as_ref().to_string()),
                     ),
-                    ("port", aver::replay::JsonValue::Int(connection.port)),
+                    ("port", aver::replay::JsonValue::from(connection.port)),
                 ],
             );
             Ok((
@@ -827,7 +827,7 @@ fn unit_outcome(
 }
 
 fn json_socket(variant: &str, resource: aver::replay::JsonValue) -> aver::replay::JsonValue {
-    let mut payload = std::collections::BTreeMap::new();
+    let mut payload = serde_json::Map::new();
     payload.insert(
         "type".to_string(),
         aver::replay::JsonValue::String("Tcp.Socket".to_string()),
@@ -840,7 +840,7 @@ fn json_socket(variant: &str, resource: aver::replay::JsonValue) -> aver::replay
         "fields".to_string(),
         aver::replay::JsonValue::Array(vec![resource]),
     );
-    let mut wrapper = std::collections::BTreeMap::new();
+    let mut wrapper = serde_json::Map::new();
     wrapper.insert(
         "$variant".to_string(),
         aver::replay::JsonValue::Object(payload),
@@ -997,7 +997,7 @@ fn poll_map_json(entries: &[PollEntry]) -> aver::replay::JsonValue {
             aver::replay::JsonValue::Array(vec![entry.key_json.clone(), entry.socket_json.clone()])
         })
         .collect();
-    let mut marker = std::collections::BTreeMap::new();
+    let mut marker = serde_json::Map::new();
     marker.insert("$map".to_string(), aver::replay::JsonValue::Array(pairs));
     aver::replay::JsonValue::Object(marker)
 }
@@ -1037,9 +1037,9 @@ fn replay_poll_result(
 
 pub(super) fn guest_int_json(value: &GuestInt) -> aver::replay::JsonValue {
     match value.value {
-        Some(value) => aver::replay::JsonValue::Int(value),
+        Some(value) => aver::replay::JsonValue::from(value),
         None => {
-            let mut opaque = std::collections::BTreeMap::new();
+            let mut opaque = serde_json::Map::new();
             opaque.insert(
                 "$opaque".to_string(),
                 aver::replay::JsonValue::String(value.display.clone()),
@@ -1065,7 +1065,7 @@ fn bytes_outcome(
             let json = ints
                 .iter()
                 .copied()
-                .map(aver::replay::JsonValue::Int)
+                .map(aver::replay::JsonValue::from)
                 .collect();
             Ok((
                 host_result_ok_bytes(caller, &ints)?,
@@ -1119,7 +1119,7 @@ pub(super) fn decode_byte_payload(
             bytes
                 .iter()
                 .copied()
-                .map(|value| aver::replay::JsonValue::Int(i64::from(value)))
+                .map(|value| aver::replay::JsonValue::from(i64::from(value)))
                 .collect(),
         );
         return Ok((
@@ -1152,7 +1152,7 @@ pub(super) fn decode_byte_payload(
     let values_json = if ints.iter().all(|n| n.value.is_some()) {
         aver::replay::JsonValue::Array(
             ints.iter()
-                .filter_map(|n| n.value.map(aver::replay::JsonValue::Int))
+                .filter_map(|n| n.value.map(aver::replay::JsonValue::from))
                 .collect(),
         )
     } else {
@@ -1163,7 +1163,7 @@ pub(super) fn decode_byte_payload(
                 .collect::<Vec<_>>()
                 .join(", ")
         );
-        let mut opaque = std::collections::BTreeMap::new();
+        let mut opaque = serde_json::Map::new();
         opaque.insert("$opaque".to_string(), aver::replay::JsonValue::String(repr));
         aver::replay::JsonValue::Object(opaque)
     };

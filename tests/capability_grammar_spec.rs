@@ -1604,7 +1604,12 @@ fn main() -> Int
 ",
     )
     .expect("write main.av");
-    let mut session = recording(&dir, "Clock.now", JsonValue::Int(123), JsonValue::Int(123));
+    let mut session = recording(
+        &dir,
+        "Clock.now",
+        JsonValue::from(123),
+        JsonValue::from(123),
+    );
     session.capabilities = provenance("Clock", VALID_EFFECT_CAPABILITY);
     fs::write(
         dir.join("recorded.json"),
@@ -1662,7 +1667,7 @@ fn main() -> Int
         &suppressed,
         "Log.flush",
         JsonValue::Null,
-        JsonValue::Int(42),
+        JsonValue::from(42),
     );
     let suppressed_source = fs::read_to_string(suppressed.join("Log.av")).expect("read Log.av");
     session.capabilities = provenance("Log", &suppressed_source);

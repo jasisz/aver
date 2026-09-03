@@ -85,7 +85,7 @@ pub(crate) fn http_body_dispatch(
     // Headers map argument is recorded as an empty `Map<String, List<String>>`
     // — the host doesn't unpack the user's wasm-gc map ref yet, so the
     // trace shows the same shape the host actually forwards.
-    let empty_headers = aver::replay::JsonValue::Object(std::collections::BTreeMap::new());
+    let empty_headers = aver::replay::JsonValue::Object(serde_json::Map::new());
     let args = vec![
         aver::replay::JsonValue::String(url.clone()),
         aver::replay::JsonValue::String(body.clone()),
@@ -139,14 +139,14 @@ pub(crate) fn http_outcome_to_json(
         Ok(resp) => json_ok(json_record(
             "Http.Response",
             vec![
-                ("status", aver::replay::JsonValue::Int(resp.status)),
+                ("status", aver::replay::JsonValue::from(resp.status)),
                 (
                     "body",
                     aver::replay::JsonValue::String(resp.body.as_ref().to_string()),
                 ),
                 (
                     "headers",
-                    aver::replay::JsonValue::Object(std::collections::BTreeMap::new()),
+                    aver::replay::JsonValue::Object(serde_json::Map::new()),
                 ),
             ],
         )),
