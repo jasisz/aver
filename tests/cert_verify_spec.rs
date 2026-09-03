@@ -7855,18 +7855,58 @@ fn cert_verify_certifies_the_five_int_comparison_witnesses() {
 /// re-credit. Each is DECLINED instead, because the role indices are derived
 /// from the module's export section and the lowered bytes are pinned to the
 /// module's own code section.
-/// Read one host role's resolved function index out of the public plan data,
-/// so tampers stay robust to shifting module indices.
-fn plan_role_index(plans_text: &str, marker: &str) -> u32 {
-    let at = plans_text
-        .find(marker)
-        .unwrap_or_else(|| panic!("Plans.lean carries `{marker}`"));
-    plans_text[at + marker.len()..]
+/// Every `.lean` file the producer wrote into a package directory, sorted, as
+/// (path, contents). Acceptance is indifferent to which file carries which
+/// value (format spec section 2.2), so a tamper that keys on a value must look
+/// for it across the package rather than in one file by name.
+fn cert_lean_files(cert_dir: &std::path::Path) -> Vec<(PathBuf, String)> {
+    let mut files: Vec<PathBuf> = std::fs::read_dir(cert_dir)
+        .expect("the package directory is readable")
+        .filter_map(|entry| entry.ok().map(|e| e.path()))
+        .filter(|path| path.extension().is_some_and(|ext| ext == "lean"))
+        .collect();
+    files.sort();
+    files
+        .into_iter()
+        .map(|path| {
+            let text = std::fs::read_to_string(&path).expect("a package file is readable");
+            (path, text)
+        })
+        .collect()
+}
+
+/// Read one host role's resolved function index out of the package's own data,
+/// so tampers stay robust both to shifting module indices and to which emitted
+/// file carries the role table.
+fn cert_role_index(cert_dir: &std::path::Path, marker: &str) -> u32 {
+    let (_, text, at) = cert_lean_files(cert_dir)
+        .into_iter()
+        .find_map(|(path, text)| text.find(marker).map(|at| (path, text, at)))
+        .unwrap_or_else(|| panic!("the package carries `{marker}` in some emitted file"));
+    text[at + marker.len()..]
         .split(|c: char| !c.is_ascii_digit())
         .find(|s| !s.is_empty())
         .expect("an index follows the marker")
         .parse()
         .expect("the index parses")
+}
+
+/// Apply one textual tamper to every emitted `.lean` file of a package,
+/// returning how many files it changed. Panics when it changed none: a tamper
+/// that edits nothing proves nothing.
+fn tamper_cert_lean_files(cert_dir: &std::path::Path, name: &str, edit: &dyn Fn(&str) -> String) {
+    let mut changed = 0usize;
+    for (path, text) in cert_lean_files(cert_dir) {
+        let edited = edit(&text);
+        if edited != text {
+            std::fs::write(&path, edited).expect("the package file is writable");
+            changed += 1;
+        }
+    }
+    assert!(
+        changed > 0,
+        "tamper `{name}` must change at least one emitted package file"
+    );
 }
 
 #[test]
@@ -7899,21 +7939,23 @@ fn cert_verify_declines_int_comparison_role_tampers() {
     let (ok, report) = aver_verify(&wasm, &cert);
     assert!(ok, "the honest control must verify CERTIFIED:\n{report}");
 
-    // Recover the two helper indices from the public plan data so the tampers
-    // stay robust to shifting module indices.
+    // Recover the two helper indices from the package's own data so the tampers
+    // stay robust to shifting module indices. The role table travels in the
+    // files acceptance reads (`Artifact.lean`, `Manifest.lean`), so the lookup
+    // and the edits below both range over the whole emitted package.
     let plans_text = std::fs::read_to_string(cert.join("Plans.lean")).unwrap();
-    let cmp_idx = plan_role_index(&plans_text, "(.cmp, ");
-    let eq_idx = plan_role_index(&plans_text, "(.eq, ");
+    let cmp_idx = cert_role_index(&cert, "(.cmp, ");
+    let eq_idx = cert_role_index(&cert, "(.eq, ");
     assert_ne!(cmp_idx, eq_idx, "the two helper roles must be distinct");
+    assert!(
+        plans_text.contains(&format!(".hostCall .cmp {cmp_idx} ")),
+        "the comparison plan must cite the role table's own cmp index:\n{plans_text}"
+    );
 
     let tamper = |name: &str, edit: &dyn Fn(&str) -> String| {
         let dir = temp_dir(&format!("cert-intcmp-tamper-{name}"));
         copy_dir(&out_dir, &dir);
-        let plans = dir.join("cert").join("Plans.lean");
-        let text = std::fs::read_to_string(&plans).unwrap();
-        let edited = edit(&text);
-        assert_ne!(text, edited, "tamper `{name}` must change Plans.lean");
-        std::fs::write(&plans, edited).unwrap();
+        tamper_cert_lean_files(&dir.join("cert"), name, edit);
         let (ok, out) = aver_verify(&dir.join("int_comparison_laws.wasm"), &dir.join("cert"));
         assert!(!ok, "tamper `{name}` must be DECLINED:\n{out}");
         assert!(
@@ -8127,8 +8169,8 @@ fn cert_tripwire_declines_tampered_int_sign_cmp_plan() {
         "intcompare should certify all five comparisons:\n{report}"
     );
 
-    let cmp_idx = plan_role_index(&plans_text, "(.cmp, ");
-    let eq_idx = plan_role_index(&plans_text, "(.eq, ");
+    let cmp_idx = cert_role_index(&cert, "(.cmp, ");
+    let eq_idx = cert_role_index(&cert, "(.eq, ");
     assert_ne!(cmp_idx, eq_idx, "the two helper roles must be distinct");
 
     // `expect_pins` are Lean-level pin names the decline report must name;
@@ -8138,11 +8180,7 @@ fn cert_tripwire_declines_tampered_int_sign_cmp_plan() {
         |name: &str, edit: &dyn Fn(&str) -> String, expect_pins: &[&str], absent_pins: &[&str]| {
             let dir = temp_dir(&format!("cert-intcompare-tamper-{name}"));
             copy_dir(&out_dir, &dir);
-            let plans = dir.join("cert").join("Plans.lean");
-            let text = std::fs::read_to_string(&plans).unwrap();
-            let edited = edit(&text);
-            assert_ne!(text, edited, "tamper `{name}` must change Plans.lean");
-            std::fs::write(&plans, edited).unwrap();
+            tamper_cert_lean_files(&dir.join("cert"), name, edit);
             let (ok, out) = aver_check(&dir.join("intcompare.wasm"), &dir.join("cert"));
             assert!(!ok, "tamper `{name}` must be DECLINED:\n{out}");
             assert!(
@@ -8214,8 +8252,19 @@ fn cert_tripwire_declines_tampered_int_sign_cmp_plan() {
 
     // (4) Swap which exported helper each comparison role names. Both helpers
     //     declare the same function type, so only the export-name binding
-    //     objects — and it is what drives the audited encoder, which is
-    //     exactly why the re-encoding equality is the pin that fires.
+    //     objects — and it is what drives the audited encoder.
+    //
+    //     No pin name is asserted here, and that is a deliberate weakening of
+    //     what this case used to check. The role table used to be duplicated
+    //     into `Plans.lean`'s emitted `encodeSymRawPlanToExprFragmentRawPlan`
+    //     example, so this edit reached that example's `rfl` first and the
+    //     decline named it. The examples are no longer emitted (the packages
+    //     they broke were unbuildable, see the format spec section 2.2), so the
+    //     same edit now lands only on the role table acceptance itself reads,
+    //     in `Artifact.lean` and `Manifest.lean`. It is still DECLINED — the
+    //     assertions above are what this case now guarantees — but the decline
+    //     arrives from the acceptance build rather than from a named pin, and
+    //     re-authoring it to name one again is open work.
     tamper(
         "cmp-eq-role-swap",
         &|text| {
@@ -8223,7 +8272,7 @@ fn cert_tripwire_declines_tampered_int_sign_cmp_plan() {
                 .replace(&format!("(.eq, {eq_idx})"), &format!("(.eq, {cmp_idx})"))
                 .replace("(.cmp, __SWAP__)", &format!("(.cmp, {eq_idx})"))
         },
-        &["encodeSymRawPlanToExprFragmentRawPlan"],
+        &[],
         &[],
     );
 
