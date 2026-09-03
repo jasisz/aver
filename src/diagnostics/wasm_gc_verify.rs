@@ -528,6 +528,13 @@ fn run_verify_cases_in_wasmtime(
     use wasmtime::{Caller, Engine, ExternType, FuncType, Linker, Module, Store, Val, ValType};
 
     let mut config = crate::runtime::wasmtime_gc_engine_config();
+    // Verification runs inside Rust test/worker threads whose native stack is
+    // commonly 2 MiB. The production host's 8 MiB wasm allowance can let a
+    // malicious non-tail-recursive fixture exhaust that native stack before
+    // fuel interrupts it. Retain Wasmtime's defensive default here so the
+    // recursion becomes a catchable wasm stack-overflow trap instead of
+    // aborting the whole verifier process.
+    config.max_wasm_stack(512 * 1024);
     // Mirror the VM-side `step_limit` cap: per-case fuel budget so a
     // tail-recursive user fn (AFL byte-havoc favourite) bails as a
     // `RuntimeError` instead of pinning wasmtime. Reset before every
