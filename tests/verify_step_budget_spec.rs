@@ -763,21 +763,25 @@ fn a_given_domain_over_the_ceiling_still_fails_at_parse_time() {
     assert_ne!(out.status.code(), Some(0), "{text}");
 }
 
+/// The end-to-end proof that a raised project ceiling actually lets a
+/// twelve-thousand-case law run to completion, not merely parse, lives in
+/// `a_raised_ceiling_reaches_check_run_compile_and_proof`, which executes
+/// this exact raise (`RAISED_CEILING`) through five commands. This test only
+/// has to prove which number `[verify] max-cases = 40000` resolves to — the
+/// project's, not the compiled-in default — which is a property of
+/// `ProjectConfig::verify_max_cases_for` alone and needs no domain at all to
+/// check, small or large.
 #[test]
 fn max_cases_lets_a_project_declare_a_larger_domain() {
-    let dir = project(
-        "budget-cases-raised",
-        "big_domain.av",
-        "[verify]\nmax-cases = 40000\n",
+    use aver::config::ProjectConfig;
+
+    let config = ProjectConfig::parse("[verify]\nmax-cases = 40000\n")
+        .expect("a bare [verify] max-cases is a valid config");
+    assert_eq!(
+        config.verify_max_cases_for("identity", "main.av"),
+        40000,
+        "the project's own [verify] max-cases must be the ceiling in force, not the compiled-in default"
     );
-    let out = verify(&dir, &[]);
-    let text = stdout_of(&out);
-    assert!(
-        text.contains("✓ identity law fixpoint      12000/12000"),
-        "{}",
-        format_output(&out)
-    );
-    assert_eq!(out.status.code(), Some(0), "{}", format_output(&out));
 }
 
 #[test]
@@ -804,11 +808,15 @@ fn a_domain_over_the_raised_ceiling_fails_naming_the_raised_number() {
 /// a block belongs to exactly one function, and a `[[verify.costly]]` entry
 /// already names a function and a set of files — so `max-cases` scopes
 /// itself there under exactly the rule `step-limit` already uses.
+/// The same resolved-value proof as above, one layer further: an
+/// entry-scoped `[[verify.costly]]` ceiling must govern over the project's
+/// own `[verify] max-cases`, for the fn and file it names. Execution
+/// end-to-end is `a_raised_ceiling_reaches_check_run_compile_and_proof`'s job.
 #[test]
 fn a_costly_entry_raises_max_cases_for_the_function_it_names() {
-    let dir = project(
-        "budget-cases-costly",
-        "big_domain.av",
+    use aver::config::ProjectConfig;
+
+    let config = ProjectConfig::parse(
         r#"
 [verify]
 max-cases = 10000
@@ -819,14 +827,13 @@ files      = ["main.av"]
 max-cases  = 40000
 reason     = "the fixpoint law is declared over twelve thousand points"
 "#,
+    )
+    .expect("a [[verify.costly]] entry scoped to one fn and file is a valid config");
+    assert_eq!(
+        config.verify_max_cases_for("identity", "main.av"),
+        40000,
+        "the entry that names this fn and file must govern its ceiling, not the project default"
     );
-    let out = verify(&dir, &[]);
-    assert!(
-        stdout_of(&out).contains("✓ identity law fixpoint      12000/12000"),
-        "{}",
-        format_output(&out)
-    );
-    assert_eq!(out.status.code(), Some(0), "{}", format_output(&out));
 }
 
 #[test]
@@ -995,20 +1002,29 @@ max-cases  = 11000
 reason     = "the narrow shard of the fixpoint corpus"
 "#;
 
+/// Same precedence claim as `reordering_two_matching_entries_changes_nothing`
+/// below, at the resolved-value layer instead of a full CLI run: whichever
+/// order the two entries are written in, the ceiling `verify_max_cases_for`
+/// reports for `identity` is the wider one, 40000, never the narrower 11000.
 #[test]
 fn the_largest_matching_max_cases_wins_even_when_it_is_written_last() {
-    let dir = project(
-        "budget-cases-tiebreak",
-        "big_domain.av",
-        CEILING_NARROW_FIRST,
-    );
-    let out = verify(&dir, &[]);
-    assert!(
-        stdout_of(&out).contains("✓ identity law fixpoint      12000/12000"),
-        "the entry that grants the most room governs the block, wherever it sits in the file:\n{}",
-        format_output(&out)
-    );
-    assert_eq!(out.status.code(), Some(0), "{}", format_output(&out));
+    use aver::config::ProjectConfig;
+
+    let narrow_first = ProjectConfig::parse(CEILING_NARROW_FIRST)
+        .expect("two [[verify.costly]] entries for the same fn is a valid config");
+    let wide_first = ProjectConfig::parse(CEILING_WIDE_FIRST)
+        .expect("two [[verify.costly]] entries for the same fn is a valid config");
+
+    for (label, config) in [
+        ("the narrow entry written first", &narrow_first),
+        ("the wide entry written first", &wide_first),
+    ] {
+        assert_eq!(
+            config.verify_max_cases_for("identity", "main.av"),
+            40000,
+            "the entry that grants the most room must govern the block, wherever it sits in the file ({label})"
+        );
+    }
 }
 
 /// The same pair for `step-limit`, which already resolved this way: it is
