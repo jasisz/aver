@@ -51,7 +51,7 @@ jobs:
           fi
 
       - name: Clippy
-        run: cargo clippy --workspace --all-targets --exclude aver-lang -- -D warnings && cargo clippy -p aver-lang --lib --bin aver -- -D warnings
+        run: cargo clippy --workspace --all-targets --exclude aver-lang -- -D warnings && cargo clippy -p aver-lang --lib --bin aver --benches -- -D warnings
 
       - name: Compile gate — terminal-off feature set
         # The default build has `terminal` on, so `#[cfg(not(feature =
@@ -218,7 +218,7 @@ jobs:
           test -x "$HOME/.local/binaryen/bin/wasm-metadce"
 
       - name: Clippy (wasm + wasip2)
-        run: cargo clippy -p aver-lang --lib --bin aver --features wasm,wasip2 -- -D warnings
+        run: cargo clippy -p aver-lang --lib --bin aver --benches --features wasm,wasip2 -- -D warnings
 
       - name: Compile gate — wasip2 without wasm
         # Every other step here builds `wasm` or `wasm,wasip2`; a wasip2-only

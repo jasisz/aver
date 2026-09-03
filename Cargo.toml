@@ -37,16 +37,31 @@ include = [
 [lib]
 name = "aver"
 crate-type = ["cdylib", "rlib"]
+# `--benches` (`cargo bench`/`cargo clippy --benches`) matches every
+# target with `bench = true`, which defaults to true for a lib target
+# too. Without this, `--benches` sweeps in the whole library recompiled
+# under `cfg(test)`, exposing unrelated pre-existing test-code lint
+# noise deep in `src/`. This lib has no `#[bench]` functions of its
+# own, so opt it out and let `--benches` mean only the `[[bench]]`
+# targets below.
+bench = false
 
 [[bin]]
 name = "aver"
 path = "src/main.rs"
 required-features = ["runtime", "terminal", "tty-render"]
+# See the `[lib]` `bench = false` comment above: without this, `--benches`
+# also rebuilds this binary (and its own tests) under `cfg(test)`.
+bench = false
 
 [[bin]]
 name = "aver_self_host_cli"
 path = "src/self_host/main.rs"
 required-features = ["runtime"]
+# See the `[lib]` `bench = false` comment above: without this, `--benches`
+# also rebuilds this binary (and the ~34k-line generated self-host tree
+# it links) under `cfg(test)`.
+bench = false
 
 [features]
 default = ["runtime", "runtime-net", "terminal", "tty-render"]
