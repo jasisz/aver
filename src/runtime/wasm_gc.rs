@@ -304,22 +304,7 @@ fn run_wasm_gc_with_host(
 ) -> Result<RunOutcome, String> {
     use wasmtime::*;
 
-    let mut config = Config::new();
-    config.wasm_gc(true);
-    config.wasm_tail_call(true);
-    config.wasm_function_references(true);
-    config.wasm_reference_types(true);
-    config.wasm_multi_value(true);
-    config.wasm_bulk_memory(true);
-    config.cranelift_opt_level(OptLevel::Speed);
-    config.max_wasm_stack(8 * 1024 * 1024);
-    // `component-model-async` (pulled in by the `wasip2` feature) enables
-    // the runtime's async path; in that mode wasmtime enforces
-    // `max_wasm_stack <= async_stack_size`. Default async stack is 2 MiB,
-    // so the 8 MiB max above would trip `Engine::new` validation. Pin the
-    // async stack at 12 MiB to keep both paths happy. No-op when async
-    // support is off (unrelated builds).
-    config.async_stack_size(12 * 1024 * 1024);
+    let mut config = super::wasmtime_gc_engine_config();
     // Wasm emission and Cranelift are separate compilation stages. Persist the
     // latter in Wasmtime's content/config-addressed cache so repeated
     // `aver run --wasm-gc` processes rehydrate native code instead of JITing

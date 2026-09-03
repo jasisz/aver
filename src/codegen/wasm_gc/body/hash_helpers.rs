@@ -342,7 +342,13 @@ impl HashHelperRegistry {
 
 #[cfg(test)]
 mod tests {
-    use super::{HashHelperRegistry, HashKind};
+    use super::{FNV1A_OFFSET_BASIS, FNV1A_PRIME, HashHelperRegistry, HashKind};
+
+    fn packed_hash(bytes: &[u8]) -> u32 {
+        bytes.iter().fold(FNV1A_OFFSET_BASIS, |acc, byte| {
+            (acc ^ i32::from(*byte)).wrapping_mul(FNV1A_PRIME)
+        }) as u32
+    }
 
     #[test]
     fn slot_assignment_is_independent_of_discovery_order() {
@@ -363,7 +369,43 @@ mod tests {
         );
         assert_eq!(left.lookup_type_idx("Zulu"), right.lookup_type_idx("Zulu"));
     }
+
+    #[test]
+    fn packed_sequence_hash_uses_fnv1a() {
+        assert_eq!(packed_hash(b""), 0x811c_9dc5);
+        assert_eq!(packed_hash(b"a"), 0xe40c_292c);
+        assert_eq!(packed_hash(b"foobar"), 0xbf9c_f968);
+    }
+
+    #[test]
+    fn packed_sequence_hash_spreads_btc_style_keys_across_map_buckets() {
+        const KEY_COUNT: u32 = 4096;
+        const CAPACITY: usize = 8192;
+        let mut occupied = vec![false; CAPACITY];
+
+        for index in 1..=KEY_COUNT {
+            let mut key = [0_u8; 37];
+            key[0] = 117;
+            key[29..33].copy_from_slice(&(index / 4).to_be_bytes());
+            key[33..37].copy_from_slice(&(index % 4).to_be_bytes());
+            occupied[packed_hash(&key) as usize & (CAPACITY - 1)] = true;
+        }
+
+        let distinct_buckets = occupied.into_iter().filter(|used| *used).count();
+        assert!(
+            distinct_buckets >= 3900,
+            "btc-style packed keys occupied only {distinct_buckets}/{KEY_COUNT} buckets"
+        );
+    }
 }
+
+// FNV-1a keeps the low bits well mixed, which matters because Map's
+// power-of-two table selects a bucket with `hash & (capacity - 1)`.
+// DJB2's low bits clustered badly for fixed-width binary keys such as
+// btc-listener's `tag || txid[32] || vout[4]`: issue #1203 measured long
+// linear-probe runs even while the table was below half full.
+const FNV1A_OFFSET_BASIS: i32 = 0x811c_9dc5_u32 as i32;
+const FNV1A_PRIME: i32 = 0x0100_0193;
 
 fn emit_packed_sequence_hash_body(
     name: &str,
@@ -387,7 +429,7 @@ fn emit_packed_sequence_hash_body(
     f.instruction(&Instruction::LocalSet(2));
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::LocalSet(3));
-    f.instruction(&Instruction::I32Const(5381));
+    f.instruction(&Instruction::I32Const(FNV1A_OFFSET_BASIS));
     f.instruction(&Instruction::LocalSet(4));
     f.instruction(&Instruction::Block(wasm_encoder::BlockType::Empty));
     f.instruction(&Instruction::Loop(wasm_encoder::BlockType::Empty));
@@ -396,10 +438,6 @@ fn emit_packed_sequence_hash_body(
     f.instruction(&Instruction::I32GeU);
     f.instruction(&Instruction::BrIf(1));
     f.instruction(&Instruction::LocalGet(4));
-    f.instruction(&Instruction::I32Const(5));
-    f.instruction(&Instruction::I32Shl);
-    f.instruction(&Instruction::LocalGet(4));
-    f.instruction(&Instruction::I32Add);
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::LocalGet(3));
     match packed.layout.element {
@@ -417,7 +455,9 @@ fn emit_packed_sequence_hash_body(
             f.instruction(&Instruction::ArrayGet(packed.type_idx));
         }
     }
-    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::I32Xor);
+    f.instruction(&Instruction::I32Const(FNV1A_PRIME));
+    f.instruction(&Instruction::I32Mul);
     f.instruction(&Instruction::LocalSet(4));
     f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::I32Const(1));
