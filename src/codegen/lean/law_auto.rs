@@ -2699,6 +2699,62 @@ const COMPARISON_NORMALIZERS: &[&str] = &[
     "gt_iff_lt",
 ];
 
+/// The Bool-algebra companion to [`COMPARISON_NORMALIZERS`]: core `&&` / `||`
+/// associativity plus their (permutative, so simp orders them into a normal
+/// form) commutativity lemmas.
+///
+/// A structural law over a Bool PREDICATE does not end in a `… = true` goal the
+/// comparison bridge alone can peel — after the induction hypothesis fires, both
+/// sides are open Bool terms that differ only in how the `&&` chain associates
+/// or orders (`a && b && (c && d) = a && b && c && d`). The comparison lemmas
+/// carry the `decide`/`&&` wrappers down to the decidable propositions; these
+/// collapse the two spellings of the surrounding Bool skeleton to one. Neither
+/// half closes the family alone, so the induction ladder's bridging rungs use
+/// both — see [`bool_bridge_rungs`].
+const BOOL_AC_NORMALIZERS: &[&str] = &[
+    "Bool.and_assoc",
+    "Bool.and_comm",
+    "Bool.and_left_comm",
+    "Bool.or_assoc",
+    "Bool.or_comm",
+    "Bool.or_left_comm",
+];
+
+/// The two bridging alternatives the induction ladder's closers end with (ahead
+/// of their `sorry` floor): `simp_all` over the arm's own def set PLUS the
+/// Bool-to-Prop bridge ([`COMPARISON_NORMALIZERS`]) and the Bool skeleton
+/// normalisers ([`BOOL_AC_NORMALIZERS`]), in a `; done` and a
+/// `<;> (try split) <;> omega` variant (the latter peels a residual `if` before
+/// handing what is left to `omega`).
+///
+/// `prefix` is the arm's own `cases … <;> ` chain, empty at every site whose arm
+/// starts at the goal.
+///
+/// PURELY ADDITIVE: emitted AFTER every existing alternative, so a law that
+/// closed before still closes on the very same rung and keeps its proof text
+/// there; the `; done` and the trailing `omega` both throw on a leftover goal,
+/// so a bridge that does not finish falls through to the next alternative and
+/// ultimately to the floor. `simp_all`/`split`/`omega` are sound and terminate,
+/// so these rungs can only ADD closures — never a false theorem.
+fn bool_bridge_rungs(prefix: &str, defs: &str) -> String {
+    let bridge = COMPARISON_NORMALIZERS
+        .iter()
+        .chain(BOOL_AC_NORMALIZERS.iter())
+        .copied()
+        .collect::<Vec<_>>()
+        .join(", ");
+    // Guard against an empty def set so we never emit a leading-comma
+    // `simp_all [, …]` — a parse error `first` could not recover from.
+    let set = if defs.is_empty() {
+        bridge
+    } else {
+        format!("{defs}, {bridge}")
+    };
+    format!(
+        " | ({prefix}simp_all [{set}]; done) | ({prefix}simp_all [{set}] <;> (try split) <;> omega)"
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 fn emit_simp_omega_from_ir(
     unfold_fns: &[String],

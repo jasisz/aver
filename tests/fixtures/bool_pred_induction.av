@@ -1,0 +1,25 @@
+module BoolPredInduction
+    intent =
+        "A Bool predicate over a list and the two structural laws a byte"
+        "encoding needs: appending a byte, and reversing the list."
+    effects []
+
+fn allBytes(xs: List<Int>) -> Bool
+    ? "Whether every element is a byte, 0 to 255."
+    match xs
+        [] -> true
+        [head, ..tail] -> Bool.and(Bool.and(head >= 0, head <= 255), allBytes(tail))
+
+verify allBytes
+    allBytes([]) => true
+    allBytes([0]) => true
+    allBytes([256]) => false
+
+verify allBytes law appendedByteLast
+    given xs: List<Int> = [[1], [1, 2], [256, 1], [-1]]
+    given b: Int = [-1, 0, 255, 256]
+    allBytes(List.concat(xs, [b])) => Bool.and(allBytes(xs), Bool.and(b >= 0, b <= 255))
+
+verify allBytes law reverseKeepsBytes
+    given xs: List<Int> = [[1], [1, 2], [256, 1], [-1]]
+    allBytes(List.reverse(xs)) => allBytes(xs)

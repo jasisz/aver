@@ -3148,8 +3148,12 @@ fn wrap_with_fun_induction_rung(
     // the rung stays sound-by-floor and falls through to `sorry`. Gated LAST so
     // the cheaper `simp_all` rungs fire first. Closes the count-over-insert
     // family (count/insert/sort branching on `eqNat`/`lessEq`).
+    // Last of all, the Bool bridge: a law over a Bool PREDICATE (`allBytes xs`)
+    // leaves each arm an equality between two open Bool terms that no `omega`
+    // rung above can touch — see `super::bool_bridge_rungs`.
+    let bridge = super::bool_bridge_rungs("", simp_defs);
     let closer = format!(
-        "first | (simp_all {defs}; done) | (simp_all {defs}; omega) | (simp_all {defs} <;> omega) | (simp_all {defs} <;> (repeat' split) <;> omega)"
+        "first | (simp_all {defs}; done) | (simp_all {defs}; omega) | (simp_all {defs} <;> omega) | (simp_all {defs} <;> (repeat' split) <;> omega){bridge}"
     );
     let mut out = vec![intro_line, "  first".to_string()];
     for t in targets {
@@ -3576,11 +3580,12 @@ fn emit_count_composition_rung(
 /// Returns `(support_helper_theorems, rung_alternative_lines)` — the rung is ONE
 /// parenthesized `first` alternative (`| ( induction … with | zero => … | succ
 /// k ih => … )`) meant to LEAD the existing ladder. It carries NO `sorry` floor
-/// and every arm ends in `simp_all` (which THROWS on an open goal), so the
-/// alternative either CLOSES the goal or FAILS and `first` falls through to the
-/// existing ladder byte-for-byte. It NEVER selects the induction variable for the
-/// existing ladder (the #567 root cause) — it is purely a leading addition. All
-/// tactics (`cases`/`simp_all` + `sorry`-floored proved `nil`-helpers) are sound,
+/// and every arm alternative ends in a throw-on-leftover tactic (`; done` or a
+/// trailing `omega`), so the alternative either CLOSES the goal or FAILS and
+/// `first` falls through to the existing ladder byte-for-byte. It NEVER selects
+/// the induction variable for the existing ladder (the #567 root cause) — it is
+/// purely a leading addition. All tactics (`cases`/`simp_all` + `sorry`-floored
+/// proved `nil`-helpers) are sound,
 /// so it can only ever ADD closures; a non-closing law stays `universal:false`
 /// exactly as before.
 fn emit_synchronous_multivar_induction(
@@ -3667,14 +3672,32 @@ fn emit_synchronous_multivar_induction(
     // Each arm: `cases <other Nats/Lists> <;> simp_all [defs, helpers, …]`. With no
     // splittable other given, the arm is a bare `simp_all`. Both arms are
     // IDENTICAL (the predecessor `k`/its IH ride in `simp_all` automatically).
-    let arm = if cases_intros.is_empty() {
-        format!("simp_all [{simp}]")
+    let cases_prefix = if cases_intros.is_empty() {
+        String::new()
     } else {
-        format!(
-            "cases {} <;> simp_all [{simp}]",
-            cases_intros.join(" <;> cases ")
-        )
+        format!("cases {} <;> ", cases_intros.join(" <;> cases "))
     };
+    // The plain arm stays FIRST, so a law that closed before keeps closing on
+    // exactly that tactic; the Bool bridge (a law over a Bool PREDICATE leaves
+    // an equality between two open Bool terms `simp_all` over the defs alone
+    // cannot normalise) is tried only after it fails — see
+    // `super::bool_bridge_rungs`.
+    //
+    // The `; done` on the plain alternative is what makes the bridge REACHABLE.
+    // `simp_all` over a Bool-predicate arm makes progress (it unfolds the def
+    // and fires the IH) and then RETURNS with the `&&`-associativity goal still
+    // open instead of throwing, so a bare first alternative would be committed
+    // to by `first` and the arm would only fail later, at the `induction … with`
+    // alternative level, where the inner `first` can no longer backtrack.
+    // `done` turns that leftover into a throw inside the inner `first`, so the
+    // bridge is tried. Behaviour-preserving for laws that closed before (`done`
+    // succeeds right after a closing `simp_all`) and for laws that did not (they
+    // used to throw one level up; now the last inner alternative throws and the
+    // outer ladder falls through to exactly the same place).
+    let arm = format!(
+        "first | ({cases_prefix}simp_all [{simp}]; done){}",
+        super::bool_bridge_rungs(&cases_prefix, &simp)
+    );
     let generalizing = if other_intros.is_empty() {
         String::new()
     } else {
@@ -3941,10 +3964,14 @@ fn emit_list_induction(
             format!(" | (simp [{arm_simp}]; congr 1 <;> simp_all [{arm_simp}] <;> omega)");
         let congr_cons =
             format!(" | (simp_all [{arm_simp}]; congr 1 <;> simp_all [{arm_simp}] <;> omega)");
+        // Bool bridge — a law over a Bool PREDICATE (`allBytes xs`) leaves each
+        // arm an equality between two open Bool terms, which none of the
+        // arithmetic rungs above can touch. See `super::bool_bridge_rungs`.
+        let bool_bridge = super::bool_bridge_rungs("", arm_simp);
         let tail = if with_sorry { " | sorry" } else { "" };
         (
             format!(
-                "| nil => first | (simp [{arm_simp}]; done) | (simp [{arm_simp}]; omega){nil_bridge} | (simp only [{arm_split}]; split <;> simp_all [{arm_simp}]{split_bridge} <;> omega){second_cases_nil}{congr_nil}{tail}"
+                "| nil => first | (simp [{arm_simp}]; done) | (simp [{arm_simp}]; omega){nil_bridge} | (simp only [{arm_split}]; split <;> simp_all [{arm_simp}]{split_bridge} <;> omega){second_cases_nil}{congr_nil}{bool_bridge}{tail}"
             ),
             // Trailing `cases tail` branch: a fn whose body matches TWO levels
             // deep on the list (`last`/`butlast`: `match x | [] | y::z => match z
@@ -3958,7 +3985,7 @@ fn emit_list_induction(
             // non-closing arm still degrades to the honest `sorry`. Sound, so it
             // can only ADD closures.
             format!(
-                "| cons head tail ih => first | (simp_all [{arm_simp}]; done) | (simp_all [{arm_simp}]; omega){cons_bridge} | (simp only [{arm_split}]; split <;> simp_all [{arm_simp}]{split_bridge} <;> omega) | (cases tail <;> simp_all [{arm_simp}] <;> omega){cases_extra_branch}{split_extra_branch}{second_cases_cons}{congr_cons}{tail}"
+                "| cons head tail ih => first | (simp_all [{arm_simp}]; done) | (simp_all [{arm_simp}]; omega){cons_bridge} | (simp only [{arm_split}]; split <;> simp_all [{arm_simp}]{split_bridge} <;> omega) | (cases tail <;> simp_all [{arm_simp}] <;> omega){cases_extra_branch}{split_extra_branch}{second_cases_cons}{congr_cons}{bool_bridge}{tail}"
             ),
         )
     };
@@ -4830,6 +4857,12 @@ fn emit_simple_induction(
         .map(|s| format!(" | (simp_all [{s}]; done)"))
         .unwrap_or_default();
 
+    // Bool bridge — a law over a Bool PREDICATE leaves each arm an equality
+    // between two open Bool terms that none of the arithmetic rungs above can
+    // touch. Appended last, ahead of the `sorry` floor; see
+    // `super::bool_bridge_rungs`.
+    let bool_bridge = super::bool_bridge_rungs("", &simp_list);
+
     let mut arm_lines: Vec<String> = Vec::new();
     for variant in variants {
         let lean_variant = match &peano {
@@ -4861,7 +4894,7 @@ fn emit_simple_induction(
                     .map(|(leaf, _)| leaf.as_str())
                     .unwrap_or_default();
                 arm_lines.push(format!(
-                    "| {v}{b} => first | (simp [{d}]; done) | (simp [{d}]; omega){bridge}{comm}{mul_ac}{sibling} | sorry",
+                    "| {v}{b} => first | (simp [{d}]; done) | (simp [{d}]; omega){bridge}{comm}{mul_ac}{sibling}{bool_bridge} | sorry",
                     v = lean_variant,
                     b = binders,
                     d = simp_list,
@@ -4895,7 +4928,7 @@ fn emit_simple_induction(
                     .map(|(_, rec)| rec.as_str())
                     .unwrap_or_default();
                 arm_lines.push(format!(
-                    "| {v} {b} {ih} => first | (simp_all [{d}]; done) | (simp_all [{d}]; omega){bridge}{comm}{mul_ac}{sibling} | sorry",
+                    "| {v} {b} {ih} => first | (simp_all [{d}]; done) | (simp_all [{d}]; omega){bridge}{comm}{mul_ac}{sibling}{bool_bridge} | sorry",
                     v = lean_variant,
                     b = field_binders.join(" "),
                     ih = ih_names.join(" "),
