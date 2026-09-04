@@ -1905,6 +1905,7 @@ pub(in crate::codegen::lean) fn emit_conditional_comparison_bridge_law(
         support_lines: support,
         body: Tactic::raw(vec![intro, close]),
         replaces_theorem: false,
+        first_arm_is_guaranteed_closer: false,
     })
 }
 
@@ -2083,6 +2084,7 @@ pub(in crate::codegen::lean) fn emit_validated_wrapper_law(
         support_lines: Vec::new(),
         body: Tactic::raw(vec![intro, "  first".to_string(), arm, floor]),
         replaces_theorem: false,
+        first_arm_is_guaranteed_closer: false,
     })
 }
 
@@ -2437,6 +2439,7 @@ pub(in crate::codegen::lean) fn emit_conditional_inductive_generic_law(
         support_lines: support,
         body: Tactic::raw(body),
         replaces_theorem: false,
+        first_arm_is_guaranteed_closer: false,
     })
 }
 
@@ -2918,6 +2921,7 @@ fn emit_map_fold_homomorphism(
         support_lines: Vec::new(),
         body: crate::codegen::lean::tactic_ir::Tactic::raw(proof_lines),
         replaces_theorem: false,
+        first_arm_is_guaranteed_closer: false,
     }
 }
 
@@ -4508,6 +4512,7 @@ fn emit_list_induction(
         support_lines,
         body: crate::codegen::lean::tactic_ir::Tactic::raw(proof_lines),
         replaces_theorem: false,
+        first_arm_is_guaranteed_closer: false,
     })
 }
 
@@ -4684,6 +4689,7 @@ fn emit_both_args_peeling_law(
         },
         body: crate::codegen::lean::tactic_ir::Tactic::raw(proof_lines),
         replaces_theorem: false,
+        first_arm_is_guaranteed_closer: false,
     })
 }
 
@@ -5078,6 +5084,7 @@ fn emit_simple_induction(
         support_lines,
         body: crate::codegen::lean::tactic_ir::Tactic::raw(proof_lines),
         replaces_theorem: false,
+        first_arm_is_guaranteed_closer: false,
     })
 }
 

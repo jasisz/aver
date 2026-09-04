@@ -108,6 +108,7 @@ pub(in crate::codegen::lean) fn emit_transparent_chain_law(
             )],
         )),
         replaces_theorem: false,
+        first_arm_is_guaranteed_closer: false,
     })
 }
 

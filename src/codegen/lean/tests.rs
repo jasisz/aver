@@ -4665,6 +4665,48 @@ verify len law lenAppend
     );
 }
 
+/// Shape-gated `grind` rung, SKIP side under a GLOBAL fail-closed floor: a
+/// plain linear-arithmetic law over a non-recursive fn is flat (so the shape
+/// gate admits it) and its portfolio now ends in `sorry` like every other one,
+/// but its FIRST alternative is the `simp only [<cone>] <;> omega` closer that
+/// already decides the goal. The trailing `sorry` is the floor, not a frontier,
+/// so the rung must NOT fire: a `grind` saturation ahead of `omega` costs a
+/// second per law and buys nothing. Pins the closer as the leading alternative
+/// so the reverted spelling cannot drift back. Codegen-only (no lake).
+#[test]
+fn grind_rung_skipped_when_first_alternative_already_closes() {
+    let src = "\
+module FlooredNoGrind
+    effects []
+
+fn twice(n: Int) -> Int
+    ? \"double n\"
+    n + n
+
+verify twice law doubling
+    given n: Int = [0, 1, 2]
+    twice(n) => n * 2
+";
+    let mut ctx = ctx_from_source(src, "FlooredNoGrind");
+    let out = transpile(&mut ctx);
+    let lean = generated_lean_file(&out);
+    assert!(
+        !lean.contains("grind"),
+        "a law whose first alternative is the omega closer must NOT gain a \
+         grind rung just because the global fail-closed floor put a `sorry` \
+         at the end of its portfolio:\n{lean}"
+    );
+    assert!(
+        lean.contains("intro n\n  first | (simp only [twice] <;> omega) | ("),
+        "the linear-arithmetic closer must stay the LEADING alternative of the \
+         portfolio:\n{lean}"
+    );
+    assert!(
+        lean.contains(" | sorry"),
+        "the global fail-closed floor stays under the closer:\n{lean}"
+    );
+}
+
 /// Locate a `verify <fn> law <name>` block in a built context.
 fn find_clique_law<'a>(
     ctx: &'a CodegenContext,

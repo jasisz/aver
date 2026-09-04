@@ -610,5 +610,6 @@ pub(in crate::codegen::lean) fn emit_multicite_composition_law(
         support_lines: Vec::new(),
         body: Tactic::raw(lines),
         replaces_theorem: false,
+        first_arm_is_guaranteed_closer: false,
     })
 }

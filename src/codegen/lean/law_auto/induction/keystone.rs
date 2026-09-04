@@ -1487,5 +1487,6 @@ pub(in crate::codegen::lean) fn emit_pool_composition_generic_law(
         support_lines,
         body: Tactic::raw(vec![intro, "  first".to_string(), close, floor]),
         replaces_theorem: false,
+        first_arm_is_guaranteed_closer: false,
     })
 }

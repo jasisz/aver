@@ -78,6 +78,7 @@ fn emit_effectful_spec_equivalence_law(
                 vec![tactic],
             )),
             replaces_theorem: false,
+            first_arm_is_guaranteed_closer: false,
         });
     }
 
@@ -109,6 +110,7 @@ fn emit_effectful_spec_equivalence_law(
         support_lines: Vec::new(),
         body: crate::codegen::lean::tactic_ir::Tactic::raw(intro_then(intro_names, vec![tactic])),
         replaces_theorem: false,
+        first_arm_is_guaranteed_closer: false,
     })
 }
 
@@ -219,6 +221,7 @@ pub(super) fn emit_spec_function_equivalence_law(
                 vec![format!("simpa [{}]", simp_defs.join(", "))],
             )),
             replaces_theorem: false,
+            first_arm_is_guaranteed_closer: false,
         })
     };
 

@@ -269,6 +269,7 @@ done"#
         support_lines,
         body: crate::codegen::lean::tactic_ir::Tactic::raw(proof_lines),
         replaces_theorem: false,
+        first_arm_is_guaranteed_closer: false,
     })
 }
 

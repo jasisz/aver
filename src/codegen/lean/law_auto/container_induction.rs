@@ -164,6 +164,7 @@ pub(in crate::codegen::lean) fn emit_container_induction_law(
         support_lines: support,
         body: Tactic::raw(super::intro_then(intro_names, vec![body_line])),
         replaces_theorem: false,
+        first_arm_is_guaranteed_closer: false,
     })
 }
 

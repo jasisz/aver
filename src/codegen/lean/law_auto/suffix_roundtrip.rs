@@ -893,6 +893,7 @@ pub(super) fn emit_string_escape_roundtrip_law(
         support_lines: support,
         body: crate::codegen::lean::tactic_ir::Tactic::raw(proof_lines),
         replaces_theorem: false,
+        first_arm_is_guaranteed_closer: false,
     })
 }
 

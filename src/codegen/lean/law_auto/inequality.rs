@@ -82,5 +82,6 @@ pub(super) fn emit_nonlinear_nonneg_law(
         support_lines: Vec::new(),
         body: super::intro_then_first(&intro_names, vec![branch]),
         replaces_theorem: false,
+        first_arm_is_guaranteed_closer: false,
     })
 }
