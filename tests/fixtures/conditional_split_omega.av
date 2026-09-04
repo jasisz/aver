@@ -1,0 +1,86 @@
+module ConditionalSplitOmega
+    intent =
+        "A sign byte placed by a case split, read back by a case split: the"
+        "conditional law about it needs no induction, only split and omega."
+    effects []
+
+fn signByte(negative: Bool) -> Int
+    ? "The byte that carries a sign and nothing else."
+    match negative
+        true -> 128
+        false -> 0
+
+verify signByte
+    signByte(true) => 128
+    signByte(false) => 0
+
+fn orSign(top: Int, negative: Bool) -> Int
+    ? "Set the sign bit on a byte that has room for it."
+    match negative
+        true -> top + 128
+        false -> top
+
+verify orSign
+    orSign(1, true) => 129
+    orSign(1, false) => 1
+
+fn placed(top: Int, rest: List<Int>, negative: Bool) -> List<Int>
+    ? "The top byte gets the sign bit if it has room, else a sign byte is appended."
+    match top >= 128
+        true -> List.prepend(signByte(negative), List.prepend(top, rest))
+        false -> List.prepend(orSign(top, negative), rest)
+
+verify placed
+    placed(1, [], false) => [1]
+    placed(1, [], true) => [129]
+    placed(128, [], false) => [0, 128]
+    placed(128, [], true) => [128, 128]
+
+verify placed law readsAsSigned
+    given top: Int = [0, 1, 127, 128, 200, 255]
+    given rest: List<Int> = [[0], [7, 9]]
+    given negative: Bool = [true, false]
+    when Bool.and(top >= 0, top <= 255)
+    readTop(placed(top, rest, negative)) => signedBy(sum(List.prepend(top, rest), 0), negative)
+
+fn unsigned(top: Int) -> Int
+    ? "The magnitude bits of a byte, with the sign taken off."
+    match top >= 128
+        true -> top - 128
+        false -> top
+
+verify unsigned
+    unsigned(1) => 1
+    unsigned(129) => 1
+    unsigned(128) => 0
+
+fn signedBy(magnitude: Int, negative: Bool) -> Int
+    ? "Apply the sign."
+    match negative
+        true -> 0 - magnitude
+        false -> magnitude
+
+verify signedBy
+    signedBy(5, false) => 5
+    signedBy(5, true) => 0 - 5
+
+fn sum(bytes: List<Int>, acc: Int) -> Int
+    ? "Big-endian reading."
+    match bytes
+        [] -> acc
+        [head, ..tail] -> sum(tail, acc * 256 + head)
+
+verify sum
+    sum([], 0) => 0
+    sum([1, 2], 0) => 258
+
+fn readTop(item: List<Int>) -> Int
+    ? "Read the top byte's sign and magnitude, then the rest."
+    match item
+        [] -> 0
+        [top, ..rest] -> signedBy(sum(List.prepend(unsigned(top), rest), 0), top >= 128)
+
+verify readTop
+    readTop([]) => 0
+    readTop([129]) => 0 - 1
+    readTop([1, 2]) => 258

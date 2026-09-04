@@ -1918,6 +1918,13 @@ fn emit_verify_law_forall_auto_proof_inner(
                         )
                     })
                     .collect();
+                // An unconditional law with earlier laws about its cone fns
+                // gets the keystone composition as its last arm before the
+                // floor (`keystone_floor_arm`): the fuel strategy closes the
+                // countdown fn's OWN laws, and this composes them one level up.
+                if let Some(arm) = induction::keystone_floor_arm(vb, law, ctx) {
+                    arms.push(arm);
+                }
                 arms.push("sorry".to_string());
                 format!("first | {}", arms.join(" | "))
             } else {
