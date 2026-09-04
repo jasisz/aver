@@ -11417,6 +11417,18 @@ fn cmd_proof_lean(
     ctx: &mut codegen::CodegenContext,
     verify_mode: &super::cli::ProofVerifyMode,
 ) {
+    // Laws about a function are emitted before every law whose cone reaches
+    // it, wherever the formatter put the blocks — see `citation_order`.
+    for cycle in lean_codegen::order_verify_blocks_for_citation(ctx) {
+        eprintln!(
+            "{}",
+            format!(
+                "warning[proof-citation-cycle:{}]: {}",
+                cycle.line, cycle.message
+            )
+            .yellow()
+        );
+    }
     let proof_issues = lean_codegen::proof_mode_findings(ctx);
     for issue in proof_issues {
         eprintln!(

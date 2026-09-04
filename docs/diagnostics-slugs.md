@@ -93,6 +93,7 @@ When a real signature shape is deliberately uninhabited, keep the residue explic
 | `verify-unexpected-err` | fail | Case propagated a `Result.Err` via `?` the case didn't account for. | Either expect the `Err` in the case or handle it inside the function. |
 | `replay-output-mismatch` | fail | Replayed recording's output differs from the recorded run. | Inspect `fields.diff`; update the function or re-record. |
 | `replay-error` | fail | Replay couldn't complete (format mismatch, missing effects, crash). | Check `fields.error`; format drift usually means re-record. |
+| `proof-citation-cycle` | warning | `aver proof` (Lean): two law blocks of one file reach each other's function, so no order of their theorems lets each cite the other; the pair keeps source order and the one written first cannot cite the second. Laws are otherwise declared before every law whose calls reach their function, wherever the file puts them. | Decide which law should cite the other and write that one second. |
 
 ## Format (mechanical rewrites)
 

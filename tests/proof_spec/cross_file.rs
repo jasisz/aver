@@ -702,16 +702,15 @@ fn run_forward_ref_variant(variant: &str) -> (serde_json::Value, std::process::O
 }
 
 #[test]
-fn cross_file_forward_citation_is_refused_end_to_end() {
+fn cross_file_forward_citation_is_reordered_backward_end_to_end() {
     if Command::new("lake").arg("--version").output().is_err() {
         eprintln!("skipping citation-closure topology end-to-end test: `lake` not available");
         return;
     }
-
-    // BASELINE (`inorder`): the cited sibling is emitted first, so the geone
+    // BASELINE (`inorder`): the cited sibling is written first, so the geone
     // law proves universally and genuinely cites `pow2_law_positive` — AFTER
     // that theorem's own definition (a backward reference). This is what makes
-    // the forward case's refusal non-vacuous: the citation edge really exists.
+    // the forward case non-vacuous: the citation edge really exists.
     let (base_summary, base_run, base_frac) = run_forward_ref_variant("inorder");
     assert_eq!(
         (
@@ -725,7 +724,7 @@ fn cross_file_forward_citation_is_refused_end_to_end() {
     assert!(
         base_frac.contains("-- aver:law-class pow2SignedAtLeastOne_law_geOneFlip universal"),
         "baseline: the geone law must prove universally when its cited sibling \
-         is emitted first\nDomain/Frac.lean:\n{base_frac}"
+         is written first\nDomain/Frac.lean:\n{base_frac}"
     );
     let base_def = base_frac
         .find("theorem pow2_law_positive ")
@@ -738,11 +737,14 @@ fn cross_file_forward_citation_is_refused_end_to_end() {
         "baseline: the citation must be a BACKWARD reference — the sibling is \
          defined before it is cited\nDomain/Frac.lean:\n{base_frac}"
     );
-
     // GUARANTEE (`forward`): the identical program with the cited sibling
-    // emitted LATER. The forward citation is refused — the geone law degrades
-    // to its pre-closure tier (no universal theorem, no citation), NO forward
-    // reference reaches `Frac.lean`, and the build stays green (never red).
+    // WRITTEN later. The export orders a file's verify blocks into citation
+    // order before emitting (a block about a function precedes every law
+    // whose cone reaches it), so the sibling's theorem is still declared
+    // first: the geone law keeps its universal theorem, its citation is a
+    // backward reference exactly as in the baseline, NO forward reference
+    // reaches `Frac.lean`, and the build stays green (never red). Before that
+    // pass the law silently lost the lemma and fell to its pre-closure tier.
     let (fwd_summary, fwd_run, fwd_frac) = run_forward_ref_variant("forward");
     assert_eq!(
         (
@@ -750,19 +752,25 @@ fn cross_file_forward_citation_is_refused_end_to_end() {
             fwd_summary["build_errors"].as_u64(),
         ),
         (Some(true), Some(0)),
-        "the forward-citation fixture must NOT produce a red build\n{}",
+        "the forward-written fixture must NOT produce a red build\n{}",
         format_output(&fwd_run)
     );
     assert!(
-        !fwd_frac.contains("-- aver:law-class pow2SignedAtLeastOne_law_geOneFlip universal"),
-        "forward: the geone law must degrade to its pre-closure tier (lose its \
-         universal theorem) when its citation would be a forward reference\n\
+        fwd_frac.contains("-- aver:law-class pow2SignedAtLeastOne_law_geOneFlip universal"),
+        "forward: the geone law must keep its universal theorem — the export \
+         declares the cited sibling first, wherever it was written\n\
          Domain/Frac.lean:\n{fwd_frac}"
     );
+    let fwd_def = fwd_frac
+        .find("theorem pow2_law_positive ")
+        .expect("forward: the positivity sibling theorem must be emitted");
+    let fwd_cite = fwd_frac
+        .find("have h := pow2_law_positive")
+        .expect("forward: the geone proof must cite the positivity sibling");
     assert!(
-        !fwd_frac.contains("have h := pow2_law_positive"),
-        "forward: NO forward reference to the later-emitted sibling may appear \
-         in the emitted proof\nDomain/Frac.lean:\n{fwd_frac}"
+        fwd_def < fwd_cite,
+        "forward: the citation must still be a BACKWARD reference — the \
+         sibling is declared before it is cited\nDomain/Frac.lean:\n{fwd_frac}"
     );
 }
 

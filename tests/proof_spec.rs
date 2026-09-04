@@ -17,6 +17,8 @@ mod capability;
 mod capability_opaque;
 #[path = "proof_spec/check_gates.rs"]
 mod check_gates;
+#[path = "proof_spec/citation_order.rs"]
+mod citation_order;
 #[path = "proof_spec/conditional_split_omega.rs"]
 mod conditional_split_omega;
 #[path = "proof_spec/container_induction.rs"]

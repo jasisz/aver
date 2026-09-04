@@ -34,6 +34,8 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Fixed
 
+- **Where a helper law sits in the file no longer decides whether the law that needs it certifies.** A law can only use, as a lemma, a law whose theorem is declared above it, and `aver format` places every law right behind its function's examples. So a round trip on a digit writer that needs the snoc law on the digit reader lost that lemma, and stopped at its samples, whenever the writer was defined first. The Lean export now declares the laws about a function before every law whose calls reach that function, whatever order the functions were written in.
+
 - **A list builtin applied to an empty list literal now takes its element type from where the result goes.** `allBytes(List.reverse([]))` used to be rejected with `expected List<Int>, got List<T>`, and so was every `verify … law` whose `given xs: List<Int>` listed `[]` among its samples as soon as the law applied `List.reverse`, `List.take` or `List.drop` to the given. The empty literal now takes the expected list type, the way it already did under `List.concat` and `Result.withDefault`.
 
 - **A law guarded by the length of its list now certifies when its claim reads a fixed window of that list.** `when List.len(items) >= 2` followed by a claim about the first two items — the stack shuffles: swapping twice is the top pair, rotating three times is the top three — used to stop at its samples, because list induction cannot see that the tail is still long enough. The proof now exposes exactly the items the premise guarantees and evaluates the claim on them. A claim that needs induction proper under the same premise keeps its sampled evidence, as before.

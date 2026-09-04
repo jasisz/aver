@@ -5,6 +5,8 @@
 /// Effectful functions and `main` are skipped.
 mod builtins;
 mod capability_opaque;
+mod citation_order;
+pub use citation_order::{CitationCycle, order_verify_blocks_for_citation};
 mod crypto;
 mod decl_order;
 mod expr;
