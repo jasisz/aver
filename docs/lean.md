@@ -267,9 +267,12 @@ summary line. Fields of the Lean summary:
   `sorry` never count), at least one theorem is explicitly classed
   universal, and the file has no sorries
 - `universal_laws` — how many law theorems classed universal passed that
-  same per-theorem axiom whitelist. On a file with sorries the axiom
-  audit does not run at all, so this reports `0` — pin it together with
-  `sorries == 0`, not instead of it
+  same per-theorem axiom whitelist. The audit is per theorem, so on a
+  file with sorries it still runs: a sorry-floored theorem's own axiom
+  line carries `sorryAx` and records tier `failed`, while every
+  kernel-clean sibling keeps its `universal` record and counts. Only the
+  file-level `universal` bool keeps the "no sorries" conjunct — pin the
+  count together with `sorries`, not instead of it
 - `bounded_laws` — how many law theorems the emitter classed
   bounded-domain (stated only over the finite sample grid, e.g. guarded
   `when`-law enumerations); these never earn universal credit

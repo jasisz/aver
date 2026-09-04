@@ -14,7 +14,7 @@ use super::super::expr::aver_name_to_lean;
 use super::super::syntax::lean_ctor_name;
 use super::super::tactic_ir::{InductionArm, Tactic};
 use super::AutoProof;
-use super::shared::law_simp_defs;
+use super::shared::law_simp_defs_blind;
 use crate::ast::{TypeDef, TypeVariant, VerifyBlock, VerifyLaw};
 use crate::codegen::CodegenContext;
 
@@ -917,7 +917,7 @@ fn consumer_law_qualified_scope(
 /// analysis. Soundness rides on the same guard as everything else — if the
 /// referenced law itself only `sorry`s, this law's proof inherits `sorryAx`
 /// and the universal metric reports false.
-fn earlier_law_lemmas(
+pub(super) fn earlier_law_lemmas(
     vb: &VerifyBlock,
     law: &VerifyLaw,
     ctx: &CodegenContext,
@@ -1016,6 +1016,16 @@ fn earlier_law_lemmas(
                 .collect();
             !pmentions.is_empty() && pmentions.is_subset(&scope) && scope.contains(&prev_subject)
         });
+        // LOOPING-REWRITE guard: a sibling whose RHS contains an instance of
+        // its own LHS pattern (the accumulator law `f v acc = acc.reverse ++
+        // f v []` — its RHS `f v []` is matched by the LHS `f ?v ?acc`) is a
+        // simp rule that never terminates (Lean's "Possibly looping simp
+        // theorem" warning is the symptom), so it must not join any
+        // `simp_all` pool. Consumers that need such a law cite it as a GROUND
+        // instance instead (see `wf_fuel`).
+        if super::shared::law_is_looping_rewrite(prev_law, ctx) {
+            continue;
+        }
         if mentions.is_subset(&scope)
             || (mentions.contains(&subject) && scope.contains(&prev_subject))
             || lhs_rooted
@@ -1077,6 +1087,10 @@ fn earlier_law_lemmas(
             let VerifyKind::Law(prev_law) = &prev.kind else {
                 continue;
             };
+            // Same looping-rewrite guard as the in-file pool above.
+            if super::shared::law_is_looping_rewrite(prev_law, ctx) {
+                continue;
+            }
             if let Some((name, text)) = dep_law_admissible(
                 module,
                 prev,
@@ -1383,7 +1397,7 @@ fn b_tight_decomposition_arms(
     }
     let (bridge_support, bridges, bridged_fns) =
         lean_nat_lift_support(law, ctx, law_uid, &cited_fns);
-    let defs: Vec<String> = law_simp_defs(ctx, vb, law)
+    let defs: Vec<String> = law_simp_defs_blind(ctx, vb, law)
         .into_iter()
         .filter(|n| !bridged_fns.contains(super::shared::bare_lean_name(n)))
         .collect();
@@ -2021,6 +2035,12 @@ pub(in crate::codegen::lean) fn recognize_conditional_inductive_generic(
     if recognize_conditional_comparison_bridge(vb, law, ctx) {
         return false;
     }
+    // Exclusive with the fuel-induction arm as well: a `when`-law over a
+    // well-founded Int-countdown fn is closed by `wf_fuel` (one unfold per
+    // fuel step), which this driver's blind `simp_all` portfolio cannot do.
+    if super::wf_fuel::recognize_wf_fuel_induction(vb, law, ctx).is_some() {
+        return false;
+    }
     // Class-1 recursion-incompatibility (single-list only): a cone fn that
     // DECREMENTS a co-given synchronously with the list — `drop`/`take` over a
     // free `Nat` (`prop_39`'s `elem(x, drop(y, z))`) — is not closed by plain
@@ -2062,7 +2082,7 @@ pub(in crate::codegen::lean) fn emit_conditional_inductive_generic_law(
     }
     let target_idx = find_list_induction_target(law)?;
     let target = intro_names.get(target_idx)?.clone();
-    let defs = law_simp_defs(ctx, vb, law)
+    let defs = law_simp_defs_blind(ctx, vb, law)
         .into_iter()
         .collect::<Vec<_>>()
         .join(", ");
@@ -2731,7 +2751,7 @@ fn emit_map_fold_homomorphism(
     target_idx: usize,
     plan: &MapFoldHomomorphism,
 ) -> AutoProof {
-    let simp_list = law_simp_defs(ctx, vb, law)
+    let simp_list = law_simp_defs_blind(ctx, vb, law)
         .into_iter()
         .collect::<Vec<_>>()
         .join(", ");
@@ -2878,7 +2898,14 @@ pub(super) fn find_fun_induction_targets(
     // noise, so restrict to the recursive pure fns — exactly the `.induct` set.
     // (`fn_body_has_match` is a redundant sanity guard: a recursive fn always
     // case-splits, but a fn lifted to a non-matching builtin would not.)
+    // A well-founded Int-countdown fn (`termination_by p.toNat`) is NOT a
+    // target: its `.induct` exists, but the rung's `simp_all [f]` closer
+    // unfolds the countdown forever (the unfold equation is unconditional)
+    // and dies in a `whnf` heartbeat timeout — a hard build error `first`
+    // cannot catch. That class is closed by the fuel-induction strategy
+    // (`law_auto::wf_fuel`) instead.
     let recursive_names = crate::codegen::lean::recursive_pure_fn_names(ctx);
+    let wf_countdown = super::shared::wf_countdown_fn_names(ctx);
     let induct_fns: std::collections::HashSet<String> = ctx
         .modules
         .iter()
@@ -2887,6 +2914,7 @@ pub(super) fn find_fun_induction_targets(
         .filter(|fd| {
             crate::codegen::common::is_pure_fn(fd)
                 && recursive_names.contains(&fd.name)
+                && !wf_countdown.contains(&fd.name)
                 && fn_body_has_match(fd)
         })
         .map(|fd| fd.name.clone())
@@ -3402,14 +3430,14 @@ fn emit_count_composition_rung(
     // chains the IH after rewriting `op a (k+1)` to `(a + k) + 1` (so `f` peels)
     // — `simp only [bridge, Nat.add_succ, f-defs] at *` exposes the one-step
     // unfolds, then `simp_all [base, ih]` lands the IH at the tail.
-    let mut base_set: BTreeSet<String> = law_simp_defs(ctx, vb, law);
+    let mut base_set: BTreeSet<String> = law_simp_defs_blind(ctx, vb, law);
     base_set.insert(add_bridge.clone());
     base_set.extend(nil_simp.iter().cloned());
     let base = base_set.iter().cloned().collect::<Vec<_>>().join(", ");
     // The `simp only` unfold set for the succ arm: the law's defs (so `f`'s
     // equations fire) + the bridge + `Nat.add_succ` (reassociates `a + (k+1)` to
     // `(a + k) + 1` so `f` recognizes the `_ + 1` driver).
-    let mut unfold_set: BTreeSet<String> = law_simp_defs(ctx, vb, law);
+    let mut unfold_set: BTreeSet<String> = law_simp_defs_blind(ctx, vb, law);
     unfold_set.insert(add_bridge.clone());
     unfold_set.insert("Nat.add_succ".to_string());
     let unfold = unfold_set.iter().cloned().collect::<Vec<_>>().join(", ");
@@ -3525,7 +3553,7 @@ fn emit_synchronous_multivar_induction(
     // + the proved nil-helpers + the append-peeling lemmas. `List.cons_append` /
     // `List.nil_append` let the appended list (`[y] ++ zs` in lemma_04) peel a
     // cons in lockstep with the recursing fn.
-    let mut simp_set: BTreeSet<String> = law_simp_defs(ctx, vb, law);
+    let mut simp_set: BTreeSet<String> = law_simp_defs_blind(ctx, vb, law);
     simp_set.extend(helper_names.iter().cloned());
     simp_set.insert("List.cons_append".to_string());
     simp_set.insert("List.nil_append".to_string());
@@ -3587,7 +3615,7 @@ fn emit_list_induction(
             &plan,
         ));
     }
-    let mut simp_defs: BTreeSet<String> = law_simp_defs(ctx, vb, law);
+    let mut simp_defs: BTreeSet<String> = law_simp_defs_blind(ctx, vb, law);
     let law_uid = format!(
         "{}_{}",
         aver_name_to_lean(&vb.fn_name),
@@ -3950,7 +3978,7 @@ fn emit_list_induction(
         if !fast_simp.is_empty() {
             fast_lemmas.extend(COMMUTE_NORMALIZERS.iter().map(|s| s.to_string()));
         }
-        let fast_unfolds: BTreeSet<String> = law_simp_defs(ctx, vb, law)
+        let fast_unfolds: BTreeSet<String> = law_simp_defs_blind(ctx, vb, law)
             .into_iter()
             .chain(fast_simp.iter().cloned())
             .chain(arith_bridges.iter().cloned())
@@ -4474,7 +4502,7 @@ fn emit_both_args_peeling_law(
         return None;
     }
 
-    let simp_list = law_simp_defs(ctx, vb, law)
+    let simp_list = law_simp_defs_blind(ctx, vb, law)
         .into_iter()
         .collect::<Vec<_>>()
         .join(", ");
@@ -4538,7 +4566,7 @@ fn emit_simple_induction(
     variants: &[TypeVariant],
     discovered: &[String],
 ) -> Option<AutoProof> {
-    let mut simp_defs: BTreeSet<String> = law_simp_defs(ctx, vb, law);
+    let mut simp_defs: BTreeSet<String> = law_simp_defs_blind(ctx, vb, law);
     // Discovery feedback: COMMITTED pins join the arm simp sets (see
     // `emit_list_induction`); EARLIER sibling laws (część A) feed only the
     // fast path. Empty `fast_simp` (no committed, no eligible sibling) keeps
@@ -4622,7 +4650,7 @@ fn emit_simple_induction(
             .filter_map(|s| s.strip_prefix(&format!("{law_uid}_")))
             .map(str::to_string)
             .collect();
-        let mut comm_set: Vec<String> = law_simp_defs(ctx, vb, law)
+        let mut comm_set: Vec<String> = law_simp_defs_blind(ctx, vb, law)
             .into_iter()
             .filter(|d| !commd_fns.contains(d))
             .collect();
@@ -4649,7 +4677,7 @@ fn emit_simple_induction(
         let bridge_thms = arith_bridges.iter().filter(|b| b.starts_with(&law_uid));
         // `law_simp_defs` may qualify an entry-module fn; `bridged_fns` holds
         // the bare Lean name, so compare basenames.
-        let mut acset: Vec<String> = law_simp_defs(ctx, vb, law)
+        let mut acset: Vec<String> = law_simp_defs_blind(ctx, vb, law)
             .into_iter()
             .filter(|d| !bridged_fns.contains(super::shared::bare_lean_name(d)))
             .collect();
@@ -4874,7 +4902,7 @@ fn emit_simple_induction(
             fast_lemmas.join(", ")
         ));
         if !fast_simp.is_empty() {
-            let fast_unfolds: BTreeSet<String> = law_simp_defs(ctx, vb, law)
+            let fast_unfolds: BTreeSet<String> = law_simp_defs_blind(ctx, vb, law)
                 .into_iter()
                 .chain(fast_simp.iter().cloned())
                 .chain(arith_bridges.iter().cloned())
