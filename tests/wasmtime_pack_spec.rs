@@ -68,16 +68,25 @@ fn compile_pack(
 }
 
 fn run_host(pack: &Path) -> Output {
+    run_host_with_args(pack, &[])
+}
+
+fn run_host_with_args(pack: &Path, args: &[&str]) -> Output {
     let host = pack.join(format!(
         "aver-wasmtime-host{}",
         std::env::consts::EXE_SUFFIX
     ));
-    Command::new(host)
+    let mut command = Command::new(host);
+    command
         .current_dir(pack)
         .env_clear()
         .env("PATH", "/definitely/missing")
-        .output()
-        .expect("run packed host")
+        .args(args);
+    command.output().expect("run packed host")
+}
+
+fn run_host_artifact(pack: &Path, artifact: &str) -> Output {
+    run_host_with_args(pack, &["--artifact", artifact, "--"])
 }
 
 fn write_custom_project(root: &Path, provider: &Path) -> PathBuf {
@@ -143,6 +152,9 @@ fn emitted_standard_and_custom_hosts_are_toolchain_free_and_cache_isolated() {
             .expect("read certificate manifest"),
     )
     .expect("valid certificate manifest");
+    assert_eq!(bundle_manifest["schemaVersion"], 3);
+    assert!(bundle_manifest["canonicalImports"].is_array());
+    assert!(bundle_manifest["runtimeImports"].is_array());
     assert_eq!(certificate_manifest["wasm"], "main.wasm");
     assert_eq!(bundle_manifest["artifact"]["file"], "main.wasm");
     assert_eq!(
@@ -162,12 +174,23 @@ fn emitted_standard_and_custom_hosts_are_toolchain_free_and_cache_isolated() {
         bundle_manifest["precompiled"]["sourceSha256"],
         bundle_manifest["runtimeArtifact"]["sha256"]
     );
+    let help = run_host_with_args(&standard_pack, &["--help"]);
+    assert!(help.status.success(), "{}", report(&help));
+    assert!(String::from_utf8_lossy(&help.stdout).contains("--artifact aot|canonical|optimized"));
     let standard_run = run_host(&standard_pack);
     assert!(standard_run.status.success(), "{}", report(&standard_run));
     assert_eq!(
         String::from_utf8_lossy(&standard_run.stdout).trim(),
         "standard-pack-ok"
     );
+    for artifact in ["canonical", "optimized"] {
+        let selected = run_host_artifact(&standard_pack, artifact);
+        assert!(selected.status.success(), "{}", report(&selected));
+        assert_eq!(
+            String::from_utf8_lossy(&selected.stdout).trim(),
+            "standard-pack-ok"
+        );
+    }
 
     // Portable byte identity is checked before Wasmtime is allowed to load or
     // instantiate the precompiled guest.
@@ -183,6 +206,8 @@ fn emitted_standard_and_custom_hosts_are_toolchain_free_and_cache_isolated() {
         "{}",
         report(&tampered)
     );
+    let isolated = run_host_artifact(&standard_pack, "optimized");
+    assert!(isolated.status.success(), "{}", report(&isolated));
     fs::write(&wasm_path, original_wasm).expect("restore packed wasm");
 
     let optimized_path = standard_pack.join("main.optimized.wasm");
@@ -201,6 +226,8 @@ fn emitted_standard_and_custom_hosts_are_toolchain_free_and_cache_isolated() {
         "{}",
         report(&tampered)
     );
+    let isolated = run_host_artifact(&standard_pack, "canonical");
+    assert!(isolated.status.success(), "{}", report(&isolated));
     fs::write(&optimized_path, original_optimized).expect("restore optimized wasm");
 
     // A precompiled image is native code and must never reach Wasmtime's
@@ -220,6 +247,10 @@ fn emitted_standard_and_custom_hosts_are_toolchain_free_and_cache_isolated() {
         "{}",
         report(&tampered)
     );
+    for artifact in ["canonical", "optimized"] {
+        let isolated = run_host_artifact(&standard_pack, artifact);
+        assert!(isolated.status.success(), "{}", report(&isolated));
+    }
     fs::write(&precompiled_path, original_precompiled).expect("restore precompiled module");
 
     let custom_root = temp.path().join("custom");
@@ -240,6 +271,19 @@ fn emitted_standard_and_custom_hosts_are_toolchain_free_and_cache_isolated() {
     assert_eq!(
         String::from_utf8_lossy(&custom_run.stdout).trim(),
         "custom-pack-ok"
+    );
+    let custom_canonical = run_host_artifact(&custom_pack, "canonical");
+    assert!(
+        custom_canonical.status.success(),
+        "{}",
+        report(&custom_canonical)
+    );
+    let missing_optimized = run_host_artifact(&custom_pack, "optimized");
+    assert!(!missing_optimized.status.success());
+    assert!(
+        String::from_utf8_lossy(&missing_optimized.stderr).contains("artifact-unavailable"),
+        "{}",
+        report(&missing_optimized)
     );
     let custom_manifest =
         fs::read_to_string(custom_pack.join("manifest.json")).expect("read custom manifest");
