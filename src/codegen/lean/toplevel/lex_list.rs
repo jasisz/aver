@@ -41,6 +41,10 @@ enum LexListArg {
     /// of `g`'s actual arguments (`rest pivot`), used to instantiate the
     /// synthesised `<g>_len_le` lemma in `decreasing_by`.
     Filtered { helper: String, lemma_args: String },
+    /// The argument is `List.drop(s, n)` or `List.take(s, n)`, where `s` is
+    /// the caller's measure param or a cons-tail. Core Lean supplies the
+    /// non-growing length theorem, so no helper lemma is synthesised.
+    ListBuiltin { length_lemma: &'static str },
 }
 
 /// One recognised recursive edge inside the SCC, in body source order
@@ -76,6 +80,10 @@ struct LexListMemberPlan<'a> {
     offset: usize,
     /// Lex second component (rank).
     rank: usize,
+    /// This plan came from the shared cycle measure with zero offsets. A
+    /// strict cons-tail edge then decreases the length component directly,
+    /// rather than becoming equal through the helper-filter offset scheme.
+    direct_length_decrease: bool,
     /// Recognised recursive edges, in body source order.
     edges: Vec<LexListEdge>,
 }
@@ -105,6 +113,55 @@ fn lex_list_measure_param(fd: &FnDef, ctx: &CodegenContext) -> Option<(usize, St
         }
     }
     found
+}
+
+/// Select exactly one List measure per SCC member with the shared call-edge
+/// analysis. This is the multi-List counterpart of
+/// [`lex_list_measure_param`]: it can discard a growing List accumulator and
+/// retain the list passed verbatim, as a cons-tail, or through a known
+/// non-growing builtin. Int parameters are never candidates here.
+fn cycle_selected_list_measure_params(
+    fns: &[&FnDef],
+    ctx: &CodegenContext,
+) -> Option<Vec<(usize, String, usize)>> {
+    use crate::codegen::recursion::cycle_measure::{Candidate, MeasureKind};
+
+    let candidates: Vec<Vec<Candidate>> = fns
+        .iter()
+        .map(|fd| {
+            let rfd = crate::codegen::common::fn_id_for_decl(ctx, fd)
+                .and_then(|id| ctx.resolved_program.fn_by_id(id))?;
+            let mut member = Vec::new();
+            for (index, (_, ty)) in rfd.params.iter().enumerate() {
+                match ty {
+                    crate::types::Type::List(_) => member.push(Candidate {
+                        index,
+                        kind: MeasureKind::Structural,
+                    }),
+                    crate::types::Type::Vector(_) | crate::types::Type::Str => return None,
+                    _ => {}
+                }
+            }
+            Some(member)
+        })
+        .collect::<Option<_>>()?;
+    let measures =
+        crate::codegen::recursion::cycle_measure::measure_for_cycle(fns, &candidates, false)
+            .ok()?;
+
+    fns.iter()
+        .zip(measures)
+        .map(|(fd, measure)| {
+            let [candidate] = measure.params.as_slice() else {
+                return None;
+            };
+            if candidate.kind != MeasureKind::Structural {
+                return None;
+            }
+            let name = fd.params.get(candidate.index)?.0.as_str();
+            Some((candidate.index, aver_name_to_lean(name), measure.rank))
+        })
+        .collect()
 }
 
 /// True iff `g` is a non-growing structural list filter: a recursive fn
@@ -250,13 +307,27 @@ fn classify_lex_list_arg(
     // is a non-growing list filter defined in the program.
     if let Expr::FnCall(callee, args) = &arg.node {
         let dotted = expr_to_dotted_name(callee)?;
-        let bare = dotted.rsplit('.').next().unwrap_or(&dotted).to_string();
         let first = args.first()?;
         let s = local_name_of(first)?;
         let s_ok = s == caller_list_param || tail_binders.contains(s);
         if !s_ok {
             return None;
         }
+        // Aver uses list-first order (`List.drop(xs, n)`), while the Lean
+        // lowering reverses these to `List.drop n xs`. The classifier stays
+        // on the Aver AST and records only the core length theorem the emitter
+        // must cite for the lowered call.
+        if args.len() == 2 {
+            let length_lemma = match dotted.as_str() {
+                "List.drop" => Some("List.length_drop"),
+                "List.take" => Some("List.length_take"),
+                _ => None,
+            };
+            if let Some(length_lemma) = length_lemma {
+                return Some(LexListArg::ListBuiltin { length_lemma });
+            }
+        }
+        let bare = dotted.rsplit('.').next().unwrap_or(&dotted).to_string();
         let helper_fd = find_user_fn_by_name(ctx, &bare)?;
         // Kernel-provable non-growing filter shape required.
         lex_list_filter_helper(helper_fd, ctx)?;
@@ -285,6 +356,66 @@ fn find_user_fn_by_name<'a>(ctx: &'a CodegenContext, name: &str) -> Option<&'a F
         .find(|fd| fd.name == name)
 }
 
+/// Recognise the core-builtin non-growing shape with the shared cycle
+/// measure. Unlike the older helper-filter path, this accepts multiple List
+/// parameters and lets the call graph discard an accumulator that grows.
+/// It is gated on an actual `List.drop`/`List.take` edge so existing
+/// structural and user-filter SCCs retain their byte-identical plans.
+fn recognize_core_list_builtin_wf_scc<'a>(
+    fns: &'a [&'a FnDef],
+    ctx: &CodegenContext,
+) -> Option<Vec<LexListMemberPlan<'a>>> {
+    if fns.len() < 2 || fns.iter().any(|fd| !is_pure_fn(fd)) {
+        return None;
+    }
+    let selected = cycle_selected_list_measure_params(fns, ctx)?;
+    let names: HashSet<String> = fns.iter().map(|fd| fd.name.clone()).collect();
+    let mut saw_builtin = false;
+    let mut plans = Vec::new();
+
+    for (member, fd) in fns.iter().enumerate() {
+        let (_, list_param, rank) = &selected[member];
+        let tail_binders =
+            crate::codegen::recursion::detect::collect_list_tail_binders(fd, list_param);
+        let mut edges = Vec::new();
+        for (callee_raw, args) in
+            crate::codegen::recursion::detect::collect_calls_from_body(fd.body.as_ref())
+        {
+            let Some(callee) =
+                crate::codegen::recursion::detect::canonical_callee_name(&callee_raw, &names)
+            else {
+                continue;
+            };
+            let callee_member = fns.iter().position(|peer| peer.name == callee)?;
+            let callee_list_idx = selected[callee_member].0;
+            let arg = args.get(callee_list_idx)?;
+            let classified = classify_lex_list_arg(arg, list_param, &tail_binders, ctx)?;
+            match &classified {
+                LexListArg::ListBuiltin { .. } => saw_builtin = true,
+                LexListArg::Subterm { .. } => {}
+                LexListArg::Filtered { .. } => return None,
+            }
+            edges.push(LexListEdge {
+                callee,
+                arg: classified,
+            });
+        }
+        if edges.is_empty() {
+            return None;
+        }
+        plans.push(LexListMemberPlan {
+            fd,
+            list_param_lean: list_param.clone(),
+            offset: 0,
+            rank: *rank,
+            direct_length_decrease: true,
+            edges,
+        });
+    }
+
+    saw_builtin.then_some(plans)
+}
+
 /// Recognise a mutual SCC whose every recursive call decreases either by a
 /// structural subterm (cons-tail) or through a non-growing list filter,
 /// and assign each member a lex measure `(list_param.length + offset, rank)`
@@ -294,6 +425,9 @@ fn recognize_lex_list_wf_scc<'a>(
     fns: &'a [&'a FnDef],
     ctx: &CodegenContext,
 ) -> Option<(Vec<LexListMemberPlan<'a>>, Vec<LengthLemma>)> {
+    if let Some(plans) = recognize_core_list_builtin_wf_scc(fns, ctx) {
+        return Some((plans, Vec::new()));
+    }
     let names: HashSet<String> = fns.iter().map(|fd| fd.name.clone()).collect();
     if fns.len() < 2 {
         // Single-fn "mutual" SCCs are emitted by the self-recursive path,
@@ -392,7 +526,10 @@ fn recognize_lex_list_wf_scc<'a>(
     for raw in &raws {
         let off_f = offset[&raw.fd.name];
         for edge in &raw.edges {
-            if matches!(edge.arg, LexListArg::Filtered { .. }) {
+            if matches!(
+                &edge.arg,
+                LexListArg::Filtered { .. } | LexListArg::ListBuiltin { .. }
+            ) {
                 let off_c = offset[&edge.callee];
                 if off_c >= off_f {
                     return None;
@@ -415,6 +552,7 @@ fn recognize_lex_list_wf_scc<'a>(
             list_param_lean,
             offset: off,
             rank,
+            direct_length_decrease: false,
             edges: raw.edges,
         });
     }
@@ -563,6 +701,12 @@ pub(super) fn emit_native_mutual_lex_list_wf_group(
         lines.push("  decreasing_by".to_string());
         for edge in &plan.edges {
             match &edge.arg {
+                LexListArg::Subterm { strict } if plan.direct_length_decrease && *strict => {
+                    // The zero-offset core-builtin plan keeps a cons-tail
+                    // strict in the first component; `simp_wf` exposes the
+                    // length arithmetic for omega.
+                    lines.push("    · simp_wf; omega".to_string());
+                }
                 LexListArg::Subterm { .. } => {
                     // Equal first component, decrease lives in the rank — a
                     // `Prod.Lex` goal omega can't discharge directly.
@@ -576,6 +720,12 @@ pub(super) fn emit_native_mutual_lex_list_wf_group(
                         "    · simp_wf; have := {} {}; omega",
                         lemma_name, lemma_args
                     ));
+                }
+                LexListArg::ListBuiltin { length_lemma } => {
+                    // The core theorem rewrites the computed length to a
+                    // non-growing arithmetic expression; omega combines it
+                    // with the cycle rank when equality is possible.
+                    lines.push(format!("    · simp only [{length_lemma}]; omega"));
                 }
             }
         }

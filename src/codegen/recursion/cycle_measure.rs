@@ -396,6 +396,40 @@ fn relation(arg: &Spanned<Expr>, caller: &FnDef, scope: &Scope) -> Relation {
             None => Relation::Unknown,
         };
     }
+    // `List.drop(s, n)` and `List.take(s, n)` never grow `s`. When `s` is
+    // the caller's measured list or a cons-tail tracked from it, classify the
+    // result as the same non-strict source. The operation is computed rather
+    // than a structural subterm, so its path is deliberately empty: equality
+    // is possible (`drop 0`, or `take n` with `length s <= n`) and the SCC's
+    // rank must order that edge exactly like a verbatim list pass.
+    if let Expr::FnCall(callee, args) = &arg.node
+        && args.len() == 2
+        && matches!(
+            expr_to_dotted_name(callee).as_deref(),
+            Some("List.drop" | "List.take")
+        )
+        && let Some(source) = local_name_of(&args[0])
+        && let Some(origin) = scope.tracked.get(source)
+    {
+        let is_list_param_or_tail =
+            caller
+                .params
+                .get(origin.param)
+                .is_some_and(|(param_name, type_name)| {
+                    let is_list = type_name == "List" || type_name.starts_with("List<");
+                    let is_tail = crate::codegen::recursion::detect::collect_list_tail_binders(
+                        caller, param_name,
+                    )
+                    .contains(source);
+                    is_list && (origin.path.is_empty() || is_tail)
+                });
+        if is_list_param_or_tail {
+            return Relation::Part {
+                param: origin.param,
+                path: Vec::new(),
+            };
+        }
+    }
     // `Map.entries(m)` lowers to `m` itself in the proof model (the map is
     // list-backed), so it carries exactly the size of its argument.
     if let Expr::FnCall(callee, args) = &arg.node

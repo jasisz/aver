@@ -1,0 +1,44 @@
+module SccListDrop
+    intent =
+        "Mutual list recursion may pass a measured tail through List.drop or List.take without growing it."
+    exposes [scan, scanTake]
+    depends []
+    effects []
+
+fn scan(bytes: List<Int>, acc: Int) -> Int
+    ? "Read a head and hand the strict cons tail to the next member."
+    match bytes
+        [] -> acc
+        [code, ..rest] -> head(code, rest, acc)
+
+fn head(code: Int, rest: List<Int>, acc: Int) -> Int
+    ? "Pass the measured list verbatim while choosing a skip count."
+    skip(code, 1, rest, acc)
+
+fn skip(code: Int, n: Int, rest: List<Int>, acc: Int) -> Int
+    ? "Return through List.drop while changing only unmeasured Int arguments."
+    scan(List.drop(rest, n), acc + code)
+
+fn scanTake(bytes: List<Int>, acc: Int) -> Int
+    ? "Read a head for the List.take variant and hand on the strict cons tail."
+    match bytes
+        [] -> acc
+        [code, ..rest] -> headTake(code, rest, acc)
+
+fn headTake(code: Int, rest: List<Int>, acc: Int) -> Int
+    ? "Pass the measured list verbatim to the List.take edge."
+    skipTake(code, 1, rest, acc)
+
+fn skipTake(code: Int, n: Int, rest: List<Int>, acc: Int) -> Int
+    ? "Return through List.take while changing only unmeasured Int arguments."
+    scanTake(List.take(rest, n), acc + code)
+
+verify scan
+    scan([], 7) => 7
+    scan([1], 0) => 1
+    scan([1, 2, 3], 0) => 4
+
+verify scanTake
+    scanTake([], 7) => 7
+    scanTake([1], 0) => 1
+    scanTake([1, 2, 3], 0) => 3
