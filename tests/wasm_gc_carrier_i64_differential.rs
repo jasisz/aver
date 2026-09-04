@@ -1521,7 +1521,7 @@ fn compile_wasm_bytes_optimized(prefix: &str, source: &str, no_carrier: bool) ->
         cmd.env("AVER_NO_CARRIER_I64", "1");
     }
     let out = cmd.output().expect("aver compile executes");
-    let wasm = out_dir.join("main.wasm");
+    let wasm = out_dir.join("main.optimized.wasm");
     let bytes = std::fs::read(&wasm).ok();
     cleanup(&path);
     if out.status.success() { bytes } else { None }

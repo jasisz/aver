@@ -18,12 +18,29 @@ built.
 ```text
 out/
   aver-wasmtime-host   native launcher, Wasmtime, and linked providers
-  app.wasm             exact wasm-gc artifact
-  manifest.json        artifact, ABI, capability, provider, and policy facts
+  app.wasm             canonical wasm-gc artifact; certificate subject
+  app.optimized.wasm   optional Binaryen result; deployment Wasm
+  app.cwasm            AOT image of the deployment Wasm
+  manifest.json        artifacts, ABI, capability, provider, and policy facts
 ```
 
 Program arguments passed after `aver-wasmtime-host` become the program's
-`Args` values. The host always invokes the exported `main` function.
+`Args` values. The host always invokes the exported `main` function. It loads
+`app.cwasm` directly, so the destination does not run Cranelift on first start.
+Without `--optimize`, the AOT image is derived directly from `app.wasm` and the
+middle file is absent.
+
+With `--certify --optimize`, all three stages remain visible on purpose:
+
+```text
+app.wasm --Binaryen (unproved)--> app.optimized.wasm --Cranelift (unproved)--> app.cwasm
+    |
+    +-- cert/ proves this exact artifact
+```
+
+The certificate makes no claim about either transformation. This keeps the
+proof boundary honest while the manifest records the exact hashes and selected
+optimization mode of the deployment chain.
 
 ## Providers and the build cache
 
@@ -44,21 +61,35 @@ another.
 The manifest is data, not an instruction to trust. Before Wasmtime
 instantiates the module, the host:
 
-1. hashes the actual `.wasm` bytes and compares them with the manifest;
-2. reads the module import section and compares every module, name, parameter,
-   and result type;
-3. reconstructs bundled custom capability contracts and recomputes their
+1. hashes the canonical `.wasm`, optional `.optimized.wasm`, and `.cwasm`
+   bytes and compares every present stage with the manifest;
+2. requires a Wasmtime precompiled-module envelope and the exact engine
+   compatibility fingerprint recorded by the host that built the pack;
+3. deserializes the checked image, then compares every import module, name,
+   parameter, and result type with the manifest;
+4. reconstructs bundled custom capability contracts and recomputes their
    contract and replay-model hashes;
-4. compares the required operations and the identity/fingerprint of every
+5. compares the required operations and the identity/fingerprint of every
    provider with the bindings compiled into the executable; and
-5. parses and enforces the runtime effect policy carried from `aver.toml`.
+6. parses and enforces the runtime effect policy carried from `aver.toml`.
 
 Any mismatch stops before instantiation with a `wasmtime-bundle-*` diagnostic.
-`--optimize` is applied before these facts are recorded, so the manifest binds
-the delivered bytes. `--certify` likewise certifies the delivered module and
-leaves its `cert/` directory beside the three runtime files; certificate
-verification remains the separate `aver cert check` / `aver-cert check`
-operation and is not silently replaced by the host's deployment checks.
+`--optimize` writes a sibling instead of replacing the canonical artifact, and
+the AOT image is derived from the optimized sibling when present. `--certify`
+certifies only the canonical `.wasm` and leaves its `cert/`
+directory beside the bundle artifacts; certificate verification remains the
+separate `aver cert check` / `aver-cert check` operation and is not silently
+replaced by the host's deployment checks. The certificate binds the Wasm, not
+Cranelift's native output; Wasmtime remains in the trusted execution path just
+as it is when compiling the module at startup.
+
+The `.cwasm` file contains native executable code and Wasmtime intentionally
+deserializes that format with fewer checks than portable Wasm. The host reaches
+that operation only after the digest, envelope, and engine fingerprint checks.
+Those checks detect partial or accidental replacement; they are not a bundle
+signature. Deployment integrity or code signing must cover the host, manifest,
+canonical/runtime Wasm files, and `.cwasm` as one trust unit. Replacing the
+complete unit is equivalent to replacing any other native application.
 
 ## Current boundary
 
@@ -67,13 +98,13 @@ The first pack surface is deliberately narrow:
 - target: `wasm-gc` on Wasmtime GC;
 - entry: `main` (not an incoming HTTP `--handler`);
 - execution mode: live effects; a toolchain-free record/replay control surface
-  is not part of schema 1;
+  is not part of schema 2;
 - platform: the build machine's OS and architecture;
 - standard capabilities: compiler-shipped wasm-gc adapters; custom Rust
   replacement of a standard adapter is rejected explicitly.
 
-A future `--target wasip2 --pack wasmtime` can carry the Component Model and
-WASI implementation in a separate, larger host. Cross-platform standard-host
-downloads, cross-compiling custom providers, and serialized Wasmtime AOT
-images are also independent follow-ups rather than hidden assumptions of this
-format.
+The `wasip2` target stays a host-neutral Component Model artifact and does not
+grow an Aver-owned host pack. Cross-platform standard-host downloads and
+cross-compiling arbitrary custom providers are separate deployment concerns;
+the supported path is to build the pack on its destination platform or in a
+matching CI runner.

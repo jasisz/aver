@@ -33,9 +33,13 @@ aver compile app.av --target wasm-gc --certify -o out/
 aver compile app.av --target wasip2 --certify -o out/
 ```
 
-`--certify` cannot be combined with `--optimize`, because the certificate binds
-the emitter's exact bytes. Reusing an output directory replaces its `cert/`
-package, so use one output directory per artifact.
+On `wasm-gc`, `--certify --optimize` preserves the proof boundary as separate
+files: the certificate binds the emitter's exact `<name>.wasm`, while Binaryen
+writes `<name>.optimized.wasm` outside the proof. A Wasmtime pack may then AOT
+compile that derivative to `<name>.cwasm`; neither transformation receives a
+certificate claim. `wasip2` still rejects `--optimize` because Binaryen does not
+yet accept this component/wasm-gc combination. Reusing an output directory
+replaces its `cert/` package, so use one output directory per artifact.
 
 Run the fast preflight or strict verification directly with the standalone
 checker:

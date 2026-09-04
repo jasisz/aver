@@ -495,8 +495,9 @@ pub(super) enum Commands {
         /// compile-rejected in 0.18 unless ready.
         #[arg(long, value_enum, default_value = "wasi:cli/command")]
         world: Wasip2World,
-        /// Post-process generated WASM through a fixed-point Binaryen
-        /// size/speed pipeline (`wasm-opt --converge --strip-*`).
+        /// Derive `<name>.optimized.wasm` from the canonical `<name>.wasm`
+        /// through a fixed-point Binaryen size/speed pipeline
+        /// (`wasm-opt --converge --strip-*`).
         /// Pass `size` for aggressive size reduction (`-Oz`) or `speed`
         /// for runtime tuning (`-O3`).
         #[arg(long, value_enum)]
@@ -505,9 +506,10 @@ pub(super) enum Commands {
         /// `aver cert verify` supplies its own Lean wall and the actual artifact
         /// bytes, then checks the package with Lean 4.32. Unsupported exports
         /// are listed with a reason, never credited with a weaker theorem.
-        /// Requires `--target wasm-gc` or `--target wasip2`; incompatible with
-        /// `--optimize` because the certificate binds the exact delivered bytes.
-        #[arg(long, default_value_t = false, conflicts_with = "optimize")]
+        /// Requires `--target wasm-gc` or `--target wasip2`. On wasm-gc it may
+        /// accompany `--optimize`: the certificate binds the canonical `.wasm`,
+        /// while the explicitly separate `.optimized.wasm` stays outside the proof.
+        #[arg(long, default_value_t = false)]
         certify: bool,
         /// Internal representation-differential hook used by wasm-gc backend tests.
         #[arg(long = "test-boxed-sequences", hide = true)]
@@ -1057,6 +1059,33 @@ mod tests {
             } => {
                 assert_eq!(target, CompileTarget::WasmGc);
                 assert_eq!(optimize, Some(WasmOptMode::Oz));
+            }
+            _ => panic!("expected compile command"),
+        }
+    }
+
+    #[test]
+    fn wasm_gc_compile_accepts_certify_with_a_separate_optimized_artifact() {
+        let cli = Cli::parse_from([
+            "aver",
+            "compile",
+            "examples/core/hello.av",
+            "--target",
+            "wasm-gc",
+            "--certify",
+            "--optimize",
+            "speed",
+        ]);
+        match cli.command {
+            Commands::Compile {
+                target,
+                optimize,
+                certify,
+                ..
+            } => {
+                assert_eq!(target, CompileTarget::WasmGc);
+                assert_eq!(optimize, Some(WasmOptMode::O3));
+                assert!(certify);
             }
             _ => panic!("expected compile command"),
         }

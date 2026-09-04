@@ -189,7 +189,7 @@ def build_wasm(aver_bin: str) -> None:
 def collect_sizes() -> dict[str, str]:
     sizes: dict[str, str] = {}
     for game in GAMES:
-        wasm_path = PLAYGROUND_ROOT / f"{game.slug}.wasm"
+        wasm_path = PLAYGROUND_ROOT / f"{game.slug}.optimized.wasm"
         sizes[game.slug] = format_kib(wasm_path.stat().st_size)
     return sizes
 
@@ -280,7 +280,7 @@ def update_website_copy(sizes: dict[str, str]) -> None:
 def print_report(sizes: dict[str, str]) -> None:
     print("Playground WASM sizes:")
     for game in GAMES:
-        wasm_path = PLAYGROUND_ROOT / f"{game.slug}.wasm"
+        wasm_path = PLAYGROUND_ROOT / f"{game.slug}.optimized.wasm"
         print(f"  {game.slug:<8} {wasm_path.stat().st_size:>6} B  {sizes[game.slug]}")
 
 
@@ -314,7 +314,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--skip-build",
         action="store_true",
-        help="Do not rebuild playground game .wasm artifacts",
+        help="Do not rebuild canonical and optimized playground game artifacts",
     )
     parser.add_argument(
         "--skip-html",
