@@ -39,6 +39,8 @@ mod floor_window;
 mod lean_kernel;
 #[path = "proof_spec/lemmas.rs"]
 mod lemmas;
+#[path = "proof_spec/list_prefix_guard.rs"]
+mod list_prefix_guard;
 #[path = "proof_spec/literalization.rs"]
 mod literalization;
 #[path = "proof_spec/opaque_closure.rs"]

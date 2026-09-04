@@ -11590,18 +11590,48 @@ fn run_lean_speculative(
     }
 
     let (probe_ok, probe_out) = build(output_dir);
+    if let Ok(path) = std::env::var("AVER_SPECULATIVE_LOG") {
+        let _ = std::fs::write(&path, &probe_out);
+    }
+    let mut failed = speculative::parse_failures(&probe_out);
     if !probe_ok {
         // A `sorry` is only a warning, so the probe build succeeds even when
-        // every candidate fails to close — a HARD failure means a speculative
-        // statement did not elaborate, and the per-law verdict can't be trusted.
-        // Commit an empty closed-set so every candidate falls back to bounded
-        // (NOT `clear()`, which would re-expose the default-admit baseline and
-        // stamp a two-list non-closer `universal` over a `sorry`).
-        speculative::set_committed(std::collections::HashSet::new());
-        cmd_proof_lean(file, output_dir, ctx, verify_mode);
-        return;
+        // every candidate fails to close; a FAILED probe build means a hard
+        // error somewhere in it — a heartbeat timeout in one arm, say, which
+        // `first` cannot catch. Lean aborts only THAT theorem (its floor never
+        // runs, so it counts as open) and still elaborates every other one,
+        // whose floors stay a reliable oracle. Map the errors to their
+        // candidates and go on; the committed build below re-verifies the
+        // result. Only an error outside every candidate's theorems (a def
+        // failed) leaves nothing to trust — then every candidate keeps its
+        // bounded statement, and the run says so: a silent fallback hides the
+        // one arm that needs fixing.
+        match speculative::parse_error_theorems(&probe_out, Path::new(output_dir), &probed) {
+            Some(errored) if !errored.is_empty() => {
+                eprintln!(
+                    "{}",
+                    format!(
+                        "speculative-universal: the probe hit a hard error in {} candidate(s) — \
+                         they keep their bounded statements (AVER_SPECULATIVE_LOG=<file> keeps the probe log)",
+                        errored.len()
+                    )
+                    .yellow()
+                );
+                failed.extend(errored);
+            }
+            _ => {
+                speculative::set_committed(std::collections::HashSet::new());
+                cmd_proof_lean(file, output_dir, ctx, verify_mode);
+                eprintln!(
+                    "{}",
+                    "speculative-universal: probe build failed — every candidate kept its \
+                     bounded statement (AVER_SPECULATIVE_LOG=<file> keeps the probe log)"
+                        .yellow()
+                );
+                return;
+            }
+        }
     }
-    let failed = speculative::parse_failures(&probe_out);
     let closed: std::collections::HashSet<String> = probed.difference(&failed).cloned().collect();
 
     // 2) COMMIT re-emit — the laws that closed go universal, the rest fall back.
