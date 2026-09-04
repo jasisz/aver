@@ -1384,7 +1384,6 @@ pub(in crate::codegen::lean) fn emit_pool_composition_generic_law(
         .into_iter()
         .filter(|d| !abstract_fns.contains(bare_basename(d)))
         .collect();
-    let defs_csv = defs.join(", ");
     // `grind` gets the laws-as-lemmas pool names (not the cone defs): the `simp`
     // already unfolds the non-recursive cone, and feeding grind the recursive defs
     // risks it re-unfolding into a loop. Two pools, both fed to the same `grind`:
@@ -1495,11 +1494,18 @@ pub(in crate::codegen::lean) fn emit_pool_composition_generic_law(
     // cross-multiply facts (it rejects a bare `decide (… == …)` wrapper). Added
     // ONLY on the signed path — the integer-only pow2 laws close without it, so
     // their emission stays byte-identical.
-    let bridge_extra = if pow2signed.is_some() {
-        ", beq_iff_eq"
-    } else {
-        ""
-    };
+    // The simp set as a list, never a `{defs}, …` template: a cone whose every
+    // def is abstract (all recursive, or all pool subjects) leaves `defs`
+    // EMPTY, and `[, Bool.and_eq_true]` is a syntax error that fails the whole
+    // probe build — which silently costs every other candidate in the program
+    // its universal statement.
+    let mut simp_items: Vec<String> = defs.clone();
+    simp_items.push("Bool.and_eq_true".to_string());
+    simp_items.push("decide_eq_true_eq".to_string());
+    if pow2signed.is_some() {
+        simp_items.push("beq_iff_eq".to_string());
+    }
+    let simp_list = simp_items.join(", ");
     let close = if pow2_normalizer.is_some() {
         // A multiplication-value law (`fpMul`) normalizes its significand with
         // an `if`-branch (shift 0 vs 1); `repeat' split` discharges that branch
@@ -1514,12 +1520,10 @@ pub(in crate::codegen::lean) fn emit_pool_composition_generic_law(
         // For a single-match law `repeat' split` peels exactly the one match, so
         // the fpMul / fpScale / product-exponent laws are unaffected.
         format!(
-            "  | (simp only [{defs_csv}, Bool.and_eq_true, decide_eq_true_eq{bridge_extra}] {simp_at} <;> (first | ((repeat' split) <;> {grind_call}) | {grind_call}))"
+            "  | (simp only [{simp_list}] {simp_at} <;> (first | ((repeat' split) <;> {grind_call}) | {grind_call}))"
         )
     } else {
-        format!(
-            "  | (simp only [{defs_csv}, Bool.and_eq_true, decide_eq_true_eq{bridge_extra}] {simp_at} <;> {grind_call})"
-        )
+        format!("  | (simp only [{simp_list}] {simp_at} <;> {grind_call})")
     };
     let floor = if super::super::super::tactic_ir::speculative::probing() {
         let id = format!("{}.{}", vb.fn_name, law.name);

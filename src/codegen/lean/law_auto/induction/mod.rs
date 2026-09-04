@@ -2439,6 +2439,25 @@ pub(in crate::codegen::lean) fn emit_conditional_inductive_generic_law(
         // Cheap subject-unfold + split (closes the wrapper helper laws).
         subject_split_rung,
     ]);
+    // A `when List.len(target) >= k` premise (literal `k`, see
+    // `when_length_floor`) guarantees `k - 1` more conses under `hd`: expose
+    // them by one `rcases` so fixed-position reads (`itemAt(items, 2)`) and
+    // `List.take` evaluate, let `simp_all` kill the short cases through
+    // `h_when` and close the long one, `omega` for the arithmetic leftover.
+    if let Some(depth) = when_length_floor(law, &law.givens[target_idx].name)
+        && depth >= 2
+        && let Some(at) = body
+            .iter()
+            .rposition(|l| l.starts_with("    | (cases hd <;> "))
+    {
+        let pattern = cons_prefix_pattern(depth - 1);
+        body.insert(
+            at + 1,
+            format!(
+                "    | (rcases tl with {pattern} <;> simp_all [{defs_pool}, h_when, {normalizers}] <;> omega)"
+            ),
+        );
+    }
     // Comparison-premise rung (`prop_86`): bridges + `omega` — only when the law
     // carries a Peano comparison.
     if let Some(rung) = bridge_rung {
@@ -2566,6 +2585,48 @@ fn find_list_induction_target(law: &VerifyLaw) -> Option<usize> {
     law.givens
         .iter()
         .position(|given| given.type_name.trim().starts_with("List<"))
+}
+
+/// The number of leading conses a `when` premise guarantees on the list given
+/// `list_name`: `List.len(xs) >= k`, `List.len(xs) > k`, `k <= List.len(xs)` or
+/// `k < List.len(xs)` with a literal `k`, capped at 8. A stack shuffle read
+/// through fixed positions (`itemAt(items, 1)`) is fully evaluated once that
+/// many conses are exposed, so the cons arm can split the tail that deep and
+/// let `simp_all` finish — no induction hypothesis is needed for such a law.
+fn when_length_floor(law: &VerifyLaw, list_name: &str) -> Option<usize> {
+    use crate::ast::{BinOp, Expr, Literal};
+    let when = law.when.as_ref()?;
+    let Expr::BinOp(op, l, r) = &when.node else {
+        return None;
+    };
+    let len_of = |e: &crate::ast::Spanned<Expr>| -> bool {
+        super::shared::call_name_args(e).is_some_and(|(name, args)| {
+            name == "List.len" && args.len() == 1 && super::shared::is_ident(&args[0], list_name)
+        })
+    };
+    let lit = |e: &crate::ast::Spanned<Expr>| -> Option<i64> {
+        match &e.node {
+            Expr::Literal(Literal::Int(k)) => Some(*k),
+            _ => None,
+        }
+    };
+    let (k, strict) = match op {
+        BinOp::Gte if len_of(l) => (lit(r)?, false),
+        BinOp::Gt if len_of(l) => (lit(r)?, true),
+        BinOp::Lte if len_of(r) => (lit(l)?, false),
+        BinOp::Lt if len_of(r) => (lit(l)?, true),
+        _ => return None,
+    };
+    let depth = usize::try_from(k).ok()? + usize::from(strict);
+    (1..=8).contains(&depth).then_some(depth)
+}
+
+/// `rcases` pattern exposing `depth` more conses of a tail: depth 1 is
+/// `_ | ⟨pfx1, pfxrest⟩`, depth 2 is `_ | ⟨pfx1, _ | ⟨pfx2, pfxrest⟩⟩`, …
+fn cons_prefix_pattern(depth: usize) -> String {
+    (1..=depth).rev().fold("pfxrest".to_string(), |inner, i| {
+        format!("_ | ⟨pfx{i}, {inner}⟩")
+    })
 }
 
 /// Whether the law applies some fn that DECREMENTS a CO-GIVEN (a given other than

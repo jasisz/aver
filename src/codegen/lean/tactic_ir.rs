@@ -557,6 +557,76 @@ pub mod speculative {
     /// branch's trace, so the marker surfaces IFF the portfolio reached its
     /// sorry floor — a direct "this law did not close", no warning-location
     /// mapping or separate `#print axioms` run required.
+    /// The candidates whose probe theorem carries a HARD error — one `first`
+    /// cannot catch (a heartbeat timeout in one arm, a malformed arm): Lean
+    /// aborts that theorem before its trace floor runs, so it must count as
+    /// open, while every other theorem in the file still elaborates and its
+    /// floor stays a reliable oracle. Maps each `error: <file>.lean:LINE:COL`
+    /// of the build output to the last `theorem` declared at or above LINE in
+    /// that emitted file and then to the probed id whose `<fn>_law_<law>` name
+    /// that theorem carries (its `_sample_N` / `_checked_domain` companions
+    /// map to the same law). `None` when some error lies outside every probed
+    /// candidate's theorems — a def failed, say — after which no floor can be
+    /// trusted and the caller keeps every candidate bounded.
+    pub fn parse_error_theorems(
+        build_output: &str,
+        output_dir: &std::path::Path,
+        probed: &HashSet<String>,
+    ) -> Option<HashSet<String>> {
+        let mut by_prefix: Vec<(String, String)> = probed
+            .iter()
+            .filter_map(|id| {
+                let (f, l) = id.rsplit_once('.')?;
+                Some((format!("{}_law_{}", f.replace('.', "_"), l), id.clone()))
+            })
+            .collect();
+        // Longest prefix first so `f_law_x` never claims `f_law_xy`'s theorem.
+        by_prefix.sort_by_key(|(prefix, _)| std::cmp::Reverse(prefix.len()));
+        let mut files: std::collections::HashMap<String, Vec<(usize, String)>> =
+            std::collections::HashMap::new();
+        let mut errored = HashSet::new();
+        for line in build_output.lines() {
+            let Some(rest) = line.strip_prefix("error: ") else {
+                continue;
+            };
+            let Some(dot) = rest.find(".lean:") else {
+                continue;
+            };
+            let file = &rest[..dot + 5];
+            let mut nums = rest[dot + 6..].split(':');
+            let Some(row) = nums.next().and_then(|n| n.trim().parse::<usize>().ok()) else {
+                continue;
+            };
+            let theorems = files.entry(file.to_string()).or_insert_with(|| {
+                std::fs::read_to_string(output_dir.join(file))
+                    .map(|src| {
+                        src.lines()
+                            .enumerate()
+                            .filter_map(|(i, l)| {
+                                let name = l.strip_prefix("theorem ")?;
+                                let name: String = name
+                                    .chars()
+                                    .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '.')
+                                    .collect();
+                                Some((i + 1, name))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            });
+            let (_, name) = theorems.iter().rev().find(|(at, _)| *at <= row)?;
+            let bare = name.rsplit('.').next().unwrap_or(name);
+            let (_, id) = by_prefix.iter().find(|(prefix, _)| {
+                bare == prefix
+                    || bare
+                        .strip_prefix(prefix.as_str())
+                        .is_some_and(|tail| tail.starts_with('_'))
+            })?;
+            errored.insert(id.clone());
+        }
+        Some(errored)
+    }
+
     pub fn parse_failures(build_output: &str) -> HashSet<String> {
         const MARKER: &str = "AVERSPEC_SORRY:";
         let mut failed = HashSet::new();
@@ -580,6 +650,51 @@ pub mod speculative {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn probe_hard_errors_map_to_their_candidate_only() {
+        let dir = std::env::temp_dir().join(format!("aver-probe-errors-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("Domain")).unwrap();
+        std::fs::write(
+            dir.join("Domain/Stack.lean"),
+            "def f := 1\ntheorem shuffle_law_swapTwice : True := by\n  first | (simp) | sorry\n\
+             set_option synthInstance.maxSize 4096 in\ntheorem shuffle_law_swapTwice_checked_domain : True := by trivial\n\
+             theorem shuffle_law_swapTwiceMore : True := by\n  trivial\n",
+        )
+        .unwrap();
+        let probed: std::collections::HashSet<String> = [
+            "shuffle.swapTwice".to_string(),
+            "shuffle.swapTwiceMore".to_string(),
+        ]
+        .into_iter()
+        .collect();
+        // A hard error inside the first theorem's body maps to its own law.
+        let out = "error: Domain/Stack.lean:3:10: Tactic `simp` failed with a nested error\n";
+        let got = speculative::parse_error_theorems(out, &dir, &probed).unwrap();
+        assert_eq!(
+            got.into_iter().collect::<Vec<_>>(),
+            vec!["shuffle.swapTwice".to_string()]
+        );
+        // The companion `_checked_domain` theorem maps to the same law, and the
+        // longer-named sibling is never claimed by the shorter prefix.
+        let out = "error: Domain/Stack.lean:5:80: something\nerror: Domain/Stack.lean:7:3: other\n";
+        let mut got: Vec<String> = speculative::parse_error_theorems(out, &dir, &probed)
+            .unwrap()
+            .into_iter()
+            .collect();
+        got.sort();
+        assert_eq!(
+            got,
+            vec![
+                "shuffle.swapTwice".to_string(),
+                "shuffle.swapTwiceMore".to_string()
+            ]
+        );
+        // An error above every theorem (the def) means nothing can be trusted.
+        let out = "error: Domain/Stack.lean:1:4: bad def\n";
+        assert!(speculative::parse_error_theorems(out, &dir, &probed).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     fn leaf(s: &str) -> Tactic {
         Tactic::Leaf(s.to_string())
