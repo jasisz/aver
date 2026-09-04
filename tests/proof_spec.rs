@@ -7,6 +7,8 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[path = "proof_spec/bare_name_collision.rs"]
+mod bare_name_collision;
 #[path = "proof_spec/bool_eq_omega.rs"]
 mod bool_eq_omega;
 #[path = "proof_spec/bool_pred_induction.rs"]

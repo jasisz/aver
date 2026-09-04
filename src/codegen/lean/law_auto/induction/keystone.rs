@@ -24,24 +24,10 @@ use crate::codegen::CodegenContext;
 /// standalone export and the dependency export: the entry case returns exactly
 /// the `ctx.items` verify blocks (byte-identical to the old `for item in
 /// &ctx.items` iteration), the dependency case finds the module's siblings.
-fn enclosing_verify_blocks<'a>(vb: &VerifyBlock, ctx: &'a CodegenContext) -> Vec<&'a VerifyBlock> {
-    use crate::ast::TopLevel;
-    for module in &ctx.modules {
-        if module
-            .verify_laws
-            .iter()
-            .any(|b| b.line == vb.line && b.fn_name == vb.fn_name)
-        {
-            return module.verify_laws.iter().collect();
-        }
-    }
-    ctx.items
-        .iter()
-        .filter_map(|it| match it {
-            TopLevel::Verify(b) => Some(b),
-            _ => None,
-        })
-        .collect()
+fn enclosing_verify_blocks<'a>(_vb: &VerifyBlock, ctx: &'a CodegenContext) -> Vec<&'a VerifyBlock> {
+    // The file the theorem is emitted into, by the active module scope — not
+    // a (line, fn) membership guess that two modules can both satisfy.
+    super::super::shared::same_file_verify_blocks(ctx)
 }
 
 /// Keystone — the NON-recursive analog of [`recognize_conditional_inductive_generic`].
@@ -1506,25 +1492,41 @@ pub(in crate::codegen::lean) fn emit_pool_composition_generic_law(
         simp_items.push("beq_iff_eq".to_string());
     }
     let simp_list = simp_items.join(", ");
-    let close = if pow2_normalizer.is_some() {
-        // A multiplication-value law (`fpMul`) normalizes its significand with
-        // an `if`-branch (shift 0 vs 1); `repeat' split` discharges that branch
-        // before `grind`, and the `first | (repeat' split <;> …) | …` covers both
-        // the branching and the flat (no-`if`) shapes uniformly — the bare `grind`
-        // arm is the path the scaling / product-exponent laws (no `if`) take.
-        // `repeat'` (not a single `split`) is load-bearing for the SIGNED pow2
-        // homomorphism: its goal carries THREE independent `pow2Signed` sign
-        // matches (for `m`, `n`, and `m+n`), and `grind` does not case-split the
-        // residual matches itself — every sign arm must be peeled before `grind`
-        // sees a product of `pow2` of nonneg atoms the normalizer can canonicalize.
-        // For a single-match law `repeat' split` peels exactly the one match, so
-        // the fpMul / fpScale / product-exponent laws are unaffected.
-        format!(
-            "  | (simp only [{simp_list}] {simp_at} <;> (first | ((repeat' split) <;> {grind_call}) | {grind_call}))"
-        )
-    } else {
-        format!("  | (simp only [{simp_list}] {simp_at} <;> {grind_call})")
+    // The composition arm with the pool cited, then the SAME arm with a bare
+    // `grind`: a pool is additive material, never a precondition. Since laws
+    // are declared in citation order, every law about a cone fn precedes its
+    // consumer and joins the pool — and a `grind` that closed the goal alone
+    // can fail once it is also handed an idempotence or monotonicity lemma to
+    // instantiate. The bare arm keeps whatever closed before the pool grew.
+    // The bare arm unfolds the WHOLE non-recursive cone: a pool subject is
+    // kept folded in the first arm so the pool's lemmas can fire on it, but
+    // that is exactly the unfolding a `grind` that never needed the pool
+    // relied on (`observe` under a settled-is-identity law).
+    let recursive_only: std::collections::HashSet<String> =
+        super::super::recursive_pure_fn_names(ctx)
+            .iter()
+            .map(|n| bare_basename(&aver_name_to_lean(n)).to_string())
+            .collect();
+    let mut simp_items_full: Vec<String> = law_simp_defs(ctx, vb, law)
+        .into_iter()
+        .filter(|d| !recursive_only.contains(bare_basename(d)))
+        .collect();
+    simp_items_full.push("Bool.and_eq_true".to_string());
+    simp_items_full.push("decide_eq_true_eq".to_string());
+    let simp_list_full = simp_items_full.join(", ");
+    let close_with = |simp_list: &str, grind: &str| -> String {
+        if pow2_normalizer.is_some() {
+            format!(
+                "  | (simp only [{simp_list}] {simp_at} <;> (first | ((repeat' split) <;> {grind}) | {grind}))"
+            )
+        } else {
+            format!("  | (simp only [{simp_list}] {simp_at} <;> {grind})")
+        }
     };
+    let mut closes = vec![close_with(&simp_list, &grind_call)];
+    if grind_call != "grind" || simp_list_full != simp_list {
+        closes.push(close_with(&simp_list_full, "grind"));
+    }
     let floor = if super::super::super::tactic_ir::speculative::probing() {
         let id = format!("{}.{}", vb.fn_name, law.name);
         super::super::super::tactic_ir::speculative::record_probed(&id);
@@ -1534,7 +1536,13 @@ pub(in crate::codegen::lean) fn emit_pool_composition_generic_law(
     };
     Some(AutoProof {
         support_lines,
-        body: Tactic::raw(vec![intro, "  first".to_string(), close, floor]),
+        body: Tactic::raw(
+            std::iter::once(intro)
+                .chain(std::iter::once("  first".to_string()))
+                .chain(closes)
+                .chain(std::iter::once(floor))
+                .collect(),
+        ),
         replaces_theorem: false,
         first_arm_is_guaranteed_closer: false,
     })

@@ -1,0 +1,21 @@
+module Main
+    intent =
+        "Two dependencies that each define littleEndian and bigEndian with"
+        "different shapes; the writer's laws must resolve to the writer's own."
+    depends [Wire, Writer]
+    effects []
+
+fn framed(value: Int) -> List<Int>
+    ? "The writer's number read back and framed as two wire bytes."
+    Wire.littleEndian(Writer.bigEndian(List.reverse(Writer.littleEndian(value, [])), 0), 2)
+
+verify framed
+    framed(1) => [1, 0]
+    framed(258) => [2, 1]
+
+fn framedSize(value: Int) -> Int
+    ? "How many wire bytes the framing produced."
+    Wire.bytes(framed(value))
+
+verify framedSize
+    framedSize(1) => 2

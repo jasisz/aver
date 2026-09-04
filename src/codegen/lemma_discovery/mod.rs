@@ -20,6 +20,7 @@
 mod committed;
 pub use committed::{
     CommittedLemma, LemmaProvenance, SimpDirection, apply_simp_over_lemma_pins,
-    discovery_surface_hash, forbidden_token_in_lemma, lemma_lhs_fns, mentioned_fns,
-    parse_committed_lemmas, plan_simp_over_lemma_pins, simp_entries, simp_orientation,
+    discovery_surface_hash, forbidden_token_in_lemma, lemma_lhs_fns, lemma_lhs_fns_bound,
+    mentioned_fns, mentioned_fns_bound, parse_committed_lemmas, plan_simp_over_lemma_pins,
+    simp_entries, simp_orientation,
 };

@@ -1120,6 +1120,7 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
             recursive_fns: &recursive_fns_owned,
             symbol_table: symbols,
             program_shape: Some(&program_shape),
+            scope: None,
         };
         let mut ir = result.proof_ir.take().unwrap_or_default();
         if cfg.run_refinement_lower {

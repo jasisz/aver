@@ -154,6 +154,7 @@ fn detection_payload_matches_refinement_info_for() {
         recursive_fns: &recursive_fns,
         symbol_table: &symbol_table,
         program_shape: None,
+        scope: None,
     };
     let legacy = aver::codegen::common::refinement_info_for(type_name, &inputs)
         .expect("legacy refinement_info_for must match the new pattern detector");

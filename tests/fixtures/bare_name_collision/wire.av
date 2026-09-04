@@ -1,0 +1,37 @@
+module Wire
+    intent = "Fixed-width little-endian encoding for the wire, name-clashing with the writer's."
+    exposes [littleEndian, bigEndian, bytes]
+    depends []
+    effects []
+
+fn littleEndian(value: Int, width: Int) -> List<Int>
+    ? "Exactly width bytes, least significant first."
+    littleEndianInto(value, width, [])
+
+verify littleEndian
+    littleEndian(1, 2) => [1, 0]
+    littleEndian(258, 2) => [2, 1]
+
+fn littleEndianInto(value: Int, width: Int, acc: List<Int>) -> List<Int>
+    ? "One byte per step until the width is spent."
+    match width <= 0
+        true -> List.reverse(acc)
+        false -> littleEndianInto(Int.div(value, 256), width - 1, List.prepend(Int.mod(value, 256), acc))
+
+verify littleEndianInto
+    littleEndianInto(1, 2, []) => [1, 0]
+
+fn bigEndian(value: Int, width: Int) -> List<Int>
+    ? "Exactly width bytes, most significant first."
+    List.reverse(littleEndian(value, width))
+
+verify bigEndian
+    bigEndian(258, 2) => [1, 2]
+
+fn bytes(frame: List<Int>) -> Int
+    ? "How many bytes a frame carries; the writer's snoc law names a given `bytes`."
+    List.len(frame)
+
+verify bytes
+    bytes([]) => 0
+    bytes([1, 2]) => 2

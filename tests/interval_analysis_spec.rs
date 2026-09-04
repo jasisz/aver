@@ -557,6 +557,7 @@ fn carrier_table(
         recursive_fns: &recursive,
         symbol_table: &symbols,
         program_shape: None,
+        scope: None,
     };
     aver::codegen::proof_lower::carrier_interval_table(&inputs)
 }
