@@ -2136,17 +2136,99 @@ verify mirror law involutive
         lean.contains("theorem mirror_law_involutive : ∀ (t : Tree), mirror (mirror t) = t := by")
     );
     assert!(lean.contains("  induction t with"));
-    assert!(
-        lean.contains(
-            "  | leaf f0 => first | (simp [Mirror.mirror]; done) | (simp [Mirror.mirror]; omega) | sorry"
-        )
-    );
-    assert!(lean.contains(
-        "  | node f0 f1 ih0 ih1 => first | (simp_all [Mirror.mirror]; done) | (simp_all [Mirror.mirror]; omega) | sorry"
-        ));
+    // The Bool bridge rungs (`bool_bridge_rungs`) sit between the arithmetic
+    // ladder and the `sorry` floor: the arms that closed before still close on
+    // their original tactic.
+    let bridge = " | (simp_all [Mirror.mirror, Bool.beq_comm, beq_iff_eq, bne_iff_ne, \
+         Bool.or_eq_true, Bool.and_eq_true, decide_eq_decide, decide_eq_true_eq, \
+         ← decide_not, Bool.not_eq_true', ge_iff_le, gt_iff_lt, Bool.and_assoc, \
+         Bool.and_comm, Bool.and_left_comm, Bool.or_assoc, Bool.or_comm, \
+         Bool.or_left_comm]";
+    assert!(lean.contains(&format!(
+        "  | leaf f0 => first | (simp [Mirror.mirror]; done) | (simp [Mirror.mirror]; omega)\
+         {bridge}; done){bridge} <;> (try split) <;> omega) | sorry"
+    )));
+    assert!(lean.contains(&format!(
+        "  | node f0 f1 ih0 ih1 => first | (simp_all [Mirror.mirror]; done) | \
+         (simp_all [Mirror.mirror]; omega){bridge}; done){bridge} <;> (try split) <;> omega) | sorry"
+    )));
     assert!(!lean.contains(
             "-- universal theorem mirror_law_involutive omitted: sampled law shape is not auto-proved yet"
         ));
+}
+
+/// The SYNCHRONOUS take/drop rung (`induction n generalizing xs with | zero …
+/// | succ k ih …`) is the one closer whose arms used to be a bare tactic. Its
+/// arms are now a `first` chain, and EVERY alternative in it — the plain one
+/// included — has to end in a throw-on-leftover tactic: `simp_all` over a Bool
+/// predicate makes progress and RETURNS with the goal open, so without the
+/// `; done` the chain would commit to the plain alternative and the Bool bridge
+/// behind it would be dead text. Pinned on the take/drop shape (isaplanner
+/// prop_01), which still closes on that very first alternative.
+#[test]
+fn transpile_synchronous_takedrop_arms_close_or_throw_before_the_bool_bridge() {
+    let mut ctx = ctx_from_source(
+        r#"
+module Prop01
+    intent =
+        "synchronous take/drop induction probe"
+
+type Nat
+    Z
+    S(Nat)
+
+fn take(n: Nat, xs: List<Int>) -> List<Int>
+    match n
+        Nat.Z -> []
+        Nat.S(z) -> match xs
+            [] -> []
+            [x2, ..x3] -> List.concat([x2], take(z, x3))
+
+fn drop(n: Nat, xs: List<Int>) -> List<Int>
+    match n
+        Nat.Z -> xs
+        Nat.S(z) -> match xs
+            [] -> []
+            [x2, ..x3] -> drop(z, x3)
+
+verify take law takeDropAppend
+    given n: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given xs: List<Int> = [[], [1], [1, 2, 3]]
+    List.concat(take(n, xs), drop(n, xs)) => xs
+"#,
+        "prop01",
+    );
+    let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
+    let lean = generated_lean_file(&out);
+
+    let defs = "List.cons_append, List.nil_append, Prop01.drop, Prop01.take, \
+                take_takeDropAppend_drop_nil, take_takeDropAppend_take_nil";
+    let bridged = format!(
+        "{defs}, Bool.beq_comm, beq_iff_eq, bne_iff_ne, Bool.or_eq_true, Bool.and_eq_true, \
+         decide_eq_decide, decide_eq_true_eq, ← decide_not, Bool.not_eq_true', ge_iff_le, \
+         gt_iff_lt, Bool.and_assoc, Bool.and_comm, Bool.and_left_comm, Bool.or_assoc, \
+         Bool.or_comm, Bool.or_left_comm"
+    );
+    // The plain alternative carries `; done`, so a leftover goal THROWS inside
+    // this `first` instead of committing to it; the two bridging alternatives
+    // behind it are therefore reachable.
+    let arm = format!(
+        "first | (cases xs <;> simp_all [{defs}]; done) | \
+         (cases xs <;> simp_all [{bridged}]; done) | \
+         (cases xs <;> simp_all [{bridged}] <;> (try split) <;> omega)"
+    );
+    assert!(
+        lean.contains("    induction n generalizing xs with"),
+        "the synchronous rung must lead the ladder:\n{lean}"
+    );
+    assert!(
+        lean.contains(&format!("    | zero => {arm}\n")),
+        "the zero arm must close-or-throw before the Bool bridge:\n{lean}"
+    );
+    assert!(
+        lean.contains(&format!("    | succ k ih => {arm})")),
+        "the succ arm must close-or-throw before the Bool bridge:\n{lean}"
+    );
 }
 
 #[test]
@@ -4580,6 +4662,48 @@ verify len law lenAppend
         "an inductive law over user-recursive fns (len/append) must NOT \
          gain a grind rung — grind cannot close a structural-induction \
          goal, so emitting it is pure waste:\n{lean}"
+    );
+}
+
+/// Shape-gated `grind` rung, SKIP side under a GLOBAL fail-closed floor: a
+/// plain linear-arithmetic law over a non-recursive fn is flat (so the shape
+/// gate admits it) and its portfolio now ends in `sorry` like every other one,
+/// but its FIRST alternative is the `simp only [<cone>] <;> omega` closer that
+/// already decides the goal. The trailing `sorry` is the floor, not a frontier,
+/// so the rung must NOT fire: a `grind` saturation ahead of `omega` costs a
+/// second per law and buys nothing. Pins the closer as the leading alternative
+/// so the reverted spelling cannot drift back. Codegen-only (no lake).
+#[test]
+fn grind_rung_skipped_when_first_alternative_already_closes() {
+    let src = "\
+module FlooredNoGrind
+    effects []
+
+fn twice(n: Int) -> Int
+    ? \"double n\"
+    n + n
+
+verify twice law doubling
+    given n: Int = [0, 1, 2]
+    twice(n) => n * 2
+";
+    let mut ctx = ctx_from_source(src, "FlooredNoGrind");
+    let out = transpile(&mut ctx);
+    let lean = generated_lean_file(&out);
+    assert!(
+        !lean.contains("grind"),
+        "a law whose first alternative is the omega closer must NOT gain a \
+         grind rung just because the global fail-closed floor put a `sorry` \
+         at the end of its portfolio:\n{lean}"
+    );
+    assert!(
+        lean.contains("intro n\n  first | (simp only [twice] <;> omega) | ("),
+        "the linear-arithmetic closer must stay the LEADING alternative of the \
+         portfolio:\n{lean}"
+    );
+    assert!(
+        lean.contains(" | sorry"),
+        "the global fail-closed floor stays under the closer:\n{lean}"
     );
 }
 

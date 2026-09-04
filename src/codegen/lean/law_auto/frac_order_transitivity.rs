@@ -552,6 +552,7 @@ pub(super) fn emit_frac_order_transitivity_law(
         support_lines: text.lines().map(|l| l.to_string()).collect(),
         body: crate::codegen::lean::tactic_ir::Tactic::raw(Vec::new()),
         replaces_theorem: true,
+        first_arm_is_guaranteed_closer: false,
     })
 }
 

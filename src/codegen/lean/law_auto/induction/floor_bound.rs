@@ -1403,6 +1403,7 @@ fn emit_rational_floor_bound_matched(
         support_lines,
         body: Tactic::raw(body),
         replaces_theorem: false,
+        first_arm_is_guaranteed_closer: false,
     })
 }
 
@@ -1821,6 +1822,7 @@ fn emit_rational_frac_bound(
         support_lines: support,
         body: Tactic::raw(body),
         replaces_theorem: false,
+        first_arm_is_guaranteed_closer: false,
     })
 }
 
@@ -2057,6 +2059,7 @@ fn emit_rational_floor_bound_general(
         support_lines,
         body: Tactic::raw(body),
         replaces_theorem: false,
+        first_arm_is_guaranteed_closer: false,
     })
 }
 
@@ -2232,6 +2235,7 @@ fn emit_rational_floor_sign_general(
         support_lines,
         body: Tactic::raw(body),
         replaces_theorem: false,
+        first_arm_is_guaranteed_closer: false,
     })
 }
 
@@ -2432,6 +2436,7 @@ fn emit_rational_floor_bound(
         support_lines,
         body: Tactic::raw(body),
         replaces_theorem: false,
+        first_arm_is_guaranteed_closer: false,
     })
 }
 
@@ -2539,5 +2544,6 @@ pub(super) fn emit_rational_floor_family(
         support_lines,
         body: Tactic::raw(vec![intro, "  first".to_string(), arm, floor]),
         replaces_theorem: false,
+        first_arm_is_guaranteed_closer: false,
     })
 }

@@ -184,6 +184,7 @@ pub(super) fn emit_simp_normalized_spec_equivalence_law(
                 vec![format!("simp [{}]", simp_defs.join(", "))],
             )),
             replaces_theorem: false,
+            first_arm_is_guaranteed_closer: false,
         })
     };
 

@@ -92,6 +92,7 @@ pub(super) fn emit_linear_int_omega_spec_equivalence_law(
                 ],
             )),
             replaces_theorem: false,
+            first_arm_is_guaranteed_closer: false,
         })
     };
 

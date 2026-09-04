@@ -168,5 +168,6 @@ pub(in super::super) fn emit_second_order_linear_recurrence_spec_equivalence_law
         support_lines,
         body: crate::codegen::lean::tactic_ir::Tactic::raw(Vec::new()),
         replaces_theorem: true,
+        first_arm_is_guaranteed_closer: false,
     })
 }

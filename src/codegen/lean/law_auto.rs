@@ -226,6 +226,15 @@ pub struct AutoProof {
     /// When true, the main theorem statement is already included in `support_lines`
     /// and should not be emitted separately by the caller.
     pub replaces_theorem: bool,
+    /// When true, the FIRST alternative of this proof's `first` portfolio is the
+    /// closer that already decided the goal before a fail-closed `sorry` floor
+    /// was added below it — the body ends in `sorry` only because the floor is
+    /// global, not because the law is open. Read by the grind rung's FRONTIER
+    /// gate ([`maybe_wrap_with_grind_rung`]): a proof carrying this flag gets no
+    /// speculative `grind` arm prepended, since the arm could only race a closer
+    /// that is already sufficient. Set where such a portfolio is built; `false`
+    /// everywhere else, which keeps the frontier reading of a trailing `sorry`.
+    pub first_arm_is_guaranteed_closer: bool,
 }
 
 /// Look up the strategy `proof_lower::populate_law_theorems` pinned
@@ -319,6 +328,7 @@ fn emit_hand_sidecar_law(
             body.lines().map(str::to_string).collect(),
         ),
         replaces_theorem: false,
+        first_arm_is_guaranteed_closer: false,
     })
 }
 
@@ -357,8 +367,9 @@ pub fn emit_verify_law_forall_auto_proof(
     // iff BOTH gates pass: the SHAPE gate (`grind_is_shape_amenable` — the
     // law's unfold cone has NO user-recursive pure fn the proof would
     // induct over) AND the FRONTIER gate (the proof ends in an honest
-    // `sorry`, so grind can do NEW work — guaranteed closers like
-    // `omega`/`rfl` are left byte-identical).
+    // `sorry` that is NOT the global floor under an already-sufficient
+    // first alternative, so grind can do NEW work — guaranteed closers
+    // like `omega`/`rfl` are left byte-identical).
     Some(maybe_wrap_with_grind_rung(vb, law, ctx, inner))
 }
 
@@ -449,7 +460,19 @@ fn maybe_wrap_with_grind_rung(
     if !grind_is_shape_amenable(ctx, vb, law) {
         return proof;
     }
-    // FRONTIER GATE: only wrap a proof whose body ends in an honest
+    // FRONTIER GATE, part one: a portfolio whose FIRST alternative is
+    // already the closer that decided the goal is not a frontier at all —
+    // its trailing `sorry` is the GLOBAL fail-closed floor sitting under a
+    // sufficient closer, not an open goal. Reading the floor alone would
+    // admit every such law (that is exactly what happened when the floor
+    // became global under the LinearArithmetic portfolio) and spend a grind
+    // saturation ahead of a closer that never needed help. The emitter that
+    // builds such a portfolio says so on the proof; everything else keeps
+    // the trailing-`sorry` reading below.
+    if proof.first_arm_is_guaranteed_closer {
+        return proof;
+    }
+    // FRONTIER GATE, part two: only wrap a proof whose body ends in an honest
     // `sorry` floor (a `first | … | sorry` fallback that might NOT
     // close). A proof with a GUARANTEED closer (no trailing `sorry`: the
     // IR-pinned `Reflexive`/`Commutative`/`LinearArithmetic`/… rungs that
@@ -532,6 +555,7 @@ fn maybe_wrap_with_grind_rung(
         support_lines,
         body,
         replaces_theorem: false,
+        first_arm_is_guaranteed_closer: false,
     }
 }
 
@@ -598,6 +622,7 @@ fn emit_finite_int_domain_law(
         support_lines: text.lines().map(|l| l.to_string()).collect(),
         body: crate::codegen::lean::tactic_ir::Tactic::raw(Vec::new()),
         replaces_theorem: true,
+        first_arm_is_guaranteed_closer: false,
     })
 }
 
@@ -1199,6 +1224,7 @@ fn emit_verify_law_forall_auto_proof_inner(
                     lines,
                 )),
                 replaces_theorem: false,
+                first_arm_is_guaranteed_closer: false,
             });
         }
     }
@@ -1219,6 +1245,7 @@ fn emit_verify_law_forall_auto_proof_inner(
                 vec![format!("simpa [{}]", lean_names.join(", "))],
             )),
             replaces_theorem: false,
+            first_arm_is_guaranteed_closer: false,
         });
     }
 
@@ -1245,6 +1272,7 @@ fn emit_verify_law_forall_auto_proof_inner(
                 )],
             )),
             replaces_theorem: false,
+            first_arm_is_guaranteed_closer: false,
         });
     }
 
@@ -1275,6 +1303,7 @@ fn emit_verify_law_forall_auto_proof_inner(
                 vec![format!("{cascade} <;> (first | rfl | decide | sorry)")],
             )),
             replaces_theorem: false,
+            first_arm_is_guaranteed_closer: false,
         });
     }
 
@@ -1353,6 +1382,7 @@ fn emit_verify_law_forall_auto_proof_inner(
                 ],
             )),
             replaces_theorem: false,
+            first_arm_is_guaranteed_closer: false,
         });
     }
 
@@ -1387,6 +1417,7 @@ fn emit_verify_law_forall_auto_proof_inner(
                 vec![tactic],
             )),
             replaces_theorem: false,
+            first_arm_is_guaranteed_closer: false,
         });
     }
 
@@ -1430,6 +1461,7 @@ fn emit_verify_law_forall_auto_proof_inner(
                 vec![tactic],
             )),
             replaces_theorem: false,
+            first_arm_is_guaranteed_closer: false,
         });
     }
 
@@ -1539,6 +1571,7 @@ fn emit_verify_law_forall_auto_proof_inner(
                         )],
                     )),
                     replaces_theorem: false,
+                    first_arm_is_guaranteed_closer: false,
                 });
             }
             None
@@ -1602,6 +1635,7 @@ fn emit_verify_law_forall_auto_proof_inner(
                         vec![simp_first, simp_second],
                     )),
                     replaces_theorem: false,
+                    first_arm_is_guaranteed_closer: false,
                 });
             }
             None
@@ -1644,6 +1678,7 @@ fn emit_verify_law_forall_auto_proof_inner(
                         lines,
                     )),
                     replaces_theorem: false,
+                    first_arm_is_guaranteed_closer: false,
                 });
             }
             None
@@ -1700,20 +1735,22 @@ fn emit_verify_law_forall_auto_proof_inner(
                     &proof_intro_names
                 };
                 let uses_max_min = linear_arith_uses_max_min(unfold_fns, ctx);
+                let simp_omega = emit_simp_omega_from_ir(
+                    unfold_fns,
+                    wrapper_return,
+                    smart_guard.as_ref(),
+                    lifted,
+                    chosen_intro,
+                    &intro_names,
+                    law.when.is_some(),
+                    uses_max_min,
+                    ctx,
+                );
                 return Some(AutoProof {
                     support_lines: Vec::new(),
-                    body: emit_simp_omega_from_ir(
-                        unfold_fns,
-                        wrapper_return,
-                        smart_guard.as_ref(),
-                        lifted,
-                        chosen_intro,
-                        &intro_names,
-                        law.when.is_some(),
-                        uses_max_min,
-                        ctx,
-                    ),
+                    body: simp_omega.body,
                     replaces_theorem: false,
+                    first_arm_is_guaranteed_closer: simp_omega.first_arm_is_guaranteed_closer,
                 });
             }
             None
@@ -1773,6 +1810,7 @@ fn emit_verify_law_forall_auto_proof_inner(
                     support_lines: Vec::new(),
                     body: crate::codegen::lean::tactic_ir::Tactic::raw(vec![intro, close]),
                     replaces_theorem: false,
+                    first_arm_is_guaranteed_closer: false,
                 });
             }
             if ctx.allow_mathlib
@@ -1788,6 +1826,7 @@ fn emit_verify_law_forall_auto_proof_inner(
                 support_lines: Vec::new(),
                 body: crate::codegen::lean::tactic_ir::Tactic::raw(proof_lines),
                 replaces_theorem: false,
+                first_arm_is_guaranteed_closer: false,
             })
         })
         .or_else(|| {
@@ -1937,6 +1976,7 @@ fn emit_verify_law_forall_auto_proof_inner(
                     vec![tactic_line],
                 )),
                 replaces_theorem: false,
+                first_arm_is_guaranteed_closer: false,
             })
         })
 }
@@ -2169,6 +2209,7 @@ fn emit_mathlib_break_glass_law(
         support_lines: Vec::new(),
         body: crate::codegen::lean::tactic_ir::Tactic::raw(vec![intro, close]),
         replaces_theorem: false,
+        first_arm_is_guaranteed_closer: false,
     })
 }
 
@@ -2256,6 +2297,7 @@ fn emit_ring_identity_law(
             ],
         ),
         replaces_theorem: false,
+        first_arm_is_guaranteed_closer: false,
     })
 }
 
@@ -2312,6 +2354,7 @@ fn emit_simp_over_prelude_lemmas_law(
             vec![format!("simp [{}]; done", simp_set.join(", "))],
         ),
         replaces_theorem: false,
+        first_arm_is_guaranteed_closer: false,
     })
 }
 
@@ -2354,6 +2397,7 @@ fn emit_string_length_additive_law(
             vec!["simp only [String.add_eq_append, String.length_append] <;> omega".to_string()],
         ),
         replaces_theorem: false,
+        first_arm_is_guaranteed_closer: false,
     })
 }
 
@@ -2442,6 +2486,7 @@ fn emit_string_append_monoid_law(
             ],
         ),
         replaces_theorem: false,
+        first_arm_is_guaranteed_closer: false,
     })
 }
 
@@ -2498,6 +2543,7 @@ fn emit_int_abs_identity_law(law: &VerifyLaw, proof_intro_names: &[String]) -> O
             ],
         ),
         replaces_theorem: false,
+        first_arm_is_guaranteed_closer: false,
     })
 }
 
@@ -2554,6 +2600,7 @@ fn emit_map_empty_fact_law(
             vec![format!("simp only [{}] ; done", simp_set.join(", "))],
         ),
         replaces_theorem: false,
+        first_arm_is_guaranteed_closer: false,
     })
 }
 
@@ -2653,6 +2700,7 @@ fn emit_map_len_set_positive_law(
             vec!["exact AverMap.len_set_ge_one _ _ _".to_string()],
         ),
         replaces_theorem: false,
+        first_arm_is_guaranteed_closer: false,
     })
 }
 
@@ -2706,6 +2754,73 @@ const COMPARISON_NORMALIZERS: &[&str] = &[
     "gt_iff_lt",
 ];
 
+/// The Bool-algebra companion to [`COMPARISON_NORMALIZERS`]: core `&&` / `||`
+/// associativity plus their (permutative, so simp orders them into a normal
+/// form) commutativity lemmas.
+///
+/// A structural law over a Bool PREDICATE does not end in a `… = true` goal the
+/// comparison bridge alone can peel — after the induction hypothesis fires, both
+/// sides are open Bool terms that differ only in how the `&&` chain associates
+/// or orders (`a && b && (c && d) = a && b && c && d`). The comparison lemmas
+/// carry the `decide`/`&&` wrappers down to the decidable propositions; these
+/// collapse the two spellings of the surrounding Bool skeleton to one. Neither
+/// half closes the family alone, so the induction ladder's bridging rungs use
+/// both — see [`bool_bridge_rungs`].
+const BOOL_AC_NORMALIZERS: &[&str] = &[
+    "Bool.and_assoc",
+    "Bool.and_comm",
+    "Bool.and_left_comm",
+    "Bool.or_assoc",
+    "Bool.or_comm",
+    "Bool.or_left_comm",
+];
+
+/// The two bridging alternatives the induction ladder's closers end with (ahead
+/// of their `sorry` floor): `simp_all` over the arm's own def set PLUS the
+/// Bool-to-Prop bridge ([`COMPARISON_NORMALIZERS`]) and the Bool skeleton
+/// normalisers ([`BOOL_AC_NORMALIZERS`]), in a `; done` and a
+/// `<;> (try split) <;> omega` variant (the latter peels a residual `if` before
+/// handing what is left to `omega`).
+///
+/// `prefix` is the arm's own `cases … <;> ` chain, empty at every site whose arm
+/// starts at the goal.
+///
+/// PURELY ADDITIVE: emitted AFTER every existing alternative, so a law that
+/// closed before still closes on the very same rung and keeps its proof text
+/// there; the `; done` and the trailing `omega` both throw on a leftover goal,
+/// so a bridge that does not finish falls through to the next alternative and
+/// ultimately to the floor. `simp_all`/`split`/`omega` are sound and terminate,
+/// so these rungs can only ADD closures — never a false theorem.
+fn bool_bridge_rungs(prefix: &str, defs: &str) -> String {
+    let bridge = COMPARISON_NORMALIZERS
+        .iter()
+        .chain(BOOL_AC_NORMALIZERS.iter())
+        .copied()
+        .collect::<Vec<_>>()
+        .join(", ");
+    // Guard against an empty def set so we never emit a leading-comma
+    // `simp_all [, …]` — a parse error `first` could not recover from.
+    let set = if defs.is_empty() {
+        bridge
+    } else {
+        format!("{defs}, {bridge}")
+    };
+    format!(
+        " | ({prefix}simp_all [{set}]; done) | ({prefix}simp_all [{set}] <;> (try split) <;> omega)"
+    )
+}
+
+/// A LinearArithmetic body plus the provenance the grind rung's frontier gate
+/// needs: which of [`emit_simp_omega_from_ir`]'s branches produced it. Returned
+/// as one value so the branch and its flag cannot drift apart.
+struct SimpOmegaProof {
+    body: super::tactic_ir::Tactic,
+    /// True only for the default portfolio ([`emit_default_simp_omega_portfolio`]),
+    /// whose first alternative is the closer that decided the goal before the
+    /// global fail-closed floor was added under it.
+    first_arm_is_guaranteed_closer: bool,
+}
+
 #[allow(clippy::too_many_arguments)]
 fn emit_simp_omega_from_ir(
     unfold_fns: &[String],
@@ -2717,7 +2832,7 @@ fn emit_simp_omega_from_ir(
     has_when: bool,
     uses_max_min: bool,
     ctx: &CodegenContext,
-) -> super::tactic_ir::Tactic {
+) -> SimpOmegaProof {
     use super::tactic_ir::Tactic;
     let lean_names: Vec<String> = unfold_fns.iter().map(|n| aver_name_to_lean(n)).collect();
     if lifted && wrapper_return {
@@ -2727,13 +2842,16 @@ fn emit_simp_omega_from_ir(
         // by_cases case-split is unnecessary. Plain unfold + simp
         // with arithmetic lemmas closes via Lean's built-in
         // commutativity normalisation.
-        Tactic::raw(intro_then(
-            intro_names,
-            vec![
-                format!("unfold {}", lean_names.join(" ")),
-                "simp [Int.add_comm, Int.mul_comm]".to_string(),
-            ],
-        ))
+        SimpOmegaProof {
+            body: Tactic::raw(intro_then(
+                intro_names,
+                vec![
+                    format!("unfold {}", lean_names.join(" ")),
+                    "simp [Int.add_comm, Int.mul_comm]".to_string(),
+                ],
+            )),
+            first_arm_is_guaranteed_closer: false,
+        }
     } else if wrapper_return {
         // Case ONLY over the law's actual Int-typed given variables —
         // NEVER the introduced premise-hypothesis names. `intro_names`
@@ -2786,11 +2904,17 @@ fn emit_simp_omega_from_ir(
         );
         // `unfold` then a structured `first | (sign-split) | (comparison) | sorry`
         // (was a flat string) so `--minimize` can collapse it to its winner.
-        intro_prefix_then_first(
-            intro_names,
-            vec![format!("unfold {}", lean_names.join(" "))],
-            vec![format!("{by_cases_chain} <;> simp [{simp_args}]"), cmp],
-        )
+        // The floor here predates the global one and the sign-split arm is NOT a
+        // guaranteed closer (a Bool-comparison identity falls through it), so the
+        // frontier reading of the trailing `sorry` stands: flag stays false.
+        SimpOmegaProof {
+            body: intro_prefix_then_first(
+                intro_names,
+                vec![format!("unfold {}", lean_names.join(" "))],
+                vec![format!("{by_cases_chain} <;> simp [{simp_args}]"), cmp],
+            ),
+            first_arm_is_guaranteed_closer: false,
+        }
     } else {
         // A `when` premise is introduced as a hypothesis (`h_when`).
         // `simp_all` simplifies it — e.g. a nested Bool `match` lowered to
@@ -2833,17 +2957,27 @@ fn emit_simp_omega_from_ir(
             let l = lemmas.join(", ");
             // Structured `first | (omega) | (split…omega) | sorry` so a minimizer
             // can drop the legacy fallback rung when the clean `omega` form wins.
-            intro_then_first(
-                intro_names,
-                vec![
-                    format!("simp only [{l}] <;> omega"),
-                    format!("simp only [{l}] <;> (try split) <;> simp_all <;> omega"),
-                ],
-            )
-        } else if has_when {
-            emit_default_simp_omega_portfolio(intro_names, &lean_names, true)
+            // The min/max floor also predates the global one: its first arm is
+            // the NEW clean `omega` form, kept ahead of the legacy chain that a
+            // 3-way nest could not close, so the trailing `sorry` still reads as
+            // a real frontier. Flag stays false.
+            SimpOmegaProof {
+                body: intro_then_first(
+                    intro_names,
+                    vec![
+                        format!("simp only [{l}] <;> omega"),
+                        format!("simp only [{l}] <;> (try split) <;> simp_all <;> omega"),
+                    ],
+                ),
+                first_arm_is_guaranteed_closer: false,
+            }
         } else {
-            emit_default_simp_omega_portfolio(intro_names, &lean_names, false)
+            // The default portfolio's first arm IS the closer that decided this
+            // law before the bridge and the global floor were added under it.
+            SimpOmegaProof {
+                body: emit_default_simp_omega_portfolio(intro_names, &lean_names, has_when),
+                first_arm_is_guaranteed_closer: true,
+            }
         }
     }
 }

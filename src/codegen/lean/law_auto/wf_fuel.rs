@@ -579,5 +579,6 @@ pub(in crate::codegen::lean) fn emit_wf_fuel_induction_law(
         support_lines: Vec::new(),
         body: crate::codegen::lean::tactic_ir::Tactic::raw(lines),
         replaces_theorem: false,
+        first_arm_is_guaranteed_closer: false,
     })
 }

@@ -155,5 +155,6 @@ theorem {base} : ∀ {quant_params}, {when} = true -> {lhs} = {rhs} := by
         support_lines: text.lines().map(|l| l.to_string()).collect(),
         body: crate::codegen::lean::tactic_ir::Tactic::raw(Vec::new()),
         replaces_theorem: true,
+        first_arm_is_guaranteed_closer: false,
     })
 }

@@ -39,5 +39,6 @@ pub(in super::super) fn emit_result_pipeline_chain_law(
         support_lines: Vec::new(),
         body: crate::codegen::lean::tactic_ir::Tactic::raw(proof_lines),
         replaces_theorem: false,
+        first_arm_is_guaranteed_closer: false,
     })
 }
