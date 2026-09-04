@@ -30,15 +30,12 @@ the wall's own shapes (verbatim in `AverMin.lean`):
   obligation's code table carries at the export (`exprFragmentPlanAccepted`),
   with `nlocals = 1`.
 
-The composition sentence: the translation environment is
+This file proves the profile half: the translation environment is
 `envOfClaim claim.hostTable claim.carrier [.record face.structIdx fields]` —
-nothing but those pinned declarations — the plan is in the profile relative
-to it (`planInProfile_of_recordCompute`), so the coverage lemma types and
-translates the body, `HostSorts_of_contracts` and `HostSimulation_recordCompute`
-supply the host premises from the verbatim contracts, and
-`wFuncN_terminatesWith` is stated over EXACTLY the synthetic module
-`synthModule env … (translation of body)` with the adapter host
-(`recordCompute_terminatesWith`).
+nothing but those pinned declarations — and the plan is in the profile
+relative to it (`planInProfile_of_recordCompute`). The composition sentence
+over it, stated at Talos's export boundary, is `recordCompute_runsExport`
+(`RunsExport.lean`).
 
 ## What the declared envelope does NOT pin (the precise extra hypotheses)
 
@@ -280,73 +277,5 @@ theorem planInProfile_of_recordCompute
       rfl
     simp [nodeInProfile, hk, hrec, hsorts]
   case intSignCmp op k scratch value => simp [nodeInProfile, hk]
-
-/-! ## The composition sentence -/
-
-/-- Brief §9 (4): over the declared envelope of an accepted record
-    projection-compute claim, the Talos configuration `wFuncN_terminatesWith`
-    is stated over is `synthModule (envOfClaim …) … (translation of the lowered
-    body)` with the adapter host, and a successful `wFuncN` run of the wall's
-    code at the export, under the verbatim contracts, terminates in Talos with
-    a related result. `envOfClaim` consumes only the claim's role table, its
-    carrier index and the pinned record declaration. -/
-theorem recordCompute_terminatesWith (α : Type)
-    (roles : CertDecode.AddSub.Roles) (ht : List (HostRole × Nat)) (C structIdx : Nat)
-    (fields : List TypeDecl) (plan : ExprFragmentRawPlan) (body : List WInstr)
-    -- the wall's conjuncts (declared data)
-    (hbound : hostTableBound roles ht = true)
-    (hok : (plan.body.nodes.all fun n => recordComputeNodeOk ht n.kind) = true)
-    (hidx : ((plan.body.nodes.filterMap fun n => fragNodeStructIdx? n.kind).all (· == structIdx)) = true)
-    (htyped : planTypedB structIdx (tyOfPlan plan) plan.params plan.body.nodes = true)
-    (hparams : (plan.params.all (· == .adtRef)) = true)
-    (hfields : (fields.all fun f => match f with | .intCarrier => true | _ => false) = true)
-    (hdecl : checkRecordDecl (.record structIdx fields) = true)
-    (hlow : lowerExprFragmentBody C plan = some body)
-    -- the three extra hypotheses (header)
-    (hi32 : ∀ n ∈ plan.body.nodes, ∀ v, n.kind = .constI32 v → i32Band v)
-    (harity : ∀ n ∈ plan.body.nodes,
-      (∀ args, n.kind = .structNew structIdx args → args.length = fields.length) ∧
-      (∀ field value, n.kind = .structGetUser structIdx field value → field < fields.length))
-    (hne : structIdx ≠ C)
-    -- the wall's contracts, the representation, the run
-    (S : CarrierSpec C) (add sub mul cmp eq : List WVal → Option WVal)
-    (hc : ComputeContracts S add sub mul cmp eq) (hmw : CarrierMachine S)
-    (code : CodeTbl) (self fuel : Nat)
-    (hself : code self = some ⟨plan.params.length, 1, body⟩)
-    (vs : List WVal)
-    (hvs : Sorted (envOfClaim ht C [.record structIdx fields]) S vs (plan.params.map sortOfFragTy))
-    (store0 : Store α) (args : List Value) (hargs : Rs store0.gcHeap args vs)
-    (w : WVal)
-    (hrun : wFuncN code (recordComputeSlots C add sub mul cmp eq ht) fuel self vs = some w) :
-    let env := envOfClaim ht C [.record structIdx fields]
-    let host := recordComputeSlots C add sub mul cmp eq ht
-    ∃ (body' : Program) (t : STy),
-      translateList env body = some body' ∧ SubSort t (sortOfFragTy plan.result) ∧
-      ∃ trace v store',
-        Steps (initialConfig (synthModule env (plan.params.map sortOfFragTy) t 1 body')
-            (adapterEnv α env host) (synthFunction env (plan.params.map sortOfFragTy) t 1 body')
-            store0 args)
-          trace ⟨.done [v], store'⟩ ∧
-        R store'.wasm.gcHeap v w := by
-  intro env host
-  have hchk : checkBlockFuel AverCert.PlanCheck.maxFuel plan.params plan.body = true := by
-    simp only [lowerExprFragmentBody] at hlow
-    split at hlow
-    · rename_i h
-      simp only [checkExprFragmentRawPlan, Bool.and_eq_true] at h
-      exact h.1.2
-    · simp at hlow
-  have hprof := planInProfile_of_recordCompute roles ht C structIdx fields plan hbound hok hidx htyped
-    hparams hchk hfields hdecl hne hi32 harity
-  obtain ⟨t, hsub, hty, body', htr⟩ := coverage_envOfClaim ht C [.record structIdx fields] plan hprof
-    body hlow
-  have hnd : hostTableIndicesDistinct ht = true := by
-    simp only [hostTableBound, Bool.and_eq_true] at hbound; exact hbound.1
-  refine ⟨body', t, htr, hsub, ?_⟩
-  exact wFuncN_terminatesWith env S (envOfClaim_carrier ht C _) host (adapterEnv α env host)
-    (HostSimulation_recordCompute α ht C _ S add sub mul cmp eq hc hmw hnd)
-    (HostSorts_of_contracts ht C _ S add sub mul cmp eq hc hnd)
-    code self fuel ⟨plan.params.length, 1, body⟩ hself (plan.params.map sortOfFragTy) t body'
-    (by simpa [Γof] using hty) htr vs hvs store0 args hargs w hrun
 
 end Bridge

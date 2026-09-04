@@ -16,9 +16,10 @@ nested `ifElse` without the wall's `wRunF_frame`.
 `wFuncN_terminatesWith` is the statement of brief §4.5: with the wall's
 fuelled call semantics returning `some w` for the export, Talos, started in
 the configuration `Config.lean` builds, reaches `.done [v]` with `v` related
-to `w`. Talos's own `TerminatesWith` (SmallStep.lean:7066) is exactly
-`∃ trace values store, Steps … ⟨.done values, store⟩ ∧ post values store`;
-the theorem is stated in that shape and repackaged as `TerminatesWith`.
+to `w` — stated directly as Talos's `TerminatesWith` (SmallStep.lean:7066,
+`∃ trace values store, Steps … ⟨.done values, store⟩ ∧ post values store`).
+`RunsExport.lean` enters through Talos's export boundary instead of the
+configuration.
 
 Premises, all explicit: `HostSimulation` and `HostSorts` for the host slots,
 a typing derivation for the body (the coverage lemma's output), the
@@ -430,11 +431,10 @@ theorem wFuncN_terminatesWith {α : Type} (env : TranslateEnv) (S : CarrierSpec 
     (vs : List WVal) (hvs : Sorted env S vs paramSorts)
     (store0 : Store α) (args : List Value) (hargs : Rs store0.gcHeap args vs)
     (w : WVal) (hrun : wFuncN code host fuel self vs = some w) :
-    ∃ trace v store',
-      Steps (initialConfig (synthModule env paramSorts result c.nlocals body') hostEnv
-          (synthFunction env paramSorts result c.nlocals body') store0 args)
-        trace ⟨.done [v], store'⟩
-      ∧ R store'.wasm.gcHeap v w := by
+    TerminatesWith
+      (initialConfig (synthModule env paramSorts result c.nlocals body') hostEnv
+        (synthFunction env paramSorts result c.nlocals body') store0 args)
+      (fun values store' => ∃ v, values = [v] ∧ R store'.wasm.gcHeap v w) := by
   match fuel, hrun with
   | 0, hrun => simp [wFuncN] at hrun
   | fuel + 1, hrun =>
@@ -462,8 +462,9 @@ theorem wFuncN_terminatesWith {α : Type} (env : TranslateEnv) (S : CarrierSpec 
       match hvals : L'.values, hS' with
       | [tv], hS' =>
         simp only [Rs] at hS'
-        refine ⟨trace ++ [.administrative .finish], tv,
-          ⟨synthRuntime (synthModule env paramSorts result c.nlocals body') hostEnv, wasm'⟩, ?_, hS'.1⟩
+        refine ⟨trace ++ [.administrative .finish], [tv],
+          ⟨synthRuntime (synthModule env paramSorts result c.nlocals body') hostEnv, wasm'⟩, ?_, tv, rfl,
+          hS'.1⟩
         have hfin := Step.finish (α := α) (locals := L') (arity := 1) (remainder := [])
           (store := ⟨synthRuntime (synthModule env paramSorts result c.nlocals body') hostEnv, wasm'⟩)
         rw [hvals] at hfin
@@ -474,25 +475,5 @@ theorem wFuncN_terminatesWith {α : Type} (env : TranslateEnv) (S : CarrierSpec 
         typed_run host _ _ S hcar hsorts hty (initLocals c vs) [] [] _ hΓ Sorted_nil (by simpa using hbody)
       simp at heq
     · simp at hrun
-
-/-- The same statement in Talos's own vocabulary (`TerminatesWith`,
-    SmallStep.lean:7066). -/
-theorem wFuncN_TerminatesWith {α : Type} (env : TranslateEnv) (S : CarrierSpec env.carrier)
-    (hcar : CarrierDeclared env) (host : HostTbl) (hostEnv : HostEnv α)
-    (hsim : HostSimulation env S host hostEnv) (hsorts : HostSorts env S host)
-    (code : CodeTbl) (self fuel : Nat) (c : WCode) (hc : code self = some c)
-    (paramSorts : List STy) (result : STy) (body' : Program)
-    (hty : HasTy env (paramSorts ++ List.replicate c.nlocals .ref) [] c.body [result])
-    (htr : translateList env c.body = some body')
-    (vs : List WVal) (hvs : Sorted env S vs paramSorts)
-    (store0 : Store α) (args : List Value) (hargs : Rs store0.gcHeap args vs)
-    (w : WVal) (hrun : wFuncN code host fuel self vs = some w) :
-    TerminatesWith
-      (initialConfig (synthModule env paramSorts result c.nlocals body') hostEnv
-        (synthFunction env paramSorts result c.nlocals body') store0 args)
-      (fun values store' => ∃ v, values = [v] ∧ R store'.wasm.gcHeap v w) := by
-  obtain ⟨trace, v, store', hsteps, hR⟩ := wFuncN_terminatesWith env S hcar host hostEnv hsim hsorts
-    code self fuel c hc paramSorts result body' hty htr vs hvs store0 args hargs w hrun
-  exact ⟨trace, [v], store', hsteps, v, rfl, hR⟩
 
 end Bridge

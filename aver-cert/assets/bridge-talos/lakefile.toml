@@ -8,7 +8,7 @@ defaultTargets = ["Bridge"]
 [[require]]
 name = "Interpreter"
 git = "https://github.com/cajal-technologies/talos.git"
-rev = "6fd26867bc11b57f5f18c2ca834195d055e14d69"
+rev = "a6a34484c1cbe65b6e9b38dfaa24b8bb6ca06d27"
 subDir = "interpreter"
 
 [[lean_lib]]

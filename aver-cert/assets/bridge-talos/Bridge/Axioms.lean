@@ -4,6 +4,7 @@ import Bridge.Coverage
 import Bridge.Contracts
 import Bridge.Adapter
 import Bridge.Accepted
+import Bridge.RunsExport
 import Bridge.Tripwire
 
 /-!
@@ -23,10 +24,9 @@ statements, never axioms. `lake build Bridge.Axioms` prints the lists.
 #print axioms Bridge.declEntry?_lowerTypeDecl
 #print axioms Bridge.hostRoleIdx?_slotLookup
 #print axioms Bridge.envOfClaim_import_role
-#print axioms Bridge.initSingleModuleConfig_synth
+#print axioms Bridge.initConfig_synth
 #print axioms Bridge.bridge_run
 #print axioms Bridge.wFuncN_terminatesWith
-#print axioms Bridge.wFuncN_TerminatesWith
 #print axioms Bridge.checkBlockFuel_succ
 #print axioms Bridge.HasTy_translates
 #print axioms Bridge.cov
@@ -41,4 +41,5 @@ statements, never axioms. `lake build Bridge.Axioms` prints the lists.
 #print axioms Bridge.HostSimulation_adapter
 #print axioms Bridge.HostSimulation_recordCompute
 #print axioms Bridge.planInProfile_of_recordCompute
-#print axioms Bridge.recordCompute_terminatesWith
+#print axioms Bridge.startExportConfig?_synth
+#print axioms Bridge.recordCompute_runsExport

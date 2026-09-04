@@ -17,9 +17,14 @@ names the source lines and the wall id).
 ## Pins
 
 - Talos: `https://github.com/cajal-technologies/talos.git` at commit
-  `6fd26867bc11b57f5f18c2ca834195d055e14d69` (Lean package `interpreter/`, pulled with
-  Lake's `subDir`). AGPL-3.0; nothing of it is bundled or embedded here — Lake fetches
-  it at build time.
+  `a6a34484c1cbe65b6e9b38dfaa24b8bb6ca06d27` — the head of Talos PR #232
+  (`codex-semantic-spec-interface`, open on 2026-09-04), which adds
+  `Interpreter/Wasm/Host/Run.lean` (`ExportCall`, `startExportConfig?`,
+  `RunsExportWith`); previously `6fd26867bc11b57f5f18c2ca834195d055e14d69` (main,
+  2026-09-02). Lean package `interpreter/`, pulled with Lake's `subDir`. AGPL-3.0;
+  nothing of it is bundled or embedded here — Lake fetches it at build time. When the
+  PR merges, move the pin to the merge commit; if the branch is rewritten, the pinned
+  sha still resolves as long as GitHub keeps the object.
 - Mathlib comes transitively through Talos's own `lakefile.toml` (`v4.32.2`, resolved
   rev in `lake-manifest.json`).
 - Toolchain: `leanprover/lean4:v4.32.2` (Talos's; the wall is on the same release).
@@ -33,7 +38,7 @@ names the source lines and the wall id).
 cd aver-cert/assets/bridge-talos
 lake update                      # clones Talos + Mathlib; Mathlib's post-update hook
                                  # fetches the olean cache (`lake exe cache get`)
-LEAN_NUM_THREADS=6 lake build Interpreter.Wasm.SmallStep   # Talos, ~4 min on 6 threads
+LEAN_NUM_THREADS=6 lake build Interpreter.Wasm.Host.Run   # Talos, ~4 min on 6 threads
 LEAN_NUM_THREADS=6 lake build   # the bridge itself, seconds
 ```
 
@@ -54,19 +59,20 @@ set `autoImplicit false`; the earlier ones do not yet.
 | `Bridge/Rel.lean` | value relation `R`/`Rs` (heap-indexed), monotonicity under heap extension, the LOCALS relation `RLocals` with Talos's split `params`/`locals` |
 | `Bridge/Env.lean` | `TranslateEnv` (imports, struct sorts, carrier), value sorts `HasSort`/`Sorted`, `envOfClaim` (projection of host-role table + certified `TypeDecl`s) |
 | `Bridge/Translate.lean` | `translate`/`translateList` for the profile, the stack typing `HasTy`, `typed_run` (typed wall runs return `.ok`, keep the stack beneath, preserve sorts) |
-| `Bridge/Config.lean` | synthetic module (one function, host slots as imports, declared struct types), initial configuration, the `HostSimulation` assumption |
+| `Bridge/Config.lean` | synthetic module (one function exported as `exportName`, host slots as imports, declared struct types), initial configuration (`initConfig_synth`: Talos's `initConfig` builds it), the `HostSimulation` assumption |
 | `Bridge/HostCall.lean` | spike (a): `bridge_hostCall` — a wall `call` of a host slot is one Talos `callHostReturn` step |
 | `Bridge/IfElse.lean` | spike (b): `bridge_ifElse` — a wall `ifElse` is `Step.iff`, the branch, `Step.exitControl` |
 | `Bridge/EnvOfClaim.lean` | spike (c): `envOfClaim` is a projection of the declared envelope (host half, struct half), the k5 instance |
 | `Bridge/Instr.lean` | one `Step` per remaining profile instruction: locals, constants, `structGet`/`structNew`, `refIsNull`, the nine comparisons |
-| `Bridge/Bridge.lean` | `bridge_run` (induction on `HasTy`, framed) and the export theorem `wFuncN_terminatesWith` / `wFuncN_TerminatesWith` |
+| `Bridge/Bridge.lean` | `bridge_run` (induction on `HasTy`, framed) and the export theorem `wFuncN_terminatesWith`, stated as Talos's `TerminatesWith` over `initialConfig` |
 | `Bridge/Coverage.lean` | the coverage lemma (brief §3): `lowerExprFragmentBody carrier plan = some instrs` for a plan in the profile ⇒ `HasTy env (Γof plan.params) [] instrs [sortOfFragTy plan.result]` and `translateList env instrs = some _`, by induction over the wall's `lowerNodesFuel`/`lowerBlockFuel` with the checker's facts read one node at a time |
 | `Bridge/Tripwire.lean` | fail-closed enumeration: `wInstrInProfile` (every `WInstr` constructor) with `translate_eq_none_of_out`, and 27 checked sample plans, one per `FragNodeKind` constructor, lowered by the wall and translated (`#eval` fails the build on disagreement) |
 | `Bridge/Contracts.lean` | `HostSorts_of_contracts`: `HostSorts` for the compute face's real host table (`StandardFace.recordComputeSlots`) from the five `Obligation.holds` contract hypotheses (`ComputeContracts`, verbatim) and distinct indices; `hostTableBound_nodup`: the `Nodup` the host half needs is the claim check's `hostTableIndicesDistinct` |
 | `Bridge/Adapter.lean` | the concrete Talos host: `adapterEnv` reads each slot's arguments back along their sorts, applies the wall's abstract contract function, reifies the result into the heap; `HostSimulation_adapter` (any machine-shaped table) and `HostSimulation_recordCompute` (the compute face's `recordComputeSlots` under the contracts) |
-| `Bridge/Accepted.lean` | the composition sentence (brief §9 (4)): `planInProfile_of_recordCompute` (a plan the compute-face classifier admits is in the profile relative to `envOfClaim`) and `recordCompute_terminatesWith` (over the declared envelope of an accepted record projection-compute claim, the Talos configuration is `synthModule (envOfClaim …) … (translation of the lowered body)` with the adapter host, and a successful `wFuncN` run terminates in Talos related); the three hypotheses the envelope lacks are named in its header |
+| `Bridge/Accepted.lean` | the profile half of brief §9 (4): `planInProfile_of_recordCompute` (a plan the compute-face classifier admits is in the profile relative to `envOfClaim`); the three hypotheses the envelope lacks are named in its header |
+| `Bridge/RunsExport.lean` | the composition sentence at Talos's export boundary: `startExportConfig?_synth` (Talos's `startExportConfig?` on sorted, related arguments enters exactly `initialConfig`) and `recordCompute_runsExport` (over the declared envelope of an accepted record projection-compute claim, `RunsExportWith (adapterEnv …) (synthModule (envOfClaim …) …) exportName call (fun ret => ∃ v, ret.values = [v] ∧ R ret.final.gcHeap v w)` for the wall's `wFuncN` result `w`) |
 | `Bridge/Axioms.lean` | `#print axioms` of every theorem (all `[propext, Classical.choice, Quot.sound]` or fewer) |
-| `Bridge/Smoke.lean` | the k5 claims' PLANS (verbatim from the certificate package) lowered by the wall, translated over `envOfClaim`, run in Talos with the adapter host over the reference faces and compared with `wFuncN`; the declared-data hypotheses of `recordCompute_terminatesWith` evaluated on the k5 data (not part of the proof) |
+| `Bridge/Smoke.lean` | the k5 claims' PLANS (verbatim from the certificate package) lowered by the wall, translated over `envOfClaim`, entered through `startExportConfig?`, run in Talos with the adapter host over the reference faces and compared with `wFuncN`; the declared-data hypotheses of `recordCompute_runsExport` evaluated on the k5 data (not part of the proof) |
 
 ## Log
 
@@ -251,6 +257,84 @@ set `autoImplicit false`; the earlier ones do not yet.
   package's `Module.lean`) agree between `wFuncN` (small-int faces) and Talos
   (`translate` + `runSteps`, heap host): `plus(1/2,1/3)` = 5/6 (18 Talos steps),
   `plus(7/9,-2/5)` = 17/45, `isNonNeg` on 1/2, -3/4, 0/1, `lessThan` both ways. Smoke only.
+- **Step 15 (2026-09-04) — Talos's export boundary, `RunsExport.lean`; pin moved to PR #232.**
+  CLOSED. Pin: `lakefile.toml` now names the head of Talos PR #232
+  (`a6a34484c1cbe65b6e9b38dfaa24b8bb6ca06d27`, `codex-semantic-spec-interface`); `lake
+  update Interpreter` fetched it directly (Mathlib cache hit, 17 s), `Interpreter.Wasm.Host.Run`
+  built in one go (SmallStep 222 s on 6 threads, Host.Run 0.4 s); the unchanged bridge
+  built green against it, so nothing was vendored. Baseline `wc -l`: 17 files, 6438 lines
+  (Accepted 352, Bridge 498, Config 183, Axioms 44, Smoke 218).
+  WHAT `startExportConfig?` EXPECTS: `env : HostEnv α` — the adapter `adapterEnv α env host`
+  IS one, no wrapping; it builds `initConfig { module := m, host := env } entry call.initial
+  call.arguments` after `m.findExport op = some entry`, `m.funcSig? entry = some sig`,
+  `call.arguments.length == sig.params.length` and the private `exportArgumentsMatch`
+  (each argument, source order, matches its declared parameter type; `.anyref _` matches
+  `.anyref`). Two consequences for `Config.lean`: (a) the synthetic module now EXPORTS its
+  function (`exports := [{ name := exportName, funcIdx := env.imports.length }]`; the name
+  is fixed, `"aver"`, since Talos resolves it to the entry index and nothing else reads it);
+  (b) `synthInstance` is `{ module := m, host := hostEnv }` with `resolvedImports` at its
+  default, exactly the instance `startExportConfig?` builds — `Step` consults
+  `resolvedImports` only for an import WITHOUT a host function (`callCrossInstance`,
+  `hnoHost : currentHost.funcs.length ≤ functionIndex`, SmallStep.lean:3377–3381), and every
+  import here has one. `ExportCall.ofHost` does not apply: it fixes `initial :=
+  m.initialStore` (empty heap), and the arguments are records living in the heap; so the
+  theorem takes an arbitrary `call : ExportCall α` with `Rs call.initial.gcHeap
+  call.arguments.reverse vs` (Talos's operand-stack order, top first — their ABI note, stated
+  once). THE THEOREM: `recordCompute_runsExport` concludes `RunsExportWith (adapterEnv α env
+  host) (synthModule env (params.map sortOfFragTy) t 1 body') exportName call (fun ret => ∃ v,
+  ret.values = [v] ∧ R ret.final.gcHeap v w)` — `RunsExportWith`, not `…Outcome`: the wall's
+  run gives an actual `.done` trace and `Step` is deterministic, so a trap on the same call is
+  impossible, not merely unobserved. Proof: the old composition + `startExportConfig?_synth`
+  (`findExport`/`funcSig?` of the synthetic module by `simp`; the argument guard from
+  `exportValueMatches_of_R`: a sorted, related argument of each profile sort matches
+  `valueTypeOf` of that sort — the two private guards are named with Batteries'
+  `open private … from Interpreter.Wasm.Host.Run`; then `initConfig_synth`). Elaboration
+  0.6 s; axioms `[propext, Classical.choice, Quot.sound]` (`startExportConfig?_synth`:
+  `[propext, Quot.sound]`). REDUNDANT NOW, deleted: `wFuncN_TerminatesWith` (Bridge.lean, 19
+  lines — `wFuncN_terminatesWith` states `TerminatesWith` directly, which is what
+  `RunsExportWith` wraps); `recordCompute_terminatesWith` (Accepted.lean, 67 lines — its
+  `∃ trace v store', Steps (initialConfig …) …` conclusion is recovered from
+  `recordCompute_runsExport` by `startExportConfig?_synth`, so the composition sentence lives
+  once, at the boundary); `initSingleModuleConfig_synth` became `initConfig_synth` (same
+  proof, over the instance the boundary builds — `initSingleModuleConfig` is no longer on the
+  path). No determinism lemma of our own existed (`RunsExportWith.deterministic` is Talos's
+  to use); argument-order plumbing: the theorem takes `call.arguments` as Talos hands them
+  and the only `.reverse` left is in the relation to the wall's list. `Smoke.lean` enters
+  through `startExportConfig?` now (its guards evaluate on the k5 calls): 7/7 agree, 12/12
+  declared-data hypotheses hold. After: 18 files, 6564 lines (Accepted 281, Bridge 479, Config
+  196, Axioms 45, RunsExport 202, Smoke 218) — net +126, of which the new file's header and
+  the boundary lemmas; the composition theorem itself moved, not grew.
+  THE ARITY QUESTION (Q4). `startExportConfig?` checks the export name, the argument COUNT
+  and the argument TYPES of the call (Host/Run.lean: `guard (call.arguments.length ==
+  signature.params.length)`, `guard (exportArgumentsMatch m call signature)`) — nothing about
+  the body. `Config.Safe`/`ValidConfig` (SmallStep.lean:6974–6980) is semantic — "no
+  reachable configuration makes `stepChecked?` fail" — not a syntactic validator, and it is
+  not a premise of `RunsExportWith`. Talos's module validator DOES check both struct arities:
+  `Module.validate` (Validate.lean:1496) runs `m.checkFuncStraight f` on every function
+  (1627–1629), which stack-types the body with `Instruction.straightSig` (941): `.structNew t
+  ↦ (m.structFields? t).map fun fs => ((fs.map (·.storage.vt)).reverse, [.ref false
+  (.concrete t)])` (1133–1136) pops exactly the declared field count, and `.structGet t f ↦
+  (m.structField? t f).map …` (1127–1129) needs the field to exist. WHERE IT STOPS SHORT:
+  `straightSig` returns `none` for an instruction it does not model and `Program.checkTypes`
+  then ACCEPTS the whole function ("Unsupported instructions conservatively make the check
+  succeed", 1466–1467; `| none => pure none` 1459–1460, `| none => return none` 1462) — so a
+  `struct.get` whose field index is out of range on a declared struct passes
+  `checkFuncStraight` (only `struct.set` fields are checked separately, 1593–1596), and any
+  unmodelled instruction earlier in the body switches the arity check off for the rest.
+  More to the point, NONE of it is reachable from the theorem: `RunsExportWith` never
+  invokes `Module.validate`, and the module it would validate is the SYNTHETIC one, whose
+  type section is generated from the same declaration the translation reads — `translate`
+  already refuses a `structNew` whose operand count differs from the declared field count
+  (Translate.lean:61–63) and `HasTy` types `structGetUser` against the declared sorts, so a
+  Talos validation of `synthModule` could only re-derive what `translateList … = some body'`
+  already says. The hypothesis `harity` is about the PLAN versus the pinned declaration,
+  needed before any wasm exists; Talos never sees the plan. KEPT. Same verdict for `hi32`:
+  Talos's `.const` carries a `UInt32` (Syntax.lean:279), always in band; the band condition
+  is on the wall's unbounded `Int` literal and is what lets `translate` emit the word at all
+  (Translate.lean:59) — nothing on Talos's side can speak to it. KEPT. And `hne : structIdx ≠
+  carrier`: a consistency condition between two of OUR inputs to `envOfClaim` (which entry
+  `structSorts?` finds at the index), not a validity condition of any module; Talos's
+  `gcTypeRefs` range check (1584–1585) sees one type section and cannot notice it. KEPT.
 
 ## What is NOT proved here (the list, not an estimate)
 
@@ -267,6 +351,8 @@ takes as a premise, and where each premise comes from:
 3. **The three envelope hypotheses of `Accepted.lean`** — `constI32` band, struct arity
    agreement, `structIdx ≠ carrier`. Byte-derivable in principle, not declared; the
    arity one is the real gap (a mismatch is invalid wasm the wall never validates).
+   Talos's validator would catch the arity mismatch in a module it validates, but
+   `RunsExportWith` does not validate, and the module here is the synthetic one (Step 15).
 4. **Sorted arguments** — `Sorted env S vs (params.map sortOfFragTy)`: records whose Int
    fields are represented canonical carriers. The wall's `recordComputeDomRepr`
    (`SReprAll`) says exactly that; the one-line bridge `SRepr → HasSort` is not written.
@@ -274,4 +360,7 @@ takes as a premise, and where each premise comes from:
    `carrierState` bind the declaration, the body and the carrier index to the bytes; the
    bridge reads the declaration, the lowered body and the index, never a byte. The
    composition sentence therefore says: the Talos module the theorem is about is built
-   from exactly what those pins pin — not that Talos has decoded the artifact.
+   from exactly what those pins pin — not that Talos has decoded the artifact. Its export
+   is entered through Talos's own boundary (`startExportConfig?`), on a call whose
+   initial store carries the argument records; `ExportCall.ofHost` (empty initial store)
+   is not the shape of a call with reference arguments.

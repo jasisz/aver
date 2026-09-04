@@ -1,4 +1,4 @@
-import Bridge.Accepted
+import Bridge.RunsExport
 
 set_option autoImplicit false
 
@@ -19,7 +19,7 @@ runs the same lowered bodies through `wFuncN` with the same `wallHost`. Both
 results are decoded and compared.
 
 Also executed here: `planInProfile k5Env plan` for the three plans, and the
-declared-data hypotheses of `recordCompute_terminatesWith` on the k5 data
+declared-data hypotheses of `recordCompute_runsExport` on the k5 data
 (`hostTableBound` against the manifest's decoded roles, `recordComputeNodeOk`,
 the struct-index agreement, `planTypedB`, the record declaration, and the
 three extra hypotheses of `Accepted.lean`) — all decidable, all `true`.
@@ -138,10 +138,10 @@ def runTalos (c : Case) (body : List WInstr) : String :=
     let base := carriers.length
     let store0 : Store Unit := { (m.initialStore : Store Unit) with gcHeap := carriers ++ fracs }
     let args : List Value := (List.range c.args.length).map fun i => .anyref (some (.struct (base + i)))
-    match initSingleModuleConfig m (adapterEnv Unit k5Env wallHost) k5Env.imports.length store0
-        args.reverse with
-    | .error e => s!"init error: {e.message}"
-    | .ok cfg =>
+    match startExportConfig? (adapterEnv Unit k5Env wallHost) m exportName
+        { initial := store0, arguments := args.reverse } with
+    | none => "the export boundary refused the call"
+    | some cfg =>
       let tr := runSteps 100000 cfg
       match tr.result with
       | .success [v] st => s!"{decodeT st.wasm.gcHeap v} ({tr.trace.length} steps)"
@@ -166,7 +166,7 @@ def cases : List Case :=
     { name := "lessThan(1/3, 1/2)", plan := Domain_Rational_lessThanPlan, expected := lessThanBody,
       args := [(1, 3), (1, 2)] } ]
 
-/-! ## The declared-data hypotheses of `recordCompute_terminatesWith` on k5 -/
+/-! ## The declared-data hypotheses of `recordCompute_runsExport` on k5 -/
 
 def k5Fields : List TypeDecl := [.intCarrier, .intCarrier]
 
@@ -211,7 +211,7 @@ def report : IO Unit := do
     for (h, b) in compositionHyps plan do
       unless b do throw (IO.userError s!"{name}: composition hypothesis `{h}` is false on k5")
     IO.println s!"{name}: all {(compositionHyps plan).length} declared-data hypotheses of \
-      recordCompute_terminatesWith hold"
+      recordCompute_runsExport hold"
 
 #eval report
 

@@ -69,14 +69,26 @@ def synthFunction (env : TranslateEnv) (paramSorts : List STy) (result : STy)
     body
     results := [valueTypeOf result] }
 
+/-- The name under which the synthetic module exports its one function.
+    Talos enters a module by export NAME (`Module.findExport`); the name is
+    not semantic — it resolves to the function after the imports — so the
+    bridge fixes one. -/
+def exportName : String := "aver"
+
 def synthModule (env : TranslateEnv) (paramSorts : List STy) (result : STy)
     (nlocals : Nat) (body : Program) : Module :=
   { funcs := [synthFunction env paramSorts result nlocals body]
+    exports := [{ name := exportName, funcIdx := env.imports.length }]
     imports := env.imports.map importDecl
     gcTypes := (List.range (structsBound env.structs)).map (gcTypeDefOf env.structs) }
 
+/-- The instance Talos's export boundary builds (`startExportConfig?`:
+    `{ module := m, host := env }`). `resolvedImports` is left at its default:
+    `Step` consults it only for an import WITHOUT a host function
+    (`callCrossInstance`, `hnoHost`), and every import here has one
+    (`HostSimulation.resolved`). -/
 def synthInstance (m : Module) (hostEnv : HostEnv α) : ModuleInstance α :=
-  { module := m, host := hostEnv, resolvedImports := hostEnv.funcs.toArray.map .host }
+  { module := m, host := hostEnv }
 
 def synthRuntime (m : Module) (hostEnv : HostEnv α) : RuntimeEnv α :=
   { instances := #[synthInstance m hostEnv], entry := ⟨0⟩ }
@@ -132,13 +144,14 @@ def initialConfig (m : Module) (hostEnv : HostEnv α) (fn : Function)
     (store0 : Store α) (args : List Value) : Config α :=
   ⟨.running (initialThread fn args), { runtime := synthRuntime m hostEnv, wasm := store0 }⟩
 
-/-- `initialConfig` is exactly what Talos's own single-module entry point
-    builds for the function after the imports, given the arguments in
-    Talos's stack order (last argument first). -/
-theorem initSingleModuleConfig_synth (env : TranslateEnv) (paramSorts : List STy) (result : STy)
+/-- `initialConfig` is what Talos's `initConfig` builds for the function after
+    the imports, given the arguments in Talos's stack order (last argument
+    first). `RunsExport.lean` lifts this to the export boundary
+    (`startExportConfig?`). -/
+theorem initConfig_synth (env : TranslateEnv) (paramSorts : List STy) (result : STy)
     (nlocals : Nat) (body : Program) (hostEnv : HostEnv α) (store0 : Store α)
     (args : List Value) (hlen : args.length = paramSorts.length) :
-    initSingleModuleConfig (synthModule env paramSorts result nlocals body) hostEnv
+    initConfig (synthInstance (synthModule env paramSorts result nlocals body) hostEnv)
         env.imports.length store0 args.reverse =
       .ok (initialConfig (synthModule env paramSorts result nlocals body) hostEnv
         (synthFunction env paramSorts result nlocals body) store0 args) := by
@@ -148,7 +161,7 @@ theorem initSingleModuleConfig_synth (env : TranslateEnv) (paramSorts : List STy
     simpa using List.take_length (l := args.reverse)
   have hd : List.drop args.length args.reverse = [] := by
     simp
-  simp only [initSingleModuleConfig, initConfig, synthModule_imports_length, Nat.lt_irrefl,
+  simp only [initConfig, synthInstance, synthModule_imports_length, Nat.lt_irrefl,
     if_false, Nat.sub_self, synthModule_funcs_getElem?, hnp, ht, hd, List.reverse_reverse]
   rfl
 
