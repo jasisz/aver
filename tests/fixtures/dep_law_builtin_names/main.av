@@ -1,0 +1,31 @@
+module DepLawEntry
+    intent =
+        "An entry that reaches Bytes and a dependency module whose laws it"
+        "cites: List.concat in a law must never resolve to Bytes.concat, and a"
+        "law proved here by fuel induction cites the dependency's own laws."
+    depends [Bytes, Digits]
+    effects []
+
+fn checksum(bytes: Bytes) -> Int
+    ? "The big-endian reading of a byte string, through the dependency."
+    Digits.bigEndian(Bytes.octets(bytes), 0)
+
+verify checksum
+    checksum(Bytes.fromList([1, 2])) => 258
+    checksum(Bytes.empty()) => 0
+
+fn readBack(value: Int) -> Int
+    ? "Write a magnitude as digits, then read it back."
+    Digits.bigEndian(List.reverse(Digits.digits(value, [])), 0)
+
+verify readBack
+    readBack(0) => 0
+    readBack(258) => 258
+
+verify readBack law readsBackDigits
+    given m: Int = [0, 1, 127, 128, 255, 256, 65535, 65536]
+    when m >= 0
+    Digits.bigEndian(List.reverse(Digits.digits(m, [])), 0) => m
+
+fn main() -> Unit
+    Unit

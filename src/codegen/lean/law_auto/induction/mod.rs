@@ -922,7 +922,7 @@ pub(super) fn earlier_law_lemmas(
     law: &VerifyLaw,
     ctx: &CodegenContext,
 ) -> Vec<crate::codegen::lemma_discovery::CommittedLemma> {
-    use crate::ast::{TopLevel, VerifyKind};
+    use crate::ast::VerifyKind;
     let inputs = crate::codegen::proof_lower::ProofLowerInputs::from_ctx(ctx);
     let cone = crate::codegen::proof_lower::LawProofCone::compute(law, &vb.fn_name, &inputs);
     let mut scope: BTreeSet<String> = cone
@@ -937,12 +937,33 @@ pub(super) fn earlier_law_lemmas(
         .into_iter()
         .map(|l| (l.clone(), l))
         .collect();
+    // Under a DEPENDENCY module's scope the statement renderer spells that
+    // module's own fns namespace-qualified (`M.f`), so the in-file gate must
+    // compare in the same qualified identity the cross-file half uses —
+    // otherwise a module's own siblings never match its bare-name cone and
+    // the pool comes back empty for every dependency law.
+    let active_module = ctx
+        .active_module_scope()
+        .and_then(|s| ctx.modules.iter().find(|m| m.prefix == s));
+    let (program_index, scope, subject) = match active_module {
+        Some(m) => {
+            let (mut qscope, _) = consumer_law_qualified_scope(vb, law, ctx);
+            let qsubject = format!("{}.{}", m.prefix, subject);
+            qscope.insert(qsubject.clone());
+            (dep_membership_index(m, ctx), qscope, qsubject)
+        }
+        None => (program_index, scope, subject),
+    };
+    let sibling_subject = |prev: &VerifyBlock| match active_module {
+        Some(m) => format!("{}.{}", m.prefix, aver_name_to_lean(&prev.fn_name)),
+        None => aver_name_to_lean(&prev.fn_name),
+    };
 
     let mut out = Vec::new();
-    for item in &ctx.items {
-        let TopLevel::Verify(prev) = item else {
-            continue;
-        };
+    // "Same file" is the file this theorem lands in: the dependency module's
+    // own blocks under its scope, the entry items otherwise (see
+    // `same_file_verify_blocks`).
+    for prev in super::shared::same_file_verify_blocks(ctx) {
         // Stop at the consumer law itself; only earlier blocks are eligible.
         if prev.line == vb.line && prev.fn_name == vb.fn_name {
             break;
@@ -978,7 +999,7 @@ pub(super) fn earlier_law_lemmas(
         // proof — is inert in the goal (nothing to rewrite) and only adds noise.
         // The genuine decomposition case is preserved: a count-homomorphism
         // helper IS a law about `count`, the very subject it shares.
-        let prev_subject = aver_name_to_lean(&prev.fn_name);
+        let prev_subject = sibling_subject(prev);
         // THIRD rule — LHS-rooted relevance. A Forward sibling fires against the
         // consumer goal only through its LHS shape, so a helper whose LHS sits
         // ENTIRELY inside this proof's cone is relevant even when its RHS
@@ -1012,7 +1033,7 @@ pub(super) fn earlier_law_lemmas(
             let pmentions: BTreeSet<String> = raw
                 .iter()
                 .map(|n| aver_name_to_lean(n))
-                .filter(|n| program_index.contains_key(n))
+                .filter_map(|n| program_index.get(&n).cloned())
                 .collect();
             !pmentions.is_empty() && pmentions.is_subset(&scope) && scope.contains(&prev_subject)
         });
@@ -1162,12 +1183,12 @@ fn bridge_law_lean_names(
 /// the tight rung does not yet render. Unconditional (`when.is_none`) universal-
 /// form laws only; the per-declaration `#print axioms` gate keeps soundness, so
 /// the dafny-only opaque/native-mutual/oracle filters are not mirrored here.
-fn earlier_law_cites<'a>(
+fn earlier_law_cites(
     vb: &VerifyBlock,
     law: &VerifyLaw,
-    ctx: &'a CodegenContext,
-) -> Vec<(String, &'a VerifyLaw)> {
-    use crate::ast::{TopLevel, VerifyKind};
+    ctx: &CodegenContext,
+) -> Vec<(String, VerifyLaw)> {
+    use crate::ast::VerifyKind;
     let inputs = crate::codegen::proof_lower::ProofLowerInputs::from_ctx(ctx);
     let cone = crate::codegen::proof_lower::LawProofCone::compute(law, &vb.fn_name, &inputs);
     let mut scope: BTreeSet<String> = cone
@@ -1182,12 +1203,27 @@ fn earlier_law_cites<'a>(
         .into_iter()
         .map(|l| (l.clone(), l))
         .collect();
+    // Same qualified-identity rule as `earlier_law_lemmas` under a dependency
+    // module's scope.
+    let active_module = ctx
+        .active_module_scope()
+        .and_then(|s| ctx.modules.iter().find(|m| m.prefix == s));
+    let (program_index, scope, subject) = match active_module {
+        Some(m) => {
+            let (mut qscope, _) = consumer_law_qualified_scope(vb, law, ctx);
+            let qsubject = format!("{}.{}", m.prefix, subject);
+            qscope.insert(qsubject.clone());
+            (dep_membership_index(m, ctx), qscope, qsubject)
+        }
+        None => (program_index, scope, subject),
+    };
+    let sibling_subject = |prev: &VerifyBlock| match active_module {
+        Some(m) => format!("{}.{}", m.prefix, aver_name_to_lean(&prev.fn_name)),
+        None => aver_name_to_lean(&prev.fn_name),
+    };
 
     let mut out = Vec::new();
-    for item in &ctx.items {
-        let TopLevel::Verify(prev) = item else {
-            continue;
-        };
+    for prev in super::shared::same_file_verify_blocks(ctx) {
         // Only blocks earlier in source are eligible; stop at the consumer.
         if prev.line == vb.line && prev.fn_name == vb.fn_name {
             break;
@@ -1220,7 +1256,7 @@ fn earlier_law_cites<'a>(
         // SAME three admission rules as `earlier_law_lemmas`: the sibling stays in
         // the cone, OR it mentions the consumer's subject (decomposition that
         // introduces a combinator), OR its LHS is cone-rooted.
-        let prev_subject = aver_name_to_lean(&prev.fn_name);
+        let prev_subject = sibling_subject(prev);
         let lhs_mentions = crate::codegen::lemma_discovery::lemma_lhs_fns(&text, &program_index);
         let lhs_rooted = !lhs_mentions.is_empty()
             && lhs_mentions.is_subset(&scope)
@@ -1229,10 +1265,79 @@ fn earlier_law_cites<'a>(
             || (mentions.contains(&subject) && scope.contains(&prev_subject))
             || lhs_rooted
         {
-            out.push((name, prev_law.as_ref()));
+            out.push((name, prev_law.as_ref().clone()));
+        }
+    }
+    // Cross-file half: a dependency module's exposed, unconditional laws,
+    // admitted by the SAME gate as `earlier_law_lemmas` and cited by their
+    // namespace-qualified theorem name. The instantiation engine matches call
+    // heads by their dotted spelling, so the dependency law's calls to its
+    // own fns are re-spelled the way the consumer writes them (`M.f`) before
+    // it is handed over. Only modules strictly earlier in the DAG than the
+    // consumer's are eligible (a dependency precedes its consumers).
+    let (qualified_scope, qualified_subject) = consumer_law_qualified_scope(vb, law, ctx);
+    let consumer_module_idx = ctx
+        .active_module_scope()
+        .and_then(|s| ctx.modules.iter().position(|m| m.prefix == s));
+    for (module_idx, module) in ctx.modules.iter().enumerate() {
+        if let Some(consumer_idx) = consumer_module_idx
+            && module_idx >= consumer_idx
+        {
+            continue;
+        }
+        let dep_index = dep_membership_index(module, ctx);
+        for prev in &module.verify_laws {
+            let VerifyKind::Law(prev_law) = &prev.kind else {
+                continue;
+            };
+            if prev_law.when.is_some()
+                || crate::codegen::cite_instantiate::law_rewrites_to_self(prev_law)
+            {
+                continue;
+            }
+            if let Some((name, _text)) = dep_law_admissible(
+                module,
+                prev,
+                prev_law,
+                &qualified_scope,
+                &qualified_subject,
+                &dep_index,
+                ctx,
+            ) {
+                out.push((name, qualify_module_calls(prev_law, module)));
+            }
         }
     }
     out
+}
+
+/// A dependency law's expressions with every call to one of that module's own
+/// fns spelled the way a consumer writes it (`M.f`), so the instantiation
+/// engine's dotted-name matching lines up with the consumer's goal. Binders
+/// are respected by the scoped rewriter; a fn name never shadows a given.
+fn qualify_module_calls(law: &VerifyLaw, module: &crate::codegen::ModuleInfo) -> VerifyLaw {
+    use crate::ast::{Expr, Spanned};
+    fn dotted(path: &str) -> Spanned<Expr> {
+        let mut parts = path.split('.');
+        let mut expr = Spanned::bare(Expr::Ident(parts.next().unwrap_or_default().to_string()));
+        for part in parts {
+            expr = Spanned::bare(Expr::Attr(Box::new(expr), part.to_string()));
+        }
+        expr
+    }
+    let own: BTreeSet<&str> = module.fn_defs.iter().map(|d| d.name.as_str()).collect();
+    let qualify = |e: &Spanned<Expr>| {
+        crate::ast_rewrite::rewrite_idents_scoped(e, |name| {
+            own.contains(name)
+                .then(|| dotted(&format!("{}.{}", module.prefix, name)))
+        })
+    };
+    VerifyLaw {
+        when: law.when.as_ref().map(&qualify),
+        lhs: qualify(&law.lhs),
+        rhs: qualify(&law.rhs),
+        ..law.clone()
+    }
 }
 
 /// Render a computed instantiation argument (from `cite_instantiate`) to a Lean
@@ -1368,7 +1473,7 @@ fn b_tight_decomposition_arms(
     if cites.is_empty() {
         return None;
     }
-    let cited: Vec<&VerifyLaw> = cites.iter().map(|(_, l)| *l).collect();
+    let cited: Vec<&VerifyLaw> = cites.iter().map(|(_, l)| l).collect();
     let insts =
         crate::codegen::cite_instantiate::compute_instantiations(law, ind_aver_name, &cited, ctx);
     if insts.is_empty() {

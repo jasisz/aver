@@ -26,12 +26,10 @@ use super::super::expr::aver_name_to_lean;
 use super::AutoProof;
 use super::shared::{
     call_name_args, child_exprs, direct_user_calls, find_fn_def, find_fn_def_by_call_name,
-    ident_name, law_simp_defs_blind, render, simp_def_name, substitute_expr, wf_countdown_fn_names,
-    wf_countdown_param,
+    ident_name, law_simp_defs_blind, render, same_file_verify_blocks, simp_def_name,
+    substitute_expr, wf_countdown_fn_names, wf_countdown_param,
 };
-use crate::ast::{
-    BinOp, Expr, FnDef, Literal, Spanned, Stmt, TopLevel, VerifyBlock, VerifyKind, VerifyLaw,
-};
+use crate::ast::{BinOp, Expr, FnDef, Literal, Spanned, Stmt, VerifyBlock, VerifyKind, VerifyLaw};
 use crate::codegen::CodegenContext;
 
 /// A recognized fuel-induction law: the single well-founded countdown fn the
@@ -265,10 +263,14 @@ fn reaches(from: &str, target: &str, ctx: &CodegenContext) -> bool {
     false
 }
 
-/// An earlier, same-file, unconditional law whose LHS is a direct call to `f`
-/// on bare, distinct givens covering all of its givens: `f(g_1..g_n)`. Cited
-/// as a ground instance at every IH tuple (the accumulator law is exactly this
-/// shape and is a looping simp rule, so it never joins a simp set).
+/// An earlier law whose LHS is a direct call to `f` on bare, distinct givens
+/// covering all of its givens: `f(g_1..g_n)`. Cited as a ground instance at
+/// every IH tuple (the accumulator law is exactly this shape and is a looping
+/// simp rule, so it never joins a simp set). Two sources: laws earlier in the
+/// FILE this theorem lands in, and the exposed laws of the dependency module
+/// that OWNS `f` (cited by their namespace-qualified theorem name; the
+/// consumer file imports and opens every dependency, and a dependency always
+/// precedes its consumers in the module DAG, so a cycle is impossible).
 struct GroundLaw {
     theorem: String,
     /// For each of the law's givens, the `f` argument position it occupies.
@@ -276,40 +278,33 @@ struct GroundLaw {
 }
 
 fn ground_laws_about(vb: &VerifyBlock, plan: &WfFuelPlan, ctx: &CodegenContext) -> Vec<GroundLaw> {
-    let mut out = Vec::new();
-    // Only laws from the FILE this theorem is emitted into can be cited by
-    // name: a dependency module's laws are emitted under
-    // `with_module_scope(Some(prefix))` from that module's own verify blocks,
-    // while `ctx.items` holds the ENTRY module's items. Scanning the wrong
-    // sequence would cite an entry-module theorem from a dependency file (an
-    // unknown identifier) or stop at a same-line block of another file.
-    let scope = ctx.active_module_scope();
-    let blocks: Vec<&VerifyBlock> = match scope.as_deref() {
-        Some(prefix) => ctx
-            .modules
-            .iter()
-            .find(|m| m.prefix == prefix)
-            .map(|m| m.verify_blocks.iter().collect())
-            .unwrap_or_default(),
-        None => ctx
-            .items
-            .iter()
-            .filter_map(|item| match item {
-                TopLevel::Verify(prev) => Some(prev),
-                _ => None,
-            })
-            .collect(),
-    };
-    for prev in blocks {
+    // Candidate blocks, each with the dependency module it comes from (`None`
+    // = this file). `ctx.items` holds the ENTRY module only, so the in-file
+    // sequence is read through `same_file_verify_blocks`.
+    let mut candidates: Vec<(Option<&crate::codegen::ModuleInfo>, &VerifyBlock)> = Vec::new();
+    for prev in same_file_verify_blocks(ctx) {
         if prev.line == vb.line && prev.fn_name == vb.fn_name {
             break;
         }
+        candidates.push((None, prev));
+    }
+    let active = ctx.active_module_scope();
+    if let Some(owner) = ctx
+        .modules
+        .iter()
+        .find(|m| m.fn_defs.iter().any(|d| d.name == plan.f))
+        && active.as_deref() != Some(owner.prefix.as_str())
+    {
+        // `verify_laws` holds only the laws whose subject the module exposes.
+        for prev in &owner.verify_laws {
+            candidates.push((Some(owner), prev));
+        }
+    }
+    let mut out = Vec::new();
+    for (owner, prev) in candidates {
         let VerifyKind::Law(prev_law) = &prev.kind else {
             continue;
         };
-        if prev_law.when.is_some() {
-            continue;
-        }
         let Some((name, args)) = call_name_args(&prev_law.lhs) else {
             continue;
         };
@@ -336,10 +331,31 @@ fn ground_laws_about(vb: &VerifyBlock, plan: &WfFuelPlan, ctx: &CodegenContext) 
         if !covered || args.iter().any(|a| ident_name(a).is_none()) {
             continue;
         }
-        let Some((theorem, _)) =
-            crate::codegen::lean::toplevel::law_as_lemma_statement(prev, prev_law, ctx)
-        else {
+        // The theorem must exist in its universal form. An unconditional law
+        // is stated so exactly when `law_as_lemma_statement` accepts it; a
+        // `when`-law is stated so only when this strategy recognises it
+        // (verify.rs classes exactly those `conditional_universal`), and is
+        // then cited as the implication `<when> = true -> claim`, which
+        // `simp_all` uses as a conditional rewrite — never discharged here.
+        let base = ctx.with_module_scope(owner.map(|m| m.prefix.as_str()), || {
+            if prev_law.when.is_some() {
+                recognize_wf_fuel_induction(prev, prev_law, ctx)
+                    .map(|_| crate::codegen::lean::toplevel::law_theorem_base(prev, prev_law, ctx))
+            } else {
+                crate::codegen::lean::toplevel::law_as_lemma_statement(prev, prev_law, ctx)
+                    .map(|(name, _)| name)
+            }
+        });
+        let Some(base) = base else {
             continue;
+        };
+        let theorem = match owner {
+            Some(m) => format!(
+                "{}.{}",
+                crate::codegen::lean::syntax::aver_path_to_lean(&m.prefix),
+                base
+            ),
+            None => base,
         };
         out.push(GroundLaw {
             theorem,

@@ -21,6 +21,8 @@ mod container_induction;
 mod cross_file;
 #[path = "proof_spec/dafny_inline.rs"]
 mod dafny_inline;
+#[path = "proof_spec/dep_law_names.rs"]
+mod dep_law_names;
 #[path = "proof_spec/dependency_effects.rs"]
 mod dependency_effects;
 #[path = "proof_spec/entry_opens.rs"]

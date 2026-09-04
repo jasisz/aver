@@ -1,0 +1,40 @@
+module Digits
+    intent =
+        "A big-endian reader, a little-endian digit writer with a well-founded"
+        "countdown, and the laws about them that a consumer module cites."
+    exposes [bigEndian, digits]
+    depends []
+    effects []
+
+fn bigEndian(bytes: List<Int>, acc: Int) -> Int
+    ? "Most significant byte first."
+    match bytes
+        [] -> acc
+        [head, ..tail] -> bigEndian(tail, acc * 256 + head)
+
+verify bigEndian
+    bigEndian([], 0) => 0
+    bigEndian([1], 0) => 1
+    bigEndian([1, 2], 0) => 258
+
+verify bigEndian law readsTheLastByteLast
+    given bytes: List<Int> = [[], [1], [1, 2], [255, 0, 7]]
+    given b: Int = [0, 1, 128, 255]
+    given acc: Int = [0, 1, 300]
+    bigEndian(List.concat(bytes, [b]), acc) => bigEndian(bytes, acc) * 256 + b
+
+fn digits(value: Int, acc: List<Int>) -> List<Int>
+    ? "Least significant byte first; a non-positive value writes nothing."
+    match value > 0
+        true -> digits(Int.div(value, 256), List.prepend(Int.mod(value, 256), acc))
+        false -> List.reverse(acc)
+
+verify digits
+    digits(0, []) => []
+    digits(1, []) => [1]
+    digits(258, []) => [2, 1]
+
+verify digits law accumulatorComesFirst
+    given value: Int = [-1, 0, 1, 255, 256, 65536]
+    given acc: List<Int> = [[], [9], [1, 2]]
+    digits(value, acc) => List.concat(List.reverse(acc), digits(value, []))
