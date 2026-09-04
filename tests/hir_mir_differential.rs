@@ -263,6 +263,19 @@ fn builtin_record_construction_and_projection() {
 }
 
 #[test]
+fn http_request_query_construction_and_projection() {
+    // Keep the VM arena shape for this compiler-owned record aligned with
+    // the typechecker and the other backends. A missing `query` slot used to
+    // let `aver check` pass while MIR compilation rejected the constructor.
+    let src = prog(
+        "fn request() -> HttpRequest\n    \
+         HttpRequest(method = \"GET\", path = \"/search\", query = \"q=aver\", body = \"\", headers = {})\n\n\
+         fn run() -> String\n    request().query\n",
+    );
+    assert_golden("http_request_query", &src, "run", "Str(\"q=aver\")");
+}
+
+#[test]
 fn discard_binding_evaluates_for_effect() {
     // `_ = step(5)?` — the idiomatic "run it, drop the Ok, continue"
     // form. The resolver assigns `_` no slot; the lowerer evaluates the

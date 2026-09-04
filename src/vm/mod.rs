@@ -31,14 +31,15 @@ pub use types::{CallFrame, CodeStore, FnChunk, VmError};
 /// Register compiler-owned host record types in the arena before compilation.
 /// Capability-owned records are compiled from their embedded Aver modules.
 pub fn register_service_types(arena: &mut crate::nan_value::Arena) {
+    let http_request = crate::codegen::builtin_records::find("HttpRequest")
+        .expect("HttpRequest must be declared as a compiler-owned host record");
     arena.register_record_type(
-        "HttpRequest",
-        vec![
-            "method".into(),
-            "path".into(),
-            "body".into(),
-            "headers".into(),
-        ],
+        http_request.aver_name,
+        http_request
+            .fields
+            .iter()
+            .map(|field| field.name.to_string())
+            .collect(),
     );
     arena.register_record_type(
         "Tcp.Connection",
