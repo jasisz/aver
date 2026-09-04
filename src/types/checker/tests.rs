@@ -472,6 +472,41 @@ fn inBareBinding(r: Result<List<Int>, String>) -> Int
 }
 
 #[test]
+fn list_identities_type_empty_literals_from_the_expected_list() {
+    // `List.reverse([])`, `List.take([], n)`, `List.drop([], n)` used to
+    // stay `List<T>` and fail against a concrete parameter — which every
+    // `verify … law` with `[]` in a `given xs: List<Int>` domain hit as
+    // soon as a builtin was applied to the given (#1275).
+    let items = parse_items(
+        r#"
+fn allBytes(xs: List<Int>) -> Bool
+    match xs
+        [] -> true
+        [head, ..tail] -> byteAnd(head, tail)
+
+fn byteAnd(head: Int, tail: List<Int>) -> Bool
+    match Bool.and(head >= 0, head <= 255)
+        true -> allBytes(tail)
+        false -> false
+
+verify allBytes
+    allBytes(List.reverse([])) => true
+    allBytes(List.take([], 1)) => true
+    allBytes(List.drop([], 1)) => true
+
+verify allBytes law reverseKeepsBytes
+    given xs: List<Int> = [[], [1], [1, 2]]
+    allBytes(List.reverse(xs)) => allBytes(xs)
+"#,
+    );
+    let errs = errors(items);
+    assert!(
+        errs.is_empty(),
+        "expected the list identities to take the element type from the expected list, got: {errs:?}"
+    );
+}
+
+#[test]
 fn result_from_option_types_empty_error_from_expected() {
     // The error argument is unrelated to the subject's payload, so its
     // type can only come from the expected `Result`'s error side.
