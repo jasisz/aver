@@ -1142,10 +1142,11 @@ fn proof_export_lean_at_edge_domain_is_byte_identical_to_baseline() {
     // whose largest given (8 values) is below the 128-value edge and
     // whose case product (8x8x8 = 512) sits exactly at the 512-case edge
     // must emit byte-for-byte the same `LargeDomainLaw.lean` the
-    // pre-partitioning emitter did. The golden snapshot
-    // (`tests/fixtures/large_domain_law.baseline.lean`) preserves that
-    // pre-partitioning output inside the entry module namespace; any other
-    // drift means the partitioning moved an at/below-edge export. Fast (no lake).
+    // current emitter does. The golden snapshot
+    // (`tests/fixtures/large_domain_law.baseline.lean`) preserves that output
+    // inside the entry module namespace, including the global fail-closed
+    // LinearArithmetic portfolio; any other drift means the partitioning moved
+    // an at/below-edge export. Fast (no lake).
     let aver_bin = env!("CARGO_BIN_EXE_aver");
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let out = temp_output_dir("aver-large-domain-byte-identity");
@@ -1168,8 +1169,8 @@ fn proof_export_lean_at_edge_domain_is_byte_identical_to_baseline() {
     let baseline = baseline_file.strip_suffix('\n').unwrap_or(&baseline_file);
     assert_eq!(
         emitted, baseline,
-        "at/below-edge export must stay byte-identical to the pre-partitioning \
-         baseline; the partitioning must not move sub-edge emission"
+        "at/below-edge export must stay byte-identical to the current baseline; \
+         the partitioning must not move sub-edge emission"
     );
     let _ = std::fs::remove_dir_all(&out);
 }

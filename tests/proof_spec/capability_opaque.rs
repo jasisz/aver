@@ -161,14 +161,15 @@ verify twice law doubling
         "the fabricated-default falsifier must never be decided:\n{main}"
     );
 
-    // These exact declarations are the origin/main emission for the unrelated
-    // pure function.  Keeping literal pins makes a provider-dependent sibling
-    // unable to perturb either the computable case or the universal law.
+    // These exact declarations pin the unrelated pure function. Keeping the
+    // literal portfolio pin makes a provider-dependent sibling unable to
+    // perturb either the computable case, the original first tactic tier, or
+    // the universal law's global fail-closed floor.
     assert!(
         main.contains("def twice (n : Int) : Int :=\n  (n + n)")
             && main.contains("example : twice 2 = 4 := by decide +kernel")
             && main.contains(
-                "theorem twice_law_doubling : ∀ (n : Int), twice n = (n * 2) := by\n  intro n\n  simp only [twice] <;> omega"
+                "theorem twice_law_doubling : ∀ (n : Int), twice n = (n * 2) := by\n  intro n\n  first | (grind [Main.twice]; done) | (first | (simp only [twice] <;> omega) | (simp only [twice, Bool.beq_comm, beq_iff_eq, bne_iff_ne, Bool.or_eq_true, Bool.and_eq_true, decide_eq_decide, decide_eq_true_eq, ← decide_not, Bool.not_eq_true', ge_iff_le, gt_iff_lt] <;> (try split) <;> simp_all <;> omega) | sorry)"
             )
             && main.contains(
                 "theorem twice_law_doubling_checked_domain : (twice 0 = 0) ∧ (twice 1 = 2) ∧ (twice 2 = 4) := by native_decide"
@@ -525,13 +526,14 @@ verify twice law doubling
             && main.contains("-- verify hb: the Lean call cone reaches provider-owned capability operation(s) Cap.hash,"),
         "the exported file must carry each refusal:\n{main}"
     );
-    // The pure law in the same module keeps its exact origin/main emission.
+    // The pure law in the same module keeps its exact current emission,
+    // including the byte-identical original first LinearArithmetic tier.
     assert!(
         main.contains("\ndef g (x : Int) : Int :=\n  x\n")
             && !main.contains("noncomputable section\n\ndef g")
             && main.contains("def twice (n : Int) : Int :=\n  (n + n)")
             && main.contains(
-                "theorem twice_law_doubling : ∀ (n : Int), twice n = (n * 2) := by\n  intro n\n  simp only [twice] <;> omega"
+                "theorem twice_law_doubling : ∀ (n : Int), twice n = (n * 2) := by\n  intro n\n  first | (grind [Main.twice]; done) | (first | (simp only [twice] <;> omega) | (simp only [twice, Bool.beq_comm, beq_iff_eq, bne_iff_ne, Bool.or_eq_true, Bool.and_eq_true, decide_eq_decide, decide_eq_true_eq, ← decide_not, Bool.not_eq_true', ge_iff_le, gt_iff_lt] <;> (try split) <;> simp_all <;> omega) | sorry)"
             )
             && main.contains(
                 "theorem twice_law_doubling_checked_domain : (twice 0 = 0) ∧ (twice 1 = 2) ∧ (twice 2 = 4) := by native_decide"
