@@ -946,24 +946,24 @@ document.querySelectorAll("[data-game]").forEach(btn => {
         setStatus(`Loading ${name}…`, "info");
 
         try {
-            // Fetch .wasm + all .av source files in parallel so the
-            // editor shows real tabs (editable) at the same moment the
-            // binary is ready to run — no separate source-viewer mode.
+            // Fetch the explicit Binaryen derivative + all .av source files
+            // in parallel so the editor shows real tabs (editable) at the same
+            // moment the binary is ready to run — no separate source-viewer mode.
             const [resp] = await Promise.all([
-                fetch(`./${name}.wasm`),
+                fetch(`./${name}.optimized.wasm`),
                 loadGameSourcesAsTabs(name),
             ]);
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             const bytes = await resp.arrayBuffer();
             state.wasmBytes = bytes;
-            state.wasmName = `${name}.wasm`;
+            state.wasmName = `${name}.optimized.wasm`;
             const sizeKiB = (bytes.byteLength / 1024).toFixed(1);
-            dom.fileMeta.textContent = `${name}.wasm — ${sizeKiB} KiB`;
+            dom.fileMeta.textContent = `${name}.optimized.wasm — ${sizeKiB} KiB`;
             dom.runButton.disabled = false;
             // Show real prebuilt size (not a fake compile timing) so
             // users don't see "compiled 0ms · 9.5 KiB" on a 29 KiB
             // roguelike that was shipped by the CLI.
-            renderPrebuiltMeta(`${name}.wasm`, bytes.byteLength);
+            renderPrebuiltMeta(`${name}.optimized.wasm`, bytes.byteLength);
             // Don't auto-run — loading a game should surface the source
             // for reading first. ▶ Run is right there when the user's
             // ready. (Pre-edit: runs the prebuilt bytes; post-edit:

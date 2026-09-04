@@ -283,11 +283,14 @@ Firefox 120+ / Safari 18.2+ / wasmtime 25+ / Node 22+ / Workers).
 pre-2024 NaN-boxed wasm32 backend (`--target wasm` + `--bridge`)
 was dropped in 0.18 — see [`docs/effects.md`](docs/effects.md) and
 [`docs/wasip2.md`](docs/wasip2.md) for the supported deployment surfaces.
-The Wasmtime pack is a native directory bundle containing the wasm-gc module,
-an exact manifest, and a stripped `aver-wasmtime-host` executable with the
-engine and the project's configured providers linked in. Only the build
-machine needs Aver, Cargo, and provider sources; the destination needs the
-three bundle files and a matching OS/architecture. See
+The Wasmtime pack is a native directory bundle containing the canonical
+wasm-gc module, an optional distinct Binaryen result, its matching precompiled
+Wasmtime image, a manifest, and a stripped `aver-wasmtime-host` executable with
+the engine and the project's configured providers linked in. Only the build
+machine needs Aver, Cargo, and provider sources; the destination loads the AOT
+image without running Cranelift. `--certify --optimize` intentionally keeps
+three stages: the certificate binds `<name>.wasm`, deployment uses
+`<name>.optimized.wasm`, and Wasmtime executes `<name>.cwasm`. See
 [`docs/wasmtime-pack.md`](docs/wasmtime-pack.md).
 Custom capabilities whose complete contract uses only `Unit`, `Bool`, `Float`,
 and `String` compile to typed wasip2 component imports. They are host-bound: an

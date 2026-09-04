@@ -333,6 +333,33 @@ pub(super) fn run_wasm_gc_with_host(
     let engine = Engine::new(&config).map_err(|e| format!("engine: {e:#}"))?;
     let module = Module::new(&engine, wasm_bytes).map_err(|e| format!("module: {e:#}"))?;
 
+    execute_wasm_gc_module(
+        &engine,
+        &module,
+        program_args,
+        mode,
+        tcp_settings,
+        project_config,
+        entry_info,
+        return_ty,
+        custom_providers,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_wasm_gc_module(
+    engine: &wasmtime::Engine,
+    module: &wasmtime::Module,
+    program_args: &[String],
+    mode: &EffectMode,
+    tcp_settings: aver_rt::tcp::TcpSettings,
+    project_config: Option<aver::config::ProjectConfig>,
+    entry_info: Option<&(String, Vec<Value>)>,
+    return_ty: &Type,
+    custom_providers: Option<&CustomProviderConfig>,
+) -> Result<RunOutcome, String> {
+    use wasmtime::*;
+
     let mut recorder = match mode {
         EffectMode::Normal => None,
         EffectMode::Record => {
@@ -347,7 +374,7 @@ pub(super) fn run_wasm_gc_with_host(
         }
     };
     let mut store = Store::new(
-        &engine,
+        engine,
         RunWasmGcHost {
             program_args: program_args.to_vec(),
             recorder: recorder.take(),
@@ -356,7 +383,7 @@ pub(super) fn run_wasm_gc_with_host(
             project_config,
         },
     );
-    let mut linker: Linker<RunWasmGcHost> = Linker::new(&engine);
+    let mut linker: Linker<RunWasmGcHost> = Linker::new(engine);
     let custom_imports = custom_providers
         .map(provider_host::operation_imports)
         .transpose()?;
@@ -375,7 +402,7 @@ pub(super) fn run_wasm_gc_with_host(
         let module_name = import.module().to_string();
         let field_name = import.name().to_string();
         let result_tys: Vec<ValType> = ft.results().collect();
-        let func_ty = FuncType::new(&engine, ft.params(), ft.results());
+        let func_ty = FuncType::new(engine, ft.params(), ft.results());
         let module_name_for_closure = module_name.clone();
         let field_name_for_closure = field_name.clone();
         let custom_operation = custom_imports
@@ -426,7 +453,7 @@ pub(super) fn run_wasm_gc_with_host(
     }
 
     let instance = linker
-        .instantiate(&mut store, &module)
+        .instantiate(&mut store, module)
         .map_err(|e| format!("instantiate: {e:#}"))?;
 
     // Materialise the caller-fn name table. The compiler exports
@@ -536,4 +563,6 @@ mod decode;
 mod imports;
 mod provider_host;
 
-pub use bundle::{BundleManifestInput, manifest_json, run_bundle_from_current_exe};
+pub use bundle::{
+    BundleArtifacts, BundleManifestInput, build_bundle_artifacts, run_bundle_from_current_exe,
+};

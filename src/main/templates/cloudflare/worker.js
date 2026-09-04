@@ -17,7 +17,7 @@
 // constructing the request-headers map via the per-instance Map
 // helpers (`__rt_map_string_list_string_*` + `__rt_list_string_cons`).
 
-import userWasm from "./__WASM_NAME__.wasm";
+import userWasm from "./__WASM_FILE__";
 
 let exports = null;
 let instancePromise = null;

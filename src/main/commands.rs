@@ -6817,15 +6817,16 @@ fn cmd_compile_wasm_gc(
         eprintln!("{}", format!("Failed to write WASM file: {}", e).red());
         process::exit(1);
     }
-    // Optional `--optimize` post-pass — see `run_optimize_pipeline`.
-    let (final_size, opt_suffix) = finalize_wasm_artifact(&wasm_file, optimize);
     println!(
-        "{} wasm-gc → {} ({} bytes{})",
+        "{} wasm-gc → {} ({} bytes)",
         "•".cyan(),
         wasm_file.display().to_string().cyan(),
-        final_size,
-        opt_suffix
+        bytes.len()
     );
+    // The canonical emitter output remains at `<name>.wasm`. Binaryen writes
+    // a distinct `<name>.optimized.wasm`, so certification can bind the former
+    // while deployment and AOT explicitly consume the latter.
+    let runtime_wasm_file = finalize_wasm_artifact(&wasm_file, optimize);
     print_capability_target_accounting(
         &items,
         &dep_modules,
@@ -6837,8 +6838,8 @@ fn cmd_compile_wasm_gc(
         aver::provider::CapabilityTarget::WasmGc,
     );
     // `--certify`: emit the artifact-certificate `cert/` project next to
-    // the module. Binds THESE bytes (pre-optimize; `--certify` conflicts
-    // with `--optimize`) via sha256, classifies each user function, and
+    // the module. Binds THESE canonical emitter bytes, never the separate
+    // Binaryen/AOT derivatives, via sha256; classifies each user function and
     // emits kernel-clean Lean theorems for the certified ones. The model
     // definitions are the reused `aver proof` Lean emission.
     #[cfg(feature = "certify")]
@@ -6866,6 +6867,7 @@ fn cmd_compile_wasm_gc(
         && let Err(error) = emit_wasmtime_pack(
             out_path,
             &wasm_file,
+            &runtime_wasm_file,
             &items,
             capabilities,
             &required,
@@ -6885,7 +6887,7 @@ fn cmd_compile_wasm_gc(
     // backend; the worker.js template is wasm-gc-aware (LM string
     // transport + `aver_http_handle` synth wrapper).
     if let Some(super::cli::DeployPack::Cloudflare) = pack {
-        emit_cloudflare_pack(out_path, &wasm_name, &wasm_file);
+        emit_cloudflare_pack(out_path, &wasm_name, &runtime_wasm_file);
     }
 }
 
@@ -6894,6 +6896,7 @@ fn cmd_compile_wasm_gc(
 fn emit_wasmtime_pack(
     out_path: &Path,
     wasm_file: &Path,
+    runtime_wasm_file: &Path,
     items: &[TopLevel],
     capabilities: &aver::capability::CapabilityRegistry,
     required: &std::collections::BTreeSet<String>,
@@ -6933,18 +6936,36 @@ fn emit_wasmtime_pack(
             "error[wasmtime-bundle-entry]: --pack wasmtime requires a top-level fn main()"
                 .to_string()
         })?;
-    let wasm_bytes = std::fs::read(wasm_file)
-        .map_err(|error| format!("read final wasm '{}': {error}", wasm_file.display()))?;
+    let artifact_bytes = std::fs::read(wasm_file)
+        .map_err(|error| format!("read canonical wasm '{}': {error}", wasm_file.display()))?;
+    let runtime_wasm_bytes = std::fs::read(runtime_wasm_file).map_err(|error| {
+        format!(
+            "read deployment wasm '{}': {error}",
+            runtime_wasm_file.display()
+        )
+    })?;
     let artifact_file = wasm_file
         .file_name()
         .and_then(|name| name.to_str())
         .ok_or_else(|| "generated wasm file name is not valid UTF-8".to_string())?;
+    let runtime_artifact_file = runtime_wasm_file
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| "generated deployment wasm file name is not valid UTF-8".to_string())?;
+    let precompiled_path = wasm_file.with_extension("cwasm");
+    let precompiled_file = precompiled_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| "generated precompiled file name is not valid UTF-8".to_string())?;
     let project_config = aver::config::ProjectConfig::load_from_dir(Path::new(module_root))?;
     let runtime_policy_toml = render_wasmtime_runtime_policy(project_config.as_ref())?;
-    let manifest =
-        aver::runtime::wasm_gc::manifest_json(aver::runtime::wasm_gc::BundleManifestInput {
+    let bundle = aver::runtime::wasm_gc::build_bundle_artifacts(
+        aver::runtime::wasm_gc::BundleManifestInput {
             artifact_file,
-            wasm_bytes: &wasm_bytes,
+            artifact_bytes: &artifact_bytes,
+            runtime_artifact_file,
+            runtime_wasm_bytes: &runtime_wasm_bytes,
+            precompiled_file,
             return_type: &return_type,
             capabilities,
             required_operations: required,
@@ -6958,7 +6979,14 @@ fn emit_wasmtime_pack(
                 None => "none",
             },
             certified: certify,
-        })?;
+        },
+    )?;
+    std::fs::write(&precompiled_path, &bundle.precompiled_bytes).map_err(|error| {
+        format!(
+            "write precompiled Wasmtime module '{}': {error}",
+            precompiled_path.display()
+        )
+    })?;
 
     let host_name = format!("aver-wasmtime-host{}", std::env::consts::EXE_SUFFIX);
     let host_file = out_path.join(&host_name);
@@ -6976,12 +7004,13 @@ fn emit_wasmtime_pack(
         )
     })?;
     let manifest_file = out_path.join("manifest.json");
-    std::fs::write(&manifest_file, manifest)
+    std::fs::write(&manifest_file, bundle.manifest_json)
         .map_err(|error| format!("write '{}': {error}", manifest_file.display()))?;
     println!(
-        "{} wasmtime pack → {}, {}",
+        "{} wasmtime pack → {}, {}, {}",
         "•".cyan(),
         host_file.display().to_string().cyan(),
+        precompiled_path.display().to_string().cyan(),
         manifest_file.display().to_string().cyan()
     );
     Ok(())
@@ -7508,14 +7537,13 @@ fn cmd_compile_wasip2(
 /// real `.js` file under `src/main/templates/cloudflare/` so editor
 /// tooling (syntax highlighting, ESLint, prettier) treats it like
 /// JavaScript instead of a Rust-side `format!` literal. The single
-/// `__WASM_NAME__` placeholder is the only thing we substitute at
+/// `__WASM_FILE__` selects the canonical or optimized deployment artifact at
 /// pack time — everything else is identical across packs.
 #[cfg(feature = "wasm")]
 const CLOUDFLARE_WORKER_JS: &str = include_str!("templates/cloudflare/worker.js");
 
 /// `wrangler.toml` template for the Cloudflare Workers pack — same
-/// rationale as `CLOUDFLARE_WORKER_JS`. `__WASM_NAME__` is the only
-/// substitution.
+/// rationale as `CLOUDFLARE_WORKER_JS`. `__WASM_NAME__` sets the Worker name.
 #[cfg(feature = "wasm")]
 const CLOUDFLARE_WRANGLER_TOML: &str = include_str!("templates/cloudflare/wrangler.toml");
 
@@ -7531,7 +7559,11 @@ fn emit_cloudflare_pack(out_path: &Path, wasm_name: &str, wasm_file: &Path) {
     let worker_path = out_path.join("worker.js");
     let wrangler_path = out_path.join("wrangler.toml");
 
-    let worker_js = CLOUDFLARE_WORKER_JS.replace("__WASM_NAME__", wasm_name);
+    let wasm_file_name = wasm_file
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("generated wasm file name is UTF-8");
+    let worker_js = CLOUDFLARE_WORKER_JS.replace("__WASM_FILE__", wasm_file_name);
     let wrangler_toml = CLOUDFLARE_WRANGLER_TOML.replace("__WASM_NAME__", wasm_name);
 
     // worker.js is the host-bridge between user.wasm and the
@@ -7572,9 +7604,9 @@ fn emit_cloudflare_pack(out_path: &Path, wasm_name: &str, wasm_file: &Path) {
     );
 }
 
-/// Run the post-codegen WASM tail: optionally run wasm-opt. Returns
-/// (final_size, suffix) for the existing `Compiled X → Y (size, suffix)`
-/// print line.
+/// Run the post-codegen WASM tail. The canonical emitter output stays at
+/// `<name>.wasm`; an enabled Binaryen pass consumes a copy and writes
+/// `<name>.optimized.wasm`. Returns the file deployment packs should execute.
 ///
 /// WAT companion output is intentionally not provided — the name section
 /// emitted by codegen makes the binary readable through standard tooling
@@ -7589,20 +7621,31 @@ fn emit_cloudflare_pack(out_path: &Path, wasm_name: &str, wasm_file: &Path) {
 /// caller, so `-g` would only hand back an empty name map. Nothing here
 /// can preserve it, so the build says out loud what the artifact lost.
 #[cfg(feature = "wasm")]
-fn finalize_wasm_artifact(
-    wasm_file: &Path,
-    optimize: Option<super::cli::WasmOptMode>,
-) -> (u64, String) {
-    let mut final_size = std::fs::metadata(wasm_file).map(|m| m.len()).unwrap_or(0);
-    let mut compile_suffix = String::new();
+fn finalize_wasm_artifact(wasm_file: &Path, optimize: Option<super::cli::WasmOptMode>) -> PathBuf {
     if let Some(mode) = optimize {
         warn_optimize_drops_capacity_names(wasm_file);
-        let report = aver::codegen::wasm_gc::optimize_artifact(wasm_file, mode.codegen_mode())
-            .unwrap_or_else(|err| {
-                eprintln!("{}", err.red());
-                process::exit(1);
-            });
-        final_size = report.output_size;
+        let stem = wasm_file
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or("program");
+        let optimized_file = wasm_file.with_file_name(format!("{stem}.optimized.wasm"));
+        std::fs::copy(wasm_file, &optimized_file).unwrap_or_else(|err| {
+            eprintln!(
+                "{}",
+                format!(
+                    "Failed to stage optimized artifact '{}': {err}",
+                    optimized_file.display()
+                )
+                .red()
+            );
+            process::exit(1);
+        });
+        let report =
+            aver::codegen::wasm_gc::optimize_artifact(&optimized_file, mode.codegen_mode())
+                .unwrap_or_else(|err| {
+                    eprintln!("{}", err.red());
+                    process::exit(1);
+                });
         let size_delta = if report.input_size == report.output_size {
             "(no size change)".to_string()
         } else {
@@ -7612,13 +7655,13 @@ fn finalize_wasm_artifact(
         println!(
             "{} {} → {} ({})",
             "Optimized".green().bold(),
-            wasm_file.display(),
+            optimized_file.display(),
             format_byte_size(report.output_size),
             opt_summary
         );
-        compile_suffix = format!(", optimized for {}", optimize_label(mode));
+        return optimized_file;
     }
-    (final_size, compile_suffix)
+    wasm_file.to_path_buf()
 }
 
 /// Say on stderr that the artifact about to be optimized carries the map
@@ -7642,11 +7685,6 @@ fn warn_optimize_drops_capacity_names(wasm_file: &Path) {
          Build without `--optimize` to read the backtrace.",
         "note:".yellow()
     );
-}
-
-#[cfg(feature = "wasm")]
-fn optimize_label(mode: super::cli::WasmOptMode) -> &'static str {
-    mode.codegen_mode().label()
 }
 
 pub(super) struct CompileOptions<'a> {

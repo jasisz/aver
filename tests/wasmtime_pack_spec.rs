@@ -40,6 +40,7 @@ fn compile_pack(
     module_root: &Path,
     output_dir: &Path,
     cargo: Option<&Path>,
+    optimize_and_certify: bool,
 ) -> Output {
     let mut command = Command::new(aver_bin());
     command
@@ -57,6 +58,9 @@ fn compile_pack(
         .env("CARGO_NET_OFFLINE", "true")
         .env_remove("RUSTC_WRAPPER")
         .env_remove("RUSTC_WORKSPACE_WRAPPER");
+    if optimize_and_certify {
+        command.arg("--optimize").arg("speed").arg("--certify");
+    }
     if let Some(cargo) = cargo {
         command.env("CARGO", cargo);
     }
@@ -118,11 +122,46 @@ fn emitted_standard_and_custom_hosts_are_toolchain_free_and_cache_isolated() {
         &standard_root,
         &standard_pack,
         None,
+        true,
     );
     assert!(standard.status.success(), "{}", report(&standard));
-    for file in ["main.wasm", "manifest.json"] {
+    for file in [
+        "main.wasm",
+        "main.optimized.wasm",
+        "main.cwasm",
+        "manifest.json",
+        "cert/cert-manifest.json",
+    ] {
         assert!(standard_pack.join(file).is_file(), "missing {file}");
     }
+    let bundle_manifest: serde_json::Value = serde_json::from_slice(
+        &fs::read(standard_pack.join("manifest.json")).expect("read bundle manifest"),
+    )
+    .expect("valid bundle manifest");
+    let certificate_manifest: serde_json::Value = serde_json::from_slice(
+        &fs::read(standard_pack.join("cert/cert-manifest.json"))
+            .expect("read certificate manifest"),
+    )
+    .expect("valid certificate manifest");
+    assert_eq!(certificate_manifest["wasm"], "main.wasm");
+    assert_eq!(bundle_manifest["artifact"]["file"], "main.wasm");
+    assert_eq!(
+        bundle_manifest["artifact"]["sha256"],
+        format!(
+            "sha256:{}",
+            certificate_manifest["wasm_sha256"]
+                .as_str()
+                .expect("certificate wasm hash")
+        )
+    );
+    assert_eq!(
+        bundle_manifest["runtimeArtifact"]["file"],
+        "main.optimized.wasm"
+    );
+    assert_eq!(
+        bundle_manifest["precompiled"]["sourceSha256"],
+        bundle_manifest["runtimeArtifact"]["sha256"]
+    );
     let standard_run = run_host(&standard_pack);
     assert!(standard_run.status.success(), "{}", report(&standard_run));
     assert_eq!(
@@ -130,8 +169,8 @@ fn emitted_standard_and_custom_hosts_are_toolchain_free_and_cache_isolated() {
         "standard-pack-ok"
     );
 
-    // Byte identity is checked before Wasmtime is allowed to compile or
-    // instantiate the guest.
+    // Portable byte identity is checked before Wasmtime is allowed to load or
+    // instantiate the precompiled guest.
     let wasm_path = standard_pack.join("main.wasm");
     let original_wasm = fs::read(&wasm_path).expect("read packed wasm");
     let mut tampered_wasm = original_wasm.clone();
@@ -146,11 +185,55 @@ fn emitted_standard_and_custom_hosts_are_toolchain_free_and_cache_isolated() {
     );
     fs::write(&wasm_path, original_wasm).expect("restore packed wasm");
 
+    let optimized_path = standard_pack.join("main.optimized.wasm");
+    let original_optimized = fs::read(&optimized_path).expect("read optimized wasm");
+    let mut tampered_optimized = original_optimized.clone();
+    tampered_optimized.push(0);
+    fs::write(&optimized_path, tampered_optimized).expect("tamper optimized wasm");
+    let tampered = run_host(&standard_pack);
+    assert!(
+        !tampered.status.success(),
+        "tampered optimized artifact ran"
+    );
+    assert!(
+        String::from_utf8_lossy(&tampered.stderr)
+            .contains("wasmtime-bundle-runtime-artifact-mismatch"),
+        "{}",
+        report(&tampered)
+    );
+    fs::write(&optimized_path, original_optimized).expect("restore optimized wasm");
+
+    // A precompiled image is native code and must never reach Wasmtime's
+    // unsafe deserializer after even a one-byte change.
+    let precompiled_path = standard_pack.join("main.cwasm");
+    let original_precompiled = fs::read(&precompiled_path).expect("read precompiled module");
+    let mut tampered_precompiled = original_precompiled.clone();
+    tampered_precompiled.push(0);
+    fs::write(&precompiled_path, tampered_precompiled).expect("tamper precompiled module");
+    let tampered = run_host(&standard_pack);
+    assert!(
+        !tampered.status.success(),
+        "tampered precompiled module ran"
+    );
+    assert!(
+        String::from_utf8_lossy(&tampered.stderr).contains("wasmtime-bundle-precompiled-mismatch"),
+        "{}",
+        report(&tampered)
+    );
+    fs::write(&precompiled_path, original_precompiled).expect("restore precompiled module");
+
     let custom_root = temp.path().join("custom");
     let provider = repo_root().join("tests/fixtures/native_provider_host");
     let custom_entry = write_custom_project(&custom_root, &provider);
     let custom_pack = temp.path().join("custom-pack");
-    let custom = compile_pack(&cache, &custom_entry, &custom_root, &custom_pack, None);
+    let custom = compile_pack(
+        &cache,
+        &custom_entry,
+        &custom_root,
+        &custom_pack,
+        None,
+        false,
+    );
     assert!(custom.status.success(), "{}", report(&custom));
     let custom_run = run_host(&custom_pack);
     assert!(custom_run.status.success(), "{}", report(&custom_run));
@@ -173,6 +256,7 @@ fn emitted_standard_and_custom_hosts_are_toolchain_free_and_cache_isolated() {
         &standard_root,
         &standard_pack_again,
         Some(Path::new("/definitely/missing/cargo")),
+        true,
     );
     assert!(cached.status.success(), "{}", report(&cached));
     let cached_run = run_host(&standard_pack_again);
