@@ -389,6 +389,33 @@ impl TypeChecker {
                     // genuine element mismatch between non-empty lists falls
                     // through to normal concat inference, which reports a precise
                     // "list element types differ" error.
+                    // The list-shaped identities: an empty literal has nothing
+                    // of its own to fix its element type, and `List.reverse([])`
+                    // used to leave the call `List<T>` — which then failed
+                    // against a concrete parameter ("expected List<Int>, got
+                    // List<T>"). A law's `given xs: List<Int>` with `[]` in its
+                    // sample domain hits exactly this on every builtin applied
+                    // to the given. The expected type reaches the literal here.
+                    ("List.reverse", 1, Type::List(_)) if matches!(&args[0].node, Expr::List(elems) if elems.is_empty()) =>
+                    {
+                        let ty = self.infer_type_with_expected(&args[0], Some(expected));
+                        if self.compatible(&ty, expected) {
+                            Some(expected.clone())
+                        } else {
+                            None
+                        }
+                    }
+                    ("List.take" | "List.drop", 2, Type::List(_)) if matches!(&args[0].node, Expr::List(elems) if elems.is_empty()) =>
+                    {
+                        let ty = self.infer_type_with_expected(&args[0], Some(expected));
+                        let count_ty = self.infer_type_with_expected(&args[1], Some(&Type::Int));
+                        if self.compatible(&ty, expected) && self.compatible(&count_ty, &Type::Int)
+                        {
+                            Some(expected.clone())
+                        } else {
+                            None
+                        }
+                    }
                     ("List.concat", 2, Type::List(_))
                         if args
                             .iter()
