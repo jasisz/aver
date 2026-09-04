@@ -11605,6 +11605,16 @@ fn run_lean_speculative(
     if let Ok(path) = std::env::var("AVER_SPECULATIVE_LOG") {
         let _ = std::fs::write(&path, &probe_out);
     }
+    // `AVER_SPECULATIVE_KEEP=<dir>` keeps the probe emit itself (the
+    // universal statements with their trace floors), which the committed
+    // emit below overwrites — the only way to read the arm a candidate
+    // actually failed with.
+    if let Ok(keep) = std::env::var("AVER_SPECULATIVE_KEEP") {
+        let _ = std::fs::remove_dir_all(&keep);
+        let _ = std::process::Command::new("cp")
+            .args(["-R", output_dir, &keep])
+            .status();
+    }
     let mut failed = speculative::parse_failures(&probe_out);
     if !probe_ok {
         // A `sorry` is only a warning, so the probe build succeeds even when
