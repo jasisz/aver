@@ -470,6 +470,16 @@ fn program_fn_lean_names(ctx: &CodegenContext) -> BTreeSet<String> {
 /// spelling, never on the raw `ModuleInfo::prefix`. Raw prefixes stay the
 /// identity currency of the cone gate (`qualified_cone_name`) and of the
 /// `(module_prefix, theorem_base)` emit keys.
+/// A law's givens as the Lean names its statement binds implicitly — the
+/// scan of that statement must not read them as program fns (a given
+/// `bytes` next to a program fn `bytes`).
+fn law_given_names(law: &VerifyLaw) -> BTreeSet<String> {
+    law.givens
+        .iter()
+        .map(|g| aver_name_to_lean(&g.name))
+        .collect()
+}
+
 fn dep_module_lean_prefix(prefix: &str) -> String {
     crate::codegen::lean::syntax::aver_path_to_lean(prefix)
 }
@@ -544,7 +554,11 @@ fn dep_law_admissible(
         bare_name
     );
     let text = format!("theorem {name} : {stmt} := by");
-    let mentions = crate::codegen::lemma_discovery::mentioned_fns(&text, dep_index);
+    let mentions = crate::codegen::lemma_discovery::mentioned_fns_bound(
+        &text,
+        dep_index,
+        &law_given_names(dep_prev_law),
+    );
     if mentions.is_empty() {
         return None;
     }
@@ -977,7 +991,11 @@ pub(super) fn earlier_law_lemmas(
             continue;
         };
         let text = format!("theorem {name} : {stmt} := by");
-        let mentions = crate::codegen::lemma_discovery::mentioned_fns(&text, &program_index);
+        let mentions = crate::codegen::lemma_discovery::mentioned_fns_bound(
+            &text,
+            &program_index,
+            &law_given_names(prev_law),
+        );
         if mentions.is_empty() {
             continue;
         }
@@ -1012,7 +1030,11 @@ pub(super) fn earlier_law_lemmas(
         // genuinely ABOUT a cone fn, not unrelated noise), exactly as the
         // subject rule does; the RHS combinator's `= a + b` bridge is
         // synthesized downstream, and loop safety stays in `simp_entries`.
-        let lhs_mentions = crate::codegen::lemma_discovery::lemma_lhs_fns(&text, &program_index);
+        let lhs_mentions = crate::codegen::lemma_discovery::lemma_lhs_fns_bound(
+            &text,
+            &program_index,
+            &law_given_names(prev_law),
+        );
         let lhs_rooted = !lhs_mentions.is_empty()
             && lhs_mentions.is_subset(&scope)
             && scope.contains(&prev_subject);
@@ -1249,7 +1271,11 @@ fn earlier_law_cites(
             continue;
         };
         let text = format!("theorem {name} : {stmt} := by");
-        let mentions = crate::codegen::lemma_discovery::mentioned_fns(&text, &program_index);
+        let mentions = crate::codegen::lemma_discovery::mentioned_fns_bound(
+            &text,
+            &program_index,
+            &law_given_names(prev_law),
+        );
         if mentions.is_empty() {
             continue;
         }
@@ -1257,7 +1283,11 @@ fn earlier_law_cites(
         // the cone, OR it mentions the consumer's subject (decomposition that
         // introduces a combinator), OR its LHS is cone-rooted.
         let prev_subject = sibling_subject(prev);
-        let lhs_mentions = crate::codegen::lemma_discovery::lemma_lhs_fns(&text, &program_index);
+        let lhs_mentions = crate::codegen::lemma_discovery::lemma_lhs_fns_bound(
+            &text,
+            &program_index,
+            &law_given_names(prev_law),
+        );
         let lhs_rooted = !lhs_mentions.is_empty()
             && lhs_mentions.is_subset(&scope)
             && scope.contains(&prev_subject);

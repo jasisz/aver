@@ -321,6 +321,7 @@ mod tests {
             recursive_fns: &recursive,
             symbol_table: &result.symbol_table,
             program_shape: None,
+            scope: None,
         };
         packed_sequence_layout_table(&inputs)
     }

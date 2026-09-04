@@ -234,6 +234,7 @@ pub(super) fn emit_module_with(
             recursive_fns: &empty_recursive,
             symbol_table: &symbol_table,
             program_shape: None,
+            scope: None,
         };
         crate::codegen::proof_lower::carrier_interval_table(&inputs)
     };
@@ -301,6 +302,7 @@ pub(super) fn emit_module_with(
                     recursive_fns: &std::collections::HashSet::new(),
                     symbol_table: &symbol_table,
                     program_shape: None,
+                    scope: None,
                 };
                 // RESOLVED-IR Map-key types: the typed-MIR instantiation
                 // registry carries every `Map<K, V>` the program uses, keyed
@@ -379,6 +381,7 @@ pub(super) fn emit_module_with(
                 recursive_fns: &std::collections::HashSet::new(),
                 symbol_table: &symbol_table,
                 program_shape: None,
+                scope: None,
             };
             // The inference-complete instantiation registry (every `Map`,
             // `List`, `Vector`, `Tuple`, `Option`, `Result` the program uses)
@@ -435,6 +438,7 @@ pub(super) fn emit_module_with(
             recursive_fns: &std::collections::HashSet::new(),
             symbol_table: &symbol_table,
             program_shape: None,
+            scope: None,
         };
         let layouts = crate::codegen::proof_lower::packed_sequence_layout_table(&inputs);
         let candidates: std::collections::HashSet<String> = layouts.keys().cloned().collect();

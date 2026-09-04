@@ -62,23 +62,10 @@ fn subject_body<'a>(fn_name: &str, ctx: &'a CodegenContext) -> Option<&'a Spanne
     Some(body)
 }
 
-fn sibling_blocks<'a>(vb: &VerifyBlock, ctx: &'a CodegenContext) -> Vec<&'a VerifyBlock> {
-    for module in &ctx.modules {
-        if module
-            .verify_laws
-            .iter()
-            .any(|b| b.line == vb.line && b.fn_name == vb.fn_name)
-        {
-            return module.verify_laws.iter().collect();
-        }
-    }
-    ctx.items
-        .iter()
-        .filter_map(|it| match it {
-            crate::ast::TopLevel::Verify(b) => Some(b),
-            _ => None,
-        })
-        .collect()
+fn sibling_blocks<'a>(_vb: &VerifyBlock, ctx: &'a CodegenContext) -> Vec<&'a VerifyBlock> {
+    // The file the theorem is emitted into, by the active module scope — not
+    // a (line, fn) membership guess that two modules can both satisfy.
+    super::shared::same_file_verify_blocks(ctx)
 }
 
 #[derive(Clone)]

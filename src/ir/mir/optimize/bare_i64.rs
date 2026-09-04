@@ -2399,6 +2399,7 @@ mod tests {
             recursive_fns: &empty_recursive,
             symbol_table: symbols,
             program_shape: None,
+            scope: None,
         };
         crate::codegen::proof_lower::carrier_interval_table(&inputs)
     }
@@ -3653,6 +3654,7 @@ fn main() -> Int
             recursive_fns: &empty_recursive,
             symbol_table: &result.symbol_table,
             program_shape: None,
+            scope: None,
         };
         crate::codegen::proof_lower::field_carrier_interval_table(&inputs)
     }

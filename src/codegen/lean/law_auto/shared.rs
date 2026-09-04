@@ -12,8 +12,7 @@ use std::collections::BTreeSet;
 
 use super::super::expr::aver_name_to_lean;
 use crate::ast::{
-    BinOp, Expr, FnBody, FnDef, Literal, Spanned, Stmt, TopLevel, VerifyBlock, VerifyKind,
-    VerifyLaw,
+    BinOp, Expr, FnBody, FnDef, Literal, Spanned, Stmt, VerifyBlock, VerifyKind, VerifyLaw,
 };
 use crate::ast_rewrite::rewrite_idents_scoped;
 use crate::codegen::CodegenContext;
@@ -589,17 +588,22 @@ fn cited_positivity_law(
 /// (source line strictly before the citing law). Ordering is enforced because
 /// Lean forbids forward references to the cited theorem.
 fn citable_pool_blocks(ctx: &CodegenContext, before_line: usize) -> Vec<&VerifyBlock> {
+    // The other modules' laws, then the blocks of the FILE being emitted
+    // that sit above `before_line` — the entry's items when the scope is the
+    // entry, the dependency's own blocks under a dependency scope (the entry
+    // is never citable from a dependency: citations go backward in the DAG).
+    let scope = ctx.active_module_scope();
     let mut out: Vec<&VerifyBlock> = Vec::new();
     for module in &ctx.modules {
-        out.extend(module.verify_laws.iter());
-    }
-    for item in &ctx.items {
-        if let TopLevel::Verify(b) = item
-            && b.line < before_line
-        {
-            out.push(b);
+        if scope.as_deref() != Some(module.prefix.as_str()) {
+            out.extend(module.verify_laws.iter());
         }
     }
+    out.extend(
+        same_file_verify_blocks(ctx)
+            .into_iter()
+            .filter(|b| b.line < before_line),
+    );
     out
 }
 
@@ -932,7 +936,23 @@ pub(super) fn same_file_verify_blocks(ctx: &CodegenContext) -> Vec<&VerifyBlock>
     }
 }
 
+/// The fn a bare name denotes in the FILE being emitted. An unqualified call
+/// in Aver names a fn of the module it appears in (every other module's fn is
+/// called through its prefix), so the active module scope answers first, the
+/// entry module next, and only a name neither knows falls back to the
+/// program-wide first match. A real project defines `littleEndian` three
+/// times over (a wire encoder, a script-number writer, a taproot reader);
+/// the program-wide search handed a StackItem law the wire encoder's def,
+/// and every strategy over the wrong cone fell to sorry.
 pub(super) fn find_fn_def<'a>(ctx: &'a CodegenContext, fn_name: &str) -> Option<&'a FnDef> {
+    if let Some(scope) = ctx.active_module_scope()
+        && let Some(fd) = ctx.fn_def_by_name(fn_name, Some(scope.as_str()))
+    {
+        return Some(fd);
+    }
+    if let Some(fd) = ctx.fn_def_by_name(fn_name, None) {
+        return Some(fd);
+    }
     ctx.modules
         .iter()
         .flat_map(|m| m.fn_defs.iter())

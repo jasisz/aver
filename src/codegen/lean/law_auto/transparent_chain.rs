@@ -492,24 +492,10 @@ fn has_citable_pool_law_for_call(vb: &VerifyBlock, call_name: &str, ctx: &Codege
     false
 }
 
-fn enclosing_verify_blocks<'a>(vb: &VerifyBlock, ctx: &'a CodegenContext) -> Vec<&'a VerifyBlock> {
-    use crate::ast::TopLevel;
-    for module in &ctx.modules {
-        if module
-            .verify_laws
-            .iter()
-            .any(|b| b.line == vb.line && b.fn_name == vb.fn_name)
-        {
-            return module.verify_laws.iter().collect();
-        }
-    }
-    ctx.items
-        .iter()
-        .filter_map(|item| match item {
-            TopLevel::Verify(block) => Some(block),
-            _ => None,
-        })
-        .collect()
+fn enclosing_verify_blocks<'a>(_vb: &VerifyBlock, ctx: &'a CodegenContext) -> Vec<&'a VerifyBlock> {
+    // The file the theorem is emitted into, by the active module scope — not
+    // a (line, fn) membership guess that two modules can both satisfy.
+    super::shared::same_file_verify_blocks(ctx)
 }
 
 fn scoped_key(scope: Option<&str>, name: &str) -> String {

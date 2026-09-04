@@ -24,24 +24,10 @@ use crate::codegen::CodegenContext;
 /// standalone export and the dependency export: the entry case returns exactly
 /// the `ctx.items` verify blocks (byte-identical to the old `for item in
 /// &ctx.items` iteration), the dependency case finds the module's siblings.
-fn enclosing_verify_blocks<'a>(vb: &VerifyBlock, ctx: &'a CodegenContext) -> Vec<&'a VerifyBlock> {
-    use crate::ast::TopLevel;
-    for module in &ctx.modules {
-        if module
-            .verify_laws
-            .iter()
-            .any(|b| b.line == vb.line && b.fn_name == vb.fn_name)
-        {
-            return module.verify_laws.iter().collect();
-        }
-    }
-    ctx.items
-        .iter()
-        .filter_map(|it| match it {
-            TopLevel::Verify(b) => Some(b),
-            _ => None,
-        })
-        .collect()
+fn enclosing_verify_blocks<'a>(_vb: &VerifyBlock, ctx: &'a CodegenContext) -> Vec<&'a VerifyBlock> {
+    // The file the theorem is emitted into, by the active module scope — not
+    // a (line, fn) membership guess that two modules can both satisfy.
+    super::super::shared::same_file_verify_blocks(ctx)
 }
 
 /// Keystone — the NON-recursive analog of [`recognize_conditional_inductive_generic`].

@@ -67,16 +67,13 @@ pub(super) enum RationalFloorShape {
 /// fn, so this is name-blind. Guarded to a `pow` that actually appears in this
 /// law's cone, so an unrelated module's `pow` never leaks in.
 fn rf_pow2_fn(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContext) -> Option<String> {
-    use crate::ast::{TopLevel, VerifyKind};
+    use crate::ast::VerifyKind;
     use crate::ir::{FloorWindowFigure, ProofStrategy};
     let cone = super::super::shared::law_simp_source_names(ctx, vb, law);
     if let Some(p) = keystone_pow2_fn(vb, law, ctx) {
         return Some(p);
     }
-    for item in &ctx.items {
-        let TopLevel::Verify(prev) = item else {
-            continue;
-        };
+    for prev in super::super::shared::same_file_verify_blocks(ctx) {
         let VerifyKind::Law(prev_law) = &prev.kind else {
             continue;
         };
@@ -408,13 +405,10 @@ fn rf_citations(
     ctx: &CodegenContext,
     intro_names: &[String],
 ) -> Vec<RfCitation> {
-    use crate::ast::{BinOp, Expr, TopLevel, VerifyKind};
+    use crate::ast::{BinOp, Expr, VerifyKind};
     let mut out = Vec::new();
     let citing_when = law.when.as_ref();
-    for item in &ctx.items {
-        let TopLevel::Verify(prev) = item else {
-            continue;
-        };
+    for prev in super::super::shared::same_file_verify_blocks(ctx) {
         if prev.line == vb.line && prev.fn_name == vb.fn_name {
             break; // only earlier-in-source siblings
         }
@@ -591,17 +585,14 @@ fn rf_window_law(
     law: &VerifyLaw,
     ctx: &CodegenContext,
 ) -> Option<(String, String)> {
-    use crate::ast::{BinOp, Expr, TopLevel, VerifyKind};
+    use crate::ast::{BinOp, Expr, VerifyKind};
     let is_cmp = |e: &Expr| {
         matches!(
             e,
             Expr::BinOp(BinOp::Lt | BinOp::Gt | BinOp::Lte | BinOp::Gte, _, _)
         )
     };
-    for item in &ctx.items {
-        let TopLevel::Verify(prev) = item else {
-            continue;
-        };
+    for prev in super::super::shared::same_file_verify_blocks(ctx) {
         if prev.line == vb.line && prev.fn_name == vb.fn_name {
             break; // earlier-in-source only
         }
@@ -650,7 +641,7 @@ fn rf_window_law(
 /// claim's rhs is a product of two `pow` calls. The dep-module name is qualified
 /// with the module prefix (`Domain.Fprep.pow2_law_homomorphism`).
 fn rf_homomorphism_name(ctx: &CodegenContext, pow_lean: &str) -> Option<String> {
-    use crate::ast::{BinOp, Expr, TopLevel, VerifyKind};
+    use crate::ast::{BinOp, Expr, VerifyKind};
     let pow_base = rf_bare_basename(pow_lean);
     let is_hom = |lw: &VerifyLaw| -> bool {
         // rhs is `pow(_) * pow(_)`.
@@ -666,9 +657,8 @@ fn rf_homomorphism_name(ctx: &CodegenContext, pow_lean: &str) -> Option<String> 
         false
     };
     // In-file (entry module) first.
-    for item in &ctx.items {
-        if let TopLevel::Verify(prev) = item
-            && let VerifyKind::Law(prev_law) = &prev.kind
+    for prev in super::super::shared::same_file_verify_blocks(ctx) {
+        if let VerifyKind::Law(prev_law) = &prev.kind
             && rf_bare_basename(&prev.fn_name) == pow_base
             && is_hom(prev_law)
         {

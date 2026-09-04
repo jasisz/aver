@@ -909,11 +909,10 @@ fn parser_law_raw<'a>(
 fn collect_pool_laws<'a>(
     ctx: &'a CodegenContext,
 ) -> (HashMap<String, WeakRaw>, HashMap<String, ParserRaw<'a>>) {
-    use crate::ast::{TopLevel, VerifyKind};
+    use crate::ast::VerifyKind;
     let mut weak = HashMap::new();
     let mut parser = HashMap::new();
-    for item in &ctx.items {
-        let TopLevel::Verify(vb) = item else { continue };
+    for vb in super::shared::same_file_verify_blocks(ctx) {
         let VerifyKind::Law(law) = &vb.kind else {
             continue;
         };

@@ -223,13 +223,84 @@ pub fn forbidden_token_in_lemma(text: &str) -> Option<&'static str> {
 
 /// Program fns a lemma's Lean text mentions, projected through `lean_index`
 /// (Lean name → caller-chosen value, e.g. the source name). Token scan over
-/// identifier-shaped chunks; builtin lemma names (`List.append_assoc`, …) and
-/// binder names simply miss the index.
+/// identifier-shaped chunks; builtin lemma names (`List.append_assoc`, …)
+/// miss the index. A name the statement BINDS in its `∀` header is never a
+/// mention, however the index spells it: a law's given `bytes` next to a
+/// program fn `bytes` used to make the snoc law "mention" that fn, fail the
+/// cone test, and vanish from the round trip's pool.
 pub fn mentioned_fns(text: &str, lean_index: &BTreeMap<String, String>) -> BTreeSet<String> {
+    mentioned_fns_excluding(text, lean_index, &bound_names(text))
+}
+
+/// [`mentioned_fns`] for a LAW statement, whose binders are implicit (the
+/// law's givens, never spelled in a `∀` header): the caller passes them.
+pub fn mentioned_fns_bound(
+    text: &str,
+    lean_index: &BTreeMap<String, String>,
+    givens: &BTreeSet<String>,
+) -> BTreeSet<String> {
+    let mut bound = bound_names(text);
+    bound.extend(givens.iter().cloned());
+    mentioned_fns_excluding(text, lean_index, &bound)
+}
+
+/// [`lemma_lhs_fns`] for a LAW statement with implicit binders (its givens).
+pub fn lemma_lhs_fns_bound(
+    text: &str,
+    lean_index: &BTreeMap<String, String>,
+    givens: &BTreeSet<String>,
+) -> BTreeSet<String> {
+    let mut bound = bound_names(text);
+    bound.extend(givens.iter().cloned());
+    mentioned_fns_excluding(lemma_lhs_text(text), lean_index, &bound)
+}
+
+fn lemma_lhs_text(text: &str) -> &str {
+    statement_body(text)
+        .and_then(|stmt| {
+            split_after_top_eq(stmt).map(|rhs| {
+                let end = stmt.len() - rhs.len() - 1; // strip the `=` between lhs and rhs
+                stmt[..end].trim()
+            })
+        })
+        .unwrap_or(text)
+}
+
+fn mentioned_fns_excluding(
+    text: &str,
+    lean_index: &BTreeMap<String, String>,
+    bound: &BTreeSet<String>,
+) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
     for token in text.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '.' || c == '\'')) {
+        if bound.contains(token) {
+            continue;
+        }
         if let Some(v) = lean_index.get(token) {
             out.insert(v.clone());
+        }
+    }
+    out
+}
+
+/// The names a statement binds in its `∀ (a : T) (b c : U),` header.
+fn bound_names(text: &str) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    let Some(stmt) = statement_of(text) else {
+        return out;
+    };
+    let Some(rest) = stmt.trim_start().strip_prefix('∀') else {
+        return out;
+    };
+    let header_len = match split_after_depth0(rest, ',') {
+        Some(after) => rest.len() - after.len() - 1,
+        None => rest.len(),
+    };
+    for group in rest[..header_len].split('(') {
+        if let Some((names, _ty)) = group.split_once(':') {
+            for name in names.split_whitespace() {
+                out.insert(name.to_string());
+            }
         }
     }
     out
@@ -245,15 +316,7 @@ pub fn mentioned_fns(text: &str, lean_index: &BTreeMap<String, String>) -> BTree
 /// [`simp_entries`]. Falls back to the whole statement when there is no
 /// top-level `=` (an invariant-shaped lemma, which is inert as a rewrite anyway).
 pub fn lemma_lhs_fns(text: &str, lean_index: &BTreeMap<String, String>) -> BTreeSet<String> {
-    let lhs = statement_body(text)
-        .and_then(|stmt| {
-            split_after_top_eq(stmt).map(|rhs| {
-                let end = stmt.len() - rhs.len() - 1; // strip the `=` between lhs and rhs
-                stmt[..end].trim()
-            })
-        })
-        .unwrap_or(text);
-    mentioned_fns(lhs, lean_index)
+    mentioned_fns_excluding(lemma_lhs_text(text), lean_index, &bound_names(text))
 }
 
 /// How a committed lemma may join a `simp` set. Discovery commits equations
@@ -620,6 +683,44 @@ pub fn discovery_surface_hash(inputs: &ProofLowerInputs) -> String {
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_bound_name_that_spells_a_program_fn_is_not_a_mention() {
+        // The snoc law binds `bytes`; the program also has a fn `bytes` (a
+        // mempool size). Only the fns the statement applies are mentions.
+        let index: BTreeMap<String, String> = [
+            ("bytes", "Domain.Mempool.bytes"),
+            ("Domain.StackItem.bigEndian", "Domain.StackItem.bigEndian"),
+            ("acc", "Domain.Other.acc"),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+        let text = "theorem bigEndian_law_readsTheLastByteLast : ∀ (bytes : List Int) (b : Int) (acc : Int), Domain.StackItem.bigEndian (bytes ++ [b]) acc = ((Domain.StackItem.bigEndian bytes acc * 256) + b) := by";
+        let got: Vec<String> = mentioned_fns(text, &index).into_iter().collect();
+        assert_eq!(got, vec!["Domain.StackItem.bigEndian".to_string()]);
+        let lhs: Vec<String> = lemma_lhs_fns(text, &index).into_iter().collect();
+        assert_eq!(lhs, vec!["Domain.StackItem.bigEndian".to_string()]);
+        // A LAW statement has no header: its givens are passed explicitly.
+        let law_text = "theorem bigEndian_law_readsTheLastByteLast : Domain.StackItem.bigEndian (bytes ++ [b]) acc = ((Domain.StackItem.bigEndian bytes acc * 256) + b) := by";
+        let givens: BTreeSet<String> = ["bytes", "b", "acc"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        let got: Vec<String> = mentioned_fns_bound(law_text, &index, &givens)
+            .into_iter()
+            .collect();
+        assert_eq!(got, vec!["Domain.StackItem.bigEndian".to_string()]);
+        let lhs: Vec<String> = lemma_lhs_fns_bound(law_text, &index, &givens)
+            .into_iter()
+            .collect();
+        assert_eq!(lhs, vec!["Domain.StackItem.bigEndian".to_string()]);
+        // A statement with no binder header scans every token as before.
+        let flat: Vec<String> = mentioned_fns("theorem t : bytes = 3 := by", &index)
+            .into_iter()
+            .collect();
+        assert_eq!(flat, vec!["Domain.Mempool.bytes".to_string()]);
+    }
+
     /// The count-into-plus fold family (mirrors the conjecturer fixture in
     /// the parent module), plus an `orphan` pure fn UNREACHABLE from the law —
     /// the out-of-cone case the in-scope gate must reject.
@@ -695,6 +796,7 @@ verify count law countPlusConcat
             recursive_fns: &recursive,
             symbol_table: &symbols,
             program_shape: None,
+            scope: None,
         };
         f(&inputs)
     }

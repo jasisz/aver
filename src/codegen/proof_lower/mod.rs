@@ -125,6 +125,9 @@ pub struct ProofLowerInputs<'a> {
     /// preserved for test fixtures that build `ProofLowerInputs` by
     /// hand without going through the pipeline.
     pub program_shape: Option<&'a crate::analysis::shape::ProgramShape>,
+    /// The module whose file is being emitted, when the caller runs under a
+    /// dependency scope: a bare call name there is that module's own fn.
+    pub scope: Option<String>,
 }
 
 impl<'a> ProofLowerInputs<'a> {
@@ -140,6 +143,7 @@ impl<'a> ProofLowerInputs<'a> {
             recursive_fns: &ctx.recursive_fns,
             symbol_table: &ctx.symbol_table,
             program_shape: ctx.program_shape.as_ref(),
+            scope: ctx.active_module_scope(),
         }
     }
 
@@ -321,6 +325,36 @@ impl<'a> ProofLowerInputs<'a> {
     /// last segment of a dotted call (e.g. `Module.fn` resolves to
     /// `fn` when no exact-match candidate exists).
     pub fn find_fn_def_by_call_name(&self, call_name: &str) -> Option<&'a FnDef> {
+        // A dotted name denotes THAT module's fn; a bare name under a module
+        // scope denotes the scoped module's own fn (Aver calls every other
+        // module's fn through its prefix); a bare name at the entry denotes
+        // the entry's. Only then the program-wide first match — which, with
+        // three modules each defining `littleEndian`, used to hand a law the
+        // wrong cone whenever the wrong module came first in the DAG.
+        let in_module = |prefix: &str, name: &str| -> Option<&'a FnDef> {
+            self.dep_modules
+                .iter()
+                .find(|m| m.prefix == prefix)
+                .and_then(|m| m.fn_defs.iter().find(|fd| fd.name == name))
+        };
+        if let Some((prefix, short)) = call_name.rsplit_once('.')
+            && let Some(fd) = in_module(prefix, short)
+        {
+            return Some(fd);
+        }
+        if !call_name.contains('.') {
+            if let Some(scope) = self.scope.as_deref()
+                && let Some(fd) = in_module(scope, call_name)
+            {
+                return Some(fd);
+            }
+            if let Some(fd) = self.entry_items.iter().find_map(|item| match item {
+                TopLevel::FnDef(fd) if fd.name == call_name => Some(fd),
+                _ => None,
+            }) {
+                return Some(fd);
+            }
+        }
         let find_exact = |name: &str| -> Option<&'a FnDef> {
             self.dep_modules
                 .iter()
