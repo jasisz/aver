@@ -19,7 +19,7 @@ use aver::provider::{ProviderBinding, ProviderRegistry};
 
 use super::{CustomProviderConfig, EffectMode, execute_wasm_gc_module};
 
-pub const BUNDLE_MANIFEST_SCHEMA: u32 = 2;
+pub const BUNDLE_MANIFEST_SCHEMA: u32 = 3;
 const BUNDLE_TARGET: &str = "wasm-gc";
 const BUNDLE_ENGINE: &str = "wasmtime-gc";
 const BUNDLE_MANIFEST_FILE: &str = "manifest.json";
@@ -36,7 +36,8 @@ struct BundleManifest {
     precompiled: BundlePrecompiled,
     build: BundleBuild,
     entry: BundleEntry,
-    imports: Vec<BundleImport>,
+    canonical_imports: Vec<BundleImport>,
+    runtime_imports: Vec<BundleImport>,
     capabilities: Vec<BundleCapability>,
     capability_sources: Vec<BundleCapabilitySource>,
     runtime_policy_toml: String,
@@ -127,6 +128,34 @@ pub struct BundleArtifacts {
     pub precompiled_bytes: Vec<u8>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BundleArtifactSelection {
+    Aot,
+    Canonical,
+    Optimized,
+}
+
+impl BundleArtifactSelection {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Aot => "aot",
+            Self::Canonical => "canonical",
+            Self::Optimized => "optimized",
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum BundleHostInvocation {
+    Help,
+    Run {
+        artifact: BundleArtifactSelection,
+        program_args: Vec<String>,
+    },
+}
+
+const BUNDLE_HOST_HELP: &str = "Usage: aver-wasmtime-host [--artifact aot|canonical|optimized] [--] [program arguments...]\n\nThe default is 'aot'. Use '--' before program arguments that begin with a dash.\n'canonical' JIT-compiles the certificate-subject .wasm; 'optimized' JIT-compiles\nthe Binaryen derivative. Neither diagnostic mode silently falls back from AOT.";
+
 /// AOT-compile the final module and render the canonical bundle manifest.
 /// Building both in one operation means the import surface and serialized
 /// native image come from the same Wasmtime `Module`, without compiling twice.
@@ -197,6 +226,14 @@ pub fn build_bundle_artifacts(input: BundleManifestInput<'_>) -> Result<BundleAr
         .map_err(|error| format!("build bundle engine: {error:#}"))?;
     let module = wasmtime::Module::new(&engine, input.runtime_wasm_bytes)
         .map_err(|error| format!("precompile bundle module: {error:#}"))?;
+    let runtime_imports = inspect_imports(&module)?;
+    let canonical_imports = if input.artifact_bytes == input.runtime_wasm_bytes {
+        runtime_imports.clone()
+    } else {
+        let canonical_module = wasmtime::Module::new(&engine, input.artifact_bytes)
+            .map_err(|error| format!("inspect canonical bundle module: {error:#}"))?;
+        inspect_imports(&canonical_module)?
+    };
     let precompiled_bytes = module
         .serialize()
         .map_err(|error| format!("serialize bundle module: {error:#}"))?;
@@ -228,7 +265,8 @@ pub fn build_bundle_artifacts(input: BundleManifestInput<'_>) -> Result<BundleAr
             export: "main".to_string(),
             return_type: input.return_type.display(),
         },
-        imports: inspect_imports(&module)?,
+        canonical_imports,
+        runtime_imports,
         capabilities,
         capability_sources,
         runtime_policy_toml: input.runtime_policy_toml.to_string(),
@@ -252,18 +290,86 @@ pub fn run_bundle_from_current_exe(bindings: Vec<ProviderBinding>) -> Result<(),
     let directory = executable
         .parent()
         .ok_or_else(|| "aver-wasmtime-host has no parent directory".to_string())?;
-    let program_args = std::env::args_os()
+    let host_args = std::env::args_os()
         .skip(1)
         .map(|arg| {
             arg.into_string()
                 .map_err(|_| "program arguments must be valid UTF-8".to_string())
         })
         .collect::<Result<Vec<_>, _>>()?;
-    run_bundle(directory, program_args, bindings)
+    match parse_bundle_host_args(host_args)? {
+        BundleHostInvocation::Help => {
+            println!("{BUNDLE_HOST_HELP}");
+            Ok(())
+        }
+        BundleHostInvocation::Run {
+            artifact,
+            program_args,
+        } => run_bundle(directory, artifact, program_args, bindings),
+    }
+}
+
+fn parse_bundle_host_args(args: Vec<String>) -> Result<BundleHostInvocation, String> {
+    let Some(first) = args.first() else {
+        return Ok(BundleHostInvocation::Run {
+            artifact: BundleArtifactSelection::Aot,
+            program_args: Vec::new(),
+        });
+    };
+    if first == "--help" || first == "-h" {
+        return Ok(BundleHostInvocation::Help);
+    }
+    if first == "--" {
+        return Ok(BundleHostInvocation::Run {
+            artifact: BundleArtifactSelection::Aot,
+            program_args: args[1..].to_vec(),
+        });
+    }
+
+    let (artifact_name, rest) = if first == "--artifact" {
+        let artifact_name = args.get(1).ok_or_else(|| {
+            "error[wasmtime-bundle-cli]: --artifact requires aot, canonical, or optimized"
+                .to_string()
+        })?;
+        (artifact_name.as_str(), &args[2..])
+    } else if let Some(artifact_name) = first.strip_prefix("--artifact=") {
+        (artifact_name, &args[1..])
+    } else {
+        return Ok(BundleHostInvocation::Run {
+            artifact: BundleArtifactSelection::Aot,
+            program_args: args,
+        });
+    };
+
+    let artifact = match artifact_name {
+        "aot" => BundleArtifactSelection::Aot,
+        "canonical" => BundleArtifactSelection::Canonical,
+        "optimized" => BundleArtifactSelection::Optimized,
+        other => {
+            return Err(format!(
+                "error[wasmtime-bundle-cli]: unknown artifact '{other}'; expected aot, canonical, or optimized"
+            ));
+        }
+    };
+    let program_args = match rest {
+        [] => Vec::new(),
+        [separator, program_args @ ..] if separator == "--" => program_args.to_vec(),
+        _ => {
+            return Err(
+                "error[wasmtime-bundle-cli]: place '--' between host options and program arguments"
+                    .to_string(),
+            );
+        }
+    };
+    Ok(BundleHostInvocation::Run {
+        artifact,
+        program_args,
+    })
 }
 
 fn run_bundle(
     directory: &Path,
+    artifact_selection: BundleArtifactSelection,
     program_args: Vec<String>,
     bindings: Vec<ProviderBinding>,
 ) -> Result<(), String> {
@@ -273,89 +379,101 @@ fn run_bundle(
     let manifest: BundleManifest = serde_json::from_slice(&manifest_bytes)
         .map_err(|error| format!("parse '{}': {error}", manifest_path.display()))?;
     validate_manifest_header(&manifest)?;
-    require_sibling_file(&manifest.artifact.file)?;
-
-    let wasm_path = directory.join(&manifest.artifact.file);
-    let wasm_bytes = std::fs::read(&wasm_path)
-        .map_err(|error| format!("read '{}': {error}", wasm_path.display()))?;
-    let actual_hash = sha256(&wasm_bytes);
-    if actual_hash != manifest.artifact.sha256 {
-        return Err(format!(
-            "error[wasmtime-bundle-artifact-mismatch]: '{}' has sha256 {}, manifest requires {}",
-            wasm_path.display(),
-            actual_hash,
-            manifest.artifact.sha256
-        ));
-    }
-
-    require_sibling_file(&manifest.runtime_artifact.file)?;
-    let runtime_wasm_path = directory.join(&manifest.runtime_artifact.file);
-    let runtime_wasm_bytes = if manifest.runtime_artifact.file == manifest.artifact.file {
-        wasm_bytes.clone()
-    } else {
-        std::fs::read(&runtime_wasm_path)
-            .map_err(|error| format!("read '{}': {error}", runtime_wasm_path.display()))?
-    };
-    let actual_runtime_hash = sha256(&runtime_wasm_bytes);
-    if actual_runtime_hash != manifest.runtime_artifact.sha256 {
-        return Err(format!(
-            "error[wasmtime-bundle-runtime-artifact-mismatch]: '{}' has sha256 {}, manifest requires {}",
-            runtime_wasm_path.display(),
-            actual_runtime_hash,
-            manifest.runtime_artifact.sha256
-        ));
-    }
-
-    require_sibling_file(&manifest.precompiled.file)?;
-    let precompiled_path = directory.join(&manifest.precompiled.file);
-    let precompiled_bytes = std::fs::read(&precompiled_path)
-        .map_err(|error| format!("read '{}': {error}", precompiled_path.display()))?;
-    let actual_precompiled_hash = sha256(&precompiled_bytes);
-    if actual_precompiled_hash != manifest.precompiled.sha256 {
-        return Err(format!(
-            "error[wasmtime-bundle-precompiled-mismatch]: '{}' has sha256 {}, manifest requires {}",
-            precompiled_path.display(),
-            actual_precompiled_hash,
-            manifest.precompiled.sha256
-        ));
-    }
-    if manifest.precompiled.source_sha256 != actual_runtime_hash {
-        return Err(format!(
-            "error[wasmtime-bundle-precompiled-source-mismatch]: precompiled image declares source {}, runtime wasm has {}",
-            manifest.precompiled.source_sha256, actual_runtime_hash
-        ));
-    }
-    if !matches!(
-        wasmtime::Engine::detect_precompiled(&precompiled_bytes),
-        Some(wasmtime::Precompiled::Module)
-    ) {
-        return Err(format!(
-            "error[wasmtime-bundle-precompiled]: '{}' is not a Wasmtime precompiled module",
-            precompiled_path.display()
-        ));
-    }
     let engine = wasmtime::Engine::new(&crate::runtime::wasmtime_gc_engine_config())
         .map_err(|error| format!("bundle engine: {error:#}"))?;
-    let actual_engine_compatibility = engine_compatibility(&engine);
-    if actual_engine_compatibility != manifest.precompiled.engine_compatibility {
-        return Err(format!(
-            "error[wasmtime-bundle-precompiled-incompatible]: host engine compatibility {} does not match manifest {}",
-            actual_engine_compatibility, manifest.precompiled.engine_compatibility
-        ));
-    }
-    // SAFETY: the bundle accepts only bytes whose digest matches the manifest
-    // and whose Wasmtime envelope identifies a module. A pack is a native-code
-    // trust unit: deployment signing/integrity must cover the host, manifest,
-    // `.wasm`, and `.cwasm` together. Wasmtime performs the remaining exact
-    // version, target, and engine-configuration compatibility checks here.
-    let module = unsafe { wasmtime::Module::deserialize(&engine, &precompiled_bytes) }
-        .map_err(|error| format!("deserialize bundled precompiled module: {error:#}"))?;
+    let module = match artifact_selection {
+        BundleArtifactSelection::Canonical => {
+            let (wasm_bytes, _) = read_checked_artifact(
+                directory,
+                &manifest.artifact,
+                "wasmtime-bundle-artifact-mismatch",
+            )?;
+            wasmtime::Module::new(&engine, wasm_bytes)
+                .map_err(|error| format!("compile canonical bundle artifact: {error:#}"))?
+        }
+        BundleArtifactSelection::Optimized => {
+            if manifest.runtime_artifact.file == manifest.artifact.file {
+                return Err(
+                    "error[wasmtime-bundle-artifact-unavailable]: this pack has no distinct optimized artifact"
+                        .to_string(),
+                );
+            }
+            let (wasm_bytes, _) = read_checked_artifact(
+                directory,
+                &manifest.runtime_artifact,
+                "wasmtime-bundle-runtime-artifact-mismatch",
+            )?;
+            wasmtime::Module::new(&engine, wasm_bytes)
+                .map_err(|error| format!("compile optimized bundle artifact: {error:#}"))?
+        }
+        BundleArtifactSelection::Aot => {
+            read_checked_artifact(
+                directory,
+                &manifest.artifact,
+                "wasmtime-bundle-artifact-mismatch",
+            )?;
+            let (_, actual_runtime_hash) = read_checked_artifact(
+                directory,
+                &manifest.runtime_artifact,
+                "wasmtime-bundle-runtime-artifact-mismatch",
+            )?;
+            require_sibling_file(&manifest.precompiled.file)?;
+            let precompiled_path = directory.join(&manifest.precompiled.file);
+            let precompiled_bytes = std::fs::read(&precompiled_path)
+                .map_err(|error| format!("read '{}': {error}", precompiled_path.display()))?;
+            let actual_precompiled_hash = sha256(&precompiled_bytes);
+            if actual_precompiled_hash != manifest.precompiled.sha256 {
+                return Err(format!(
+                    "error[wasmtime-bundle-precompiled-mismatch]: '{}' has sha256 {}, manifest requires {}",
+                    precompiled_path.display(),
+                    actual_precompiled_hash,
+                    manifest.precompiled.sha256
+                ));
+            }
+            if manifest.precompiled.source_sha256 != actual_runtime_hash {
+                return Err(format!(
+                    "error[wasmtime-bundle-precompiled-source-mismatch]: precompiled image declares source {}, runtime wasm has {}",
+                    manifest.precompiled.source_sha256, actual_runtime_hash
+                ));
+            }
+            if !matches!(
+                wasmtime::Engine::detect_precompiled(&precompiled_bytes),
+                Some(wasmtime::Precompiled::Module)
+            ) {
+                return Err(format!(
+                    "error[wasmtime-bundle-precompiled]: '{}' is not a Wasmtime precompiled module",
+                    precompiled_path.display()
+                ));
+            }
+            let actual_engine_compatibility = engine_compatibility(&engine);
+            if actual_engine_compatibility != manifest.precompiled.engine_compatibility {
+                return Err(format!(
+                    "error[wasmtime-bundle-precompiled-incompatible]: host engine compatibility {} does not match manifest {}",
+                    actual_engine_compatibility, manifest.precompiled.engine_compatibility
+                ));
+            }
+            // SAFETY: the bundle accepts only bytes whose digest matches the
+            // manifest and whose Wasmtime envelope identifies a module. A pack
+            // is a native-code trust unit: deployment signing/integrity must
+            // cover the host, manifest, `.wasm`, and `.cwasm` together.
+            // Wasmtime performs the remaining exact version, target, and
+            // engine-configuration compatibility checks here.
+            unsafe { wasmtime::Module::deserialize(&engine, &precompiled_bytes) }
+                .map_err(|error| format!("deserialize bundled precompiled module: {error:#}"))?
+        }
+    };
     let actual_imports = inspect_imports(&module)?;
-    if actual_imports != manifest.imports {
-        return Err(
-            "error[wasmtime-bundle-abi-mismatch]: wasm import names or signatures differ from manifest"
-                .to_string(),
-        );
+    let expected_imports = match artifact_selection {
+        BundleArtifactSelection::Canonical => &manifest.canonical_imports,
+        BundleArtifactSelection::Aot | BundleArtifactSelection::Optimized => {
+            &manifest.runtime_imports
+        }
+    };
+    if actual_imports != *expected_imports {
+        return Err(format!(
+            "error[wasmtime-bundle-abi-mismatch]: {} artifact import names or signatures differ from manifest",
+            artifact_selection.label()
+        ));
     }
 
     let mut registry = aver::stdlib::standard_capability_registry();
@@ -622,6 +740,27 @@ fn engine_compatibility(engine: &wasmtime::Engine) -> String {
     format!("{:016x}", hasher.finish())
 }
 
+fn read_checked_artifact(
+    directory: &Path,
+    artifact: &BundleArtifact,
+    mismatch_code: &str,
+) -> Result<(Vec<u8>, String), String> {
+    require_sibling_file(&artifact.file)?;
+    let path = directory.join(&artifact.file);
+    let bytes =
+        std::fs::read(&path).map_err(|error| format!("read '{}': {error}", path.display()))?;
+    let actual_hash = sha256(&bytes);
+    if actual_hash != artifact.sha256 {
+        return Err(format!(
+            "error[{mismatch_code}]: '{}' has sha256 {}, manifest requires {}",
+            path.display(),
+            actual_hash,
+            artifact.sha256
+        ));
+    }
+    Ok((bytes, actual_hash))
+}
+
 fn require_sibling_file(file: &str) -> Result<(), String> {
     let mut components = Path::new(file).components();
     if matches!(components.next(), Some(Component::Normal(_))) && components.next().is_none() {
@@ -644,6 +783,7 @@ mod tests {
         let engine = wasmtime::Engine::new(&crate::runtime::wasmtime_gc_engine_config())
             .expect("test engine");
         let module = wasmtime::Module::new(&engine, wasm_bytes).expect("compile test wasm");
+        let imports = inspect_imports(&module).expect("inspect test wasm");
         let precompiled = module.serialize().expect("serialize test wasm");
         let manifest = BundleManifest {
             schema_version: BUNDLE_MANIFEST_SCHEMA,
@@ -672,7 +812,8 @@ mod tests {
                 export: "main".to_string(),
                 return_type: "Unit".to_string(),
             },
-            imports: inspect_imports(&module).expect("inspect test wasm"),
+            canonical_imports: imports.clone(),
+            runtime_imports: imports,
             capabilities: Vec::new(),
             capability_sources: Vec::new(),
             runtime_policy_toml: String::new(),
@@ -696,6 +837,125 @@ mod tests {
         .expect("write test manifest");
     }
 
+    fn host_args(args: &[&str]) -> Vec<String> {
+        args.iter().map(|arg| (*arg).to_string()).collect()
+    }
+
+    #[test]
+    fn host_cli_defaults_to_aot_and_preserves_ordinary_program_arguments() {
+        assert_eq!(
+            parse_bundle_host_args(host_args(&["one", "--two"])).unwrap(),
+            BundleHostInvocation::Run {
+                artifact: BundleArtifactSelection::Aot,
+                program_args: host_args(&["one", "--two"]),
+            }
+        );
+        assert_eq!(
+            parse_bundle_host_args(host_args(&["--", "--artifact", "canonical"])).unwrap(),
+            BundleHostInvocation::Run {
+                artifact: BundleArtifactSelection::Aot,
+                program_args: host_args(&["--artifact", "canonical"]),
+            }
+        );
+    }
+
+    #[test]
+    fn host_cli_selects_portable_artifacts_before_the_argument_separator() {
+        assert_eq!(
+            parse_bundle_host_args(host_args(&["--artifact", "canonical", "--", "guest-arg",]))
+                .unwrap(),
+            BundleHostInvocation::Run {
+                artifact: BundleArtifactSelection::Canonical,
+                program_args: host_args(&["guest-arg"]),
+            }
+        );
+        assert_eq!(
+            parse_bundle_host_args(host_args(&["--artifact=optimized"])).unwrap(),
+            BundleHostInvocation::Run {
+                artifact: BundleArtifactSelection::Optimized,
+                program_args: Vec::new(),
+            }
+        );
+        assert_eq!(
+            parse_bundle_host_args(host_args(&["--help"])).unwrap(),
+            BundleHostInvocation::Help
+        );
+    }
+
+    #[test]
+    fn host_cli_rejects_ambiguous_or_unknown_artifact_options() {
+        assert!(
+            parse_bundle_host_args(host_args(&["--artifact", "canonical", "guest-arg"]))
+                .unwrap_err()
+                .contains("place '--'")
+        );
+        assert!(
+            parse_bundle_host_args(host_args(&["--artifact", "invented"]))
+                .unwrap_err()
+                .contains("unknown artifact")
+        );
+        assert!(
+            parse_bundle_host_args(host_args(&["--artifact"]))
+                .unwrap_err()
+                .contains("requires")
+        );
+    }
+
+    #[test]
+    fn canonical_selection_does_not_require_a_valid_aot_derivative() {
+        let wasm = wat::parse_str("(module (func (export \"main\")))").expect("test wasm");
+        let (manifest, mut precompiled) = test_manifest(&wasm);
+        precompiled.push(0);
+        let directory = tempfile::tempdir().expect("bundle directory");
+        write_test_bundle(directory.path(), &manifest, &wasm, &precompiled);
+
+        run_bundle(
+            directory.path(),
+            BundleArtifactSelection::Canonical,
+            Vec::new(),
+            Vec::new(),
+        )
+        .expect("canonical artifact should run independently of cwasm");
+    }
+
+    #[test]
+    fn optimized_selection_uses_the_distinct_runtime_artifact_without_aot() {
+        let wasm = wat::parse_str("(module (func (export \"main\")))").expect("test wasm");
+        let (mut manifest, mut precompiled) = test_manifest(&wasm);
+        manifest.runtime_artifact.file = "main.optimized.wasm".to_string();
+        manifest.build.optimization = "speed".to_string();
+        precompiled.push(0);
+        let directory = tempfile::tempdir().expect("bundle directory");
+        write_test_bundle(directory.path(), &manifest, &wasm, &precompiled);
+        std::fs::write(directory.path().join("main.optimized.wasm"), &wasm)
+            .expect("write optimized test wasm");
+
+        run_bundle(
+            directory.path(),
+            BundleArtifactSelection::Optimized,
+            Vec::new(),
+            Vec::new(),
+        )
+        .expect("optimized artifact should run independently of cwasm");
+    }
+
+    #[test]
+    fn optimized_selection_rejects_a_pack_without_that_derivative() {
+        let wasm = wat::parse_str("(module (func (export \"main\")))").expect("test wasm");
+        let (manifest, precompiled) = test_manifest(&wasm);
+        let directory = tempfile::tempdir().expect("bundle directory");
+        write_test_bundle(directory.path(), &manifest, &wasm, &precompiled);
+
+        let error = run_bundle(
+            directory.path(),
+            BundleArtifactSelection::Optimized,
+            Vec::new(),
+            Vec::new(),
+        )
+        .unwrap_err();
+        assert!(error.contains("artifact-unavailable"), "{error}");
+    }
+
     #[test]
     fn artifact_name_must_stay_inside_bundle_directory() {
         assert!(require_sibling_file("main.wasm").is_ok());
@@ -713,7 +973,13 @@ mod tests {
         let directory = tempfile::tempdir().expect("bundle directory");
         write_test_bundle(directory.path(), &manifest, &wasm, &precompiled);
 
-        let error = run_bundle(directory.path(), Vec::new(), Vec::new()).unwrap_err();
+        let error = run_bundle(
+            directory.path(),
+            BundleArtifactSelection::Aot,
+            Vec::new(),
+            Vec::new(),
+        )
+        .unwrap_err();
         assert!(
             error.contains("wasmtime-bundle-artifact-mismatch"),
             "{error}"
@@ -728,7 +994,13 @@ mod tests {
         let directory = tempfile::tempdir().expect("bundle directory");
         write_test_bundle(directory.path(), &manifest, &wasm, &precompiled);
 
-        let error = run_bundle(directory.path(), Vec::new(), Vec::new()).unwrap_err();
+        let error = run_bundle(
+            directory.path(),
+            BundleArtifactSelection::Aot,
+            Vec::new(),
+            Vec::new(),
+        )
+        .unwrap_err();
         assert!(
             error.contains("wasmtime-bundle-precompiled-mismatch"),
             "{error}"
@@ -743,7 +1015,13 @@ mod tests {
         let directory = tempfile::tempdir().expect("bundle directory");
         write_test_bundle(directory.path(), &manifest, &wasm, &precompiled);
 
-        let error = run_bundle(directory.path(), Vec::new(), Vec::new()).unwrap_err();
+        let error = run_bundle(
+            directory.path(),
+            BundleArtifactSelection::Aot,
+            Vec::new(),
+            Vec::new(),
+        )
+        .unwrap_err();
         assert!(
             error.contains("wasmtime-bundle-runtime-artifact-mismatch"),
             "{error}"
@@ -754,7 +1032,7 @@ mod tests {
     fn import_manifest_mismatch_stops_before_instantiation() {
         let wasm = wat::parse_str("(module (func (export \"main\")))").expect("test wasm");
         let (mut manifest, precompiled) = test_manifest(&wasm);
-        manifest.imports.push(BundleImport {
+        manifest.runtime_imports.push(BundleImport {
             module: "aver".to_string(),
             name: "invented".to_string(),
             params: Vec::new(),
@@ -763,7 +1041,13 @@ mod tests {
         let directory = tempfile::tempdir().expect("bundle directory");
         write_test_bundle(directory.path(), &manifest, &wasm, &precompiled);
 
-        let error = run_bundle(directory.path(), Vec::new(), Vec::new()).unwrap_err();
+        let error = run_bundle(
+            directory.path(),
+            BundleArtifactSelection::Aot,
+            Vec::new(),
+            Vec::new(),
+        )
+        .unwrap_err();
         assert!(error.contains("wasmtime-bundle-abi-mismatch"), "{error}");
     }
 }

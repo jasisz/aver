@@ -270,6 +270,10 @@ aver run hello.av --wasm-gc
 aver compile hello.av --target wasm-gc --pack wasmtime -o out/
 ./out/aver-wasmtime-host some-arg
 
+# Diagnose a particular deployment stage (default remains zero-JIT AOT)
+./out/aver-wasmtime-host --artifact canonical -- some-arg
+./out/aver-wasmtime-host --artifact optimized -- some-arg
+
 # WASI 0.2 / Component Model output (wasmtime, Spin, NGINX Unit, etc.)
 aver compile hello.av --target wasip2
 
@@ -292,6 +296,9 @@ image without running Cranelift. `--certify --optimize` intentionally keeps
 three stages: the certificate binds `<name>.wasm`, deployment uses
 `<name>.optimized.wasm`, and Wasmtime executes `<name>.cwasm`. See
 [`docs/wasmtime-pack.md`](docs/wasmtime-pack.md).
+The bundled host defaults to `.cwasm` but can explicitly JIT either portable
+stage with `--artifact canonical|optimized` for differential diagnosis. It
+never falls back automatically.
 Custom capabilities whose complete contract uses only `Unit`, `Bool`, `Float`,
 and `String` compile to typed wasip2 component imports. They are host-bound: an
 external Component Model host may provide the generated interface directly, or
