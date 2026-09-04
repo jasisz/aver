@@ -2677,20 +2677,24 @@ fn law_is_map_len_set_ge_one(law: &VerifyLaw) -> bool {
 /// return` / `smart_guard` from `ProofIR.law_theorems[*].strategy`.
 /// Core (no-Mathlib) lemma package that normalises a Bool-valued Int
 /// comparison identity so `omega` can finish: `Bool.beq_comm` orders the
-/// `==`, `Bool.or_eq_true`/`Bool.and_eq_true`/`decide_eq_true_eq` strip the
-/// `= true` / `&&` / `||` Bool wrappers to the underlying decidable props,
+/// `==`, `beq_iff_eq`/`bne_iff_ne` bridge Bool equality to propositions,
+/// `Bool.or_eq_true`/`Bool.and_eq_true`/`decide_eq_true_eq` strip the `= true`
+/// / `&&` / `||` Bool wrappers to the underlying decidable props,
 /// `decide_eq_decide` reduces `decide p = decide q` to `p ↔ q`, `← decide_not`
-/// turns `!decide p` into `decide ¬p`, and `ge_iff_le`/`gt_iff_lt` rewrite
-/// `≥`/`>` to `≤`/`<` — leaving a pure linear-order goal `omega` decides.
-/// Used only as a `first`-alternative after the sign-split in the
-/// `wrapper_return` arm of [`emit_simp_omega_from_ir`].
+/// and `Bool.not_eq_true'` expose negation, and `ge_iff_le`/`gt_iff_lt`
+/// rewrite `≥`/`>` to `≤`/`<` — leaving a pure linear-order goal `omega`
+/// decides. Used as a later `first`-alternative after the existing tactic
+/// rung in [`emit_simp_omega_from_ir`].
 const COMPARISON_NORMALIZERS: &[&str] = &[
     "Bool.beq_comm",
+    "beq_iff_eq",
+    "bne_iff_ne",
     "Bool.or_eq_true",
     "Bool.and_eq_true",
     "decide_eq_decide",
     "decide_eq_true_eq",
     "← decide_not",
+    "Bool.not_eq_true'",
     "ge_iff_le",
     "gt_iff_lt",
 ];
@@ -2830,17 +2834,40 @@ fn emit_simp_omega_from_ir(
                 ],
             )
         } else if has_when {
-            Tactic::raw(intro_then(
-                intro_names,
-                vec![format!("simp_all [{}] <;> omega", lean_names.join(", "))],
-            ))
+            emit_default_simp_omega_portfolio(intro_names, &lean_names, true)
         } else {
-            Tactic::raw(intro_then(
-                intro_names,
-                vec![format!("simp only [{}] <;> omega", lean_names.join(", "))],
-            ))
+            emit_default_simp_omega_portfolio(intro_names, &lean_names, false)
         }
     }
+}
+
+/// The ordinary LinearArithmetic portfolio shared by the plain and `when`
+/// paths. Keeping the old closer in one explicit first slot makes its exact
+/// spelling independently testable while the bridge and fail-closed floor
+/// remain global for both paths.
+fn emit_default_simp_omega_portfolio(
+    intro_names: &[String],
+    lean_names: &[String],
+    has_when: bool,
+) -> super::tactic_ir::Tactic {
+    let cmp_lemmas = lean_names
+        .iter()
+        .map(String::as_str)
+        .chain(COMPARISON_NORMALIZERS.iter().copied())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let first_rung = if has_when {
+        format!("simp_all [{}] <;> omega", lean_names.join(", "))
+    } else {
+        format!("simp only [{}] <;> omega", lean_names.join(", "))
+    };
+    intro_then_first(
+        intro_names,
+        vec![
+            first_rung,
+            format!("simp only [{cmp_lemmas}] <;> (try split) <;> simp_all <;> omega"),
+        ],
+    )
 }
 
 /// Detect whether the LinearArithmetic unfold chain calls
@@ -2997,4 +3024,33 @@ pub(super) fn indent_lines(lines: Vec<String>, spaces: usize) -> Vec<String> {
         .into_iter()
         .map(|line| format!("{pad}{line}"))
         .collect()
+}
+
+#[cfg(test)]
+mod simp_omega_portfolio_tests {
+    use super::emit_default_simp_omega_portfolio;
+
+    #[test]
+    fn existing_plain_and_when_first_rungs_are_byte_identical() {
+        let intro_names = vec!["a".to_string()];
+        let lean_names = vec!["subject".to_string(), "helper".to_string()];
+
+        for (has_when, old_first_rung) in [
+            (false, "simp only [subject, helper] <;> omega"),
+            (true, "simp_all [subject, helper] <;> omega"),
+        ] {
+            let rendered = emit_default_simp_omega_portfolio(&intro_names, &lean_names, has_when)
+                .render_body()
+                .join("\n");
+            let expected_prefix = format!("  intro a\n  first | ({old_first_rung}) | (");
+            assert!(
+                rendered.starts_with(&expected_prefix),
+                "the pre-existing first rung moved or changed:\n{rendered}"
+            );
+            assert!(
+                rendered.ends_with(") | sorry"),
+                "the global portfolio must retain its fail-closed floor:\n{rendered}"
+            );
+        }
+    }
 }

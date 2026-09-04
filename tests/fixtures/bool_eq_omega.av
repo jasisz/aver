@@ -1,0 +1,31 @@
+module BoolEqOmega
+    intent =
+        "Exercises Boolean equality normalization before Presburger arithmetic."
+    effects []
+
+fn oneIf(condition: Bool) -> Int
+    ? "One for true, zero for false."
+    match condition
+        true -> 1
+        false -> 0
+
+verify oneIf
+    oneIf(true) => 1
+    oneIf(false) => 0
+
+fn unaryValue(code: Int, a: Int) -> Int
+    ? "Two of Script's unary rows: OP_NOT (145) and OP_0NOTEQUAL (146)."
+    match code
+        145 -> oneIf(a == 0)
+        146 -> oneIf(a != 0)
+        _ -> a
+
+verify unaryValue
+    unaryValue(145, 0) => 1
+    unaryValue(145, 7) => 0
+    unaryValue(146, 5) => 1
+    unaryValue(146, 0) => 0
+
+verify unaryValue law notNotIsZeroNotEqual
+    given a: Int = [-2, -1, 0, 1, 2]
+    unaryValue(145, unaryValue(145, a)) => unaryValue(146, a)

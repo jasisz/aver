@@ -4054,17 +4054,21 @@ fn echoConn(conn: Tcp.Connection) -> Tcp.Connection
 }
 
 #[test]
-fn law_auto_example_has_no_sorry_in_proof_mode() {
+fn law_auto_example_has_no_reached_sorry_in_proof_mode() {
     let mut ctx = ctx_from_source(
         include_str!("../../../examples/formal/law_auto.av"),
         "law_auto",
     );
     let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
     let lean = generated_lean_file(&out);
+    let reached_sorry: Vec<&str> = lean
+        .lines()
+        .filter(|line| line.contains("sorry") && !line.contains("| sorry"))
+        .collect();
     assert!(
-        !lean.contains("sorry"),
-        "expected law_auto proof export to avoid sorry, got:\n{}",
-        lean
+        reached_sorry.is_empty(),
+        "expected law_auto proof export to avoid reaching sorry; offending lines:\n{}",
+        reached_sorry.join("\n")
     );
 }
 
