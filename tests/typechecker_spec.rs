@@ -5075,3 +5075,315 @@ type Shade
 
     let _ = std::fs::remove_dir_all(&root);
 }
+
+// ---------------------------------------------------------------------------
+// A law `given`'s annotation pins the element type of its samples
+// ---------------------------------------------------------------------------
+
+/// The law source from the report: the domain of a `List<Int>` given
+/// contains the empty list.
+const EMPTY_SAMPLE_LAW: &str = "fn allBytes(xs: List<Int>) -> Bool\n\
+     \x20   match xs\n\
+     \x20       [] -> true\n\
+     \x20       [head, ..tail] -> Bool.and(head >= 0, allBytes(tail))\n\
+     \n\
+     verify allBytes law reverseKeepsBytes\n\
+     \x20   given xs: List<Int> = [[], [1], [1, 2]]\n\
+     \x20   allBytes(List.reverse(xs)) => allBytes(xs)\n";
+
+/// An empty-list sample has no element type of its own: expanded into a
+/// case on its own it infers as `List<T>`, so `List.reverse(xs)` came out
+/// `List<T>` and the call around it was rejected against `List<Int>` —
+/// while the very same law without `[]` in the domain type-checked. The
+/// `given` annotation is where the element type is written down, so it
+/// pins every sample substituted for that name.
+#[test]
+fn law_given_annotation_pins_the_element_type_of_an_empty_sample() {
+    assert_no_errors(EMPTY_SAMPLE_LAW);
+}
+
+/// The same law with `[]` dropped from the domain is unchanged: it
+/// type-checked before the pin and still does.
+#[test]
+fn law_without_an_empty_sample_is_unchanged() {
+    assert_no_errors(&EMPTY_SAMPLE_LAW.replace("[[], [1], [1, 2]]", "[[1], [1, 2]]"));
+}
+
+/// The pin is a type, not a licence: a sample that contradicts the
+/// annotation is still rejected.
+#[test]
+fn law_given_sample_that_contradicts_its_annotation_is_still_rejected() {
+    assert_error_containing(
+        &EMPTY_SAMPLE_LAW.replace("[[], [1], [1, 2]]", "[[], [\"a\"]]"),
+        "allBytes",
+    );
+}
+
+/// Rejection was the visible half of the bug; the stamp is the other. An
+/// unresolved element type on the expanded case survives into every
+/// consumer that reads the checked AST, so assert the substituted sample
+/// itself carries the declared type rather than only that no error was
+/// reported.
+#[test]
+fn expanded_law_case_stamps_the_empty_sample_with_the_declared_type() {
+    use aver::ast::Expr;
+    use aver::types::Type;
+
+    let items = parse(EMPTY_SAMPLE_LAW);
+    let errs = run_type_check(&items);
+    assert!(errs.is_empty(), "expected no type errors, got: {errs:?}");
+
+    let verify_block = items
+        .iter()
+        .find_map(|item| match item {
+            TopLevel::Verify(vb) => Some(vb),
+            _ => None,
+        })
+        .expect("the law verify block");
+    let (lhs, _) = verify_block.cases.first().expect("the first expanded case");
+
+    // `allBytes(List.reverse([]))` — the argument of `List.reverse` is
+    // the substituted sample.
+    let Expr::FnCall(_, outer_args) = &lhs.node else {
+        panic!("expected the case LHS to be a call, got {:?}", lhs.node);
+    };
+    let Expr::FnCall(_, reverse_args) = &outer_args[0].node else {
+        panic!("expected `List.reverse(...)`, got {:?}", outer_args[0].node);
+    };
+    let sample = &reverse_args[0];
+    assert!(
+        matches!(&sample.node, Expr::List(elems) if elems.is_empty()),
+        "expected the empty-list sample, got {:?}",
+        sample.node
+    );
+    assert_eq!(
+        sample.ty(),
+        Some(&Type::List(Box::new(Type::Int))),
+        "the given's `List<Int>` must pin the sample's element type"
+    );
+    assert_eq!(
+        outer_args[0].ty(),
+        Some(&Type::List(Box::new(Type::Int))),
+        "`List.reverse` over a pinned sample keeps the element type"
+    );
+}
+
+/// The reported law again, with one more `List.reverse` around the given.
+/// This is the shape no expected type can reach: `allBytes` pushes its
+/// concrete `List<Int>` one level down, into
+/// `List.reverse(List.reverse([]))`, and there the push stops — the inner
+/// call sits in a parameter position declared `List<T>`, which fixes
+/// nothing. Bottom-up the sample is `List<T>` and stays `List<T>` all the
+/// way out, so the call is rejected. The given's annotation is the only
+/// statement of the element type that reaches this far in.
+const NESTED_SAMPLE_LAW: &str = "fn allBytes(xs: List<Int>) -> Bool\n\
+     \x20   match xs\n\
+     \x20       [] -> true\n\
+     \x20       [head, ..tail] -> Bool.and(head >= 0, allBytes(tail))\n\
+     \n\
+     verify allBytes law reverseTwiceKeepsBytes\n\
+     \x20   given xs: List<Int> = [[], [1], [1, 2]]\n\
+     \x20   allBytes(List.reverse(List.reverse(xs))) => allBytes(xs)\n";
+
+/// A sample under two levels of a polymorphic builtin still takes the
+/// given's element type — and the whole law checks clean.
+#[test]
+fn law_given_annotation_reaches_a_sample_no_expected_type_can() {
+    assert_no_errors(NESTED_SAMPLE_LAW);
+}
+
+/// The stamps under the nested call, node by node: the sample, the inner
+/// `List.reverse` and the outer one all carry `List<Int>`. Without the
+/// pin every one of them is `List<T>`.
+#[test]
+fn nested_law_case_stamps_every_level_with_the_declared_element_type() {
+    use aver::ast::Expr;
+    use aver::types::Type;
+
+    let items = parse(NESTED_SAMPLE_LAW);
+    let errs = run_type_check(&items);
+    assert!(errs.is_empty(), "expected no type errors, got: {errs:?}");
+
+    let verify_block = items
+        .iter()
+        .find_map(|item| match item {
+            TopLevel::Verify(vb) => Some(vb),
+            _ => None,
+        })
+        .expect("the law verify block");
+    let (lhs, _) = verify_block.cases.first().expect("the first expanded case");
+
+    // `allBytes(List.reverse(List.reverse([])))`.
+    let Expr::FnCall(_, outer_args) = &lhs.node else {
+        panic!("expected the case LHS to be a call, got {:?}", lhs.node);
+    };
+    let outer_reverse = &outer_args[0];
+    let Expr::FnCall(_, mid_args) = &outer_reverse.node else {
+        panic!(
+            "expected the outer `List.reverse(...)`, got {:?}",
+            outer_reverse.node
+        );
+    };
+    let inner_reverse = &mid_args[0];
+    let Expr::FnCall(_, inner_args) = &inner_reverse.node else {
+        panic!(
+            "expected the inner `List.reverse(...)`, got {:?}",
+            inner_reverse.node
+        );
+    };
+    let sample = &inner_args[0];
+    assert!(
+        matches!(&sample.node, Expr::List(elems) if elems.is_empty()),
+        "expected the empty-list sample, got {:?}",
+        sample.node
+    );
+
+    let list_int = Type::List(Box::new(Type::Int));
+    assert_eq!(
+        sample.ty(),
+        Some(&list_int),
+        "the given's `List<Int>` must pin the sample's element type"
+    );
+    assert_eq!(
+        inner_reverse.ty(),
+        Some(&list_int),
+        "the inner `List.reverse` must carry the pinned element type"
+    );
+    assert_eq!(
+        outer_reverse.ty(),
+        Some(&list_int),
+        "the outer `List.reverse` must carry the pinned element type"
+    );
+}
+
+/// A law whose builtins are polymorphic end to end: `List.len` accepts
+/// `List<T>`, so nothing here is ever rejected — the leak is silent. The
+/// expanded case still stamps `List<T>` on the sample and on the
+/// `List.reverse` around it, and every consumer that reads the checked
+/// AST (the proof lowering, the backends' instantiation registries)
+/// inherits that unresolved element type. The pin is what makes the
+/// stamp match what the given declared.
+#[test]
+fn polymorphic_law_case_stamps_the_sample_even_when_nothing_is_rejected() {
+    use aver::ast::Expr;
+    use aver::types::Type;
+
+    let src = "fn allBytes(xs: List<Int>) -> Bool\n\
+        \x20   match xs\n\
+        \x20       [] -> true\n\
+        \x20       [head, ..tail] -> Bool.and(head >= 0, allBytes(tail))\n\
+        \n\
+        verify allBytes law reverseKeepsLength\n\
+        \x20   given xs: List<Int> = [[], [1], [1, 2]]\n\
+        \x20   List.len(List.reverse(xs)) => List.len(xs)\n";
+
+    let items = parse(src);
+    let errs = run_type_check(&items);
+    assert!(errs.is_empty(), "expected no type errors, got: {errs:?}");
+
+    let verify_block = items
+        .iter()
+        .find_map(|item| match item {
+            TopLevel::Verify(vb) => Some(vb),
+            _ => None,
+        })
+        .expect("the law verify block");
+    let (lhs, rhs) = verify_block.cases.first().expect("the first expanded case");
+
+    // `List.len(List.reverse([]))`.
+    let Expr::FnCall(_, len_args) = &lhs.node else {
+        panic!("expected the case LHS to be a call, got {:?}", lhs.node);
+    };
+    let reverse = &len_args[0];
+    let Expr::FnCall(_, reverse_args) = &reverse.node else {
+        panic!("expected `List.reverse(...)`, got {:?}", reverse.node);
+    };
+
+    let list_int = Type::List(Box::new(Type::Int));
+    assert_eq!(
+        reverse_args[0].ty(),
+        Some(&list_int),
+        "the given's `List<Int>` must pin the sample under `List.len`"
+    );
+    assert_eq!(
+        reverse.ty(),
+        Some(&list_int),
+        "`List.reverse` over the pinned sample keeps the element type"
+    );
+
+    // The bare sample on the right-hand side takes the annotation too.
+    let Expr::FnCall(_, rhs_args) = &rhs.node else {
+        panic!("expected the case RHS to be a call, got {:?}", rhs.node);
+    };
+    assert_eq!(
+        rhs_args[0].ty(),
+        Some(&list_int),
+        "the bare sample must carry the declared type on both sides"
+    );
+}
+
+/// The other half of the polymorphic law: a sample that contradicts the
+/// annotation, under consumers that accept `List<T>` and therefore never
+/// reject anything. Nothing but the given itself can catch this — and it
+/// must, because the pin would otherwise stamp the expanded case with a
+/// `List<Int>` the sample never had, silently, while `aver check` passed.
+#[test]
+fn polymorphic_law_rejects_a_sample_that_contradicts_its_given() {
+    let src = "fn allBytes(xs: List<Int>) -> Bool\n\
+        \x20   match xs\n\
+        \x20       [] -> true\n\
+        \x20       [head, ..tail] -> Bool.and(head >= 0, allBytes(tail))\n\
+        \n\
+        verify allBytes law reverseKeepsLength\n\
+        \x20   given xs: List<Int> = [[], [\"a\"]]\n\
+        \x20   List.len(List.reverse(xs)) => List.len(xs)\n";
+
+    assert_error_containing(src, "expected Int, got String");
+}
+
+/// And the stamp that goes with it: a rejected given pins nothing, so the
+/// contradicting sample keeps the type it actually has instead of gaining
+/// a false `List<Int>` that travels with the node into the backends.
+#[test]
+fn a_rejected_given_does_not_stamp_its_samples() {
+    use aver::ast::Expr;
+    use aver::types::Type;
+
+    let src = "fn allBytes(xs: List<Int>) -> Bool\n\
+        \x20   match xs\n\
+        \x20       [] -> true\n\
+        \x20       [head, ..tail] -> Bool.and(head >= 0, allBytes(tail))\n\
+        \n\
+        verify allBytes law reverseKeepsLength\n\
+        \x20   given xs: List<Int> = [[\"a\"]]\n\
+        \x20   List.len(List.reverse(xs)) => List.len(xs)\n";
+
+    let items = parse(src);
+    let errs = run_type_check(&items);
+    assert!(
+        !errs.is_empty(),
+        "the contradicting sample must be reported"
+    );
+
+    let verify_block = items
+        .iter()
+        .find_map(|item| match item {
+            TopLevel::Verify(vb) => Some(vb),
+            _ => None,
+        })
+        .expect("the law verify block");
+    let (lhs, _) = verify_block.cases.first().expect("the first expanded case");
+
+    // `List.len(List.reverse(["a"]))`.
+    let Expr::FnCall(_, len_args) = &lhs.node else {
+        panic!("expected the case LHS to be a call, got {:?}", lhs.node);
+    };
+    let Expr::FnCall(_, reverse_args) = &len_args[0].node else {
+        panic!("expected `List.reverse(...)`, got {:?}", len_args[0].node);
+    };
+    assert_ne!(
+        reverse_args[0].ty(),
+        Some(&Type::List(Box::new(Type::Int))),
+        "a sample the given rejected must not be stamped with the declared type"
+    );
+}

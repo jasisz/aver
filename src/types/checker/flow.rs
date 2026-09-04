@@ -108,6 +108,230 @@ impl TypeChecker {
         out
     }
 
+    /// Declared type per `given` of a law, for the samples the parser
+    /// substituted into the expanded cases. Operation-shaped annotations
+    /// (`Random.int`) are not types and are left out — their samples are
+    /// stub functions, checked against the callable shape elsewhere.
+    ///
+    /// A given whose own domain contradicts its annotation is reported
+    /// here, at the sample, and then left out: pinning would stamp the
+    /// expanded cases with a type the sample does not have, and the stamp
+    /// is what every later consumer of the checked AST reads.
+    fn law_given_declared_types(
+        &mut self,
+        givens: &[crate::ast::VerifyGiven],
+    ) -> std::collections::HashMap<String, Type> {
+        let mut out = std::collections::HashMap::new();
+        for given in givens {
+            if self.verify_given_targets_operation(&given.type_name)
+                || Self::verify_given_is_operation_reference(&given.type_name)
+            {
+                continue;
+            }
+            let Ok(declared) = parse_type_str_strict(&given.type_name) else {
+                continue;
+            };
+            let declared = self.canonicalize_named(declared);
+            if !self.law_given_domain_has_declared_type(given, &declared) {
+                continue;
+            }
+            out.insert(given.name.clone(), declared);
+        }
+        out
+    }
+
+    /// Whether every explicit sample of a plain-type law `given` has the
+    /// type the given declares, reporting each sample that does not.
+    ///
+    /// The annotation is what pins a sample like `[]`, so it has to be
+    /// true of the sample before it is used as a pin. Nothing else checks
+    /// it: a law whose consumers are polymorphic end to end
+    /// (`List.len(List.reverse(xs))`) never rejects a `List<String>`
+    /// sample under a `List<Int>` given, so the contradiction has to be
+    /// caught where it is written — once per sample, whatever the law
+    /// does with it.
+    fn law_given_domain_has_declared_type(
+        &mut self,
+        given: &crate::ast::VerifyGiven,
+        declared: &Type,
+    ) -> bool {
+        let crate::ast::VerifyGivenDomain::Explicit(values) = &given.domain else {
+            return true;
+        };
+        // Resource-typed domains are rejected wholesale above, with a
+        // message of their own; do not say it twice.
+        let already_reported = self.type_contains_capability_resource(declared);
+        let mut matches = true;
+        for value in values {
+            let mark = self.error_mark();
+            let actual = self.infer_type_with_expected(value, Some(declared));
+            // A literal checked against an expected type reports the
+            // element that contradicts it and still comes back stamped
+            // with the expectation, so a raised diagnostic is as much a
+            // mismatch as an incompatible result — and a more precise
+            // one, at the element rather than at the sample.
+            let described = self.errors.len() > mark;
+            if !described && self.compatible(&actual, declared) {
+                continue;
+            }
+            matches = false;
+            if already_reported {
+                self.discard_errors_since(mark);
+                continue;
+            }
+            if described {
+                continue;
+            }
+            let (want, got) = self.describe_type_pair(declared, &actual);
+            self.error_at_line(
+                value.line,
+                format!(
+                    "Verify law given '{}: {}' expects {}, got {}",
+                    given.name, given.type_name, want, got
+                ),
+            );
+        }
+        matches
+    }
+
+    /// Pin every substituted `given` sample of one expanded law case to
+    /// the type its `given` declares.
+    ///
+    /// The parser expands a law's cartesian product by substituting each
+    /// sample expression for the given's identifier, and a sample like
+    /// `[]` carries no element type of its own: inferred bottom-up it is
+    /// `List<T>`, so `List.reverse(xs)` in the law body comes out
+    /// `List<T>` and a call wanting `List<Int>` is rejected even though
+    /// the given says `xs: List<Int>`. The annotation is the pin. The
+    /// template and the expanded case have the same shape — the case is
+    /// the template with identifiers replaced — so walking the two in
+    /// lockstep locates each sample exactly, without guessing from the
+    /// case alone which `[]` came from a given.
+    ///
+    /// This pass only stamps. A given only reaches it once its whole
+    /// domain has been checked against the annotation
+    /// (`law_given_domain_has_declared_type`), so the pin is never the
+    /// only witness of a contradicting sample: what it could still raise
+    /// is a repeat of that report, or of a diagnostic inference proper
+    /// raises over the same case right after. Both are dropped here and
+    /// reported there.
+    fn pin_law_case_samples(
+        &mut self,
+        template: &Spanned<Expr>,
+        case: &Spanned<Expr>,
+        declared: &std::collections::HashMap<String, Type>,
+    ) {
+        if let Expr::Ident(name) = &template.node {
+            // An identifier still standing in the case was not
+            // substituted — a match arm rebound the name, so the given's
+            // type does not describe it.
+            if matches!(&case.node, Expr::Ident(same) if same == name) {
+                return;
+            }
+            if let Some(ty) = declared.get(name).cloned() {
+                let mark = self.error_mark();
+                self.infer_type_with_expected(case, Some(&ty));
+                self.discard_errors_since(mark);
+            }
+            return;
+        }
+
+        match (&template.node, &case.node) {
+            (Expr::Attr(t, _), Expr::Attr(c, _))
+            | (Expr::Neg(t), Expr::Neg(c))
+            | (Expr::ErrorProp(t), Expr::ErrorProp(c))
+            | (Expr::Constructor(_, Some(t)), Expr::Constructor(_, Some(c))) => {
+                self.pin_law_case_samples(t, c, declared)
+            }
+            (Expr::BinOp(_, tl, tr), Expr::BinOp(_, cl, cr)) => {
+                self.pin_law_case_samples(tl, cl, declared);
+                self.pin_law_case_samples(tr, cr, declared);
+            }
+            (Expr::FnCall(t_callee, t_args), Expr::FnCall(c_callee, c_args)) => {
+                self.pin_law_case_samples(t_callee, c_callee, declared);
+                self.pin_law_case_sample_pairs(t_args, c_args, declared);
+            }
+            (Expr::List(t), Expr::List(c))
+            | (Expr::Tuple(t), Expr::Tuple(c))
+            | (Expr::IndependentProduct(t, _), Expr::IndependentProduct(c, _)) => {
+                self.pin_law_case_sample_pairs(t, c, declared)
+            }
+            (Expr::MapLiteral(t), Expr::MapLiteral(c)) => {
+                for ((t_key, t_val), (c_key, c_val)) in t.iter().zip(c.iter()) {
+                    self.pin_law_case_samples(t_key, c_key, declared);
+                    self.pin_law_case_samples(t_val, c_val, declared);
+                }
+            }
+            (
+                Expr::RecordCreate { fields: t, .. },
+                Expr::RecordCreate {
+                    fields: c_fields, ..
+                },
+            ) => {
+                for ((_, t_val), (_, c_val)) in t.iter().zip(c_fields.iter()) {
+                    self.pin_law_case_samples(t_val, c_val, declared);
+                }
+            }
+            (
+                Expr::RecordUpdate {
+                    base: t_base,
+                    updates: t_updates,
+                    ..
+                },
+                Expr::RecordUpdate {
+                    base: c_base,
+                    updates: c_updates,
+                    ..
+                },
+            ) => {
+                self.pin_law_case_samples(t_base, c_base, declared);
+                for ((_, t_val), (_, c_val)) in t_updates.iter().zip(c_updates.iter()) {
+                    self.pin_law_case_samples(t_val, c_val, declared);
+                }
+            }
+            (
+                Expr::Match {
+                    subject: t_subject,
+                    arms: t_arms,
+                },
+                Expr::Match {
+                    subject: c_subject,
+                    arms: c_arms,
+                },
+            ) => {
+                self.pin_law_case_samples(t_subject, c_subject, declared);
+                for (t_arm, c_arm) in t_arms.iter().zip(c_arms.iter()) {
+                    self.pin_law_case_samples(&t_arm.body, &c_arm.body, declared);
+                }
+            }
+            (Expr::InterpolatedStr(t), Expr::InterpolatedStr(c)) => {
+                for (t_part, c_part) in t.iter().zip(c.iter()) {
+                    if let (
+                        crate::ast::StrPart::Parsed(t_expr),
+                        crate::ast::StrPart::Parsed(c_expr),
+                    ) = (t_part, c_part)
+                    {
+                        self.pin_law_case_samples(t_expr, c_expr, declared);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// [`Self::pin_law_case_samples`] over two positionally matched
+    /// operand lists — a call's arguments, a list or tuple's elements.
+    fn pin_law_case_sample_pairs(
+        &mut self,
+        template: &[Spanned<Expr>],
+        case: &[Spanned<Expr>],
+        declared: &std::collections::HashMap<String, Type>,
+    ) {
+        for (t, c) in template.iter().zip(case.iter()) {
+            self.pin_law_case_samples(t, c, declared);
+        }
+    }
+
     fn verify_case_calls_target(expr: &Spanned<Expr>, fn_name: &str) -> bool {
         match &expr.node {
             Expr::FnCall(callee, args) => {
@@ -695,6 +919,14 @@ impl TypeChecker {
                 let prev_in_verify_trace = self.in_verify_trace_context;
                 self.in_verify_trace_context =
                     vb.trace || matches!(vb.kind, crate::ast::VerifyKind::Law(_));
+                // A law's `given` annotations are the only place the
+                // element type of a sample like `[]` is written down.
+                // Collect them once for the case loop below, which pins
+                // each substituted sample before inferring the case.
+                let law_declared_givens = match &vb.kind {
+                    crate::ast::VerifyKind::Law(law) => self.law_given_declared_types(&law.givens),
+                    crate::ast::VerifyKind::Cases => std::collections::HashMap::new(),
+                };
                 for (idx, (left, right)) in vb.cases.iter().enumerate() {
                     // Use case-specific line if available, fall back to block line
                     let case_line = vb
@@ -716,6 +948,17 @@ impl TypeChecker {
                                 vb.fn_name
                             ),
                         );
+                    }
+                    if let crate::ast::VerifyKind::Law(law) = &vb.kind
+                        && !law_declared_givens.is_empty()
+                    {
+                        self.pin_law_case_samples(&law.lhs, left, &law_declared_givens);
+                        self.pin_law_case_samples(&law.rhs, right, &law_declared_givens);
+                        if let Some(when_expr) = &law.when
+                            && let Some(guard) = law.sample_guards.get(idx)
+                        {
+                            self.pin_law_case_samples(when_expr, guard, &law_declared_givens);
+                        }
                     }
                     let left_ty = self.infer_type(left);
                     self.check_effects_in_expr(left, &caller, &inherited_effects);

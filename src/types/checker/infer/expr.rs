@@ -190,6 +190,26 @@ impl TypeChecker {
         // outright.
         let raw = self.infer_type_inner(expr);
         let t = self.canonicalize_named(raw);
+        // A pin left on the node by an earlier bidirectional pass wins over
+        // an unresolved bottom-up result. `set_ty` is set-once, so the pin
+        // already survives on the node — but the *returned* type is what
+        // flows into the enclosing expression, and returning the unresolved
+        // one there re-opens the leak the pin exists to close: a law given's
+        // substituted `[]` sample types as `List<T>` on its own, so
+        // `List.reverse([])` under a `List<Int>` given ends up `List<T>` and
+        // the enclosing call is rejected. Only an unresolved result may be
+        // replaced, only by a fully concrete pin, and only when the two
+        // agree in shape — a genuine mismatch still goes to the caller's
+        // own check.
+        if let Some(pinned) = expr.ty()
+            && !type_is_fully_concrete(&t)
+            && type_is_fully_concrete(pinned)
+        {
+            let pinned = pinned.clone();
+            if self.compatible(&pinned, &t) {
+                return pinned;
+            }
+        }
         expr.set_ty(t.clone());
         t
     }
