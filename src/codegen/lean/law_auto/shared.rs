@@ -284,6 +284,83 @@ pub(super) fn calls_fn_on_ident(expr: &Spanned<Expr>, fn_src: &str, ident: &str)
         .any(|c| calls_fn_on_ident(c, fn_src, ident))
 }
 
+/// Whether `law` read as a left-to-right rewrite rule LOOPS: its RHS contains
+/// an instance of its own LHS pattern (the LHS with the law's givens as
+/// pattern variables). The accumulator law `f(v, acc) => concat(reverse(acc),
+/// f(v, []))` is the canonical case — `f(v, [])` is matched by `f(?v, ?acc)`,
+/// so `simp [law]` rewrites forever (Lean warns "Possibly looping simp
+/// theorem"). A structurally decreasing rule (`g(concat(xs, [b]), acc) =>
+/// g(xs, acc) * 256 + b`) is NOT looping: `xs` is not matched by
+/// `concat(?xs, [?b])`. Matching is syntactic: a bare given matches anything
+/// (repeated givens are not checked for consistency — conservative towards
+/// "looping"), calls/operators match structurally, everything else by
+/// rendered Lean text.
+pub(super) fn law_is_looping_rewrite(law: &VerifyLaw, ctx: &CodegenContext) -> bool {
+    let Some((head, lhs_args)) = call_name_args(&law.lhs) else {
+        return false;
+    };
+    let givens: BTreeSet<&str> = law.givens.iter().map(|g| g.name.as_str()).collect();
+    fn instance_of(
+        pat: &Spanned<Expr>,
+        e: &Spanned<Expr>,
+        givens: &BTreeSet<&str>,
+        ctx: &CodegenContext,
+    ) -> bool {
+        if let Some(n) = ident_name(pat)
+            && givens.contains(n)
+        {
+            return true;
+        }
+        match (&pat.node, &e.node) {
+            (Expr::Literal(a), Expr::Literal(b)) => a == b,
+            (Expr::BinOp(o1, a1, b1), Expr::BinOp(o2, a2, b2)) => {
+                o1 == o2 && instance_of(a1, a2, givens, ctx) && instance_of(b1, b2, givens, ctx)
+            }
+            (Expr::Neg(a), Expr::Neg(b)) => instance_of(a, b, givens, ctx),
+            (Expr::List(xs), Expr::List(ys)) => {
+                xs.len() == ys.len()
+                    && xs
+                        .iter()
+                        .zip(ys)
+                        .all(|(x, y)| instance_of(x, y, givens, ctx))
+            }
+            _ => match (call_name_args(pat), call_name_args(e)) {
+                (Some((n1, a1)), Some((n2, a2))) => {
+                    n1 == n2
+                        && a1.len() == a2.len()
+                        && a1
+                            .iter()
+                            .zip(a2)
+                            .all(|(x, y)| instance_of(x, y, givens, ctx))
+                }
+                _ => render(pat, ctx) == render(e, ctx),
+            },
+        }
+    }
+    fn walk(
+        e: &Spanned<Expr>,
+        head: &str,
+        lhs_args: &[Spanned<Expr>],
+        givens: &BTreeSet<&str>,
+        ctx: &CodegenContext,
+    ) -> bool {
+        if let Some((name, args)) = call_name_args(e)
+            && name == head
+            && args.len() == lhs_args.len()
+            && lhs_args
+                .iter()
+                .zip(args)
+                .all(|(p, a)| instance_of(p, a, givens, ctx))
+        {
+            return true;
+        }
+        child_exprs(e)
+            .into_iter()
+            .any(|c| walk(c, head, lhs_args, givens, ctx))
+    }
+    walk(&law.rhs, &head, lhs_args, &givens, ctx)
+}
+
 /// Direct callees of `src` that are user fn defs (by source name), treating
 /// `TailCall` as a call site so mutual SCC recognition sees post-TCO bodies.
 pub(super) fn direct_user_calls(src: &str, ctx: &CodegenContext) -> BTreeSet<String> {
@@ -617,19 +694,68 @@ pub(super) fn law_simp_defs(
 ) -> BTreeSet<String> {
     law_simp_source_names(ctx, vb, law)
         .into_iter()
-        .map(|name| {
-            let rendered = aver_name_to_lean(&name);
-            // Entry-module fns use their module-qualified name so a user fn
-            // shadowing a stdlib symbol (for example `insert`) remains an
-            // unambiguous simp target. Dependency fns already live under an
-            // opened module namespace and keep their existing bare spelling.
-            if is_dep_module_fn(ctx, &name) {
-                rendered
-            } else {
-                entry_qualified_lean_name(ctx, &name)
-            }
-        })
+        .map(|name| simp_def_name(ctx, &name))
         .collect()
+}
+
+/// [`law_simp_defs`] for a BLIND simp portfolio (`simp [defs]` /
+/// `simp_all [defs]` with no driving induction): the same cone MINUS every
+/// well-founded Int-countdown fn ([`wf_countdown_fn_names`]). Such a fn's
+/// unfold equation is unconditional (`f n = if … then … else … f (n / k) …`),
+/// so a blind `simp [f]` rewrites the recursive call forever and dies in a
+/// heartbeat timeout — a HARD build error `first | … | sorry` cannot catch.
+/// The generic induction ladder and its closers source their def sets here;
+/// the countdown fn is closed by the dedicated fuel-induction strategy
+/// (`wf_fuel`) or the bespoke templates that drive its `.induct` on purpose.
+pub(super) fn law_simp_defs_blind(
+    ctx: &CodegenContext,
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+) -> BTreeSet<String> {
+    let wf = wf_countdown_fn_names(ctx);
+    law_simp_source_names(ctx, vb, law)
+        .into_iter()
+        .filter(|name| !wf.contains(name))
+        .map(|name| simp_def_name(ctx, &name))
+        .collect()
+}
+
+/// The Lean spelling a cone fn takes in a simp set / `unfold`.
+pub(super) fn simp_def_name(ctx: &CodegenContext, source_name: &str) -> String {
+    let rendered = aver_name_to_lean(source_name);
+    // Entry-module fns use their module-qualified name so a user fn
+    // shadowing a stdlib symbol (for example `insert`) remains an
+    // unambiguous simp target. Dependency fns already live under an
+    // opened module namespace and keep their existing bare spelling.
+    if is_dep_module_fn(ctx, source_name) {
+        rendered
+    } else {
+        entry_qualified_lean_name(ctx, source_name)
+    }
+}
+
+/// Every pure user fn emitted as a native well-founded def on
+/// `param.toNat` — the `RecursionContract::WellFoundedToNat` class (the
+/// guard-validated floor-division countdown and the graduated subtractive
+/// countdown), by source name. Keyed on the contract, never on names.
+pub(super) fn wf_countdown_fn_names(ctx: &CodegenContext) -> BTreeSet<String> {
+    super::super::pure_fns(ctx)
+        .into_iter()
+        .filter(|fd| wf_countdown_param(ctx, fd).is_some())
+        .map(|fd| fd.name.clone())
+        .collect()
+}
+
+/// The decreasing Int parameter (source name) of a
+/// `RecursionContract::WellFoundedToNat` fn; `None` for every other fn.
+pub(super) fn wf_countdown_param<'a>(ctx: &'a CodegenContext, fd: &FnDef) -> Option<&'a str> {
+    match crate::codegen::common::find_fn_contract_for_fn(ctx, fd)?
+        .recursion
+        .as_ref()?
+    {
+        crate::ir::RecursionContract::WellFoundedToNat { param, .. } => Some(param.as_str()),
+        _ => None,
+    }
 }
 
 pub(super) fn entry_qualified_lean_name(ctx: &CodegenContext, source_name: &str) -> String {

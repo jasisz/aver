@@ -41,6 +41,8 @@ mod opaque_closure;
 mod oracle_verify;
 #[path = "proof_spec/panics.rs"]
 mod panics;
+#[path = "proof_spec/wf_fuel.rs"]
+mod wf_fuel;
 #[path = "proof_spec/when_lane.rs"]
 mod when_lane;
 

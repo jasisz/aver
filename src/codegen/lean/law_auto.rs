@@ -23,6 +23,7 @@ mod spec;
 mod suffix_roundtrip;
 mod transparent_chain;
 mod triangle_sum;
+mod wf_fuel;
 
 use super::VerifyEmitMode;
 use super::expr::aver_name_to_lean;
@@ -51,7 +52,15 @@ pub(in crate::codegen::lean) use induction::recognize_conditional_comparison_bri
 /// lemmas pool). Also feeds the `omit_domain` statement driver, kept in
 /// lockstep with the emit.
 pub(in crate::codegen::lean) use induction::recognize_conditional_inductive_generic;
+
 pub(in crate::codegen::lean) use induction::recognize_pool_composition_generic;
+/// Fuel induction over a well-founded Int-countdown fn
+/// (`RecursionContract::WellFoundedToNat`): the law's single countdown fn is
+/// unfolded once under a `Nat` fuel bounding the countdown given, with ground
+/// IH instances computed from the fn's own self-calls. A recognized `when`-law
+/// is stated universally (`omit_domain`), so the statement driver keys on the
+/// same recognizer as the emit.
+pub(in crate::codegen::lean) use wf_fuel::recognize_wf_fuel_induction;
 
 /// Validated-wrapper shape (the Theorem-2 wrapper-correctness law: a thin
 /// error-checking wrapper returning `Result.Ok(core(…))` on valid input). Feeds
@@ -222,7 +231,7 @@ pub struct AutoProof {
 /// Look up the strategy `proof_lower::populate_law_theorems` pinned
 /// on `(fn_name, law_name)`. Returns `None` when no contract was
 /// lowered (LawLower disabled or the verify block wasn't a Law).
-fn law_strategy_for(
+pub(super) fn law_strategy_for(
     ctx: &CodegenContext,
     fn_name: &str,
     law_name: &str,
@@ -675,6 +684,9 @@ fn emit_verify_law_forall_auto_proof_inner(
     // path — a figure's algebraic content (e.g. zip-reverse's snoc-distribution)
     // lives as Aver helper laws, not a hardcoded Lean template. Tried last among
     // the conditional arms; the bespoke recognizers above decline into it.
+    // (The generic conditional close declines a law the fuel-induction
+    // strategy below recognizes — see `recognize_conditional_inductive_generic`
+    // — so a `when`-law over a well-founded countdown fn reaches that arm.)
     if law.when.is_some()
         && let Some(proof) =
             induction::emit_conditional_inductive_generic_law(vb, law, ctx, &intro_names)
@@ -1037,6 +1049,22 @@ fn emit_verify_law_forall_auto_proof_inner(
     // names threaded through: the emit embeds the lemma texts, adds
     // the names to the simp sets, and tries a lemma-first fast path
     // before inducting.
+    // Fuel induction over a well-founded Int-countdown fn
+    // (`RecursionContract::WellFoundedToNat`): the accumulator law `f(v, acc)
+    // => concat(reverse(acc), f(v, []))` and the `when m >= 0 ->
+    // bigEndian(reverse(littleEndian(m, [])), 0) => m` round trip. The
+    // countdown fn is unfolded exactly once per fuel step, so the blind
+    // `simp_all [f]` portfolios and `fun_induction f …` rungs of the ladder
+    // below — which heartbeat-abort on the fn's unconditional unfold equation
+    // — are never reached for this class. Placed AFTER every bespoke
+    // recognizer (conditional and unconditional) and BEFORE the generic
+    // structural ladder; declines (fail-closed) for every other shape and for
+    // any law an IR pin hands to a bespoke template further down.
+    if let Some(proof) =
+        wf_fuel::emit_wf_fuel_induction_law(vb, law, ctx, &intro_names, quant_params, theorem_prop)
+    {
+        return Some(proof);
+    }
     let pinned = law_strategy_for(ctx, &vb.fn_name, &law.name);
     let discovered: Vec<String> = match &pinned {
         Some(crate::ir::ProofStrategy::SimpOverLemmas(names)) => names.clone(),
@@ -1855,8 +1883,17 @@ fn emit_verify_law_forall_auto_proof_inner(
             // blind-simp fallback for this case, so a non-closing split
             // degrades to the honest `sorry` floor rather than aborting the
             // build. A non-scanner cone keeps the byte-identical simp floor.
+            // The same hard timeout hits every well-founded Int-countdown fn
+            // (`RecursionContract::WellFoundedToNat`, `termination_by p.toNat`):
+            // its unfold equation is unconditional, so a blind `simp [f]`
+            // rewrites the recursive call forever. Such a cone drops the blind
+            // arm too (the countdown fn is closed by the fuel-induction
+            // strategy when the law has that shape; otherwise the honest
+            // `sorry`), and the countdown fn is never a `fun_induction` target
+            // (see `find_fun_induction_targets`).
             let scope = ctx.active_module_scope();
-            let cone_has_scanner = shared::law_simp_source_names(ctx, vb, law)
+            let cone = shared::law_simp_source_names(ctx, vb, law);
+            let cone_has_scanner = cone
                 .iter()
                 .filter_map(|n| {
                     ctx.fn_def_by_name(n, scope.as_deref())
@@ -1866,7 +1903,9 @@ fn emit_verify_law_forall_auto_proof_inner(
                     crate::codegen::lean::toplevel::fuel::detect_simple_string_pos_skip_literal(fd)
                         .is_some()
                 });
-            let tactic_line = if cone_has_scanner {
+            let wf_countdown = shared::wf_countdown_fn_names(ctx);
+            let cone_has_wf_countdown = cone.iter().any(|n| wf_countdown.contains(n));
+            let tactic_line = if cone_has_scanner || cone_has_wf_countdown {
                 let targets =
                     induction::find_fun_induction_targets(vb, law, ctx, &proof_intro_names);
                 let mut arms: Vec<String> = targets

@@ -8634,12 +8634,12 @@ fn run_proof_check(
         // The OPEN laws to probe = every emitted MAIN law theorem (with its
         // `fn.law` identity from the class marker) MINUS the ones the manifest
         // already records as tier Universal (a genuinely-closed law has no
-        // residual). Reading the open set from the emitted markers — not just
-        // `m.laws` — is essential: a sorry-floored, universal-CLASSED law earns
-        // NO manifest record at all (the audit returns early on `sorries > 0`),
-        // so it would otherwise be invisible to a `m.laws`-only scan. A Bounded
-        // record IS probed (its native_decide twin closes, but the law's own
-        // universal `∀`-statement is the residual-bearing shape).
+        // residual). The open set is read from the emitted markers — not just
+        // `m.laws` — so a law the audit could not record at all (no lakefile
+        // root, an unreadable class channel) is still probed rather than
+        // silently skipped. A Bounded record IS probed (its native_decide twin
+        // closes, but the law's own universal `∀`-statement is the
+        // residual-bearing shape).
         let closed_universal: std::collections::HashSet<&str> = m
             .laws
             .iter()
@@ -8651,16 +8651,15 @@ fn run_proof_check(
             .filter(|(label, _)| !closed_universal.contains(label.as_str()))
             .collect();
         open_goals = lean_residual_goals(output_dir, &open);
-        // Attribute residuals to the law that ACTUALLY failed. When the gate
-        // build has residual sorries the audit bailed on `sorries > 0`, so
-        // `closed_universal` above is empty and the coarse normalization-only
-        // probe runs over EVERY emitted law — including healthy, kernel-proven
-        // ones (a proven law still yields an "unsolved goals" residual once its
-        // closing tactics are stripped). Keying that borrowed residual as the
-        // failure is what sent the P4 cold-start report to "fix" a law that was
-        // already proven. So split by `sorry_laws` (the laws whose theorem truly
-        // carries the gate-build sorry): sorry-bearers are the genuine
-        // `open_goals`; a residual from a non-sorry law is probe context
+        // Attribute residuals to the law that ACTUALLY failed. A proven law
+        // still yields an "unsolved goals" residual once its closing tactics
+        // are stripped, and the coarse normalization-only probe can run over
+        // such a law (a kernel-clean theorem the per-law audit did not record
+        // as Universal — the audit used to bail on `sorries > 0` and drop every
+        // record, which is what sent the P4 cold-start report to "fix" a law
+        // that was already proven). So split by `sorry_laws` (the laws whose
+        // theorem truly carries the gate-build sorry): sorry-bearers are the
+        // genuine `open_goals`; a residual from a non-sorry law is probe context
         // (`probe_of`), never presented as the failure. With no sorries the probe
         // only ran over bounded laws, so keep every residual as `open_goals`
         // (unchanged behavior — no `probe_of`).
@@ -9801,6 +9800,13 @@ impl LeanLawAudit {
 ///   - `bounded_laws`: law theorems classed `bounded-domain` (a pure
 ///     classification count — no certificate involved).
 ///
+/// A file with residual sorries still gets its per-theorem probe: the
+/// sorry-floored theorem's own axiom line carries `sorryAx` (tier `failed`,
+/// not counted), while every kernel-clean sibling keeps its `universal`
+/// record and counts — one open law in a module no longer erases the
+/// certificate of the laws that did close. The file-level bool alone keeps
+/// the "no sorries" conjunct.
+///
 /// The bool's semantics are untouched: `universal` remains the
 /// all-or-nothing verdict over the whole crediting set (universal-classed
 /// AND unmarked theorems), computed from the exact same expression as
@@ -9937,14 +9943,14 @@ fn lean_universal_audit(dir: &str, sorries: usize) -> LeanLawAudit {
         }
         by_label.into_values().collect()
     };
-    if sorries > 0 {
-        return LeanLawAudit {
-            universal: false,
-            universal_laws: 0,
-            bounded_laws,
-            laws: bounded_records,
-        };
-    }
+    // A build with residual sorries still runs the per-theorem probe below:
+    // `#print axioms` on a sorry-floored theorem lists `sorryAx`, so that law
+    // records tier `failed` while every kernel-clean sibling keeps its own
+    // `universal` record and counts in `universal_laws`. Only the FILE-level
+    // `universal` bool keeps its all-or-nothing "no sorries" conjunct (see
+    // the final assembly). Per-law credit is decided by each theorem's own
+    // axiom line, never by the dir's sorry count.
+    let file_has_sorries = sorries > 0;
     // Consume the statement-class channel (see the doc comment above):
     // bounded-domain theorems leave the crediting set; at least one
     // explicitly universal-classed theorem must remain or the dir earns no
@@ -10014,7 +10020,8 @@ fn lean_universal_audit(dir: &str, sorries: usize) -> LeanLawAudit {
             // output format is `'name' depends on axioms: [a, b]` (or `does
             // not depend on any axioms`); the two blacklist probes stay as a
             // belt-and-suspenders floor against output-format drift.
-            let universal = o.status.success()
+            let universal = !file_has_sorries
+                && o.status.success()
                 && lean_axiom_lines_whitelisted(&combined)
                 && !combined.contains("Lean.ofReduceBool")
                 && !combined.contains("sorryAx");
@@ -10193,8 +10200,8 @@ fn lean_sorry_laws(dir: &str, build_output: &str) -> Vec<String> {
 /// marker's third field (falling back to the theorem name on an older emission
 /// without the label, matching `manifest_label_for`). Used by `--explain` to
 /// build the open-law set DIRECTLY from the markers — robust to the audit
-/// returning early (no manifest record) for a sorry-floored universal-classed
-/// law. Returns `(fn.law, theorem)` pairs, deduped by theorem name. Only the
+/// recording nothing for a law (no lakefile root, an unreadable class
+/// channel). Returns `(fn.law, theorem)` pairs, deduped by theorem name. Only the
 /// entry module's namespace is scanned; dependency law pools remain transitive
 /// inputs to those theorems.
 fn emitted_main_law_theorems(dir: &str) -> Vec<(String, String)> {

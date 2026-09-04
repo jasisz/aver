@@ -1105,6 +1105,13 @@ fn emit_verify_law_block(
                 &law_for_auto_proof,
                 ctx,
             )
+            // Fuel induction over a well-founded Int-countdown fn: proven
+            // universally by `induction k` on a `Nat` fuel bounding the
+            // countdown given, so the statement drops the sampled domain to
+            // `∀ givens, <when> = true -> claim`. The proof emit keys on the
+            // same recognizer; credit stays fail-closed behind `#print axioms`.
+            || super::law_auto::recognize_wf_fuel_induction(vb, &law_for_auto_proof, ctx)
+                .is_some()
             // A `when`-premised `NonlinearNonneg` law (the Newton-Raphson
             // factor-sign guards) is proved UNIVERSALLY by the generic
             // `aver_int_order` step, so its statement drops the sampled
@@ -1855,6 +1862,9 @@ pub(crate) fn law_as_lemma_statement(
     if law.when.is_some()
         && !(super::law_auto::recognize_conditional_comparison_bridge(vb, law, ctx)
             || super::law_auto::recognize_conditional_inductive_generic(vb, law, ctx)
+            // The fuel-induction `when`-law is stated universally (see
+            // `conditional_universal`), so it is a sound conditional rewrite.
+            || super::law_auto::recognize_wf_fuel_induction(vb, law, ctx).is_some()
             // The exact-rational at-least-one (`F(k) >= 1` for `k >= 0`) and
             // monotonicity (`F(LO) <= F(HI)` for `LO <= HI`) conditional laws are
             // proven universally by their dedicated composition rungs, so they are

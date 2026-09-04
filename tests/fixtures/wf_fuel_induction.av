@@ -1,0 +1,44 @@
+module WfFuel
+    intent =
+        "Fuel induction over a well-founded Int countdown: a base-256 digit"
+        "writer that shrinks its value by floor division, an accumulator"
+        "law about it, and a round trip through a structural reader."
+    effects []
+
+fn digits(value: Int, acc: List<Int>) -> List<Int>
+    ? "Least significant base-256 digit first, with no leading zero."
+    match value < 1
+        true -> List.reverse(acc)
+        false -> digits(Int.div(value, 256), List.prepend(Int.mod(value, 256), acc))
+
+verify digits
+    digits(0, []) => []
+    digits(1, []) => [1]
+    digits(258, []) => [2, 1]
+
+verify digits law accumulatorComesFirst
+    given value: Int = [-1, 0, 1, 255, 256, 65536, 2147483648]
+    given acc: List<Int> = [[], [9], [1, 2]]
+    digits(value, acc) => List.concat(List.reverse(acc), digits(value, []))
+
+fn bigEndian(bytes: List<Int>, acc: Int) -> Int
+    ? "Most significant digit first, which is what reversing the digits gives."
+    match bytes
+        [] -> acc
+        [head, ..tail] -> bigEndian(tail, acc * 256 + head)
+
+verify bigEndian
+    bigEndian([], 0) => 0
+    bigEndian([1], 0) => 1
+    bigEndian([1, 2], 0) => 258
+
+verify bigEndian law readsTheLastByteLast
+    given bytes: List<Int> = [[], [1], [1, 2], [255, 0, 7]]
+    given b: Int = [0, 1, 128, 255]
+    given acc: Int = [0, 1, 300]
+    bigEndian(List.concat(bytes, [b]), acc) => bigEndian(bytes, acc) * 256 + b
+
+verify digits law readsBackBigEndian
+    given m: Int = [0, 1, 127, 128, 255, 256, 65535, 65536, 2147483647, 2147483648]
+    when m >= 0
+    bigEndian(List.reverse(digits(m, [])), 0) => m

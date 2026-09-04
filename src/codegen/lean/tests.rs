@@ -4903,3 +4903,275 @@ verify nonNeg law nonNegOfPositive
         "the law must stay bounded-domain and be dropped from the certificate surface:\n{lean}"
     );
 }
+
+/// Fuel induction over a well-founded Int countdown (the `wf_fuel` strategy)
+/// and its two guards — G1 (the countdown fn never enters a blind simp set or
+/// a `fun_induction` rung) and G3 (a looping rewrite law is cited as a
+/// ground instance, never as a simp rule). Mirrors
+/// `tests/fixtures/wf_fuel_induction.av` at the unit level.
+#[test]
+fn wf_fuel_induction_emits_fuel_skeleton_and_keeps_countdown_fn_out_of_blind_simp() {
+    let mut ctx = ctx_from_source(
+        r#"
+module WfFuelUnit
+    intent = "fuel induction over a floor-division countdown"
+    effects []
+
+fn digits(value: Int, acc: List<Int>) -> List<Int>
+    ? "Least significant base-256 digit first."
+    match value < 1
+        true -> List.reverse(acc)
+        false -> digits(Int.div(value, 256), List.prepend(Int.mod(value, 256), acc))
+
+verify digits law accumulatorComesFirst
+    given value: Int = [0, 1, 256]
+    given acc: List<Int> = [[], [9]]
+    digits(value, acc) => List.concat(List.reverse(acc), digits(value, []))
+
+fn bigEndian(bytes: List<Int>, acc: Int) -> Int
+    ? "Most significant digit first."
+    match bytes
+        [] -> acc
+        [head, ..tail] -> bigEndian(tail, acc * 256 + head)
+
+verify bigEndian law readsTheLastByteLast
+    given bytes: List<Int> = [[], [1, 2]]
+    given b: Int = [0, 255]
+    given acc: Int = [0, 1]
+    bigEndian(List.concat(bytes, [b]), acc) => bigEndian(bytes, acc) * 256 + b
+
+verify digits law readsBackBigEndian
+    given m: Int = [0, 1, 256, 65536]
+    when m >= 0
+    bigEndian(List.reverse(digits(m, [])), 0) => m
+"#,
+        "wf_fuel_unit",
+    );
+    let lean = generated_lean_file(&transpile_for_proof_mode(
+        &mut ctx,
+        VerifyEmitMode::NativeDecide,
+    ));
+
+    // The countdown class and the fuel skeleton on both `digits` laws.
+    assert!(lean.contains("termination_by value.toNat"), "{lean}");
+    assert!(
+        lean.contains(
+            "have key : ∀ (k : Nat) (value : Int) (acc : List Int), value.toNat ≤ k → digits value acc = (acc.reverse ++ (digits value [])) := by"
+        ),
+        "the accumulator law must be proved by fuel induction:\n{lean}"
+    );
+    assert!(
+        lean.contains(
+            "have ih1 := ih (value / 256) ((value % 256) :: acc) (by first | omega | sorry)"
+        ),
+        "the IH must be instantiated at the self-call arguments:\n{lean}"
+    );
+    assert!(
+        lean.contains(
+            "theorem digits_law_readsBackBigEndian : ∀ (m : Int), (m >= 0) = true -> bigEndian ((digits m []).reverse) 0 = m := by"
+        ),
+        "the when-law must be stated universally:\n{lean}"
+    );
+    assert!(
+        lean.contains("have l1 := digits_law_accumulatorComesFirst (m / 256) ((m % 256) :: [])"),
+        "the looping accumulator law is cited as a ground instance:\n{lean}"
+    );
+    for base in [
+        "digits_law_accumulatorComesFirst",
+        "digits_law_readsBackBigEndian",
+        "bigEndian_law_readsTheLastByteLast",
+    ] {
+        assert!(
+            lean.contains(&format!("-- aver:law-class {base} universal")),
+            "{base} must be classed universal:\n{lean}"
+        );
+    }
+    // G1: the countdown fn is unfolded once per fuel step, never simp'd blindly
+    // and never a `fun_induction` target.
+    assert!(lean.contains("unfold WfFuelUnit.digits"), "{lean}");
+    assert!(
+        !lean.contains("simp_all [WfFuelUnit.digits")
+            && !lean.contains("simp [WfFuelUnit.digits")
+            && !lean.contains("fun_induction digits"),
+        "the countdown fn must stay out of every blind simp set:\n{lean}"
+    );
+    // G3: the accumulator law (RHS holds an instance of its LHS) never joins
+    // a simp set; the snoc law (structurally decreasing) does.
+    assert!(
+        !lean.contains("digits_law_accumulatorComesFirst]")
+            && !lean.contains("digits_law_accumulatorComesFirst,"),
+        "a looping rewrite must not join a simp set:\n{lean}"
+    );
+    assert!(
+        lean.contains("simp_all [WfFuelUnit.bigEndian, bigEndian_law_readsTheLastByteLast]"),
+        "a non-looping earlier law joins the safe simp set:\n{lean}"
+    );
+}
+
+/// The fuel strategy DECLINES a countdown position carrying an expression
+/// (`digits(magnitudeOf(value), [])`): no `generalize` in v1. The law keeps an
+/// honest `sorry` floor and no rung unfolds the countdown fn blindly (the
+/// former hard heartbeat timeout).
+#[test]
+fn wf_fuel_induction_declines_composite_countdown_arg_without_blind_simp() {
+    let mut ctx = ctx_from_source(
+        r#"
+module WfFuelDecline
+    intent = "composite countdown argument is out of scope"
+    effects []
+
+fn digits(value: Int, acc: List<Int>) -> List<Int>
+    ? "Least significant base-256 digit first."
+    match value < 1
+        true -> List.reverse(acc)
+        false -> digits(Int.div(value, 256), List.prepend(Int.mod(value, 256), acc))
+
+fn magnitudeOf(value: Int) -> Int
+    ? "Size without sign."
+    match value < 0
+        true -> 0 - value
+        false -> value
+
+fn bigEndian(bytes: List<Int>, acc: Int) -> Int
+    ? "Most significant digit first."
+    match bytes
+        [] -> acc
+        [head, ..tail] -> bigEndian(tail, acc * 256 + head)
+
+verify digits law readsBackBigEndian
+    given value: Int = [-5, 0, 1, 256]
+    bigEndian(List.reverse(digits(magnitudeOf(value), [])), 0) => magnitudeOf(value)
+"#,
+        "wf_fuel_decline",
+    );
+    let lean = generated_lean_file(&transpile_for_proof_mode(
+        &mut ctx,
+        VerifyEmitMode::NativeDecide,
+    ));
+    let start = lean
+        .find("theorem digits_law_readsBackBigEndian :")
+        .unwrap_or_else(|| panic!("theorem must be emitted:\n{lean}"));
+    let body = &lean[start..];
+    let body = &body[..body.find("_checked_domain").unwrap_or(body.len())];
+    assert!(!body.contains("have key : ∀ (k : Nat)"), "{body}");
+    assert!(
+        !body.contains("simp [WfFuelDecline.digits")
+            && !body.contains("simp_all [WfFuelDecline.digits")
+            && !body.contains("fun_induction digits"),
+        "the declined law must never unfold the countdown fn blindly:\n{body}"
+    );
+    assert!(
+        body.contains("sorry"),
+        "the declined law keeps its honest floor:\n{body}"
+    );
+}
+
+/// The fuel strategy DECLINES a countdown that shrinks through a WRAPPER fn
+/// (`ticks(halve(a), …)`, contract `FloorDivShrink { helper_fn: Some(..) }`):
+/// the fuel-decrease premise `(halve a).toNat ≤ k` is an atom to `omega`, and
+/// a failing discharge inside an `induction` arm is a logged build error, not
+/// a fall-through. The law keeps its honest floor with no bare `(by omega)`.
+#[test]
+fn wf_fuel_induction_declines_wrapper_shrink_countdown() {
+    let mut ctx = ctx_from_source(
+        r#"
+module WfFuelWrapper
+    intent = "wrapper shrink is out of scope for fuel induction"
+    effects []
+
+fn halve(a: Int) -> Int
+    ? "Floor half of a."
+    Int.div(a, 2)
+
+fn ticks(a: Int, acc: Int) -> Int
+    ? "Counts the halvings down to zero."
+    match a < 1
+        true -> acc
+        false -> ticks(halve(a), acc + 1)
+
+verify ticks law accumulatorAdds
+    given a: Int = [0, 1, 7, 64]
+    given acc: Int = [0, 3]
+    ticks(a, acc) => ticks(a, 0) + acc
+"#,
+        "wf_fuel_wrapper",
+    );
+    let lean = generated_lean_file(&transpile_for_proof_mode(
+        &mut ctx,
+        VerifyEmitMode::NativeDecide,
+    ));
+    assert!(
+        lean.contains("termination_by a.toNat")
+            && lean.contains("simp [halve, Except.withDefault] <;> omega"),
+        "the wrapper shrink must still be a well-founded countdown:\n{lean}"
+    );
+    let start = lean
+        .find("theorem ticks_law_accumulatorAdds :")
+        .unwrap_or_else(|| panic!("theorem must be emitted:\n{lean}"));
+    let body = &lean[start..];
+    let body = &body[..body.find("_checked_domain").unwrap_or(body.len())];
+    assert!(
+        !body.contains("have key : ∀ (k : Nat)"),
+        "a wrapper shrink is out of scope for fuel induction:\n{body}"
+    );
+    assert!(
+        !body.contains("(by omega)"),
+        "no unfloored fuel-decrease discharge may be emitted:\n{body}"
+    );
+    assert!(
+        !body.contains("simp [WfFuelWrapper.ticks")
+            && !body.contains("simp_all [WfFuelWrapper.ticks")
+            && !body.contains("fun_induction ticks"),
+        "the declined law must never unfold the countdown fn blindly:\n{body}"
+    );
+    assert!(
+        body.contains("sorry"),
+        "the declined law keeps its honest floor:\n{body}"
+    );
+}
+
+/// The fuel strategy DECLINES a law whose only mention of the countdown fn
+/// sits in the `when` premise: the arms `unfold` the fn in the GOAL, and
+/// `unfold` throws on no progress — a logged build error inside an
+/// `induction` arm. Such a law is stated over its sampled domain as before.
+#[test]
+fn wf_fuel_induction_declines_when_only_countdown_mention() {
+    let mut ctx = ctx_from_source(
+        r#"
+module WfFuelWhenOnly
+    intent = "a when-only mention gives unfold nothing to unfold"
+    effects []
+
+fn digits(value: Int, acc: List<Int>) -> List<Int>
+    ? "Least significant base-256 digit first."
+    match value < 1
+        true -> List.reverse(acc)
+        false -> digits(Int.div(value, 256), List.prepend(Int.mod(value, 256), acc))
+
+verify digits law emptyMeansSmall
+    given m: Int = [0, 1, 256]
+    when digits(m, []) == []
+    m < 1 => true
+"#,
+        "wf_fuel_when_only",
+    );
+    let lean = generated_lean_file(&transpile_for_proof_mode(
+        &mut ctx,
+        VerifyEmitMode::NativeDecide,
+    ));
+    let start = lean
+        .find("theorem digits_law_emptyMeansSmall")
+        .unwrap_or_else(|| panic!("theorem must be emitted:\n{lean}"));
+    let body = &lean[start..];
+    let body = &body[..body.find("_checked_domain").unwrap_or(body.len())];
+    assert!(
+        !body.contains("have key : ∀ (k : Nat)") && !body.contains("unfold WfFuelWhenOnly.digits"),
+        "a when-only mention must not be closed by fuel induction:\n{body}"
+    );
+    assert!(
+        !body.contains("simp [WfFuelWhenOnly.digits")
+            && !body.contains("simp_all [WfFuelWhenOnly.digits")
+            && !body.contains("fun_induction digits"),
+        "the declined law must never unfold the countdown fn blindly:\n{body}"
+    );
+}
