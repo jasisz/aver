@@ -906,6 +906,32 @@ fn collect_user_fn_simp_names(
     }
 }
 
+/// The verify blocks of the FILE a law theorem is emitted into, in source
+/// order: a dependency module's blocks when the emitter runs under that
+/// module's scope (`with_module_scope(Some(prefix))`), the entry module's
+/// top-level verify items otherwise. Pools of "earlier laws in the same file"
+/// must read this sequence — `ctx.items` holds the entry module only, so
+/// scanning it from inside a dependency cites theorems of another file (an
+/// unknown identifier there) and misses the dependency's own siblings.
+pub(super) fn same_file_verify_blocks(ctx: &CodegenContext) -> Vec<&VerifyBlock> {
+    match ctx.active_module_scope().as_deref() {
+        Some(prefix) => ctx
+            .modules
+            .iter()
+            .find(|m| m.prefix == prefix)
+            .map(|m| m.verify_blocks.iter().collect())
+            .unwrap_or_default(),
+        None => ctx
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                crate::ast::TopLevel::Verify(vb) => Some(vb),
+                _ => None,
+            })
+            .collect(),
+    }
+}
+
 pub(super) fn find_fn_def<'a>(ctx: &'a CodegenContext, fn_name: &str) -> Option<&'a FnDef> {
     ctx.modules
         .iter()
@@ -914,14 +940,36 @@ pub(super) fn find_fn_def<'a>(ctx: &'a CodegenContext, fn_name: &str) -> Option<
         .find(|fd| fd.name == fn_name)
 }
 
+/// Resolve a call's dotted source name to the fn def it denotes, the way the
+/// checker does: a qualifier that names a loaded module picks THAT module's
+/// fn (`Bytes.concat`, `Domain.StackItem.asNumber`); a qualifier that is a
+/// builtin namespace (`List.concat`, `Int.div`, `Crypto.sha256`) denotes a
+/// builtin and never a user fn; only an unqualified name, or a qualifier this
+/// program does not know, falls back to a bare-name lookup. The bare fallback
+/// used to run for every dotted name, so `List.concat` in a law resolved to
+/// `Bytes.concat` whenever `Bytes` was in the program closure — and the stray
+/// `concat` in the law's simp set made every tactic arm fail, so laws that
+/// closed as an entry module fell to `sorry` as a dependency module.
 pub(super) fn find_fn_def_by_call_name<'a>(
     ctx: &'a CodegenContext,
     call_name: &str,
 ) -> Option<&'a FnDef> {
-    find_fn_def(ctx, call_name).or_else(|| {
-        let short = call_name.rsplit('.').next()?;
-        find_fn_def(ctx, short)
-    })
+    if let Some(found) = find_fn_def(ctx, call_name) {
+        return Some(found);
+    }
+    let (prefix, short) = call_name.rsplit_once('.')?;
+    if let Some(module) = ctx.modules.iter().find(|m| m.prefix == prefix) {
+        return module.fn_defs.iter().find(|fd| fd.name == short);
+    }
+    if crate::ir::is_builtin_namespace(prefix)
+        || prefix
+            .split('.')
+            .next()
+            .is_some_and(crate::ir::is_builtin_namespace)
+    {
+        return None;
+    }
+    find_fn_def(ctx, short)
 }
 
 pub(super) fn expr_dotted_name(expr: &Spanned<Expr>) -> Option<String> {
