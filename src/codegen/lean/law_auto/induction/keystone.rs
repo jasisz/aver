@@ -1272,6 +1272,51 @@ fn keystone_order_bridge_citations(
     out
 }
 
+/// The keystone `grind` arm as a FLOOR: for an unconditional law that no
+/// dedicated rung closed and whose generic fallback is the honest `sorry`
+/// (a cone reaching a well-founded countdown fn drops the blind simp arm),
+/// compose the earlier laws about its cone fns exactly as the keystone does —
+/// `simp only [<cone defs, recursive fns folded>, bridges] <;> grind [<pool>]`.
+/// Reached only from that fallback, so it can never shadow a rung; a pool that
+/// does not compose still falls to the `sorry` the theorem had anyway.
+pub(in crate::codegen::lean) fn keystone_floor_arm(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+) -> Option<String> {
+    if law.when.is_some() || !matches!(&law.lhs.node, crate::ast::Expr::FnCall(..)) {
+        return None;
+    }
+    let self_registering = keystone_self_registering_pool_names(vb, law, ctx);
+    let pool_names: Vec<String> = keystone_pool_names(vb, law, ctx)
+        .into_iter()
+        .filter(|n| !self_registering.contains(n))
+        .collect();
+    if pool_names.is_empty() {
+        return None;
+    }
+    let mut abstract_fns: std::collections::HashSet<String> =
+        super::super::recursive_pure_fn_names(ctx)
+            .iter()
+            .map(|n| super::super::shared::bare_lean_name(&aver_name_to_lean(n)).to_string())
+            .collect();
+    for subj in keystone_pool_subject_fns(vb, law, ctx) {
+        abstract_fns.insert(super::super::shared::bare_lean_name(&subj).to_string());
+    }
+    let defs: Vec<String> = law_simp_defs(ctx, vb, law)
+        .into_iter()
+        .filter(|d| !abstract_fns.contains(super::super::shared::bare_lean_name(d)))
+        .collect();
+    let mut simp_set = defs;
+    simp_set.push("Bool.and_eq_true".to_string());
+    simp_set.push("decide_eq_true_eq".to_string());
+    Some(format!(
+        "((try simp only [{}]) <;> grind [{}])",
+        simp_set.join(", "),
+        pool_names.join(", ")
+    ))
+}
+
 /// Emit the keystone proof: `intro <givens> h_when; first | (simp only [<cone>,
 /// <bridges>] at h_when ⊢ <;> grind [<cone>, <pool law names>]) | <floor>`. The
 /// `simp` unfolds the cone and bridges the Bool comparison / splits a

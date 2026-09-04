@@ -17,6 +17,8 @@ mod capability;
 mod capability_opaque;
 #[path = "proof_spec/check_gates.rs"]
 mod check_gates;
+#[path = "proof_spec/conditional_split_omega.rs"]
+mod conditional_split_omega;
 #[path = "proof_spec/container_induction.rs"]
 mod container_induction;
 #[path = "proof_spec/cross_file.rs"]
@@ -45,6 +47,8 @@ mod opaque_closure;
 mod oracle_verify;
 #[path = "proof_spec/panics.rs"]
 mod panics;
+#[path = "proof_spec/pool_composition_recursive.rs"]
+mod pool_composition_recursive;
 #[path = "proof_spec/scc_list_drop.rs"]
 mod scc_list_drop;
 #[path = "proof_spec/wf_fuel.rs"]

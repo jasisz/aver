@@ -109,12 +109,14 @@ fn proof_export_wf_fuel_induction_lean_structure() {
     let _ = std::fs::remove_dir_all(&output_dir);
 }
 
-/// Documented DECLINE: the countdown position carrying an expression
-/// (`digits(magnitudeOf(value), [])`) is out of the fuel strategy's scope
-/// (no `generalize`), so the law keeps an honest `sorry` floor — and no
-/// blind rung ever unfolds the countdown fn into a hard build error. The
-/// export pin only checks the emitted shape; the lake gate below proves the
-/// module still builds.
+/// Documented DECLINE of the fuel strategy: the countdown position carrying
+/// an expression (`digits(magnitudeOf(value), [])`) is out of its scope (no
+/// `generalize`), and no blind rung ever unfolds the countdown fn into a
+/// hard build error. The law is handed to the generic fallback, whose last
+/// arm before the honest `sorry` floor composes the earlier laws about the
+/// cone fns by `grind` (the keystone floor arm; see
+/// `pool_composition_recursive.rs` for the live gate). The export pin only
+/// checks the emitted shape.
 #[test]
 fn proof_export_wf_fuel_declines_composite_countdown_arg_honestly() {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -163,8 +165,11 @@ fn proof_export_wf_fuel_declines_composite_countdown_arg_honestly() {
         "the declined law must never unfold the countdown fn blindly:\n{body}"
     );
     assert!(
-        body.contains("sorry"),
-        "the declined law keeps its honest sorry floor:\n{body}"
+        body.contains("<;> grind [")
+            && body.contains("bigEndian_law_readsTheLastByteLast")
+            && body.contains(") | sorry"),
+        "the declined law composes the pool as its last arm, under the honest \
+         sorry floor:\n{body}"
     );
     let _ = std::fs::remove_dir_all(&output_dir);
     let _ = std::fs::remove_dir_all(&src_dir);
