@@ -250,6 +250,22 @@ If the identifier after `law` is the name of an existing pure function and the l
 
 This is an intentional style choice. In Aver, the author should usually write a simple spec function and a law relating the implementation to that spec, instead of writing proof-oriented invariants directly in surface code.
 
+When a law needs an explanation, optional `because` lines express ordered facts in ordinary, pure Aver:
+
+```aver
+verify identity law positive
+    given value: Int = [-3, 0, 1, 7]
+    when value > 0
+    because value >= 1
+    because value + 1 > 1
+    using []
+    identity(value) > 0 holds
+```
+
+Each explanation must return `Bool`. It may call a normal function whose `match` branches describe the argument. `verify` and `verify --hostile` check every explanation under the original `when`, as well as checking the claim. A false explanation fails even if the claim is true; it never restricts the law's domain.
+
+`because` entries are ordered: the proof of a later fact can use earlier facts. The optional `using [function.law, Module.function.law]` list selects an unordered set of lemmas; omitting it keeps automatic selection, and `using []` selects none. Ordinary local bindings may appear between these clauses and remain expression shortcuts, not assertions. The first proof implementation targets Lean; see [law explanations](lean.md#law-explanations-in-aver) for the obligations, diagnostics, and limits.
+
 `verify` is deterministic, not random. Regular cases run exactly as written. `verify ... law ...` expands the cartesian product of explicit `given` domains, capped at `10_000` cases — a project that means to go further says so in `aver.toml`, with `[verify] max-cases` for the whole project or `max-cases` in a `[[verify.costly]]` entry for the blocks of one function.
 
 Oracle laws cover classified effectful functions:

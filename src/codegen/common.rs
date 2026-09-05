@@ -2045,6 +2045,7 @@ pub fn law_map_order_refusal(
     ctx: &CodegenContext,
 ) -> Option<MapRefusal> {
     let mut roots: Vec<&Spanned<Expr>> = vec![&law.lhs, &law.rhs];
+    roots.extend(&law.because);
     if let Some(when) = law.when.as_ref() {
         roots.push(when);
     }
@@ -2054,7 +2055,7 @@ pub fn law_map_order_refusal(
         ctx,
         crate::codegen::DeclineKind::Law,
         format!("{}.{}", vb.fn_name, law.name),
-        &refusal,
+        format!("{}: {}", refusal.subject, refusal.reason),
     );
     Some(refusal)
 }
@@ -2075,7 +2076,7 @@ pub fn verify_case_map_order_refusal(vb: &VerifyBlock, ctx: &CodegenContext) -> 
         ctx,
         crate::codegen::DeclineKind::Cases,
         vb.fn_name.clone(),
-        &refusal,
+        format!("{}: {}", refusal.subject, refusal.reason),
     );
     Some(refusal)
 }
@@ -2087,11 +2088,11 @@ pub fn verify_case_map_order_refusal(vb: &VerifyBlock, ctx: &CodegenContext) -> 
 /// lemma-citability, and the same pair again on the other backend — collapse to
 /// one record instead of inflating the count. The first reason wins; every
 /// consultation of one claim computes the same one.
-fn record_declined_claim(
+pub(crate) fn record_declined_claim(
     ctx: &CodegenContext,
     kind: crate::codegen::DeclineKind,
     claim: String,
-    refusal: &MapRefusal,
+    reason: String,
 ) {
     ctx.declined_claims
         .borrow_mut()
@@ -2099,7 +2100,7 @@ fn record_declined_claim(
         .or_insert_with(|| crate::codegen::DeclinedClaim {
             kind,
             claim,
-            reason: format!("{}: {}", refusal.subject, refusal.reason),
+            reason,
         });
 }
 
@@ -3641,6 +3642,9 @@ fn collect_verify_root_fn_ids(
     }
     if let VerifyKind::Law(law) = &vb.kind {
         collect_expr(&law.lhs);
+        for reason in &law.because {
+            collect_expr(reason);
+        }
         collect_expr(&law.rhs);
         if let Some(when) = &law.when {
             collect_expr(when);
@@ -3815,6 +3819,8 @@ mod tests {
             when: None,
             lhs,
             rhs,
+            because: Vec::new(),
+            using: None,
             sample_guards: Vec::new(),
         }
     }

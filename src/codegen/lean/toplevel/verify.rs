@@ -147,6 +147,7 @@ pub fn emit_verify_block(
         .collect();
     if let VerifyKind::Law(law) = &vb.kind {
         roots.extend([&law.lhs, &law.rhs]);
+        roots.extend(law.because.iter());
         roots.extend(law.when.iter());
     }
     let refusal = if matches!(verify_mode, VerifyEmitMode::NativeDecide) {
@@ -600,6 +601,8 @@ fn emit_verify_trace_block_proofs(
         rhs: vb.cases.first().map(|(_, r)| r.clone()).unwrap_or_else(|| {
             crate::ast::Spanned::new(Expr::Literal(crate::ast::Literal::Unit), vb.line)
         }),
+        because: Vec::new(),
+        using: None,
         sample_guards: Vec::new(),
     };
 
@@ -1058,7 +1061,9 @@ fn emit_verify_law_block(
     // gates above. (`recognize_hand_sidecar` keys on the loaded sidecar map; no
     // sidecar => false => byte-identical to before.)
     let has_hand_sidecar = super::law_auto::recognize_hand_sidecar(ctx, vb, law);
+    let guided = !law.because.is_empty() || law.using.is_some();
     let skip_universal = !has_hand_sidecar
+        && !guided
         && (singleton_const_rhs
             || ((calls_fuel_bounded || calls_foreign_acc_fold) && !pinned_self_universal));
     // Oracle v1: the auto-proof matchers compare law.lhs / law.rhs ASTs. For
@@ -1070,6 +1075,14 @@ fn emit_verify_law_block(
         name: law.name.clone(),
         givens: law.givens.clone(),
         when: law.when.clone(),
+        because: law
+            .because
+            .iter()
+            .map(|reason| {
+                crate::codegen::common::project_lifted_idents_to_val(reason, &lifted_vars)
+            })
+            .collect(),
+        using: law.using.clone(),
         lhs: law_lhs.clone(),
         rhs: law_rhs.clone(),
         sample_guards: law.sample_guards.clone(),
@@ -1087,7 +1100,7 @@ fn emit_verify_law_block(
             // A hand-proof sidecar proves the true-universal `∀ givens, <when> =
             // true -> claim`, so drop the sampled domain and class it universal
             // (statement and spliced proof stay in lockstep).
-            has_hand_sidecar
+            has_hand_sidecar || guided
             // Clique-propagated position-monotonicity (`when F(s, pos) ==
             // ok(v, p) -> p >= pos`) over a self-contained parser SCC: proven
             // universally by the rank-slotted `induction fuel` conjunction and
@@ -1344,7 +1357,24 @@ fn emit_verify_law_block(
         // shape and pins the strategy; emit_simp_omega_from_ir
         // skips by_cases when lifted=true. Step 30 retired this
         // separate code path so all laws go through one dispatch.)
-        if floor_window_universal
+        if guided {
+            let prop = &theorem_parts[0].prop;
+            lines.extend(super::law_auto::emit_reason_law(
+                vb,
+                &law_for_auto_proof,
+                ctx,
+                super::law_auto::ReasonClaim {
+                    base: &theorem_base,
+                    label: &law_label,
+                    binders: &quant_binders,
+                    prop,
+                    guard: when_template.as_deref(),
+                },
+            ));
+            if cert_model {
+                claim_statement = Some(universal_statement(&quant_params, prop));
+            }
+        } else if floor_window_universal
             && let Some(auto_proof) = emit_verify_law_forall_auto_proof(
                 vb,
                 &law_for_auto_proof,
@@ -1860,6 +1890,8 @@ pub(crate) fn law_as_lemma_statement(
         )
     );
     if law.when.is_some()
+        && law.because.is_empty()
+        && law.using.is_none()
         && !(super::law_auto::recognize_conditional_comparison_bridge(vb, law, ctx)
             || super::law_auto::recognize_conditional_inductive_generic(vb, law, ctx)
             // The fuel-induction `when`-law is stated universally (see

@@ -133,6 +133,8 @@ pub(super) fn rewrite_plain_case_oracles(
         when: None,
         lhs: left.clone(),
         rhs: right.clone(),
+        because: Vec::new(),
+        using: None,
         sample_guards: Vec::new(),
     };
     let mut case_bindings = vb.case_givens.get(case_index).cloned().unwrap_or_default();

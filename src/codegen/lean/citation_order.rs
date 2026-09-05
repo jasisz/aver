@@ -116,15 +116,53 @@ fn citation_order(
     let n = blocks.len();
     let mut indegree = vec![0usize; n];
     let mut successors: Vec<Vec<usize>> = vec![Vec::new(); n];
+    // Explicit citations constrain emission before inferred cone preferences.
+    // An inferred reverse edge must not move a requested supplier below its
+    // consumer. Modules without explicit citations retain their old ordering.
+    let has_explicit = blocks
+        .iter()
+        .any(|b| matches!(&b.kind, VerifyKind::Law(l) if l.using.is_some()));
     for consumer in 0..n {
         for cited in 0..n {
-            if consumer != cited
-                && blocks[cited].fn_name != blocks[consumer].fn_name
-                && reaches[consumer].contains(&blocks[cited].fn_name)
-            {
+            let explicit = match &blocks[consumer].kind {
+                VerifyKind::Law(law) => law
+                    .using
+                    .as_ref()
+                    .map(|names| names.contains(&law_label(blocks[cited]))),
+                VerifyKind::Cases => None,
+            };
+            if consumer != cited && explicit == Some(true) {
                 successors[cited].push(consumer);
                 indegree[consumer] += 1;
             }
+        }
+    }
+    for consumer in 0..n {
+        if matches!(&blocks[consumer].kind, VerifyKind::Law(l) if l.using.is_some()) {
+            continue;
+        }
+        for cited in 0..n {
+            if consumer == cited
+                || blocks[cited].fn_name == blocks[consumer].fn_name
+                || !reaches[consumer].contains(&blocks[cited].fn_name)
+            {
+                continue;
+            }
+            if has_explicit {
+                let mut pending = vec![consumer];
+                let mut visited = vec![false; n];
+                while let Some(next) = pending.pop() {
+                    if !visited[next] {
+                        visited[next] = true;
+                        pending.extend(successors[next].iter().copied());
+                    }
+                }
+                if visited[cited] {
+                    continue;
+                }
+            }
+            successors[cited].push(consumer);
+            indegree[consumer] += 1;
         }
     }
     let mut placed = vec![false; n];

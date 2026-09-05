@@ -881,6 +881,16 @@ impl TypeChecker {
                 let caller = format!("<verify:{}>", vb.fn_name);
                 if let crate::ast::VerifyKind::Law(law) = &vb.kind {
                     self.with_verify_law_givens(&law.givens, vb.line, |checker| {
+                        for reason in &law.because {
+                            let ty = checker.infer_type(reason);
+                            if !checker.compatible(&ty, &Type::Bool) {
+                                checker.error_at_line(reason.line, format!(
+                                    "Verify law '{}.{}' because must have type Bool, got {}",
+                                    vb.fn_name, law.name, ty.display()
+                                ));
+                            }
+                            checker.check_effects_in_expr(reason, &caller, &[]);
+                        }
                         if let Some(when_expr) = &law.when {
                             let when_ty = checker.infer_type(when_expr);
                             if !checker.compatible(&when_ty, &Type::Bool) {

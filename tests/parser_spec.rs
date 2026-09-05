@@ -38,6 +38,49 @@ fn parse_error(src: &str) -> String {
         .to_string()
 }
 
+#[test]
+fn law_reasons_preserve_order_and_do_not_become_guards() {
+    let items = parse(
+        "verify f law reasoned\n    given x: Int = [0, 1]\n    when x >= 0\n    because x + 1 > 0\n    because x + 2 > 1\n    using [f.first, g.second]\n    f(x) => x\n",
+    );
+    let TopLevel::Verify(block) = &items[0] else {
+        panic!()
+    };
+    let VerifyKind::Law(law) = &block.kind else {
+        panic!()
+    };
+    assert_eq!(law.because.len(), 2);
+    assert_eq!(law.using.as_ref().unwrap(), &["f.first", "g.second"]);
+    assert_eq!(
+        aver::checker::expr_to_str(law.when.as_ref().unwrap()),
+        "x >= 0"
+    );
+    assert!(law.because[0].line < law.because[1].line);
+    assert!(parse_fails(
+        "verify f law bad\n    given x: Int = [0]\n    using [f.a, f.a]\n    f(x) => x\n"
+    ));
+}
+
+#[test]
+fn law_locals_expand_in_reasons_and_later_bindings() {
+    let items = parse(
+        "verify f law reasoned\n    given x: Int = [0]\n    a = x + 1\n    because a > x\n    b = a + 1\n    using []\n    because b > a\n    f(b) => b\n",
+    );
+    let TopLevel::Verify(block) = &items[0] else {
+        panic!()
+    };
+    let VerifyKind::Law(law) = &block.kind else {
+        panic!()
+    };
+    let printed = law
+        .because
+        .iter()
+        .map(aver::checker::expr_to_str)
+        .collect::<Vec<_>>();
+    assert_eq!(printed, ["x + 1 > x", "x + 1 + 1 > x + 1"]);
+    assert_eq!(aver::checker::expr_to_str(&law.lhs), "f(x + 1 + 1)");
+}
+
 fn single_expr_body(fd: &FnDef) -> &Expr {
     match fd.body.as_ref() {
         FnBody::Block(stmts) if stmts.len() == 1 => match &stmts[0] {

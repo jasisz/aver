@@ -749,6 +749,10 @@ pub struct VerifyLaw {
     pub givens: Vec<VerifyGiven>,
     /// Optional precondition for the law template, written as `when <bool-expr>`.
     pub when: Option<Spanned<Expr>>,
+    /// Ordered Bool explanations to prove under the law's original guard.
+    pub because: Vec<Spanned<Expr>>,
+    /// Explicit law dependencies; `None` retains automatic selection.
+    pub using: Option<Vec<String>>,
     /// Template assertion from source before given-domain expansion.
     pub lhs: Spanned<Expr>,
     pub rhs: Spanned<Expr>,

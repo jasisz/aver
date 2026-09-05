@@ -83,6 +83,9 @@ use crate::codegen::{CodegenContext, ProjectOutput};
 /// and `aver-cert verify` reads the manifest's `laws` array. Nothing outside
 /// this crate spells the prefix, so there is no second copy to keep in step.
 pub const LAW_CLASS_MARKER_PREFIX: &str = "-- aver:law-class ";
+/// Separately audited obligations belonging to one source law. They do not
+/// increase the count of source laws in a proof report.
+pub const LAW_OBLIGATION_MARKER_PREFIX: &str = "-- aver:law-obligation ";
 /// Marker class tag: no sampled-domain premises — the `∀`-statement is the
 /// law's genuine universal claim.
 pub const LAW_CLASS_UNIVERSAL: &str = "universal";

@@ -8615,9 +8615,11 @@ fn run_proof_check(
     // absent the probe never runs, so the written bytes are unchanged. The probe
     // is gated on the COUNTED build having succeeded (no audit otherwise), and
     // its own outcome can never touch `passed` / `universal` / the exit code.
-    let mut manifest: Option<ProofManifest> = lean_law_audit
-        .as_ref()
-        .map(|audit| build_proof_manifest(&audit.laws, declined));
+    let mut manifest: Option<ProofManifest> = lean_law_audit.as_ref().map(|audit| {
+        let mut manifest = build_proof_manifest(&audit.laws, declined);
+        manifest.obligations = audit.obligations.clone();
+        manifest
+    });
     let mut open_goals: std::collections::BTreeMap<String, String> =
         std::collections::BTreeMap::new();
     // `--explain` residuals borrowed from HEALTHY (proven) laws — see the
@@ -8779,6 +8781,9 @@ fn run_proof_check(
         }
     }
     // Write the manifest AFTER residuals are merged so the sidecar carries them.
+    if explain && let Some(m) = &mut manifest {
+        law_reason_report::attach_residuals(&mut m.obligations, &format!("{stdout}{stderr}"));
+    }
     if let Some(m) = &manifest {
         write_proof_manifest(output_dir, m);
     }
@@ -8838,6 +8843,14 @@ fn run_proof_check(
             // keys on (computed in the counted build).
             obj.insert("universal_laws".into(), audit.universal_laws.into());
             obj.insert("bounded_laws".into(), audit.bounded_laws.into());
+            if !audit.obligations.is_empty() {
+                let obligations: serde_json::Map<String, serde_json::Value> = audit
+                    .obligations
+                    .iter()
+                    .map(|o| (o.law.clone(), o.tier.as_str().into()))
+                    .collect();
+                obj.insert("obligations".into(), serde_json::Value::Object(obligations));
+            }
         }
         if matches!(backend, super::cli::ProofBackend::Lean) {
             // Renamed from the short-lived `fuel_exhausted` (0.25.0-unreleased
@@ -8905,6 +8918,11 @@ fn run_proof_check(
         // diagnostics; we already parsed counts above.
         print!("{}", stdout);
         eprint!("{}", stderr);
+        if let Some(audit) = &lean_law_audit {
+            for obligation in &audit.obligations {
+                println!("  {}: {}", obligation.law, obligation.tier.as_str());
+            }
+        }
         let (metric, budget_desc) = match backend {
             super::cli::ProofBackend::Dafny => (
                 format!(
@@ -9200,6 +9218,7 @@ fn duplicate_program_law_identities(ctx: &codegen::CodegenContext) -> Vec<String
 struct ProofManifest {
     backend: String,
     laws: Vec<ManifestLaw>,
+    obligations: Vec<ManifestLaw>,
     /// Claims the exporter REFUSED to state, so no law record exists for
     /// them. Recorded here because the ratchet's baseline is the artifact a
     /// reviewer reads: without this, a refused claim leaves the manifest with
@@ -9208,6 +9227,9 @@ struct ProofManifest {
     /// unaffected corpus's manifest stays byte-for-byte identical.
     declined: Vec<aver::codegen::DeclinedClaim>,
 }
+
+#[path = "law_reason_report.rs"]
+mod law_reason_report;
 
 /// The file-level audit records as one per-law manifest, keyed on the `fn.law`
 /// identity and sorted by it for byte-reproducibility.
@@ -9223,6 +9245,7 @@ fn build_proof_manifest(
     ProofManifest {
         backend: "lean".to_string(),
         laws: by_label.into_values().collect(),
+        obligations: Vec::new(),
         declined: declined.to_vec(),
     }
 }
@@ -9234,42 +9257,53 @@ fn build_proof_manifest(
 /// byte-reproducibly) and each `axioms` array is sorted+deduped at
 /// construction, so the output is byte-reproducible across runs.
 fn proof_manifest_to_json(manifest: &ProofManifest) -> String {
-    let mut sorted: Vec<&ManifestLaw> = manifest.laws.iter().collect();
-    sorted.sort_by(|a, b| a.law.cmp(&b.law));
-    let laws: Vec<serde_json::Value> = sorted
-        .iter()
-        .map(|l| {
-            // Build per-law records as a `Map` (a `BTreeMap`, so keys stay
-            // alphabetical / byte-reproducible) so `open_goal` is inserted ONLY
-            // when present: an absent key (not `null`) for a closed law / a
-            // manifest written without `--explain` keeps the byte-for-byte
-            // baseline diff clean and existing substring consumers untouched.
-            let mut obj = serde_json::Map::new();
-            obj.insert("law".into(), l.law.clone().into());
-            obj.insert("backend".into(), l.backend.clone().into());
-            obj.insert("tier".into(), l.tier.as_str().into());
-            obj.insert("axioms".into(), l.axioms.clone().into());
-            obj.insert("theorem".into(), l.theorem.clone().into());
-            if let Some(g) = &l.open_goal {
-                obj.insert("open_goal".into(), g.clone().into());
-            }
-            // `--allow-mathlib` per-law credit: inserted ONLY when present, so a
-            // manifest written without the flag stays byte-for-byte identical.
-            if let Some(c) = &l.credit {
-                obj.insert("credit".into(), c.clone().into());
-            }
-            // Self-declared law provenance: inserted ONLY when a marker was
-            // present, so an unmarked corpus stays byte-for-byte identical.
-            if let Some(p) = &l.provenance {
-                obj.insert("provenance".into(), p.clone().into());
-            }
-            serde_json::Value::Object(obj)
-        })
-        .collect();
+    fn records(records: &[ManifestLaw]) -> Vec<serde_json::Value> {
+        let mut sorted: Vec<&ManifestLaw> = records.iter().collect();
+        sorted.sort_by(|a, b| a.law.cmp(&b.law));
+        sorted
+            .iter()
+            .map(|l| {
+                // Build per-law records as a `Map` (a `BTreeMap`, so keys stay
+                // alphabetical / byte-reproducible) so `open_goal` is inserted ONLY
+                // when present: an absent key (not `null`) for a closed law / a
+                // manifest written without `--explain` keeps the byte-for-byte
+                // baseline diff clean and existing substring consumers untouched.
+                let mut obj = serde_json::Map::new();
+                obj.insert("law".into(), l.law.clone().into());
+                obj.insert("backend".into(), l.backend.clone().into());
+                obj.insert("tier".into(), l.tier.as_str().into());
+                obj.insert("axioms".into(), l.axioms.clone().into());
+                obj.insert("theorem".into(), l.theorem.clone().into());
+                if let Some(g) = &l.open_goal {
+                    obj.insert("open_goal".into(), g.clone().into());
+                }
+                // `--allow-mathlib` per-law credit: inserted ONLY when present, so a
+                // manifest written without the flag stays byte-for-byte identical.
+                if let Some(c) = &l.credit {
+                    obj.insert("credit".into(), c.clone().into());
+                }
+                // Self-declared law provenance: inserted ONLY when a marker was
+                // present, so an unmarked corpus stays byte-for-byte identical.
+                if let Some(p) = &l.provenance {
+                    obj.insert("provenance".into(), p.clone().into());
+                }
+                serde_json::Value::Object(obj)
+            })
+            .collect()
+    }
     let mut root = serde_json::Map::new();
     root.insert("version".into(), 1.into());
     root.insert("backend".into(), manifest.backend.clone().into());
-    root.insert("laws".into(), serde_json::Value::Array(laws));
+    root.insert(
+        "laws".into(),
+        serde_json::Value::Array(records(&manifest.laws)),
+    );
+    if !manifest.obligations.is_empty() {
+        root.insert(
+            "obligations".into(),
+            serde_json::Value::Array(records(&manifest.obligations)),
+        );
+    }
     // Declined claims, sorted by identity for byte-reproducibility. Written
     // ONLY when there are any, so a corpus with no refusal keeps the exact
     // bytes it had before this field existed.
@@ -9355,6 +9389,12 @@ fn parse_proof_manifest(raw: &str) -> Result<ProofManifest, String> {
     Ok(ProofManifest {
         backend: value["backend"].as_str().unwrap_or("lean").to_string(),
         laws,
+        obligations: match value.get("obligations") {
+            Some(obligations) => {
+                parse_proof_manifest(&serde_json::json!({"laws": obligations}).to_string())?.laws
+            }
+            None => Vec::new(),
+        },
         // Informational in a BASELINE: the ratchet compares law records, and a
         // law that moved from proved to declined is already caught as MISSING
         // (the comparator iterates the baseline law set). Read as empty rather
@@ -9724,6 +9764,7 @@ struct LeanLawAudit {
     /// Per-law manifest records (file-level audit half), keyed on the
     /// `fn.law` identity read from the class marker, forming the manifest.
     laws: Vec<ManifestLaw>,
+    obligations: Vec<ManifestLaw>,
 }
 
 impl LeanLawAudit {
@@ -9735,6 +9776,7 @@ impl LeanLawAudit {
         universal_laws: 0,
         bounded_laws: 0,
         laws: Vec::new(),
+        obligations: Vec::new(),
     };
 }
 
@@ -9828,6 +9870,7 @@ fn lean_universal_audit(dir: &str, sorries: usize) -> LeanLawAudit {
     // `theorem -> fn.law` identity, read off the marker's third field — the
     // stable key the proof manifest is keyed on.
     let mut labels: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut obligation_theorems = HashSet::new();
     for root in &roots {
         let relative = format!("{}.lean", root.replace('.', "/"));
         let path = std::path::Path::new(dir).join(&relative);
@@ -9855,10 +9898,17 @@ fn lean_universal_audit(dir: &str, sorries: usize) -> LeanLawAudit {
                 } else if trimmed == "end" || trimmed.starts_with("end ") {
                     namespace_depth = namespace_depth.saturating_sub(1);
                 }
-                if let Some(rest) = line.strip_prefix(lean_codegen::LAW_CLASS_MARKER_PREFIX) {
+                let obligation = line.strip_prefix(lean_codegen::LAW_OBLIGATION_MARKER_PREFIX);
+                if let Some(rest) = line
+                    .strip_prefix(lean_codegen::LAW_CLASS_MARKER_PREFIX)
+                    .or(obligation)
+                {
                     let mut parts = rest.split_whitespace();
                     if let (Some(thm), Some(class)) = (parts.next(), parts.next()) {
                         let qualified = format!("{root}.{thm}");
+                        if obligation.is_some() {
+                            obligation_theorems.insert(qualified.clone());
+                        }
                         classes.insert(qualified.clone(), class.to_string());
                         // Third field (optional on older emissions): the
                         // `fn.law` identity label for the manifest.
@@ -9974,6 +10024,7 @@ fn lean_universal_audit(dir: &str, sorries: usize) -> LeanLawAudit {
             universal_laws: 0,
             bounded_laws,
             laws: bounded_records,
+            obligations: Vec::new(),
         };
     }
     // Throwaway checker: print each main law theorem's axiom dependency
@@ -9996,6 +10047,7 @@ fn lean_universal_audit(dir: &str, sorries: usize) -> LeanLawAudit {
             universal_laws: 0,
             bounded_laws,
             laws: bounded_records,
+            obligations: Vec::new(),
         };
     }
     let out = Command::new("lake")
@@ -10038,7 +10090,10 @@ fn lean_universal_audit(dir: &str, sorries: usize) -> LeanLawAudit {
             let universal_laws = if o.status.success() {
                 universal_classed
                     .iter()
-                    .filter(|theorem| theorem_credit_from_axioms(&combined, theorem))
+                    .filter(|theorem| {
+                        !obligation_theorems.contains(*theorem)
+                            && theorem_credit_from_axioms(&combined, theorem)
+                    })
                     .count()
             } else {
                 0
@@ -10077,11 +10132,15 @@ fn lean_universal_audit(dir: &str, sorries: usize) -> LeanLawAudit {
             let mut laws = bounded_records;
             laws.extend(universal_records.into_values());
             laws.sort_by(|a, b| a.law.cmp(&b.law));
+            let (obligations, laws) = laws
+                .into_iter()
+                .partition(|law: &ManifestLaw| obligation_theorems.contains(&law.theorem));
             LeanLawAudit {
                 universal,
                 universal_laws,
                 bounded_laws,
                 laws,
+                obligations,
             }
         }
         Err(_) => LeanLawAudit {
@@ -10089,6 +10148,7 @@ fn lean_universal_audit(dir: &str, sorries: usize) -> LeanLawAudit {
             universal_laws: 0,
             bounded_laws,
             laws: bounded_records,
+            obligations: Vec::new(),
         },
     }
 }
@@ -10151,7 +10211,10 @@ fn lean_sorry_laws(dir: &str, build_output: &str) -> Vec<String> {
         if let Ok(contents) = std::fs::read_to_string(path) {
             let mut thms: Vec<(usize, String)> = Vec::new();
             for (idx, line) in contents.lines().enumerate() {
-                if let Some(rest) = line.strip_prefix(lean_codegen::LAW_CLASS_MARKER_PREFIX) {
+                if let Some(rest) = line
+                    .strip_prefix(lean_codegen::LAW_CLASS_MARKER_PREFIX)
+                    .or_else(|| line.strip_prefix(lean_codegen::LAW_OBLIGATION_MARKER_PREFIX))
+                {
                     let mut parts = rest.split_whitespace();
                     if let (Some(thm), Some(_class)) = (parts.next(), parts.next())
                         && let Some(label) = parts.next()
@@ -10942,6 +11005,8 @@ fn build_candidate_law(
         when,
         lhs: clone_expr(&goal.claim.0),
         rhs: clone_expr(&goal.claim.1),
+        because: Vec::new(),
+        using: None,
         sample_guards: vec![],
     };
     let block = VerifyBlock {
@@ -12359,6 +12424,7 @@ mod tests {
         super::ProofManifest {
             backend: "lean".to_string(),
             laws,
+            obligations: Vec::new(),
             declined: Vec::new(),
         }
     }
@@ -12913,6 +12979,8 @@ mod tests {
             when: None,
             lhs: t(),
             rhs: t(),
+            because: Vec::new(),
+            using: None,
             sample_guards: vec![],
         }));
         super::TopLevel::Verify(VerifyBlock::new_unspanned(

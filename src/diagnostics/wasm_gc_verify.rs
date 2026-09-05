@@ -650,7 +650,7 @@ fn run_verify_cases_in_wasmtime(
                                 limit: fuel,
                                 raised_by: raised.map(str::to_string),
                             },
-                            span: None,
+                            span: plan.block.case_spans.get(idx).cloned(),
                             case_expr: case.case_expr.clone(),
                             case_index: idx,
                             case_total,
@@ -667,7 +667,7 @@ fn run_verify_cases_in_wasmtime(
                             skipped += 1;
                             case_results.push(VerifyCaseResult {
                                 outcome: VerifyCaseOutcome::Skipped,
-                                span: None,
+                                span: plan.block.case_spans.get(idx).cloned(),
                                 case_expr: case.case_expr.clone(),
                                 case_index: idx,
                                 case_total,
@@ -686,7 +686,7 @@ fn run_verify_cases_in_wasmtime(
                             outcome: VerifyCaseOutcome::RuntimeError {
                                 error: format!("guard: {}", e.message()),
                             },
-                            span: None,
+                            span: plan.block.case_spans.get(idx).cloned(),
                             case_expr: case.case_expr.clone(),
                             case_index: idx,
                             case_total,
@@ -747,7 +747,7 @@ fn run_verify_cases_in_wasmtime(
             };
             case_results.push(VerifyCaseResult {
                 outcome,
-                span: None,
+                span: plan.block.case_spans.get(idx).cloned(),
                 case_expr: case.case_expr.clone(),
                 case_index: idx,
                 case_total,
@@ -762,7 +762,7 @@ fn run_verify_cases_in_wasmtime(
         results.push(VerifyResult {
             fn_name: plan.block.fn_name.clone(),
             is_law: matches!(&plan.block.kind, crate::ast::VerifyKind::Law(_)),
-            block_label: plan.block.fn_name.clone(),
+            block_label: crate::checker::verify_block_label(&plan.block),
             passed,
             failed,
             skipped,

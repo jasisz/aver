@@ -794,6 +794,9 @@ pub(super) fn law_simp_source_names(
     names.insert(vb.fn_name.clone());
     collect_user_fn_simp_names(&law.lhs, ctx, &vb.fn_name, &mut names);
     collect_user_fn_simp_names(&law.rhs, ctx, &vb.fn_name, &mut names);
+    for reason in &law.because {
+        collect_user_fn_simp_names(reason, ctx, &vb.fn_name, &mut names);
+    }
     if let Some(when_expr) = &law.when {
         collect_user_fn_simp_names(when_expr, ctx, &vb.fn_name, &mut names);
     }

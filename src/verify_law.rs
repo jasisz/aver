@@ -7,6 +7,7 @@ use crate::ast::{
 use crate::types::Type;
 
 pub mod expand;
+pub mod reasons;
 
 /// Legacy `name → (params, return_type, effects)` map carrying the fn /
 /// ctor signatures the verify-law helpers query.
@@ -902,6 +903,8 @@ mod tests {
             when: None,
             lhs,
             rhs,
+            because: Vec::new(),
+            using: None,
             sample_guards: vec![],
         }
     }

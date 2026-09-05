@@ -1644,7 +1644,7 @@ pub fn emit_law_samples(
     native_emitted: &std::collections::HashSet<crate::ir::FnId>,
     termination_opaque: &std::collections::HashSet<crate::ir::FnId>,
 ) -> Option<String> {
-    if vb.cases.is_empty() {
+    if vb.cases.is_empty() || !law.because.is_empty() || law.using.is_some() {
         return None;
     }
 
@@ -3007,7 +3007,7 @@ fn eligible_cites<'a>(
             continue;
         };
         // Unconditional only: a `when` law's universal is `P -> lhs == rhs`.
-        if prev_law.when.is_some() {
+        if prev_law.when.is_some() || !prev_law.because.is_empty() || prev_law.using.is_some() {
             continue;
         }
         // Universal-form only: opaque / native-mutual siblings are emitted with
@@ -3133,6 +3133,17 @@ pub fn emit_verify_law(
 ) -> String {
     let fn_name = aver_name_to_dafny(&vb.fn_name);
     let law_name = aver_name_to_dafny(&law.name);
+    if !law.because.is_empty() || law.using.is_some() {
+        let claim = format!("{}.{}", vb.fn_name, law.name);
+        let reason = "because/using proof obligations currently require the Lean backend";
+        crate::codegen::common::record_declined_claim(
+            ctx,
+            crate::codegen::DeclineKind::Law,
+            claim.clone(),
+            reason.to_string(),
+        );
+        return format!("// Law {claim} is not exported: {reason}");
+    }
 
     // Issue #127: trace-projection LHS has no proof-side shape — the
     // lifted Dafny fn returns the bare value, no `.trace` field. Emit

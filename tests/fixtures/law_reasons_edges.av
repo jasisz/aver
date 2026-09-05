@@ -1,0 +1,30 @@
+module ReasonEdges
+    intent = "True, false and restating the goal cannot create proof credit."
+    effects []
+
+fn identity(value: Int) -> Int
+    value
+
+verify identity law trueReason
+    given value: Int = [0]
+    because true
+    using []
+    identity(value) => value + value
+
+verify identity law falseReason
+    given value: Int = [0]
+    because false
+    using []
+    identity(value) => value
+
+verify identity law restatedGoal
+    given value: Int = [0]
+    because identity(value) == value + value
+    using []
+    identity(value) => value + value
+
+verify identity law taintedDependency
+    given value: Int = [0]
+    because identity(value) == value + value
+    using [identity.restatedGoal]
+    identity(value) => value + value

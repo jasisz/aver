@@ -38,6 +38,8 @@ impl TypeChecker {
 
         self.build_signatures(items);
 
+        self.check_law_dependencies(items, &loaded_modules);
+
         if !loaded_modules.is_empty() {
             self.check_loaded_module_bodies(&loaded_modules, base_dir);
         }
@@ -87,6 +89,7 @@ impl TypeChecker {
         let mut loaded = loaded.to_vec();
         crate::stdlib::append_required_standard_capability_modules(items, &mut loaded);
         self.configure_capabilities(items, &loaded, None);
+        self.check_law_dependencies(items, &loaded);
         self.prepare_loaded_modules(&loaded);
         let visible_roots = Self::visible_module_roots(items);
         self.integrate_loaded_modules(&loaded, &visible_roots);
@@ -95,6 +98,20 @@ impl TypeChecker {
             self.check_loaded_module_bodies(&loaded, None);
         }
         self.check_body(items);
+    }
+
+    fn check_law_dependencies(
+        &mut self,
+        items: &[TopLevel],
+        loaded: &[crate::source::LoadedModule],
+    ) {
+        let visible = Self::visible_module_roots(items);
+        for (line, message) in crate::verify_law::reasons::dependency_errors(
+            items,
+            loaded.iter().filter(|m| visible.contains(&m.dep_name)),
+        ) {
+            self.error_at_line(line, message);
+        }
     }
 
     fn configure_capabilities(
@@ -329,6 +346,7 @@ impl TypeChecker {
             sub.build_signatures(&module.items);
             sub.check_top_level_stmts(&module.items);
             sub.check_verify_blocks(&module.items);
+            sub.check_law_dependencies(&module.items, modules);
             for item in &module.items {
                 if let TopLevel::FnDef(f) = item {
                     sub.check_fn(f);

@@ -43,6 +43,8 @@ mod export_structure;
 mod floor_window;
 #[path = "proof_spec/fuel_when_cites.rs"]
 mod fuel_when_cites;
+#[path = "proof_spec/law_reasons.rs"]
+mod law_reasons;
 #[path = "proof_spec/lean_kernel.rs"]
 mod lean_kernel;
 #[path = "proof_spec/lemmas.rs"]
@@ -366,6 +368,16 @@ fn run_lean_check_json(
     sorry_budget: usize,
     envs: &[(&str, &str)],
 ) -> (serde_json::Value, std::process::Output) {
+    run_lean_check_json_with_args(example_path, output_dir, sorry_budget, envs, &[])
+}
+
+fn run_lean_check_json_with_args(
+    example_path: &str,
+    output_dir: &std::path::Path,
+    sorry_budget: usize,
+    envs: &[(&str, &str)],
+    args: &[&str],
+) -> (serde_json::Value, std::process::Output) {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let aver_bin = env!("CARGO_BIN_EXE_aver");
     let mut cmd = Command::new(aver_bin);
@@ -379,7 +391,8 @@ fn run_lean_check_json(
         .arg("--check")
         .arg("--check-json")
         .arg("--sorry-budget")
-        .arg(sorry_budget.to_string());
+        .arg(sorry_budget.to_string())
+        .args(args);
     for (k, v) in envs {
         cmd.env(k, v);
     }
