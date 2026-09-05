@@ -15,7 +15,11 @@
 //! the countdown fn. Earlier laws about the same fn that would loop as simp
 //! rules (the accumulator law) are cited as ground instances too; an earlier
 //! `when`-law is an implication, so its ground instance carries the premise
-//! discharged at the shrunk arguments and is cited as the plain fact.
+//! discharged at the shrunk arguments and is cited as the plain fact. The
+//! step arm's closer keeps one last alternative behind those: a SECOND
+//! unfold, at the shrunk arguments, for the bottom rung of a ladder — the one
+//! with no rung below to cite, whose goal needs the countdown's terminal
+//! branch rather than a bound one step weaker.
 //!
 //! Shape-keyed and name-blind: the fn is discovered from its contract and the
 //! law's calls, never from a name. Fail-closed: the closers end in `sorry`, so
@@ -575,6 +579,19 @@ pub(in crate::codegen::lean) fn emit_wf_fuel_induction_law(
     let closer = format!(
         "first | (split <;> {simp_all} <;> omega) | ({simp_all} <;> omega) | (split <;> {simp_all} <;> done) | sorry"
     );
+    // The BOTTOM rung of a ladder has no rung below it to cite, and its own IH
+    // is one step too weak: proving `len(f(v)) <= 1` from `v < 256` leaves
+    // `len(f(v / 256)) + 1 <= 1` against `ih1 : len(f(v / 256)) <= 1`. What
+    // closes it is the countdown's own terminal branch at the shrunk argument
+    // (`v / 256` is 0 there, so `f` returns its base value): one MORE unfold,
+    // then `split` down to the branch the arithmetic rules out. This is an
+    // extra alternative behind the three above — every goal they already close
+    // keeps the proof it had — and `unfold` is a single pass, not the looping
+    // `simp [f]` the strategy exists to avoid. `sorry` stays the floor.
+    let deep_closer = format!(
+        "first | (split <;> {simp_all} <;> omega) | ({simp_all} <;> omega) | (split <;> {simp_all} <;> done) | ((unfold {}; repeat' split) <;> {simp_all} <;> omega) | sorry",
+        plan.f_lean
+    );
     let mut arm_intro = givens.clone();
     arm_intro.push(hk.clone());
     let mut outer_intro = givens.clone();
@@ -628,7 +645,7 @@ pub(in crate::codegen::lean) fn emit_wf_fuel_induction_law(
     }
     lines.push(format!("         clear {ih}"));
     lines.push(format!("         unfold {}", plan.f_lean));
-    lines.push(format!("         {closer}"));
+    lines.push(format!("         {deep_closer}"));
     let when_arg = if conditional { " h_when" } else { "" };
     lines.push(format!(
         "     exact {key} _ {} (Nat.le_refl _){when_arg})",

@@ -58,7 +58,7 @@ fn proof_export_fuel_cites_earlier_when_law_with_its_premise_discharged() {
     // `(value / 256 < 256) = true`, which omega reads off `value < 65536`.
     assert!(
         body.contains(
-            "have l2 := digits_law_atMostOneDigitBelow256 (value / 256) (by first | omega"
+            "have l1 := digits_law_atMostOneDigitBelow256 (value / 256) (by first | omega"
         ),
         "the rung below must be cited at the shrunk value with a discharged \
          premise:\n{body}"
@@ -82,9 +82,26 @@ fn proof_export_fuel_cites_earlier_when_law_with_its_premise_discharged() {
             "the countdown fn must stay out of every premise discharge:\n{cite}"
         );
     }
+    // The BOTTOM rung has no rung below it to cite; what it needs is the
+    // countdown's terminal branch at the shrunk value, so the step arm's
+    // closer keeps a second `unfold` as its last alternative before `sorry`.
+    let bottom = law_body(&lean, "digits_law_atMostOneDigitBelow256");
+    assert!(
+        cite_lines(&bottom).is_empty(),
+        "the bottom rung has no earlier rung to cite:\n{bottom}"
+    );
+    let deep = bottom
+        .lines()
+        .map(str::trim)
+        .find(|l| l.contains("| ((unfold FuelWhenCites.digits; repeat' split) <;> simp_all"))
+        .unwrap_or_else(|| panic!("the step closer must try a second unfold:\n{bottom}"));
+    assert!(
+        deep.starts_with("first | (split") && deep.ends_with("| sorry"),
+        "the second unfold must sit behind the plain closers and above the \
+         `sorry` floor:\n{deep}"
+    );
     // Every rung is stated universally.
     for base in [
-        "digits_law_noDigitsBelowOne",
         "digits_law_atMostOneDigitBelow256",
         "digits_law_atMostTwoDigitsBelow65536",
         "digits_law_atMostThreeDigitsBelow16777216",
@@ -126,8 +143,8 @@ fn proof_fuel_when_cites_ladder_closes_kernel_genuine() {
     );
     assert_eq!(
         summary["universal_laws"].as_u64(),
-        Some(6),
-        "all six rungs of the length ladder must be certified universal.\n{}",
+        Some(5),
+        "all five rungs of the length ladder must be certified universal.\n{}",
         format_output(&run)
     );
     assert_eq!(

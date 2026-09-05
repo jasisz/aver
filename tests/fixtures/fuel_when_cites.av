@@ -15,11 +15,6 @@ verify digits
     digits(0) => []
     digits(258) => [2, 1]
 
-verify digits law noDigitsBelowOne
-    given value: Int = [-1, 0]
-    when value < 1
-    List.len(digits(value)) <= 0 holds
-
 verify digits law atMostOneDigitBelow256
     given value: Int = [-1, 0, 1, 255]
     when value < 256
