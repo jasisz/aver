@@ -3,11 +3,13 @@
 //! original law applies those theorems, retaining every dependency in its proof.
 
 use crate::ast::{Expr, VerifyBlock, VerifyKind, VerifyLaw};
+use crate::codegen::CodegenContext;
 use crate::codegen::lean::{
     LAW_OBLIGATION_MARKER_PREFIX,
     expr::{aver_name_to_lean, emit_expr, resolve_rewrite_output},
 };
-use crate::codegen::{CodegenContext, proof_lower::ProofLowerInputs};
+
+mod induction;
 
 pub(in crate::codegen::lean) struct ReasonClaim<'a> {
     pub base: &'a str,
@@ -92,13 +94,16 @@ fn premise_chain(premises: &[String], prop: &str) -> String {
         + prop
 }
 
-fn solver(defs: &str, label: &str, indent: &str) -> Vec<String> {
+fn solver(defs: &str, grind_defs: &str, label: &str, indent: &str) -> Vec<String> {
+    let grind_defs = [grind_defs, "List.take, List.reverse_eq_nil_iff"]
+        .into_iter()
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join(", ");
     vec![
         format!("{indent}first"),
         format!("{indent}| (simp_all +zetaDelta [{defs}]; done)"),
-        format!(
-            "{indent}| ((try simp only [List.contains_eq_mem]); grind [{defs}, List.take, List.reverse_eq_nil_iff])"
-        ),
+        format!("{indent}| ((try simp only [List.contains_eq_mem]); grind [{grind_defs}])"),
         format!("{indent}| (trace \"AVER_REASON_OPEN:{label}\"; trace_state; sorry)"),
     ]
 }
@@ -109,30 +114,19 @@ pub(in crate::codegen::lean) fn emit_reason_law(
     ctx: &CodegenContext,
     claim: ReasonClaim<'_>,
 ) -> Vec<String> {
-    let scope = ctx.active_module_scope();
-    let inputs = ProofLowerInputs::from_ctx(ctx);
-    let recursive = inputs.recursive_pure_fn_names_in_scope(scope.as_deref());
-    let cone = super::shared::law_simp_source_names(ctx, vb, law);
-    let defs = inputs
-        .pure_fns_in_scope(scope.as_deref())
-        .into_iter()
-        .filter(|f| cone.contains(&f.name) && !recursive.contains(&f.name))
-        .map(|f| match scope.as_deref() {
-            Some(prefix) => format!(
-                "{}.{}",
-                aver_name_to_lean(prefix),
-                aver_name_to_lean(&f.name)
-            ),
-            None => super::shared::entry_qualified_lean_name(ctx, &f.name),
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
-    let defs = if defs.is_empty() {
-        "Bool.and_eq_true".to_string()
-    } else {
-        defs
-    };
+    let definitions = induction::definitions(law, ctx);
+    let defs = definitions.simp;
     let facts = dependencies(vb, law, ctx);
+    let targets = law
+        .because
+        .iter()
+        .map(|r| induction::target(r, law, ctx))
+        .collect::<Vec<_>>();
+    let grind_defs = if targets.iter().any(Option::is_some) {
+        definitions.grind
+    } else {
+        defs.clone()
+    };
     let params = claim
         .binders
         .iter()
@@ -210,9 +204,16 @@ pub(in crate::codegen::lean) fn emit_reason_law(
                 }
             }
             lines.push("  all_goals".to_string());
-            lines.extend(solver(&defs, &label, "    "));
+            lines.extend(solver(&defs, &grind_defs, &label, "    "));
         } else {
-            if let Some(call) = case_call(&law.because[index], ctx) {
+            if let Some(call) = &targets[index] {
+                // Guards and previous explanations belong in the motive:
+                // recursive calls must establish their own premises.
+                if !hypotheses.is_empty() || !guard_intro.is_empty() {
+                    lines.push(format!("  revert{hypotheses}{guard_intro}"));
+                }
+                lines.push(format!("  fun_induction {call}"));
+            } else if let Some(call) = case_call(&law.because[index], ctx) {
                 lines.push(format!("  fun_cases {call}"));
             }
             // Each right-hand goal receives the checked left-hand fact as a
@@ -221,7 +222,7 @@ pub(in crate::codegen::lean) fn emit_reason_law(
                 "  all_goals repeat' first | apply {and_rule} | intro"
             ));
             lines.push("  all_goals".to_string());
-            lines.extend(solver(&defs, &label, "    "));
+            lines.extend(solver(&defs, &grind_defs, &label, "    "));
             previous.push(format!("h_reason{index}"));
         }
     }

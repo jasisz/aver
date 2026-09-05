@@ -1,0 +1,82 @@
+module RecursiveReasons
+    intent = "An executable recursive explanation supplies the induction shape."
+    effects []
+
+fn count(items: List<Int>) -> Int
+    match items
+        [] -> 0
+        [head, ..rest] -> 1 + count(rest)
+
+fn appendReason(items: List<Int>, suffix: List<Int>) -> Bool
+    match items
+        [] -> count(List.concat(items, suffix)) == count(items) + count(suffix)
+        [head, ..rest] -> Bool.and(appendReason(rest, suffix), count(List.concat(items, suffix)) == count(items) + count(suffix))
+
+verify count law appendExplained
+    given items: List<Int> = [[], [1], [1, 2, 3]]
+    given suffix: List<Int> = [[], [4, 5]]
+    because appendReason(items, suffix)
+    using []
+    count(List.concat(items, suffix)) => count(items) + count(suffix)
+
+fn falseBase(items: List<Int>) -> Bool
+    match items
+        [] -> false
+        [head, ..rest] -> falseBase(rest)
+
+verify count law rejectsFalseBase
+    given items: List<Int> = [[], [1]]
+    because falseBase(items)
+    using []
+    count(items) => count(items)
+
+fn boundReason(items: List<Int>, limit: Int) -> Bool
+    match items
+        [] -> limit >= 0
+        [head, ..rest] -> Bool.and(boundReason(rest, limit - 1), count(items) <= limit)
+
+verify count law guardedChangingArgument
+    given items: List<Int> = [[], [1], [1, 2]]
+    given limit: Int = [-1, 0, 3]
+    when count(items) <= limit
+    because boundReason(items, limit)
+    using []
+    count(items) <= limit holds
+
+fn guardedReason(items: List<Int>, floor: Int) -> Bool
+    match items
+        [] -> floor <= 0
+        [head, ..rest] -> Bool.and(guardedReason(rest, floor), count(items) >= floor)
+
+verify count law guardedStructural
+    given items: List<Int> = [[], [1], [1, 2]]
+    given floor: Int = [-1, 0, 1]
+    when floor <= 0
+    because floor <= 0
+    because guardedReason(items, floor)
+    using []
+    count(items) >= floor holds
+
+fn falseStep(items: List<Int>) -> Bool
+    match items
+        [] -> true
+        [head, ..rest] -> Bool.and(falseStep(rest), count(items) == count(rest))
+
+verify count law rejectsFalseStep
+    given items: List<Int> = [[], [1]]
+    because falseStep(items)
+    using []
+    count(items) => count(items)
+
+fn positiveItemsReason(items: List<Int>) -> Bool
+    match items
+        [] -> true
+        [head, ..rest] -> Bool.and(head > 0, positiveItemsReason(rest))
+
+verify count law guardMustReachRecursiveCall
+    given items: List<Int> = [[1], [1, 0]]
+    when List.contains(items, 1)
+    because List.contains(items, 1)
+    because positiveItemsReason(items)
+    using []
+    count(items) => count(items)
