@@ -1,0 +1,17 @@
+module NondecreasingReason
+    intent = "A recursive call on the same list cannot manufacture an induction hypothesis."
+    effects []
+
+fn identity(value: Int) -> Int
+    value
+
+fn stuckReason(items: List<Int>) -> Bool
+    match items
+        [] -> true
+        [head, ..rest] -> stuckReason(items)
+
+verify identity law rejectsCircularReason
+    given items: List<Int> = [[]]
+    because stuckReason(items)
+    using []
+    identity(0) => 0

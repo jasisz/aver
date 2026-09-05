@@ -2455,15 +2455,23 @@ pub fn analyze_plans_in_scope(
         }
 
         let fd = component[0];
+        let list_structural = single_list_structural_param(fd);
         if crate::codegen::lean::recurrence::detect_second_order_int_linear_recurrence(fd).is_some()
         {
             plans.insert(fd.name.clone(), RecursionPlan::LinearRecurrence2);
-        } else if let Some((param_index, bound)) = single_int_ascending_param(fd) {
+        } else if let Some((param_index, bound)) =
+            single_int_ascending_param(fd).filter(|_| list_structural.is_none())
+        {
             plans.insert(
                 fd.name.clone(),
                 RecursionPlan::IntAscending { param_index, bound },
             );
-        } else if let Some(param_index) = single_int_countdown_param_index(fd) {
+        } else if let Some(param_index) =
+            single_int_countdown_param_index(fd).filter(|_| list_structural.is_none())
+        {
+            // A checked list descent terminates independently of a sibling
+            // counter. Let the structural plan below handle that case instead
+            // of introducing a counter-derived fuel bound.
             // Try native guarded emission first — when the body has the
             // clean `match p { 0 -> BASE; _ -> rec(p-1, ...) }` shape and
             // the fn is closed-world (no external module can call it
@@ -2518,7 +2526,7 @@ pub fn analyze_plans_in_scope(
                 },
             );
         } else if supports_single_sizeof_structural(fd, inputs)
-            || (single_list_structural_param_index(fd).is_none()
+            || (list_structural.is_none()
                 && single_adt_structural_param_index(fd, inputs).is_some())
         {
             // Single-param ADT structural recursion (the OR's second arm) covers
@@ -2531,7 +2539,7 @@ pub fn analyze_plans_in_scope(
             // keeps its `ListStructural` plan — its laws induct on the list, and
             // stealing it to the ADT driver regressed `drop`-concat decomposition.
             plans.insert(fd.name.clone(), RecursionPlan::SizeOfStructural);
-        } else if let Some((param_index, peel)) = single_list_structural_param(fd) {
+        } else if let Some((param_index, peel)) = list_structural {
             plans.insert(
                 fd.name.clone(),
                 RecursionPlan::ListStructural { param_index, peel },

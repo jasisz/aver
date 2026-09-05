@@ -181,7 +181,20 @@ The backend uses nonrecursive reason functions' case structure to preserve branc
 
 `aver verify` and `aver verify --hostile` execute every reason under the original guard, using the same sample expansion as the claim. These checks do not require Lean. `aver proof --check-json` and `proof_manifest.json` additionally report separate `obligations`, identified by `<function>.<law>.because1`, `.because2`, and `.implication`. Obligations do not inflate `universal_laws`. `--explain` includes residual goals for failed explanation obligations when the solver provides them; an implication may be universal while its reason and the original law remain failed.
 
-This first implementation uses universal explanation obligations. A stage the backend cannot prove remains failed; it does not silently substitute sampled evidence. Recursive reason functions do not yet specify an induction plan. Dafny export explicitly declines annotated laws because that backend does not yet implement their obligations. The syntax is provisional; [#1288](https://github.com/jasisz/aver/issues/1288) tracks the mechanism and acceptance checks.
+Recursive explanations can also supply an induction plan when the function has a checked structural descent on a list. A recursive call contributes an induction hypothesis for the shorter list; its Boolean result must still establish the facts needed by the next step. Original guards and earlier reasons remain premises of that hypothesis, so they must hold at the recursive arguments. The same termination contract serves ordinary functions and explanations: a shrinking list takes precedence over a sibling counter's fuel model.
+
+For example, the explanation can establish the property for `rest` before assembling the property for the whole list:
+
+```aver
+fn appendReason(items: List<Int>, suffix: List<Int>) -> Bool
+    match items
+        [] -> count(List.concat(items, suffix)) == count(items) + count(suffix)
+        [head, ..rest] -> Bool.and(appendReason(rest, suffix), count(List.concat(items, suffix)) == count(items) + count(suffix))
+```
+
+[law_reasons_recursive.av](../tests/fixtures/law_reasons_recursive.av) contains the complete laws, including a changing counter, multiple reasons, and deliberately false base and step cases. This first induction path accepts direct calls on distinct law parameters, including imported functions. Composite arguments, mutual recursion, other recursion measures, and wrappers around recursive explanations do not yet select this induction path. A call on the unchanged list does not produce a checked induction hypothesis; passing declared samples cannot replace that proof.
+
+Explanation obligations are universal. A stage the backend cannot prove remains failed; it does not silently substitute sampled evidence. Dafny export explicitly declines annotated laws because that backend does not yet implement their obligations. The syntax is provisional; [#1288](https://github.com/jasisz/aver/issues/1288) tracks the mechanism and acceptance checks.
 
 ## Specs over invariants
 

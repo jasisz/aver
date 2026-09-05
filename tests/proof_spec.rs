@@ -61,6 +61,8 @@ mod oracle_verify;
 mod panics;
 #[path = "proof_spec/pool_composition_recursive.rs"]
 mod pool_composition_recursive;
+#[path = "proof_spec/recursive_law_reasons.rs"]
+mod recursive_law_reasons;
 #[path = "proof_spec/scc_list_drop.rs"]
 mod scc_list_drop;
 #[path = "proof_spec/wf_fuel.rs"]

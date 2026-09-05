@@ -1,0 +1,166 @@
+use super::*;
+
+#[test]
+fn list_descent_outlives_a_sibling_counter_in_both_proof_models() {
+    for (backend, tool) in [("lean", "lake"), ("dafny", "dafny")] {
+        if Command::new(tool).arg("--version").output().is_err() {
+            continue;
+        }
+        let dir = temp_output_dir(&format!("aver-list-counter-{backend}"));
+        let run = Command::new(env!("CARGO_BIN_EXE_aver"))
+            .args([
+                "proof",
+                "tests/fixtures/list_counter_descent.av",
+                "--backend",
+                backend,
+                "--check-json",
+                "-o",
+            ])
+            .arg(&dir)
+            .output()
+            .unwrap();
+        assert!(run.status.success(), "{backend}: {}", format_output(&run));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
+#[test]
+fn recursive_explanations_use_checked_induction_and_keep_all_premises() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        return;
+    }
+    let dir = temp_output_dir("aver-recursive-law-reasons");
+    let (summary, run) =
+        run_lean_check_json("tests/fixtures/law_reasons_recursive.av", &dir, 0, &[]);
+    assert!(
+        !run.status.success(),
+        "false reasons must still fail the gate"
+    );
+    assert_eq!(summary["build_errors"], 0, "{}", format_output(&run));
+    assert_eq!(summary["universal_laws"], 3, "{summary}");
+    for law in [
+        "appendExplained",
+        "guardedChangingArgument",
+        "guardedStructural",
+    ] {
+        assert_eq!(
+            summary["obligations"][format!("count.{law}.because1")],
+            "universal",
+            "{summary}"
+        );
+        assert_eq!(
+            summary["obligations"][format!("count.{law}.implication")],
+            "universal",
+            "{summary}"
+        );
+    }
+    assert_eq!(
+        summary["obligations"]["count.guardedStructural.because2"],
+        "universal"
+    );
+    for (law, step) in [
+        ("rejectsFalseBase", 1),
+        ("rejectsFalseStep", 1),
+        ("guardMustReachRecursiveCall", 2),
+    ] {
+        assert_eq!(
+            summary["obligations"][format!("count.{law}.because{step}")],
+            "failed",
+            "{summary}"
+        );
+        assert_eq!(
+            summary["obligations"][format!("count.{law}.implication")],
+            "universal",
+            "{summary}"
+        );
+    }
+    let lean = std::fs::read_to_string(dir.join("RecursiveReasons.lean")).unwrap();
+    assert!(
+        !lean.contains("boundReason__fuel"),
+        "list descent must beat sibling countdown fuel"
+    );
+    let hostile = Command::new(env!("CARGO_BIN_EXE_aver"))
+        .args([
+            "verify",
+            "tests/fixtures/law_reasons_recursive.av",
+            "--hostile",
+        ])
+        .output()
+        .unwrap();
+    assert!(!hostile.status.success());
+    let output = format_output(&hostile);
+    for law in [
+        "appendExplained",
+        "guardedChangingArgument",
+        "guardedStructural",
+    ] {
+        assert!(
+            output.contains(&format!("✓ count law {law}.because1")),
+            "{output}"
+        );
+    }
+    for law in [
+        "rejectsFalseBase",
+        "rejectsFalseStep",
+        "guardMustReachRecursiveCall",
+    ] {
+        assert!(
+            output.contains(&format!("✗ count law {law}.because")),
+            "{output}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn nondecreasing_reason_cannot_turn_passing_samples_into_a_proof() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        return;
+    }
+    let file = "tests/fixtures/law_reasons_nondecreasing.av";
+    let samples = Command::new(env!("CARGO_BIN_EXE_aver"))
+        .args(["verify", file])
+        .output()
+        .unwrap();
+    assert!(samples.status.success(), "{}", format_output(&samples));
+    let dir = temp_output_dir("aver-nondecreasing-reason");
+    let (summary, run) = run_lean_check_json(file, &dir, 0, &[]);
+    assert!(!run.status.success());
+    assert_eq!(summary["build_errors"], 0, "{}", format_output(&run));
+    assert_eq!(summary["universal_laws"], 0);
+    assert_eq!(
+        summary["obligations"]["identity.rejectsCircularReason.because1"],
+        "failed"
+    );
+    assert_eq!(
+        summary["obligations"]["identity.rejectsCircularReason.implication"],
+        "universal"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn recursive_reason_resolves_imported_helpers_despite_local_name_collisions() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        return;
+    }
+    let dir = temp_output_dir("aver-recursive-reason-import");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("ListProof.av"), "module ListProof\n    exposes [measure, reason]\n    intent = \"Structural argument.\"\n    effects []\nfn measure(xs: List<Int>) -> Int\n    match xs\n        [] -> 0\n        [x, ..rest] -> 1 + measure(rest)\nfn reason(xs: List<Int>) -> Bool\n    match xs\n        [] -> true\n        [x, ..rest] -> Bool.and(reason(rest), measure(xs) >= 0)\n").unwrap();
+    let file = dir.join("Consumer.av");
+    std::fs::write(&file, "module Consumer\n    depends [ListProof]\n    intent = \"Names belong to their modules.\"\n    effects []\nfn measure(x: Int) -> Int\n    x\nfn reason(x: Int) -> Bool\n    x == 0\nverify measure law explained\n    given xs: List<Int> = [[], [1, 2]]\n    because ListProof.reason(xs)\n    using []\n    ListProof.measure(xs) >= 0 holds\n").unwrap();
+    let (summary, run) = run_lean_check_json_with_args(
+        file.to_str().unwrap(),
+        &dir.join("lean"),
+        0,
+        &[],
+        &["--module-root", dir.to_str().unwrap()],
+    );
+    assert!(run.status.success(), "{}", format_output(&run));
+    assert_eq!(summary["universal_laws"], 1);
+    assert_eq!(
+        summary["obligations"]["measure.explained.because1"],
+        "universal"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}

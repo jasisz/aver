@@ -1,0 +1,13 @@
+module ListCounterDescent
+    intent = "List descent terminates even after an unrelated counter crosses zero."
+    effects []
+
+fn consume(counter: Int, items: List<Int>) -> Int
+    match items
+        [] -> counter
+        [head, ..rest] -> consume(counter - 1, rest)
+
+verify consume
+    consume(0, [1, 2, 3]) => -3
+    consume(-1, [4, 5, 6, 7]) => -5
+    consume(2, []) => 2
