@@ -13,12 +13,17 @@
 //! self-call arguments), the countdown fn unfolded exactly ONCE, and a
 //! `split`-then-`simp_all`/`omega` closer over a simp set that never contains
 //! the countdown fn. Earlier laws about the same fn that would loop as simp
-//! rules (the accumulator law) are cited as ground instances too.
+//! rules (the accumulator law) are cited as ground instances too; an earlier
+//! `when`-law is an implication, so its ground instance carries the premise
+//! discharged at the shrunk arguments and is cited as the plain fact.
 //!
 //! Shape-keyed and name-blind: the fn is discovered from its contract and the
-//! law's calls, never from a name. Fail-closed: the portfolio ends in `sorry`,
-//! so a non-closing instance degrades to the honest floor and `#print axioms`
-//! decides credit.
+//! law's calls, never from a name. Fail-closed: the closers end in `sorry`, so
+//! a non-closing arm degrades to the honest floor and `#print axioms` decides
+//! credit. A `when` premise at a shrunk value is floored the other way — it
+//! can be plainly false there, and admitting it would smuggle `sorryAx` into
+//! a proof the closer finishes honestly (and into every law citing it), so its
+//! portfolio ends in `fail` under a `try` that DROPS the instance.
 
 use std::collections::{BTreeSet, HashMap};
 
@@ -29,7 +34,9 @@ use super::shared::{
     ident_name, law_simp_defs_blind, render, same_file_verify_blocks, simp_def_name,
     substitute_expr, wf_countdown_fn_names, wf_countdown_param,
 };
-use crate::ast::{BinOp, Expr, FnDef, Literal, Spanned, Stmt, VerifyBlock, VerifyKind, VerifyLaw};
+use crate::ast::{
+    BinOp, Expr, FnDef, Literal, Spanned, Stmt, VerifyBlock, VerifyGiven, VerifyKind, VerifyLaw,
+};
 use crate::codegen::CodegenContext;
 
 /// A recognized fuel-induction law: the single well-founded countdown fn the
@@ -263,18 +270,24 @@ fn reaches(from: &str, target: &str, ctx: &CodegenContext) -> bool {
     false
 }
 
-/// An earlier law whose LHS is a direct call to `f` on bare, distinct givens
-/// covering all of its givens: `f(g_1..g_n)`. Cited as a ground instance at
-/// every IH tuple (the accumulator law is exactly this shape and is a looping
-/// simp rule, so it never joins a simp set). Two sources: laws earlier in the
-/// FILE this theorem lands in, and the exposed laws of the dependency module
-/// that OWNS `f` (cited by their namespace-qualified theorem name; the
+/// An earlier law whose claim applies `f` to bare, distinct givens covering
+/// all of its givens: `f(g_1..g_n)` as the claim's LHS (the accumulator
+/// shape), or nested inside it when the law bounds a quantity computed FROM
+/// the countdown's output (`List.len(f(g)) <= 2`). Cited as a ground instance
+/// at every IH tuple (the accumulator law is exactly this shape and is a
+/// looping simp rule, so it never joins a simp set). Two sources: laws earlier
+/// in the FILE this theorem lands in, and the exposed laws of the dependency
+/// module that OWNS `f` (cited by their namespace-qualified theorem name; the
 /// consumer file imports and opens every dependency, and a dependency always
 /// precedes its consumers in the module DAG, so a cycle is impossible).
 struct GroundLaw {
     theorem: String,
     /// For each of the law's givens, the `f` argument position it occupies.
     given_positions: Vec<usize>,
+    /// Whether the cited law carries a `when`. Its theorem is then the
+    /// implication `<when> = true -> claim`, so the ground instance needs the
+    /// premise discharged at the shrunk arguments to be a usable fact.
+    conditional: bool,
 }
 
 fn ground_laws_about(vb: &VerifyBlock, plan: &WfFuelPlan, ctx: &CodegenContext) -> Vec<GroundLaw> {
@@ -305,38 +318,22 @@ fn ground_laws_about(vb: &VerifyBlock, plan: &WfFuelPlan, ctx: &CodegenContext) 
         let VerifyKind::Law(prev_law) = &prev.kind else {
             continue;
         };
-        let Some((name, args)) = call_name_args(&prev_law.lhs) else {
+        let mut applications: Vec<Vec<Spanned<Expr>>> = Vec::new();
+        collect_calls_to(&prev_law.lhs, &plan.f, ctx, &mut applications);
+        collect_calls_to(&prev_law.rhs, &plan.f, ctx, &mut applications);
+        let Some(given_positions) = applications
+            .iter()
+            .filter(|args| args.len() == plan.params.len())
+            .find_map(|args| given_positions_in(args, &prev_law.givens))
+        else {
             continue;
         };
-        let Some(fd) = find_fn_def_by_call_name(ctx, &name) else {
-            continue;
-        };
-        if fd.name != plan.f || args.len() != plan.params.len() {
-            continue;
-        }
-        let mut given_positions = Vec::with_capacity(prev_law.givens.len());
-        let mut covered = true;
-        for g in &prev_law.givens {
-            match args
-                .iter()
-                .position(|a| ident_name(a) == Some(g.name.as_str()))
-            {
-                Some(j) => given_positions.push(j),
-                None => {
-                    covered = false;
-                    break;
-                }
-            }
-        }
-        if !covered || args.iter().any(|a| ident_name(a).is_none()) {
-            continue;
-        }
         // The theorem must exist in its universal form. An unconditional law
         // is stated so exactly when `law_as_lemma_statement` accepts it; a
         // `when`-law is stated so only when this strategy recognises it
         // (verify.rs classes exactly those `conditional_universal`), and is
-        // then cited as the implication `<when> = true -> claim`, which
-        // `simp_all` uses as a conditional rewrite — never discharged here.
+        // then the implication `<when> = true -> claim`, whose premise the
+        // emitter discharges at the shrunk arguments.
         let base = ctx.with_module_scope(owner.map(|m| m.prefix.as_str()), || {
             if prev_law.when.is_some() {
                 recognize_wf_fuel_induction(prev, prev_law, ctx)
@@ -360,9 +357,44 @@ fn ground_laws_about(vb: &VerifyBlock, plan: &WfFuelPlan, ctx: &CodegenContext) 
         out.push(GroundLaw {
             theorem,
             given_positions,
+            conditional: prev_law.when.is_some(),
         });
     }
     out
+}
+
+/// Deep-collect the argument vectors of every call that resolves to the fn
+/// named `f` (dotted call names resolved the same way the recognizer does).
+fn collect_calls_to(
+    e: &Spanned<Expr>,
+    f: &str,
+    ctx: &CodegenContext,
+    out: &mut Vec<Vec<Spanned<Expr>>>,
+) {
+    if let Some((name, args)) = call_name_args(e)
+        && let Some(fd) = find_fn_def_by_call_name(ctx, &name)
+        && fd.name == f
+    {
+        out.push(args.to_vec());
+    }
+    for c in child_exprs(e) {
+        collect_calls_to(c, f, ctx, out);
+    }
+}
+
+/// The argument position each given occupies in `args`, when every argument is
+/// a bare identifier and every given is covered.
+fn given_positions_in(args: &[Spanned<Expr>], givens: &[VerifyGiven]) -> Option<Vec<usize>> {
+    if args.iter().any(|a| ident_name(a).is_none()) {
+        return None;
+    }
+    givens
+        .iter()
+        .map(|g| {
+            args.iter()
+                .position(|a| ident_name(a) == Some(g.name.as_str()))
+        })
+        .collect()
 }
 
 /// Render a Lean application argument: parenthesize anything that is not a
@@ -478,14 +510,44 @@ pub(in crate::codegen::lean) fn emit_wf_fuel_induction_law(
         }
     }
 
-    // Ground instances of earlier direct laws about `f`, at every tuple.
-    let mut ground: Vec<String> = Vec::new();
+    // The `when` premise at a shrunk value — the IH's own, and an earlier
+    // `when`-law's when it is cited there. A bare comparison premise is stated
+    // `(P) = true`, which elaborates as the Prop equation `P = (true = true)`;
+    // a Bool-valued premise (`f(..) && g(..)`) as `decide`-coerced Bool.
+    // Normalize both to Prop, then `omega`. A cite in an UNCONDITIONAL
+    // consumer has no `h_when` to normalize: its premise has to follow from
+    // the tuple's arithmetic alone.
+    //
+    // This portfolio has NO `sorry` floor, and that is the fail-closed choice
+    // here: the premise can be plainly false at the shrunk value (`value / 256
+    // > 0` does not follow from `value > 0`), and an admitted premise would
+    // put `sorryAx` in the proof term of a law the closer goes on to prove
+    // honestly — and in every law that later cites it. So the portfolio ends
+    // in `fail` and the whole instance sits under `try`: an undischargeable
+    // premise DROPS the hypothesis, and the closer falls to its own floor.
+    let premise_normal = "eq_iff_iff, iff_true, decide_eq_true_eq, Bool.and_eq_true, Bool.or_eq_true, Bool.not_eq_true', ge_iff_le, gt_iff_lt";
+    let guard = format!("first | omega | (simp only [{premise_normal}] at h_when ⊢; omega) | fail");
+    let cite_guard = if conditional {
+        guard.clone()
+    } else {
+        format!("first | omega | (simp only [{premise_normal}]; omega) | fail")
+    };
+
+    // Ground instances of earlier laws about `f`, at every tuple. A `when`-law
+    // is an implication, so its instance carries the premise discharge that
+    // makes it the plain fact the closer can use — `simp_all` would otherwise
+    // only get a conditional rewrite whose side condition (`(value / 256 <
+    // 256) = true` from `value < 65536`) is omega's job, not simp's.
+    let mut ground: Vec<(String, bool)> = Vec::new();
     for gl in ground_laws_about(vb, &plan, ctx) {
         for tuple in &tuples {
             let args: Vec<String> = gl.given_positions.iter().map(|j| arg(&tuple[*j])).collect();
-            let cite = format!("{} {}", gl.theorem, args.join(" "));
-            if !ground.contains(&cite) {
-                ground.push(cite);
+            let mut cite = format!("{} {}", gl.theorem, args.join(" "));
+            if gl.conditional {
+                cite.push_str(&format!(" (by {cite_guard})"));
+            }
+            if !ground.iter().any(|(seen, _)| *seen == cite) {
+                ground.push((cite, gl.conditional));
             }
         }
     }
@@ -513,13 +575,6 @@ pub(in crate::codegen::lean) fn emit_wf_fuel_induction_law(
     let closer = format!(
         "first | (split <;> {simp_all} <;> omega) | ({simp_all} <;> omega) | (split <;> {simp_all} <;> done) | sorry"
     );
-    // The `when` premise at the shrunk value. A bare comparison premise is
-    // stated `(P) = true`, which elaborates as the Prop equation `P = (true =
-    // true)`; a Bool-valued premise (`f(..) && g(..)`) as `decide`-coerced
-    // Bool. Normalize both to Prop, then `omega`. Same recovery rule as the
-    // closers: the floor is `sorry`, never a progress-then-fail alternative.
-    let guard = "first | omega | (simp only [eq_iff_iff, iff_true, decide_eq_true_eq, Bool.and_eq_true, Bool.or_eq_true, Bool.not_eq_true', ge_iff_le, gt_iff_lt] at h_when ⊢; omega) | sorry";
-
     let mut arm_intro = givens.clone();
     arm_intro.push(hk.clone());
     let mut outer_intro = givens.clone();
@@ -551,19 +606,25 @@ pub(in crate::codegen::lean) fn emit_wf_fuel_induction_law(
     // shrinks — but the floor is what keeps the class fail-closed) degrades
     // to `sorryAx`, never to a logged build error.
     for (i, inst) in ih_instances.iter().enumerate() {
-        let premise = if conditional {
-            format!(" (by {guard})")
-        } else {
-            String::new()
-        };
-        lines.push(format!(
-            "         have {ih}{} := {ih} {} (by first | omega | sorry){premise}",
+        let have = format!(
+            "have {ih}{} := {ih} {} (by first | omega | sorry)",
             i + 1,
             inst.join(" ")
-        ));
+        );
+        // A conditional law's IH instance carries the `when` premise at the
+        // shrunk value, which need not hold there — `try` drops the instance
+        // rather than admitting a false premise.
+        lines.push(match conditional {
+            true => format!("         try ({have} (by {guard}))"),
+            false => format!("         {have}"),
+        });
     }
-    for (i, cite) in ground.iter().enumerate() {
-        lines.push(format!("         have {}{} := {cite}", fresh("l"), i + 1));
+    for (i, (cite, cite_conditional)) in ground.iter().enumerate() {
+        let have = format!("have {}{} := {cite}", fresh("l"), i + 1);
+        lines.push(match cite_conditional {
+            true => format!("         try ({have})"),
+            false => format!("         {have}"),
+        });
     }
     lines.push(format!("         clear {ih}"));
     lines.push(format!("         unfold {}", plan.f_lean));

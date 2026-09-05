@@ -41,6 +41,8 @@ mod entry_opens;
 mod export_structure;
 #[path = "proof_spec/floor_window.rs"]
 mod floor_window;
+#[path = "proof_spec/fuel_when_cites.rs"]
+mod fuel_when_cites;
 #[path = "proof_spec/lean_kernel.rs"]
 mod lean_kernel;
 #[path = "proof_spec/lemmas.rs"]

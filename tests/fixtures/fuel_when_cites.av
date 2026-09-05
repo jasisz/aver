@@ -1,0 +1,46 @@
+module FuelWhenCites
+    intent =
+        "A ladder of when-laws about one well-founded Int countdown: each rung"
+        "bounds the length of the base-256 digit writer's output and is proved"
+        "from the rung one digit below it, cited at the shrunk value."
+    effects []
+
+fn digits(value: Int) -> List<Int>
+    ? "The base-256 digits of a positive number, least significant first; empty otherwise."
+    match value > 0
+        true -> List.prepend(Int.mod(value, 256), digits(Int.div(value, 256)))
+        false -> []
+
+verify digits
+    digits(0) => []
+    digits(258) => [2, 1]
+
+verify digits law noDigitsBelowOne
+    given value: Int = [-1, 0]
+    when value < 1
+    List.len(digits(value)) <= 0 holds
+
+verify digits law atMostOneDigitBelow256
+    given value: Int = [-1, 0, 1, 255]
+    when value < 256
+    List.len(digits(value)) <= 1 holds
+
+verify digits law atMostTwoDigitsBelow65536
+    given value: Int = [-1, 0, 1, 255, 256, 65535]
+    when value < 65536
+    List.len(digits(value)) <= 2 holds
+
+verify digits law atMostThreeDigitsBelow16777216
+    given value: Int = [0, 255, 256, 65535, 65536, 16777215]
+    when value < 16777216
+    List.len(digits(value)) <= 3 holds
+
+verify digits law atLeastOneDigitAboveZero
+    given value: Int = [1, 255, 256, 65536]
+    when value > 0
+    List.len(digits(value)) >= 1 holds
+
+verify digits law atLeastTwoDigitsFrom256
+    given value: Int = [256, 65535, 65536, 16777216]
+    when value >= 256
+    List.len(digits(value)) >= 2 holds
