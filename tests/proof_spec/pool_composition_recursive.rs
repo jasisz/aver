@@ -116,3 +116,81 @@ fn proof_keystone_floor_arm_lean_closes_kernel_genuine() {
     );
     let _ = std::fs::remove_dir_all(&output_dir);
 }
+
+/// A wrapper pins the prelude-simp strategy even though its recursive callee
+/// needs earlier laws. Composition must remain available after that attempt;
+/// the same pool must not certify a false unguarded statement from its samples.
+#[test]
+fn proof_prelude_wrapper_composes_without_admitting_a_false_neighbor() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping wrapper composition test: `lake` not available");
+        return;
+    }
+    let output_dir = temp_output_dir("aver-proof-pool-wrapper");
+    let (summary, run) = run_lean_check_json(
+        "tests/fixtures/pool_composition_wrapper.av",
+        &output_dir,
+        1,
+        &[],
+    );
+    assert_eq!(
+        (
+            summary["build_errors"].as_u64(),
+            summary["universal_laws"].as_u64(),
+            summary["bounded_laws"].as_u64(),
+            summary["sorries"].as_u64(),
+        ),
+        (Some(0), Some(4), Some(0), Some(1)),
+        "the wrapper must compose, while the false law stays open:\n{}",
+        format_output(&run)
+    );
+    assert_eq!(
+        summary["sorry_laws"],
+        serde_json::json!(["normalized.unguardedRequestMustStayOpen"])
+    );
+    let lean = std::fs::read_to_string(output_dir.join("PoolCompositionWrapper.lean")).unwrap();
+    let body = lean
+        .split("theorem normalized_law_preservesNonnegativeRequest :")
+        .nth(1)
+        .unwrap()
+        .split("_checked_domain")
+        .next()
+        .unwrap();
+    assert!(
+        body.find("simp [").unwrap() < body.find("grind [").unwrap(),
+        "composition must follow the original prelude attempt:\n{body}"
+    );
+    let _ = std::fs::remove_dir_all(&output_dir);
+}
+
+/// One-step observations compose earlier laws about the same subject; the
+/// leading digit also needs that composition inside its fuel induction.
+#[test]
+fn proof_equation_composition_closes_observations_and_keeps_false_law_open() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        return;
+    }
+    let output_dir = temp_output_dir("aver-proof-equation-composition");
+    let (summary, run) = run_lean_check_json(
+        "tests/fixtures/equation_composition.av",
+        &output_dir,
+        1,
+        &[],
+    );
+    assert_eq!(
+        (
+            summary["build_errors"].as_u64(),
+            summary["universal_laws"].as_u64(),
+            summary["bounded_laws"].as_u64(),
+            summary["sorries"].as_u64(),
+        ),
+        (Some(0), Some(3), Some(0), Some(1)),
+        "true observations must close and the false neighbor must remain open:\n{}",
+        format_output(&run)
+    );
+    assert_eq!(
+        summary["sorry_laws"],
+        serde_json::json!(["digits.falseDropMustStayOpen"])
+    );
+    let _ = std::fs::remove_dir_all(&output_dir);
+}

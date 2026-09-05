@@ -1,0 +1,56 @@
+module PoolCompositionWrapper
+    intent =
+        "A non-recursive wrapper uses a base-seven writer's laws after unfolding."
+        "The unguarded claim is deliberately false on negative inputs, outside"
+        "its samples, and must remain open."
+    effects []
+
+fn decodeDigits(digits: List<Int>, acc: Int) -> Int
+    ? "Read the most significant base-seven digit first."
+    match digits
+        [] -> acc
+        [head, ..tail] -> decodeDigits(tail, acc * 7 + head)
+
+verify decodeDigits
+    decodeDigits([1, 2], 0) => 9
+
+verify decodeDigits law appendedDigit
+    given digits: List<Int> = [[], [1], [2, 3]]
+    given digit: Int = [0, 3, 6]
+    given acc: Int = [0, 2]
+    decodeDigits(List.concat(digits, [digit]), acc) => decodeDigits(digits, acc) * 7 + digit
+
+fn encodeDigits(value: Int, acc: List<Int>) -> List<Int>
+    ? "Write the least significant base-seven digit first."
+    match value > 0
+        true -> encodeDigits(Int.div(value, 7), List.prepend(Int.mod(value, 7), acc))
+        false -> List.reverse(acc)
+
+verify encodeDigits
+    encodeDigits(49, []) => [0, 0, 1]
+
+verify encodeDigits law accumulatorPrefix
+    given value: Int = [-1, 0, 1, 6, 7, 49]
+    given acc: List<Int> = [[], [9], [1, 2]]
+    encodeDigits(value, acc) => List.concat(List.reverse(acc), encodeDigits(value, []))
+
+verify encodeDigits law decodesNonnegative
+    given value: Int = [0, 1, 6, 7, 48, 49]
+    when value >= 0
+    decodeDigits(List.reverse(encodeDigits(value, [])), 0) => value
+
+fn normalized(requested: Int) -> Int
+    ? "Read a nonnegative request through the base-seven representation."
+    decodeDigits(List.reverse(encodeDigits(Int.max(requested, 0), [])), 0)
+
+verify normalized
+    normalized(-2) => 0
+    normalized(9) => 9
+
+verify normalized law preservesNonnegativeRequest
+    given requested: Int = [-3, -1, 0, 1, 5]
+    normalized(requested) => Int.max(requested, 0)
+
+verify normalized law unguardedRequestMustStayOpen
+    given requested: Int = [0, 1, 5]
+    normalized(requested) => requested

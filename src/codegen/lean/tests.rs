@@ -5125,11 +5125,15 @@ verify digits law readsBackBigEndian
     );
     // G3: the accumulator law (RHS holds an instance of its LHS) never joins
     // a simp set; the snoc law (structurally decreasing) does.
-    assert!(
-        !lean.contains("digits_law_accumulatorComesFirst]")
-            && !lean.contains("digits_law_accumulatorComesFirst,"),
-        "a looping rewrite must not join a simp set:\n{lean}"
-    );
+    for prefix in ["simp [", "simp only [", "simp_all [", "simp_all only ["] {
+        for tail in lean.split(prefix).skip(1) {
+            let set = tail.split(']').next().unwrap();
+            assert!(
+                !set.contains("digits_law_accumulatorComesFirst"),
+                "a looping rewrite must not join a simp set: {prefix}{set}]"
+            );
+        }
+    }
     assert!(
         lean.contains("simp_all [WfFuelUnit.bigEndian, bigEndian_law_readsTheLastByteLast]"),
         "a non-looping earlier law joins the safe simp set:\n{lean}"

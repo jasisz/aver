@@ -1,0 +1,40 @@
+module ConditionalLayout
+    intent =
+        "A reversible list layout uses a caller-selected marker threshold."
+        "A positive head makes its marker necessary under either Boolean mode."
+    effects []
+
+fn pack(head: Int, tail: List<Int>, threshold: Int, marked: Bool) -> List<Int>
+    ? "Use a separate marker only when the leading value occupies its position."
+    marker = match marked
+        true -> threshold
+        false -> 0
+    match head >= threshold
+        true -> List.concat(List.reverse(List.prepend(head, tail)), [marker])
+        false -> List.reverse(List.prepend(head + marker, tail))
+
+verify pack
+    pack(2, [3], 7, true) => [3, 9]
+    pack(7, [], 7, false) => [7, 0]
+
+verify pack law markerIsNecessary
+    given head: Int = [1, 6, 7, 16, 256, 257]
+    given tail: List<Int> = [[], [1], [-3, 260]]
+    given threshold: Int = [1, 7, 16, 257]
+    given marked: Bool = [false, true]
+    when Bool.and(head > 0, threshold > 0)
+    canonical(pack(head, tail, threshold, marked), threshold) holds
+
+fn canonical(item: List<Int>, threshold: Int) -> Bool
+    ? "A marker is needed only when the value below it occupies its position."
+    match List.reverse(item)
+        [] -> true
+        [head, ..tail] -> match Bool.or(head == 0, head == threshold)
+            false -> true
+            true -> match tail
+                [] -> false
+                [next, ..rest] -> next >= threshold
+
+verify canonical
+    canonical([7, 0], 7) => true
+    canonical([1, 0], 7) => false

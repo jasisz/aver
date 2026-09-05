@@ -48,6 +48,22 @@ pub struct InductionArm {
 }
 
 impl Tactic {
+    /// Add a last attempt to the outer portfolio, retaining its admission floor.
+    /// Only the ending sequence/portfolio is visited: nested induction arms and
+    /// opaque Lean text keep their own scope and failure behavior.
+    pub fn insert_before_sorry(&mut self, alternative: Tactic) -> bool {
+        match self {
+            Tactic::Seq(steps) => steps
+                .last_mut()
+                .is_some_and(|last| last.insert_before_sorry(alternative)),
+            Tactic::First(branches) if branches.last() == Some(&Tactic::Sorry) => {
+                branches.insert(branches.len() - 1, alternative);
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// Wrap already-rendered proof lines as an opaque sequence — the
     /// behavior-preserving bridge for proofs not yet structured into `First`
     /// nodes. `raw(lines).render() == lines`, so migrating a site to
@@ -698,6 +714,38 @@ mod tests {
 
     fn leaf(s: &str) -> Tactic {
         Tactic::Leaf(s.to_string())
+    }
+
+    #[test]
+    fn fallback_extends_only_the_outer_portfolio_and_keeps_existing_priority() {
+        let existing = Tactic::First(vec![leaf("simp; done"), Tactic::Sorry]);
+        let mut body = Tactic::Seq(vec![
+            leaf("intro x"),
+            Tactic::First(vec![existing.clone(), Tactic::Sorry]),
+        ]);
+        assert!(body.insert_before_sorry(leaf("grind; done")));
+        assert_eq!(
+            body,
+            Tactic::Seq(vec![
+                leaf("intro x"),
+                Tactic::First(vec![existing, leaf("grind; done"), Tactic::Sorry]),
+            ])
+        );
+        for mut complete_or_opaque in [
+            leaf("first | omega | sorry"),
+            Tactic::First(vec![leaf("rfl")]),
+            Tactic::Induction {
+                target: "xs".to_string(),
+                arms: vec![InductionArm {
+                    pattern: "nil".to_string(),
+                    body: Tactic::First(vec![leaf("simp"), Tactic::Sorry]),
+                }],
+            },
+        ] {
+            let original = complete_or_opaque.clone();
+            assert!(!complete_or_opaque.insert_before_sorry(leaf("grind; done")));
+            assert_eq!(complete_or_opaque, original);
+        }
     }
 
     #[test]

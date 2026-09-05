@@ -23,7 +23,8 @@ mod keystone;
 mod multicite;
 
 pub(in crate::codegen::lean) use keystone::{
-    emit_pool_composition_generic_law, keystone_floor_arm, recognize_pool_composition_generic,
+    emit_pool_composition_generic_law, equation_grind_arm, keystone_floor_arms,
+    recognize_pool_composition_generic,
 };
 pub(in crate::codegen::lean) use multicite::{
     emit_multicite_composition_law, recognize_multicite_composition,
@@ -2415,6 +2416,18 @@ pub(in crate::codegen::lean) fn emit_conditional_inductive_generic_law(
     // The Bool-to-Prop bridge the LinearArithmetic portfolio uses (#1273), for
     // the non-inductive closer in both arms.
     let normalizers = super::COMPARISON_NORMALIZERS.join(", ");
+    // Decide finite flags before unfolding a layout that uses them. Normalize
+    // comparisons separately with `only`: `← decide_not` opposes the default
+    // `Classical.decide_not` simp rule and must not share its rewrite set.
+    let bool_cases = law
+        .givens
+        .iter()
+        .filter(|given| given.type_name.trim() == "Bool")
+        .map(|given| format!("cases {} <;> ", aver_name_to_lean(&given.name)))
+        .collect::<String>();
+    let arithmetic_rung = format!(
+        "    | ({bool_cases}simp only [{subject}, Bool.false_eq_true, Bool.true_eq_false, ite_true, ite_false] <;> (try split) <;> simp_all [{defs_pool}, h_when] <;> (try simp_all only [{normalizers}]) <;> omega)"
+    );
     let mut body = vec![format!("  intro {}", before.join(" "))];
     body.extend([
         format!("  induction {target} with"),
@@ -2431,14 +2444,12 @@ pub(in crate::codegen::lean) fn emit_conditional_inductive_generic_law(
         // Non-inductive closer: a conditional law whose content is a case split
         // plus linear arithmetic (a sign byte placed by `if top >= 128`, a
         // clamp, a guard) needs no induction hypothesis at all — `split`
-        // exhausts the `if`/`match` branch points, the Bool bridge turns the
+        // decides the subject's guard, the Bool bridge turns the
         // `when` premise and a Bool-valued goal into propositions, and `omega`
         // closes each branch. Tried after the inductive closers so a law that
         // closed before keeps its proof text; under the speculative probe a
         // non-closing split only falls to the floor.
-        format!(
-            "    | (simp only [{subject}] <;> (repeat' split) <;> simp_all [{defs_pool}, h_when, {normalizers}] <;> (repeat' split) <;> (try simp_all) <;> omega)"
-        ),
+        arithmetic_rung.clone(),
     ]);
     // Comparison-premise rung in the BASE case too (`prop_86`'s `elem x (ins y [])
     // = elem x []` reduces to `elem x [y] = false`, which needs `eqNat x y = false`
@@ -2465,9 +2476,7 @@ pub(in crate::codegen::lean) fn emit_conditional_inductive_generic_law(
         // a non-inductive head (`cases hd` on an `Int` fails, `first` advances).
         format!("    | (cases hd <;> simp_all [{defs_pool}, h_when] <;> done)"),
         // The non-inductive closer, as in the nil arm.
-        format!(
-            "    | (simp only [{subject}] <;> (repeat' split) <;> simp_all [{defs_pool}, h_when, {normalizers}] <;> (repeat' split) <;> (try simp_all) <;> omega)"
-        ),
+        arithmetic_rung,
         // Cheap subject-unfold + split (closes the wrapper helper laws).
         subject_split_rung,
     ]);
