@@ -1,0 +1,30 @@
+module EquationComposition
+    intent =
+        "Finite observations of recursive outputs follow from earlier laws and"
+        "the function equations. The writer uses base seven."
+    effects []
+
+fn digits(value: Int, acc: List<Int>) -> List<Int>
+    match value > 0
+        true -> digits(Int.div(value, 7), List.prepend(Int.mod(value, 7), acc))
+        false -> List.reverse(acc)
+
+verify digits
+    digits(49, []) => [0, 0, 1]
+
+verify digits law accumulatorPrefix
+    given value: Int = [-1, 0, 1, 7, 49]
+    given acc: List<Int> = [[], [2], [-3, 9]]
+    digits(value, acc) => List.concat(List.reverse(acc), digits(value, []))
+
+verify digits law dropOne
+    given value: Int = [-7, 0, 1, 6, 7, 49, 343]
+    List.drop(digits(value, []), 1) => digits(Int.div(value, 7), [])
+
+verify digits law leadingNonzero
+    given value: Int = [-7, 0, 1, 6, 7, 49, 343]
+    List.contains(List.take(List.reverse(digits(value, [])), 1), 0) => false
+
+verify digits law falseDropMustStayOpen
+    given value: Int = [-7, 0, 1, 2, 6]
+    List.drop(digits(value, []), 1) => digits(Int.div(value, 49), [])

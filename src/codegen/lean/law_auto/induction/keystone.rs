@@ -229,70 +229,67 @@ pub(in crate::codegen::lean) fn recognize_pool_composition_generic(
 /// not rest on this stability anyway: if a cited law's own proof carries `sorry`,
 /// the citing theorem inherits `sorryAx` and the `--check` whitelist refuses it
 /// credit (see the `pinned_when_universal` note in `law_as_lemma_statement`).
-fn keystone_pool_names(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContext) -> Vec<String> {
+struct KeystoneLaw {
+    name: String,
+    subject: String,
+    self_registering: bool,
+}
+
+/// Share citation discovery across pool consumers, using the full call cone
+/// including earlier laws about
+/// the current subject. The subject is omitted from `LawProofCone` because
+/// that API serves unfolding; citation has no reason to omit it.
+fn keystone_pool(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContext) -> Vec<KeystoneLaw> {
     use crate::ast::VerifyKind;
-    let inputs = crate::codegen::proof_lower::ProofLowerInputs::from_ctx(ctx);
-    let cone = crate::codegen::proof_lower::LawProofCone::compute(law, &vb.fn_name, &inputs);
-    let cone_fns: std::collections::HashSet<String> =
-        cone.pure_fns().iter().map(|fd| fd.name.clone()).collect();
+    use crate::ir::{FloorWindowFigure, ProofStrategy};
+    let cone = super::super::shared::law_simp_source_names(ctx, vb, law);
     let mut out = Vec::new();
     for prev in enclosing_verify_blocks(vb, ctx) {
-        // Only blocks EARLIER in source — source order is emit order, so the
-        // cited theorem precedes this one and cyclic use is impossible.
         if prev.line == vb.line && prev.fn_name == vb.fn_name {
             break;
         }
         let VerifyKind::Law(prev_law) = &prev.kind else {
             continue;
         };
-        if !cone_fns.contains(&prev.fn_name) {
+        if !cone.contains(&prev.fn_name) {
             continue;
         }
-        if let Some((name, _stmt)) =
+        let Some((name, _)) =
             crate::codegen::lean::toplevel::law_as_lemma_statement(prev, prev_law, ctx)
-        {
-            out.push(name);
-        }
+        else {
+            continue;
+        };
+        out.push(KeystoneLaw {
+            name,
+            subject: aver_name_to_lean(&prev.fn_name),
+            self_registering: matches!(
+                super::super::law_strategy_for(ctx, &prev.fn_name, &prev_law.name),
+                Some(ProofStrategy::FloorDivWindow {
+                    figure: FloorWindowFigure::FloorPow2Cancel { .. }
+                })
+            ),
+        });
     }
     out
 }
 
-/// The SUBJECT fns (Lean names) of the keystone's cited equational pool —
-/// the fn each cited pool law is a rewrite ABOUT. Mirrors
-/// [`keystone_pool_names`] one-for-one but returns the subject fn instead
-/// of the lemma name. The keystone keeps these fns FOLDED (out of its
-/// `simp only` cone unfold) so the cited rewrite can e-match the goal term:
-/// the floorDiv exact-cancel `floor(s·pow(b), pow(a)) = s·pow(b−a)` can only
-/// fire while `floorDiv` is still abstract, exactly as the `pow2`
-/// homomorphism needs `pow2` abstract (recursive fns are folded for the same
-/// reason). Shape-keyed and name-blind — driven by which laws are cited, not
-/// by any hard-coded fn name.
+fn keystone_pool_names(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContext) -> Vec<String> {
+    keystone_pool(vb, law, ctx)
+        .into_iter()
+        .map(|law| law.name)
+        .collect()
+}
+
+/// Keep each cited law's subject folded so the law can still match its call.
 fn keystone_pool_subject_fns(
     vb: &VerifyBlock,
     law: &VerifyLaw,
     ctx: &CodegenContext,
 ) -> Vec<String> {
-    use crate::ast::VerifyKind;
-    let inputs = crate::codegen::proof_lower::ProofLowerInputs::from_ctx(ctx);
-    let cone = crate::codegen::proof_lower::LawProofCone::compute(law, &vb.fn_name, &inputs);
-    let cone_fns: std::collections::HashSet<String> =
-        cone.pure_fns().iter().map(|fd| fd.name.clone()).collect();
-    let mut out = Vec::new();
-    for prev in enclosing_verify_blocks(vb, ctx) {
-        if prev.line == vb.line && prev.fn_name == vb.fn_name {
-            break;
-        }
-        let VerifyKind::Law(prev_law) = &prev.kind else {
-            continue;
-        };
-        if !cone_fns.contains(&prev.fn_name) {
-            continue;
-        }
-        if crate::codegen::lean::toplevel::law_as_lemma_statement(prev, prev_law, ctx).is_some() {
-            out.push(aver_name_to_lean(&prev.fn_name));
-        }
-    }
-    out
+    keystone_pool(vb, law, ctx)
+        .into_iter()
+        .map(|law| law.subject)
+        .collect()
 }
 
 /// Earlier-sibling FINITE bounded-Int-domain laws (`∀ idx, LO ≤ idx → idx < HI
@@ -421,38 +418,11 @@ fn keystone_self_registering_pool_names(
     law: &VerifyLaw,
     ctx: &CodegenContext,
 ) -> std::collections::HashSet<String> {
-    use crate::ast::VerifyKind;
-    use crate::ir::{FloorWindowFigure, ProofStrategy};
-    let inputs = crate::codegen::proof_lower::ProofLowerInputs::from_ctx(ctx);
-    let cone = crate::codegen::proof_lower::LawProofCone::compute(law, &vb.fn_name, &inputs);
-    let cone_fns: std::collections::HashSet<String> =
-        cone.pure_fns().iter().map(|fd| fd.name.clone()).collect();
-    let mut out = std::collections::HashSet::new();
-    for prev in enclosing_verify_blocks(vb, ctx) {
-        if prev.line == vb.line && prev.fn_name == vb.fn_name {
-            break;
-        }
-        let VerifyKind::Law(prev_law) = &prev.kind else {
-            continue;
-        };
-        if !cone_fns.contains(&prev.fn_name) {
-            continue;
-        }
-        if !matches!(
-            super::super::law_strategy_for(ctx, &prev.fn_name, &prev_law.name),
-            Some(ProofStrategy::FloorDivWindow {
-                figure: FloorWindowFigure::FloorPow2Cancel { .. }
-            })
-        ) {
-            continue;
-        }
-        if let Some((name, _stmt)) =
-            crate::codegen::lean::toplevel::law_as_lemma_statement(prev, prev_law, ctx)
-        {
-            out.insert(name);
-        }
-    }
-    out
+    keystone_pool(vb, law, ctx)
+        .into_iter()
+        .filter(|law| law.self_registering)
+        .map(|law| law.name)
+        .collect()
 }
 
 /// The power-of-two function the keystone's cited pool reasons about, if any:
@@ -1263,13 +1233,13 @@ fn keystone_order_bridge_citations(
 /// `simp only [<cone defs, recursive fns folded>, bridges] <;> grind [<pool>]`.
 /// Reached after the portfolio's existing alternatives, so a pool that
 /// does not compose still falls to the `sorry` the theorem had anyway.
-pub(in crate::codegen::lean) fn keystone_floor_arm(
+pub(in crate::codegen::lean) fn keystone_floor_arms(
     vb: &VerifyBlock,
     law: &VerifyLaw,
     ctx: &CodegenContext,
-) -> Option<String> {
+) -> Vec<String> {
     if law.when.is_some() || !matches!(&law.lhs.node, crate::ast::Expr::FnCall(..)) {
-        return None;
+        return Vec::new();
     }
     let self_registering = keystone_self_registering_pool_names(vb, law, ctx);
     let pool_names: Vec<String> = keystone_pool_names(vb, law, ctx)
@@ -1277,7 +1247,7 @@ pub(in crate::codegen::lean) fn keystone_floor_arm(
         .filter(|n| !self_registering.contains(n))
         .collect();
     if pool_names.is_empty() {
-        return None;
+        return Vec::new();
     }
     let mut abstract_fns: std::collections::HashSet<String> =
         super::super::recursive_pure_fn_names(ctx)
@@ -1294,11 +1264,45 @@ pub(in crate::codegen::lean) fn keystone_floor_arm(
     let mut simp_set = defs;
     simp_set.push("Bool.and_eq_true".to_string());
     simp_set.push("decide_eq_true_eq".to_string());
-    Some(format!(
+    let composed = format!(
         "((try simp only [{}]) <;> grind [{}])",
         simp_set.join(", "),
         pool_names.join(", ")
-    ))
+    );
+    let mut arms = vec![composed];
+    arms.extend(equation_grind_arm(vb, law, ctx));
+    arms
+}
+
+/// E-matching uses Lean's bounded term generations, so recursive equations
+/// may be offered here without the unbounded rewriting of `simp [f]`.
+/// Shared by ordinary composition and the fuel induction's residual closer.
+pub(in crate::codegen::lean) fn equation_grind_arm(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+) -> Option<String> {
+    let wf = super::super::shared::wf_countdown_fn_names(ctx);
+    let cone = super::super::shared::law_simp_source_names(ctx, vb, law);
+    if !cone.iter().any(|name| wf.contains(name)) {
+        return None;
+    }
+    let recursive = super::super::recursive_pure_fn_names(ctx);
+    let mut hints = cone
+        .iter()
+        .filter(|name| !recursive.contains(*name) || wf.contains(*name))
+        .map(|name| super::super::shared::simp_def_name(ctx, name))
+        .collect::<Vec<_>>();
+    hints.extend(
+        keystone_pool(vb, law, ctx)
+            .into_iter()
+            .filter(|law| !law.self_registering)
+            .map(|law| law.name),
+    );
+    // Expose finite list observations as equations, keeping their arguments
+    // symbolic. The standard list lemmas handle append/reverse/contains.
+    hints.push("List.take".to_string());
+    Some(format!("grind [{}]", hints.join(", ")))
 }
 
 /// Emit the keystone proof: `intro <givens> h_when; first | (simp only [<cone>,

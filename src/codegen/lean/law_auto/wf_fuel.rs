@@ -576,9 +576,13 @@ pub(in crate::codegen::lean) fn emit_wf_fuel_induction_law(
     // enclosing `first | (have key …) | sorry` never sees a failure to fall
     // through on. With `sorry` last, a non-closing arm degrades to `sorryAx`
     // (no credit, no build error); the middle alternatives fail cleanly.
-    let closer = format!(
-        "first | (split <;> {simp_all} <;> omega) | ({simp_all} <;> omega) | (split <;> {simp_all} <;> done) | sorry"
+    let equations = super::induction::equation_grind_arm(vb, law, ctx)
+        .map(|arm| format!(" | ({arm})"))
+        .unwrap_or_default();
+    let basic_closers = format!(
+        "first | (split <;> {simp_all} <;> omega) | ({simp_all} <;> omega) | (split <;> {simp_all} <;> done)"
     );
+    let closer = format!("{basic_closers}{equations} | sorry");
     // The BOTTOM rung of a ladder has no rung below it to cite, and its own IH
     // is one step too weak: proving `len(f(v)) <= 1` from `v < 256` leaves
     // `len(f(v / 256)) + 1 <= 1` against `ih1 : len(f(v / 256)) <= 1`. What
@@ -589,7 +593,7 @@ pub(in crate::codegen::lean) fn emit_wf_fuel_induction_law(
     // keeps the proof it had — and `unfold` is a single pass, not the looping
     // `simp [f]` the strategy exists to avoid. `sorry` stays the floor.
     let deep_closer = format!(
-        "first | (split <;> {simp_all} <;> omega) | ({simp_all} <;> omega) | (split <;> {simp_all} <;> done) | ((unfold {}; repeat' split) <;> {simp_all} <;> omega) | sorry",
+        "{basic_closers} | ((unfold {}; repeat' split) <;> {simp_all} <;> omega){equations} | sorry",
         plan.f_lean
     );
     let mut arm_intro = givens.clone();

@@ -34,6 +34,8 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Fixed
 
+- **Finite observations of countdown output can compose the writer's equations with its earlier laws.** The shared citation pool now includes earlier laws about the current subject. A bounded `grind` step serves both composition and the residual goals of fuel induction, proving digit removal and a nonzero leading digit for a base-seven writer. Failed claims retain their `sorry` and receive no universal credit.
+
 - **Conditional list-layout proofs decide Boolean parameters before simplifying the reader.** The shared arithmetic step now keeps comparison normalization separate from default simplification, preventing opposing negation rewrites from looping. A layout law with an arbitrary positive marker threshold now certifies universally.
 
 - **Wrapper laws can now compose the earlier laws of their callees after prelude simplification fails.** The existing composition attempt now belongs to the shared proof portfolio, so choosing the prelude strategy no longer hides it. Earlier attempts keep their priority, and an unsuccessful composition leaves the law open.

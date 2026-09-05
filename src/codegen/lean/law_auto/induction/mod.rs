@@ -23,7 +23,8 @@ mod keystone;
 mod multicite;
 
 pub(in crate::codegen::lean) use keystone::{
-    emit_pool_composition_generic_law, keystone_floor_arm, recognize_pool_composition_generic,
+    emit_pool_composition_generic_law, equation_grind_arm, keystone_floor_arms,
+    recognize_pool_composition_generic,
 };
 pub(in crate::codegen::lean) use multicite::{
     emit_multicite_composition_law, recognize_multicite_composition,

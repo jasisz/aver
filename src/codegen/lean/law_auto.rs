@@ -382,11 +382,12 @@ pub fn emit_verify_law_forall_auto_proof(
             .render()
             .iter()
             .any(|line| line.contains("grind"))
-        && let Some(arm) = induction::keystone_floor_arm(vb, law, ctx)
     {
-        proof
-            .body
-            .insert_before_sorry(super::tactic_ir::Tactic::Leaf(arm));
+        for arm in induction::keystone_floor_arms(vb, law, ctx) {
+            proof
+                .body
+                .insert_before_sorry(super::tactic_ir::Tactic::Leaf(arm));
+        }
     }
     Some(proof)
 }
