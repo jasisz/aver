@@ -2,6 +2,13 @@ use crate::ast::{Expr, Spanned, TailCallData, TopLevel, VerifyBlock, VerifyKind}
 
 use super::callee_is_target;
 
+pub fn verify_block_label(block: &VerifyBlock) -> String {
+    match &block.kind {
+        VerifyKind::Law(law) => format!("{} law {}", block.fn_name, law.name),
+        VerifyKind::Cases => block.fn_name.clone(),
+    }
+}
+
 pub(super) fn collect_target_call_args<'a>(
     expr: &'a Spanned<Expr>,
     fn_name: &str,
@@ -170,6 +177,7 @@ pub fn merge_verify_blocks(items: &[TopLevel]) -> Vec<VerifyBlock> {
                 }
             }
             VerifyKind::Law(_) => {
+                merged.extend(crate::verify_law::reasons::sample_blocks(vb));
                 merged.push(vb.clone());
             }
         }

@@ -154,6 +154,35 @@ verify fib law fibSpec
     fib(n) => fibSpec(n)
 ```
 
+## Law explanations in Aver
+
+Automatic proof remains the default. If it cannot assemble an argument, a law can supply ordinary pure Boolean expressions with `because` and select lemmas with `using`:
+
+```aver
+fn selectionReason(value: Int) -> Bool
+    match choose(value)
+        Option.None -> value <= 0
+        Option.Some(found) -> Bool.and(found == value, found > 0)
+
+verify amount law selectionIsClamped
+    given value: Int = [-3, 0, 1, 7]
+    because selectionReason(value)
+    using []
+    amount(choose(value)) => Int.max(value, 0)
+```
+
+The complete executable example is [law_reasons.av](../tests/fixtures/law_reasons.av); [law_reasons_digits.av](../tests/fixtures/law_reasons_digits.av) composes four helper laws to prove minimality of a base-seven digit representation. Reason functions use normal Aver semantics and remain normal functions, including the usual `check` guidance. There is no separate assertion meaning for Boolean local bindings.
+
+Multiple `because` lines are ordered steps. With original guard `H`, reasons `R1 … Rn`, and claim `P`, the backend proves `H → R1`, then each `H ∧ R1 ∧ … ∧ R(i-1) → Ri`, and finally `H ∧ R1 ∧ … ∧ Rn → P`. Without `when`, `H` is true. The exported original theorem still states `H → P`, and its audited dependency chain includes every explanation. An easy original claim cannot hide a failed reason.
+
+The backend uses nonrecursive reason functions' case structure to preserve branch equations, and decomposes Boolean conjunctions into sequential goals: the right-hand fact can use the left-hand fact. It then applies the available lemmas and ordinary automation. `because true` leaves the work in the final implication; `because false` fails the first obligation; restating the claim as its own reason leaves the work in that reason. All three are legal and none bypasses proof checking.
+
+`using [function.law, Module.function.law]` selects a set of lemma names. Order within the list is immaterial. Omitting `using` keeps automatic selection; `using []` selects none. Local forward references are allowed, imported laws must be exposed by their subject's module, and unknown names or dependency cycles are errors. Explicit citations retain theorem scope and the usual transitive axiom audit: samples and `sorry`-tainted theorems cannot grant universal credit.
+
+`aver verify` and `aver verify --hostile` execute every reason under the original guard, using the same sample expansion as the claim. These checks do not require Lean. `aver proof --check-json` and `proof_manifest.json` additionally report separate `obligations`, identified by `<function>.<law>.because1`, `.because2`, and `.implication`. Obligations do not inflate `universal_laws`. `--explain` includes residual goals for failed explanation obligations when the solver provides them; an implication may be universal while its reason and the original law remain failed.
+
+This first implementation uses universal explanation obligations. A stage the backend cannot prove remains failed; it does not silently substitute sampled evidence. Recursive reason functions do not yet specify an induction plan. Dafny export explicitly declines annotated laws because that backend does not yet implement their obligations. The syntax is provisional; [#1288](https://github.com/jasisz/aver/issues/1288) tracks the mechanism and acceptance checks.
+
 ## Specs over invariants
 
 This is the intended proof style in Aver:

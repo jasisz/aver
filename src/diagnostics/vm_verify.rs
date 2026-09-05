@@ -2120,10 +2120,7 @@ fn empty_verify_result(
     raised_by: Option<&str>,
 ) -> VerifyResult {
     let block = &plan.block;
-    let block_label = match &block.kind {
-        VerifyKind::Law(law) => format!("{} law {}", block.fn_name, law.name),
-        VerifyKind::Cases => block.fn_name.clone(),
-    };
+    let block_label = crate::checker::verify_block_label(block);
     VerifyResult {
         fn_name: block.fn_name.clone(),
         is_law: matches!(&block.kind, VerifyKind::Law(_)),
@@ -2660,10 +2657,7 @@ fn run_verify_vm(
         }
     }
 
-    let block_label = match &block.kind {
-        VerifyKind::Law(law) => format!("{} law {}", block.fn_name, law.name),
-        VerifyKind::Cases => block.fn_name.clone(),
-    };
+    let block_label = crate::checker::verify_block_label(block);
     machine.set_plain_verify_fn(None);
     VerifyResult {
         fn_name: block.fn_name.clone(),
@@ -2714,6 +2708,8 @@ mod tests {
                 when: None,
                 lhs: Spanned::bare(Expr::Literal(Literal::Unit)),
                 rhs: Spanned::bare(Expr::Literal(Literal::Unit)),
+                because: Vec::new(),
+                using: None,
                 sample_guards: vec![],
             })),
             trace: true,
@@ -2759,6 +2755,8 @@ mod tests {
                 when: None,
                 lhs: Spanned::bare(Expr::Literal(Literal::Unit)),
                 rhs: Spanned::bare(Expr::Literal(Literal::Unit)),
+                because: Vec::new(),
+                using: None,
                 sample_guards: vec![],
             })),
             trace: true,
@@ -2800,6 +2798,8 @@ mod tests {
                 when: None,
                 lhs: Spanned::bare(Expr::Literal(Literal::Unit)),
                 rhs: Spanned::bare(Expr::Literal(Literal::Unit)),
+                because: Vec::new(),
+                using: None,
                 sample_guards: vec![],
             })),
             trace: false, // no trace, still law → still gets effect-side
@@ -2832,6 +2832,8 @@ mod tests {
                 when: None,
                 lhs: Spanned::bare(Expr::Literal(Literal::Unit)),
                 rhs: Spanned::bare(Expr::Literal(Literal::Unit)),
+                because: Vec::new(),
+                using: None,
                 sample_guards: vec![],
             })),
             trace: true,
@@ -2860,6 +2862,8 @@ mod tests {
                 when: None,
                 lhs: Spanned::bare(Expr::Literal(Literal::Unit)),
                 rhs: Spanned::bare(Expr::Literal(Literal::Unit)),
+                because: Vec::new(),
+                using: None,
                 sample_guards: vec![],
             })),
             trace: true,
@@ -3077,6 +3081,8 @@ verify currentYear trace
                     when: None,
                     lhs: Spanned::bare(Expr::Literal(Literal::Unit)),
                     rhs: Spanned::bare(Expr::Literal(Literal::Unit)),
+                    because: Vec::new(),
+                    using: None,
                     sample_guards: vec![],
                 })),
                 trace: true,
@@ -3162,6 +3168,8 @@ verify currentYear trace
                 when: None,
                 lhs: Spanned::bare(Expr::Literal(Literal::Unit)),
                 rhs: Spanned::bare(Expr::Literal(Literal::Unit)),
+                because: Vec::new(),
+                using: None,
                 sample_guards: vec![],
             })),
             trace: false,

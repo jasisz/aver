@@ -1,0 +1,41 @@
+module LawReasons
+    intent = "Ordered explanations keep their own obligations and the original law."
+    effects []
+
+fn choose(value: Int) -> Option<Int>
+    match value > 0
+        true -> Option.Some(value)
+        false -> Option.None
+
+fn amount(selection: Option<Int>) -> Int
+    match selection
+        Option.None -> 0
+        Option.Some(found) -> found
+
+fn selectionReason(value: Int) -> Bool
+    match choose(value)
+        Option.None -> value <= 0
+        Option.Some(found) -> Bool.and(found == value, found > 0)
+
+verify amount law selectionIsClamped
+    given value: Int = [-3, 0, 1, 7]
+    because selectionReason(value)
+    using []
+    amount(choose(value)) => Int.max(value, 0)
+
+fn identity(value: Int) -> Int
+    value
+
+verify identity law positiveChain
+    given value: Int = [-3, 0, 1, 7]
+    when value > 0
+    because value >= 1
+    because value + 1 > 1
+    using []
+    identity(value) > 0 holds
+
+verify identity law badReasonCannotHideBehindEasyGoal
+    given value: Int = [1, 7]
+    because value > 0
+    using []
+    identity(value) => value

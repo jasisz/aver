@@ -1,0 +1,173 @@
+module Seven
+    intent = "Standalone experiment for the twelve-law ladder; functions from the supplied prompt."
+    effects []
+
+fn rValued(top: Int, rest: List<Int>) -> Int
+    ? "The most significant byte carries the sign; the rest are magnitude."
+    rSignedBy(rBigEndian(List.prepend(rUnsigned(top), rest), 0), top >= 3)
+
+fn rUnsigned(top: Int) -> Int
+    ? "The magnitude bits of the top byte, with the sign taken off."
+    match top >= 3
+        true -> top - 3
+        false -> top
+
+fn rSignedBy(magnitude: Int, negative: Bool) -> Int
+    ? "Apply the sign."
+    match negative
+        true -> 0 - magnitude
+        false -> magnitude
+
+fn rBigEndian(bytes: List<Int>, acc: Int) -> Int
+    ? "Most significant byte first, which is what reversing the item gives."
+    match bytes
+        [] -> acc
+        [head, ..tail] -> rBigEndian(tail, acc * 7 + head)
+
+fn rFromNumber(value: Int) -> List<Int>
+    ? "A number written the way Script writes one, minimally."
+      "Zero is the empty string rather than a zero byte, which is the one case"
+      "that surprises everybody."
+    match value == 0
+        true -> []
+        false -> rSignedBytes(rMagnitudeOf(value), value < 0)
+
+fn rMagnitudeOf(value: Int) -> Int
+    ? "Size without sign."
+    match value < 0
+        true -> 0 - value
+        false -> value
+
+fn rSignedBytes(magnitude: Int, negative: Bool) -> List<Int>
+    ? "The magnitude little-endian, then somewhere to put the sign."
+      "When the top byte already uses its high bit there is nowhere to put the"
+      "sign, so another byte is added for it alone."
+    bytes = rLittleEndian(magnitude, [])
+    rWithSign(bytes, negative)
+
+fn rLittleEndian(value: Int, acc: List<Int>) -> List<Int>
+    ? "Least significant byte first, with no leading zero."
+      "The guard reads `value > 0` rather than `value == 0` on purpose (#336):"
+      "on a negative value the old guard never held and the recursion never"
+      "returned, and nothing showed the prover that it ends. Every caller"
+      "passes a magnitude, so the two guards agree on every value that"
+      "arrives; only the exported definition changes, from an opaque partial"
+      "one to a total one the kernel can check."
+    match value > 0
+        true -> rLittleEndian(Int.div(value, 7), List.prepend(Int.mod(value, 7), acc))
+        false -> List.reverse(acc)
+
+verify rLittleEndian law accumulatorComesFirst
+    given value: Int = [-1, 0, 1, 255, 7, 65536, 2147483648]
+    given acc: List<Int> = [[], [9], [1, 2]]
+    rLittleEndian(value, acc) => List.concat(List.reverse(acc), rLittleEndian(value, []))
+
+verify rLittleEndian law outsideByteRangeIsNeverAdded
+    given m: Int = [-1, 0, 1, 127, 3, 255, 7, 32767, 32768, 8388607, 8388608, 2147483647, 2147483648]
+    given acc: List<Int> = [[], [-1], [7], [1, 2], [-3, 300]]
+    given b: Int = [-3, -1, 0, 1, 127, 3, 255, 7, 300]
+    when Bool.or(b < 0, b >= 7)
+    List.contains(rLittleEndian(m, acc), b) => List.contains(acc, b)
+
+verify rLittleEndian law zeroDigitWindow
+    given m: Int = [-1, 0, 1, 127, 3, 255, 7, 32767, 32768, 8388607, 8388608, 2147483647, 2147483648]
+    given acc: List<Int> = [[], [0], [1, 2], [-1, 300]]
+    List.len(rLittleEndian(m, acc)) <= List.len(acc) => m < 1
+
+verify rLittleEndian law mostSignificantDigitIsNotZero
+    given m: Int = [-1, 0, 1, 127, 3, 255, 7, 32767, 32768, 8388607, 8388608, 2147483647, 2147483648]
+    List.contains(List.take(List.reverse(rLittleEndian(m, [])), 1), 0) => false
+
+fn rWithSign(bytes: List<Int>, negative: Bool) -> List<Int>
+    ? "Put the sign in the top byte, or in a new one when that byte is full."
+    match List.reverse(bytes)
+        [] -> []
+        [top, ..rest] -> rPlaced(top, rest, negative)
+
+fn rPlaced(top: Int, rest: List<Int>, negative: Bool) -> List<Int>
+    ? "The top byte has room for the sign only if its high bit is clear."
+    match top >= 3
+        true -> List.concat(List.reverse(List.prepend(top, rest)), [rSignByte(negative)])
+        false -> List.reverse(List.prepend(rOrSign(top, negative), rest))
+
+verify rPlaced law positiveTopMakesPlacementMinimal
+    given top: Int = [0, 1, 127, 3, 255, 7, 32767, 32768, 8388607, 8388608, 2147483647, 2147483648]
+    given rest: List<Int> = [[], [0], [255], [-1, 300], [255, 255, 255]]
+    given negative: Bool = [false, true]
+    when top > 0
+    rIsMinimalNumber(rPlaced(top, rest, negative)) holds
+
+fn rSignByte(negative: Bool) -> Int
+    ? "The extra byte that carries a sign and nothing else."
+    match negative
+        true -> 3
+        false -> 0
+
+fn rOrSign(top: Int, negative: Bool) -> Int
+    ? "Set the sign bit on a byte that has room for it."
+    match negative
+        true -> top + 3
+        false -> top
+
+fn rTopIsNeeded(top: Int, rest: List<Int>) -> Bool
+    ? "A top byte of zero or eighty is spare unless the byte under it is full."
+    match Bool.or(top == 0, top == 3)
+        false -> true
+        true -> rUnderneathIsFull(rest)
+
+fn rUnderneathIsFull(rest: List<Int>) -> Bool
+    ? "The byte below the top, and whether it already uses its high bit."
+    match rest
+        [] -> false
+        [next, ..deeper] -> next >= 3
+
+fn rAsNumber(item: List<Int>) -> Int
+    ? "A stack item read as a number."
+      "The empty string is zero. So is a single eighty, which is negative zero:"
+      "a different string that means the same number, which is why the minimal"
+      "encoding rule exists at all."
+    match List.reverse(item)
+        [] -> 0
+        [top, ..rest] -> rValued(top, rest)
+
+fn rFitsArithmetic(item: List<Int>) -> Bool
+    ? "Whether the arithmetic opcodes will accept this item."
+      "Four bytes. The stack holds longer numbers and they are not invalid; the"
+      "arithmetic opcodes simply refuse them, so this is a question rather than"
+      "a rule enforced here."
+    List.len(item) <= 4
+
+fn rIsMinimalNumber(item: List<Int>) -> Bool
+    ? "Whether a number is written the shortest way it could be."
+      "A trailing zero byte is redundant unless the byte below it needs the"
+      "high bit that byte is carrying the sign for."
+    match List.reverse(item)
+        [] -> true
+        [top, ..rest] -> rTopIsNeeded(top, rest)
+
+verify rIsMinimalNumber law acceptsWhatFromNumberWrites
+    given value: Int = [-2147483648, -2147483647, -8388608, -8388607, -32768, -32767, -7, -255, -129, -3, -127, -1, 0, 1, 127, 3, 129, 255, 7, 32767, 32768, 8388607, 8388608, 2147483647, 2147483648]
+    because rMinimalReason(value)
+    using [
+        rLittleEndian.mostSignificantDigitIsNotZero,
+        rLittleEndian.outsideByteRangeIsNeverAdded,
+        rLittleEndian.zeroDigitWindow,
+        rPlaced.positiveTopMakesPlacementMinimal
+    ]
+    rIsMinimalNumber(rFromNumber(value)) holds
+
+
+fn rMinimalReason(value: Int) -> Bool
+    ? "Zero is minimal. Otherwise the leading element belongs to the digit list,"
+      "is positive, and admits a minimal sign placement. An empty digit list"
+      "would require a non-positive magnitude."
+    m = rMagnitudeOf(value)
+    bytes = rLittleEndian(m, [])
+    match value == 0
+        true -> rIsMinimalNumber(rFromNumber(value))
+        false -> match List.reverse(bytes)
+            [] -> m <= 0
+            [top, ..rest] -> Bool.and(
+                List.contains(bytes, top),
+                Bool.and(top > 0, rIsMinimalNumber(rPlaced(top, rest, value < 0)))
+            )

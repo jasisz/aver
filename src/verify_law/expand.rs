@@ -209,6 +209,8 @@ mod tests {
             when: None,
             lhs: Spanned::bare(Expr::Ident(name.to_string())),
             rhs: Spanned::bare(Expr::Ident(name.to_string())),
+            because: Vec::new(),
+            using: None,
             sample_guards: vec![],
         }
     }
@@ -268,6 +270,8 @@ mod tests {
             when: None,
             lhs: Spanned::bare(Expr::Ident("x".to_string())),
             rhs: Spanned::bare(Expr::Ident("y".to_string())),
+            because: Vec::new(),
+            using: None,
             sample_guards: vec![],
         };
         let declared = expand_law_cases(&law, ExpansionMode::Declared);

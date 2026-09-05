@@ -507,7 +507,14 @@ pub fn verify_mismatch_diagnostic(
         };
         fields.push(("origin", origin_label));
     }
-    let repair = if from_hostile {
+    let explanation = block_name
+        .rsplit_once(".because")
+        .is_some_and(|(_, index)| !index.is_empty() && index.bytes().all(|b| b.is_ascii_digit()));
+    let repair = if explanation {
+        Repair::primary(
+            "this `because` expression is false for the shown input. Correct the explanation under the law's existing `when`; an explanation is an obligation, not an additional precondition.",
+        )
+    } else if from_hostile {
         if hostile_profile
             .map(|p| p.contains("reverse-eval"))
             .unwrap_or(false)

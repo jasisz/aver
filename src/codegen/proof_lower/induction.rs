@@ -148,6 +148,9 @@ impl<'a> LawProofCone<'a> {
         let mut raw: BTreeSet<String> = BTreeSet::new();
         collect_fn_calls_expr(&law.lhs, &mut raw);
         collect_fn_calls_expr(&law.rhs, &mut raw);
+        for reason in &law.because {
+            collect_fn_calls_expr(reason, &mut raw);
+        }
         if let Some(when_expr) = &law.when {
             collect_fn_calls_expr(when_expr, &mut raw);
         }

@@ -391,24 +391,70 @@ impl Parser {
                     });
                 }
 
-                // Oracle v1: local bindings in law form — symmetric
-                // with trace-form. `expected = rnd(root(), 0, 1, 6) + ...`
-                // between givens and the single `lhs => rhs` assertion.
-                // Substituted into lhs / rhs before case expansion so
-                // downstream (auto-proof matcher, emit) doesn't see
-                // the binding at all — it's a textual shortcut.
+                let mut because = Vec::new();
+                let mut using = None;
+                // Law locals remain ordinary expression shortcuts. Resolve
+                // them as they are declared, including in subsequent reasons.
                 let mut law_locals: Vec<(String, Spanned<Expr>)> = Vec::new();
-                while let TokenKind::Ident(_) = &self.current().kind {
-                    if !self.looks_like_binding() {
-                        break;
+                while self.looks_like_binding()
+                    || self.current_ident_is("because")
+                    || self.current_ident_is("using")
+                {
+                    if self.looks_like_binding() {
+                        let name = self.expect_user_identifier(
+                            "Expected binding name",
+                            "law-local binding names",
+                        )?;
+                        self.expect_exact(&TokenKind::Assign)?;
+                        let mut value = self.parse_expr()?;
+                        for (local, replacement) in &law_locals {
+                            substitute_ident(&mut value, local, replacement);
+                        }
+                        law_locals.push((name, value));
+                    } else if self.current_ident_is("because") {
+                        self.advance();
+                        let mut reason = self.parse_expr()?;
+                        for (name, value) in &law_locals {
+                            substitute_ident(&mut reason, name, value);
+                        }
+                        because.push(reason);
+                    } else {
+                        self.advance();
+                        if using.is_some() {
+                            return Err(
+                                self.error("A law may have only one 'using' list".to_string())
+                            );
+                        }
+                        self.expect_exact(&TokenKind::LBracket)?;
+                        self.skip_formatting();
+                        let mut names = Vec::new();
+                        while !self.check_exact(&TokenKind::RBracket) {
+                            let mut name = self
+                                .expect_user_identifier("Expected law name", "law dependencies")?;
+                            while self.check_exact(&TokenKind::Dot) {
+                                self.advance();
+                                name.push('.');
+                                name.push_str(&self.expect_user_identifier(
+                                    "Expected law name after '.'",
+                                    "law dependencies",
+                                )?);
+                            }
+                            if !name.contains('.') || names.contains(&name) {
+                                return Err(self.error(
+                                    "'using' requires distinct function.law names".to_string(),
+                                ));
+                            }
+                            names.push(name);
+                            self.skip_formatting();
+                            if !self.check_exact(&TokenKind::Comma) {
+                                break;
+                            }
+                            self.advance();
+                            self.skip_formatting();
+                        }
+                        self.expect_exact(&TokenKind::RBracket)?;
+                        using = Some(names);
                     }
-                    let name = self.expect_user_identifier(
-                        "Expected binding name",
-                        "law-local binding names",
-                    )?;
-                    self.expect_exact(&TokenKind::Assign)?;
-                    let expr = self.parse_expr()?;
-                    law_locals.push((name, expr));
                     self.skip_newlines();
                 }
 
@@ -463,6 +509,8 @@ impl Parser {
                     name: law_name,
                     givens,
                     when,
+                    because,
+                    using,
                     lhs: left,
                     rhs: right,
                     sample_guards,
