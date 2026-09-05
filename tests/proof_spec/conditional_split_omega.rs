@@ -60,8 +60,32 @@ fn proof_conditional_split_closer_lean_closes_universally() {
         "the law must be classed universal:\n{lean}"
     );
     assert!(
-        lean.contains("(simp only [placed] <;> (repeat' split) <;> simp_all ["),
+        lean.contains("(cases negative <;> simp only [placed, Bool.false_eq_true"),
         "both induction arms must carry the subject-first split closer:\n{lean}"
+    );
+    let _ = std::fs::remove_dir_all(&output_dir);
+}
+
+/// Neither the marker's threshold nor the sign flag is fixed by its samples.
+/// The old combined rewrite set looped on the reader's Boolean condition.
+#[test]
+fn proof_conditional_layout_with_arbitrary_threshold_closes() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        return;
+    }
+    let output_dir = temp_output_dir("aver-proof-conditional-layout");
+    let (summary, run) =
+        run_lean_check_json("tests/fixtures/conditional_layout.av", &output_dir, 0, &[]);
+    assert_eq!(
+        (
+            summary["build_errors"].as_u64(),
+            summary["universal_laws"].as_u64(),
+            summary["bounded_laws"].as_u64(),
+            summary["sorries"].as_u64(),
+        ),
+        (Some(0), Some(1), Some(0), Some(0)),
+        "the layout law must prove beyond its sampled thresholds:\n{}",
+        format_output(&run)
     );
     let _ = std::fs::remove_dir_all(&output_dir);
 }
