@@ -1258,12 +1258,10 @@ fn keystone_order_bridge_citations(
     out
 }
 
-/// The keystone `grind` arm as a FLOOR: for an unconditional law that no
-/// dedicated rung closed and whose generic fallback is the honest `sorry`
-/// (a cone reaching a well-founded countdown fn drops the blind simp arm),
+/// The keystone `grind` arm as a FLOOR of an unconditional law's portfolio:
 /// compose the earlier laws about its cone fns exactly as the keystone does —
 /// `simp only [<cone defs, recursive fns folded>, bridges] <;> grind [<pool>]`.
-/// Reached only from that fallback, so it can never shadow a rung; a pool that
+/// Reached after the portfolio's existing alternatives, so a pool that
 /// does not compose still falls to the `sorry` the theorem had anyway.
 pub(in crate::codegen::lean) fn keystone_floor_arm(
     vb: &VerifyBlock,

@@ -370,7 +370,25 @@ pub fn emit_verify_law_forall_auto_proof(
     // `sorry` that is NOT the global floor under an already-sufficient
     // first alternative, so grind can do NEW work — guaranteed closers
     // like `omega`/`rfl` are left byte-identical).
-    Some(maybe_wrap_with_grind_rung(vb, law, ctx, inner))
+    let mut proof = maybe_wrap_with_grind_rung(vb, law, ctx, inner);
+    // Every structured, still-open portfolio can compose the same earlier
+    // laws. Keeping this at the common exit prevents an earlier strategy from
+    // hiding composition merely by supplying its own `sorry` floor.
+    if !proof.replaces_theorem
+        && !proof.first_arm_is_guaranteed_closer
+        && !recognize_hand_sidecar(ctx, vb, law)
+        && !proof
+            .body
+            .render()
+            .iter()
+            .any(|line| line.contains("grind"))
+        && let Some(arm) = induction::keystone_floor_arm(vb, law, ctx)
+    {
+        proof
+            .body
+            .insert_before_sorry(super::tactic_ir::Tactic::Leaf(arm));
+    }
+    Some(proof)
 }
 
 /// Whether the additive `grind` rung is SHAPE-AMENABLE for this law:
@@ -1944,37 +1962,25 @@ fn emit_verify_law_forall_auto_proof_inner(
                 });
             let wf_countdown = shared::wf_countdown_fn_names(ctx);
             let cone_has_wf_countdown = cone.iter().any(|n| wf_countdown.contains(n));
-            let tactic_line = if cone_has_scanner || cone_has_wf_countdown {
+            let branches = if cone_has_scanner || cone_has_wf_countdown {
                 let targets =
                     induction::find_fun_induction_targets(vb, law, ctx, &proof_intro_names);
-                let mut arms: Vec<String> = targets
+                targets
                     .iter()
                     .map(|t| {
                         format!(
-                            "(fun_induction {} {} <;> simp_all <;> omega)",
+                            "fun_induction {} {} <;> simp_all <;> omega",
                             t.fn_lean,
                             t.args.join(" ")
                         )
                     })
-                    .collect();
-                // An unconditional law with earlier laws about its cone fns
-                // gets the keystone composition as its last arm before the
-                // floor (`keystone_floor_arm`): the fuel strategy closes the
-                // countdown fn's OWN laws, and this composes them one level up.
-                if let Some(arm) = induction::keystone_floor_arm(vb, law, ctx) {
-                    arms.push(arm);
-                }
-                arms.push("sorry".to_string());
-                format!("first | {}", arms.join(" | "))
+                    .collect()
             } else {
-                format!("first | (simp [{}] <;> done) | sorry", defs.join(", "))
+                vec![format!("simp [{}] <;> done", defs.join(", "))]
             };
             Some(AutoProof {
                 support_lines: Vec::new(),
-                body: crate::codegen::lean::tactic_ir::Tactic::raw(intro_then(
-                    &proof_intro_names,
-                    vec![tactic_line],
-                )),
+                body: intro_then_first(&proof_intro_names, branches),
                 replaces_theorem: false,
                 first_arm_is_guaranteed_closer: false,
             })
