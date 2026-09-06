@@ -13,8 +13,11 @@ pub(super) fn reflects_equality(ty: &Type, ctx: &CodegenContext, scope: Option<&
                 visit(a, ctx, scope, seen) && visit(b, ctx, scope, seen)
             }
             Type::Tuple(ts) => ts.iter().all(|t| visit(t, ctx, scope, seen)),
-            Type::Named { name, .. } => {
-                let Some((td, owner)) = super::find_type_def_scoped(ctx, name, scope) else {
+            Type::Named { .. } => {
+                let Some(name) = crate::codegen::common::backend_named_type_key(ctx, ty) else {
+                    return false;
+                };
+                let Some((td, owner)) = super::find_type_def_scoped(ctx, &name, scope) else {
                     return false;
                 };
                 if crate::codegen::proof_recognize::detect_canonical_peano(td).is_some() {
