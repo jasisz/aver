@@ -63,10 +63,11 @@ fn imported_empty_list_comparisons_keep_types_in_samples_and_guards() {
         return;
     }
     let dir = temp_output_dir("aver-empty-list-comparisons");
-    let (summary, run) = run_lean_check_json(
+    let (summary, run) = run_lean_check_json_with_args(
         "tests/fixtures/typed_empty_comparisons/main.av",
         &dir,
         0,
+        &[],
         &["--module-root", "tests/fixtures/typed_empty_comparisons"],
     );
     assert!(run.status.success(), "{}", format_output(&run));
