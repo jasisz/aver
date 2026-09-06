@@ -36,6 +36,39 @@ fn guided_laws_see_all_nonrecursive_match_alternatives() {
 }
 
 #[test]
+fn nested_reason_cases_preserve_branch_premises_before_ordered_facts() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        return;
+    }
+    let file = "tests/fixtures/law_reason_match_branches.av";
+    let samples = Command::new(env!("CARGO_BIN_EXE_aver"))
+        .args(["verify", file])
+        .output()
+        .unwrap();
+    assert!(samples.status.success(), "{}", format_output(&samples));
+    let dir = temp_output_dir("aver-match-branch-reasons");
+    let (summary, run) = run_lean_check_json(file, &dir, 0, &[]);
+    assert!(
+        !run.status.success(),
+        "strict positivity must remain unproved"
+    );
+    assert_eq!(summary["build_errors"], 0, "{}", format_output(&run));
+    assert_eq!(summary["universal_laws"], 2, "{summary}");
+    for step in ["because1", "implication"] {
+        assert_eq!(
+            summary["obligations"][format!("score.nonnegative.{step}")],
+            "universal",
+            "{summary}"
+        );
+    }
+    assert_eq!(
+        summary["obligations"]["score.rejectsPositiveScore.because1"], "failed",
+        "{summary}"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn local_match_reasons_fall_back_to_the_checked_list_measure() {
     if Command::new("lake").arg("--version").output().is_err() {
         return;

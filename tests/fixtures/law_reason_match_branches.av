@@ -1,0 +1,67 @@
+module BranchReason
+    intent = "A recursive explanation follows a chunked list traversal, retaining each branch condition."
+    effects []
+
+fn score(values: List<Int>) -> Int
+    match values
+        [] -> 0
+        [head, ..tail] -> match head < 0
+            false -> head + score(tail)
+            true -> chunkScore(tail, 0 - head)
+
+verify score law nonnegative
+    given steps: List<Int> = [[], [0], [0, 0, 0, 0]]
+    given values: List<Int> = [[], [2, 3], [-2, 8, 9, 4]]
+    when List.len(steps) >= List.len(values)
+    because reason(steps, values)
+    using [suffixFits.always]
+    score(values) >= 0 holds
+
+verify score law rejectsPositiveScore
+    given steps: List<Int> = [[0, 0]]
+    given values: List<Int> = [[2, 3]]
+    when Bool.and(List.len(steps) >= List.len(values), List.len(values) > 0)
+    because falseReason(steps, values)
+    using [suffixFits.always]
+    score(values) > 0 holds
+
+fn chunkScore(values: List<Int>, count: Int) -> Int
+    match List.take(values, count)
+        chunk -> match List.len(chunk) == count
+            false -> 0
+            true -> score(List.drop(values, count))
+
+fn suffixFits(values: List<Int>, count: Int) -> Bool
+    List.len(List.drop(values, count)) <= List.len(values)
+
+verify suffixFits law always
+    given values: List<Int> = [[], [2, 3]]
+    given count: Int = [-1, 0, 2, 10]
+    using []
+    List.len(List.drop(values, count)) <= List.len(values) holds
+
+fn reason(steps: List<Int>, values: List<Int>) -> Bool
+    continuation = match steps
+        [] -> true
+        [step, ..remaining] -> match values
+            [] -> true
+            [head, ..tail] -> match head < 0
+                false -> reason(remaining, tail)
+                true -> match List.take(tail, 0 - head)
+                    chunk -> match List.len(chunk) == 0 - head
+                        false -> true
+                        true -> reason(remaining, List.drop(tail, 0 - head))
+    Bool.and(continuation, score(values) >= 0)
+
+fn falseReason(steps: List<Int>, values: List<Int>) -> Bool
+    continuation = match steps
+        [] -> true
+        [step, ..remaining] -> match values
+            [] -> true
+            [head, ..tail] -> match head < 0
+                false -> falseReason(remaining, tail)
+                true -> match List.take(tail, 0 - head)
+                    chunk -> match List.len(chunk) == 0 - head
+                        false -> true
+                        true -> falseReason(remaining, List.drop(tail, 0 - head))
+    Bool.and(continuation, Bool.or(List.len(values) == 0, score(values) > 0))
