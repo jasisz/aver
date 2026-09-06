@@ -36,6 +36,8 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Fixed
 
+- **Empty-list equality samples keep their declared element types in Lean.** Imported laws could emit `[] == []` without the `List<Int>` or nested list type supplied by `given`, failing before the proof ran. Equality and inequality now preserve that type when both literals lack an element witness, including comparisons in `when` guards.
+
 - **Cited accumulator equations no longer make executable law explanations loop in simplification.** Selected lemmas remain available to proof search while the simplifier handles the local facts and definitions. Conditional induction also joins its rewrite terms structurally, so an empty safe unfold set cannot emit malformed Lean or degrade neighboring proofs during the probe.
 
 - **Finite observations of countdown output can compose the writer's equations with its earlier laws.** The shared citation pool now includes earlier laws about the current subject. A bounded `grind` step serves both composition and the residual goals of fuel induction, proving digit removal and a nonzero leading digit for a base-seven writer. Failed claims retain their `sorry` and receive no universal credit.

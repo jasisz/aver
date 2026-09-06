@@ -56,3 +56,22 @@ fn cited_accumulator_equations_do_not_loop_as_simp_rules_in_reasons() {
     );
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn imported_empty_list_comparisons_keep_types_in_samples_and_guards() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        return;
+    }
+    let dir = temp_output_dir("aver-empty-list-comparisons");
+    let (summary, run) = run_lean_check_json(
+        "tests/fixtures/typed_empty_comparisons/main.av",
+        &dir,
+        0,
+        &["--module-root", "tests/fixtures/typed_empty_comparisons"],
+    );
+    assert!(run.status.success(), "{}", format_output(&run));
+    assert_eq!(summary["build_errors"], 0, "{summary}");
+    assert_eq!(summary["universal_laws"], 4, "{summary}");
+    assert_eq!(summary["sorries"], 0, "{summary}");
+    let _ = std::fs::remove_dir_all(dir);
+}

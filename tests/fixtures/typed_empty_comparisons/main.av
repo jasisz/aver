@@ -1,0 +1,6 @@
+module EmptyComparisonEntry
+    intent = "Imported law samples retain their given types."
+    depends [Comparisons]
+
+fn main() -> Unit
+    Unit
