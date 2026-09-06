@@ -193,27 +193,22 @@ pub(in crate::codegen::lean) fn emit_reason_law(
         ));
         let hypotheses = previous.iter().map(|h| format!(" {h}")).collect::<String>();
         lines.push(format!("  intro {args}{hypotheses}{guard_intro}"));
-        let fact_count = if !final_step || reasons.is_empty() {
-            facts.as_ref().map_or(0, Vec::len)
-        } else {
-            0
-        };
-        if !final_step || reasons.is_empty() {
-            if let Some(facts) = &facts {
-                for (i, fact) in facts.iter().enumerate() {
-                    lines.push(format!("  have _fact{i} := {fact}"));
-                    lines.push(format!("  try simp only [List.contains_eq_mem, Bool.or_eq_true, Bool.and_eq_true, decide_eq_decide, decide_eq_true_eq, Bool.not_eq_true', ge_iff_le, gt_iff_lt] at _fact{i}"));
-                }
-            } else {
-                lines.push(format!(
-                    "  trace \"AVER_REASON_OPEN:{label}:dependency has no available theorem\""
-                ));
-                lines.push("  sorry".to_string());
-                if !final_step {
-                    previous.push(format!("h_reason{index}"));
-                }
-                continue;
+        // Citation scope belongs to the law, including its final implication.
+        let fact_count = facts.as_ref().map_or(0, Vec::len);
+        if let Some(facts) = &facts {
+            for (i, fact) in facts.iter().enumerate() {
+                lines.push(format!("  have _fact{i} := {fact}"));
+                lines.push(format!("  try simp only [List.contains_eq_mem, Bool.or_eq_true, Bool.and_eq_true, decide_eq_decide, decide_eq_true_eq, Bool.not_eq_true', ge_iff_le, gt_iff_lt] at _fact{i}"));
             }
+        } else {
+            lines.push(format!(
+                "  trace \"AVER_REASON_OPEN:{label}:dependency has no available theorem\""
+            ));
+            lines.push("  sorry".to_string());
+            if !final_step {
+                previous.push(format!("h_reason{index}"));
+            }
+            continue;
         }
         if final_step {
             for reason in &law.because {
