@@ -1,0 +1,20 @@
+module InductionTarget
+    intent = "Deletion is idempotent; the accumulator precedes the recursive driver."
+    effects []
+
+fn remove(values: List<Int>, target: Int) -> List<Int>
+    match values
+        [] -> []
+        [head, ..tail] -> match head == target
+            true -> remove(tail, target)
+            false -> List.prepend(head, remove(tail, target))
+
+fn removeEach(values: List<Int>, targets: List<Int>) -> List<Int>
+    match targets
+        [] -> values
+        [head, ..tail] -> removeEach(remove(values, head), tail)
+
+verify removeEach law idempotent
+    given values: List<Int> = [[], [1, 2, 1]]
+    given targets: List<Int> = [[], [1]]
+    removeEach(removeEach(values, targets), targets) => removeEach(values, targets)
