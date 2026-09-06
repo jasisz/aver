@@ -1,0 +1,47 @@
+module CitedAccumulatorReason
+    intent = "Isolate the digit encoding step with the existing prover."
+
+fn digits(value: Int, acc: List<Int>) -> List<Int>
+    match value > 0
+        true -> digits(Int.div(value, 256), List.prepend(Int.mod(value, 256), acc))
+        false -> List.reverse(acc)
+
+verify digits law accumulatorComesFirst
+    given value: Int = [-1, 0, 1, 255, 256, 65536, 2147483648]
+    given acc: List<Int> = [[], [9], [1, 2]]
+    digits(value, acc) => List.concat(List.reverse(acc), digits(value, []))
+
+fn afterFirstDigit(value: Int) -> List<Int>
+    ? "Write the remaining magnitude with its first digit already collected."
+    digits(Int.div(value, 256), [Int.mod(value, 256)])
+
+verify afterFirstDigit
+    afterFirstDigit(1) => [1]
+    afterFirstDigit(256) => [0, 1]
+
+verify digits law positiveStep
+    given value: Int = [1, 127, 128, 256, 2147483648]
+    when value > 0
+    afterFirstDigit(value) => digits(value, [])
+
+fn digitStepReason(prefix: Int, digit: Int) -> Bool
+    ? "The quotient recovers the prefix and the remainder recovers the digit."
+    value = prefix * 256 + digit
+    Bool.and(value > 0, Bool.and(
+        digits(value, []) == afterFirstDigit(value),
+        Bool.and(Int.div(value, 256) == prefix, Bool.and(Int.mod(value, 256) == digit,
+            digits(prefix, [digit]) == List.prepend(digit, digits(prefix, []))))
+    ))
+
+verify digitStepReason
+    digitStepReason(1, 0) => true
+    digitStepReason(128, 255) => true
+
+verify digits law positivePrefixAndDigit
+    given prefix: Int = [1, 127, 128, 256, 2147483648]
+    given digit: Int = [0, 1, 127, 128, 255]
+    when Bool.and(prefix > 0, Bool.and(digit >= 0, digit < 256))
+    because digitStepReason(prefix, digit)
+    using [digits.positiveStep, digits.accumulatorComesFirst]
+    digits(prefix * 256 + digit, []) => List.prepend(digit, digits(prefix, []))
+

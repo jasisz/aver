@@ -1,0 +1,20 @@
+module ConditionalEmptySimp
+    intent = "Reproduce the empty leading simp entry for a list-parameter step law."
+
+fn digits(value: Int, acc: List<Int>) -> List<Int>
+    match value > 0
+        true -> digits(Int.div(value, 7), List.prepend(Int.mod(value, 7), acc))
+        false -> List.reverse(acc)
+
+verify digits law doesNotAddOutsideDigits
+    given m: Int = [-1, 0, 1, 7, 49]
+    given acc: List<Int> = [[], [-1], [7]]
+    given b: Int = [-1, 0, 7]
+    when Bool.or(b < 0, b >= 7)
+    List.contains(digits(m, acc), b) => List.contains(acc, b)
+
+verify digits law positiveStep
+    given value: Int = [1, 7]
+    given acc: List<Int> = [[], [-1], [7]]
+    when value > 0
+    digits(value, acc) => digits(Int.div(value, 7), List.prepend(Int.mod(value, 7), acc))
