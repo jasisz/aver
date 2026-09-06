@@ -5333,3 +5333,34 @@ verify digits law emptyMeansSmall
         "the declined law must never unfold the countdown fn blindly:\n{body}"
     );
 }
+
+#[test]
+fn certificate_countdown_model_keeps_the_wall_contract_and_restores_proof_context() {
+    let mut ctx = ctx_from_source(
+        r#"module CountdownModel
+    exposes [count]
+    effects []
+fn count(n: Int, acc: Int) -> Int
+    match n <= 0
+        true -> acc
+        false -> count(n - 1, acc + n)
+"#,
+        "CountdownModel",
+    );
+    let before = generated_lean_file(&transpile_for_proof_mode(
+        &mut ctx,
+        VerifyEmitMode::NativeDecide,
+    ));
+    assert!(before.contains("termination_by n.toNat"), "{before}");
+    let model = generated_lean_file(&transpile_for_cert_model(&mut ctx));
+    assert!(model.contains("def count__fuel"), "{model}");
+    assert!(!model.contains("termination_by n.toNat"), "{model}");
+    let after = generated_lean_file(&transpile_for_proof_mode(
+        &mut ctx,
+        VerifyEmitMode::NativeDecide,
+    ));
+    assert_eq!(
+        before, after,
+        "certificate emission must not mutate the proof contract"
+    );
+}

@@ -315,7 +315,9 @@ pub fn transpile_for_proof_mode(
 /// Proof-mode transpilation for an artifact CERTIFICATE's reused model
 /// modules.
 ///
-/// Same model DEFINITIONS as [`transpile_for_proof_mode`], but emitted
+/// The same source semantics as [`transpile_for_proof_mode`], with subtractive
+/// countdowns retaining the explicit fuel model consumed by the certificate
+/// recursion wall. Emitted
 /// without the proof-only executable machinery that the `aver proof`
 /// sample checks rely on: the `@[implemented_by]`/`unsafe` `DecidableEq`
 /// shims (user recursive types and `Float`), the `verify` sample-check
@@ -328,7 +330,30 @@ pub fn transpile_for_proof_mode(
 /// them out of already-emitted text. The `aver proof` emission is
 /// untouched (this is a distinct entry point).
 pub fn transpile_for_cert_model(ctx: &mut CodegenContext) -> ProjectOutput {
-    transpile_unified(ctx, VerifyEmitMode::NativeDecide, LeanEmitMode::Proof, true)
+    // The certificate recursion wall relates its evaluator to the explicit
+    // fuel model. Keep that representation at this consumer boundary; proof
+    // export uses native equations. Adapt the contracts too, so law emission
+    // sees the same definitions as the certificate model actually contains.
+    let mut native = Vec::new();
+    for (id, contract) in &mut ctx.proof_ir.fn_contracts {
+        if let Some(crate::ir::RecursionContract::WellFoundedToNat {
+            param,
+            floor_div: None,
+        }) = &contract.recursion
+        {
+            let fuel = crate::ir::RecursionContract::Fuel {
+                fuel_metric: crate::ir::FuelMetric::NatAbsPlusOne {
+                    param: param.clone(),
+                },
+            };
+            native.push((*id, contract.recursion.replace(fuel)));
+        }
+    }
+    let output = transpile_unified(ctx, VerifyEmitMode::NativeDecide, LeanEmitMode::Proof, true);
+    for (id, recursion) in native {
+        ctx.proof_ir.fn_contracts.get_mut(&id).unwrap().recursion = recursion;
+    }
+    output
 }
 
 /// Transpile an Aver program to a Lean 4 project with configurable verify proof mode.
