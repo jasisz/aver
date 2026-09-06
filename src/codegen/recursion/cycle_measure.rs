@@ -398,10 +398,10 @@ fn relation(arg: &Spanned<Expr>, caller: &FnDef, scope: &Scope) -> Relation {
     }
     // `List.drop(s, n)` and `List.take(s, n)` never grow `s`. When `s` is
     // the caller's measured list or a cons-tail tracked from it, classify the
-    // result as the same non-strict source. The operation is computed rather
-    // than a structural subterm, so its path is deliberately empty: equality
-    // is possible (`drop 0`, or `take n` with `length s <= n`) and the SCC's
-    // rank must order that edge exactly like a verbatim list pass.
+    // result by its source's path. The slice can equal that source (`drop 0`
+    // or a sufficiently large `take`), but a source that is already a cons-tail
+    // remains strictly smaller than the original list. A slice of the whole
+    // parameter keeps the empty path and still needs a decreasing cycle rank.
     if let Expr::FnCall(callee, args) = &arg.node
         && args.len() == 2
         && matches!(
@@ -426,7 +426,7 @@ fn relation(arg: &Spanned<Expr>, caller: &FnDef, scope: &Scope) -> Relation {
         if is_list_param_or_tail {
             return Relation::Part {
                 param: origin.param,
-                path: Vec::new(),
+                path: origin.path.clone(),
             };
         }
     }

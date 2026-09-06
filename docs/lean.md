@@ -187,6 +187,8 @@ For `using` and `because`, nonrecursive functions contribute their full kernel e
 
 Recursive explanations can also supply an induction plan when the function has a checked structural descent on a list. A recursive call contributes an induction hypothesis for the shorter list; its Boolean result must still establish the facts needed by the next step. Original guards and earlier reasons remain premises of that hypothesis, so they must hold at the recursive arguments. If Lean cannot construct a functional induction principle for a local match, the backend falls back to ordinary induction on that same checked list parameter, with the other givens generalized and all original premises retained. The same termination contract serves ordinary functions and explanations: a shrinking list takes precedence over a sibling counter's fuel model.
 
+A single recursive function also reuses the shared cycle analysis for `List.drop` or `List.take` of a known cons-tail: the slice may equal that tail, but it is still shorter than the original list. This uses the existing length contract and native emitter, including when another list accumulator grows. Dafny also prefers this shared checked descent over its fallback parameter ordering. Slicing the whole input does not establish strict decrease. [law_reason_singleton_list.av](../tests/fixtures/law_reason_singleton_list.av) demonstrates direct induction over a chunked traversal without a separate step list, alongside nondecreasing and growing-call controls.
+
 For example, the explanation can establish the property for `rest` before assembling the property for the whole list:
 
 ```aver

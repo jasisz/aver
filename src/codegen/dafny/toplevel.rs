@@ -816,6 +816,14 @@ struct DecreasesInfo {
 
 /// Try to infer a `decreases` clause from the function signature.
 fn infer_decreases(fd: &FnDef) -> Option<DecreasesInfo> {
+    // A checked list descent wins over a growing accumulator or sibling
+    // counter, using the same contract selection as the proof lowerer.
+    if let Some((index, _)) = crate::codegen::recursion::detect::single_list_descent_param(fd) {
+        return Some(DecreasesInfo {
+            expr: format!("|{}|", aver_name_to_dafny(&fd.params[index].0)),
+            requires: vec![],
+        });
+    }
     // Walk the body to learn which params actually change across
     // self-calls. The plain type-priority pick (`prefer List/String,
     // fall back to Int`) emits clauses Dafny rejects when the chosen

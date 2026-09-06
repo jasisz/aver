@@ -1225,6 +1225,37 @@ pub(crate) fn single_list_structural_param(fd: &FnDef) -> Option<(usize, usize)>
         })
 }
 
+/// A checked list-length descent, retaining an exact structural peel when
+/// available and a conservative one-cell bound for slices of known tails.
+/// The literal-tail query stays separate for tactics that inspect that shape.
+pub(crate) fn single_list_descent_param(fd: &FnDef) -> Option<(usize, usize)> {
+    single_list_structural_param(fd).or_else(|| {
+        // The shared cycle analysis also recognizes a non-growing slice
+        // of a cons-tail. One strict self-edge consumes at least one cell;
+        // keep the existing length contract and native proof emitters.
+        use super::cycle_measure::{Candidate, MeasureKind, measure_for_cycle};
+        let names = HashSet::from([fd.name.clone()]);
+        if !collect_calls_from_body(fd.body.as_ref())
+            .iter()
+            .any(|(name, _)| canonical_callee_name(name, &names).is_some())
+        {
+            return None;
+        }
+        fd.params.iter().enumerate().find_map(|(index, (_, ty))| {
+            if !(ty == "List" || ty.starts_with("List<")) {
+                return None;
+            }
+            let candidates = vec![Candidate {
+                index,
+                kind: MeasureKind::Structural,
+            }];
+            measure_for_cycle(&[fd], &[candidates], false)
+                .ok()
+                .map(|_| (index, 1))
+        })
+    })
+}
+
 pub(crate) fn single_list_structural_param_index(fd: &FnDef) -> Option<usize> {
     single_list_structural_param(fd).map(|(param_index, _)| param_index)
 }
@@ -2479,7 +2510,7 @@ pub fn analyze_plans_in_scope(
         }
 
         let fd = component[0];
-        let list_structural = single_list_structural_param(fd);
+        let list_structural = single_list_descent_param(fd);
         if crate::codegen::lean::recurrence::detect_second_order_int_linear_recurrence(fd).is_some()
         {
             plans.insert(fd.name.clone(), RecursionPlan::LinearRecurrence2);
