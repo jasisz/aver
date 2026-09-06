@@ -537,6 +537,9 @@ fn ascribe_ground_truth_rhs(
             ))
         });
     match inferred.as_ref() {
+        Some(ty @ Type::List(_)) if emitted.trim() == "[]" => {
+            format!("({emitted} : {})", super::types::type_to_lean(ty))
+        }
         Some(ty @ Type::Result(_, _)) if emitted.trim_start().starts_with("Except.") => {
             format!("({emitted} : {})", super::types::type_to_lean(ty))
         }

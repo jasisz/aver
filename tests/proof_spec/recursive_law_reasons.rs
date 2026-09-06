@@ -1,6 +1,41 @@
 use super::*;
 
 #[test]
+fn slice_reasons_use_integer_counts_without_losing_their_premises() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        return;
+    }
+    let dir = temp_output_dir("aver-slice-reasons");
+    let (summary, run) = run_lean_check_json("tests/fixtures/law_reason_slices.av", &dir, 0, &[]);
+    assert!(!run.status.success(), "false laws must remain open");
+    assert_eq!(summary["build_errors"], 0, "{}", format_output(&run));
+    assert_eq!(summary["universal_laws"], 5, "{summary}");
+    for law in ["sumInto.step", "rejoined.emptyGivenKeepsElementType"] {
+        assert_eq!(
+            summary["obligations"][format!("{law}.implication")],
+            "universal",
+            "{summary}"
+        );
+    }
+    for law in ["above.dropPreservesBound", "above.takePreservesBound"] {
+        for step in ["because1", "implication"] {
+            assert_eq!(
+                summary["obligations"][format!("{law}.{step}")],
+                "universal",
+                "{summary}"
+            );
+        }
+    }
+    for obligation in [
+        "above.rejectsMissingPremise.because1",
+        "rejoined.rejectsDeletingAnExtraElement.implication",
+    ] {
+        assert_eq!(summary["obligations"][obligation], "failed", "{summary}");
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn list_descent_outlives_a_sibling_counter_in_both_proof_models() {
     for (backend, tool) in [("lean", "lake"), ("dafny", "dafny")] {
         if Command::new(tool).arg("--version").output().is_err() {
