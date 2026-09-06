@@ -1,0 +1,25 @@
+module ChunkSteps
+    intent = "A list walker uses each head as a count of following elements to skip."
+    effects []
+
+fn scan(values: List<Int>, acc: List<Int>) -> List<Int>
+    match values
+        [] -> List.reverse(acc)
+        [head, ..tail] -> advance(tail, head, acc)
+
+verify scan law chunkStep
+    given count: Int = [-1, 0, 2]
+    given rest: List<Int> = [[], [1, 2, 3]]
+    given acc: List<Int> = [[], [9]]
+    using []
+    scan(List.prepend(count, rest), acc) => scan(List.drop(rest, count), List.prepend(count, acc))
+
+verify scan law rejectsExtraSkip
+    given count: Int = [0]
+    given rest: List<Int> = [[]]
+    given acc: List<Int> = [[]]
+    using []
+    scan(List.prepend(count, rest), acc) => scan(List.drop(rest, count + 1), List.prepend(count, acc))
+
+fn advance(rest: List<Int>, count: Int, acc: List<Int>) -> List<Int>
+    scan(List.drop(rest, count), List.prepend(count, acc))

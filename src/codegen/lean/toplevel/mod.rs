@@ -7,6 +7,7 @@ mod type_def;
 mod verify;
 mod verify_cases;
 
+pub(super) use fn_def::emit_native_mutual_group;
 pub use fn_def::{emit_fn_def, emit_fn_def_proof, emit_mutual_group, emit_mutual_group_proof};
 pub use fuel::PROOF_FUEL_EXHAUSTED_MSG;
 pub(super) use fuel::{law_fuel_simp_names, law_string_pos_rank};

@@ -131,8 +131,7 @@ pub(super) fn definitions(law: &VerifyLaw, ctx: &CodegenContext) -> Definitions 
                 && fns
                     .iter()
                     .any(|fd| common::fn_id_for_decl(ctx, fd).is_some_and(|id| seen.contains(&id)))
-                && crate::codegen::lean::toplevel::fuel::native_mutual_sizeof_measures(fns, ctx)
-                    .is_some()
+                && crate::codegen::lean::toplevel::emit_native_mutual_group(fns, ctx).is_some()
             {
                 for fd in fns {
                     if common::fn_id_for_decl(ctx, fd).is_some_and(|id| seen.contains(&id)) {
