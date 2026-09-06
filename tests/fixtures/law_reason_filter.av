@@ -1,0 +1,44 @@
+module PacketFilter
+    intent = "Retaining packets is a stable filter over their exact key."
+    effects []
+
+type Packet
+    Data(Int, List<Int>)
+    Marker(Int)
+
+fn key(packet: Packet) -> List<Int>
+    match packet
+        Packet.Data(tag, bytes) -> List.prepend(tag, bytes)
+        Packet.Marker(tag) -> [tag]
+
+fn without(packets: List<Packet>, target: List<Int>, acc: List<Packet>) -> List<Packet>
+    match packets
+        [] -> List.reverse(acc)
+        [head, ..tail] -> keep(head, tail, target, acc)
+
+verify without law stableFilter
+    given packets: List<Packet> = [[], [Packet.Marker(81)], [Packet.Data(1, [171]), Packet.Marker(81)]]
+    given target: List<Int> = [[], [1, 171]]
+    given acc: List<Packet> = [[], [Packet.Marker(82)]]
+    because reason(packets, target, acc)
+    using []
+    without(packets, target, acc) => List.concat(List.reverse(acc), retained(packets, target))
+
+fn keep(packet: Packet, rest: List<Packet>, target: List<Int>, acc: List<Packet>) -> List<Packet>
+    match key(packet) == target
+        true -> without(rest, target, acc)
+        false -> without(rest, target, List.prepend(packet, acc))
+
+fn retained(packets: List<Packet>, target: List<Int>) -> List<Packet>
+    match packets
+        [] -> []
+        [head, ..tail] -> match key(head) == target
+            true -> retained(tail, target)
+            false -> List.prepend(head, retained(tail, target))
+
+fn reason(packets: List<Packet>, target: List<Int>, acc: List<Packet>) -> Bool
+    match packets
+        [] -> without(packets, target, acc) == List.concat(List.reverse(acc), retained(packets, target))
+        [head, ..tail] -> match key(head) == target
+            true -> Bool.and(reason(tail, target, acc), without(packets, target, acc) == List.concat(List.reverse(acc), retained(packets, target)))
+            false -> Bool.and(reason(tail, target, List.prepend(head, acc)), without(packets, target, acc) == List.concat(List.reverse(acc), retained(packets, target)))

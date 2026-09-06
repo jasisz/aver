@@ -1,0 +1,60 @@
+module ReasonEquality
+    intent = "Executable equality reflects structural data but not IEEE NaN."
+    effects []
+
+record Count
+    value: Int
+
+record Containers
+    optional: Option<List<Count>>
+    result: Result<Tuple<Int, Count>, String>
+    vector: Vector<Count>
+    table: Map<Int, Count>
+
+record FloatBox
+    value: Float
+
+record NestedFloat
+    values: List<FloatBox>
+
+fn identity(value: Int) -> Int
+    value
+
+verify identity law recordExplanation
+    given value: Int = [-1, 0, 1]
+    because recordReason(value)
+    using []
+    identity(value) => value
+
+fn recordReason(value: Int) -> Bool
+    Count(value = identity(value)) == Count(value = value)
+
+fn equalContainers(value: Containers) -> Bool
+    value == value
+
+verify equalContainers law reflexive
+    given value: Containers = [Containers(optional = Option.Some([Count(value = 1)]), result = Result.Ok((2, Count(value = 3))), vector = Vector.fromList([Count(value = 4)]), table = Map.fromList([(1, Count(value = 5))]))]
+    because equalContainers(value)
+    using []
+    equalContainers(value) holds
+
+fn floatIdentity(value: Float) -> Float
+    value
+
+verify floatIdentity law noNaNReflexivity
+    given value: Float = [0.0, 1.0]
+    because floatReason(value)
+    using []
+    floatIdentity(value) => value
+
+verify floatIdentity law noNestedNaNReflexivity
+    given value: Float = [0.0, 1.0]
+    because nestedFloatReason(value)
+    using []
+    floatIdentity(value) => value
+
+fn floatReason(value: Float) -> Bool
+    FloatBox(value = value) == FloatBox(value = value)
+
+fn nestedFloatReason(value: Float) -> Bool
+    NestedFloat(values = [FloatBox(value = value)]) == NestedFloat(values = [FloatBox(value = value)])

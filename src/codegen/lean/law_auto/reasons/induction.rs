@@ -21,10 +21,7 @@ fn callee<'a>(
     ctx: &'a CodegenContext,
     scope: Option<&str>,
 ) -> Option<&'a FnDef> {
-    let Expr::FnCall(callee, _) = &expr.node else {
-        return None;
-    };
-    let name = super::super::shared::expr_dotted_name(callee)?;
+    let (name, _) = super::super::shared::call_name_args(expr)?;
     let id = ctx.symbol_table.resolve_fn_id_in(&name, scope)?;
     let key = &ctx.symbol_table.fn_entry(id).key;
     ctx.fn_def_by_name(&key.name, key.scope_str())
@@ -136,6 +133,28 @@ pub(super) fn definitions(
             include_structural,
         );
     }
+    // A mutual helper's original equation is available only when the same
+    // checked measure that emits its native definition succeeds. Fuel remains opaque.
+    common::route_pure_components_per_scope(
+        ctx,
+        |fd| fd.effects.is_empty(),
+        |fns, _| {
+            if fns.len() > 1
+                && fns
+                    .iter()
+                    .any(|fd| common::fn_id_for_decl(ctx, fd).is_some_and(|id| seen.contains(&id)))
+                && crate::codegen::lean::toplevel::fuel::native_mutual_sizeof_measures(fns, ctx)
+                    .is_some()
+            {
+                for fd in fns {
+                    if common::fn_id_for_decl(ctx, fd).is_some_and(|id| seen.contains(&id)) {
+                        out.insert(format!("= {}.eq_def", lean_name(fd, ctx)), true);
+                    }
+                }
+            }
+            Vec::new()
+        },
+    );
     // An induction hypothesis says reason(rest) = true. Its match equation
     // reveals the checked facts even when `rest` is not a known constructor.
     for reason in &law.because {
