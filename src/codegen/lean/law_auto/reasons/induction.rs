@@ -76,13 +76,18 @@ pub(super) struct Definitions {
     pub(super) grind: String,
 }
 
-pub(super) fn definitions(law: &VerifyLaw, ctx: &CodegenContext) -> Definitions {
+pub(super) fn definitions(
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+    include_structural: bool,
+) -> Definitions {
     fn visit(
         expr: &Spanned<Expr>,
         scope: Option<&str>,
         ctx: &CodegenContext,
         seen: &mut HashSet<crate::ir::FnId>,
         out: &mut BTreeMap<String, bool>,
+        include_structural: bool,
     ) {
         if let Some(fd) = callee(expr, ctx, scope)
             && fd.effects.is_empty()
@@ -90,17 +95,27 @@ pub(super) fn definitions(law: &VerifyLaw, ctx: &CodegenContext) -> Definitions 
             && seen.insert(id)
         {
             let recursive = ctx.recursive_fns.contains(&id);
-            if !recursive || list_structural(fd, ctx) {
+            // Subtractive countdown equations expose fixed-width steps. Keep
+            // floor-division recursion opaque: its equations recursively grow
+            // the arithmetic search even when cited laws already summarize it.
+            let subtractive = matches!(
+                common::find_fn_contract_for_fn(ctx, fd).and_then(|c| c.recursion.as_ref()),
+                Some(crate::ir::RecursionContract::WellFoundedToNat {
+                    floor_div: None,
+                    ..
+                })
+            );
+            if !recursive || (include_structural && list_structural(fd, ctx)) || subtractive {
                 out.insert(lean_name(fd, ctx), recursive);
             }
             let owner = common::fn_owning_scope_for(ctx, fd);
             for stmt in fd.body.stmts() {
                 let (Stmt::Expr(body) | Stmt::Binding(_, _, body)) = stmt;
-                visit(body, owner, ctx, seen, out);
+                visit(body, owner, ctx, seen, out, include_structural);
             }
         }
         crate::codegen::expr_walk::for_each_child(expr, &mut |child| {
-            visit(child, scope, ctx, seen, out)
+            visit(child, scope, ctx, seen, out, include_structural)
         });
     }
     let scope = ctx.active_module_scope();
@@ -112,7 +127,14 @@ pub(super) fn definitions(law: &VerifyLaw, ctx: &CodegenContext) -> Definitions 
         .chain([&law.lhs, &law.rhs])
         .chain(law.when.iter())
     {
-        visit(expr, scope.as_deref(), ctx, &mut seen, &mut out);
+        visit(
+            expr,
+            scope.as_deref(),
+            ctx,
+            &mut seen,
+            &mut out,
+            include_structural,
+        );
     }
     // An induction hypothesis says reason(rest) = true. Its match equation
     // reveals the checked facts even when `rest` is not a known constructor.

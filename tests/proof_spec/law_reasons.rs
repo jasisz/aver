@@ -343,3 +343,96 @@ fn explanations_require_bool_purity_and_acyclic_known_dependencies() {
     let effectful = "fn noisy(x: Int) -> Bool\n    ! [Console.print]\n    Console.print(\"effect\")\n    true\n";
     assert!(!errors(&format!("{header}{effectful}verify f law bad\n    given x: Int = [0]\n    because noisy(x)\n    f(x) => x\n")).is_empty());
 }
+
+#[test]
+fn guarded_countdown_equations_support_citations_and_accumulator_laws() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        return;
+    }
+    let dir = temp_output_dir("aver-guarded-countdown");
+    let (summary, run) = run_lean_check_json_with_args(
+        "tests/fixtures/guarded_countdown_digits.av",
+        &dir,
+        0,
+        &[],
+        &[],
+    );
+    assert!(run.status.success(), "{}", format_output(&run));
+    assert_eq!(summary["build_errors"], 0);
+    assert_eq!(summary["universal_laws"], 4);
+    assert_eq!(summary["bounded_laws"], 0);
+    let manifest: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("proof_manifest.json")).unwrap())
+            .unwrap();
+    for law in manifest["laws"].as_array().unwrap() {
+        assert_eq!(law["tier"], "universal", "{law}");
+        for axiom in law["axioms"].as_array().unwrap() {
+            assert!(
+                matches!(
+                    axiom.as_str(),
+                    Some("propext" | "Classical.choice" | "Quot.sound")
+                ),
+                "{law}"
+            );
+        }
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn imported_record_reason_retains_its_owner_when_entry_has_the_same_type_name() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        return;
+    }
+    let dir = temp_output_dir("aver-imported-record-reason");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("lib.av"),
+        r#"module Lib
+    exposes [identity]
+    intent = "An executable reason comparing local records."
+    effects []
+record Count
+    value: Int
+    rest: List<Int>
+fn identity(value: Int) -> Int
+    value
+fn reason(value: Int) -> Bool
+    Count(value = identity(value), rest = []) == Count(value = value, rest = [])
+verify identity law explained
+    given value: Int = [0, 1]
+    because reason(value)
+    identity(value) => value
+"#,
+    )
+    .unwrap();
+    let av = dir.join("entry.av");
+    std::fs::write(
+        &av,
+        r#"module Entry
+    depends [Lib]
+    intent = "A same-named entry record must not capture the dependency stamp."
+    effects []
+record Count
+    text: String
+fn copy(value: Int) -> Int
+    Lib.identity(value)
+verify copy law copied
+    given value: Int = [0, 1]
+    using [Lib.identity.explained]
+    copy(value) => value
+"#,
+    )
+    .unwrap();
+    let (summary, run) = run_lean_check_json_with_args(
+        av.to_str().unwrap(),
+        &dir.join("lean"),
+        0,
+        &[],
+        &["--module-root", dir.to_str().unwrap()],
+    );
+    assert!(run.status.success(), "{}", format_output(&run));
+    assert_eq!(summary["universal_laws"], 2);
+    assert_eq!(summary["build_errors"], 0);
+    let _ = std::fs::remove_dir_all(dir);
+}

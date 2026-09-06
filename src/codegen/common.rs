@@ -2208,8 +2208,10 @@ fn map_order_refusal(
             // A body's call names are written in the module that declares the
             // function, exactly like its signature's annotations above.
             push_called_names(expr, owner, &mut pending);
-            collect_observed_map_key_types(expr, ctx, &mut key_types, &mut seen_types);
-            collect_compared_map_key_types(expr, ctx, &mut compared_keys, &mut compared_seen);
+            ctx.with_module_scope(owner, || {
+                collect_observed_map_key_types(expr, ctx, &mut key_types, &mut seen_types);
+                collect_compared_map_key_types(expr, ctx, &mut compared_keys, &mut compared_seen);
+            });
         }
     }
 
@@ -2591,6 +2593,19 @@ fn type_def_for_named<'a>(
     let Some(type_id) = id else {
         return type_def_by_name(ctx, name, ctx.active_module_scope().as_deref());
     };
+    // Dependency bodies are checked once as standalone entries before their
+    // ModuleInfo is linked into the consumer. An own-type stamp therefore
+    // carries the standalone entry identity. Rebase that exact identity in
+    // its owning scope, before looking in the combined table: the consumer
+    // may itself declare a different type with the same entry identity.
+    if let Some(scope) = ctx.active_module_scope()
+        && let Some(module) = ctx.modules.iter().find(|m| m.prefix == scope)
+        && let Some(td) = module.type_defs.iter().find(|td| {
+            crate::ir::TypeId::for_key(&crate::ir::TypeKey::entry(type_def_name(td))) == *type_id
+        })
+    {
+        return Some((Some(module.prefix.as_str()), td));
+    }
     let key = &ctx.symbol_table.type_entry(*type_id).key;
     let defs: &[TypeDef] = match &key.scope {
         None => &ctx.type_defs,

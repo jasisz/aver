@@ -117,8 +117,7 @@ pub fn emit_fn_def_proof(fd: &FnDef, ctx: &CodegenContext) -> Option<String> {
     // WellFoundedToNat — native well-founded def on `param.toNat`.
     // Two validated sources (see the contract docs): the
     // guard-validated floor-division countdown (`floor_div: Some`)
-    // and the guarded subtractive countdown a floor-division window
-    // law graduated out of fuel (`floor_div: None`). The kernel
+    // and the guard-validated subtractive countdown (`floor_div: None`). The kernel
     // re-checks the measure through `decreasing_by`: the branch
     // hypotheses of the emitted if/else chain land in the decreasing
     // goals' context, `simp [<wrapper>, Except.withDefault]` reduces

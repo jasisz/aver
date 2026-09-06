@@ -360,9 +360,8 @@ pub enum RecursionContract {
     ///   shrink keeps its prior (partial/opaque) emission.
     /// - `floor_div: None` — guard-protected subtractive countdown
     ///   (`p - k`, literal k >= 1, guards imply `p >= 1`), graduated
-    ///   out of fuel on demand by the floor-division window law
-    ///   family, whose proof templates need the fn's defining
-    ///   equations and functional-induction principle.
+    ///   independently of law shapes. Every self-call is checked
+    ///   with the same positivity analysis as floor-division descent.
     WellFoundedToNat {
         /// The decreasing Int parameter (source name).
         param: String,

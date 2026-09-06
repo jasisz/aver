@@ -551,6 +551,30 @@ pub(crate) fn single_int_countdown_param_index(fd: &FnDef) -> Option<usize> {
         })
 }
 
+/// Reuse the countdown shrink and guard checks for a native `param.toNat`
+/// measure. Every recursive call must subtract a positive literal under a
+/// guard proving the old parameter positive; no law shape is involved.
+pub(crate) fn has_guarded_subtractive_descent(fd: &FnDef, param_index: usize) -> bool {
+    let Some((param, ty)) = fd.params.get(param_index) else {
+        return false;
+    };
+    let calls: Vec<_> = collect_calls_from_body(fd.body.as_ref())
+        .into_iter()
+        .filter(|(name, _)| call_matches(name, &fd.name))
+        .collect();
+    let chains = collect_self_call_guard_chains(fd);
+    ty == "Int"
+        && !calls.is_empty()
+        && chains.len() == calls.len()
+        && calls.iter().all(|(_, args)| {
+            args.get(param_index)
+                .is_some_and(|arg| is_int_minus_positive(arg, param))
+        })
+        && chains
+            .iter()
+            .all(|chain| guards_imply_param_ge_one(chain, param))
+}
+
 /// **syntax-discovery-only**: recognize a floor-division shrink of
 /// `param_name` — bare `Int.div(p, k)` (discharged total form) or the
 /// legacy `Result.withDefault(Int.div(p, k), <int literal>)` wrapper,
