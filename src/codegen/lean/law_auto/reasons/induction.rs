@@ -7,13 +7,13 @@ use crate::ast::{Expr, FnDef, Spanned, Stmt, VerifyLaw};
 use crate::codegen::lean::expr::{aver_name_to_lean, emit_expr, resolve_rewrite_output};
 use crate::codegen::{CodegenContext, common};
 
-fn list_structural(fd: &FnDef, ctx: &CodegenContext) -> bool {
-    matches!(
-        common::find_fn_contract_for_fn(ctx, fd).and_then(|c| c.recursion.as_ref()),
+fn list_measure<'a>(fd: &FnDef, ctx: &'a CodegenContext) -> Option<&'a str> {
+    match common::find_fn_contract_for_fn(ctx, fd).and_then(|c| c.recursion.as_ref()) {
         Some(crate::ir::RecursionContract::Fuel {
-            fuel_metric: crate::ir::FuelMetric::SeqLenPlusOne { .. }
-        })
-    )
+            fuel_metric: crate::ir::FuelMetric::SeqLenPlusOne { param },
+        }) => Some(param),
+        _ => None,
+    }
 }
 
 fn callee<'a>(
@@ -38,16 +38,13 @@ fn lean_name(fd: &FnDef, ctx: &CodegenContext) -> String {
     }
 }
 
-pub(super) fn target(
-    expr: &Spanned<Expr>,
-    law: &VerifyLaw,
-    ctx: &CodegenContext,
-) -> Option<String> {
+pub(super) fn plan(expr: &Spanned<Expr>, law: &VerifyLaw, ctx: &CodegenContext) -> Option<String> {
     let scope = ctx.active_module_scope();
     let fd = callee(expr, ctx, scope.as_deref())?;
-    if !fd.effects.is_empty() || !list_structural(fd, ctx) {
+    if !fd.effects.is_empty() {
         return None;
     }
+    let measure = list_measure(fd, ctx)?;
     let Expr::FnCall(_, args) = &expr.node else {
         return None;
     };
@@ -63,7 +60,29 @@ pub(super) fn target(
             return None;
         }
     }
-    Some(emit_expr(&resolve_rewrite_output(expr, ctx, None), ctx))
+    let position = fd.params.iter().position(|(name, _)| name == measure)?;
+    let (Expr::Ident(argument) | Expr::Resolved { name: argument, .. }) = &args.get(position)?.node
+    else {
+        return None;
+    };
+    let others = law
+        .givens
+        .iter()
+        .filter(|g| g.name != *argument)
+        .map(|g| aver_name_to_lean(&g.name))
+        .collect::<Vec<_>>();
+    let generalizing = if others.is_empty() {
+        String::new()
+    } else {
+        format!(" generalizing {}", others.join(" "))
+    };
+    let call = emit_expr(&resolve_rewrite_output(expr, ctx, None), ctx);
+    // Lean can fail to construct a functional principle for a local match.
+    // The checked list measure still supplies ordinary structural induction.
+    Some(format!(
+        "first | fun_induction {call} | induction {}{generalizing}",
+        aver_name_to_lean(argument)
+    ))
 }
 
 /// Walk only this law's calls, resolving every edge in its owner's scope.
@@ -97,7 +116,7 @@ pub(super) fn definitions(law: &VerifyLaw, ctx: &CodegenContext) -> Definitions 
                     ..
                 })
             );
-            if !recursive || list_structural(fd, ctx) || subtractive {
+            if !recursive || list_measure(fd, ctx).is_some() || subtractive {
                 out.insert(lean_name(fd, ctx), recursive);
             }
             let owner = common::fn_owning_scope_for(ctx, fd);
@@ -146,7 +165,7 @@ pub(super) fn definitions(law: &VerifyLaw, ctx: &CodegenContext) -> Definitions 
     // reveals the checked facts even when `rest` is not a known constructor.
     for reason in &law.because {
         if let Some(fd) = callee(reason, ctx, scope.as_deref())
-            && list_structural(fd, ctx)
+            && list_measure(fd, ctx).is_some()
         {
             out.insert(format!("= {}.eq_def", lean_name(fd, ctx)), true);
         }
