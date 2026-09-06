@@ -1,0 +1,19 @@
+module LookupReasons
+    intent = "Laws see the complete alternatives of an ordinary finite lookup."
+    effects []
+
+fn label(value: Int) -> Int
+    match value
+        17 -> 3
+        23 -> 7
+        _ -> 0
+
+verify label law bounded
+    given value: Int = [0, 17, 23, -100]
+    using []
+    label(value) <= 7 holds
+
+verify label law rejectsSmallerBound
+    given value: Int = [0, 17]
+    using []
+    label(value) <= 3 holds

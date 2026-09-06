@@ -221,7 +221,15 @@ pub fn emit_expr(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
         ResolvedExpr::InterpolatedStr(parts) => emit_interpolated_str(parts, ctx),
         ResolvedExpr::List(elements) => {
             if elements.is_empty() {
-                "[]".to_string()
+                // A sampled empty given carries its checked element type even
+                // when an enclosing polymorphic operation has no type stamp.
+                match expr
+                    .ty()
+                    .filter(|ty| crate::types::checker::type_is_fully_concrete(ty))
+                {
+                    Some(ty) => format!("([] : {})", super::types::type_to_lean(ty)),
+                    None => "[]".to_string(),
+                }
             } else {
                 let parts: Vec<String> = elements.iter().map(|e| emit_expr(e, ctx)).collect();
                 format!("[{}]", parts.join(", "))

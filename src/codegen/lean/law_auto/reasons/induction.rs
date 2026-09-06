@@ -80,8 +80,9 @@ pub(super) fn plan(expr: &Spanned<Expr>, law: &VerifyLaw, ctx: &CodegenContext) 
     // Lean can fail to construct a functional principle for a local match.
     // The checked list measure still supplies ordinary structural induction.
     Some(format!(
-        "first | fun_induction {call} | induction {}{generalizing}",
-        aver_name_to_lean(argument)
+        "first | fun_induction {call} | (induction {}{generalizing} <;> rw [{}.eq_def])",
+        aver_name_to_lean(argument),
+        lean_name(fd, ctx)
     ))
 }
 
@@ -177,6 +178,16 @@ pub(super) fn definitions(law: &VerifyLaw, ctx: &CodegenContext) -> Definitions 
             .map(|(name, _)| name.as_str())
             .collect::<Vec<_>>()
             .join(", "),
-        grind: out.into_keys().collect::<Vec<_>>().join(", "),
+        grind: out
+            .into_iter()
+            .map(|(name, recursive)| {
+                if recursive {
+                    name
+                } else {
+                    format!("= {name}.eq_def")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", "),
     }
 }
