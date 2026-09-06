@@ -2444,6 +2444,15 @@ fn main() -> Unit
     assert_eq!(rust, vm, "Rust Int endian codecs diverged from VM");
 }
 
+/// An untyped `[]` used to become `AverList` even when compared with an
+/// `AverIntList`. Real compilation catches the representation mismatch;
+/// VM parity also checks both operand orders, inequality and nested lists.
+#[test]
+fn rust_empty_list_equality_matches_vm() {
+    assert_plain_parity("tests/fixtures/empty_list_equality.av", None)
+        .expect("empty list equality must compile and match the VM");
+}
+
 /// `List.drop` on the compiled backend: stepping through a list must see
 /// exactly what stepping by destructuring sees, and the two answers are
 /// printed side by side so a skipped or duplicated element shows up in the

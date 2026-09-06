@@ -36,6 +36,8 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Fixed
 
+- **Empty lists take their element type from the other side of equality.** `items == []` and `[] != items` now preserve the checked element type, including nested lists and tuple literals. This reuses the expected-type inference already used for `Option.None`, preventing generated Rust from comparing `AverIntList` with an unresolved generic list.
+
 - **Empty-list equality samples keep their declared element types in Lean.** Imported laws could emit `[] == []` without the `List<Int>` or nested list type supplied by `given`, failing before the proof ran. Equality and inequality now preserve that type when both literals lack an element witness, including comparisons in `when` guards.
 
 - **Cited accumulator equations no longer make executable law explanations loop in simplification.** Selected lemmas remain available to proof search while the simplifier handles the local facts and definitions. Conditional induction also joins its rewrite terms structurally, so an empty safe unfold set cannot emit malformed Lean or degrade neighboring proofs during the probe.

@@ -93,6 +93,54 @@ fn assert_parse_error_containing(src: &str, snippet: &str) {
     );
 }
 
+#[test]
+fn equality_stamps_contextual_literals_from_the_other_operand() {
+    use aver::ast::{Expr, FnBody, Stmt};
+
+    for (ty, literal) in [
+        ("List<Int>", "[]"),
+        ("List<List<Int>>", "[[]]"),
+        ("List<String>", "[]"),
+        ("Option<Int>", "Option.None"),
+        ("List<Option<Int>>", "[Option.None]"),
+        ("Tuple<List<Int>, Int>", "([], 1)"),
+    ] {
+        for op in ["==", "!="] {
+            for comparison in [format!("xs {op} {literal}"), format!("{literal} {op} xs")] {
+                let source = format!("fn compare(xs: {ty}) -> Bool\n    {comparison}\n");
+                let items = parse(&source);
+                let errs = run_type_check(&items);
+                assert!(errs.is_empty(), "{source}: {errs:?}");
+                let TopLevel::FnDef(function) = &items[0] else {
+                    panic!("expected function");
+                };
+                let body = match &*function.body {
+                    FnBody::Block(stmts) => match &stmts[0] {
+                        Stmt::Expr(body) => body,
+                        _ => panic!("expected expression statement"),
+                    },
+                };
+                let Expr::BinOp(_, left, right) = &body.node else {
+                    panic!("expected comparison");
+                };
+                let expected = aver::types::parse_type_str(ty);
+                assert_eq!(left.ty(), Some(&expected), "{source}: left operand");
+                assert_eq!(right.ty(), Some(&expected), "{source}: right operand");
+            }
+        }
+    }
+}
+
+#[test]
+fn equality_context_keeps_rejecting_incompatible_elements() {
+    for expression in ["xs == [[], [true]]", "[[], [true]] != xs"] {
+        assert_error_containing(
+            &format!("fn compare(xs: List<List<Int>>) -> Bool\n    {expression}\n"),
+            "expected Int, got Bool",
+        );
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Valid programs — must pass with zero errors
 // ---------------------------------------------------------------------------
