@@ -1961,3 +1961,20 @@ fn lean_proves_negated_premise_comparison_bridge_when_lake_is_available() {
         "the negated-premise comparison bridge must close le-totality as a universal\n{summary}"
     );
 }
+
+/// The first list given can itself be the threaded accumulator. Generalizing
+/// the induction target is invalid Lean; an open law must still build honestly.
+#[test]
+fn lean_list_induction_does_not_generalize_its_own_target_when_lake_is_available() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        return;
+    }
+    let summary = proof_check_summary(
+        include_str!("../fixtures/list_induction_target.av"),
+        "lean",
+        "aver-list-induction-target",
+    );
+    assert_eq!(summary["build_errors"], 0, "{summary}");
+    assert_eq!(summary["universal"], false, "{summary}");
+    assert!(summary["sorries"].as_u64().unwrap() > 0, "{summary}");
+}

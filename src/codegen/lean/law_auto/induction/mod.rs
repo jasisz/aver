@@ -3940,6 +3940,7 @@ fn emit_list_induction(
                 law.givens
                     .iter()
                     .position(|g| g.name == fn_param)
+                    .filter(|gi| *gi != target_idx)
                     .map(|gi| intro_names[gi].clone())
             };
             // Peano sync-decremented param → generalize + cases.
