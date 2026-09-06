@@ -1,0 +1,61 @@
+module EmptyListEquality
+    intent = "Empty list comparisons keep the element type supplied by the other operand."
+    effects [Console.print]
+
+fn emptyRight(items: List<Int>) -> Bool
+    items == []
+
+verify emptyRight
+    emptyRight([]) => true
+    emptyRight([1]) => false
+
+fn emptyLeft(items: List<Int>) -> Bool
+    [] == items
+
+verify emptyLeft
+    emptyLeft([]) => true
+    emptyLeft([1]) => false
+
+fn nonemptyRight(items: List<Int>) -> Bool
+    items != []
+
+verify nonemptyRight
+    nonemptyRight([]) => false
+    nonemptyRight([1]) => true
+
+fn nonemptyLeft(items: List<Int>) -> Bool
+    [] != items
+
+verify nonemptyLeft
+    nonemptyLeft([]) => false
+    nonemptyLeft([1]) => true
+
+fn nestedEmpty(items: List<List<Int>>) -> Bool
+    [[]] == items
+
+verify nestedEmpty
+    nestedEmpty([[]]) => true
+    nestedEmpty([[1]]) => false
+
+fn emptyStrings(items: List<String>) -> Bool
+    items == []
+
+verify emptyStrings
+    emptyStrings([]) => true
+    emptyStrings(["a"]) => false
+
+fn reversedEmpty(items: List<Int>) -> Bool
+    match List.reverse(items)
+        [] -> items == []
+        [head, ..tail] -> false
+
+verify reversedEmpty
+    reversedEmpty([]) => true
+    reversedEmpty([1]) => false
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("{emptyRight([])}/{emptyRight([1])}/{emptyLeft([])}/{emptyLeft([1])}")
+    Console.print("{nonemptyRight([])}/{nonemptyRight([1])}/{nonemptyLeft([])}/{nonemptyLeft([1])}")
+    Console.print("{nestedEmpty([[]])}/{nestedEmpty([[1]])}/{emptyStrings([])}/{emptyStrings(["a"])}")
+    Console.print("{reversedEmpty([])}/{reversedEmpty([1])}")

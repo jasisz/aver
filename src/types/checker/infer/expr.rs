@@ -172,6 +172,18 @@ pub(in crate::types::checker) fn is_bare_none_expr(expr: &Expr) -> bool {
     }
 }
 
+/// These literals need the opposite equality operand to supply an element
+/// type before their set-once type stamps reach the backends.
+fn equality_needs_context(expr: &Expr) -> bool {
+    match expr {
+        Expr::List(items) => {
+            items.is_empty() || items.iter().any(|item| equality_needs_context(&item.node))
+        }
+        Expr::Tuple(items) => items.iter().any(|item| equality_needs_context(&item.node)),
+        _ => is_bare_none_expr(expr),
+    }
+}
+
 impl TypeChecker {
     /// Infer the type of `expr` and record it on the `Spanned` node so later
     /// passes can read the result without re-running inference. The actual
@@ -1139,20 +1151,13 @@ impl TypeChecker {
             }
 
             Expr::BinOp(op, left, right) => {
-                // Bidirectional equality: a bare `Option.None` on one side
-                // of `==` / `!=` has no payload to fix its `T`, so plain
-                // inference stamps it `Option<T>` — and the stamp is
-                // set-once, so the imprecision is permanent. The wasm-gc
-                // backend then fails to resolve the `Option<T>`
-                // instantiation slot (the verify runner synthesizes exactly
-                // this shape: `__verify_X_check() -> Bool` with body
-                // `f(args) == Option.None`). Infer the concrete side first
-                // and propagate its type into the bare-None side; when both
-                // sides are bare (or the concrete side isn't fully
-                // concrete) fall back to the plain left-then-right order.
-                let bare_none_eq = matches!(op, BinOp::Eq | BinOp::Neq);
-                let l_bare = bare_none_eq && is_bare_none_expr(&left.node);
-                let r_bare = bare_none_eq && is_bare_none_expr(&right.node);
+                // Infer the concrete side first: `[]` and `Option.None`
+                // (also inside collection literals) otherwise keep an
+                // unresolved set-once stamp. Forward the checked type using
+                // the same expected-type path as arguments and returns.
+                let equality = matches!(op, BinOp::Eq | BinOp::Neq);
+                let l_bare = equality && equality_needs_context(&left.node);
+                let r_bare = equality && equality_needs_context(&right.node);
                 let (lt, rt) = if l_bare && !r_bare {
                     let rt = self.infer_type(right);
                     let lt = if type_is_fully_concrete(&rt) {
