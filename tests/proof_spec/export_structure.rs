@@ -132,12 +132,12 @@ fn proof_export_cross_module_recursive_fns_get_per_module_fn_contracts() {
         std::fs::read_to_string(out_dir.join("CountdownB.lean")).expect("read CountdownB.lean");
 
     assert!(
-        a_lean.contains("def countdown__fuel"),
-        "CountdownA.countdown must emit fuel-encoded def, not `partial def`:\n{a_lean}"
+        a_lean.contains("termination_by n.toNat"),
+        "CountdownA.countdown must emit a checked native countdown:\n{a_lean}"
     );
     assert!(
-        b_lean.contains("def countdown__fuel"),
-        "CountdownB.countdown must emit fuel-encoded def, not `partial def`:\n{b_lean}"
+        b_lean.contains("termination_by n.toNat"),
+        "CountdownB.countdown must emit a checked native countdown:\n{b_lean}"
     );
     assert!(
         !a_lean.contains("partial def countdown"),
@@ -374,15 +374,14 @@ fn proof_export_cross_module_differentiated_recursion_shapes_emit_per_module() {
     let a_lean = std::fs::read_to_string(out_dir.join("WalkerA.lean")).expect("read WalkerA.lean");
     let b_lean = std::fs::read_to_string(out_dir.join("WalkerB.lean")).expect("read WalkerB.lean");
 
-    // WalkerA is IntCountdown → fuel-encoded `def walker__fuel
-    // (fuel : Nat) (n : Int) : Int`.
+    // WalkerA has a positive-guarded Int countdown → native toNat measure.
     assert!(
-        a_lean.contains("def walker__fuel"),
-        "WalkerA.walker (IntCountdown) must emit fuel-encoded def:\n{a_lean}"
+        a_lean.contains("termination_by n.toNat"),
+        "WalkerA.walker must emit a checked native countdown:\n{a_lean}"
     );
     assert!(
         a_lean.contains("(n : Int)"),
-        "WalkerA.walker fuel sig must carry Int param `n`:\n{a_lean}"
+        "WalkerA.walker signature must carry Int param `n`:\n{a_lean}"
     );
 
     // WalkerB is ListStructural → backend may emit either a

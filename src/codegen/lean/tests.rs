@@ -3165,9 +3165,9 @@ fn proof_mode_accepts_single_int_countdown_on_nonfirst_param() {
         .iter()
         .find_map(|(name, content)| (name == "Verify_mode.lean").then_some(content))
         .expect("expected generated Lean file");
-    assert!(lean.contains("def repeatLike__fuel"));
+    assert!(!lean.contains("def repeatLike__fuel"));
     assert!(lean.contains("def repeatLike (char : String) (n : Int) : List String :="));
-    assert!(lean.contains("repeatLike__fuel ((Int.natAbs n) + 1) char n"));
+    assert!(lean.contains("termination_by n.toNat"));
 }
 
 #[test]

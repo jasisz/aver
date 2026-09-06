@@ -1,0 +1,45 @@
+module CountdownDigits
+    intent = "Equations and accumulator proofs for a guarded countdown, independent of law shapes."
+    effects []
+
+fn digits(value: Int, width: Int) -> List<Int>
+    ? "Encode a non-negative integer as `width` little-endian bytes."
+    digitsInto(value, width, [])
+
+verify digits law lowDigitStep
+    given value: Int = [0, 1, 10, 999]
+    given width: Int = [1, 2, 4, 8]
+    when width > 0
+    using [digitsInto.accumulatorPrefix]
+    digits(value, width) => List.prepend(Int.mod(value, 10), digits(Int.div(value, 10), width - 1))
+
+verify digits law fixedWidth
+    given value: Int = [-1, 0, 1, 999]
+    given width: Int = [0, 1, 2, 8]
+    when width >= 0
+    using [digitsInto.fixedWidth]
+    List.len(digits(value, width)) => width
+
+fn digitsInto(value: Int, width: Int, acc: List<Int>) -> List<Int>
+    ? "Accumulator form: take the low byte, shift down by one byte, repeat."
+    match width <= 0
+        true -> List.reverse(acc)
+        false -> digitsInto(Int.div(value, 10), width - 1, List.prepend(Int.mod(value, 10), acc))
+
+verify digitsInto
+    digitsInto(42, 2, []) => [2, 4]
+    digitsInto(42, -1, [7, 8]) => [8, 7]
+
+verify digitsInto law accumulatorPrefix
+    given value: Int = [0, 1, 999]
+    given width: Int = [-1, 0, 1, 2, 8]
+    given acc: List<Int> = [[], [7], [1, 2]]
+    digitsInto(value, width, acc) => List.concat(List.reverse(acc), digitsInto(value, width, []))
+
+verify digitsInto law fixedWidth
+    given value: Int = [-1, 0, 1, 999]
+    given width: Int = [0, 1, 2, 8]
+    given acc: List<Int> = [[], [7], [1, 2]]
+    List.len(digitsInto(value, width, acc)) => match width <= 0
+        true -> List.len(acc)
+        false -> List.len(acc) + width

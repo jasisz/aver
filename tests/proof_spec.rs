@@ -515,19 +515,20 @@ fn proof_minimize_collapses_grind_portfolios_and_stays_passing() {
 /// (`stepSum(20) => stepSumAcc(20)`) — the exact shape that goes vacuous when
 /// fuel exhaustion collapses both sides to `default` under `native_decide`.
 const FUEL_PROBE_AV: &str = "module FuelProbe\n\
+    \x20   exposes [stepSum, stepSumAcc]\n\
     \x20   intent = \"fuel-exhaustion soundness probe\"\n\
     \n\
     fn stepSum(n: Int) -> Int\n\
     \x20   ? \"Sums 1..n by counting down.\"\n\
-    \x20   match n <= 0\n\
-    \x20       true  -> 0\n\
-    \x20       false -> n + stepSum(n - 1)\n\
+    \x20   match n\n\
+    \x20       0 -> 0\n\
+    \x20       _ -> n + stepSum(n - 1)\n\
     \n\
     fn stepSumAcc(n: Int) -> Int\n\
     \x20   ? \"Sums 1..n, other association.\"\n\
-    \x20   match n <= 0\n\
-    \x20       true  -> 0\n\
-    \x20       false -> stepSumAcc(n - 1) + n\n\
+    \x20   match n\n\
+    \x20       0 -> 0\n\
+    \x20       _ -> stepSumAcc(n - 1) + n\n\
     \n\
     verify stepSum\n\
     \x20   stepSum(20) => stepSumAcc(20)\n";

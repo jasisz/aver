@@ -2916,3 +2916,44 @@ fn ring_identity_not_pinned_for_single_field_record_given() {
         theorem.strategy
     );
 }
+
+#[test]
+fn native_subtractive_measure_requires_positive_guards_at_every_call() {
+    for (body, native) in [
+        (
+            "match width <= 0\n        true -> acc\n        false -> worker(acc + 1, width - 1)",
+            true,
+        ),
+        (
+            "match width > 0\n        true -> worker(acc, width - 3)\n        false -> acc",
+            true,
+        ),
+        (
+            "match width >= 0\n        true -> worker(acc, width - 1)\n        false -> acc",
+            false,
+        ),
+        (
+            "match width <= 0\n        true -> worker(acc, width - 1)\n        false -> worker(acc, width - 1)",
+            false,
+        ),
+        (
+            "match width < 0\n        true -> worker(acc, width + 1)\n        false -> acc",
+            false,
+        ),
+    ] {
+        let src = format!(
+            "module Worker\n    exposes [worker]\n    intent = \"guarded descent\"\nfn worker(acc: Int, width: Int) -> Int\n    {body}\n"
+        );
+        let ctx = build_ctx(&src);
+        let recursion = fn_contract(&ctx, "worker")
+            .unwrap()
+            .recursion
+            .as_ref()
+            .unwrap();
+        assert_eq!(
+            matches!(recursion, RecursionContract::WellFoundedToNat { param, floor_div: None } if param == "width"),
+            native,
+            "{body}: {recursion:?}"
+        );
+    }
+}

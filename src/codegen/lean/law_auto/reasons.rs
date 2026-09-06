@@ -95,24 +95,26 @@ fn premise_chain(premises: &[String], prop: &str) -> String {
 }
 
 fn solver(
-    defs: &str,
-    grind_defs: &str,
+    definitions: &induction::Definitions,
     label: &str,
     indent: &str,
     fact_count: usize,
 ) -> Vec<String> {
     // Cited theorems remain available to grind, but are not unconditional
     // rewrite rules: an accumulator equation can rewrite its own result.
-    let simp_defs = std::iter::once(defs.to_string())
+    let simp_defs = std::iter::once(definitions.simp.clone())
         .filter(|s| !s.is_empty())
         .chain((0..fact_count).map(|i| format!("-_fact{i}")))
         .collect::<Vec<_>>()
         .join(", ");
-    let grind_defs = [grind_defs, "List.take, List.reverse_eq_nil_iff"]
-        .into_iter()
-        .filter(|s| !s.is_empty())
-        .collect::<Vec<_>>()
-        .join(", ");
+    let grind_defs = [
+        definitions.grind.as_str(),
+        "List.take, List.reverse_eq_nil_iff",
+    ]
+    .into_iter()
+    .filter(|s| !s.is_empty())
+    .collect::<Vec<_>>()
+    .join(", ");
     vec![
         format!("{indent}first"),
         format!("{indent}| (simp_all +zetaDelta [{simp_defs}]; done)"),
@@ -127,19 +129,13 @@ pub(in crate::codegen::lean) fn emit_reason_law(
     ctx: &CodegenContext,
     claim: ReasonClaim<'_>,
 ) -> Vec<String> {
-    let definitions = induction::definitions(law, ctx);
-    let defs = definitions.simp;
     let facts = dependencies(vb, law, ctx);
     let targets = law
         .because
         .iter()
         .map(|r| induction::target(r, law, ctx))
         .collect::<Vec<_>>();
-    let grind_defs = if targets.iter().any(Option::is_some) {
-        definitions.grind
-    } else {
-        defs.clone()
-    };
+    let definitions = induction::definitions(law, ctx, targets.iter().any(Option::is_some));
     let params = claim
         .binders
         .iter()
@@ -217,7 +213,7 @@ pub(in crate::codegen::lean) fn emit_reason_law(
                 }
             }
             lines.push("  all_goals".to_string());
-            lines.extend(solver(&defs, &grind_defs, &label, "    ", fact_count));
+            lines.extend(solver(&definitions, &label, "    ", fact_count));
         } else {
             if let Some(call) = &targets[index] {
                 // Guards and previous explanations belong in the motive:
@@ -235,7 +231,7 @@ pub(in crate::codegen::lean) fn emit_reason_law(
                 "  all_goals repeat' first | apply {and_rule} | intro"
             ));
             lines.push("  all_goals".to_string());
-            lines.extend(solver(&defs, &grind_defs, &label, "    ", fact_count));
+            lines.extend(solver(&definitions, &label, "    ", fact_count));
             previous.push(format!("h_reason{index}"));
         }
     }

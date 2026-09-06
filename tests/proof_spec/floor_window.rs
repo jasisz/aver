@@ -744,21 +744,14 @@ verify floorDiv law absorbBare
 /// The cited pool positivity law is LOAD-BEARING for the cancel arm, proven by a
 /// two-source revert. Both sources carry the identical guard-free cancel law
 /// `floorDiv(a*pow2(k), 8*pow2(k)) = floorDiv(a, 8)`, whose only positivity
-/// source is `0 < pow2 k`. WITH `pow2 law positive` in scope the divisor-shape
-/// rung derives that by CITING it and the law classes `universal`; DELETE just
-/// that one pool law (the fn and the cancel law untouched) and the same law
-/// declines to the sound `bounded-domain` sampled fallback. This is the
-/// mechanized form of the "delete the pool law" revert — the classification flip
-/// is what proves the citation, not a coincidence, carries the universality.
-/// Export-structure pin (no toolchain): the class is fixed at emit time.
+/// source is `0 < pow2 k`. The positive law supplies that fact. Native
+/// countdown equations now allow an attempted universal without the citation,
+/// so check the kernel-audited result rather than its pre-check class marker.
 #[test]
 fn proof_divisor_shape_pool_law_is_load_bearing() {
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let aver_bin = env!("CARGO_BIN_EXE_aver");
-
     // Shared tail: the pow2 fn, a floor fn, and the guard-free cancel law whose
     // shared factor is `pow2(k)`. The `when 0 < k` guard bounds the exponent,
-    // NOT the divisor, so `0 < pow2 k` has no route but a citation.
+    // NOT the divisor; the current closer needs the positivity citation.
     let tail = r#"
 fn pow2(n: Int) -> Int
     match n <= 0
@@ -786,50 +779,31 @@ verify floorDiv law cancelPow2
     let pool_law =
         "\nverify pow2 law positive\n    given k: Int = [0, 1, 3]\n    pow2(k) >= 1 holds\n";
 
-    let emit_class = |with_pool: bool| -> String {
+    if Command::new("lake").arg("--version").output().is_err() {
+        return;
+    }
+    for with_pool in [true, false] {
         let body = tail.replace("POOL_LAW", if with_pool { pool_law } else { "" });
-        let src = format!("{header}{body}");
-        let dir = temp_output_dir(if with_pool {
-            "aver-proof-cancel-revert-with"
-        } else {
-            "aver-proof-cancel-revert-without"
-        });
-        std::fs::create_dir_all(&dir).expect("mkdir");
-        let av = dir.join("cancel_revert.av");
-        std::fs::write(&av, &src).expect("write fixture");
-        let out_lean = dir.join("lean");
-        let run = Command::new(aver_bin)
-            .current_dir(&repo_root)
-            .arg("proof")
-            .arg(&av)
-            .arg("-o")
-            .arg(&out_lean)
-            .output()
-            .expect("aver proof should run");
-        assert!(run.status.success(), "{}", format_output(&run));
-        let lean = std::fs::read_to_string(out_lean.join("CancelRevert.lean")).expect("lean out");
-        let _ = std::fs::remove_dir_all(&dir);
-        lean.lines()
-            .find(|l| l.contains("-- aver:law-class floorDiv_law_cancelPow2 "))
-            .unwrap_or_else(|| panic!("no cancel law-class line:\n{lean}"))
-            .to_string()
-    };
-
-    // WITH the pool law: the citation discharges `0 < pow2 k` → universal.
-    let with_pool = emit_class(true);
-    assert!(
-        with_pool.contains("floorDiv_law_cancelPow2 universal"),
-        "with the pool law present the cancel law must class universal; got: {with_pool}"
-    );
-    // WITHOUT the pool law: nothing derives `0 < pow2 k` → the rung declines to
-    // the sound bounded sampled fallback (NOT a false universal).
-    let without_pool = emit_class(false);
-    assert!(
-        without_pool.contains("floorDiv_law_cancelPow2 bounded-domain"),
-        "deleting the pool law must drop the cancel law to bounded-domain; got: {without_pool}"
-    );
-    assert!(
-        !without_pool.contains("floorDiv_law_cancelPow2 universal"),
-        "deleting the pool law must NOT leave a false universal; got: {without_pool}"
-    );
+        let dir = temp_output_dir("aver-proof-cancel-citation");
+        std::fs::create_dir_all(&dir).unwrap();
+        let av = dir.join("cancel.av");
+        std::fs::write(&av, format!("{header}{body}")).unwrap();
+        let output = dir.join("lean");
+        let (summary, run) =
+            run_lean_check_json_with_args(av.to_str().unwrap(), &output, 0, &[], &[]);
+        assert_eq!(summary["build_errors"], 0, "{}", format_output(&run));
+        assert_eq!(run.status.success(), with_pool, "{}", format_output(&run));
+        let manifest: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(output.join("proof_manifest.json")).unwrap(),
+        )
+        .unwrap();
+        let law = manifest["laws"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|law| law["law"] == "floorDiv.cancelPow2")
+            .unwrap();
+        assert_eq!(law["tier"], if with_pool { "universal" } else { "failed" });
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }
