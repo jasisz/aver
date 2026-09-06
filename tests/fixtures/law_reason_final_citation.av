@@ -1,0 +1,19 @@
+module CitedFinalStep
+    intent = "An explicit citation stays available after a trivial explanation."
+
+fn count(items: List<Int>) -> Int
+    match items
+        [] -> 0
+        [head, ..tail] -> 1 + count(tail)
+
+verify count law concatenation
+    given left: List<Int> = [[], [1], [1, 2]]
+    given right: List<Int> = [[], [3]]
+    count(List.concat(left, right)) => count(left) + count(right)
+
+verify count law explainedConcatenation
+    given left: List<Int> = [[], [1], [1, 2]]
+    given right: List<Int> = [[], [3]]
+    because true
+    using [count.concatenation]
+    count(List.concat(left, right)) => count(left) + count(right)

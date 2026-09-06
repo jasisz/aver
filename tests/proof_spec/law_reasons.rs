@@ -1,6 +1,31 @@
 use super::*;
 
 #[test]
+fn citations_remain_available_in_the_final_implication_after_a_reason() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        return;
+    }
+    let dir = temp_output_dir("aver-law-final-citation");
+    let (summary, run) = run_lean_check_json_with_args(
+        "tests/fixtures/law_reason_final_citation.av",
+        &dir,
+        0,
+        &[],
+        &[],
+    );
+    assert!(run.status.success(), "{}", format_output(&run));
+    assert_eq!(summary["build_errors"], 0);
+    assert_eq!(summary["universal_laws"], 2);
+    for step in ["because1", "implication"] {
+        assert_eq!(
+            summary["obligations"][format!("count.explainedConcatenation.{step}")],
+            "universal"
+        );
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn reasons_are_audited_separately_and_cannot_hide_behind_an_easy_goal() {
     if Command::new("lake").arg("--version").output().is_err() {
         return;
