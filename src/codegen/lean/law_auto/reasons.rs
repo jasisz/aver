@@ -227,10 +227,12 @@ pub(in crate::codegen::lean) fn emit_reason_law(
             } else if let Some(call) = case_call(&law.because[index], ctx) {
                 lines.push(format!("  fun_cases {call}"));
             }
-            // Each right-hand goal receives the checked left-hand fact as a
-            // premise. No Bool-valued local binding becomes an assumption.
+            // Split the explanation's cases before its ordered facts, so the
+            // right-hand goal keeps the same branch premises. Reduce local
+            // lets only when they hide a case; neither operation unfolds a
+            // recursive call or assumes a Bool-valued binding is true.
             lines.push(format!(
-                "  all_goals repeat' first | apply {and_rule} | intro"
+                "  all_goals repeat' first | (intro) | (split) | (dsimp only; split) | apply {and_rule}"
             ));
             lines.push("  all_goals".to_string());
             lines.extend(solver(&definitions, &label, "    ", fact_count));
