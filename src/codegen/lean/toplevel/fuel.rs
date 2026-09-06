@@ -1500,21 +1500,11 @@ pub(in crate::codegen::lean) fn native_measure_refusal(
     Some(reasons.join("; "))
 }
 
-/// Native termination emission for mutual-recursion SCCs planned as
-/// `MutualSizeOfRanked` — a Lean 4 `mutual ... end` block with one
-/// `termination_by` per def, the lex tuple `(measure, rank)` chosen by the
-/// call edge analysis so it decreases on every call between the members.
-/// Mirrors the Dafny native path from #83.
-///
-/// Returns `None` when:
-/// - SCC isn't fully `MutualSizeOfRanked` (caller picks fuel)
-/// - The analysis finds no measure that decreases on every call
-/// - This backend backs off from the measure it finds: see
-///   [`native_measure_back_off`]
-pub(super) fn emit_native_mutual_sizeof_group(
+/// The same checked measure gates native emission and equation use in reasons.
+pub(in crate::codegen::lean) fn native_mutual_sizeof_measures(
     fns: &[&FnDef],
     ctx: &CodegenContext,
-) -> Option<String> {
+) -> Option<Vec<NativeMeasure>> {
     for fd in fns {
         if !is_pure_fn(fd) {
             return None;
@@ -1537,6 +1527,26 @@ pub(super) fn emit_native_mutual_sizeof_group(
     if native_measure_back_off(fns, &measures).is_some() {
         return None;
     }
+
+    Some(measures)
+}
+
+/// Native termination emission for mutual-recursion SCCs planned as
+/// `MutualSizeOfRanked` — a Lean 4 `mutual ... end` block with one
+/// `termination_by` per def, the lex tuple `(measure, rank)` chosen by the
+/// call edge analysis so it decreases on every call between the members.
+/// Mirrors the Dafny native path from #83.
+///
+/// Returns `None` when:
+/// - SCC isn't fully `MutualSizeOfRanked` (caller picks fuel)
+/// - The analysis finds no measure that decreases on every call
+/// - This backend backs off from the measure it finds: see
+///   [`native_measure_back_off`]
+pub(super) fn emit_native_mutual_sizeof_group(
+    fns: &[&FnDef],
+    ctx: &CodegenContext,
+) -> Option<String> {
+    let measures = native_mutual_sizeof_measures(fns, ctx)?;
 
     let mut lines: Vec<String> = vec!["mutual".to_string()];
     for (fd, measure) in fns.iter().zip(&measures) {

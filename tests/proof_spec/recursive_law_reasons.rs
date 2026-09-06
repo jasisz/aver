@@ -164,3 +164,94 @@ fn recursive_reason_resolves_imported_helpers_despite_local_name_collisions() {
     );
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn structural_equality_reasons_preserve_float_nonreflexivity() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        return;
+    }
+    let dir = temp_output_dir("aver-reason-equality");
+    let (summary, run) = run_lean_check_json("tests/fixtures/law_reason_equality.av", &dir, 0, &[]);
+    assert!(!run.status.success(), "NaN reasons must stay open");
+    assert_eq!(summary["build_errors"], 0, "{}", format_output(&run));
+    assert_eq!(summary["universal_laws"], 2, "{summary}");
+    for law in ["identity.recordExplanation", "equalContainers.reflexive"] {
+        assert_eq!(
+            summary["obligations"][format!("{law}.because1")],
+            "universal",
+            "{summary}"
+        );
+    }
+    for law in [
+        "floatIdentity.noNaNReflexivity",
+        "floatIdentity.noNestedNaNReflexivity",
+    ] {
+        assert_eq!(
+            summary["obligations"][format!("{law}.because1")],
+            "failed",
+            "{summary}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn structural_filter_reason_uses_checked_mutual_equations() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        return;
+    }
+    let dir = temp_output_dir("aver-reason-filter");
+    let (summary, run) = run_lean_check_json("tests/fixtures/law_reason_filter.av", &dir, 0, &[]);
+    assert!(run.status.success(), "{}", format_output(&run));
+    assert_eq!(summary["universal_laws"], 1, "{summary}");
+    assert_eq!(
+        summary["obligations"]["without.stableFilter.because1"],
+        "universal"
+    );
+    assert_eq!(
+        summary["obligations"]["without.stableFilter.implication"],
+        "universal"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn imported_structural_equality_and_mutual_equations_keep_their_owner() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        return;
+    }
+    let dir = temp_output_dir("aver-imported-filter-reason");
+    std::fs::create_dir_all(&dir).unwrap();
+    let dependency = include_str!("../fixtures/law_reason_filter.av").replace(
+        "module PacketFilter",
+        "module PacketFilter\n    exposes [Packet, without, retained, reason]",
+    );
+    std::fs::write(dir.join("PacketFilter.av"), dependency).unwrap();
+    let source = dir.join("Consumer.av");
+    std::fs::write(&source, r#"module Consumer
+    depends [PacketFilter]
+    intent = "Imported proof symbols retain their types and owning scopes."
+    effects []
+record Packet
+    value: Float
+fn key(value: Int) -> Int
+    value
+verify key law importedFilter
+    given packets: List<PacketFilter.Packet> = [[], [PacketFilter.Packet.Marker(1)]]
+    given target: List<Int> = [[], [1]]
+    given acc: List<PacketFilter.Packet> = [[]]
+    because PacketFilter.reason(packets, target, acc)
+    using []
+    PacketFilter.without(packets, target, acc) => List.concat(List.reverse(acc), PacketFilter.retained(packets, target))
+"#).unwrap();
+    let (summary, run) = run_lean_check_json_with_args(
+        source.to_str().unwrap(),
+        &dir.join("lean"),
+        0,
+        &[],
+        &["--module-root", dir.to_str().unwrap()],
+    );
+    assert!(run.status.success(), "{}", format_output(&run));
+    assert_eq!(summary["universal_laws"], 2, "{summary}");
+    let _ = std::fs::remove_dir_all(dir);
+}

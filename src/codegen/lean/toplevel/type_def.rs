@@ -1,3 +1,5 @@
+mod equality;
+
 use std::collections::{HashMap, HashSet};
 
 use super::expr::aver_name_to_lean;
@@ -429,6 +431,12 @@ fn emit_sum_type(
     });
     // #14: Recursive types cannot derive DecidableEq automatically
     lines.push(derives_line(inhabited, !is_recursive));
+    if equality::reflects_equality(&crate::types::Type::named(name), ctx, scope) {
+        lines.push(format!(
+            "deriving instance ReflBEq, LawfulBEq for {}",
+            aver_name_to_lean(name)
+        ));
+    }
     lines.join("\n")
 }
 
@@ -485,6 +493,12 @@ fn emit_product_type(
         .iter()
         .all(|(_, field)| field_is_inhabitable(field, ctx, scope, &mut Vec::new()));
     lines.push(derives_line(inhabited, !is_recursive));
+    if equality::reflects_equality(&crate::types::Type::named(name), ctx, scope) {
+        lines.push(format!(
+            "deriving instance ReflBEq, LawfulBEq for {}",
+            aver_name_to_lean(name)
+        ));
+    }
     lines.join("\n")
 }
 
