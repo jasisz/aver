@@ -2221,10 +2221,9 @@ pub(in crate::codegen::lean) fn emit_conditional_inductive_generic_law(
     }
     let target_idx = find_list_induction_target(law)?;
     let target = intro_names.get(target_idx)?.clone();
-    let defs = law_simp_defs_blind(ctx, vb, law)
+    let mut simp_terms = law_simp_defs_blind(ctx, vb, law)
         .into_iter()
-        .collect::<Vec<_>>()
-        .join(", ");
+        .collect::<Vec<_>>();
     // The laws-as-lemmas pool: earlier sibling laws eligible for this proof's
     // cone ∪ subject. Their NAMES join the induction-arm `simp_all` set (the
     // membership emit only feeds them to its flat fast path; a conditional
@@ -2233,13 +2232,24 @@ pub(in crate::codegen::lean) fn emit_conditional_inductive_generic_law(
         .iter()
         .map(|l| l.name.clone())
         .collect();
-    let defs_pool = if pool_names.is_empty() {
-        defs.clone()
-    } else {
-        format!("{defs}, {}", pool_names.join(", "))
+    simp_terms.extend(pool_names.iter().cloned());
+    // Countdown definitions can leave the safe unfold set empty. Join actual
+    // terms, rather than inserting a comma after an empty rendered set.
+    let simp_set = |extra: &[&str]| {
+        simp_terms
+            .iter()
+            .map(String::as_str)
+            .chain(extra.iter().copied())
+            .collect::<Vec<_>>()
+            .join(", ")
     };
-    let with_append =
-        format!("{defs_pool}, List.cons_append, List.nil_append, List.singleton_append");
+    let defs_pool = simp_set(&[]);
+    let with_when = simp_set(&["h_when"]);
+    let with_append = simp_set(&[
+        "List.cons_append",
+        "List.nil_append",
+        "List.singleton_append",
+    ]);
     // Peano comparison bridges (`(f a b = true) = (a R b)`) for the relations the
     // law mentions — premise included (seeded into `extra`). They let `omega`
     // discharge a dispatcher branch a COMPARISON premise rules out (`prop_86`'s
@@ -2272,7 +2282,7 @@ pub(in crate::codegen::lean) fn emit_conditional_inductive_generic_law(
     let bridge_rung: Option<String> = if cmp_bridges.is_empty() {
         None
     } else {
-        let defs_pool_br = format!("{defs_pool}, {}", cmp_bridges.join(", "));
+        let defs_pool_br = simp_set(&cmp_bridges.iter().map(String::as_str).collect::<Vec<_>>());
         let bridges_csv = cmp_bridges.join(", ");
         Some(format!(
             "    | (simp only [{with_append}, {bridges_csv}] at h_when ⊢ <;> (split <;> simp_all [{defs_pool_br}]) <;> (try omega) <;> done)"
@@ -2336,9 +2346,8 @@ pub(in crate::codegen::lean) fn emit_conditional_inductive_generic_law(
     // `simp` + `split` + `simp_all` rung is CHEAP (no search) and closes the
     // wrapper helper laws (`sortTail`, `sortedConsLeHead`, `leHeadInsort`).
     let subject = aver_name_to_lean(&vb.fn_name);
-    let subject_split_rung = format!(
-        "    | (simp only [{subject}] <;> (split <;> simp_all [{defs_pool}, h_when]) <;> done)"
-    );
+    let subject_split_rung =
+        format!("    | (simp only [{subject}] <;> (split <;> simp_all [{with_when}]) <;> done)");
     // GOAL-DIRECTED closer — the EXPENSIVE rung (`apply` each pool law + bounded
     // `solve_by_elim` + Bool adapters). Restricted to the shape that needs it: a
     // conclusion that WRAPS the verified fn's call in a DIFFERENT predicate
@@ -2427,7 +2436,7 @@ pub(in crate::codegen::lean) fn emit_conditional_inductive_generic_law(
         .map(|given| format!("cases {} <;> ", aver_name_to_lean(&given.name)))
         .collect::<String>();
     let arithmetic_rung = format!(
-        "    | ({bool_cases}simp only [{subject}, Bool.false_eq_true, Bool.true_eq_false, ite_true, ite_false] <;> (try split) <;> simp_all [{defs_pool}, h_when] <;> (try simp_all only [{normalizers}]) <;> omega)"
+        "    | ({bool_cases}simp only [{subject}, Bool.false_eq_true, Bool.true_eq_false, ite_true, ite_false] <;> (try split) <;> simp_all [{with_when}] <;> (try simp_all only [{normalizers}]) <;> omega)"
     );
     let mut body = vec![format!("  intro {}", before.join(" "))];
     body.extend([
@@ -2441,7 +2450,7 @@ pub(in crate::codegen::lean) fn emit_conditional_inductive_generic_law(
         // A wrapper-conclusion base case (`leHead z (insort x [])`) needs the
         // verified fn unfolded then `simp_all`; the bare `simp_all` above leaves
         // it under a stuck dependent match.
-        format!("    | (simp only [{subject}] <;> simp_all [{defs_pool}, h_when] <;> done)"),
+        format!("    | (simp only [{subject}] <;> simp_all [{with_when}] <;> done)"),
         // Non-inductive closer: a conditional law whose content is a case split
         // plus linear arithmetic (a sign byte placed by `if top >= 128`, a
         // clamp, a guard) needs no induction hypothesis at all — `split`
@@ -2468,14 +2477,14 @@ pub(in crate::codegen::lean) fn emit_conditional_inductive_generic_law(
         format!(
             "    | ({case_other}simp only [{with_append}] at h_when ⊢ <;> (split <;> simp_all [{defs_pool}]) <;> done)"
         ),
-        format!("    | (simp only [{with_append}] <;> simp_all [{defs_pool}, h_when] <;> done)"),
-        format!("    | (split <;> simp_all [{defs_pool}, h_when] <;> done)"),
-        format!("    | (simp_all [{defs_pool}, h_when] <;> done)"),
+        format!("    | (simp only [{with_append}] <;> simp_all [{with_when}] <;> done)"),
+        format!("    | (split <;> simp_all [{with_when}] <;> done)"),
+        format!("    | (simp_all [{with_when}] <;> done)"),
         // Single-list per-element-fold shape (`when allZ(xs) -> sumN(xs) => Z`):
         // the cons-head premise (`allZ (hd :: tl)` unfolds to a match on `hd`)
         // needs the head split before the conditional IH applies. Fail-closed for
         // a non-inductive head (`cases hd` on an `Int` fails, `first` advances).
-        format!("    | (cases hd <;> simp_all [{defs_pool}, h_when] <;> done)"),
+        format!("    | (cases hd <;> simp_all [{with_when}] <;> done)"),
         // The non-inductive closer, as in the nil arm.
         arithmetic_rung,
         // Cheap subject-unfold + split (closes the wrapper helper laws).
@@ -2496,7 +2505,7 @@ pub(in crate::codegen::lean) fn emit_conditional_inductive_generic_law(
         body.insert(
             at + 1,
             format!(
-                "    | (rcases tl with {pattern} <;> simp_all [{defs_pool}, h_when, {normalizers}] <;> omega)"
+                "    | (rcases tl with {pattern} <;> simp_all [{with_when}, {normalizers}] <;> omega)"
             ),
         );
     }

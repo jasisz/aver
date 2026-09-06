@@ -65,6 +65,29 @@ fn canonical_literal_key_order(
     Some(keyed.into_iter().map(|(_, entry)| entry).collect())
 }
 
+/// Empty list literals, including nested empty lists, carry no element-type
+/// witness in Lean. Preserve the checked Aver type on comparisons where
+/// neither operand can supply that witness (notably substituted law samples).
+pub(super) fn typed_comparison_operands(
+    op: &BinOp,
+    left: &Spanned<ResolvedExpr>,
+    right: &Spanned<ResolvedExpr>,
+    mut l: String,
+    r: String,
+) -> (String, String) {
+    fn only_empty_lists(expr: &Spanned<ResolvedExpr>) -> bool {
+        matches!(&expr.node, ResolvedExpr::List(items) if items.iter().all(only_empty_lists))
+    }
+    if matches!(op, BinOp::Eq | BinOp::Neq)
+        && only_empty_lists(left)
+        && only_empty_lists(right)
+        && let Some(ty @ crate::types::Type::List(_)) = left.ty().or_else(|| right.ty())
+    {
+        l = format!("({l} : {})", super::types::type_to_lean(ty));
+    }
+    (l, r)
+}
+
 /// Emit a Lean 4 expression from an Aver Expr.
 pub fn emit_expr(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
     match &expr.node {
@@ -160,8 +183,13 @@ pub fn emit_expr(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
         ResolvedExpr::Call(callee, args) => emit_fn_call(callee, args, ctx),
         ResolvedExpr::Neg(inner) => format!("(-{})", emit_expr(inner, ctx)),
         ResolvedExpr::BinOp(op, left, right) => {
-            let l = emit_expr(left, ctx);
-            let r = emit_expr(right, ctx);
+            let (l, r) = typed_comparison_operands(
+                op,
+                left,
+                right,
+                emit_expr(left, ctx),
+                emit_expr(right, ctx),
+            );
             let op_str = match op {
                 BinOp::Add => "+",
                 BinOp::Sub => "-",

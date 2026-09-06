@@ -84,8 +84,13 @@ fn emit_sample_guard_resolved(
             format!("(!{})", emit_sample_guard_resolved(&args[0], ctx))
         }
         ResolvedExpr::BinOp(op, left, right) => {
-            let l = emit_sample_guard_resolved(left, ctx);
-            let r = emit_sample_guard_resolved(right, ctx);
+            let (l, r) = super::expr::typed_comparison_operands(
+                op,
+                left,
+                right,
+                emit_sample_guard_resolved(left, ctx),
+                emit_sample_guard_resolved(right, ctx),
+            );
             // Operator spellings mirror `expr::emit_expr` exactly.
             let op_str = match op {
                 BinOp::Add => "+",

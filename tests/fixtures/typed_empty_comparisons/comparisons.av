@@ -1,0 +1,35 @@
+module Comparisons
+    intent = "Empty list comparisons keep their checked element types."
+    exposes [same]
+
+fn same(xs: List<Int>, ys: List<Int>) -> Bool
+    xs == ys
+
+verify same law agrees
+    given xs: List<Int> = [[], [1]]
+    given ys: List<Int> = [[], [2]]
+    using []
+    same(xs, ys) => xs == ys
+
+verify same law guarded
+    given xs: List<Int> = [[], [1]]
+    given ys: List<Int> = [[], [2]]
+    when xs == ys
+    using []
+    same(xs, ys) holds
+
+fn sameNested(xs: List<List<String>>, ys: List<List<String>>) -> Bool
+    xs == ys
+
+verify sameNested law agrees
+    given xs: List<List<String>> = [[], [[]], [["x"]]]
+    given ys: List<List<String>> = [[], [[]], [["y"]]]
+    using []
+    sameNested(xs, ys) => xs == ys
+
+verify sameNested law different
+    given xs: List<List<String>> = [[], [[]], [["x"]]]
+    given ys: List<List<String>> = [[], [[]], [["y"]]]
+    when xs != ys
+    using []
+    sameNested(xs, ys) => false
