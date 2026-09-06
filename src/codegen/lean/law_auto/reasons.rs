@@ -132,10 +132,10 @@ pub(in crate::codegen::lean) fn emit_reason_law(
     claim: ReasonClaim<'_>,
 ) -> Vec<String> {
     let facts = dependencies(vb, law, ctx);
-    let targets = law
+    let plans = law
         .because
         .iter()
-        .map(|r| induction::target(r, law, ctx))
+        .map(|r| induction::plan(r, law, ctx))
         .collect::<Vec<_>>();
     let definitions = induction::definitions(law, ctx);
     let params = claim
@@ -217,13 +217,13 @@ pub(in crate::codegen::lean) fn emit_reason_law(
             lines.push("  all_goals".to_string());
             lines.extend(solver(&definitions, &label, "    ", fact_count));
         } else {
-            if let Some(call) = &targets[index] {
+            if let Some(plan) = &plans[index] {
                 // Guards and previous explanations belong in the motive:
                 // recursive calls must establish their own premises.
                 if !hypotheses.is_empty() || !guard_intro.is_empty() {
                     lines.push(format!("  revert{hypotheses}{guard_intro}"));
                 }
-                lines.push(format!("  fun_induction {call}"));
+                lines.push(format!("  {plan}"));
             } else if let Some(call) = case_call(&law.because[index], ctx) {
                 lines.push(format!("  fun_cases {call}"));
             }

@@ -1,0 +1,55 @@
+module LocalMatchReason
+    intent = "Checked list descent survives a recursive call inside a local match binding."
+    effects []
+
+fn reason(lower: Int, steps: List<Int>, values: List<Int>) -> Bool
+    next = match steps
+        [] -> true
+        [step, ..remaining] -> match values
+            [] -> true
+            [head, ..tail] -> match List.take(tail, head)
+                taken -> reason(lower + 1, remaining, taken)
+    Bool.and(next, lower >= 0)
+
+verify reason law localMatch
+    given lower: Int = [0, 2]
+    given guide: List<Int> = [[], [0, 0]]
+    given values: List<Int> = [[], [1, 2, 3]]
+    when lower >= 0
+    because lower >= 0
+    because reason(lower, guide, values)
+    using []
+    reason(lower, guide, values) holds
+
+fn falseBase(steps: List<Int>, values: List<Int>) -> Bool
+    next = match steps
+        [] -> false
+        [step, ..remaining] -> match values
+            [] -> true
+            [head, ..tail] -> match List.take(tail, head)
+                taken -> falseBase(remaining, taken)
+    Bool.and(next, List.len(values) >= 0)
+
+verify falseBase law rejectsFalseBase
+    given steps: List<Int> = [[0]]
+    given values: List<Int> = [[]]
+    because falseBase(steps, values)
+    using []
+    falseBase(steps, values) holds
+
+fn guardLoss(steps: List<Int>, values: List<Int>) -> Bool
+    next = match steps
+        [] -> true
+        [step, ..remaining] -> match values
+            [] -> true
+            [head, ..tail] -> match List.take(tail, head)
+                taken -> guardLoss(remaining, taken)
+    Bool.and(next, List.len(steps) > 0)
+
+verify guardLoss law rejectsLostPremise
+    given steps: List<Int> = [[0]]
+    given values: List<Int> = [[]]
+    when List.len(steps) > 0
+    because guardLoss(steps, values)
+    using []
+    guardLoss(steps, values) holds

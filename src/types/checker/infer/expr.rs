@@ -69,7 +69,7 @@ fn ident_namespace_diagnostic(
 /// NOT be passed as expected into arg inference, otherwise the
 /// recogniser stamps the arg with the bare Var-bearing type and
 /// breaks downstream backends. Same for `Type::Invalid` recovery nodes.
-pub(in crate::types::checker) fn type_is_fully_concrete(ty: &Type) -> bool {
+pub(crate) fn type_is_fully_concrete(ty: &Type) -> bool {
     match ty {
         Type::Var(_) | Type::Invalid => false,
         Type::Int | Type::Float | Type::Str | Type::Bool | Type::Unit | Type::Named { .. } => true,

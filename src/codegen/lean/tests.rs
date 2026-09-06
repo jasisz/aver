@@ -4239,7 +4239,7 @@ fn rle_example_exports_sampled_roundtrip_laws_without_sorry() {
         "expected rle proof export to contain sorry for unproved universal theorems"
     );
     assert!(lean.contains(
-        "theorem encode_law_roundtrip_sample_1 : decode (encode []) = [] := by native_decide"
+        "theorem encode_law_roundtrip_sample_1 : decode (encode ([] : List String)) = ([] : List String) := by native_decide"
     ));
     assert!(lean.contains(
             "theorem encodeString_law_string_roundtrip_sample_1 : decodeString (encodeString \"\") = \"\" := by native_decide"
@@ -4604,7 +4604,7 @@ fn notepad_store_example_stays_inside_proof_subset() {
             "theorem serializeLine_law_lineRoundtrip : ∀ (note : Note), note = { id' := 1, title := \"Hello\", body := \"World\" : Note } ∨"
         ));
     assert!(lean.contains(
-        "theorem serializeLines_law_notesRoundtrip : ∀ (notes : List Note), notes = [] ∨"
+        "theorem serializeLines_law_notesRoundtrip : ∀ (notes : List Note), notes = ([] : List Note) ∨"
     ));
     assert!(lean.contains("notesRoundtripSafe notes = true ->"));
     assert!(lean.contains("parseNotes (s!\"{String.intercalate \"\\n\" (serializeLines notes)}\\n\") = Except.ok notes"));

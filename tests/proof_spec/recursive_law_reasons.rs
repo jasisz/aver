@@ -1,6 +1,74 @@
 use super::*;
 
 #[test]
+fn sampled_slice_guards_keep_checked_element_types() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        return;
+    }
+    let dir = temp_output_dir("aver-empty-slice-guard");
+    let (summary, run) =
+        run_lean_check_json("tests/fixtures/law_empty_slice_guard.av", &dir, 0, &[]);
+    assert!(run.status.success(), "{}", format_output(&run));
+    assert_eq!(summary["build_errors"], 0, "{summary}");
+    assert_eq!(summary["universal_laws"], 2, "{summary}");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn guided_laws_see_all_nonrecursive_match_alternatives() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        return;
+    }
+    let dir = temp_output_dir("aver-lookup-reasons");
+    let (summary, run) = run_lean_check_json("tests/fixtures/law_reason_lookup.av", &dir, 0, &[]);
+    assert!(!run.status.success(), "the smaller bound must remain open");
+    assert_eq!(summary["build_errors"], 0, "{}", format_output(&run));
+    assert_eq!(summary["universal_laws"], 1, "{summary}");
+    assert_eq!(
+        summary["obligations"]["label.bounded.implication"], "universal",
+        "{summary}"
+    );
+    assert_eq!(
+        summary["obligations"]["label.rejectsSmallerBound.implication"], "failed",
+        "{summary}"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn local_match_reasons_fall_back_to_the_checked_list_measure() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        return;
+    }
+    let dir = temp_output_dir("aver-local-match-reasons");
+    let (summary, run) =
+        run_lean_check_json("tests/fixtures/law_reason_local_match.av", &dir, 0, &[]);
+    assert!(!run.status.success(), "false reasons must remain open");
+    assert_eq!(summary["build_errors"], 0, "{}", format_output(&run));
+    assert_eq!(summary["universal_laws"], 1, "{summary}");
+    for step in ["because1", "because2", "implication"] {
+        assert_eq!(
+            summary["obligations"][format!("reason.localMatch.{step}")],
+            "universal",
+            "{summary}"
+        );
+    }
+    for law in ["falseBase.rejectsFalseBase", "guardLoss.rejectsLostPremise"] {
+        assert_eq!(
+            summary["obligations"][format!("{law}.because1")],
+            "failed",
+            "{summary}"
+        );
+        assert_eq!(
+            summary["obligations"][format!("{law}.implication")],
+            "universal",
+            "{summary}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn guided_laws_reuse_native_mutual_list_equations() {
     if Command::new("lake").arg("--version").output().is_err() {
         return;

@@ -1,0 +1,19 @@
+module EmptySliceGuard
+    intent = "A typed empty list keeps its type through a slice in a sample guard."
+    effects []
+
+fn sizeAfterTake(values: List<Int>, count: Int) -> Int
+    List.len(List.take(values, count))
+
+verify sizeAfterTake law nonnegative
+    given values: List<Int> = [[]]
+    given count: Int = [-2, 0, 2]
+    when List.len(List.take(values, count)) >= 0
+    using []
+    sizeAfterTake(values, count) >= 0 holds
+
+verify sizeAfterTake law suffixDoesNotGrow
+    given values: List<Int> = [[], [1, 2, 3]]
+    given count: Int = [-2, 0, 2]
+    using []
+    List.len(List.drop(values, count)) <= List.len(values) holds
