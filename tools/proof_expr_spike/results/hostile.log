@@ -1,0 +1,82 @@
+Verify: tools/proof_expr_spike/corpus.av
+  ✓ identity law positiveChain.because1      3/7
+  ✓ identity law positiveChain.because2      3/7
+  ✓ identity law positiveChain      3/7
+  ✗ identity law falseReason.because1      3/6 passed (2/2 declared, 1/4 hostile)
+
+fail[verify-hostile-mismatch]: law violated under --hostile expansion
+  at: tools/proof_expr_spike/corpus.av:18:1
+  block: identity law falseReason.because1
+  case: 0 > 0 == true
+  expected: true
+  actual: false
+  repair: this `because` expression is false for the shown input. Correct the explanation under the law's existing `when`; an explanation is an obligation, not an additional precondition.
+     |
+  18 |     because value > 0
+     | ^^^^^^^^^^^^^^^^^  verify-hostile-mismatch
+
+fail[verify-hostile-mismatch]: law violated under --hostile expansion
+  at: tools/proof_expr_spike/corpus.av:18:1
+  block: identity law falseReason.because1
+  case: -1 > 0 == true
+  expected: true
+  actual: false
+  repair: this `because` expression is false for the shown input. Correct the explanation under the law's existing `when`; an explanation is an obligation, not an additional precondition.
+     |
+  18 |     because value > 0
+     | ^^^^^^^^^^^^^^^^^  verify-hostile-mismatch
+
+fail[verify-hostile-mismatch]: law violated under --hostile expansion
+  at: tools/proof_expr_spike/corpus.av:18:1
+  block: identity law falseReason.because1
+  case: -9223372036854775808 > 0 == true
+  expected: true
+  actual: false
+  repair: this `because` expression is false for the shown input. Correct the explanation under the law's existing `when`; an explanation is an obligation, not an additional precondition.
+     |
+  18 |     because value > 0
+     | ^^^^^^^^^^^^^^^^^  verify-hostile-mismatch
+  ✓ identity law falseReason      6/6
+  ✓ amount law selectionIsDecoded.because1      10/10
+  ✓ amount law selectionIsDecoded      10/10
+  ✓ advance law preservesOrder.because1      138/294
+  ✓ advance law preservesOrder      138/294
+  ✗ advance law brokenInduction.because1      10/100 passed (1/1 declared, 9/39 hostile, 60 skipped by `when`)
+
+fail[verify-hostile-mismatch]: law violated under --hostile expansion
+  at: tools/proof_expr_spike/corpus.av:57:1
+  block: advance law brokenInduction.because1
+  case: brokenOrderReason([0], 0, 1) == true
+  expected: true
+  actual: false
+  repair: this `because` expression is false for the shown input. Correct the explanation under the law's existing `when`; an explanation is an obligation, not an additional precondition.
+     |
+  57 |     because brokenOrderReason(items, lower, upper)
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^  verify-hostile-mismatch
+
+fail[verify-hostile-mismatch]: law violated under --hostile expansion
+  at: tools/proof_expr_spike/corpus.av:57:1
+  block: advance law brokenInduction.because1
+  case: brokenOrderReason([0], 0, 9223372036854775807) == true
+  expected: true
+  actual: false
+  repair: this `because` expression is false for the shown input. Correct the explanation under the law's existing `when`; an explanation is an obligation, not an additional precondition.
+     |
+  57 |     because brokenOrderReason(items, lower, upper)
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^  verify-hostile-mismatch
+
+fail[verify-hostile-mismatch]: law violated under --hostile expansion
+  at: tools/proof_expr_spike/corpus.av:57:1
+  block: advance law brokenInduction.because1
+  case: brokenOrderReason([0], 1, 9223372036854775807) == true
+  expected: true
+  actual: false
+  repair: this `because` expression is false for the shown input. Correct the explanation under the law's existing `when`; an explanation is an obligation, not an additional precondition.
+     |
+  57 |     because brokenOrderReason(items, lower, upper)
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^  verify-hostile-mismatch
+
+  ... and 27 more (use --verbose to see all)
+  ✓ advance law brokenInduction      40/100
+
+Summary: 1 module | 11 blocks | 364/841 cases passed | 33 failed | 444 skipped by `when`

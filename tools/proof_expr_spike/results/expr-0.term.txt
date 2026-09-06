@@ -1,0 +1,17 @@
+fun value a =>
+  (fun value a a_1 a_2 =>
+      of_eq_true
+        (Eq.trans
+          (congr
+            (congrArg Eq
+              (Eq.trans gt_iff_lt._simp_1
+                (eq_true
+                  (id
+                    (Eq.mp
+                      (Eq.trans (Eq.trans (congr (congrArg Eq gt_iff_lt._simp_1) (eq_self true)) eq_iff_iff._simp_1)
+                        (iff_true (0 < value)))
+                      a_2)))))
+            (eq_self true))
+          (eq_self True)))
+    value ((fun value a => _proof_51 value a) value a)
+    ((fun value a a_1 => _proof_53 value a) value ((fun value a => _proof_51 value a) value a) a) a

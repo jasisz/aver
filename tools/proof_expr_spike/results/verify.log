@@ -1,0 +1,14 @@
+Verify: tools/proof_expr_spike/corpus.av
+  ✓ identity law positiveChain.because1      2/4
+  ✓ identity law positiveChain.because2      2/4
+  ✓ identity law positiveChain      2/4
+  ✓ identity law falseReason.because1      2/2
+  ✓ identity law falseReason      2/2
+  ✓ amount law selectionIsDecoded.because1      4/4
+  ✓ amount law selectionIsDecoded      4/4
+  ✓ advance law preservesOrder.because1      18/27
+  ✓ advance law preservesOrder      18/27
+  ✓ advance law brokenInduction.because1      1/1
+  ✓ advance law brokenInduction      1/1
+
+Summary: 1 module | 11 blocks | 56/80 cases passed | 0 failed | 24 skipped by `when`

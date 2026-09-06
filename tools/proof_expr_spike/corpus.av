@@ -1,0 +1,75 @@
+module ExprSpike
+    intent = "Compare proof construction paths on executable explanations without application-specific rules."
+    effects []
+
+fn identity(value: Int) -> Int
+    value
+
+verify identity law positiveChain
+    given value: Int = [-3, 0, 1, 7]
+    when value > 0
+    because value >= 1
+    because value + 1 > 1
+    using []
+    identity(value) > 0 holds
+
+verify identity law falseReason
+    given value: Int = [1, 7]
+    because value > 0
+    using []
+    identity(value) => value
+
+fn amount(selection: Option<Int>) -> Int
+    match selection
+        Option.None -> 0
+        Option.Some(found) -> found
+
+verify amount law selectionIsDecoded
+    given selection: Option<Int> = [Option.None, Option.Some(-3), Option.Some(0), Option.Some(7)]
+    because selectionReason(selection)
+    using []
+    amount(selection) => Option.withDefault(selection, 0)
+
+fn selectionReason(selection: Option<Int>) -> Bool
+    match selection
+        Option.None -> amount(selection) == 0
+        Option.Some(found) -> amount(selection) == found
+
+fn advance(items: List<Int>, value: Int) -> Int
+    match items
+        [] -> value
+        [head, ..tail] -> advance(tail, value + 1)
+
+verify advance law preservesOrder
+    given items: List<Int> = [[], [0], [1, 2, 3]]
+    given lower: Int = [-2, 0, 5]
+    given upper: Int = [-1, 1, 7]
+    when lower < upper
+    because orderReason(items, lower, upper)
+    using []
+    advance(items, lower) < advance(items, upper) holds
+
+verify advance law brokenInduction
+    given items: List<Int> = [[]]
+    given lower: Int = [0]
+    given upper: Int = [1]
+    when lower < upper
+    because brokenOrderReason(items, lower, upper)
+    using []
+    advance(items, lower) => advance(items, lower)
+
+fn orderReason(items: List<Int>, lower: Int, upper: Int) -> Bool
+    match items
+        [] -> lower < upper
+        [head, ..tail] -> Bool.and(
+            orderReason(tail, lower + 1, upper + 1),
+            advance(items, lower) < advance(items, upper)
+        )
+
+fn brokenOrderReason(items: List<Int>, lower: Int, upper: Int) -> Bool
+    match items
+        [] -> lower < upper
+        [head, ..tail] -> Bool.and(
+            brokenOrderReason(tail, lower + 1, upper + 1),
+            advance(items, lower) > advance(items, upper)
+        )

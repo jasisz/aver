@@ -1,0 +1,108 @@
+fun items lower upper a =>
+  (fun items =>
+      List.casesOn (motive := fun x =>
+        ∀ (lower upper : Int),
+          ExprSpike.orderReason x lower upper = true →
+            (lower < upper) = (true = true) → (ExprSpike.advance x lower < ExprSpike.advance x upper) = (true = true))
+        items
+        (fun lower upper a a_1 =>
+          of_eq_true
+            (Eq.trans
+              (congr
+                (congrArg Eq
+                  (Eq.trans (congr (congrArg LT.lt (ExprSpike.advance.eq_1 lower)) (ExprSpike.advance.eq_1 upper))
+                    (eq_true
+                      (id
+                        (Eq.mp
+                          (Eq.trans (Eq.trans (congrArg (Eq (lower < upper)) (eq_self true)) eq_iff_iff._simp_1)
+                            (iff_true (lower < upper)))
+                          a_1)))))
+                (eq_self true))
+              (eq_self True)))
+        fun head tail lower upper a a_1 =>
+        of_eq_true
+          (Eq.trans
+            (congr
+              (congrArg Eq
+                (Eq.trans
+                  (congr (congrArg LT.lt (ExprSpike.advance.eq_2 lower head tail))
+                    (ExprSpike.advance.eq_2 upper head tail))
+                  (eq_true
+                    (id
+                        (Eq.mp
+                          (Eq.trans
+                            (Eq.trans
+                              (congrFun'
+                                (congrArg Eq
+                                  (Eq.trans (ExprSpike.orderReason.eq_2 lower upper head tail)
+                                    (congrArg (ExprSpike.orderReason tail (lower + 1) (upper + 1)).and
+                                      (Decidable.decide.congr_simp
+                                        (ExprSpike.advance (head :: tail) lower <
+                                          ExprSpike.advance (head :: tail) upper)
+                                        (ExprSpike.advance tail (lower + 1) < ExprSpike.advance tail (upper + 1))
+                                        (congr (congrArg LT.lt (ExprSpike.advance.eq_2 lower head tail))
+                                          (ExprSpike.advance.eq_2 upper head tail))))))
+                                true)
+                              (Bool.and_eq_true (ExprSpike.orderReason tail (lower + 1) (upper + 1))
+                                (decide (ExprSpike.advance tail (lower + 1) < ExprSpike.advance tail (upper + 1)))))
+                            (congrArg (And (ExprSpike.orderReason tail (lower + 1) (upper + 1) = true))
+                              decide_eq_true_eq))
+                          a)).2)))
+              (eq_self true))
+            (eq_self True)))
+    items lower upper
+    ((fun items =>
+        List.rec (motive := fun x =>
+          ∀ (lower upper : Int), (lower < upper) = (true = true) → ExprSpike.orderReason x lower upper = true)
+          (fun lower upper a =>
+            Eq.mpr (id (congrFun' (congrArg Eq (ExprSpike.orderReason.eq_def [] lower upper)) true))
+              (of_eq_true
+                (Eq.trans
+                  (congrFun'
+                    (congrArg Eq
+                      (Eq.trans
+                        (Decidable.decide.congr_simp (lower < upper) True
+                          (eq_true
+                            (id
+                              (Eq.mp
+                                (Eq.trans (Eq.trans (congrArg (Eq (lower < upper)) (eq_self true)) eq_iff_iff._simp_1)
+                                  (iff_true (lower < upper)))
+                                a))))
+                        (decide_true instDecidableTrue)))
+                    true)
+                  (eq_self true))))
+          (fun head tail tail_ih lower upper a =>
+            Eq.mpr (id (congrFun' (congrArg Eq (ExprSpike.orderReason.eq_def (head :: tail) lower upper)) true))
+              (ProofExprSpike.andStep
+                (of_eq_true
+                  (Eq.trans
+                    (congrFun'
+                      (congrArg Eq
+                        ((fun lower upper a =>
+                            id
+                              (Eq.mp
+                                (forall_congr fun lower =>
+                                  forall_congr fun upper =>
+                                    implies_congr
+                                      (Eq.trans
+                                        (Eq.trans (congrArg (Eq (lower < upper)) (eq_self true)) eq_iff_iff._simp_1)
+                                        (iff_true (lower < upper)))
+                                      (Eq.refl (ExprSpike.orderReason tail lower upper = true)))
+                                tail_ih)
+                              lower upper a)
+                          (lower + 1) (upper + 1)
+                          (of_eq_true
+                            (Eq.trans (Int.add_lt_add_iff_right._simp_1 1)
+                              (eq_true
+                                (id
+                                  (Eq.mp
+                                    (Eq.trans
+                                      (Eq.trans (congrArg (Eq (lower < upper)) (eq_self true)) eq_iff_iff._simp_1)
+                                      (iff_true (lower < upper)))
+                                    a)))))))
+                      true)
+                    (eq_self true)))
+                fun a_1 => _proof_61 head tail lower upper a a_1))
+          items)
+      items lower upper a)
+    a

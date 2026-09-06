@@ -1,0 +1,69 @@
+{
+  "versions": {
+    "compiler": "aver 0.30.0-dev",
+    "source_commit": "db6fb85b615cfc04c84cb67fb99b1c56624f8b59",
+    "lean": "Lean (version 4.32.2, arm64-apple-darwin24.6.0, commit f3b06c705e6c85f5314019d5d3baab0fec5b580c, Release)",
+    "lean_toolchain": "leanprover/lean4:v4.32.2",
+    "max_heartbeats_per_stage": 200000,
+    "baseline_process_ms": 1238.116791
+  },
+  "runs": 3,
+  "measurements": {
+    "text": {
+      "samples": [
+        {
+          "construct_ms": 81.432125,
+          "kernel_ms": 17.901667,
+          "pretty_bytes": 8422,
+          "raw_bytes": 1237527
+        },
+        {
+          "construct_ms": 81.026085,
+          "kernel_ms": 18.84929,
+          "pretty_bytes": 8422,
+          "raw_bytes": 1237571
+        },
+        {
+          "construct_ms": 81.353916,
+          "kernel_ms": 18.795,
+          "pretty_bytes": 8422,
+          "raw_bytes": 1237571
+        }
+      ],
+      "median": {
+        "construct_ms": 81.353916,
+        "kernel_ms": 18.795,
+        "pretty_bytes": 8422,
+        "raw_bytes": 1237571
+      }
+    },
+    "expr": {
+      "samples": [
+        {
+          "construct_ms": 84.021793,
+          "kernel_ms": 17.967416,
+          "pretty_bytes": 6787,
+          "raw_bytes": 1047766
+        },
+        {
+          "construct_ms": 82.446623,
+          "kernel_ms": 18.679999,
+          "pretty_bytes": 6787,
+          "raw_bytes": 1047766
+        },
+        {
+          "construct_ms": 81.369792,
+          "kernel_ms": 17.985292,
+          "pretty_bytes": 6787,
+          "raw_bytes": 1047805
+        }
+      ],
+      "median": {
+        "construct_ms": 82.446623,
+        "kernel_ms": 17.985292,
+        "pretty_bytes": 6787,
+        "raw_bytes": 1047766
+      }
+    }
+  }
+}

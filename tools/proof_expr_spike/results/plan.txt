@@ -1,0 +1,16 @@
+ExprSpike.identity_law_positiveChain
+  identity.positiveChain.because1 @ corpus.av:11: plain; branch lines []
+  identity.positiveChain.because2 @ corpus.av:12: plain; branch lines []
+  identity.positiveChain.implication @ corpus.av:14: plain; branch lines []
+ExprSpike.identity_law_falseReason
+  identity.falseReason.because1 @ corpus.av:18: plain; branch lines []
+  identity.falseReason.implication @ corpus.av:20: plain; branch lines []
+ExprSpike.amount_law_selectionIsDecoded
+  amount.selectionIsDecoded.because1 @ corpus.av:29: cases; branch lines [35, 36]
+  amount.selectionIsDecoded.implication @ corpus.av:31: cases; branch lines []
+ExprSpike.advance_law_preservesOrder
+  advance.preservesOrder.because1 @ corpus.av:48: induction; branch lines [63, 64]
+  advance.preservesOrder.implication @ corpus.av:50: cases; branch lines []
+ExprSpike.advance_law_brokenInduction
+  advance.brokenInduction.because1 @ corpus.av:57: induction; branch lines [71, 72]
+  advance.brokenInduction.implication @ corpus.av:59: cases; branch lines []

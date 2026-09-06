@@ -1,0 +1,48 @@
+{
+  "laws": [
+    {
+      "law": "ExprSpike.identity_law_positiveChain",
+      "status": "universal",
+      "diagnostic": "",
+      "axioms": [
+        "propext",
+        "Classical.choice",
+        "Quot.sound"
+      ]
+    },
+    {
+      "law": "ExprSpike.identity_law_falseReason",
+      "status": "rejected",
+      "diagnostic": "identity.falseReason.because1@18: `grind` failed",
+      "axioms": []
+    },
+    {
+      "law": "ExprSpike.amount_law_selectionIsDecoded",
+      "status": "universal",
+      "diagnostic": "",
+      "axioms": [
+        "propext",
+        "Classical.choice",
+        "Quot.sound"
+      ]
+    },
+    {
+      "law": "ExprSpike.advance_law_preservesOrder",
+      "status": "universal",
+      "diagnostic": "",
+      "axioms": [
+        "propext",
+        "Classical.choice",
+        "Quot.sound"
+      ]
+    },
+    {
+      "law": "ExprSpike.advance_law_brokenInduction",
+      "status": "rejected",
+      "diagnostic": "advance.brokenInduction.because1@57/branch2@72/fact2: `grind` failed",
+      "axioms": []
+    }
+  ],
+  "corrupt_rejected": true,
+  "shortcut_rejected": true
+}

@@ -1,0 +1,13 @@
+fun selection =>
+  (fun selection =>
+      Option.casesOn (motive := fun x => ExprSpike.selectionReason x = true → ExprSpike.amount x = x.getD 0) selection
+        (fun a => of_eq_true (eq_self 0)) fun val a => of_eq_true (eq_self val))
+    selection
+    ((fun selection =>
+        Option.casesOn selection
+          (Eq.mpr (id (congrFun' (congrArg Eq (ExprSpike.selectionReason.eq_def none)) true))
+            (of_eq_true (Eq.trans (congrFun' (congrArg Eq BEq.rfl) true) (eq_self true))))
+          fun val =>
+          Eq.mpr (id (congrFun' (congrArg Eq (ExprSpike.selectionReason.eq_def (some val))) true))
+            (of_eq_true (Eq.trans (congrFun' (congrArg Eq BEq.rfl) true) (eq_self true))))
+      selection)
