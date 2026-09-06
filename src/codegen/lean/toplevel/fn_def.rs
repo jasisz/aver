@@ -563,8 +563,27 @@ pub fn emit_mutual_group(fns: &[&FnDef], ctx: &CodegenContext) -> String {
     lines.join("\n")
 }
 
+/// Select the native mutual definition once for both emission and law equations.
+/// A rejected group keeps its fuel semantics and must remain opaque to reasons.
+pub(in crate::codegen::lean) fn emit_native_mutual_group(
+    fns: &[&FnDef],
+    ctx: &CodegenContext,
+) -> Option<String> {
+    if !fns
+        .iter()
+        .all(|fd| is_pure_fn(fd) && matches!(contract_lex_params_rank(ctx, fd), Some(([], _))))
+    {
+        return None;
+    }
+    emit_native_mutual_sizeof_group(fns, ctx)
+        .or_else(|| emit_native_mutual_lex_list_wf_group(fns, ctx))
+}
+
 /// Proof-mode mutual recursion emission with optional group-level termination.
 pub fn emit_mutual_group_proof(fns: &[&FnDef], ctx: &CodegenContext) -> String {
+    if let Some(code) = emit_native_mutual_group(fns, ctx) {
+        return code;
+    }
     // Distinguish mutual SCC shapes by the Lex params vector:
     //   `[p]` rank 0  → MutualIntCountdown
     //   `[s, pos]`    → MutualStringPosAdvance
@@ -596,16 +615,6 @@ pub fn emit_mutual_group_proof(fns: &[&FnDef], ctx: &CodegenContext) -> String {
         )
     });
     if all_sizeof {
-        if let Some(code) = emit_native_mutual_sizeof_group(fns, ctx) {
-            return code;
-        }
-        // Termination-as-a-law: try a genuine well-founded mutual block whose
-        // `decreasing_by` cites synthesised, kernel-proved length lemmas for
-        // computed-list-arg recursion (quicksort's `sort`/`sortWithPivot`).
-        // Backs off to fuel when the SCC isn't length-monotone-WF.
-        if let Some(code) = emit_native_mutual_lex_list_wf_group(fns, ctx) {
-            return code;
-        }
         return emit_fuelized_mutual_sizeof_group(fns, ctx);
     }
 

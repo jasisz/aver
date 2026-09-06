@@ -109,7 +109,9 @@ fn solver(
         .join(", ");
     let grind_defs = [
         definitions.grind.as_str(),
-        "List.take, List.reverse_eq_nil_iff",
+        // Aver counts are Ints; use the guarded library equations instead of
+        // unfolding take's Nat recursion behind an opaque Int.toNat argument.
+        "List.take_cons, List.drop_cons, Int.toNat_of_nonpos, List.reverse_eq_nil_iff",
     ]
     .into_iter()
     .filter(|s| !s.is_empty())
@@ -135,7 +137,7 @@ pub(in crate::codegen::lean) fn emit_reason_law(
         .iter()
         .map(|r| induction::target(r, law, ctx))
         .collect::<Vec<_>>();
-    let definitions = induction::definitions(law, ctx, targets.iter().any(Option::is_some));
+    let definitions = induction::definitions(law, ctx);
     let params = claim
         .binders
         .iter()

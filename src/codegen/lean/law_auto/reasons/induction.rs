@@ -73,18 +73,13 @@ pub(super) struct Definitions {
     pub(super) grind: String,
 }
 
-pub(super) fn definitions(
-    law: &VerifyLaw,
-    ctx: &CodegenContext,
-    include_structural: bool,
-) -> Definitions {
+pub(super) fn definitions(law: &VerifyLaw, ctx: &CodegenContext) -> Definitions {
     fn visit(
         expr: &Spanned<Expr>,
         scope: Option<&str>,
         ctx: &CodegenContext,
         seen: &mut HashSet<crate::ir::FnId>,
         out: &mut BTreeMap<String, bool>,
-        include_structural: bool,
     ) {
         if let Some(fd) = callee(expr, ctx, scope)
             && fd.effects.is_empty()
@@ -102,17 +97,17 @@ pub(super) fn definitions(
                     ..
                 })
             );
-            if !recursive || (include_structural && list_structural(fd, ctx)) || subtractive {
+            if !recursive || list_structural(fd, ctx) || subtractive {
                 out.insert(lean_name(fd, ctx), recursive);
             }
             let owner = common::fn_owning_scope_for(ctx, fd);
             for stmt in fd.body.stmts() {
                 let (Stmt::Expr(body) | Stmt::Binding(_, _, body)) = stmt;
-                visit(body, owner, ctx, seen, out, include_structural);
+                visit(body, owner, ctx, seen, out);
             }
         }
         crate::codegen::expr_walk::for_each_child(expr, &mut |child| {
-            visit(child, scope, ctx, seen, out, include_structural)
+            visit(child, scope, ctx, seen, out)
         });
     }
     let scope = ctx.active_module_scope();
@@ -124,14 +119,7 @@ pub(super) fn definitions(
         .chain([&law.lhs, &law.rhs])
         .chain(law.when.iter())
     {
-        visit(
-            expr,
-            scope.as_deref(),
-            ctx,
-            &mut seen,
-            &mut out,
-            include_structural,
-        );
+        visit(expr, scope.as_deref(), ctx, &mut seen, &mut out);
     }
     // A mutual helper's original equation is available only when the same
     // checked measure that emits its native definition succeeds. Fuel remains opaque.
@@ -143,8 +131,7 @@ pub(super) fn definitions(
                 && fns
                     .iter()
                     .any(|fd| common::fn_id_for_decl(ctx, fd).is_some_and(|id| seen.contains(&id)))
-                && crate::codegen::lean::toplevel::fuel::native_mutual_sizeof_measures(fns, ctx)
-                    .is_some()
+                && crate::codegen::lean::toplevel::emit_native_mutual_group(fns, ctx).is_some()
             {
                 for fd in fns {
                     if common::fn_id_for_decl(ctx, fd).is_some_and(|id| seen.contains(&id)) {

@@ -1,0 +1,86 @@
+module SliceReasons
+    intent = "Taking or dropping elements preserves a shared lower bound."
+    effects []
+
+fn above(values: List<Int>, lower: Int) -> Bool
+    ? "Every value meets the supplied lower bound."
+    match values
+        [] -> true
+        [head, ..tail] -> Bool.and(head >= lower, above(tail, lower))
+
+verify above law dropPreservesBound
+    given values: List<Int> = [[], [-3, 4, 9], [0, 2]]
+    given count: Int = [-4, 0, 1, 3, 100000000000000000000]
+    given lower: Int = [-3, 0, 4]
+    when above(values, lower)
+    because dropReason(values, count, lower)
+    using []
+    above(List.drop(values, count), lower) holds
+
+verify above law takePreservesBound
+    given values: List<Int> = [[], [-3, 4, 9], [0, 2]]
+    given count: Int = [-4, 0, 1, 3, 100000000000000000000]
+    given lower: Int = [-3, 0, 4]
+    when above(values, lower)
+    because takeReason(values, count, lower)
+    using []
+    above(List.take(values, count), lower) holds
+
+verify above law rejectsMissingPremise
+    given values: List<Int> = [[], [1, 2]]
+    given count: Int = [1]
+    given lower: Int = [0]
+    because dropReason(values, count, lower)
+    using []
+    above(List.drop(values, count), lower) holds
+
+fn dropReason(values: List<Int>, count: Int, lower: Int) -> Bool
+    ? "Follow the shorter suffix while a positive count consumes its head."
+    match values
+        [] -> above(List.drop(values, count), lower)
+        [head, ..tail] -> match count <= 0
+            true -> above(List.drop(values, count), lower)
+            false -> Bool.and(dropReason(tail, count - 1, lower), above(List.drop(values, count), lower))
+
+fn takeReason(values: List<Int>, count: Int, lower: Int) -> Bool
+    ? "Each retained head and the shorter prefix keep the supplied bound."
+    match values
+        [] -> above(List.take(values, count), lower)
+        [head, ..tail] -> match count <= 0
+            true -> above(List.take(values, count), lower)
+            false -> Bool.and(takeReason(tail, count - 1, lower), above(List.take(values, count), lower))
+
+fn rejoined(values: List<Int>, count: Int) -> List<Int>
+    ? "Join a prefix with the suffix left after taking it."
+    List.concat(List.take(values, count), List.drop(values, count))
+
+verify rejoined law exact
+    given values: List<Int> = [[], [-3, 4, 9]]
+    given count: Int = [-4, 0, 1, 3, 100000000000000000000]
+    using []
+    rejoined(values, count) => values
+
+verify rejoined law emptyGivenKeepsElementType
+    given values: List<Int> = [[]]
+    given count: Int = [0]
+    using []
+    List.concat(List.take(values, count), List.drop(values, count)) => values
+
+verify rejoined law rejectsDeletingAnExtraElement
+    given values: List<Int> = [[]]
+    given count: Int = [0]
+    using []
+    rejoined(values, count) => List.concat(List.take(values, count), List.drop(values, count + 1))
+
+fn sumInto(values: List<Int>, acc: Int) -> Int
+    ? "Accumulate a sum through a structurally smaller list."
+    match values
+        [] -> acc
+        [head, ..tail] -> sumInto(tail, acc + head)
+
+verify sumInto law step
+    given head: Int = [-2, 0, 3]
+    given tail: List<Int> = [[], [1, 2]]
+    given acc: Int = [-1, 0, 4]
+    using []
+    sumInto(List.prepend(head, tail), acc) => sumInto(tail, acc + head)
