@@ -1,0 +1,96 @@
+module SingletonListReason
+    intent = "A recursive explanation follows a chunked list traversal, retaining each branch condition."
+    effects []
+
+fn score(values: List<Int>) -> Int
+    match values
+        [] -> 0
+        [head, ..tail] -> match head < 0
+            false -> head + score(tail)
+            true -> match List.take(tail, 0 - head)
+                chunk -> match List.len(chunk) == 0 - head
+                    false -> 0
+                    true -> score(List.drop(tail, 0 - head))
+
+verify score law nonnegative
+    given values: List<Int> = [[], [2, 3], [-2, 8, 9, 4]]
+    because reason(values)
+    using []
+    score(values) >= 0 holds
+
+verify score law rejectsPositiveScore
+    given values: List<Int> = [[2, 3]]
+    when List.len(values) > 0
+    because falseReason(values)
+    using []
+    score(values) > 0 holds
+
+fn reason(values: List<Int>) -> Bool
+    match values
+        [] -> score(values) >= 0
+        [head, ..tail] -> match head < 0
+            false -> Bool.and(reason(tail), score(values) >= 0)
+            true -> match List.take(tail, 0 - head)
+                chunk -> match List.len(chunk) == 0 - head
+                    false -> score(values) >= 0
+                    true -> Bool.and(reason(List.drop(tail, 0 - head)), score(values) >= 0)
+
+fn falseReason(values: List<Int>) -> Bool
+    match values
+        [] -> Bool.or(List.len(values) == 0, score(values) > 0)
+        [head, ..tail] -> match head < 0
+            false -> Bool.and(falseReason(tail), Bool.or(List.len(values) == 0, score(values) > 0))
+            true -> match List.take(tail, 0 - head)
+                chunk -> match List.len(chunk) == 0 - head
+                    false -> Bool.or(List.len(values) == 0, score(values) > 0)
+                    true -> Bool.and(falseReason(List.drop(tail, 0 - head)), Bool.or(List.len(values) == 0, score(values) > 0))
+
+fn selected(acc: List<Int>, values: List<Int>, count: Int) -> List<Int>
+    match values
+        [] -> List.reverse(acc)
+        [head, ..tail] -> selected(List.prepend(head, acc), List.take(tail, count), count - 1)
+
+verify selected
+    selected([], [1, 2, 3, 4], 2) => [1, 2, 3]
+    selected([9], [1, 2], -1) => [9, 1]
+
+fn sameList(values: List<Int>, count: Int) -> Int
+    match values
+        [] -> 0
+        [head, ..tail] -> sameList(List.drop(values, count), count)
+
+verify sameList
+    sameList([], 0) => 0
+
+verify sameList law rejectsUnchangedInput
+    given values: List<Int> = [[]]
+    given count: Int = [0]
+    using []
+    sameList(values, count) => 0
+
+fn growing(values: List<Int>) -> Int
+    match values
+        [] -> 0
+        [head, ..tail] -> growing(List.concat(values, [head]))
+
+verify growing
+    growing([]) => 0
+
+verify growing law rejectsGrowth
+    given values: List<Int> = [[]]
+    using []
+    growing(values) => 0
+
+fn samePrefix(values: List<Int>, count: Int) -> Int
+    match values
+        [] -> 0
+        [head, ..tail] -> samePrefix(List.take(values, count), count)
+
+verify samePrefix
+    samePrefix([1], 0) => 0
+
+verify samePrefix law rejectsUnchangedPrefix
+    given values: List<Int> = [[1]]
+    given count: Int = [0]
+    using []
+    samePrefix(values, count) => 0
