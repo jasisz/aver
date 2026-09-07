@@ -36,8 +36,8 @@ module Kernel
         "sticky-plus, 7.3.1 final-round-commutes, and the Section 9 exponent/precision"
         "bounds for Theorem 2; plus the remaining bridge from model rounding to the"
         "Fraction operations, using fpValueGeneral for negative exponents."
-    depends [Domain.ModelScale, Domain.BinadeOrder, Domain.Rational, Domain.Fprep, Domain.Round, Domain.Binade]
-    exposes [RoundingMode, fracSign, halve, expoAtLeastOne, twoPow, binadeSig, binadeWindow, fracExpo, fracExpoWindow, normalizedValueExponent, truncFrac, awayFrac, stickyFrac, nearestFrac, posinfFrac, neginfFrac, round, compFrac, reciprocalEstimate, lookup, quotient, divideBang, inField, divide, divideBangCorrect, divideMatchesBang, divideCorrect, finalRoundCommutes_7_3_1, stickyPlus_7_3_2, stickyPerturbStable_7_3_3, truncSticky_rtl, stickySticky_rtl, stickyPlusExact_rtl]
+    depends [Domain.TruncScale, Domain.IntegerOrder, Domain.ModelScale, Domain.BinadeOrder, Domain.Rational, Domain.Fprep, Domain.Round, Domain.Binade]
+    exposes [RoundingMode, fracSign, halve, expoAtLeastOne, twoPow, binadeSig, binadeWindow, fracExpo, fracExpoWindow, normalizedValueExponent, modelSign, sameTruncation, truncFrac, awayFrac, stickyFrac, nearestFrac, posinfFrac, neginfFrac, round, compFrac, reciprocalEstimate, lookup, quotient, divideBang, inField, divide, divideBangCorrect, divideMatchesBang, divideCorrect, finalRoundCommutes_7_3_1, stickyPlus_7_3_2, stickyPerturbStable_7_3_3, truncSticky_rtl, stickySticky_rtl, stickyPlusExact_rtl]
     effects []
 
 // ---------------------------------------------------------------------------
@@ -193,8 +193,9 @@ fn fracExpoWindow(x: Fraction) -> Bool
 // The rounding procedures on rationals (Section 5.2, p.13).
 // Each rounds the rational x to n significant bits: e = fracExpo(x), the ulp is
 // 2^(e-n+1), and the result is sign_x * (integer multiple) * ulp.
-// These AGREE on values with domain/round.av's significand-level fpTrunc /
-// fpAway / fpSticky (which act on the already-normalized Fp model).
+// sameTruncation proves agreement with the significand-level fpTrunc for
+// normalized models, every exponent, and positive target precision.
+// The corresponding fpAway / fpSticky bridges still have concrete examples.
 // ---------------------------------------------------------------------------
 
 verify fracExpoWindow
@@ -211,7 +212,7 @@ verify ceilDiv
     ceilDiv(59, 8) => 8
 
 fn truncFrac(x: Fraction, n: Int) -> Fraction
-    ? "trunc(x,n) (Section 5.2, p.13): round x TOWARD ZERO to n significant bits. The ulp is 2^(e_x - n + 1); the result is sign_x * floor(|x| / ulp) * ulp. Agrees with fpValue(fpTrunc(.)) on the normalized model."
+    ? "trunc(x,n) (Section 5.2, p.13): round x TOWARD ZERO to n significant bits. The ulp is 2^(e_x - n + 1); the result is sign_x * floor(|x| / ulp) * ulp. sameTruncation proves agreement with fpValueGeneral(fpTrunc(.)) on normalized models for every exponent and positive target precision."
     match x.top == 0
         true -> Domain.Rational.zeroFraction()
         false -> Domain.Rational.Fraction(top = fracSign(x) * Domain.Round.floorDiv(Domain.Rational.absInt(x.top) * Domain.Fprep.pow2Signed(fracExpo(x) - n + 1).bottom, Domain.Rational.absInt(x.bottom) * Domain.Fprep.pow2Signed(fracExpo(x) - n + 1).top) * Domain.Fprep.pow2Signed(fracExpo(x) - n + 1).top, bottom = Domain.Fprep.pow2Signed(fracExpo(x) - n + 1).bottom)
@@ -220,6 +221,19 @@ verify truncFrac
     Domain.Rational.sameValue(truncFrac(Domain.Rational.Fraction(top = 13, bottom = 8), 3), Domain.Rational.Fraction(top = 6, bottom = 4)) => true
     Domain.Rational.sameValue(truncFrac(Domain.Rational.Fraction(top = 7, bottom = 2), 24), Domain.Rational.Fraction(top = 7, bottom = 2)) => true
     Domain.Rational.sameValue(truncFrac(Domain.Rational.Fraction(top = -13, bottom = 8), 3), Domain.Rational.Fraction(top = -6, bottom = 4)) => true
+
+fn truncationFormula(x: Fraction, e: Int, n: Int) -> Bool
+    ? "Substitute an established exponent into the executable nonzero truncation formula."
+    truncFrac(x, n) == truncAtExponent(x, e, n)
+
+verify truncationFormula law knownExponent
+    given x: Fraction = [Domain.Rational.Fraction(top = 13, bottom = 8), Domain.Rational.Fraction(top = -9, bottom = 64)]
+    given e: Int = [-3, 0]
+    given n: Int = [1, 2, 7]
+    when x.top != 0
+    when fracExpo(x) == e
+    using []
+    truncationFormula(x, e, n) holds
 
 fn awayFrac(x: Fraction, n: Int) -> Fraction
     ? "away(x,n) (Section 5.2, p.13): round x AWAY FROM ZERO to n significant bits -- the magnitude rounded up (ceiling). The ulp is 2^(e_x - n + 1); the result is sign_x * ceil(|x| / ulp) * ulp. Agrees with fpValue(fpAway(.)) on the normalized model."
@@ -610,3 +624,75 @@ verify normalizedValueExponent law executableExponent
     because Domain.ModelScale.uniqueWindow(Domain.Fprep.fpValueGeneral(f), fracExpo(Domain.Fprep.fpValueGeneral(f)), f.exp)
     using [Domain.ModelScale.nonzeroValue.normalizedValue, fracExpo.rationalMagnitude, Domain.ModelScale.modelWindow.normalizedMagnitude, Domain.ModelScale.uniqueWindow.uniqueExponent]
     normalizedValueExponent(f) holds
+
+fn truncAtExponent(x: Fraction, e: Int, n: Int) -> Fraction
+    ? "The nonzero Fraction truncation formula after its binary exponent has been identified."
+    ulp = Domain.Fprep.pow2Signed(e - n + 1)
+    Domain.Rational.Fraction(top = fracSign(x) * Domain.Round.floorDiv(Domain.Rational.absInt(x.top) * ulp.bottom, Domain.Rational.absInt(x.bottom) * ulp.top) * ulp.top, bottom = ulp.bottom)
+
+verify truncAtExponent
+    truncAtExponent(Domain.Rational.Fraction(top = 13, bottom = 8), 0, 3) => Domain.Rational.Fraction(top = 6, bottom = 4)
+    truncAtExponent(Domain.Rational.Fraction(top = -9, bottom = 64), -3, 2) => Domain.Rational.Fraction(top = -2, bottom = 16)
+
+fn modelSign(f: Fp) -> Bool
+    ? "The executable rational sign agrees with the normalized model's stored sign."
+    fracSign(Domain.Fprep.fpValueGeneral(f)) == f.sign
+
+verify modelSign law normalizedSign
+    given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 9, exp = -3, width = 4)]
+    when Domain.Fprep.isFp(f)
+    because Domain.Fprep.pow2(f.width - 1) >= 1
+    because Domain.Fprep.pow2SignedPositive(f.exp)
+    because Domain.IntegerOrder.positiveProduct(f.sigBits, Domain.Fprep.pow2Signed(f.exp).top)
+    because Domain.IntegerOrder.positiveProduct(Domain.Fprep.pow2(f.width - 1), Domain.Fprep.pow2Signed(f.exp).bottom)
+    because Domain.IntegerOrder.positiveProduct(f.sigBits * Domain.Fprep.pow2Signed(f.exp).top, Domain.Fprep.pow2(f.width - 1) * Domain.Fprep.pow2Signed(f.exp).bottom)
+    because Domain.TruncScale.signOfProduct(f.sign, f.sigBits * Domain.Fprep.pow2Signed(f.exp).top, Domain.Fprep.pow2(f.width - 1) * Domain.Fprep.pow2Signed(f.exp).bottom)
+    because Domain.Fprep.fpValueGeneral(f).top * Domain.Fprep.fpValueGeneral(f).bottom == f.sign * ((f.sigBits * Domain.Fprep.pow2Signed(f.exp).top) * (Domain.Fprep.pow2(f.width - 1) * Domain.Fprep.pow2Signed(f.exp).bottom))
+    using [Domain.Fprep.pow2.positive, Domain.Fprep.pow2SignedPositive.positive, Domain.IntegerOrder.positiveProduct.positiveFactors, Domain.TruncScale.signOfProduct.positiveMagnitudes]
+    modelSign(f) holds
+
+fn sameTruncation(f: Fp, n: Int) -> Bool
+    ? "The executable rational truncation and model significand truncation denote the same value, including negative exponents and either sign."
+    Domain.Rational.sameValue(truncFrac(Domain.Fprep.fpValueGeneral(f), n), Domain.Fprep.fpValueGeneral(Domain.Round.fpTrunc(f, n)))
+
+verify sameTruncation
+    sameTruncation(Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), 0) => false
+    sameTruncation(Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), 3) => true
+    sameTruncation(Domain.Fprep.Fp(sign = -1, sigBits = 13, exp = -3, width = 4), 3) => true
+    sameTruncation(Domain.Fprep.Fp(sign = 1, sigBits = 9, exp = 5, width = 4), 2) => true
+    sameTruncation(Domain.Fprep.Fp(sign = -1, sigBits = 9, exp = 0, width = 4), 7) => true
+
+verify sameTruncation law normalizedModel
+    given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 9, exp = -3, width = 4), Domain.Fprep.Fp(sign = 1, sigBits = 9, exp = 5, width = 4)]
+    given n: Int = [1, 2, 3, 7]
+    when Domain.Fprep.isFp(f)
+    when f.width >= 1
+    when n >= 1
+    because normalizedValueExponent(f)
+    because Domain.ModelScale.nonzeroValue(f)
+    because truncationFormula(Domain.Fprep.fpValueGeneral(f), f.exp, n)
+    because modelTruncation(f, n)
+    using [normalizedValueExponent.executableExponent, Domain.ModelScale.nonzeroValue.normalizedValue, truncationFormula.knownExponent, modelTruncation.normalizedModel]
+    sameTruncation(f, n) holds
+
+fn modelTruncation(f: Fp, n: Int) -> Bool
+    ? "At the stored exponent, the Fraction formula agrees with the truncated model value."
+    Domain.Rational.sameValue(truncAtExponent(Domain.Fprep.fpValueGeneral(f), f.exp, n), Domain.Fprep.fpValueGeneral(Domain.Round.fpTrunc(f, n)))
+
+verify modelTruncation law normalizedModel
+    given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 9, exp = -3, width = 4), Domain.Fprep.Fp(sign = 1, sigBits = 9, exp = 5, width = 4)]
+    given n: Int = [1, 2, 3, 7]
+    when Domain.Fprep.isFp(f)
+    when f.width >= 1
+    when n >= 1
+    because Domain.ModelScale.absoluteValue(f)
+    because Domain.ModelScale.nonzeroValue(f)
+    because modelSign(f)
+    because Domain.Fprep.pow2(f.width - 1) >= 1
+    because Domain.Fprep.pow2SignedPositive(f.exp)
+    because Domain.Fprep.pow2SignedPositive(f.exp - n + 1)
+    because Domain.TruncScale.ulpScale(f.exp, n)
+    because Domain.TruncScale.scaledQuotient(f.sigBits, Domain.Fprep.pow2(f.width - 1), Domain.Fprep.pow2Signed(f.exp), Domain.Fprep.pow2Signed(f.exp - n + 1), Domain.Fprep.pow2(n - 1))
+    because Domain.TruncScale.restoredValue(f.sign, Domain.Round.fpTrunc(f, n).sigBits, Domain.Fprep.pow2Signed(f.exp), Domain.Fprep.pow2Signed(f.exp - n + 1), Domain.Fprep.pow2(n - 1))
+    using [ Domain.ModelScale.absoluteValue.normalizedMagnitude, Domain.ModelScale.nonzeroValue.normalizedValue, modelSign.normalizedSign, Domain.Fprep.pow2.positive, Domain.Fprep.pow2SignedPositive.positive, Domain.TruncScale.ulpScale.signedExponent, Domain.TruncScale.scaledQuotient.exactScale, Domain.TruncScale.restoredValue.exactScale]
+    modelTruncation(f, n) holds

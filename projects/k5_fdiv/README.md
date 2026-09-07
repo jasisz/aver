@@ -1,4 +1,11 @@
-# K5 FDIV — a processor's divider, proven in Aver
+# K5 FDIV — reproducing a processor divider proof in Aver
+
+The executable Fraction truncation now agrees with the normalized model:
+`Kernel.sameTruncation.normalizedModel` proves
+`sameValue(truncFrac(fpValueGeneral(f), n), fpValueGeneral(fpTrunc(f, n)))`
+for `isFp(f)`, `f.width >= 1`, and `n >= 1`. This covers both signs, every
+integer exponent, and target precisions greater than the input width. An
+executable counterexample at `n = 0` records why positive precision is required.
 
 The executable exponent now agrees with the normalized floating-point model:
 `Kernel.normalizedValueExponent.executableExponent` states
@@ -14,14 +21,31 @@ value and proves uniqueness of a binary magnitude interval; `BinadeOrder` reads
 the executable integer bracket as the same rational interval. The Kernel then
 identifies the two exponents through `because` and `using`.
 
-The Kernel export and its imports now contain **82 universal laws**, the same
-**4 bounded laws**, and **105 universal proof steps**, with no `sorry` or build
+`TruncScale` then proves five reusable laws: equal positive-denominator ratios
+have equal floors; the signed exponent scale factors into an ulp and a
+significand scale; floor quotients and restored values respect that change of
+scale; and positive magnitudes preserve a unit sign. `modelSign` identifies the
+executable sign, `modelTruncation` proves the fixed-exponent formula, and
+`truncationFormula` substitutes the established exponent into `truncFrac`.
+The final equality composes those source laws. This argument was developed with
+Aver source and `--explain`, without inspecting the generated Lean.
+
+The source reports identified an open sign implication and a checker limit at a
+nested truncation-formula application. An explicit product-regrouping `because`
+step and a directly citable Bool helper closed those gaps. That is a concrete
+Aver-only proof-author workflow; other open obligations can still require richer
+source diagnostics.
+
+The Kernel export and its imports now contain **91 universal laws**, the same
+**4 bounded laws**, and **142 universal proof steps**, with no `sorry` or build
 errors. The earlier universal laws retain their proof tiers and axiom sets.
 For an open step, `aver proof ... --check --explain` reports its Aver goal,
-assumptions and cited requirements at the source location; see
+assumptions and cited requirements at the source location. Supported direct
+citations also report the actual premises closed or left open in an isolated
+application, with dependency and closure-axiom audits; see
 [proof diagnostics](../../docs/lean.md#step-zero-which-law-failed).
 
-Fraction trunc-sticky composition, sticky-plus, and the complete divider
+The Fraction away/sticky bridges, Fraction trunc-sticky composition, sticky-plus, and the complete divider
 correctness theorem remain open. The wrapper still calls `fpValue`; connecting
 its negative-exponent inputs to `fpValueGeneral` is also outstanding.
 
@@ -32,7 +56,8 @@ Correctness of the Kernel of the AMD5K86 Floating-Point Division Algorithm*
 (Moore, Lynch & Kaufmann, 1996), one of the flagship results of the ACL2 prover and
 a landmark of industrial formal methods.
 
-This project reproduces that proof — **as ordinary Aver code**.
+This project aims to reproduce that proof **as ordinary Aver code**. The audited
+fragments and the remaining end-to-end gap are listed below.
 
 ## The point
 
@@ -49,8 +74,9 @@ the question "is this language a toy?" stops being interesting.
 `.lean` script anyone edits. If K5 were 160 hand-written Lean proofs in disguise, it
 would prove *nothing* — ACL2 already wrote those.
 
-What we write is **clean, provable Aver**: the divider as normal code, the ~160
-intermediate facts as `verify ... law` blocks. **The machine proves them.** Lean's
+What we write is **clean, provable Aver**: the divider as normal code and
+intermediate facts as `verify ... law` blocks. The machine checks the proofs;
+the audited status distinguishes universal results from samples and open claims. Lean's
 kernel and Z3/Dafny are the certifying backends underneath, invisible to the author.
 A helper fact that the prover can't yet close is handled by *stating it as another
 Aver law* (fed to the lemma pool via The Method) or by building a **generic** prover
@@ -97,11 +123,11 @@ Each stage is independently useful as a verified corpus.
 | **1. Float-as-rational (faithful normalized model)** | the paper's representation (Section 5.1, p.10): every value is `sign · s · 2^exp` with `sign` either `+1` or `−1`, a **normalized** rational significand `s ∈ [1,2)` (an n-bit integer `sigBits ∈ [2^(n-1), 2^n)`), an integer exponent, and the width n; the denoted value is the Stage-0 exact `Fraction` | 🟡 **seeded** — `domain/fprep.av`: **Lemma 7.1.2 (p.18)** landed `universal` on the Lean kernel, both halves — the significand is invariant under scaling, `s(x·2^j) = s_x`, and the exponent shifts, `e(x·2^j) = e_x + j` — which hold *definitionally* because `fpScale` renormalizes nothing. Plus the power-of-two homomorphism `pow2(m+n) == pow2(m)·pow2(n)` and the folklore value-of-scaling corollary `fpValue(x·2^j) == fpValue(x)·2^j`, all `universal` (`#print axioms ⊆ {propext, Classical.choice, Quot.sound}`, zero `sorry`). The value corollary is the **laws-as-lemmas composition** end to end, ACROSS the `Domain.Rational` module boundary: it re-proves nothing about powers of two — it *cites* the proven homomorphism and the compiler composes them via one generic strategy, never a per-figure proof. **Lemma 7.1.7 (p.18)** also landed `universal`: *if `x ≠ 0` and `y ≠ 0` then `e_x + e_y ≤ e(x·y) ≤ e_x + e_y + 1`* — the product-exponent range, stated exactly as the paper (a nonzero float is one with a nonzero significand). It is closed by the **generic match-splitting already in the engine**: the keystone's `grind` case-splits `fpMul`'s normalization branch (shift 0 vs 1) and bounds each arm — no new tactic, no per-figure code. **Multiplication's value-preservation** `fpMulValue` also landed `universal` on the Lean kernel (every exponent, `#print axioms ⊆ {propext, Classical.choice, Quot.sound}`, 0 `sorry`). Its obstacle was never the case-split (the same match-splitting that closes 7.1.7 reduces each branch cleanly) but a **pow2 homomorphism *rearrangement***: the product denominator `pow2(w_a+w_b−2)` must be seen as `pow2(w_a−1)·pow2(w_b−1)`, the homomorphism at the rearranged exponent `(w_a−1)+(w_b−1)` — which `grind`'s bare e-matcher misses on the syntactic `+`. The **signed-power-of-two homomorphism normalizer** (the `Fraction`-level companion of the integer pow2 normalizer) supplies exactly that: it canonicalizes `2^(m+n)`/`2^(m+n+1)` through the proven Aver homomorphism law, cited in cross-multiplied form, so `grind` closes the composition — a generic mechanism keyed on the signed-power-of-two cone shape, never a per-figure proof. **Lemma 7.2.12** needs `trunc` plus a strict product bound; then the rounding modes |
 | **2. Newton–Raphson bounds** | the nonlinear error estimates — `domain/estimate.av`: square/product nonneg, monotonicity, the right-factor monotonicity bound, transitivity-through-products, the error-squaring identity, the contraction bound | ✅ **proven** — **all 8 laws `universal` on the Lean kernel** (`#print axioms ⊆ {propext, Classical.choice, Quot.sound}`, 0 sampled, 0 sorries); push-button on Z3/Dafny. Two reusable mechanisms do it, no per-figure tactics. (1) `aver_int_order`, the nonlinear analog of `omega` for the products-and-squares fragment — recurse on a product with `Int.mul_nonneg` (nonnegativity) / `Int.mul_le_mul` (`prod ≤ prod`) / `Int.mul_le_mul_of_nonneg_right` (shared-right-factor bound), sign-split squares — closes the nonneg sub-family (`sqNonneg`, `mulNonneg`, `tripleNonneg`), the monotonicities (`sqMono`, `mulLeMonoRight`), and the contraction bound (`nrContraction`); `grind` closes the error-squaring ring identity. (2) **order-law composition**: the transitivity bound `mulLeTrans` (`a·c ≤ m` when `a ≤ b`, `0 ≤ c`, `b·c ≤ m`) is closed by *citing* `mulLeMonoRight` — the proof composer restates an earlier inequality law as a rewrite trigger over its two comparison sides and chains the instantiated bound `a·c ≤ b·c` with the premise `b·c ≤ m`. Shape-keyed and derived from the cited Aver law (deleting `mulLeMonoRight` breaks it), not a re-proof — the same laws-as-lemmas composition that closes Stage 1, extended from equalities to inequalities |
 | **Rounding — trunc** | Truncation, away/sticky rounding, error bounds and composition laws in `domain/round.av` | **All laws in this module and its imports are universal:** 62 laws, 23 source-proof obligations, no bounded claims or `sorry`. The trunc-sticky argument is source-local: `StickyInt` supplies the low-bit floor law, `StickyScale` cancels the precision scales, and `fpSticky.preservesCoarseTruncation` proves complete record equality for `1 <= m < n`. The public rational-value law follows from it. This result replaces the former manual Lean proof. |
-| **3. Kernel divide** | The 32 straight-line steps and the end-to-end division theorems | **Partial source proofs.** The executable exponent has integer and rational magnitude bounds and agrees with the normalized model for either sign of the exponent. `divide.theorem_2` proves the wrapper equation under the explicit row-32 result-exponent bracket; deriving that bracket remains open. Complete divider correctness still has executable examples rather than a universal proof. Remaining work includes the Fraction rounding bridge, sticky-plus/final-round composition, reciprocal and digit/remainder bounds, the Section 9 bounds, and the wrapper's use of `fpValue` for negative exponents. |
+| **3. Kernel divide** | The 32 straight-line steps and the end-to-end division theorems | **Partial source proofs.** The executable exponent has integer and rational magnitude bounds and agrees with the normalized model for either sign of the exponent. `divide.theorem_2` proves the wrapper equation under the explicit row-32 result-exponent bracket; deriving that bracket remains open. Complete divider correctness still has executable examples rather than a universal proof. Remaining work includes the Fraction away/sticky bridges, sticky-plus/final-round composition, reciprocal and digit/remainder bounds, the Section 9 bounds, and the wrapper's use of `fpValue` for negative exponents. |
 
-Why it's tractable: the algorithm is **straight-line** (two Newton iterations + four
-quotient digits + a rounded sum) — zero unbounded recursion, so no termination/fuel
-problem. Modelling floats as exact rationals sidesteps floating-point/FFI semantics
+The division driver is **straight-line** (two Newton iterations + four
+quotient digits + a rounded sum). Its exponent and rounding helpers still use
+recursion and require termination arguments. Modelling floats as exact rationals sidesteps floating-point/FFI semantics
 entirely. The honest wall is **nonlinear rational arithmetic** (NR error bounds): Z3
 proves it natively; the Lean side gets one reusable generic strategy rather than 160
 bespoke proofs — the first task where the dual backend earns its keep.

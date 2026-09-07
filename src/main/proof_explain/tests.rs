@@ -80,6 +80,34 @@ fn expression_rendering_preserves_grouping() {
 }
 
 #[test]
+fn expression_rendering_keeps_dotted_names_and_escaped_literals_readable() {
+    let source = r#"fn f(x: Int) -> Int
+    x
+verify f law display
+    given x: Int = [1]
+    because Domain.Fprep.value(x).exp > x.exp + 1
+    because String.len("quote: \" and slash: \\") > 0
+    f(x) => x
+"#;
+    let catalog = catalog(source, None, "source.av");
+    let reports = collect(
+        &catalog,
+        None,
+        &["f.display.because1".into(), "f.display.because2".into()],
+        "unused",
+        "",
+    );
+    assert_eq!(
+        reports["f.display.because1"]["goal"],
+        "Domain.Fprep.value(x).exp > (x.exp + 1)"
+    );
+    assert_eq!(
+        reports["f.display.because2"]["goal"],
+        r#"String.len("quote: \" and slash: \\") > 0"#
+    );
+}
+
+#[test]
 fn unrelated_checker_errors_are_not_hidden_by_an_open_source_step() {
     let source = "fn f(x: Int) -> Int\n    x\nverify f law chain\n    given x: Int = [1]\n    because x > 0\n    f(x) => x\n";
     let catalog = catalog(source, None, "source.av");

@@ -702,10 +702,12 @@ pub(super) enum Commands {
         check_json: bool,
         /// Explain open proof steps in Aver: source locations, goals,
         /// assumptions, previous because results, and explicit using
-        /// requirements. Check mode only; Lean backend only. JSON adds
+        /// requirements, plus isolated citation applications and their
+        /// remaining premises where supported. Check mode only; Lean backend only. JSON adds
         /// `explanations` keyed by law/step. Checker limits are distinguished
         /// from unproved statements; technical output is saved in
-        /// proof_backend.log. Existing `open_goals` / manifest `open_goal`
+        /// proof_backend.log (citation probes: proof_citations.log).
+        /// Existing `open_goals` / manifest `open_goal`
         /// residuals remain available. Laws without because may require an
         /// additional isolated diagnostic build. Explanations never change
         /// proof credit, budgets, or exit codes; absent this flag, no new

@@ -39,7 +39,7 @@ fn k5_sticky_composition_has_universal_source_proofs() {
 }
 
 #[test]
-fn k5_fraction_exponent_has_a_universal_magnitude_window() {
+fn k5_fraction_exponent_and_truncation_agree_with_the_normalized_model() {
     if Command::new("lake").arg("--version").output().is_err() {
         return;
     }
@@ -67,6 +67,15 @@ fn k5_fraction_exponent_has_a_universal_magnitude_window() {
         "fracExpo.executableMagnitude",
         "fracExpo.rationalMagnitude",
         "normalizedValueExponent.executableExponent",
+        "modelSign.normalizedSign",
+        "truncationFormula.knownExponent",
+        "modelTruncation.normalizedModel",
+        "sameTruncation.normalizedModel",
+        "Domain.TruncScale.equalQuotients.equalPositiveRatios",
+        "Domain.TruncScale.ulpScale.signedExponent",
+        "Domain.TruncScale.scaledQuotient.exactScale",
+        "Domain.TruncScale.restoredValue.exactScale",
+        "Domain.TruncScale.signOfProduct.positiveMagnitudes",
         "Domain.ModelScale.modelWindow.normalizedMagnitude",
         "Domain.ModelScale.uniqueWindow.uniqueExponent",
         "Domain.BinadeOrder.fractionWindow.integerMagnitude",
@@ -98,9 +107,44 @@ fn k5_fraction_exponent_has_a_universal_magnitude_window() {
             assert_eq!(law["tier"], "universal", "{law}");
         }
     }
-    for obligation in manifest["obligations"].as_array().unwrap() {
+    let obligations = manifest["obligations"].as_array().unwrap();
+    for obligation in obligations {
         assert_eq!(obligation["tier"], "universal", "{obligation}");
     }
+    // Pin every new source step as well as its parent law: a missing or
+    // unaudited because/implication must not silently reduce the proof surface.
+    for (law, reasons) in [
+        ("Domain.TruncScale.equalQuotients.equalPositiveRatios", 2),
+        ("Domain.TruncScale.ulpScale.signedExponent", 1),
+        ("Domain.TruncScale.scaledQuotient.exactScale", 3),
+        ("Domain.TruncScale.restoredValue.exactScale", 0),
+        ("Domain.TruncScale.signOfProduct.positiveMagnitudes", 2),
+        ("modelSign.normalizedSign", 7),
+        ("truncationFormula.knownExponent", 0),
+        ("modelTruncation.normalizedModel", 9),
+        ("sameTruncation.normalizedModel", 4),
+    ] {
+        for step in (1..=reasons)
+            .map(|index| format!("{law}.because{index}"))
+            .chain(std::iter::once(format!("{law}.implication")))
+        {
+            assert!(
+                obligations.iter().any(|claim| claim["law"] == step),
+                "missing source obligation {step}"
+            );
+        }
+    }
+    // The checked result currently has 91 universal laws, four previously
+    // bounded laws, and 142 universal steps. Allow additions and promotions.
+    assert!(
+        laws.iter().filter(|law| law["tier"] == "universal").count() >= 91,
+        "{manifest}"
+    );
+    assert!(
+        laws.iter().filter(|law| law["tier"] == "bounded").count() <= 4,
+        "{manifest}"
+    );
+    assert!(obligations.len() >= 142, "{manifest}");
     for claim in laws
         .iter()
         .chain(manifest["obligations"].as_array().unwrap())

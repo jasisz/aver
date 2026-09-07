@@ -477,7 +477,12 @@ fn explain_reports_source_requirements_without_changing_proof_credit() {
     let fixture = "tests/fixtures/law_reason_constant_citation.av";
     let (plain, _) = run_lean_check_json_with_args(fixture, &dir, 0, &[], &[]);
     assert!(plain.get("explanations").is_none());
+    let counted_source = std::fs::read(dir.join("ConstantCitation.lean")).unwrap();
     let (explained, run) = run_lean_check_json_with_args(fixture, &dir, 0, &[], &["--explain"]);
+    assert_eq!(
+        counted_source,
+        std::fs::read(dir.join("ConstantCitation.lean")).unwrap()
+    );
     assert!(!run.status.success());
     for (key, value) in plain.as_object().unwrap() {
         assert_eq!(&explained[key], value, "counted field {key} changed");
@@ -495,6 +500,31 @@ fn explain_reports_source_requirements_without_changing_proof_credit() {
         report["citations"][0]["requires"],
         serde_json::json!(["0 <= a", "b >= 0"])
     );
+    let attempt = &report["citation_attempts"][0];
+    assert_eq!(
+        attempt["phase"], "diagnostic_direct_application",
+        "{report}"
+    );
+    assert_eq!(attempt["law"], "orderedProducts.monotone", "{report}");
+    assert_eq!(attempt["outcome"], "matched", "{report}");
+    assert_eq!(attempt["law_status"], "universal", "{report}");
+    assert_eq!(attempt["established_dependencies"], true, "{report}");
+    assert_eq!(attempt["premises"][0]["expression"], "0 <= a", "{report}");
+    assert_eq!(attempt["premises"][0]["status"], "closed", "{report}");
+    assert_eq!(attempt["premises"][0]["closure_audited"], true, "{report}");
+    assert!(
+        attempt["premises"][0]["proof_axioms"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|axiom| matches!(
+                axiom.as_str(),
+                Some("propext" | "Classical.choice" | "Quot.sound")
+            )),
+        "{report}"
+    );
+    assert_eq!(attempt["premises"][1]["expression"], "0 <= b", "{report}");
+    assert_eq!(attempt["premises"][1]["status"], "open", "{report}");
     assert!(
         std::fs::read_to_string(dir.join("proof_backend.log"))
             .unwrap()
@@ -514,6 +544,8 @@ fn explain_reports_source_requirements_without_changing_proof_credit() {
         "{output}"
     );
     assert!(output.contains("requires b >= 0"), "{output}");
+    assert!(output.contains("[closed in probe] 0 <= a"), "{output}");
+    assert!(output.contains("[open in probe] 0 <= b"), "{output}");
     assert!(output.contains("when a >= 0 [assumed]"), "{output}");
     for technical in ["AVER_REASON_OPEN:", "⊢", ".lean:", "simp only", "case "] {
         assert!(

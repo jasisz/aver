@@ -1,8 +1,20 @@
 //! Explanations of failed proof steps in the source language. This report is
 //! diagnostic metadata only; the existing backend audit remains authoritative.
 
+mod attempt_report;
 mod backend;
+mod display;
+mod probe;
 mod source;
+
+pub(super) fn attach_citation_attempts(
+    dir: &str,
+    catalog: &Catalog,
+    manifest: Option<&ProofManifest>,
+    reports: &mut BTreeMap<String, Value>,
+) {
+    probe::attach(dir, catalog, manifest, reports);
+}
 
 use super::{LawTier, ProofManifest};
 use serde_json::{Value, json};
@@ -118,6 +130,8 @@ pub(super) fn collect(
             "Report the checker error at this source step, with proof_backend.log from the output directory. The error does not identify a missing mathematical premise."
         } else if failure.status == "checker_limit" {
             "Split this step into smaller because expressions or a helper law; the checker did not finish the current proof."
+        } else if reason.is_none() && !law.body.because.is_empty() {
+            "Connect the earlier because statements to the final claim. A proved intermediate statement does not by itself establish this implication."
         } else if citations
             .iter()
             .any(|c| c["requires"].as_array().is_some_and(|r| !r.is_empty()))
@@ -206,7 +220,7 @@ pub(super) fn render(reports: &BTreeMap<String, Value>) {
         if let Some(citations) = report["citations"].as_array() {
             for citation in citations {
                 let scope = if citation["instantiated"] == true {
-                    "arguments substituted"
+                    "source arguments substituted"
                 } else {
                     "schematic parameters"
                 };
@@ -225,6 +239,7 @@ pub(super) fn render(reports: &BTreeMap<String, Value>) {
                 }
             }
         }
+        attempt_report::render(report);
         println!("  Next: {}", text("next"));
     }
 }
