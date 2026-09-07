@@ -1,0 +1,35 @@
+module StickyScale
+    intent =
+        "Move the integer sticky-bit argument between significand scales."
+        "The coarse scale cancels from the outer quotient. The low bit then"
+        "drops, nested floors collapse, and the remaining scale cancels."
+    depends [Domain.Fprep, Domain.StickyInt]
+    exposes [coarsen]
+    effects []
+
+fn coarsen(a: Int, divisor: Int, n: Int, m: Int, bit: Int) -> Int
+    ? "Truncate an n-bit significand with low bit 0 or 1 to the coarser m-bit scale."
+    half = Domain.StickyInt.floorDiv(a * Domain.Fprep.pow2(n - 2), divisor)
+    scale = Domain.Fprep.pow2(m - 1)
+    Domain.StickyInt.floorDiv((2 * half + bit) * scale, Domain.Fprep.pow2(n - 1))
+
+verify coarsen law dropsStickyBit
+    given a: Int = [-13, 0, 12, 13]
+    given divisor: Int = [1, 3, 8]
+    given n: Int = [2, 3, 5]
+    given m: Int = [1, 2, 3]
+    given bit: Int = [0, 1]
+    when divisor > 0
+    when 1 <= m
+    when m < n
+    when 0 <= bit
+    when bit < 2
+    because Domain.Fprep.pow2(n - 1) == Domain.Fprep.pow2(n - m) * Domain.Fprep.pow2(m - 1)
+    because Domain.Fprep.pow2(n - m) == 2 * Domain.Fprep.pow2(n - m - 1)
+    because Domain.Fprep.pow2(n - 2) == Domain.Fprep.pow2(m - 1) * Domain.Fprep.pow2(n - m - 1)
+    because Domain.StickyInt.floorDiv(Domain.Fprep.pow2(m - 1) * (2 * Domain.StickyInt.floorDiv(a * Domain.Fprep.pow2(n - 2), divisor) + bit), Domain.Fprep.pow2(m - 1) * (2 * Domain.Fprep.pow2(n - m - 1))) == Domain.StickyInt.floorDiv(2 * Domain.StickyInt.floorDiv(a * Domain.Fprep.pow2(n - 2), divisor) + bit, 2 * Domain.Fprep.pow2(n - m - 1))
+    because Domain.StickyInt.floorDiv(2 * Domain.StickyInt.floorDiv(a * Domain.Fprep.pow2(n - 2), divisor) + bit, 2 * Domain.Fprep.pow2(n - m - 1)) == Domain.StickyInt.floorDiv(Domain.StickyInt.floorDiv(a * Domain.Fprep.pow2(n - 2), divisor), Domain.Fprep.pow2(n - m - 1))
+    because Domain.StickyInt.floorDiv(Domain.StickyInt.floorDiv(a * Domain.Fprep.pow2(n - 2), divisor), Domain.Fprep.pow2(n - m - 1)) == Domain.StickyInt.floorDiv(a * Domain.Fprep.pow2(n - 2), divisor * Domain.Fprep.pow2(n - m - 1))
+    because Domain.StickyInt.floorDiv(Domain.Fprep.pow2(n - m - 1) * (a * Domain.Fprep.pow2(m - 1)), Domain.Fprep.pow2(n - m - 1) * divisor) == Domain.StickyInt.floorDiv(a * Domain.Fprep.pow2(m - 1), divisor)
+    using [Domain.Fprep.pow2.homomorphism, Domain.Fprep.pow2.positive, Domain.StickyInt.floorDiv.cancelCommonFactor, Domain.StickyInt.floorDiv.lowBitDrops, Domain.StickyInt.floorDiv.nestedFloorCollapse]
+    coarsen(a, divisor, n, m, bit) => Domain.StickyInt.floorDiv(a * Domain.Fprep.pow2(m - 1), divisor)
