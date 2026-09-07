@@ -56,66 +56,109 @@
                 (local.set $qm (array.new_default $mag (if (result i32) (i32.eqz (local.get $alen)) (then (i32.const 1)) (else (local.get $alen)))))
                 (local.set $rwm (array.new_default $mag (i32.add (local.get $blen) (i32.const 1))))
                 (local.set $rwlen (i32.const 0))
-                ;; bit index counts from alen*32-1 downto 0.
-                (local.set $bit (i32.sub (i32.mul (local.get $alen) (i32.const 32)) (i32.const 1)))
-                (block $bits_done (loop $bits
-                  (br_if $bits_done (i32.lt_s (local.get $bit) (i32.const 0)))
-                  ;; r <<= 1  (shift the working remainder magnitude left by one bit)
-                  (local.set $carry (i64.const 0))
-                  (local.set $i (i32.const 0))
-                  (block $shl_done (loop $shl
-                    (br_if $shl_done (i32.ge_u (local.get $i) (i32.add (local.get $blen) (i32.const 1))))
-                    (local.set $acc (i64.or
-                      (i64.and (i64.shl (array.get $mag (local.get $rwm) (local.get $i)) (i64.const 1)) (i64.const 0xffffffff))
-                      (local.get $carry)))
-                    (local.set $carry (i64.shr_u (array.get $mag (local.get $rwm) (local.get $i)) (i64.const 31)))
-                    (array.set $mag (local.get $rwm) (local.get $i) (local.get $acc))
-                    (local.set $i (i32.add (local.get $i) (i32.const 1)))
-                    (br $shl)))
-                  ;; r |= bit_(bit) of |a|
-                  (local.set $word (i32.div_u (local.get $bit) (i32.const 32)))
-                  (local.set $off (i32.rem_u (local.get $bit) (i32.const 32)))
-                  (if (i64.ne
-                        (i64.and (i64.shr_u (array.get $mag (local.get $am) (local.get $word)) (i64.extend_i32_u (local.get $off))) (i64.const 1))
-                        (i64.const 0))
-                    (then
-                      (array.set $mag (local.get $rwm) (i32.const 0)
-                        (i64.or (array.get $mag (local.get $rwm) (i32.const 0)) (i64.const 1)))))
-                  ;; recompute stripped working-remainder length $rwlen
-                  (local.set $rwlen (i32.add (local.get $blen) (i32.const 1)))
-                  (block $rstrip_done (loop $rstrip
-                    (br_if $rstrip_done (i32.eqz (local.get $rwlen)))
-                    (br_if $rstrip_done (i64.ne (array.get $mag (local.get $rwm) (i32.sub (local.get $rwlen) (i32.const 1))) (i64.const 0)))
-                    (local.set $rwlen (i32.sub (local.get $rwlen) (i32.const 1)))
-                    (br $rstrip)))
-                  ;; if r >= |b|: r -= |b|; set quotient bit.
-                  {cmp_r_b}
-                  (if (i32.ge_s (local.get $cmp) (i32.const 0))
-                    (then
-                      ;; r -= |b|  (borrow subtract, r >= |b| guaranteed)
-                      (local.set $borrow (i64.const 0))
-                      (local.set $i (i32.const 0))
-                      (block $rsub_done (loop $rsub
-                        (br_if $rsub_done (i32.ge_u (local.get $i) (i32.add (local.get $blen) (i32.const 1))))
-                        (local.set $diff (i64.sub
-                          (i64.sub
-                            (array.get $mag (local.get $rwm) (local.get $i))
-                            (if (result i64) (i32.lt_u (local.get $i) (local.get $blen)) (then (array.get $mag (local.get $bm) (local.get $i))) (else (i64.const 0))))
-                          (local.get $borrow)))
-                        (if (i64.lt_s (local.get $diff) (i64.const 0))
+                ;; A single 32-bit divisor needs one unsigned division per limb.
+                ;; carry < divisor, so (carry << 32) | limb fits in u64 and
+                ;; the quotient limb is below 2^32. Shared sign correction below
+                ;; still supplies Euclidean division for every sign combination.
+                (if (i32.eq (local.get $blen) (i32.const 1))
+                  (then
+                    (local.set $sb (array.get $mag (local.get $bm) (i32.const 0)))
+                    (local.set $sr (i64.const 0))
+                    (local.set $i (i32.sub (local.get $alen) (i32.const 1)))
+                    (block $word_div_done (loop $word_div
+                      (br_if $word_div_done (i32.lt_s (local.get $i) (i32.const 0)))
+                      (local.set $acc (i64.or
+                        (i64.shl (local.get $sr) (i64.const 32))
+                        (array.get $mag (local.get $am) (local.get $i))))
+                      (array.set $mag (local.get $qm) (local.get $i)
+                        (i64.div_u (local.get $acc) (local.get $sb)))
+                      (local.set $sr (i64.rem_u (local.get $acc) (local.get $sb)))
+                      (local.set $i (i32.sub (local.get $i) (i32.const 1)))
+                      (br $word_div)))
+                    (array.set $mag (local.get $rwm) (i32.const 0) (local.get $sr)))
+                  (else
+                    (block $unsigned_done
+                      ;; If |a| < |b|, the quotient is zero and the remainder is |a|.
+                      {cmp_a_b}
+                      (if (i32.lt_s (local.get $cmp) (i32.const 0))
+                        (then
+                          (array.copy $mag $mag (local.get $rwm) (i32.const 0)
+                            (local.get $am) (i32.const 0) (local.get $alen))
+                          (br $unsigned_done)))
+                      ;; The highest blen-1 limbs are strictly below |b|.
+                      ;; Seed that prefix as the remainder, skipping quotient zeros.
+                      (local.set $rwlen (i32.sub (local.get $blen) (i32.const 1)))
+                      (local.set $word (i32.sub (local.get $alen) (local.get $rwlen)))
+                      (array.copy $mag $mag (local.get $rwm) (i32.const 0)
+                        (local.get $am) (local.get $word) (local.get $rwlen))
+                      (local.set $bit (i32.sub (i32.mul (local.get $word) (i32.const 32)) (i32.const 1)))
+                      (block $bits_done (loop $bits
+                        (br_if $bits_done (i32.lt_s (local.get $bit) (i32.const 0)))
+                        ;; A shift can grow the live remainder by at most one limb.
+                        ;; Higher allocated limbs remain zero; do not scan the full
+                        ;; divisor width while the partial remainder is still small.
+                        (local.set $rwlen
+                          (i32.add
+                            (if (result i32) (i32.lt_u (local.get $rwlen) (local.get $blen))
+                              (then (local.get $rwlen)) (else (local.get $blen)))
+                            (i32.const 1)))
+                        ;; r <<= 1  (shift the working remainder magnitude left by one bit)
+                        (local.set $carry (i64.const 0))
+                        (local.set $i (i32.const 0))
+                        (block $shl_done (loop $shl
+                          (br_if $shl_done (i32.ge_u (local.get $i) (local.get $rwlen)))
+                          (local.set $acc (i64.or
+                            (i64.and (i64.shl (array.get $mag (local.get $rwm) (local.get $i)) (i64.const 1)) (i64.const 0xffffffff))
+                            (local.get $carry)))
+                          (local.set $carry (i64.shr_u (array.get $mag (local.get $rwm) (local.get $i)) (i64.const 31)))
+                          (array.set $mag (local.get $rwm) (local.get $i) (local.get $acc))
+                          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+                          (br $shl)))
+                        ;; r |= bit_(bit) of |a|
+                        (local.set $word (i32.div_u (local.get $bit) (i32.const 32)))
+                        (local.set $off (i32.rem_u (local.get $bit) (i32.const 32)))
+                        (if (i64.ne
+                              (i64.and (i64.shr_u (array.get $mag (local.get $am) (local.get $word)) (i64.extend_i32_u (local.get $off))) (i64.const 1))
+                              (i64.const 0))
                           (then
-                            (local.set $diff (i64.add (local.get $diff) (i64.const 0x100000000)))
-                            (local.set $borrow (i64.const 1)))
-                          (else (local.set $borrow (i64.const 0))))
-                        (array.set $mag (local.get $rwm) (local.get $i) (i64.and (local.get $diff) (i64.const 0xffffffff)))
-                        (local.set $i (i32.add (local.get $i) (i32.const 1)))
-                        (br $rsub)))
-                      ;; set quotient bit (bit) — word/off computed above.
-                      (array.set $mag (local.get $qm) (local.get $word)
-                        (i64.or (array.get $mag (local.get $qm) (local.get $word))
-                          (i64.shl (i64.const 1) (i64.extend_i32_u (local.get $off)))))))
-                  (local.set $bit (i32.sub (local.get $bit) (i32.const 1)))
-                  (br $bits)))
+                            (array.set $mag (local.get $rwm) (i32.const 0)
+                              (i64.or (array.get $mag (local.get $rwm) (i32.const 0)) (i64.const 1)))))
+                        ;; Strip only the live upper bound computed before shifting.
+                        (block $rstrip_done (loop $rstrip
+                          (br_if $rstrip_done (i32.eqz (local.get $rwlen)))
+                          (br_if $rstrip_done (i64.ne (array.get $mag (local.get $rwm) (i32.sub (local.get $rwlen) (i32.const 1))) (i64.const 0)))
+                          (local.set $rwlen (i32.sub (local.get $rwlen) (i32.const 1)))
+                          (br $rstrip)))
+                        ;; if r >= |b|: r -= |b|; set quotient bit.
+                        {cmp_r_b}
+                        (if (i32.ge_s (local.get $cmp) (i32.const 0))
+                          (then
+                            ;; r -= |b|  (borrow subtract, r >= |b| guaranteed)
+                            (local.set $borrow (i64.const 0))
+                            (local.set $i (i32.const 0))
+                            (block $rsub_done (loop $rsub
+                              (br_if $rsub_done (i32.ge_u (local.get $i) (i32.add (local.get $blen) (i32.const 1))))
+                              (local.set $diff (i64.sub
+                                (i64.sub
+                                  (array.get $mag (local.get $rwm) (local.get $i))
+                                  (if (result i64) (i32.lt_u (local.get $i) (local.get $blen)) (then (array.get $mag (local.get $bm) (local.get $i))) (else (i64.const 0))))
+                                (local.get $borrow)))
+                              (if (i64.lt_s (local.get $diff) (i64.const 0))
+                                (then
+                                  (local.set $diff (i64.add (local.get $diff) (i64.const 0x100000000)))
+                                  (local.set $borrow (i64.const 1)))
+                                (else (local.set $borrow (i64.const 0))))
+                              (array.set $mag (local.get $rwm) (local.get $i) (i64.and (local.get $diff) (i64.const 0xffffffff)))
+                              (local.set $i (i32.add (local.get $i) (i32.const 1)))
+                              (br $rsub)))
+                            ;; set quotient bit (bit) — word/off computed above.
+                            (array.set $mag (local.get $qm) (local.get $word)
+                              (i64.or (array.get $mag (local.get $qm) (local.get $word))
+                                (i64.shl (i64.const 1) (i64.extend_i32_u (local.get $off)))))))
+                        (local.set $bit (i32.sub (local.get $bit) (i32.const 1)))
+                        (br $bits)))
+                    )
+                  ))
                 ;; $rwm now holds the unsigned truncating remainder magnitude;
                 ;; $qm the unsigned truncating quotient. Re-strip $rwm to its
                 ;; canonical length $rwlen — the in-loop $rwlen reflects the

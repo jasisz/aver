@@ -127,9 +127,29 @@ fn solver(
     for i in 0..fact_count {
         lines.push(format!("{indent}| (simp only [Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq] at *; apply _fact{i} <;> (first | assumption | omega))"));
     }
+    // Expose named Bool facts before simp_all substitutes their truth values.
+    // Normalize multiplication by constants before Presburger arithmetic treats
+    // the remaining products as opaque integer terms.
+    lines.push(format!(
+        "{indent}| ((try simp only [Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq, {}] at *) <;> simp_all +zetaDelta [Int.mul_assoc, Int.add_assoc, {simp_defs}] <;> omega)",
+        definitions.simp
+    ));
     lines.push(format!(
         "{indent}| ((try simp only [List.contains_eq_mem]); grind [{grind_defs}])"
     ));
+    let mut steps = Vec::new();
+    for (name, reason) in &definitions.unfold_once {
+        let location = if *reason { " at *" } else { "" };
+        steps.push(format!(
+            "(try rw [{name}.eq_def]{location}) <;> (try simp only [{}] at *)",
+            definitions.simp
+        ));
+        let prefix = steps.join(" <;> ");
+        lines.push(format!(
+            "{indent}| ((try simp only [{}] at *) <;> {prefix} <;> grind [{grind_defs}])",
+            definitions.simp
+        ));
+    }
     lines.push(format!(
         "{indent}| (trace \"AVER_REASON_OPEN:{label}\"; trace_state; sorry)"
     ));

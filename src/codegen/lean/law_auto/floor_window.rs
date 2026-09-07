@@ -514,14 +514,14 @@ theorem {base}__exp_of_big (a b : Int) (h1 : ¬b < 1) (h2 : ¬a < 2 * b) :
     {exp} a b = 1 + {exp} ({halve} a) b := by
   rw [{exp}.eq_def, if_neg h1, if_neg h2]
 theorem {base}__exp_nonneg (a b : Int) : 0 <= {exp} a b := by
-  induction a using {exp}.induct (b := b) with
+  induction a using {exp}.induct b with
   | case1 a h => rw [{base}__exp_of_low a b h]; omega
   | case2 a h1 h2 => rw [{base}__exp_of_small a b h1 h2]; omega
   | case3 a h1 h2 ih => rw [{base}__exp_of_big a b h1 h2]; omega
 theorem {base}__exp_window : ∀ a b : Int, 1 <= b -> b <= a ->
     {pow} ({exp} a b) * b <= a ∧ a < {pow} ({exp} a b + 1) * b := by
   intro a b
-  induction a using {exp}.induct (b := b) with
+  induction a using {exp}.induct b with
   | case1 a h =>
       intro hb _
       exact absurd hb (by omega)

@@ -1,0 +1,153 @@
+module Binade
+    intent = "Bind the executable exponent to its integer magnitude window."
+    exposes [powerOfTwo, exponent, positiveWindow, negativeExponent, negativeWindow, significand, significandWindow, magnitudeExponent, magnitudeWindow]
+    effects []
+
+fn powerOfTwo(n: Int) -> Int
+    match n <= 0
+        true -> 1
+        false -> 2 * powerOfTwo(n - 1)
+
+verify powerOfTwo
+    powerOfTwo(-3) => 1
+    powerOfTwo(0) => 1
+    powerOfTwo(3) => 8
+
+fn halve(p: Int) -> Int
+    Int.div(p, 2)
+
+fn exponent(p: Int, q: Int) -> Int
+    match q < 1
+        true -> 0
+        false -> match p < 2 * q
+            true -> 0
+            false -> 1 + exponent(halve(p), q)
+
+verify exponent
+    exponent(13, 3) => 2
+    exponent(31, 1) => 4
+    exponent(8, 0) => 0
+
+fn positiveWindow(p: Int, q: Int) -> Bool
+    e = exponent(p, q)
+    Bool.and(e >= 0, Bool.and(powerOfTwo(e) * q <= p, p < powerOfTwo(e + 1) * q))
+
+verify positiveWindow law executableMagnitude
+    given p: Int = [1, 2, 5, 7, 16, 31]
+    given q: Int = [1, 2, 3, 8]
+    when q >= 1
+    when p >= q
+    because positiveWindowReason(p, q)
+    using []
+    positiveWindow(p, q) holds
+
+fn doubleWindowReason(p: Int, q: Int) -> Bool
+    ? "Reuse the half-sized window, advance the exponent, double both endpoints, and place p between them."
+    e = exponent(Int.div(p, 2), q)
+    smallerWindow = positiveWindow(Int.div(p, 2), q)
+    nextExponent = exponent(p, q) == e + 1
+    lowerScale = powerOfTwo(e + 1) == 2 * powerOfTwo(e)
+    upperScale = powerOfTwo(e + 2) == 2 * powerOfTwo(e + 1)
+    Bool.and(smallerWindow, Bool.and(nextExponent, Bool.and(lowerScale, Bool.and(upperScale, positiveWindow(p, q)))))
+
+verify doubleWindowReason
+    doubleWindowReason(4, 2) => true
+    doubleWindowReason(14, 3) => true
+
+fn positiveWindowReason(p: Int, q: Int) -> Bool
+    match q < 1
+        true -> true
+        false -> match p < q
+            true -> true
+            false -> match p < 2 * q
+                true -> positiveWindow(p, q)
+                false -> Bool.and(positiveWindowReason(Int.div(p, 2), q), doubleWindowReason(p, q))
+
+verify positiveWindowReason
+    positiveWindowReason(0, 0) => true
+    positiveWindowReason(9, 2) => true
+
+fn negativeExponent(p: Int, q: Int) -> Int
+    ? "For 0 < p < q, invert the strict upper endpoint before taking the integer exponent."
+    match 2 * p >= q
+        true -> -1
+        false -> 0 - exponent(q - 1, p) - 1
+
+verify negativeExponent
+    negativeExponent(1, 2) => -1
+    negativeExponent(1, 3) => -2
+    negativeExponent(1, 8) => -3
+    negativeExponent(3, 8) => -2
+    negativeExponent(4, 8) => -1
+
+fn negativeWindow(p: Int, q: Int) -> Bool
+    e = negativeExponent(p, q)
+    Bool.and(e < 0, Bool.and(q <= p * powerOfTwo(0 - e), p * powerOfTwo(0 - e - 1) < q))
+
+verify negativeWindow law executableMagnitude
+    given p: Int = [1, 2, 3, 5]
+    given q: Int = [2, 3, 4, 7, 8, 9, 16]
+    when p >= 1
+    when p < q
+    because positiveWindow(q - 1, p)
+    using [positiveWindow.executableMagnitude]
+    negativeWindow(p, q) holds
+
+fn significand(p: Int, q: Int, n: Int) -> Int
+    e = exponent(p, q)
+    s = n - 1 - e
+    match s >= 0
+        true -> Result.withDefault(Int.div(p * powerOfTwo(s), q), 0)
+        false -> Result.withDefault(Int.div(p, q * powerOfTwo(0 - s)), 0)
+
+verify significand law normalized
+    given p: Int = [1, 2, 5, 7]
+    given q: Int = [1, 2, 4]
+    given n: Int = [1, 2, 3]
+    when q >= 1
+    when p >= q
+    when n >= 1
+    significandWindow(p, q, n) holds
+
+fn significandWindow(p: Int, q: Int, n: Int) -> Bool
+    j = significand(p, q, n)
+    Bool.and(powerOfTwo(n - 1) <= j, j < powerOfTwo(n))
+
+verify significandWindow
+    significandWindow(5, 2, 2) => true
+    significandWindow(15, 4, 4) => true
+
+fn magnitudeExponent(p: Int, q: Int) -> Int
+    match p >= q
+        true -> exponent(p, q)
+        false -> negativeExponent(p, q)
+
+verify magnitudeExponent
+    magnitudeExponent(1, 3) => -2
+    magnitudeExponent(2, 2) => 0
+    magnitudeExponent(15, 2) => 2
+    magnitudeExponent(32, 1) => 5
+
+fn magnitudeWindow(p: Int, q: Int) -> Bool
+    e = magnitudeExponent(p, q)
+    match e >= 0
+        true -> Bool.and(powerOfTwo(e) * q <= p, p < powerOfTwo(e + 1) * q)
+        false -> Bool.and(q <= p * powerOfTwo(0 - e), p * powerOfTwo(0 - e - 1) < q)
+
+verify magnitudeWindow law executableMagnitude
+    given p: Int = [1, 2, 3, 8, 17]
+    given q: Int = [1, 2, 3, 8, 17]
+    when p >= 1
+    when q >= 1
+    because magnitudeReason(p, q)
+    using [positiveWindow.executableMagnitude, negativeWindow.executableMagnitude]
+    magnitudeWindow(p, q) holds
+
+fn magnitudeReason(p: Int, q: Int) -> Bool
+    match p >= q
+        true -> positiveWindow(p, q)
+        false -> negativeWindow(p, q)
+
+verify magnitudeReason
+    magnitudeReason(1, 16) => true
+    magnitudeReason(17, 2) => true
