@@ -1,0 +1,107 @@
+module SliceAliasReason
+    intent = "Induction follows nested slices whether named by match, binding, or written inline."
+    effects []
+
+fn countChunks(values: List<Int>, width: Int, count: Int) -> Int
+    match values
+        [] -> 0
+        [head, ..tail] -> match List.drop(tail, width)
+            rest -> 1 + countChunks(List.drop(rest, count), width, count)
+
+verify countChunks
+    countChunks([1, 2, 3], 0, 0) => 3
+    countChunks([1, 2, 3, 4], 1, 1) => 2
+
+verify countChunks law nonnegative
+    given values: List<Int> = [[], [1, 2, 3]]
+    given width: Int = [-1, 0, 1]
+    given count: Int = [-1, 0, 1]
+    because reason(values, width, count)
+    using []
+    countChunks(values, width, count) >= 0 holds
+
+verify countChunks law rejectsLostRecursivePremises
+    given values: List<Int> = [[], [1]]
+    given width: Int = [0]
+    given count: Int = [0]
+    given limit: Int = [1]
+    when limit >= 0
+    because limit >= 0
+    because boundedReason(values, width, count, limit)
+    using []
+    countChunks(values, width, count) <= limit holds
+
+fn reason(values: List<Int>, width: Int, count: Int) -> Bool
+    continuation = match values
+        [] -> true
+        [head, ..tail] -> match List.drop(tail, width)
+            rest -> reason(List.drop(rest, count), width, count)
+    Bool.and(continuation, countChunks(values, width, count) >= 0)
+
+fn inlineSlices(values: List<Int>, count: Int) -> Int
+    match values
+        [] -> 0
+        [head, ..tail] -> 1 + inlineSlices(List.drop(List.take(tail, count), count), count)
+
+verify inlineSlices
+    inlineSlices([1, 2, 3], 2) => 1
+    inlineSlices([1], -1) => 1
+
+fn bindingAlias(values: List<Int>, count: Int) -> Int
+    source = List.drop(values, count)
+    alias = source
+    match alias
+        [] -> 0
+        [head, ..tail] -> 1 + bindingAlias(List.take(tail, count), count)
+
+verify bindingAlias
+    bindingAlias([1, 2, 3], 0) => 1
+    bindingAlias([1, 2, 3], 1) => 1
+
+fn mutualStart(values: List<Int>, count: Int) -> Int
+    source = List.take(values, count)
+    match source
+        [] -> 0
+        [head, ..tail] -> 1 + mutualNext(tail, count)
+
+verify mutualStart
+    mutualStart([1, 2, 3], 1) => 1
+    mutualStart([1, 2, 3], -1) => 0
+
+fn mutualNext(values: List<Int>, count: Int) -> Int
+    rest = List.drop(values, count)
+    mutualStart(List.take(rest, count), count)
+
+fn unchanged(values: List<Int>) -> Int
+    alias = List.drop(values, 0)
+    match alias
+        [] -> 0
+        [head, ..tail] -> unchanged(List.take(alias, List.len(alias)))
+
+verify unchanged
+    unchanged([]) => 0
+
+fn shadowed(values: List<Int>) -> Int
+    alias = List.concat(values, values)
+    match alias
+        [] -> 0
+        [head, ..tail] -> shadowed(tail)
+
+verify shadowed
+    shadowed([]) => 0
+
+fn shadowedMatch(values: List<Int>) -> Int
+    match values
+        [] -> 0
+        [head, ..tail] -> match List.concat(values, values)
+            grown -> shadowedMatch(grown)
+
+verify shadowedMatch
+    shadowedMatch([]) => 0
+
+fn boundedReason(values: List<Int>, width: Int, count: Int, limit: Int) -> Bool
+    continuation = match values
+        [] -> true
+        [head, ..tail] -> match List.drop(tail, width)
+            rest -> boundedReason(List.drop(rest, count), width, count, limit - 1)
+    Bool.and(continuation, countChunks(values, width, count) <= limit)

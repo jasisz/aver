@@ -261,8 +261,13 @@ fn call_sites<'a>(
         match stmt {
             Stmt::Binding(name, _, expr) => {
                 walk(expr, &scope, names, heads_are_parts, &mut out);
-                // A `let` of the same name shadows the part from here on.
+                // Resolve before replacing the name: an alias can retain its
+                // origin, while an unknown or growing value must erase it.
+                let origin = expression_origin(expr, &scope);
                 scope.tracked.remove(name);
+                if let Some(origin) = origin {
+                    scope.tracked.insert(name.clone(), origin);
+                }
             }
             Stmt::Expr(expr) => walk(expr, &scope, names, heads_are_parts, &mut out),
         }
@@ -300,8 +305,7 @@ fn walk<'a>(
         }
         Expr::Match { subject, arms } => {
             walk(subject, scope, names, heads_are_parts, out);
-            let subject_origin =
-                local_name_of(subject).and_then(|id| scope.tracked.get(id).cloned());
+            let subject_origin = expression_origin(subject, scope);
             for MatchArm { pattern, body, .. } in arms {
                 let scoped = arm_scope(
                     scope,
@@ -385,58 +389,33 @@ fn arm_scope(
     scoped
 }
 
+/// A bound on an expression's size, preserving the source path through
+/// aliases and non-growing operations. A slice may equal its source, so
+/// it adds no strict step and remains overlapping with other slices of it.
+/// Pattern descent (with list heads excluded for length) supplies strictness.
+fn expression_origin(expr: &Spanned<Expr>, scope: &Scope) -> Option<Origin> {
+    if let Some(name) = local_name_of(expr) {
+        return scope.tracked.get(name).cloned();
+    }
+    if let Expr::FnCall(callee, args) = &expr.node {
+        let source = match (expr_to_dotted_name(callee).as_deref(), args.as_slice()) {
+            (Some("List.drop" | "List.take"), [source, _]) => source,
+            // Maps are list-backed in the proof model; entries preserves size.
+            (Some("Map.entries"), [source]) => source,
+            _ => return None,
+        };
+        return expression_origin(source, scope);
+    }
+    None
+}
+
 /// Classify one argument against the caller's parameters in `scope`.
 fn relation(arg: &Spanned<Expr>, caller: &FnDef, scope: &Scope) -> Relation {
-    if let Some(name) = local_name_of(arg) {
-        return match scope.tracked.get(name) {
-            Some(origin) => Relation::Part {
-                param: origin.param,
-                path: origin.path.clone(),
-            },
-            None => Relation::Unknown,
+    if let Some(origin) = expression_origin(arg, scope) {
+        return Relation::Part {
+            param: origin.param,
+            path: origin.path,
         };
-    }
-    // `List.drop(s, n)` and `List.take(s, n)` never grow `s`. When `s` is
-    // the caller's measured list or a cons-tail tracked from it, classify the
-    // result by its source's path. The slice can equal that source (`drop 0`
-    // or a sufficiently large `take`), but a source that is already a cons-tail
-    // remains strictly smaller than the original list. A slice of the whole
-    // parameter keeps the empty path and still needs a decreasing cycle rank.
-    if let Expr::FnCall(callee, args) = &arg.node
-        && args.len() == 2
-        && matches!(
-            expr_to_dotted_name(callee).as_deref(),
-            Some("List.drop" | "List.take")
-        )
-        && let Some(source) = local_name_of(&args[0])
-        && let Some(origin) = scope.tracked.get(source)
-    {
-        let is_list_param_or_tail =
-            caller
-                .params
-                .get(origin.param)
-                .is_some_and(|(param_name, type_name)| {
-                    let is_list = type_name == "List" || type_name.starts_with("List<");
-                    let is_tail = crate::codegen::recursion::detect::collect_list_tail_binders(
-                        caller, param_name,
-                    )
-                    .contains(source);
-                    is_list && (origin.path.is_empty() || is_tail)
-                });
-        if is_list_param_or_tail {
-            return Relation::Part {
-                param: origin.param,
-                path: origin.path.clone(),
-            };
-        }
-    }
-    // `Map.entries(m)` lowers to `m` itself in the proof model (the map is
-    // list-backed), so it carries exactly the size of its argument.
-    if let Expr::FnCall(callee, args) = &arg.node
-        && args.len() == 1
-        && expr_to_dotted_name(callee).as_deref() == Some("Map.entries")
-    {
-        return relation(&args[0], caller, scope);
     }
     // `n - k` on an `Int` parameter the guards in force bound below by one.
     for (index, (name, type_name)) in caller.params.iter().enumerate() {
@@ -737,3 +716,6 @@ pub(crate) fn describe(expr: &Spanned<Expr>) -> String {
         _ => "an expression".to_string(),
     }
 }
+
+#[cfg(test)]
+mod tests;

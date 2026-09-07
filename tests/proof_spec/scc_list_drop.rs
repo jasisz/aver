@@ -38,8 +38,7 @@ fn proof_export_scc_list_drop_and_take_are_native_mutual_groups() {
         );
     }
     assert!(
-        lean.contains("simp only [List.length_drop]; omega")
-            && lean.contains("simp only [List.length_take]; omega"),
+        lean.contains("List.length_drop") && lean.contains("List.length_take"),
         "computed list edges must cite their core non-growing length theorems:\n{lean}"
     );
 

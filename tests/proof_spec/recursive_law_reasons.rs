@@ -1,6 +1,54 @@
 use super::*;
 
 #[test]
+fn slice_aliases_share_descent_and_induction_on_the_remaining_input() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        return;
+    }
+    let file = "tests/fixtures/law_reason_slice_aliases.av";
+    let samples = Command::new(env!("CARGO_BIN_EXE_aver"))
+        .args(["verify", file])
+        .output()
+        .unwrap();
+    assert!(samples.status.success(), "{}", format_output(&samples));
+    let dir = temp_output_dir("aver-slice-alias-reasons");
+    let (summary, run) = run_lean_check_json(file, &dir, 0, &[]);
+    assert!(
+        !run.status.success(),
+        "the false guarded explanation must fail"
+    );
+    assert_eq!(summary["build_errors"], 0, "{summary}");
+    assert_eq!(summary["universal_laws"], 1, "{summary}");
+    for step in ["because1", "implication"] {
+        assert_eq!(
+            summary["obligations"][format!("countChunks.nonnegative.{step}")],
+            "universal",
+            "{summary}"
+        );
+    }
+    assert_eq!(
+        summary["obligations"]["countChunks.rejectsLostRecursivePremises.because2"], "failed",
+        "{summary}"
+    );
+    let lean = std::fs::read_to_string(dir.join("SliceAliasReason.lean")).unwrap();
+    for name in [
+        "countChunks",
+        "reason",
+        "inlineSlices",
+        "bindingAlias",
+        "mutualStart",
+        "mutualNext",
+    ] {
+        assert!(!lean.contains(&format!("partial def {name}")), "{lean}");
+        assert!(!lean.contains(&format!("{name}__fuel")), "{lean}");
+    }
+    for name in ["unchanged", "shadowed", "shadowedMatch"] {
+        assert!(lean.contains(&format!("partial def {name}")), "{lean}");
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn sampled_slice_guards_keep_checked_element_types() {
     if Command::new("lake").arg("--version").output().is_err() {
         return;
@@ -52,6 +100,16 @@ fn selected(acc: List<Int>, values: List<Int>, count: Int) -> List<Int>
     match values
         [] -> List.reverse(acc)
         [head, ..tail] -> selected(List.prepend(head, acc), List.take(tail, count), count - 1)
+fn selectedAliases(acc: List<Int>, values: List<Int>, count: Int) -> List<Int>
+    source = List.drop(values, count)
+    alias = source
+    match alias
+        [] -> List.reverse(acc)
+        [head, ..tail] -> selectedAliases(List.prepend(head, acc), List.take(tail, count), count - 1)
+verify selectedAliases law emptyInput
+    given acc: List<Int> = [[], [1, 2]]
+    given count: Int = [-1, 0, 3]
+    selectedAliases(acc, [], count) => List.reverse(acc)
 verify selected law emptyInput
     given acc: List<Int> = [[], [1, 2]]
     given count: Int = [-1, 0, 3]

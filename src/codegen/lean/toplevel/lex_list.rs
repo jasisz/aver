@@ -7,6 +7,10 @@ use super::render::{emit_doc_comment, emit_fn_params, ret_type_or_unit};
 use crate::ast::*;
 use crate::codegen::CodegenContext;
 
+/// Kernel-check a selected list-length measure after exposing local aliases.
+/// Shared by singleton definitions and the core mutual-list route.
+pub(super) const CHECKED_LIST_DECREASE: &str = "all_goals (simp_wf <;> (try dsimp +zetaDelta only at *) <;> grind [List.length_drop, List.length_take, List.length_cons])";
+
 // ---------------------------------------------------------------------------
 // Termination-as-a-law: length-monotonicity WF for computed-arg mutual SCCs.
 //
@@ -359,8 +363,8 @@ fn find_user_fn_by_name<'a>(ctx: &'a CodegenContext, name: &str) -> Option<&'a F
 /// Recognise the core-builtin non-growing shape with the shared cycle
 /// measure. Unlike the older helper-filter path, this accepts multiple List
 /// parameters and lets the call graph discard an accumulator that grows.
-/// It is gated on an actual `List.drop`/`List.take` edge so existing
-/// structural and user-filter SCCs retain their byte-identical plans.
+/// This route handles groups using core slices. User-defined filters still
+/// need the separate helper-lemma synthesis below.
 fn recognize_core_list_builtin_wf_scc<'a>(
     fns: &'a [&'a FnDef],
     ctx: &CodegenContext,
@@ -368,52 +372,28 @@ fn recognize_core_list_builtin_wf_scc<'a>(
     if fns.len() < 2 || fns.iter().any(|fd| !is_pure_fn(fd)) {
         return None;
     }
+    // Origin propagation and strict/ranked edges have already been checked
+    // by the shared analysis. Do not reclassify their syntax here: aliases
+    // and nested slices carry the same measure as an inline slice.
     let selected = cycle_selected_list_measure_params(fns, ctx)?;
-    let names: HashSet<String> = fns.iter().map(|fd| fd.name.clone()).collect();
-    let mut saw_builtin = false;
-    let mut plans = Vec::new();
-
-    for (member, fd) in fns.iter().enumerate() {
-        let (_, list_param, rank) = &selected[member];
-        let tail_binders =
-            crate::codegen::recursion::detect::collect_list_tail_binders(fd, list_param);
-        let mut edges = Vec::new();
-        for (callee_raw, args) in
-            crate::codegen::recursion::detect::collect_calls_from_body(fd.body.as_ref())
-        {
-            let Some(callee) =
-                crate::codegen::recursion::detect::canonical_callee_name(&callee_raw, &names)
-            else {
-                continue;
-            };
-            let callee_member = fns.iter().position(|peer| peer.name == callee)?;
-            let callee_list_idx = selected[callee_member].0;
-            let arg = args.get(callee_list_idx)?;
-            let classified = classify_lex_list_arg(arg, list_param, &tail_binders, ctx)?;
-            match &classified {
-                LexListArg::ListBuiltin { .. } => saw_builtin = true,
-                LexListArg::Subterm { .. } => {}
-                LexListArg::Filtered { .. } => return None,
-            }
-            edges.push(LexListEdge {
-                callee,
-                arg: classified,
-            });
-        }
-        if edges.is_empty() {
-            return None;
-        }
-        plans.push(LexListMemberPlan {
-            fd,
-            list_param_lean: list_param.clone(),
-            offset: 0,
-            rank: *rank,
-            direct_length_decrease: true,
-            edges,
-        });
-    }
-
-    saw_builtin.then_some(plans)
+    let saw_builtin = fns.iter().any(|fd| {
+        crate::codegen::recursion::detect::collect_calls_from_body(fd.body.as_ref())
+            .iter()
+            .any(|(name, _)| matches!(name.as_str(), "List.drop" | "List.take"))
+    });
+    saw_builtin.then(|| {
+        fns.iter()
+            .zip(selected)
+            .map(|(fd, (_, list_param, rank))| LexListMemberPlan {
+                fd,
+                list_param_lean: list_param,
+                offset: 0,
+                rank,
+                direct_length_decrease: true,
+                edges: Vec::new(),
+            })
+            .collect()
+    })
 }
 
 /// Recognise a mutual SCC whose every recursive call decreases either by a
@@ -699,14 +679,11 @@ pub(super) fn emit_native_mutual_lex_list_wf_group(
         ));
         // One `decreasing_by` goal per recursive call, in body source order.
         lines.push("  decreasing_by".to_string());
+        if plan.direct_length_decrease {
+            lines.push(format!("    {CHECKED_LIST_DECREASE}"));
+        }
         for edge in &plan.edges {
             match &edge.arg {
-                LexListArg::Subterm { strict } if plan.direct_length_decrease && *strict => {
-                    // The zero-offset core-builtin plan keeps a cons-tail
-                    // strict in the first component; `simp_wf` exposes the
-                    // length arithmetic for omega.
-                    lines.push("    · simp_wf; omega".to_string());
-                }
                 LexListArg::Subterm { .. } => {
                     // Equal first component, decrease lives in the rank — a
                     // `Prod.Lex` goal omega can't discharge directly.
