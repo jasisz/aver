@@ -36,8 +36,8 @@ module Kernel
         "sticky-plus, 7.3.1 final-round-commutes, and the Section 9 exponent/precision"
         "bounds for Theorem 2; plus the remaining bridge from model rounding to the"
         "Fraction operations, using fpValueGeneral for negative exponents."
-    depends [Domain.Rational, Domain.Fprep, Domain.Round, Domain.Binade]
-    exposes [RoundingMode, fracSign, halve, expoAtLeastOne, twoPow, binadeSig, binadeWindow, fracExpo, fracExpoWindow, truncFrac, awayFrac, stickyFrac, nearestFrac, posinfFrac, neginfFrac, round, compFrac, reciprocalEstimate, lookup, quotient, divideBang, inField, divide, divideBangCorrect, divideMatchesBang, divideCorrect, finalRoundCommutes_7_3_1, stickyPlus_7_3_2, stickyPerturbStable_7_3_3, truncSticky_rtl, stickySticky_rtl, stickyPlusExact_rtl]
+    depends [Domain.ModelScale, Domain.BinadeOrder, Domain.Rational, Domain.Fprep, Domain.Round, Domain.Binade]
+    exposes [RoundingMode, fracSign, halve, expoAtLeastOne, twoPow, binadeSig, binadeWindow, fracExpo, fracExpoWindow, normalizedValueExponent, truncFrac, awayFrac, stickyFrac, nearestFrac, posinfFrac, neginfFrac, round, compFrac, reciprocalEstimate, lookup, quotient, divideBang, inField, divide, divideBangCorrect, divideMatchesBang, divideCorrect, finalRoundCommutes_7_3_1, stickyPlus_7_3_2, stickyPerturbStable_7_3_3, truncSticky_rtl, stickySticky_rtl, stickyPlusExact_rtl]
     effects []
 
 // ---------------------------------------------------------------------------
@@ -110,6 +110,20 @@ verify fracExpo law executableMagnitude
     because twoPow(0 - fracExpo(x) - 1) == Domain.Fprep.pow2(0 - fracExpo(x) - 1)
     using [Domain.Binade.magnitudeWindow.executableMagnitude, twoPow.roundingScale]
     fracExpoWindow(x) holds
+
+verify fracExpo law rationalMagnitude
+    given x: Fraction = [Domain.Rational.Fraction(top = 1, bottom = 3), Domain.Rational.Fraction(top = -13, bottom = 8), Domain.Rational.Fraction(top = 8, bottom = -1)]
+    when x.top != 0
+    when x.bottom != 0
+    because fracExpoWindow(x)
+    because twoPow(fracExpo(x)) == Domain.Fprep.pow2(fracExpo(x))
+    because twoPow(fracExpo(x) + 1) == Domain.Fprep.pow2(fracExpo(x) + 1)
+    because twoPow(0 - fracExpo(x)) == Domain.Fprep.pow2(0 - fracExpo(x))
+    because twoPow(0 - fracExpo(x) - 1) == Domain.Fprep.pow2(0 - fracExpo(x) - 1)
+    because Domain.BinadeOrder.integerWindow(Domain.Rational.absInt(x.top), Domain.Rational.absInt(x.bottom), fracExpo(x))
+    because Domain.BinadeOrder.fractionWindow(Domain.Rational.absInt(x.top), Domain.Rational.absInt(x.bottom), fracExpo(x))
+    using [fracExpo.executableMagnitude, twoPow.roundingScale, Domain.BinadeOrder.fractionWindow.integerMagnitude]
+    Domain.ModelScale.magnitudeWindow(x, fracExpo(x)) holds
 
 fn twoPow(n: Int) -> Int
     ? "The integer power-of-two scale used by the executable binary-exponent proofs; clamps to 1 below zero."
@@ -581,3 +595,18 @@ fn stickyPlusExact_rtl(x: Fraction, y: Fraction, k: Int) -> Bool
 verify stickyPlusExact_rtl
     stickyPlusExact_rtl(Domain.Rational.Fraction(top = 6, bottom = 4), Domain.Rational.Fraction(top = 1, bottom = 8), 4) => true
     stickyPlusExact_rtl(Domain.Rational.Fraction(top = 7, bottom = 4), Domain.Rational.Fraction(top = 1, bottom = 16), 3) => true
+
+fn normalizedValueExponent(f: Fp) -> Bool
+    ? "The executable Fraction exponent recovers the exponent of every normalized model value, including negative exponents."
+    fracExpo(Domain.Fprep.fpValueGeneral(f)) == f.exp
+
+verify normalizedValueExponent law executableExponent
+    given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 9, exp = -3, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 7, exp = 5, width = 3)]
+    when Domain.Fprep.isFp(f)
+    when f.width >= 1
+    because Domain.ModelScale.nonzeroValue(f)
+    because Domain.ModelScale.magnitudeWindow(Domain.Fprep.fpValueGeneral(f), fracExpo(Domain.Fprep.fpValueGeneral(f)))
+    because Domain.ModelScale.modelWindow(f)
+    because Domain.ModelScale.uniqueWindow(Domain.Fprep.fpValueGeneral(f), fracExpo(Domain.Fprep.fpValueGeneral(f)), f.exp)
+    using [Domain.ModelScale.nonzeroValue.normalizedValue, fracExpo.rationalMagnitude, Domain.ModelScale.modelWindow.normalizedMagnitude, Domain.ModelScale.uniqueWindow.uniqueExponent]
+    normalizedValueExponent(f) holds

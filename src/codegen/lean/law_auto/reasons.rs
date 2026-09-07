@@ -78,7 +78,7 @@ fn case_call(expr: &crate::ast::Spanned<Expr>, ctx: &CodegenContext) -> Option<S
     };
     let name = crate::checker::expr_to_str(callee);
     let scope = ctx.active_module_scope();
-    let function = ctx.fn_def_by_name(&name, scope.as_deref())?;
+    let function = induction::callee(expr, ctx, scope.as_deref())?;
     let id = ctx.symbol_table.resolve_fn_id_in(&name, scope.as_deref())?;
     if !function.effects.is_empty() || ctx.recursive_fns.contains(&id) {
         return None;
@@ -239,6 +239,7 @@ pub(in crate::codegen::lean) fn emit_reason_law(
             }
             continue;
         }
+        let strategy_start = lines.len();
         if final_step {
             for reason in &law.because {
                 if let Some(call) = case_call(reason, ctx) {
@@ -268,6 +269,44 @@ pub(in crate::codegen::lean) fn emit_reason_law(
             lines.push("  all_goals".to_string());
             lines.extend(solver(&definitions, &label, "    ", fact_count));
             previous.push(format!("h_reason{index}"));
+        }
+        // First use the named facts without expanding their dependency cones.
+        // A direct citation must also precede case analysis, which can erase
+        // constant arguments needed to match the cited conclusion. Restricted
+        // transparency prevents unrelated conclusions from unfolding recursion.
+        let direct_facts = if !final_step && matches!(law.because[index].node, Expr::FnCall(..)) {
+            fact_count
+        } else {
+            0
+        };
+        if !definitions.heads.is_empty() || direct_facts > 0 {
+            let structured = lines.split_off(strategy_start);
+            let excluded = (0..fact_count)
+                .map(|i| format!("-_fact{i}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let shallow = format!(
+                "simp only [Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq, {}] at *; simp_all only [and_self, and_true, true_and, {excluded}] <;> omega",
+                definitions.heads
+            );
+            let premise_simp = [
+                "Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq",
+                definitions.simp.as_str(),
+                excluded.as_str(),
+            ]
+            .into_iter()
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join(", ");
+            lines.push("  first".to_string());
+            if !definitions.heads.is_empty() {
+                lines.push(format!("  | ({shallow})"));
+            }
+            for i in 0..direct_facts {
+                lines.push(format!("  | (simp only [Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq] at *; with_reducible apply _fact{i} <;> (first | assumption | omega | ({shallow}) | (simp_all only [{premise_simp}]; grind)))"));
+            }
+            lines.push("  |".to_string());
+            lines.extend(structured.into_iter().map(|line| format!("  {line}")));
         }
     }
     lines.push(format!(

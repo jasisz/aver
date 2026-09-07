@@ -1,0 +1,41 @@
+module ConstantCitation
+    intent = "Cite an order law before simplification erases its zero argument."
+    effects []
+
+fn orderedProducts(a: Int, b: Int, factor: Int) -> Bool
+    a * factor <= b * factor
+
+verify orderedProducts law monotone
+    given a: Int = [-2, 0, 1]
+    given b: Int = [-1, 0, 3]
+    given factor: Int = [0, 1, 4]
+    when a <= b
+    when factor >= 0
+    because orderReason(a, b, factor)
+    using []
+    orderedProducts(a, b, factor) holds
+
+fn orderReason(a: Int, b: Int, factor: Int) -> Bool
+    match factor <= 0
+        true -> orderedProducts(a, b, factor)
+        false -> Bool.and(orderReason(a, b, factor - 1), orderedProducts(a, b, factor))
+
+fn product(a: Int, b: Int) -> Int
+    a * b
+
+verify product law nonnegative
+    given a: Int = [0, 1, 3]
+    given b: Int = [0, 2, 4]
+    when a >= 0
+    when b >= 0
+    because orderedProducts(0, a, b)
+    using [orderedProducts.monotone]
+    product(a, b) >= 0 holds
+
+verify product law missingFactorGuard
+    given a: Int = [0, 1, 3]
+    given b: Int = [-1, 0, 4]
+    when a >= 0
+    because orderedProducts(0, a, b)
+    using [orderedProducts.monotone]
+    product(a, b) => product(a, b)

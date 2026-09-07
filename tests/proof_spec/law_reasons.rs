@@ -436,3 +436,120 @@ verify copy law copied
     assert_eq!(summary["build_errors"], 0);
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn constant_citations_preserve_arguments_and_require_every_premise() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        return;
+    }
+    let dir = temp_output_dir("aver-law-constant-citation");
+    let (summary, run) = run_lean_check_json_with_args(
+        "tests/fixtures/law_reason_constant_citation.av",
+        &dir,
+        0,
+        &[],
+        &[],
+    );
+    assert!(!run.status.success(), "the missing guard must fail");
+    assert_eq!(summary["build_errors"], 0, "{}", format_output(&run));
+    assert_eq!(summary["universal_laws"], 2, "{summary}");
+    assert_eq!(summary["bounded_laws"], 0, "{summary}");
+    for step in ["because1", "implication"] {
+        assert_eq!(
+            summary["obligations"][format!("product.nonnegative.{step}")],
+            "universal",
+            "{summary}"
+        );
+    }
+    assert_eq!(
+        summary["obligations"]["product.missingFactorGuard.because1"], "failed",
+        "{summary}"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn explain_reports_source_requirements_without_changing_proof_credit() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        return;
+    }
+    let dir = temp_output_dir("aver-source-explain-citation");
+    let fixture = "tests/fixtures/law_reason_constant_citation.av";
+    let (plain, _) = run_lean_check_json_with_args(fixture, &dir, 0, &[], &[]);
+    assert!(plain.get("explanations").is_none());
+    let (explained, run) = run_lean_check_json_with_args(fixture, &dir, 0, &[], &["--explain"]);
+    assert!(!run.status.success());
+    for (key, value) in plain.as_object().unwrap() {
+        assert_eq!(&explained[key], value, "counted field {key} changed");
+    }
+    let reports = explained["explanations"].as_object().unwrap();
+    assert_eq!(reports.len(), 1, "{explained}");
+    let report = &reports["product.missingFactorGuard.because1"];
+    assert_eq!(report["file"], fixture);
+    assert_eq!(report["line"], 39);
+    assert_eq!(report["goal"], "orderedProducts(0, a, b)");
+    assert_eq!(report["assumptions"][0]["expression"], "a >= 0");
+    assert_eq!(report["assumptions"].as_array().unwrap().len(), 1);
+    assert_eq!(report["citations"][0]["status"], "universal");
+    assert_eq!(
+        report["citations"][0]["requires"],
+        serde_json::json!(["0 <= a", "b >= 0"])
+    );
+    assert!(
+        std::fs::read_to_string(dir.join("proof_backend.log"))
+            .unwrap()
+            .contains("AVER_REASON_OPEN:")
+    );
+
+    let run = Command::new(env!("CARGO_BIN_EXE_aver"))
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .args(["proof", fixture, "--check", "--explain", "-o"])
+        .arg(&dir)
+        .output()
+        .unwrap();
+    assert!(!run.status.success());
+    let output = format_output(&run);
+    assert!(
+        output.contains("To prove: orderedProducts(0, a, b)"),
+        "{output}"
+    );
+    assert!(output.contains("requires b >= 0"), "{output}");
+    assert!(output.contains("when a >= 0 [assumed]"), "{output}");
+    for technical in ["AVER_REASON_OPEN:", "⊢", ".lean:", "simp only", "case "] {
+        assert!(
+            !output.contains(technical),
+            "raw backend state leaked: {output}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn explain_locates_private_imported_steps_and_marks_failed_previous_reasons() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        return;
+    }
+    let dir = temp_output_dir("aver-source-explain-private-import");
+    std::fs::create_dir_all(&dir).unwrap();
+    let library = dir.join("lib.av");
+    std::fs::write(&library, "module Lib\n    exposes [identity]\n    intent = \"Private proof diagnostics.\"\n    effects []\nfn identity(x: Int) -> Int\n    x\nfn secret(x: Int) -> Int\n    x\nverify secret law chain\n    given x: Int = [0]\n    because x > 0\n    because x > 1\n    because x > 2\n    using []\n    secret(x) => x\n").unwrap();
+    let entry = dir.join("entry.av");
+    std::fs::write(&entry, "module Entry\n    depends [Lib]\n    intent = \"Import a private proof.\"\n    effects []\nfn copy(x: Int) -> Int\n    Lib.identity(x)\n").unwrap();
+    let (summary, run) = run_lean_check_json_with_args(
+        entry.to_str().unwrap(),
+        &dir.join("lean"),
+        0,
+        &[],
+        &["--explain", "--module-root", dir.to_str().unwrap()],
+    );
+    assert!(!run.status.success());
+    assert_eq!(summary["build_errors"], 0, "{}", format_output(&run));
+    let report = &summary["explanations"]["Lib.secret.chain.because2"];
+    assert_eq!(report["file"], library.to_str().unwrap(), "{summary}");
+    assert_eq!(report["line"], 12);
+    assert_eq!(report["goal"], "x > 1");
+    assert_eq!(report["assumptions"].as_array().unwrap().len(), 1);
+    assert_eq!(report["assumptions"][0]["expression"], "x > 0");
+    assert_eq!(report["assumptions"][0]["status"], "failed");
+    let _ = std::fs::remove_dir_all(dir);
+}

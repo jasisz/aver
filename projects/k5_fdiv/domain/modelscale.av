@@ -1,0 +1,140 @@
+module ModelScale
+    intent = "Connect executable Fraction rounding to the normalized floating-point model."
+    depends [Domain.Fprep, Domain.Rational, Domain.IntegerOrder, Domain.FractionOrder]
+    exposes [magnitudeWindow, modelWindow, signedDouble, scaledValue, scaledWindow, absoluteValue, nonzeroValue, uniqueWindow]
+    effects []
+
+fn signedDouble(e: Int) -> Bool
+    ? "The next signed power of two is twice the current one, including the crossing at zero."
+    Domain.Rational.sameValue(Domain.Fprep.pow2Signed(e + 1), Domain.Rational.times(Domain.Rational.Fraction(top = 2, bottom = 1), Domain.Fprep.pow2Signed(e)))
+
+verify signedDouble law successor
+    given e: Int = [-4, -1, 0, 3]
+    because signedDoubleReason(e)
+    using []
+    signedDouble(e) holds
+
+fn signedDoubleReason(e: Int) -> Bool
+    ? "Expose one integer power equation on each side of the reciprocal boundary."
+    match e < -1
+        true -> Bool.and(Domain.Fprep.pow2(0 - e) == 2 * Domain.Fprep.pow2(0 - e - 1), signedDouble(e))
+        false -> match e == -1
+            true -> signedDouble(e)
+            false -> Bool.and(Domain.Fprep.pow2(e + 1) == 2 * Domain.Fprep.pow2(e), signedDouble(e))
+
+verify signedDoubleReason
+    signedDoubleReason(-3) => true
+    signedDoubleReason(-1) => true
+    signedDoubleReason(0) => true
+    signedDoubleReason(4) => true
+
+fn scaledValue(j: Int, q: Int, scale: Fraction) -> Fraction
+    ? "Scale the rational significand j/q by an exact rational power."
+    Domain.Rational.Fraction(top = j * scale.top, bottom = q * scale.bottom)
+
+verify scaledValue
+    scaledValue(13, 8, Domain.Rational.Fraction(top = 1, bottom = 4)) => Domain.Rational.Fraction(top = 13, bottom = 32)
+    scaledValue(9, 8, Domain.Rational.Fraction(top = 4, bottom = 1)) => Domain.Rational.Fraction(top = 36, bottom = 8)
+
+fn scaledWindow(j: Int, q: Int, scale: Fraction, upper: Fraction) -> Bool
+    ? "Scaling a significand in [1,2) places it between scale and twice scale."
+    value = scaledValue(j, q, scale)
+    Bool.and(Domain.FractionOrder.le(scale, value), Domain.FractionOrder.lt(value, upper))
+
+verify scaledWindow law normalizedSignificand
+    given j: Int = [1, 5, 7]
+    given q: Int = [1, 4]
+    given scale: Fraction = [Domain.Rational.Fraction(top = 1, bottom = 8), Domain.Rational.Fraction(top = 4, bottom = 1)]
+    given upper: Fraction = [Domain.Rational.Fraction(top = 1, bottom = 4), Domain.Rational.Fraction(top = 8, bottom = 1)]
+    when q > 0
+    when q <= j
+    when j < 2 * q
+    when scale.top > 0
+    when scale.bottom > 0
+    when upper.bottom > 0
+    when Domain.Rational.sameValue(upper, Domain.Rational.times(Domain.Rational.Fraction(top = 2, bottom = 1), scale))
+    because Domain.IntegerOrder.positiveProduct(q, scale.bottom)
+    because Domain.IntegerOrder.positiveProduct(scale.top, scale.bottom)
+    because Domain.IntegerOrder.positiveProduct(scale.top, upper.bottom)
+    because Domain.IntegerOrder.multiplyLe(q, j, scale.top * scale.bottom)
+    because Domain.IntegerOrder.multiplyLt(j, 2 * q, scale.top * upper.bottom)
+    because Domain.FractionOrder.le(scale, scaledValue(j, q, scale))
+    because Domain.FractionOrder.lt(scaledValue(j, q, scale), upper)
+    using [Domain.IntegerOrder.positiveProduct.positiveFactors, Domain.IntegerOrder.multiplyLe.nonnegativeFactor, Domain.IntegerOrder.multiplyLt.positiveFactor, Domain.FractionOrder.le.fromPositiveCrossProduct, Domain.FractionOrder.lt.fromPositiveCrossProduct]
+    scaledWindow(j, q, scale, upper) holds
+
+fn absoluteValue(f: Fp) -> Bool
+    ? "The normalized model has the unsigned scaled significand as its exact magnitude."
+    Domain.Rational.absFraction(Domain.Fprep.fpValueGeneral(f)) == scaledValue(f.sigBits, Domain.Fprep.pow2(f.width - 1), Domain.Fprep.pow2Signed(f.exp))
+
+verify absoluteValue law normalizedMagnitude
+    given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 9, exp = -3, width = 4)]
+    when Domain.Fprep.isFp(f)
+    because Domain.Fprep.pow2(f.width - 1) >= 1
+    because Domain.Fprep.pow2SignedPositive(f.exp)
+    because Domain.IntegerOrder.positiveProduct(f.sigBits, Domain.Fprep.pow2Signed(f.exp).top)
+    because Domain.IntegerOrder.positiveProduct(Domain.Fprep.pow2(f.width - 1), Domain.Fprep.pow2Signed(f.exp).bottom)
+    because Domain.FractionOrder.signedAbsolute(f.sign, scaledValue(f.sigBits, Domain.Fprep.pow2(f.width - 1), Domain.Fprep.pow2Signed(f.exp)))
+    using [Domain.Fprep.pow2.positive, Domain.Fprep.pow2SignedPositive.positive, Domain.IntegerOrder.positiveProduct.positiveFactors, Domain.FractionOrder.signedAbsolute.nonnegativeMagnitude]
+    absoluteValue(f) holds
+
+fn magnitudeWindow(x: Fraction, e: Int) -> Bool
+    ? "The magnitude lies in the binary interval [2^e, 2^(e+1))."
+    a = Domain.Rational.absFraction(x)
+    Bool.and(Domain.Rational.isNonNeg(Domain.Rational.minus(a, Domain.Fprep.pow2Signed(e))), Domain.Rational.lessThan(a, Domain.Fprep.pow2Signed(e + 1)))
+
+verify magnitudeWindow
+    magnitudeWindow(Domain.Rational.Fraction(top = -1, bottom = 8), -3) => true
+    magnitudeWindow(Domain.Rational.Fraction(top = 1, bottom = -8), -4) => false
+    magnitudeWindow(Domain.Rational.Fraction(top = 7, bottom = 2), 1) => true
+    magnitudeWindow(Domain.Rational.Fraction(top = 8, bottom = 2), 1) => false
+
+fn modelWindow(f: Fp) -> Bool
+    ? "The stored exponent brackets the model value for both signs of the exponent."
+    magnitudeWindow(Domain.Fprep.fpValueGeneral(f), f.exp)
+
+verify modelWindow law normalizedMagnitude
+    given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 9, exp = -3, width = 4)]
+    when Domain.Fprep.isFp(f)
+    when f.width >= 1
+    because Domain.Fprep.pow2(f.width) == 2 * Domain.Fprep.pow2(f.width - 1)
+    because signedDouble(f.exp)
+    because Domain.Fprep.pow2SignedPositive(f.exp)
+    because Domain.Fprep.pow2SignedPositive(f.exp + 1)
+    because Domain.Fprep.pow2(f.width - 1) >= 1
+    because absoluteValue(f)
+    because scaledWindow(f.sigBits, Domain.Fprep.pow2(f.width - 1), Domain.Fprep.pow2Signed(f.exp), Domain.Fprep.pow2Signed(f.exp + 1))
+    using [Domain.Fprep.pow2.homomorphism, signedDouble.successor, Domain.Fprep.pow2SignedPositive.positive, Domain.Fprep.pow2.positive, absoluteValue.normalizedMagnitude, scaledWindow.normalizedSignificand]
+    modelWindow(f) holds
+
+fn nonzeroValue(f: Fp) -> Bool
+    ? "A normalized model denotes a fraction with nonzero numerator and denominator."
+    value = Domain.Fprep.fpValueGeneral(f)
+    Bool.and(value.top != 0, value.bottom != 0)
+
+verify nonzeroValue law normalizedValue
+    given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 9, exp = -3, width = 4)]
+    when Domain.Fprep.isFp(f)
+    because Domain.Fprep.pow2(f.width - 1) >= 1
+    because Domain.Fprep.pow2SignedPositive(f.exp)
+    because Domain.IntegerOrder.positiveProduct(f.sigBits, Domain.Fprep.pow2Signed(f.exp).top)
+    because Domain.IntegerOrder.positiveProduct(Domain.Fprep.pow2(f.width - 1), Domain.Fprep.pow2Signed(f.exp).bottom)
+    using [Domain.Fprep.pow2.positive, Domain.Fprep.pow2SignedPositive.positive, Domain.IntegerOrder.positiveProduct.positiveFactors]
+    nonzeroValue(f) holds
+
+fn uniqueWindow(x: Fraction, e: Int, m: Int) -> Bool
+    ? "Two binary magnitude intervals containing the same nonzero fraction have the same exponent."
+    e == m
+
+verify uniqueWindow law uniqueExponent
+    given x: Fraction = [Domain.Rational.Fraction(top = 1, bottom = 8), Domain.Rational.Fraction(top = -13, bottom = 8), Domain.Rational.Fraction(top = 8, bottom = -1)]
+    given e: Int = [-3, 0, 3]
+    given m: Int = [-3, 0, 3]
+    when x.bottom != 0
+    when magnitudeWindow(x, e)
+    when magnitudeWindow(x, m)
+    because Domain.Rational.absInt(x.bottom) > 0
+    because Domain.Fprep.fracExpoFromMagnitude(Domain.Rational.absFraction(x), e, m + 1)
+    because Domain.Fprep.fracExpoFromMagnitude(Domain.Rational.absFraction(x), m, e + 1)
+    using [Domain.Fprep.fracExpoFromMagnitude.fundamentalExponent]
+    uniqueWindow(x, e, m) holds

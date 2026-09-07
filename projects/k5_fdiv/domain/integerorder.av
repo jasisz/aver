@@ -1,0 +1,69 @@
+module IntegerOrder
+    intent = "Explain how integer multiplication transports inequalities."
+    exposes [multiplyLe, multiplyLt, nonnegativeProduct, positiveProduct]
+    effects []
+
+fn multiplyLe(a: Int, b: Int, c: Int) -> Bool
+    ? "Multiplication preserves a weak inequality when the common factor is nonnegative."
+    a * c <= b * c
+
+verify multiplyLe law nonnegativeFactor
+    given a: Int = [-3, 0, 2]
+    given b: Int = [-2, 0, 5]
+    given c: Int = [0, 1, 4]
+    when a <= b
+    when c >= 0
+    because multiplyLeReason(a, b, c)
+    using []
+    multiplyLe(a, b, c) holds
+
+fn multiplyLeReason(a: Int, b: Int, c: Int) -> Bool
+    ? "Descend through the nonnegative factor; each step adds the original inequality."
+    match c <= 0
+        true -> multiplyLe(a, b, c)
+        false -> Bool.and(multiplyLeReason(a, b, c - 1), multiplyLe(a, b, c))
+
+verify multiplyLeReason
+    multiplyLeReason(-2, 3, 0) => true
+    multiplyLeReason(-2, 3, 4) => true
+    multiplyLeReason(3, 2, 4) => false
+
+fn multiplyLt(a: Int, b: Int, c: Int) -> Bool
+    ? "A positive common factor preserves a strict integer inequality."
+    a * c < b * c
+
+verify multiplyLt law positiveFactor
+    given a: Int = [-3, 0, 2]
+    given b: Int = [-2, 1, 5]
+    given c: Int = [1, 2, 4]
+    when a < b
+    when c > 0
+    because multiplyLe(a, b - 1, c)
+    using [multiplyLe.nonnegativeFactor]
+    multiplyLt(a, b, c) holds
+
+fn nonnegativeProduct(a: Int, b: Int) -> Bool
+    ? "The product of two nonnegative integers is nonnegative."
+    a * b >= 0
+
+verify nonnegativeProduct law nonnegativeFactors
+    given a: Int = [0, 1, 3]
+    given b: Int = [0, 2, 5]
+    when a >= 0
+    when b >= 0
+    because multiplyLe(0, a, b)
+    using [multiplyLe.nonnegativeFactor]
+    nonnegativeProduct(a, b) holds
+
+fn positiveProduct(a: Int, b: Int) -> Bool
+    ? "The product of two positive integers is positive."
+    a * b > 0
+
+verify positiveProduct law positiveFactors
+    given a: Int = [1, 2, 3]
+    given b: Int = [1, 2, 5]
+    when a > 0
+    when b > 0
+    because multiplyLt(0, a, b)
+    using [multiplyLt.positiveFactor]
+    positiveProduct(a, b) holds
