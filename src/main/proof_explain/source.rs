@@ -13,6 +13,8 @@ pub(super) struct Law {
     pub line: usize,
     pub function: String,
     pub body: VerifyLaw,
+    pub untranslate: aver::codegen::lean::untranslate::UntranslateCtx,
+    pub emitted_module: String,
 }
 
 #[derive(Default)]
@@ -42,6 +44,15 @@ impl Catalog {
                 catalog.add(block, Some(&module.prefix), &file);
             }
         }
+        for law in catalog.laws.values_mut() {
+            law.emitted_module =
+                aver::codegen::lean::citation_probe::module_name(ctx, law.scope.as_deref());
+            law.untranslate = aver::codegen::lean::untranslate::context_for_law(
+                ctx,
+                law.scope.as_deref(),
+                &law.body,
+            );
+        }
         catalog
     }
 
@@ -65,6 +76,8 @@ impl Catalog {
                 line: block.line,
                 function: qualify(scope, &block.fn_name),
                 body: *body.clone(),
+                untranslate: Default::default(),
+                emitted_module: scope.unwrap_or_default().to_string(),
             },
         );
     }
@@ -98,24 +111,7 @@ fn qualify(scope: Option<&str>, name: &str) -> String {
 }
 
 pub(super) fn expression(expr: &Spanned<Expr>) -> String {
-    let mut out = String::new();
-    // This printer preserves precedence, string escaping, and match scopes.
-    if aver::ast::unparse::write_expr_public(&mut out, expr, 0).is_ok() {
-        let out = out.trim();
-        // The unparser fully parenthesizes binary expressions. The outermost
-        // pair is redundant when an expression is displayed on its own.
-        if matches!(expr.node, Expr::BinOp(..)) {
-            out.strip_prefix('(')
-                .and_then(|s| s.strip_suffix(')'))
-                .unwrap_or(out)
-                .to_string()
-        } else {
-            out.to_string()
-        }
-    } else {
-        // An unavailable source form is explicit, never a guessed Lean translation.
-        "<source expression unavailable>".to_string()
-    }
+    super::display::expression(expr)
 }
 
 pub(super) fn assertion(law: &VerifyLaw) -> String {

@@ -367,23 +367,45 @@ tests/fixtures/law_reason_constant_citation.av:39 — product.missingFactorGuard
   To prove: orderedProducts(0, a, b)
   For any a: Int, b: Int
   when a >= 0 [assumed]
-  using orderedProducts.monotone [universal; arguments substituted]
+  using orderedProducts.monotone [universal; source arguments substituted]
     provides orderedProducts(0, a, b) holds
     requires 0 <= a
     requires b >= 0
+  Citation check (isolated): orderedProducts.monotone — direct application succeeded
+    [closed in probe] 0 <= a
+    [open in probe] 0 <= b
 ```
 
 Here the available assumption does not establish `b >= 0`. The requirements
 list describes the cited law; it is not a solver claim that every listed
 condition is missing, or that the checker applied that citation. Unambiguous
 direct call patterns are substituted; other forms retain schematic parameters.
-Automatic law selection is identified as automatic rather than guessed from
-the source. Previous `because` steps carry their audited status: `failed` and
+After a successful counted build, supported direct applications also run in an
+isolated diagnostic copy. This reports the cited law actually tried and the
+premises closed or left open by that application. The actual normalized premise
+may differ in spelling from the source requirement (`0 <= b` versus `b >= 0`
+above). Automatic citations are reported from these observed attempts too.
+Other proof strategies and final implications may have source context only;
+an unsuccessful application does not show that the law is inapplicable.
+
+Every available citation and earlier proof step retains its audited status.
+A probe using a failed, bounded, or unchecked fact is explicitly conditional;
+each closed premise also audits its actual proof's transitive axioms, including
+any additional global lemmas visible in the diagnostic import. Missing audits
+or axioms outside the counted checker's whitelist keep the closure conditional.
+Even closing all its premises awards no proof credit. Unknown backend forms
+are marked unavailable instead of guessed. Probe details are saved separately
+in `proof_citations.log`; the temporary copy never enters the counted build or
+manifest. Previous `because` steps carry their audited status: `failed` and
 `not_checked` steps must not be treated as proved facts. Later steps are never
 listed as assumptions for an earlier step.
 
 `--check-json --explain` exposes the same report in `explanations`, keyed by
-`fn.law` or `fn.law.becauseN` / `fn.law.implication`. A computation limit is
+`fn.law` or `fn.law.becauseN` / `fn.law.implication`. Observed attempts appear in
+`citation_attempts`, with `phase: "diagnostic_direct_application"`, an `outcome`,
+`premises`, `available_laws`, and `established_dependencies`; closed premises
+include `closure_audited` and `proof_axioms`. These describe the
+isolated attempt, not the counted solver's search history. A computation limit is
 reported as `checker_limit`, separately from an unproved step. These reports
 can retain source context even when a hard checker error prevents the final
 axiom audit. Such an error does not establish that the mathematical statement

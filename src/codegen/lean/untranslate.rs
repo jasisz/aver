@@ -20,6 +20,9 @@
 
 use serde_json::Value;
 
+mod context;
+pub use context::context_for_law;
+
 use crate::ast::{BinOp, Expr, Literal, Spanned, TopLevel, VerifyKind};
 
 /// The Lean 4 meta-tactic emitted into the `--explain` residual probe file. It
@@ -131,6 +134,9 @@ fn sp(e: Expr) -> Spanned<Expr> {
 #[derive(Debug, Clone, Default)]
 pub struct UntranslateCtx {
     pub peano: Option<PeanoCtx>,
+    /// Exact emitted structure owner/name to declared source fields, in order.
+    /// Empty outside a context built from compiler-owned declaration metadata.
+    pub record_fields: std::collections::BTreeMap<String, Vec<String>>,
 }
 
 /// The canonical-Peano ADT (surface type + constructor names) whose Lean-`Nat`
@@ -174,6 +180,7 @@ pub fn peano_ctx_for_law(items: &[TopLevel], fn_name: &str, law_name: &str) -> U
                                 zero_ctor: p.base_ctor.clone(),
                                 succ_ctor: p.succ_ctor.clone(),
                             }),
+                            ..Default::default()
                         };
                     }
                 }
@@ -237,7 +244,7 @@ pub fn untranslate_goal_ctx(
                     "binder `{name}` has a type outside the grammar (cannot name it in Aver)"
                 ))
             })?;
-            givens.push((name.to_string(), tn));
+            givens.push((untranslate_local_name(name)?, tn));
         }
         cur = body;
     }
@@ -248,6 +255,44 @@ pub fn untranslate_goal_ctx(
         givens,
         premises,
         claim: (lhs?, rhs?),
+    })
+}
+
+/// One actual application premise, abstracted only over data variables by the
+/// citation probe. This is display syntax, not a new proof or a source guard.
+#[derive(Debug, Clone)]
+pub struct UntranslatedPremise {
+    pub givens: Vec<(String, String)>,
+    pub expression: Spanned<Expr>,
+}
+
+/// Render a structured citation premise without requiring the final Prop to
+/// be an equality. Higher-order binders and unsupported terms decline honestly.
+pub fn untranslate_premise_json(
+    json: &str,
+    ctx: &UntranslateCtx,
+) -> Result<UntranslatedPremise, EngineGap> {
+    let value: Value = serde_json::from_str(json)
+        .map_err(|e| EngineGap::new(format!("malformed premise JSON: {e}")))?;
+    let mut current = &value;
+    let mut givens = Vec::new();
+    while let Some(binder) = current.get("forall") {
+        let name = binder
+            .get("name")
+            .and_then(Value::as_str)
+            .ok_or_else(|| EngineGap::new("premise binder without a name"))?;
+        let ty = binder
+            .get("ty")
+            .and_then(|ty| aver_type_name(ty, ctx))
+            .ok_or_else(|| EngineGap::new("premise binder is not a supported data type"))?;
+        givens.push((untranslate_local_name(name)?, ty));
+        current = binder
+            .get("body")
+            .ok_or_else(|| EngineGap::new("premise binder without a body"))?;
+    }
+    Ok(UntranslatedPremise {
+        givens,
+        expression: untranslate_bool(current, ctx)?,
     })
 }
 
@@ -305,6 +350,22 @@ fn untranslate_eq(
     ))
 }
 
+/// Undo only the emitter's known keyword guard. Other Lean-local decorations
+/// have no source identifier spelling and must not be presented as Aver.
+fn untranslate_local_name(name: &str) -> Result<String, EngineGap> {
+    let source = super::expr::lean_name_to_aver(name);
+    let mut chars = source.chars();
+    if !chars.next().is_some_and(|c| c.is_alphabetic() || c == '_')
+        || !chars.all(|c| c.is_alphanumeric() || c == '_')
+        || super::expr::aver_name_to_lean(&source) != name
+    {
+        return Err(EngineGap::new(
+            "local variable has no exact source identifier spelling",
+        ));
+    }
+    Ok(source)
+}
+
 /// Recursive descent JSON node → `ast::Expr`, declining on any out-of-grammar
 /// shape.
 fn untranslate_expr(v: &Value, ctx: &UntranslateCtx) -> Result<Spanned<Expr>, EngineGap> {
@@ -318,7 +379,7 @@ fn untranslate_expr(v: &Value, ctx: &UntranslateCtx) -> Result<Spanned<Expr>, En
         return Ok(sp(Expr::Literal(Literal::Str(s.to_string()))));
     }
     if let Some(name) = v.get("var").and_then(Value::as_str) {
-        return Ok(sp(Expr::Ident(name.to_string())));
+        return Ok(sp(Expr::Ident(untranslate_local_name(name)?)));
     }
     if let Some(name) = v.get("const").and_then(Value::as_str) {
         return Ok(sp(const_to_expr(name)));
@@ -332,14 +393,58 @@ fn untranslate_expr(v: &Value, ctx: &UntranslateCtx) -> Result<Spanned<Expr>, En
     if v.get("forall").is_some() {
         return Err(EngineGap::new("nested quantifier in the goal claim"));
     }
-    if v.get("proj").is_some() {
-        return Err(EngineGap::new("field projection outside the grammar"));
+    if let Some(projection) = v.get("proj") {
+        let owner = projection
+            .get("struct")
+            .and_then(Value::as_str)
+            .ok_or_else(|| EngineGap::new("field projection without a structure owner"))?;
+        let index = projection
+            .get("idx")
+            .and_then(Value::as_u64)
+            .and_then(|index| usize::try_from(index).ok())
+            .ok_or_else(|| EngineGap::new("field projection without a valid index"))?;
+        let field = ctx
+            .record_fields
+            .get(owner)
+            .and_then(|fields| fields.get(index))
+            .ok_or_else(|| EngineGap::new("field projection has no exact source record mapping"))?;
+        let receiver = projection
+            .get("e")
+            .ok_or_else(|| EngineGap::new("field projection without a receiver"))?;
+        return Ok(sp(Expr::Attr(
+            Box::new(untranslate_expr(receiver, ctx)?),
+            field.clone(),
+        )));
     }
     Err(EngineGap::new("unrecognised goal node"))
 }
 
 fn untranslate_app(app: &Value, ctx: &UntranslateCtx) -> Result<Spanned<Expr>, EngineGap> {
     let head = head_const(app);
+    // Before reduction Lean represents a record projection as its generated
+    // accessor constant applied to the receiver, rather than Expr.proj. Both
+    // forms need the same exact declaration-backed inverse.
+    if let Some((owner, accessor)) = head.and_then(|name| name.rsplit_once('.'))
+        && let Some(fields) = ctx.record_fields.get(owner)
+        && let Some(field) = fields
+            .iter()
+            .find(|field| super::expr::aver_name_to_lean(field) == accessor)
+    {
+        let args = app
+            .get("args")
+            .and_then(Value::as_array)
+            .filter(|args| args.len() == 1)
+            .ok_or_else(|| EngineGap::new("record accessor has no unique source receiver"))?;
+        return Ok(sp(Expr::Attr(
+            Box::new(untranslate_expr(&args[0], ctx)?),
+            field.clone(),
+        )));
+    }
+    if matches!(head, Some("Subtype.val" | "Subtype.property")) {
+        return Err(EngineGap::new(
+            "refinement projection outside the source record grammar",
+        ));
+    }
     // Numeric literal: `@OfNat.ofNat _ n _` — the middle arg carries the nat.
     if head == Some("OfNat.ofNat") {
         let nat = app
@@ -717,6 +822,66 @@ fn peano_numeral_from_str(p: &PeanoCtx, nat: &str) -> Result<Expr, EngineGap> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn citation_premise_restores_reserved_source_variables_and_rejects_decorations() {
+        let make = |name: &str| {
+            serde_json::json!({"forall": {
+                "name": name, "ty": {"const": "Int"}, "body": {"app": {
+                    "fn": {"const": "LE.le"}, "args": [
+                        {"const": "Int"}, {"const": "Int.instLEInt"},
+                        {"nat": "0"}, {"var": name}
+                    ]
+                }}
+            }})
+        };
+        let actual = super::untranslate_premise_json(
+            &make("by'").to_string(),
+            &super::UntranslateCtx::default(),
+        )
+        .unwrap();
+        assert_eq!(actual.givens, [("by".to_string(), "Int".to_string())]);
+        assert_eq!(crate::checker::expr_to_str(&actual.expression), "0 <= by");
+        for name in ["value'", "value✝", "a.b", "by"] {
+            assert!(
+                super::untranslate_premise_json(
+                    &make(name).to_string(),
+                    &super::UntranslateCtx::default(),
+                )
+                .is_err(),
+                "must decline {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn citation_premise_renders_comparison_and_declines_higher_order_context() {
+        let premise = serde_json::json!({"forall": {
+            "name": "b", "ty": {"const": "Int"}, "body": {"app": {
+                "fn": {"const": "GE.ge"}, "args": [
+                    {"const": "Int"}, {"const": "Int.instLEInt"},
+                    {"var": "b"}, {"nat": "0"}
+                ]
+            }}
+        }});
+        let actual = super::untranslate_premise_json(
+            &premise.to_string(),
+            &super::UntranslateCtx::default(),
+        )
+        .unwrap();
+        assert_eq!(actual.givens, [("b".to_string(), "Int".to_string())]);
+        assert_eq!(crate::checker::expr_to_str(&actual.expression), "b >= 0");
+        let foreign = serde_json::json!({"forall": {
+            "name": "proof", "ty": {"forall": {}}, "body": premise
+        }});
+        assert!(
+            super::untranslate_premise_json(
+                &foreign.to_string(),
+                &super::UntranslateCtx::default(),
+            )
+            .is_err()
+        );
+    }
+
     use super::*;
     use crate::ast::unparse;
 
@@ -953,6 +1118,7 @@ mod tests {
                 zero_ctor: "Z".to_string(),
                 succ_ctor: "S".to_string(),
             }),
+            ..Default::default()
         }
     }
 
@@ -1002,20 +1168,52 @@ mod tests {
         assert!(!r.contains("hAppend") && !r.contains("List.cons"), "{r}");
     }
 
+    // These saved probes contain one inaccessible Lean-generated local name.
+    // First assert that real input declines there; then alpha-rename only that
+    // fixture binder and its occurrences to exercise the independent blocked
+    // match boundary that the original tests were written to guard.
+    fn fixture_without_hygienic_local(dump: &str) -> String {
+        let error = untranslate_goal_ctx(dump, &peano_nat()).expect_err("hygienic local");
+        assert!(
+            error.reason.contains("exact source identifier"),
+            "{}",
+            error.reason
+        );
+        let value: Value = serde_json::from_str(dump).unwrap();
+        let mut current = &value;
+        let mut result = dump.to_string();
+        let mut renamed = 0;
+        while let Some(binder) = current.get("forall") {
+            let name = binder["name"].as_str().unwrap();
+            if name.contains("._hygCtx.") {
+                result = result.replace(
+                    &serde_json::to_string(name).unwrap(),
+                    &format!("\"fixtureLocal{renamed}\""),
+                );
+                renamed += 1;
+            }
+            current = &binder["body"];
+        }
+        assert_eq!(renamed, 1, "fixture must keep its one hygienic local");
+        result
+    }
+
     #[test]
     fn peano_66_2_declines_on_blocked_match() {
         // p66_2 still has the unreduced blocked `if isZ … then … else …`: its
         // `ite` decidability condition (`false = true`) is a nested equality and
         // its `isZ.match_1` args are opaque (Wall B, cleaned in step 1's Lean-side
         // re-strip). Descent hits the nested-`Eq` condition first — honest decline.
-        let err = untranslate_goal_ctx(DUMP_P66_2, &peano_nat()).expect_err("blocked match");
+        let err = untranslate_goal_ctx(&fixture_without_hygienic_local(DUMP_P66_2), &peano_nat())
+            .expect_err("blocked match");
         assert!(err.reason.contains("equality nested"), "{}", err.reason);
     }
 
     #[test]
     fn peano_73_1_declines_on_blocked_match() {
         // p73_1 likewise carries the unreduced `ite`/`isZ.match_1` residual.
-        let err = untranslate_goal_ctx(DUMP_P73_1, &peano_nat()).expect_err("blocked match");
+        let err = untranslate_goal_ctx(&fixture_without_hygienic_local(DUMP_P73_1), &peano_nat())
+            .expect_err("blocked match");
         assert!(err.reason.contains("equality nested"), "{}", err.reason);
     }
 

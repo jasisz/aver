@@ -551,6 +551,7 @@ mod tests {
                 zero_ctor: "Z".to_string(),
                 succ_ctor: "S".to_string(),
             }),
+            ..Default::default()
         }
     }
 

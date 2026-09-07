@@ -8698,7 +8698,7 @@ fn run_proof_check(
         write_proof_manifest(output_dir, m);
     }
 
-    let proof_reports = proof_sources
+    let mut proof_reports = proof_sources
         .map(|sources| {
             proof_explain::collect(
                 sources,
@@ -8709,6 +8709,17 @@ fn run_proof_check(
             )
         })
         .unwrap_or_default();
+    if output.status.success()
+        && model_panic_hits == 0
+        && let Some(sources) = proof_sources
+    {
+        proof_explain::attach_citation_attempts(
+            output_dir,
+            sources,
+            manifest.as_ref(),
+            &mut proof_reports,
+        );
+    }
     if proof_sources.is_some() {
         let _ = std::fs::write(
             std::path::Path::new(output_dir).join("proof_backend.log"),

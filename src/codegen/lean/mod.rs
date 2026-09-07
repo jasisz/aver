@@ -6,6 +6,7 @@
 mod builtins;
 mod capability_opaque;
 mod citation_order;
+pub mod citation_probe;
 pub use citation_order::{CitationCycle, order_verify_blocks_for_citation};
 mod crypto;
 mod decl_order;

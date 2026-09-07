@@ -1,0 +1,99 @@
+module TruncScale
+    intent = "Transport Euclidean floor quotients across exact rational changes of scale."
+    depends [Domain.StickyInt, Domain.Rational, Domain.Fprep, Domain.IntegerOrder]
+    exposes [equalQuotients, ulpScale, scaledQuotient, restoredValue, signOfProduct]
+    effects []
+
+fn equalQuotients(a: Int, b: Int, c: Int, d: Int) -> Bool
+    ? "Equal rational values with positive denominators have the same Euclidean floor."
+    Domain.StickyInt.floorDiv(a, b) == Domain.StickyInt.floorDiv(c, d)
+
+verify equalQuotients law equalPositiveRatios
+    given a: Int = [-13, 0, 13, 26]
+    given b: Int = [2, 4, 8]
+    given c: Int = [-26, 0, 26, 52]
+    given d: Int = [4, 8, 16]
+    when b > 0
+    when d > 0
+    when a * d == c * b
+    because Domain.StickyInt.floorDiv(d * a, d * b) == Domain.StickyInt.floorDiv(a, b)
+    because Domain.StickyInt.floorDiv(b * c, b * d) == Domain.StickyInt.floorDiv(c, d)
+    using [Domain.StickyInt.floorDiv.cancelCommonFactor]
+    equalQuotients(a, b, c, d) holds
+
+fn ulpScale(e: Int, n: Int) -> Bool
+    ? "The model exponent scale is the truncation ulp multiplied by the n-bit significand scale."
+    scale = Domain.Fprep.pow2Signed(e)
+    ulp = Domain.Fprep.pow2Signed(e - n + 1)
+    scale.top * ulp.bottom == scale.bottom * ulp.top * Domain.Fprep.pow2(n - 1)
+
+verify ulpScale law signedExponent
+    given e: Int = [-5, -1, 0, 3, 8]
+    given n: Int = [1, 2, 4, 9]
+    when n >= 1
+    because Domain.Fprep.pow2SignedHomomorphism(e - n + 1, n - 1)
+    using [Domain.Fprep.pow2SignedHomomorphism.signedHomomorphism]
+    ulpScale(e, n) holds
+
+fn scaledQuotient(a: Int, b: Int, scale: Fraction, ulp: Fraction, p: Int) -> Bool
+    ? "Changing from a model significand to ulp units preserves the integer truncation quotient."
+    Domain.StickyInt.floorDiv(a * scale.top * ulp.bottom, b * scale.bottom * ulp.top) == Domain.StickyInt.floorDiv(a * p, b)
+
+verify scaledQuotient law exactScale
+    given a: Int = [-13, 0, 13]
+    given b: Int = [1, 8]
+    given scale: Fraction = [Domain.Rational.Fraction(top = 1, bottom = 8), Domain.Rational.Fraction(top = 8, bottom = 1)]
+    given ulp: Fraction = [Domain.Rational.Fraction(top = 1, bottom = 32), Domain.Rational.Fraction(top = 2, bottom = 1)]
+    given p: Int = [4]
+    when b > 0
+    when scale.bottom > 0
+    when ulp.top > 0
+    when scale.top * ulp.bottom == scale.bottom * ulp.top * p
+    because Domain.IntegerOrder.positiveProduct(b, scale.bottom)
+    because Domain.IntegerOrder.positiveProduct(b * scale.bottom, ulp.top)
+    because equalQuotients(a * scale.top * ulp.bottom, b * scale.bottom * ulp.top, a * p, b)
+    using [Domain.IntegerOrder.positiveProduct.positiveFactors, equalQuotients.equalPositiveRatios]
+    scaledQuotient(a, b, scale, ulp, p) holds
+
+fn restoredValue(sign: Int, q: Int, scale: Fraction, ulp: Fraction, p: Int) -> Bool
+    ? "Restoring a signed integer quotient in ulp units equals restoring its model significand."
+    Domain.Rational.sameValue(Domain.Rational.Fraction(top = sign * q * ulp.top, bottom = ulp.bottom), Domain.Rational.Fraction(top = scale.top * sign * q, bottom = scale.bottom * p))
+
+verify restoredValue law exactScale
+    given sign: Int = [-1, 1]
+    given q: Int = [0, 1, 6]
+    given scale: Fraction = [Domain.Rational.Fraction(top = 1, bottom = 8), Domain.Rational.Fraction(top = 8, bottom = 1)]
+    given ulp: Fraction = [Domain.Rational.Fraction(top = 1, bottom = 32), Domain.Rational.Fraction(top = 2, bottom = 1)]
+    given p: Int = [4]
+    when scale.top * ulp.bottom == scale.bottom * ulp.top * p
+    using []
+    restoredValue(sign, q, scale, ulp, p) holds
+
+fn signOfProduct(sign: Int, a: Int, b: Int) -> Bool
+    ? "Multiplying two positive magnitudes by a unit sign preserves that sign."
+    match sign * (a * b) >= 0
+        true -> sign == 1
+        false -> sign == -1
+
+verify signOfProduct law positiveMagnitudes
+    given sign: Int = [-1, 1]
+    given a: Int = [1, 9, 13]
+    given b: Int = [1, 8, 32]
+    when Bool.or(sign == 1, sign == -1)
+    when a > 0
+    when b > 0
+    because Domain.IntegerOrder.positiveProduct(a, b)
+    because signOfProductReason(sign, a, b)
+    using [Domain.IntegerOrder.positiveProduct.positiveFactors]
+    signOfProduct(sign, a, b) holds
+
+fn signOfProductReason(sign: Int, a: Int, b: Int) -> Bool
+    ? "Resolve the two unit signs while the unsigned product remains a proved positive integer."
+    match sign == 1
+        true -> signOfProduct(sign, a, b)
+        false -> signOfProduct(sign, a, b)
+
+verify signOfProductReason
+    signOfProductReason(2, 13, 8) => false
+    signOfProductReason(1, 13, 8) => true
+    signOfProductReason(-1, 13, 8) => true
