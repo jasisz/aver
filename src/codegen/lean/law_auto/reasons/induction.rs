@@ -78,9 +78,10 @@ pub(super) fn plan(expr: &Spanned<Expr>, law: &VerifyLaw, ctx: &CodegenContext) 
     };
     let call = emit_expr(&resolve_rewrite_output(expr, ctx, None), ctx);
     // Lean can fail to construct a functional principle for a local match.
-    // The checked list measure still supplies ordinary structural induction.
+    // The checked length measure supplies an IH for every shorter list,
+    // including computed slices; reduce its relation before solving leaves.
     Some(format!(
-        "first | fun_induction {call} | (induction {}{generalizing} <;> rw [{}.eq_def])",
+        "first | fun_induction {call} | (induction {} using (measure List.length).wf.induction{generalizing} <;> dsimp only [WellFoundedRelation.rel, measure, invImage, InvImage, Nat.lt_wfRel] at * <;> rw [{}.eq_def])",
         aver_name_to_lean(argument),
         lean_name(fd, ctx)
     ))
