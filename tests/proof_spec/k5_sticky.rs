@@ -39,7 +39,7 @@ fn k5_sticky_composition_has_universal_source_proofs() {
 }
 
 #[test]
-fn k5_fraction_exponent_and_truncation_agree_with_the_normalized_model() {
+fn k5_fraction_exponent_and_rounding_agree_with_the_normalized_model() {
     if Command::new("lake").arg("--version").output().is_err() {
         return;
     }
@@ -123,7 +123,35 @@ fn k5_fraction_exponent_and_truncation_agree_with_the_normalized_model() {
         ("truncationFormula.knownExponent", 0),
         ("modelTruncation.normalizedModel", 9),
         ("sameTruncation.normalizedModel", 4),
+        ("Domain.RoundScale.cancelProduct.positiveFactor", 1),
+        ("Domain.RoundScale.scaledExactness.positiveScale", 1),
+        ("Domain.RoundScale.remainderQuotient.smallRemainder", 1),
+        ("Domain.RoundScale.ceilingExact.exactQuotient", 1),
+        ("Domain.RoundScale.ceilingInexact.strictRemainder", 1),
+        ("Domain.RoundScale.ceilingFromWindow.euclideanWindow", 1),
+        ("Domain.RoundScale.scaledCeiling.positiveScale", 5),
+        ("Domain.AwayModel.normalizedValue.carryPreservesValue", 3),
+        ("Domain.AwayModel.rawValuePositive.positivePrecision", 3),
+        ("Domain.AwayModel.transferredValue.sameRawValue", 4),
+        ("Domain.ValueChain.sameValueThrough.positiveMiddle", 2),
+        ("awayFormula.knownExponent", 0),
+        ("modelCeiling.normalizedModel", 11),
+        ("modelAway.normalizedModel", 2),
+        ("modelAwayRaw.normalizedModel", 4),
+        ("sameAway.normalizedModel", 4),
+        ("stickyFormula.knownExponent", 0),
+        ("modelStickyHalf.normalizedModel", 6),
+        ("modelStickyExact.normalizedModel", 8),
+        ("modelSticky.normalizedModel", 6),
+        ("modelSticky.singleBit", 2),
+        ("modelSticky.positivePrecision", 1),
+        ("singleBitHalf.normalizedModel", 15),
+        ("sameSticky.normalizedModel", 4),
     ] {
+        assert!(
+            laws.iter().any(|claim| claim["law"] == law),
+            "missing source law {law}"
+        );
         for step in (1..=reasons)
             .map(|index| format!("{law}.because{index}"))
             .chain(std::iter::once(format!("{law}.implication")))
@@ -134,17 +162,17 @@ fn k5_fraction_exponent_and_truncation_agree_with_the_normalized_model() {
             );
         }
     }
-    // The checked result currently has 91 universal laws, four previously
-    // bounded laws, and 142 universal steps. Allow additions and promotions.
+    // The checked result currently has 115 universal laws, four previously
+    // bounded laws, and 252 universal steps. Allow additions and promotions.
     assert!(
-        laws.iter().filter(|law| law["tier"] == "universal").count() >= 91,
+        laws.iter().filter(|law| law["tier"] == "universal").count() >= 115,
         "{manifest}"
     );
     assert!(
         laws.iter().filter(|law| law["tier"] == "bounded").count() <= 4,
         "{manifest}"
     );
-    assert!(obligations.len() >= 142, "{manifest}");
+    assert!(obligations.len() >= 252, "{manifest}");
     for claim in laws
         .iter()
         .chain(manifest["obligations"].as_array().unwrap())

@@ -1,0 +1,146 @@
+module RoundScale
+    intent = "Preserve exactness and upward integer rounding when a positive scale is shared."
+    depends [Domain.StickyInt, Domain.IntegerOrder]
+    exposes [cancelProduct, scaledExactness, roundedQuotient, remainderQuotient, ceilingFromWindow, scaledCeiling]
+    effects []
+
+fn cancelProduct(a: Int, b: Int, c: Int) -> Bool
+    ? "Multiplication by a strictly positive integer preserves and reflects equality."
+    (a * c == b * c) == (a == b)
+
+verify cancelProduct law positiveFactor
+    given a: Int = [-2, 0, 3]
+    given b: Int = [-1, 0, 3]
+    given c: Int = [1, 2, 8]
+    when c > 0
+    because cancelProductReason(a, b, c)
+    using [Domain.IntegerOrder.multiplyLt.positiveFactor]
+    cancelProduct(a, b, c) holds
+
+fn cancelProductReason(a: Int, b: Int, c: Int) -> Bool
+    ? "Unequal integers have a strict order, and a positive factor preserves that order."
+    match a < b
+        true -> Bool.and(Domain.IntegerOrder.multiplyLt(a, b, c), cancelProduct(a, b, c))
+        false -> match b < a
+            true -> Bool.and(Domain.IntegerOrder.multiplyLt(b, a, c), cancelProduct(a, b, c))
+            false -> cancelProduct(a, b, c)
+
+verify cancelProductReason
+    cancelProductReason(1, 2, 3) => true
+    cancelProductReason(2, 1, 3) => true
+    cancelProductReason(2, 2, 3) => true
+
+fn scaledExactness(a: Int, b: Int, c: Int, q: Int) -> Bool
+    ? "A quotient is exact before multiplication by a common positive scale precisely when it is exact afterward."
+    (a * c == b * c * q) == (a == b * q)
+
+verify scaledExactness law positiveScale
+    given a: Int = [-13, 0, 12, 13]
+    given b: Int = [1, 4, 8]
+    given c: Int = [1, 2, 8]
+    given q: Int = [-2, 0, 3]
+    when c > 0
+    because cancelProduct(a, b * q, c)
+    using [cancelProduct.positiveFactor]
+    scaledExactness(a, b, c, q) holds
+
+fn roundedQuotient(a: Int, b: Int, q: Int) -> Int
+    ? "Keep an exact floor quotient; otherwise move up to the next integer."
+    match a == b * q
+        true -> q
+        false -> q + 1
+
+verify roundedQuotient
+    roundedQuotient(12, 4, 3) => 3
+    roundedQuotient(13, 4, 3) => 4
+
+fn remainderQuotient(d: Int, q: Int, r: Int) -> Bool
+    ? "A remainder inside a positive divisor leaves its quotient unchanged."
+    Domain.StickyInt.floorDiv(d * q + r, d) == q
+
+verify remainderQuotient law smallRemainder
+    given d: Int = [2, 4, 8]
+    given q: Int = [-3, 0, 3]
+    given r: Int = [0, 1, 3]
+    when d > 0
+    when r >= 0
+    when r < d
+    because Domain.StickyInt.floorDiv(d * q + r, d) == q
+    using [Domain.StickyInt.floorDiv.absorbRemainder]
+    remainderQuotient(d, q, r) holds
+
+fn ceilingExact(a: Int, b: Int, q: Int) -> Bool
+    ? "An exact quotient remains unchanged by upward rounding."
+    Domain.StickyInt.floorDiv(a + b - 1, b) == q
+
+verify ceilingExact law exactQuotient
+    given a: Int = [-12, 0, 12]
+    given b: Int = [1, 4]
+    given q: Int = [-3, 0, 3]
+    when b > 0
+    when a == b * q
+    because remainderQuotient(b, q, b - 1)
+    using [remainderQuotient.smallRemainder]
+    ceilingExact(a, b, q) holds
+
+fn ceilingInexact(a: Int, b: Int, q: Int) -> Bool
+    ? "A strict floor remainder advances upward rounding by one."
+    Domain.StickyInt.floorDiv(a + b - 1, b) == q + 1
+
+verify ceilingInexact law strictRemainder
+    given a: Int = [-13, 1, 13]
+    given b: Int = [4, 8]
+    given q: Int = [-4, -2, 0, 1, 3]
+    when b > 0
+    when b * q < a
+    when a < b * (q + 1)
+    because remainderQuotient(b, q + 1, a - b * q - 1)
+    using [remainderQuotient.smallRemainder]
+    ceilingInexact(a, b, q) holds
+
+fn ceilingFromWindow(a: Int, b: Int, q: Int) -> Bool
+    ? "The upward integer quotient is determined by the Euclidean floor window and its exactness test."
+    Domain.StickyInt.floorDiv(a + b - 1, b) == roundedQuotient(a, b, q)
+
+verify ceilingFromWindow law euclideanWindow
+    given a: Int = [-13, 0, 12, 13]
+    given b: Int = [1, 4, 8]
+    given q: Int = [-4, -2, 0, 1, 3, 12, 13]
+    when b > 0
+    when b * q <= a
+    when a < b * (q + 1)
+    because ceilingReason(a, b, q)
+    using [ceilingExact.exactQuotient, ceilingInexact.strictRemainder]
+    ceilingFromWindow(a, b, q) holds
+
+fn ceilingReason(a: Int, b: Int, q: Int) -> Bool
+    ? "Express the rounded dividend as a quotient multiple plus a remainder inside its divisor."
+    match a == b * q
+        true -> Bool.and(ceilingExact(a, b, q), ceilingFromWindow(a, b, q))
+        false -> Bool.and(ceilingInexact(a, b, q), ceilingFromWindow(a, b, q))
+
+verify ceilingReason
+    ceilingReason(12, 4, 3) => true
+    ceilingReason(13, 4, 3) => true
+    ceilingReason(-13, 4, -4) => true
+
+fn scaledCeiling(a: Int, b: Int, c: Int, q: Int) -> Bool
+    ? "A positive common numerator-denominator scale leaves upward rounding unchanged."
+    Domain.StickyInt.floorDiv(a * c + b * c - 1, b * c) == roundedQuotient(a, b, q)
+
+verify scaledCeiling law positiveScale
+    given a: Int = [-13, 0, 12, 13]
+    given b: Int = [1, 4, 8]
+    given c: Int = [1, 2, 8]
+    given q: Int = [-4, -2, 0, 1, 3, 12, 13]
+    when b > 0
+    when c > 0
+    when b * q <= a
+    when a < b * (q + 1)
+    because Domain.IntegerOrder.positiveProduct(b, c)
+    because Domain.IntegerOrder.multiplyLe(b * q, a, c)
+    because Domain.IntegerOrder.multiplyLt(a, b * (q + 1), c)
+    because ceilingFromWindow(a * c, b * c, q)
+    because scaledExactness(a, b, c, q)
+    using [Domain.IntegerOrder.positiveProduct.positiveFactors, Domain.IntegerOrder.multiplyLe.nonnegativeFactor, Domain.IntegerOrder.multiplyLt.positiveFactor, ceilingFromWindow.euclideanWindow, scaledExactness.positiveScale]
+    scaledCeiling(a, b, c, q) holds
