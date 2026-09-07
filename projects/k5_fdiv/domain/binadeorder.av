@@ -1,0 +1,50 @@
+module BinadeOrder
+    intent = "Read an integer binary magnitude window as an exact rational interval."
+    depends [Domain.Fprep, Domain.Rational, Domain.FractionOrder]
+    exposes [integerWindow, fractionWindow]
+    effects []
+
+fn integerWindow(p: Int, q: Int, e: Int) -> Bool
+    ? "Cross-multiplied binary endpoints, using reciprocal powers for negative exponents."
+    match e >= 0
+        true -> Bool.and(Domain.Fprep.pow2(e) * q <= p, p < Domain.Fprep.pow2(e + 1) * q)
+        false -> Bool.and(q <= p * Domain.Fprep.pow2(0 - e), p * Domain.Fprep.pow2(0 - e - 1) < q)
+
+verify integerWindow
+    integerWindow(1, 8, -3) => true
+    integerWindow(1, 2, -1) => true
+    integerWindow(7, 2, 1) => true
+    integerWindow(8, 2, 1) => false
+
+fn fractionWindow(p: Int, q: Int, e: Int) -> Bool
+    ? "The same interval expressed with exact rational comparison."
+    value = Domain.Rational.Fraction(top = p, bottom = q)
+    Bool.and(Domain.FractionOrder.le(Domain.Fprep.pow2Signed(e), value), Domain.FractionOrder.lt(value, Domain.Fprep.pow2Signed(e + 1)))
+
+verify fractionWindow law integerMagnitude
+    given p: Int = [1, 3, 17]
+    given q: Int = [1, 2, 8]
+    given e: Int = [-3, -1, 0, 3, 4]
+    when p > 0
+    when q > 0
+    when integerWindow(p, q, e)
+    because Domain.Fprep.pow2(0 - e) >= 1
+    because Domain.Fprep.pow2(0 - e - 1) >= 1
+    because fractionWindowReason(p, q, e)
+    using [Domain.Fprep.pow2.positive, Domain.FractionOrder.le.fromPositiveCrossProduct, Domain.FractionOrder.lt.fromPositiveCrossProduct]
+    fractionWindow(p, q, e) holds
+
+fn fractionWindowReason(p: Int, q: Int, e: Int) -> Bool
+    ? "Separate nonnegative exponents, minus one, and smaller exponents before comparing fractions."
+    value = Domain.Rational.Fraction(top = p, bottom = q)
+    match e >= 0
+        true -> Bool.and(Domain.FractionOrder.le(Domain.Fprep.pow2Signed(e), value), Domain.FractionOrder.lt(value, Domain.Fprep.pow2Signed(e + 1)))
+        false -> match e == -1
+            true -> Bool.and(Domain.FractionOrder.le(Domain.Fprep.pow2Signed(e), value), Domain.FractionOrder.lt(value, Domain.Fprep.pow2Signed(e + 1)))
+            false -> Bool.and(Domain.FractionOrder.le(Domain.Fprep.pow2Signed(e), value), Domain.FractionOrder.lt(value, Domain.Fprep.pow2Signed(e + 1)))
+
+verify fractionWindowReason
+    fractionWindowReason(1, 8, -3) => true
+    fractionWindowReason(1, 2, -1) => true
+    fractionWindowReason(7, 2, 1) => true
+    fractionWindowReason(8, 2, 1) => false

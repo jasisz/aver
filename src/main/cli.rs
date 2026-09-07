@@ -700,20 +700,16 @@ pub(super) enum Commands {
         /// unchanged: 0 within budget, 1 over, 2 on harness failure.
         #[arg(long)]
         check_json: bool,
-        /// Check mode (`--check`/`--check-json`) only, Lean-only: for each
-        /// law that does NOT close
-        /// universally (a residual `sorry` / failed inductive arm), emit
-        /// the law's UNSOLVED GOAL ("residual") text per law — into the
-        /// per-law `proof_manifest.json` records (`open_goal`) and, with
-        /// `--check-json`, inline as a top-level `open_goals` object keyed
-        /// by `fn.law`. The residual is the leftover after normalization
-        /// with the IH left in canonical recursive form — the enabler for
-        /// an agent proposer / "Lemma Calculation" (apply the IH once to
-        /// the residual and the leftover IS the missing lemma). Costs one
-        /// extra isolated `lake env lean` build per open law; opt-in and
-        /// fail-soft (a probe failure never affects `passed` / exit code).
-        /// With `--explain` absent, the check-json bytes and manifest are
-        /// byte-identical to before (no new key, `open_goal` absent).
+        /// Explain open proof steps in Aver: source locations, goals,
+        /// assumptions, previous because results, and explicit using
+        /// requirements. Check mode only; Lean backend only. JSON adds
+        /// `explanations` keyed by law/step. Checker limits are distinguished
+        /// from unproved statements; technical output is saved in
+        /// proof_backend.log. Existing `open_goals` / manifest `open_goal`
+        /// residuals remain available. Laws without because may require an
+        /// additional isolated diagnostic build. Explanations never change
+        /// proof credit, budgets, or exit codes; absent this flag, no new
+        /// diagnostic fields are emitted.
         #[arg(long, requires = "check_mode")]
         explain: bool,
         /// Check mode (`--check`/`--check-json`) only, Lean-only: MINIMIZE

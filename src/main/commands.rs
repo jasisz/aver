@@ -8007,6 +8007,9 @@ pub(super) fn cmd_proof(
             &ctx.items,
             file,
             &module_root,
+            (explain && matches!(backend, super::cli::ProofBackend::Lean))
+                .then(|| proof_explain::Catalog::new(&ctx, file, &module_root))
+                .as_ref(),
         );
     }
 }
@@ -8256,6 +8259,7 @@ fn run_proof_check(
     source_items: &[aver::ast::TopLevel],
     source_file: &str,
     source_module_root: &str,
+    proof_sources: Option<&proof_explain::Catalog>,
 ) {
     use std::process::Command;
 
@@ -8578,6 +8582,9 @@ fn run_proof_check(
         let open: Vec<(String, String)> = emitted_main_law_theorems(output_dir)
             .into_iter()
             .filter(|(label, _)| !closed_universal.contains(label.as_str()))
+            // A because law has independently checked source steps. Probing its
+            // final composition theorem adds no explanation of a failed step.
+            .filter(|(label, _)| !proof_sources.is_some_and(|sources| sources.has_reasons(label)))
             .collect();
         open_goals = lean_residual_goals(output_dir, &open);
         // Attribute residuals to the law that ACTUALLY failed. A proven law
@@ -8691,9 +8698,32 @@ fn run_proof_check(
         write_proof_manifest(output_dir, m);
     }
 
+    let proof_reports = proof_sources
+        .map(|sources| {
+            proof_explain::collect(
+                sources,
+                manifest.as_ref(),
+                &sorry_laws,
+                output_dir,
+                &format!("{stdout}{stderr}"),
+            )
+        })
+        .unwrap_or_default();
+    if proof_sources.is_some() {
+        let _ = std::fs::write(
+            std::path::Path::new(output_dir).join("proof_backend.log"),
+            format!("{stdout}{stderr}"),
+        );
+    }
     if check_json {
         let mut obj = serde_json::Map::new();
         obj.insert("backend".into(), backend_tag.into());
+        if !proof_reports.is_empty() {
+            obj.insert(
+                "explanations".into(),
+                serde_json::to_value(&proof_reports).unwrap(),
+            );
+        }
         if let Some(e) = errors {
             obj.insert("errors".into(), e.into());
         }
@@ -8819,11 +8849,29 @@ fn run_proof_check(
     } else {
         // Stream the verifier's own output so the user sees the
         // diagnostics; we already parsed counts above.
-        print!("{}", stdout);
-        eprint!("{}", stderr);
+        if explain && matches!(backend, super::cli::ProofBackend::Lean) {
+            proof_explain::render(&proof_reports);
+        } else {
+            print!("{}", stdout);
+            eprint!("{}", stderr);
+        }
         if let Some(audit) = &lean_law_audit {
-            for obligation in &audit.obligations {
-                println!("  {}: {}", obligation.law, obligation.tier.as_str());
+            if explain {
+                let universal = audit
+                    .obligations
+                    .iter()
+                    .filter(|o| o.tier == LawTier::Universal)
+                    .count();
+                if !audit.obligations.is_empty() {
+                    println!(
+                        "  Proof steps: {universal}/{} universal",
+                        audit.obligations.len()
+                    );
+                }
+            } else {
+                for obligation in &audit.obligations {
+                    println!("  {}: {}", obligation.law, obligation.tier.as_str());
+                }
             }
         }
         let (metric, budget_desc) = match backend {
@@ -9133,6 +9181,8 @@ struct ProofManifest {
 
 #[path = "law_reason_report.rs"]
 mod law_reason_report;
+#[path = "proof_explain/mod.rs"]
+mod proof_explain;
 
 /// The file-level audit records as one per-law manifest, keyed on the `fn.law`
 /// identity and sorted by it for byte-reproducibility.

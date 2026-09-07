@@ -348,20 +348,57 @@ bool keys on. A robust CI budget pins all four together:
 
 ### Step zero: which law failed?
 
-When a check reports `sorries: N > 0`, the first question is *which* law — and
-the answer is already in the summary. Read `sorry_laws`: it names the failing
-`fn.law` identities directly, no manual `lake build` + grep. Add `--explain` to
-also get goal text where there is any to show: a failing law whose proof left a
-partial goal gets it inline under `open_goals` (keyed by the same identity),
-while a law that fails outright — its theorem is just a `sorry` — has no
-residual goal to print and is named in `sorry_laws` only. The residual probe is
-deliberately coarse, so on a file with both a proven and a failing law it can
-also surface a goal from the *proven* law; that borrowed goal is reported
-separately under `probe_of` and never in `open_goals`, so a healthy,
-already-proven law is never mistaken for the failure. Only after `sorry_laws`
-names the culprit should you reach for the
-`--emit-ir-after=law_lower` workflow (linked above) to understand *why* that
-specific law did not auto-prove.
+Start with a source-level explanation:
+
+```sh
+aver proof file.av --check --explain
+```
+
+The report locates each open law or `because` step in its `.av` file, including
+imported modules. It shows the goal, universally quantified variables, `when`
+assumptions, earlier `because` results and explicit `using` citations. For a
+direct call matching a cited law's argument pattern, requirements are displayed
+with the actual arguments substituted. For example, the deliberately incomplete
+law in `tests/fixtures/law_reason_constant_citation.av` produces:
+
+```text
+tests/fixtures/law_reason_constant_citation.av:39 — product.missingFactorGuard.because1
+  This step has not been proved from the current assumptions.
+  To prove: orderedProducts(0, a, b)
+  For any a: Int, b: Int
+  when a >= 0 [assumed]
+  using orderedProducts.monotone [universal; arguments substituted]
+    provides orderedProducts(0, a, b) holds
+    requires 0 <= a
+    requires b >= 0
+```
+
+Here the available assumption does not establish `b >= 0`. The requirements
+list describes the cited law; it is not a solver claim that every listed
+condition is missing, or that the checker applied that citation. Unambiguous
+direct call patterns are substituted; other forms retain schematic parameters.
+Automatic law selection is identified as automatic rather than guessed from
+the source. Previous `because` steps carry their audited status: `failed` and
+`not_checked` steps must not be treated as proved facts. Later steps are never
+listed as assumptions for an earlier step.
+
+`--check-json --explain` exposes the same report in `explanations`, keyed by
+`fn.law` or `fn.law.becauseN` / `fn.law.implication`. A computation limit is
+reported as `checker_limit`, separately from an unproved step. These reports
+can retain source context even when a hard checker error prevents the final
+axiom audit. Such an error does not establish that the mathematical statement
+is false. Errors that cannot be mapped to a source step are identified as
+checker errors, with technical details saved in `proof_backend.log` in the
+output directory. Reports are diagnostic only and never change proof credit,
+budgets, or exit codes.
+
+The existing `sorry_laws` identities, `open_goals` residuals and manifest
+`open_goal` fields remain available for tools that need backend detail. Laws
+without `because` can still use an isolated residual probe and calculated helper
+suggestions; a residual borrowed from a healthy law stays under `probe_of`,
+never `open_goals`. Without `--explain`, no new diagnostic fields are emitted.
+The [IR snapshots](transpilation.md#debugging-a-law-that-didnt-auto-prove) and generated output remain useful for
+compiler debugging; ordinary proof-step reports use Aver syntax directly.
 
 ## Law provenance (`-- aver:provenance`)
 

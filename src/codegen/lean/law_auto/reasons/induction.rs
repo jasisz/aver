@@ -1,7 +1,7 @@
 //! Functional induction for explanations with an existing checked recursion measure.
 //! Recursion contracts and kernel-generated equations remain the source of truth.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use crate::ast::{Expr, FnDef, Spanned, Stmt, VerifyLaw};
 use crate::codegen::lean::expr::{aver_name_to_lean, emit_expr, resolve_rewrite_output};
@@ -16,7 +16,7 @@ fn list_measure<'a>(fd: &FnDef, ctx: &'a CodegenContext) -> Option<&'a str> {
     }
 }
 
-fn callee<'a>(
+pub(super) fn callee<'a>(
     expr: &Spanned<Expr>,
     ctx: &'a CodegenContext,
     scope: Option<&str>,
@@ -102,6 +102,7 @@ pub(super) fn plan(expr: &Spanned<Expr>, law: &VerifyLaw, ctx: &CodegenContext) 
 /// Walk only this law's calls, resolving every edge in its owner's scope.
 /// Unsupported recursive functions stay opaque; no fuel equation is imported.
 pub(super) struct Definitions {
+    pub(super) heads: String,
     pub(super) simp: String,
     pub(super) grind: String,
     pub(super) unfold_once: Vec<(String, bool)>,
@@ -203,7 +204,24 @@ pub(super) fn definitions(law: &VerifyLaw, ctx: &CodegenContext) -> Definitions 
             out.insert(format!("= {}.eq_def", lean_name(fd, ctx)), true);
         }
     }
+    // Only outer calls: retain computations passed as arguments as opaque terms.
+    let heads = law
+        .because
+        .iter()
+        .chain([&law.lhs, &law.rhs])
+        .filter_map(|expr| callee(expr, ctx, scope.as_deref()))
+        .filter(|fd| {
+            fd.effects.is_empty()
+                && common::fn_id_for_decl(ctx, fd)
+                    .is_some_and(|id| !ctx.recursive_fns.contains(&id))
+        })
+        .map(|fd| lean_name(fd, ctx))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>()
+        .join(", ");
     Definitions {
+        heads,
         unfold_once: unfold_once
             .into_iter()
             .map(|name| {

@@ -65,6 +65,13 @@ fn k5_fraction_exponent_has_a_universal_magnitude_window() {
         "Domain.Binade.significand.normalized",
         "twoPow.roundingScale",
         "fracExpo.executableMagnitude",
+        "fracExpo.rationalMagnitude",
+        "normalizedValueExponent.executableExponent",
+        "Domain.ModelScale.modelWindow.normalizedMagnitude",
+        "Domain.ModelScale.uniqueWindow.uniqueExponent",
+        "Domain.BinadeOrder.fractionWindow.integerMagnitude",
+        "Domain.IntegerOrder.multiplyLe.nonnegativeFactor",
+        "Domain.FractionOrder.lt.fromPositiveCrossProduct",
         "binadeSig.significandWindow",
     ] {
         let law = laws
@@ -93,6 +100,20 @@ fn k5_fraction_exponent_has_a_universal_magnitude_window() {
     }
     for obligation in manifest["obligations"].as_array().unwrap() {
         assert_eq!(obligation["tier"], "universal", "{obligation}");
+    }
+    for claim in laws
+        .iter()
+        .chain(manifest["obligations"].as_array().unwrap())
+    {
+        for axiom in claim["axioms"].as_array().unwrap() {
+            assert!(
+                matches!(
+                    axiom.as_str(),
+                    Some("propext" | "Classical.choice" | "Quot.sound")
+                ),
+                "{claim}"
+            );
+        }
     }
     let binade = std::fs::read_to_string(dir.join("Domain/Binade.lean")).unwrap();
     let kernel = std::fs::read_to_string(dir.join("Kernel.lean")).unwrap();

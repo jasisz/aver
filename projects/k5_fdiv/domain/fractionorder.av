@@ -1,0 +1,60 @@
+module FractionOrder
+    intent = "Transport cross-multiplied inequalities to the exact rational order."
+    depends [Domain.Rational, Domain.IntegerOrder]
+    exposes [le, lt, signedAbsolute]
+    effects []
+
+fn le(a: Fraction, b: Fraction) -> Bool
+    ? "Exact weak order, expressed through the sign of the rational difference."
+    Domain.Rational.isNonNeg(Domain.Rational.minus(b, a))
+
+verify le law fromPositiveCrossProduct
+    given a: Fraction = [Domain.Rational.Fraction(top = -3, bottom = 2), Domain.Rational.Fraction(top = 1, bottom = 3)]
+    given b: Fraction = [Domain.Rational.Fraction(top = -1, bottom = 2), Domain.Rational.Fraction(top = 2, bottom = 3)]
+    when a.bottom > 0
+    when b.bottom > 0
+    when a.top * b.bottom <= b.top * a.bottom
+    because Domain.IntegerOrder.positiveProduct(b.bottom, a.bottom)
+    because Domain.IntegerOrder.nonnegativeProduct(b.top * a.bottom - a.top * b.bottom, b.bottom * a.bottom)
+    using [Domain.IntegerOrder.positiveProduct.positiveFactors, Domain.IntegerOrder.nonnegativeProduct.nonnegativeFactors]
+    le(a, b) holds
+
+fn lt(a: Fraction, b: Fraction) -> Bool
+    ? "Exact strict order, retaining the original rational comparison."
+    Domain.Rational.lessThan(a, b)
+
+verify lt law fromPositiveCrossProduct
+    given a: Fraction = [Domain.Rational.Fraction(top = -3, bottom = 2), Domain.Rational.Fraction(top = 1, bottom = 3)]
+    given b: Fraction = [Domain.Rational.Fraction(top = -1, bottom = 2), Domain.Rational.Fraction(top = 2, bottom = 3)]
+    when a.bottom > 0
+    when b.bottom > 0
+    when a.top * b.bottom < b.top * a.bottom
+    because Domain.IntegerOrder.positiveProduct(a.bottom, b.bottom)
+    because Domain.IntegerOrder.multiplyLt(a.top * b.bottom, b.top * a.bottom, a.bottom * b.bottom)
+    using [Domain.IntegerOrder.positiveProduct.positiveFactors, Domain.IntegerOrder.multiplyLt.positiveFactor]
+    lt(a, b) holds
+
+fn signedAbsolute(sign: Int, a: Fraction) -> Bool
+    ? "Removing a unit sign recovers a fraction with nonnegative fields."
+    Domain.Rational.absFraction(Domain.Rational.Fraction(top = sign * a.top, bottom = a.bottom)) == a
+
+verify signedAbsolute law nonnegativeMagnitude
+    given sign: Int = [-1, 1]
+    given a: Fraction = [Domain.Rational.Fraction(top = 0, bottom = 1), Domain.Rational.Fraction(top = 3, bottom = 4)]
+    when Bool.or(sign == 1, sign == -1)
+    when a.top >= 0
+    when a.bottom >= 0
+    because signedAbsoluteReason(sign, a)
+    using []
+    signedAbsolute(sign, a) holds
+
+fn signedAbsoluteReason(sign: Int, a: Fraction) -> Bool
+    ? "Check the positive and negative unit signs separately."
+    match sign == 1
+        true -> signedAbsolute(sign, a)
+        false -> signedAbsolute(sign, a)
+
+verify signedAbsoluteReason
+    signedAbsoluteReason(1, Domain.Rational.Fraction(top = 3, bottom = 4)) => true
+    signedAbsoluteReason(-1, Domain.Rational.Fraction(top = 3, bottom = 4)) => true
+    signedAbsoluteReason(2, Domain.Rational.Fraction(top = 3, bottom = 4)) => false
