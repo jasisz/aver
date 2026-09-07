@@ -26,34 +26,11 @@ module Round
         "kept bit is already 1, falsifying Lemma 7.3.2 Sticky Plus on ~17% of cases)."
         "RTL sticky truncates to n-1 bits then forces the n-th bit to 1, which keeps"
         "the significand strictly below 2 -- sticky never carries."
-        "Landed universal on the Lean kernel: Lemma 7.2.1 (p.19) -- trunc, away and"
-        "sticky are all sign-symmetric, round(-x,i) = -round(x,i) ('Analogous lemmas"
-        "hold for away and sticky'); Lemma 7.2.6 (p.19) -- trunc keeps the exponent of"
-        "a non-zero x; Lemma 7.2.7 (p.19) -- e(away(x,i)) is e_x or 1+e_x (the"
-        "[e_x, e_x+1] range); Lemma 7.2.8 (p.19) -- e(sticky(x,i)) = e_x, sticky keeps"
-        "the exponent; and the rounding-COMPOSITION lemmas Lemma 7.2.10 (p.20) --"
-        "trunc(trunc(x,i),j) = trunc(x,i) for i <= j -- and Lemma 7.2.11 (p.20) --"
-        "trunc(away(x,i),j) = away(x,i) for i <= j (re-truncating an already-i-bit"
-        "value to the wider j >= i is the identity). Both reduce after"
-        "cross-multiplication to one EXACT-DIVISION CANCEL on the outer truncation's"
-        "floor: floor(s*2^b / 2^a) * 2^a = s*2^b when 0 <= a <= b, valid because"
-        "2^a | 2^b (the power-of-two homomorphism). That cancel is itself a generic"
-        "Aver law on floorDiv (dividesPow2Multiple, universal); the composition"
-        "lemmas CITE it -- no per-figure proof. Lemma 7.2.3 (p.19) and Lemma 7.2.4"
-        "(p.19), the RECONSTRUCTION halves -- away(x,i) = x + epsilon and sticky(x,i) ="
-        "x + epsilon, with epsilon = round(x,i) - x -- both landed universal (the"
-        "additive complement of Lemma 7.2.2's trunc(x,i) = x - epsilon; the exact"
-        "rational ring identity x + (round(x,i) - x) = round(x,i), closed by the"
-        "equational keystone case-splitting the rounding match). Deferred (kwiatki):"
-        "Lemma 7.2.3/7.2.4's STRICT BOUND |epsilon| < 2^(e_x - i + 1) and Lemma 7.2.3's"
-        "SAME-SIGN condition (both stated EXACTLY as the paper and sample-verified, NOT"
-        "yet universal): the away error is the COMPLEMENT |W - r| of the truncation"
-        "remainder and the sticky error is a round-to-odd half-step, but a faithful"
-        "fpAway/fpSticky is PIECEWISE (awaySig's exact/round-up split, the carry"
-        "renormalization Lemma 7.2.7 needs, sticky's three branches), so the trunc bound"
-        "arm -- which reads a SINGLE floor quotient off one clean record -- needs a"
-        "genuinely new matched-rounded-value case-split before it can fire."
-    depends [Domain.Fprep, Domain.Rational]
+        "The source laws cover the rounding identities and error bounds defined"
+        "here. Sticky composition factors the significand scales through"
+        "Domain.StickyScale and proves equality of the complete truncated records"
+        "for 1 <= m < n. Its public rational-value law follows from that identity."
+    depends [Domain.Fprep, Domain.Rational, Domain.StickyScale]
     exposes [floorDiv, floorDivWindow, truncFitsWindow, fpTrunc, fpNegate, truncNegateSymmetric, truncKeepsExponent, truncError, truncErrorMagnitude, truncErrorMagnitudeNonneg, fpValueMagnitude, fpValueMagnitudePos, truncErrorReconstructs, truncErrorBound, truncErrorSameSign, truncComposes, awaySig, fpAway, awayNegateSymmetric, awayExpInRange, awayTruncComposes, truncStickyComposes, awayError, awayErrorReconstructs, awayErrorBound, awayErrorSameSign, stickyHalf, fpSticky, stickyNegateSymmetric, stickyKeepsExponent, stickyError, stickyErrorReconstructs, stickyErrorBound]
     effects []
 
@@ -442,6 +419,17 @@ fn fpSticky(f: Fp, n: Int) -> Fp
             true -> Domain.Fprep.Fp(sign = f.sign, sigBits = 2 * stickyHalf(f, n), exp = f.exp, width = n)
             false -> Domain.Fprep.Fp(sign = f.sign, sigBits = 2 * stickyHalf(f, n) + 1, exp = f.exp, width = n)
 
+verify fpSticky law preservesCoarseTruncation
+    given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), Domain.Fprep.Fp(sign = 1, sigBits = 12, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4), Domain.Fprep.Fp(sign = 1, sigBits = -13, exp = -3, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 7, exp = -2, width = 0)]
+    given n: Int = [1, 2, 3, 5]
+    given m: Int = [1, 2, 3]
+    when 1 <= m
+    when m < n
+    because Domain.StickyScale.coarsen(f.sigBits, Domain.Fprep.pow2(f.width - 1), n, m, 0) == fpTrunc(f, m).sigBits
+    because Domain.StickyScale.coarsen(f.sigBits, Domain.Fprep.pow2(f.width - 1), n, m, 1) == fpTrunc(f, m).sigBits
+    using [Domain.StickyScale.coarsen.dropsStickyBit, Domain.Fprep.pow2.positive]
+    fpTrunc(fpSticky(f, n), m) => fpTrunc(f, m)
+
 verify fpSticky
     fpSticky(Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), 3) => Domain.Fprep.Fp(sign = 1, sigBits = 7, exp = 0, width = 3)
     fpSticky(Domain.Fprep.Fp(sign = 1, sigBits = 12, exp = 0, width = 4), 3) => Domain.Fprep.Fp(sign = 1, sigBits = 6, exp = 0, width = 3)
@@ -550,6 +538,7 @@ fn truncStickyComposes(f: Fp, n: Int, m: Int) -> Bool
 
 verify truncStickyComposes
     truncStickyComposes(Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), 3, 2) => true
+    truncStickyComposes(Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), 3, 3) => false
     truncStickyComposes(Domain.Fprep.Fp(sign = 1, sigBits = 12, exp = 0, width = 4), 3, 2) => true
     truncStickyComposes(Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4), 3, 2) => true
 
@@ -560,12 +549,11 @@ verify truncStickyComposes
 // bits discards it and recovers trunc(x,m). The paper's m, n are positive
 // integers (1 <= m < n), on a normalized significand (width >= 1).
 //
-// The integer coarsening core is now proved with source-local because/using in
-// sticky_int.av. This normalized floating-point composition still needs its own
-// source argument connecting the scale exponents and represented significands.
-// The former hand-written Lean sidecar has been removed; this law remains an
-// open universal claim until that argument is checked. Sample cases above are
-// executable evidence only.
+// StickyScale transports the integer low-bit law through the two significand
+// scales. Both bit values give the same coarse significand. Sign and exponent
+// are copied unchanged, so the entire truncated Fp records are equal -- even
+// before taking their rational values. Only 1 <= m < n is needed for this
+// stronger record identity; the original public law retains its width guard.
 
 verify truncStickyComposes law composesThroughSticky
     given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), Domain.Fprep.Fp(sign = 1, sigBits = 12, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4)]
@@ -574,6 +562,8 @@ verify truncStickyComposes law composesThroughSticky
     when 1 <= f.width
     when 1 <= m
     when m < n
+    because fpTrunc(fpSticky(f, n), m) == fpTrunc(f, m)
+    using [fpSticky.preservesCoarseTruncation]
     truncStickyComposes(f, n, m) holds
 
 fn awayError(f: Fp, i: Int) -> Fraction

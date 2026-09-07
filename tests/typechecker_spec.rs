@@ -506,7 +506,8 @@ fn k5_fdiv_corpus_passes_check() {
         "projects/k5_fdiv/domain/recip.av",
         "projects/k5_fdiv/domain/remainder.av",
         "projects/k5_fdiv/domain/round.av",
-        "projects/k5_fdiv/domain/sticky_int.av",
+        "projects/k5_fdiv/domain/stickyint.av",
+        "projects/k5_fdiv/domain/stickyscale.av",
         "projects/k5_fdiv/domain/table.av",
     ];
 
