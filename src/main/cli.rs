@@ -706,7 +706,8 @@ pub(super) enum Commands {
         /// remaining premises where supported. Check mode only; Lean backend only. JSON adds
         /// `explanations` keyed by law/step. Checker limits are distinguished
         /// from unproved statements; technical output is saved in
-        /// proof_backend.log (citation probes: proof_citations.log).
+        /// proof_backend.log (citation probes: proof_citations.log;
+        /// unavailable helper suggestions: proof_candidates.log).
         /// Existing `open_goals` / manifest `open_goal`
         /// residuals remain available. Laws without because may require an
         /// additional isolated diagnostic build. Explanations never change

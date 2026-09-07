@@ -547,7 +547,17 @@ fn explain_reports_source_requirements_without_changing_proof_credit() {
     assert!(output.contains("[closed in probe] 0 <= a"), "{output}");
     assert!(output.contains("[open in probe] 0 <= b"), "{output}");
     assert!(output.contains("when a >= 0 [assumed]"), "{output}");
-    for technical in ["AVER_REASON_OPEN:", "⊢", ".lean:", "simp only", "case "] {
+    for technical in [
+        "AVER_REASON_OPEN:",
+        "⊢",
+        ".lean:",
+        "simp only",
+        "case ",
+        "__aver_reason_",
+        "residual not extractable",
+        "engine-form gap",
+        "candidate Aver laws for open goals",
+    ] {
         assert!(
             !output.contains(technical),
             "raw backend state leaked: {output}"

@@ -3,9 +3,12 @@
 
 mod attempt_report;
 mod backend;
+mod candidates;
 mod display;
 mod probe;
 mod source;
+
+pub(super) use candidates::render as render_candidates;
 
 pub(super) fn attach_citation_attempts(
     dir: &str,

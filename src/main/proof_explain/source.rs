@@ -56,9 +56,10 @@ impl Catalog {
         catalog
     }
 
-    pub(crate) fn has_reasons(&self, identity: &str) -> bool {
-        self.claim(identity)
-            .is_some_and(|(law, _)| !law.body.because.is_empty())
+    pub(crate) fn accepts_residual_suggestion(&self, identity: &str) -> bool {
+        self.laws
+            .get(identity)
+            .is_some_and(|law| law.body.because.is_empty())
     }
 
     pub(super) fn add(&mut self, block: &VerifyBlock, scope: Option<&str>, file: &str) {

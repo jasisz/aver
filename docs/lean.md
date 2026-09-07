@@ -418,7 +418,11 @@ The existing `sorry_laws` identities, `open_goals` residuals and manifest
 `open_goal` fields remain available for tools that need backend detail. Laws
 without `because` can still use an isolated residual probe and calculated helper
 suggestions; a residual borrowed from a healthy law stays under `probe_of`,
-never `open_goals`. Without `--explain`, no new diagnostic fields are emitted.
+never `open_goals`. Explanations show the source proof report before usable
+helper suggestions. Unavailable suggestions produce a short notice,
+with technical extraction and translation details in `proof_candidates.log`.
+Generated proof-step theorems are excluded from this legacy helper search.
+Without `--explain`, no new diagnostic fields are emitted.
 The [IR snapshots](transpilation.md#debugging-a-law-that-didnt-auto-prove) and generated output remain useful for
 compiler debugging; ordinary proof-step reports use Aver syntax directly.
 
