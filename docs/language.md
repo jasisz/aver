@@ -264,7 +264,7 @@ verify identity law positive
 
 Each explanation must return `Bool`. It may call a normal function whose `match` branches describe the argument. `verify` and `verify --hostile` check every explanation under the original `when`, as well as checking the claim. A false explanation fails even if the claim is true; it never restricts the law's domain.
 
-A recursive explanation can guide induction when it has a checked structural descent on a list. The recursive step must establish the original guard and any earlier reason premises for its own arguments. This uses ordinary function recursion; there is no separate induction syntax.
+A recursive explanation can guide induction when it has a checked structural descent on a list or a native, checked integer countdown (including floor division by a positive literal). The recursive step must establish the original guard and any earlier reason premises for its own arguments. This uses ordinary function recursion; there is no separate induction syntax.
 
 `because` entries are ordered: the proof of a later fact can use earlier facts. The optional `using [function.law, Module.function.law]` list selects an unordered set of lemmas; omitting it keeps automatic selection, and `using []` selects none. Ordinary local bindings may appear between these clauses and remain expression shortcuts, not assertions. The first proof implementation targets Lean; see [law explanations](lean.md#law-explanations-in-aver) for the obligations, diagnostics, and limits.
 

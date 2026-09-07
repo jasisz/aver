@@ -1,5 +1,19 @@
 # K5 FDIV — a processor's divider, proven in Aver
 
+The executable exponent now has a source proof for both signs of the exponent.
+`Domain.Binade` establishes the integer magnitude windows; `Kernel.fracExpo`'s
+`executableMagnitude` law transports them to every nonzero `Fraction` with a
+nonzero denominator and the same powers used by rounding. The below-one branch
+uses `-exponent(q - 1, p) - 1`, with both endpoints proved universally, so it no
+longer relies on opaque doubling recursion. `because` follows checked integer
+descent here just as it follows checked list descent elsewhere.
+
+The Kernel export has 66 universal laws and no `sorry`; its four previously
+bounded imported Round laws retain that status. The standalone Round export
+still has all 62 laws universal. This closes the executable exponent window,
+not the remaining Fraction trunc-sticky composition, sticky-plus, or the full
+divider correctness theorem.
+
 In 1994 the Pentium FDIV bug — a wrong floating-point division — cost Intel about
 $475M and a lot of trust. AMD's answer for its next chip (the K5 / AMD5K86) was to
 **formally prove the divider correct**: *A Mechanically Checked Proof of the

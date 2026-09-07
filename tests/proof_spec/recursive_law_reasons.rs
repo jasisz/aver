@@ -555,3 +555,47 @@ verify key law importedFilter
     assert_eq!(summary["universal_laws"], 2, "{summary}");
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn integer_descent_keeps_recursive_guards_and_rejects_false_explanations() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        return;
+    }
+    let file = "tests/fixtures/law_reason_integer_descent.av";
+    let samples = Command::new(env!("CARGO_BIN_EXE_aver"))
+        .args(["verify", file])
+        .output()
+        .unwrap();
+    assert!(samples.status.success(), "{}", format_output(&samples));
+    let dir = temp_output_dir("aver-integer-descent-reasons");
+    let (summary, run) = run_lean_check_json(file, &dir, 0, &[]);
+    assert!(!run.status.success(), "false explanations must be rejected");
+    assert_eq!(summary["build_errors"], 0, "{summary}");
+    assert_eq!(summary["bounded_laws"], 0, "{summary}");
+    assert_eq!(summary["universal_laws"], 1, "{summary}");
+    for step in ["because1", "implication"] {
+        assert_eq!(
+            summary["obligations"][format!("levels.nonnegative.{step}")],
+            "universal",
+            "{summary}"
+        );
+    }
+    for label in [
+        "levels.rejectsLostPremises.because2",
+        "levels.rejectsFalseBound.because1",
+        "uncheckedReason.remainsOpaque.because1",
+    ] {
+        assert_eq!(summary["obligations"][label], "failed", "{summary}");
+    }
+    let lean = std::fs::read_to_string(dir.join("IntegerDescentReason.lean")).unwrap();
+    for name in ["nonnegativeReason", "boundedReason", "evenPath"] {
+        assert!(
+            lean.contains(&format!("fun_induction {name} number")),
+            "{lean}"
+        );
+        assert!(!lean.contains(&format!("{name}__fuel")), "{lean}");
+    }
+    assert!(lean.contains("partial def uncheckedReason"), "{lean}");
+    assert!(!lean.contains("fun_induction uncheckedReason"), "{lean}");
+    let _ = std::fs::remove_dir_all(dir);
+}

@@ -496,6 +496,7 @@ fn valid_services_weather_av() {
 fn k5_fdiv_corpus_passes_check() {
     const K5_FILES: &[&str] = &[
         "projects/k5_fdiv/main.av",
+        "projects/k5_fdiv/domain/binade.av",
         "projects/k5_fdiv/domain/estimate.av",
         "projects/k5_fdiv/domain/exponent.av",
         "projects/k5_fdiv/domain/floorlaws.av",

@@ -807,3 +807,55 @@ verify floorDiv law cancelPow2
         let _ = std::fs::remove_dir_all(dir);
     }
 }
+
+#[test]
+fn imported_floor_window_uses_its_owners_recursion_contract() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        return;
+    }
+    let root = temp_output_dir("aver-floor-window-owner");
+    std::fs::create_dir_all(&root).unwrap();
+    let helper = include_str!("../fixtures/floor_window.av").replace(
+        "module FloorWindow",
+        "module Window\n    exposes [windowSig, inWindow]",
+    );
+    std::fs::write(root.join("window.av"), helper).unwrap();
+    let entry = root.join("main.av");
+    std::fs::write(
+        &entry,
+        r#"module WindowUser
+    depends [Window]
+    effects []
+
+fn widthExp(a: Int, b: Int) -> Int
+    0
+
+fn viewWindow(a: Int, b: Int, n: Int) -> Bool
+    Window.inWindow(a, b, n)
+
+verify viewWindow law importedWindow
+    given a: Int = [1, 7]
+    given b: Int = [1, 2]
+    given n: Int = [1, 3]
+    when b >= 1
+    when a >= b
+    when n >= 1
+    because Window.inWindow(a, b, n)
+    using [Window.windowSig.sigWindow]
+    viewWindow(a, b, n) holds
+"#,
+    )
+    .unwrap();
+    let (summary, output) = run_lean_check_json_with_args(
+        entry.to_str().unwrap(),
+        &root.join("proof"),
+        0,
+        &[],
+        &["--module-root", root.to_str().unwrap()],
+    );
+    assert!(output.status.success(), "{}", format_output(&output));
+    assert_eq!(summary["universal_laws"], 5, "{summary}");
+    assert_eq!(summary["bounded_laws"], 0, "{summary}");
+    assert_eq!(summary["build_errors"], 0, "{summary}");
+    let _ = std::fs::remove_dir_all(root);
+}

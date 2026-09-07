@@ -346,6 +346,19 @@ fn resolve_pure_fn<'a>(name: &str, inputs: &ProofLowerInputs<'a>) -> Option<&'a 
     Some(fd)
 }
 
+/// Resolve a helper edge in the defining function's module, not the entry.
+fn resolve_owned_pure_fn<'a>(
+    name: &str,
+    owner: &FnDef,
+    inputs: &ProofLowerInputs<'a>,
+) -> Option<&'a FnDef> {
+    let id = inputs
+        .symbol_table
+        .resolve_fn_id_in(name, inputs.fn_owning_scope(owner))?;
+    let fd = inputs.find_fn_def_by_id(id)?;
+    (fd.effects.is_empty() && fd.name != "main").then_some(fd)
+}
+
 /// The power-of-two countdown shape:
 /// `match p <= 0 { true -> 1; false -> 2 * self(p - 1) }` over a
 /// single Int param, Int return. The literal base 1 and multiplier 2
@@ -416,15 +429,11 @@ fn is_binade_exp_shape(
     if ta != "Int" || tb != "Int" || fd.return_type != "Int" {
         return None;
     }
-    // Contract gate: guard-validated floor-division countdown with
-    // divisor 2 through a wrapper fn. **syntax-discovery-only**
-    // (epic #170 Phase 8 guardrail): verify laws are entry-only by
-    // parser grammar, so the cone fns a law names resolve in entry
-    // scope; a module-owned same-bare-name fn would simply fail the
-    // contract/shape gate below and the figure declines.
+    // Use the declaration's owner: an imported exponent has its own checked
+    // contract even when the entry module contains an identically named helper.
     let fn_id = inputs
         .symbol_table
-        .fn_id_of(&crate::ir::FnKey::entry(&fd.name))?;
+        .resolve_fn_id_in(&fd.name, inputs.fn_owning_scope(fd))?;
     let contract = fn_contracts.get(&fn_id)?;
     let Some(crate::ir::RecursionContract::WellFoundedToNat {
         floor_div: Some(shrink),
@@ -975,10 +984,10 @@ fn detect_sig_window(
     // The law subject fn is the significand fn; the window predicate
     // wraps it.
     let sig_fd = resolve_pure_fn(fn_name, inputs)?;
-    let window_fd = resolve_pure_fn(&window_name, inputs)?;
+    let window_fd = resolve_owned_pure_fn(&window_name, sig_fd, inputs)?;
     // Pull the pow fn name out of the window predicate's conjunction.
     let pow_name = window_pred_pow_name(window_fd, &sig_fd.name)?;
-    let pow_fd = resolve_pure_fn(&pow_name, inputs)?;
+    let pow_fd = resolve_owned_pure_fn(&pow_name, window_fd, inputs)?;
     if !is_pow2_shape(pow_fd) {
         return None;
     }
@@ -986,7 +995,7 @@ fn detect_sig_window(
         return None;
     }
     let exp_name = sig_shape_exp_name(sig_fd)?;
-    let exp_fd = resolve_pure_fn(&exp_name, inputs)?;
+    let exp_fd = resolve_owned_pure_fn(&exp_name, sig_fd, inputs)?;
     if !is_sig_shape(sig_fd, &exp_fd.name, &pow_fd.name) {
         return None;
     }

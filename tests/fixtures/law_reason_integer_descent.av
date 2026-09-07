@@ -1,0 +1,54 @@
+module IntegerDescentReason
+    intent = "Checked integer descent supports explanations and keeps recursive premises."
+    effects []
+
+fn levels(number: Int) -> Int
+    match number < 1
+        true -> 0
+        false -> 1 + levels(Int.div(number, 3))
+
+verify levels law nonnegative
+    given number: Int = [-2, 0, 1, 3, 27]
+    because nonnegativeReason(number)
+    using []
+    levels(number) >= 0 holds
+
+verify levels law rejectsLostPremises
+    given number: Int = [0, 2, 6]
+    when Int.mod(number, 2) == 0
+    because Int.mod(number, 2) == 0
+    because evenPath(number)
+    using []
+    levels(number) >= 0 holds
+
+verify levels law rejectsFalseBound
+    given number: Int = [0, 1]
+    because boundedReason(number)
+    using []
+    levels(number) <= 1 holds
+
+fn nonnegativeReason(number: Int) -> Bool
+    match number < 1
+        true -> levels(number) >= 0
+        false -> Bool.and(nonnegativeReason(Int.div(number, 3)), levels(number) >= 0)
+
+fn evenPath(number: Int) -> Bool
+    match number < 1
+        true -> true
+        false -> Bool.and(Int.mod(number, 2) == 0, evenPath(Int.div(number, 3)))
+
+fn boundedReason(number: Int) -> Bool
+    match number < 1
+        true -> levels(number) <= 1
+        false -> Bool.and(boundedReason(Int.div(number, 3)), levels(number) <= 1)
+
+fn uncheckedReason(number: Int) -> Bool
+    match number < 1
+        true -> true
+        false -> uncheckedReason(number)
+
+verify uncheckedReason law remainsOpaque
+    given number: Int = [0]
+    because uncheckedReason(number)
+    using []
+    uncheckedReason(number) holds

@@ -226,3 +226,114 @@ fn f(n: Int) -> Int
         "expected a helpful 'literal patterns beyond 64 bits' error, got:\n{combined}"
     );
 }
+
+#[test]
+fn limb_division_matches_euclidean_bigint_arithmetic() {
+    use num_bigint::BigInt;
+    use num_traits::{Signed, Zero};
+
+    let magnitudes = [
+        BigInt::zero(),
+        BigInt::from(1),
+        BigInt::from(1) << 63,
+        (BigInt::from(1) << 127) + (BigInt::from(1) << 64) + 9,
+        (BigInt::from(1) << 256) - 1,
+        BigInt::from(4_294_967_295u64) * (BigInt::from(1) << 32) - 1,
+    ];
+    let mut source = String::from(
+        r#"module WordDivision
+    effects [Console.print]
+
+fn quotient(a: Int, d: Int) -> Int
+    Result.withDefault(Int.div(a, d), 0)
+
+fn remainder(a: Int, d: Int) -> Int
+    Result.withDefault(Int.mod(a, d), 0)
+
+fn report(a: Int, d: Int) -> Unit
+    ! [Console.print]
+    Console.print("{quotient(a, d)},{remainder(a, d)}")
+
+fn main() -> Unit
+    ! [Console.print]
+"#,
+    );
+    let mut expected = Vec::new();
+    for magnitude in magnitudes {
+        for divisor in [
+            1u64,
+            2,
+            3,
+            4_294_967_295,
+            4_294_967_296,
+            4_294_967_297,
+            9_223_372_036_854_775_811,
+            u64::MAX,
+        ]
+        .map(BigInt::from)
+        .into_iter()
+        .chain([
+            (BigInt::from(1) << 127) - 1,
+            (BigInt::from(1) << 128) + 3,
+            (BigInt::from(1) << 255) + 1,
+        ]) {
+            for a_sign in [-1, 1] {
+                for d_sign in [-1, 1] {
+                    let a: BigInt = &magnitude * a_sign;
+                    let d: BigInt = &divisor * d_sign;
+                    let mut q: BigInt = &a / &d;
+                    let mut r: BigInt = &a % &d;
+                    if r.is_negative() {
+                        r += d.abs();
+                        q -= d.signum();
+                    }
+                    source.push_str(&format!("    report({a}, {d})\n"));
+                    expected.push(format!("{q},{r}"));
+                }
+            }
+        }
+    }
+    let expected = expected.join("\n");
+    for (prefix, args) in [
+        ("word-div-vm", vec!["run"]),
+        ("word-div-wasm", vec!["run", "--wasm-gc"]),
+    ] {
+        let (ok, output, err) = run(prefix, &source, &args);
+        assert!(ok, "{prefix}: {err}");
+        assert_eq!(output, expected, "{prefix}: {err}");
+    }
+}
+
+#[test]
+fn large_integer_division_fits_the_default_verify_budget() {
+    // Construct powers directly so decimal parsing is not the measured cost.
+    let source = r#"module Halving
+    effects []
+
+fn power(n: Int) -> Int
+    Result.withDefault(Bits.shiftLeft(1, n), 0)
+
+fn halveMany(value: Int, count: Int) -> Int
+    match count <= 0
+        true -> value
+        false -> halveMany(Int.div(value, 2), count - 1)
+
+verify halveMany
+    halveMany(power(4096) - 1, 64) => power(4032) - 1
+    halveMany(1 - power(4096), 64) => 0 - power(4032)
+
+fn quotient(a: Int, b: Int) -> Int
+    Result.withDefault(Int.div(a, b), 0)
+
+verify quotient
+    quotient(power(4096) - 1, power(4095) + 1) => 1
+    quotient(1 - power(4096), power(4095) + 1) => -2
+"#;
+    for (prefix, args) in [
+        ("large-halving-vm", vec!["verify"]),
+        ("large-halving-wasm", vec!["verify", "--wasm-gc"]),
+    ] {
+        let (ok, output, err) = run(prefix, source, &args);
+        assert!(ok, "{prefix}: {output}\n{err}");
+    }
+}

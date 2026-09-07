@@ -966,8 +966,8 @@ fn divmod_locals() -> &'static str {
 /// Fast path: both operands Small AND not the `i64::MIN / -1` overflow
 /// (whose ℤ quotient `+2^63` is a Big) — reuse the same i64 Euclidean
 /// arithmetic the wrapping backend emits (`i64.div_s`/`i64.rem_s` plus
-/// the rem<0 lift). Slow path: decompose, run unsigned shift-subtract
-/// long division of the magnitudes to a truncating quotient+remainder,
+/// the rem<0 lift). Slow path: decompose, divide by a one-limb divisor
+/// wordwise or use shift-subtract after skipping leading zero quotient limbs,
 /// then apply the sign rules + the Euclidean adjustment and normalize.
 ///
 /// Euclidean lift (derived from `euclid_div_rem`): when the dividend is
@@ -985,6 +985,7 @@ pub(super) fn emit_aint_divmod(registry: &TypeRegistry) -> Result<Function, Wasm
     let strip_b = strip(registry, "bm", "blen", "sb", "lb");
     // r vs |b| during long division: $rwm (stripped $rwlen) ⋛ $bm ($blen).
     let cmp_r_b = umag_cmp(registry, "rwm", "rwlen", "bm", "blen", "cmp", "j");
+    let cmp_a_b = umag_cmp(registry, "am", "alen", "bm", "blen", "cmp", "j");
     // Two normalize epilogues, one per result branch; they're in disjoint
     // `if` arms so reusing the same scratch locals is safe.
     let norm_q = normalize(registry, "rm", "rs");
@@ -1005,6 +1006,7 @@ pub(super) fn emit_aint_divmod(registry: &TypeRegistry) -> Result<Function, Wasm
         strip_a = strip_a,
         strip_b = strip_b,
         cmp_r_b = cmp_r_b,
+        cmp_a_b = cmp_a_b,
         norm_q = norm_q,
         norm_r = norm_r,
     );
@@ -1467,6 +1469,7 @@ mod validation_guard {
         let strip_a = strip(registry, "am", "alen", "sa", "la");
         let strip_b = strip(registry, "bm", "blen", "sb", "lb");
         let cmp_r_b = umag_cmp(registry, "rwm", "rwlen", "bm", "blen", "cmp", "j");
+        let cmp_a_b = umag_cmp(registry, "am", "alen", "bm", "blen", "cmp", "j");
         let norm_q = normalize(registry, "rm", "rs");
         let norm_r = normalize(registry, "rm", "rs");
         let func_pad = func_pad(&[
@@ -1485,6 +1488,7 @@ mod validation_guard {
             strip_a = strip_a,
             strip_b = strip_b,
             cmp_r_b = cmp_r_b,
+            cmp_a_b = cmp_a_b,
             norm_q = norm_q,
             norm_r = norm_r,
         )

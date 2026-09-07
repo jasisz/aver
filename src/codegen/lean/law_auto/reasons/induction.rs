@@ -1,4 +1,4 @@
-//! Functional induction for explanations with an existing checked list measure.
+//! Functional induction for explanations with an existing checked recursion measure.
 //! Recursion contracts and kernel-generated equations remain the source of truth.
 
 use std::collections::{BTreeMap, HashSet};
@@ -44,7 +44,14 @@ pub(super) fn plan(expr: &Spanned<Expr>, law: &VerifyLaw, ctx: &CodegenContext) 
     if !fd.effects.is_empty() {
         return None;
     }
-    let measure = list_measure(fd, ctx)?;
+    let measure = list_measure(fd, ctx);
+    let native_integer = matches!(
+        common::find_fn_contract_for_fn(ctx, fd).and_then(|c| c.recursion.as_ref()),
+        Some(crate::ir::RecursionContract::WellFoundedToNat { .. })
+    );
+    if measure.is_none() && !native_integer {
+        return None;
+    }
     let Expr::FnCall(_, args) = &expr.node else {
         return None;
     };
@@ -60,6 +67,11 @@ pub(super) fn plan(expr: &Spanned<Expr>, law: &VerifyLaw, ctx: &CodegenContext) 
             return None;
         }
     }
+    if native_integer {
+        let call = emit_expr(&resolve_rewrite_output(expr, ctx, None), ctx);
+        return Some(format!("fun_induction {call}"));
+    }
+    let measure = measure?;
     let position = fd.params.iter().position(|(name, _)| name == measure)?;
     let (Expr::Ident(argument) | Expr::Resolved { name: argument, .. }) = &args.get(position)?.node
     else {
@@ -92,6 +104,7 @@ pub(super) fn plan(expr: &Spanned<Expr>, law: &VerifyLaw, ctx: &CodegenContext) 
 pub(super) struct Definitions {
     pub(super) simp: String,
     pub(super) grind: String,
+    pub(super) unfold_once: Vec<(String, bool)>,
 }
 
 pub(super) fn definitions(law: &VerifyLaw, ctx: &CodegenContext) -> Definitions {
@@ -101,6 +114,7 @@ pub(super) fn definitions(law: &VerifyLaw, ctx: &CodegenContext) -> Definitions 
         ctx: &CodegenContext,
         seen: &mut HashSet<crate::ir::FnId>,
         out: &mut BTreeMap<String, bool>,
+        unfold_once: &mut Vec<String>,
     ) {
         if let Some(fd) = callee(expr, ctx, scope)
             && fd.effects.is_empty()
@@ -118,29 +132,46 @@ pub(super) fn definitions(law: &VerifyLaw, ctx: &CodegenContext) -> Definitions 
                     ..
                 })
             );
+            if matches!(
+                common::find_fn_contract_for_fn(ctx, fd).and_then(|c| c.recursion.as_ref()),
+                Some(crate::ir::RecursionContract::WellFoundedToNat {
+                    floor_div: Some(_),
+                    ..
+                })
+            ) {
+                unfold_once.push(lean_name(fd, ctx));
+            }
             if !recursive || list_measure(fd, ctx).is_some() || subtractive {
                 out.insert(lean_name(fd, ctx), recursive);
             }
             let owner = common::fn_owning_scope_for(ctx, fd);
             for stmt in fd.body.stmts() {
                 let (Stmt::Expr(body) | Stmt::Binding(_, _, body)) = stmt;
-                visit(body, owner, ctx, seen, out);
+                visit(body, owner, ctx, seen, out, unfold_once);
             }
         }
         crate::codegen::expr_walk::for_each_child(expr, &mut |child| {
-            visit(child, scope, ctx, seen, out)
+            visit(child, scope, ctx, seen, out, unfold_once)
         });
     }
     let scope = ctx.active_module_scope();
     let mut seen = HashSet::new();
     let mut out = BTreeMap::new();
+    let mut unfold_once = Vec::new();
     for expr in law
         .because
         .iter()
         .chain([&law.lhs, &law.rhs])
         .chain(law.when.iter())
     {
-        visit(expr, scope.as_deref(), ctx, &mut seen, &mut out);
+        visit(
+            expr,
+            scope.as_deref(),
+            ctx,
+            &mut seen,
+            &mut out,
+            &mut unfold_once,
+        );
     }
     // A mutual helper's original equation is available only when the same
     // checked measure that emits its native definition succeeds. Fuel remains opaque.
@@ -173,6 +204,15 @@ pub(super) fn definitions(law: &VerifyLaw, ctx: &CodegenContext) -> Definitions 
         }
     }
     Definitions {
+        unfold_once: unfold_once
+            .into_iter()
+            .map(|name| {
+                let reason = law.because.iter().any(|expr| {
+                    callee(expr, ctx, scope.as_deref()).is_some_and(|fd| lean_name(fd, ctx) == name)
+                });
+                (name, reason)
+            })
+            .collect(),
         simp: out
             .iter()
             .filter(|(_, recursive)| !**recursive)
