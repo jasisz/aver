@@ -1953,7 +1953,14 @@ pub(crate) fn law_as_lemma_statement(
         && crate::codegen::common::all_givens_are_singletons(law)
         && crate::codegen::common::law_rhs_is_independent_of_givens(law);
     let unclassified = crate::codegen::common::unclassified_fn_names(ctx);
-    if singleton_const_rhs || crate::codegen::common::law_calls_unclassified_fn(law, &unclassified)
+    // Guided laws are emitted as universal statements even when the automatic
+    // sample/fuel heuristics would skip one. Match that emission policy here:
+    // their examples do not restrict citation. A failed proof still propagates
+    // sorryAx through the ordinary transitive credit audit.
+    let guided = !law.because.is_empty() || law.using.is_some();
+    if !guided
+        && (singleton_const_rhs
+            || crate::codegen::common::law_calls_unclassified_fn(law, &unclassified))
     {
         return None;
     }

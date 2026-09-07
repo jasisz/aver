@@ -1,0 +1,41 @@
+module SingletonCitation
+    depends [Lib]
+    intent = "Imported guided singleton laws remain citable without granting false proof credit."
+    effects []
+
+fn identity(n: Int) -> Int
+    n
+
+verify identity law same
+    given n: Int = [0, 1]
+    using []
+    identity(n) => n
+
+fn checked(n: Int) -> Bool
+    Lib.inRange(Lib.Bounds(lower = 0), n)
+
+verify checked law explainedHelper
+    given n: Int = [1, 2]
+    when n >= 1
+    because identity(n) == n
+    because Lib.inRange(Lib.Bounds(lower = 0), n)
+    using [identity.same, Lib.inRange.explained]
+    checked(n) holds
+
+verify checked law usingOnlyHelper
+    given n: Int = [1, 2]
+    when n >= 1
+    because identity(n) == n
+    because Lib.inRange(Lib.Bounds(lower = 0), n)
+    using [identity.same, Lib.inRange.citedOnly]
+    checked(n) holds
+
+fn asserted(n: Int) -> Bool
+    Lib.positive(n)
+
+verify asserted law taintedHelper
+    given n: Int = [1, 2]
+    because identity(n) == n
+    because Lib.positive(n)
+    using [identity.same, Lib.positive.falseUniversal]
+    asserted(n) holds

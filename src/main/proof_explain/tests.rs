@@ -50,6 +50,34 @@ fn helper_suggestions_require_a_source_law_without_explicit_reasons() {
 }
 
 #[test]
+fn unavailable_citations_are_not_reported_as_missing_mathematical_premises() {
+    let source = "fn f(x: Int) -> Int\n    x\nverify f law chain\n    given x: Int = [1]\n    because x == x\n    using []\n    f(x) => x\n";
+    let catalog = catalog(source, None, "source.av");
+    let reports = collect(
+        &catalog,
+        None,
+        &["f.chain.because1".into()],
+        "unused",
+        "info: Entry.lean:8:2: AVER_REASON_OPEN:f.chain.because1:dependency has no available theorem\n",
+    );
+    let report = &reports["f.chain.because1"];
+    assert_eq!(report["status"], "citation_unavailable");
+    assert_eq!(report["goal"], "x == x");
+    assert!(
+        report["next"]
+            .as_str()
+            .unwrap()
+            .contains("already universally checked")
+    );
+    assert!(
+        !report["next"]
+            .as_str()
+            .unwrap()
+            .contains("missing intermediate fact")
+    );
+}
+
+#[test]
 fn explanations_show_only_earlier_reasons_and_instantiated_requirements() {
     let source = include_str!("../../../tests/fixtures/law_reason_constant_citation.av");
     let catalog = catalog(source, None, "source.av");

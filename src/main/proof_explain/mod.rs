@@ -133,6 +133,8 @@ pub(super) fn collect(
             "Report the checker error at this source step, with proof_backend.log from the output directory. The error does not identify a missing mathematical premise."
         } else if failure.status == "checker_limit" {
             "Split this step into smaller because expressions or a helper law; the checker did not finish the current proof."
+        } else if failure.status == "citation_unavailable" {
+            "Check that each selected law can be cited at this step. If the cited laws are already universally checked, report this diagnostic with proof_backend.log."
         } else if reason.is_none() && !law.body.because.is_empty() {
             "Connect the earlier because statements to the final claim. A proved intermediate statement does not by itself establish this implication."
         } else if citations
