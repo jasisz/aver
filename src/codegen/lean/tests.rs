@@ -77,7 +77,6 @@ fn empty_ctx() -> CodegenContext {
         sample_expected: std::collections::HashMap::new(),
         declined_cases: std::collections::HashMap::new(),
         allow_mathlib: false,
-        hand_proofs: Default::default(),
     }
 }
 

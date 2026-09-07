@@ -1063,15 +1063,8 @@ fn emit_verify_law_block(
         Some(crate::ir::ProofStrategy::FiniteDomainCases { .. })
             | Some(crate::ir::ProofStrategy::TailRecFixedBaseFold { .. })
     );
-    // A hand-proof sidecar FORCES the universal statement: the spliced body
-    // proves `∀ givens, <when> = true -> <claim>`, so the law must be emitted
-    // in universal (not skipped / sample-only) form regardless of the auto
-    // gates above. (`recognize_hand_sidecar` keys on the loaded sidecar map; no
-    // sidecar => false => byte-identical to before.)
-    let has_hand_sidecar = super::law_auto::recognize_hand_sidecar(ctx, vb, law);
     let guided = !law.because.is_empty() || law.using.is_some();
-    let skip_universal = !has_hand_sidecar
-        && !guided
+    let skip_universal = !guided
         && (singleton_const_rhs
             || ((calls_fuel_bounded || calls_foreign_acc_fold) && !pinned_self_universal));
     // Oracle v1: the auto-proof matchers compare law.lhs / law.rhs ASTs. For
@@ -1104,11 +1097,7 @@ fn emit_verify_law_block(
     // the same recognizer.
     let conditional_universal = law.when.is_some()
         && lifted_vars.is_empty()
-        && (
-            // A hand-proof sidecar proves the true-universal `∀ givens, <when> =
-            // true -> claim`, so drop the sampled domain and class it universal
-            // (statement and spliced proof stay in lockstep).
-            has_hand_sidecar || guided
+        && (guided
             // Clique-propagated position-monotonicity (`when F(s, pos) ==
             // ok(v, p) -> p >= pos`) over a self-contained parser SCC: proven
             // universally by the rank-slotted `induction fuel` conjunction and
@@ -1212,19 +1201,8 @@ fn emit_verify_law_block(
             // structural case — a list-length homomorphism — has no sampled domain to
             // drop and is classed universal by the default unconditional path.)
             || super::law_auto::recognize_homomorphism(vb, &law_for_auto_proof, ctx)
-            // Nested-Euclidean-floor collapse (`floor (floor a d) e = floor a
-            // (d * e)`, positive divisors): proven universally in pure core by
-            // `Int.ediv_ediv_of_nonneg`. The emit replaces the theorem with the
-            // universal form, so dropping the sampled domain keeps statement and
-            // proof aligned.
-            || super::law_auto::recognize_nested_floor(&law_for_auto_proof, ctx)
-            // Euclidean-floor arithmetic: shared positive-factor cancellation
-            // (`floor (a * c) (d * c) = floor a d`) and bounded-remainder
-            // absorption (`floor (d * q + r) d = q`), proven universally in pure
-            // core. Each emit replaces the theorem with the universal form, so
-            // dropping the sampled domain keeps statement and proof aligned.
-            || super::law_auto::recognize_cancel_common_factor(vb, &law_for_auto_proof, ctx)
-            || super::law_auto::recognize_absorb_remainder(vb, &law_for_auto_proof, ctx)
+            // Use the same admission as the citation pool for universal floor laws.
+            || super::law_auto::recognize_universal_floor_law(vb, &law_for_auto_proof, ctx)
             // Rational-order chaining law (the reciprocal-magnitude composition,
             // Lemma 8.2.4): the conclusion is the Fraction order fact `isNonNeg
             // (minus (pow2Signed BIG) A)`, proven universally by chaining the
@@ -1269,8 +1247,7 @@ fn emit_verify_law_block(
             // byte-identical and a core-claimed law keeps its core (non-Mathlib)
             // proof. Kept in lockstep with the `emit_mathlib_break_glass_law` arm
             // (also last in the proof cascade).
-            || super::law_auto::recognize_mathlib_break_glass(ctx, &law_for_auto_proof)
-        );
+            || super::law_auto::recognize_mathlib_break_glass(ctx, &law_for_auto_proof));
     let mut universal_fell_to_sorry = false;
     // The universal statement of the theorem the law-class marker names, as
     // the emitter assembled it — the certificate producer's law-claim is built
@@ -1927,6 +1904,7 @@ pub(crate) fn law_as_lemma_statement(
             || super::law_auto::recognize_interval_monotonicity(vb, law, ctx)
             || super::law_auto::recognize_transparent_chain(vb, law, ctx)
             || super::law_auto::recognize_validated_wrapper(vb, law, ctx)
+            || super::law_auto::recognize_universal_floor_law(vb, law, ctx)
             || pinned_when_universal)
     {
         return None;

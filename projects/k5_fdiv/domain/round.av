@@ -108,7 +108,6 @@ verify floorDiv law nestedFloorCollapse
 // pure core over Int.mul_ediv_mul_of_pos_left -- no power-of-two or K5 literal
 // in the recognizer, so the same rung fires on any Euclidean-floor fn. One of
 // the two citable links the trunc-sticky coarsening chain rewrites through
-// (the sidecar re-derived this inline as its `cancel` have).
 
 verify floorDiv law cancelCommonFactor
     given a: Int = [13, 3, 1]
@@ -123,7 +122,7 @@ verify floorDiv law cancelCommonFactor
 // absorb-remainder floor strategy closes it in pure core over
 // Int.add_mul_ediv_left + Int.ediv_eq_zero_of_lt. The second citable link: the
 // doubled round-to-odd low bit b in {0, 1} is the remainder absorbed under the
-// divisor 2 (the sidecar re-derived this inline as its `absorb2` have).
+// divisor 2.
 
 verify floorDiv law absorbRemainder
     given d: Int = [2, 3, 5]
@@ -561,37 +560,12 @@ verify truncStickyComposes
 // bits discards it and recovers trunc(x,m). The paper's m, n are positive
 // integers (1 <= m < n), on a normalized significand (width >= 1).
 //
-// UNIVERSAL on the Lean kernel, via an EXPLICIT HAND-PROOF SIDECAR
-// (proofs/lean/truncStickyComposes__composesThroughSticky.lean), re-checked by
-// the kernel every build; credit `hand`, never auto. After unfolding, both
-// significands reduce to a nested Euclidean floor that coarsens away the doubled
-// round-to-odd low bit:
-//   floor((2*floor(s*2^(n-2) / 2^(width-1)) + b) * 2^(m-1) / 2^(n-1)) = floor(s*2^(m-1) / 2^(width-1)),  b in {0,1}.
-// This is nonlinear power-of-two floor (bit) algebra with a doubled round-to-odd
-// low bit -- the one composition the generic exact-cancel does not reach. There
-// is no honest GENERIC (claim-shape) strategy for it yet: a bespoke "power-of-two
-// floor" figure keyed on this exact identity would be a per-figure template
-// disguised as generic, which the laws-as-lemmas discipline declines. So it is
-// discharged where every real prover puts such a lemma -- a labeled hand proof
-// living beside this pure spec. The sidecar CITES the proven pool laws (the pow2
-// homomorphism from fprep, the nested-floor collapse, and positivity) rather than
-// re-proving them, and drives the exponent regrouping (2^(n-1) = 2^(n-m)*2^(m-1),
-// 2^(n-m) = 2*2^(n-m-1)) by hand. The two shape-only floor facts it re-derives
-// inline (its `cancel` / `absorb2` haves) are now also citable pool laws in this
-// module -- cancelCommonFactor and absorbRemainder above. A wrong or stale sidecar
-// fails the build loudly and earns no credit.
-//
-// GRADUATION MEASURED NOT VIABLE (2026-07-02): the equality-saturation proposer
-// platform landed, and its floorDiv pool laws + the pow2 homomorphism ARE legal
-// e-graph rules, but running `connect` on the two coarsening endpoints DECLINES
-// (measured under a generous budget; in-crate test coarsening_chain_is_a_saturation_
-// boundary). The spike's ~253us figure was the pow2 REGROUPING sub-identity with
-// both split sides seeded, NOT this full directed chain: bottom-up saturation only
-// rewrites existing subterms, so it cannot INVENT the m-boundary split exponents
-// (n-m, n-m-1) the chain pivots on, nor apply the pow2 definitional unfold
-// pow2(k)=2*pow2(k-1) its e2 step needs. The generic replacement therefore awaits a
-// proposer that INTRODUCES those splits (a goal-analysis feeder), not saturation
-// over the endpoints; until then the sidecar remains the mechanism.
+// The integer coarsening core is now proved with source-local because/using in
+// sticky_int.av. This normalized floating-point composition still needs its own
+// source argument connecting the scale exponents and represented significands.
+// The former hand-written Lean sidecar has been removed; this law remains an
+// open universal claim until that argument is checked. Sample cases above are
+// executable evidence only.
 
 verify truncStickyComposes law composesThroughSticky
     given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), Domain.Fprep.Fp(sign = 1, sigBits = 12, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 11, exp = 1, width = 4)]

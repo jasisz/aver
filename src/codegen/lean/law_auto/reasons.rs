@@ -117,12 +117,23 @@ fn solver(
     .filter(|s| !s.is_empty())
     .collect::<Vec<_>>()
     .join(", ");
-    vec![
+    let mut lines = vec![
         format!("{indent}first"),
         format!("{indent}| (simp_all +zetaDelta [{simp_defs}]; done)"),
-        format!("{indent}| ((try simp only [List.contains_eq_mem]); grind [{grind_defs}])"),
-        format!("{indent}| (trace \"AVER_REASON_OPEN:{label}\"; trace_state; sorry)"),
-    ]
+    ];
+    // Apply a cited conclusion before arithmetic normalization can erase its
+    // matching syntax. This is one theorem application, with every remaining
+    // premise checked from the current context; no recursive rewrite loop.
+    for i in 0..fact_count {
+        lines.push(format!("{indent}| (simp only [Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq] at *; apply _fact{i} <;> (first | assumption | omega))"));
+    }
+    lines.push(format!(
+        "{indent}| ((try simp only [List.contains_eq_mem]); grind [{grind_defs}])"
+    ));
+    lines.push(format!(
+        "{indent}| (trace \"AVER_REASON_OPEN:{label}\"; trace_state; sorry)"
+    ));
+    lines
 }
 
 pub(in crate::codegen::lean) fn emit_reason_law(

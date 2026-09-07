@@ -124,19 +124,17 @@ pub(in crate::codegen::lean) use recursive_mono::{
     recognize_recursive_monotone, recognize_recursive_positive,
 };
 
-/// Content-blind nested-Euclidean-floor collapse rung — `floor (floor a d) e =
-/// floor a (d * e)` for positive divisors, closed in pure core by
-/// `Int.ediv_ediv_of_nonneg`. Feeds the `omit_domain` statement driver, kept in
-/// lockstep with `emit_nested_floor_law`.
-pub(in crate::codegen::lean) use nested_floor::recognize_nested_floor;
-
-/// Content-blind Euclidean-floor arithmetic rungs — `floor (a * c) (d * c) =
-/// floor a d` (shared positive factor cancel) and `floor (d * q + r) d = q`
-/// (bounded-remainder absorption), closed in pure core. Both feed the
-/// `omit_domain` statement driver, kept in lockstep with their emits.
-pub(in crate::codegen::lean) use floor_arith::{
-    recognize_absorb_remainder, recognize_cancel_common_factor,
-};
+/// These floor laws emit universal guarded statements. Share admission between
+/// theorem emission and the citation pool so `using` can consume the same facts.
+pub(in crate::codegen::lean) fn recognize_universal_floor_law(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+) -> bool {
+    nested_floor::recognize_nested_floor(law, ctx)
+        || floor_arith::recognize_cancel_common_factor(vb, law, ctx)
+        || floor_arith::recognize_absorb_remainder(vb, law, ctx)
+}
 
 /// Content-blind homomorphism rung — the name-blind, shape-only recognizer for
 /// `subject(OP1(a, b)) = OP2(subject(a), subject(b))` (subject recursive, OP1 /
@@ -290,50 +288,6 @@ fn sum_carrier_given_names(law: &VerifyLaw, ctx: &CodegenContext) -> Vec<String>
         .collect()
 }
 
-/// Whether a hand-proof SIDECAR exists for this law in the active backend's
-/// loaded map (`CodegenContext::hand_proofs`, keyed on the source `(fn, law)`
-/// identity). Read by `emit_verify_law_block` to FORCE the true-universal
-/// statement (drop the sampled domain, keep the `when` premise) so the spliced
-/// hand body proves the universal claim, and by the proof cascade to splice
-/// that body. A law with no sidecar returns `false` — byte-identical to before.
-pub(in crate::codegen::lean) fn recognize_hand_sidecar(
-    ctx: &CodegenContext,
-    vb: &VerifyBlock,
-    law: &VerifyLaw,
-) -> bool {
-    ctx.hand_proofs
-        .contains_key(&(vb.fn_name.clone(), law.name.clone()))
-}
-
-/// Splice a hand-proof sidecar as the law's proof body. HIGHEST precedence in
-/// the cascade: a sidecar is a deliberate, source-controlled hand proof for a
-/// genuinely-hard law the generic engine cannot close, so it overrides every
-/// auto recognizer below. The body is emitted VERBATIM after the standard
-/// `theorem <base> : ∀ givens, <when> = true -> <claim> := by` header
-/// (`replaces_theorem = false`) and re-checked by `lake build` — a WRONG or
-/// STALE body is a loud build error, and the `#print axioms` whitelist still
-/// gates universal credit, so the sidecar is kernel-CHECKED, never trusted.
-/// The body may CITE earlier-emitted sibling law theorems by their stable
-/// `<fn>_law_<law>` names (composition by citation), since they appear before
-/// this theorem in the same module file.
-fn emit_hand_sidecar_law(
-    vb: &VerifyBlock,
-    law: &VerifyLaw,
-    ctx: &CodegenContext,
-) -> Option<AutoProof> {
-    let body = ctx
-        .hand_proofs
-        .get(&(vb.fn_name.clone(), law.name.clone()))?;
-    Some(AutoProof {
-        support_lines: Vec::new(),
-        body: crate::codegen::lean::tactic_ir::Tactic::raw(
-            body.lines().map(str::to_string).collect(),
-        ),
-        replaces_theorem: false,
-        first_arm_is_guaranteed_closer: false,
-    })
-}
-
 #[allow(clippy::too_many_arguments)]
 pub fn emit_verify_law_forall_auto_proof(
     vb: &VerifyBlock,
@@ -378,7 +332,6 @@ pub fn emit_verify_law_forall_auto_proof(
     // hiding composition merely by supplying its own `sorry` floor.
     if !proof.replaces_theorem
         && !proof.first_arm_is_guaranteed_closer
-        && !recognize_hand_sidecar(ctx, vb, law)
         && !proof
             .body
             .render()
@@ -444,12 +397,6 @@ fn maybe_wrap_with_grind_rung(
     // body to prepend a `grind` arm onto, and the RingIdentity family
     // already runs `grind` internally. Leave them untouched.
     if proof.replaces_theorem {
-        return proof;
-    }
-    // A hand-proof sidecar is a deliberate, complete proof — never prepend an
-    // auto `grind` arm to it (it owns its own tactic body and may end in a
-    // genuine closer the rung would needlessly race).
-    if recognize_hand_sidecar(ctx, vb, law) {
         return proof;
     }
     // A `when`-premised law introduces extra hypotheses (`h_when`, …)
@@ -660,15 +607,6 @@ fn emit_verify_law_forall_auto_proof_inner(
 ) -> Option<AutoProof> {
     if verify_mode != VerifyEmitMode::NativeDecide {
         return None;
-    }
-
-    // HAND-PROOF SIDECAR — highest precedence. A persistent, source-controlled
-    // tactic body for this law overrides every auto recognizer below. Spliced
-    // VERBATIM and re-checked by lake; the `#print axioms` whitelist still gates
-    // universal credit, so a wrong/stale sidecar fails the build loudly and is
-    // denied credit (kernel-CHECKED, never trusted).
-    if let Some(proof) = emit_hand_sidecar_law(vb, law, ctx) {
-        return Some(proof);
     }
 
     let intro_names: Vec<String> = law

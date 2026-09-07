@@ -1,18 +1,13 @@
 module StickyInt
     intent =
-        "The hand-proof-tier demo of the K5 prover. truncSig(A, drop) is the"
-        "integer significand truncation floor(A / 2^drop); stickySig(A, dn) is"
-        "round-to-odd: shift right by dn, keep one sticky low bit (the OR of the"
-        "dropped bits). The law truncStickyInt is the integer-model trunc-sticky"
-        "COMPOSITION -- truncating a sticky-rounded value by jt equals truncating"
-        "the original by dn + jt - 1. It is the shape of the §7.3 sticky-rounding"
-        "composition the generic engine cannot find a proof for, so it carries a"
-        "LABELED, kernel-checked HAND proof in proofs/lean/truncSig__truncStickyInt.lean."
-        "The pow2 homomorphism (pow2(m+n) = pow2(m)*pow2(n)) and positivity"
-        "(pow2(k) >= 1) laws below auto-prove generically; the hand proof CITES"
-        "their generated theorems (composition by citation), proving the genuinely"
-        "hard ediv case-split itself. sigDouble's doubleIsTwice carries a small"
-        "Dafny hand sidecar -- the symmetric splice demo on the other backend."
+        "Integer significand truncation and round-to-odd composition for K5."
+        "truncSig drops low bits; stickySig retains one bit recording whether"
+        "any discarded bit was set. Truncating that result more coarsely gives"
+        "the same integer as truncating the original directly. The proof is"
+        "ordinary Aver: powers of two split the scale, nested floors compose,"
+        "and the final truncation discards either value of the sticky bit."
+        "Each because is checked and using selects the proved identities."
+        "The independent sigDouble law also exercises automatic arithmetic proof."
     exposes [pow2, floorDiv, truncSig, stickySig, sigDouble]
     effects []
 
@@ -27,9 +22,8 @@ verify pow2
     pow2(1) => 2
     pow2(3) => 8
 
-// The power-of-two homomorphism: adding exponents multiplies scales. Auto-proven
-// generically (content-blind homomorphism rung); the hand proof of truncStickyInt
-// CITES this law's generated theorem to collapse pow2(dn + jt - 1) and pow2(jt).
+// Adding nonnegative exponents multiplies their scales.
+
 verify pow2 law homomorphism
     given m: Int = [0, 1, 4]
     given n: Int = [0, 2, 3]
@@ -37,12 +31,17 @@ verify pow2 law homomorphism
     when n >= 0
     pow2(m + n) => pow2(m) * pow2(n)
 
-// The power of two is always at least one. Auto-proven generically (recursive
-// positivity); the hand proof CITES it to discharge the floorDiv non-zero-divisor
-// guards (pow2 d != 0).
+// Every scale is positive, including the clamped nonpositive-exponent case.
+
 verify pow2 law positive
     given k: Int = [0, 1, 4]
     pow2(k) >= 1 holds
+
+verify pow2 law successor
+    given k: Int = [1, 2, 5]
+    when k >= 1
+    using []
+    pow2(k) => 2 * pow2(k - 1)
 
 fn floorDiv(a: Int, d: Int) -> Int
     ? "Total Euclidean floor division a / d (0 when d == 0): the digit-dropping shift."
@@ -52,6 +51,43 @@ verify floorDiv
     floorDiv(7, 2) => 3
     floorDiv(8, 4) => 2
 
+verify floorDiv law nestedFloorCollapse
+    given a: Int = [-13, 0, 7, 52]
+    given d: Int = [1, 2, 3, 8]
+    given e: Int = [1, 2, 5]
+    when 0 < d
+    when 0 < e
+    floorDiv(floorDiv(a, d), e) => floorDiv(a, d * e)
+
+verify floorDiv law cancelCommonFactor
+    given value: Int = [-13, 0, 52]
+    given divisor: Int = [1, 2, 5]
+    given factor: Int = [2, 3]
+    when divisor > 0
+    when factor > 0
+    floorDiv(factor * value, factor * divisor) => floorDiv(value, divisor)
+
+verify floorDiv law absorbRemainder
+    given d: Int = [2, 3, 5]
+    given q: Int = [-7, 0, 4, 6]
+    given r: Int = [0, 1, 2]
+    when 0 < d
+    when 0 <= r
+    when r < d
+    floorDiv(d * q + r, d) => q
+
+verify floorDiv law lowBitDrops
+    given q: Int = [-13, 0, 3, 7]
+    given bit: Int = [0, 1]
+    given scale: Int = [1, 2, 5]
+    when 0 <= bit
+    when bit < 2
+    when scale >= 1
+    because floorDiv(2 * q + bit, 2) == q
+    because floorDiv(floorDiv(2 * q + bit, 2), scale) == floorDiv(2 * q + bit, 2 * scale)
+    using [floorDiv.absorbRemainder, floorDiv.nestedFloorCollapse]
+    floorDiv(2 * q + bit, 2 * scale) => floorDiv(q, scale)
+
 fn truncSig(A: Int, drop: Int) -> Int
     ? "Truncated significand: floor(A / 2^drop), the kept high bits after dropping `drop` low bits."
     floorDiv(A, pow2(drop))
@@ -59,6 +95,20 @@ fn truncSig(A: Int, drop: Int) -> Int
 verify truncSig
     truncSig(13, 2) => 3
     truncSig(8, 1) => 4
+
+verify truncSig law truncStickyInt
+    given A: Int = [-257, -13, -1, 0, 1, 8, 13, 257]
+    given dn: Int = [0, 1, 2, 8]
+    given jt: Int = [0, 1, 2, 3, 6]
+    when dn >= 0
+    when jt >= 1
+    because pow2(jt) == 2 * pow2(jt - 1)
+    because pow2(dn + jt - 1) == pow2(dn) * pow2(jt - 1)
+    because floorDiv(floorDiv(A, pow2(dn)), pow2(jt - 1)) == floorDiv(A, pow2(dn + jt - 1))
+    because floorDiv(2 * floorDiv(A, pow2(dn)), 2 * pow2(jt - 1)) == floorDiv(floorDiv(A, pow2(dn)), pow2(jt - 1))
+    because floorDiv(2 * floorDiv(A, pow2(dn)) + 1, 2 * pow2(jt - 1)) == floorDiv(floorDiv(A, pow2(dn)), pow2(jt - 1))
+    using [pow2.homomorphism, pow2.positive, pow2.successor, floorDiv.nestedFloorCollapse, floorDiv.cancelCommonFactor, floorDiv.lowBitDrops]
+    truncSig(stickySig(A, dn), jt) => truncSig(A, dn + jt - 1)
 
 fn stickySig(A: Int, dn: Int) -> Int
     ? "Round-to-odd at position dn: shift right by dn, append one sticky bit (1 iff any dropped bit set). Value is 2*floor(A/2^dn) + (A mod 2^dn != 0)."
@@ -70,24 +120,15 @@ verify stickySig
     stickySig(13, 2) => 7
     stickySig(8, 2) => 4
 
-// THE hand-proof demo law (§7.3 trunc-sticky composition, integer model). The
-// generic engine cannot find a proof; proofs/lean/truncSig__truncStickyInt.lean
-// supplies a labeled, kernel-checked hand proof that closes it UNIVERSALLY.
-verify truncSig law truncStickyInt
-    given A: Int = [8, 13]
-    given dn: Int = [1, 2]
-    given jt: Int = [1, 2]
-    when dn >= 0
-    when jt >= 1
-    truncSig(stickySig(A, dn), jt) => truncSig(A, dn + jt - 1)
+// Split the final scale into twice a coarser scale, then compose the two
+// divisions. Both possible sticky bits disappear at that coarser boundary.
+// There is no bound on the significand or the two shift counts.
 
 fn sigDouble(x: Int) -> Int
-    ? "Doubling: x + x. A trivial pure fn carrying the Dafny hand-sidecar demo."
+    ? "Doubling: x + x, checked against multiplication by two."
     x + x
 
-// The symmetric DAFNY hand-sidecar demo (proofs/dafny/sigDouble__doubleIsTwice.dfy).
-// Z3 closes this from nothing, so the spliced hand body is what verifies it -- a
-// minimal proof that the Dafny splice + per-backend `hand` credit works.
+// The same elementary identity can be proved automatically by both backends.
 verify sigDouble law doubleIsTwice
     given x: Int = [0, 3, -4]
     sigDouble(x) => 2 * x

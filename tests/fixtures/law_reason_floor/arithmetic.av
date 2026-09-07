@@ -1,0 +1,32 @@
+module Arithmetic
+    intent = "Total floor division with reusable guarded identities."
+    exposes [quotient]
+    effects []
+
+fn quotient(value: Int, divisor: Int) -> Int
+    Result.withDefault(Int.div(value, divisor), 0)
+
+verify quotient law nested
+    given value: Int = [-13, 0, 52]
+    given first: Int = [2, 3]
+    given second: Int = [2, 5]
+    when first > 0
+    when second > 0
+    quotient(quotient(value, first), second) => quotient(value, first * second)
+
+verify quotient law cancel
+    given value: Int = [-13, 0, 52]
+    given divisor: Int = [2, 3]
+    given factor: Int = [2, 5]
+    when divisor > 0
+    when factor > 0
+    quotient(value * factor, divisor * factor) => quotient(value, divisor)
+
+verify quotient law absorb
+    given divisor: Int = [2, 3]
+    given whole: Int = [-13, 0, 52]
+    given rest: Int = [0, 1]
+    when divisor > 0
+    when 0 <= rest
+    when rest < divisor
+    quotient(divisor * whole + rest, divisor) => whole

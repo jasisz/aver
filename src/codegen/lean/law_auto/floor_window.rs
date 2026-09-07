@@ -656,7 +656,7 @@ theorem {base}__floor_window (a d : Int) (hd : 0 < d) :
     d * ({floor} a d) <= a ∧ a < d * ({floor} a d + 1) := by
   rw [{base}__floordiv_eq a d hd]
   have hd0 : d ≠ 0 := by omega
-  have heq := Int.ediv_add_emod a d
+  have heq := Int.mul_ediv_add_emod a d
   have h0 := Int.emod_nonneg a hd0
   have h1 := Int.emod_lt_of_pos a hd
   have hexp : d * (a / d + 1) = d * (a / d) + d := by rw [Int.mul_add, Int.mul_one]
