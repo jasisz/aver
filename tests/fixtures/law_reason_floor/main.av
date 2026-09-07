@@ -1,0 +1,33 @@
+module Main
+    intent = "Compose independently proved floor identities across a module boundary."
+    depends [Arithmetic]
+    effects []
+
+fn scaled(value: Int, divisor: Int, factor: Int, second: Int) -> Int
+    Arithmetic.quotient(Arithmetic.quotient(value * factor, divisor * factor), second)
+
+verify scaled law cancelsThenDivides
+    given value: Int = [-13, 0, 52]
+    given divisor: Int = [2, 3]
+    given factor: Int = [2, 5]
+    given second: Int = [2, 5]
+    when divisor > 0
+    when factor > 0
+    when second > 0
+    because Arithmetic.quotient(value * factor, divisor * factor) == Arithmetic.quotient(value, divisor)
+    using [Arithmetic.quotient.cancel, Arithmetic.quotient.nested]
+    scaled(value, divisor, factor, second) => Arithmetic.quotient(value, divisor * second)
+
+fn discardLowBit(whole: Int, bit: Int, scale: Int) -> Int
+    Arithmetic.quotient(2 * whole + bit, 2 * scale)
+
+verify discardLowBit law coarsens
+    given whole: Int = [-13, 0, 52]
+    given bit: Int = [0, 1, 2]
+    given scale: Int = [1, 2, 5]
+    when 0 <= bit
+    when bit < 2
+    when scale > 0
+    because Arithmetic.quotient(2 * whole + bit, 2) == whole
+    using [Arithmetic.quotient.absorb, Arithmetic.quotient.nested]
+    discardLowBit(whole, bit, scale) => Arithmetic.quotient(whole, scale)

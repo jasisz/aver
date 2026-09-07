@@ -39,6 +39,8 @@ mod dependency_effects;
 mod entry_opens;
 #[path = "proof_spec/export_structure.rs"]
 mod export_structure;
+#[path = "proof_spec/floor_citations.rs"]
+mod floor_citations;
 #[path = "proof_spec/floor_window.rs"]
 mod floor_window;
 #[path = "proof_spec/fuel_when_cites.rs"]
@@ -67,6 +69,8 @@ mod reason_rough_edges;
 mod recursive_law_reasons;
 #[path = "proof_spec/scc_list_drop.rs"]
 mod scc_list_drop;
+#[path = "proof_spec/source_only.rs"]
+mod source_only;
 #[path = "proof_spec/wf_fuel.rs"]
 mod wf_fuel;
 #[path = "proof_spec/when_lane.rs"]

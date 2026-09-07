@@ -7707,55 +7707,6 @@ pub(super) struct CompileOptions<'a> {
     pub(super) provider_bindings: &'a [aver::provider::ProviderBinding],
 }
 
-/// Load hand-proof SIDECARS for `file`'s project and `backend` into the
-/// `(fn, law) -> body` map the codegen splices. The sidecar dir is found by
-/// ascending from the `.av` file's directory to the FIRST ancestor that has a
-/// `proofs/<lean|dafny>/` subdir (so it works whether the entry is a project's
-/// `main.av` or a `domain/<mod>.av`); the ascent is bounded so it never wanders
-/// past the project. Each `<fn>__<law>.{lean,dfy}` file's contents become the
-/// proof body for `(fn, law)`. No dir / no match => empty map => the auto path,
-/// byte-identical to before. Keeping the `.av` sources pure spec, the persistent
-/// hand proofs live ONLY here and are re-spliced + kernel-re-checked every run.
-fn load_hand_proofs(
-    file: &str,
-    backend: &super::cli::ProofBackend,
-) -> std::collections::HashMap<(String, String), String> {
-    use std::path::Path;
-    let (subdir, ext) = match backend {
-        super::cli::ProofBackend::Lean => ("lean", ".lean"),
-        super::cli::ProofBackend::Dafny => ("dafny", ".dfy"),
-    };
-    let mut out = std::collections::HashMap::new();
-    let mut cur = Path::new(file).parent();
-    let mut hops = 0;
-    while let Some(dir) = cur {
-        let proofs = dir.join("proofs").join(subdir);
-        if proofs.is_dir() {
-            if let Ok(rd) = std::fs::read_dir(&proofs) {
-                for entry in rd.flatten() {
-                    let name = entry.file_name().to_string_lossy().into_owned();
-                    let Some(stem) = name.strip_suffix(ext) else {
-                        continue;
-                    };
-                    let Some((fn_name, law_name)) = stem.split_once("__") else {
-                        continue;
-                    };
-                    if let Ok(body) = std::fs::read_to_string(entry.path()) {
-                        out.insert((fn_name.to_string(), law_name.to_string()), body);
-                    }
-                }
-            }
-            break; // first proofs/ dir up the chain wins
-        }
-        cur = dir.parent();
-        hops += 1;
-        if hops > 8 {
-            break;
-        }
-    }
-    out
-}
-
 #[allow(clippy::too_many_arguments)]
 pub(super) fn cmd_proof(
     file: &str,
@@ -7806,14 +7757,6 @@ pub(super) fn cmd_proof(
     }
     let allow_mathlib = allow_mathlib && matches!(backend, super::cli::ProofBackend::Lean);
     ctx.allow_mathlib = allow_mathlib;
-
-    // Hand-proof SIDECAR tier (both backends): load any source-controlled
-    // `proofs/<lean|dafny>/<fn>__<law>.{lean,dfy}` proof bodies for this file's
-    // project + backend into the codegen's splice map. When a law has a sidecar
-    // the codegen emits its theorem/lemma with that body and the kernel
-    // (lake / dafny verify) re-checks it; absent a sidecar the auto path is
-    // byte-identical. The `.av` source stays pure spec — proofs live only here.
-    ctx.hand_proofs = load_hand_proofs(file, backend);
 
     // Oracle v1: aver proof only models `?!` in complete mode. If the
     // project's aver.toml selects cancel or sequential, fail loudly —
@@ -8047,15 +7990,6 @@ pub(super) fn cmd_proof(
         // CLOSED rather than collapse two distinct law blocks into one manifest
         // entry — see `duplicate_law_identities`.
         let duplicate_laws = duplicate_program_law_identities(&ctx);
-        // `fn.law` identities that had a hand-proof sidecar spliced for this
-        // backend — the credit channel (a spliced law that reaches Universal
-        // tier is credited `hand`, else `open`; fail-closed). Derived from the
-        // loaded sidecar map keys, so empty when no sidecar exists.
-        let hand_laws: std::collections::HashSet<String> = ctx
-            .hand_proofs
-            .keys()
-            .map(|(f, l)| format!("{f}.{l}"))
-            .collect();
         run_proof_check(
             output_dir,
             backend,
@@ -8069,7 +8003,6 @@ pub(super) fn cmd_proof(
             gate,
             write_baseline,
             &duplicate_laws,
-            &hand_laws,
             &declined,
             &ctx.items,
             file,
@@ -8310,12 +8243,6 @@ fn run_proof_check(
     // (exit 2) on any duplicate before it can collapse two distinct law blocks
     // into one manifest entry.
     duplicate_laws: &[String],
-    // `fn.law` identities that had a hand-proof sidecar spliced for this
-    // backend. After the manifest is built, each such law is tagged `credit:
-    // hand` if it reached Universal tier (the spliced proof kernel-verified) or
-    // `credit: open` if not (a wrong/stale sidecar failed the build — fail-
-    // closed, never `hand`). Empty => no `credit` key written => byte-identical.
-    hand_laws: &std::collections::HashSet<String>,
     // Claims codegen REFUSED to state (see `CodegenContext::declined_claims`).
     // Charged against `declined_budget` below and recorded in the manifest, so
     // a claim that moves from proved to declined is a demotion the ratchet
@@ -8730,30 +8657,6 @@ fn run_proof_check(
                 "core"
             };
             l.credit = Some(credit.to_string());
-        }
-    }
-    // Hand-proof SIDECAR per-law credit (BOTH backends): a law whose `fn.law`
-    // identity had a sidecar spliced for this backend is credited `hand` IFF it
-    // reached Universal tier (the spliced proof kernel/Z3-verified, axiom-clean
-    // on Lean), else `open` — a wrong/stale sidecar that failed the build never
-    // earns `hand`. Set ONLY for laws WITH a sidecar (orthogonal to `tier`, like
-    // `--allow-mathlib`'s credit), so a law with no sidecar keeps `credit: None`
-    // and the serialized manifest stays byte-identical. Runs last, so a hand
-    // sidecar overrides any Mathlib classification for the same law.
-    if !hand_laws.is_empty()
-        && let Some(m) = manifest.as_mut()
-    {
-        for l in m.laws.iter_mut() {
-            if hand_laws.contains(l.law.as_str()) {
-                l.credit = Some(
-                    if matches!(l.tier, LawTier::Universal) {
-                        "hand"
-                    } else {
-                        "open"
-                    }
-                    .to_string(),
-                );
-            }
         }
     }
     // Law PROVENANCE (Lean only): a self-declared `// aver:provenance <value>
@@ -13235,7 +13138,6 @@ Dafny program verifier finished with 158 verified, 2 errors, 12 time outs";
             sample_expected: std::collections::HashMap::new(),
             declined_cases: std::collections::HashMap::new(),
             allow_mathlib: false,
-            hand_proofs: Default::default(),
         }
     }
 
