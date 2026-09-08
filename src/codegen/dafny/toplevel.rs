@@ -1669,7 +1669,11 @@ fn verify_subject_fn_id(vb: &VerifyBlock, ctx: &CodegenContext) -> Option<crate:
     ctx.symbol_table.fn_id_of(&key)
 }
 
-fn sample_seed_lemma_available(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContext) -> bool {
+pub(super) fn sample_seed_lemma_available(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+) -> bool {
     // Mirror of the issue-#128 "universal lemma omitted" gate in
     // `emit_verify_law` — keep in sync.
     let vb_fn_id = verify_subject_fn_id(vb, ctx);
@@ -1855,7 +1859,9 @@ pub fn emit_law_samples(
             law_refs_opaque_fn(l, ctx, native_emitted) || law_refs_opaque_fn(r, ctx, native_emitted)
         })
         .unwrap_or(false);
-    let needs_bounded_form = any_opaque || any_native_mutual;
+    let native_sequence =
+        super::law_search::native_sequence_law(vb, law, ctx, opaque_fns, native_emitted);
+    let needs_bounded_form = any_opaque || (any_native_mutual && !native_sequence);
 
     // Only lift the sample cap when the universal lemma will *also*
     // emit as bounded-∀ (every given Int + Explicit literal-int
@@ -2065,28 +2071,8 @@ pub fn emit_law_samples(
         // `length([1, 0]) == S(length([1]))` spuriously fails to verify even
         // though the universal law (which carries `{:fuel}`) proves — masking
         // a genuinely-closed proof behind a sample error.
-        let mut sample_fns = std::collections::BTreeSet::new();
-        crate::codegen::proof_recognize::collect_called_fns(&law.lhs, &mut sample_fns);
-        crate::codegen::proof_recognize::collect_called_fns(&law.rhs, &mut sample_fns);
-        let mut transitive = std::collections::BTreeSet::new();
-        for f in &sample_fns {
-            if let Some(fd) = ctx.fn_def_by_name(f, ctx.active_module_scope().as_deref()) {
-                crate::codegen::proof_recognize::collect_called_fns_in_body(
-                    &fd.body,
-                    &mut transitive,
-                );
-            }
-        }
-        sample_fns.extend(transitive);
-        let sample_fuel: String = sample_fns
-            .iter()
-            .filter(|f| {
-                ctx.fn_def_by_name(f, ctx.active_module_scope().as_deref())
-                    .is_some()
-            })
-            .map(|f| format!("{{:fuel {}, 5}}", aver_name_to_dafny(f)))
-            .collect::<Vec<_>>()
-            .join(" ");
+        let sample_fuel =
+            super::law_search::attributes(vb, law, ctx, native_sequence, native_emitted);
         let fuel_prefix = if sample_fuel.is_empty() {
             String::new()
         } else {
@@ -3740,36 +3726,9 @@ pub(super) fn emit_verify_law(
     } = super::lemmas::algebra_lemmas(law, ctx, &law_uid);
 
     let mut lines = Vec::new();
-    // Collect all functions used in the law for fuel annotations
-    let mut law_fns = std::collections::BTreeSet::new();
-    crate::codegen::proof_recognize::collect_called_fns(&law.lhs, &mut law_fns);
-    crate::codegen::proof_recognize::collect_called_fns(&law.rhs, &mut law_fns);
-    // Add transitive callees
-    let mut transitive_fns = std::collections::BTreeSet::new();
-    for f in &law_fns {
-        if let Some(fd) = ctx.fn_def_by_name(f, ctx.active_module_scope().as_deref()) {
-            crate::codegen::proof_recognize::collect_called_fns_in_body(
-                &fd.body,
-                &mut transitive_fns,
-            );
-        }
-    }
-    law_fns.extend(transitive_fns);
-
-    // Oracle v1: fuel attrs only for names that resolve to top-level
-    // functions. Callees collected from lifted effectful bodies can
-    // include oracle / capability params (e.g. `rnd_Random_int`,
-    // `oracle`) that Dafny sees as lambda variables — emitting
-    // `{:fuel oracle, 5}` makes Dafny reject the lemma.
-    let fuel_attrs: String = law_fns
-        .iter()
-        .filter(|f| {
-            ctx.fn_def_by_name(f, ctx.active_module_scope().as_deref())
-                .is_some()
-        })
-        .map(|f| format!("{{:fuel {}, 5}}", aver_name_to_dafny(f)))
-        .collect::<Vec<_>>()
-        .join(" ");
+    let native_sequence =
+        super::law_search::native_sequence_law(vb, law, ctx, opaque_fns, native_emitted);
+    let fuel_attrs = super::law_search::attributes(vb, law, ctx, native_sequence, native_emitted);
 
     lines.push(format!("// Law: {}.{}", fn_name, law_name));
     if fuel_attrs.is_empty() {
@@ -3835,14 +3794,16 @@ pub(super) fn emit_verify_law(
     let is_opaque = law_refs_opaque_fn(&law.lhs, ctx, opaque_fns)
         || law_refs_opaque_fn(&law.rhs, ctx, opaque_fns);
     // Native-decreases mutual recursion isn't opaque (Dafny unfolds
-    // it), but the universal `add_commutative(a, b: int)` over
+    // it). Open sequence laws now try a real universal with shared-cone
+    // unfolding; the legacy finite-Int lane below remains separate.
+    // The universal `add_commutative(a, b: int)` over
     // `int × int` still doesn't close as a true ∀ without a domain
     // restriction. Route through the bounded-∀ form the same way
     // opaque does — the case-split body composes per-pair sample
     // lemmas that Dafny *can* close from `{}` on the native path.
     let is_native_mutual = law_refs_opaque_fn(&law.lhs, ctx, native_emitted)
         || law_refs_opaque_fn(&law.rhs, ctx, native_emitted);
-    let needs_bounded_form = is_opaque || is_native_mutual;
+    let needs_bounded_form = is_opaque || (is_native_mutual && !native_sequence);
     let all_explicit_int = !law.givens.is_empty()
         && law.givens.iter().all(|g| {
             (g.type_name == "Int" || lifted_vars.contains_key(&g.name))
@@ -4208,6 +4169,11 @@ pub(super) fn emit_verify_law(
         }
     }
 
+    if native_sequence {
+        // An explicit VC also exposes recursive Bool equalities which Z3 can
+        // leave opaque when they appear only in the method postcondition.
+        lines.push(format!("  assert {} == {};", lhs, rhs));
+    }
     lines.push("}\n".to_string());
 
     // Prepend the proved additive-op lemmas the `forall`-lift above refers

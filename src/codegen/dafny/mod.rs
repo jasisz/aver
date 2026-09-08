@@ -8,6 +8,7 @@ mod crypto;
 mod expr;
 mod fuel;
 mod law_induction;
+mod law_search;
 mod lemmas;
 mod propagation;
 mod reasons;

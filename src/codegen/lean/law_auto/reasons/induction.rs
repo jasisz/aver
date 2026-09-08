@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
-use crate::ast::{Expr, FnDef, Spanned, Stmt, VerifyLaw};
+use crate::ast::{Expr, FnDef, Spanned, VerifyBlock, VerifyLaw};
 use crate::codegen::lean::expr::{aver_name_to_lean, emit_expr, resolve_rewrite_output};
 use crate::codegen::{CodegenContext, common};
 
@@ -145,73 +145,51 @@ pub(super) struct Definitions {
     pub(super) unfold_once: Vec<(String, bool)>,
 }
 
-pub(super) fn definitions(law: &VerifyLaw, ctx: &CodegenContext) -> Definitions {
-    fn visit(
-        expr: &Spanned<Expr>,
-        scope: Option<&str>,
-        ctx: &CodegenContext,
-        seen: &mut HashSet<crate::ir::FnId>,
-        out: &mut BTreeMap<String, bool>,
-        unfold_once: &mut Vec<String>,
-    ) {
-        if let Some(fd) = callee(expr, ctx, scope)
-            && fd.effects.is_empty()
-            && let Some(id) = common::fn_id_for_decl(ctx, fd)
-            && seen.insert(id)
-        {
-            let recursive = ctx.recursive_fns.contains(&id);
-            // Subtractive countdown equations expose fixed-width steps. Keep
-            // floor-division recursion opaque: its equations recursively grow
-            // the arithmetic search even when cited laws already summarize it.
-            let subtractive = matches!(
-                common::find_fn_contract_for_fn(ctx, fd).and_then(|c| c.recursion.as_ref()),
-                Some(crate::ir::RecursionContract::WellFoundedToNat {
-                    floor_div: None,
-                    ..
-                })
-            );
-            if matches!(
-                common::find_fn_contract_for_fn(ctx, fd).and_then(|c| c.recursion.as_ref()),
-                Some(
-                    crate::ir::RecursionContract::WellFoundedToNat {
-                        floor_div: Some(_),
-                        ..
-                    } | crate::ir::RecursionContract::WellFoundedSequenceGap { .. }
-                )
-            ) {
-                unfold_once.push(lean_name(fd, ctx));
-            }
-            if !recursive || list_measure(fd, ctx).is_some() || subtractive {
-                out.insert(lean_name(fd, ctx), recursive);
-            }
-            let owner = common::fn_owning_scope_for(ctx, fd);
-            for stmt in fd.body.stmts() {
-                let (Stmt::Expr(body) | Stmt::Binding(_, _, body)) = stmt;
-                visit(body, owner, ctx, seen, out, unfold_once);
-            }
-        }
-        crate::codegen::expr_walk::for_each_child(expr, &mut |child| {
-            visit(child, scope, ctx, seen, out, unfold_once)
-        });
-    }
+pub(super) fn definitions(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContext) -> Definitions {
     let scope = ctx.active_module_scope();
-    let mut seen = HashSet::new();
+    let cone = ctx
+        .law_target_fn_id(&vb.fn_name)
+        .and_then(|id| {
+            ctx.proof_ir
+                .law_theorems
+                .iter()
+                .find(|t| t.fn_id == id && t.law_name == law.name)
+        })
+        .map(|t| t.function_cone.as_slice())
+        .unwrap_or(&[]);
+    let seen: HashSet<_> = cone.iter().copied().collect();
     let mut out = BTreeMap::new();
     let mut unfold_once = Vec::new();
-    for expr in law
-        .because
-        .iter()
-        .chain([&law.lhs, &law.rhs])
-        .chain(law.when.iter())
-    {
-        visit(
-            expr,
-            scope.as_deref(),
-            ctx,
-            &mut seen,
-            &mut out,
-            &mut unfold_once,
+    for &id in cone {
+        let key = &ctx.symbol_table.fn_entry(id).key;
+        let Some(fd) = ctx.fn_def_by_name(&key.name, key.scope_str()) else {
+            continue;
+        };
+        let recursive = ctx.recursive_fns.contains(&id);
+        // Subtractive countdown equations expose fixed-width steps. Keep
+        // floor-division recursion opaque: its equations recursively grow
+        // the arithmetic search even when cited laws already summarize it.
+        let subtractive = matches!(
+            common::find_fn_contract_for_fn(ctx, fd).and_then(|c| c.recursion.as_ref()),
+            Some(crate::ir::RecursionContract::WellFoundedToNat {
+                floor_div: None,
+                ..
+            })
         );
+        if matches!(
+            common::find_fn_contract_for_fn(ctx, fd).and_then(|c| c.recursion.as_ref()),
+            Some(
+                crate::ir::RecursionContract::WellFoundedToNat {
+                    floor_div: Some(_),
+                    ..
+                } | crate::ir::RecursionContract::WellFoundedSequenceGap { .. }
+            )
+        ) {
+            unfold_once.push(lean_name(fd, ctx));
+        }
+        if !recursive || list_measure(fd, ctx).is_some() || subtractive {
+            out.insert(lean_name(fd, ctx), recursive);
+        }
     }
     // A mutual helper's original equation is available only when the same
     // checked measure that emits its native definition succeeds. Fuel remains opaque.

@@ -349,3 +349,35 @@ the change and passes afterwards. Bool and record payloads also check. Incorrect
 reordering of a trailing sequence passes the fixture's empty/singleton samples
 but fails universal verification, both as an intermediate reason and as the
 final claim. A false cited field law is rejected as well.
+
+## Native mutual sequence laws and shared dependencies
+
+ProofIR now records each law's transitive statically resolved pure function
+cone, including explanations and the guard. Each function body is resolved in
+its owning module; cycles terminate on canonical function IDs, and sample
+expressions do not supply dependencies. Lean's guided equation selection and
+Dafny's ordinary-law unfolding both consume this field. Target equation
+eligibility, termination checks and solver tactics remain backend decisions.
+
+Dafny previously sent even native, termination-checked mutual recursion through
+the finite-sample fallback. Ordinary laws with a list binder now attempt their
+actual universal claim when the cone reaches native mutual recursion and no
+opaque function. Unfolding covers every cycle member, including helpers hidden
+behind wrappers. The moderate fuel setting is a search budget, not a limit on
+list length or quantified values. A checked assertion of the unchanged claim
+also exposes recursive Bool equalities that can remain opaque in an `ensures`
+alone. Unsupported signatures retain their existing
+exclusions; the legacy finite-Int lane remains separate.
+
+Sample assertions instantiate the checked universal theorem. That theorem does
+not call the samples, so a false universal cannot be rescued by a sample cycle.
+An independent permutation fixture checks Int and Bool elements and imported
+lookup functions alongside colliding local names. Incorrect order and omitted
+length/index guards pass the chosen samples but fail actual universal checking.
+
+All four unchanged BTC `ScriptState.rearranged` laws now check without their
+previous axiom fallbacks; their samples check too. Imported modules still have
+open obligations, so these four do not yet earn strict whole-module BTC credit.
+This checkpoint does not claim full Lean/Dafny strategy parity: the existing
+Lean ordinary-law lane still bounds one of the independent fixture's two laws,
+while Dafny proves both universally.

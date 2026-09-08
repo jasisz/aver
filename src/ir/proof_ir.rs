@@ -492,6 +492,10 @@ pub struct LawTheorem {
     /// These are proof candidates, never assumptions: each backend must prove
     /// the recursive call's premises and strict decrease.
     pub induction: Option<LawInduction>,
+    /// Transitive statically resolved pure declarations used by the claim,
+    /// explanations and guard, in discovery order. Samples do not contribute.
+    /// Search data only: callbacks and builtin implementations are not expanded.
+    pub function_cone: Vec<FnId>,
     /// Optional unfolding budgets, in `because` order followed by the claim.
     /// These guide proof search only; they neither restrict the quantified
     /// domain nor replace any source premise, supplier, or proof obligation.

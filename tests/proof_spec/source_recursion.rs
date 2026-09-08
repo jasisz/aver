@@ -254,3 +254,79 @@ fn source_recursion_rejects_dropped_accumulator_and_failed_supplier() {
         );
     }
 }
+
+#[test]
+fn dafny_native_mutual_sequence_laws_prove_universally_and_reject_sample_blind_spots() {
+    let source = include_str!("../fixtures/source_recursion/native_sequence.av");
+    for (name, source, expected) in [
+        ("positive", source.to_string(), true),
+        (
+            "wrong_order",
+            source.replace(
+                "shuffle(shuffle(shuffle(items)))",
+                "shuffle(shuffle(items))",
+            ),
+            false,
+        ),
+        (
+            "missing_length",
+            source.replace("    when List.len(items) >= 3\n", ""),
+            false,
+        ),
+        (
+            "missing_index",
+            source.replace("    when Bool.and(index >= 0, index < 3)\n", ""),
+            false,
+        ),
+    ] {
+        let dir = temp_output_dir(&format!("aver-native-sequence-{name}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("main.av");
+        std::fs::write(&path, source).unwrap();
+        // Symmetric samples deliberately miss the permutation error; all
+        // supplied lists/indices also satisfy the guards removed above.
+        let vm = Command::new(env!("CARGO_BIN_EXE_aver"))
+            .args(["verify", path.to_str().unwrap()])
+            .output()
+            .unwrap();
+        assert!(vm.status.success(), "{name}: {}", format_output(&vm));
+        if let Some(summary) = check(path.to_str().unwrap(), "dafny") {
+            assert_eq!(summary["passed"], expected, "{name}: {summary}");
+            if !expected {
+                assert!(summary["errors"].as_u64().unwrap() > 0, "{name}: {summary}");
+            }
+        }
+    }
+}
+
+#[test]
+fn dafny_native_sequence_search_preserves_import_owners_and_boolean_elements() {
+    let source = include_str!("../fixtures/source_recursion/native_sequence.av");
+    let (definitions, claims) = source.split_once("fn shuffle").unwrap();
+    let dir = temp_output_dir("aver-native-sequence-import");
+    std::fs::create_dir_all(&dir).unwrap();
+    let dependency =
+        definitions.replace("module NativeSequence", "module Lookup\n    exposes [at]");
+    std::fs::write(dir.join("lookup.av"), dependency).unwrap();
+    let entry = format!(
+        "module Consumer\n    depends [Lookup]\n\nfn at(n: Int) -> Int\n    n + 99\n\nfn select(n: Int) -> Int\n    n + 77\n\nfn shuffle{}",
+        claims.replace("at(items,", "Lookup.at(items,")
+    );
+    let path = dir.join("main.av");
+    std::fs::write(&path, entry).unwrap();
+    if let Some(summary) = check(path.to_str().unwrap(), "dafny") {
+        assert_eq!(summary["passed"], true, "{summary}");
+    }
+    let bool_source = source
+        .replace("List<Int>", "List<Bool>")
+        .replace("head: Int", "head: Bool")
+        .replace(") -> Int", ") -> Bool")
+        .replace("[] -> 0", "[] -> false")
+        .replace("[4, 4, 4]", "[true, true, true]")
+        .replace("[9, 9, 9, 9]", "[false, false, false, false]");
+    let path = dir.join("bool.av");
+    std::fs::write(&path, bool_source).unwrap();
+    if let Some(summary) = check(path.to_str().unwrap(), "dafny") {
+        assert_eq!(summary["passed"], true, "{summary}");
+    }
+}
