@@ -7,6 +7,7 @@ mod crypto;
 /// file holding the trust header, top-level items, and verify lemmas.
 mod expr;
 mod fuel;
+mod law_induction;
 mod lemmas;
 mod propagation;
 mod reasons;
@@ -890,6 +891,7 @@ function BranchPath_parse(s: string): Result<BranchPath, string> {
 /// match wins, and `ListAny` is the existential, false on the empty list.
 const DAFNY_HELPER_AVER_LIST: &str = r#"
 function ListReverse<T>(xs: seq<T>): seq<T>
+  ensures |ListReverse(xs)| == |xs|
   decreases |xs|
 {
   if |xs| == 0 then []
@@ -1516,6 +1518,28 @@ verify roll law alwaysSix\n    given rnd: Random.int = [rollMax]\n    roll() => 
             "expected underscore-form call; got:\n{}",
             dfy
         );
+    }
+
+    #[test]
+    fn shared_countdown_measure_wins_over_a_growing_sequence_accumulator() {
+        let ctx = ctx_from_source(
+            r#"module Countdown
+    intent = "The counter, not the growing output, drives termination."
+fn bytes(value: Int, width: Int, acc: List<Int>) -> List<Int>
+    match width <= 0
+        true -> List.reverse(acc)
+        false -> bytes(Int.div(value, 256), width - 1, List.prepend(Int.mod(value, 256), acc))
+"#,
+            "Countdown",
+        );
+        let out = transpile(&ctx);
+        let dfy = dafny_output(&out);
+        assert!(
+            dfy.contains("decreases if width >= 0 then width else 0"),
+            "{dfy}"
+        );
+        assert!(!dfy.contains("decreases |acc|"), "{dfy}");
+        assert!(!dfy.contains("requires width"), "{dfy}");
     }
 
     #[test]

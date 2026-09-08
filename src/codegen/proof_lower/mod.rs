@@ -2142,6 +2142,24 @@ fn populate_fn_contracts_for_scope(
             continue;
         };
 
+        if let RecursionPlan::SequenceGrowthBound {
+            sequence_index,
+            bound_index,
+        } = plan
+        {
+            ir.fn_contracts.insert(
+                canonical_key,
+                FnContract {
+                    source_name: fn_name.clone(),
+                    recursion: Some(RecursionContract::WellFoundedSequenceGap {
+                        sequence: fd.params[*sequence_index].0.clone(),
+                        bound: fd.params[*bound_index].0.clone(),
+                    }),
+                },
+            );
+            continue;
+        }
+
         // A subtractive countdown with a positive guard at every self-call
         // has a total native measure. Reuse the same shrink and guard checks
         // as the recursion classifier, independently of the laws present.
@@ -2511,6 +2529,8 @@ pub fn populate_law_theorems(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
             law_scope_ref,
         );
 
+        let induction = law_induction::plan(law, fn_id, inputs, ir, law_scope_ref);
+
         ir.law_theorems.push(LawTheorem {
             fn_id,
             law_name: law.name.clone(),
@@ -2519,9 +2539,12 @@ pub fn populate_law_theorems(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
             claim_lhs: inputs.resolve_expr(&law.lhs, law_scope_ref),
             claim_rhs: inputs.resolve_expr(&law.rhs, law_scope_ref),
             strategy,
+            induction,
         });
     }
 }
+
+mod law_induction;
 
 /// Pick the strategy `LawLower` should pin on a `(fn, law)` pair.
 ///

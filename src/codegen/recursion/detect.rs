@@ -2580,6 +2580,14 @@ pub fn analyze_plans_in_scope(
                     helper_fn,
                 },
             );
+        } else if let Some((sequence_index, bound_index)) = super::sequence_growth::detect(fd) {
+            plans.insert(
+                fd.name.clone(),
+                RecursionPlan::SequenceGrowthBound {
+                    sequence_index,
+                    bound_index,
+                },
+            );
         } else if supports_single_sizeof_structural(fd, inputs)
             || (list_structural.is_none()
                 && single_adt_structural_param_index(fd, inputs).is_some())

@@ -291,6 +291,10 @@ pub struct FnContract {
 /// the lowerer having proved preservation + decrease.
 #[derive(Debug, Clone)]
 pub enum RecursionContract {
+    /// A list or string grows by at least one element at every self-call while its length
+    /// is strictly below an unchanged integer bound. The natural part of the
+    /// remaining gap decreases, including calls that overshoot the bound.
+    WellFoundedSequenceGap { sequence: String, bound: String },
     /// Fuel-encoded fallback. No side-conditions to prove; works
     /// for any shape the classifier accepted as recursive.
     Fuel {
@@ -484,6 +488,42 @@ pub struct LawTheorem {
     pub claim_lhs: Spanned<crate::ir::hir::ResolvedExpr>,
     pub claim_rhs: Spanned<crate::ir::hir::ResolvedExpr>,
     pub strategy: ProofStrategy,
+    /// Source-recursion instances for an induction over a checked input.
+    /// These are proof candidates, never assumptions: each backend must prove
+    /// the recursive call's premises and strict decrease.
+    pub induction: Option<LawInduction>,
+}
+
+#[derive(Debug, Clone)]
+pub struct LawInduction {
+    pub driver: String,
+    pub measure: LawInductionMeasure,
+    /// A call whose distinct source arguments map function parameters to givens.
+    pub source_call: Spanned<crate::ir::hir::ResolvedExpr>,
+    /// Recursive instances in the law's given order, including updated accumulators.
+    pub calls: Vec<LawInductionCall>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum LawInductionMeasure {
+    SequenceLength,
+    NonnegativeInt,
+}
+
+#[derive(Debug, Clone)]
+pub struct LawInductionCall {
+    pub guard: Spanned<crate::ir::hir::ResolvedExpr>,
+    /// Nil/cons decomposition under the nonempty guard. Projection names are
+    /// fresh in the source/law scope; no partial List.head value is invented.
+    pub list_case: Option<LawInductionListCase>,
+    pub arguments: Vec<Spanned<crate::ir::hir::ResolvedExpr>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct LawInductionListCase {
+    pub list: Spanned<crate::ir::hir::ResolvedExpr>,
+    pub head: Option<String>,
+    pub tail: Option<String>,
 }
 
 /// A universally-quantified variable in a law theorem. Carries

@@ -44,6 +44,43 @@ pub(super) fn plan(expr: &Spanned<Expr>, law: &VerifyLaw, ctx: &CodegenContext) 
     if !fd.effects.is_empty() {
         return None;
     }
+    // LawLower records the canonical source call and its checked input once.
+    // Reuse that plan when this explanation is the law's anchored call;
+    // backend-specific functional/measure tactics still prove every branch.
+    if let Some(id) = common::fn_id_for_decl(ctx, fd)
+        && let Some(shared) = ctx
+            .proof_ir
+            .law_theorems
+            .iter()
+            .find(|t| t.fn_id == id && t.law_name == law.name)
+            .and_then(|t| t.induction.as_ref())
+        && shared.source_call.node == resolve_rewrite_output(expr, ctx, None).node
+    {
+        let call = emit_expr(&shared.source_call, ctx);
+        return Some(match shared.measure {
+            crate::ir::proof_ir::LawInductionMeasure::NonnegativeInt => {
+                format!("fun_induction {call}")
+            }
+            crate::ir::proof_ir::LawInductionMeasure::SequenceLength => {
+                let others = law
+                    .givens
+                    .iter()
+                    .filter(|g| g.name != shared.driver)
+                    .map(|g| aver_name_to_lean(&g.name))
+                    .collect::<Vec<_>>();
+                let generalizing = if others.is_empty() {
+                    String::new()
+                } else {
+                    format!(" generalizing {}", others.join(" "))
+                };
+                format!(
+                    "first | fun_induction {call} | (induction {} using (measure List.length).wf.induction{generalizing} <;> dsimp only [WellFoundedRelation.rel, measure, invImage, InvImage, Nat.lt_wfRel] at * <;> rw [{}.eq_def])",
+                    aver_name_to_lean(&shared.driver),
+                    lean_name(fd, ctx)
+                )
+            }
+        });
+    }
     let measure = list_measure(fd, ctx);
     let native_integer = matches!(
         common::find_fn_contract_for_fn(ctx, fd).and_then(|c| c.recursion.as_ref()),
@@ -135,10 +172,12 @@ pub(super) fn definitions(law: &VerifyLaw, ctx: &CodegenContext) -> Definitions 
             );
             if matches!(
                 common::find_fn_contract_for_fn(ctx, fd).and_then(|c| c.recursion.as_ref()),
-                Some(crate::ir::RecursionContract::WellFoundedToNat {
-                    floor_div: Some(_),
-                    ..
-                })
+                Some(
+                    crate::ir::RecursionContract::WellFoundedToNat {
+                        floor_div: Some(_),
+                        ..
+                    } | crate::ir::RecursionContract::WellFoundedSequenceGap { .. }
+                )
             ) {
                 unfold_once.push(lean_name(fd, ctx));
             }

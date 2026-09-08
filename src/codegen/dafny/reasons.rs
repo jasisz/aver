@@ -232,6 +232,7 @@ pub(super) fn emit(
             out.push(format!("  decreases {}", driver.decreases));
         }
         out.push("{".to_string());
+        out.extend(super::law_induction::sequence_identities(law, ctx));
         for &citation in &citations {
             let dependency = citation.law;
             let cited_name = citations::supplier_name(citation, &name, ctx);

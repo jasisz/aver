@@ -1,0 +1,110 @@
+//! Render the shared source-recursion instances. Dafny checks the original law
+//! premises at every recursive call and verifies the selected strict decrease.
+
+use crate::ast::{VerifyBlock, VerifyLaw};
+use crate::codegen::CodegenContext;
+use crate::ir::proof_ir::{LawInduction, LawInductionMeasure};
+
+use super::expr::{aver_name_to_dafny, emit_expr};
+
+/// Checked sequence identities give the SMT solver ground-independent rewrite
+/// facts. In particular, recursive calls with `[x] + []` must match calls with
+/// `[x]`; unfolding the worker alone does not reliably expose this equality.
+pub(super) fn sequence_identities(law: &VerifyLaw, ctx: &CodegenContext) -> Vec<String> {
+    let mut elements = std::collections::BTreeSet::new();
+    let scope = ctx.active_module_scope();
+    for expr in [&law.lhs, &law.rhs].into_iter().chain(law.because.iter()) {
+        crate::codegen::expr_walk::walk(expr, &mut |e| {
+            if let Some(crate::ast::Type::List(element)) = e.ty()
+                && crate::types::checker::type_is_fully_concrete(element)
+            {
+                elements.insert(super::toplevel::type_to_dafny_in_scope(
+                    element,
+                    scope.as_deref(),
+                ));
+            }
+        });
+    }
+    elements
+        .into_iter()
+        .flat_map(|element| {
+            [
+                format!("  forall xs: seq<{element}> ensures xs + [] == xs && [] + xs == xs {{ }}"),
+                format!("  forall x: {element} ensures ListReverse([x]) == [x] {{ }}"),
+            ]
+        })
+        .collect()
+}
+
+pub(super) fn plan<'a>(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &'a CodegenContext,
+) -> Option<&'a LawInduction> {
+    let scope = ctx.active_module_scope();
+    let id = ctx
+        .symbol_table
+        .resolve_fn_id_in(&vb.fn_name, scope.as_deref())?;
+    ctx.proof_ir
+        .law_theorems
+        .iter()
+        .find(|t| t.fn_id == id && t.law_name == law.name)?
+        .induction
+        .as_ref()
+}
+
+pub(super) fn measure(plan: &LawInduction) -> String {
+    let name = aver_name_to_dafny(&plan.driver);
+    match plan.measure {
+        LawInductionMeasure::SequenceLength => format!("|{name}|"),
+        LawInductionMeasure::NonnegativeInt => format!("if {name} >= 0 then {name} else 0"),
+    }
+}
+
+pub(super) fn calls(plan: &LawInduction, name: &str, ctx: &CodegenContext) -> Vec<String> {
+    let mut lines = Vec::new();
+    for call in &plan.calls {
+        lines.push(format!("  if {} {{", emit_expr(&call.guard, ctx)));
+        if let Some(case) = &call.list_case {
+            let list = emit_expr(&case.list, ctx);
+            if let Some(head) = &case.head {
+                lines.push(format!(
+                    "    var {} := ({list})[0];",
+                    aver_name_to_dafny(head)
+                ));
+            }
+            if let Some(tail) = &case.tail {
+                lines.push(format!(
+                    "    var {} := ({list})[1..];",
+                    aver_name_to_dafny(tail)
+                ));
+            }
+            // Expose the exact nil/cons equation used by source recursion.
+            lines.push(format!(
+                "    assert {list} == [({list})[0]] + ({list})[1..];"
+            ));
+            if let Some(ty) = case.list.ty() {
+                let ty = super::toplevel::type_to_dafny_in_scope(
+                    ty,
+                    ctx.active_module_scope().as_deref(),
+                );
+                let mut suffix = "averInductionSuffix".to_string();
+                while list.contains(&suffix) {
+                    suffix.push('_');
+                }
+                // Expose the cons equation underneath append too. The target
+                // checker proves this sequence identity for every suffix.
+                lines.push(format!("    forall {suffix}: {ty} ensures {list} + {suffix} == [({list})[0]] + (({list})[1..] + {suffix}) {{ }}"));
+            }
+        }
+        let args = call
+            .arguments
+            .iter()
+            .map(|a| emit_expr(a, ctx))
+            .collect::<Vec<_>>()
+            .join(", ");
+        lines.push(format!("    {name}({args});"));
+        lines.push("  }".to_string());
+    }
+    lines
+}

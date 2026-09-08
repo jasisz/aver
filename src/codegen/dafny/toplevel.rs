@@ -474,27 +474,37 @@ pub fn emit_fn_def(
         lines.push(format!("  requires {requirement}.Ok?"));
     }
 
-    // Guard-validated floor-division countdown (shared classifier —
-    // `RecursionContract::WellFoundedToNat { floor_div: Some(_) }`):
+    // Guard-validated integer descent comes from ProofIR for both subtractive
+    // and floor-division countdowns. It must precede signature heuristics:
+    // an output accumulator can grow while this checked counter decreases.
     // the classifier proved every self-call site's guard chain
     // implies the shrinking param is >= 1, so the total guarded
     // measure verifies WITHOUT a synthesized `requires` — total
     // callers stay wellformed (a synthesized precondition on a
     // recursive fn breaks every caller that can't prove it).
-    let floor_div_param = crate::codegen::common::find_fn_contract_for_fn(ctx, fd).and_then(
+    let native_int_param = crate::codegen::common::find_fn_contract_for_fn(ctx, fd).and_then(
         |contract| match &contract.recursion {
-            Some(crate::ir::RecursionContract::WellFoundedToNat {
-                param,
-                floor_div: Some(_),
-            }) => Some(param.clone()),
+            Some(crate::ir::RecursionContract::WellFoundedToNat { param, .. }) => {
+                Some(param.clone())
+            }
             _ => None,
         },
     );
-    if needs_decreases && let Some(param) = floor_div_param {
+    if needs_decreases && let Some(param) = native_int_param {
         let dname = aver_name_to_dafny(&param);
         lines.push(format!(
             "  decreases if {} >= 0 then {} else 0",
             dname, dname
+        ));
+    } else if needs_decreases
+        && let Some(crate::ir::RecursionContract::WellFoundedSequenceGap { sequence, bound }) =
+            crate::codegen::common::find_fn_contract_for_fn(ctx, fd)
+                .and_then(|c| c.recursion.as_ref())
+    {
+        lines.push(format!(
+            "  decreases {} - |{}|",
+            aver_name_to_dafny(bound),
+            aver_name_to_dafny(sequence)
         ));
     } else if needs_decreases && let Some(info) = infer_decreases(fd) {
         for req in &info.requires {
@@ -1428,17 +1438,17 @@ pub(super) fn termination_guess_unjustified(fd: &FnDef, ctx: &CodegenContext) ->
     if !body_has_recursive_call(fd.body.as_ref(), &fd.name) {
         return false;
     }
-    // Guard-validated floor-division countdown — the shared
+    // Guard-validated integer countdown — the shared
     // classifier proved the measure, so the fn emits with a native
     // total-guard `decreases` (see `emit_fn_def`) instead of
     // declining to an opaque `{:axiom}`.
     if crate::codegen::common::find_fn_contract_for_fn(ctx, fd).is_some_and(|contract| {
         matches!(
             &contract.recursion,
-            Some(crate::ir::RecursionContract::WellFoundedToNat {
-                floor_div: Some(_),
-                ..
-            })
+            Some(
+                crate::ir::RecursionContract::WellFoundedToNat { .. }
+                    | crate::ir::RecursionContract::WellFoundedSequenceGap { .. }
+            )
         )
     }) {
         return false;
@@ -3859,13 +3869,34 @@ pub(super) fn emit_verify_law(
     }
 
     lines.push(format!("  ensures {} == {}", lhs, rhs));
+    let source_induction = if needs_bounded_form || !lifted_vars.is_empty() {
+        None
+    } else {
+        super::law_induction::plan(vb, law, ctx)
+    };
+    if let Some(plan) = source_induction {
+        // Explicit source calls supply the induction instances; suppress the
+        // target's unrelated parameter-order heuristic.
+        if let Some(header) = lines
+            .iter_mut()
+            .rev()
+            .find(|line| line.starts_with("lemma "))
+        {
+            *header = header.replacen("lemma ", "lemma {:induction false} ", 1);
+        }
+        lines.push(format!(
+            "  decreases {}",
+            super::law_induction::measure(plan)
+        ));
+    }
     // Datatype accumulator-generalization: the structurally-shrinking driver
     // given may not be the lemma's FIRST param (givens can be declared in any
     // order), so Dafny's default lexicographic measure — which tries params
     // left-to-right and would hit the GROWING accumulator first — fails. Pin the
     // measure to the driver. (The datatype-induction hint below recurses on its
     // field predecessor, which decreases this driver.)
-    if law.when.is_none()
+    if source_induction.is_none()
+        && law.when.is_none()
         && crate::codegen::common::accumulator_fold_fn_names(ctx).contains(&vb.fn_name)
         && let Some(fd) = ctx.fn_def_by_name(&vb.fn_name, ctx.active_module_scope().as_deref())
         && let Some(driver) = datatype_driver_given_name(fd, law)
@@ -3878,6 +3909,9 @@ pub(super) fn emit_verify_law(
     // `forall` hoist (here) and the explicit-instantiation engine (list-induction
     // step, below).
     let cites = eligible_cites(vb, law, ctx, opaque_fns, native_emitted);
+    if !needs_bounded_form {
+        lines.extend(super::law_induction::sequence_identities(law, ctx));
+    }
 
     // Hoist additive-op facts at the top of the body (inductive paths only;
     // bounded-form bodies dispatch to samples and never reach the universal).
@@ -3932,6 +3966,20 @@ pub(super) fn emit_verify_law(
         lines.push(format!("  assume {{:axiom}} {} == {};", lhs, rhs));
         lines.push("}\n".to_string());
         return lines.join("\n");
+    }
+
+    if let Some(plan) = source_induction {
+        lines.extend(super::law_induction::calls(
+            plan,
+            &format!("{}_{}", fn_name, law_name),
+            ctx,
+        ));
+        lines.push("}\n".to_string());
+        return op_lemma_defs
+            .into_iter()
+            .chain(lines)
+            .collect::<Vec<_>>()
+            .join("\n");
     }
 
     // Generate inductive proof body for Int-parameterized laws

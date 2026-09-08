@@ -232,6 +232,9 @@ pub(super) fn plain_supplier(
     }
     let params = binders(citation, ctx)?;
     let goal = conclusion(citation, ctx);
+    let induction = ctx.with_module_scope(citation.scope, || {
+        super::super::law_induction::plan(citation.block, citation.law, ctx)
+    });
     let mut lines = vec![
         format!(
             "// Checked universal citation: {}",
@@ -245,11 +248,23 @@ pub(super) fn plain_supplier(
             expression(guard, citation.scope, ctx)
         ));
     }
-    lines.extend([
-        format!("  ensures {goal}"),
-        "{".to_string(),
-        format!("  assert {goal};"),
-        "}".to_string(),
-    ]);
+    lines.push(format!("  ensures {goal}"));
+    if let Some(plan) = induction {
+        lines.push(format!(
+            "  decreases {}",
+            super::super::law_induction::measure(plan)
+        ));
+    }
+    lines.push("{".to_string());
+    ctx.with_module_scope(citation.scope, || {
+        lines.extend(super::super::law_induction::sequence_identities(
+            citation.law,
+            ctx,
+        ));
+        if let Some(plan) = induction {
+            lines.extend(super::super::law_induction::calls(plan, &name, ctx));
+        }
+    });
+    lines.extend([format!("  assert {goal};"), "}".to_string()]);
     Ok(Some(lines.join("\n")))
 }
