@@ -58,6 +58,9 @@ impl<'a> Checker<'a> {
                     .map(|item| self.supported_type(item))
                     .collect::<Result<_, _>>()?,
             ),
+            // syntax-discovery-only: annotation() supplies freshly parsed source
+            // types, without HIR IDs. Resolve the name immediately to TypeId;
+            // scope, fields and the returned type all use that canonical ID.
             Type::Named { name, .. } => {
                 let scope = self.ctx.active_module_scope();
                 let id = self
