@@ -1,0 +1,12 @@
+module DafnyGuidanceFalseReason
+    intent = "A false reason must fail even when the final equation is true."
+    effects []
+
+fn identity(x: Int) -> Int
+    x
+
+verify identity law falseReason
+    given x: Int = [0]
+    because false
+    using []
+    identity(x) => x

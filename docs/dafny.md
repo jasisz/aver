@@ -8,12 +8,19 @@ Use it when you want:
 - Z3/SMT solver attempting universal proofs for you
 - a quick validation of whether your laws hold before investing in Lean proof strategies
 
-For each `verify law` block, the backend emits two things:
+For an ordinary `verify law` block without proof guidance, the backend emits two things:
 
 1. **Sample assertions** — concrete smoke tests from the `given` domain (e.g. `assert fib(5) == fibSpec(5)`), capped at 5 to avoid Z3 timeouts
 2. **Universal lemma** — `lemma` with `when` as `requires` and the law as `ensures`, proved by Z3
 
 The samples may time out on deeply recursive computations — that is expected. The lemma is the primary verification target.
+
+For guided laws, the [nonrecursive Int/Bool pilot](dafny-guidance-spike.md) emits
+separate lemmas for every `because`, the final implication and their parent law.
+It supports explicit local `using` citations, retains each guard, and explicitly
+declines unsupported dependency cones. Use `aver verify` to execute the examples.
+The strict whole-file gate must pass; a verified caller does not establish a
+failed cited lemma.
 
 ## Quick start
 

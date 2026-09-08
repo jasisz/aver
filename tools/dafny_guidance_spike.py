@@ -1,0 +1,218 @@
+#!/usr/bin/env python3
+"""Measure guided proof portability on identical sources with strict backend gates.
+
+Results describe whole-file verification. A modular caller in a failing file
+never receives independent credit; Dafny verification is not a Lean axiom audit.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import signal
+import subprocess
+import time
+
+
+ROOT = Path(__file__).resolve().parents[1]
+FIXTURES = ROOT / "tests/fixtures/dafny_guidance_spike"
+EXPECTED = {
+    "positive": {"lean": "verified", "dafny": "verified"},
+    "missing_guard": {"lean": "failed", "dafny": "failed"},
+    "false_reason": {"lean": "failed", "dafny": "failed"},
+    "restated_goal": {"lean": "failed", "dafny": "failed"},
+    "failed_citation": {"lean": "failed", "dafny": "failed"},
+    "recursive": {"lean": "verified", "dafny": "declined"},
+}
+
+
+def digest(path: Path) -> str:
+    with path.open("rb") as source:
+        return hashlib.file_digest(source, "sha256").hexdigest()
+
+
+def summary_from_log(log: str, backend: str) -> dict | None:
+    summaries = []
+    for line in log.splitlines():
+        try:
+            value = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(value, dict) and value.get("backend") == backend:
+            summaries.append(value)
+    return summaries[0] if len(summaries) == 1 else None
+
+
+def outcome(summary: dict | None, returncode: int, timed_out: bool = False) -> str:
+    if timed_out:
+        return "timeout"
+    if summary is None or returncode not in (0, 1):
+        return "checker_error"
+    if summary.get("timeouts", 0):
+        return "timeout"
+    if summary.get("build_errors", 0) or summary.get("model_panicked", False):
+        return "checker_error"
+    if summary.get("declined", 0):
+        return "declined"
+    if summary.get("omitted", 0) or summary.get("axioms", 0):
+        return "conditional"
+    if summary.get("errors", 0) or summary.get("sorries", 0):
+        return "failed"
+    if returncode == 0 and summary.get("passed") is True:
+        if summary.get("backend") == "lean" and summary.get("universal") is not True:
+            return "conditional"
+        return "verified"
+    return "failed"
+
+
+def run_process(command: list[str], timeout: float) -> tuple[str, int, bool]:
+    process = subprocess.Popen(
+        command, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, start_new_session=True,
+    )
+    try:
+        output, _ = process.communicate(timeout=timeout)
+        return output, process.returncode, False
+    except subprocess.TimeoutExpired:
+        # Stop the verifier descendants as well as Aver; no orphan Lean/Z3 jobs.
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        try:
+            output, _ = process.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            output, _ = process.communicate()
+        return output, process.returncode, True
+
+
+def claim_inventory(directory: Path, backend: str) -> dict[str, list[str]]:
+    if backend == "lean":
+        manifest = directory / "proof_manifest.json"
+        if not manifest.is_file():
+            return {"laws": [], "obligations": []}
+        value = json.loads(manifest.read_text())
+        return {
+            kind: sorted(claim["law"] for claim in value.get(kind, []))
+            for kind in ("laws", "obligations")
+        }
+    claims: dict[str, list[str]] = {"laws": [], "obligations": []}
+    marker = re.compile(r"^\s*// aver:dafny-(law|obligation)\s+\S+\s+(\S+)\s*$")
+    for source in directory.rglob("*.dfy"):
+        for line in source.read_text().splitlines():
+            match = marker.match(line)
+            if match:
+                kind = "laws" if match[1] == "law" else "obligations"
+                claims[kind].append(match[2])
+    return {kind: sorted(names) for kind, names in claims.items()}
+
+
+def coverage(rows: list[dict]) -> dict:
+    verified = {
+        backend: {
+            (row["source_sha256"], claim)
+            for row in rows if row["backend"] == backend and row["outcome"] == "verified"
+            for claim in row["claims"]["laws"]
+        }
+        for backend in ("lean", "dafny")
+    }
+    return {
+        "scope": "selected spike fixtures; failed files grant no independent law credit",
+        "both_backends": len(verified["lean"] & verified["dafny"]),
+        "lean_only": len(verified["lean"] - verified["dafny"]),
+        "dafny_only": len(verified["dafny"] - verified["lean"]),
+    }
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--aver", default="aver", help="Aver executable to measure")
+    parser.add_argument("--output", type=Path, default=ROOT / "out/dafny-guidance-spike")
+    parser.add_argument("--case", action="append", choices=EXPECTED)
+    parser.add_argument("--timeout", type=float, default=180, help="Wall time per backend run")
+    args = parser.parse_args()
+    if args.timeout <= 0:
+        parser.error("--timeout must be positive")
+    binary_name = shutil.which(args.aver)
+    if binary_name is None:
+        parser.error(f"Aver executable not found: {args.aver}")
+    binary = Path(binary_name).resolve()
+    output = args.output.resolve()
+    output.mkdir(parents=True, exist_ok=True)
+    rows = []
+    problems = []
+    compiler_hash = digest(binary)
+    versions = {}
+    for tool in (str(binary), "lake", "dafny"):
+        try:
+            version, code, expired = run_process([tool, "--version"], min(args.timeout, 10))
+            versions[Path(tool).name] = {
+                "output": version.strip(), "returncode": code, "timed_out": expired,
+            }
+        except OSError as error:
+            versions[Path(tool).name] = {"error": str(error)}
+    for case in args.case or EXPECTED:
+        source = FIXTURES / f"{case}.av"
+        source_hash = digest(source)
+        case_rows = []
+        for backend in ("lean", "dafny"):
+            destination = output / case / backend
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            # Reusing old generated files could contaminate the evidence.
+            if destination.exists():
+                parser.error(f"Output already exists; choose a fresh directory: {destination}")
+            command = [str(binary), "proof", str(source), "--backend", backend,
+                       "--check-json", "--error-budget", "0", "--sorry-budget", "0",
+                       "--declined-budget", "0", "-o", str(destination)]
+            started = time.monotonic()
+            try:
+                log, code, timed_out = run_process(command, args.timeout)
+            except OSError as error:
+                log, code, timed_out = str(error), 2, False
+            (destination.parent / f"{backend}.log").write_text(log)
+            summary = summary_from_log(log, backend)
+            result = outcome(summary, code, timed_out)
+            if digest(source) != source_hash or digest(binary) != compiler_hash:
+                result = "input_changed"
+            inventory = claim_inventory(destination, backend)
+            row = {
+                "case": case, "backend": backend, "source_sha256": source_hash,
+                "outcome": result, "expected": EXPECTED[case][backend],
+                "returncode": code, "seconds": round(time.monotonic() - started, 3),
+                "summary": summary, "claims": inventory,
+            }
+            rows.append(row)
+            case_rows.append(row)
+            if result != row["expected"]:
+                problems.append(f"{case}/{backend}: expected {row['expected']}, got {result}")
+            print(f"{case:20} {backend:6} {result}", flush=True)
+        if all(row["outcome"] == "verified" for row in case_rows):
+            if case_rows[0]["claims"] != case_rows[1]["claims"]:
+                problems.append(f"{case}: verified backends reported different source claim IDs")
+            for names in case_rows[0]["claims"].values():
+                if len(names) != len(set(names)):
+                    problems.append(f"{case}: duplicate source claim IDs")
+    report = {
+        "scope": "whole-file strict verification, not independent per-law credit",
+        "dafny_evidence": "Dafny/Boogie/Z3 verification, not a Lean kernel axiom audit",
+        "compiler_sha256": compiler_hash, "versions": versions, "results": rows,
+        "verified_law_coverage": coverage(rows),
+        "expectations_met": not problems, "problems": problems,
+    }
+    (output / "matrix.json").write_text(json.dumps(report, indent=2) + "\n")
+    for problem in problems:
+        print(problem)
+    return int(bool(problems))
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

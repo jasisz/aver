@@ -1,0 +1,12 @@
+module DafnyGuidanceRestatedGoal
+    intent = "Restating a false universal goal cannot prove it, although its zero sample passes."
+    effects []
+
+fn identity(x: Int) -> Int
+    x
+
+verify identity law restatedGoal
+    given x: Int = [0]
+    because identity(x) == x + x
+    using []
+    identity(x) => x + x

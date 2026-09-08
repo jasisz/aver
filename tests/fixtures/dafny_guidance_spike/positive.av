@@ -1,0 +1,25 @@
+module DafnyGuidancePositive
+    intent = "One source proves a guarded linear chain with ordered reasons and a local citation on both backends."
+    effects []
+
+fn nonnegative(x: Int) -> Bool
+    x >= 0
+
+verify nonnegative law guarded
+    given x: Int = [0, 2]
+    when x >= 0
+    because x >= 0
+    using []
+    nonnegative(x) holds
+
+fn advance(x: Int) -> Int
+    x + 2
+
+verify advance law guardedChain
+    given x: Int = [0, 2]
+    when x >= 0
+    because nonnegative(x)
+    because x + 1 > 0
+    because x + 2 >= 2
+    using [nonnegative.guarded]
+    advance(x) >= 2 holds

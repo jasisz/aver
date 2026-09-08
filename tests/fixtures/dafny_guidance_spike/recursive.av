@@ -1,0 +1,15 @@
+module DafnyGuidanceRecursive
+    intent = "The initial Dafny guided subset must explicitly decline recursive source proofs."
+    effects []
+
+fn down(n: Int) -> Int
+    match n <= 0
+        true -> 0
+        false -> down(n - 1)
+
+verify down law successorEquation
+    given n: Int = [0, 1, 3]
+    when n >= 0
+    because down(n + 1) == down(n)
+    using []
+    down(n + 1) => down(n)

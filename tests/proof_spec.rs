@@ -31,6 +31,8 @@ mod conditional_split_omega;
 mod container_induction;
 #[path = "proof_spec/cross_file.rs"]
 mod cross_file;
+#[path = "proof_spec/dafny_guidance.rs"]
+mod dafny_guidance;
 #[path = "proof_spec/dafny_inline.rs"]
 mod dafny_inline;
 #[path = "proof_spec/dep_law_names.rs"]

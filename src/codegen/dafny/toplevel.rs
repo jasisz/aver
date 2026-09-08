@@ -3143,7 +3143,10 @@ pub fn emit_verify_law(
     let law_name = aver_name_to_dafny(&law.name);
     if !law.because.is_empty() || law.using.is_some() {
         let claim = format!("{}.{}", vb.fn_name, law.name);
-        let reason = "because/using proof obligations currently require the Lean backend";
+        let reason = match super::reasons::emit(vb, law, ctx) {
+            Ok(emitted) => return emitted,
+            Err(reason) => format!("Dafny guided-law pilot declined: {reason}"),
+        };
         crate::codegen::common::record_declined_claim(
             ctx,
             crate::codegen::DeclineKind::Law,

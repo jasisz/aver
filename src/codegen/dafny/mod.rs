@@ -8,6 +8,7 @@ mod crypto;
 mod expr;
 mod fuel;
 mod lemmas;
+mod reasons;
 mod toplevel;
 
 use crate::ast::{FnDef, TopLevel, VerifyKind};
@@ -1161,7 +1162,7 @@ mod tests {
     use crate::codegen::build_context;
     use crate::source::parse_source;
 
-    fn ctx_from_source(src: &str, project_name: &str) -> CodegenContext {
+    pub(super) fn ctx_from_source(src: &str, project_name: &str) -> CodegenContext {
         let mut items = parse_source(src).expect("parse");
         // Proof-mode minimal pipeline — same shape as `lean::tests::
         // ctx_from_source`; see that for why every rewriting stage is
