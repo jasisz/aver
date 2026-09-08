@@ -1366,10 +1366,13 @@ fn emit_rational_floor_bound_matched(
             "          unfold {sgnfn}; rw [if_neg hE, if_neg hLE]; grind"
         ));
     }
-    body.push(format!("    simp only [{set1}]"));
+    // Keep dependent Decidable instances synchronized with the definitions
+    // being unfolded. Lean 4.33 checks their types at implicit transparency;
+    // simp alone can leave an instance referring to the old folded term.
+    body.push(format!("    dsimp +instances only [{set1}]"));
     body.push("    repeat' split".to_string());
     body.push(format!(
-        "    all_goals (simp only [{set2}, decide_eq_true_eq])"
+        "    all_goals (dsimp +instances only [{set2}]; simp only [decide_eq_true_eq])"
     ));
     body.push("    all_goals (try simp only [beq_iff_eq] at *)".to_string());
     body.push("    all_goals (".to_string());
@@ -2016,7 +2019,10 @@ fn emit_rational_floor_bound_general(
     body.push(format!(
         "          unfold {sgn}; rw [if_neg hE, if_neg hLE]; grind"
     ));
-    body.push(format!("    simp only [{defs}, decide_eq_true_eq]"));
+    // Normalize definition-backed instance arguments before Bool-to-Prop
+    // rewriting; otherwise their folded types can block the rewrite.
+    body.push(format!("    dsimp +instances only [{defs}]"));
+    body.push("    simp only [decide_eq_true_eq]".to_string());
     body.push(format!(
         "    have habsN : (if {minustop} < 0 then 0 - ({minustop}) else {minustop}) = {t_abs} := by have hfact : {minustop} = {sg} * ({t_abs}) := (by grind); have hnn : 0 ≤ {t_abs} := Int.mul_nonneg (Int.mul_nonneg (Int.le_of_lt hPSeT) (Int.le_of_lt hPSeB)) hr0; rw [hfact]; rcases hsign with h | h <;> rw [h] <;> split <;> omega"
     ));
@@ -2200,7 +2206,10 @@ fn emit_rational_floor_sign_general(
     body.push(format!(
         "    have hr0 : 0 ≤ {r} := by have := h_win.1; omega"
     ));
-    body.push(format!("    simp only [{defs}, decide_eq_true_eq]"));
+    // Normalize definition-backed instance arguments before Bool-to-Prop
+    // rewriting; otherwise their folded types can block the rewrite.
+    body.push(format!("    dsimp +instances only [{defs}]"));
+    body.push("    simp only [decide_eq_true_eq]".to_string());
     body.push(format!(
         "    have hVfact : {vprod} = {sg} * ({a_pos}) := by grind"
     ));
