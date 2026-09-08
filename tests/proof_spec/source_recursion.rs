@@ -1,6 +1,6 @@
 use super::*;
 
-fn check(source: &str, backend: &str) -> Option<serde_json::Value> {
+pub(super) fn check(source: &str, backend: &str) -> Option<serde_json::Value> {
     let checker = if backend == "lean" { "lake" } else { "dafny" };
     if Command::new(checker).arg("--version").output().is_err() {
         return None;
@@ -58,6 +58,95 @@ fn check(source: &str, backend: &str) -> Option<serde_json::Value> {
         }
     }
     Some(summary)
+}
+
+#[test]
+fn dafny_bounded_unfolding_keeps_universal_values_and_checks_every_supplier_and_reason() {
+    let source = include_str!("../fixtures/source_recursion/bounded_unfolding.av");
+    for (name, source, expected) in [
+        ("positive", source.to_string(), true),
+        (
+            "different_radix",
+            source
+                .replace(", 10)", ", 16)")
+                .replace("acc * 10", "acc * 16")
+                .replace("< 1000)", "< 4096)")
+                .replace("< 100000)", "< 1048576)"),
+            true,
+        ),
+        (
+            "missing_guard",
+            source.replace("    when Bool.and(value >= 0, value < 1000)\n", ""),
+            false,
+        ),
+        (
+            "false_reason",
+            source.replace(
+                "because read(digits(value, 5)) == value",
+                "because read(digits(value, 5)) == value + 1",
+            ),
+            false,
+        ),
+        (
+            "false_unused_supplier",
+            source.replace("identity(value) => value", "identity(value) => value + 1"),
+            false,
+        ),
+    ] {
+        let dir = temp_output_dir(&format!("aver-bounded-unfolding-{name}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("main.av");
+        std::fs::write(&path, source).unwrap();
+        let Some(summary) = check(path.to_str().unwrap(), "dafny") else {
+            return;
+        };
+        assert_eq!(summary["passed"], expected, "{name}: {summary}");
+        if !expected {
+            assert!(summary["errors"].as_u64().unwrap() > 0, "{name}: {summary}");
+        }
+    }
+}
+
+#[test]
+fn dafny_bounded_unfolding_handles_imported_names_and_typed_reverse_helpers() {
+    let dir = temp_output_dir("aver-bounded-import");
+    std::fs::create_dir_all(&dir).unwrap();
+    let source = include_str!("../fixtures/source_recursion/bounded_unfolding.av").replace(
+        "module BoundedUnfolding",
+        "module Codec\n    exposes [digits, read]",
+    );
+    std::fs::write(dir.join("codec.av"), source).unwrap();
+    let entry = dir.join("main.av");
+    std::fs::write(
+        &entry,
+        r#"module Main
+    depends [Codec]
+fn readFrom(n: Int) -> Int
+    n + 100
+fn digitsInto(n: Int) -> Int
+    n + 200
+fn identity(n: Int) -> Int
+    n
+verify identity law importedDigits
+    given n: Int = [0, 999]
+    when Bool.and(n >= 0, n < 1000)
+    using []
+    Codec.read(Codec.digits(n, 3)) => n
+fn repeat(value: Bool, width: Int, acc: List<Bool>) -> List<Bool>
+    match width <= 0
+        true -> List.reverse(acc)
+        false -> repeat(value, width - 1, List.prepend(value, acc))
+verify repeat law threeValues
+    given value: Bool = [true, false]
+    using []
+    repeat(value, 3, []) => [value, value, value]
+"#,
+    )
+    .unwrap();
+    let Some(summary) = check(entry.to_str().unwrap(), "dafny") else {
+        return;
+    };
+    assert_eq!(summary["passed"], true, "{summary}");
 }
 
 #[test]

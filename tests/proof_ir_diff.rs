@@ -26,6 +26,9 @@ use aver::ir::proof_ir::{
 use aver::source::{LoadedModule, parse_source};
 use std::path::PathBuf;
 
+#[path = "proof_ir_diff/bounded_unfolding.rs"]
+mod bounded_unfolding;
+
 fn build_ctx(src: &str) -> CodegenContext {
     let mut items = parse_source(src).expect("parse");
     // Proof-mode minimal pipeline: rewrite stages off (would alter
@@ -86,15 +89,27 @@ fn build_ctx_with_modules(entry_src: &str, deps: &[(&str, &str)]) -> CodegenCont
     let mut items = parse_source(entry_src).expect("entry parse");
     let loaded: Vec<LoadedModule> = deps
         .iter()
-        .map(|(name, source)| LoadedModule {
-            dep_name: (*name).to_string(),
-            items: parse_source(source).unwrap_or_else(|error| panic!("{name} parse: {error}")),
-            path: PathBuf::from(format!("{name}.av")),
+        .map(|(name, source)| {
+            let mut items =
+                parse_source(source).unwrap_or_else(|error| panic!("{name} parse: {error}"));
+            // Module loading performs TCO before assembling the codegen view.
+            aver::tco::transform_program(&mut items);
+            LoadedModule {
+                dep_name: (*name).to_string(),
+                items,
+                path: PathBuf::from(format!("{name}.av")),
+            }
         })
         .collect();
     let modules: Vec<aver::codegen::ModuleInfo> = loaded
         .iter()
-        .map(aver::codegen::ModuleInfo::from_loaded)
+        .map(|module| {
+            aver::codegen::ModuleInfo::from_items(
+                module.dep_name.clone(),
+                &module.items,
+                Some(aver::ir::analyze(&module.items, None)),
+            )
+        })
         .collect();
     let mut pipeline_result = aver::ir::pipeline::run(
         &mut items,

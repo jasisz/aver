@@ -492,6 +492,20 @@ pub struct LawTheorem {
     /// These are proof candidates, never assumptions: each backend must prove
     /// the recursive call's premises and strict decrease.
     pub induction: Option<LawInduction>,
+    /// Optional unfolding budgets, in `because` order followed by the claim.
+    /// These guide proof search only; they neither restrict the quantified
+    /// domain nor replace any source premise, supplier, or proof obligation.
+    pub unfolding: Vec<Option<LawUnfolding>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct LawUnfolding {
+    /// Small literal countdown plus headroom for wrappers and the base case.
+    pub depth: u32,
+    /// Canonical recursive declarations in this obligation's source cone.
+    pub functions: Vec<FnId>,
+    /// Concrete instances of the recursive sequence reversal operation.
+    pub reverse_elements: Vec<crate::ast::Type>,
 }
 
 #[derive(Debug, Clone)]

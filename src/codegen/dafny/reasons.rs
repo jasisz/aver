@@ -14,6 +14,7 @@ mod induction;
 mod subset;
 #[cfg(test)]
 mod tests;
+mod unfolding;
 
 fn label(vb: &VerifyBlock, law: &VerifyLaw) -> String {
     format!("{}.{}", vb.fn_name, law.name)
@@ -207,6 +208,11 @@ pub(super) fn emit(
             None => vec![&law.lhs, &law.rhs],
         };
         let driver = induction_driver(&source_expressions, law, ctx);
+        let unfolding = if driver.is_none() {
+            unfolding::attributes(vb, law, index, ctx)
+        } else {
+            None
+        };
         let has_induction = driver.is_some();
         let list_induction = driver
             .as_ref()
@@ -215,7 +221,11 @@ pub(super) fn emit(
             "// aver:dafny-obligation {step_name} {source_id}.{step}"
         ));
         out.push(format!(
-            "lemma {{:induction {}}} {step_name}({params})",
+            "lemma {}{{:induction {}}} {step_name}({params})",
+            unfolding
+                .as_ref()
+                .map(|attrs| format!("{attrs} "))
+                .unwrap_or_default(),
             driver
                 .as_ref()
                 .map(|driver| driver.variables.as_str())
@@ -232,8 +242,12 @@ pub(super) fn emit(
             out.push(format!("  decreases {}", driver.decreases));
         }
         out.push("{".to_string());
-        out.extend(super::law_induction::sequence_identities(law, ctx));
-        for &citation in &citations {
+        if unfolding.is_none() {
+            out.extend(super::law_induction::sequence_identities(law, ctx));
+        }
+        // Suppliers were validated and emitted above even when this obligation
+        // can close directly by unfolding. No `using` declaration is trusted.
+        for &citation in citations.iter().filter(|_| unfolding.is_none()) {
             let dependency = citation.law;
             let cited_name = citations::supplier_name(citation, &name, ctx);
             // The forall range retains the supplier's guard. Calling its

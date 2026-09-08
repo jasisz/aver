@@ -305,3 +305,29 @@ Move a transformation into the common pipeline when both consumers can retain
 the same source semantics, and check the change with the same-source positive
 and negative controls. Do not require a broad ProofIR refactor to merge this
 validated structural checkpoint.
+
+## Fixed-count unfolding checkpoint
+
+The unchanged BTC `Message` module now passes all ten laws with its imports
+checked, including the 2/4/8-byte read-after-write laws. Strict whole-module
+BTC coverage rises from **7/104 to 17/104** (`Message` plus `ScriptMath`).
+
+ProofIR carries an optional unfolding budget for each `because` step and the
+final claim. It follows small literal arguments through direct forwarding
+wrappers to a checked integer countdown, and records the recursive function
+IDs and concrete sequence-reversal instances in that obligation's source cone.
+The initial strategy accepts Int/Bool givens and countdown literals up to 16;
+arbitrary sequence givens retain citation/induction search. Sample domains and
+range premises do not determine the budget or restrict universal quantifiers.
+
+Dafny renders these hints as local fuel attributes. It avoids introducing broad
+quantified citation facts into the same unfolding context, while still checking
+every cited supplier and every intermediate step. The original premises and
+claim remain unchanged. Lean retains its existing automation; the new ProofIR
+field is a search hint rather than a new semantic assumption.
+
+Regression controls use decimal and hexadecimal digits, widths 3 and 5,
+imported functions beside colliding local names, and Bool sequence reversal.
+Missing bounds, false intermediate steps and false unused suppliers all fail
+actual Dafny checking. The remaining BTC modules still have open proofs or
+unsupported operations; this checkpoint does not establish full BTC or K5.

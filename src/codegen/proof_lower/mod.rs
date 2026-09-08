@@ -2530,6 +2530,13 @@ pub fn populate_law_theorems(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
         );
 
         let induction = law_induction::plan(law, fn_id, inputs, ir, law_scope_ref);
+        let unfolding = law
+            .because
+            .iter()
+            .map(|e| vec![e])
+            .chain(std::iter::once(vec![&law.lhs, &law.rhs]))
+            .map(|expressions| law_unfolding::plan(law, &expressions, inputs, ir, law_scope_ref))
+            .collect();
 
         ir.law_theorems.push(LawTheorem {
             fn_id,
@@ -2540,11 +2547,13 @@ pub fn populate_law_theorems(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
             claim_rhs: inputs.resolve_expr(&law.rhs, law_scope_ref),
             strategy,
             induction,
+            unfolding,
         });
     }
 }
 
 mod law_induction;
+mod law_unfolding;
 
 /// Pick the strategy `LawLower` should pin on a `(fn, law)` pair.
 ///
