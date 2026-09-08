@@ -1,0 +1,14 @@
+module DafnyGuidanceNonlinearZeroFactor
+    intent = "Nonzero sampled factors cannot justify cancellation without excluding zero from the universal claim."
+    effects []
+
+fn cancelled(x: Int, y: Int, factor: Int) -> Bool
+    (x * factor == y * factor) == (x == y)
+
+verify cancelled law missingNonzero
+    given x: Int = [-3, 0, 2]
+    given y: Int = [-2, 0, 2]
+    given factor: Int = [-2, 1, 4]
+    because (x * factor == y * factor) == (x == y)
+    using []
+    cancelled(x, y, factor) holds

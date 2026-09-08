@@ -341,7 +341,7 @@ aver cert explain out/app.wasm out/cert
 exact wasm-gc module or wasip2 component. A wasip2 package hashes the delivered
 `.component.wasm`; its declared prefix/core/suffix envelope binds the exact
 embedded core bytes consumed by the existing Wasm wall. Install `aver-cert`
-separately; it is an independently versioned verifier using Lean 4.32. A
+separately; it is an independently versioned verifier using Lean 4.33. A
 crates.io compiler install needs `--features wasm` for wasm-gc, plus `wasip2`
 for component output. Verification also requires a standard Elan installation
 for the pinned toolchain.

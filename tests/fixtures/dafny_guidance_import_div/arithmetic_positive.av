@@ -1,0 +1,67 @@
+module ArithmeticPositive
+    intent = "Division preserves Aver's Euclidean and Result semantics, and quotient recursion threads an accumulator."
+    effects []
+
+fn quotient(value: Int, divisor: Int) -> Result<Int, String>
+    Int.div(value, divisor)
+
+fn remainder(value: Int, divisor: Int) -> Result<Int, String>
+    Int.mod(value, divisor)
+
+fn rebuild(value: Int) -> Int
+    3 * Int.div(value, 3) + Int.mod(value, 3)
+
+verify quotient
+    quotient(-8, 3) => Result.Ok(-3)
+    quotient(-8, -3) => Result.Ok(3)
+    quotient(8, -3) => Result.Ok(-2)
+    quotient(8, 0) => Result.Err("division by zero")
+
+verify remainder
+    remainder(-8, 3) => Result.Ok(1)
+    remainder(-8, -3) => Result.Ok(1)
+    remainder(8, -3) => Result.Ok(2)
+    remainder(8, 0) => Result.Err("division by zero")
+
+verify rebuild law identity
+    given value: Int = [-9, -8, 0, 8, 9]
+    because rebuild(value) == value
+    using []
+    rebuild(value) => value
+
+verify quotient law dynamicThree
+    given value: Int = [-8, 0, 8]
+    given divisor: Int = [0, 3, -3]
+    when divisor == 3
+    because quotient(value, divisor) == Result.Ok(Int.div(value, 3))
+    using []
+    quotient(value, divisor) => Result.Ok(Int.div(value, 3))
+
+verify quotient law zero
+    given value: Int = [-8, 0, 8]
+    because quotient(value, 0) == Result.Err("division by zero")
+    using []
+    quotient(value, 0) => Result.Err("division by zero")
+
+verify remainder law zero
+    given value: Int = [-8, 0, 8]
+    because remainder(value, 0) == Result.Err("division by zero")
+    using []
+    remainder(value, 0) => Result.Err("division by zero")
+
+fn levels(number: Int, acc: Int) -> Int
+    match number > 0
+        true -> levels(Int.div(number, 3), acc + 1)
+        false -> acc
+
+fn growsReason(number: Int, acc: Int) -> Bool
+    match number > 0
+        true -> Bool.and(growsReason(Int.div(number, 3), acc + 1), levels(number, acc) >= acc)
+        false -> levels(number, acc) >= acc
+
+verify levels law grows
+    given number: Int = [-3, 0, 1, 3, 27]
+    given acc: Int = [-4, 0, 5]
+    because growsReason(number, acc)
+    using []
+    levels(number, acc) >= acc holds

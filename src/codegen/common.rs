@@ -3170,15 +3170,6 @@ pub(crate) fn is_set_type(ty: &Type) -> bool {
     matches!(ty, Type::Map(_, v) if matches!(v.as_ref(), Type::Unit))
 }
 
-/// Resolved-form mirror of the historical AST helper. Same Phase-E shape
-/// (`ResolvedExpr::Literal(Unit)`); used by migrated backends.
-pub(crate) fn is_unit_expr_resolved(expr: &crate::ir::hir::ResolvedExpr) -> bool {
-    matches!(
-        expr,
-        crate::ir::hir::ResolvedExpr::Literal(crate::ast::Literal::Unit)
-    )
-}
-
 /// Escape an Aver identifier if it collides with a target language reserved word.
 ///
 /// `affix` is appended as a suffix (e.g. `"_"` for Dafny, `"'"` for Lean).

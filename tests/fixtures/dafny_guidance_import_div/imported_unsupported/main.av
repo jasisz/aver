@@ -1,0 +1,14 @@
+module ImportedUnsupported
+    intent = "Admission must inspect the full imported function cone."
+    depends [Mid]
+    effects []
+
+fn positive(value: Int) -> Bool
+    Mid.positive(value)
+
+verify positive law preservesPositive
+    given value: Int = [1, 4]
+    when value > 0
+    because positive(value)
+    using []
+    positive(value) holds

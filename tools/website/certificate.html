@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
     <title>ABC (Artifact Behavioral Certificate) — Aver</title>
-    <meta name="description" content="ABC (Artifact Behavioral Certificate) binds admitted claims about selected exports to the exact WebAssembly bytes checked by the standalone aver-cert verifier and Lean 4.32.">
+    <meta name="description" content="ABC (Artifact Behavioral Certificate) binds admitted claims about selected exports to the exact WebAssembly bytes checked by the standalone aver-cert verifier and Lean 4.33.">
     <link rel="canonical" href="https://averlang.dev/certificate.html">
     <link rel="stylesheet" href="article.css">
 </head>
@@ -50,7 +50,7 @@
         <p class="article-deck">
             An ABC binds admitted behavioral claims about selected exports to the exact
             WebAssembly bytes supplied to the verifier. The standalone
-            <code>aver-cert</code> checks those claims under its embedded Lean 4.32 wall
+            <code>aver-cert</code> checks those claims under its embedded Lean 4.33 wall
             and emits <code>CERTIFIED</code> after the fixed proof root, axiom audit, and
             fresh kernel replay succeed.
         </p>
@@ -58,7 +58,7 @@
             <span><code>aver-cert</code> 0.1.x</span>
             <span>package 1</span>
             <span>schema 4</span>
-            <span>Lean 4.32</span>
+            <span>Lean 4.33</span>
             <span><code>CERTIFIED</code> or decline</span>
         </p>
     </header>
@@ -112,7 +112,7 @@
                 <span>03</span>
                 <div>
                     <strong>Build a fresh checker project</strong>
-                    <p>Materialize the checker-owned wall, Lean 4.32 toolchain, build files, and witness.</p>
+                    <p>Materialize the checker-owned wall, Lean 4.33 toolchain, build files, and witness.</p>
                 </div>
             </li>
             <li>
@@ -177,7 +177,7 @@
                     </tr>
                     <tr>
                         <th scope="row">Toolchain</th>
-                        <td>Pinned Lean 4.32, resolved through Elan</td>
+                        <td>Pinned Lean 4.33, resolved through Elan</td>
                     </tr>
                     <tr>
                         <th scope="row">Public proof root</th>
@@ -314,7 +314,7 @@ aver-cert explain out/app.wasm out/cert</code></pre>
             <li>An ABC is not a signature, authorship claim, or reproducible-build attestation.</li>
             <li>Source meaning erased by WebAssembly, including user-ADT domain, representation, and model declarations, remains an explicit premise.</li>
             <li>Trace and replay recordings do not participate in plan selection, theorem construction, or the verdict.</li>
-            <li><code>leanchecker --fresh</code> belongs to the same Lean 4.32 distribution; the architecture does not claim two independently implemented kernels.</li>
+            <li><code>leanchecker --fresh</code> belongs to the same Lean 4.33 distribution; the architecture does not claim two independently implemented kernels.</li>
         </ul>
 
         <h3>Trusted computing base</h3>
@@ -322,7 +322,7 @@ aver-cert explain out/app.wasm out/cert</code></pre>
         <ul>
             <li>the small standalone verifier path for file I/O, hashing, version checks, safe staging, process execution, and report pinning;</li>
             <li><code>wasmparser::Validator</code> for complete WebAssembly validity;</li>
-            <li>the exact embedded Lean wall and Lean 4.32 elaborator, kernel, and build tools;</li>
+            <li>the exact embedded Lean wall and Lean 4.33 elaborator, kernel, and build tools;</li>
             <li>the canonical Elan installation used to resolve the pinned toolchain;</li>
             <li>SHA-256 collision resistance, named runtime contracts, explicit source declarations, and any configured local build cache.</li>
         </ul>

@@ -128,13 +128,7 @@ theorem runEqTail
         rw [hgot]
         simp only [b32, heq', Bool.false_eq_true, ↓reduceIte, wRunF]
         rw [hr']
-        simp [evalStringEq, byteArray]
-        intro hc
-        have hc' : stringEqW input
-            (.arr stringTy (plan.needle.bytes.map (fun b => .i32v (Int.ofNat b)))) = true := by
-          simpa using hc
-        rw [heq'] at hc'
-        simp at hc'
+        simp only [evalStringEq, byteArray, heq', Bool.false_eq_true, ↓reduceIte]
       · have hr := runEqResult host ar callee stringTy input locals hlocal []
           plan.hit []
         have heq' : stringEqW input
@@ -147,13 +141,7 @@ theorem runEqTail
         simp only [b32, heq', ↓reduceIte, wRunF]
         simp
         rw [hr']
-        simp [evalStringEq, byteArray]
-        intro hc
-        have hc' : stringEqW input
-            (.arr stringTy (plan.needle.bytes.map (fun b => .i32v (Int.ofNat b)))) = false := by
-          simpa using hc
-        rw [heq'] at hc'
-        simp at hc'
+        simp only [evalStringEq, byteArray, heq', ↓reduceIte]
 
 theorem popConcatStack (stringTy : Nat) (prefixes suffixes : List StringConcatChunk)
     (v : WVal) :

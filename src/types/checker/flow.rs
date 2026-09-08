@@ -881,6 +881,19 @@ impl TypeChecker {
                 let caller = format!("<verify:{}>", vb.fn_name);
                 if let crate::ast::VerifyKind::Law(law) = &vb.kind {
                     self.with_verify_law_givens(&law.givens, vb.line, |checker| {
+                        // Proof exporters render the uninstantiated templates,
+                        // not just the separately cloned finite cases. Infer
+                        // their types from declared givens and normal scoped
+                        // signatures, including match binders and call results.
+                        // Samples retain their independent literal-discharge
+                        // types; no sampled values become proof assumptions.
+                        let previous_trace = checker.in_verify_trace_context;
+                        checker.in_verify_trace_context = true;
+                        let left_ty = checker.infer_type(&law.lhs);
+                        let expected = super::infer::type_is_fully_concrete(&left_ty)
+                            .then_some(&left_ty);
+                        checker.infer_type_with_expected(&law.rhs, expected);
+                        checker.in_verify_trace_context = previous_trace;
                         for reason in &law.because {
                             let ty = checker.infer_type(reason);
                             if !checker.compatible(&ty, &Type::Bool) {

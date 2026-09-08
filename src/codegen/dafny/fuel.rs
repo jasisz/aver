@@ -76,7 +76,7 @@ pub fn emit_mutual_fuel_group(fns: &[&FnDef], ctx: &CodegenContext) -> Option<St
         // g(rest))?!` stays an `IndependentProduct` node in the AST
         // and Dafny sees raw tuples instead of the match-unwrapped
         // Result shape.
-        let lowered_body = crate::types::checker::effect_lifting::lower_pure_question_bang_fn(fd)
+        let lowered_body = super::propagation::lower_pure_fn(fd)
             .ok()
             .flatten()
             .map(|lowered| lowered.body.as_ref().clone())
@@ -117,92 +117,49 @@ pub fn emit_mutual_fuel_group(fns: &[&FnDef], ctx: &CodegenContext) -> Option<St
     )
 }
 
-/// Native `decreases` tuple emission for mutual-recursion SCCs whose
-/// every fn has a sizeOf measure on at least one parameter and the
-/// classifier already gave each fn a rank in the SCC. Replaces the
+/// Native `decreases` tuple emission for mutual-recursion SCCs with a
+/// checked sequence-length measure. Replaces the
 /// fuel-bounded encoding entirely for these groups: Dafny verifies
 /// termination via the lexicographic tuple `(measure, rank)` and Z3
 /// can symbolically unfold the SCC for proofs over concrete values
 /// without hitting a fuel ceiling.
 ///
-/// Returns `None` when the SCC isn't `MutualSizeOfRanked`, or when
-/// any member has no inferable sizeOf measure (no `List`/`Vector`/
-/// `String` parameter). The caller falls back to
-/// [`emit_mutual_fuel_group`] in that case.
-///
-/// Why ranks come from the classifier verbatim: `ranks_from_same_
-/// edges` already topo-sorts on "same-measure" callees, so a call
-/// that keeps the measure constant (e.g. `addStep → addDigits` on
-/// the same `(ta, tb)`) goes to a strictly lower rank — the lex
-/// tuple decreases on the second component. Calls that strictly
-/// shrink the measure (e.g. `addDigits → addLeft` peeling a head
-/// off `a`) decrease on the first component regardless of rank.
+/// Each member's selected parameters and rank come from the same call-edge
+/// analysis. An accumulator may grow when a separate selected input shrinks;
+/// the accumulator is then absent from the measure. Calls that leave the
+/// selected lengths unchanged must decrease the rank. List heads never count
+/// as shorter lists. Unrecognised groups retain the existing forwarded-rank
+/// path when eligible, otherwise the caller falls back to fuel emission.
 pub fn emit_mutual_native_decreases_group(fns: &[&FnDef], ctx: &CodegenContext) -> Option<String> {
     // MutualSizeOfRanked SCC: every member's contract is
     // `Fuel { Lex { params: [], rank } }` (empty params signal the
     // frame-level sizeOf measure). Any other Lex shape (single-param
     // mutual int-countdown, two-param string-pos) fails this group.
-    let mut ranks: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     for fd in fns {
         let contract = crate::codegen::common::find_fn_contract_for_fn(ctx, fd)?;
         match contract.recursion.as_ref()? {
             crate::ir::RecursionContract::Fuel {
-                fuel_metric: crate::ir::FuelMetric::Lex { params, rank },
-            } if params.is_empty() => {
-                ranks.insert(fd.name.clone(), *rank);
-            }
+                fuel_metric: crate::ir::FuelMetric::Lex { params, .. },
+            } if params.is_empty() => {}
             _ => return None,
         }
     }
-    let mut measures: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-    for fd in fns {
-        let measure = emit_sizeof_measure_expr_dafny(fd)?;
-        measures.insert(fd.name.clone(), measure);
-    }
-
-    // Reject tail-recursive accumulator patterns where an intra-SCC
-    // call passes a sizeOf-relevant arg through `[x] + acc` /
-    // `List.prepend(x, acc)` / `acc + [x]` — measure grows across
-    // that edge so the lexicographic `(measure, rank)` tuple can't
-    // decrease and Dafny rejects the `decreases` clause. The fuel-
-    // bounded encoding still terminates these (fuel parameter
-    // counts down regardless of measure shape), so we fall back to
-    // it for these SCCs. Conservative: any non-`Ident`/`Resolved`/
-    // `Literal`/`Attr` arg in a sizeOf slot drops us back to fuel.
-    if crate::codegen::recursion::detect::scc_has_growing_accumulator(fns) {
-        return None;
-    }
-
-    // The contract's rank orders the calls that leave the PLAN's measure
-    // unchanged. Dafny's measure is the length of every sequence parameter,
-    // which is what the plan ranked whenever it ranked the parameters the
-    // members hand on by name — the ordering these groups had before the
-    // call edge analysis existed, kept as it was. A rank the analysis chose
-    // for another measure — one counting an `Int` down, or leaving a
-    // sequence out — is not Dafny's to pair with `|xs| + |ys|`: there the
-    // analysis is rerun over exactly Dafny's parameters, and the group stays
-    // native only when it counts every one of them, with the ranks it then
-    // gives.
-    if crate::codegen::recursion::detect::forwarded_ranks(fns).is_none() {
-        ranks = dafny_cycle_ranks(fns)?;
-    }
+    let measures = dafny_native_measures(fns)?;
 
     let mut lines: Vec<String> = Vec::new();
-    for fd in fns {
-        let measure = measures.get(&fd.name).unwrap();
-        let rank = ranks.get(&fd.name).unwrap();
+    for (fd, (measure, rank)) in fns.iter().zip(&measures) {
         let fn_name = aver_name_to_dafny(&fd.name);
-        let params_str = emit_dafny_params(&fd.params);
-        let ret_type_str = super::toplevel::emit_type(&fd.return_type);
+        let active = ctx.active_module_scope();
+        let params_str = emit_dafny_params_in_scope(&fd.params, active.as_deref());
+        let ret_type_str = super::toplevel::emit_type_in_scope(&fd.return_type, active.as_deref());
         // Apply `?!` lowering so the body shape matches what the
         // fuel path also emits — keeps `(f(x), g(y))?!` -> match-
         // unwrapped tuple even on the native path.
-        let lowered_body = crate::types::checker::effect_lifting::lower_pure_question_bang_fn(fd)
+        let lowered_body = super::propagation::lower_pure_fn(fd)
             .ok()
             .flatten()
             .map(|lowered| lowered.body.as_ref().clone())
             .unwrap_or_else(|| fd.body.as_ref().clone());
-        let active = ctx.active_module_scope();
         let resolved_body = ctx.resolve_rewritten_fn_body(&lowered_body, active.as_deref());
         let body_str = super::toplevel::emit_fn_body(&resolved_body, ctx);
 
@@ -221,13 +178,11 @@ pub fn emit_mutual_native_decreases_group(fns: &[&FnDef], ctx: &CodegenContext) 
     Some(lines.join("\n"))
 }
 
-/// SizeOf measure expression for a fn's `List`/`Vector`/`String`
-/// parameters — Dafny syntax `|name|` for seq/string length. Matches
-/// the index set [`sizeof_measure_param_indices`] uses on the Lean
-/// side so the same fns are picked across backends.
-fn emit_sizeof_measure_expr_dafny(fd: &FnDef) -> Option<String> {
-    let terms: Vec<String> = dafny_measure_param_indices(fd)
-        .into_iter()
+/// Length sum over precisely the selected parameter positions.
+fn emit_length_measure(fd: &FnDef, indices: &[usize]) -> Option<String> {
+    let terms: Vec<String> = indices
+        .iter()
+        .copied()
         .map(|index| format!("|{}|", aver_name_to_dafny(&fd.params[index].0)))
         .collect();
     (!terms.is_empty()).then(|| terms.join(" + "))
@@ -251,59 +206,79 @@ fn dafny_measure_param_indices(fd: &FnDef) -> Vec<usize> {
         .collect()
 }
 
-/// Tie-break ranks from the call edge analysis run over exactly the
-/// parameters Dafny measures, or `None` when the measure it finds counts
-/// something else (an `Int` it can see count down) or leaves one of them
-/// out — `decreases |xs| + |ys|, rank` is only right for a rank that
-/// orders the calls leaving `|xs| + |ys|` unchanged. The analysis is run
-/// with a matched list's head not taken for a part of the list: the head
-/// is smaller by size, which the plan measures, not by length.
-fn dafny_cycle_ranks(fns: &[&FnDef]) -> Option<std::collections::HashMap<String, usize>> {
+/// Measures and their matching ranks, in member order. Never borrow ranks
+/// from an analysis that counts integers, list heads, or other parameters.
+fn dafny_native_measures(fns: &[&FnDef]) -> Option<Vec<(String, usize)>> {
+    if let Some(measures) = dafny_cycle_measures(fns) {
+        return Some(measures);
+    }
+
+    // Keep the pre-existing all-sequence/forwarded-rank strategy for groups
+    // the structural call-edge walker cannot yet recognise. Its original
+    // growing-argument gate still applies: only a validated selection above
+    // may remove an accumulator from the emitted measure. Dafny checks the
+    // resulting native functions' termination in either path.
+    if crate::codegen::recursion::detect::scc_has_growing_accumulator(fns) {
+        return None;
+    }
+    let ranks = crate::codegen::recursion::detect::forwarded_ranks(fns)?;
+    fns.iter()
+        .map(|fd| {
+            Some((
+                emit_length_measure(fd, &dafny_measure_param_indices(fd))?,
+                *ranks.get(&fd.name)?,
+            ))
+        })
+        .collect()
+}
+
+/// Select only sequence lengths and emit exactly those terms. With list
+/// heads excluded, a match tail is strictly shorter while a forwarded input
+/// or a slice is merely non-growing. A growing accumulator is dropped by
+/// the common analysis, which must still find a decrease around every cycle.
+fn dafny_cycle_measures(fns: &[&FnDef]) -> Option<Vec<(String, usize)>> {
     use crate::codegen::recursion::cycle_measure::{Candidate, MeasureKind, measure_for_cycle};
+    if fns.is_empty() {
+        return None;
+    }
     let candidates: Vec<Vec<Candidate>> = fns
         .iter()
         .map(|fd| {
-            fd.params
-                .iter()
-                .enumerate()
-                .filter_map(|(index, (_, ty))| {
-                    let kind = match crate::codegen::common::parse_type_annotation(ty) {
-                        crate::types::Type::List(_) | crate::types::Type::Vector(_) => {
-                            MeasureKind::Structural
-                        }
-                        crate::types::Type::Int => MeasureKind::Countdown,
-                        _ => return None,
-                    };
-                    Some(Candidate { index, kind })
+            dafny_measure_param_indices(fd)
+                .into_iter()
+                .map(|index| Candidate {
+                    index,
+                    kind: MeasureKind::Structural,
                 })
                 .collect()
         })
         .collect();
     let measures = measure_for_cycle(fns, &candidates, false).ok()?;
-    let counted: Vec<Vec<usize>> = measures
-        .iter()
-        .map(|measure| measure.params.iter().map(|c| c.index).collect())
-        .collect();
-    let measured: Vec<Vec<usize>> = fns
-        .iter()
-        .map(|fd| dafny_measure_param_indices(fd))
-        .collect();
-    (counted == measured).then(|| {
-        fns.iter()
-            .zip(measures)
-            .map(|(fd, measure)| (fd.name.clone(), measure.rank))
-            .collect()
-    })
+    fns.iter()
+        .zip(measures)
+        .map(|(fd, measure)| {
+            let indices: Vec<_> = measure
+                .params
+                .iter()
+                .map(|candidate| candidate.index)
+                .collect();
+            Some((emit_length_measure(fd, &indices)?, measure.rank))
+        })
+        .collect()
 }
 
 fn emit_dafny_params(params: &[(String, String)]) -> String {
+    emit_dafny_params_in_scope(params, None)
+}
+
+fn emit_dafny_params_in_scope(params: &[(String, String)], scope: Option<&str>) -> String {
     params
         .iter()
         .map(|(pname, ptype)| {
             format!(
                 "{}: {}",
                 aver_name_to_dafny(pname),
-                super::toplevel::emit_type(ptype)
+                super::toplevel::emit_type_in_scope(ptype, scope)
             )
         })
         .collect::<Vec<_>>()
@@ -632,5 +607,101 @@ fn type_def_default(
                 .collect::<Option<_>>()?;
             Some(format!("{}({})", name, args.join(", ")))
         }
+    }
+}
+
+#[cfg(test)]
+mod native_measure_tests {
+    use super::{dafny_native_measures, emit_dafny_params_in_scope};
+    use crate::ast::{FnDef, TopLevel};
+
+    fn functions(source: &str) -> Vec<FnDef> {
+        crate::source::parse_source(source)
+            .unwrap()
+            .into_iter()
+            .filter_map(|item| match item {
+                TopLevel::FnDef(fd) => Some(fd),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn growing_accumulator_is_excluded_and_reordered_inputs_keep_their_rank() {
+        let fns = functions(
+            r#"fn scan(acc: List<Int>, items: List<Int>) -> Int
+    match items
+        [] -> List.len(acc)
+        [head, ..tail] -> accept(tail, List.prepend(head, acc))
+fn accept(rest: List<Int>, output: List<Int>) -> Int
+    scan(output, rest)
+"#,
+        );
+        let refs: Vec<_> = fns.iter().collect();
+        assert!(crate::codegen::recursion::detect::scc_has_growing_accumulator(&refs));
+        let measures = dafny_native_measures(&refs).expect("the input tail drives the cycle");
+        assert_eq!(measures[0].0, "|items|");
+        assert_eq!(measures[1].0, "|rest|");
+        assert!(
+            measures[1].1 > measures[0].1,
+            "the unchanged call drops rank"
+        );
+    }
+
+    #[test]
+    fn selected_sum_tracks_two_inputs_but_not_the_growing_output() {
+        let fns = functions(
+            r#"fn first(left: List<Int>, right: List<Int>, acc: List<Int>) -> Int
+    match left
+        [] -> List.len(acc)
+        [head, ..tail] -> second(right, tail, List.prepend(head, acc))
+fn second(right: List<Int>, left: List<Int>, acc: List<Int>) -> Int
+    match right
+        [] -> List.len(acc)
+        [head, ..tail] -> first(left, tail, List.prepend(head, acc))
+"#,
+        );
+        let measures = dafny_native_measures(&fns.iter().collect::<Vec<_>>()).unwrap();
+        assert_eq!(measures[0].0, "|left| + |right|");
+        assert_eq!(measures[1].0, "|right| + |left|");
+    }
+
+    #[test]
+    fn growing_output_does_not_disguise_an_unchanged_input_cycle() {
+        for transfer in ["items", "List.take(items, 1)", "List.concat(items, items)"] {
+            let fns = functions(&format!(
+                "fn first(items: List<Int>, acc: List<Int>) -> Int\n    second({transfer}, List.prepend(1, acc))\nfn second(items: List<Int>, acc: List<Int>) -> Int\n    first(items, acc)\n"
+            ));
+            assert!(
+                dafny_native_measures(&fns.iter().collect::<Vec<_>>()).is_none(),
+                "a growing, unchanged or merely non-growing input is insufficient: {transfer}"
+            );
+        }
+    }
+
+    #[test]
+    fn list_heads_and_integer_countdowns_do_not_supply_length_ranks() {
+        for source in [
+            include_str!("../../../tests/fixtures/mutual_cycle_head_and_tail.av"),
+            include_str!("../../../tests/fixtures/mutual_cycle_countdown_and_list.av"),
+        ] {
+            let fns = functions(source);
+            assert!(dafny_native_measures(&fns.iter().collect::<Vec<_>>()).is_none());
+        }
+    }
+
+    #[test]
+    fn native_parameters_keep_the_emitting_modules_own_types_local() {
+        let params = vec![
+            ("own".to_string(), "List<Parser.Op>".to_string()),
+            (
+                "foreign".to_string(),
+                "Result<Other.Op, String>".to_string(),
+            ),
+        ];
+        assert_eq!(
+            emit_dafny_params_in_scope(&params, Some("Parser")),
+            "own: seq<Op>, foreign: Result<Aver_Other.Op, string>"
+        );
     }
 }

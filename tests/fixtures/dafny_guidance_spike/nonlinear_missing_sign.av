@@ -1,0 +1,15 @@
+module DafnyGuidanceNonlinearMissingSign
+    intent = "Nonnegative sampled factors hide the missing sign guard in universal multiplication monotonicity."
+    effects []
+
+fn orderedProducts(x: Int, y: Int, factor: Int) -> Bool
+    x * factor <= y * factor
+
+verify orderedProducts law missingSign
+    given x: Int = [-3, 0, 2]
+    given y: Int = [-2, 0, 5]
+    given factor: Int = [0, 1, 4]
+    when x <= y
+    because x * factor <= y * factor
+    using []
+    orderedProducts(x, y, factor) holds

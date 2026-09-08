@@ -1,0 +1,95 @@
+module PropagationPositive
+    intent = "Nested propagation preserves the enclosing Result, first-error order, and branch-local evaluation."
+    effects []
+
+record Box
+    value: Int
+
+fn read(value: Int) -> Result<Int, Int>
+    match value >= 0
+        true -> Result.Ok(value)
+        false -> Result.Err(value)
+
+fn add(left: Int, right: Int) -> Int
+    left + right
+
+fn nested(left: Int, right: Int) -> Result<Int, Int>
+    Result.Ok(add(read(left)?, read(right)?))
+
+fn nestedExpected(left: Int, right: Int) -> Result<Int, Int>
+    match left < 0
+        true -> Result.Err(left)
+        false -> match right < 0
+            true -> Result.Err(right)
+            false -> Result.Ok(left + right)
+
+verify nested law firstErrorOrSum
+    given left: Int = [-3, 0, 5]
+    given right: Int = [-7, 0, 9]
+    because nested(left, right) == nestedExpected(left, right)
+    using []
+    nested(left, right) => nestedExpected(left, right)
+
+fn pack(value: Int) -> Result<Tuple<Box, List<Int>>, Int>
+    Result.Ok((Box(value = read(value)?), [read(value)?, value]))
+
+fn packExpected(value: Int) -> Result<Tuple<Box, List<Int>>, Int>
+    match value < 0
+        true -> Result.Err(value)
+        false -> Result.Ok((Box(value = value), [value, value]))
+
+verify pack law nestedContainers
+    given value: Int = [-4, 0, 6]
+    because pack(value) == packExpected(value)
+    using []
+    pack(value) => packExpected(value)
+
+fn update(value: Int) -> Result<Box, Int>
+    original = Box(value = 13)
+    Result.Ok(Box.update(original, value = read(value)?))
+
+fn updateExpected(value: Int) -> Result<Box, Int>
+    match value < 0
+        true -> Result.Err(value)
+        false -> Result.Ok(Box(value = value))
+
+verify update law nestedUpdate
+    given value: Int = [-4, 0, 6]
+    because update(value) == updateExpected(value)
+    using []
+    update(value) => updateExpected(value)
+
+fn branch(take: Bool, value: Int) -> Result<Int, Int>
+    result = match take
+        true -> read(value)?
+        false -> 7
+    Result.Ok(result)
+
+fn branchExpected(take: Bool, value: Int) -> Result<Int, Int>
+    match take
+        true -> read(value)
+        false -> Result.Ok(7)
+
+verify branch law onlySelectedBranch
+    given take: Bool = [false, true]
+    given value: Int = [-4, 0, 6]
+    because branch(take, value) == branchExpected(take, value)
+    using []
+    branch(take, value) => branchExpected(take, value)
+
+fn product(left: Int, right: Int) -> Result<Tuple<Int, Int>, Int>
+    Result.Ok((read(left), read(right))?!)
+
+fn productExpected(left: Int, right: Int) -> Result<Tuple<Int, Int>, Int>
+    match left < 0
+        true -> Result.Err(left)
+        false -> match right < 0
+            true -> Result.Err(right)
+            false -> Result.Ok((left, right))
+
+verify product law firstErrorOrTuple
+    given left: Int = [-3, 0, 5]
+    given right: Int = [-7, 0, 9]
+    because product(left, right) == productExpected(left, right)
+    using []
+    product(left, right) => productExpected(left, right)

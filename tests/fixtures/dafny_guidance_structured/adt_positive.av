@@ -1,0 +1,38 @@
+module StructuredAdtPositive
+    intent = "Named constructors, their list fields, recursive list reasons and checked local citations retain the same source meaning."
+    effects []
+
+type Op
+    Code(Int)
+    Push(Int, List<Int>)
+
+fn rebuild(op: Op) -> Op
+    match op
+        Op.Code(code) -> Op.Code(code)
+        Op.Push(code, data) -> Op.Push(code, data)
+
+verify rebuild law identity
+    given op: Op = [Op.Code(81), Op.Push(76, [171])]
+    because rebuild(op) == op
+    using []
+    rebuild(op) => op
+
+fn wrap(op: Op) -> List<Op>
+    [op]
+
+verify wrap law rebuilt
+    given op: Op = [Op.Code(81), Op.Push(76, [171])]
+    because rebuild(op) == op
+    using [rebuild.identity]
+    wrap(rebuild(op)) => wrap(op)
+
+fn allRebuilt(ops: List<Op>) -> Bool
+    match ops
+        [] -> true
+        [head, ..tail] -> Bool.and(allRebuilt(tail), rebuild(head) == head)
+
+verify allRebuilt law identity
+    given ops: List<Op> = [[], [Op.Code(81)], [Op.Push(76, [171]), Op.Code(82)]]
+    because allRebuilt(ops)
+    using [rebuild.identity]
+    allRebuilt(ops) holds

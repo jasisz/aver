@@ -204,7 +204,7 @@ fn appendReason(items: List<Int>, suffix: List<Int>) -> Bool
 
 [law_reason_integer_descent.av](../tests/fixtures/law_reason_integer_descent.av) exercises division by three, a false bound, a guard that fails at recursive arguments, and an opaque nondecreasing function. [K5 Binade](../projects/k5_fdiv/domain/binade.av) uses the same mechanism to bracket its executable binary exponent, including negative exponents. Named Boolean facts are expanded before contextual simplification, preserving their arithmetic content.
 
-Explanation obligations are universal. A stage the backend cannot prove remains failed; it does not silently substitute sampled evidence. Dafny export explicitly declines annotated laws because that backend does not yet implement their obligations. The syntax is provisional; [#1288](https://github.com/jasisz/aver/issues/1288) tracks the mechanism and acceptance checks.
+Explanation obligations are universal. A stage the backend cannot prove remains failed; it does not silently substitute sampled evidence. Dafny implements a [restricted Int/Bool guidance pilot](dafny-guidance-spike.md) with explicit local citations and declines guided laws outside that fragment. The syntax is provisional; [#1288](https://github.com/jasisz/aver/issues/1288) tracks the mechanism and acceptance checks.
 
 ## Specs over invariants
 

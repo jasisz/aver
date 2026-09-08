@@ -8,13 +8,14 @@ mod crypto;
 mod expr;
 mod fuel;
 mod lemmas;
+mod propagation;
+mod reasons;
 mod toplevel;
 
 use crate::ast::{FnDef, TopLevel, VerifyKind};
 use crate::codegen::{CodegenContext, ProjectOutput};
 
-/// Check if a function body uses the `?` (ErrorProp) operator.
-/// Such functions require early-return semantics that Dafny pure functions cannot express.
+/// Find propagation requiring an explicit function-result-valued match.
 fn body_uses_error_prop(body: &std::sync::Arc<crate::ast::FnBody>) -> bool {
     match body.as_ref() {
         crate::ast::FnBody::Block(stmts) => stmts.iter().any(|s| match s {
@@ -30,7 +31,7 @@ fn body_uses_error_prop(body: &std::sync::Arc<crate::ast::FnBody>) -> bool {
 fn expr_uses_error_prop(expr: &crate::ast::Spanned<crate::ast::Expr>) -> bool {
     use crate::ast::Expr;
     match &expr.node {
-        Expr::ErrorProp(_) => true,
+        Expr::ErrorProp(_) | Expr::IndependentProduct(_, true) => true,
         Expr::FnCall(f, args) => expr_uses_error_prop(f) || args.iter().any(expr_uses_error_prop),
         Expr::BinOp(_, l, r) => expr_uses_error_prop(l) || expr_uses_error_prop(r),
         Expr::Neg(inner) => expr_uses_error_prop(inner),
@@ -60,23 +61,13 @@ fn expr_uses_error_prop(expr: &crate::ast::Spanned<crate::ast::Expr>) -> bool {
     }
 }
 
-/// Does `?` survive the pure `?!`/`?` lowering that every Dafny
-/// emission path runs first?
-///
-/// The lowering rewrites `?` at statement position into a `match`
-/// cascade, but recurses *through* a `?` sitting inside an expression
-/// and leaves it in place. So the question the emitter has to ask is
-/// whether the lowered body still carries a `?`, not whether the
-/// lowering produced anything: a residual `?` has no Dafny expression
-/// form and the function must be emitted as an opaque axiom instead.
+/// Refuse a body only when the complete pure propagation lowering fails or
+/// leaves a residual operator. Ordinary nested propagation becomes matches.
 fn body_keeps_error_prop_after_lowering(fd: &FnDef) -> bool {
     if !body_uses_error_prop(&fd.body) {
         return false;
     }
-    match crate::types::checker::effect_lifting::lower_pure_question_bang_fn(fd)
-        .ok()
-        .flatten()
-    {
+    match propagation::lower_pure_fn(fd).ok().flatten() {
         Some(lowered) => body_uses_error_prop(&lowered.body),
         None => true,
     }
@@ -345,6 +336,12 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
     let opaque_fns = toplevel::transitive_opaque_closure(ctx, &direct_opaque);
     let native_transitive = toplevel::transitive_opaque_closure(ctx, &native_emitted);
     let termination_opaque = toplevel::transitive_opaque_closure(ctx, &termination_axiom_ids);
+    let law_recursion = toplevel::LawRecursion {
+        opaque_fns: &opaque_fns,
+        native_members: &native_emitted,
+        native_callers: &native_transitive,
+        termination_opaque: &termination_opaque,
+    };
 
     let mut module_files: Vec<(String, String)> = Vec::new();
     let mut union_body = String::new();
@@ -402,9 +399,7 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
                     vb,
                     law,
                     ctx,
-                    &opaque_fns,
-                    &native_transitive,
-                    &termination_opaque,
+                    &law_recursion,
                     &suffix,
                 ));
             }
@@ -432,12 +427,32 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
             })
             .collect::<Vec<_>>()
             .join("\n");
-        let depends_imports: String = module
+        let mut imports: Vec<String> = module
             .depends
             .iter()
             .map(|d| format!("  import opened {}", dafny_module_name(d)))
-            .collect::<Vec<_>>()
-            .join("\n");
+            .collect();
+        // A selected law can mention a type or helper owned by its supplier's
+        // dependency. Rendering retains that canonical owner qualification;
+        // Dafny therefore needs its module name in scope in the consumer too.
+        // The existing direct include chain already supplies those modules.
+        // Keep transitive imports unopened so unrelated bare declarations do
+        // not enter the consumer's namespace or create new ambiguities.
+        let mut transitive =
+            crate::codegen::common::visible_module_prefixes(Some(&module.prefix), ctx)
+                .unwrap_or_default();
+        for direct in &module.depends {
+            transitive.remove(direct);
+        }
+        transitive.remove(&module.prefix);
+        let mut transitive: Vec<_> = transitive.into_iter().collect();
+        transitive.sort();
+        imports.extend(
+            transitive
+                .iter()
+                .map(|prefix| format!("  import {}", dafny_module_name(prefix))),
+        );
+        let depends_imports = imports.join("\n");
 
         let mut header = format!(
             "// Aver-generated module: {}\ninclude \"{}common.dfy\"\n",
@@ -608,9 +623,7 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
                 vb,
                 law,
                 ctx,
-                &opaque_fns,
-                &native_transitive,
-                &termination_opaque,
+                &law_recursion,
                 &suffix,
             ));
         }
@@ -741,6 +754,8 @@ fn dafny_helper_block(key: &str) -> Option<&'static str> {
         "BranchPath" => Some(DAFNY_HELPER_BRANCH_PATH),
         "AverList" => Some(DAFNY_HELPER_AVER_LIST),
         "StringHelpers" => Some(DAFNY_HELPER_STRING_HELPERS),
+        "StringOpaque" => Some(DAFNY_HELPER_STRING_OPAQUE),
+        "StringUtf8" => Some(DAFNY_HELPER_STRING_UTF8),
         "NumericParse" => Some(DAFNY_HELPER_NUMERIC_PARSE),
         "StringCodePoint" => Some(DAFNY_HELPER_CODE_POINT),
         "AverBits" => Some(DAFNY_HELPER_BITS),
@@ -806,10 +821,13 @@ const DAFNY_HELPER_BRANCH_PATH_DATATYPE: &str = r#"
 datatype BranchPath = BranchPath(dewey: string)
 "#;
 
-/// Universal `ToString<T>` opaque — small (1 line), used by interpolation
-/// machinery in many shapes, kept always-on to avoid token-detection edge
-/// cases for things like `ToString(x)` showing up in nested type args.
+/// Boolean display is exact and needs no optional string helper bundle.
+/// `ToString` remains only for the ordinary export's legacy Float display;
+/// universal guidance rejects Float rather than treating real as IEEE-754.
 const DAFNY_PRELUDE_CORE_HELPERS: &str = r#"
+function StringFromBool(b: bool): string {
+  if b then "true" else "false"
+}
 function ToString<T>(v: T): string
 "#;
 
@@ -972,11 +990,9 @@ function MapFromList<K, V>(entries: seq<(K, V)>): map<K, V>
 }
 "#;
 
-/// `StringHelpers` covers the opaque/ish string utilities. Note Dafny
-/// has no AverDigits namespace; the numeric `IntToString`/`FromString`/
-/// `FloatToString`/`FromString` opaques live under the `NumericParse`
-/// helper key alongside Lean's parsing namespace, since the body-token
-/// detection is shared.
+/// Exact structural text operations over Unicode scalar sequences. Numeric
+/// formatting belongs to NumericParse; uninterpreted case/byte operations and
+/// the legacy UTF-8 axiom are separate demand-driven bundles.
 const DAFNY_HELPER_STRING_HELPERS: &str = r#"
 function StringCharAt(s: string, i: int): Option<string> {
   if 0 <= i < |s| then Option.Some([s[i]]) else Option.None
@@ -993,7 +1009,9 @@ function StringSlice(s: string, from_: int, to_: int): string
   if lo >= hi then "" else s[lo..hi]
 }
 
-function StringJoin(sep: string, parts: seq<string>): string
+// Expose nested structural text steps through source wrappers. This is SMT
+// unfolding depth, not a bounded execution model: recursion stays native.
+function {:fuel 4} StringJoin(sep: string, parts: seq<string>): string
   decreases |parts|
 {
   if |parts| == 0 then ""
@@ -1001,25 +1019,84 @@ function StringJoin(sep: string, parts: seq<string>): string
   else parts[0] + sep + StringJoin(sep, parts[1..])
 }
 
-function StringSplit(s: string, sep: string): seq<string>
+function StringStartsWith(s: string, prefix: string): bool {
+  |prefix| <= |s| && s[..|prefix|] == prefix
+}
+
+function StringEndsWith(s: string, suffix: string): bool {
+  |suffix| <= |s| && s[|s|-|suffix|..] == suffix
+}
+
 function StringContains(s: string, sub: string): bool
-function StringStartsWith(s: string, prefix: string): bool
-function StringEndsWith(s: string, suffix: string): bool
-function StringTrim(s: string): string
-function StringReplace(s: string, from_: string, to_: string): string
+  decreases |s|
+{
+  if |sub| == 0 then true
+  else if |s| < |sub| then false
+  else if s[..|sub|] == sub then true
+  else StringContains(s[1..], sub)
+}
+
+function {:fuel 4} StringSplitAt(s: string, sep: string, start: int, pos: int): seq<string>
+  requires |sep| > 0 && 0 <= start <= pos <= |s|
+  decreases |s| - pos
+{
+  if pos + |sep| > |s| then [s[start..]]
+  else if s[pos..pos+|sep|] == sep then
+    [s[start..pos]] + StringSplitAt(s, sep, pos+|sep|, pos+|sep|)
+  else StringSplitAt(s, sep, start, pos+1)
+}
+
+function StringSplit(s: string, sep: string): seq<string> {
+  if |sep| == 0 then [""] + StringChars(s) + [""]
+  else StringSplitAt(s, sep, 0, 0)
+}
+
+function StringReplace(s: string, from_: string, to_: string): string {
+  StringJoin(to_, StringSplit(s, from_))
+}
+
+// Rust str::trim uses Unicode White_Space, not ASCII-only whitespace and
+// not zero-width space or BOM. These are its 25 scalar values.
+function StringWhitespace(c: char): bool {
+  var n := c as int;
+  (9 <= n <= 13) || n == 32 || n == 133 || n == 160 || n == 5760 ||
+  (8192 <= n <= 8202) || n == 8232 || n == 8233 || n == 8239 ||
+  n == 8287 || n == 12288
+}
+
+function {:fuel 4} StringTrim(s: string): string
+  decreases |s|
+{
+  if |s| == 0 then s
+  else if StringWhitespace(s[0]) then StringTrim(s[1..])
+  else if StringWhitespace(s[|s|-1]) then StringTrim(s[..|s|-1])
+  else s
+}
+"#;
+
+const DAFNY_HELPER_STRING_OPAQUE: &str = r#"
 function StringToUpper(s: string): string
 function StringToLower(s: string): string
-function StringFromBool(b: bool): string
 function StringByteLength(s: string): int
-function {:axiom} StringToUtf8(s: string): seq<int>
-  ensures forall i :: 0 <= i < |StringToUtf8(s)| ==> 0 <= StringToUtf8(s)[i] <= 255
-function StringFromUtf8(bytes: seq<int>): Result<string, string>
-
 function ListReverseStr(xs: seq<string>): seq<string>
 "#;
 
+const DAFNY_HELPER_STRING_UTF8: &str = r#"
+function {:axiom} StringToUtf8(s: string): seq<int>
+  ensures forall i :: 0 <= i < |StringToUtf8(s)| ==> 0 <= StringToUtf8(s)[i] <= 255
+function StringFromUtf8(bytes: seq<int>): Result<string, string>
+"#;
+
 const DAFNY_HELPER_NUMERIC_PARSE: &str = r#"
-function IntToString(n: int): string
+function NatDecimalString(n: nat): string
+  decreases n
+{
+  if n < 10 then ["0123456789"[n]]
+  else NatDecimalString(n / 10) + ["0123456789"[n % 10]]
+}
+function IntToString(n: int): string {
+  if n < 0 then "-" + NatDecimalString(-n) else NatDecimalString(n)
+}
 function IntFromString(s: string): Result<int, string>
 function IntFitsUnsignedWidth(value: int, width: int): bool
   requires width >= 0
@@ -1161,7 +1238,66 @@ mod tests {
     use crate::codegen::build_context;
     use crate::source::parse_source;
 
-    fn ctx_from_source(src: &str, project_name: &str) -> CodegenContext {
+    #[test]
+    fn imported_law_owners_are_in_scope_without_opening_transitive_names() {
+        let mut ctx = ctx_from_source("module Entry\n    effects []\n", "Entry");
+        ctx.modules = vec![
+            crate::codegen::test_module("Chain.Provider", &[], vec![]),
+            crate::codegen::test_module("Chain.Facade", &["Chain.Provider"], vec![]),
+            crate::codegen::test_module("Chain.Second", &["Chain.Provider"], vec![]),
+            crate::codegen::test_module(
+                "Chain.Consumer",
+                &["Chain.Facade", "Chain.Second"],
+                vec![],
+            ),
+            crate::codegen::test_module("Unrelated", &[], vec![]),
+        ];
+        ctx.module_prefixes = ctx
+            .modules
+            .iter()
+            .map(|module| module.prefix.clone())
+            .collect();
+        ctx.symbol_table = crate::ir::SymbolTable::build(&ctx.items, &ctx.modules);
+        let project = transpile(&ctx);
+        let consumer = &project
+            .files
+            .iter()
+            .find(|(name, _)| name == "Chain/Consumer.dfy")
+            .unwrap()
+            .1;
+        assert!(
+            consumer.contains("  import opened Aver_Chain_Facade\n"),
+            "{consumer}"
+        );
+        assert!(
+            consumer.contains("  import opened Aver_Chain_Second\n"),
+            "{consumer}"
+        );
+        assert_eq!(
+            consumer.matches("  import Aver_Chain_Provider\n").count(),
+            1,
+            "{consumer}"
+        );
+        assert!(
+            !consumer.contains("import opened Aver_Chain_Provider"),
+            "{consumer}"
+        );
+        assert!(!consumer.contains("Aver_Unrelated"), "{consumer}");
+        assert!(
+            consumer.contains("include \"../Chain/Facade.dfy\""),
+            "{consumer}"
+        );
+        assert!(
+            consumer.contains("include \"../Chain/Second.dfy\""),
+            "{consumer}"
+        );
+        assert!(
+            !consumer.contains("include \"../Chain/Provider.dfy\""),
+            "{consumer}"
+        );
+    }
+
+    pub(super) fn ctx_from_source(src: &str, project_name: &str) -> CodegenContext {
         let mut items = parse_source(src).expect("parse");
         // Proof-mode minimal pipeline — same shape as `lean::tests::
         // ctx_from_source`; see that for why every rewriting stage is
@@ -1495,12 +1631,20 @@ verify roll law alwaysSix\n    given rnd: Random.int = [rollMax]\n    roll() => 
         ]
         .iter()
         .any(|prefix| {
-            let needle = format!("{}{}", prefix, name);
-            block.match_indices(&needle).any(|(at, hit)| {
-                !matches!(
-                    block[at + hit.len()..].chars().next(),
-                    Some(c) if c.is_alphanumeric() || c == '_'
-                )
+            block.match_indices(prefix).any(|(at, hit)| {
+                let mut declaration = &block[at + hit.len()..];
+                while declaration.starts_with("{:") {
+                    let Some(end) = declaration.find('}') else {
+                        return false;
+                    };
+                    declaration = declaration[end + 1..].trim_start();
+                }
+                declaration.strip_prefix(name).is_some_and(|rest| {
+                    !matches!(
+                        rest.chars().next(),
+                        Some(c) if c.is_alphanumeric() || c == '_'
+                    )
+                })
             })
         })
     }

@@ -1,0 +1,21 @@
+module Leaf
+    intent = "A guarded theorem belongs to the supplier module."
+    exposes [Op, Packet, extract]
+    effects []
+
+type Op
+    Code(Int)
+
+record Packet
+    value: Int
+
+fn extract(op: Op) -> Int
+    match op
+        Op.Code(value) -> value
+
+verify extract law positive
+    given value: Int = [-1, 0, 4]
+    when value > 0
+    because extract(Op.Code(value)) > 0
+    using []
+    extract(Op.Code(value)) > 0 holds

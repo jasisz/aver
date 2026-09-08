@@ -1,0 +1,15 @@
+module Collector
+    intent = "The mutual definitions retain their native input-list measure across module boundaries."
+    exposes [collect, accept]
+    effects []
+
+fn collect(items: List<Int>, acc: List<Int>) -> List<Int>
+    match items
+        [] -> acc
+        [head, ..tail] -> accept(head, tail, acc)
+
+fn accept(head: Int, rest: List<Int>, acc: List<Int>) -> List<Int>
+    match head >= 0
+        true -> collect(rest, List.prepend(head, acc))
+        false -> collect(rest, acc)
+

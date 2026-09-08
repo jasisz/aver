@@ -1,0 +1,51 @@
+module DafnyGuidanceNonlinearPositive
+    intent = "Expose polynomial identities and signed multiplication to each backend from identical Aver reasons."
+    effects []
+
+fn multiply(x: Int, y: Int) -> Int
+    x * y
+
+verify multiply law nonnegativeFactors
+    given x: Int = [0, 1, 3]
+    given y: Int = [0, 2, 5]
+    when x >= 0
+    when y >= 0
+    because x * y >= 0
+    using []
+    multiply(x, y) >= 0 holds
+
+fn square(x: Int) -> Int
+    x * x
+
+verify square law nonnegative
+    given x: Int = [-3, 0, 2]
+    because x * x >= 0
+    using []
+    square(x) >= 0 holds
+
+fn orderedProducts(x: Int, y: Int, factor: Int) -> Bool
+    multiply(x, factor) <= multiply(y, factor)
+
+verify orderedProducts law nonnegativeFactor
+    given x: Int = [-3, 0, 2]
+    given y: Int = [-2, 0, 5]
+    given factor: Int = [0, 1, 4]
+    when x <= y
+    when factor >= 0
+    because multiply(y - x, factor) >= 0
+    because y * factor - x * factor == (y - x) * factor
+    using [multiply.nonnegativeFactors]
+    orderedProducts(x, y, factor) holds
+
+fn cancelled(x: Int, y: Int, factor: Int) -> Bool
+    (multiply(x, factor) == multiply(y, factor)) == (x == y)
+
+verify cancelled law nonzeroFactor
+    given x: Int = [-3, 0, 2]
+    given y: Int = [-2, 0, 2]
+    given factor: Int = [-2, 1, 4]
+    when factor != 0
+    because x * factor - y * factor == (x - y) * factor
+    because ((x - y) * factor == 0) == (x == y)
+    using []
+    cancelled(x, y, factor) holds

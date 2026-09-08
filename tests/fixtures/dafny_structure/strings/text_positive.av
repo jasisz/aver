@@ -1,0 +1,77 @@
+module TextOperationsPositive
+    intent = "Text operations preserve Unicode scalar boundaries, empty needles and Rust whitespace semantics."
+    effects []
+
+fn edges(value: String) -> Bool
+    Bool.and(String.startsWith(value, ""), String.endsWith(value, ""))
+
+fn containsSelf(value: String) -> Bool
+    String.contains(value, value)
+
+fn suffixCharacter(prefix: String) -> Option<String>
+    String.charAt("{prefix}🦀", String.len(prefix))
+
+fn splitEmpty(value: String) -> List<String>
+    String.split(value, "")
+
+fn splitNothing(separator: String) -> List<String>
+    String.split("", separator)
+
+fn replaceWhole(value: String, replacement: String) -> String
+    String.replace(value, value, replacement)
+
+fn trimmed(value: String) -> String
+    String.trim(value)
+
+verify edges law emptyNeedles
+    given value: String = ["", "zażółć 🦀"]
+    because edges(value)
+    using []
+    edges(value) holds
+
+verify containsSelf law reflexive
+    given value: String = ["", "zażółć 🦀"]
+    because containsSelf(value)
+    using []
+    containsSelf(value) holds
+
+verify suffixCharacter law scalarBoundary
+    given prefix: String = ["", "zażółć", "🦀"]
+    because suffixCharacter(prefix) == Option.Some("🦀")
+    using []
+    suffixCharacter(prefix) => Option.Some("🦀")
+
+verify splitEmpty law scalarPieces
+    given value: String = ["", "a🦀"]
+    because splitEmpty(value) == List.concat([""], List.concat(String.chars(value), [""]))
+    using []
+    splitEmpty(value) => List.concat([""], List.concat(String.chars(value), [""]))
+
+verify splitNothing law oneEmptyPiece
+    given separator: String = ["", ":", "🦀"]
+    when separator != ""
+    because splitNothing(separator) == [""]
+    using []
+    splitNothing(separator) => [""]
+
+verify replaceWhole law nonemptyReplacement
+    given value: String = ["", "a", "🦀"]
+    given replacement: String = ["", "other"]
+    when value != ""
+    because replaceWhole(value, replacement) == replacement
+    using []
+    replaceWhole(value, replacement) => replacement
+
+verify trimmed law unicodeWhitespace
+    given value: String = [" 🦀　", ""]
+    when value == " 🦀　"
+    because trimmed(value) == "🦀"
+    using []
+    trimmed(value) => "🦀"
+
+verify trimmed law preservesZeroWidthAndBom
+    given value: String = ["​🦀﻿", ""]
+    when value == "​🦀﻿"
+    because trimmed(value) == value
+    using []
+    trimmed(value) => value

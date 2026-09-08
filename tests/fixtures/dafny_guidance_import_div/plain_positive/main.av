@@ -1,0 +1,14 @@
+module PlainPositive
+    intent = "Explicitly select the ordinary imported law without weakening its guard."
+    depends [Leaf]
+    effects []
+
+fn read(value: Int) -> Int
+    Leaf.identity(value)
+
+verify read law positive
+    given value: Int = [1, 4]
+    when value > 0
+    because Leaf.identity(value) > 0
+    using [Leaf.identity.positive]
+    read(value) > 0 holds

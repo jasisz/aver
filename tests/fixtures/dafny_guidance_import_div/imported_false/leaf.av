@@ -1,0 +1,14 @@
+module Leaf
+    intent = "The false imported supplier must invalidate the complete proof."
+    exposes [identity]
+    effects []
+
+fn identity(value: Int) -> Int
+    value
+
+verify identity law atLeastTwo
+    given value: Int = [2, 4]
+    when value > 0
+    because value >= 2
+    using []
+    identity(value) >= 2 holds

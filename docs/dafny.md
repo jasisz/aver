@@ -8,25 +8,52 @@ Use it when you want:
 - Z3/SMT solver attempting universal proofs for you
 - a quick validation of whether your laws hold before investing in Lean proof strategies
 
-For each `verify law` block, the backend emits two things:
+For an ordinary `verify law` block without proof guidance, the backend emits two things:
 
 1. **Sample assertions** — concrete smoke tests from the `given` domain (e.g. `assert fib(5) == fibSpec(5)`), capped at 5 to avoid Z3 timeouts
 2. **Universal lemma** — `lemma` with `when` as `requires` and the law as `ensures`, proved by Z3
 
 The samples may time out on deeply recursive computations — that is expected. The lemma is the primary verification target.
 
+For guided laws, the [guided proof fragment](dafny-guidance-spike.md) emits
+separate lemmas for every `because`, the final implication and their parent law.
+Explicit `using` citations can cross module boundaries, as can supported pure
+functions and record or sum types. Imported declarations retain their original
+identities and guards. A selected ordinary law is re-proved by a separate
+universal lemma; its existing sample checks are not treated as universal evidence.
+The strict whole-file gate must pass; a verified caller does not establish a
+failed cited supplier. Use `aver verify` to execute the examples.
+
+This fragment includes nonlinear integer arithmetic and exact `Int.div` /
+`Int.mod`. Nonzero literal divisors return `Int`; zero or dynamic divisors retain
+Aver’s `Result<Int, String>` boundary, including the zero-divisor error. Quotient
+and remainder follow Euclidean semantics for negative operands too. Checked
+integer and list descent can support guided induction with generalized givens,
+including changing accumulators. Quotient recursion requires a shared validated
+contract for descent by a fixed literal divisor of at least two.
+
+Guidance admits checked native mutual recursion, named pure callbacks and
+refinements whose emitted predicate matches a fully checked source cone. It
+still declines automatic citation selection, fuel-backed recursion, unsupported
+recursion patterns, arbitrary callback givens, effectful calls, provider resources
+and `Float`. Every called body and named field
+is checked, including imported dependencies. These restrictions concern guided
+proof admission; the ordinary backend’s broader emission and fallback paths are
+described below.
+
 ## Quick start
 
 ```bash
 aver proof examples/data/fibonacci.av --backend dafny -o /tmp/fib-dafny
-cd /tmp/fib-dafny && dafny verify fibonacci.dfy
+cd /tmp/fib-dafny && dafny verify --verify-included-files fibonacci.dfy
 ```
 
 Requires [Dafny](https://github.com/dafny-lang/dafny) (4.x+) installed with Z3. On macOS: `brew install dafny`.
 
 ## What it generates
 
-A single `.dfy` file containing:
+An entry `.dfy` file, with dependency module files and a shared prelude when
+needed, containing:
 
 - **Prelude**: `Result<T,E>`, `Option<T>`, list/map/string helpers
 - **Datatypes**: user-defined `record` → `datatype`, `type` (sum) → `datatype`
@@ -38,7 +65,6 @@ A single `.dfy` file containing:
 
 - `verify` cases (non-law concrete assertions) — Z3 can't efficiently compute deeply recursive functions on specific inputs; Lean's `native_decide` is the right tool for this
 - Unclassified effectful functions — only pure functions and Oracle-lifted classified effects are emitted
-- Functions using `?` (ErrorProp) — Dafny pure functions cannot express early-return Err propagation
 - `fn main()` — entry point is skipped
 
 ## How it maps Aver → Dafny
@@ -46,11 +72,12 @@ A single `.dfy` file containing:
 | Aver | Dafny |
 |---|---|
 | `Int` | `int` |
-| `Float` | `real` |
+| `Float` | legacy `real` approximation; not an IEEE model and declined by guidance |
 | `String` | `string` |
 | `Bool` | `bool` |
-| `List<T>` | `seq<T>` |
-| `Map<K,V>` | `map<K,V>` |
+| `Unit` | `()` |
+| `List<T>` / `Vector<T>` | `seq<T>` |
+| `Map<K,V>` | `map<K,V>`; `Map<K,Unit>` uses `set<K>` |
 | `Result<T,E>` | `Result<T,E>` (prelude datatype) |
 | `Option<T>` | `Option<T>` (prelude datatype) |
 | `record Foo` | `datatype Foo = Foo(fields...)` |
@@ -60,6 +87,27 @@ A single `.dfy` file containing:
 | `match xs: [] → a, [h,..t] → b` | `if \|xs\| == 0 then a else var h := xs[0]; var t := xs[1..]; b` |
 | `Int.div(a, b)` / `Int.mod(a, b)` | `Result`-wrapped Euclidean div/mod (Dafny guards the zero divisor); with a syntactic nonzero literal divisor the call is discharged to plain `Int` and renders as bare Euclidean `/` / `%`. Integer `/` is a type error, `/` is Float-only (Dafny `real`) |
 | `verify f law name` | sample `method` + universal `lemma` |
+
+## Pure propagation and structural expressions
+
+`?` exits the enclosing Result-returning function. The Dafny lowering threads
+that continuation through arguments, constructors, records and updates,
+containers, interpolation and match branches. It evaluates eager operands once
+in source order and preserves selection of match branches. `?!` evaluates the
+independent Results before selecting the first error in source order. No error
+branch is replaced with a default value or assumed success.
+
+Primitive interpolation has exact decimal `Int`, lowercase `Bool` and identity
+`String` rendering. Structural text helpers define character indexing, slicing,
+joining, substring tests, splitting, replacement and Unicode whitespace trimming.
+UTF-8 and Unicode case operations remain separate legacy opaque helpers; using
+an exact text operation no longer imports an unrelated UTF-8 axiom.
+
+Named callbacks are admitted only after checking their complete pure bodies and
+termination. A callback that reintroduces an active function is refused. Arbitrary
+function-valued givens have no checked source totality domain. Maps support
+extensional operations, including Unit-valued sets; sorted iteration still lacks
+an exact backend model. These boundaries differ from missing expression syntax.
 
 ## Termination
 
@@ -72,15 +120,27 @@ Recursive functions fall into three buckets based on the shared classifier in `c
 - Int countdown with explicit `match n < 0` base → `decreases if n >= 0 then n else 0` (no `requires`, the body itself handles the negative case).
 - Int floor-division countdown by a literal divisor (`Int.div(p, k)` with literal `k >= 2` — discharged total form — or the legacy `Result.withDefault(Int.div(p, k), d)` wrapper, inlined or through a unary wrapper like `half`) → `decreases if p >= 0 then p else 0` with NO synthesized `requires`, when the function's own guards prove `p >= 1` at every recursive call (binary exponent search by halving, base-10⁹ digit peeling). An unvalidated guard declines to the opaque form instead of guessing. `verify ... law` blocks over this class — power-of-two positivity and sum laws, the scaled-significand window of an integer ratio, the m-bit×n-bit product window — emit a proved support stack (division-window lemmas derived from the Euclidean identity, power algebra by self-call induction, branch-split significand lemmas) so the universal lemmas verify instead of being omitted; see `tests/fixtures/floor_window.av`.
 
-**Mutual-recursion SCCs** — preferred path emits as native `decreases` tuples when every member has a measurable `List`/`Vector`/`String` parameter (most BigInt-style SCCs):
+**Mutual-recursion SCCs** — the preferred path chooses sequence-length measures and matching ranks for structural mutual groups, then emits native `decreases` tuples:
 
 ```dafny
 function fn(args): T
-  decreases <sizeof_measure>, <rank>
+  decreases <selected_length_sum>, <rank>
 { <body with intra-SCC calls unchanged> }
 ```
 
-The size measure sums `|seq_param|` for every `List`/`Vector`/`String` parameter; the rank is the recursion classifier's topo position over "same-measure" callees, so a call that keeps the size constant decreases lexicographically on rank instead. Z3 unfolds these to ground terms during proof obligations — no fuel ceiling on large literals (BigInt's `10⁹`).
+The shared call-edge analysis selects which `List`/`Vector`/`String` parameters
+contribute their lengths. It can omit a growing accumulator while retaining the
+input that drives progress. The rank orders calls leaving that selected sum
+unchanged; it always comes from the same analysis as the emitted measure. List
+tails are shorter, but list heads are not shorter by length, and slices are only
+non-growing. Dafny checks the native functions' termination. The existing guarded
+all-sequence/forwarded-rank path remains a fallback for older supported shapes.
+
+Guided laws admit exactly the functions emitted natively, while still validating
+their complete bodies and dependency cones. A caller of a native function does
+not thereby acquire native recursion status. Fuel and opaque fallbacks remain
+outside guided universal admission. Native function emission does not provide a
+general mutual induction tactic for arbitrary laws.
 
 **Fuel fallback** — SCCs without a measurable parameter (pure `Int`-only mutual recursion) still go through fuel-guarded pairs, parallel to Lean's `def fn__fuel (fuel : Nat) …`:
 
@@ -99,7 +159,7 @@ Fuel metric depends on the plan: `natAbs(n) + 1` for `MutualIntCountdown`, `(|s|
 
 **Axiom fallback** (`function {:axiom} fn(args): T` — signature without body) — for:
 - SCCs whose return type admits no obvious total default (left-recursive Named ADTs, function types).
-- Fns whose body still uses `?` after the lowering pass — a `?` nested inside a larger expression, which no pure match can replace. Keeps the name in scope for downstream references instead of silently dropping the fn. A mutual-SCC member in this shape leaves the fuel group; its peers still emit as one.
+- Functions whose propagation cannot be normalized (for example, an invalid non-Result return). Valid pure nested `?` and `?!` normalize into explicit matches before ordinary, native-recursive or fuel emission.
 
 Lemmas whose `ensures` references an opaque fn (axiom or fuel-guarded) short-circuit their body to `assume {:axiom} <ensures>;` — parallel to Lean's `sorry`, accepted on trust rather than derived from unfolding. Dafny still type-checks the whole file; users add their own lemma proofs where the axiom fallback bites.
 
@@ -193,7 +253,7 @@ lemma fib_fibSpec(n: int)
 - **No verify cases**: Z3 times out on deep computations like `fib(12) == 144`. Dafny's own `errors` total is blind to per-lemma timeouts, so `--check-json` carries a separate additive `timeouts` field (count of `… timed out after N seconds` lines) alongside `errors`; a consumer accounting for failing laws must read both. `timeouts` is informational — it does not change `passed` or the exit code (the timed-out run still fails via Dafny's exit status)
 - **Constructor collisions**: if a user type defines variants named `Ok`/`Err`, Dafny may report ambiguity errors
 - **Opaque builtins**: `IntToString`, `FloatFromString`, `StringFirstCodePoint` etc. are declared without bodies — Z3 knows their signatures but can't reason about their implementation
-- **Complex laws**: laws involving indirect recursion, accumulator patterns, or multi-function chains may not be provable by Z3 alone
+- **Complex laws**: checked integer/list induction can generalize changing accumulators, but more complex indirect recursion and multi-function arguments may still need additional source lemmas or fail to verify. Guided proofs decline mutual/fuel recursion instead of relying on the ordinary backend’s fallback encoding.
 
 When a law's lemma comes out with an empty body, see [transpilation.md → Debugging a law that didn't auto-prove](transpilation.md#debugging-a-law-that-didnt-auto-prove) for the `--emit-ir-after=law_lower` workflow that tells you whether the classifier matched a strategy or fell through to backend dispatch.
 

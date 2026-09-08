@@ -1,0 +1,29 @@
+module TextOperationSamples
+    intent = "Ground regression cases pin nonoverlapping matches and empty separators, independently of proof automation."
+    effects []
+
+fn split(value: String, separator: String) -> List<String>
+    String.split(value, separator)
+
+fn replace(value: String, needle: String, replacement: String) -> String
+    String.replace(value, needle, replacement)
+
+fn trimmed(value: String) -> String
+    String.trim(value)
+
+verify split
+    split("a🦀b🦀", "🦀") => ["a", "b", ""]
+    split("🦀a", "") => ["", "🦀", "a", ""]
+    split("", "") => ["", ""]
+    split("", "🦀") => [""]
+    split("aaa", "aa") => ["", "a"]
+
+verify replace
+    replace("aaa", "aa", "x") => "xa"
+    replace("🦀", "", "-") => "-🦀-"
+    replace("", "", "-") => "-"
+
+verify trimmed
+    trimmed(" 🦀　") => "🦀"
+    trimmed("​🦀﻿") => "​🦀﻿"
+    trimmed("x ") => "x"

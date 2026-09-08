@@ -1242,7 +1242,8 @@ fn generate_prelude_for_body(body: &str, include_all_helpers: bool) -> String {
             // Dafny-side datatype declarations — Lean has Result/Option
             // natively (`Except`/`Option`) and BranchPath ships as part
             // of the BranchPath helper key, so all four are no-ops here.
-            "ResultDatatype" | "OptionDatatype" | "ResultFromOption" | "BranchPathDatatype" => {}
+            "ResultDatatype" | "OptionDatatype" | "ResultFromOption" | "BranchPathDatatype"
+            | "StringOpaque" | "StringUtf8" => {}
             other => panic!(
                 "Lean backend has no implementation for builtin helper key '{}'. \
                  Add a match arm in generate_prelude_for_body or remove the key \
@@ -1438,7 +1439,7 @@ lean_lib «{}» where
 }
 
 pub(super) fn generate_toolchain() -> String {
-    "leanprover/lean4:v4.32.2\n".to_string()
+    "leanprover/lean4:v4.33.1\n".to_string()
 }
 
 pub(super) fn build_common_lean(union_body: &str, cert_model: bool) -> String {
@@ -1474,7 +1475,8 @@ pub(super) fn build_common_lean(union_body: &str, cert_model: bool) -> String {
                 LEAN_PRELUDE_OPTION_TO_EXCEPT.to_string(),
             ]),
             "StringHadd" => parts.push(generate_string_hadd_prelude(union_body, false)),
-            "ResultDatatype" | "OptionDatatype" | "ResultFromOption" | "BranchPathDatatype" => {}
+            "ResultDatatype" | "OptionDatatype" | "ResultFromOption" | "BranchPathDatatype"
+            | "StringOpaque" | "StringUtf8" => {}
             other => panic!(
                 "Lean backend has no implementation for builtin helper key '{}'. \
                  Add a match arm in build_common_lean or remove the key from BUILTIN_HELPERS.",

@@ -1,0 +1,25 @@
+module StructuredFailedCitation
+    intent = "A false theorem about a named constructor cannot give a structured caller proof credit."
+    effects []
+
+type Op
+    Code(Int)
+    Push(Int, List<Int>)
+
+fn identity(op: Op) -> Op
+    op
+
+verify identity law onlyZero
+    given op: Op = [Op.Code(0)]
+    because op == Op.Code(0)
+    using []
+    identity(op) => Op.Code(0)
+
+fn forward(op: Op) -> List<Op>
+    [identity(op)]
+
+verify forward law onlyZero
+    given op: Op = [Op.Code(0)]
+    because identity(op) == Op.Code(0)
+    using [identity.onlyZero]
+    forward(op) => [Op.Code(0)]

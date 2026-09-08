@@ -1,0 +1,13 @@
+module DafnyUnitMapsFalse
+    intent = "Unit-valued maps do not acquire arbitrary keys from a false reason."
+    effects []
+
+fn contains(m: Map<Int, Unit>, key: Int) -> Bool
+    Map.has(m, key)
+
+verify contains law falseReason
+    given m: Map<Int, Unit> = [{1 => Unit}]
+    given key: Int = [1]
+    because contains(m, key)
+    using []
+    contains(m, key) => contains(m, key)

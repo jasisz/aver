@@ -1,0 +1,15 @@
+module CallbacksRecursive
+    intent = "Passing an active function back as a callback introduces a hidden recursion edge, which admission must reject."
+    effects []
+
+fn apply(callback: Fn(Int) -> Int, value: Int) -> Int
+    callback(value)
+
+fn bounce(value: Int) -> Int
+    apply(bounce, value)
+
+verify bounce law reflexive
+    given value: Int = [0]
+    because bounce(value) == bounce(value)
+    using []
+    bounce(value) => bounce(value)

@@ -103,9 +103,11 @@ would prove *nothing* — ACL2 already wrote those.
 What we write is **clean, provable Aver**: the divider as normal code and
 intermediate facts as `verify ... law` blocks. The machine checks the proofs;
 the audited status distinguishes universal results from samples and open claims.
-Lean currently checks the guided `because`/`using` proofs. Dafny supports other law
-shapes, but declines these guided laws; their portability across proof backends
-has not yet been demonstrated.
+Lean currently checks the full K5 guided proof closure. Dafny's
+[Int/Bool guidance pilot](../../docs/dafny-guidance-spike.md) also checks all four
+laws and eight steps in the unchanged `domain/integerorder.av`, including its
+recursive multiplication argument. Imported citations, records and division in
+the rounding arguments remain outside that pilot's supported fragment.
 A helper fact that the prover can't yet close is handled by *stating it as another
 Aver law* (fed to the lemma pool via The Method) or by building a **generic** prover
 strategy for its whole class — never a one-off Lean script.

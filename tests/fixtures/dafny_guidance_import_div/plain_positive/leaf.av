@@ -1,0 +1,12 @@
+module Leaf
+    intent = "An ordinary guarded law can be explicitly selected by a guided caller."
+    exposes [identity]
+    effects []
+
+fn identity(value: Int) -> Int
+    value
+
+verify identity law positive
+    given value: Int = [-1, 0, 4]
+    when value > 0
+    identity(value) => value

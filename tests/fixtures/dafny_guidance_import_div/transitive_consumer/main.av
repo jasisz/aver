@@ -1,0 +1,7 @@
+module TransitiveConsumer
+    intent = "The guided consumer is itself imported, with both supplier and provider transitive."
+    depends [Consumer]
+    effects []
+
+fn read(value: Int) -> Int
+    Consumer.read(value)

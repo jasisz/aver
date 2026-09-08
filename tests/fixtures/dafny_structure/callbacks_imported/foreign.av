@@ -1,0 +1,10 @@
+module Foreign
+    intent = "The callback's parameter type belongs to its declaring module."
+    exposes [Payload, read]
+    effects []
+
+record Payload
+    value: Int
+
+fn read(item: Payload) -> Int
+    item.value

@@ -1,0 +1,15 @@
+module ArithmeticFalse
+    intent = "An original guard on an integer must not be silently assumed for its quotient."
+    effects []
+
+fn evenPath(number: Int) -> Bool
+    match number > 0
+        true -> Bool.and(Int.mod(number, 2) == 0, evenPath(Int.div(number, 3)))
+        false -> true
+
+verify evenPath law lostGuard
+    given number: Int = [0, 2, 6]
+    when Int.mod(number, 2) == 0
+    because evenPath(number)
+    using []
+    number == number holds

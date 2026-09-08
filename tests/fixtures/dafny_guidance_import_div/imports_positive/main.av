@@ -1,0 +1,42 @@
+module ImportPositive
+    intent = "Imported types and calls do not collide with local names."
+    depends [Leaf, Mid]
+    effects []
+
+type Op
+    Code(Bool)
+
+record Packet
+    value: Bool
+
+fn extract(op: Op) -> Bool
+    match op
+        Op.Code(value) -> value
+
+fn recordRoundtrip(value: Int) -> Bool
+    original = Leaf.Packet(value = value)
+    changed = Leaf.Packet.update(original, value = value + 1)
+    local = Packet(value = true)
+    Bool.and(changed.value == value + 1, local.value)
+
+fn read(op: Leaf.Op) -> Int
+    Mid.read(op)
+
+verify read law positive
+    given value: Int = [-1, 0, 4]
+    when value > 0
+    because Leaf.extract(Leaf.Op.Code(value)) > 0
+    using [Leaf.extract.positive]
+    read(Leaf.Op.Code(value)) > 0 holds
+
+verify extract law localIdentity
+    given value: Bool = [false, true]
+    because extract(Op.Code(value)) == value
+    using []
+    extract(Op.Code(value)) => value
+
+verify read law importedValue
+    given op: Leaf.Op = [Leaf.Op.Code(-1), Leaf.Op.Code(4)]
+    because Bool.and(read(op) == Leaf.extract(op), recordRoundtrip(Leaf.extract(op)))
+    using []
+    read(op) => Leaf.extract(op)

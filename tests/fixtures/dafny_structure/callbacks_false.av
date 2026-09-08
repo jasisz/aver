@@ -1,0 +1,15 @@
+module CallbacksFalse
+    intent = "A passing callback sample cannot replace checking its unrestricted result."
+    effects []
+
+fn identity(value: Int) -> Int
+    value
+
+fn apply(callback: Fn(Int) -> Int, value: Int) -> Int
+    callback(value)
+
+verify apply law falseZero
+    given value: Int = [0]
+    because apply(identity, value) == 0
+    using []
+    apply(identity, value) => apply(identity, value)

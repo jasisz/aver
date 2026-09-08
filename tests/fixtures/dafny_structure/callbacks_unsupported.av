@@ -1,0 +1,18 @@
+module CallbacksUnsupported
+    intent = "A named Int-to-Int callback must not hide unsupported floating-point work behind its signature."
+    effects []
+
+fn hidden(value: Int) -> Int
+    scale: Float = 1.5
+    match scale > 0.0
+        true -> value
+        false -> value
+
+fn apply(callback: Fn(Int) -> Int, value: Int) -> Int
+    callback(value)
+
+verify apply law identity
+    given value: Int = [-2, 0, 5]
+    because apply(hidden, value) == value
+    using []
+    apply(hidden, value) => value

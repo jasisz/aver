@@ -1,0 +1,21 @@
+module DafnyGuidanceNonlinearFailedCitation
+    intent = "Samples at zero and one conceal a false polynomial lemma whose caller must not receive whole-file proof credit."
+    effects []
+
+fn square(x: Int) -> Int
+    x * x
+
+verify square law equalsInput
+    given x: Int = [0, 1]
+    because x * x == x
+    using []
+    square(x) => x
+
+fn forwardedSquare(x: Int) -> Int
+    square(x)
+
+verify forwardedSquare law equalsInput
+    given x: Int = [0, 1]
+    because square(x) == x
+    using [square.equalsInput]
+    forwardedSquare(x) => x

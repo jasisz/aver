@@ -1,0 +1,15 @@
+module DafnyGuidanceRecursiveFalseReason
+    intent = "An induction-capable backend must reject a false countdown claim even when the zero sample passes."
+    effects []
+
+fn bad(n: Int) -> Bool
+    match n <= 0
+        true -> true
+        false -> Bool.and(bad(n - 1), n == 0)
+
+verify bad law falseInductionReason
+    given n: Int = [0]
+    when n >= 0
+    because bad(n)
+    using []
+    bad(n) => bad(n)

@@ -1,0 +1,14 @@
+module StructuredFalseReason
+    intent = "A false reason over an arbitrary list must fail although the final equality is true and the empty sample passes."
+    effects []
+
+fn allZero(items: List<Int>) -> Bool
+    match items
+        [] -> true
+        [head, ..tail] -> Bool.and(allZero(tail), head == 0)
+
+verify allZero law falseReason
+    given items: List<Int> = [[]]
+    because allZero(items)
+    using []
+    allZero(items) => allZero(items)

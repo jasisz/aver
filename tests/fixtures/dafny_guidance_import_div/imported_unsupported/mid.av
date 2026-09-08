@@ -1,0 +1,8 @@
+module Mid
+    intent = "A supported signature must not hide an unsupported callee body."
+    depends [Leaf]
+    exposes [positive]
+    effects []
+
+fn positive(value: Int) -> Bool
+    Leaf.positive(value)

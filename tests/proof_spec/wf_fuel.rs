@@ -85,7 +85,7 @@ fn proof_export_wf_fuel_induction_lean_structure() {
     // disjunction on the theorem statement).
     assert!(
         lean.contains(
-            "theorem digits_law_readsBackBigEndian : ∀ (m : Int), (m >= 0) = true -> bigEndian ((digits m []).reverse) 0 = m := by"
+            "theorem digits_law_readsBackBigEndian : ∀ (m : Int), (m >= 0) = true -> bigEndian ((digits m ([] : List Int)).reverse) 0 = m := by"
         ),
         "the when-law must drop its sampled domain:\n{lean}"
     );
@@ -93,7 +93,9 @@ fn proof_export_wf_fuel_induction_lean_structure() {
     // looping rewrite, so it never joins a simp set) and the ground IH at the
     // shrunk value.
     assert!(
-        lean.contains("have l1 := digits_law_accumulatorComesFirst (m / 256) ((m % 256) :: [])"),
+        lean.contains(
+            "have l1 := digits_law_accumulatorComesFirst (m / 256) ((m % 256) :: ([] : List Int))"
+        ),
         "the round trip must cite the accumulator law at the recursive call:\n{lean}"
     );
     assert!(

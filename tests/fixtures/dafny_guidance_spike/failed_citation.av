@@ -1,0 +1,21 @@
+module DafnyGuidanceFailedCitation
+    intent = "A modular caller of an unproved helper cannot make the whole-file proof gate pass."
+    effects []
+
+fn identity(x: Int) -> Int
+    x
+
+verify identity law isZero
+    given x: Int = [0]
+    because identity(x) == 0
+    using []
+    identity(x) => 0
+
+fn forward(x: Int) -> Int
+    identity(x)
+
+verify forward law isZero
+    given x: Int = [0]
+    because identity(x) == 0
+    using [identity.isZero]
+    forward(x) => 0

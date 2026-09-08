@@ -399,7 +399,17 @@ pub fn rewrite_recursive_calls_expr(
             }
         }
     };
-    Spanned::new(new_node, line)
+    // Adding fuel changes the callee signature, not the call's result or
+    // any surrounding value's type. Keep the checked stamps on rebuilt
+    // nodes: an interpolated record field, for example, must still select
+    // its exact primitive display implementation after this rewrite.
+    // The synthesized helper callee and fuel argument above intentionally
+    // have fresh stamps rather than inheriting the old callable's type.
+    let rewritten = Spanned::new(new_node, line);
+    if let Some(ty) = expr.ty() {
+        rewritten.set_ty(ty.clone());
+    }
+    rewritten
 }
 
 /// Walk a `ResolvedExpr` and rewrite every recursive call to the
@@ -533,7 +543,15 @@ pub fn rewrite_native_guarded_calls_resolved_expr(
             }
         }
     };
-    Spanned::new(new_node, line)
+    // Guarded-call rewriting adds a proof argument without changing the
+    // expression's result type. Preserve checked display/constructor types
+    // just as the source-AST fuel rewrite does; the new auxiliary callee and
+    // proof sentinel retain their own fresh type slots.
+    let rewritten = Spanned::new(new_node, line);
+    if let Some(ty) = expr.ty() {
+        rewritten.set_ty(ty.clone());
+    }
+    rewritten
 }
 
 /// Body-level wrapper around [`rewrite_recursive_calls_expr`].
@@ -558,3 +576,6 @@ pub fn rewrite_recursive_calls_body(
             .collect(),
     )
 }
+
+#[cfg(test)]
+mod rewrite_tests;
