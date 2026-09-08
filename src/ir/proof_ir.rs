@@ -530,7 +530,12 @@ pub enum LawInductionMeasure {
 
 #[derive(Debug, Clone)]
 pub struct LawInductionCall {
+    /// Source branch guard, evaluated before introducing pattern projections.
     pub guard: Spanned<crate::ir::hir::ResolvedExpr>,
+    /// The theorem premise at the recursive arguments. Evaluated after
+    /// `list_case` bindings, since it may mention the projected head or tail.
+    /// Where it is false, the original claim still needs an independent proof.
+    pub premise: Option<Spanned<crate::ir::hir::ResolvedExpr>>,
     /// Nil/cons decomposition under the nonempty guard. Projection names are
     /// fresh in the source/law scope; no partial List.head value is invented.
     pub list_case: Option<LawInductionListCase>,

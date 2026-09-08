@@ -1,0 +1,14 @@
+module GuardedListSeed
+    intent = "An induction premise is evaluated after binding the recursive head."
+    effects []
+
+fn grow(items: List<Int>, acc: Int) -> Int
+    match items
+        [] -> acc
+        [head, ..tail] -> grow(tail, acc + Int.abs(head))
+
+verify grow law nonnegative
+    given items: List<Int> = [[], [1, 2], [3]]
+    given acc: Int = [0, 4]
+    when acc >= 0
+    grow(items, acc) >= 0 holds

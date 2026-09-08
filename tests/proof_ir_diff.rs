@@ -3120,3 +3120,78 @@ fn pad(text: String, width: Int) -> String
         );
     }
 }
+
+#[test]
+fn law_induction_retains_fixed_seeds_and_guards_the_recursive_premise() {
+    let source = include_str!("fixtures/source_recursion/floor_digits.av");
+    let flipped = source.replace(
+        "digits(value, acc) => List.concat(List.reverse(acc), digits(value, []))",
+        "List.concat(List.reverse(acc), digits(value, [])) => digits(value, acc)",
+    );
+    let flipped_ctx = build_ctx(&flipped);
+    let plan = law_theorem(&flipped_ctx, "digits", "prefix")
+        .unwrap()
+        .induction
+        .as_ref()
+        .unwrap();
+    assert!(
+        plan.calls
+            .iter()
+            .all(|call| !matches!(&call.arguments[1].node,
+        aver::ir::hir::ResolvedExpr::Ident(name) if name == "acc")),
+        "Prefer the fully quantified anchor even when the fixed seed appears first"
+    );
+    let ctx = build_ctx(source);
+    for name in ["oneDigit", "positive", "nonpositive"] {
+        let plan = law_theorem(&ctx, "digits", name)
+            .unwrap()
+            .induction
+            .as_ref()
+            .unwrap();
+        assert_eq!(plan.driver, "value");
+        assert_eq!(plan.calls.len(), 1);
+        let call = &plan.calls[0];
+        assert_eq!(
+            call.arguments.len(),
+            1,
+            "The fixed [] seed is not a theorem parameter"
+        );
+        assert!(
+            matches!(
+                &call.arguments[0].node,
+                aver::ir::hir::ResolvedExpr::Call(
+                    aver::ir::hir::ResolvedCallee::Intrinsic(
+                        aver::ir::hir::BuiltinIntrinsic::IntDivEuclid
+                    ),
+                    _
+                )
+            ),
+            "{:?}",
+            call.arguments[0]
+        );
+        let premise = call
+            .premise
+            .as_ref()
+            .expect("Keep the recursive theorem premise");
+        assert!(
+            format!("{premise:?}").contains("IntDivEuclid"),
+            "Use the recursive premise, not the original one"
+        );
+    }
+}
+
+#[test]
+fn recursive_list_premises_live_inside_the_projection_scope() {
+    let ctx = build_ctx(include_str!(
+        "fixtures/source_recursion/guarded_list_seed.av"
+    ));
+    let plan = law_theorem(&ctx, "grow", "nonnegative")
+        .unwrap()
+        .induction
+        .as_ref()
+        .unwrap();
+    let call = &plan.calls[0];
+    let head = call.list_case.as_ref().unwrap().head.as_ref().unwrap();
+    assert!(!format!("{:?}", call.guard).contains(head));
+    assert!(format!("{:?}", call.premise).contains(head));
+}

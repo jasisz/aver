@@ -191,15 +191,38 @@ pub(super) fn plan(
             }
         });
     }
-    let anchor = occurrences.iter().copied().find(|e| {
+    // A fixed seed is not a quantified induction parameter. Recurse on the
+    // varying givens while retaining that seed in the theorem statement; the
+    // backend must prove the resulting equation (often using an accumulator
+    // decomposition law). Never infer a bound from concrete sample values.
+    fn fixed(expr: &Spanned<Expr>) -> bool {
+        match &expr.node {
+            Expr::Literal(_) => true,
+            Expr::List(xs) | Expr::Tuple(xs) => xs.iter().all(fixed),
+            _ => false,
+        }
+    }
+    let full_anchor = occurrences.iter().copied().find(|e| {
         let args = self_args(e, id, inputs, scope).unwrap();
-        let names: Option<Vec<_>> = args.iter().map(ident).collect();
-        names.is_some_and(|names| {
-            names.len() == fd.params.len()
-                && names
-                    .iter()
-                    .all(|n| law.givens.iter().any(|g| g.name == *n))
-                && names.iter().collect::<BTreeSet<_>>().len() == names.len()
+        let mut names = BTreeSet::new();
+        args.len() == fd.params.len()
+            && args.iter().all(|arg| {
+                ident(arg).is_some_and(|name| {
+                    law.givens.iter().any(|g| g.name == name) && names.insert(name)
+                })
+            })
+    });
+    let anchor = full_anchor.or_else(|| {
+        occurrences.iter().copied().find(|e| {
+            let args = self_args(e, id, inputs, scope).unwrap();
+            if args.len() != fd.params.len() || ident(&args[driver_index]).is_none() {
+                return false;
+            }
+            let mut names = BTreeSet::new();
+            args.iter().all(|arg| match ident(arg) {
+                Some(name) => law.givens.iter().any(|g| g.name == name) && names.insert(name),
+                None => fixed(arg),
+            })
         })
     })?;
     let anchor_args = self_args(anchor, id, inputs, scope)?;
@@ -310,13 +333,19 @@ pub(super) fn plan(
             .map(|g| (g.name.clone(), var(&g.name)))
             .collect();
         for (anchor_arg, recursive_arg) in anchor_args.iter().zip(recursive_args) {
-            given_args.insert(
-                ident(anchor_arg)?.to_string(),
-                substitute(recursive_arg, &bindings)?,
-            );
+            if let Some(name) = ident(anchor_arg) {
+                given_args.insert(name.to_string(), substitute(recursive_arg, &bindings)?);
+            }
         }
+        // A conditional theorem supplies an IH only where its recursive
+        // premise holds. Other branches remain independent proof obligations.
+        let premise = match &law.when {
+            Some(premise) => Some(inputs.resolve_expr(&substitute(premise, &given_args)?, scope)),
+            None => None,
+        };
         calls.push(LawInductionCall {
             guard: inputs.resolve_expr(&guard, scope),
+            premise,
             list_case,
             arguments: law
                 .givens

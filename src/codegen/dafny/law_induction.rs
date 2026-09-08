@@ -107,7 +107,13 @@ pub(super) fn calls(plan: &LawInduction, name: &str, ctx: &CodegenContext) -> Ve
             .map(|a| emit_expr(a, ctx))
             .collect::<Vec<_>>()
             .join(", ");
-        lines.push(format!("    {name}({args});"));
+        if let Some(premise) = &call.premise {
+            lines.push(format!("    if {} {{", emit_expr(premise, ctx)));
+            lines.push(format!("      {name}({args});"));
+            lines.push("    }".to_string());
+        } else {
+            lines.push(format!("    {name}({args});"));
+        }
         lines.push("  }".to_string());
     }
     lines

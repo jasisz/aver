@@ -381,3 +381,40 @@ open obligations, so these four do not yet earn strict whole-module BTC credit.
 This checkpoint does not claim full Lean/Dafny strategy parity: the existing
 Lean ordinary-law lane still bounds one of the independent fixture's two laws,
 while Dafny proves both universally.
+
+## Native floor-division law checkpoint
+
+A checked floor-division recursion no longer makes every ordinary law in its
+cone sample-only. Dafny retains the specialized division-window strategy when
+available and otherwise checks the actual universal obligation. Failure to
+find a proof remains a failed check; native termination alone is not law credit.
+
+Shared source induction now accepts fixed literal arguments in the claim,
+such as the empty seed in `digits(value, [])`. It keeps that seed in the
+statement and recurses on the quantified inputs using the source call's actual
+quotient. A fully quantified anchor still takes priority when one is available.
+Sample values neither choose the seed nor restrict the theorem's quantifiers.
+
+ProofIR also carries the theorem premise instantiated at each recursive call.
+Dafny introduces any list-pattern projections before testing that premise; an
+IH is available only in the branch where its own premise holds. The original
+claim must still be proved in all other branches. Lean continues to consume
+the same source-induction plan with its own functional-induction tactics.
+
+The Dafny sequence-reversal helper now proves preservation of membership in
+addition to length. The quantified element ranges over the input/output union,
+so the contract also supports generic elements containing references. An
+explicit, checked cons decomposition proves the contract from the recursive
+implementation; no sequence property is assumed.
+
+An independent decimal collector has seven universal laws checked by both
+backends; the Dafny controls also use radix seven. Missing guards and an
+incorrect prefix order pass their supplied VM samples but fail universal
+checking. A separate list-accumulator control checks the scope of recursive
+premises in Dafny, which also rejects its false variant. Negative digit laws are
+isolated from unrelated true sibling citations to avoid turning a concrete
+counterexample into a quantifier-search timeout.
+
+Nine of the ten previously omitted ordinary `StackItem.littleEndian` laws
+now check on unchanged BTC source. The readback law and several separate
+citation obligations remain open, so this does not establish the whole module.

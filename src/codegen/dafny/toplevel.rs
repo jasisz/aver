@@ -1725,18 +1725,6 @@ pub(super) fn sample_seed_lemma_available(
     ) {
         return false;
     }
-    // Mirror of the floor-division omitted-universal gate in
-    // `emit_verify_law`: a law whose cone reaches a guard-validated
-    // floor-division countdown fn gets NO universal lemma unless its
-    // `FloorDivWindow` figure is pinned — seeding a sample with a
-    // call to a lemma that was never emitted would be a parse error.
-    if !matches!(
-        pinned_strategy,
-        Some(crate::ir::ProofStrategy::FloorDivWindow { .. })
-    ) && law_reaches_floor_div_fn(law, ctx)
-    {
-        return false;
-    }
     law.givens.iter().all(|g| {
         oracle_predicate_for(&g.type_name).is_none()
             && crate::codegen::common::refinement_lift_for_given(
@@ -2700,49 +2688,6 @@ fn emit_tailrec_fixed_base_support_stack(
     Some(lines.join("\n"))
 }
 
-/// True when the law's call cone (lhs + rhs, transitively expanded
-/// through fn bodies) reaches a fn carrying the guard-validated
-/// floor-division countdown contract
-/// (`RecursionContract::WellFoundedToNat { floor_div: Some(_) }`).
-/// Such a fn verifies its own termination natively, but a DEFAULT
-/// empty-body universal lemma over it still hands Z3 an unbounded
-/// symbolic unfolding — a guaranteed error or timeout on a law that
-/// may well hold — so `emit_verify_law` keeps the honest
-/// omitted-universal decline unless the law carries a
-/// `FloorDivWindow` strategy (whose support stack proves it).
-pub(super) fn law_reaches_floor_div_fn(law: &VerifyLaw, ctx: &CodegenContext) -> bool {
-    let mut cone = std::collections::BTreeSet::new();
-    crate::codegen::proof_recognize::collect_called_fns(&law.lhs, &mut cone);
-    crate::codegen::proof_recognize::collect_called_fns(&law.rhs, &mut cone);
-    let mut changed = true;
-    while changed {
-        changed = false;
-        let snapshot: Vec<String> = cone.iter().cloned().collect();
-        for name in snapshot {
-            if let Some(fd) = ctx.fn_def_by_name(&name, ctx.active_module_scope().as_deref()) {
-                let before = cone.len();
-                crate::codegen::proof_recognize::collect_called_fns_in_body(&fd.body, &mut cone);
-                if cone.len() != before {
-                    changed = true;
-                }
-            }
-        }
-    }
-    cone.iter().any(|name| {
-        crate::codegen::common::fn_id_for_dotted_name(ctx, name)
-            .and_then(|id| ctx.proof_ir.fn_contracts.get(&id))
-            .is_some_and(|contract| {
-                matches!(
-                    &contract.recursion,
-                    Some(crate::ir::RecursionContract::WellFoundedToNat {
-                        floor_div: Some(_),
-                        ..
-                    })
-                )
-            })
-    })
-}
-
 /// Render the `FloorDivWindow` support stack + main lemma for one
 /// pinned figure. The lemma text was validated end-to-end on the
 /// emitted artifact (`dafny verify`: everything PROVED, no `assume`,
@@ -3443,16 +3388,9 @@ pub(super) fn emit_verify_law(
         );
     }
 
-    // Floor-division window family. A law whose cone reaches a
-    // guard-validated floor-division countdown fn either carries a
-    // recognized `FloorDivWindow` figure — then its validated support
-    // stack (division-window prelude + power algebra + branch-split
-    // helper lemmas, all PROVED in the emitted file) closes the
-    // universal — or it stays an honestly omitted universal: the fn
-    // is in the proof subset now, but Z3 cannot close an arbitrary
-    // universal over its unbounded symbolic unfolding, and the
-    // default empty-body lemma would manufacture a guaranteed error
-    // on a law that may well hold.
+    // Prefer the shared division-window support plan when available. Other
+    // laws over native floor-division recursion still receive real universal
+    // obligations: a missing specialized tactic is not a language omission.
     let pinned_floor_window_figure = vb_fn_id
         .and_then(|fn_id| {
             ctx.proof_ir
@@ -3470,35 +3408,6 @@ pub(super) fn emit_verify_law(
     if let Some(body) = super::lemmas::floor_arith_law(law, ctx, &fn_name, &law_name) {
         return body;
     }
-    // The omission applies only where the default path would state an
-    // OPEN universal with an empty body. The bounded-∀ form (mutual /
-    // opaque cone over all-literal-Int given domains — the same
-    // predicates the default path evaluates below) dispatches to
-    // per-sample lemmas instead and keeps working exactly as it did
-    // before this family existed, so it is excluded here.
-    let bounded_form_applies = {
-        let is_opaque_cone = law_refs_opaque_fn(&law.lhs, ctx, opaque_fns)
-            || law_refs_opaque_fn(&law.rhs, ctx, opaque_fns)
-            || law_refs_opaque_fn(&law.lhs, ctx, native_emitted)
-            || law_refs_opaque_fn(&law.rhs, ctx, native_emitted);
-        let all_literal_int_domains = !law.givens.is_empty()
-            && law.givens.iter().all(|g| {
-                g.type_name == "Int"
-                    && matches!(
-                        &g.domain,
-                        VerifyGivenDomain::Explicit(vs)
-                            if vs.iter().all(|v| literal_int_value(v).is_some())
-                    )
-            });
-        is_opaque_cone && all_literal_int_domains
-    };
-    if !bounded_form_applies && law_reaches_floor_div_fn(law, ctx) {
-        return format!(
-            "// Law {}.{}{}: reaches a floor-division recursion whose universal Z3 cannot close push-button, sample-only (universal lemma omitted)",
-            fn_name, law_name, suffix,
-        );
-    }
-
     // IR-pinned `LinearRecurrence2SpecEquivalence` — emit a full
     // support-theorem stack (Nat helper + worker_nat_shift +
     // helper_nat + helper_seed + spec_nat_bridge + main lemma)

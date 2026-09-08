@@ -890,13 +890,17 @@ function BranchPath_parse(s: string): Result<BranchPath, string> {
 /// signature. They mirror Lean's model of the same two builtins
 /// (`codegen::lean::builtins` renders `xs.find? p` and `xs.any p`): first
 /// match wins, and `ListAny` is the existential, false on the empty list.
+/// Reversal's membership contract quantifies over the finite input/output
+/// union, so generic elements containing references remain admissible. Its
+/// cons assertion proves the contract from the definition, including absence.
 const DAFNY_HELPER_AVER_LIST: &str = r#"
 function ListReverse<T>(xs: seq<T>): seq<T>
   ensures |ListReverse(xs)| == |xs|
+  ensures forall item | item in xs + ListReverse(xs) :: item in ListReverse(xs) <==> item in xs
   decreases |xs|
 {
   if |xs| == 0 then []
-  else ListReverse(xs[1..]) + [xs[0]]
+  else assert xs == [xs[0]] + xs[1..]; ListReverse(xs[1..]) + [xs[0]]
 }
 
 function ListHead<T>(xs: seq<T>): Option<T> {

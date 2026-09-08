@@ -220,6 +220,7 @@ fn source_recursion_identical_positive_sources_pass_both_checkers() {
         ("tests/fixtures/source_recursion/list_fold.av", 3),
         ("tests/fixtures/source_recursion/imported/main.av", 2),
         ("tests/fixtures/source_recursion/sequence_growth.av", 3),
+        ("tests/fixtures/source_recursion/floor_digits.av", 7),
     ] {
         for backend in ["dafny", "lean"] {
             let Some(summary) = check(source, backend) else {
@@ -328,5 +329,103 @@ fn dafny_native_sequence_search_preserves_import_owners_and_boolean_elements() {
     std::fs::write(&path, bool_source).unwrap();
     if let Some(summary) = check(path.to_str().unwrap(), "dafny") {
         assert_eq!(summary["passed"], true, "{summary}");
+    }
+}
+
+#[test]
+fn dafny_floor_division_laws_keep_fixed_seeds_and_require_real_universal_proofs() {
+    let source = include_str!("../fixtures/source_recursion/floor_digits.av");
+    for (name, source, expected) in [
+        ("positive", source.to_string(), true),
+        (
+            "radix_seven",
+            source.replace("10", "7").replace("[1, 9]", "[1, 6]"),
+            true,
+        ),
+        (
+            "missing_digit_guard",
+            source.replace("    when Bool.and(value > 0, value < 10)\n", ""),
+            false,
+        ),
+        (
+            "missing_range_guard",
+            source.replace("    when Bool.or(item < 0, item >= 10)\n", ""),
+            false,
+        ),
+        (
+            "missing_positive_guard",
+            source.replace("    when value > 0\n", ""),
+            false,
+        ),
+        (
+            "wrong_prefix",
+            source.replace("[2, 3]", "[2, 2]").replace(
+                "List.concat(List.reverse(acc), digits(value, []))",
+                "List.concat(acc, digits(value, []))",
+            ),
+            false,
+        ),
+    ] {
+        // A counterexample to one law does not need the automatic pool of
+        // other true laws. Isolate it so quantified citations do not turn
+        // a concrete rejection into a search timeout.
+        let source = if expected {
+            source
+        } else {
+            let target = match name {
+                "missing_digit_guard" => "oneDigit",
+                "missing_range_guard" => "outsideRange",
+                "missing_positive_guard" => "positive",
+                "wrong_prefix" => "prefix",
+                _ => unreachable!(),
+            };
+            let mut blocks = source.split("verify digits law ");
+            let definitions = blocks.next().unwrap();
+            let law = blocks
+                .find(|b| b.starts_with(&format!("{target}\n")))
+                .unwrap();
+            format!("{definitions}verify digits law {law}")
+        };
+        let dir = temp_output_dir(&format!("aver-floor-laws-{name}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("main.av");
+        std::fs::write(&path, source).unwrap();
+        let sampled = Command::new(env!("CARGO_BIN_EXE_aver"))
+            .args(["verify", path.to_str().unwrap()])
+            .output()
+            .unwrap();
+        assert!(
+            sampled.status.success(),
+            "{name}: {}",
+            format_output(&sampled)
+        );
+        if let Some(summary) = check(path.to_str().unwrap(), "dafny") {
+            assert_eq!(summary["passed"], expected, "{name}: {summary}");
+            if !expected {
+                assert!(summary["errors"].as_u64().unwrap() > 0, "{summary}");
+            }
+        }
+    }
+}
+
+#[test]
+fn dafny_recursive_premise_guards_bind_list_projections_without_excusing_a_false_law() {
+    let source = include_str!("../fixtures/source_recursion/guarded_list_seed.av");
+    for (name, source, expected) in [
+        ("positive", source.to_string(), true),
+        ("false", source.replace("Int.abs(head)", "head"), false),
+    ] {
+        let dir = temp_output_dir(&format!("aver-list-premise-{name}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("main.av");
+        std::fs::write(&path, source).unwrap();
+        let vm = Command::new(env!("CARGO_BIN_EXE_aver"))
+            .args(["verify", path.to_str().unwrap()])
+            .output()
+            .unwrap();
+        assert!(vm.status.success(), "{}", format_output(&vm));
+        if let Some(summary) = check(path.to_str().unwrap(), "dafny") {
+            assert_eq!(summary["passed"], expected, "{name}: {summary}");
+        }
     }
 }
