@@ -1,0 +1,27 @@
+module ImportedMutualAccumulator
+    intent = "The guided caller states the exact transitions of an imported mutual processing cone."
+    depends [Collector]
+    effects []
+
+fn scan(items: List<Int>, acc: List<Int>) -> List<Int>
+    Collector.collect(items, acc)
+
+fn accept(head: Int, rest: List<Int>, acc: List<Int>) -> List<Int>
+    Collector.accept(head, rest, acc)
+
+verify scan law consumeHead
+    given head: Int = [-1, 0, 3]
+    given tail: List<Int> = [[], [1, 2]]
+    given acc: List<Int> = [[], [8, 9]]
+    because scan(List.prepend(head, tail), acc) == Collector.accept(head, tail, acc)
+    using []
+    scan(List.prepend(head, tail), acc) => Collector.accept(head, tail, acc)
+
+verify accept law keepAcceptedHead
+    given head: Int = [-1, 0, 3]
+    given rest: List<Int> = [[], [1, 2]]
+    given acc: List<Int> = [[], [8, 9]]
+    when head >= 0
+    because accept(head, rest, acc) == Collector.collect(rest, List.prepend(head, acc))
+    using []
+    accept(head, rest, acc) => Collector.collect(rest, List.prepend(head, acc))

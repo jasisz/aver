@@ -3134,20 +3134,33 @@ fn earlier_law_citations(cites: &[(String, &VerifyLaw)], ctx: &CodegenContext) -
     out
 }
 
-pub fn emit_verify_law(
+/// Distinguish actual native mutual members from their transitive callers.
+/// Guidance admission needs membership; legacy law strategies use the closure.
+pub(super) struct LawRecursion<'a> {
+    pub opaque_fns: &'a std::collections::HashSet<crate::ir::FnId>,
+    pub native_members: &'a std::collections::HashSet<crate::ir::FnId>,
+    pub native_callers: &'a std::collections::HashSet<crate::ir::FnId>,
+    pub termination_opaque: &'a std::collections::HashSet<crate::ir::FnId>,
+}
+
+pub(super) fn emit_verify_law(
     vb: &VerifyBlock,
     law: &VerifyLaw,
     ctx: &CodegenContext,
-    opaque_fns: &std::collections::HashSet<crate::ir::FnId>,
-    native_emitted: &std::collections::HashSet<crate::ir::FnId>,
-    termination_opaque: &std::collections::HashSet<crate::ir::FnId>,
+    recursion: &LawRecursion<'_>,
     suffix: &str,
 ) -> String {
+    let LawRecursion {
+        opaque_fns,
+        native_members,
+        native_callers: native_emitted,
+        termination_opaque,
+    } = *recursion;
     let fn_name = aver_name_to_dafny(&vb.fn_name);
     let law_name = aver_name_to_dafny(&law.name);
     if !law.because.is_empty() || law.using.is_some() {
         let claim = format!("{}.{}", vb.fn_name, law.name);
-        let reason = match super::reasons::emit(vb, law, ctx) {
+        let reason = match super::reasons::emit(vb, law, ctx, native_members) {
             Ok(emitted) => return emitted,
             Err(reason) => format!("Dafny guided-law pilot declined: {reason}"),
         };

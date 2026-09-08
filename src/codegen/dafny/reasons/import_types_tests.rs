@@ -37,6 +37,7 @@ fn context(entry: &str, library: &str) -> CodegenContext {
 fn checker(ctx: &CodegenContext) -> Checker<'_> {
     Checker {
         ctx,
+        native_members: HashSet::new(),
         functions: HashSet::new(),
         checking_functions: Vec::new(),
         laws: BTreeMap::new(),

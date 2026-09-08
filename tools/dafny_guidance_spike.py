@@ -60,6 +60,18 @@ for name in ["imports_positive", "arithmetic_positive", "transitive_consumer", "
         SOURCE_PATHS[case] = IMPORT_DIV / f"{name}.av"
 
 
+MUTUAL = ROOT / "tests/fixtures/dafny_guidance_mutual"
+for name in ["positive", "imported", "false_reason"]:
+    case = f"mutual_{name}"
+    expected = "failed" if name == "false_reason" else "verified"
+    EXPECTED[case] = {"lean": expected, "dafny": expected}
+    if name == "imported":
+        MODULE_ROOTS[case] = MUTUAL / name
+        SOURCE_PATHS[case] = MODULE_ROOTS[case] / "main.av"
+    else:
+        SOURCE_PATHS[case] = MUTUAL / f"{name}.av"
+
+
 def digest(path: Path) -> str:
     with path.open("rb") as source:
         return hashlib.file_digest(source, "sha256").hexdigest()

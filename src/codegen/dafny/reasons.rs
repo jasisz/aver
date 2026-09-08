@@ -1,4 +1,4 @@
-//! Bounded Dafny support for source-authored proof steps. Every step is a
+//! First-order Dafny support for source-authored proof steps. Every step is a
 //! checked lemma; only the parent chains them into the original guarded law.
 //! This pilot has no assumptions/axiom fallback and makes no kernel-audit claim.
 
@@ -159,9 +159,10 @@ pub(super) fn emit(
     vb: &VerifyBlock,
     law: &VerifyLaw,
     ctx: &CodegenContext,
+    native_members: &std::collections::HashSet<crate::ir::FnId>,
 ) -> Result<String, String> {
     let blocks = local_blocks(ctx);
-    let citations = subset::validate(vb, law, ctx, &blocks)?;
+    let citations = subset::validate(vb, law, ctx, &blocks, native_members)?;
     let id = label(vb, law);
     let name = lemma_name(&id);
     let source_id = match ctx.active_module_scope() {

@@ -46,10 +46,19 @@ change its accumulators. For a simple source match with a unique recursive
 call, the backend instantiates the step lemma at that call’s arguments. Dafny
 must prove its guard, earlier reasons and termination; no premise is invented.
 
+Mutually recursive functions are admitted when the backend actually emits their
+complete cycle as native functions with checked termination. The common call-edge
+analysis chooses a sum of sequence lengths and the matching rank for each member.
+A growing accumulator can be excluded while the input decreases. List tails count
+as shorter; list heads do not, and `take`/`drop` alone imply only a non-growing
+length. The checker validates every body and every member of the cycle. Admission
+does not add a general mutual induction tactic or grant native status to callers
+of a native function.
+
 Explicit `using` citations may select local or visible imported laws. A selected
 ordinary law without `because` or `using` is also supported through a separately
 checked universal restatement, described below. Automatic citation selection,
-mutual recursion, fuel or opaque recursion fallbacks, unsupported countdowns,
+fuel or opaque recursion fallbacks, unsupported countdowns,
 higher-order or effectful calls, provider resources, refinements and `Float`
 remain outside this guidance fragment. A supported-looking caller that selects
 an unsupported helper is declined as well. Admission does not guarantee that
@@ -171,20 +180,20 @@ or the later imports and division extension.
 
 ## Imports and division controls
 
-The twenty-four-case comparison adds eleven laws and twenty-two obligations
-from three positive source graphs. All eleven laws pass both backends. Two
-additional negative files fail actual proof checking in both backends: one cites
+The twenty-four-case checkpoint added eleven laws and twenty-two obligations
+from three positive source graphs. All eleven laws passed both backends. Two
+additional negative files failed actual proof checking in both backends: one cites
 a false imported supplier, and one loses a required recursive guard. Across the
-complete comparison, **27 laws pass both backends and four pass only Dafny**;
-all thirteen negative files fail both. These are fixture counts, not whole-project
+comparison at that checkpoint, **27 laws passed both backends and four passed only Dafny**;
+all thirteen negative files failed both. These are fixture counts, not whole-project
 K5 or BTC coverage. See the [control descriptions](../tests/fixtures/dafny_guidance_import_div/README.md).
 
 The runner fingerprints imported Aver files as well as their entry points. An
 edited, added or removed supplier invalidates that run’s evidence.
 
-## Whole-project BTC measurement of the extension
+## Whole-project BTC checkpoint before native mutual admission
 
-The final measurement on BTC commit
+The imports/division checkpoint on BTC commit
 `a6870c9de7280593d3e5a5928ceb62610a2ba316` still confirms only **7 of 104 own BTC
 laws** under the strict whole-module gate. Those seven belong to `ScriptMath`.
 This is a lower bound, not a count of all individually provable laws.
@@ -193,13 +202,38 @@ This is a lower bound, not a count of all individually provable laws.
 declines**. This records admission of their guided source; it does not mean
 those modules passed verification. Open obligations remain, including solver
 timeouts, four axiom fallbacks in `ScriptState`, and ten omitted obligations in
-`StackItem`. `ScriptParse` and its importer `Chainwork` each report sixteen
+`StackItem`. `ScriptParse` and its importer `Chainwork` each reported sixteen
 declines, chiefly through mutually recursive parser/filter functions with growing
-list accumulators. Those functions still use fuel-backed emission; accepting
-their guidance as universal would require first establishing native termination.
+list accumulators. Those functions still used fuel-backed emission at that checkpoint.
 
 The module runs had no outer wall-clock timeouts, but Dafny reported six solver
 timeouts across the runs. Whole-module diagnostics include imported dependencies,
 so their counts must not be summed as distinct source laws. The comparison and
 BTC measurement used the same compiler SHA-256:
 `952c21ed33868eef4eb4e2c19eee9c7a1d6a09153ef2ef45862ca41be70b3473`.
+
+## Native mutual recursion checkpoint
+
+The twenty-seven-case comparison adds four one-step laws and eight obligations
+from local and imported mutual processing functions. Both backends verify those
+source transitions. A false intermediate reason fails actual proof checking in
+both; a separate nonshrinking cycle stays declined and is never VM-executed.
+Across the comparison, **31 laws pass both backends and four pass only Dafny**.
+All fourteen negative files fail both. These controls establish termination and
+source transitions, not a general mutual induction tactic. See the
+[mutual controls](../tests/fixtures/dafny_guidance_mutual/README.md).
+
+On the same unchanged BTC commit, the seven parser/filter functions `from`,
+`nextOp`, `pushOf`, `taken`, `wide`, `keptUnlessMatched` and `without` now emit
+natively. A filtered Dafny check of those functions verifies **34 assertions
+with zero errors**. `ScriptParse` and `Chainwork` guidance declines fall from
+sixteen to nine: eight identify string interpolation in a parser error message,
+and one identifies Result propagation (`?`) in `withoutPushes`. Seven filter
+laws now reach proof checking.
+
+Whole BTC remains **7/104 own laws** under the strict whole-module gate; native
+termination and admission do not close all mathematical obligations. The final
+runs retain four axiom fallbacks in `ScriptState`, ten omissions in `StackItem`,
+and six reported solver timeouts across repeated module dependencies. No outer
+wall-clock timeout occurred. The comparison and BTC runs use compiler SHA-256
+`f30a0974ac3d5e38bed72fad36337264f26031b3edd256a0f5d1a58639396830`.

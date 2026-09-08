@@ -346,6 +346,12 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
     let opaque_fns = toplevel::transitive_opaque_closure(ctx, &direct_opaque);
     let native_transitive = toplevel::transitive_opaque_closure(ctx, &native_emitted);
     let termination_opaque = toplevel::transitive_opaque_closure(ctx, &termination_axiom_ids);
+    let law_recursion = toplevel::LawRecursion {
+        opaque_fns: &opaque_fns,
+        native_members: &native_emitted,
+        native_callers: &native_transitive,
+        termination_opaque: &termination_opaque,
+    };
 
     let mut module_files: Vec<(String, String)> = Vec::new();
     let mut union_body = String::new();
@@ -403,9 +409,7 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
                     vb,
                     law,
                     ctx,
-                    &opaque_fns,
-                    &native_transitive,
-                    &termination_opaque,
+                    &law_recursion,
                     &suffix,
                 ));
             }
@@ -629,9 +633,7 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
                 vb,
                 law,
                 ctx,
-                &opaque_fns,
-                &native_transitive,
-                &termination_opaque,
+                &law_recursion,
                 &suffix,
             ));
         }

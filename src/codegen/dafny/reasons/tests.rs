@@ -12,7 +12,7 @@ fn emitted(source: &str, wanted: &str) -> Result<String, String> {
             _ => None,
         })
         .expect("fixture law");
-    emit(block, law, &ctx)
+    emit(block, law, &ctx, &std::collections::HashSet::new())
 }
 
 const POSITIVE: &str = r#"fn positive(x: Int) -> Bool
@@ -33,6 +33,41 @@ verify advance law explained
     using [positive.guarded]
     advance(x) >= 3 holds
 "#;
+
+#[test]
+fn mutual_admission_requires_every_native_member_and_checks_its_body() {
+    let source = "fn scan(xs: List<Int>, acc: List<Int>) -> List<Int>\n    match xs\n        [] -> acc\n        [head, ..tail] -> step(head, tail, acc)\nfn step(head: Int, rest: List<Int>, acc: List<Int>) -> List<Int>\n    scan(rest, List.prepend(head, acc))\nverify scan law identity\n    given xs: List<Int> = [[]]\n    given acc: List<Int> = [[]]\n    because true\n    using []\n    scan(xs, acc) => scan(xs, acc)\n";
+    for (native_names, unsupported, admitted) in [
+        (vec![], false, false),
+        (vec!["scan"], false, false),
+        (vec!["scan", "step"], false, true),
+        (vec!["scan", "step"], true, false),
+    ] {
+        let source = if unsupported {
+            source.replace(
+                "    scan(rest, List.prepend(head, acc))",
+                "    hidden = String.byteLength(\"unsupported\")\n    scan(rest, List.prepend(head, acc))",
+            )
+        } else {
+            source.to_string()
+        };
+        let ctx = ctx_from_source(&source, "Guidance");
+        let native = native_names
+            .iter()
+            .map(|name| ctx.symbol_table.resolve_fn_id_in(name, None).unwrap())
+            .collect();
+        let blocks = local_blocks(&ctx);
+        let block = blocks[0];
+        let VerifyKind::Law(law) = &block.kind else {
+            panic!("expected law");
+        };
+        let result = emit(block, law, &ctx, &native);
+        assert_eq!(result.is_ok(), admitted, "{native_names:?}: {result:?}");
+        if unsupported {
+            assert!(result.unwrap_err().contains("String.byteLength"));
+        }
+    }
+}
 
 #[test]
 fn guarded_steps_remain_separate_and_parent_calls_every_obligation() {

@@ -1,0 +1,18 @@
+module MutualNonshrinking
+    intent = "A same-input cycle cannot obtain universal guidance credit from a fuel fallback."
+    effects []
+
+fn scan(items: List<Int>, acc: List<Int>) -> Bool
+    match items
+        [] -> true
+        [head, ..tail] -> accept(items, List.prepend(head, acc))
+
+fn accept(items: List<Int>, acc: List<Int>) -> Bool
+    scan(items, acc)
+
+verify scan law falseTermination
+    given items: List<Int> = [[]]
+    given acc: List<Int> = [[]]
+    because scan(items, acc)
+    using []
+    scan(items, acc) holds

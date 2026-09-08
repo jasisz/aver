@@ -30,6 +30,7 @@ fn bind(env: &mut Env, name: &str, ty: Type) -> Result<(), String> {
 
 struct Checker<'a> {
     ctx: &'a CodegenContext,
+    native_members: HashSet<FnId>,
     functions: HashSet<FnId>,
     checking_functions: Vec<FnId>,
     laws: BTreeMap<Key, Citation<'a>>,
@@ -145,6 +146,12 @@ impl<'a> Checker<'a> {
                 base,
                 updates,
             } => self.record(type_name, Some(base), updates, env),
+            Expr::InterpolatedStr(_) => {
+                Err("string interpolation is outside the first-order guidance subset".to_string())
+            }
+            Expr::ErrorProp(_) => {
+                Err("Result propagation (?) is outside the first-order guidance subset".to_string())
+            }
             _ => Err("expression is outside the first-order guidance subset".to_string()),
         }
     }
@@ -184,6 +191,7 @@ impl<'a> Checker<'a> {
             }
             let result = self.annotation(&fd.return_type)?;
             if ctx.recursive_fns.contains(&id)
+                && !self.native_members.contains(&id)
                 && countdown_parameter(fd, ctx).is_none()
                 && list_parameter(fd, ctx).is_none()
                 && super::arithmetic::quotient_parameter(fd, ctx).is_none()
@@ -193,13 +201,20 @@ impl<'a> Checker<'a> {
                     key.canonical()
                 ));
             }
-            // The stack crosses module boundaries. An imported call back to a
-            // different active function is mutual recursion, never a trusted
-            // already-checked body or a route to a fuel/opaque declaration.
-            if self.checking_functions.contains(&id) && self.checking_functions.last() != Some(&id)
+            // Every member of a backedge cycle must have an actual native
+            // declaration. Transitive callers or fuel/opaque wrappers cannot
+            // confer this admission. The complete bodies still get checked.
+            if let Some(start) = self
+                .checking_functions
+                .iter()
+                .position(|active| *active == id)
+                && start + 1 < self.checking_functions.len()
+                && !self.checking_functions[start..]
+                    .iter()
+                    .all(|member| self.native_members.contains(member))
             {
                 return Err(format!(
-                    "mutual recursion through {} is outside this pilot",
+                    "mutual recursion through {} requires native termination",
                     key.canonical()
                 ));
             }
@@ -358,10 +373,12 @@ pub(super) fn validate<'a>(
     law: &'a VerifyLaw,
     ctx: &'a CodegenContext,
     blocks: &[&'a VerifyBlock],
+    native_members: &HashSet<FnId>,
 ) -> Result<Vec<Citation<'a>>, String> {
     let laws = citations::index(ctx, blocks)?;
     let mut checker = Checker {
         ctx,
+        native_members: native_members.clone(),
         functions: HashSet::new(),
         checking_functions: Vec::new(),
         laws,

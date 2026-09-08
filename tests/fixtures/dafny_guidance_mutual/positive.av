@@ -1,0 +1,30 @@
+module MutualAccumulatorPositive
+    intent = "Each parser-state transition preserves its source equation while consuming the input and growing a separate accumulator."
+    effects []
+
+fn collect(items: List<Int>, acc: List<Int>) -> List<Int>
+    match items
+        [] -> acc
+        [head, ..tail] -> accept(head, tail, acc)
+
+fn accept(head: Int, rest: List<Int>, acc: List<Int>) -> List<Int>
+    match head >= 0
+        true -> collect(rest, List.prepend(head, acc))
+        false -> collect(rest, acc)
+
+verify collect law consumeHead
+    given head: Int = [-1, 0, 3]
+    given tail: List<Int> = [[], [1, 2]]
+    given acc: List<Int> = [[], [8, 9]]
+    because collect(List.prepend(head, tail), acc) == accept(head, tail, acc)
+    using []
+    collect(List.prepend(head, tail), acc) => accept(head, tail, acc)
+
+verify accept law keepAcceptedHead
+    given head: Int = [-1, 0, 3]
+    given rest: List<Int> = [[], [1, 2]]
+    given acc: List<Int> = [[], [8, 9]]
+    when head >= 0
+    because accept(head, rest, acc) == collect(rest, List.prepend(head, acc))
+    using []
+    accept(head, rest, acc) => collect(rest, List.prepend(head, acc))

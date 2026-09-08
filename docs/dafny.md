@@ -97,15 +97,27 @@ Recursive functions fall into three buckets based on the shared classifier in `c
 - Int countdown with explicit `match n < 0` base → `decreases if n >= 0 then n else 0` (no `requires`, the body itself handles the negative case).
 - Int floor-division countdown by a literal divisor (`Int.div(p, k)` with literal `k >= 2` — discharged total form — or the legacy `Result.withDefault(Int.div(p, k), d)` wrapper, inlined or through a unary wrapper like `half`) → `decreases if p >= 0 then p else 0` with NO synthesized `requires`, when the function's own guards prove `p >= 1` at every recursive call (binary exponent search by halving, base-10⁹ digit peeling). An unvalidated guard declines to the opaque form instead of guessing. `verify ... law` blocks over this class — power-of-two positivity and sum laws, the scaled-significand window of an integer ratio, the m-bit×n-bit product window — emit a proved support stack (division-window lemmas derived from the Euclidean identity, power algebra by self-call induction, branch-split significand lemmas) so the universal lemmas verify instead of being omitted; see `tests/fixtures/floor_window.av`.
 
-**Mutual-recursion SCCs** — preferred path emits as native `decreases` tuples when every member has a measurable `List`/`Vector`/`String` parameter (most BigInt-style SCCs):
+**Mutual-recursion SCCs** — the preferred path chooses sequence-length measures and matching ranks for structural mutual groups, then emits native `decreases` tuples:
 
 ```dafny
 function fn(args): T
-  decreases <sizeof_measure>, <rank>
+  decreases <selected_length_sum>, <rank>
 { <body with intra-SCC calls unchanged> }
 ```
 
-The size measure sums `|seq_param|` for every `List`/`Vector`/`String` parameter; the rank is the recursion classifier's topo position over "same-measure" callees, so a call that keeps the size constant decreases lexicographically on rank instead. Z3 unfolds these to ground terms during proof obligations — no fuel ceiling on large literals (BigInt's `10⁹`).
+The shared call-edge analysis selects which `List`/`Vector`/`String` parameters
+contribute their lengths. It can omit a growing accumulator while retaining the
+input that drives progress. The rank orders calls leaving that selected sum
+unchanged; it always comes from the same analysis as the emitted measure. List
+tails are shorter, but list heads are not shorter by length, and slices are only
+non-growing. Dafny checks the native functions' termination. The existing guarded
+all-sequence/forwarded-rank path remains a fallback for older supported shapes.
+
+Guided laws admit exactly the functions emitted natively, while still validating
+their complete bodies and dependency cones. A caller of a native function does
+not thereby acquire native recursion status. Fuel and opaque fallbacks remain
+outside guided universal admission. Native function emission does not provide a
+general mutual induction tactic for arbitrary laws.
 
 **Fuel fallback** — SCCs without a measurable parameter (pure `Int`-only mutual recursion) still go through fuel-guarded pairs, parallel to Lean's `def fn__fuel (fuel : Nat) …`:
 
