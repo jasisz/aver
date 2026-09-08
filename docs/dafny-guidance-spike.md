@@ -6,21 +6,39 @@ port K5's rounding proofs to Dafny.
 
 ## Supported fragment
 
-Each law needs an explicit `using` list (`using []` selects no helpers) and a
-pure dependency cone in its own module. Givens may contain `Int`, `Bool`,
-`String`, lists, tuples, `Option`, `Result`, and local records or sum types.
-Every named field type, constructor, pattern, called body and selected local
-law is checked against the same restrictions. Arithmetic includes addition,
-subtraction, comparisons and multiplication of arbitrary integers. Selected
-first-order list operations use native sequences or total defined helpers.
+Guided laws need an explicit `using` list (`using []` selects no helpers).
+Their pure dependency cones may cross explicit module imports. Givens may
+contain `Int`, `Bool`, `String`, lists, tuples, `Option`, `Result`, and local or
+imported records and sum types. Every named field type, constructor, pattern,
+called body and selected law is checked against the same restrictions.
+Signatures, bodies and field annotations resolve in their declaring modules;
+same-named functions or types in a caller do not replace imported declarations.
 
-Self-recursive helpers are admitted when the existing recursion classifier
-recognizes a guarded integer countdown that subtracts a positive literal. The
-backend validates the entire recursive body, including expressions after a
-self-call. Dafny checks the function's termination. A step whose direct Boolean
-predicate call is driven by an integer given can request induction on that given,
-with a nonnegative decreases measure. Integer equations use ordinary unfolding
-without an unnecessary induction hint. Neither strategy inserts an assumption.
+Arithmetic includes addition, subtraction, comparisons, multiplication of
+arbitrary integers, and `Int.div` / `Int.mod`. Division preserves Aver’s exact
+Euclidean semantics, including negative operands. A syntactically nonzero
+literal divisor returns `Int`, using the same discharge rule as Aver’s type
+checker. A zero or dynamic divisor retains `Result<Int, String>`: zero produces
+`Result.Err("division by zero")`, and a nonzero value produces `Result.Ok` of the
+quotient or remainder. For a nonzero divisor `d`, the quotient `q` and remainder
+`r` satisfy `a = d * q + r` and `0 <= r < Int.abs(d)`. This does not add an integer
+`/` operator or erase an error branch.
+
+Selected first-order list operations use native sequences or total defined
+helpers. Other unsupported operations still decline, even inside an unused
+binding or a branch that the supplied examples never take.
+
+Self-recursive helpers are admitted when the shared classifier recognizes a
+guarded integer countdown that subtracts a positive literal, or a checked
+quotient countdown by a fixed literal divisor of at least two. The quotient
+contract must establish that the source argument is positive at every recursive
+call and strictly shrinks. A division expression alone is not such a contract.
+The backend validates the entire recursive body; Dafny checks its termination.
+Boolean reason predicates can generalize the law’s givens, including growing
+accumulators, while decreasing only the selected integer’s nonnegative measure.
+An explicit recursive step call instantiates a checked quotient induction when
+its source arguments can be translated safely. Integer equations use ordinary
+unfolding without an unnecessary induction hint.
 
 Native structural list descent is also admitted. Boolean list reasons can
 generalize all givens while decreasing only the list length, so a fold can
@@ -28,11 +46,14 @@ change its accumulators. For a simple source match with a unique recursive
 call, the backend instantiates the step lemma at that call’s arguments. Dafny
 must prove its guard, earlier reasons and termination; no premise is invented.
 
-Automatic selection, imported citations/functions or types, mutual recursion,
-unsupported countdowns, higher-order calls, refinements and division are
-explicitly declined. A supported-looking caller that selects an unsupported helper is
-declined as well. Admitting a recursive expression does not guarantee that Dafny
-can prove it; more complex induction arguments may still fail verification.
+Explicit `using` citations may select local or visible imported laws. A selected
+ordinary law without `because` or `using` is also supported through a separately
+checked universal restatement, described below. Automatic citation selection,
+mutual recursion, fuel or opaque recursion fallbacks, unsupported countdowns,
+higher-order or effectful calls, provider resources, refinements and `Float`
+remain outside this guidance fragment. A supported-looking caller that selects
+an unsupported helper is declined as well. Admission does not guarantee that
+Dafny can complete the proof.
 
 ## What the backend checks
 
@@ -42,11 +63,22 @@ its own premise. A separate lemma checks the final implication. The parent law
 calls every step in order, so an unproved intermediate reason cannot disappear
 because the final claim happens to be true.
 
-Explicit citations become checked calls under the cited law's own guard. They
-provide no unconditional assumption or axiom fallback. Dafny verifies the entire
-generated file, including every cited supplier. A modular caller may verify
-while its supplier fails; the experiment consequently grants no independent
-credit to that caller. Only the strict whole-file result is compared.
+Explicit citations become checked calls under the cited law's own guard.
+Imported statements and their binder types retain their declaring-module
+identities when rendered in the caller. Dependency modules import reachable
+transitive owners without opening their names, so a supplier’s statement can
+refer to its own dependencies without making unrelated bare names visible.
+
+For a selected ordinary law, the backend emits a separate universal lemma in
+the consumer with the original guard and an assertion of the original claim.
+It proves this statement again; a legacy lemma or finite sample check is not
+used as universal evidence. Guided suppliers are called through their checked
+parent lemmas. Neither path adds an unconditional assumption or axiom fallback.
+
+Aver invokes Dafny with `--verify-included-files`, checking the generated file
+and its included suppliers. A modular caller may verify while its supplier
+fails; the experiment consequently grants no independent credit to that caller.
+Only the strict whole-file result is compared.
 
 Dafny/Boogie/Z3 verification is a different evidence path from Lean's kernel and
 transitive axiom audit. This spike does not create a Dafny proof manifest or
@@ -71,8 +103,12 @@ When both backends verify a file, the emitted law and step identities must match
 The coverage counter counts laws verified by both backends or only one, scoped
 to these fixtures. It gives no independent credit to any law in a failing file.
 
-The thirteen source cases (twelve fixtures and the original K5 IntegerOrder module)
-produced these outcomes with Lean 4.33.1 and Dafny 4.11.0:
+The tables below retain the recorded checkpoints before the imports and division
+extension. The current runner also exercises the newer controls; its fresh
+`matrix.json` is authoritative for that run’s case and coverage counts.
+
+At the thirteen-case checkpoint, twelve fixtures and the original K5 IntegerOrder
+module produced these outcomes with Lean 4.33.1 and Dafny 4.11.0:
 
 | Same source | Lean | Dafny |
 |---|---|---|
@@ -108,14 +144,15 @@ they cannot satisfy an expected failed-proof control.
 Dafny already uses nonlinear arithmetic through Z3; this extension removes the
 pilot rejection of variable products rather than enabling a new solver flag.
 For more complex arguments, source lemmas and intermediate steps still matter.
-Imported citations and types, exact division, refinements and broader induction
-remain portability boundaries before K5 rounding can use this backend.
+The current extension admits imported citations and types and exact integer
+division. Refinements, broader recursive proof patterns and solver completion
+remain boundaries before K5 rounding can use this backend.
 
 ## Structured source controls
 
-The comparison also includes six structured fixtures: three positive files
+The next recorded checkpoint added six structured fixtures: three positive files
 containing seven laws, and three negative files. All seven laws and fourteen
-source steps pass both backends; all three negative files fail their strict
+source steps passed both backends; all three negative files failed their strict
 whole-file gates. Two positive laws are complete,
 unchanged declarations from BTC `StackItem`, with their complete local function
 dependencies; see the [source provenance](../tests/fixtures/dafny_guidance_structured/README.md).
@@ -124,9 +161,45 @@ and local citations. Negative controls remove a necessary guard, insert a false
 recursive reason despite a true final goal, and cite a false structured law.
 
 These slices measure individual source portability. They do not imply that the
-whole BTC StackItem module passes: unrelated unsupported laws and dependencies
-still prevent whole-file proof credit.
+whole BTC StackItem module passes. At that checkpoint, other unsupported laws
+and dependencies prevented whole-file proof credit.
 
-Across all nineteen comparison cases, sixteen laws now pass both backends and
-four pass only Dafny. All eleven negative files fail both backends. These counts
-cover the selected fixtures and K5 IntegerOrder, not the full K5/BTC projects.
+At the nineteen-case checkpoint, sixteen laws passed both backends and four
+passed only Dafny. All eleven negative files failed both backends. These counts
+cover those selected fixtures and K5 IntegerOrder, not the full K5/BTC projects
+or the later imports and division extension.
+
+## Imports and division controls
+
+The twenty-four-case comparison adds eleven laws and twenty-two obligations
+from three positive source graphs. All eleven laws pass both backends. Two
+additional negative files fail actual proof checking in both backends: one cites
+a false imported supplier, and one loses a required recursive guard. Across the
+complete comparison, **27 laws pass both backends and four pass only Dafny**;
+all thirteen negative files fail both. These are fixture counts, not whole-project
+K5 or BTC coverage. See the [control descriptions](../tests/fixtures/dafny_guidance_import_div/README.md).
+
+The runner fingerprints imported Aver files as well as their entry points. An
+edited, added or removed supplier invalidates that run’s evidence.
+
+## Whole-project BTC measurement of the extension
+
+The final measurement on BTC commit
+`a6870c9de7280593d3e5a5928ceb62610a2ba316` still confirms only **7 of 104 own BTC
+laws** under the strict whole-module gate. Those seven belong to `ScriptMath`.
+This is a lower bound, not a count of all individually provable laws.
+
+`CompactSize`, `Message`, `ScriptState` and `StackItem` now have **zero guidance
+declines**. This records admission of their guided source; it does not mean
+those modules passed verification. Open obligations remain, including solver
+timeouts, four axiom fallbacks in `ScriptState`, and ten omitted obligations in
+`StackItem`. `ScriptParse` and its importer `Chainwork` each report sixteen
+declines, chiefly through mutually recursive parser/filter functions with growing
+list accumulators. Those functions still use fuel-backed emission; accepting
+their guidance as universal would require first establishing native termination.
+
+The module runs had no outer wall-clock timeouts, but Dafny reported six solver
+timeouts across the runs. Whole-module diagnostics include imported dependencies,
+so their counts must not be summed as distinct source laws. The comparison and
+BTC measurement used the same compiler SHA-256:
+`952c21ed33868eef4eb4e2c19eee9c7a1d6a09153ef2ef45862ca41be70b3473`.

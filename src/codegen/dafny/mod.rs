@@ -433,12 +433,32 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
             })
             .collect::<Vec<_>>()
             .join("\n");
-        let depends_imports: String = module
+        let mut imports: Vec<String> = module
             .depends
             .iter()
             .map(|d| format!("  import opened {}", dafny_module_name(d)))
-            .collect::<Vec<_>>()
-            .join("\n");
+            .collect();
+        // A selected law can mention a type or helper owned by its supplier's
+        // dependency. Rendering retains that canonical owner qualification;
+        // Dafny therefore needs its module name in scope in the consumer too.
+        // The existing direct include chain already supplies those modules.
+        // Keep transitive imports unopened so unrelated bare declarations do
+        // not enter the consumer's namespace or create new ambiguities.
+        let mut transitive =
+            crate::codegen::common::visible_module_prefixes(Some(&module.prefix), ctx)
+                .unwrap_or_default();
+        for direct in &module.depends {
+            transitive.remove(direct);
+        }
+        transitive.remove(&module.prefix);
+        let mut transitive: Vec<_> = transitive.into_iter().collect();
+        transitive.sort();
+        imports.extend(
+            transitive
+                .iter()
+                .map(|prefix| format!("  import {}", dafny_module_name(prefix))),
+        );
+        let depends_imports = imports.join("\n");
 
         let mut header = format!(
             "// Aver-generated module: {}\ninclude \"{}common.dfy\"\n",
@@ -1161,6 +1181,65 @@ mod tests {
     use super::*;
     use crate::codegen::build_context;
     use crate::source::parse_source;
+
+    #[test]
+    fn imported_law_owners_are_in_scope_without_opening_transitive_names() {
+        let mut ctx = ctx_from_source("module Entry\n    effects []\n", "Entry");
+        ctx.modules = vec![
+            crate::codegen::test_module("Chain.Provider", &[], vec![]),
+            crate::codegen::test_module("Chain.Facade", &["Chain.Provider"], vec![]),
+            crate::codegen::test_module("Chain.Second", &["Chain.Provider"], vec![]),
+            crate::codegen::test_module(
+                "Chain.Consumer",
+                &["Chain.Facade", "Chain.Second"],
+                vec![],
+            ),
+            crate::codegen::test_module("Unrelated", &[], vec![]),
+        ];
+        ctx.module_prefixes = ctx
+            .modules
+            .iter()
+            .map(|module| module.prefix.clone())
+            .collect();
+        ctx.symbol_table = crate::ir::SymbolTable::build(&ctx.items, &ctx.modules);
+        let project = transpile(&ctx);
+        let consumer = &project
+            .files
+            .iter()
+            .find(|(name, _)| name == "Chain/Consumer.dfy")
+            .unwrap()
+            .1;
+        assert!(
+            consumer.contains("  import opened Aver_Chain_Facade\n"),
+            "{consumer}"
+        );
+        assert!(
+            consumer.contains("  import opened Aver_Chain_Second\n"),
+            "{consumer}"
+        );
+        assert_eq!(
+            consumer.matches("  import Aver_Chain_Provider\n").count(),
+            1,
+            "{consumer}"
+        );
+        assert!(
+            !consumer.contains("import opened Aver_Chain_Provider"),
+            "{consumer}"
+        );
+        assert!(!consumer.contains("Aver_Unrelated"), "{consumer}");
+        assert!(
+            consumer.contains("include \"../Chain/Facade.dfy\""),
+            "{consumer}"
+        );
+        assert!(
+            consumer.contains("include \"../Chain/Second.dfy\""),
+            "{consumer}"
+        );
+        assert!(
+            !consumer.contains("include \"../Chain/Provider.dfy\""),
+            "{consumer}"
+        );
+    }
 
     pub(super) fn ctx_from_source(src: &str, project_name: &str) -> CodegenContext {
         let mut items = parse_source(src).expect("parse");

@@ -39,6 +39,7 @@ EXPECTED = {
 SOURCE_PATHS = {
     "k5_integerorder": ROOT / "projects/k5_fdiv/domain/integerorder.av",
 }
+MODULE_ROOTS: dict[str, Path] = {}
 
 STRUCTURED = ROOT / "tests/fixtures/dafny_guidance_structured"
 for name in ["btc_stackitem_slice", "adt_positive", "result_positive", "missing_guard", "recursive_false_reason", "failed_citation"]:
@@ -47,10 +48,37 @@ for name in ["btc_stackitem_slice", "adt_positive", "result_positive", "missing_
     EXPECTED[case] = {"lean": expected, "dafny": expected}
     SOURCE_PATHS[case] = STRUCTURED / f"{name}.av"
 
+IMPORT_DIV = ROOT / "tests/fixtures/dafny_guidance_import_div"
+for name in ["imports_positive", "arithmetic_positive", "transitive_consumer", "imported_false", "arithmetic_false"]:
+    case = f"import_div_{name}"
+    expected = "failed" if name in {"imported_false", "arithmetic_false"} else "verified"
+    EXPECTED[case] = {"lean": expected, "dafny": expected}
+    if name in {"imports_positive", "transitive_consumer", "imported_false"}:
+        MODULE_ROOTS[case] = IMPORT_DIV / name
+        SOURCE_PATHS[case] = MODULE_ROOTS[case] / "main.av"
+    else:
+        SOURCE_PATHS[case] = IMPORT_DIV / f"{name}.av"
+
 
 def digest(path: Path) -> str:
     with path.open("rb") as source:
         return hashlib.file_digest(source, "sha256").hexdigest()
+
+
+def source_hashes(source: Path, module_root: Path | None = None) -> dict[str, str]:
+    """Fingerprint fixture imports too, including added or removed Aver files.
+
+    Imported fixtures have an explicit module root. Hash its complete Aver tree
+    so a changed transitive supplier cannot keep an unchanged entry's credit.
+    Missing files are absent from the map, making deletion an input change.
+    """
+    paths = {source}
+    if module_root is not None:
+        paths.update(module_root.rglob("*.av"))
+    return {
+        str(path.relative_to(ROOT) if path.is_relative_to(ROOT) else path): digest(path)
+        for path in sorted(paths) if path.is_file()
+    }
 
 
 def summary_from_log(log: str, backend: str) -> dict | None:
@@ -181,7 +209,9 @@ def main() -> int:
             versions[Path(tool).name] = {"error": str(error)}
     for case in args.case or EXPECTED:
         source = SOURCE_PATHS.get(case, FIXTURES / f"{case}.av")
+        module_root = MODULE_ROOTS.get(case)
         source_hash = digest(source)
+        input_hashes = source_hashes(source, module_root)
         case_rows = []
         for backend in ("lean", "dafny"):
             destination = output / case / backend
@@ -192,6 +222,12 @@ def main() -> int:
             command = [str(binary), "proof", str(source), "--backend", backend,
                        "--check-json", "--error-budget", "0", "--sorry-budget", "0",
                        "--declined-budget", "0", "-o", str(destination)]
+            if module_root is not None:
+                command.extend(["--module-root", str(module_root)])
+            inputs_changed_before = (
+                source_hashes(source, module_root) != input_hashes
+                or digest(binary) != compiler_hash
+            )
             started = time.monotonic()
             try:
                 log, code, timed_out = run_process(command, args.timeout)
@@ -200,7 +236,9 @@ def main() -> int:
             (destination.parent / f"{backend}.log").write_text(log)
             summary = summary_from_log(log, backend)
             result = outcome(summary, code, timed_out)
-            if digest(source) != source_hash or digest(binary) != compiler_hash:
+            if (inputs_changed_before
+                    or source_hashes(source, module_root) != input_hashes
+                    or digest(binary) != compiler_hash):
                 result = "input_changed"
             inventory = claim_inventory(destination, backend)
             generated_toolchain = None
@@ -224,6 +262,8 @@ def main() -> int:
             row = {
                 "case": case, "backend": backend, "source_sha256": source_hash,
                 "source_path": str(source.relative_to(ROOT)),
+                "source_hashes_sha256": input_hashes,
+                "module_root": str(module_root.relative_to(ROOT)) if module_root else None,
                 "outcome": result, "expected": EXPECTED[case][backend],
                 "returncode": code, "seconds": round(time.monotonic() - started, 3),
                 "summary": summary, "claims": inventory,

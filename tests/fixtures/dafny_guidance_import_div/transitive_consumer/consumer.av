@@ -1,0 +1,15 @@
+module Consumer
+    intent = "Citing Supplier needs Provider only in the generated proof, not in this source module's imports."
+    depends [Supplier]
+    exposes [read]
+    effects []
+
+fn read(value: Int) -> Int
+    Supplier.read(value)
+
+verify read law positive
+    given value: Int = [-1, 0, 4]
+    when value > 0
+    because Supplier.read(value) > 0
+    using [Supplier.read.positive]
+    read(value) > 0 holds

@@ -8,6 +8,8 @@ use crate::codegen::CodegenContext;
 use super::expr::{aver_name_to_dafny, emit_expr};
 use super::toplevel::{emit_type_in_scope, resolve_rewrite_output};
 
+mod arithmetic;
+mod citations;
 mod induction;
 mod subset;
 #[cfg(test)]
@@ -107,7 +109,9 @@ fn induction_driver(
                     && let Some((index, list)) = subset::list_parameter(fd, ctx)
                         .map(|index| (index, true))
                         .or_else(|| {
-                            subset::countdown_parameter(fd, ctx).map(|index| (index, false))
+                            subset::countdown_parameter(fd, ctx)
+                                .or_else(|| arithmetic::quotient_parameter(fd, ctx))
+                                .map(|index| (index, false))
                         })
                     && let Some(arg) = args.get(index)
                     && let Expr::Ident(name) | Expr::Resolved { name, .. } = &arg.node
@@ -143,7 +147,7 @@ fn induction_driver(
         }
     } else {
         Induction {
-            variables: driver.clone(),
+            variables: arguments(law),
             decreases: format!("if {driver} >= 0 then {driver} else 0"),
         }
     })
@@ -170,6 +174,11 @@ pub(super) fn emit(
     let reasons: Vec<_> = law.because.iter().map(|e| expression(e, ctx)).collect();
     let goal = conclusion(law, ctx);
     let mut out = Vec::new();
+    for &citation in &citations {
+        if let Some(supplier) = citations::plain_supplier(citation, &name, law, ctx)? {
+            out.push(supplier);
+        }
+    }
     for index in 0..=reasons.len() {
         let step = if index == reasons.len() {
             "implication".to_string()
@@ -183,6 +192,7 @@ pub(super) fn emit(
             None => vec![&law.lhs, &law.rhs],
         };
         let driver = induction_driver(&source_expressions, law, ctx);
+        let has_induction = driver.is_some();
         let list_induction = driver
             .as_ref()
             .is_some_and(|driver| driver.decreases.starts_with("|"));
@@ -207,20 +217,21 @@ pub(super) fn emit(
             out.push(format!("  decreases {}", driver.decreases));
         }
         out.push("{".to_string());
-        for (cited, dependency) in &citations {
-            let cited_name = lemma_name(&label(cited, dependency));
+        for &citation in &citations {
+            let dependency = citation.law;
+            let cited_name = citations::supplier_name(citation, &name, ctx);
             // The forall range retains the supplier's guard. Calling its
             // lemma inside that range must prove every precondition; no
             // required fact is asserted unconditionally in the consumer.
             let range = dependency
                 .when
                 .as_ref()
-                .map(|e| format!(" | {}", expression(e, ctx)))
+                .map(|e| format!(" | {}", citations::expression(e, citation.scope, ctx)))
                 .unwrap_or_default();
             out.push(format!(
                 "  forall {}{range} ensures {} {{",
-                binders(dependency, ctx),
-                conclusion(dependency, ctx)
+                citations::binders(citation, ctx)?,
+                citations::conclusion(citation, ctx)
             ));
             out.push(format!("    {cited_name}({});", arguments(dependency)));
             out.push("  }".to_string());
@@ -228,6 +239,13 @@ pub(super) fn emit(
         if list_induction {
             for expr in &source_expressions {
                 if let Some(calls) = induction::emit_list_calls(expr, law, &step_name, ctx) {
+                    out.extend(calls);
+                }
+            }
+        }
+        if has_induction {
+            for expr in &source_expressions {
+                if let Some(calls) = arithmetic::emit_quotient_calls(expr, law, &step_name, ctx) {
                     out.extend(calls);
                 }
             }

@@ -1,0 +1,8 @@
+module Leaf
+    intent = "The unsupported floating point work is deliberately transitive."
+    exposes [positive]
+    effects []
+
+fn positive(value: Int) -> Bool
+    hidden: Float = 1.5
+    Bool.and(hidden > 0.0, value > 0)

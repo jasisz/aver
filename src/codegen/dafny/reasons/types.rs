@@ -69,15 +69,13 @@ impl<'a> Checker<'a> {
                     .resolve_type_id_in(&name, scope.as_deref())
                     .ok_or_else(|| format!("no declared type {name}"))?;
                 let entry = self.ctx.symbol_table.type_entry(id);
-                if entry.key.scope_str() != scope.as_deref() || entry.is_capability_resource {
-                    return Err(format!(
-                        "imported or provider type {name} is outside this pilot"
-                    ));
+                if entry.is_capability_resource {
+                    return Err(format!("provider type {name} is outside this pilot"));
                 }
                 if crate::codegen::common::find_refined_type_scoped(
                     self.ctx,
                     &entry.key.name,
-                    scope.as_deref(),
+                    entry.key.scope_str(),
                 )
                 .is_some()
                 {
@@ -110,9 +108,13 @@ impl<'a> Checker<'a> {
                                 .collect()
                         }
                     };
-                    for field in fields {
-                        self.annotation(field)?;
-                    }
+                    let ctx = self.ctx;
+                    ctx.with_module_scope(entry.key.scope_str(), || {
+                        for field in fields {
+                            self.annotation(field)?;
+                        }
+                        Ok::<_, String>(())
+                    })?;
                 }
                 resolved
             }
@@ -122,7 +124,7 @@ impl<'a> Checker<'a> {
 
     fn definition(&self, ty: &Type) -> Result<&'a TypeDef, String> {
         let Type::Named { id: Some(id), name } = ty else {
-            return Err("a declared local datatype is required".to_string());
+            return Err("a declared datatype is required".to_string());
         };
         let key = &self.ctx.symbol_table.type_entry(*id).key;
         let definitions = match key.scope_str() {
@@ -153,7 +155,7 @@ impl<'a> Checker<'a> {
             .ok_or_else(|| format!("unknown constructor {name}"))?
             .fields
             .iter()
-            .map(|field| self.annotation(field))
+            .map(|field| self.annotation_in_owner(&ty, field))
             .collect::<Result<_, _>>()?;
         Ok((ty, fields))
     }
@@ -201,7 +203,19 @@ impl<'a> Checker<'a> {
             .iter()
             .find(|(name, _)| name == field)
             .ok_or_else(|| format!("unknown record field {field}"))?;
-        self.annotation(annotation)
+        self.annotation_in_owner(ty, annotation)
+    }
+
+    /// Field annotations are source spellings owned by the datatype's module.
+    /// Resolve them there even when its constructor or projection is used by
+    /// a caller declaring a different type with the same bare name.
+    fn annotation_in_owner(&mut self, ty: &Type, annotation: &str) -> Result<Type, String> {
+        let Type::Named { id: Some(id), .. } = ty else {
+            return Err("a canonical datatype identity is required".to_string());
+        };
+        let ctx = self.ctx;
+        let scope = ctx.symbol_table.type_entry(*id).key.scope_str();
+        ctx.with_module_scope(scope, || self.annotation(annotation))
     }
 
     pub(super) fn record(
@@ -345,3 +359,7 @@ impl<'a> Checker<'a> {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "import_types_tests.rs"]
+mod import_tests;

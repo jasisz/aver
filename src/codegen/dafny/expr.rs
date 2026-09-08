@@ -1,7 +1,7 @@
 /// Aver expressions → Dafny expression strings.
 use crate::ast::{BinOp, Literal, Spanned};
 use crate::codegen::CodegenContext;
-use crate::codegen::common::{is_user_type, resolve_module_call};
+use crate::codegen::common::resolve_module_call;
 use crate::ir::hir::{
     BuiltinCtor, ResolvedCallee, ResolvedCtor, ResolvedExpr, ResolvedMatchArm, ResolvedPattern,
     ResolvedStrPart,
@@ -135,30 +135,17 @@ pub fn emit_expr(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
                     return "BranchPath_Root".to_string();
                 }
             }
-            // Module-qualified call/access: must be checked before
-            // `is_user_type` because Aver allows `module Enemy` to coexist
-            // with `record Enemy`. If the head is a known module prefix,
-            // route through the renamed Dafny module (`Aver_Enemy.fn`).
+            // Preserve module identity even when a local datatype has the
+            // same bare name. Resolved constructors take the Ctor path below;
+            // legacy module accesses retain their complete qualified suffix.
             if let Some(full_dotted) = crate::ir::hir::resolved_to_dotted(&expr.node)
                 && let Some((prefix, bare)) = resolve_module_call(&full_dotted, ctx)
             {
-                if let Some(dot_pos) = bare.find('.') {
-                    let type_name = &bare[..dot_pos];
-                    let variant = &bare[dot_pos + 1..];
-                    if is_user_type(type_name, ctx) {
-                        return format!("{}.{}", type_name, variant);
-                    }
-                }
                 let bare_dafny = aver_name_to_dafny(bare);
-                if !ctx.modules.is_empty() {
+                if !ctx.modules.is_empty() && ctx.active_module_scope().as_deref() != Some(prefix) {
                     return format!("{}.{}", super::dafny_module_name(prefix), bare_dafny);
                 }
                 return bare_dafny;
-            }
-            if let ResolvedExpr::Ident(type_name) = &obj.node
-                && is_user_type(type_name, ctx)
-            {
-                return format!("{}.{}", type_name, field);
             }
             let obj_str = emit_expr(obj, ctx);
             format!("{}.{}", obj_str, aver_name_to_dafny(field))
@@ -244,14 +231,17 @@ pub fn emit_expr(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
             }
         }
         ResolvedExpr::RecordCreate {
-            type_name, fields, ..
+            type_id,
+            type_name,
+            fields,
         } => {
+            let owner = named_type_identity(*type_id, type_name, ctx);
             // Refinement records admitted by the proof lowerer emit as a
             // subset type (`type X = value: T | P(value)`), so
             // `X(value := carrier)` collapses to the carrier expression.
             // Dafny narrowing (via `if pred then ... else ...`) is
             // what closes the refinement obligation at the call site.
-            if let Some(decl) = crate::codegen::common::find_refined_type(ctx, type_name)
+            if let Some(decl) = crate::codegen::common::find_refined_type_for_named(ctx, &owner)
                 && fields.len() == 1
             {
                 let (_, value_expr) = &fields[0];
@@ -266,32 +256,11 @@ pub fn emit_expr(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
                     format!("{} := {}", aver_name_to_dafny(name), emit_expr(expr, ctx))
                 })
                 .collect();
-            // Datatype-constructor reference. Built-in records with
-            // dotted names (`Terminal.Size`, `Tcp.Connection`) flatten
-            // to underscore form because the prelude declares them as
-            // `Terminal_Size` / `Tcp_Connection`. A user type from a
-            // DIFFERENT module is qualified `Aver_<module>.<Ctor>` so
-            // the qualifier matches the renamed Dafny module; a type in
-            // the module currently being emitted stays BARE (the
-            // resolver already hands back a bare name there, and a
-            // module name is not in scope for self-qualification). This
-            // mirrors `toplevel::type_to_dafny`'s `Type::Named` arm so
-            // constructor references agree with type references.
-            let active = ctx.active_module_scope();
-            let dafny_type_name = if crate::codegen::builtin_records::find(type_name).is_some() {
-                type_name.replace('.', "_")
-            } else if let Some(dot) = type_name.rfind('.') {
-                let module_part = &type_name[..dot];
-                let local = &type_name[dot + 1..];
-                if active.as_deref() == Some(module_part) {
-                    local.to_string()
-                } else {
-                    format!("Aver_{}.{}", module_part.replace('.', "_"), local)
-                }
-            } else {
-                type_name.to_string()
-            };
-            format!("{}({})", dafny_type_name, field_strs.join(", "))
+            format!(
+                "{}({})",
+                record_constructor_name(&owner, ctx),
+                field_strs.join(", ")
+            )
         }
         ResolvedExpr::RecordUpdate { base, updates, .. } => {
             let base_str = emit_expr(base, ctx);
@@ -765,7 +734,7 @@ fn emit_match(
     lines.push(format!("match {}", subj));
 
     for arm in arms {
-        let pat = emit_pattern(&arm.pattern);
+        let pat = emit_pattern(&arm.pattern, ctx);
         let body = emit_expr(&arm.body, ctx);
         lines.push(format!("  case {} => {}", pat, body));
     }
@@ -856,7 +825,7 @@ fn emit_if_chain_inner(
             format!("(if {} == {} then {} else {})", subj, lit_str, body, rest)
         }
         _ => {
-            let pat = emit_pattern(&arm.pattern);
+            let pat = emit_pattern(&arm.pattern, ctx);
             format!("/* unsupported pattern: {} */ {}", pat, body)
         }
     }
@@ -926,7 +895,7 @@ fn emit_list_match(
     )
 }
 
-pub(crate) fn emit_pattern(pattern: &ResolvedPattern) -> String {
+pub(crate) fn emit_pattern(pattern: &ResolvedPattern, ctx: &CodegenContext) -> String {
     match pattern {
         ResolvedPattern::Wildcard => "_".to_string(),
         ResolvedPattern::Literal(lit) => emit_literal(lit),
@@ -940,26 +909,25 @@ pub(crate) fn emit_pattern(pattern: &ResolvedPattern) -> String {
             )
         }
         ResolvedPattern::Tuple(pats) => {
-            let subs: Vec<String> = pats.iter().map(emit_pattern).collect();
+            let subs: Vec<String> = pats
+                .iter()
+                .map(|pattern| emit_pattern(pattern, ctx))
+                .collect();
             format!("({})", subs.join(", "))
         }
-        ResolvedPattern::Ctor(ctor, bindings) => emit_ctor_pattern(ctor, bindings),
+        ResolvedPattern::Ctor(ctor, bindings) => emit_ctor_pattern(ctor, bindings, ctx),
     }
 }
 
-fn emit_ctor_pattern(ctor: &ResolvedCtor, bindings: &[String]) -> String {
+fn emit_ctor_pattern(ctor: &ResolvedCtor, bindings: &[String], ctx: &CodegenContext) -> String {
     let variant = match ctor {
         ResolvedCtor::Builtin(BuiltinCtor::ResultOk) => "Ok".to_string(),
         ResolvedCtor::Builtin(BuiltinCtor::ResultErr) => "Err".to_string(),
         ResolvedCtor::Builtin(BuiltinCtor::OptionSome) => "Some".to_string(),
         ResolvedCtor::Builtin(BuiltinCtor::OptionNone) => "None".to_string(),
-        ResolvedCtor::User { name, .. } => {
-            if let Some(dot_pos) = name.rfind('.') {
-                name[dot_pos + 1..].to_string()
-            } else {
-                name.clone()
-            }
-        }
+        // Dafny constructor patterns must be bare: the subject type supplies
+        // ownership. Use the resolved variant identity, not a guessed owner.
+        ResolvedCtor::User { ctor_id, .. } => ctx.symbol_table.ctor_entry(*ctor_id).name.clone(),
         ResolvedCtor::Unresolved { name } => {
             if let Some(dot_pos) = name.rfind('.') {
                 name[dot_pos + 1..].to_string()
@@ -973,6 +941,48 @@ fn emit_ctor_pattern(ctor: &ResolvedCtor, bindings: &[String]) -> String {
     } else {
         let subs: Vec<String> = bindings.iter().map(|b| aver_name_to_dafny(b)).collect();
         format!("{}({})", variant, subs.join(", "))
+    }
+}
+
+/// A resolved TypeId is authoritative when local and imported names collide.
+/// The spelling-only fallback is for prelude records and unresolved diagnostics.
+fn named_type_identity(
+    id: Option<crate::ir::TypeId>,
+    source: &str,
+    ctx: &CodegenContext,
+) -> crate::types::Type {
+    let active = ctx.active_module_scope();
+    let id = id.or_else(|| {
+        ctx.symbol_table
+            .resolve_type_id_in(source, active.as_deref())
+    });
+    match id {
+        Some(id) => {
+            crate::types::Type::named_resolved(id, ctx.symbol_table.type_entry(id).key.canonical())
+        }
+        None => crate::types::Type::named(source),
+    }
+}
+
+/// An opened module contributes constructor names even when a local datatype
+/// shadows its type name. Qualify the constructor through the selected datatype
+/// whenever another loaded constructor shares this record's bare name.
+fn record_constructor_name(owner: &crate::types::Type, ctx: &CodegenContext) -> String {
+    let qualified =
+        super::toplevel::type_to_dafny_in_scope(owner, ctx.active_module_scope().as_deref());
+    let crate::types::Type::Named { id: Some(id), .. } = owner else {
+        return qualified;
+    };
+    let entry = ctx.symbol_table.type_entry(*id);
+    if ctx
+        .symbol_table
+        .ctors
+        .iter()
+        .any(|ctor| ctor.owning_type != *id && ctor.name == entry.key.name)
+    {
+        format!("{}.{}", qualified, entry.key.name)
+    } else {
+        qualified
     }
 }
 
@@ -990,7 +1000,9 @@ fn emit_constructor(
     // right datatype.
     let explicit_wrapper = result_type
         .filter(|ty| type_contains_refinement(ty, ctx))
-        .map(super::toplevel::emit_type_from);
+        .map(|ty| {
+            super::toplevel::type_to_dafny_in_scope(ty, ctx.active_module_scope().as_deref())
+        });
     let qualified = match ctor {
         ResolvedCtor::Builtin(BuiltinCtor::ResultOk) => explicit_wrapper
             .as_ref()
@@ -1005,18 +1017,23 @@ fn emit_constructor(
             return explicit_wrapper
                 .map_or_else(|| "Option.None".to_string(), |ty| format!("{}.None", ty));
         }
-        ResolvedCtor::User { type_id, name, .. } => {
-            let type_entry = ctx.symbol_table.type_entry(*type_id);
-            let type_name = type_entry.key.name.as_str();
-            let variant = if let Some(dot_pos) = name.rfind('.') {
-                &name[dot_pos + 1..]
+        ResolvedCtor::User {
+            type_id, ctor_id, ..
+        } => {
+            let entry = ctx.symbol_table.type_entry(*type_id);
+            let owner = named_type_identity(Some(*type_id), &entry.key.name, ctx);
+            let qualified = super::toplevel::type_to_dafny_in_scope(
+                &owner,
+                ctx.active_module_scope().as_deref(),
+            );
+            if entry.is_product {
+                record_constructor_name(&owner, ctx)
             } else {
-                name.as_str()
-            };
-            if is_user_type(type_name, ctx) {
-                format!("{}.{}", type_name, variant)
-            } else {
-                variant.to_string()
+                format!(
+                    "{}.{}",
+                    qualified,
+                    ctx.symbol_table.ctor_entry(*ctor_id).name
+                )
             }
         }
         ResolvedCtor::Unresolved { name } => {
@@ -1025,10 +1042,18 @@ fn emit_constructor(
             } else {
                 ("", name.as_str())
             };
-            if is_user_type(type_name, ctx) || type_name == "Result" || type_name == "Option" {
-                format!("{}.{}", type_name, variant)
-            } else {
+            if type_name.is_empty() {
                 variant.to_string()
+            } else {
+                let owner = if type_name == "Result" || type_name == "Option" {
+                    type_name.to_string()
+                } else {
+                    super::toplevel::type_to_dafny_in_scope(
+                        &named_type_identity(None, type_name, ctx),
+                        ctx.active_module_scope().as_deref(),
+                    )
+                };
+                format!("{}.{}", owner, variant)
             }
         }
     };

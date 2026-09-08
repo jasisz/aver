@@ -1,0 +1,12 @@
+module Leaf
+    intent = "Finite samples satisfy a false ordinary supplier, which must not provide universal credit."
+    exposes [identity]
+    effects []
+
+fn identity(value: Int) -> Int
+    value
+
+verify identity law atLeastTwo
+    given value: Int = [2, 4]
+    when value > 0
+    identity(value) >= 2 holds

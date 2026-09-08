@@ -4,8 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use crate::ast::{
-    BinOp, Expr, FnDef, Literal, Pattern, Spanned, Stmt, Type, TypeDef, VerifyBlock, VerifyKind,
-    VerifyLaw,
+    BinOp, Expr, FnDef, Literal, Pattern, Spanned, Stmt, Type, TypeDef, VerifyBlock, VerifyLaw,
 };
 use crate::codegen::CodegenContext;
 use crate::ir::FnId;
@@ -18,7 +17,7 @@ mod types;
 use types::{hole, merge};
 
 type Env = BTreeMap<String, Type>;
-type Citation<'a> = (&'a VerifyBlock, &'a VerifyLaw);
+use super::citations::{self, Citation, Key};
 
 fn bind(env: &mut Env, name: &str, ty: Type) -> Result<(), String> {
     let emitted = aver_name_to_dafny(name);
@@ -33,9 +32,9 @@ struct Checker<'a> {
     ctx: &'a CodegenContext,
     functions: HashSet<FnId>,
     checking_functions: Vec<FnId>,
-    laws: BTreeMap<String, Citation<'a>>,
-    checking_laws: BTreeSet<String>,
-    checked_laws: BTreeSet<String>,
+    laws: BTreeMap<Key, Citation<'a>>,
+    checking_laws: BTreeSet<Key>,
+    checked_laws: BTreeSet<Key>,
     checked_types: HashSet<crate::ir::TypeId>,
 }
 
@@ -89,69 +88,7 @@ impl<'a> Checker<'a> {
                     .symbol_table
                     .resolve_fn_id_in(&name, scope.as_deref())
                 {
-                    let key = &self.ctx.symbol_table.fn_entry(id).key;
-                    if key.scope_str() != scope.as_deref() {
-                        return Err(format!("imported function {name} is outside this pilot"));
-                    }
-                    let fd = self
-                        .ctx
-                        .fn_def_by_name(&key.name, key.scope_str())
-                        .ok_or_else(|| format!("no source definition for {name}"))?;
-                    if !fd.effects.is_empty() || fd.params.len() != args.len() {
-                        return Err(format!("only pure first-order calls are supported: {name}"));
-                    }
-                    for ((_, ty), arg) in fd.params.iter().zip(args) {
-                        let expected = self.annotation(ty)?;
-                        self.expect(arg, env, expected)?;
-                    }
-                    let result = self.annotation(&fd.return_type)?;
-                    if self.ctx.recursive_fns.contains(&id)
-                        && countdown_parameter(fd, self.ctx).is_none()
-                        && list_parameter(fd, self.ctx).is_none()
-                    {
-                        return Err(format!(
-                            "recursive function {name} requires checked Int or List descent"
-                        ));
-                    }
-                    if self.checking_functions.contains(&id)
-                        && self.checking_functions.last() != Some(&id)
-                    {
-                        return Err(format!(
-                            "mutual recursion through {name} is outside this pilot"
-                        ));
-                    }
-                    if self.functions.insert(id) {
-                        self.checking_functions.push(id);
-                        let mut locals = Env::new();
-                        for (param, ty) in &fd.params {
-                            let ty = self.annotation(ty)?;
-                            bind(&mut locals, param, ty)?;
-                        }
-                        let mut body_type = None;
-                        for stmt in fd.body.stmts() {
-                            match stmt {
-                                Stmt::Binding(local, annotation, value) => {
-                                    let mut ty = self.expression(value, &locals)?;
-                                    if let Some(annotation) = annotation {
-                                        ty = merge(&ty, &self.annotation(annotation)?)?;
-                                    }
-                                    if local != "_" {
-                                        bind(&mut locals, local, ty)?;
-                                    }
-                                    body_type = None;
-                                }
-                                Stmt::Expr(value) => {
-                                    body_type = Some(self.expression(value, &locals)?)
-                                }
-                            }
-                        }
-                        self.checking_functions.pop();
-                        merge(
-                            &body_type.ok_or("unsupported empty function result")?,
-                            &result,
-                        )?;
-                    }
-                    return Ok(result);
+                    return self.function_call(id, args, env);
                 }
                 self.builtin(&name, args, env)
             }
@@ -212,11 +149,103 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// Resolve arguments in the caller's scope, then check the signature and
+    /// every body expression in the declaring module. Canonical IDs, rather
+    /// than an import alias or bare spelling, identify the checked cone.
+    fn function_call(
+        &mut self,
+        id: FnId,
+        args: &[Spanned<Expr>],
+        env: &Env,
+    ) -> Result<Type, String> {
+        let ctx = self.ctx;
+        let key = &ctx.symbol_table.fn_entry(id).key;
+        let fd = ctx
+            .fn_def_by_name(&key.name, key.scope_str())
+            .ok_or_else(|| format!("no source definition for {}", key.canonical()))?;
+        if !fd.effects.is_empty() || fd.params.len() != args.len() {
+            return Err(format!(
+                "only pure first-order calls are supported: {}",
+                key.canonical()
+            ));
+        }
+        let actuals = args
+            .iter()
+            .map(|arg| self.expression(arg, env))
+            .collect::<Result<Vec<_>, _>>()?;
+        ctx.with_module_scope(key.scope_str(), || {
+            let parameters = fd
+                .params
+                .iter()
+                .map(|(_, annotation)| self.annotation(annotation))
+                .collect::<Result<Vec<_>, _>>()?;
+            for (actual, expected) in actuals.iter().zip(&parameters) {
+                merge(actual, expected)?;
+            }
+            let result = self.annotation(&fd.return_type)?;
+            if ctx.recursive_fns.contains(&id)
+                && countdown_parameter(fd, ctx).is_none()
+                && list_parameter(fd, ctx).is_none()
+                && super::arithmetic::quotient_parameter(fd, ctx).is_none()
+            {
+                return Err(format!(
+                    "recursive function {} requires checked Int or List descent",
+                    key.canonical()
+                ));
+            }
+            // The stack crosses module boundaries. An imported call back to a
+            // different active function is mutual recursion, never a trusted
+            // already-checked body or a route to a fuel/opaque declaration.
+            if self.checking_functions.contains(&id) && self.checking_functions.last() != Some(&id)
+            {
+                return Err(format!(
+                    "mutual recursion through {} is outside this pilot",
+                    key.canonical()
+                ));
+            }
+            if self.functions.insert(id) {
+                self.checking_functions.push(id);
+                let mut locals = Env::new();
+                for ((param, _), ty) in fd.params.iter().zip(parameters) {
+                    bind(&mut locals, param, ty)?;
+                }
+                let mut body_type = None;
+                for stmt in fd.body.stmts() {
+                    match stmt {
+                        Stmt::Binding(local, annotation, value) => {
+                            let mut ty = self.expression(value, &locals)?;
+                            if let Some(annotation) = annotation {
+                                ty = merge(&ty, &self.annotation(annotation)?)?;
+                            }
+                            if local != "_" {
+                                bind(&mut locals, local, ty)?;
+                            }
+                            body_type = None;
+                        }
+                        Stmt::Expr(value) => body_type = Some(self.expression(value, &locals)?),
+                    }
+                }
+                self.checking_functions.pop();
+                merge(
+                    &body_type.ok_or("unsupported empty function result")?,
+                    &result,
+                )?;
+            }
+            Ok(result)
+        })
+    }
+
     fn expect(&mut self, expr: &Spanned<Expr>, env: &Env, expected: Type) -> Result<(), String> {
         merge(&self.expression(expr, env)?, &expected).map(|_| ())
     }
 
     fn builtin(&mut self, name: &str, args: &[Spanned<Expr>], env: &Env) -> Result<Type, String> {
+        if let Some(result) = super::arithmetic::division_result_type(name, args) {
+            for arg in args {
+                self.expect(arg, env, Type::Int)?;
+            }
+            return Ok(result);
+        }
         let scalar = match name {
             "Bool.and" | "Bool.or" => Some((2, Type::Bool, Type::Bool)),
             "Bool.not" => Some((1, Type::Bool, Type::Bool)),
@@ -264,16 +293,22 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn law(&mut self, id: &str, law: &'a VerifyLaw) -> Result<(), String> {
+    fn law(&mut self, id: &Key, law: &'a VerifyLaw, selected_supplier: bool) -> Result<(), String> {
         if self.checked_laws.contains(id) {
             return Ok(());
         }
-        if !self.checking_laws.insert(id.to_string()) {
-            return Err(format!("cyclic citation {id}"));
+        if !self.checking_laws.insert(id.clone()) {
+            return Err(format!("cyclic citation {}", law.name));
         }
-        let selected = law.using.as_ref().ok_or_else(|| {
-            "an explicit using list is required (using [] selects no laws)".to_string()
-        })?;
+        let selected = match law.using.as_deref() {
+            Some(selected) => selected,
+            None if selected_supplier && law.because.is_empty() => &[],
+            None => {
+                return Err(
+                    "an explicit using list is required (using [] selects no laws)".to_string(),
+                );
+            }
+        };
         if law.givens.is_empty() {
             return Err("at least one first-order given is required".to_string());
         }
@@ -291,14 +326,13 @@ impl<'a> Checker<'a> {
         let left = self.expression(&law.lhs, &env)?;
         self.expect(&law.rhs, &env, left)?;
         for selected in selected {
-            let (_, dependency) = self.laws.get(selected).copied().ok_or_else(|| {
-                format!("citation {selected} is not an available same-module law")
-            })?;
-            self.law(selected, dependency)
+            let (key, dependency) = citations::select(&self.laws, selected, self.ctx)?;
+            let ctx = self.ctx;
+            ctx.with_module_scope(dependency.scope, || self.law(&key, dependency.law, true))
                 .map_err(|reason| format!("citation {selected}: {reason}"))?;
         }
         self.checking_laws.remove(id);
-        self.checked_laws.insert(id.to_string());
+        self.checked_laws.insert(id.clone());
         Ok(())
     }
 }
@@ -325,15 +359,7 @@ pub(super) fn validate<'a>(
     ctx: &'a CodegenContext,
     blocks: &[&'a VerifyBlock],
 ) -> Result<Vec<Citation<'a>>, String> {
-    let mut laws = BTreeMap::new();
-    for block in blocks {
-        if let VerifyKind::Law(law) = &block.kind {
-            let id = label(block, law);
-            if laws.insert(id.clone(), (*block, law.as_ref())).is_some() {
-                return Err(format!("ambiguous source law identity {id}"));
-            }
-        }
-    }
+    let laws = citations::index(ctx, blocks)?;
     let mut checker = Checker {
         ctx,
         functions: HashSet::new(),
@@ -343,7 +369,7 @@ pub(super) fn validate<'a>(
         checked_laws: BTreeSet::new(),
         checked_types: HashSet::new(),
     };
-    checker.law(&label(vb, law), law)?;
+    checker.law(&citations::key(vb, law, ctx)?, law, false)?;
     // Reserve every generated parent/step name. A source declaration or a
     // quantified citation argument must not capture one of the lemma calls.
     let scope = ctx.active_module_scope();
@@ -357,8 +383,9 @@ pub(super) fn validate<'a>(
         None => ctx.fn_defs.as_slice(),
     };
     for id in &checker.checked_laws {
-        let name = lemma_name(id);
-        let (_, checked) = checker.laws[id];
+        let citation = checker.laws[id];
+        let name = lemma_name(&label(citation.block, citation.law));
+        let checked = citation.law;
         let generated = std::iter::once(name.clone())
             .chain(std::iter::once(format!("{name}_implication")))
             .chain((1..=checked.because.len()).map(|index| format!("{name}_because{index}")));
@@ -368,14 +395,15 @@ pub(super) fn validate<'a>(
                 .any(|fd| aver_name_to_dafny(&fd.name) == generated)
                 || checker.checked_laws.iter().any(|id| {
                     checker.laws[id]
-                        .1
+                        .law
                         .givens
                         .iter()
                         .any(|given| aver_name_to_dafny(&given.name) == generated)
                 })
             {
                 return Err(format!(
-                    "generated lemma name collides with source name for {id}"
+                    "generated lemma name collides with source name for {}",
+                    checked.name
                 ));
             }
         }
@@ -386,14 +414,12 @@ pub(super) fn validate<'a>(
         .expect("validated explicit citations")
         .clone();
     selected.sort();
+    selected.dedup();
+    // Different exported aliases may select the same source law. Canonical
+    // deduplication also prevents duplicate checked proxy declarations.
     selected
         .into_iter()
-        .map(|id| {
-            checker
-                .laws
-                .get(&id)
-                .copied()
-                .ok_or_else(|| format!("unavailable citation {id}"))
-        })
-        .collect()
+        .map(|name| citations::select(&checker.laws, &name, ctx))
+        .collect::<Result<BTreeMap<_, _>, _>>()
+        .map(|selected| selected.into_values().collect())
 }

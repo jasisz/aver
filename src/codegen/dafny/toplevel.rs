@@ -66,7 +66,7 @@ fn type_to_dafny(ty: &Type) -> String {
 /// `module Aver_Tcp { function f(x: Aver_Tcp.Socket) ... }` is a resolver
 /// error, while `Socket` is the source-faithful local spelling. Foreign
 /// module types remain qualified so cross-module identity stays explicit.
-fn type_to_dafny_in_scope(ty: &Type, scope: Option<&str>) -> String {
+pub(super) fn type_to_dafny_in_scope(ty: &Type, scope: Option<&str>) -> String {
     match ty {
         Type::Int => "int".to_string(),
         Type::Float => "real".to_string(),

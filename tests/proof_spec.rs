@@ -33,6 +33,8 @@ mod container_induction;
 mod cross_file;
 #[path = "proof_spec/dafny_guidance.rs"]
 mod dafny_guidance;
+#[path = "proof_spec/dafny_import_div.rs"]
+mod dafny_import_div;
 #[path = "proof_spec/dafny_inline.rs"]
 mod dafny_inline;
 #[path = "proof_spec/dafny_structured.rs"]

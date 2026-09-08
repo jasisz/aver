@@ -81,16 +81,12 @@ fn singleton_guided_statements_are_admitted_without_claiming_they_hold() {
 
 #[test]
 fn unsupported_cones_decline_before_any_guided_obligation_is_emitted() {
-    for (body, reason) in [("Int.div(x, 2)", "unsupported call Int.div")] {
-        let source = format!(
-            "fn f(x: Int) -> Int\n    {body}\nverify f law explained\n    given x: Int = [1, 2]\n    because x == x\n    using []\n    f(x) => f(x)\n"
-        );
-        assert!(
-            emitted(&source, "f.explained")
-                .unwrap_err()
-                .contains(reason)
-        );
-    }
+    let source = "fn f(x: Int) -> Int\n    String.byteLength(\"unsupported\")\nverify f law explained\n    given x: Int = [1, 2]\n    because x == x\n    using []\n    f(x) => f(x)\n";
+    assert!(
+        emitted(source, "f.explained")
+            .unwrap_err()
+            .contains("unsupported call String.byteLength")
+    );
     let recursion = "fn down(n: Int) -> Int\n    match n <= 0\n        true -> 0\n        false -> down(n + 1)\nverify down law explained\n    given n: Int = [0, 1]\n    because down(n) == down(n)\n    using []\n    down(n) => down(n)\n";
     assert!(
         emitted(recursion, "down.explained")
@@ -107,10 +103,13 @@ fn unsupported_cones_decline_before_any_guided_obligation_is_emitted() {
 
 #[test]
 fn selected_unsupported_helper_declines_the_consumer_too() {
-    let source = "fn square(x: Int) -> Int\n    Int.div(x, 2)\nverify square law reflexive\n    given x: Int = [0, 1]\n    using []\n    square(x) => square(x)\nfn identity(x: Int) -> Int\n    x\nverify identity law consumer\n    given x: Int = [0, 1]\n    because x == x\n    using [square.reflexive]\n    identity(x) => x\n";
+    let source = "fn square(x: Int) -> Int\n    String.byteLength(\"unsupported\")\nverify square law reflexive\n    given x: Int = [0, 1]\n    using []\n    square(x) => square(x)\nfn identity(x: Int) -> Int\n    x\nverify identity law consumer\n    given x: Int = [0, 1]\n    because x == x\n    using [square.reflexive]\n    identity(x) => x\n";
     let error = emitted(source, "identity.consumer").unwrap_err();
     assert!(error.contains("citation square.reflexive"), "{error}");
-    assert!(error.contains("unsupported call Int.div"), "{error}");
+    assert!(
+        error.contains("unsupported call String.byteLength"),
+        "{error}"
+    );
 }
 
 #[test]
@@ -127,8 +126,8 @@ fn recursive_admission_checks_hidden_calls_and_mutual_cycles() {
     let tail = "verify down law reflexive\n    given n: Int = [0, 2]\n    using []\n    down(n) => down(n)\n";
     for (definition, expected) in [
         (
-            "fn down(n: Int) -> Int\n    match n <= 0\n        true -> Int.div(n, 2)\n        false -> down(n - 1)\n",
-            "unsupported call Int.div",
+            "fn down(n: Int) -> Int\n    match n <= 0\n        true -> String.byteLength(\"unsupported\")\n        false -> down(n - 1)\n",
+            "unsupported call String.byteLength",
         ),
         (
             "fn down(n: Int) -> Int\n    match n <= 0\n        true -> 0\n        false -> down(n - 1) + other(n - 1)\nfn other(n: Int) -> Int\n    match n <= 0\n        true -> 0\n        false -> down(n - 1)\n",
@@ -166,19 +165,35 @@ fn guarded_countdown_with_binding_keeps_its_negative_input_domain() {
 }
 
 #[test]
-fn automatic_selection_and_unguarded_legacy_citation_are_not_silently_enabled() {
+fn automatic_selection_declines_and_plain_suppliers_get_checked_restatements() {
     let automatic = POSITIVE.replace("    using [positive.guarded]\n", "");
     assert!(
         emitted(&automatic, "advance.explained")
             .unwrap_err()
             .contains("explicit using")
     );
-    let legacy = POSITIVE.replace("    using []\n", "");
+    // An explained supplier still requires an explicit selection policy.
+    let missing_selection = POSITIVE.replace("    using []\n", "");
     assert!(
-        emitted(&legacy, "advance.explained")
+        emitted(&missing_selection, "advance.explained")
             .unwrap_err()
             .contains("citation positive.guarded")
     );
+    // A plain source law is re-proved as a universal statement, even if its
+    // ordinary backend strategy only proved the finite supplied examples.
+    let plain = missing_selection.replace("    because x >= 1\n", "");
+    let text = emitted(&plain, "advance.explained").unwrap();
+    assert!(
+        text.contains("// Checked universal citation: positive.guarded"),
+        "{text}"
+    );
+    assert!(text.contains("assert (positive(x)) == (true);"), "{text}");
+    assert!(text.contains("requires (x > 0)"), "{text}");
+    assert!(
+        !text.contains(&format!("\n    {}(x);", lemma_name("positive.guarded"))),
+        "{text}"
+    );
+    assert!(!text.contains("assume"), "{text}");
 }
 
 #[test]
@@ -280,9 +295,12 @@ verify lengthFrom law reflexive
     lengthFrom(xs, acc) => lengthFrom(xs, acc)
 "#;
     assert!(emitted(source, "lengthFrom.reflexive").is_ok());
-    let hidden = source.replace("[] -> acc", "[] -> Int.div(acc, 2)");
+    let hidden = source.replace("[] -> acc", "[] -> String.byteLength(\"unsupported\")");
     let error = emitted(&hidden, "lengthFrom.reflexive").unwrap_err();
-    assert!(error.contains("unsupported call Int.div"), "{error}");
+    assert!(
+        error.contains("unsupported call String.byteLength"),
+        "{error}"
+    );
 }
 
 #[test]

@@ -15,25 +15,43 @@ For an ordinary `verify law` block without proof guidance, the backend emits two
 
 The samples may time out on deeply recursive computations — that is expected. The lemma is the primary verification target.
 
-For guided laws, the [first-order guidance pilot](dafny-guidance-spike.md) emits
+For guided laws, the [first-order guidance spike](dafny-guidance-spike.md) emits
 separate lemmas for every `because`, the final implication and their parent law.
-It supports explicit local `using` citations, retains each guard, and explicitly
-declines unsupported dependency cones. Use `aver verify` to execute the examples.
+Explicit `using` citations can cross module boundaries, as can supported pure
+functions and record or sum types. Imported declarations retain their original
+identities and guards. A selected ordinary law is re-proved by a separate
+universal lemma; its existing sample checks are not treated as universal evidence.
 The strict whole-file gate must pass; a verified caller does not establish a
-failed cited lemma.
+failed cited supplier. Use `aver verify` to execute the examples.
+
+This fragment includes nonlinear integer arithmetic and exact `Int.div` /
+`Int.mod`. Nonzero literal divisors return `Int`; zero or dynamic divisors retain
+Aver’s `Result<Int, String>` boundary, including the zero-divisor error. Quotient
+and remainder follow Euclidean semantics for negative operands too. Checked
+integer and list descent can support guided induction with generalized givens,
+including changing accumulators. Quotient recursion requires a shared validated
+contract for descent by a fixed literal divisor of at least two.
+
+Guidance still declines automatic citation selection, mutual or fuel-backed
+recursion, unsupported recursion patterns, higher-order or effectful calls,
+provider resources, refinements and `Float`. Every called body and named field
+is checked, including imported dependencies. These restrictions concern guided
+proof admission; the ordinary backend’s broader emission and fallback paths are
+described below.
 
 ## Quick start
 
 ```bash
 aver proof examples/data/fibonacci.av --backend dafny -o /tmp/fib-dafny
-cd /tmp/fib-dafny && dafny verify fibonacci.dfy
+cd /tmp/fib-dafny && dafny verify --verify-included-files fibonacci.dfy
 ```
 
 Requires [Dafny](https://github.com/dafny-lang/dafny) (4.x+) installed with Z3. On macOS: `brew install dafny`.
 
 ## What it generates
 
-A single `.dfy` file containing:
+An entry `.dfy` file, with dependency module files and a shared prelude when
+needed, containing:
 
 - **Prelude**: `Result<T,E>`, `Option<T>`, list/map/string helpers
 - **Datatypes**: user-defined `record` → `datatype`, `type` (sum) → `datatype`
@@ -200,7 +218,7 @@ lemma fib_fibSpec(n: int)
 - **No verify cases**: Z3 times out on deep computations like `fib(12) == 144`. Dafny's own `errors` total is blind to per-lemma timeouts, so `--check-json` carries a separate additive `timeouts` field (count of `… timed out after N seconds` lines) alongside `errors`; a consumer accounting for failing laws must read both. `timeouts` is informational — it does not change `passed` or the exit code (the timed-out run still fails via Dafny's exit status)
 - **Constructor collisions**: if a user type defines variants named `Ok`/`Err`, Dafny may report ambiguity errors
 - **Opaque builtins**: `IntToString`, `FloatFromString`, `StringFirstCodePoint` etc. are declared without bodies — Z3 knows their signatures but can't reason about their implementation
-- **Complex laws**: laws involving indirect recursion, accumulator patterns, or multi-function chains may not be provable by Z3 alone
+- **Complex laws**: checked integer/list induction can generalize changing accumulators, but more complex indirect recursion and multi-function arguments may still need additional source lemmas or fail to verify. Guided proofs decline mutual/fuel recursion instead of relying on the ordinary backend’s fallback encoding.
 
 When a law's lemma comes out with an empty body, see [transpilation.md → Debugging a law that didn't auto-prove](transpilation.md#debugging-a-law-that-didnt-auto-prove) for the `--emit-ir-after=law_lower` workflow that tells you whether the classifier matched a strategy or fell through to backend dispatch.
 

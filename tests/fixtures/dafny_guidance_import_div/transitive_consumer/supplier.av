@@ -1,0 +1,15 @@
+module Supplier
+    intent = "The guarded supplier refers to its own dependency by its canonical module name."
+    depends [Provider]
+    exposes [read]
+    effects []
+
+fn read(value: Int) -> Int
+    Provider.identity(value)
+
+verify read law positive
+    given value: Int = [-1, 0, 4]
+    when Provider.identity(value) > 0
+    because read(value) > 0
+    using []
+    read(value) > 0 holds
