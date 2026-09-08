@@ -1,0 +1,158 @@
+module DafnyContainers
+    intent = "Defined collection operations preserve exact values and their Option or Result boundaries."
+    effects []
+
+fn vectorRoundtrip(xs: List<Int>) -> List<Int>
+    List.fromVector(Vector.fromList(xs))
+
+verify vectorRoundtrip law identity
+    given xs: List<Int> = [[], [1], [-3, 0, 7]]
+    because vectorRoundtrip(xs) == xs
+    using []
+    vectorRoundtrip(xs) => xs
+
+fn readUpdated(xs: Vector<Int>, index: Int, value: Int) -> Option<Int>
+    match Vector.set(xs, index, value)
+        Option.Some(updated) -> Vector.get(updated, index)
+        Option.None -> Option.None
+
+verify readUpdated law inBounds
+    given xs: Vector<Int> = [Vector.fromList([]), Vector.fromList([1, 2])]
+    given index: Int = [-1, 0, 1, 2]
+    given value: Int = [-7, 0, 9]
+    when Bool.and(index >= 0, index < Vector.len(xs))
+    because readUpdated(xs, index, value) == Option.Some(value)
+    using []
+    readUpdated(xs, index, value) => Option.Some(value)
+
+fn allocationFails(size: Int, value: Int) -> Bool
+    match Vector.new(size, value)
+        Result.Ok(_) -> false
+        Result.Err(_) -> true
+
+verify allocationFails law negativeSize
+    given size: Int = [-3, -1, 0, 2]
+    given value: Int = [-7, 9]
+    when size < 0
+    because allocationFails(size, value)
+    using []
+    allocationFails(size, value) => true
+
+fn stored(m: Map<List<Int>, Int>, key: List<Int>, value: Int) -> Option<Int>
+    Map.get(Map.set(m, key, value), key)
+
+verify stored law writesItsValue
+    given m: Map<List<Int>, Int> = [{[1] => 2}, {[1, 2] => 3}]
+    given key: List<Int> = [[], [1], [1, 2]]
+    given value: Int = [-2, 0, 7]
+    because stored(m, key, value) == Option.Some(value)
+    using []
+    stored(m, key, value) => Option.Some(value)
+
+fn literalStored(key: Int, value: Int) -> Option<Int>
+    Map.get({key => value}, key)
+
+verify literalStored law readsLiteral
+    given key: Int = [-1, 0, 2]
+    given value: Int = [-2, 0, 7]
+    because literalStored(key, value) == Option.Some(value)
+    using []
+    literalStored(key, value) => Option.Some(value)
+
+fn removed(m: Map<Int, String>, key: Int) -> Bool
+    Map.has(Map.remove(m, key), key)
+
+verify removed law keyAbsent
+    given m: Map<Int, String> = [{1 => "one"}, {2 => "two"}]
+    given key: Int = [-1, 1, 2]
+    because Bool.not(removed(m, key))
+    using []
+    removed(m, key) => false
+
+fn lastWrite(key: Int, first: Int, last: Int) -> Option<Int>
+    entries = [(key, first), (key, last)]
+    Map.get(Map.fromList(entries), key)
+
+verify lastWrite law duplicateKey
+    given key: Int = [-1, 0, 2]
+    given first: Int = [0, 4]
+    given last: Int = [-7, 3]
+    because lastWrite(key, first, last) == Option.Some(last)
+    using []
+    lastWrite(key, first, last) => Option.Some(last)
+
+fn optionResult(value: Unit) -> Result<Unit, Int>
+    Result.fromOption(Option.Some(value), 7)
+
+verify optionResult law success
+    given value: Unit = [Unit]
+    because optionResult(value) == Result.Ok(value)
+    using []
+    optionResult(value) => Result.Ok(value)
+
+fn wholeSlice(value: String) -> String
+    String.slice(value, 0, String.len(value))
+
+verify wholeSlice law identity
+    given value: String = ["", "abc", "żółw", "🦊"]
+    because wholeSlice(value) == value
+    using []
+    wholeSlice(value) => value
+
+fn firstChar(value: String) -> Option<String>
+    String.charAt(value, 0)
+
+verify firstChar law empty
+    given value: String = ["", "a", "🦊"]
+    when String.len(value) == 0
+    because firstChar(value) == Option.None
+    using []
+    firstChar(value) => Option.None
+
+fn characterCount(value: String) -> Int
+    List.len(String.chars(value))
+
+verify characterCount law preservesLength
+    given value: String = ["", "abc", "ą🦊"]
+    because characterCount(value) == String.len(value)
+    using []
+    characterCount(value) => String.len(value)
+
+fn joined(value: String, separator: String) -> String
+    String.join([value], separator)
+
+verify joined law singleton
+    given value: String = ["", "abc", "ą🦊"]
+    given separator: String = ["", ",", "::"]
+    because joined(value, separator) == value
+    using []
+    joined(value, separator) => value
+
+fn doubleComplement(value: Int) -> Int
+    Bits.not(Bits.not(value))
+
+verify doubleComplement law identity
+    given value: Int = [-9, -1, 0, 7]
+    because doubleComplement(value) == value
+    using []
+    doubleComplement(value) => value
+
+fn shiftOne(value: Int) -> Int
+    Bits.shiftLeft(value, 1)
+
+verify shiftOne law doubles
+    given value: Int = [-9, -1, 0, 7]
+    because shiftOne(value) == value * 2
+    using []
+    shiftOne(value) => value * 2
+
+fn shiftRight(value: Int, count: Int) -> Result<Int, String>
+    Bits.shiftRight(value, count)
+
+verify shiftRight law negativeCount
+    given value: Int = [-9, 0, 7]
+    given count: Int = [-2, -1, 0, 1]
+    when count < 0
+    because shiftRight(value, count) == Result.Err("negative shift count")
+    using []
+    shiftRight(value, count) => Result.Err("negative shift count")

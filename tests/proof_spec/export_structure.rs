@@ -1239,20 +1239,10 @@ fn proof_export_rational_ring_laws_carry_ac_ring_package() {
 }
 
 #[test]
-fn proof_export_dafny_routes_nested_error_prop_to_an_axiom() {
-    // #825: the pure `?` lowering rewrites `?` at statement position
-    // into a `match` cascade, but recurses through a `?` nested inside
-    // an expression and leaves it there. The Dafny axiom gate used to
-    // ask whether the lowering had produced anything at all, so a
-    // nested `?` read as "handled" and fell through to ordinary
-    // emission — where `emit_expr` rendered it as the error marker it
-    // documents as unreachable, and `dafny verify` rejected the file
-    // with an arity error naming the innocent helper.
-    //
-    // `stepA`/`stepB` cover the second half: a residual `?` inside a
-    // mutual-recursion SCC must be excluded from the fuel group, or it
-    // gets a fuel definition AND an axiom — the same function declared
-    // twice.
+fn proof_export_dafny_lowers_nested_error_prop_in_plain_and_fuel_functions() {
+    // Nested propagation now becomes an explicit Result match on every
+    // emission path. The mutual integer cycle still uses its existing fuel
+    // model; normalization must not duplicate or axiomize either member.
     let aver_bin = env!("CARGO_BIN_EXE_aver");
     let root = temp_output_dir("aver-proof-dafny-nested-error-prop");
     std::fs::create_dir_all(&root).expect("create root");
@@ -1309,8 +1299,8 @@ fn proof_export_dafny_routes_nested_error_prop_to_an_axiom() {
     // other regresses (a marker-free body, or an axiom that still
     // carries the marker in a sibling).
     assert!(
-        dfy.contains("function {:axiom} nestedArg("),
-        "a fn with a nested `?` must export as an axiom, not a body:\n{dfy}"
+        dfy.contains("function nestedArg("),
+        "a fn with a nested `?` must export its checked body:\n{dfy}"
     );
     assert!(
         !dfy.contains("ERROR:"),
@@ -1318,12 +1308,12 @@ fn proof_export_dafny_routes_nested_error_prop_to_an_axiom() {
     );
 
     assert!(
-        dfy.contains("function {:axiom} stepA("),
-        "the fuel-recursive fn with a nested `?` must export as an axiom:\n{dfy}"
+        !dfy.contains("function {:axiom}"),
+        "nested propagation must not introduce axioms:\n{dfy}"
     );
     assert!(
-        !dfy.contains("stepA__fuel"),
-        "the axiomized fn must not also get a fuel definition:\n{dfy}"
+        dfy.contains("function stepA__fuel("),
+        "the recursive function must retain one fuel definition:\n{dfy}"
     );
     let step_a_decls = dfy
         .lines()
@@ -1333,11 +1323,10 @@ fn proof_export_dafny_routes_nested_error_prop_to_an_axiom() {
         step_a_decls, 1,
         "stepA must be declared exactly once, got {step_a_decls}:\n{dfy}"
     );
-    // The SCC peer keeps its fuel encoding — exclusion is per-fn, not
-    // per-group.
+    // Both SCC members keep the established recursive representation.
     assert!(
         dfy.contains("function stepB__fuel("),
-        "the peer without a residual `?` must keep its fuel definition:\n{dfy}"
+        "the peer must keep its fuel definition:\n{dfy}"
     );
 
     if Command::new("dafny").arg("--version").output().is_ok() {

@@ -1,5 +1,5 @@
 /// Aver expressions → Dafny expression strings.
-use crate::ast::{BinOp, Literal, Spanned};
+use crate::ast::{BinOp, Literal, Spanned, Type};
 use crate::codegen::CodegenContext;
 use crate::codegen::common::resolve_module_call;
 use crate::ir::hir::{
@@ -158,8 +158,20 @@ pub fn emit_expr(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
             format!("(-{})", emit_expr(inner, ctx))
         }
         ResolvedExpr::BinOp(op, left, right) => {
-            let l = emit_expr(left, ctx);
-            let r = emit_expr(right, ctx);
+            let (l, r) = if matches!(op, BinOp::Eq | BinOp::Neq) {
+                match left.ty().or_else(|| right.ty()) {
+                    Some(expected) => {
+                        let expected = contextual_type(right.ty(), expected);
+                        (
+                            emit_expr_with_expected(left, ctx, &expected),
+                            emit_expr_with_expected(right, ctx, &expected),
+                        )
+                    }
+                    None => (emit_expr(left, ctx), emit_expr(right, ctx)),
+                }
+            } else {
+                (emit_expr(left, ctx), emit_expr(right, ctx))
+            };
             // Float `/` lowers via `FloatDiv` so Aver's IEEE-754
             // "no runtime crash, divide-by-zero yields a defined
             // value" semantics carry into Dafny's exact-rational
@@ -213,13 +225,9 @@ pub fn emit_expr(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
             format!("({})", items.join(", "))
         }
         ResolvedExpr::MapLiteral(entries) => {
-            if entries.is_empty() {
-                "map[]".to_string()
-            } else if entries
-                .iter()
-                .all(|(_, v)| crate::codegen::common::is_unit_expr_resolved(&v.node))
-            {
-                // Map<T, Unit> literal → set literal
+            // Unit maps are finite sets, even when the values are variables
+            // or the literal is empty. Use the checked type, not value syntax.
+            if expr.ty().is_some_and(crate::codegen::common::is_set_type) {
                 let items: Vec<String> = entries.iter().map(|(k, _)| emit_expr(k, ctx)).collect();
                 format!("{{{}}}", items.join(", "))
             } else {
@@ -262,7 +270,31 @@ pub fn emit_expr(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
                 field_strs.join(", ")
             )
         }
-        ResolvedExpr::RecordUpdate { base, updates, .. } => {
+        ResolvedExpr::RecordUpdate {
+            type_id,
+            type_name,
+            base,
+            updates,
+        } => {
+            let owner = named_type_identity(*type_id, type_name, ctx);
+            if let Some(decl) = crate::codegen::common::find_refined_type_for_named(ctx, &owner) {
+                let Some((_, value)) = updates.first() else {
+                    return emit_expr(base, ctx);
+                };
+                let ty = super::toplevel::type_to_dafny_in_scope(
+                    &owner,
+                    ctx.active_module_scope().as_deref(),
+                );
+                let value = packed_refinement_value(value, decl, ctx)
+                    .unwrap_or_else(|| emit_expr(value, ctx));
+                // Evaluate the base, then narrow the replacement carrier. The
+                // wildcard cannot capture a source name; the result binder's
+                // scope starts after its initializer. Dafny proves the subset.
+                return format!(
+                    "(var _: {ty} := {}; var averRefinedUpdate: {ty} := {value}; averRefinedUpdate)",
+                    emit_expr(base, ctx)
+                );
+            }
             let base_str = emit_expr(base, ctx);
             let update_strs: Vec<String> = updates
                 .iter()
@@ -360,18 +392,82 @@ fn emit_fn_call(
     ctx: &CodegenContext,
 ) -> String {
     use crate::codegen::builtins::recognize_builtin;
-    use crate::codegen::common::is_unit_expr_resolved;
 
     match callee {
         ResolvedCallee::Builtin(name) => {
-            // Map<T, Unit> set operations: intercept before generic builtin path
-            if name == "Map.set" && args.len() == 3 && is_unit_expr_resolved(&args[2].node) {
-                let m = emit_expr(&args[0], ctx);
-                let k = emit_expr(&args[1], ctx);
-                return format!("({} + {{{}}})", m, k);
+            // Map<K, Unit> is represented by set<K>. Dispatch every reader
+            // and writer by the checked map type, including Unit variables.
+            if args
+                .first()
+                .and_then(Spanned::ty)
+                .is_some_and(crate::codegen::common::is_set_type)
+            {
+                if name == "Map.set" && args.len() == 3 {
+                    return format!(
+                        "({} + {{{}}})",
+                        emit_expr(&args[0], ctx),
+                        emit_expr(&args[1], ctx)
+                    );
+                }
+                if name == "Map.get" && args.len() == 2 {
+                    return format!(
+                        "(if {} in {} then Option.Some(()) else Option.None)",
+                        emit_expr(&args[1], ctx),
+                        emit_expr(&args[0], ctx)
+                    );
+                }
+                // has/remove/len already use membership, difference and size,
+                // which have the same syntax and meaning for sets and maps.
+            }
+            if name == "Map.fromList"
+                && args.len() == 1
+                && let Some(Type::List(inner)) = args[0].ty()
+                && let Type::Tuple(pair) = inner.as_ref()
+                && let [key, Type::Unit] = pair.as_slice()
+            {
+                let scope = ctx.active_module_scope();
+                let key_type = super::toplevel::type_to_dafny_in_scope(key, scope.as_deref());
+                // Give empty inputs their key type. The fresh binding's scope
+                // starts after its initializer, so no source name is captured.
+                return format!(
+                    "(var averMapEntries: seq<({}, ())> := {}; set averMapEntry | averMapEntry in averMapEntries :: averMapEntry.0)",
+                    key_type,
+                    emit_expr(&args[0], ctx)
+                );
             }
             if let Some(builtin) = recognize_builtin(name) {
                 let a: Vec<String> = args.iter().map(|e| emit_expr(e, ctx)).collect();
+                if matches!(
+                    builtin,
+                    crate::codegen::builtins::Builtin::IntToBigEndian
+                        | crate::codegen::builtins::Builtin::IntToLittleEndian
+                ) && let Some(id) = ctx
+                    .symbol_table
+                    .type_id_of(&crate::ir::TypeKey::in_module("Bytes", "Bytes"))
+                {
+                    let bytes =
+                        Type::named_resolved(id, ctx.symbol_table.type_entry(id).key.canonical());
+                    let carrier = super::toplevel::type_to_dafny_in_scope(
+                        &bytes,
+                        ctx.active_module_scope().as_deref(),
+                    );
+                    let native = super::toplevel::native_endian_bytes_type(ctx).map(|_| {
+                        let suffix =
+                            if matches!(builtin, crate::codegen::builtins::Builtin::IntToBigEndian)
+                            {
+                                "BigEndian"
+                            } else {
+                                "LittleEndian"
+                            };
+                        let helper = format!("AverPackedBytes{suffix}");
+                        if ctx.active_module_scope().as_deref() == Some("Bytes") {
+                            helper
+                        } else {
+                            format!("Aver_Bytes.{helper}")
+                        }
+                    });
+                    return emit_endian_encoder(builtin, &a, &carrier, native.as_deref());
+                }
                 return emit_dafny_builtin(builtin, &a);
             }
             if let Some(operation) = ctx.capabilities.operation(name) {
@@ -525,6 +621,35 @@ fn dafny_vector_new(a: &[String]) -> String {
     )
 }
 
+/// Preserve the public Bytes result at resolved call sites. The sequence-only
+/// spelling is retained solely for callers without a program type context.
+fn emit_endian_encoder(
+    b: crate::codegen::builtins::Builtin,
+    a: &[String],
+    carrier: &str,
+    native: Option<&str>,
+) -> String {
+    let big = matches!(b, crate::codegen::builtins::Builtin::IntToBigEndian);
+    let operation = if big {
+        "Int.toBigEndian"
+    } else {
+        "Int.toLittleEndian"
+    };
+    let bytes = native.unwrap_or(if big {
+        "IntBigEndianBytes"
+    } else {
+        "IntLittleEndianBytes"
+    });
+    let limit = aver_rt::MAX_MATERIALIZED_SEQUENCE_ELEMENTS;
+    let width_error = aver_rt::int_endian_width_error_message(operation);
+    let value_error = aver_rt::int_endian_value_error_message(operation);
+    format!(
+        "(if {width} < 0 || {width} > {limit} then Result<{carrier}, string>.Err(\"{width_error}\") else if {value} < 0 || !IntFitsUnsignedWidth({value}, {width}) then Result<{carrier}, string>.Err(\"{value_error}\") else Result<{carrier}, string>.Ok({bytes}({value}, {width})))",
+        value = a[0],
+        width = a[1],
+    )
+}
+
 pub(super) fn emit_dafny_builtin(b: crate::codegen::builtins::Builtin, a: &[String]) -> String {
     use crate::codegen::builtins::Builtin::*;
     match b {
@@ -567,26 +692,7 @@ pub(super) fn emit_dafny_builtin(b: crate::codegen::builtins::Builtin, a: &[Stri
             a = a[0],
             b = a[1]
         ),
-        IntToBigEndian | IntToLittleEndian => {
-            let operation = if matches!(b, IntToBigEndian) {
-                "Int.toBigEndian"
-            } else {
-                "Int.toLittleEndian"
-            };
-            let bytes = if matches!(b, IntToBigEndian) {
-                "IntBigEndianBytes"
-            } else {
-                "IntLittleEndianBytes"
-            };
-            let limit = aver_rt::MAX_MATERIALIZED_SEQUENCE_ELEMENTS;
-            let width_error = aver_rt::int_endian_width_error_message(operation);
-            let value_error = aver_rt::int_endian_value_error_message(operation);
-            format!(
-                "(if {width} < 0 || {width} > {limit} then Result<seq<int>, string>.Err(\"{width_error}\") else if {value} < 0 || !IntFitsUnsignedWidth({value}, {width}) then Result<seq<int>, string>.Err(\"{value_error}\") else Result<seq<int>, string>.Ok({bytes}({value}, {width})))",
-                value = a[0],
-                width = a[1],
-            )
-        }
+        IntToBigEndian | IntToLittleEndian => emit_endian_encoder(b, a, "seq<int>", None),
         IntFromBigEndian => format!("IntFromBigEndianBytes({})", a[0]),
         IntFromLittleEndian => format!("IntFromLittleEndianBytes({})", a[0]),
 
@@ -999,7 +1105,7 @@ fn emit_constructor(
     // variant names, and Dafny needs the discriminator to pick the
     // right datatype.
     let explicit_wrapper = result_type
-        .filter(|ty| type_contains_refinement(ty, ctx))
+        .filter(|ty| type_is_complete(ty) && type_contains_refinement(ty, ctx))
         .map(|ty| {
             super::toplevel::type_to_dafny_in_scope(ty, ctx.active_module_scope().as_deref())
         });
@@ -1112,14 +1218,26 @@ fn emit_interpolated_str(parts: &[ResolvedStrPart], ctx: &CodegenContext) -> Str
                 ));
             }
             ResolvedStrPart::Parsed(expr) => {
-                pieces.push(format!("ToString({})", emit_expr(expr, ctx)));
+                let value = emit_expr(expr, ctx);
+                let rendered = match expr.ty() {
+                    Some(crate::types::Type::Str) => format!("({value})"),
+                    Some(crate::types::Type::Int) => format!("IntToString({value})"),
+                    Some(crate::types::Type::Bool) => format!("StringFromBool({value})"),
+                    // The ordinary export retains its legacy uninterpreted
+                    // Float display. Guidance rejects Float before emission:
+                    // a mathematical real does not model IEEE-754 formatting.
+                    Some(crate::types::Type::Float) => format!("ToString({value})"),
+                    _ => "/* ERROR: interpolation requires a resolved primitive display type */"
+                        .to_string(),
+                };
+                pieces.push(rendered);
             }
         }
     }
-    if pieces.len() == 1 {
-        pieces.into_iter().next().unwrap()
-    } else {
-        pieces.join(" + ")
+    match pieces.len() {
+        0 => "\"\"".to_string(),
+        1 => pieces.into_iter().next().unwrap(),
+        _ => format!("({})", pieces.join(" + ")),
     }
 }
 
@@ -1132,17 +1250,172 @@ pub(super) fn emit_expr_with_expected(
     ctx: &CodegenContext,
     expected: &crate::types::Type,
 ) -> String {
-    stamp_result_position_type(expr, expected);
-    emit_expr(expr, ctx)
+    // Type stamps are OnceLocks: a partly inferred Result<T, Var> cannot be
+    // repaired by set_ty. Carry checked context in a private rendering copy,
+    // keeping the shared source/IR and its earlier inference facts unchanged.
+    let mut contextual = expr.clone();
+    contextualize(&mut contextual, expected);
+    emit_expr(&contextual, ctx)
 }
 
-fn stamp_result_position_type(expr: &Spanned<ResolvedExpr>, expected: &crate::types::Type) {
-    if expr.ty().is_none() {
-        let _ = expr.ty.set(expected.clone());
+fn type_is_complete(ty: &Type) -> bool {
+    match ty {
+        Type::Var(_) | Type::Invalid => false,
+        Type::List(t) | Type::Vector(t) | Type::Option(t) => type_is_complete(t),
+        Type::Map(a, b) | Type::Result(a, b) => type_is_complete(a) && type_is_complete(b),
+        Type::Tuple(ts) => ts.iter().all(type_is_complete),
+        Type::Fn(ts, result, _) => ts.iter().all(type_is_complete) && type_is_complete(result),
+        _ => true,
     }
-    if let ResolvedExpr::Match { arms, .. } = &expr.node {
-        for arm in arms {
-            stamp_result_position_type(&arm.body, expected);
+}
+
+/// Fill inference holes without replacing a known, different nominal identity.
+/// The expected type originates in a checked signature or equality operand.
+fn contextual_type(actual: Option<&Type>, expected: &Type) -> Type {
+    let Some(actual) = actual else {
+        return expected.clone();
+    };
+    match (actual, expected) {
+        (Type::Var(_) | Type::Invalid, _) => expected.clone(),
+        (Type::List(a), Type::List(b)) => Type::List(Box::new(contextual_type(Some(a), b))),
+        (Type::Vector(a), Type::Vector(b)) => Type::Vector(Box::new(contextual_type(Some(a), b))),
+        (Type::Option(a), Type::Option(b)) => Type::Option(Box::new(contextual_type(Some(a), b))),
+        (Type::Result(a, b), Type::Result(c, d)) => Type::Result(
+            Box::new(contextual_type(Some(a), c)),
+            Box::new(contextual_type(Some(b), d)),
+        ),
+        (Type::Map(a, b), Type::Map(c, d)) => Type::Map(
+            Box::new(contextual_type(Some(a), c)),
+            Box::new(contextual_type(Some(b), d)),
+        ),
+        (Type::Tuple(a), Type::Tuple(b)) if a.len() == b.len() => Type::Tuple(
+            a.iter()
+                .zip(b)
+                .map(|(a, b)| contextual_type(Some(a), b))
+                .collect(),
+        ),
+        (
+            Type::Named {
+                id: old,
+                name: old_name,
+            },
+            Type::Named { id: Some(id), name },
+        ) if old == &Some(*id) || (old.is_none() && old_name == name) => expected.clone(),
+        _ => actual.clone(),
+    }
+}
+
+fn contextualize(expr: &mut Spanned<ResolvedExpr>, expected: &Type) {
+    let ty = contextual_type(expr.ty(), expected);
+    expr.ty = std::sync::OnceLock::from(ty.clone());
+    match (&mut expr.node, &ty) {
+        (ResolvedExpr::Ctor(ResolvedCtor::Builtin(ctor), args), _) => {
+            let payload = match (ctor, &ty) {
+                (BuiltinCtor::ResultOk, Type::Result(ok, _)) => Some(ok.as_ref()),
+                (BuiltinCtor::ResultErr, Type::Result(_, err)) => Some(err.as_ref()),
+                (BuiltinCtor::OptionSome, Type::Option(inner)) => Some(inner.as_ref()),
+                _ => None,
+            };
+            if let (Some(payload), [arg]) = (payload, args.as_mut_slice()) {
+                contextualize(arg, payload);
+            }
         }
+        (ResolvedExpr::List(items), Type::List(inner) | Type::Vector(inner)) => {
+            for item in items {
+                contextualize(item, inner);
+            }
+        }
+        (
+            ResolvedExpr::Tuple(items) | ResolvedExpr::IndependentProduct(items, false),
+            Type::Tuple(types),
+        ) if items.len() == types.len() => {
+            for (item, ty) in items.iter_mut().zip(types) {
+                contextualize(item, ty);
+            }
+        }
+        (ResolvedExpr::MapLiteral(entries), Type::Map(key, value)) => {
+            for (k, v) in entries {
+                contextualize(k, key);
+                contextualize(v, value);
+            }
+        }
+        (ResolvedExpr::Match { arms, .. }, _) => {
+            for arm in arms {
+                contextualize(&mut arm.body, &ty);
+            }
+        }
+        _ => {}
+    }
+}
+
+#[cfg(test)]
+mod contextual_tests {
+    use super::*;
+    use crate::codegen::dafny::tests::ctx_from_source;
+
+    fn refined_context() -> (CodegenContext, Type) {
+        let ctx = ctx_from_source(
+            include_str!("../../../tests/fixtures/dafny_structure/refinement.av"),
+            "Contextual",
+        );
+        let id = ctx
+            .symbol_table
+            .resolve_type_id_in("Positive", None)
+            .unwrap();
+        let ty = Type::named_resolved(id, ctx.symbol_table.type_entry(id).key.canonical());
+        (ctx, ty)
+    }
+
+    fn partial_ok(ty: &Type) -> Spanned<ResolvedExpr> {
+        let record = Spanned::bare(ResolvedExpr::RecordCreate {
+            type_id: ty.named_id(),
+            type_name: "Positive".to_string(),
+            fields: vec![(
+                "value".to_string(),
+                Spanned::bare(ResolvedExpr::Literal(Literal::Int(7))),
+            )],
+        });
+        record.set_ty(ty.clone());
+        let result = Spanned::bare(ResolvedExpr::Ctor(
+            ResolvedCtor::Builtin(BuiltinCtor::ResultOk),
+            vec![record],
+        ));
+        result.set_ty(Type::Result(
+            Box::new(ty.clone()),
+            Box::new(Type::Var("unused_error".to_string())),
+        ));
+        result
+    }
+
+    #[test]
+    fn equality_completes_a_partial_refined_wrapper_in_either_operand() {
+        let (ctx, ty) = refined_context();
+        let partial = partial_ok(&ty);
+        let before = partial.ty().cloned();
+        let known = Spanned::bare(ResolvedExpr::Ident("known".to_string()));
+        known.set_ty(Type::Result(Box::new(ty), Box::new(Type::Str)));
+        for (left, right, op) in [
+            (known.clone(), partial.clone(), BinOp::Eq),
+            (partial.clone(), known, BinOp::Neq),
+        ] {
+            let eq = Spanned::bare(ResolvedExpr::BinOp(op, Box::new(left), Box::new(right)));
+            let text = emit_expr(&eq, &ctx);
+            assert!(text.contains("Result<Positive, string>.Ok(7)"), "{text}");
+            assert!(!text.contains("unknown type"), "{text}");
+        }
+        assert_eq!(
+            partial.ty(),
+            before.as_ref(),
+            "rendering must not mutate shared stamps"
+        );
+    }
+
+    #[test]
+    fn expected_types_do_not_replace_a_different_known_nominal_name() {
+        let (_, expected) = refined_context();
+        let different = Type::named("Other");
+        assert_eq!(contextual_type(Some(&different), &expected), different);
+        let same = Type::named("Positive");
+        assert_eq!(contextual_type(Some(&same), &expected), expected);
     }
 }

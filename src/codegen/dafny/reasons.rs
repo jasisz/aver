@@ -72,10 +72,24 @@ fn expression(expr: &crate::ast::Spanned<crate::ast::Expr>, ctx: &CodegenContext
 }
 
 fn conclusion(law: &VerifyLaw, ctx: &CodegenContext) -> String {
+    let left = resolve_rewrite_output(&law.lhs, ctx);
+    let right = resolve_rewrite_output(&law.rhs, ctx);
+    equality(&left, &right, ctx)
+}
+
+fn equality(
+    left: &crate::ast::Spanned<crate::ir::hir::ResolvedExpr>,
+    right: &crate::ast::Spanned<crate::ir::hir::ResolvedExpr>,
+    ctx: &CodegenContext,
+) -> String {
+    let render = |expr, expected| match expected {
+        Some(ty) => super::expr::emit_expr_with_expected(expr, ctx, ty),
+        None => emit_expr(expr, ctx),
+    };
     format!(
         "({}) == ({})",
-        expression(&law.lhs, ctx),
-        expression(&law.rhs, ctx)
+        render(left, right.ty()),
+        render(right, left.ty())
     )
 }
 

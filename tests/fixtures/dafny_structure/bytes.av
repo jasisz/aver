@@ -1,0 +1,43 @@
+module DafnyBytesStructure
+    intent = "Byte refinements and endian conversions retain canonical Bytes values and Result boundaries."
+    depends [Bytes]
+    effects []
+
+fn concatenate(left: Bytes, right: Bytes) -> List<Int>
+    Bytes.octets(Bytes.concat(left, right))
+
+verify concatenate law octets
+    given left: Bytes = [Bytes.fromList([]), Bytes.fromList([0, 255])]
+    given right: Bytes = [Bytes.fromList([7]), Bytes.fromList([128, 255])]
+    because concatenate(left, right) == List.concat(Bytes.octets(left), Bytes.octets(right))
+    using []
+    concatenate(left, right) => List.concat(Bytes.octets(left), Bytes.octets(right))
+
+fn literalOctets(marker: Int) -> List<Int>
+    Bytes.octets(Bytes.fromList([0, 255]))
+
+verify literalOctets law discharge
+    given marker: Int = [0, 7]
+    because literalOctets(marker) == [0, 255]
+    using []
+    literalOctets(marker) => [0, 255]
+
+fn encodedLiteral(marker: Int) -> Int
+    Int.fromBigEndian(Int.toBigEndian(258, 2))
+
+verify encodedLiteral law discharge
+    given marker: Int = [0, 7]
+    because encodedLiteral(marker) == 258
+    using []
+    encodedLiteral(marker) => 258
+
+fn encode(value: Int, width: Int) -> Result<Bytes, String>
+    Int.toLittleEndian(value, width)
+
+verify encode law emptyEncoding
+    given value: Int = [0, 1]
+    given width: Int = [-1, 0, 1]
+    when Bool.and(value == 0, width == 0)
+    because encode(value, width) == Result.Ok(Bytes.empty())
+    using []
+    encode(value, width) => Result.Ok(Bytes.empty())

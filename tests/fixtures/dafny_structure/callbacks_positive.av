@@ -1,0 +1,24 @@
+module CallbacksPositive
+    intent = "Named pure callbacks are checked through their complete source bodies before higher-order application."
+    effects []
+
+fn increment(value: Int) -> Int
+    value + 1
+
+fn apply(callback: Fn(Int) -> Int, value: Int) -> Int
+    callback(value)
+
+fn twice(callback: Fn(Int) -> Int, value: Int) -> Int
+    callback(callback(value))
+
+verify apply law incrementOnce
+    given value: Int = [-2, 0, 5]
+    because apply(increment, value) == value + 1
+    using []
+    apply(increment, value) => value + 1
+
+verify twice law incrementTwice
+    given value: Int = [-2, 0, 5]
+    because twice(increment, value) == value + 2
+    using []
+    twice(increment, value) => value + 2

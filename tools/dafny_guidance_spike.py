@@ -71,6 +71,23 @@ for name in ["positive", "imported", "false_reason"]:
     else:
         SOURCE_PATHS[case] = MUTUAL / f"{name}.av"
 
+# These exact source files measure a useful automation difference as well as
+# admission: Dafny closes the positive callback/display laws; Lean's current
+# generated proof attempts remain incomplete. False reasons must fail both.
+STRUCTURE = ROOT / "tests/fixtures/dafny_structure"
+for name, path in {
+    "display_positive": "strings/positive.av",
+    "callbacks_positive": "callbacks_positive.av",
+    "callbacks_imported": "callbacks_imported/main.av",
+    "display_false": "strings/false_reason.av",
+    "callbacks_false": "callbacks_false.av",
+}.items():
+    case = f"structure_{name}"
+    EXPECTED[case] = {"lean": "failed", "dafny": "failed" if name.endswith("_false") else "verified"}
+    SOURCE_PATHS[case] = STRUCTURE / path
+    if name == "callbacks_imported":
+        MODULE_ROOTS[case] = STRUCTURE / "callbacks_imported"
+
 
 def digest(path: Path) -> str:
     with path.open("rb") as source:

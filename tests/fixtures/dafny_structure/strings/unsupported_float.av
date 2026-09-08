@@ -1,0 +1,12 @@
+module StringDisplayFloat
+    intent = "IEEE-754 formatting must not receive universal credit from an uninterpreted real-valued model."
+    effects []
+
+fn display(value: Float) -> String
+    "{value}"
+
+verify display law reflexive
+    given value: Float = [0.0, -1.5, 1.5]
+    because display(value) == display(value)
+    using []
+    display(value) => display(value)

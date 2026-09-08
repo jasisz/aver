@@ -1,0 +1,65 @@
+module StringDisplayPositive
+    intent = "Primitive interpolation preserves Aver decimal, boolean and string display exactly."
+    effects []
+
+fn integer(value: Int) -> String
+    "{value}"
+
+fn boolean(value: Bool) -> String
+    "{value}"
+
+fn identity(value: String) -> String
+    "{value}"
+
+fn line(name: String, count: Int, enabled: Bool) -> String
+    "{name}:{count}:{enabled}"
+
+fn expectedBoolean(value: Bool) -> String
+    match value
+        true -> "true"
+        false -> "false"
+
+verify integer
+    integer(0) => "0"
+    integer(12345) => "12345"
+    integer(-12345) => "-12345"
+    integer(12345678901234567890123) => "12345678901234567890123"
+    integer(-12345678901234567890123) => "-12345678901234567890123"
+
+verify line
+    line("zażółć 🦀", -12, false) => "zażółć 🦀:-12:false"
+    line("", 0, true) => ":0:true"
+
+verify integer law zero
+    given value: Int = [-1, 0, 1]
+    when value == 0
+    because integer(value) == "0"
+    using []
+    integer(value) => "0"
+
+verify integer law negative
+    given value: Int = [-12, 0, 12]
+    when value == -12
+    because integer(value) == "-12"
+    using []
+    integer(value) => "-12"
+
+verify boolean law spelling
+    given value: Bool = [false, true]
+    because boolean(value) == expectedBoolean(value)
+    using []
+    boolean(value) => expectedBoolean(value)
+
+verify identity law preservesText
+    given value: String = ["", "zażółć 🦀", "a\nb\"c"]
+    because identity(value) == value
+    using []
+    identity(value) => value
+
+verify line law namedConversions
+    given name: String = ["", "sample"]
+    given count: Int = [-12, 0, 12]
+    given enabled: Bool = [false, true]
+    because line(name, count, enabled) == "{name}:{String.fromInt(count)}:{String.fromBool(enabled)}"
+    using []
+    line(name, count, enabled) => "{name}:{String.fromInt(count)}:{String.fromBool(enabled)}"

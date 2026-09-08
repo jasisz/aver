@@ -12,12 +12,36 @@ use crate::ir::FnId;
 use super::{label, lemma_name};
 use crate::codegen::dafny::expr::aver_name_to_dafny;
 
+#[path = "builtins.rs"]
+mod builtins;
+#[path = "callbacks.rs"]
+mod callbacks;
 #[path = "types.rs"]
 mod types;
 use types::{hole, merge};
 
 type Env = BTreeMap<String, Type>;
 use super::citations::{self, Citation, Key};
+
+/// Universal law templates have no sampled binding environment in the source
+/// typechecker. Preserve the types independently checked here for HIR emission.
+/// Empty containers wait for their surrounding expected type; a hole must not
+/// occupy a once-only stamp before its representation is known.
+fn stamp(expr: &Spanned<Expr>, ty: &Type) {
+    fn closed(ty: &Type) -> bool {
+        match ty {
+            Type::Var(_) | Type::Invalid => false,
+            Type::List(t) | Type::Vector(t) | Type::Option(t) => closed(t),
+            Type::Map(a, b) | Type::Result(a, b) => closed(a) && closed(b),
+            Type::Tuple(ts) => ts.iter().all(closed),
+            Type::Fn(args, result, _) => args.iter().all(closed) && closed(result),
+            _ => true,
+        }
+    }
+    if closed(ty) {
+        expr.set_ty(ty.clone());
+    }
+}
 
 fn bind(env: &mut Env, name: &str, ty: Type) -> Result<(), String> {
     let emitted = aver_name_to_dafny(name);
@@ -41,14 +65,27 @@ struct Checker<'a> {
 
 impl<'a> Checker<'a> {
     fn expression(&mut self, expr: &Spanned<Expr>, env: &Env) -> Result<Type, String> {
+        let ty = self.expression_type(expr, env)?;
+        if !matches!(ty, Type::Fn(..)) && contains_callback(&ty) {
+            return Err("callback containers have no source-equivalent equality model".to_string());
+        }
+        stamp(expr, &ty);
+        Ok(ty)
+    }
+
+    fn expression_type(&mut self, expr: &Spanned<Expr>, env: &Env) -> Result<Type, String> {
         match &expr.node {
             Expr::Literal(Literal::Int(_) | Literal::BigInt(_)) => Ok(Type::Int),
             Expr::Literal(Literal::Bool(_)) => Ok(Type::Bool),
             Expr::Literal(Literal::Str(_)) => Ok(Type::Str),
-            Expr::Ident(name) | Expr::Resolved { name, .. } => env
-                .get(name)
-                .cloned()
-                .ok_or_else(|| format!("only local first-order values are supported: {name}")),
+            Expr::Literal(Literal::Unit) => Ok(Type::Unit),
+            Expr::Literal(Literal::Float(_)) => {
+                Err("Float requires an IEEE model; Dafny real is not source-equivalent".to_string())
+            }
+            Expr::Ident(name) | Expr::Resolved { name, .. } => match env.get(name) {
+                Some(ty) => Ok(ty.clone()),
+                None => self.function_value(name),
+            },
             Expr::Neg(inner) => {
                 self.expect(inner, env, Type::Int)?;
                 Ok(Type::Int)
@@ -60,7 +97,12 @@ impl<'a> Checker<'a> {
                 let left = self.expression(lhs, env)?;
                 let right = self.expression(rhs, env)?;
                 let ty = merge(&left, &right)?;
+                stamp(lhs, &ty);
+                stamp(rhs, &ty);
                 if matches!(op, BinOp::Eq | BinOp::Neq) {
+                    if matches!(ty, Type::Fn(..)) {
+                        return Err("callback identity is not Dafny function equality".to_string());
+                    }
                     return Ok(Type::Bool);
                 }
                 if ty == Type::Str && *op == BinOp::Add {
@@ -76,9 +118,21 @@ impl<'a> Checker<'a> {
                 })
             }
             Expr::FnCall(callee, args) => {
-                let name = crate::checker::expr_to_str(callee);
-                if env.contains_key(&name) {
-                    return Err("function-valued calls are outside this pilot".to_string());
+                let name = match &callee.node {
+                    Expr::Ident(name) | Expr::Resolved { name, .. } => name.clone(),
+                    _ => crate::checker::expr_to_str(callee),
+                };
+                if let Some(ty) = env.get(&name) {
+                    let Type::Fn(params, result, effects) = ty else {
+                        return Err(format!("{name} is not a callback"));
+                    };
+                    if !effects.is_empty() || params.len() != args.len() {
+                        return Err("callback call requires a pure matching signature".to_string());
+                    }
+                    for (arg, expected) in args.iter().zip(params) {
+                        self.expect(arg, env, expected.clone())?;
+                    }
+                    return Ok(*result.clone());
                 }
                 if crate::ast::dotted_name_spells_constructor(&name) {
                     return self.constructor(&name, args, env);
@@ -122,18 +176,39 @@ impl<'a> Checker<'a> {
                 }
                 Ok(Type::List(Box::new(inner)))
             }
-            Expr::Tuple(items) => Ok(Type::Tuple(
+            Expr::Tuple(items) | Expr::IndependentProduct(items, false) => Ok(Type::Tuple(
                 items
                     .iter()
                     .map(|item| self.expression(item, env))
                     .collect::<Result<_, _>>()?,
             )),
+            Expr::IndependentProduct(_, true) => {
+                Err("Result product (?!) requires enclosing Result-body lowering".to_string())
+            }
+            Expr::MapLiteral(entries) => {
+                let mut key = hole();
+                let mut value = hole();
+                for (k, v) in entries {
+                    key = merge(&key, &self.expression(k, env)?)?;
+                    value = merge(&value, &self.expression(v, env)?)?;
+                }
+                self.map_type(key, value)
+            }
             Expr::Constructor(name, arg) => {
                 let args: Vec<_> = arg.iter().map(|arg| arg.as_ref().clone()).collect();
                 self.constructor(name, &args, env)
             }
             Expr::Attr(base, field) => {
                 let name = crate::checker::expr_to_str(expr);
+                let scope = self.ctx.active_module_scope();
+                if self
+                    .ctx
+                    .symbol_table
+                    .resolve_fn_id_in(&name, scope.as_deref())
+                    .is_some()
+                {
+                    return self.function_value(&name);
+                }
                 if crate::ast::dotted_name_spells_constructor(&name) {
                     return self.constructor(&name, &[], env);
                 }
@@ -146,13 +221,20 @@ impl<'a> Checker<'a> {
                 base,
                 updates,
             } => self.record(type_name, Some(base), updates, env),
-            Expr::InterpolatedStr(_) => {
-                Err("string interpolation is outside the first-order guidance subset".to_string())
+            Expr::InterpolatedStr(parts) => {
+                for part in parts {
+                    if let crate::ast::StrPart::Parsed(value) = part {
+                        let ty = self.expression(value, env)?;
+                        if !matches!(ty, Type::Int | Type::Bool | Type::Str) {
+                            return Err(format!("no exact Dafny display model for {ty:?}"));
+                        }
+                    }
+                }
+                Ok(Type::Str)
             }
             Expr::ErrorProp(_) => {
                 Err("Result propagation (?) is outside the first-order guidance subset".to_string())
             }
-            _ => Err("expression is outside the first-order guidance subset".to_string()),
         }
     }
 
@@ -186,8 +268,8 @@ impl<'a> Checker<'a> {
                 .iter()
                 .map(|(_, annotation)| self.annotation(annotation))
                 .collect::<Result<Vec<_>, _>>()?;
-            for (actual, expected) in actuals.iter().zip(&parameters) {
-                merge(actual, expected)?;
+            for ((actual, expected), arg) in actuals.iter().zip(&parameters).zip(args) {
+                stamp(arg, &merge(actual, expected)?);
             }
             let result = self.annotation(&fd.return_type)?;
             if ctx.recursive_fns.contains(&id)
@@ -225,7 +307,12 @@ impl<'a> Checker<'a> {
                     bind(&mut locals, param, ty)?;
                 }
                 let mut body_type = None;
-                for stmt in fd.body.stmts() {
+                let lowered = crate::codegen::dafny::propagation::lower_pure_fn(fd)
+                    .map_err(|error| error.message)?;
+                let body = lowered
+                    .as_ref()
+                    .map_or(fd.body.as_ref(), |f| f.body.as_ref());
+                for stmt in body.stmts() {
                     match stmt {
                         Stmt::Binding(local, annotation, value) => {
                             let mut ty = self.expression(value, &locals)?;
@@ -246,66 +333,18 @@ impl<'a> Checker<'a> {
                     &result,
                 )?;
             }
-            Ok(result)
+            Ok(self.literal_refinement_result(id, args)?.unwrap_or(result))
         })
     }
 
     fn expect(&mut self, expr: &Spanned<Expr>, env: &Env, expected: Type) -> Result<(), String> {
-        merge(&self.expression(expr, env)?, &expected).map(|_| ())
+        let ty = merge(&self.expression(expr, env)?, &expected)?;
+        stamp(expr, &ty);
+        Ok(())
     }
 
     fn builtin(&mut self, name: &str, args: &[Spanned<Expr>], env: &Env) -> Result<Type, String> {
-        if let Some(result) = super::arithmetic::division_result_type(name, args) {
-            for arg in args {
-                self.expect(arg, env, Type::Int)?;
-            }
-            return Ok(result);
-        }
-        let scalar = match name {
-            "Bool.and" | "Bool.or" => Some((2, Type::Bool, Type::Bool)),
-            "Bool.not" => Some((1, Type::Bool, Type::Bool)),
-            "Int.abs" => Some((1, Type::Int, Type::Int)),
-            "Int.min" | "Int.max" => Some((2, Type::Int, Type::Int)),
-            "String.len" => Some((1, Type::Str, Type::Int)),
-            _ => None,
-        };
-        if let Some((arity, input, output)) = scalar {
-            if args.len() != arity {
-                return Err(format!("unsupported arity for {name}"));
-            }
-            for arg in args {
-                self.expect(arg, env, input.clone())?;
-            }
-            return Ok(output);
-        }
-        // Only operations with total, definition-backed Dafny lowerings enter
-        // this list. Higher-order List helpers and opaque String helpers do not.
-        let values = args
-            .iter()
-            .map(|arg| self.expression(arg, env))
-            .collect::<Result<Vec<_>, _>>()?;
-        match (name, values.as_slice()) {
-            ("List.len", [Type::List(_)]) => Ok(Type::Int),
-            ("List.reverse", [list @ Type::List(_)]) => Ok(list.clone()),
-            ("List.take" | "List.drop", [list @ Type::List(_), Type::Int]) => Ok(list.clone()),
-            ("List.concat", [left @ Type::List(_), right @ Type::List(_)]) => merge(left, right),
-            ("List.prepend", [value, Type::List(inner)]) => {
-                Ok(Type::List(Box::new(merge(value, inner)?)))
-            }
-            ("List.contains", [Type::List(inner), value]) => {
-                merge(inner, value)?;
-                Ok(Type::Bool)
-            }
-            ("List.zip", [Type::List(left), Type::List(right)]) => {
-                Ok(Type::List(Box::new(Type::Tuple(vec![
-                    *left.clone(),
-                    *right.clone(),
-                ]))))
-            }
-            ("Result.withDefault", [Type::Result(ok, _), default]) => merge(ok, default),
-            ("Option.withDefault", [Type::Option(inner), default]) => merge(inner, default),
-            _ => Err(format!("unsupported call {name}")),
-        }
+        self.defined_builtin(name, args, env)
     }
 
     fn law(&mut self, id: &Key, law: &'a VerifyLaw, selected_supplier: bool) -> Result<(), String> {
@@ -330,6 +369,9 @@ impl<'a> Checker<'a> {
         let mut env = Env::new();
         for given in &law.givens {
             let ty = self.annotation(&given.type_name)?;
+            if matches!(ty, Type::Fn(..)) {
+                return Err("callback givens require a source totality domain".to_string());
+            }
             bind(&mut env, &given.name, ty)?;
         }
         if let Some(guard) = &law.when {
@@ -349,6 +391,16 @@ impl<'a> Checker<'a> {
         self.checking_laws.remove(id);
         self.checked_laws.insert(id.clone());
         Ok(())
+    }
+}
+
+fn contains_callback(ty: &Type) -> bool {
+    match ty {
+        Type::Fn(..) => true,
+        Type::List(t) | Type::Vector(t) | Type::Option(t) => contains_callback(t),
+        Type::Map(a, b) | Type::Result(a, b) => contains_callback(a) || contains_callback(b),
+        Type::Tuple(ts) => ts.iter().any(contains_callback),
+        _ => false,
     }
 }
 

@@ -18,6 +18,10 @@ pub(super) fn merge(left: &Type, right: &Type) -> Result<Type, String> {
     }
     Ok(match (left, right) {
         (Type::List(a), Type::List(b)) => Type::List(Box::new(merge(a, b)?)),
+        (Type::Vector(a), Type::Vector(b)) => Type::Vector(Box::new(merge(a, b)?)),
+        (Type::Map(a, b), Type::Map(c, d)) => {
+            Type::Map(Box::new(merge(a, c)?), Box::new(merge(b, d)?))
+        }
         (Type::Option(a), Type::Option(b)) => Type::Option(Box::new(merge(a, b)?)),
         (Type::Result(a, b), Type::Result(c, d)) => {
             Type::Result(Box::new(merge(a, c)?), Box::new(merge(b, d)?))
@@ -45,12 +49,26 @@ impl<'a> Checker<'a> {
 
     fn supported_type(&mut self, ty: Type) -> Result<Type, String> {
         Ok(match ty {
-            Type::Int | Type::Bool | Type::Str => ty,
+            Type::Int | Type::Bool | Type::Str | Type::Unit => ty,
             Type::List(inner) => Type::List(Box::new(self.supported_type(*inner)?)),
+            Type::Vector(inner) => Type::Vector(Box::new(self.supported_type(*inner)?)),
+            Type::Map(key, value) => {
+                let key = self.supported_type(*key)?;
+                let value = self.supported_type(*value)?;
+                self.map_type(key, value)?
+            }
             Type::Option(inner) => Type::Option(Box::new(self.supported_type(*inner)?)),
             Type::Result(ok, err) => Type::Result(
                 Box::new(self.supported_type(*ok)?),
                 Box::new(self.supported_type(*err)?),
+            ),
+            Type::Fn(params, result, effects) if effects.is_empty() => Type::Fn(
+                params
+                    .into_iter()
+                    .map(|param| self.supported_type(param))
+                    .collect::<Result<_, _>>()?,
+                Box::new(self.supported_type(*result)?),
+                vec![],
             ),
             Type::Tuple(items) => Type::Tuple(
                 items
@@ -61,25 +79,18 @@ impl<'a> Checker<'a> {
             // syntax-discovery-only: annotation() supplies freshly parsed source
             // types, without HIR IDs. Resolve the name immediately to TypeId;
             // scope, fields and the returned type all use that canonical ID.
-            Type::Named { name, .. } => {
+            Type::Named { id, name } => {
                 let scope = self.ctx.active_module_scope();
-                let id = self
-                    .ctx
-                    .symbol_table
-                    .resolve_type_id_in(&name, scope.as_deref())
+                let id = id
+                    .or_else(|| {
+                        self.ctx
+                            .symbol_table
+                            .resolve_type_id_in(&name, scope.as_deref())
+                    })
                     .ok_or_else(|| format!("no declared type {name}"))?;
                 let entry = self.ctx.symbol_table.type_entry(id);
                 if entry.is_capability_resource {
                     return Err(format!("provider type {name} is outside this pilot"));
-                }
-                if crate::codegen::common::find_refined_type_scoped(
-                    self.ctx,
-                    &entry.key.name,
-                    entry.key.scope_str(),
-                )
-                .is_some()
-                {
-                    return Err(format!("refined type {name} is outside this pilot"));
                 }
                 let resolved = Type::named_resolved(id, entry.key.canonical());
                 let definition = self.definition(&resolved)?;
@@ -113,6 +124,7 @@ impl<'a> Checker<'a> {
                         for field in fields {
                             self.annotation(field)?;
                         }
+                        self.check_refinement(id)?;
                         Ok::<_, String>(())
                     })?;
                 }
@@ -120,6 +132,103 @@ impl<'a> Checker<'a> {
             }
             _ => return Err(format!("unsupported first-order type {ty:?}")),
         })
+    }
+
+    /// The emitted subset predicate must be the same source predicate whose
+    /// complete cone is checked here. Keeping the canonical type preserves
+    /// its invariant in Dafny binders; this never returns its bare carrier.
+    fn check_refinement(&mut self, id: crate::ir::TypeId) -> Result<(), String> {
+        let ctx = self.ctx;
+        let Some(decl) = ctx.proof_ir.refined_types.get(&id) else {
+            return Ok(());
+        };
+        let key = &ctx.symbol_table.type_entry(id).key;
+        let inputs = crate::codegen::proof_lower::ProofLowerInputs::from_ctx(ctx);
+        let info = crate::codegen::common::refinement_info_for_in_scope(
+            &key.name,
+            &inputs,
+            key.scope_str(),
+        )
+        .ok_or_else(|| format!("no source predicate for refinement {}", key.canonical()))?;
+        if info.carrier_field != decl.carrier_field
+            || info.carrier_type != decl.carrier_type
+            || info.param_name != decl.predicate_param
+            || ctx.resolve_expr(info.predicate, key.scope_str()).node != decl.invariant.expr.node
+        {
+            return Err(format!(
+                "refinement model disagrees with source {}",
+                key.canonical()
+            ));
+        }
+        let carrier = self.annotation(&decl.carrier_type)?;
+        let mut env = Env::new();
+        bind(&mut env, &decl.predicate_param, carrier)?;
+        self.expect(info.predicate, &env, Type::Bool)
+            .map_err(|reason| format!("refinement {} predicate: {reason}", key.canonical()))
+    }
+
+    /// Match exactly the same source-literal discharge used by HIR. The
+    /// caller still checks the source smart constructor's full function cone;
+    /// only its call-site result changes from Result<T,E> to the refined T.
+    pub(super) fn literal_refinement_result(
+        &mut self,
+        id: crate::ir::FnId,
+        args: &[Spanned<Expr>],
+    ) -> Result<Option<Type>, String> {
+        let Some(ctor) = self
+            .ctx
+            .symbol_table
+            .literal_refinements()
+            .discharge(id, args)
+        else {
+            return Ok(None);
+        };
+        let type_id = ctor.type_id;
+        if !self.ctx.proof_ir.refined_types.contains_key(&type_id) {
+            return Err("literal refinement has no checked Dafny subset model".to_string());
+        }
+        let key = self.ctx.symbol_table.type_entry(type_id).key.canonical();
+        self.supported_type(Type::named_resolved(type_id, key))
+            .map(Some)
+    }
+
+    /// Integer endian builtins own the standard Bytes contract. Resolve its
+    /// canonical identity, then require the shared exact octet refinement;
+    /// an unrelated record named Bytes or a narrower interval cannot enter.
+    pub(super) fn bytes_type(&mut self) -> Result<Type, String> {
+        let key = crate::ir::TypeKey::in_module("Bytes", "Bytes");
+        let id = self
+            .ctx
+            .symbol_table
+            .type_id_of(&key)
+            .ok_or("integer endian conversion requires the standard Bytes type")?;
+        let octets = crate::ir::interval::Interval {
+            lo: crate::ir::interval::Bound::Finite(0),
+            hi: crate::ir::interval::Bound::Finite(255),
+        };
+        if !self
+            .ctx
+            .symbol_table
+            .literal_refinements()
+            .iter()
+            .any(|ctor| ctor.type_id == id && ctor.element_interval == octets)
+            || !self.ctx.proof_ir.refined_types.contains_key(&id)
+        {
+            return Err(
+                "integer endian conversion requires the exact octet refinement".to_string(),
+            );
+        }
+        self.supported_type(Type::named_resolved(id, key.canonical()))
+    }
+
+    /// Extensional map equality is exact for the recursively checked types.
+    /// Unit-valued maps use the typed finite-set model. Function-valued
+    /// keys or values have no source collection equality model.
+    pub(super) fn map_type(&self, key: Type, value: Type) -> Result<Type, String> {
+        if matches!(key, Type::Fn(..)) || matches!(value, Type::Fn(..)) {
+            return Err("function-valued maps are outside the equality model".to_string());
+        }
+        Ok(Type::Map(Box::new(key), Box::new(value)))
     }
 
     fn definition(&self, ty: &Type) -> Result<&'a TypeDef, String> {
@@ -363,3 +472,7 @@ impl<'a> Checker<'a> {
 #[cfg(test)]
 #[path = "import_types_tests.rs"]
 mod import_tests;
+
+#[cfg(test)]
+#[path = "refinement_tests.rs"]
+mod refinement_tests;

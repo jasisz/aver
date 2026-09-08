@@ -39,6 +39,8 @@ mod dafny_import_div;
 mod dafny_inline;
 #[path = "proof_spec/dafny_mutual.rs"]
 mod dafny_mutual;
+#[path = "proof_spec/dafny_structure.rs"]
+mod dafny_structure;
 #[path = "proof_spec/dafny_structured.rs"]
 mod dafny_structured;
 #[path = "proof_spec/dep_law_names.rs"]

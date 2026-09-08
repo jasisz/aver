@@ -1,0 +1,13 @@
+module DafnyContainersFalse
+    intent = "Passing finite samples cannot hide a false indexed-read reason."
+    effects []
+
+fn read(value: Int, index: Int) -> Option<Int>
+    Vector.get(Vector.new(1, value), index)
+
+verify read law falseReason
+    given value: Int = [-1, 0, 7]
+    given index: Int = [0]
+    because read(value, index) == Option.Some(value)
+    using []
+    read(value, index) => read(value, index)

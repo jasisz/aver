@@ -1,0 +1,17 @@
+module PropagationFalseReason
+    intent = "Nonnegative samples cannot justify dropping errors from a nested propagation step."
+    effects []
+
+fn read(value: Int) -> Result<Int, Int>
+    match value >= 0
+        true -> Result.Ok(value)
+        false -> Result.Err(value)
+
+fn nested(value: Int) -> Result<List<Int>, Int>
+    Result.Ok([0, read(value)?])
+
+verify nested law errorsCannotBeIgnored
+    given value: Int = [0, 1, 5]
+    because nested(value) == Result.Ok([0, value])
+    using []
+    nested(value) => nested(value)

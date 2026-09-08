@@ -1,15 +1,15 @@
 # Guided proof portability: the Dafny spike
 
 This experiment sends identical Aver files through Lean and Dafny. It covers a
-restricted first-order fragment of `because` and `using`; it does not
+checked pure fragment of `because` and `using`; it does not
 port K5's rounding proofs to Dafny.
 
 ## Supported fragment
 
 Guided laws need an explicit `using` list (`using []` selects no helpers).
 Their pure dependency cones may cross explicit module imports. Givens may
-contain `Int`, `Bool`, `String`, lists, tuples, `Option`, `Result`, and local or
-imported records and sum types. Every named field type, constructor, pattern,
+contain `Int`, `Bool`, `String`, `Unit`, lists, vectors, maps, tuples, `Option`,
+`Result`, checked refinements, and local or imported records and sum types. Every named field type, constructor, pattern,
 called body and selected law is checked against the same restrictions.
 Signatures, bodies and field annotations resolve in their declaring modules;
 same-named functions or types in a caller do not replace imported declarations.
@@ -59,8 +59,9 @@ Explicit `using` citations may select local or visible imported laws. A selected
 ordinary law without `because` or `using` is also supported through a separately
 checked universal restatement, described below. Automatic citation selection,
 fuel or opaque recursion fallbacks, unsupported countdowns,
-higher-order or effectful calls, provider resources, refinements and `Float`
-remain outside this guidance fragment. A supported-looking caller that selects
+arbitrary function-valued givens, effectful calls, provider resources and `Float`
+remain outside this guidance fragment. Named pure callbacks are checked through
+their entire source cones, including hidden recursion edges. A supported-looking caller that selects
 an unsupported helper is declined as well. Admission does not guarantee that
 Dafny can complete the proof.
 
@@ -154,8 +155,8 @@ Dafny already uses nonlinear arithmetic through Z3; this extension removes the
 pilot rejection of variable products rather than enabling a new solver flag.
 For more complex arguments, source lemmas and intermediate steps still matter.
 The current extension admits imported citations and types and exact integer
-division. Refinements, broader recursive proof patterns and solver completion
-remain boundaries before K5 rounding can use this backend.
+division. Broader recursive proof patterns and solver completion remain
+boundaries before K5 rounding can use this backend.
 
 ## Structured source controls
 
@@ -237,3 +238,70 @@ runs retain four axiom fallbacks in `ScriptState`, ten omissions in `StackItem`,
 and six reported solver timeouts across repeated module dependencies. No outer
 wall-clock timeout occurred. The comparison and BTC runs use compiler SHA-256
 `f30a0974ac3d5e38bed72fad36337264f26031b3edd256a0f5d1a58639396830`.
+
+## Pure source structure checkpoint
+
+The structural suite contains **52 positive laws**: 45 guided laws and seven
+ordinary laws. All pass the strict Dafny gate, including imported definitions.
+Eight negative files contain ten laws with false intermediate steps or invalid
+subset constructors/updates; their samples pass but actual proof checking fails.
+See the [fixture inventory](../tests/fixtures/dafny_structure/README.md).
+
+Pure `?` and `?!` normalize throughout expression trees, preserving error exits,
+eager operand order and lazy branch selection. Unit, vectors, extensional maps,
+Unit-valued maps, named pure callbacks, exact primitive interpolation and defined
+text operations are admitted. Checked refinements retain their source predicate;
+Bytes encoders return the refined type and prove equality to their arithmetic
+recurrence. Structural subset helpers prove their concat/take/drop equations.
+No return constraint is erased to make an encoder or record update pass.
+
+The source typechecker now types ordinary law templates in their declared given
+environment as well as their expanded samples. A dynamic operation in a template
+keeps its Result type; literal discharge in a separate sample stays independent.
+Proof rewrites preserve these types rather than making a renderer guess them.
+
+The expanded **32-case** comparison checks **31 laws in both backends and 12 only
+in Dafny**. The eight new Dafny-only laws concern primitive display and named
+callbacks; Lean's existing attempts remain incomplete on the identical source.
+All sixteen negative files fail actual proof checking in both backends.
+
+This closes expression-translation gaps, not every semantic model or recursive
+proof strategy. Exact IEEE Float, Unicode case conversion, UTF-8 and parsing,
+sorted map iteration and arbitrary callback givens remain separate boundaries.
+Unclassified effects still require contracts. Full historical K5 rounding is not
+established by these structural fixtures.
+
+On unchanged BTC commit `a6870c9de7280593d3e5a5928ceb62610a2ba316`,
+`ScriptParse` guidance declines fall from nine to **one**. Its remaining refusal
+is `String.toLower` reached through `withoutPushes`; propagation and interpolation
+now translate. The same single refusal appears in the generated Chainwork import
+graph. Fuel rewrites preserve record-field display types in `Transaction` too.
+
+Strict whole-module coverage remains **7/104 own laws**. The primary 60-second
+measurement records a Chainwork wall-clock timeout, plus solver timeouts and
+open obligations elsewhere; it does not grant per-law credit from failing files.
+ScriptState still has four axiom fallbacks, and StackItem ten omissions. The
+32-case comparison and primary BTC run use compiler SHA-256
+`d9cd78491e597b7743ef75f8da3f0dd4e1ed69a1c064922180ef634a91bd8ccb`.
+
+An isolated Chainwork diagnostic with a 180-second outer limit finishes in
+51.99 seconds: one guidance decline, 56 errors, two solver timeouts, and no
+axioms or omissions. This diagnostic does not replace the primary measurement
+or establish any additional whole-module law credit.
+
+## Next phase: BTC and shared ProofIR
+
+After this PR, use unchanged BTC source to drive the remaining Dafny work.
+Prefer putting shared semantic facts and proof analysis in ProofIR and its
+lowering passes, with both backends consuming the same canonical identities,
+refinement predicates, recursion contracts and law obligations. These already
+have shared representations; extend those where a new fact is backend-neutral
+instead of introducing a second recognizer in a renderer.
+
+Keep target syntax, automation and target-specific capability checks in their
+backends. The current Dafny propagation normalizer is still backend-local;
+this checkpoint does not claim the two renderers share every transformation.
+Move a transformation into the common pipeline when both consumers can retain
+the same source semantics, and check the change with the same-source positive
+and negative controls. Do not require a broad ProofIR refactor to merge this
+validated structural checkpoint.

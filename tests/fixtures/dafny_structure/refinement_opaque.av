@@ -1,0 +1,24 @@
+module DafnyRefinementOpaque
+    intent = "An unmodelled predicate cannot become a trusted subset invariant."
+    exposes opaque [Token]
+    effects []
+
+record Token
+    value: Int
+
+fn valid(value: Int) -> Bool
+    String.toLower(String.fromInt(value)) == "1"
+
+fn fromInt(value: Int) -> Result<Token, String>
+    match valid(value)
+        true -> Result.Ok(Token(value = value))
+        false -> Result.Err("missing x")
+
+fn carrier(value: Token) -> Int
+    value.value
+
+verify carrier law identity
+    given value: Token = [Token(value = 1)]
+    because valid(carrier(value))
+    using []
+    carrier(value) => carrier(value)

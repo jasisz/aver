@@ -1,0 +1,19 @@
+module CallbacksImported
+    intent = "Imported callbacks retain their parameter's canonical type despite local type and function name collisions."
+    depends [Foreign]
+    effects []
+
+record Payload
+    value: Bool
+
+fn read(item: Payload) -> Bool
+    item.value
+
+fn apply(callback: Fn(Foreign.Payload) -> Int, item: Foreign.Payload) -> Int
+    callback(item)
+
+verify apply law readsImportedValue
+    given value: Int = [-2, 0, 5]
+    because apply(Foreign.read, Foreign.Payload(value = value)) == value
+    using []
+    apply(Foreign.read, Foreign.Payload(value = value)) => value

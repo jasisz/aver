@@ -1,0 +1,21 @@
+module StringDisplayFalse
+    intent = "Finite samples must not disguise a constant-zero or constant-true display model."
+    effects []
+
+fn integer(value: Int) -> String
+    "{value}"
+
+fn boolean(value: Bool) -> String
+    "{value}"
+
+verify integer law falseZero
+    given value: Int = [0]
+    because integer(value) == "0"
+    using []
+    integer(value) => integer(value)
+
+verify boolean law falseTrue
+    given value: Bool = [true]
+    because boolean(value) == "true"
+    using []
+    boolean(value) => boolean(value)

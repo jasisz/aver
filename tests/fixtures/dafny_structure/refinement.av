@@ -1,0 +1,21 @@
+module DafnyRefinement
+    intent = "A subset value retains its checked source predicate at the proof boundary."
+    exposes opaque [Positive]
+    effects []
+
+record Positive
+    value: Int
+
+fn fromInt(value: Int) -> Result<Positive, String>
+    match value >= 0
+        true -> Result.Ok(Positive(value = value))
+        false -> Result.Err("negative value")
+
+fn carrier(value: Positive) -> Int
+    value.value
+
+verify carrier law nonnegative
+    given value: Positive = [Positive(value = 0), Positive(value = 7)]
+    because carrier(value) >= 0
+    using []
+    carrier(value) >= 0 holds

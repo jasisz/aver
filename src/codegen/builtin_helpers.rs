@@ -98,20 +98,30 @@ pub const BUILTIN_HELPERS: &[BuiltinHelper] = &[
             "StringEndsWith(",
             "StringTrim(",
             "StringReplace(",
-            "StringToUpper(",
-            "StringToLower(",
-            "StringFromBool(",
-            "StringByteLength(",
-            "StringToUtf8(",
-            "StringFromUtf8(",
             "AverString",
         ],
-        // Dafny's `StringCharAt` returns `Option<string>` and UTF-8 decoding
-        // returns `Result<string,string>`. Lean has both datatypes natively.
+        // Keep the shared datatype dependencies stable for Lean. Dafny's
+        // exact structural block uses Option; UTF-8 has its own separate key.
         depends_on: &["OptionDatatype", "ResultDatatype"],
-        doc: "Character/slice/intercalate + split/contains/replace/etc. \
-              Lean: native `String.*`. Dafny: opaque `StringCharAt`, `StringChars`, \
-              `StringJoin`, `StringSplit`, `StringContains`, etc.",
+        doc: "Character/slice/intercalate + split/contains/replace/trim. \
+              Lean: native `String.*`. Dafny: exact structural sequence definitions.",
+    },
+    BuiltinHelper {
+        key: "StringOpaque",
+        body_tokens: &[
+            "StringToUpper(",
+            "StringToLower(",
+            "StringByteLength(",
+            "ListReverseStr(",
+        ],
+        depends_on: &[],
+        doc: "Dafny-only uninterpreted Unicode case conversion and byte-length declarations.",
+    },
+    BuiltinHelper {
+        key: "StringUtf8",
+        body_tokens: &["StringToUtf8(", "StringFromUtf8("],
+        depends_on: &["ResultDatatype"],
+        doc: "Dafny-only legacy UTF-8 boundary declarations; never pulled in by unrelated text operations.",
     },
     BuiltinHelper {
         key: "NumericParse",
@@ -145,7 +155,7 @@ pub const BUILTIN_HELPERS: &[BuiltinHelper] = &[
         // `Except` (no-op there).
         depends_on: &["ResultDatatype"],
         doc: "Decimal parsing/formatting. Lean: full `AverDigits` namespace, `String.fromInt`, \
-              `Int.fromString`, `Float.fromString`. Dafny: opaque `IntToString` / `IntFromString` \
+              `Int.fromString`, `Float.fromString`. Dafny: exact `IntToString`, opaque `IntFromString` \
               / `FloatToString` / `FloatFromString` declarations.",
     },
     BuiltinHelper {
@@ -411,6 +421,27 @@ mod tests {
     }
 
     #[test]
+    fn structural_text_does_not_pull_unrelated_utf8_axioms_or_opaque_case_helpers() {
+        let keys = needed_helpers(
+            "StringCharAt(s, 0) StringSplit(s, sep) StringTrim(s)",
+            false,
+        )
+        .iter()
+        .map(|helper| helper.key)
+        .collect::<Vec<_>>();
+        assert!(keys.contains(&"StringHelpers"));
+        assert!(!keys.contains(&"StringUtf8"));
+        assert!(!keys.contains(&"StringOpaque"));
+        let utf8 = needed_helpers("StringToUtf8(s)", false)
+            .iter()
+            .map(|helper| helper.key)
+            .collect::<Vec<_>>();
+        assert!(utf8.contains(&"StringUtf8"));
+        assert!(utf8.contains(&"ResultDatatype"));
+        assert!(!utf8.contains(&"StringHelpers"));
+    }
+
+    #[test]
     fn force_all_returns_every_helper() {
         let keys = needed_helpers("", true)
             .iter()
@@ -428,6 +459,8 @@ mod tests {
                 "OptionDatatype",
                 "AverList",
                 "StringHelpers",
+                "StringOpaque",
+                "StringUtf8",
                 "StringCodePoint",
                 "AverBits",
                 "AverMeasure",

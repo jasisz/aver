@@ -1,0 +1,18 @@
+module CallbackContainerIdentity
+    intent = "Function identity inside a container cannot be replaced by extensional Dafny equality."
+    effects []
+
+fn first(value: Int) -> Int
+    value
+
+fn second(value: Int) -> Int
+    value
+
+fn observed(value: Int) -> Bool
+    List.contains([first], second)
+
+verify observed law reflexive
+    given value: Int = [0, 1]
+    because observed(value) == observed(value)
+    using []
+    observed(value) => observed(value)

@@ -76,7 +76,7 @@ pub fn emit_mutual_fuel_group(fns: &[&FnDef], ctx: &CodegenContext) -> Option<St
         // g(rest))?!` stays an `IndependentProduct` node in the AST
         // and Dafny sees raw tuples instead of the match-unwrapped
         // Result shape.
-        let lowered_body = crate::types::checker::effect_lifting::lower_pure_question_bang_fn(fd)
+        let lowered_body = super::propagation::lower_pure_fn(fd)
             .ok()
             .flatten()
             .map(|lowered| lowered.body.as_ref().clone())
@@ -155,7 +155,7 @@ pub fn emit_mutual_native_decreases_group(fns: &[&FnDef], ctx: &CodegenContext) 
         // Apply `?!` lowering so the body shape matches what the
         // fuel path also emits — keeps `(f(x), g(y))?!` -> match-
         // unwrapped tuple even on the native path.
-        let lowered_body = crate::types::checker::effect_lifting::lower_pure_question_bang_fn(fd)
+        let lowered_body = super::propagation::lower_pure_fn(fd)
             .ok()
             .flatten()
             .map(|lowered| lowered.body.as_ref().clone())

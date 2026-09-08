@@ -1,0 +1,13 @@
+module DafnyBytesHexOpaque
+    intent = "The byte type does not grant admission to an unmodelled hexadecimal parser dependency."
+    depends [Bytes]
+    effects []
+
+fn decode(text: String) -> Result<Bytes, String>
+    Bytes.fromHex(text)
+
+verify decode law reflexive
+    given text: String = ["", "00ff"]
+    because true
+    using []
+    decode(text) => decode(text)

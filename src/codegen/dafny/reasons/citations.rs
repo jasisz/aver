@@ -126,6 +126,18 @@ fn canonical(ty: Type, owner: Option<&str>, ctx: &CodegenContext) -> Result<Type
             Type::named_resolved(id, ctx.symbol_table.type_entry(id).key.canonical())
         }
         Type::List(t) => Type::List(Box::new(canonical(*t, owner, ctx)?)),
+        Type::Vector(t) => Type::Vector(Box::new(canonical(*t, owner, ctx)?)),
+        Type::Map(a, b) => Type::Map(
+            Box::new(canonical(*a, owner, ctx)?),
+            Box::new(canonical(*b, owner, ctx)?),
+        ),
+        Type::Fn(args, result, effects) => Type::Fn(
+            args.into_iter()
+                .map(|t| canonical(t, owner, ctx))
+                .collect::<Result<_, _>>()?,
+            Box::new(canonical(*result, owner, ctx)?),
+            effects,
+        ),
         Type::Option(t) => Type::Option(Box::new(canonical(*t, owner, ctx)?)),
         Type::Result(a, b) => Type::Result(
             Box::new(canonical(*a, owner, ctx)?),
@@ -160,11 +172,13 @@ pub(super) fn binders(citation: Citation<'_>, ctx: &CodegenContext) -> Result<St
 }
 
 pub(super) fn conclusion(citation: Citation<'_>, ctx: &CodegenContext) -> String {
-    format!(
-        "({}) == ({})",
-        expression(&citation.law.lhs, citation.scope, ctx),
-        expression(&citation.law.rhs, citation.scope, ctx)
-    )
+    let (left, right) = ctx.with_module_scope(citation.scope, || {
+        (
+            resolve_rewrite_output(&citation.law.lhs, ctx),
+            resolve_rewrite_output(&citation.law.rhs, ctx),
+        )
+    });
+    super::equality(&left, &right, ctx)
 }
 
 /// Plain source laws keep their original backend strategy. A selected plain

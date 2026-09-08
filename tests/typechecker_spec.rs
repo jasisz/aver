@@ -5437,3 +5437,71 @@ fn a_rejected_given_does_not_stamp_its_samples() {
         "a sample the given rejected must not be stamped with the declared type"
     );
 }
+
+#[test]
+fn ordinary_law_templates_have_scoped_primitive_interpolation_types() {
+    use aver::ast::{Expr, StrPart, VerifyKind};
+    use aver::types::Type;
+    let items = parse(include_str!("fixtures/dafny_structure/strings/plain.av"));
+    let errors = run_type_check(&items);
+    assert!(errors.is_empty(), "{errors:?}");
+    let mut saw = [false; 3];
+    let mut embeds = 0;
+    for item in &items {
+        let TopLevel::Verify(block) = item else {
+            continue;
+        };
+        let VerifyKind::Law(law) = &block.kind else {
+            continue;
+        };
+        for expression in [&law.lhs, &law.rhs] {
+            aver::codegen::expr_walk::walk(expression, &mut |expression| {
+                if let Expr::InterpolatedStr(parts) = &expression.node {
+                    for part in parts {
+                        if let StrPart::Parsed(value) = part {
+                            embeds += 1;
+                            match value.ty() {
+                                Some(Type::Int) => saw[0] = true,
+                                Some(Type::Bool) => saw[1] = true,
+                                Some(Type::Str) => saw[2] = true,
+                                ty => panic!(
+                                    "ordinary template display has no resolved primitive type: {ty:?}"
+                                ),
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    }
+    assert!(embeds >= 8);
+    assert_eq!(saw, [true; 3]);
+}
+
+#[test]
+fn law_template_typing_keeps_sample_literal_discharge_independent() {
+    use aver::ast::VerifyKind;
+    use aver::types::Type;
+    let items = parse(
+        "fn divide(n: Int, d: Int) -> Result<Int, String>\n    Int.div(n, d)\nverify divide law reflexive\n    given n: Int = [6]\n    given d: Int = [3, 0]\n    Int.div(n, d) => Int.div(n, d)\n",
+    );
+    let errors = run_type_check(&items);
+    assert!(errors.is_empty(), "{errors:?}");
+    let block = items
+        .iter()
+        .find_map(|item| match item {
+            TopLevel::Verify(block) => Some(block),
+            _ => None,
+        })
+        .unwrap();
+    let VerifyKind::Law(law) = &block.kind else {
+        panic!("law expected");
+    };
+    let result = Type::Result(Box::new(Type::Int), Box::new(Type::Str));
+    assert_eq!(law.lhs.ty(), Some(&result));
+    assert_eq!(law.rhs.ty(), Some(&result));
+    assert_eq!(block.cases[0].0.ty(), Some(&Type::Int));
+    assert_eq!(block.cases[0].1.ty(), Some(&Type::Int));
+    assert_eq!(block.cases[1].0.ty(), Some(&result));
+    assert_eq!(block.cases[1].1.ty(), Some(&result));
+}

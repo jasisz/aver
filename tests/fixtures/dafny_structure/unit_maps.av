@@ -1,0 +1,34 @@
+module DafnyUnitMaps
+    intent = "Unit-valued maps preserve membership through typed finite-set operations."
+    effects []
+
+fn stored(m: Map<Int, Unit>, key: Int, value: Unit) -> Option<Unit>
+    Map.get(Map.set(m, key, value), key)
+
+verify stored law unitVariable
+    given m: Map<Int, Unit> = [{1 => Unit}, {2 => Unit}]
+    given key: Int = [-1, 0, 1]
+    given value: Unit = [Unit]
+    because stored(m, key, value) == Option.Some(value)
+    using []
+    stored(m, key, value) => Option.Some(value)
+
+fn fromPairs(pairs: List<Tuple<Int, Unit>>) -> Map<Int, Unit>
+    Map.fromList(pairs)
+
+verify fromPairs law singleton
+    given key: Int = [-1, 0, 1]
+    given value: Unit = [Unit]
+    because fromPairs([(key, value)]) == {key => value}
+    using []
+    fromPairs([(key, value)]) => {key => value}
+
+fn emptyBuild(marker: Int) -> Map<Int, Unit>
+    pairs: List<Tuple<Int, Unit>> = []
+    Map.fromList(pairs)
+
+verify emptyBuild law empty
+    given marker: Int = [-1, 0, 1]
+    because Map.len(emptyBuild(marker)) == 0
+    using []
+    emptyBuild(marker) => {}

@@ -5109,7 +5109,7 @@ verify digits law readsBackBigEndian
     assert!(lean.contains("termination_by value.toNat"), "{lean}");
     assert!(
         lean.contains(
-            "have key : ∀ (k : Nat) (value : Int) (acc : List Int), value.toNat ≤ k → digits value acc = (acc.reverse ++ (digits value [])) := by"
+            "have key : ∀ (k : Nat) (value : Int) (acc : List Int), value.toNat ≤ k → digits value acc = (acc.reverse ++ (digits value ([] : List Int))) := by"
         ),
         "the accumulator law must be proved by fuel induction:\n{lean}"
     );
@@ -5121,12 +5121,14 @@ verify digits law readsBackBigEndian
     );
     assert!(
         lean.contains(
-            "theorem digits_law_readsBackBigEndian : ∀ (m : Int), (m >= 0) = true -> bigEndian ((digits m []).reverse) 0 = m := by"
+            "theorem digits_law_readsBackBigEndian : ∀ (m : Int), (m >= 0) = true -> bigEndian ((digits m ([] : List Int)).reverse) 0 = m := by"
         ),
         "the when-law must be stated universally:\n{lean}"
     );
     assert!(
-        lean.contains("have l1 := digits_law_accumulatorComesFirst (m / 256) ((m % 256) :: [])"),
+        lean.contains(
+            "have l1 := digits_law_accumulatorComesFirst (m / 256) ((m % 256) :: ([] : List Int))"
+        ),
         "the looping accumulator law is cited as a ground instance:\n{lean}"
     );
     for base in [

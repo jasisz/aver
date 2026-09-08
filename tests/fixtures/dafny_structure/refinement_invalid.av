@@ -1,0 +1,21 @@
+module DafnyRefinementInvalid
+    intent = "An unchecked construction must fail its subset obligation even with a reflexive law."
+    exposes opaque [Positive]
+    effects []
+
+record Positive
+    value: Int
+
+fn fromInt(value: Int) -> Result<Positive, String>
+    match value >= 0
+        true -> Result.Ok(Positive(value = value))
+        false -> Result.Err("negative value")
+
+fn unchecked(value: Int) -> Positive
+    Positive(value = value)
+
+verify unchecked law falseConstruction
+    given value: Int = [0, 7]
+    because true
+    using []
+    unchecked(value) => unchecked(value)

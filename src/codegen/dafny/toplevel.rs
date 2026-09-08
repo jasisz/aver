@@ -221,7 +221,8 @@ pub fn emit_type_def_in_scope(
                 let Some(support) = emit_packed_refinement_support(name, ctx) else {
                     return Some(definition);
                 };
-                return Some(format!("{definition}\n{support}"));
+                let endian = emit_byte_endian_support(name, scope, ctx).unwrap_or_default();
+                return Some(format!("{definition}\n{support}\n{endian}"));
             }
             let field_strs: Vec<String> = fields
                 .iter()
@@ -252,24 +253,119 @@ fn emit_packed_refinement_support(name: &str, ctx: &CodegenContext) -> Option<St
     }
     let stem = super::expr::packed_refinement_helper_stem(name);
     Some(format!(
-        r#"function {stem}Append(a: {name}, b: {name}): {name}
+        r#"function {stem}Append(a: {name}, b: {name}): (result: {name})
+  ensures result == a + b
   decreases |a|
 {{
   if |a| == 0 then b else [a[0]] + {stem}Append(a[1..], b)
 }}
 
-function {stem}Take(a: {name}, n: int): {name}
+function {stem}Take(a: {name}, n: int): (result: {name})
+  ensures result == a[..(if n <= 0 then 0 else if n >= |a| then |a| else n)]
   decreases |a|
 {{
   if |a| == 0 || n <= 0 then []
   else [a[0]] + {stem}Take(a[1..], n - 1)
 }}
 
-function {stem}Drop(a: {name}, n: int): {name}
+function {stem}Drop(a: {name}, n: int): (result: {name})
+  ensures result == a[(if n <= 0 then 0 else if n >= |a| then |a| else n)..]
   decreases |a|
 {{
   if |a| == 0 || n <= 0 then a
   else {stem}Drop(a[1..], n - 1)
+}}
+"#
+    ))
+}
+
+/// A canonical byte subset with exactly the shared octet interval. Native
+/// encoder helpers are emitted only for this builtin contract, not another
+/// record with the same spelling or a different element restriction.
+pub(super) fn native_endian_bytes_type(ctx: &CodegenContext) -> Option<Type> {
+    let key = crate::ir::TypeKey::in_module("Bytes", "Bytes");
+    let id = ctx.symbol_table.type_id_of(&key)?;
+    let interval = crate::ir::interval::Interval {
+        lo: crate::ir::interval::Bound::Finite(0),
+        hi: crate::ir::interval::Bound::Finite(255),
+    };
+    if !ctx.proof_ir.refined_types.contains_key(&id)
+        || !ctx
+            .symbol_table
+            .literal_refinements()
+            .iter()
+            .any(|ctor| ctor.type_id == id && ctor.element_interval == interval)
+    {
+        return None;
+    }
+    Some(Type::named_resolved(id, key.canonical()))
+}
+
+/// Encode directly into the checked subset. Each recursive result carries
+/// its byte predicate, and each postcondition proves equality to the existing
+/// common arithmetic recurrence. No range fact is assumed by callers.
+fn emit_byte_endian_support(
+    name: &str,
+    scope: Option<&str>,
+    ctx: &CodegenContext,
+) -> Option<String> {
+    let bytes = native_endian_bytes_type(ctx)?;
+    let key = match scope {
+        Some(scope) => crate::ir::TypeKey::in_module(scope, name),
+        None => crate::ir::TypeKey::entry(name),
+    };
+    if ctx.symbol_table.type_id_of(&key) != bytes.named_id() {
+        return None;
+    }
+    let stem = super::expr::packed_refinement_helper_stem(name);
+    // A one-element sequence needs one more predicate unfolding than the
+    // default budget. This is a local verifier hint on the exact FnId used
+    // by the subset invariant, not semantic fuel or a termination premise.
+    let predicate_fuel = match &ctx
+        .proof_ir
+        .refined_types
+        .get(&bytes.named_id()?)?
+        .invariant
+        .expr
+        .node
+    {
+        crate::ir::hir::ResolvedExpr::Call(crate::ir::hir::ResolvedCallee::Fn(id), _) => {
+            let function = &ctx.symbol_table.fn_entry(*id).key;
+            let local = aver_name_to_dafny(&function.name);
+            let target = match function.scope_str() {
+                Some(owner) if Some(owner) != scope => {
+                    format!("{}.{}", super::dafny_module_name(owner), local)
+                }
+                _ => local,
+            };
+            format!("{{:fuel {target}, 4}} ")
+        }
+        _ => String::new(),
+    };
+    Some(format!(
+        r#"function {stem}LittleEndian(value: int, width: int): {name}
+  requires value >= 0 && width >= 0
+  ensures {stem}LittleEndian(value, width) == IntLittleEndianBytes(value, width)
+  decreases width
+{{
+  if width == 0 then []
+  else [value % 256] + {stem}LittleEndian(value / 256, width - 1)
+}}
+
+function {predicate_fuel}{stem}Octet(value: int): {name}
+  requires 0 <= value <= 255
+  ensures {stem}Octet(value) == [value]
+{{
+  [value]
+}}
+
+function {stem}BigEndian(value: int, width: int): {name}
+  requires value >= 0 && width >= 0
+  ensures {stem}BigEndian(value, width) == IntBigEndianBytes(value, width)
+  decreases width
+{{
+  if width == 0 then []
+  else {stem}Append({stem}BigEndian(value / 256, width - 1), {stem}Octet(value % 256))
 }}
 "#
     ))
@@ -505,9 +601,7 @@ fn collect_result_proven_requirements(
 }
 
 fn lower_pure_question_bang_for_emit(fd: &FnDef) -> Option<FnDef> {
-    crate::types::checker::effect_lifting::lower_pure_question_bang_fn(fd)
-        .ok()
-        .flatten()
+    super::propagation::lower_pure_fn(fd).ok().flatten()
 }
 
 /// Emit the body of a function. Visible to sibling modules in the

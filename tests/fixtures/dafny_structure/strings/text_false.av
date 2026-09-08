@@ -1,0 +1,21 @@
+module TextOperationsFalse
+    intent = "Matching a sample substring or whitespace-only sample cannot justify a universal text claim."
+    effects []
+
+fn contains(value: String) -> Bool
+    String.contains(value, "🦀")
+
+fn trimmed(value: String) -> String
+    String.trim(value)
+
+verify contains law falseUniversalNeedle
+    given value: String = ["🦀"]
+    because contains(value)
+    using []
+    contains(value) => contains(value)
+
+verify trimmed law falseEmpty
+    given value: String = ["", " 　"]
+    because trimmed(value) == ""
+    using []
+    trimmed(value) => trimmed(value)
