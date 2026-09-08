@@ -150,6 +150,70 @@ verify repeat law threeValues
 }
 
 #[test]
+fn dafny_sequence_composition_preserves_order_and_checks_cited_fields() {
+    let main = include_str!("../fixtures/source_recursion/framing/main.av");
+    let codec = include_str!("../fixtures/source_recursion/framing/codec.av");
+    let (before, reason_and_law) = main.split_once("fn roundtrip").unwrap();
+    let (reason, law) = reason_and_law.split_once("verify send law").unwrap();
+    let false_reason = format!(
+        "{before}fn roundtrip{}verify send law{law}",
+        reason.replace("rest = suffix", "rest = List.reverse(suffix)")
+    );
+    for (name, source, expected) in [
+        ("positive", main.to_string(), true),
+        ("reordered_reason", false_reason, false),
+        (
+            "reordered_claim",
+            main.replace(
+                "rest = suffix, consumed = List.len",
+                "rest = List.reverse(suffix), consumed = List.len",
+            ),
+            false,
+        ),
+        (
+            "false_supplier",
+            main.replacen(
+                "Packet(value = value, rest = suffix, consumed = 4)",
+                "Packet(value = value + 1, rest = suffix, consumed = 4)",
+                1,
+            ),
+            false,
+        ),
+    ] {
+        let dir = temp_output_dir(&format!("aver-framing-{name}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("codec.av"), codec).unwrap();
+        let path = dir.join("main.av");
+        std::fs::write(&path, source).unwrap();
+        if name.starts_with("reordered") {
+            // Empty/singleton samples cannot distinguish either reordering.
+            // The universal checker must still reject the incorrect law.
+            let sampled = Command::new(env!("CARGO_BIN_EXE_aver"))
+                .args([
+                    "verify",
+                    path.to_str().unwrap(),
+                    "--module-root",
+                    dir.to_str().unwrap(),
+                ])
+                .output()
+                .unwrap();
+            assert!(sampled.status.success(), "{}", format_output(&sampled));
+        }
+        let Some(summary) = check(path.to_str().unwrap(), "dafny") else {
+            return;
+        };
+        assert_eq!(summary["passed"], expected, "{name}: {summary}");
+        if !expected {
+            assert!(summary["errors"].as_u64().unwrap() > 0, "{name}: {summary}");
+        }
+    }
+    let Some(summary) = check("tests/fixtures/source_recursion/framing/typed.av", "dafny") else {
+        return;
+    };
+    assert_eq!(summary["passed"], true, "{summary}");
+}
+
+#[test]
 fn source_recursion_identical_positive_sources_pass_both_checkers() {
     for (source, laws) in [
         ("tests/fixtures/guarded_countdown_digits.av", 4),

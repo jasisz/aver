@@ -1,0 +1,54 @@
+module Framing
+    intent = "Compose independently verified fields behind a marker and preserve arbitrary trailing data."
+    depends [Codec]
+    effects []
+
+record Packet
+    value: Int
+    rest: List<Int>
+    consumed: Int
+
+fn field(width: Int, items: List<Int>) -> Packet
+    Packet(value = Codec.read(List.take(items, width)), rest = List.drop(items, width), consumed = width + 1)
+
+verify field law shortField
+    given value: Int = [0, 999]
+    given suffix: List<Int> = [[], [7]]
+    when Bool.and(0 <= value, value < 1000)
+    using [Codec.digits.threeDigits, Codec.digits.threeLength]
+    field(3, List.concat(Codec.digits(value, 3), suffix)) => Packet(value = value, rest = suffix, consumed = 4)
+
+verify field law longField
+    given value: Int = [0, 99999]
+    given suffix: List<Int> = [[], [7]]
+    when Bool.and(0 <= value, value < 100000)
+    using [Codec.digits.fiveDigits, Codec.digits.fiveLength]
+    field(5, List.concat(Codec.digits(value, 5), suffix)) => Packet(value = value, rest = suffix, consumed = 6)
+
+fn dispatch(tag: Int, items: List<Int>) -> Packet
+    match tag
+        17 -> field(3, items)
+        _ -> field(5, items)
+
+fn receive(items: List<Int>) -> Packet
+    match items
+        [] -> Packet(value = 0, rest = [], consumed = 0)
+        [head, ..tail] -> dispatch(head, tail)
+
+fn send(value: Int) -> List<Int>
+    match value < 1000
+        true -> List.prepend(17, Codec.digits(value, 3))
+        false -> List.prepend(23, Codec.digits(value, 5))
+
+fn roundtrip(value: Int, suffix: List<Int>) -> Bool
+    match value < 1000
+        true -> receive(List.concat(send(value), suffix)) == Packet(value = value, rest = suffix, consumed = 4)
+        false -> receive(List.concat(send(value), suffix)) == Packet(value = value, rest = suffix, consumed = 6)
+
+verify send law receivesBack
+    given value: Int = [0, 999, 1000, 99999]
+    given suffix: List<Int> = [[], [7]]
+    when Bool.and(0 <= value, value < 100000)
+    because roundtrip(value, suffix)
+    using [field.shortField, field.longField, Codec.digits.threeLength, Codec.digits.fiveLength]
+    receive(List.concat(send(value), suffix)) => Packet(value = value, rest = suffix, consumed = List.len(send(value)))

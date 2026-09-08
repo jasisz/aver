@@ -10,6 +10,9 @@ use super::expr::{aver_name_to_dafny, emit_expr};
 /// Checked sequence identities give the SMT solver ground-independent rewrite
 /// facts. In particular, recursive calls with `[x] + []` must match calls with
 /// `[x]`; unfolding the worker alone does not reliably expose this equality.
+/// A consumer matching the first element also needs append reassociated under
+/// that cons. Explicitly checking the identity exposes the suffix term at which
+/// a cited payload law applies; it does not assume anything about the payload.
 pub(super) fn sequence_identities(law: &VerifyLaw, ctx: &CodegenContext) -> Vec<String> {
     let mut elements = std::collections::BTreeSet::new();
     let scope = ctx.active_module_scope();
@@ -31,6 +34,7 @@ pub(super) fn sequence_identities(law: &VerifyLaw, ctx: &CodegenContext) -> Vec<
             [
                 format!("  forall xs: seq<{element}> ensures xs + [] == xs && [] + xs == xs {{ }}"),
                 format!("  forall x: {element} ensures ListReverse([x]) == [x] {{ }}"),
+                format!("  forall head: {element}, xs: seq<{element}>, ys: seq<{element}> ensures ([head] + xs) + ys == [head] + (xs + ys) {{ }}"),
             ]
         })
         .collect()

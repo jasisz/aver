@@ -331,3 +331,21 @@ imported functions beside colliding local names, and Bool sequence reversal.
 Missing bounds, false intermediate steps and false unused suppliers all fail
 actual Dafny checking. The remaining BTC modules still have open proofs or
 unsupported operations; this checkpoint does not establish full BTC or K5.
+
+## Sequence composition checkpoint
+
+All six `CompactSize` laws now pass with imports checked, bringing strict
+whole-module BTC coverage to **23/104**. No BTC source or claim changed.
+
+Dafny's checked sequence facts now also expose
+`([head] + prefix) + suffix == [head] + (prefix + suffix)`. This lets a parser's
+head/tail match connect to an already proved payload law at the complete suffix.
+The fact is proved for each concrete element type; it neither assumes a cited
+law nor changes an obligation. This is a Dafny automation hint over existing
+list semantics, so it needs no new source recognizer or ProofIR contract.
+
+An independent decimal framing fixture reproduces two open obligations before
+the change and passes afterwards. Bool and record payloads also check. Incorrect
+reordering of a trailing sequence passes the fixture's empty/singleton samples
+but fails universal verification, both as an intermediate reason and as the
+final claim. A false cited field law is rejected as well.
