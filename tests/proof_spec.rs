@@ -35,6 +35,8 @@ mod cross_file;
 mod dafny_guidance;
 #[path = "proof_spec/dafny_inline.rs"]
 mod dafny_inline;
+#[path = "proof_spec/dafny_structured.rs"]
+mod dafny_structured;
 #[path = "proof_spec/dep_law_names.rs"]
 mod dep_law_names;
 #[path = "proof_spec/dependency_effects.rs"]

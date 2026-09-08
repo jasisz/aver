@@ -197,7 +197,7 @@ fn wasm_checks_declared_explanations_even_when_the_claim_is_true() {
 }
 
 #[test]
-fn dafny_checks_integer_explanations_and_declines_unsupported_selection() {
+fn dafny_checks_integer_and_option_explanations_without_dropping_false_steps() {
     if Command::new("dafny").arg("--version").output().is_err() {
         return;
     }
@@ -223,22 +223,13 @@ fn dafny_checks_integer_explanations_and_declines_unsupported_selection() {
         .unwrap_or_else(|| panic!("{}", format_output(&run)));
     let summary: serde_json::Value = serde_json::from_str(json).unwrap();
     assert_eq!(summary["passed"], false, "{summary}");
-    // The Option-valued selection proof stays outside the initial guided
-    // subset. Both integer laws are attempted; the unguarded positive reason
-    // must fail even though its identity conclusion and samples are true.
-    assert_eq!(summary["declined"], 1, "{summary}");
+    // Option selection and both integer laws are now admitted. The unguarded
+    // positive reason must still fail despite its true conclusion and samples.
+    assert_eq!(summary["declined"].as_u64().unwrap_or(0), 0, "{summary}");
     assert!(summary["errors"].as_u64().unwrap() > 0, "{summary}");
     assert_eq!(summary["axioms"], 0, "{summary}");
+    assert_eq!(summary["omitted"], 0, "{summary}");
     assert_eq!(summary["timeouts"], 0, "{summary}");
-    assert_eq!(
-        summary["declined_claims"].as_array().unwrap().len(),
-        1,
-        "{summary}"
-    );
-    assert_eq!(
-        summary["declined_claims"][0]["claim"], "amount.selectionIsClamped",
-        "{summary}"
-    );
     let _ = std::fs::remove_dir_all(dir);
 }
 

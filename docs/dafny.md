@@ -15,7 +15,7 @@ For an ordinary `verify law` block without proof guidance, the backend emits two
 
 The samples may time out on deeply recursive computations — that is expected. The lemma is the primary verification target.
 
-For guided laws, the [Int/Bool guidance pilot](dafny-guidance-spike.md) emits
+For guided laws, the [first-order guidance pilot](dafny-guidance-spike.md) emits
 separate lemmas for every `because`, the final implication and their parent law.
 It supports explicit local `using` citations, retains each guard, and explicitly
 declines unsupported dependency cones. Use `aver verify` to execute the examples.

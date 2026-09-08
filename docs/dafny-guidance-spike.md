@@ -1,16 +1,18 @@
 # Guided proof portability: the Dafny spike
 
 This experiment sends identical Aver files through Lean and Dafny. It covers a
-restricted integer/Boolean fragment of `because` and `using`; it does not
+restricted first-order fragment of `because` and `using`; it does not
 port K5's rounding proofs to Dafny.
 
 ## Supported fragment
 
-Each law needs an explicit `using` list (`using []` selects no helpers), plain
-`Int`/`Bool` givens, and a pure dependency cone in its own module.
-Arithmetic includes addition, subtraction, comparisons and multiplication of
-arbitrary integers. Boolean matches and selected scalar builtins are supported.
-Selected local laws must satisfy the same restrictions.
+Each law needs an explicit `using` list (`using []` selects no helpers) and a
+pure dependency cone in its own module. Givens may contain `Int`, `Bool`,
+`String`, lists, tuples, `Option`, `Result`, and local records or sum types.
+Every named field type, constructor, pattern, called body and selected local
+law is checked against the same restrictions. Arithmetic includes addition,
+subtraction, comparisons and multiplication of arbitrary integers. Selected
+first-order list operations use native sequences or total defined helpers.
 
 Self-recursive helpers are admitted when the existing recursion classifier
 recognizes a guarded integer countdown that subtracts a positive literal. The
@@ -20,9 +22,15 @@ predicate call is driven by an integer given can request induction on that given
 with a nonnegative decreases measure. Integer equations use ordinary unfolding
 without an unnecessary induction hint. Neither strategy inserts an assumption.
 
-Automatic selection, imported citations/functions, mutual recursion, unsupported
-countdowns, collections, records, refinements and division are explicitly
-declined. A supported-looking caller that selects an unsupported helper is
+Native structural list descent is also admitted. Boolean list reasons can
+generalize all givens while decreasing only the list length, so a fold can
+change its accumulators. For a simple source match with a unique recursive
+call, the backend instantiates the step lemma at that call’s arguments. Dafny
+must prove its guard, earlier reasons and termination; no premise is invented.
+
+Automatic selection, imported citations/functions or types, mutual recursion,
+unsupported countdowns, higher-order calls, refinements and division are
+explicitly declined. A supported-looking caller that selects an unsupported helper is
 declined as well. Admitting a recursive expression does not guarantee that Dafny
 can prove it; more complex induction arguments may still fail verification.
 
@@ -100,5 +108,25 @@ they cannot satisfy an expected failed-proof control.
 Dafny already uses nonlinear arithmetic through Z3; this extension removes the
 pilot rejection of variable products rather than enabling a new solver flag.
 For more complex arguments, source lemmas and intermediate steps still matter.
-Imported citations, exact division/result handling, records and broader induction
-remain the next portability boundaries before K5 rounding can use this backend.
+Imported citations and types, exact division, refinements and broader induction
+remain portability boundaries before K5 rounding can use this backend.
+
+## Structured source controls
+
+The comparison also includes six structured fixtures: three positive files
+containing seven laws, and three negative files. All seven laws and fourteen
+source steps pass both backends; all three negative files fail their strict
+whole-file gates. Two positive laws are complete,
+unchanged declarations from BTC `StackItem`, with their complete local function
+dependencies; see the [source provenance](../tests/fixtures/dafny_guidance_structured/README.md).
+The remaining positives exercise local sum types, list payloads, Result patterns
+and local citations. Negative controls remove a necessary guard, insert a false
+recursive reason despite a true final goal, and cite a false structured law.
+
+These slices measure individual source portability. They do not imply that the
+whole BTC StackItem module passes: unrelated unsupported laws and dependencies
+still prevent whole-file proof credit.
+
+Across all nineteen comparison cases, sixteen laws now pass both backends and
+four pass only Dafny. All eleven negative files fail both backends. These counts
+cover the selected fixtures and K5 IntegerOrder, not the full K5/BTC projects.

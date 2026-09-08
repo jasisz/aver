@@ -97,11 +97,11 @@ fn unsupported_cones_decline_before_any_guided_obligation_is_emitted() {
             .unwrap_err()
             .contains("recursive")
     );
-    let record = "record Box\n    value: Int\nfn f(box: Box) -> Int\n    box.value\nverify f law explained\n    given box: Box = [Box(value = 1)]\n    because true\n    using []\n    f(box) => f(box)\n";
+    let record = "record Box\n    value: Float\nfn f(box: Box) -> Float\n    box.value\nverify f law explained\n    given box: Box = [Box(value = 1.0)]\n    because true\n    using []\n    f(box) => f(box)\n";
     assert!(
         emitted(record, "f.explained")
             .unwrap_err()
-            .contains("plain Int/Bool")
+            .contains("unsupported first-order type Float")
     );
 }
 
@@ -204,4 +204,114 @@ fn generated_names_and_escaped_variables_cannot_capture_lemma_calls() {
             .unwrap_err()
             .contains("ambiguous emitted variable")
     );
+}
+
+#[test]
+fn local_record_construction_update_and_projection_are_checked() {
+    let source = r#"record Box
+    value: Int
+fn advance(box: Box) -> Box
+    Box.update(box, value = box.value + 1)
+verify advance law increment
+    given box: Box = [Box(value = 0)]
+    because advance(box).value == box.value + 1
+    using []
+    advance(box).value => box.value + 1
+"#;
+    let text = emitted(source, "advance.increment").unwrap();
+    assert!(text.contains("// aver:dafny-law"), "{text}");
+    assert!(!text.contains("{:axiom}"), "{text}");
+}
+
+#[test]
+fn nested_unsupported_fields_decline_even_when_samples_do_not_construct_them() {
+    let source = r#"record Payload
+    measurement: Float
+record Wrapper
+    payload: Option<Payload>
+fn identity(w: Wrapper) -> Wrapper
+    w
+verify identity law reflexive
+    given w: Wrapper = [Wrapper(payload = Option.None)]
+    because true
+    using []
+    identity(w) => w
+"#;
+    let error = emitted(source, "identity.reflexive").unwrap_err();
+    assert!(
+        error.contains("unsupported first-order type Float"),
+        "{error}"
+    );
+}
+
+#[test]
+fn algebraic_matches_and_result_branches_are_admitted() {
+    let source = r#"type Op
+    Push(Int)
+    Fail
+fn interpret(op: Op) -> Result<Int, String>
+    match op
+        Op.Push(value) -> Result.Ok(value)
+        Op.Fail -> Result.Err("failed")
+fn success(op: Op) -> Bool
+    match interpret(op)
+        Result.Ok(value) -> value == value
+        Result.Err(_) -> true
+verify success law cases
+    given op: Op = [Op.Push(1), Op.Fail]
+    because success(op)
+    using []
+    success(op) holds
+"#;
+    assert!(emitted(source, "success.cases").is_ok());
+}
+
+#[test]
+fn native_list_descent_validates_the_entire_recursive_body() {
+    let source = r#"fn lengthFrom(xs: List<Int>, acc: Int) -> Int
+    match xs
+        [] -> acc
+        [_, ..rest] -> lengthFrom(rest, acc + 1)
+verify lengthFrom law reflexive
+    given xs: List<Int> = [[], [1, 2]]
+    given acc: Int = [0, 4]
+    because lengthFrom(xs, acc) == lengthFrom(xs, acc)
+    using []
+    lengthFrom(xs, acc) => lengthFrom(xs, acc)
+"#;
+    assert!(emitted(source, "lengthFrom.reflexive").is_ok());
+    let hidden = source.replace("[] -> acc", "[] -> Int.div(acc, 2)");
+    let error = emitted(&hidden, "lengthFrom.reflexive").unwrap_err();
+    assert!(error.contains("unsupported call Int.div"), "{error}");
+}
+
+#[test]
+fn list_arguments_do_not_make_unchecked_recursion_native() {
+    let source = r#"fn loop(xs: List<Int>) -> Int
+    match xs
+        [] -> 0
+        [_, ..rest] -> loop(xs)
+verify loop law reflexive
+    given xs: List<Int> = [[]]
+    because true
+    using []
+    loop(xs) => loop(xs)
+"#;
+    let error = emitted(source, "loop.reflexive").unwrap_err();
+    assert!(error.contains("recursive"), "{error}");
+}
+
+#[test]
+fn unsupported_builtins_in_unused_bindings_still_decline() {
+    let source = r#"fn identity(xs: List<Int>) -> List<Int>
+    ignored = String.toUtf8("abc")
+    xs
+verify identity law reflexive
+    given xs: List<Int> = [[], [1]]
+    because true
+    using []
+    identity(xs) => xs
+"#;
+    let error = emitted(source, "identity.reflexive").unwrap_err();
+    assert!(error.contains("unsupported call String.toUtf8"), "{error}");
 }

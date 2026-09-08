@@ -1,0 +1,28 @@
+module StructuredMissingGuard
+    intent = "Removing the accumulator order guard must fail outside the sampled ordered pair."
+    effects []
+
+fn bigEndian(bytes: List<Int>, acc: Int) -> Int
+    ? "Most significant byte first, which is what reversing the item gives."
+    match bytes
+        [] -> acc
+        [head, ..tail] -> bigEndian(tail, acc * 256 + head)
+
+
+fn largerPrefixReason(bytes: List<Int>, lower: Int, upper: Int) -> Bool
+    ? "A larger prefix stays larger after each byte, with both prefixes advancing together."
+    match bytes
+        [] -> lower < upper
+        [head, ..tail] -> Bool.and(
+            largerPrefixReason(tail, lower * 256 + head, upper * 256 + head),
+            bigEndian(bytes, lower) < bigEndian(bytes, upper)
+        )
+
+
+verify bigEndian law missingGuard
+    given bytes: List<Int> = [[], [1, 2]]
+    given lower: Int = [0]
+    given upper: Int = [1]
+    because largerPrefixReason(bytes, lower, upper)
+    using []
+    bigEndian(bytes, lower) < bigEndian(bytes, upper) holds

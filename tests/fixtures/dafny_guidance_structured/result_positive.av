@@ -1,0 +1,29 @@
+module StructuredResultPositive
+    intent = "Result constructor equality and exhaustive patterns preserve both success payloads and error payloads."
+    effects []
+
+type Op
+    Code(Int)
+    Push(Int, List<Int>)
+
+fn rebuild(result: Result<List<Op>, Int>) -> Result<List<Op>, Int>
+    match result
+        Result.Ok(ops) -> Result.Ok(ops)
+        Result.Err(code) -> Result.Err(code)
+
+verify rebuild law identity
+    given result: Result<List<Op>, Int> = [Result.Ok([]), Result.Ok([Op.Push(76, [171])]), Result.Err(3)]
+    because rebuild(result) == result
+    using []
+    rebuild(result) => result
+
+fn unwrap(result: Result<List<Op>, Int>) -> List<Op>
+    match result
+        Result.Ok(ops) -> ops
+        Result.Err(_) -> []
+
+verify unwrap law success
+    given ops: List<Op> = [[], [Op.Code(81)], [Op.Push(76, [171])]]
+    because unwrap(Result.Ok(ops)) == ops
+    using []
+    unwrap(Result.Ok(ops)) => ops

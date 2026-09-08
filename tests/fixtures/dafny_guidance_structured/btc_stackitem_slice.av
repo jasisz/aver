@@ -1,0 +1,53 @@
+module BtcStackItemSlice
+    intent = "Exact declaration slice of BTC StackItem a6870c9; see README.md for scope and provenance."
+    effects []
+
+fn bigEndian(bytes: List<Int>, acc: Int) -> Int
+    ? "Most significant byte first, which is what reversing the item gives."
+    match bytes
+        [] -> acc
+        [head, ..tail] -> bigEndian(tail, acc * 256 + head)
+
+
+fn largerPrefixReason(bytes: List<Int>, lower: Int, upper: Int) -> Bool
+    ? "A larger prefix stays larger after each byte, with both prefixes advancing together."
+    match bytes
+        [] -> lower < upper
+        [head, ..tail] -> Bool.and(
+            largerPrefixReason(tail, lower * 256 + head, upper * 256 + head),
+            bigEndian(bytes, lower) < bigEndian(bytes, upper)
+        )
+
+
+fn validBytes(bytes: List<Int>) -> Bool
+    ? "Every element is an octet."
+    match bytes
+        [] -> true
+        [head, ..tail] -> Bool.and(Bool.and(head >= 0, head < 256), validBytes(tail))
+
+
+fn positiveReadReason(bytes: List<Int>, prefix: Int) -> Bool
+    ? "A positive magnitude prefix stays positive after every valid octet."
+    match bytes
+        [] -> bigEndian(bytes, prefix) > 0
+        [head, ..tail] -> Bool.and(positiveReadReason(tail, prefix * 256 + head), bigEndian(bytes, prefix) > 0)
+
+
+verify bigEndian law largerPrefixStaysLarger
+    given bytes: List<Int> = [[], [1, 2], [255, 0, 7], [-1, 256]]
+    given lower: Int = [-2, 0, 300]
+    given upper: Int = [-1, 1, 301]
+    when lower < upper
+    because largerPrefixReason(bytes, lower, upper)
+    using []
+    bigEndian(bytes, lower) < bigEndian(bytes, upper) holds
+
+
+verify bigEndian law positivePrefixStaysPositive
+    given bytes: List<Int> = [[], [0], [255, 0], [1, 2, 3]]
+    given prefix: Int = [1, 127, 128, 256]
+    when Bool.and(validBytes(bytes), prefix > 0)
+    because positiveReadReason(bytes, prefix)
+    using []
+    bigEndian(bytes, prefix) > 0 holds
+

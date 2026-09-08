@@ -6,8 +6,9 @@ use crate::ast::{Expr, Spanned, TopLevel, VerifyBlock, VerifyLaw};
 use crate::codegen::CodegenContext;
 
 use super::expr::{aver_name_to_dafny, emit_expr};
-use super::toplevel::{emit_type, resolve_rewrite_output};
+use super::toplevel::{emit_type_in_scope, resolve_rewrite_output};
 
+mod induction;
 mod subset;
 #[cfg(test)]
 mod tests;
@@ -42,14 +43,14 @@ fn local_blocks(ctx: &CodegenContext) -> Vec<&VerifyBlock> {
     }
 }
 
-fn binders(law: &VerifyLaw) -> String {
+fn binders(law: &VerifyLaw, ctx: &CodegenContext) -> String {
     law.givens
         .iter()
         .map(|g| {
             format!(
                 "{}: {}",
                 aver_name_to_dafny(&g.name),
-                emit_type(&g.type_name)
+                emit_type_in_scope(&g.type_name, ctx.active_module_scope().as_deref())
             )
         })
         .collect::<Vec<_>>()
@@ -80,16 +81,21 @@ fn conclusion(law: &VerifyLaw, ctx: &CodegenContext) -> String {
 /// Equalities between recursive Int values often only need unfolding; adding
 /// induction there can create untriggerable hypotheses. Dafny checks every
 /// selected induction and its decreases, without adding a source premise.
+struct Induction {
+    variables: String,
+    decreases: String,
+}
+
 fn induction_driver(
     expressions: &[&Spanned<Expr>],
     law: &VerifyLaw,
     ctx: &CodegenContext,
-) -> Option<String> {
+) -> Option<Induction> {
     fn collect(
         expr: &Spanned<Expr>,
         law: &VerifyLaw,
         ctx: &CodegenContext,
-        drivers: &mut std::collections::BTreeSet<String>,
+        drivers: &mut std::collections::BTreeSet<(String, bool)>,
     ) {
         if let Expr::FnCall(callee, args) = &expr.node {
             let name = crate::checker::expr_to_str(callee);
@@ -98,15 +104,23 @@ fn induction_driver(
                 let key = &ctx.symbol_table.fn_entry(id).key;
                 if let Some(fd) = ctx.fn_def_by_name(&key.name, key.scope_str())
                     && fd.return_type == "Bool"
-                    && let Some(index) = subset::countdown_parameter(fd, ctx)
+                    && let Some((index, list)) = subset::list_parameter(fd, ctx)
+                        .map(|index| (index, true))
+                        .or_else(|| {
+                            subset::countdown_parameter(fd, ctx).map(|index| (index, false))
+                        })
                     && let Some(arg) = args.get(index)
                     && let Expr::Ident(name) | Expr::Resolved { name, .. } = &arg.node
-                    && law
-                        .givens
-                        .iter()
-                        .any(|g| g.name == *name && g.type_name == "Int")
+                    && law.givens.iter().any(|g| {
+                        g.name == *name
+                            && if list {
+                                g.type_name.starts_with("List<")
+                            } else {
+                                g.type_name == "Int"
+                            }
+                    })
                 {
-                    drivers.insert(aver_name_to_dafny(name));
+                    drivers.insert((aver_name_to_dafny(name), list));
                 }
             }
         }
@@ -115,7 +129,24 @@ fn induction_driver(
     for expr in expressions {
         collect(expr, law, ctx, &mut drivers);
     }
-    (drivers.len() == 1).then(|| drivers.pop_first().expect("one induction driver"))
+    if drivers.len() != 1 {
+        return None;
+    }
+    let (driver, list) = drivers.pop_first().expect("one induction driver");
+    Some(if list {
+        // A fold may advance its accumulators as the list shrinks. Generalize
+        // every given, but decrease only the checked list length. Dafny proves
+        // the induction; no recursive hypothesis is added as a precondition.
+        Induction {
+            variables: arguments(law),
+            decreases: format!("|{driver}|"),
+        }
+    } else {
+        Induction {
+            variables: driver.clone(),
+            decreases: format!("if {driver} >= 0 then {driver} else 0"),
+        }
+    })
 }
 
 /// Return an explicit decline reason for every shape outside the pilot. This
@@ -133,7 +164,7 @@ pub(super) fn emit(
         Some(scope) => format!("{scope}.{id}"),
         None => id,
     };
-    let params = binders(law);
+    let params = binders(law, ctx);
     let args = arguments(law);
     let guard = law.when.as_ref().map(|e| expression(e, ctx));
     let reasons: Vec<_> = law.because.iter().map(|e| expression(e, ctx)).collect();
@@ -152,12 +183,18 @@ pub(super) fn emit(
             None => vec![&law.lhs, &law.rhs],
         };
         let driver = induction_driver(&source_expressions, law, ctx);
+        let list_induction = driver
+            .as_ref()
+            .is_some_and(|driver| driver.decreases.starts_with("|"));
         out.push(format!(
             "// aver:dafny-obligation {step_name} {source_id}.{step}"
         ));
         out.push(format!(
             "lemma {{:induction {}}} {step_name}({params})",
-            driver.as_deref().unwrap_or("false")
+            driver
+                .as_ref()
+                .map(|driver| driver.variables.as_str())
+                .unwrap_or("false")
         ));
         if let Some(guard) = &guard {
             out.push(format!("  requires {guard}"));
@@ -167,7 +204,7 @@ pub(super) fn emit(
         }
         out.push(format!("  ensures {step_goal}"));
         if let Some(driver) = driver {
-            out.push(format!("  decreases if {driver} >= 0 then {driver} else 0"));
+            out.push(format!("  decreases {}", driver.decreases));
         }
         out.push("{".to_string());
         for (cited, dependency) in &citations {
@@ -182,11 +219,18 @@ pub(super) fn emit(
                 .unwrap_or_default();
             out.push(format!(
                 "  forall {}{range} ensures {} {{",
-                binders(dependency),
+                binders(dependency, ctx),
                 conclusion(dependency, ctx)
             ));
             out.push(format!("    {cited_name}({});", arguments(dependency)));
             out.push("  }".to_string());
+        }
+        if list_induction {
+            for expr in &source_expressions {
+                if let Some(calls) = induction::emit_list_calls(expr, law, &step_name, ctx) {
+                    out.extend(calls);
+                }
+            }
         }
         out.push(format!("  assert {step_goal};"));
         out.push("}".to_string());

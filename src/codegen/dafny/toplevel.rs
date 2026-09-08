@@ -29,7 +29,7 @@ pub fn emit_type(type_str: &str) -> String {
     type_to_dafny(&parse_type_annotation(type_str))
 }
 
-fn emit_type_in_scope(type_str: &str, scope: Option<&str>) -> String {
+pub(super) fn emit_type_in_scope(type_str: &str, scope: Option<&str>) -> String {
     type_to_dafny_in_scope(&parse_type_annotation(type_str), scope)
 }
 
@@ -1269,7 +1269,7 @@ fn replace_ident_word(s: &str, word: &str, repl: &str) -> String {
 /// intact even when a binder name collides with the list param). String literals
 /// are copied verbatim. Used by `dafny_threaded_accumulator_arg`, where the cons
 /// head/tail binder spellings can otherwise collide on a sequential rewrite.
-fn replace_ident_words(s: &str, subs: &[(String, String)]) -> String {
+pub(super) fn replace_ident_words(s: &str, subs: &[(String, String)]) -> String {
     let is_ident = |c: char| c.is_ascii_alphanumeric() || c == '_';
     let chars: Vec<char> = s.chars().collect();
     let mut out = String::new();

@@ -4,7 +4,8 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use crate::ast::{
-    BinOp, Expr, FnDef, Literal, Pattern, Spanned, Stmt, VerifyBlock, VerifyKind, VerifyLaw,
+    BinOp, Expr, FnDef, Literal, Pattern, Spanned, Stmt, Type, TypeDef, VerifyBlock, VerifyKind,
+    VerifyLaw,
 };
 use crate::codegen::CodegenContext;
 use crate::ir::FnId;
@@ -12,26 +13,14 @@ use crate::ir::FnId;
 use super::{label, lemma_name};
 use crate::codegen::dafny::expr::aver_name_to_dafny;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Scalar {
-    Int,
-    Bool,
-}
+#[path = "types.rs"]
+mod types;
+use types::{hole, merge};
 
-type Env = BTreeMap<String, Scalar>;
+type Env = BTreeMap<String, Type>;
 type Citation<'a> = (&'a VerifyBlock, &'a VerifyLaw);
 
-fn scalar(name: &str) -> Result<Scalar, String> {
-    match name {
-        "Int" => Ok(Scalar::Int),
-        "Bool" => Ok(Scalar::Bool),
-        _ => Err(format!(
-            "only plain Int/Bool types are supported, found {name}"
-        )),
-    }
-}
-
-fn bind(env: &mut Env, name: &str, ty: Scalar) -> Result<(), String> {
+fn bind(env: &mut Env, name: &str, ty: Type) -> Result<(), String> {
     let emitted = aver_name_to_dafny(name);
     if name.chars().all(|c| c == '_') || env.keys().any(|key| aver_name_to_dafny(key) == emitted) {
         return Err(format!("ambiguous emitted variable name {name}"));
@@ -47,20 +36,22 @@ struct Checker<'a> {
     laws: BTreeMap<String, Citation<'a>>,
     checking_laws: BTreeSet<String>,
     checked_laws: BTreeSet<String>,
+    checked_types: HashSet<crate::ir::TypeId>,
 }
 
 impl<'a> Checker<'a> {
-    fn expression(&mut self, expr: &Spanned<Expr>, env: &Env) -> Result<Scalar, String> {
+    fn expression(&mut self, expr: &Spanned<Expr>, env: &Env) -> Result<Type, String> {
         match &expr.node {
-            Expr::Literal(Literal::Int(_)) => Ok(Scalar::Int),
-            Expr::Literal(Literal::Bool(_)) => Ok(Scalar::Bool),
+            Expr::Literal(Literal::Int(_) | Literal::BigInt(_)) => Ok(Type::Int),
+            Expr::Literal(Literal::Bool(_)) => Ok(Type::Bool),
+            Expr::Literal(Literal::Str(_)) => Ok(Type::Str),
             Expr::Ident(name) | Expr::Resolved { name, .. } => env
                 .get(name)
-                .copied()
-                .ok_or_else(|| format!("only local scalar values are supported: {name}")),
+                .cloned()
+                .ok_or_else(|| format!("only local first-order values are supported: {name}")),
             Expr::Neg(inner) => {
-                self.expect(inner, env, Scalar::Int)?;
-                Ok(Scalar::Int)
+                self.expect(inner, env, Type::Int)?;
+                Ok(Type::Int)
             }
             Expr::BinOp(op, lhs, rhs) => {
                 if *op == BinOp::Div {
@@ -68,19 +59,29 @@ impl<'a> Checker<'a> {
                 }
                 let left = self.expression(lhs, env)?;
                 let right = self.expression(rhs, env)?;
-                if left != right || (!matches!(op, BinOp::Eq | BinOp::Neq) && left != Scalar::Int) {
-                    return Err("only scalar arithmetic and comparisons are supported".to_string());
+                let ty = merge(&left, &right)?;
+                if matches!(op, BinOp::Eq | BinOp::Neq) {
+                    return Ok(Type::Bool);
+                }
+                if ty == Type::Str && *op == BinOp::Add {
+                    return Ok(Type::Str);
+                }
+                if ty != Type::Int {
+                    return Err("only Int arithmetic and comparisons are supported".to_string());
                 }
                 Ok(if matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul) {
-                    Scalar::Int
+                    Type::Int
                 } else {
-                    Scalar::Bool
+                    Type::Bool
                 })
             }
             Expr::FnCall(callee, args) => {
                 let name = crate::checker::expr_to_str(callee);
                 if env.contains_key(&name) {
                     return Err("function-valued calls are outside this pilot".to_string());
+                }
+                if crate::ast::dotted_name_spells_constructor(&name) {
+                    return self.constructor(&name, args, env);
                 }
                 let scope = self.ctx.active_module_scope();
                 if let Some(id) = self
@@ -100,19 +101,18 @@ impl<'a> Checker<'a> {
                         return Err(format!("only pure first-order calls are supported: {name}"));
                     }
                     for ((_, ty), arg) in fd.params.iter().zip(args) {
-                        self.expect(arg, env, scalar(ty)?)?;
+                        let expected = self.annotation(ty)?;
+                        self.expect(arg, env, expected)?;
                     }
-                    let result = scalar(&fd.return_type)?;
+                    let result = self.annotation(&fd.return_type)?;
                     if self.ctx.recursive_fns.contains(&id)
                         && countdown_parameter(fd, self.ctx).is_none()
+                        && list_parameter(fd, self.ctx).is_none()
                     {
                         return Err(format!(
-                            "recursive function {name} is outside the guarded Int countdown pilot"
+                            "recursive function {name} requires checked Int or List descent"
                         ));
                     }
-                    // A self-call revisits the body being checked, whose remaining
-                    // expressions must still be validated. Any other back edge is
-                    // mutual recursion and must not reach Dafny's fuel/opaque lane.
                     if self.checking_functions.contains(&id)
                         && self.checking_functions.last() != Some(&id)
                     {
@@ -124,22 +124,20 @@ impl<'a> Checker<'a> {
                         self.checking_functions.push(id);
                         let mut locals = Env::new();
                         for (param, ty) in &fd.params {
-                            bind(&mut locals, param, scalar(ty)?)?;
+                            let ty = self.annotation(ty)?;
+                            bind(&mut locals, param, ty)?;
                         }
                         let mut body_type = None;
                         for stmt in fd.body.stmts() {
                             match stmt {
                                 Stmt::Binding(local, annotation, value) => {
-                                    let ty = self.expression(value, &locals)?;
-                                    if annotation
-                                        .as_deref()
-                                        .map(scalar)
-                                        .transpose()?
-                                        .is_some_and(|ann| ann != ty)
-                                    {
-                                        return Err("unsupported local binding type".to_string());
+                                    let mut ty = self.expression(value, &locals)?;
+                                    if let Some(annotation) = annotation {
+                                        ty = merge(&ty, &self.annotation(annotation)?)?;
                                     }
-                                    bind(&mut locals, local, ty)?;
+                                    if local != "_" {
+                                        bind(&mut locals, local, ty)?;
+                                    }
                                     body_type = None;
                                 }
                                 Stmt::Expr(value) => {
@@ -148,67 +146,121 @@ impl<'a> Checker<'a> {
                             }
                         }
                         self.checking_functions.pop();
-                        if body_type != Some(result) {
-                            return Err("unsupported function result".to_string());
-                        }
+                        merge(
+                            &body_type.ok_or("unsupported empty function result")?,
+                            &result,
+                        )?;
                     }
                     return Ok(result);
                 }
-                let (arity, input, output) = match name.as_str() {
-                    "Bool.and" | "Bool.or" => (2, Scalar::Bool, Scalar::Bool),
-                    "Bool.not" => (1, Scalar::Bool, Scalar::Bool),
-                    "Int.abs" => (1, Scalar::Int, Scalar::Int),
-                    "Int.min" | "Int.max" => (2, Scalar::Int, Scalar::Int),
-                    _ => return Err(format!("unsupported call {name}")),
-                };
-                if args.len() != arity {
-                    return Err(format!("unsupported arity for {name}"));
-                }
-                for arg in args {
-                    self.expect(arg, env, input)?;
-                }
-                Ok(output)
+                self.builtin(&name, args, env)
             }
             Expr::TailCall(call) => {
-                // TCO preserves the exact source call; validate it through the
-                // same path, including every argument and the recursive body.
                 let callee = Spanned::new(Expr::Ident(call.target.clone()), expr.line);
                 let call =
                     Spanned::new(Expr::FnCall(Box::new(callee), call.args.clone()), expr.line);
                 self.expression(&call, env)
             }
             Expr::Match { subject, arms } => {
-                self.expect(subject, env, Scalar::Bool)?;
-                let mut covered = [false; 2];
+                let subject = self.expression(subject, env)?;
+                let mut covered = BTreeSet::new();
                 let mut result = None;
                 for arm in arms {
-                    match arm.pattern {
-                        Pattern::Literal(Literal::Bool(value)) => {
-                            covered[usize::from(value)] = true
-                        }
-                        Pattern::Wildcard => covered = [true; 2],
-                        _ => return Err("only literal Bool matches are supported".to_string()),
-                    }
-                    let ty = self.expression(&arm.body, env)?;
-                    if result.is_some_and(|old| old != ty) {
-                        return Err("unsupported match result".to_string());
-                    }
-                    result = Some(ty);
+                    let mut locals = env.clone();
+                    self.pattern(&arm.pattern, &subject, &mut locals, &mut covered)?;
+                    let ty = self.expression(&arm.body, &locals)?;
+                    result = Some(match result {
+                        Some(old) => merge(&old, &ty)?,
+                        None => ty,
+                    });
                 }
-                if covered != [true; 2] {
-                    return Err("Bool match must cover both values".to_string());
-                }
+                self.exhaustive(&subject, &covered)?;
                 result.ok_or_else(|| "empty match is outside this pilot".to_string())
             }
-            _ => Err("expression is outside the Int/Bool guidance pilot".to_string()),
+            Expr::List(items) => {
+                let mut inner = hole();
+                for item in items {
+                    inner = merge(&inner, &self.expression(item, env)?)?;
+                }
+                Ok(Type::List(Box::new(inner)))
+            }
+            Expr::Tuple(items) => Ok(Type::Tuple(
+                items
+                    .iter()
+                    .map(|item| self.expression(item, env))
+                    .collect::<Result<_, _>>()?,
+            )),
+            Expr::Constructor(name, arg) => {
+                let args: Vec<_> = arg.iter().map(|arg| arg.as_ref().clone()).collect();
+                self.constructor(name, &args, env)
+            }
+            Expr::Attr(base, field) => {
+                let name = crate::checker::expr_to_str(expr);
+                if crate::ast::dotted_name_spells_constructor(&name) {
+                    return self.constructor(&name, &[], env);
+                }
+                let ty = self.expression(base, env)?;
+                self.field(&ty, field)
+            }
+            Expr::RecordCreate { type_name, fields } => self.record(type_name, None, fields, env),
+            Expr::RecordUpdate {
+                type_name,
+                base,
+                updates,
+            } => self.record(type_name, Some(base), updates, env),
+            _ => Err("expression is outside the first-order guidance subset".to_string()),
         }
     }
 
-    fn expect(&mut self, expr: &Spanned<Expr>, env: &Env, expected: Scalar) -> Result<(), String> {
-        if self.expression(expr, env)? == expected {
-            Ok(())
-        } else {
-            Err("unsupported expression type".to_string())
+    fn expect(&mut self, expr: &Spanned<Expr>, env: &Env, expected: Type) -> Result<(), String> {
+        merge(&self.expression(expr, env)?, &expected).map(|_| ())
+    }
+
+    fn builtin(&mut self, name: &str, args: &[Spanned<Expr>], env: &Env) -> Result<Type, String> {
+        let scalar = match name {
+            "Bool.and" | "Bool.or" => Some((2, Type::Bool, Type::Bool)),
+            "Bool.not" => Some((1, Type::Bool, Type::Bool)),
+            "Int.abs" => Some((1, Type::Int, Type::Int)),
+            "Int.min" | "Int.max" => Some((2, Type::Int, Type::Int)),
+            "String.len" => Some((1, Type::Str, Type::Int)),
+            _ => None,
+        };
+        if let Some((arity, input, output)) = scalar {
+            if args.len() != arity {
+                return Err(format!("unsupported arity for {name}"));
+            }
+            for arg in args {
+                self.expect(arg, env, input.clone())?;
+            }
+            return Ok(output);
+        }
+        // Only operations with total, definition-backed Dafny lowerings enter
+        // this list. Higher-order List helpers and opaque String helpers do not.
+        let values = args
+            .iter()
+            .map(|arg| self.expression(arg, env))
+            .collect::<Result<Vec<_>, _>>()?;
+        match (name, values.as_slice()) {
+            ("List.len", [Type::List(_)]) => Ok(Type::Int),
+            ("List.reverse", [list @ Type::List(_)]) => Ok(list.clone()),
+            ("List.take" | "List.drop", [list @ Type::List(_), Type::Int]) => Ok(list.clone()),
+            ("List.concat", [left @ Type::List(_), right @ Type::List(_)]) => merge(left, right),
+            ("List.prepend", [value, Type::List(inner)]) => {
+                Ok(Type::List(Box::new(merge(value, inner)?)))
+            }
+            ("List.contains", [Type::List(inner), value]) => {
+                merge(inner, value)?;
+                Ok(Type::Bool)
+            }
+            ("List.zip", [Type::List(left), Type::List(right)]) => {
+                Ok(Type::List(Box::new(Type::Tuple(vec![
+                    *left.clone(),
+                    *right.clone(),
+                ]))))
+            }
+            ("Result.withDefault", [Type::Result(ok, _), default]) => merge(ok, default),
+            ("Option.withDefault", [Type::Option(inner), default]) => merge(inner, default),
+            _ => Err(format!("unsupported call {name}")),
         }
     }
 
@@ -223,17 +275,18 @@ impl<'a> Checker<'a> {
             "an explicit using list is required (using [] selects no laws)".to_string()
         })?;
         if law.givens.is_empty() {
-            return Err("at least one plain Int/Bool given is required".to_string());
+            return Err("at least one first-order given is required".to_string());
         }
         let mut env = Env::new();
         for given in &law.givens {
-            bind(&mut env, &given.name, scalar(&given.type_name)?)?;
+            let ty = self.annotation(&given.type_name)?;
+            bind(&mut env, &given.name, ty)?;
         }
         if let Some(guard) = &law.when {
-            self.expect(guard, &env, Scalar::Bool)?;
+            self.expect(guard, &env, Type::Bool)?;
         }
         for reason in &law.because {
-            self.expect(reason, &env, Scalar::Bool)?;
+            self.expect(reason, &env, Type::Bool)?;
         }
         let left = self.expression(&law.lhs, &env)?;
         self.expect(&law.rhs, &env, left)?;
@@ -259,6 +312,13 @@ pub(super) fn countdown_parameter(fd: &FnDef, ctx: &CodegenContext) -> Option<us
     })
 }
 
+/// Share the exact native list-descent classifier with function emission.
+pub(super) fn list_parameter(fd: &FnDef, ctx: &CodegenContext) -> Option<usize> {
+    crate::codegen::recursion::detect::single_list_descent_param(fd)
+        .filter(|_| !crate::codegen::dafny::toplevel::termination_guess_unjustified(fd, ctx))
+        .map(|(index, _)| index)
+}
+
 pub(super) fn validate<'a>(
     vb: &VerifyBlock,
     law: &'a VerifyLaw,
@@ -281,6 +341,7 @@ pub(super) fn validate<'a>(
         laws,
         checking_laws: BTreeSet::new(),
         checked_laws: BTreeSet::new(),
+        checked_types: HashSet::new(),
     };
     checker.law(&label(vb, law), law)?;
     // Reserve every generated parent/step name. A source declaration or a

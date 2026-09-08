@@ -40,6 +40,13 @@ SOURCE_PATHS = {
     "k5_integerorder": ROOT / "projects/k5_fdiv/domain/integerorder.av",
 }
 
+STRUCTURED = ROOT / "tests/fixtures/dafny_guidance_structured"
+for name in ["btc_stackitem_slice", "adt_positive", "result_positive", "missing_guard", "recursive_false_reason", "failed_citation"]:
+    case = f"structured_{name}"
+    expected = "verified" if name in {"btc_stackitem_slice", "adt_positive", "result_positive"} else "failed"
+    EXPECTED[case] = {"lean": expected, "dafny": expected}
+    SOURCE_PATHS[case] = STRUCTURED / f"{name}.av"
+
 
 def digest(path: Path) -> str:
     with path.open("rb") as source:
