@@ -179,6 +179,8 @@ The backend uses reason functions' case structure to preserve branch equations, 
 
 `using [function.law, Module.function.law]` selects a set of lemma names. Order within the list is immaterial. Selected lemmas remain available in every explanation obligation and in the final implication. Omitting `using` keeps automatic selection; `using []` selects none. Local forward references are allowed, imported laws must be exposed by their subject's module, and unknown names or dependency cycles are errors. Explicit citations retain theorem scope and the usual transitive axiom audit: samples and `sorry`-tainted theorems cannot grant universal credit.
 
+A law guided by `because` or `using` remains citable when each `given` has only one example. Those examples do not restrict its universal statement; proof credit still depends on the checked theorem and its dependencies.
+
 Typed empty list samples retain their concrete checked element type in Lean, including when nested inside polymorphic list operations. Unresolved generic element types are left for Lean to infer from context.
 
 `aver verify` and `aver verify --hostile` execute every reason under the original guard, using the same sample expansion as the claim. These checks do not require Lean. `aver proof --check-json` and `proof_manifest.json` additionally report separate `obligations`, identified by `<function>.<law>.because1`, `.because2`, and `.implication`. Obligations do not inflate `universal_laws`. `--explain` includes residual goals for failed explanation obligations when the solver provides them; an implication may be universal while its reason and the original law remain failed.
@@ -418,7 +420,13 @@ The existing `sorry_laws` identities, `open_goals` residuals and manifest
 `open_goal` fields remain available for tools that need backend detail. Laws
 without `because` can still use an isolated residual probe and calculated helper
 suggestions; a residual borrowed from a healthy law stays under `probe_of`,
-never `open_goals`. Without `--explain`, no new diagnostic fields are emitted.
+never `open_goals`. Explanations show the source proof report before usable
+helper suggestions. Unavailable suggestions produce a short notice,
+with technical extraction and translation details in `proof_candidates.log`.
+Generated proof-step theorems are excluded from this legacy helper search.
+If a selected theorem cannot be supplied to a proof step, the report identifies
+`citation_unavailable` rather than suggesting a missing mathematical premise.
+Without `--explain`, no new diagnostic fields are emitted.
 The [IR snapshots](transpilation.md#debugging-a-law-that-didnt-auto-prove) and generated output remain useful for
 compiler debugging; ordinary proof-step reports use Aver syntax directly.
 

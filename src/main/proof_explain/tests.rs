@@ -1,6 +1,28 @@
 use super::*;
 use aver::ast::TopLevel;
 
+#[test]
+fn residual_candidates_exclude_marked_proof_steps_without_name_guessing() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("lakefile.lean"),
+        "lean_lib Entry where\n  roots := #[`Entry]\n",
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("Entry.lean"), "namespace Entry\n-- aver:law-class f_law_plain universal f.plain\ntheorem f_law_plain : True := by trivial\n-- aver:law-obligation ordinary_law_step universal f.reason.because1\ntheorem ordinary_law_step : True := by trivial\n-- aver:law-class __aver_reason_legitimate_law_name universal f.legitimate\ntheorem __aver_reason_legitimate_law_name : True := by trivial\nnamespace Helpers\n-- aver:law-obligation f_law_plain universal nested.reason.because1\ntheorem f_law_plain : True := by trivial\n-- aver:law-class __aver_reason_legitimate_law_name universal nested.name\ntheorem __aver_reason_legitimate_law_name : True := by trivial\nend Helpers\nend Entry\n").unwrap();
+    let actual = super::super::emitted_main_law_theorems(dir.path().to_str().unwrap());
+    assert_eq!(
+        actual,
+        vec![
+            ("f.plain".into(), "f_law_plain".into()),
+            (
+                "f.legitimate".into(),
+                "__aver_reason_legitimate_law_name".into()
+            )
+        ]
+    );
+}
+
 fn catalog(source: &str, scope: Option<&str>, file: &str) -> Catalog {
     let mut catalog = Catalog::default();
     for item in aver::source::parse_source(source).unwrap() {
@@ -9,6 +31,50 @@ fn catalog(source: &str, scope: Option<&str>, file: &str) -> Catalog {
         }
     }
     catalog
+}
+
+#[test]
+fn helper_suggestions_require_a_source_law_without_explicit_reasons() {
+    let source = "fn f(x: Int) -> Int\n    x\nverify f law plain\n    given x: Int = [1]\n    f(x) => x\nverify f law steps\n    given x: Int = [1]\n    because x > 0\n    f(x) => x\n";
+    let catalog = catalog(source, None, "source.av");
+    assert!(catalog.accepts_residual_suggestion("f.plain"));
+    for identity in [
+        "f.steps",
+        "f.steps.because1",
+        "f.steps.implication",
+        "__aver_reason_f_law_steps_because1",
+        "unknown_law",
+    ] {
+        assert!(!catalog.accepts_residual_suggestion(identity), "{identity}");
+    }
+}
+
+#[test]
+fn unavailable_citations_are_not_reported_as_missing_mathematical_premises() {
+    let source = "fn f(x: Int) -> Int\n    x\nverify f law chain\n    given x: Int = [1]\n    because x == x\n    using []\n    f(x) => x\n";
+    let catalog = catalog(source, None, "source.av");
+    let reports = collect(
+        &catalog,
+        None,
+        &["f.chain.because1".into()],
+        "unused",
+        "info: Entry.lean:8:2: AVER_REASON_OPEN:f.chain.because1:dependency has no available theorem\n",
+    );
+    let report = &reports["f.chain.because1"];
+    assert_eq!(report["status"], "citation_unavailable");
+    assert_eq!(report["goal"], "x == x");
+    assert!(
+        report["next"]
+            .as_str()
+            .unwrap()
+            .contains("already universally checked")
+    );
+    assert!(
+        !report["next"]
+            .as_str()
+            .unwrap()
+            .contains("missing intermediate fact")
+    );
 }
 
 #[test]

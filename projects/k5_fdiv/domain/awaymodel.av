@@ -1,0 +1,68 @@
+module AwayModel
+    intent = "Relate the upward significand integer to the renormalized floating-point value."
+    depends [Domain.Round, Domain.Fprep, Domain.ModelScale, Domain.Rational, Domain.IntegerOrder, Domain.ValueChain]
+    exposes [rawValue, normalizedValue, rawValuePositive, transferredValue]
+    effects []
+
+fn rawValue(f: Fp, n: Int) -> Fraction
+    ? "Read the upward-rounded significand at the original exponent before any carry normalization."
+    Domain.Fprep.fpValueGeneral(Domain.Fprep.Fp(sign = f.sign, sigBits = Domain.Round.awaySig(f, n), exp = f.exp, width = n))
+
+verify rawValue
+    rawValue(Domain.Fprep.Fp(sign = 1, sigBits = 15, exp = 0, width = 4), 3) => Domain.Rational.Fraction(top = 8, bottom = 4)
+    rawValue(Domain.Fprep.Fp(sign = -1, sigBits = 13, exp = -3, width = 4), 3) => Domain.Rational.Fraction(top = -7, bottom = 32)
+
+fn normalizedValue(f: Fp, n: Int) -> Bool
+    ? "An upward-rounding carry preserves the exact rational value, including the negative-exponent boundary."
+    Domain.Rational.sameValue(Domain.Fprep.fpValueGeneral(Domain.Round.fpAway(f, n)), rawValue(f, n))
+
+verify normalizedValue law carryPreservesValue
+    given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 15, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 15, exp = -1, width = 4), Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = -3, width = 4)]
+    given n: Int = [1, 2, 3, 7]
+    when n >= 1
+    because Domain.Fprep.pow2(n) == 2 * Domain.Fprep.pow2(n - 1)
+    because Domain.ModelScale.signedDouble(f.exp)
+    because normalizedReason(f, n)
+    using [Domain.Fprep.pow2.homomorphism, Domain.ModelScale.signedDouble.successor]
+    normalizedValue(f, n) holds
+
+fn normalizedReason(f: Fp, n: Int) -> Bool
+    ? "Separate a carry to the next binary exponent from an unchanged significand scale."
+    match Domain.Round.awaySig(f, n) == Domain.Fprep.pow2(n)
+        true -> normalizedValue(f, n)
+        false -> normalizedValue(f, n)
+
+verify normalizedReason
+    normalizedReason(Domain.Fprep.Fp(sign = 1, sigBits = 15, exp = -1, width = 4), 3) => true
+    normalizedReason(Domain.Fprep.Fp(sign = -1, sigBits = 13, exp = -3, width = 4), 3) => true
+
+fn rawValuePositive(f: Fp, n: Int) -> Bool
+    ? "The unnormalized upward value has a positive denominator at every positive precision."
+    rawValue(f, n).bottom > 0
+
+verify rawValuePositive law positivePrecision
+    given f: Fp = [Domain.Fprep.Fp(sign = -1, sigBits = 15, exp = -1, width = 4)]
+    given n: Int = [1, 3, 7]
+    when n >= 1
+    because Domain.Fprep.pow2(n - 1) >= 1
+    because Domain.Fprep.pow2SignedPositive(f.exp)
+    because Domain.IntegerOrder.positiveProduct(Domain.Fprep.pow2Signed(f.exp).bottom, Domain.Fprep.pow2(n - 1))
+    using [Domain.Fprep.pow2.positive, Domain.Fprep.pow2SignedPositive.positive, Domain.IntegerOrder.positiveProduct.positiveFactors]
+    rawValuePositive(f, n) holds
+
+fn transferredValue(x: Fraction, f: Fp, n: Int) -> Bool
+    ? "Transport equality with the unnormalized upward value through its value-preserving carry."
+    Domain.Rational.sameValue(x, Domain.Fprep.fpValueGeneral(Domain.Round.fpAway(f, n)))
+
+verify transferredValue law sameRawValue
+    given x: Fraction = [Domain.Rational.Fraction(top = -1, bottom = 1)]
+    given f: Fp = [Domain.Fprep.Fp(sign = -1, sigBits = 15, exp = -1, width = 4)]
+    given n: Int = [3]
+    when n >= 1
+    when Domain.Rational.sameValue(x, rawValue(f, n))
+    because rawValuePositive(f, n)
+    because normalizedValue(f, n)
+    because Domain.Rational.sameValue(rawValue(f, n), Domain.Fprep.fpValueGeneral(Domain.Round.fpAway(f, n)))
+    because Domain.ValueChain.sameValueThrough(x, rawValue(f, n), Domain.Fprep.fpValueGeneral(Domain.Round.fpAway(f, n)))
+    using [rawValuePositive.positivePrecision, normalizedValue.carryPreservesValue, Domain.ValueChain.sameValueThrough.positiveMiddle]
+    transferredValue(x, f, n) holds

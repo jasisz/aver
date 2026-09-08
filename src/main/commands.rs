@@ -8558,6 +8558,7 @@ fn run_proof_check(
     // probe artifact is never mistaken for the failing law.
     let mut probe_of: std::collections::BTreeMap<String, String> =
         std::collections::BTreeMap::new();
+    let mut candidate_goals = None;
     if explain
         && matches!(backend, super::cli::ProofBackend::Lean)
         && output.status.success()
@@ -8582,9 +8583,12 @@ fn run_proof_check(
         let open: Vec<(String, String)> = emitted_main_law_theorems(output_dir)
             .into_iter()
             .filter(|(label, _)| !closed_universal.contains(label.as_str()))
-            // A because law has independently checked source steps. Probing its
-            // final composition theorem adds no explanation of a failed step.
-            .filter(|(label, _)| !proof_sources.is_some_and(|sources| sources.has_reasons(label)))
+            // Only source law identities can receive pasteable suggestions.
+            // Because steps have their own report; generated helper theorems
+            // must never become phantom source laws through the legacy scan.
+            .filter(|(label, _)| {
+                proof_sources.is_none_or(|sources| sources.accepts_residual_suggestion(label))
+            })
             .collect();
         open_goals = lean_residual_goals(output_dir, &open);
         // Attribute residuals to the law that ACTUALLY failed. A proven law
@@ -8626,13 +8630,7 @@ fn run_proof_check(
         // Skipped under `--check-json` so the JSON bytes are unaffected.
         if !check_json {
             let goal_json = lean_goal_json(output_dir, &open);
-            render_explain_candidates(
-                &open,
-                &goal_json,
-                source_items,
-                source_file,
-                source_module_root,
-            );
+            candidate_goals = Some((open, goal_json));
         }
     }
     // `--allow-mathlib` per-law credit (Lean only): tag each law `core` /
@@ -8862,6 +8860,17 @@ fn run_proof_check(
         // diagnostics; we already parsed counts above.
         if explain && matches!(backend, super::cli::ProofBackend::Lean) {
             proof_explain::render(&proof_reports);
+            if let Some((open, goal_json)) = &candidate_goals {
+                let suggestions = proof_explain::render_candidates(
+                    open,
+                    goal_json,
+                    source_items,
+                    source_file,
+                    source_module_root,
+                    output_dir,
+                );
+                print!("{suggestions}");
+            }
         } else {
             print!("{}", stdout);
             eprint!("{}", stderr);
@@ -10238,6 +10247,7 @@ fn emitted_main_law_theorems(dir: &str) -> Vec<(String, String)> {
     };
     let entry_file_name = format!("{entry_root}.lean");
     let mut labels: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut obligations = std::collections::HashSet::new();
     let mut thms: Vec<String> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     if let Ok(rd) = std::fs::read_dir(dir) {
@@ -10260,6 +10270,15 @@ fn emitted_main_law_theorems(dir: &str) -> Vec<(String, String)> {
                 } else if trimmed == "end" || trimmed.starts_with("end ") {
                     namespace_depth = namespace_depth.saturating_sub(1);
                 }
+                if namespace_depth > 1 {
+                    continue;
+                }
+                if let Some(rest) = line.strip_prefix(lean_codegen::LAW_OBLIGATION_MARKER_PREFIX) {
+                    if let Some(theorem) = rest.split_whitespace().next() {
+                        obligations.insert(theorem.to_string());
+                    }
+                    continue;
+                }
                 if let Some(rest) = line.strip_prefix(lean_codegen::LAW_CLASS_MARKER_PREFIX) {
                     let mut parts = rest.split_whitespace();
                     if let (Some(thm), Some(_class)) = (parts.next(), parts.next())
@@ -10267,9 +10286,6 @@ fn emitted_main_law_theorems(dir: &str) -> Vec<(String, String)> {
                     {
                         labels.insert(thm.to_string(), label.to_string());
                     }
-                    continue;
-                }
-                if namespace_depth > 1 {
                     continue;
                 }
                 if let Some(rest) = line.strip_prefix("theorem ") {
@@ -10286,6 +10302,7 @@ fn emitted_main_law_theorems(dir: &str) -> Vec<(String, String)> {
         }
     }
     thms.into_iter()
+        .filter(|thm| !obligations.contains(thm))
         .map(|thm| {
             let label = manifest_label_for(&thm, &labels);
             (label, thm)
@@ -10687,225 +10704,6 @@ enum SampleVerdict {
     /// Aver, or the premise never held on the sample domain) — an engine-form
     /// gap, honestly declined rather than shown as a candidate.
     Gap(String),
-}
-
-/// `aver proof --explain` Aver-space renderer (Lean-only, console). For each
-/// open law with a dumped residual goal: un-translate it back to Aver, and print
-/// EITHER a candidate `law` skeleton gated through the VM sample-check (passed →
-/// add-and-cite; failed → counterexample) OR an honest engine-form-gap verdict.
-/// The agent/user surface is AVER-ONLY here — the raw Lean residual stays in the
-/// internal `open_goal` channel. Pure console output: never affects tiers /
-/// credit / `passed` / the exit code.
-fn render_explain_candidates(
-    open_laws: &[(String, String)],
-    goal_json: &std::collections::BTreeMap<String, GoalDump>,
-    items: &[aver::ast::TopLevel],
-    file: &str,
-    module_root: &str,
-) {
-    use aver::codegen::lean::lemma_calc::{self, CalcVerdict};
-    use aver::codegen::lean::untranslate::{peano_ctx_for_law, untranslate_goal_ctx};
-    use colored::Colorize;
-    if open_laws.is_empty() {
-        return;
-    }
-    // The lemma calculator reads program facts (constructor names, fn return
-    // types) as data; build it once for the whole render.
-    let calc_env = lemma_calc::CalcEnv::from_items(items);
-    println!();
-    println!("{}", "--explain: candidate Aver laws for open goals".bold());
-    // Every OPEN law gets at least one verdict — a law whose residual could not be
-    // extracted (no arm dumped a goal) is reported as an engine-form gap, never
-    // silently skipped. A law's split residual yields several branch goals: each
-    // becomes a candidate, deduped by source; a branch outside the grammar records
-    // its decline reason so a law with no in-grammar branch still gets one honest
-    // gap verdict.
-    for (label, _thm) in open_laws {
-        let Some(dump) = goal_json.get(label) else {
-            println!(
-                "  {label}: {}",
-                "residual not extractable (engine-form gap)".yellow()
-            );
-            continue;
-        };
-        // `fn.law`: the law name is the final segment, the fn everything before.
-        let (fn_name, law_name) = match label.rsplit_once('.') {
-            Some((f, l)) => (f, l),
-            None => ("", label.as_str()),
-        };
-        // Thread a Peano context so a law over a canonical-Peano ADT inverts the
-        // transpiler's `Nat`-lift (`Succ x → x + 1`) back to the ADT's
-        // constructors; a non-Peano law gets the default (pre-V2) behavior.
-        let ctx = peano_ctx_for_law(items, fn_name, law_name);
-        // A calculated lemma is named `_calc` and rendered "calculated law"; a raw
-        // #630 residual fallback keeps `_residual` and "candidate law". The names
-        // must agree with the block the sample-check keys its verdict on.
-        let calc_law_name = format!("{law_name}_calc");
-        let residual_law_name = format!("{law_name}_residual");
-        // The parent law's given names: the fresh lifted variables must dedup
-        // against them (the candidate builder resolves givens by name against the
-        // parent, so a colliding lift clones the wrong domain — name capture).
-        let mut parent_givens: std::collections::HashSet<String> = std::collections::HashSet::new();
-        for it in items {
-            if let aver::ast::TopLevel::Verify(vb) = it
-                && vb.fn_name == fn_name
-                && let aver::ast::VerifyKind::Law(l) = &vb.kind
-                && l.name == law_name
-            {
-                for g in &l.givens {
-                    parent_givens.insert(g.name.clone());
-                }
-            }
-        }
-        // A split residual yields several branch goals. Each becomes a candidate,
-        // deduped by source; the sample-check partitions them. We surface every
-        // branch that PASSES (a forced lemma — prop_73 legitimately yields one per
-        // branch), and fall back to a single honest negative (counterexample, then
-        // gap) only when no branch passes. A branch outside the grammar records its
-        // decline reason so a law with no in-grammar branch still gets a verdict.
-        let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-        let mut passed: Vec<(String, bool)> = Vec::new();
-        let mut first_fail: Option<(String, String)> = None;
-        let mut first_gap: Option<String> = None;
-        let mut decline: Option<String> = None;
-        for json in &dump.jsons {
-            let goal = match untranslate_goal_ctx(json, &ctx) {
-                Ok(g) => g,
-                Err(gap) => {
-                    first_gap.get_or_insert(gap.reason);
-                    continue;
-                }
-            };
-            // Prefer the calculator's forced lemma when it sample-checks; else
-            // fall back to the raw residual candidate. The calculator only ever
-            // ADDS a stronger lemma — it never downgrades a raw candidate that
-            // would have passed, so a Lemma that fails the VM defers to the raw.
-            // A `Decline` is an honest verdict of its own: record its reason so it
-            // is surfaced before the fallback, never silently dropped.
-            let mut chosen: Option<(String, SampleVerdict, bool)> = None;
-            match lemma_calc::calculate(&goal, &calc_env, &parent_givens) {
-                CalcVerdict::Lemma(g) => {
-                    if let Ok(src) = build_candidate_law(
-                        fn_name,
-                        law_name,
-                        &calc_law_name,
-                        *g,
-                        items,
-                        ctx.peano.as_ref(),
-                    ) {
-                        let verdict = sample_check_candidate(
-                            &src,
-                            fn_name,
-                            &calc_law_name,
-                            file,
-                            module_root,
-                        );
-                        if matches!(verdict, SampleVerdict::Pass) {
-                            chosen = Some((src, verdict, true));
-                        }
-                    }
-                }
-                CalcVerdict::Decline(reason) => {
-                    decline.get_or_insert(reason);
-                }
-            }
-            let (src, verdict, calculated) = match chosen {
-                Some(c) => c,
-                None => {
-                    let src = match build_candidate_law(
-                        fn_name,
-                        law_name,
-                        &residual_law_name,
-                        goal,
-                        items,
-                        ctx.peano.as_ref(),
-                    ) {
-                        Ok(s) => s,
-                        Err(reason) => {
-                            first_gap.get_or_insert(reason);
-                            continue;
-                        }
-                    };
-                    let verdict = sample_check_candidate(
-                        &src,
-                        fn_name,
-                        &residual_law_name,
-                        file,
-                        module_root,
-                    );
-                    (src, verdict, false)
-                }
-            };
-            if !seen.insert(src.clone()) {
-                continue; // alpha-equivalent branch already accounted for
-            }
-            match verdict {
-                SampleVerdict::Pass => passed.push((src, calculated)),
-                SampleVerdict::Fail { counterexample } => {
-                    first_fail.get_or_insert((counterexample, src));
-                }
-                SampleVerdict::Gap(reason) => {
-                    first_gap.get_or_insert(reason);
-                }
-            }
-        }
-        // The fourth verdict form: an honest calculator decline. Surface its reason
-        // BEFORE the raw fallback candidate it deferred to, so the reason the lemma
-        // was not forced is never silently discarded.
-        if let Some(reason) = &decline {
-            println!(
-                "  {label}: {}",
-                format!("not a forced lemma — {reason}").yellow()
-            );
-        }
-        if !passed.is_empty() {
-            for (src, calculated) in &passed {
-                let head = if *calculated {
-                    "calculated law — sample-check passed, add it and cite:"
-                } else {
-                    "candidate law — sample-check passed, add it and cite:"
-                };
-                println!("  {label}: {}", head.green());
-                // A calculated block is machine-produced, so stamp its
-                // provenance directly above the pasteable `verify …`: when the
-                // user pastes it and it proves, `--check` records the value in
-                // the new law's manifest entry (see `PROVENANCE_MARKER_PREFIX`).
-                // `from=` points back at the stuck law this was calculated from.
-                if *calculated {
-                    println!(
-                        "      {PROVENANCE_MARKER_PREFIX}calculated from={label} tool=explain"
-                    );
-                }
-                for line in src.lines() {
-                    println!("      {line}");
-                }
-            }
-        } else if let Some((counterexample, src)) = first_fail {
-            println!(
-                "  {label}: {}",
-                "law false as stated — sample-check counterexample:".red()
-            );
-            println!("      {counterexample}");
-            for line in src.lines() {
-                println!("      {line}");
-            }
-        } else {
-            let reason = first_gap.unwrap_or_else(|| "no residual branch in grammar".to_string());
-            println!(
-                "  {label}: {}",
-                format!("engine-form gap — {reason}").yellow()
-            );
-        }
-        // The multi-arm caveat applies to any verdict — a single-branch candidate
-        // may not close a many-branch law whether it passed, failed, or gapped.
-        if dump.multi_arm {
-            println!(
-                "      {}",
-                "(the law has more than one open branch — a candidate may not close it alone)"
-                    .yellow()
-            );
-        }
-    }
 }
 
 /// Build a candidate Aver `law` source from an un-translated residual goal:

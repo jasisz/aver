@@ -1,0 +1,27 @@
+module ValueChain
+    intent = "Compose exact rational equalities through a value with a positive denominator."
+    depends [Domain.Rational, Domain.RoundScale]
+    exposes [sameValueThrough]
+    effects []
+
+fn sameValueThrough(a: Fraction, b: Fraction, c: Fraction) -> Bool
+    ? "Two cross-product equalities compose when the middle denominator is positive."
+    match Bool.and(Domain.Rational.sameValue(a, b), Domain.Rational.sameValue(b, c))
+        true -> Domain.Rational.sameValue(a, c)
+        false -> true
+
+verify sameValueThrough law positiveMiddle
+    given a: Fraction = [Domain.Rational.Fraction(top = 1, bottom = 2), Domain.Rational.Fraction(top = -1, bottom = 2)]
+    given b: Fraction = [Domain.Rational.Fraction(top = 2, bottom = 4), Domain.Rational.Fraction(top = -2, bottom = 4)]
+    given c: Fraction = [Domain.Rational.Fraction(top = 3, bottom = 6), Domain.Rational.Fraction(top = -3, bottom = 6)]
+    when b.bottom > 0
+    when Domain.Rational.sameValue(a, b)
+    when Domain.Rational.sameValue(b, c)
+    because (a.top * c.bottom) * b.bottom == (c.top * a.bottom) * b.bottom
+    because Domain.RoundScale.cancelProduct(a.top * c.bottom, c.top * a.bottom, b.bottom)
+    using [Domain.RoundScale.cancelProduct.positiveFactor]
+    sameValueThrough(a, b, c) holds
+
+verify sameValueThrough
+    sameValueThrough(Domain.Rational.Fraction(top = 1, bottom = 2), Domain.Rational.Fraction(top = 2, bottom = 4), Domain.Rational.Fraction(top = 3, bottom = 6)) => true
+    sameValueThrough(Domain.Rational.Fraction(top = 1, bottom = 1), Domain.Rational.Fraction(top = 0, bottom = 0), Domain.Rational.Fraction(top = 2, bottom = 1)) => false

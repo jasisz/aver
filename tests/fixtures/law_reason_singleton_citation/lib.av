@@ -1,0 +1,37 @@
+module Lib
+    exposes [Bounds, inRange, positive]
+    intent = "Singleton examples do not restrict guided universal statements."
+    effects []
+
+record Bounds
+    lower: Int
+
+fn inRange(bounds: Bounds, n: Int) -> Bool
+    match n > bounds.lower
+        true -> n + 1 > bounds.lower + 1
+        false -> false
+
+verify inRange law explained
+    given bounds: Bounds = [Bounds(lower = 0)]
+    given n: Int = [1]
+    when n > bounds.lower
+    because n + 1 > bounds.lower + 1
+    using []
+    inRange(bounds, n) holds
+
+verify inRange law citedOnly
+    given bounds: Bounds = [Bounds(lower = 0)]
+    given n: Int = [1]
+    when n > bounds.lower
+    using [inRange.explained]
+    inRange(bounds, n) holds
+
+fn positive(n: Int) -> Bool
+    n > 0
+
+// The sample passes; the universal statement and its callers must fail.
+verify positive law falseUniversal
+    given n: Int = [1]
+    because n > 0
+    using []
+    positive(n) holds

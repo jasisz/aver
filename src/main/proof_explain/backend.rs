@@ -20,6 +20,16 @@ pub(super) fn failures(dir: &str, output: &str) -> Failures {
     let mut result = Failures::default();
     let lines: Vec<_> = output.lines().collect();
     for (index, line) in lines.iter().enumerate() {
+        if let Some(claim) = line
+            .split_once("AVER_REASON_OPEN:")
+            .and_then(|(_, detail)| detail.strip_suffix(":dependency has no available theorem"))
+        {
+            result.claims.entry(claim.to_string()).or_insert(Failure {
+                status: "citation_unavailable",
+                message: "A selected law could not be made available for citation at this step.",
+            });
+            continue;
+        }
         if !line.trim_start().starts_with("error:") {
             continue;
         }

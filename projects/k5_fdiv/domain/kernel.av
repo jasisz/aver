@@ -14,11 +14,11 @@ module Kernel
         "final round to the requested mode (step 32). The rounding procedures trunc,"
         "away and sticky (Section 5.2, p.13) and the six-way rounding-mode dispatch"
         "round (Section 5.3, p.14) are reproduced on the rationals; comp is the Newton"
-        "ones-complement 2 - x (Section 1.1, p.3). The rational trunc/away/sticky here"
-        "AGREE on values with the proven significand-level fpTrunc/fpAway/fpSticky of"
-        "domain/round.av (checked: trunc/away/sticky of 13/8 to 3 bits give 6/4, 7/4,"
-        "7/4, matching fpValue of the Fp versions) -- Theorem 1's eventual proof bridges"
-        "the two. The runnable expo (fracExpo) is the binary-exponent function the"
+        "ones-complement 2 - x (Section 1.1, p.3). Source laws relate executable"
+        "Fraction trunc/away/sticky to fpTrunc/fpAway/fpSticky through fpValueGeneral"
+        "for normalized inputs, width >= 1 and precision >= 1. These bridges include"
+        "both signs, every integer exponent, carries, and precision widening."
+        "The runnable expo (fracExpo) is the binary-exponent function the"
         "Stage-1/2 proofs avoid by storing the exponent on the normalized Fp model."
         "Its magnitude bracket is now proved on the executable Fraction functions,"
         "using Domain.Binade and the rounding scale equality, for either exponent sign."
@@ -34,10 +34,10 @@ module Kernel
         "8.1.1 reciprocal bound (Estimate NR bounds + the 128-entry Table 1, by"
         "computation), 8.2.1 digit separation, 8.2.3-4 remainder bounds, 7.3.2"
         "sticky-plus, 7.3.1 final-round-commutes, and the Section 9 exponent/precision"
-        "bounds for Theorem 2; plus the remaining bridge from model rounding to the"
-        "Fraction operations, using fpValueGeneral for negative exponents."
-    depends [Domain.TruncScale, Domain.IntegerOrder, Domain.ModelScale, Domain.BinadeOrder, Domain.Rational, Domain.Fprep, Domain.Round, Domain.Binade]
-    exposes [RoundingMode, fracSign, halve, expoAtLeastOne, twoPow, binadeSig, binadeWindow, fracExpo, fracExpoWindow, normalizedValueExponent, modelSign, sameTruncation, truncFrac, awayFrac, stickyFrac, nearestFrac, posinfFrac, neginfFrac, round, compFrac, reciprocalEstimate, lookup, quotient, divideBang, inField, divide, divideBangCorrect, divideMatchesBang, divideCorrect, finalRoundCommutes_7_3_1, stickyPlus_7_3_2, stickyPerturbStable_7_3_3, truncSticky_rtl, stickySticky_rtl, stickyPlusExact_rtl]
+        "bounds for Theorem 2; plus general Fraction rounding compositions and the"
+        "wrapper's use of fpValue rather than fpValueGeneral for negative exponents."
+    depends [Domain.RoundScale, Domain.AwayModel, Domain.TruncScale, Domain.IntegerOrder, Domain.ModelScale, Domain.BinadeOrder, Domain.Rational, Domain.Fprep, Domain.Round, Domain.Binade]
+    exposes [RoundingMode, fracSign, halve, expoAtLeastOne, twoPow, binadeSig, binadeWindow, fracExpo, fracExpoWindow, normalizedValueExponent, modelSign, sameTruncation, sameAway, sameSticky, truncFrac, awayFrac, stickyFrac, nearestFrac, posinfFrac, neginfFrac, round, compFrac, reciprocalEstimate, lookup, quotient, divideBang, inField, divide, divideBangCorrect, divideMatchesBang, divideCorrect, finalRoundCommutes_7_3_1, stickyPlus_7_3_2, stickyPerturbStable_7_3_3, truncSticky_rtl, stickySticky_rtl, stickyPlusExact_rtl]
     effects []
 
 // ---------------------------------------------------------------------------
@@ -236,7 +236,7 @@ verify truncationFormula law knownExponent
     truncationFormula(x, e, n) holds
 
 fn awayFrac(x: Fraction, n: Int) -> Fraction
-    ? "away(x,n) (Section 5.2, p.13): round x AWAY FROM ZERO to n significant bits -- the magnitude rounded up (ceiling). The ulp is 2^(e_x - n + 1); the result is sign_x * ceil(|x| / ulp) * ulp. Agrees with fpValue(fpAway(.)) on the normalized model."
+    ? "away(x,n) (Section 5.2, p.13): round x AWAY FROM ZERO to n significant bits -- the magnitude rounded up (ceiling). The ulp is 2^(e_x - n + 1); the result is sign_x * ceil(|x| / ulp) * ulp. sameAway proves agreement with fpValueGeneral(fpAway(.)) on normalized models for every exponent and positive target precision."
     match x.top == 0
         true -> Domain.Rational.zeroFraction()
         false -> Domain.Rational.Fraction(top = fracSign(x) * ceilDiv(Domain.Rational.absInt(x.top) * Domain.Fprep.pow2Signed(fracExpo(x) - n + 1).bottom, Domain.Rational.absInt(x.bottom) * Domain.Fprep.pow2Signed(fracExpo(x) - n + 1).top) * Domain.Fprep.pow2Signed(fracExpo(x) - n + 1).top, bottom = Domain.Fprep.pow2Signed(fracExpo(x) - n + 1).bottom)
@@ -247,7 +247,7 @@ verify awayFrac
     Domain.Rational.sameValue(awayFrac(Domain.Rational.Fraction(top = -13, bottom = 8), 3), Domain.Rational.Fraction(top = -7, bottom = 4)) => true
 
 fn stickyFrac(x: Fraction, n: Int) -> Fraction
-    ? "sticky(x,n) in the faithful round-to-odd (RTL/rto) form (domain/round.av, ACL2 RTL lineage): truncate to n-1 bits, then force the n-th bit to 1 unless x already fits in n-1 bits. With h = floor(|x| / 2^(e_x-n+2)) the n-bit multiple is 2*h if x fits exactly in n-1 bits, else 2*h+1. (NOT the draft paper's printed stickyn branch, a known typo.) Agrees with fpValue(fpSticky(.)) on the normalized model."
+    ? "sticky(x,n) in the faithful round-to-odd (RTL/rto) form (domain/round.av, ACL2 RTL lineage): truncate to n-1 bits, then force the n-th bit to 1 unless x already fits in n-1 bits. With h = floor(|x| / 2^(e_x-n+2)) the n-bit multiple is 2*h if x fits exactly in n-1 bits, else 2*h+1. (NOT the draft paper's printed stickyn branch, a known typo.) sameSticky proves agreement with fpValueGeneral(fpSticky(.)) on normalized models for every exponent and positive target precision, including one bit."
     match x.top == 0
         true -> Domain.Rational.zeroFraction()
         false -> stickyFromHalf(x, n, Domain.Round.floorDiv(Domain.Rational.absInt(x.top) * Domain.Fprep.pow2Signed(fracExpo(x) - n + 2).bottom, Domain.Rational.absInt(x.bottom) * Domain.Fprep.pow2Signed(fracExpo(x) - n + 2).top))
@@ -696,3 +696,294 @@ verify modelTruncation law normalizedModel
     because Domain.TruncScale.restoredValue(f.sign, Domain.Round.fpTrunc(f, n).sigBits, Domain.Fprep.pow2Signed(f.exp), Domain.Fprep.pow2Signed(f.exp - n + 1), Domain.Fprep.pow2(n - 1))
     using [ Domain.ModelScale.absoluteValue.normalizedMagnitude, Domain.ModelScale.nonzeroValue.normalizedValue, modelSign.normalizedSign, Domain.Fprep.pow2.positive, Domain.Fprep.pow2SignedPositive.positive, Domain.TruncScale.ulpScale.signedExponent, Domain.TruncScale.scaledQuotient.exactScale, Domain.TruncScale.restoredValue.exactScale]
     modelTruncation(f, n) holds
+
+fn awayAtExponent(x: Fraction, e: Int, n: Int) -> Fraction
+    ? "Read the nonzero upward-rounding formula after identifying the binary exponent."
+    ulp = Domain.Fprep.pow2Signed(e - n + 1)
+    Domain.Rational.Fraction(top = fracSign(x) * ceilDiv(Domain.Rational.absInt(x.top) * ulp.bottom, Domain.Rational.absInt(x.bottom) * ulp.top) * ulp.top, bottom = ulp.bottom)
+
+verify awayAtExponent
+    awayAtExponent(Domain.Rational.Fraction(top = 13, bottom = 8), 0, 3) => Domain.Rational.Fraction(top = 7, bottom = 4)
+    awayAtExponent(Domain.Rational.Fraction(top = -15, bottom = 16), -1, 3) => Domain.Rational.Fraction(top = -8, bottom = 8)
+
+fn awayFormula(x: Fraction, e: Int, n: Int) -> Bool
+    ? "Substitute an established exponent into executable upward rounding."
+    awayFrac(x, n) == awayAtExponent(x, e, n)
+
+verify awayFormula law knownExponent
+    given x: Fraction = [Domain.Rational.Fraction(top = 13, bottom = 8), Domain.Rational.Fraction(top = -9, bottom = 64)]
+    given e: Int = [-3, 0]
+    given n: Int = [1, 2, 7]
+    when x.top != 0
+    when fracExpo(x) == e
+    using []
+    awayFormula(x, e, n) holds
+
+fn modelCeiling(f: Fp, n: Int) -> Bool
+    ? "The exact rational ulp ceiling equals the model's upward significand integer."
+    value = Domain.Fprep.fpValueGeneral(f)
+    ulp = Domain.Fprep.pow2Signed(f.exp - n + 1)
+    ceilDiv(Domain.Rational.absInt(value.top) * ulp.bottom, Domain.Rational.absInt(value.bottom) * ulp.top) == Domain.Round.awaySig(f, n)
+
+verify modelCeiling law normalizedModel
+    given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 15, exp = -1, width = 4), Domain.Fprep.Fp(sign = 1, sigBits = 9, exp = 5, width = 4)]
+    given n: Int = [1, 2, 3, 7]
+    when Domain.Fprep.isFp(f)
+    when f.width >= 1
+    when n >= 1
+    because Domain.ModelScale.absoluteValue(f)
+    because Domain.Fprep.pow2(f.width - 1) >= 1
+    because Domain.Fprep.pow2SignedPositive(f.exp)
+    because Domain.Fprep.pow2SignedPositive(f.exp - n + 1)
+    because Domain.TruncScale.ulpScale(f.exp, n)
+    because Domain.IntegerOrder.positiveProduct(Domain.Fprep.pow2Signed(f.exp).bottom, Domain.Fprep.pow2Signed(f.exp - n + 1).top)
+    because Domain.Round.truncFitsWindow(f, n)
+    because Domain.RoundScale.scaledCeiling(f.sigBits * Domain.Fprep.pow2(n - 1), Domain.Fprep.pow2(f.width - 1), Domain.Fprep.pow2Signed(f.exp).bottom * Domain.Fprep.pow2Signed(f.exp - n + 1).top, Domain.Round.fpTrunc(f, n).sigBits)
+    because Domain.Rational.absInt(Domain.Fprep.fpValueGeneral(f).top) * Domain.Fprep.pow2Signed(f.exp - n + 1).bottom == (f.sigBits * Domain.Fprep.pow2(n - 1)) * (Domain.Fprep.pow2Signed(f.exp).bottom * Domain.Fprep.pow2Signed(f.exp - n + 1).top)
+    because Domain.Rational.absInt(Domain.Fprep.fpValueGeneral(f).bottom) * Domain.Fprep.pow2Signed(f.exp - n + 1).top == Domain.Fprep.pow2(f.width - 1) * (Domain.Fprep.pow2Signed(f.exp).bottom * Domain.Fprep.pow2Signed(f.exp - n + 1).top)
+    because Domain.RoundScale.roundedQuotient(f.sigBits * Domain.Fprep.pow2(n - 1), Domain.Fprep.pow2(f.width - 1), Domain.Round.fpTrunc(f, n).sigBits) == Domain.Round.awaySig(f, n)
+    using [Domain.ModelScale.absoluteValue.normalizedMagnitude, Domain.Fprep.pow2.positive, Domain.Fprep.pow2SignedPositive.positive, Domain.TruncScale.ulpScale.signedExponent, Domain.IntegerOrder.positiveProduct.positiveFactors, Domain.Round.truncFitsWindow.euclideanWindow, Domain.RoundScale.scaledCeiling.positiveScale]
+    modelCeiling(f, n) holds
+
+fn modelAwayRaw(f: Fp, n: Int) -> Bool
+    ? "The fixed-exponent Fraction ceiling denotes the upward significand before carry normalization."
+    Domain.Rational.sameValue(awayAtExponent(Domain.Fprep.fpValueGeneral(f), f.exp, n), Domain.AwayModel.rawValue(f, n))
+
+verify modelAwayRaw law normalizedModel
+    given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 15, exp = -1, width = 4)]
+    given n: Int = [1, 3, 7]
+    when Domain.Fprep.isFp(f)
+    when f.width >= 1
+    when n >= 1
+    because modelSign(f)
+    because modelCeiling(f, n)
+    because Domain.TruncScale.ulpScale(f.exp, n)
+    because Domain.TruncScale.restoredValue(f.sign, Domain.Round.awaySig(f, n), Domain.Fprep.pow2Signed(f.exp), Domain.Fprep.pow2Signed(f.exp - n + 1), Domain.Fprep.pow2(n - 1))
+    using [modelSign.normalizedSign, modelCeiling.normalizedModel, Domain.TruncScale.ulpScale.signedExponent, Domain.TruncScale.restoredValue.exactScale]
+    modelAwayRaw(f, n) holds
+
+fn modelAway(f: Fp, n: Int) -> Bool
+    ? "The fixed-exponent Fraction ceiling denotes the complete renormalized upward-rounded model value."
+    Domain.Rational.sameValue(awayAtExponent(Domain.Fprep.fpValueGeneral(f), f.exp, n), Domain.Fprep.fpValueGeneral(Domain.Round.fpAway(f, n)))
+
+verify modelAway law normalizedModel
+    given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 15, exp = -1, width = 4), Domain.Fprep.Fp(sign = 1, sigBits = 9, exp = 5, width = 4)]
+    given n: Int = [1, 2, 3, 7]
+    when Domain.Fprep.isFp(f)
+    when f.width >= 1
+    when n >= 1
+    because modelAwayRaw(f, n)
+    because Domain.AwayModel.transferredValue(awayAtExponent(Domain.Fprep.fpValueGeneral(f), f.exp, n), f, n)
+    using [modelAwayRaw.normalizedModel, Domain.AwayModel.transferredValue.sameRawValue]
+    modelAway(f, n) holds
+
+fn sameAway(f: Fp, n: Int) -> Bool
+    ? "Executable Fraction upward rounding and model significand upward rounding denote the same value, including carries and every exponent."
+    Domain.Rational.sameValue(awayFrac(Domain.Fprep.fpValueGeneral(f), n), Domain.Fprep.fpValueGeneral(Domain.Round.fpAway(f, n)))
+
+verify sameAway
+    sameAway(Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), 0) => true
+    sameAway(Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), -1) => false
+    sameAway(Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), 3) => true
+    sameAway(Domain.Fprep.Fp(sign = -1, sigBits = 15, exp = -1, width = 4), 3) => true
+    sameAway(Domain.Fprep.Fp(sign = 1, sigBits = 12, exp = -3, width = 4), 3) => true
+    sameAway(Domain.Fprep.Fp(sign = -1, sigBits = 9, exp = 5, width = 4), 7) => true
+
+verify sameAway law normalizedModel
+    given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 15, exp = -1, width = 4), Domain.Fprep.Fp(sign = 1, sigBits = 9, exp = 5, width = 4)]
+    given n: Int = [1, 2, 3, 7]
+    when Domain.Fprep.isFp(f)
+    when f.width >= 1
+    when n >= 1
+    because normalizedValueExponent(f)
+    because Domain.ModelScale.nonzeroValue(f)
+    because awayFormula(Domain.Fprep.fpValueGeneral(f), f.exp, n)
+    because modelAway(f, n)
+    using [normalizedValueExponent.executableExponent, Domain.ModelScale.nonzeroValue.normalizedValue, awayFormula.knownExponent, modelAway.normalizedModel]
+    sameAway(f, n) holds
+
+fn stickyAtExponent(x: Fraction, e: Int, n: Int) -> Fraction
+    ? "Read the nonzero round-to-odd formula after identifying its binary exponent."
+    halfUlp = Domain.Fprep.pow2Signed(e - n + 2)
+    ulp = Domain.Fprep.pow2Signed(e - n + 1)
+    a = Domain.Rational.absInt(x.top) * halfUlp.bottom
+    b = Domain.Rational.absInt(x.bottom) * halfUlp.top
+    h = Domain.Round.floorDiv(a, b)
+    bits = match a == b * h
+        true -> 2 * h
+        false -> 2 * h + 1
+    Domain.Rational.Fraction(top = fracSign(x) * bits * ulp.top, bottom = ulp.bottom)
+
+verify stickyAtExponent
+    stickyAtExponent(Domain.Rational.Fraction(top = 13, bottom = 8), 0, 3) => Domain.Rational.Fraction(top = 7, bottom = 4)
+    stickyAtExponent(Domain.Rational.Fraction(top = -12, bottom = 8), 0, 3) => Domain.Rational.Fraction(top = -6, bottom = 4)
+    stickyAtExponent(Domain.Rational.Fraction(top = -13, bottom = 64), -3, 1) => Domain.Rational.Fraction(top = -1, bottom = 8)
+
+fn stickyFormula(x: Fraction, e: Int, n: Int) -> Bool
+    ? "Substitute an established exponent into executable round-to-odd rounding."
+    stickyFrac(x, n) == stickyAtExponent(x, e, n)
+
+verify stickyFormula law knownExponent
+    given x: Fraction = [Domain.Rational.Fraction(top = 13, bottom = 8), Domain.Rational.Fraction(top = -9, bottom = 64)]
+    given e: Int = [-3, 0]
+    given n: Int = [1, 2, 7]
+    when x.top != 0
+    when fracExpo(x) == e
+    using []
+    stickyFormula(x, e, n) holds
+
+fn modelStickyHalf(f: Fp, n: Int) -> Bool
+    ? "The rational half-precision quotient equals the model's sticky half significand."
+    value = Domain.Fprep.fpValueGeneral(f)
+    halfUlp = Domain.Fprep.pow2Signed(f.exp - n + 2)
+    Domain.Round.floorDiv(Domain.Rational.absInt(value.top) * halfUlp.bottom, Domain.Rational.absInt(value.bottom) * halfUlp.top) == Domain.Round.stickyHalf(f, n)
+
+verify modelStickyHalf law normalizedModel
+    given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 12, exp = -3, width = 4)]
+    given n: Int = [2, 3, 7]
+    when Domain.Fprep.isFp(f)
+    when f.width >= 1
+    when n >= 2
+    because Domain.ModelScale.absoluteValue(f)
+    because Domain.Fprep.pow2(f.width - 1) >= 1
+    because Domain.Fprep.pow2SignedPositive(f.exp)
+    because Domain.Fprep.pow2SignedPositive(f.exp - n + 2)
+    because Domain.TruncScale.ulpScale(f.exp, n - 1)
+    because Domain.TruncScale.scaledQuotient(f.sigBits, Domain.Fprep.pow2(f.width - 1), Domain.Fprep.pow2Signed(f.exp), Domain.Fprep.pow2Signed(f.exp - n + 2), Domain.Fprep.pow2(n - 2))
+    using [Domain.ModelScale.absoluteValue.normalizedMagnitude, Domain.Fprep.pow2.positive, Domain.Fprep.pow2SignedPositive.positive, Domain.TruncScale.ulpScale.signedExponent, Domain.TruncScale.scaledQuotient.exactScale]
+    modelStickyHalf(f, n) holds
+
+fn modelStickyExact(f: Fp, n: Int) -> Bool
+    ? "Changing from rational ulp units to model significand units preserves the sticky exactness test."
+    value = Domain.Fprep.fpValueGeneral(f)
+    halfUlp = Domain.Fprep.pow2Signed(f.exp - n + 2)
+    (Domain.Rational.absInt(value.top) * halfUlp.bottom == Domain.Rational.absInt(value.bottom) * halfUlp.top * Domain.Round.stickyHalf(f, n)) == (f.sigBits * Domain.Fprep.pow2(n - 2) == Domain.Fprep.pow2(f.width - 1) * Domain.Round.stickyHalf(f, n))
+
+verify modelStickyExact law normalizedModel
+    given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 12, exp = -3, width = 4)]
+    given n: Int = [2, 3, 7]
+    when Domain.Fprep.isFp(f)
+    when f.width >= 1
+    when n >= 2
+    because Domain.ModelScale.absoluteValue(f)
+    because Domain.Fprep.pow2SignedPositive(f.exp)
+    because Domain.Fprep.pow2SignedPositive(f.exp - n + 2)
+    because Domain.TruncScale.ulpScale(f.exp, n - 1)
+    because Domain.IntegerOrder.positiveProduct(Domain.Fprep.pow2Signed(f.exp).bottom, Domain.Fprep.pow2Signed(f.exp - n + 2).top)
+    because Domain.RoundScale.scaledExactness(f.sigBits * Domain.Fprep.pow2(n - 2), Domain.Fprep.pow2(f.width - 1), Domain.Fprep.pow2Signed(f.exp).bottom * Domain.Fprep.pow2Signed(f.exp - n + 2).top, Domain.Round.stickyHalf(f, n))
+    because Domain.Rational.absInt(Domain.Fprep.fpValueGeneral(f).top) * Domain.Fprep.pow2Signed(f.exp - n + 2).bottom == (f.sigBits * Domain.Fprep.pow2(n - 2)) * (Domain.Fprep.pow2Signed(f.exp).bottom * Domain.Fprep.pow2Signed(f.exp - n + 2).top)
+    because Domain.Rational.absInt(Domain.Fprep.fpValueGeneral(f).bottom) * Domain.Fprep.pow2Signed(f.exp - n + 2).top == Domain.Fprep.pow2(f.width - 1) * (Domain.Fprep.pow2Signed(f.exp).bottom * Domain.Fprep.pow2Signed(f.exp - n + 2).top)
+    using [Domain.ModelScale.absoluteValue.normalizedMagnitude, Domain.Fprep.pow2SignedPositive.positive, Domain.TruncScale.ulpScale.signedExponent, Domain.IntegerOrder.positiveProduct.positiveFactors, Domain.RoundScale.scaledExactness.positiveScale]
+    modelStickyExact(f, n) holds
+
+fn modelSticky(f: Fp, n: Int) -> Bool
+    ? "The fixed-exponent sticky formula denotes the rounded model value, with separate one-bit and ordinary half-significand proofs."
+    Domain.Rational.sameValue(stickyAtExponent(Domain.Fprep.fpValueGeneral(f), f.exp, n), Domain.Fprep.fpValueGeneral(Domain.Round.fpSticky(f, n)))
+
+verify modelSticky law normalizedModel
+    given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 12, exp = -3, width = 4)]
+    given n: Int = [2, 3, 7]
+    when Domain.Fprep.isFp(f)
+    when f.width >= 1
+    when n >= 2
+    because modelSign(f)
+    because modelStickyHalf(f, n)
+    because modelStickyExact(f, n)
+    because Domain.TruncScale.ulpScale(f.exp, n)
+    because Domain.TruncScale.restoredValue(f.sign, Domain.Round.fpSticky(f, n).sigBits, Domain.Fprep.pow2Signed(f.exp), Domain.Fprep.pow2Signed(f.exp - n + 1), Domain.Fprep.pow2(n - 1))
+    because modelStickyReason(f, n)
+    using [modelSign.normalizedSign, modelStickyHalf.normalizedModel, modelStickyExact.normalizedModel, Domain.TruncScale.ulpScale.signedExponent, Domain.TruncScale.restoredValue.exactScale]
+    modelSticky(f, n) holds
+
+verify modelSticky law singleBit
+    given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 12, exp = -3, width = 4), Domain.Fprep.Fp(sign = 1, sigBits = 1, exp = 5, width = 1)]
+    when Domain.Fprep.isFp(f)
+    when f.width >= 1
+    because modelSign(f)
+    because singleBitHalf(f)
+    using [modelSign.normalizedSign, singleBitHalf.normalizedModel]
+    modelSticky(f, 1) holds
+
+verify modelSticky law positivePrecision
+    given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 12, exp = -3, width = 4)]
+    given n: Int = [1, 2, 3, 7]
+    when Domain.Fprep.isFp(f)
+    when f.width >= 1
+    when n >= 1
+    because stickyPrecisionReason(f, n)
+    using [modelSticky.normalizedModel, modelSticky.singleBit]
+    modelSticky(f, n) holds
+
+fn modelStickyReason(f: Fp, n: Int) -> Bool
+    ? "Separate exact half-precision values from values whose sticky low bit must be set."
+    match f.sigBits * Domain.Fprep.pow2(n - 2) == Domain.Fprep.pow2(f.width - 1) * Domain.Round.stickyHalf(f, n)
+        true -> modelSticky(f, n)
+        false -> modelSticky(f, n)
+
+verify modelStickyReason
+    modelStickyReason(Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), 3) => true
+    modelStickyReason(Domain.Fprep.Fp(sign = -1, sigBits = 12, exp = -3, width = 4), 3) => true
+
+fn singleBitHalf(f: Fp) -> Bool
+    ? "A normalized magnitude is strictly positive and below the two-binade half unit used by one-bit sticky rounding."
+    value = Domain.Rational.absFraction(Domain.Fprep.fpValueGeneral(f))
+    halfUlp = Domain.Fprep.pow2Signed(f.exp + 1)
+    a = value.top * halfUlp.bottom
+    b = value.bottom * halfUlp.top
+    Bool.and(a > 0, Domain.Round.floorDiv(a, b) == 0)
+
+verify singleBitHalf law normalizedModel
+    given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 12, exp = -3, width = 4), Domain.Fprep.Fp(sign = 1, sigBits = 1, exp = 5, width = 1)]
+    when Domain.Fprep.isFp(f)
+    when f.width >= 1
+    because Domain.Fprep.pow2(f.width) == 2 * Domain.Fprep.pow2(f.width - 1)
+    because Domain.ModelScale.absoluteValue(f)
+    because Domain.Fprep.pow2(f.width - 1) >= 1
+    because Domain.Fprep.pow2SignedPositive(f.exp)
+    because Domain.Fprep.pow2SignedPositive(f.exp + 1)
+    because Domain.ModelScale.signedDouble(f.exp)
+    because Domain.IntegerOrder.positiveProduct(f.sigBits, Domain.Fprep.pow2Signed(f.exp).top)
+    because Domain.IntegerOrder.positiveProduct(f.sigBits * Domain.Fprep.pow2Signed(f.exp).top, Domain.Fprep.pow2Signed(f.exp + 1).bottom)
+    because Domain.IntegerOrder.positiveProduct(Domain.Fprep.pow2(f.width - 1), Domain.Fprep.pow2Signed(f.exp).bottom)
+    because Domain.IntegerOrder.positiveProduct(Domain.Fprep.pow2(f.width - 1) * Domain.Fprep.pow2Signed(f.exp).bottom, Domain.Fprep.pow2Signed(f.exp + 1).top)
+    because Domain.IntegerOrder.positiveProduct(Domain.Fprep.pow2Signed(f.exp).top, Domain.Fprep.pow2Signed(f.exp + 1).bottom)
+    because Domain.IntegerOrder.multiplyLt(f.sigBits, 2 * Domain.Fprep.pow2(f.width - 1), Domain.Fprep.pow2Signed(f.exp).top * Domain.Fprep.pow2Signed(f.exp + 1).bottom)
+    because Domain.Rational.absFraction(Domain.Fprep.fpValueGeneral(f)).top * Domain.Fprep.pow2Signed(f.exp + 1).bottom == f.sigBits * (Domain.Fprep.pow2Signed(f.exp).top * Domain.Fprep.pow2Signed(f.exp + 1).bottom)
+    because Domain.Rational.absFraction(Domain.Fprep.fpValueGeneral(f)).bottom * Domain.Fprep.pow2Signed(f.exp + 1).top == (2 * Domain.Fprep.pow2(f.width - 1)) * (Domain.Fprep.pow2Signed(f.exp).top * Domain.Fprep.pow2Signed(f.exp + 1).bottom)
+    because Domain.RoundScale.remainderQuotient(Domain.Rational.absFraction(Domain.Fprep.fpValueGeneral(f)).bottom * Domain.Fprep.pow2Signed(f.exp + 1).top, 0, Domain.Rational.absFraction(Domain.Fprep.fpValueGeneral(f)).top * Domain.Fprep.pow2Signed(f.exp + 1).bottom)
+    using [Domain.Fprep.pow2.homomorphism, Domain.ModelScale.absoluteValue.normalizedMagnitude, Domain.Fprep.pow2.positive, Domain.Fprep.pow2SignedPositive.positive, Domain.ModelScale.signedDouble.successor, Domain.IntegerOrder.positiveProduct.positiveFactors, Domain.IntegerOrder.multiplyLt.positiveFactor, Domain.RoundScale.remainderQuotient.smallRemainder]
+    singleBitHalf(f) holds
+
+fn stickyPrecisionReason(f: Fp, n: Int) -> Bool
+    ? "Use the dedicated one-bit sticky branch or the ordinary half-significand branch."
+    match n == 1
+        true -> modelSticky(f, n)
+        false -> modelSticky(f, n)
+
+verify stickyPrecisionReason
+    stickyPrecisionReason(Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), 1) => true
+    stickyPrecisionReason(Domain.Fprep.Fp(sign = -1, sigBits = 12, exp = -3, width = 4), 3) => true
+
+fn sameSticky(f: Fp, n: Int) -> Bool
+    ? "Executable Fraction round-to-odd rounding and model significand rounding denote the same value."
+    Domain.Rational.sameValue(stickyFrac(Domain.Fprep.fpValueGeneral(f), n), Domain.Fprep.fpValueGeneral(Domain.Round.fpSticky(f, n)))
+
+verify sameSticky
+    sameSticky(Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), 0) => false
+    sameSticky(Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), 1) => true
+    sameSticky(Domain.Fprep.Fp(sign = -1, sigBits = 13, exp = -3, width = 4), 3) => true
+    sameSticky(Domain.Fprep.Fp(sign = 1, sigBits = 12, exp = 5, width = 4), 3) => true
+    sameSticky(Domain.Fprep.Fp(sign = -1, sigBits = 9, exp = 0, width = 4), 7) => true
+
+verify sameSticky law normalizedModel
+    given f: Fp = [Domain.Fprep.Fp(sign = 1, sigBits = 13, exp = 0, width = 4), Domain.Fprep.Fp(sign = -1, sigBits = 12, exp = -3, width = 4)]
+    given n: Int = [1, 2, 3, 7]
+    when Domain.Fprep.isFp(f)
+    when f.width >= 1
+    when n >= 1
+    because normalizedValueExponent(f)
+    because Domain.ModelScale.nonzeroValue(f)
+    because stickyFormula(Domain.Fprep.fpValueGeneral(f), f.exp, n)
+    because modelSticky(f, n)
+    using [normalizedValueExponent.executableExponent, Domain.ModelScale.nonzeroValue.normalizedValue, stickyFormula.knownExponent, modelSticky.positivePrecision]
+    sameSticky(f, n) holds

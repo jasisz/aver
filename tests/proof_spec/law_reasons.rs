@@ -547,7 +547,17 @@ fn explain_reports_source_requirements_without_changing_proof_credit() {
     assert!(output.contains("[closed in probe] 0 <= a"), "{output}");
     assert!(output.contains("[open in probe] 0 <= b"), "{output}");
     assert!(output.contains("when a >= 0 [assumed]"), "{output}");
-    for technical in ["AVER_REASON_OPEN:", "⊢", ".lean:", "simp only", "case "] {
+    for technical in [
+        "AVER_REASON_OPEN:",
+        "⊢",
+        ".lean:",
+        "simp only",
+        "case ",
+        "__aver_reason_",
+        "residual not extractable",
+        "engine-form gap",
+        "candidate Aver laws for open goals",
+    ] {
         assert!(
             !output.contains(technical),
             "raw backend state leaked: {output}"
@@ -583,5 +593,70 @@ fn explain_locates_private_imported_steps_and_marks_failed_previous_reasons() {
     assert_eq!(report["assumptions"].as_array().unwrap().len(), 1);
     assert_eq!(report["assumptions"][0]["expression"], "x > 0");
     assert_eq!(report["assumptions"][0]["status"], "failed");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn guided_singleton_helpers_remain_citable_without_laundering_false_claims() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        return;
+    }
+    let dir = temp_output_dir("aver-guided-singleton-citation");
+    let (summary, run) = run_lean_check_json_with_args(
+        "tests/fixtures/law_reason_singleton_citation/main.av",
+        &dir,
+        0,
+        &[],
+        &[
+            "--module-root",
+            "tests/fixtures/law_reason_singleton_citation",
+        ],
+    );
+    assert!(!run.status.success(), "the false helper must fail the gate");
+    assert_eq!(summary["build_errors"], 0, "{}", format_output(&run));
+    assert_eq!(summary["bounded_laws"], 0, "{summary}");
+    assert_eq!(summary["universal_laws"], 5, "{summary}");
+    for law in ["checked.explainedHelper", "checked.usingOnlyHelper"] {
+        for step in ["because1", "because2", "implication"] {
+            assert_eq!(
+                summary["obligations"][format!("{law}.{step}")],
+                "universal",
+                "{summary}"
+            );
+        }
+    }
+    // A cited false theorem may taint even a trivially true sibling step when
+    // its local fact remains in the proof term. Never require clean credit in
+    // that context; the false conclusion must retain the failed dependency.
+    assert_eq!(
+        summary["obligations"]["asserted.taintedHelper.because2"], "failed",
+        "{summary}"
+    );
+    let manifest: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("proof_manifest.json")).unwrap())
+            .unwrap();
+    let law_record = |id: &str| {
+        manifest["laws"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|law| law["law"] == id)
+            .unwrap()
+    };
+    for id in ["Lib.inRange.explained", "Lib.inRange.citedOnly"] {
+        assert_eq!(law_record(id)["tier"], "universal", "{manifest}");
+    }
+    for id in ["Lib.positive.falseUniversal", "asserted.taintedHelper"] {
+        let law = law_record(id);
+        assert_eq!(law["tier"], "failed", "{law}");
+        assert!(
+            law["axioms"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|axiom| axiom == "sorryAx"),
+            "statement admission must preserve transitive failed proof credit: {law}"
+        );
+    }
     let _ = std::fs::remove_dir_all(dir);
 }
