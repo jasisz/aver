@@ -27,7 +27,17 @@ EXPECTED = {
     "false_reason": {"lean": "failed", "dafny": "failed"},
     "restated_goal": {"lean": "failed", "dafny": "failed"},
     "failed_citation": {"lean": "failed", "dafny": "failed"},
-    "recursive": {"lean": "verified", "dafny": "declined"},
+    "recursive": {"lean": "verified", "dafny": "verified"},
+    "recursive_false_reason": {"lean": "failed", "dafny": "failed"},
+    "nonlinear_identity": {"lean": "verified", "dafny": "verified"},
+    "nonlinear_positive": {"lean": "failed", "dafny": "verified"},
+    "nonlinear_missing_sign": {"lean": "failed", "dafny": "failed"},
+    "nonlinear_zero_factor": {"lean": "failed", "dafny": "failed"},
+    "nonlinear_failed_citation": {"lean": "failed", "dafny": "failed"},
+    "k5_integerorder": {"lean": "verified", "dafny": "verified"},
+}
+SOURCE_PATHS = {
+    "k5_integerorder": ROOT / "projects/k5_fdiv/domain/integerorder.av",
 }
 
 
@@ -67,7 +77,9 @@ def outcome(summary: dict | None, returncode: int, timed_out: bool = False) -> s
         if summary.get("backend") == "lean" and summary.get("universal") is not True:
             return "conditional"
         return "verified"
-    return "failed"
+    # A rejected invocation without an actual proof error is not evidence for
+    # a negative control (for example, Dafny may reject a warning-only run).
+    return "checker_error"
 
 
 def run_process(command: list[str], timeout: float) -> tuple[str, int, bool]:
@@ -126,7 +138,7 @@ def coverage(rows: list[dict]) -> dict:
         for backend in ("lean", "dafny")
     }
     return {
-        "scope": "selected spike fixtures; failed files grant no independent law credit",
+        "scope": "selected spike sources; failed files grant no independent law credit",
         "both_backends": len(verified["lean"] & verified["dafny"]),
         "lean_only": len(verified["lean"] - verified["dafny"]),
         "dafny_only": len(verified["dafny"] - verified["lean"]),
@@ -161,7 +173,7 @@ def main() -> int:
         except OSError as error:
             versions[Path(tool).name] = {"error": str(error)}
     for case in args.case or EXPECTED:
-        source = FIXTURES / f"{case}.av"
+        source = SOURCE_PATHS.get(case, FIXTURES / f"{case}.av")
         source_hash = digest(source)
         case_rows = []
         for backend in ("lean", "dafny"):
@@ -184,11 +196,32 @@ def main() -> int:
             if digest(source) != source_hash or digest(binary) != compiler_hash:
                 result = "input_changed"
             inventory = claim_inventory(destination, backend)
+            generated_toolchain = None
+            actual_lean_version = None
+            if backend == "lean" and (destination / "lean-toolchain").is_file():
+                generated_toolchain = (destination / "lean-toolchain").read_text().strip()
+                try:
+                    version, version_code, version_expired = run_process(
+                        ["elan", "run", generated_toolchain, "lean", "--version"],
+                        min(args.timeout, 10),
+                    )
+                    actual_lean_version = {
+                        "output": version.strip(), "returncode": version_code,
+                        "timed_out": version_expired,
+                    }
+                    if version_code != 0 or version_expired:
+                        problems.append(f"{case}/lean: cannot identify generated toolchain version")
+                except OSError as error:
+                    actual_lean_version = {"error": str(error)}
+                    problems.append(f"{case}/lean: cannot identify generated toolchain version")
             row = {
                 "case": case, "backend": backend, "source_sha256": source_hash,
+                "source_path": str(source.relative_to(ROOT)),
                 "outcome": result, "expected": EXPECTED[case][backend],
                 "returncode": code, "seconds": round(time.monotonic() - started, 3),
                 "summary": summary, "claims": inventory,
+                "generated_toolchain": generated_toolchain,
+                "actual_lean_version": actual_lean_version,
             }
             rows.append(row)
             case_rows.append(row)
@@ -204,7 +237,7 @@ def main() -> int:
     report = {
         "scope": "whole-file strict verification, not independent per-law credit",
         "dafny_evidence": "Dafny/Boogie/Z3 verification, not a Lean kernel axiom audit",
-        "compiler_sha256": compiler_hash, "versions": versions, "results": rows,
+        "compiler_sha256": compiler_hash, "ambient_versions": versions, "results": rows,
         "verified_law_coverage": coverage(rows),
         "expectations_met": not problems, "problems": problems,
     }

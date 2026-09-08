@@ -33,6 +33,10 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Changed
 
+- **Dafny checks nonlinear source proof steps and guarded integer countdowns.** `because`/`using` now admit variable products and native self-recursive countdown helpers, with checked induction for direct Boolean explanations. The unchanged K5 IntegerOrder module passes both backends. The portability report records actual generated Lean toolchains and includes missing-sign, zero-factor, false-citation and false-induction controls.
+
+- **Lean proof and certificate toolchains are pinned to stable v4.33.1.** This includes upstream kernel and runtime fixes. The certificate wall identity rotates with the toolchain: existing packages require their matching verifier release, or regeneration with this release. Dafny remains on v4.11.0, its latest stable release.
+
 - **WASM divides large integers by a one-word divisor in one pass over their limbs.** This replaces bit-at-a-time division for divisor magnitudes up to `2^32 - 1`, including the repeated halving used by K5's checked exponent. Quotient and remainder retain Euclidean semantics for every sign, and multiword division skips leading zero quotient limbs and scans only the live prefix of its partial remainder. Differential tests cover signed boundaries and full-width carries; repeated halving of a 4096-bit value is checked under the existing verify budget.
 
 - **Proof arguments live in Aver source.** Removed automatic loading and injection of hand-written Lean/Dafny proof sidecars and their `hand` manifest credit. Existing sidecar files no longer affect exports. K5's integer trunc-sticky law now proves universally with `because`/`using`; generic nested-floor, common-factor cancellation, and remainder-absorption laws can be cited with their original premises. The floating-point composition is also replaced by a source-local proof (see Added). Lean core floor proofs also use the current `Int.mul_ediv_add_emod` theorem name.

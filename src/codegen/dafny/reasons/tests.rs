@@ -81,10 +81,7 @@ fn singleton_guided_statements_are_admitted_without_claiming_they_hold() {
 
 #[test]
 fn unsupported_cones_decline_before_any_guided_obligation_is_emitted() {
-    for (body, reason) in [
-        ("x * x", "literal integer factor"),
-        ("Int.div(x, 2)", "unsupported call Int.div"),
-    ] {
+    for (body, reason) in [("Int.div(x, 2)", "unsupported call Int.div")] {
         let source = format!(
             "fn f(x: Int) -> Int\n    {body}\nverify f law explained\n    given x: Int = [1, 2]\n    because x == x\n    using []\n    f(x) => f(x)\n"
         );
@@ -94,7 +91,7 @@ fn unsupported_cones_decline_before_any_guided_obligation_is_emitted() {
                 .contains(reason)
         );
     }
-    let recursion = "fn down(n: Int) -> Int\n    match n <= 0\n        true -> 0\n        false -> down(n - 1)\nverify down law explained\n    given n: Int = [0, 1]\n    because down(n) == down(n)\n    using []\n    down(n) => down(n)\n";
+    let recursion = "fn down(n: Int) -> Int\n    match n <= 0\n        true -> 0\n        false -> down(n + 1)\nverify down law explained\n    given n: Int = [0, 1]\n    because down(n) == down(n)\n    using []\n    down(n) => down(n)\n";
     assert!(
         emitted(recursion, "down.explained")
             .unwrap_err()
@@ -110,10 +107,62 @@ fn unsupported_cones_decline_before_any_guided_obligation_is_emitted() {
 
 #[test]
 fn selected_unsupported_helper_declines_the_consumer_too() {
-    let source = "fn square(x: Int) -> Int\n    x * x\nverify square law reflexive\n    given x: Int = [0, 1]\n    using []\n    square(x) => square(x)\nfn identity(x: Int) -> Int\n    x\nverify identity law consumer\n    given x: Int = [0, 1]\n    because x == x\n    using [square.reflexive]\n    identity(x) => x\n";
+    let source = "fn square(x: Int) -> Int\n    Int.div(x, 2)\nverify square law reflexive\n    given x: Int = [0, 1]\n    using []\n    square(x) => square(x)\nfn identity(x: Int) -> Int\n    x\nverify identity law consumer\n    given x: Int = [0, 1]\n    because x == x\n    using [square.reflexive]\n    identity(x) => x\n";
     let error = emitted(source, "identity.consumer").unwrap_err();
     assert!(error.contains("citation square.reflexive"), "{error}");
-    assert!(error.contains("literal integer factor"), "{error}");
+    assert!(error.contains("unsupported call Int.div"), "{error}");
+}
+
+#[test]
+fn nonlinear_products_are_emitted_as_checked_arithmetic() {
+    let source = "fn square(x: Int) -> Int\n    x * x\nverify square law nonnegative\n    given x: Int = [-2, 0, 3]\n    because x * x >= 0\n    using []\n    square(x) >= 0 holds\n";
+    let text = emitted(source, "square.nonnegative").unwrap();
+    assert!(text.contains("(x * x)"), "{text}");
+    assert!(text.contains("assert"), "{text}");
+    assert!(!text.contains("assume"), "{text}");
+}
+
+#[test]
+fn recursive_admission_checks_hidden_calls_and_mutual_cycles() {
+    let tail = "verify down law reflexive\n    given n: Int = [0, 2]\n    using []\n    down(n) => down(n)\n";
+    for (definition, expected) in [
+        (
+            "fn down(n: Int) -> Int\n    match n <= 0\n        true -> Int.div(n, 2)\n        false -> down(n - 1)\n",
+            "unsupported call Int.div",
+        ),
+        (
+            "fn down(n: Int) -> Int\n    match n <= 0\n        true -> 0\n        false -> down(n - 1) + other(n - 1)\nfn other(n: Int) -> Int\n    match n <= 0\n        true -> 0\n        false -> down(n - 1)\n",
+            "recurs",
+        ),
+    ] {
+        let error = emitted(&format!("{definition}{tail}"), "down.reflexive").unwrap_err();
+        assert!(error.contains(expected), "{error}");
+    }
+}
+
+#[test]
+fn recursive_integer_equations_do_not_request_unnecessary_induction() {
+    let source = "fn down(n: Int) -> Int\n    match n <= 0\n        true -> 0\n        false -> down(n - 1)\nverify down law successor\n    given n: Int = [0, 2]\n    when n >= 0\n    because down(n + 1) == down(n)\n    using []\n    down(n + 1) => down(n)\n";
+    let text = emitted(source, "down.successor").unwrap();
+    assert!(!text.contains("{:induction n}"), "{text}");
+    assert_eq!(text.matches("{:induction false}").count(), 3, "{text}");
+}
+
+#[test]
+fn guarded_countdown_with_binding_keeps_its_negative_input_domain() {
+    let source = "fn down(n: Int) -> Int\n    zero = 0\n    match n <= 0\n        true -> zero\n        false -> down(n - 1)\nverify down law negativeBase\n    given n: Int = [-2, 0]\n    when n <= 0\n    because down(n) == 0\n    using []\n    down(n) => 0\n";
+    let ctx = ctx_from_source(source, "Guidance");
+    let project = crate::codegen::dafny::transpile(&ctx);
+    let text = project
+        .files
+        .iter()
+        .filter(|(name, _)| name.ends_with(".dfy"))
+        .map(|(_, text)| text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(text.contains("decreases if n >= 0 then n else 0"), "{text}");
+    assert!(!text.contains("requires n >= 0"), "{text}");
+    assert!(!text.contains("{:axiom}"), "{text}");
 }
 
 #[test]

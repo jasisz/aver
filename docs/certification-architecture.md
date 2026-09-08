@@ -42,7 +42,7 @@ standard error, and exit status.
 | `Plans.lean` | Certificate | Untrusted but authoritative plan data; structurally checked and canonically lowered in Lean |
 | Model and artifact-specific Lean modules | Certificate | Untrusted proof data; admitted only after staging gates, data pinning, and kernel checking |
 | Soundness wall | Verifier | Embedded, selected by exact `wall_id`, and materialized by the checker |
-| Lean toolchain and build files | Verifier | Pinned to Lean 4.32 and authored by the checker |
+| Lean toolchain and build files | Verifier | Pinned to Lean 4.33 and authored by the checker |
 | `CheckerWitness.lean` | Verifier | Generated for this artifact; never accepted from the package |
 
 The public package therefore contains no `.plan` files and no
@@ -88,7 +88,7 @@ The steps are:
    generated versions.
 4. Generate `ArtifactBytes.lean` from the bytes read in step 1. The package has
    no opportunity to provide a different byte numeral.
-5. Build the package data and wall under Lean 4.32. `WasmSlice` and
+5. Build the package data and wall under Lean 4.33. `WasmSlice` and
    `CertDecode` recover the export/function/type/code facts required by the
    accepted fragment.
 6. Check the `Plans.lean` values and lower accepted plans to their canonical
@@ -179,7 +179,7 @@ A successful verdict depends on:
 - the small Rust verifier path for file I/O, hashing, version checks, safe
   staging, process execution, and report pinning;
 - `wasmparser::Validator` for full WebAssembly validity;
-- the exact embedded Lean wall and Lean 4.32 elaborator/kernel/tooling;
+- the exact embedded Lean wall and Lean 4.33 elaborator/kernel/tooling;
 - the canonical local Elan home used to resolve that pinned toolchain;
 - SHA-256 collision resistance;
 - the semantic truth and totality, where required, of named runtime contracts;
@@ -196,7 +196,7 @@ It does not depend on:
 
 `leanchecker --fresh` prevents the final replay from inheriting declarations
 from the prior elaboration environment. It is still a component of the same
-Lean 4.32 distribution, not an independent checker implementation. The
+Lean 4.33 distribution, not an independent checker implementation. The
 current architecture should not be described as having two diverse kernels.
 
 ## Read declarations and scope

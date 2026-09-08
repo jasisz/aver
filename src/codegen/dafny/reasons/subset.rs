@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use crate::ast::{
-    BinOp, Expr, Literal, Pattern, Spanned, Stmt, VerifyBlock, VerifyKind, VerifyLaw,
+    BinOp, Expr, FnDef, Literal, Pattern, Spanned, Stmt, VerifyBlock, VerifyKind, VerifyLaw,
 };
 use crate::codegen::CodegenContext;
 use crate::ir::FnId;
@@ -43,7 +43,7 @@ fn bind(env: &mut Env, name: &str, ty: Scalar) -> Result<(), String> {
 struct Checker<'a> {
     ctx: &'a CodegenContext,
     functions: HashSet<FnId>,
-    checking_functions: HashSet<FnId>,
+    checking_functions: Vec<FnId>,
     laws: BTreeMap<String, Citation<'a>>,
     checking_laws: BTreeSet<String>,
     checked_laws: BTreeSet<String>,
@@ -64,16 +64,7 @@ impl<'a> Checker<'a> {
             }
             Expr::BinOp(op, lhs, rhs) => {
                 if *op == BinOp::Div {
-                    return Err("division is outside the linear arithmetic pilot".to_string());
-                }
-                if *op == BinOp::Mul
-                    && crate::ast::single_negation_int_literal(lhs).is_none()
-                    && crate::ast::single_negation_int_literal(rhs).is_none()
-                {
-                    return Err(
-                        "multiplication requires a literal integer factor in this pilot"
-                            .to_string(),
-                    );
+                    return Err("division is outside the integer arithmetic pilot".to_string());
                 }
                 let left = self.expression(lhs, env)?;
                 let right = self.expression(rhs, env)?;
@@ -112,12 +103,25 @@ impl<'a> Checker<'a> {
                         self.expect(arg, env, scalar(ty)?)?;
                     }
                     let result = scalar(&fd.return_type)?;
-                    if self.ctx.recursive_fns.contains(&id) || self.checking_functions.contains(&id)
+                    if self.ctx.recursive_fns.contains(&id)
+                        && countdown_parameter(fd, self.ctx).is_none()
                     {
-                        return Err(format!("recursive function {name} is outside this pilot"));
+                        return Err(format!(
+                            "recursive function {name} is outside the guarded Int countdown pilot"
+                        ));
+                    }
+                    // A self-call revisits the body being checked, whose remaining
+                    // expressions must still be validated. Any other back edge is
+                    // mutual recursion and must not reach Dafny's fuel/opaque lane.
+                    if self.checking_functions.contains(&id)
+                        && self.checking_functions.last() != Some(&id)
+                    {
+                        return Err(format!(
+                            "mutual recursion through {name} is outside this pilot"
+                        ));
                     }
                     if self.functions.insert(id) {
-                        self.checking_functions.insert(id);
+                        self.checking_functions.push(id);
                         let mut locals = Env::new();
                         for (param, ty) in &fd.params {
                             bind(&mut locals, param, scalar(ty)?)?;
@@ -143,7 +147,7 @@ impl<'a> Checker<'a> {
                                 }
                             }
                         }
-                        self.checking_functions.remove(&id);
+                        self.checking_functions.pop();
                         if body_type != Some(result) {
                             return Err("unsupported function result".to_string());
                         }
@@ -164,6 +168,14 @@ impl<'a> Checker<'a> {
                     self.expect(arg, env, input)?;
                 }
                 Ok(output)
+            }
+            Expr::TailCall(call) => {
+                // TCO preserves the exact source call; validate it through the
+                // same path, including every argument and the recursive body.
+                let callee = Spanned::new(Expr::Ident(call.target.clone()), expr.line);
+                let call =
+                    Spanned::new(Expr::FnCall(Box::new(callee), call.args.clone()), expr.line);
+                self.expression(&call, env)
             }
             Expr::Match { subject, arms } => {
                 self.expect(subject, env, Scalar::Bool)?;
@@ -188,7 +200,7 @@ impl<'a> Checker<'a> {
                 }
                 result.ok_or_else(|| "empty match is outside this pilot".to_string())
             }
-            _ => Err("expression is outside the nonrecursive Int/Bool guidance pilot".to_string()),
+            _ => Err("expression is outside the Int/Bool guidance pilot".to_string()),
         }
     }
 
@@ -238,6 +250,15 @@ impl<'a> Checker<'a> {
     }
 }
 
+/// The same checked subtractive descent used by the proof lowerer. This lane
+/// excludes ascent, unguarded recursion, and opaque termination fallbacks.
+pub(super) fn countdown_parameter(fd: &FnDef, ctx: &CodegenContext) -> Option<usize> {
+    crate::codegen::recursion::detect::single_int_countdown_param_index(fd).filter(|index| {
+        crate::codegen::recursion::detect::has_guarded_subtractive_descent(fd, *index)
+            && !crate::codegen::dafny::toplevel::termination_guess_unjustified(fd, ctx)
+    })
+}
+
 pub(super) fn validate<'a>(
     vb: &VerifyBlock,
     law: &'a VerifyLaw,
@@ -256,7 +277,7 @@ pub(super) fn validate<'a>(
     let mut checker = Checker {
         ctx,
         functions: HashSet::new(),
-        checking_functions: HashSet::new(),
+        checking_functions: Vec::new(),
         laws,
         checking_laws: BTreeSet::new(),
         checked_laws: BTreeSet::new(),

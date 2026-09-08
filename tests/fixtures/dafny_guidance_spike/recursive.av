@@ -1,10 +1,11 @@
 module DafnyGuidanceRecursive
-    intent = "The initial Dafny guided subset must explicitly decline recursive source proofs."
+    intent = "A guarded integer countdown exposes the same recursive equation to both backends."
     effects []
 
 fn down(n: Int) -> Int
+    base = n - n
     match n <= 0
-        true -> 0
+        true -> base
         false -> down(n - 1)
 
 verify down law successorEquation
@@ -13,3 +14,10 @@ verify down law successorEquation
     because down(n + 1) == down(n)
     using []
     down(n + 1) => down(n)
+
+verify down law nonpositiveBase
+    given n: Int = [-3, -1, 0]
+    when n <= 0
+    because down(n) == 0
+    using []
+    down(n) => 0

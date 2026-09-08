@@ -2,7 +2,7 @@
 //! checked lemma; only the parent chains them into the original guarded law.
 //! This pilot has no assumptions/axiom fallback and makes no kernel-audit claim.
 
-use crate::ast::{TopLevel, VerifyBlock, VerifyLaw};
+use crate::ast::{Expr, Spanned, TopLevel, VerifyBlock, VerifyLaw};
 use crate::codegen::CodegenContext;
 
 use super::expr::{aver_name_to_dafny, emit_expr};
@@ -76,6 +76,48 @@ fn conclusion(law: &VerifyLaw, ctx: &CodegenContext) -> String {
     )
 }
 
+/// Choose a source given driving a direct recursive Bool predicate obligation.
+/// Equalities between recursive Int values often only need unfolding; adding
+/// induction there can create untriggerable hypotheses. Dafny checks every
+/// selected induction and its decreases, without adding a source premise.
+fn induction_driver(
+    expressions: &[&Spanned<Expr>],
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+) -> Option<String> {
+    fn collect(
+        expr: &Spanned<Expr>,
+        law: &VerifyLaw,
+        ctx: &CodegenContext,
+        drivers: &mut std::collections::BTreeSet<String>,
+    ) {
+        if let Expr::FnCall(callee, args) = &expr.node {
+            let name = crate::checker::expr_to_str(callee);
+            let scope = ctx.active_module_scope();
+            if let Some(id) = ctx.symbol_table.resolve_fn_id_in(&name, scope.as_deref()) {
+                let key = &ctx.symbol_table.fn_entry(id).key;
+                if let Some(fd) = ctx.fn_def_by_name(&key.name, key.scope_str())
+                    && fd.return_type == "Bool"
+                    && let Some(index) = subset::countdown_parameter(fd, ctx)
+                    && let Some(arg) = args.get(index)
+                    && let Expr::Ident(name) | Expr::Resolved { name, .. } = &arg.node
+                    && law
+                        .givens
+                        .iter()
+                        .any(|g| g.name == *name && g.type_name == "Int")
+                {
+                    drivers.insert(aver_name_to_dafny(name));
+                }
+            }
+        }
+    }
+    let mut drivers = std::collections::BTreeSet::new();
+    for expr in expressions {
+        collect(expr, law, ctx, &mut drivers);
+    }
+    (drivers.len() == 1).then(|| drivers.pop_first().expect("one induction driver"))
+}
+
 /// Return an explicit decline reason for every shape outside the pilot. This
 /// validates the complete selected dependency closure before emitting anything.
 pub(super) fn emit(
@@ -105,10 +147,18 @@ pub(super) fn emit(
         };
         let step_name = format!("{name}_{step}");
         let step_goal = reasons.get(index).unwrap_or(&goal);
+        let source_expressions = match law.because.get(index) {
+            Some(reason) => vec![reason],
+            None => vec![&law.lhs, &law.rhs],
+        };
+        let driver = induction_driver(&source_expressions, law, ctx);
         out.push(format!(
             "// aver:dafny-obligation {step_name} {source_id}.{step}"
         ));
-        out.push(format!("lemma {{:induction false}} {step_name}({params})"));
+        out.push(format!(
+            "lemma {{:induction {}}} {step_name}({params})",
+            driver.as_deref().unwrap_or("false")
+        ));
         if let Some(guard) = &guard {
             out.push(format!("  requires {guard}"));
         }
@@ -116,6 +166,9 @@ pub(super) fn emit(
             out.push(format!("  requires {previous}"));
         }
         out.push(format!("  ensures {step_goal}"));
+        if let Some(driver) = driver {
+            out.push(format!("  decreases if {driver} >= 0 then {driver} else 0"));
+        }
         out.push("{".to_string());
         for (cited, dependency) in &citations {
             let cited_name = lemma_name(&label(cited, dependency));

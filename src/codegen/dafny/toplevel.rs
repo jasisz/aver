@@ -897,7 +897,9 @@ fn infer_decreases(fd: &FnDef) -> Option<DecreasesInfo> {
     // (a) Source handles the n<0 branch itself via `match n < 0 { true
     //     -> base; false -> … recur(n-1, …) }` — the recursive call
     //     never fires for negative n, so `decreases if n >= 0 then n
-    //     else 0` suffices without any precondition.
+    //     else 0` suffices without any precondition. The shared per-call
+    //     guard proof also recognizes this after local bindings or nested
+    //     guards, where the first-statement shortcut cannot see it.
     // (b) Source only discriminates by `match n { 0 -> base; _ -> recur
     //     (n-1, …) }`. The wildcard arm catches negative n too, and
     //     Dafny reasons that path would step from n = -1 to n = -2
@@ -911,7 +913,9 @@ fn infer_decreases(fd: &FnDef) -> Option<DecreasesInfo> {
         && let Some((pname, _)) = fd.params.get(idx)
     {
         let dname = aver_name_to_dafny(pname);
-        if fn_handles_negative_first(fd, pname) {
+        if fn_handles_negative_first(fd, pname)
+            || crate::codegen::recursion::detect::has_guarded_subtractive_descent(fd, idx)
+        {
             return Some(DecreasesInfo {
                 expr: format!("if {} >= 0 then {} else 0", dname, dname),
                 requires: vec![],

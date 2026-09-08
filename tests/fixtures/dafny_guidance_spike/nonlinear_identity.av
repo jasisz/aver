@@ -1,0 +1,14 @@
+module DafnyGuidanceNonlinearIdentity
+    intent = "Both backends receive the same distributive identity with three unrestricted integer variables."
+    effects []
+
+fn multiply(x: Int, y: Int) -> Int
+    x * y
+
+verify multiply law distributive
+    given x: Int = [-3, 0, 2]
+    given y: Int = [-2, 0, 4]
+    given z: Int = [-1, 0, 5]
+    because x * (y + z) == x * y + x * z
+    using []
+    multiply(x, y + z) => multiply(x, y) + multiply(x, z)

@@ -49,6 +49,9 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(spike.outcome(None, 0), "checker_error")
         self.assertEqual(spike.outcome({"backend": "dafny", "errors": 1}, 2), "checker_error")
         self.assertEqual(spike.outcome(None, -15, True), "timeout")
+        self.assertEqual(spike.outcome(
+            {"backend": "dafny", "passed": False, "errors": 0, "timeouts": 0}, 1
+        ), "checker_error")
 
     def test_summary_requires_one_result_from_the_selected_backend(self):
         record = '{"backend":"dafny","passed":true}'

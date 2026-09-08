@@ -3,7 +3,7 @@
 An Aver artifact certificate states what selected exports of one exact
 WebAssembly artifact compute. The artifact may be a raw wasm-gc module or a
 wasip2 component containing the checked core module. It is checked against the
-delivered bytes by Lean 4.32 and does not require trusting the Aver compiler
+delivered bytes by Lean 4.33 and does not require trusting the Aver compiler
 that produced either the artifact or the certificate package.
 
 This is a behavioral proof, not a signature or a reproducible-build
@@ -24,7 +24,7 @@ cargo install aver-cert
 The compiler needs the `wasm` feature for `--target wasm-gc --certify`; add
 `wasip2` for component output.
 Verification also requires a standard Elan installation; `aver-cert` selects
-the pinned Lean 4.32 toolchain through Elan and installs it when necessary.
+the pinned Lean 4.33 toolchain through Elan and installs it when necessary.
 
 Generate either target and its certificate package:
 
@@ -218,7 +218,7 @@ toolchain, build configuration, generated artifact bytes, or checker witness.
 
 The verification TCB consists of the small standalone `aver-cert` orchestration
 path, the one retained `wasmparser::Validator` validity check, the selected
-checker-owned Lean wall, Lean 4.32's elaborator/kernel and build tools, the
+checker-owned Lean wall, Lean 4.33's elaborator/kernel and build tools, the
 approved runtime contracts, and the cryptographic hash binding. The positive
 verdict does not run the producer classifier, disassembler, or Rust obligation
 rederivation.

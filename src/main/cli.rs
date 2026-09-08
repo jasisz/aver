@@ -504,7 +504,7 @@ pub(super) enum Commands {
         optimize: Option<WasmOptMode>,
         /// Emit a format-v1 certificate data package next to the Wasm artifact.
         /// `aver cert verify` supplies its own Lean wall and the actual artifact
-        /// bytes, then checks the package with Lean 4.32. Unsupported exports
+        /// bytes, then checks the package with Lean 4.33. Unsupported exports
         /// are listed with a reason, never credited with a weaker theorem.
         /// Requires `--target wasm-gc` or `--target wasip2`. On wasm-gc it may
         /// accompany `--optimize`: the certificate binds the canonical `.wasm`,
