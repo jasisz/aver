@@ -70,14 +70,25 @@ fn dafny_mutual_source_transitions_verify_with_only_the_consumed_input_in_the_me
         assert_eq!(summary["passed"], true, "{fixture}: {summary}");
         assert_eq!(summary["errors"], 0, "{summary}");
         let source = generated(&dir);
+        // The importing module also declares a nonrecursive `accept` wrapper.
+        // Inspect the owning module, independently of read_dir enumeration order.
+        let definitions = std::fs::read_to_string(dir.join(if fixture == "imported/main" {
+            "Collector.dfy"
+        } else {
+            "MutualAccumulatorPositive.dfy"
+        }))
+        .expect("the module owning the recursive definitions must be emitted");
         for (name, driver) in [("collect", "items"), ("accept", "rest")] {
             assert!(!source.contains(&format!("{name}__fuel")), "{source}");
-            let declaration = source.split(&format!("function {name}(")).nth(1).unwrap();
+            let declaration = definitions
+                .split(&format!("function {name}("))
+                .nth(1)
+                .unwrap_or_else(|| panic!("missing {name} definition:\n{definitions}"));
             let header = declaration.split('{').next().unwrap();
             let measure = header
                 .lines()
                 .find(|line| line.trim().starts_with("decreases "))
-                .unwrap();
+                .unwrap_or_else(|| panic!("missing {name} measure:\n{header}"));
             assert!(
                 measure.contains(&format!("|{driver}|")),
                 "{name}: {measure}"
