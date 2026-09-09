@@ -2,16 +2,34 @@ use super::*;
 
 const SOURCE: &str = include_str!("../fixtures/source_recursion/floor_citation.av");
 
+// The positive corpus needs its decomposition pool. For a false supplier,
+// isolate the counterexample from unrelated quantified sibling facts: otherwise
+// Z3 can exhaust its search budget instead of reporting the false statement.
+// Keep the same source function, false claim and misleading zero samples.
+fn isolated_false_supplier() -> String {
+    let definitions = SOURCE.split_once("verify digits law prefix").unwrap().0;
+    let law = SOURCE
+        .split_once("verify digits law singletonPrefix")
+        .unwrap()
+        .1
+        .split_once("verify digits law oneDigit")
+        .unwrap()
+        .0;
+    format!("{definitions}verify digits law singletonPrefix{law}")
+        .replace("given item: Int = [2, 3]", "given item: Int = [0]")
+        .replace(
+            "digits(value, [item]) => List.prepend(item, digits(value, []))",
+            "digits(value, [item]) => List.prepend(0, digits(value, []))",
+        )
+}
+
 #[test]
 fn dafny_citation_reuse_keeps_guards_and_checks_false_unused_suppliers() {
     let (ordinary, guided) = SOURCE.split_once("verify digits law citedPrefix").unwrap();
     let (before_positive, positive) = guided
         .split_once("verify digits law citedPositive")
         .unwrap();
-    let false_ordinary = ordinary.replace(
-        "digits(value, [item]) => List.prepend(item, digits(value, []))",
-        "digits(value, [item]) => List.prepend(0, digits(value, []))",
-    );
+    let false_ordinary = isolated_false_supplier();
     for (name, source, expected) in [
         ("positive", SOURCE.to_string(), true),
         (
@@ -35,7 +53,7 @@ fn dafny_citation_reuse_keeps_guards_and_checks_false_unused_suppliers() {
             "false_unused_supplier",
             format!(
                 "{false_ordinary}\nverify digits law citedPrefix{}",
-                guided.replace(
+                before_positive.replace(
                     "digits(value, [item]) => List.prepend(item, digits(value, []))",
                     "digits(value, [item]) => digits(value, [item])"
                 )
@@ -78,17 +96,12 @@ fn dafny_citation_reuse_retains_import_owner_and_module_local_earlier_laws() {
     for false_supplier in [false, true] {
         let dir = temp_output_dir("aver-citation-reuse-import");
         std::fs::create_dir_all(&dir).unwrap();
-        let source = SOURCE.replace("module FloorCitation", "module Codec\n    exposes [digits]");
         let source = if false_supplier {
-            source
-                .replace("given item: Int = [2, 3]", "given item: Int = [0]")
-                .replace(
-                    "digits(value, [item]) => List.prepend(item, digits(value, []))",
-                    "digits(value, [item]) => List.prepend(0, digits(value, []))",
-                )
+            isolated_false_supplier()
         } else {
-            source
-        };
+            SOURCE.to_string()
+        }
+        .replace("module FloorCitation", "module Codec\n    exposes [digits]");
         std::fs::write(dir.join("codec.av"), source).unwrap();
         let entry = dir.join("main.av");
         std::fs::write(
