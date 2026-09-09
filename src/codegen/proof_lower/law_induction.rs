@@ -62,6 +62,10 @@ fn substitute(
             }
             Expr::FnCall(callee.clone(), args.iter().map(rec).collect::<Option<_>>()?)
         }
+        Expr::TailCall(tc) => Expr::FnCall(
+            Box::new(var(&tc.target)),
+            tc.args.iter().map(rec).collect::<Option<_>>()?,
+        ),
         _ => return None,
     };
     let result = Spanned::new(node, expr.line);
@@ -344,6 +348,9 @@ pub(super) fn plan(
             None => None,
         };
         calls.push(LawInductionCall {
+            source_call: inputs.resolve_expr(occurrence, scope),
+            source_step: substitute(branch, &bindings).map(|e| inputs.resolve_expr(&e, scope)),
+            applications: Vec::new(),
             guard: inputs.resolve_expr(&guard, scope),
             premise,
             list_case,

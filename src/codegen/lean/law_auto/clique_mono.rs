@@ -22,8 +22,8 @@
 //! member of the same SCC. No function or type name is ever matched.
 //!
 //! The emitter proves ONE conjunction over the whole clique in Prop form by
-//! ordinary `induction fuel` with rank-slotted thresholds (`T s pos rank = (len
-//! - pos.toNat) * R + rank + 1`), then projects the user-named member's conjunct
+//! ordinary `induction fuel` with rank-slotted thresholds
+//! (`T s pos rank = (len - pos.toNat) * R + rank + 1`), then projects the user-named member's conjunct
 //! back through the fuel wrapper (bridging the law's `== / >=` Bool surface via
 //! constructor injection on the `Int` position field and `omega`). Ranks are a
 //! longest-path assignment over the subgraph of same-position / whitespace-weak

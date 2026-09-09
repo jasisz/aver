@@ -2,6 +2,7 @@
 ///
 /// This module is intentionally isolated from `toplevel.rs` so all heuristic
 /// matching and proof-shape logic lives in one place.
+mod applications;
 mod clique_mono;
 mod container_induction;
 mod decimal;

@@ -2552,8 +2552,10 @@ pub fn populate_law_theorems(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
             unfolding,
         });
     }
+    law_applications::populate(inputs, ir);
 }
 
+mod law_applications;
 mod law_dependencies;
 mod law_induction;
 mod law_unfolding;

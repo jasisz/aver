@@ -530,6 +530,16 @@ pub enum LawInductionMeasure {
 
 #[derive(Debug, Clone)]
 pub struct LawInductionCall {
+    /// The concrete source occurrence and its recursive branch, including fixed
+    /// seeds that are not theorem parameters. Search terms, never equalities
+    /// admitted without the backend checking the source definition.
+    pub source_call: Spanned<crate::ir::hir::ResolvedExpr>,
+    /// Absent when branch syntax exceeds the substitution language; ordinary
+    /// induction remains usable even when application search cannot unfold it.
+    pub source_step: Option<Spanned<crate::ir::hir::ResolvedExpr>>,
+    /// Explicit applications discovered from this step and earlier ordinary
+    /// laws. Backends must independently admit each supplier's full contract.
+    pub applications: Vec<LawApplication>,
     /// Source branch guard, evaluated before introducing pattern projections.
     pub guard: Spanned<crate::ir::hir::ResolvedExpr>,
     /// The theorem premise at the recursive arguments. Evaluated after
@@ -539,6 +549,13 @@ pub struct LawInductionCall {
     /// Nil/cons decomposition under the nonempty guard. Projection names are
     /// fresh in the source/law scope; no partial List.head value is invented.
     pub list_case: Option<LawInductionListCase>,
+    pub arguments: Vec<Spanned<crate::ir::hir::ResolvedExpr>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct LawApplication {
+    pub fn_id: FnId,
+    pub law_name: String,
     pub arguments: Vec<Spanned<crate::ir::hir::ResolvedExpr>>,
 }
 

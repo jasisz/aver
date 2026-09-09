@@ -218,6 +218,20 @@ The goal is to avoid making the surface language proof-engineer-first.
 
 Invariants still exist as a proof concept, especially for optimized implementations such as tail-recursive helpers, parsers with state, or accumulator-heavy code. But Aver tries to push those invariants down into the proof backend whenever possible, instead of making users write them first.
 
+Countdown induction also consumes concrete lemma applications discovered in
+shared `ProofIR`. The search retains the actual recursive accumulator, expands
+the source step inside the claim, and matches earlier ordinary laws against the
+resulting terms. Lean introduces admitted applications as local facts and
+normalizes sequence composition before unfolding a recursive consumer. It
+splits the source branch before attempting the recursive premise: for example,
+`n >= 0` gives `n - 1 >= 0` only in the positive branch. It
+discards reflexive instances that add no information and can loop as local simp
+rules. Dafny consumes the same applications through its own contract checks;
+see the [shared roundtrip example](../tests/fixtures/source_recursion/roundtrip.av)
+and [application-search limits](dafny.md#inductive-lemma-hints). The
+[Boolean counter](../tests/fixtures/source_recursion/boolean_counter.av) checks
+the same composition with a different list element type and subtractive descent.
+
 In short:
 
 - user-facing Aver should prefer explicit specs

@@ -556,6 +556,13 @@ pub(in crate::codegen::lean) fn emit_wf_fuel_induction_law(
         }
     }
 
+    let shared_applications = super::applications::ground(vb, law, ctx);
+    for application in &shared_applications {
+        if !ground.iter().any(|(seen, _)| seen == application) {
+            ground.push((application.clone(), false));
+        }
+    }
+
     // The safe simp set: the blind cone (no countdown fn) plus the earlier
     // laws that are not looping rewrites (the pool is already filtered).
     let mut safe: Vec<String> = law_simp_defs_blind(ctx, vb, law).into_iter().collect();
@@ -579,9 +586,16 @@ pub(in crate::codegen::lean) fn emit_wf_fuel_induction_law(
     let equations = super::induction::equation_grind_arm(vb, law, ctx)
         .map(|arm| format!(" | ({arm})"))
         .unwrap_or_default();
-    let basic_closers = format!(
+    let mut basic_closers = format!(
         "first | (split <;> {simp_all} <;> omega) | ({simp_all} <;> omega) | (split <;> {simp_all} <;> done)"
     );
+    if !shared_applications.is_empty() {
+        // Preserve composed calls long enough for the concrete supplier facts
+        // to rewrite them, before unfolding a recursive reader into matches.
+        basic_closers = format!(
+            "first | ((first | split | skip) <;> simp_all only [{premise_normal}, List.reverse_cons, List.reverse_append, List.reverse_nil, List.reverse_singleton, List.nil_append, List.append_nil, List.cons_append] <;> (first | omega | ({simp_all} <;> omega))) | ({basic_closers})"
+        );
+    }
     let closer = format!("{basic_closers}{equations} | sorry");
     // The BOTTOM rung of a ladder has no rung below it to cite, and its own IH
     // is one step too weak: proving `len(f(v)) <= 1` from `v < 256` leaves
@@ -621,6 +635,18 @@ pub(in crate::codegen::lean) fn emit_wf_fuel_induction_law(
         format!("       | succ {fuel} {ih} =>"),
         format!("         intro {arm_intro}"),
     ];
+    let step_pad = if shared_applications.is_empty() {
+        "         "
+    } else {
+        // The recursive premise may follow only in the source branch: for
+        // subtractive descent, x >= 0 alone does not give x - 1 >= 0. Split
+        // the checked definition before trying the IH, keeping both branches
+        // as obligations. No additional premise is assumed.
+        lines.push(format!("         unfold {}", plan.f_lean));
+        lines.push("         split".to_string());
+        lines.push("         all_goals".to_string());
+        "           "
+    };
     // The fuel-decrease discharge is floored like the closers: the arm runs
     // under `induction`'s error recovery, so a bound `omega` cannot close
     // (never expected — the recognizer admits only inline `p / k` / `p - k`
@@ -636,20 +662,22 @@ pub(in crate::codegen::lean) fn emit_wf_fuel_induction_law(
         // shrunk value, which need not hold there — `try` drops the instance
         // rather than admitting a false premise.
         lines.push(match conditional {
-            true => format!("         try ({have} (by {guard}))"),
-            false => format!("         {have}"),
+            true => format!("{step_pad}try ({have} (by {guard}))"),
+            false => format!("{step_pad}{have}"),
         });
     }
     for (i, (cite, cite_conditional)) in ground.iter().enumerate() {
         let have = format!("have {}{} := {cite}", fresh("l"), i + 1);
         lines.push(match cite_conditional {
-            true => format!("         try ({have})"),
-            false => format!("         {have}"),
+            true => format!("{step_pad}try ({have})"),
+            false => format!("{step_pad}{have}"),
         });
     }
-    lines.push(format!("         clear {ih}"));
-    lines.push(format!("         unfold {}", plan.f_lean));
-    lines.push(format!("         {deep_closer}"));
+    lines.push(format!("{step_pad}clear {ih}"));
+    if shared_applications.is_empty() {
+        lines.push(format!("{step_pad}unfold {}", plan.f_lean));
+    }
+    lines.push(format!("{step_pad}{deep_closer}"));
     let when_arg = if conditional { " h_when" } else { "" };
     lines.push(format!(
         "     exact {key} _ {} (Nat.le_refl _){when_arg})",
