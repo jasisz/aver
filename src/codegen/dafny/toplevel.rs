@@ -3042,10 +3042,9 @@ fn eligible_cites<'a>(
     };
 
     let mut out = Vec::new();
-    for item in &ctx.items {
-        let TopLevel::Verify(prev) = item else {
-            continue;
-        };
+    // Use the declaring module's order, including when this is an imported
+    // supplier. Entry blocks must never enter a dependency's citation pool.
+    for prev in super::reasons::local_blocks(ctx) {
         // Only blocks earlier in source are eligible; stop at the consumer.
         if prev.line == vb.line && prev.fn_name == vb.fn_name {
             break;
@@ -3187,7 +3186,7 @@ pub(super) fn emit_verify_law(
 ) -> String {
     let LawRecursion {
         opaque_fns,
-        native_members,
+        native_members: _,
         native_callers: native_emitted,
         termination_opaque,
     } = *recursion;
@@ -3195,7 +3194,7 @@ pub(super) fn emit_verify_law(
     let law_name = aver_name_to_dafny(&law.name);
     if !law.because.is_empty() || law.using.is_some() {
         let claim = format!("{}.{}", vb.fn_name, law.name);
-        let reason = match super::reasons::emit(vb, law, ctx, native_members) {
+        let reason = match super::reasons::emit(vb, law, ctx, recursion) {
             Ok(emitted) => return emitted,
             Err(reason) => format!("Dafny guided-law pilot declined: {reason}"),
         };

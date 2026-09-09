@@ -1,0 +1,57 @@
+module FloorCitation
+    intent = "A decimal digit collector preserves its arbitrary prefix and range."
+    effects []
+
+fn digits(value: Int, acc: List<Int>) -> List<Int>
+    match value > 0
+        true -> digits(Int.div(value, 10), List.prepend(Int.mod(value, 10), acc))
+        false -> List.reverse(acc)
+
+verify digits law prefix
+    given value: Int = [-1, 0, 1, 10, 123]
+    given acc: List<Int> = [[], [4], [2, 3]]
+    digits(value, acc) => List.concat(List.reverse(acc), digits(value, []))
+
+verify digits law outsideRange
+    given value: Int = [-1, 0, 123]
+    given acc: List<Int> = [[], [-1, 10], [2, 3]]
+    given item: Int = [-1, 10]
+    when Bool.or(item < 0, item >= 10)
+    List.contains(digits(value, acc), item) => List.contains(acc, item)
+
+verify digits law noNewDigits
+    given value: Int = [-1, 0, 1, 123]
+    given acc: List<Int> = [[], [2, 3]]
+    List.len(digits(value, acc)) <= List.len(acc) => value <= 0
+
+verify digits law singletonPrefix
+    given value: Int = [-1, 0, 123]
+    given item: Int = [2, 3]
+    digits(value, [item]) => List.prepend(item, digits(value, []))
+
+verify digits law oneDigit
+    given value: Int = [1, 9]
+    when Bool.and(value > 0, value < 10)
+    digits(value, []) => [value]
+
+verify digits law positive
+    given value: Int = [1, 10, 123]
+    when value > 0
+    List.len(digits(value, [])) > 0 holds
+
+verify digits law nonpositive
+    given value: Int = [-1, 0]
+    when value <= 0
+    digits(value, []) => []
+
+verify digits law citedPrefix
+    given value: Int = [-1, 0, 123]
+    given item: Int = [2, 3]
+    using [digits.singletonPrefix]
+    digits(value, [item]) => List.prepend(item, digits(value, []))
+
+verify digits law citedPositive
+    given value: Int = [1, 10, 123]
+    when value > 0
+    using [digits.positive]
+    List.len(digits(value, [])) > 0 holds

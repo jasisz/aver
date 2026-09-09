@@ -221,6 +221,7 @@ fn source_recursion_identical_positive_sources_pass_both_checkers() {
         ("tests/fixtures/source_recursion/imported/main.av", 2),
         ("tests/fixtures/source_recursion/sequence_growth.av", 3),
         ("tests/fixtures/source_recursion/floor_digits.av", 7),
+        ("tests/fixtures/source_recursion/floor_citation.av", 9),
     ] {
         for backend in ["dafny", "lean"] {
             let Some(summary) = check(source, backend) else {
@@ -249,10 +250,10 @@ fn source_recursion_rejects_dropped_accumulator_and_failed_supplier() {
         } else {
             "errors"
         };
-        assert!(
-            summary[failures].as_u64().unwrap() >= if backend == "lean" { 1 } else { 2 },
-            "{summary}"
-        );
+        // A citation may reuse the ordinary supplier instead of failing a
+        // second proof of the same false statement. The original supplier
+        // must still fail and keep the entire file outside universal credit.
+        assert!(summary[failures].as_u64().unwrap() > 0, "{summary}");
     }
 }
 

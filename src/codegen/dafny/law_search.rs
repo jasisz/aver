@@ -6,6 +6,44 @@ use crate::codegen::CodegenContext;
 use crate::ir::FnId;
 use std::collections::HashSet;
 
+/// The ordinary emitter's default universal has exactly the source givens
+/// and `when`. A guided citation may call it, but must not promote a sampled
+/// contract, an opaque dependency or a specialized support-stack signature.
+/// The caller has already checked the entire source citation with `subset`.
+/// Ordinary automatic citations only point to earlier ordinary laws in their
+/// declaring module, so reusing one cannot create a cycle through guidance.
+pub(super) fn reusable_ordinary_law(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+    recursion: &super::toplevel::LawRecursion<'_>,
+) -> bool {
+    let Some(theorem) = ctx.law_target_fn_id(&vb.fn_name).and_then(|id| {
+        ctx.proof_ir
+            .law_theorems
+            .iter()
+            .find(|t| t.fn_id == id && t.law_name == law.name)
+    }) else {
+        return false;
+    };
+    super::toplevel::sample_seed_lemma_available(vb, law, ctx)
+        && !crate::codegen::common::law_lhs_has_trace_projection(&law.lhs)
+        && crate::codegen::common::law_map_order_refusal(vb, law, ctx).is_none()
+        && !matches!(
+            theorem.strategy,
+            crate::ir::ProofStrategy::TailRecFixedBaseFold { .. }
+                | crate::ir::ProofStrategy::FloorDivWindow { .. }
+        )
+        && !theorem.function_cone.iter().any(|id| {
+            recursion.opaque_fns.contains(id) || recursion.termination_opaque.contains(id)
+        })
+        && (!theorem
+            .function_cone
+            .iter()
+            .any(|id| recursion.native_callers.contains(id))
+            || native_sequence_law(vb, law, ctx, recursion.opaque_fns, recursion.native_callers))
+}
+
 fn cone<'a>(vb: &VerifyBlock, law: &VerifyLaw, ctx: &'a CodegenContext) -> &'a [FnId] {
     ctx.law_target_fn_id(&vb.fn_name)
         .and_then(|id| {

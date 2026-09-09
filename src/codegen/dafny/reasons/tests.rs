@@ -12,7 +12,14 @@ fn emitted(source: &str, wanted: &str) -> Result<String, String> {
             _ => None,
         })
         .expect("fixture law");
-    emit(block, law, &ctx, &std::collections::HashSet::new())
+    let empty = std::collections::HashSet::new();
+    let recursion = super::super::toplevel::LawRecursion {
+        opaque_fns: &empty,
+        native_members: &empty,
+        native_callers: &empty,
+        termination_opaque: &empty,
+    };
+    emit(block, law, &ctx, &recursion)
 }
 
 const POSITIVE: &str = r#"fn positive(x: Int) -> Bool
@@ -61,7 +68,14 @@ fn mutual_admission_requires_every_native_member_and_checks_its_body() {
         let VerifyKind::Law(law) = &block.kind else {
             panic!("expected law");
         };
-        let result = emit(block, law, &ctx, &native);
+        let empty = std::collections::HashSet::new();
+        let recursion = super::super::toplevel::LawRecursion {
+            opaque_fns: &empty,
+            native_members: &native,
+            native_callers: &native,
+            termination_opaque: &empty,
+        };
+        let result = emit(block, law, &ctx, &recursion);
         assert_eq!(result.is_ok(), admitted, "{native_names:?}: {result:?}");
         if unsupported {
             assert!(result.unwrap_err().contains("String.byteLength"));

@@ -27,7 +27,7 @@ fn lemma_name(id: &str) -> String {
     format!("averGuided_{encoded}")
 }
 
-fn local_blocks(ctx: &CodegenContext) -> Vec<&VerifyBlock> {
+pub(super) fn local_blocks(ctx: &CodegenContext) -> Vec<&VerifyBlock> {
     match ctx.active_module_scope().as_deref() {
         Some(scope) => ctx
             .modules
@@ -174,10 +174,10 @@ pub(super) fn emit(
     vb: &VerifyBlock,
     law: &VerifyLaw,
     ctx: &CodegenContext,
-    native_members: &std::collections::HashSet<crate::ir::FnId>,
+    recursion: &super::toplevel::LawRecursion<'_>,
 ) -> Result<String, String> {
     let blocks = local_blocks(ctx);
-    let citations = subset::validate(vb, law, ctx, &blocks, native_members)?;
+    let citations = subset::validate(vb, law, ctx, &blocks, recursion.native_members)?;
     let id = label(vb, law);
     let name = lemma_name(&id);
     let source_id = match ctx.active_module_scope() {
@@ -191,7 +191,7 @@ pub(super) fn emit(
     let goal = conclusion(law, ctx);
     let mut out = Vec::new();
     for &citation in &citations {
-        if let Some(supplier) = citations::plain_supplier(citation, &name, law, ctx)? {
+        if let Some(supplier) = citations::plain_supplier(citation, &name, law, ctx, recursion)? {
             out.push(supplier);
         }
     }

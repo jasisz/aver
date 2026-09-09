@@ -418,3 +418,41 @@ counterexample into a quantifier-search timeout.
 Nine of the ten previously omitted ordinary `StackItem.littleEndian` laws
 now check on unchanged BTC source. The readback law and several separate
 citation obligations remain open, so this does not establish the whole module.
+
+
+## Ordinary citation reuse checkpoint
+
+A guided citation of an ordinary source law keeps its checked universal
+restatement, including every given and its `when` premise. When the ordinary
+emitter supplies the same universal signature, that restatement now calls the
+original lemma. It no longer has to reproduce a proof that relied on earlier
+ordinary decomposition laws. Both the original lemma and its caller remain
+obligations in the full checker run.
+
+Availability uses the canonical function cone already carried by ProofIR,
+the emitted recursion boundaries, and the existing signature gate. Finite-Int
+mutual laws, opaque dependencies, omitted laws and specialized signatures do
+not gain universal credit from this reuse. Their citation restatements still
+need independent universal proofs. Ordinary native sequence universals may be
+reused. The backend-specific call decision does not change Lean's proof tactics.
+
+The ordinary decomposition pool now comes from the declaring module's source
+order, even for imported suppliers. It contains only earlier ordinary laws;
+entry-module laws and guided consumers cannot introduce a dependency cycle.
+Owner qualification also keeps an imported lemma distinct from a same-named
+local law.
+
+The independent decimal fixture has nine laws, checked universally from the
+same source by Lean and Dafny. Before reuse its two guided citation suppliers
+failed Dafny verification although all seven ordinary laws passed. Controls
+cover forward citations, an omitted premise, a false unused supplier whose
+samples pass, and an imported false supplier alongside colliding local names. A finite-Int
+law over native mutual lookup remains bounded: its samples pass but its false
+universal citation fails. An ordinary native sequence permutation, which does
+have a universal contract, can be reused successfully.
+
+On unchanged BTC, `StackItem` drops from 15 errors to 6, with four solver
+timeouts still open. `ScriptState` including its imports drops from 22 errors
+to 7; its solver timeouts change from two to four. Strict whole-module credit
+remains 23/104 (`Message` 10, `CompactSize` 6, `ScriptMath` 7). Fewer duplicate
+citation failures do not by themselves establish additional whole modules.

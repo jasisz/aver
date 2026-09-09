@@ -182,8 +182,9 @@ pub(super) fn conclusion(citation: Citation<'_>, ctx: &CodegenContext) -> String
 }
 
 /// Plain source laws keep their original backend strategy. A selected plain
-/// supplier also gets a separately checked universal restatement in its caller;
-/// no finite-domain or opaque legacy lemma is trusted as a universal contract.
+/// supplier also gets a checked universal restatement in its caller. When the
+/// ordinary emitter supplies the same universal contract, the restatement calls
+/// it; finite-domain and opaque legacy lemmas must still be proved afresh.
 pub(super) fn supplier_name(citation: Citation<'_>, parent: &str, ctx: &CodegenContext) -> String {
     if citation.law.using.is_some() || !citation.law.because.is_empty() {
         return call_name(citation, ctx);
@@ -203,6 +204,7 @@ pub(super) fn plain_supplier(
     parent: &str,
     consumer: &VerifyLaw,
     ctx: &CodegenContext,
+    recursion: &super::super::toplevel::LawRecursion<'_>,
 ) -> Result<Option<String>, String> {
     if citation.law.using.is_some() || !citation.law.because.is_empty() {
         return Ok(None);
@@ -232,9 +234,19 @@ pub(super) fn plain_supplier(
     }
     let params = binders(citation, ctx)?;
     let goal = conclusion(citation, ctx);
-    let induction = ctx.with_module_scope(citation.scope, || {
-        super::super::law_induction::plan(citation.block, citation.law, ctx)
+    let reuse = ctx.with_module_scope(citation.scope, || {
+        super::super::law_search::reusable_ordinary_law(
+            citation.block,
+            citation.law,
+            ctx,
+            recursion,
+        )
     });
+    let induction = ctx
+        .with_module_scope(citation.scope, || {
+            super::super::law_induction::plan(citation.block, citation.law, ctx)
+        })
+        .filter(|_| !reuse);
     let mut lines = vec![
         format!(
             "// Checked universal citation: {}",
@@ -256,15 +268,30 @@ pub(super) fn plain_supplier(
         ));
     }
     lines.push("{".to_string());
-    ctx.with_module_scope(citation.scope, || {
-        lines.extend(super::super::law_induction::sequence_identities(
-            citation.law,
-            ctx,
-        ));
-        if let Some(plan) = induction {
-            lines.extend(super::super::law_induction::calls(plan, &name, ctx));
-        }
-    });
+    if reuse {
+        let ordinary = format!(
+            "{}_{}",
+            super::super::expr::aver_name_to_dafny(&citation.block.fn_name),
+            super::super::expr::aver_name_to_dafny(&citation.law.name),
+        );
+        let ordinary = match citation.scope {
+            Some(owner) if Some(owner) != ctx.active_module_scope().as_deref() => {
+                format!("Aver_{}.{}", owner.replace('.', "_"), ordinary)
+            }
+            _ => ordinary,
+        };
+        lines.push(format!("  {ordinary}({});", super::arguments(citation.law)));
+    } else {
+        ctx.with_module_scope(citation.scope, || {
+            lines.extend(super::super::law_induction::sequence_identities(
+                citation.law,
+                ctx,
+            ));
+            if let Some(plan) = induction {
+                lines.extend(super::super::law_induction::calls(plan, &name, ctx));
+            }
+        });
+    }
     lines.extend([format!("  assert {goal};"), "}".to_string()]);
     Ok(Some(lines.join("\n")))
 }

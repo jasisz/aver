@@ -25,6 +25,8 @@ mod check_gates;
 mod citation_attempts;
 #[path = "proof_spec/citation_order.rs"]
 mod citation_order;
+#[path = "proof_spec/citation_reuse.rs"]
+mod citation_reuse;
 #[path = "proof_spec/conditional_split_omega.rs"]
 mod conditional_split_omega;
 #[path = "proof_spec/container_induction.rs"]
