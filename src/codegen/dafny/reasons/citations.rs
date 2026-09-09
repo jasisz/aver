@@ -284,6 +284,7 @@ pub(super) fn plain_supplier(
     } else {
         ctx.with_module_scope(citation.scope, || {
             lines.extend(super::super::law_induction::sequence_identities(
+                citation.block,
                 citation.law,
                 ctx,
             ));

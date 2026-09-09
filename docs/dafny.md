@@ -307,3 +307,20 @@ The budgets are not a target; they are a regression net. The umbrella issue for 
 See [docs/transpilation.md](transpilation.md) for a side-by-side comparison.
 
 In short: Lean is the gold standard (kernel-verified proofs), Dafny is the quick check (Z3-automated, zero tactic effort). Use both.
+
+### Reversal algebra for acyclic constructors
+
+A nonrecursive encoder can have a law that also calls a recursive decoder.
+ProofIR records the owning declaration's dependency cone and canonical builtin
+calls separately from the full claim cone. When that constructor uses
+`List.reverse` and reaches no recursive function, Dafny tries sequence algebra
+without adding an unrelated list induction. An existing source-recursion plan
+still takes priority.
+
+The generated list library proves reversal of concatenation and double reversal
+for arbitrary element types by explicit, decreasing recursion. Selected laws
+call those checked lemmas to obtain quantified equations. They are not axioms;
+the ordinary full-file check verifies the library, suppliers and original law.
+Recursive source proofs retain their existing induction search rather than
+receiving an additional universal reversal pool. Lean already has these list
+identities; the same Aver framing fixtures are checked by both backends.

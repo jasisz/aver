@@ -13,7 +13,11 @@ use super::expr::{aver_name_to_dafny, emit_expr};
 /// A consumer matching the first element also needs append reassociated under
 /// that cons. Explicitly checking the identity exposes the suffix term at which
 /// a cited payload law applies; it does not assume anything about the payload.
-pub(super) fn sequence_identities(law: &VerifyLaw, ctx: &CodegenContext) -> Vec<String> {
+pub(super) fn sequence_identities(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+) -> Vec<String> {
     let mut elements = std::collections::BTreeSet::new();
     let scope = ctx.active_module_scope();
     for expr in [&law.lhs, &law.rhs].into_iter().chain(law.because.iter()) {
@@ -28,16 +32,25 @@ pub(super) fn sequence_identities(law: &VerifyLaw, ctx: &CodegenContext) -> Vec<
             }
         });
     }
-    elements
-        .into_iter()
-        .flat_map(|element| {
-            [
-                format!("  forall xs: seq<{element}> ensures xs + [] == xs && [] + xs == xs {{ }}"),
-                format!("  forall x: {element} ensures ListReverse([x]) == [x] {{ }}"),
-                format!("  forall head: {element}, xs: seq<{element}>, ys: seq<{element}> ensures ([head] + xs) + ys == [head] + (xs + ys) {{ }}"),
-            ]
-        })
-        .collect()
+    // Algebra is useful for an acyclic constructor observed through reversal.
+    // Keep it out of recursive source proofs: expanding both their induction
+    // hypotheses and a universal reverse/append pool can multiply SMT search.
+    let algebra = acyclic_reversal(vb, law, ctx);
+    let mut lines = Vec::new();
+    for element in elements {
+        lines.push(format!(
+            "  forall xs: seq<{element}> ensures xs + [] == xs && [] + xs == xs {{ }}"
+        ));
+        lines.push(format!(
+            "  forall x: {element} ensures ListReverse([x]) == [x] {{ }}"
+        ));
+        lines.push(format!("  forall head: {element}, xs: seq<{element}>, ys: seq<{element}> ensures ([head] + xs) + ys == [head] + (xs + ys) {{ }}"));
+        if algebra {
+            lines.push(format!("  forall xs: seq<{element}> {{:trigger ListReverse(ListReverse(xs))}} ensures ListReverse(ListReverse(xs)) == xs {{ ListReverseInvolution(xs); }}"));
+            lines.push(format!("  forall xs: seq<{element}>, ys: seq<{element}> {{:trigger ListReverse(xs + ys)}} ensures ListReverse(xs + ys) == ListReverse(ys) + ListReverse(xs) {{ ListReverseAppend(xs, ys); }}"));
+        }
+    }
+    lines
 }
 
 pub(super) fn plan<'a>(
@@ -141,4 +154,27 @@ pub(super) fn calls(
         lines.push("  }".to_string());
     }
     lines
+}
+
+/// Prefer checked sequence algebra for an acyclic reversal constructor.
+/// A recursive observer alone does not justify adding list induction to this
+/// proof. Source-derived induction plans always retain priority.
+pub(super) fn acyclic_reversal(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContext) -> bool {
+    ctx.law_target_fn_id(&vb.fn_name)
+        .and_then(|id| {
+            ctx.proof_ir
+                .law_theorems
+                .iter()
+                .find(|t| t.fn_id == id && t.law_name == law.name)
+        })
+        .is_some_and(|t| {
+            t.induction.is_none()
+                && t.target_calls_static
+                && !t.target_function_cone.is_empty()
+                && t.target_builtins.iter().any(|name| name == "List.reverse")
+                && !t
+                    .target_function_cone
+                    .iter()
+                    .any(|id| ctx.recursive_fns.contains(id))
+        })
 }

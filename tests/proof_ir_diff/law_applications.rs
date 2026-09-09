@@ -152,3 +152,80 @@ fn concrete_applications_keep_import_owner_despite_colliding_local_names() {
         }
     }
 }
+
+#[test]
+fn target_cone_separates_acyclic_constructor_from_recursive_observer() {
+    let source = include_str!("../fixtures/source_recursion/signed_frame.av");
+    let left = source.replace("module SignedFrame", "module Left");
+    let right = source.replace("module SignedFrame", "module Right");
+    let ctx = build_ctx_with_modules(
+        "module Main\n    depends [Left, Right]\n",
+        &[("Left", &left), ("Right", &right)],
+    );
+    let targets: Vec<_> = ctx
+        .proof_ir
+        .law_theorems
+        .iter()
+        .filter(|t| t.law_name == "roundtrip")
+        .collect();
+    assert_eq!(targets.len(), 2);
+    for theorem in targets {
+        let owner = ctx.symbol_table.fn_entry(theorem.fn_id).key.scope_str();
+        assert!(matches!(owner, Some("Left" | "Right")));
+        assert!(!theorem.target_function_cone.is_empty());
+        assert!(theorem.target_function_cone.contains(&theorem.fn_id));
+        assert!(
+            theorem
+                .target_builtins
+                .iter()
+                .any(|name| name == "List.reverse")
+        );
+        assert!(
+            theorem
+                .function_cone
+                .iter()
+                .any(|id| ctx.recursive_fns.contains(id))
+        );
+        for id in &theorem.target_function_cone {
+            assert_eq!(ctx.symbol_table.fn_entry(*id).key.scope_str(), owner);
+            assert!(!ctx.recursive_fns.contains(id));
+        }
+    }
+    for theorem in ctx
+        .proof_ir
+        .law_theorems
+        .iter()
+        .filter(|t| t.law_name == "suffix")
+    {
+        assert!(theorem.target_function_cone.contains(&theorem.fn_id));
+        assert!(
+            theorem
+                .target_function_cone
+                .iter()
+                .any(|id| ctx.recursive_fns.contains(id))
+        );
+    }
+}
+
+#[test]
+fn target_cone_does_not_treat_a_callback_as_acyclic_source() {
+    let ctx = build_ctx(
+        r#"module Callback
+fn size(values: List<Int>) -> Int
+    List.len(values)
+fn frame(values: List<Int>, observe: Fn(List<Int>) -> Int) -> Int
+    observe(List.reverse(values))
+verify frame law self
+    given values: List<Int> = [[], [1]]
+    frame(values, size) => frame(values, size)
+"#,
+    );
+    let theorem = law_theorem(&ctx, "frame", "self").unwrap();
+    assert!(!theorem.target_calls_static);
+    assert!(
+        theorem
+            .target_builtins
+            .iter()
+            .any(|name| name == "List.reverse")
+    );
+}

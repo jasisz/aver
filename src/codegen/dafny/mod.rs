@@ -893,60 +893,7 @@ function BranchPath_parse(s: string): Result<BranchPath, string> {
 /// Reversal's membership contract quantifies over the finite input/output
 /// union, so generic elements containing references remain admissible. Its
 /// cons assertion proves the contract from the definition, including absence.
-const DAFNY_HELPER_AVER_LIST: &str = r#"
-function ListReverse<T>(xs: seq<T>): seq<T>
-  ensures |ListReverse(xs)| == |xs|
-  ensures forall item | item in xs + ListReverse(xs) :: item in ListReverse(xs) <==> item in xs
-  decreases |xs|
-{
-  if |xs| == 0 then []
-  else assert xs == [xs[0]] + xs[1..]; ListReverse(xs[1..]) + [xs[0]]
-}
-
-function ListHead<T>(xs: seq<T>): Option<T> {
-  if |xs| == 0 then None
-  else Some(xs[0])
-}
-
-function ListTail<T>(xs: seq<T>): seq<T> {
-  if |xs| == 0 then []
-  else xs[1..]
-}
-
-function ListTake<T>(xs: seq<T>, n: int): seq<T> {
-  if n <= 0 then []
-  else if n >= |xs| then xs
-  else xs[..n]
-}
-
-function ListDrop<T>(xs: seq<T>, n: int): seq<T> {
-  if n <= 0 then xs
-  else if n >= |xs| then []
-  else xs[n..]
-}
-
-function ListZip<A, B>(xs: seq<A>, ys: seq<B>): seq<(A, B)>
-  decreases |xs|
-{
-  if |xs| == 0 || |ys| == 0 then []
-  else [(xs[0], ys[0])] + ListZip(xs[1..], ys[1..])
-}
-
-function ListFind<T>(xs: seq<T>, p: T -> bool): Option<T>
-  decreases |xs|
-{
-  if |xs| == 0 then None
-  else if p(xs[0]) then Some(xs[0])
-  else ListFind(xs[1..], p)
-}
-
-function ListAny<T>(xs: seq<T>, p: T -> bool): bool
-  decreases |xs|
-{
-  if |xs| == 0 then false
-  else p(xs[0]) || ListAny(xs[1..], p)
-}
-"#;
+const DAFNY_HELPER_AVER_LIST: &str = include_str!("prelude/list.dfy");
 
 /// `MapEntries` is declared with a signature and no body on purpose. Dafny's
 /// `map` is unordered and this declaration is generic in the key type, so
