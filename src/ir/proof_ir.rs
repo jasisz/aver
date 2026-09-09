@@ -291,6 +291,10 @@ pub struct FnContract {
 /// the lowerer having proved preservation + decrease.
 #[derive(Debug, Clone)]
 pub enum RecursionContract {
+    /// A list or string grows by at least one element at every self-call while its length
+    /// is strictly below an unchanged integer bound. The natural part of the
+    /// remaining gap decreases, including calls that overshoot the bound.
+    WellFoundedSequenceGap { sequence: String, bound: String },
     /// Fuel-encoded fallback. No side-conditions to prove; works
     /// for any shape the classifier accepted as recursive.
     Fuel {
@@ -484,6 +488,65 @@ pub struct LawTheorem {
     pub claim_lhs: Spanned<crate::ir::hir::ResolvedExpr>,
     pub claim_rhs: Spanned<crate::ir::hir::ResolvedExpr>,
     pub strategy: ProofStrategy,
+    /// Source-recursion instances for an induction over a checked input.
+    /// These are proof candidates, never assumptions: each backend must prove
+    /// the recursive call's premises and strict decrease.
+    pub induction: Option<LawInduction>,
+    /// Transitive statically resolved pure declarations used by the claim,
+    /// explanations and guard, in discovery order. Samples do not contribute.
+    /// Search data only: callbacks and builtin implementations are not expanded.
+    pub function_cone: Vec<FnId>,
+    /// Optional unfolding budgets, in `because` order followed by the claim.
+    /// These guide proof search only; they neither restrict the quantified
+    /// domain nor replace any source premise, supplier, or proof obligation.
+    pub unfolding: Vec<Option<LawUnfolding>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct LawUnfolding {
+    /// Small literal countdown plus headroom for wrappers and the base case.
+    pub depth: u32,
+    /// Canonical recursive declarations in this obligation's source cone.
+    pub functions: Vec<FnId>,
+    /// Concrete instances of the recursive sequence reversal operation.
+    pub reverse_elements: Vec<crate::ast::Type>,
+}
+
+#[derive(Debug, Clone)]
+pub struct LawInduction {
+    pub driver: String,
+    pub measure: LawInductionMeasure,
+    /// A call whose distinct source arguments map function parameters to givens.
+    pub source_call: Spanned<crate::ir::hir::ResolvedExpr>,
+    /// Recursive instances in the law's given order, including updated accumulators.
+    pub calls: Vec<LawInductionCall>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum LawInductionMeasure {
+    SequenceLength,
+    NonnegativeInt,
+}
+
+#[derive(Debug, Clone)]
+pub struct LawInductionCall {
+    /// Source branch guard, evaluated before introducing pattern projections.
+    pub guard: Spanned<crate::ir::hir::ResolvedExpr>,
+    /// The theorem premise at the recursive arguments. Evaluated after
+    /// `list_case` bindings, since it may mention the projected head or tail.
+    /// Where it is false, the original claim still needs an independent proof.
+    pub premise: Option<Spanned<crate::ir::hir::ResolvedExpr>>,
+    /// Nil/cons decomposition under the nonempty guard. Projection names are
+    /// fresh in the source/law scope; no partial List.head value is invented.
+    pub list_case: Option<LawInductionListCase>,
+    pub arguments: Vec<Spanned<crate::ir::hir::ResolvedExpr>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct LawInductionListCase {
+    pub list: Spanned<crate::ir::hir::ResolvedExpr>,
+    pub head: Option<String>,
+    pub tail: Option<String>,
 }
 
 /// A universally-quantified variable in a law theorem. Carries

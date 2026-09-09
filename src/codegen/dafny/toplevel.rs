@@ -474,27 +474,37 @@ pub fn emit_fn_def(
         lines.push(format!("  requires {requirement}.Ok?"));
     }
 
-    // Guard-validated floor-division countdown (shared classifier —
-    // `RecursionContract::WellFoundedToNat { floor_div: Some(_) }`):
+    // Guard-validated integer descent comes from ProofIR for both subtractive
+    // and floor-division countdowns. It must precede signature heuristics:
+    // an output accumulator can grow while this checked counter decreases.
     // the classifier proved every self-call site's guard chain
     // implies the shrinking param is >= 1, so the total guarded
     // measure verifies WITHOUT a synthesized `requires` — total
     // callers stay wellformed (a synthesized precondition on a
     // recursive fn breaks every caller that can't prove it).
-    let floor_div_param = crate::codegen::common::find_fn_contract_for_fn(ctx, fd).and_then(
+    let native_int_param = crate::codegen::common::find_fn_contract_for_fn(ctx, fd).and_then(
         |contract| match &contract.recursion {
-            Some(crate::ir::RecursionContract::WellFoundedToNat {
-                param,
-                floor_div: Some(_),
-            }) => Some(param.clone()),
+            Some(crate::ir::RecursionContract::WellFoundedToNat { param, .. }) => {
+                Some(param.clone())
+            }
             _ => None,
         },
     );
-    if needs_decreases && let Some(param) = floor_div_param {
+    if needs_decreases && let Some(param) = native_int_param {
         let dname = aver_name_to_dafny(&param);
         lines.push(format!(
             "  decreases if {} >= 0 then {} else 0",
             dname, dname
+        ));
+    } else if needs_decreases
+        && let Some(crate::ir::RecursionContract::WellFoundedSequenceGap { sequence, bound }) =
+            crate::codegen::common::find_fn_contract_for_fn(ctx, fd)
+                .and_then(|c| c.recursion.as_ref())
+    {
+        lines.push(format!(
+            "  decreases {} - |{}|",
+            aver_name_to_dafny(bound),
+            aver_name_to_dafny(sequence)
         ));
     } else if needs_decreases && let Some(info) = infer_decreases(fd) {
         for req in &info.requires {
@@ -1428,17 +1438,17 @@ pub(super) fn termination_guess_unjustified(fd: &FnDef, ctx: &CodegenContext) ->
     if !body_has_recursive_call(fd.body.as_ref(), &fd.name) {
         return false;
     }
-    // Guard-validated floor-division countdown — the shared
+    // Guard-validated integer countdown — the shared
     // classifier proved the measure, so the fn emits with a native
     // total-guard `decreases` (see `emit_fn_def`) instead of
     // declining to an opaque `{:axiom}`.
     if crate::codegen::common::find_fn_contract_for_fn(ctx, fd).is_some_and(|contract| {
         matches!(
             &contract.recursion,
-            Some(crate::ir::RecursionContract::WellFoundedToNat {
-                floor_div: Some(_),
-                ..
-            })
+            Some(
+                crate::ir::RecursionContract::WellFoundedToNat { .. }
+                    | crate::ir::RecursionContract::WellFoundedSequenceGap { .. }
+            )
         )
     }) {
         return false;
@@ -1659,7 +1669,11 @@ fn verify_subject_fn_id(vb: &VerifyBlock, ctx: &CodegenContext) -> Option<crate:
     ctx.symbol_table.fn_id_of(&key)
 }
 
-fn sample_seed_lemma_available(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContext) -> bool {
+pub(super) fn sample_seed_lemma_available(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+) -> bool {
     // Mirror of the issue-#128 "universal lemma omitted" gate in
     // `emit_verify_law` — keep in sync.
     let vb_fn_id = verify_subject_fn_id(vb, ctx);
@@ -1709,18 +1723,6 @@ fn sample_seed_lemma_available(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenC
                 | crate::ir::ProofStrategy::WrapperOverRecursion { .. }
         )
     ) {
-        return false;
-    }
-    // Mirror of the floor-division omitted-universal gate in
-    // `emit_verify_law`: a law whose cone reaches a guard-validated
-    // floor-division countdown fn gets NO universal lemma unless its
-    // `FloorDivWindow` figure is pinned — seeding a sample with a
-    // call to a lemma that was never emitted would be a parse error.
-    if !matches!(
-        pinned_strategy,
-        Some(crate::ir::ProofStrategy::FloorDivWindow { .. })
-    ) && law_reaches_floor_div_fn(law, ctx)
-    {
         return false;
     }
     law.givens.iter().all(|g| {
@@ -1845,7 +1847,9 @@ pub fn emit_law_samples(
             law_refs_opaque_fn(l, ctx, native_emitted) || law_refs_opaque_fn(r, ctx, native_emitted)
         })
         .unwrap_or(false);
-    let needs_bounded_form = any_opaque || any_native_mutual;
+    let native_sequence =
+        super::law_search::native_sequence_law(vb, law, ctx, opaque_fns, native_emitted);
+    let needs_bounded_form = any_opaque || (any_native_mutual && !native_sequence);
 
     // Only lift the sample cap when the universal lemma will *also*
     // emit as bounded-∀ (every given Int + Explicit literal-int
@@ -2055,28 +2059,8 @@ pub fn emit_law_samples(
         // `length([1, 0]) == S(length([1]))` spuriously fails to verify even
         // though the universal law (which carries `{:fuel}`) proves — masking
         // a genuinely-closed proof behind a sample error.
-        let mut sample_fns = std::collections::BTreeSet::new();
-        crate::codegen::proof_recognize::collect_called_fns(&law.lhs, &mut sample_fns);
-        crate::codegen::proof_recognize::collect_called_fns(&law.rhs, &mut sample_fns);
-        let mut transitive = std::collections::BTreeSet::new();
-        for f in &sample_fns {
-            if let Some(fd) = ctx.fn_def_by_name(f, ctx.active_module_scope().as_deref()) {
-                crate::codegen::proof_recognize::collect_called_fns_in_body(
-                    &fd.body,
-                    &mut transitive,
-                );
-            }
-        }
-        sample_fns.extend(transitive);
-        let sample_fuel: String = sample_fns
-            .iter()
-            .filter(|f| {
-                ctx.fn_def_by_name(f, ctx.active_module_scope().as_deref())
-                    .is_some()
-            })
-            .map(|f| format!("{{:fuel {}, 5}}", aver_name_to_dafny(f)))
-            .collect::<Vec<_>>()
-            .join(" ");
+        let sample_fuel =
+            super::law_search::attributes(vb, law, ctx, native_sequence, native_emitted);
         let fuel_prefix = if sample_fuel.is_empty() {
             String::new()
         } else {
@@ -2704,49 +2688,6 @@ fn emit_tailrec_fixed_base_support_stack(
     Some(lines.join("\n"))
 }
 
-/// True when the law's call cone (lhs + rhs, transitively expanded
-/// through fn bodies) reaches a fn carrying the guard-validated
-/// floor-division countdown contract
-/// (`RecursionContract::WellFoundedToNat { floor_div: Some(_) }`).
-/// Such a fn verifies its own termination natively, but a DEFAULT
-/// empty-body universal lemma over it still hands Z3 an unbounded
-/// symbolic unfolding — a guaranteed error or timeout on a law that
-/// may well hold — so `emit_verify_law` keeps the honest
-/// omitted-universal decline unless the law carries a
-/// `FloorDivWindow` strategy (whose support stack proves it).
-pub(super) fn law_reaches_floor_div_fn(law: &VerifyLaw, ctx: &CodegenContext) -> bool {
-    let mut cone = std::collections::BTreeSet::new();
-    crate::codegen::proof_recognize::collect_called_fns(&law.lhs, &mut cone);
-    crate::codegen::proof_recognize::collect_called_fns(&law.rhs, &mut cone);
-    let mut changed = true;
-    while changed {
-        changed = false;
-        let snapshot: Vec<String> = cone.iter().cloned().collect();
-        for name in snapshot {
-            if let Some(fd) = ctx.fn_def_by_name(&name, ctx.active_module_scope().as_deref()) {
-                let before = cone.len();
-                crate::codegen::proof_recognize::collect_called_fns_in_body(&fd.body, &mut cone);
-                if cone.len() != before {
-                    changed = true;
-                }
-            }
-        }
-    }
-    cone.iter().any(|name| {
-        crate::codegen::common::fn_id_for_dotted_name(ctx, name)
-            .and_then(|id| ctx.proof_ir.fn_contracts.get(&id))
-            .is_some_and(|contract| {
-                matches!(
-                    &contract.recursion,
-                    Some(crate::ir::RecursionContract::WellFoundedToNat {
-                        floor_div: Some(_),
-                        ..
-                    })
-                )
-            })
-    })
-}
-
 /// Render the `FloorDivWindow` support stack + main lemma for one
 /// pinned figure. The lemma text was validated end-to-end on the
 /// emitted artifact (`dafny verify`: everything PROVED, no `assume`,
@@ -3101,10 +3042,9 @@ fn eligible_cites<'a>(
     };
 
     let mut out = Vec::new();
-    for item in &ctx.items {
-        let TopLevel::Verify(prev) = item else {
-            continue;
-        };
+    // Use the declaring module's order, including when this is an imported
+    // supplier. Entry blocks must never enter a dependency's citation pool.
+    for prev in super::reasons::local_blocks(ctx) {
         // Only blocks earlier in source are eligible; stop at the consumer.
         if prev.line == vb.line && prev.fn_name == vb.fn_name {
             break;
@@ -3246,7 +3186,7 @@ pub(super) fn emit_verify_law(
 ) -> String {
     let LawRecursion {
         opaque_fns,
-        native_members,
+        native_members: _,
         native_callers: native_emitted,
         termination_opaque,
     } = *recursion;
@@ -3254,7 +3194,7 @@ pub(super) fn emit_verify_law(
     let law_name = aver_name_to_dafny(&law.name);
     if !law.because.is_empty() || law.using.is_some() {
         let claim = format!("{}.{}", vb.fn_name, law.name);
-        let reason = match super::reasons::emit(vb, law, ctx, native_members) {
+        let reason = match super::reasons::emit(vb, law, ctx, recursion) {
             Ok(emitted) => return emitted,
             Err(reason) => format!("Dafny guided-law pilot declined: {reason}"),
         };
@@ -3447,16 +3387,9 @@ pub(super) fn emit_verify_law(
         );
     }
 
-    // Floor-division window family. A law whose cone reaches a
-    // guard-validated floor-division countdown fn either carries a
-    // recognized `FloorDivWindow` figure — then its validated support
-    // stack (division-window prelude + power algebra + branch-split
-    // helper lemmas, all PROVED in the emitted file) closes the
-    // universal — or it stays an honestly omitted universal: the fn
-    // is in the proof subset now, but Z3 cannot close an arbitrary
-    // universal over its unbounded symbolic unfolding, and the
-    // default empty-body lemma would manufacture a guaranteed error
-    // on a law that may well hold.
+    // Prefer the shared division-window support plan when available. Other
+    // laws over native floor-division recursion still receive real universal
+    // obligations: a missing specialized tactic is not a language omission.
     let pinned_floor_window_figure = vb_fn_id
         .and_then(|fn_id| {
             ctx.proof_ir
@@ -3474,35 +3407,6 @@ pub(super) fn emit_verify_law(
     if let Some(body) = super::lemmas::floor_arith_law(law, ctx, &fn_name, &law_name) {
         return body;
     }
-    // The omission applies only where the default path would state an
-    // OPEN universal with an empty body. The bounded-∀ form (mutual /
-    // opaque cone over all-literal-Int given domains — the same
-    // predicates the default path evaluates below) dispatches to
-    // per-sample lemmas instead and keeps working exactly as it did
-    // before this family existed, so it is excluded here.
-    let bounded_form_applies = {
-        let is_opaque_cone = law_refs_opaque_fn(&law.lhs, ctx, opaque_fns)
-            || law_refs_opaque_fn(&law.rhs, ctx, opaque_fns)
-            || law_refs_opaque_fn(&law.lhs, ctx, native_emitted)
-            || law_refs_opaque_fn(&law.rhs, ctx, native_emitted);
-        let all_literal_int_domains = !law.givens.is_empty()
-            && law.givens.iter().all(|g| {
-                g.type_name == "Int"
-                    && matches!(
-                        &g.domain,
-                        VerifyGivenDomain::Explicit(vs)
-                            if vs.iter().all(|v| literal_int_value(v).is_some())
-                    )
-            });
-        is_opaque_cone && all_literal_int_domains
-    };
-    if !bounded_form_applies && law_reaches_floor_div_fn(law, ctx) {
-        return format!(
-            "// Law {}.{}{}: reaches a floor-division recursion whose universal Z3 cannot close push-button, sample-only (universal lemma omitted)",
-            fn_name, law_name, suffix,
-        );
-    }
-
     // IR-pinned `LinearRecurrence2SpecEquivalence` — emit a full
     // support-theorem stack (Nat helper + worker_nat_shift +
     // helper_nat + helper_seed + spec_nat_bridge + main lemma)
@@ -3730,36 +3634,9 @@ pub(super) fn emit_verify_law(
     } = super::lemmas::algebra_lemmas(law, ctx, &law_uid);
 
     let mut lines = Vec::new();
-    // Collect all functions used in the law for fuel annotations
-    let mut law_fns = std::collections::BTreeSet::new();
-    crate::codegen::proof_recognize::collect_called_fns(&law.lhs, &mut law_fns);
-    crate::codegen::proof_recognize::collect_called_fns(&law.rhs, &mut law_fns);
-    // Add transitive callees
-    let mut transitive_fns = std::collections::BTreeSet::new();
-    for f in &law_fns {
-        if let Some(fd) = ctx.fn_def_by_name(f, ctx.active_module_scope().as_deref()) {
-            crate::codegen::proof_recognize::collect_called_fns_in_body(
-                &fd.body,
-                &mut transitive_fns,
-            );
-        }
-    }
-    law_fns.extend(transitive_fns);
-
-    // Oracle v1: fuel attrs only for names that resolve to top-level
-    // functions. Callees collected from lifted effectful bodies can
-    // include oracle / capability params (e.g. `rnd_Random_int`,
-    // `oracle`) that Dafny sees as lambda variables — emitting
-    // `{:fuel oracle, 5}` makes Dafny reject the lemma.
-    let fuel_attrs: String = law_fns
-        .iter()
-        .filter(|f| {
-            ctx.fn_def_by_name(f, ctx.active_module_scope().as_deref())
-                .is_some()
-        })
-        .map(|f| format!("{{:fuel {}, 5}}", aver_name_to_dafny(f)))
-        .collect::<Vec<_>>()
-        .join(" ");
+    let native_sequence =
+        super::law_search::native_sequence_law(vb, law, ctx, opaque_fns, native_emitted);
+    let fuel_attrs = super::law_search::attributes(vb, law, ctx, native_sequence, native_emitted);
 
     lines.push(format!("// Law: {}.{}", fn_name, law_name));
     if fuel_attrs.is_empty() {
@@ -3825,14 +3702,16 @@ pub(super) fn emit_verify_law(
     let is_opaque = law_refs_opaque_fn(&law.lhs, ctx, opaque_fns)
         || law_refs_opaque_fn(&law.rhs, ctx, opaque_fns);
     // Native-decreases mutual recursion isn't opaque (Dafny unfolds
-    // it), but the universal `add_commutative(a, b: int)` over
+    // it). Open sequence laws now try a real universal with shared-cone
+    // unfolding; the legacy finite-Int lane below remains separate.
+    // The universal `add_commutative(a, b: int)` over
     // `int × int` still doesn't close as a true ∀ without a domain
     // restriction. Route through the bounded-∀ form the same way
     // opaque does — the case-split body composes per-pair sample
     // lemmas that Dafny *can* close from `{}` on the native path.
     let is_native_mutual = law_refs_opaque_fn(&law.lhs, ctx, native_emitted)
         || law_refs_opaque_fn(&law.rhs, ctx, native_emitted);
-    let needs_bounded_form = is_opaque || is_native_mutual;
+    let needs_bounded_form = is_opaque || (is_native_mutual && !native_sequence);
     let all_explicit_int = !law.givens.is_empty()
         && law.givens.iter().all(|g| {
             (g.type_name == "Int" || lifted_vars.contains_key(&g.name))
@@ -3859,13 +3738,34 @@ pub(super) fn emit_verify_law(
     }
 
     lines.push(format!("  ensures {} == {}", lhs, rhs));
+    let source_induction = if needs_bounded_form || !lifted_vars.is_empty() {
+        None
+    } else {
+        super::law_induction::plan(vb, law, ctx)
+    };
+    if let Some(plan) = source_induction {
+        // Explicit source calls supply the induction instances; suppress the
+        // target's unrelated parameter-order heuristic.
+        if let Some(header) = lines
+            .iter_mut()
+            .rev()
+            .find(|line| line.starts_with("lemma "))
+        {
+            *header = header.replacen("lemma ", "lemma {:induction false} ", 1);
+        }
+        lines.push(format!(
+            "  decreases {}",
+            super::law_induction::measure(plan)
+        ));
+    }
     // Datatype accumulator-generalization: the structurally-shrinking driver
     // given may not be the lemma's FIRST param (givens can be declared in any
     // order), so Dafny's default lexicographic measure — which tries params
     // left-to-right and would hit the GROWING accumulator first — fails. Pin the
     // measure to the driver. (The datatype-induction hint below recurses on its
     // field predecessor, which decreases this driver.)
-    if law.when.is_none()
+    if source_induction.is_none()
+        && law.when.is_none()
         && crate::codegen::common::accumulator_fold_fn_names(ctx).contains(&vb.fn_name)
         && let Some(fd) = ctx.fn_def_by_name(&vb.fn_name, ctx.active_module_scope().as_deref())
         && let Some(driver) = datatype_driver_given_name(fd, law)
@@ -3878,6 +3778,9 @@ pub(super) fn emit_verify_law(
     // `forall` hoist (here) and the explicit-instantiation engine (list-induction
     // step, below).
     let cites = eligible_cites(vb, law, ctx, opaque_fns, native_emitted);
+    if !needs_bounded_form {
+        lines.extend(super::law_induction::sequence_identities(law, ctx));
+    }
 
     // Hoist additive-op facts at the top of the body (inductive paths only;
     // bounded-form bodies dispatch to samples and never reach the universal).
@@ -3932,6 +3835,20 @@ pub(super) fn emit_verify_law(
         lines.push(format!("  assume {{:axiom}} {} == {};", lhs, rhs));
         lines.push("}\n".to_string());
         return lines.join("\n");
+    }
+
+    if let Some(plan) = source_induction {
+        lines.extend(super::law_induction::calls(
+            plan,
+            &format!("{}_{}", fn_name, law_name),
+            ctx,
+        ));
+        lines.push("}\n".to_string());
+        return op_lemma_defs
+            .into_iter()
+            .chain(lines)
+            .collect::<Vec<_>>()
+            .join("\n");
     }
 
     // Generate inductive proof body for Int-parameterized laws
@@ -4160,6 +4077,11 @@ pub(super) fn emit_verify_law(
         }
     }
 
+    if native_sequence {
+        // An explicit VC also exposes recursive Bool equalities which Z3 can
+        // leave opaque when they appear only in the method postcondition.
+        lines.push(format!("  assert {} == {};", lhs, rhs));
+    }
     lines.push("}\n".to_string());
 
     // Prepend the proved additive-op lemmas the `forall`-lift above refers

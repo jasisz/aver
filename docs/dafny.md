@@ -114,6 +114,8 @@ an exact backend model. These boundaries differ from missing expression syntax.
 Recursive functions fall into three buckets based on the shared classifier in `codegen::recursion::detect`:
 
 **Direct-recursion patterns** — emitted as normal Dafny `function`s with inferred `decreases` clauses:
+- A shared, guarded subtractive countdown takes precedence over sequence-parameter heuristics: a byte accumulator may grow while its width decreases. Both backends consume the same `ProofIR` contract; no caller precondition is added.
+- A list growing under `List.len(xs) < bound`, with a stable integer bound and a statically nonempty prepend/append, uses `decreases bound - |xs|`. Lean uses the same difference converted to `Nat`. The same contract covers strings growing by a nonempty literal under `String.len(text) < bound`. Negative bounds and an append that overshoots the bound remain total.
 - List parameter → `decreases |xs|`
 - String parameter → `decreases |s|`
 - Int countdown (`match n { 0 -> …; _ -> recur(n-1, …) }`) → `requires n >= 0` + `decreases n`. Callers discharge the `requires` via Dafny's auto-inference from surrounding `if`/`match` shapes — `match (n < 0) { false -> worker(n) }` resolves to `n >= 0` automatically.
@@ -231,6 +233,20 @@ have no explicit literal domain (open-`Int` quantifier, oracle
 binding, etc.).
 
 ## Inductive lemma hints
+
+For simple list folds and guarded countdowns, `ProofIR` records the law's
+induction driver and the actual recursive arguments, including accumulator
+updates and extra law givens. Dafny uses those instances in ordinary laws and
+separately checked universal citation lemmas. A law comparing an arbitrary
+accumulator with an empty one receives both recursive instances. Each call must
+prove the original premises and a strict decrease; the plan supplies no axioms.
+Lean also consults the shared driver when choosing functional induction for a
+matching explanation. Unsupported source shapes retain the existing strategies.
+
+The Dafny proof bodies additionally check sequence identities needed to match
+singleton/empty concatenations and reversals. The list reverse helper has a
+checked length-preservation postcondition. See `tests/fixtures/source_recursion/`
+for positive, imported, and false-supplier controls exercised by both checkers.
 
 For `verify law` blocks with a single `given n: Int` where both sides use directly-recursive functions, the codegen generates inductive proof structure:
 

@@ -1,0 +1,17 @@
+module FalseAccumulator
+    intent = "Samples at zero hide an omitted accumulator; a universal proof must reject it."
+fn count(xs: List<Int>, acc: Int) -> Int
+    match xs
+        [] -> acc
+        [_, ..tail] -> count(tail, acc + 1)
+verify count law droppedAccumulator
+    given acc: Int = [0]
+    given xs: List<Int> = [[], [1], [2, 3]]
+    count(xs, acc) => List.len(xs)
+fn size(xs: List<Int>, initial: Int) -> Int
+    count(xs, initial)
+verify size law failedSupplier
+    given xs: List<Int> = [[], [1]]
+    given initial: Int = [0]
+    using [count.droppedAccumulator]
+    size(xs, initial) => List.len(xs)

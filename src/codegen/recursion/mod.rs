@@ -12,6 +12,7 @@
 
 pub mod cycle_measure;
 pub mod detect;
+mod sequence_growth;
 
 use std::collections::HashSet;
 
@@ -30,6 +31,12 @@ pub use detect::analyze_plans_in_scope;
 /// sees (pattern matching, `matches!`, equality via `.eq`).
 #[derive(Clone, Debug, PartialEq)]
 pub enum RecursionPlan {
+    /// A list or string grows strictly toward a preserved integer bound; every self-call
+    /// is guarded by its current length being below that bound.
+    SequenceGrowthBound {
+        sequence_index: usize,
+        bound_index: usize,
+    },
     /// Single-fn recursion where an `Int` parameter decreases by 1.
     /// The wrapper supplies `n.natAbs + 1` fuel so the helper terminates.
     IntCountdown { param_index: usize },

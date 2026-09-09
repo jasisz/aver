@@ -305,3 +305,154 @@ Move a transformation into the common pipeline when both consumers can retain
 the same source semantics, and check the change with the same-source positive
 and negative controls. Do not require a broad ProofIR refactor to merge this
 validated structural checkpoint.
+
+## Fixed-count unfolding checkpoint
+
+The unchanged BTC `Message` module now passes all ten laws with its imports
+checked, including the 2/4/8-byte read-after-write laws. Strict whole-module
+BTC coverage rises from **7/104 to 17/104** (`Message` plus `ScriptMath`).
+
+ProofIR carries an optional unfolding budget for each `because` step and the
+final claim. It follows small literal arguments through direct forwarding
+wrappers to a checked integer countdown, and records the recursive function
+IDs and concrete sequence-reversal instances in that obligation's source cone.
+The initial strategy accepts Int/Bool givens and countdown literals up to 16;
+arbitrary sequence givens retain citation/induction search. Sample domains and
+range premises do not determine the budget or restrict universal quantifiers.
+
+Dafny renders these hints as local fuel attributes. It avoids introducing broad
+quantified citation facts into the same unfolding context, while still checking
+every cited supplier and every intermediate step. The original premises and
+claim remain unchanged. Lean retains its existing automation; the new ProofIR
+field is a search hint rather than a new semantic assumption.
+
+Regression controls use decimal and hexadecimal digits, widths 3 and 5,
+imported functions beside colliding local names, and Bool sequence reversal.
+Missing bounds, false intermediate steps and false unused suppliers all fail
+actual Dafny checking. The remaining BTC modules still have open proofs or
+unsupported operations; this checkpoint does not establish full BTC or K5.
+
+## Sequence composition checkpoint
+
+All six `CompactSize` laws now pass with imports checked, bringing strict
+whole-module BTC coverage to **23/104**. No BTC source or claim changed.
+
+Dafny's checked sequence facts now also expose
+`([head] + prefix) + suffix == [head] + (prefix + suffix)`. This lets a parser's
+head/tail match connect to an already proved payload law at the complete suffix.
+The fact is proved for each concrete element type; it neither assumes a cited
+law nor changes an obligation. This is a Dafny automation hint over existing
+list semantics, so it needs no new source recognizer or ProofIR contract.
+
+An independent decimal framing fixture reproduces two open obligations before
+the change and passes afterwards. Bool and record payloads also check. Incorrect
+reordering of a trailing sequence passes the fixture's empty/singleton samples
+but fails universal verification, both as an intermediate reason and as the
+final claim. A false cited field law is rejected as well.
+
+## Native mutual sequence laws and shared dependencies
+
+ProofIR now records each law's transitive statically resolved pure function
+cone, including explanations and the guard. Each function body is resolved in
+its owning module; cycles terminate on canonical function IDs, and sample
+expressions do not supply dependencies. Lean's guided equation selection and
+Dafny's ordinary-law unfolding both consume this field. Target equation
+eligibility, termination checks and solver tactics remain backend decisions.
+
+Dafny previously sent even native, termination-checked mutual recursion through
+the finite-sample fallback. Ordinary laws with a list binder now attempt their
+actual universal claim when the cone reaches native mutual recursion and no
+opaque function. Unfolding covers every cycle member, including helpers hidden
+behind wrappers. The moderate fuel setting is a search budget, not a limit on
+list length or quantified values. A checked assertion of the unchanged claim
+also exposes recursive Bool equalities that can remain opaque in an `ensures`
+alone. Unsupported signatures retain their existing
+exclusions; the legacy finite-Int lane remains separate.
+
+Sample assertions instantiate the checked universal theorem. That theorem does
+not call the samples, so a false universal cannot be rescued by a sample cycle.
+An independent permutation fixture checks Int and Bool elements and imported
+lookup functions alongside colliding local names. Incorrect order and omitted
+length/index guards pass the chosen samples but fail actual universal checking.
+
+All four unchanged BTC `ScriptState.rearranged` laws now check without their
+previous axiom fallbacks; their samples check too. Imported modules still have
+open obligations, so these four do not yet earn strict whole-module BTC credit.
+This checkpoint does not claim full Lean/Dafny strategy parity: the existing
+Lean ordinary-law lane still bounds one of the independent fixture's two laws,
+while Dafny proves both universally.
+
+## Native floor-division law checkpoint
+
+A checked floor-division recursion no longer makes every ordinary law in its
+cone sample-only. Dafny retains the specialized division-window strategy when
+available and otherwise checks the actual universal obligation. Failure to
+find a proof remains a failed check; native termination alone is not law credit.
+
+Shared source induction now accepts fixed literal arguments in the claim,
+such as the empty seed in `digits(value, [])`. It keeps that seed in the
+statement and recurses on the quantified inputs using the source call's actual
+quotient. A fully quantified anchor still takes priority when one is available.
+Sample values neither choose the seed nor restrict the theorem's quantifiers.
+
+ProofIR also carries the theorem premise instantiated at each recursive call.
+Dafny introduces any list-pattern projections before testing that premise; an
+IH is available only in the branch where its own premise holds. The original
+claim must still be proved in all other branches. Lean continues to consume
+the same source-induction plan with its own functional-induction tactics.
+
+The Dafny sequence-reversal helper now proves preservation of membership in
+addition to length. The quantified element ranges over the input/output union,
+so the contract also supports generic elements containing references. An
+explicit, checked cons decomposition proves the contract from the recursive
+implementation; no sequence property is assumed.
+
+An independent decimal collector has seven universal laws checked by both
+backends; the Dafny controls also use radix seven. Missing guards and an
+incorrect prefix order pass their supplied VM samples but fail universal
+checking. A separate list-accumulator control checks the scope of recursive
+premises in Dafny, which also rejects its false variant. Negative digit laws are
+isolated from unrelated true sibling citations to avoid turning a concrete
+counterexample into a quantifier-search timeout.
+
+Nine of the ten previously omitted ordinary `StackItem.littleEndian` laws
+now check on unchanged BTC source. The readback law and several separate
+citation obligations remain open, so this does not establish the whole module.
+
+
+## Ordinary citation reuse checkpoint
+
+A guided citation of an ordinary source law keeps its checked universal
+restatement, including every given and its `when` premise. When the ordinary
+emitter supplies the same universal signature, that restatement now calls the
+original lemma. It no longer has to reproduce a proof that relied on earlier
+ordinary decomposition laws. Both the original lemma and its caller remain
+obligations in the full checker run.
+
+Availability uses the canonical function cone already carried by ProofIR,
+the emitted recursion boundaries, and the existing signature gate. Finite-Int
+mutual laws, opaque dependencies, omitted laws and specialized signatures do
+not gain universal credit from this reuse. Their citation restatements still
+need independent universal proofs. Ordinary native sequence universals may be
+reused. The backend-specific call decision does not change Lean's proof tactics.
+
+The ordinary decomposition pool now comes from the declaring module's source
+order, even for imported suppliers. It contains only earlier ordinary laws;
+entry-module laws and guided consumers cannot introduce a dependency cycle.
+Owner qualification also keeps an imported lemma distinct from a same-named
+local law.
+
+The independent decimal fixture has nine laws, checked universally from the
+same source by Lean and Dafny. Before reuse its two guided citation suppliers
+failed Dafny verification although all seven ordinary laws passed. Controls
+cover forward citations, an omitted premise, a false unused supplier whose
+samples pass, and an imported false supplier alongside colliding local names. A finite-Int
+law over native mutual lookup remains bounded: its samples pass but its false
+universal citation fails. An ordinary native sequence permutation, which does
+have a universal contract, can be reused successfully.
+
+On unchanged BTC, `StackItem` drops from 15 errors to 6, with four solver
+timeouts still open. `ScriptState` including its imports drops from 22 errors
+to 7; its solver timeouts change from two to four. Strict whole-module credit
+remains 23/104 (`Message` 10, `CompactSize` 6, `ScriptMath` 7). Fewer duplicate
+citation failures do not by themselves establish additional whole modules.

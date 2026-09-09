@@ -1,0 +1,12 @@
+module ImportedFold
+    depends [Worker]
+    intent = "An unrelated local function cannot capture the imported induction."
+fn read(xs: List<Int>, acc: Int) -> Int
+    acc - List.len(xs)
+fn finish(prefix: List<Int>, digit: Int) -> Int
+    Worker.read(List.concat(prefix, [digit]), 0)
+verify finish law importedSnoc
+    given prefix: List<Int> = [[], [1], [2, 3]]
+    given digit: Int = [-1, 0, 15]
+    using [Worker.read.snoc]
+    finish(prefix, digit) => Worker.read(prefix, 0) * 16 + digit

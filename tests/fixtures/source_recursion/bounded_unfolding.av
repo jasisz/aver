@@ -1,0 +1,39 @@
+module BoundedUnfolding
+    intent = "Fixed digit counts guide unfolding while values remain universally quantified."
+    effects []
+
+fn digits(value: Int, width: Int) -> List<Int>
+    digitsInto(value, width, [])
+
+fn digitsInto(value: Int, width: Int, acc: List<Int>) -> List<Int>
+    match width <= 0
+        true -> List.reverse(acc)
+        false -> digitsInto(Int.div(value, 10), width - 1, List.prepend(Int.mod(value, 10), acc))
+
+fn read(items: List<Int>) -> Int
+    readFrom(List.reverse(items), 0)
+
+fn readFrom(items: List<Int>, acc: Int) -> Int
+    match items
+        [] -> acc
+        [head, ..tail] -> readFrom(tail, acc * 10 + head)
+
+fn identity(value: Int) -> Int
+    value
+
+verify identity law unchanged
+    given value: Int = [0, 1]
+    identity(value) => value
+
+verify digits law threeDigits
+    given value: Int = [0, 1, 999]
+    when Bool.and(value >= 0, value < 1000)
+    using [identity.unchanged]
+    read(digits(value, 3)) => value
+
+verify digits law fiveDigits
+    given value: Int = [0, 1, 99999]
+    when Bool.and(value >= 0, value < 100000)
+    because read(digits(value, 5)) == value
+    using [identity.unchanged]
+    read(digits(value, 5)) => value

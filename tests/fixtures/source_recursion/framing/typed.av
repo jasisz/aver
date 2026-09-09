@@ -1,0 +1,30 @@
+module TypedFraming
+    intent = "Framing preserves the ordered payload for primitive and record elements."
+    effects []
+
+record Entry
+    value: Int
+
+fn dropBool(items: List<Bool>) -> List<Bool>
+    match items
+        [] -> []
+        [_, ..tail] -> tail
+
+verify dropBool law keepsPayload
+    given marker: Bool = [false, true]
+    given prefix: List<Bool> = [[], [true]]
+    given suffix: List<Bool> = [[], [false]]
+    using []
+    dropBool(List.concat(List.prepend(marker, prefix), suffix)) => List.concat(prefix, suffix)
+
+fn dropEntry(items: List<Entry>) -> List<Entry>
+    match items
+        [] -> []
+        [_, ..tail] -> tail
+
+verify dropEntry law keepsPayload
+    given marker: Entry = [Entry(value = 1)]
+    given prefix: List<Entry> = [[], [Entry(value = 2)]]
+    given suffix: List<Entry> = [[], [Entry(value = 3)]]
+    using []
+    dropEntry(List.concat(List.prepend(marker, prefix), suffix)) => List.concat(prefix, suffix)

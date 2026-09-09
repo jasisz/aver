@@ -4939,6 +4939,13 @@ fn render_proof_ir_dump(ir: &aver::ir::ProofIR, symbols: &aver::ir::SymbolTable)
             Some(RecursionContract::LinearRecurrence2) => {
                 writeln!(out, "LinearRecurrence2 (pair-state Nat worker)").unwrap();
             }
+            Some(RecursionContract::WellFoundedSequenceGap { sequence, bound }) => {
+                writeln!(
+                    out,
+                    "WellFoundedSequenceGap {{ measure: toNat({bound} - List.len({sequence})) }}"
+                )
+                .unwrap();
+            }
             Some(RecursionContract::WellFoundedToNat { param, floor_div }) => match floor_div {
                 Some(shrink) => writeln!(
                     out,

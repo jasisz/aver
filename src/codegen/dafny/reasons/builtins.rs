@@ -156,7 +156,14 @@ mod tests {
         let crate::ast::VerifyKind::Law(law) = &block.kind else {
             panic!("expected a law");
         };
-        reasons::emit(block, law, &ctx, &HashSet::new())
+        let empty = HashSet::new();
+        let recursion = crate::codegen::dafny::toplevel::LawRecursion {
+            opaque_fns: &empty,
+            native_members: &empty,
+            native_callers: &empty,
+            termination_opaque: &empty,
+        };
+        reasons::emit(block, law, &ctx, &recursion)
     }
 
     #[test]

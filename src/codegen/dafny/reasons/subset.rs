@@ -277,6 +277,11 @@ impl<'a> Checker<'a> {
                 && countdown_parameter(fd, ctx).is_none()
                 && list_parameter(fd, ctx).is_none()
                 && super::arithmetic::quotient_parameter(fd, ctx).is_none()
+                && !matches!(
+                    crate::codegen::common::find_fn_contract_for_fn(ctx, fd)
+                        .and_then(|c| c.recursion.as_ref()),
+                    Some(crate::ir::RecursionContract::WellFoundedSequenceGap { .. })
+                )
             {
                 return Err(format!(
                     "recursive function {} requires checked Int or List descent",

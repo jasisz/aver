@@ -168,7 +168,7 @@ pub(in crate::codegen::lean) fn emit_reason_law(
         .iter()
         .map(|r| induction::plan(r, law, ctx))
         .collect::<Vec<_>>();
-    let definitions = induction::definitions(law, ctx);
+    let definitions = induction::definitions(vb, law, ctx);
     let params = claim
         .binders
         .iter()

@@ -85,6 +85,43 @@ pub fn emit_fn_def_proof(fd: &FnDef, ctx: &CodegenContext) -> Option<String> {
         return None;
     }
 
+    if let Some(crate::ir::RecursionContract::WellFoundedSequenceGap { sequence, bound }) =
+        crate::codegen::common::find_fn_contract_for_fn(ctx, fd).and_then(|c| c.recursion.as_ref())
+    {
+        let mut lines = Vec::new();
+        if let Some(desc) = &fd.desc {
+            lines.push(format!("/-- {} -/", sanitize_doc(desc)));
+        }
+        lines.push(format!(
+            "def {} {} : {} :=",
+            aver_name_to_lean(&fd.name),
+            emit_fn_params(&fd.params),
+            type_annotation_to_lean(&fd.return_type)
+        ));
+        let lowered = lower_pure_question_bang_for_emit(fd);
+        let body = lowered
+            .as_ref()
+            .map(|f| f.body.as_ref())
+            .unwrap_or(fd.body.as_ref());
+        lines.push(emit_fn_body_for(fd, body, ctx));
+        lines.push(format!(
+            "termination_by ({} - ({}.length : Int)).toNat",
+            aver_name_to_lean(bound),
+            aver_name_to_lean(sequence)
+        ));
+        let simplify = if fd
+            .params
+            .iter()
+            .any(|(name, ty)| name == sequence && ty == "String")
+        {
+            "simp_all [String.add_eq_append, String.length, String.toList_append]"
+        } else {
+            "simp_all only [List.length_append, List.length_cons, List.length_nil]"
+        };
+        lines.push(format!("decreasing_by\n  all_goals ({simplify}; omega)"));
+        return Some(lines.join("\n"));
+    }
+
     // LinearRecurrence2 — dedicated `RecursionContract::LinearRecurrence2`
     // marker. Backend still calls `detect_second_order_int_linear_
     // recurrence` to extract base cases + coefficients; the contract

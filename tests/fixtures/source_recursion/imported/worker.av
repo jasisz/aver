@@ -1,0 +1,12 @@
+module Worker
+    exposes [read]
+    intent = "Induction follows the tail and updates the accumulator; digit is an extra law given."
+fn read(xs: List<Int>, acc: Int) -> Int
+    match xs
+        [] -> acc
+        [head, ..tail] -> read(tail, acc * 16 + head)
+verify read law snoc
+    given acc: Int = [0, -1, 17]
+    given prefix: List<Int> = [[], [1], [2, 3]]
+    given digit: Int = [-1, 0, 15]
+    read(List.concat(prefix, [digit]), acc) => read(prefix, acc) * 16 + digit

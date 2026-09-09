@@ -1,0 +1,30 @@
+module NativeSequence
+    intent = "Fixed permutations through a mutually recursive list lookup."
+    effects []
+
+fn at(items: List<Int>, index: Int) -> Int
+    match items
+        [] -> 0
+        [head, ..tail] -> select(head, tail, index)
+
+fn select(head: Int, tail: List<Int>, index: Int) -> Int
+    match index == 0
+        true -> head
+        false -> at(tail, index - 1)
+
+fn shuffle(items: List<Int>) -> List<Int>
+    [at(items, 2), at(items, 0), at(items, 1)]
+
+verify shuffle law threeTurns
+    given items: List<Int> = [[4, 4, 4], [9, 9, 9, 9]]
+    when List.len(items) >= 3
+    shuffle(shuffle(shuffle(items))) => List.take(items, 3)
+
+fn project(items: List<Int>, index: Int) -> Int
+    at(items, index)
+
+verify project law firstThree
+    given items: List<Int> = [[4, 4, 4], [9, 9, 9, 9]]
+    given index: Int = [0, 1, 2]
+    when Bool.and(index >= 0, index < 3)
+    project(List.take(items, 3), index) => project(items, index)

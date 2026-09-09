@@ -110,6 +110,20 @@ pub fn aver_name_to_dafny(name: &str) -> String {
     crate::codegen::common::escape_reserved_word(&normalized, DAFNY_RESERVED, "_")
 }
 
+/// A declaration is bare in its owning Dafny module and qualified elsewhere.
+pub(super) fn function_name(id: crate::ir::FnId, ctx: &CodegenContext) -> String {
+    let key = &ctx.symbol_table.fn_entry(id).key;
+    let bare = aver_name_to_dafny(&key.name);
+    match key.scope_str() {
+        Some(prefix)
+            if !ctx.modules.is_empty() && ctx.active_module_scope().as_deref() != Some(prefix) =>
+        {
+            format!("{}.{bare}", super::dafny_module_name(prefix))
+        }
+        _ => bare,
+    }
+}
+
 /// Emit a Dafny expression from a resolved Aver expression.
 pub fn emit_expr(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
     match &expr.node {
@@ -543,9 +557,6 @@ fn emit_fn_call(
             }
         }
         ResolvedCallee::Fn(fn_id) => {
-            let entry = ctx.symbol_table.fn_entry(*fn_id);
-            let bare = entry.key.name.as_str();
-            let module_prefix = entry.key.scope_str();
             let arg_strs: Vec<String> = args.iter().map(|a| emit_expr(a, ctx)).collect();
             // A call to a fn in a DIFFERENT module is qualified with the
             // Dafny module name (`Aver_Domain_Rational.f`). A same-module
@@ -554,17 +565,7 @@ fn emit_fn_call(
             // self-qualification, so `M.f(...)` is an unresolved
             // identifier. Compare the callee's owning scope against the
             // module currently being emitted.
-            let active = ctx.active_module_scope();
-            let func = match module_prefix {
-                Some(prefix) if !ctx.modules.is_empty() && active.as_deref() != Some(prefix) => {
-                    format!(
-                        "{}.{}",
-                        super::dafny_module_name(prefix),
-                        aver_name_to_dafny(bare)
-                    )
-                }
-                _ => aver_name_to_dafny(bare),
-            };
+            let func = function_name(*fn_id, ctx);
             format!("{}({})", func, arg_strs.join(", "))
         }
         ResolvedCallee::LocalSlot { name, .. } => {

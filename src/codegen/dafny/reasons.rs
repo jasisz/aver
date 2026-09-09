@@ -14,6 +14,7 @@ mod induction;
 mod subset;
 #[cfg(test)]
 mod tests;
+mod unfolding;
 
 fn label(vb: &VerifyBlock, law: &VerifyLaw) -> String {
     format!("{}.{}", vb.fn_name, law.name)
@@ -26,7 +27,7 @@ fn lemma_name(id: &str) -> String {
     format!("averGuided_{encoded}")
 }
 
-fn local_blocks(ctx: &CodegenContext) -> Vec<&VerifyBlock> {
+pub(super) fn local_blocks(ctx: &CodegenContext) -> Vec<&VerifyBlock> {
     match ctx.active_module_scope().as_deref() {
         Some(scope) => ctx
             .modules
@@ -173,10 +174,10 @@ pub(super) fn emit(
     vb: &VerifyBlock,
     law: &VerifyLaw,
     ctx: &CodegenContext,
-    native_members: &std::collections::HashSet<crate::ir::FnId>,
+    recursion: &super::toplevel::LawRecursion<'_>,
 ) -> Result<String, String> {
     let blocks = local_blocks(ctx);
-    let citations = subset::validate(vb, law, ctx, &blocks, native_members)?;
+    let citations = subset::validate(vb, law, ctx, &blocks, recursion.native_members)?;
     let id = label(vb, law);
     let name = lemma_name(&id);
     let source_id = match ctx.active_module_scope() {
@@ -190,7 +191,7 @@ pub(super) fn emit(
     let goal = conclusion(law, ctx);
     let mut out = Vec::new();
     for &citation in &citations {
-        if let Some(supplier) = citations::plain_supplier(citation, &name, law, ctx)? {
+        if let Some(supplier) = citations::plain_supplier(citation, &name, law, ctx, recursion)? {
             out.push(supplier);
         }
     }
@@ -207,6 +208,11 @@ pub(super) fn emit(
             None => vec![&law.lhs, &law.rhs],
         };
         let driver = induction_driver(&source_expressions, law, ctx);
+        let unfolding = if driver.is_none() {
+            unfolding::attributes(vb, law, index, ctx)
+        } else {
+            None
+        };
         let has_induction = driver.is_some();
         let list_induction = driver
             .as_ref()
@@ -215,7 +221,11 @@ pub(super) fn emit(
             "// aver:dafny-obligation {step_name} {source_id}.{step}"
         ));
         out.push(format!(
-            "lemma {{:induction {}}} {step_name}({params})",
+            "lemma {}{{:induction {}}} {step_name}({params})",
+            unfolding
+                .as_ref()
+                .map(|attrs| format!("{attrs} "))
+                .unwrap_or_default(),
             driver
                 .as_ref()
                 .map(|driver| driver.variables.as_str())
@@ -232,7 +242,12 @@ pub(super) fn emit(
             out.push(format!("  decreases {}", driver.decreases));
         }
         out.push("{".to_string());
-        for &citation in &citations {
+        if unfolding.is_none() {
+            out.extend(super::law_induction::sequence_identities(law, ctx));
+        }
+        // Suppliers were validated and emitted above even when this obligation
+        // can close directly by unfolding. No `using` declaration is trusted.
+        for &citation in citations.iter().filter(|_| unfolding.is_none()) {
             let dependency = citation.law;
             let cited_name = citations::supplier_name(citation, &name, ctx);
             // The forall range retains the supplier's guard. Calling its

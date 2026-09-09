@@ -7,6 +7,8 @@ mod crypto;
 /// file holding the trust header, top-level items, and verify lemmas.
 mod expr;
 mod fuel;
+mod law_induction;
+mod law_search;
 mod lemmas;
 mod propagation;
 mod reasons;
@@ -888,12 +890,17 @@ function BranchPath_parse(s: string): Result<BranchPath, string> {
 /// signature. They mirror Lean's model of the same two builtins
 /// (`codegen::lean::builtins` renders `xs.find? p` and `xs.any p`): first
 /// match wins, and `ListAny` is the existential, false on the empty list.
+/// Reversal's membership contract quantifies over the finite input/output
+/// union, so generic elements containing references remain admissible. Its
+/// cons assertion proves the contract from the definition, including absence.
 const DAFNY_HELPER_AVER_LIST: &str = r#"
 function ListReverse<T>(xs: seq<T>): seq<T>
+  ensures |ListReverse(xs)| == |xs|
+  ensures forall item | item in xs + ListReverse(xs) :: item in ListReverse(xs) <==> item in xs
   decreases |xs|
 {
   if |xs| == 0 then []
-  else ListReverse(xs[1..]) + [xs[0]]
+  else assert xs == [xs[0]] + xs[1..]; ListReverse(xs[1..]) + [xs[0]]
 }
 
 function ListHead<T>(xs: seq<T>): Option<T> {
@@ -1516,6 +1523,28 @@ verify roll law alwaysSix\n    given rnd: Random.int = [rollMax]\n    roll() => 
             "expected underscore-form call; got:\n{}",
             dfy
         );
+    }
+
+    #[test]
+    fn shared_countdown_measure_wins_over_a_growing_sequence_accumulator() {
+        let ctx = ctx_from_source(
+            r#"module Countdown
+    intent = "The counter, not the growing output, drives termination."
+fn bytes(value: Int, width: Int, acc: List<Int>) -> List<Int>
+    match width <= 0
+        true -> List.reverse(acc)
+        false -> bytes(Int.div(value, 256), width - 1, List.prepend(Int.mod(value, 256), acc))
+"#,
+            "Countdown",
+        );
+        let out = transpile(&ctx);
+        let dfy = dafny_output(&out);
+        assert!(
+            dfy.contains("decreases if width >= 0 then width else 0"),
+            "{dfy}"
+        );
+        assert!(!dfy.contains("decreases |acc|"), "{dfy}");
+        assert!(!dfy.contains("requires width"), "{dfy}");
     }
 
     #[test]

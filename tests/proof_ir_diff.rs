@@ -26,6 +26,9 @@ use aver::ir::proof_ir::{
 use aver::source::{LoadedModule, parse_source};
 use std::path::PathBuf;
 
+#[path = "proof_ir_diff/bounded_unfolding.rs"]
+mod bounded_unfolding;
+
 fn build_ctx(src: &str) -> CodegenContext {
     let mut items = parse_source(src).expect("parse");
     // Proof-mode minimal pipeline: rewrite stages off (would alter
@@ -86,15 +89,27 @@ fn build_ctx_with_modules(entry_src: &str, deps: &[(&str, &str)]) -> CodegenCont
     let mut items = parse_source(entry_src).expect("entry parse");
     let loaded: Vec<LoadedModule> = deps
         .iter()
-        .map(|(name, source)| LoadedModule {
-            dep_name: (*name).to_string(),
-            items: parse_source(source).unwrap_or_else(|error| panic!("{name} parse: {error}")),
-            path: PathBuf::from(format!("{name}.av")),
+        .map(|(name, source)| {
+            let mut items =
+                parse_source(source).unwrap_or_else(|error| panic!("{name} parse: {error}"));
+            // Module loading performs TCO before assembling the codegen view.
+            aver::tco::transform_program(&mut items);
+            LoadedModule {
+                dep_name: (*name).to_string(),
+                items,
+                path: PathBuf::from(format!("{name}.av")),
+            }
         })
         .collect();
     let modules: Vec<aver::codegen::ModuleInfo> = loaded
         .iter()
-        .map(aver::codegen::ModuleInfo::from_loaded)
+        .map(|module| {
+            aver::codegen::ModuleInfo::from_items(
+                module.dep_name.clone(),
+                &module.items,
+                Some(aver::ir::analyze(&module.items, None)),
+            )
+        })
         .collect();
     let mut pipeline_result = aver::ir::pipeline::run(
         &mut items,
@@ -2956,4 +2971,227 @@ fn native_subtractive_measure_requires_positive_guards_at_every_call() {
             "{body}: {recursion:?}"
         );
     }
+}
+
+#[test]
+fn law_induction_tracks_the_countdown_and_both_accumulator_instances() {
+    let ctx = build_ctx(include_str!("fixtures/guarded_countdown_digits.av"));
+    let law = law_theorem(&ctx, "digitsInto", "accumulatorPrefix").unwrap();
+    let plan = law.induction.as_ref().expect("source induction planned");
+    assert_eq!(plan.driver, "width");
+    assert!(matches!(
+        plan.measure,
+        aver::ir::proof_ir::LawInductionMeasure::NonnegativeInt
+    ));
+    assert_eq!(
+        plan.calls.len(),
+        2,
+        "the arbitrary and empty accumulators both recur"
+    );
+    for call in &plan.calls {
+        assert_eq!(call.arguments.len(), 3);
+        assert!(call.list_case.is_none());
+        assert!(matches!(
+            call.arguments[1].node,
+            aver::ir::hir::ResolvedExpr::BinOp(aver::ast::BinOp::Sub, _, _)
+        ));
+    }
+    assert_ne!(
+        plan.calls[0].arguments[2].node,
+        plan.calls[1].arguments[2].node
+    );
+}
+
+#[test]
+fn law_induction_uses_fresh_list_projections_and_preserves_extra_givens() {
+    let source = r#"module Fold
+    intent = "The induction carries the actual accumulator update."
+fn read(xs: List<Int>, acc: Int) -> Int
+    match xs
+        [] -> acc
+        [head, ..tail] -> read(tail, acc * 256 + head)
+verify read law snoc
+    given averInductionPart0: Int = [0]
+    given prefix: List<Int> = [[], [1]]
+    given digit: Int = [0]
+    read(List.concat(prefix, [digit]), averInductionPart0) => read(prefix, averInductionPart0) * 256 + digit
+"#;
+    let ctx = build_ctx(source);
+    let plan = law_theorem(&ctx, "read", "snoc")
+        .unwrap()
+        .induction
+        .as_ref()
+        .unwrap();
+    assert_eq!(plan.driver, "prefix");
+    assert_eq!(plan.calls.len(), 1);
+    let call = &plan.calls[0];
+    let case = call.list_case.as_ref().unwrap();
+    assert_ne!(case.head.as_deref(), Some("averInductionPart0"));
+    assert_ne!(case.tail.as_deref(), Some("averInductionPart0"));
+    assert_ne!(case.head, case.tail);
+    assert!(
+        matches!(&call.arguments[2].node, aver::ir::hir::ResolvedExpr::Ident(n) if n == "digit")
+    );
+    assert!(matches!(
+        call.arguments[0].node,
+        aver::ir::hir::ResolvedExpr::BinOp(aver::ast::BinOp::Add, _, _)
+    ));
+}
+
+#[test]
+fn sequence_growth_measure_requires_strict_growth_and_a_stable_guarded_bound() {
+    for (condition, growth, bound, accepted) in [
+        (
+            "List.len(xs) < width",
+            "List.concat(xs, [0])",
+            "width",
+            true,
+        ),
+        ("width > List.len(xs)", "List.prepend(0, xs)", "width", true),
+        (
+            "List.len(xs) < width",
+            "List.concat([0, 0], xs)",
+            "width",
+            true,
+        ),
+        (
+            "List.len(xs) < width",
+            "List.concat(xs, [])",
+            "width",
+            false,
+        ),
+        ("List.len(xs) < width", "xs", "width", false),
+        (
+            "List.len(xs) < width",
+            "List.concat(xs, [0])",
+            "width + 1",
+            false,
+        ),
+        (
+            "List.len(xs) > width",
+            "List.concat(xs, [0])",
+            "width",
+            false,
+        ),
+        (
+            "List.len(xs) <= width",
+            "List.concat(xs, [0])",
+            "width",
+            false,
+        ),
+    ] {
+        let source = format!(
+            "module Grow\n    intent = \"Guarded growth\"\nfn pad(xs: List<Int>, width: Int) -> List<Int>\n    match {condition}\n        true -> pad({growth}, {bound})\n        false -> xs\n"
+        );
+        let ctx = build_ctx(&source);
+        let contract = fn_contract(&ctx, "pad");
+        assert_eq!(
+            matches!(contract.and_then(|c| c.recursion.as_ref()), Some(RecursionContract::WellFoundedSequenceGap { sequence, bound }) if sequence == "xs" && bound == "width"),
+            accepted,
+            "{source}: {contract:?}"
+        );
+    }
+}
+
+#[test]
+fn string_growth_requires_a_nonempty_literal_and_an_unchanged_bound() {
+    for (growth, bound, expected) in [
+        (r#""0" + text"#, "width", true),
+        (r#"text + "xy""#, "width", true),
+        (r#""" + text"#, "width", false),
+        (r#""0" + text"#, "width + 1", false),
+        ("text + text", "width", false),
+    ] {
+        let source = format!(
+            r#"module Pad
+    intent = "The sequence must grow strictly."
+fn pad(text: String, width: Int) -> String
+    match String.len(text) >= width
+        true -> text
+        false -> pad({growth}, {bound})
+"#
+        );
+        let ctx = build_ctx(&source);
+        let contract = fn_contract(&ctx, "pad");
+        assert_eq!(
+            matches!(contract.and_then(|c| c.recursion.as_ref()), Some(RecursionContract::WellFoundedSequenceGap { sequence, bound }) if sequence == "text" && bound == "width"),
+            expected,
+            "{source}: {contract:?}"
+        );
+    }
+}
+
+#[test]
+fn law_induction_retains_fixed_seeds_and_guards_the_recursive_premise() {
+    let source = include_str!("fixtures/source_recursion/floor_digits.av");
+    let flipped = source.replace(
+        "digits(value, acc) => List.concat(List.reverse(acc), digits(value, []))",
+        "List.concat(List.reverse(acc), digits(value, [])) => digits(value, acc)",
+    );
+    let flipped_ctx = build_ctx(&flipped);
+    let plan = law_theorem(&flipped_ctx, "digits", "prefix")
+        .unwrap()
+        .induction
+        .as_ref()
+        .unwrap();
+    assert!(
+        plan.calls
+            .iter()
+            .all(|call| !matches!(&call.arguments[1].node,
+        aver::ir::hir::ResolvedExpr::Ident(name) if name == "acc")),
+        "Prefer the fully quantified anchor even when the fixed seed appears first"
+    );
+    let ctx = build_ctx(source);
+    for name in ["oneDigit", "positive", "nonpositive"] {
+        let plan = law_theorem(&ctx, "digits", name)
+            .unwrap()
+            .induction
+            .as_ref()
+            .unwrap();
+        assert_eq!(plan.driver, "value");
+        assert_eq!(plan.calls.len(), 1);
+        let call = &plan.calls[0];
+        assert_eq!(
+            call.arguments.len(),
+            1,
+            "The fixed [] seed is not a theorem parameter"
+        );
+        assert!(
+            matches!(
+                &call.arguments[0].node,
+                aver::ir::hir::ResolvedExpr::Call(
+                    aver::ir::hir::ResolvedCallee::Intrinsic(
+                        aver::ir::hir::BuiltinIntrinsic::IntDivEuclid
+                    ),
+                    _
+                )
+            ),
+            "{:?}",
+            call.arguments[0]
+        );
+        let premise = call
+            .premise
+            .as_ref()
+            .expect("Keep the recursive theorem premise");
+        assert!(
+            format!("{premise:?}").contains("IntDivEuclid"),
+            "Use the recursive premise, not the original one"
+        );
+    }
+}
+
+#[test]
+fn recursive_list_premises_live_inside_the_projection_scope() {
+    let ctx = build_ctx(include_str!(
+        "fixtures/source_recursion/guarded_list_seed.av"
+    ));
+    let plan = law_theorem(&ctx, "grow", "nonnegative")
+        .unwrap()
+        .induction
+        .as_ref()
+        .unwrap();
+    let call = &plan.calls[0];
+    let head = call.list_case.as_ref().unwrap().head.as_ref().unwrap();
+    assert!(!format!("{:?}", call.guard).contains(head));
+    assert!(format!("{:?}", call.premise).contains(head));
 }
