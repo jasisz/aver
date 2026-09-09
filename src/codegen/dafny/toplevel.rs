@@ -3841,6 +3841,7 @@ pub(super) fn emit_verify_law(
         lines.extend(super::law_induction::calls(
             plan,
             &format!("{}_{}", fn_name, law_name),
+            &cites,
             ctx,
         ));
         lines.push("}\n".to_string());

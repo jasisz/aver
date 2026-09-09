@@ -1,0 +1,29 @@
+module BooleanCounter
+    intent = "A subtractive collector and a Boolean reader share the same induction applications."
+    effects []
+
+fn read(items: List<Bool>, acc: Int) -> Int
+    match items
+        [] -> acc
+        [_, ..tail] -> read(tail, acc + 1)
+
+verify read law suffix
+    given items: List<Bool> = [[], [true], [false, true]]
+    given bit: Bool = [false, true]
+    given acc: Int = [0, 1, 20]
+    read(List.concat(items, [bit]), acc) => read(items, acc) + 1
+
+fn collect(value: Int, acc: List<Bool>) -> List<Bool>
+    match value > 0
+        true -> collect(value - 1, List.prepend(true, acc))
+        false -> List.reverse(acc)
+
+verify collect law prefix
+    given value: Int = [-1, 0, 1, 4]
+    given acc: List<Bool> = [[], [false], [true, false]]
+    collect(value, acc) => List.concat(List.reverse(acc), collect(value, []))
+
+verify collect law roundtrip
+    given value: Int = [0, 1, 4, 10]
+    when value >= 0
+    read(List.reverse(collect(value, [])), 0) => value

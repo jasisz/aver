@@ -65,7 +65,12 @@ pub(super) fn measure(plan: &LawInduction) -> String {
     }
 }
 
-pub(super) fn calls(plan: &LawInduction, name: &str, ctx: &CodegenContext) -> Vec<String> {
+pub(super) fn calls(
+    plan: &LawInduction,
+    name: &str,
+    cites: &[(String, &VerifyLaw)],
+    ctx: &CodegenContext,
+) -> Vec<String> {
     let mut lines = Vec::new();
     for call in &plan.calls {
         lines.push(format!("  if {} {{", emit_expr(&call.guard, ctx)));
@@ -113,6 +118,25 @@ pub(super) fn calls(plan: &LawInduction, name: &str, ctx: &CodegenContext) -> Ve
             lines.push("    }".to_string());
         } else {
             lines.push(format!("    {name}({args});"));
+        }
+        for application in &call.applications {
+            let target = &ctx.symbol_table.fn_entry(application.fn_id).key.name;
+            let lemma = format!(
+                "{}_{}",
+                aver_name_to_dafny(target),
+                aver_name_to_dafny(&application.law_name)
+            );
+            // Shared search never decides whether Dafny emitted a universal
+            // supplier. Reuse the same admission gate as the forall hoist.
+            if cites.iter().any(|(name, _)| name == &lemma) {
+                let args = application
+                    .arguments
+                    .iter()
+                    .map(|a| emit_expr(a, ctx))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                lines.push(format!("    {lemma}({args});"));
+            }
         }
         lines.push("  }".to_string());
     }

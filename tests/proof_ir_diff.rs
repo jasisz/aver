@@ -29,6 +29,9 @@ use std::path::PathBuf;
 #[path = "proof_ir_diff/bounded_unfolding.rs"]
 mod bounded_unfolding;
 
+#[path = "proof_ir_diff/law_applications.rs"]
+mod law_applications;
+
 fn build_ctx(src: &str) -> CodegenContext {
     let mut items = parse_source(src).expect("parse");
     // Proof-mode minimal pipeline: rewrite stages off (would alter

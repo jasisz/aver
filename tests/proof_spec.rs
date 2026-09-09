@@ -61,6 +61,8 @@ mod floor_window;
 mod fuel_when_cites;
 #[path = "proof_spec/k5_sticky.rs"]
 mod k5_sticky;
+#[path = "proof_spec/law_applications.rs"]
+mod law_applications;
 #[path = "proof_spec/law_reasons.rs"]
 mod law_reasons;
 #[path = "proof_spec/lean_kernel.rs"]

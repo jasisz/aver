@@ -243,6 +243,23 @@ prove the original premises and a strict decrease; the plan supplies no axioms.
 Lean also consults the shared driver when choosing functional induction for a
 matching explanation. Unsupported source shapes retain the existing strategies.
 
+The plan also retains the concrete source step when a fixed accumulator seed is
+not a theorem parameter. Shared application search expands that step in the
+claim and matches earlier ordinary laws against its subterms, including terms
+exposed by another lemma's result. It records canonical function identities and
+argument expressions in `ProofIR`. Dafny renders admitted instances as lemma
+calls; Lean's countdown induction consumes the same instances as local facts.
+Both backends still check each supplier through their existing universal-law
+gates. The search currently covers earlier unconditional laws in the declaring
+module and the consumer's function cone, with `Int`, `Bool`, `String`, or list
+givens and a concrete user-function call on the left.
+Its finite search budgets limit hints, never the quantified domain. Unsupported
+terms retain ordinary induction, and normalized reflexive instances are dropped.
+
+[`roundtrip.av`](../tests/fixtures/source_recursion/roundtrip.av) demonstrates an
+unbounded decimal collector/reader roundtrip using only Aver laws. The same
+source passes Lean and Dafny, including a renamed variant using radix 16.
+
 The Dafny proof bodies additionally check sequence identities needed to match
 singleton/empty concatenations and reversals. The list reverse helper has a
 checked length-preservation postcondition. See `tests/fixtures/source_recursion/`
