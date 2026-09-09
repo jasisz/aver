@@ -288,7 +288,13 @@ pub(super) fn plain_supplier(
                 ctx,
             ));
             if let Some(plan) = induction {
-                lines.extend(super::super::law_induction::calls(plan, &name, &[], ctx));
+                lines.extend(super::super::law_induction::calls(
+                    plan,
+                    &name,
+                    &[],
+                    ctx,
+                    recursion,
+                ));
             }
         });
     }

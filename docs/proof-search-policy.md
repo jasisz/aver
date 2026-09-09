@@ -19,7 +19,42 @@ and double-reversal lemmas, independently tested with true and false claims.
 The reverse examples below remain source-level diagnostic inputs; their
 Dafny success is no longer claimed by this change.
 
-## Same-source comparison
+## Alias and import follow-up
+
+Ordinary recursive laws now use a shared analysis view that eliminates local
+value aliases without changing the exported function. It substitutes local
+reads only, preserves type annotations, respects pattern shadowing and retains
+bindings whose removal would capture a name. Calls and computed expressions
+are not inlined. The same view feeds recursion contracts, ProofIR induction
+and Lean's induction argument extraction; Lean reduces the original lets when
+checking the source definition.
+
+Concrete application search now admits exported ordinary suppliers from earlier
+dependency modules as well as earlier laws in the same module. Module order
+and visibility are checked independently of ProofIR's entry-first storage
+order. Both emitters retain canonical function IDs and apply their existing
+universal-statement admission gates. Lean's definition and dependency citation
+sets use the resolved ProofIR cone, so an unrelated local `read` cannot replace
+`Reader.read`.
+
+Regression cases cover alias chains, recursive arguments through aliases,
+imported readers, transitive modules, colliding local names and hidden supplier
+visibility. A false imported supplier still fails universal verification even
+when every supplied VM sample passes. This does not increase search budgets or
+restore the withdrawn reversal strategy. Callable aliases, capture requiring
+alpha-renaming and the remaining backend-specific guided induction analyses
+are outside this change.
+
+Re-running the same seven-source matrix on 2026-09-09 with compiler SHA-256
+`338f1c3583f5fdd4a5c406b624835f4402fc58f1325ac9bb025714eaf2c4f51d`
+proves all three laws in both `roundtrip_alias` and `roundtrip_import` on
+both backends. The other ten rows retain their previous pass/open status,
+including the two open Dafny reversal cases. All source hashes match the
+original checkpoint's after-run below; the binary stayed unchanged and no
+outer timeout fired. This uses the same strict source-law count and checker
+budgets, not just a successful process exit.
+
+## Original checkpoint comparison (#1324)
 
 One local run per binary on 2026-09-09, with two concurrent checker invocations
 and unchanged production checker budgets. The 90-second outer timeout did
@@ -83,7 +118,7 @@ completion of measurement; inspect each row's `strict_passed` for proof credit.
 
 This checkpoint separates the recent policies; older ProofIR strategies and
 backend tactic portfolios still need review. Guided list and quotient analysis
-also still have backend-local source-shape restrictions. The next substantive
-work is shared analysis of source scopes and dependencies, with these
-refactoring cases as controls. Adding solver triggers or unfold instructions
+also still have backend-local source-shape restrictions. Shared source-scope
+analysis and dependency identity remain the direction for further work, with
+these refactoring cases as controls. Adding solver triggers or unfold instructions
 to the author's Aver proof is not a remedy for that analysis gap.

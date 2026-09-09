@@ -906,6 +906,30 @@ fn consumer_law_qualified_scope(
     law: &VerifyLaw,
     ctx: &CodegenContext,
 ) -> (BTreeSet<String>, String) {
+    if let Some(id) = ctx.law_target_fn_id(&vb.fn_name)
+        && let Some(theorem) = ctx
+            .proof_ir
+            .law_theorems
+            .iter()
+            .find(|t| t.fn_id == id && t.law_name == law.name)
+    {
+        let qualified = |id| {
+            let key = &ctx.symbol_table.fn_entry(id).key;
+            let name = aver_name_to_lean(&key.name);
+            match key.scope_str() {
+                Some(owner) => format!("{owner}.{name}"),
+                None => name,
+            }
+        };
+        let subject = qualified(id);
+        let mut scope: BTreeSet<_> = theorem
+            .function_cone
+            .iter()
+            .map(|id| qualified(*id))
+            .collect();
+        scope.insert(subject.clone());
+        return (scope, subject);
+    }
     let inputs = crate::codegen::proof_lower::ProofLowerInputs::from_ctx(ctx);
     let cone = crate::codegen::proof_lower::LawProofCone::compute(law, &vb.fn_name, &inputs);
     let mut scope: BTreeSet<String> = cone

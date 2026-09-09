@@ -146,9 +146,10 @@ pub(in crate::codegen::lean) fn recognize_wf_fuel_induction(
     // 4. The self-call argument vectors, verbatim (params only — a local
     //    binding or pattern variable in a self-call arg has no meaning at the
     //    law's level, so decline rather than emit a dangling name).
+    let normalized = crate::codegen::source_aliases::normalize(fd);
     let params: Vec<String> = fd.params.iter().map(|(n, _)| n.clone()).collect();
     let mut self_calls: Vec<Vec<Spanned<Expr>>> = Vec::new();
-    for stmt in fd.body.stmts() {
+    for stmt in normalized.body.stmts() {
         match stmt {
             Stmt::Expr(e) | Stmt::Binding(_, _, e) => collect_self_calls(e, &f, &mut self_calls),
         }
@@ -631,6 +632,7 @@ pub(in crate::codegen::lean) fn emit_wf_fuel_induction_law(
         "       | zero =>".to_string(),
         format!("         intro {arm_intro}"),
         format!("         unfold {}", plan.f_lean),
+        "         try dsimp only".to_string(),
         format!("         {closer}"),
         format!("       | succ {fuel} {ih} =>"),
         format!("         intro {arm_intro}"),
@@ -643,6 +645,9 @@ pub(in crate::codegen::lean) fn emit_wf_fuel_induction_law(
         // the checked definition before trying the IH, keeping both branches
         // as obligations. No additional premise is assumed.
         lines.push(format!("         unfold {}", plan.f_lean));
+        // Source aliases remain lets in the checked definition. Reduce those
+        // definitionally before exposing its branch and recursive premise.
+        lines.push("         try dsimp only".to_string());
         lines.push("         split".to_string());
         lines.push("         all_goals".to_string());
         "           "
@@ -676,6 +681,7 @@ pub(in crate::codegen::lean) fn emit_wf_fuel_induction_law(
     lines.push(format!("{step_pad}clear {ih}"));
     if shared_applications.is_empty() {
         lines.push(format!("{step_pad}unfold {}", plan.f_lean));
+        lines.push(format!("{step_pad}try dsimp only"));
     }
     lines.push(format!("{step_pad}{deep_closer}"));
     let when_arg = if conditional { " h_when" } else { "" };

@@ -2459,6 +2459,11 @@ pub fn analyze_plans_in_scope(
     } else {
         inputs.recursive_pure_fn_names_in_scope(scope)
     };
+    let normalized: Vec<_> = all_pure
+        .iter()
+        .map(|fd| crate::codegen::source_aliases::normalize(fd))
+        .collect();
+    let all_pure: Vec<_> = normalized.iter().map(|fd| fd.as_ref()).collect();
     let components = call_graph::ordered_fn_components(&all_pure, inputs.module_prefixes);
 
     for component in components {

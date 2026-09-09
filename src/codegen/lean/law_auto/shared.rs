@@ -696,6 +696,9 @@ pub(super) fn law_simp_defs(
     vb: &VerifyBlock,
     law: &VerifyLaw,
 ) -> BTreeSet<String> {
+    if let Some(defs) = resolved_law_simp_defs(ctx, vb, law, false) {
+        return defs;
+    }
     law_simp_source_names(ctx, vb, law)
         .into_iter()
         .map(|name| simp_def_name(ctx, &name))
@@ -716,12 +719,54 @@ pub(super) fn law_simp_defs_blind(
     vb: &VerifyBlock,
     law: &VerifyLaw,
 ) -> BTreeSet<String> {
+    if let Some(defs) = resolved_law_simp_defs(ctx, vb, law, true) {
+        return defs;
+    }
     let wf = wf_countdown_fn_names(ctx);
     law_simp_source_names(ctx, vb, law)
         .into_iter()
         .filter(|name| !wf.contains(name))
         .map(|name| simp_def_name(ctx, &name))
         .collect()
+}
+
+/// The lowered cone retains declaration identities across imports. Rendering
+/// basenames after traversing a dependency loses that identity (and can pick
+/// an unrelated local or Lean library definition with the same name).
+fn resolved_law_simp_defs(
+    ctx: &CodegenContext,
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    blind: bool,
+) -> Option<BTreeSet<String>> {
+    let id = ctx.law_target_fn_id(&vb.fn_name)?;
+    let theorem = ctx
+        .proof_ir
+        .law_theorems
+        .iter()
+        .find(|t| t.fn_id == id && t.law_name == law.name)?;
+    Some(
+        theorem
+            .function_cone
+            .iter()
+            .filter(|id| {
+                !blind
+                    || !ctx.proof_ir.fn_contracts.get(id).is_some_and(|c| {
+                        matches!(
+                            c.recursion,
+                            Some(crate::ir::RecursionContract::WellFoundedToNat { .. })
+                        )
+                    })
+            })
+            .map(|id| {
+                let key = &ctx.symbol_table.fn_entry(*id).key;
+                match key.scope_str() {
+                    Some(_) => super::super::expr::user_fn_path(*id, ctx),
+                    None => entry_qualified_lean_name(ctx, &key.name),
+                }
+            })
+            .collect(),
+    )
 }
 
 /// The Lean spelling a cone fn takes in a simp set / `unfold`.

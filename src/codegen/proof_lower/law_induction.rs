@@ -187,6 +187,8 @@ pub(super) fn plan(
         .into_iter()
         .find(|fd| fd.name == *name)?;
     let driver_index = fd.params.iter().position(|(p, _)| p == param)?;
+    let normalized = crate::codegen::source_aliases::normalize(fd);
+    let fd = normalized.as_ref();
     let mut occurrences = Vec::new();
     for expr in [&law.lhs, &law.rhs] {
         crate::codegen::expr_walk::walk(expr, &mut |e| {

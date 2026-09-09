@@ -148,9 +148,11 @@ pub fn populate(
             eligible.insert((id, law.name.clone()));
         }
     }
-    for index in 0..ir.law_theorems.len() {
-        let (earlier, remaining) = ir.law_theorems.split_at_mut(index);
-        let theorem = &mut remaining[0];
+    // IR storage order is entry-first, not dependency order. Keep source order
+    // within a module, and use the module DAG plus exported-law visibility
+    // across modules. A dependency can never borrow a consumer's theorem.
+    let suppliers = ir.law_theorems.clone();
+    for (index, theorem) in ir.law_theorems.iter_mut().enumerate() {
         if !terms::supported(&theorem.claim_lhs) || !terms::supported(&theorem.claim_rhs) {
             continue;
         }
@@ -158,20 +160,39 @@ pub fn populate(
             continue;
         };
         let scope = inputs.symbol_table.fn_entry(theorem.fn_id).key.scope_str();
-        let rules: Vec<_> = earlier
+        let rules: Vec<_> = suppliers
             .iter()
-            .filter(|t| {
+            .enumerate()
+            .filter(|(supplier_index, t)| {
+                let owner = inputs.symbol_table.fn_entry(t.fn_id).key.scope_str();
+                let available = if owner == scope {
+                    *supplier_index < index
+                } else {
+                    owner.is_some_and(|owner| {
+                        let Some(donor) = inputs.dep_modules.iter().position(|m| m.prefix == owner) else {
+                            return false;
+                        };
+                        let before_consumer = scope.is_none_or(|scope| {
+                            inputs.dep_modules.iter().position(|m| m.prefix == scope)
+                                .is_some_and(|consumer| donor < consumer)
+                        });
+                        before_consumer && inputs.dep_modules[donor].verify_laws.iter().any(|vb| {
+                            matches!(&vb.kind, VerifyKind::Law(law) if law.name == t.law_name)
+                                && inputs.symbol_table.resolve_fn_id_in(&vb.fn_name, owner.into()) == Some(t.fn_id)
+                        })
+                    })
+                };
                 eligible.contains(&(t.fn_id, t.law_name.clone()))
+                    && available
                     // A concrete user-function signature anchors the match's
                     // argument types. Bare-variable and polymorphic builtin
                     // roots need a separate typed unifier; never guess there.
                     && matches!(t.claim_lhs.node, crate::ir::hir::ResolvedExpr::Call(crate::ir::hir::ResolvedCallee::Fn(_), _))
                     && terms::supported(&t.claim_lhs)
                     && terms::supported(&t.claim_rhs)
-                    && inputs.symbol_table.fn_entry(t.fn_id).key.scope_str() == scope
                     && theorem.function_cone.contains(&t.fn_id)
             })
-            .map(|t| Rule {
+            .map(|(_, t)| Rule {
                 theorem: t,
                 lhs: terms::normalize(&t.claim_lhs),
                 rhs: terms::normalize(&t.claim_rhs),

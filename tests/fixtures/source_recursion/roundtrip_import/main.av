@@ -1,0 +1,19 @@
+module Roundtrip
+    depends [Reader]
+    intent = "An unbounded decimal roundtrip composes a collector and a reader."
+    effects []
+
+fn digits(value: Int, acc: List<Int>) -> List<Int>
+    match value > 0
+        true -> digits(Int.div(value, 10), List.prepend(Int.mod(value, 10), acc))
+        false -> List.reverse(acc)
+
+verify digits law prefix
+    given value: Int = [-1, 0, 1, 10, 123]
+    given acc: List<Int> = [[], [4], [2, 3]]
+    digits(value, acc) => List.concat(List.reverse(acc), digits(value, []))
+
+verify digits law roundtrip
+    given value: Int = [0, 1, 9, 10, 123, 99999]
+    when value >= 0
+    Reader.read(List.reverse(digits(value, [])), 0) => value

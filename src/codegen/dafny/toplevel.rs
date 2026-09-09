@@ -3844,6 +3844,7 @@ pub(super) fn emit_verify_law(
             &format!("{}_{}", fn_name, law_name),
             &cites,
             ctx,
+            recursion,
         ));
         lines.push("}\n".to_string());
         return op_lemma_defs

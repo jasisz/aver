@@ -5,6 +5,79 @@ use aver::ir::hir::{ResolvedCallee as Callee, ResolvedExpr as Expr};
 const SOURCE: &str = include_str!("../fixtures/source_recursion/roundtrip.av");
 
 #[test]
+fn alias_chains_preserve_source_induction_and_concrete_applications() {
+    let original = build_ctx(SOURCE);
+    let aliased = build_ctx(&SOURCE.replace(
+        "    match value > 0",
+        "    first = value\n    current = first\n    match current > 0",
+    ));
+    let lhs = law_theorem(&original, "digits", "roundtrip").unwrap();
+    let rhs = law_theorem(&aliased, "digits", "roundtrip").unwrap();
+    let lhs = lhs.induction.as_ref().unwrap();
+    let rhs = rhs.induction.as_ref().unwrap();
+    assert_eq!(lhs.driver, rhs.driver);
+    assert_eq!(lhs.source_call, rhs.source_call);
+    assert_eq!(lhs.calls.len(), rhs.calls.len());
+    for (a, b) in lhs.calls.iter().zip(&rhs.calls) {
+        assert_eq!(a.guard, b.guard);
+        assert_eq!(a.premise, b.premise);
+        assert_eq!(a.arguments, b.arguments);
+        assert_eq!(a.source_step, b.source_step);
+        assert_eq!(a.applications.len(), b.applications.len());
+        for (a, b) in a.applications.iter().zip(&b.applications) {
+            assert_eq!(a.fn_id, b.fn_id);
+            assert_eq!(a.law_name, b.law_name);
+            assert_eq!(a.arguments, b.arguments);
+        }
+    }
+    assert_eq!(
+        format!("{:?}", fn_contract(&original, "digits").unwrap().recursion),
+        format!("{:?}", fn_contract(&aliased, "digits").unwrap().recursion)
+    );
+}
+
+#[test]
+fn imported_application_search_respects_export_visibility_and_canonical_identity() {
+    let entry = include_str!("../fixtures/source_recursion/roundtrip_import/main.av").replace(
+        "fn digits",
+        "fn read(n: Int) -> Int\n    n + 99\n\nfn digits",
+    );
+    let reader = include_str!("../fixtures/source_recursion/roundtrip_import/reader.av");
+    let mut ctx = build_ctx_with_modules(&entry, &[("Reader", reader)]);
+    let donor = ctx
+        .symbol_table
+        .resolve_fn_id_in("Reader.read", None)
+        .unwrap();
+    let calls = |ctx: &CodegenContext| {
+        law_theorem(ctx, "digits", "roundtrip")
+            .unwrap()
+            .induction
+            .as_ref()
+            .unwrap()
+            .calls
+            .iter()
+            .flat_map(|c| &c.applications)
+            .filter(|a| a.fn_id == donor && a.law_name == "suffix")
+            .count()
+    };
+    assert!(calls(&ctx) > 0);
+    // Removing public citation visibility does not remove the owner's source
+    // obligation. Search must stop using it even though it remains in the IR.
+    ctx.modules[0].verify_laws.clear();
+    let inputs = aver::codegen::proof_lower::ProofLowerInputs::from_ctx(&ctx);
+    let mut ir = ctx.proof_ir.clone();
+    aver::codegen::proof_search::populate(&inputs, &mut ir, Default::default());
+    ctx.proof_ir = ir;
+    assert_eq!(calls(&ctx), 0);
+    assert!(
+        ctx.proof_ir
+            .law_theorems
+            .iter()
+            .any(|t| t.fn_id == donor && t.law_name == "suffix")
+    );
+}
+
+#[test]
 fn application_search_is_optional_repeatable_and_preserves_source_obligations() {
     use aver::codegen::{proof_lower, proof_search};
     use proof_search::ApplicationSearchBudget;

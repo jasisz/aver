@@ -70,6 +70,7 @@ pub(super) fn calls(
     name: &str,
     cites: &[(String, &VerifyLaw)],
     ctx: &CodegenContext,
+    recursion: &super::toplevel::LawRecursion<'_>,
 ) -> Vec<String> {
     let mut lines = Vec::new();
     for call in &plan.calls {
@@ -120,15 +121,34 @@ pub(super) fn calls(
             lines.push(format!("    {name}({args});"));
         }
         for application in &call.applications {
-            let target = &ctx.symbol_table.fn_entry(application.fn_id).key.name;
+            let key = &ctx.symbol_table.fn_entry(application.fn_id).key;
             let lemma = format!(
                 "{}_{}",
-                aver_name_to_dafny(target),
+                super::expr::function_name(application.fn_id, ctx),
                 aver_name_to_dafny(&application.law_name)
             );
             // Shared search never decides whether Dafny emitted a universal
             // supplier. Reuse the same admission gate as the forall hoist.
-            if cites.iter().any(|(name, _)| name == &lemma) {
+            let imported = key
+                .scope_str()
+                .filter(|owner| Some(*owner) != ctx.active_module_scope().as_deref())
+                .and_then(|owner| ctx.modules.iter().find(|m| m.prefix == owner))
+                .is_some_and(|module| {
+                    module.verify_laws.iter().any(|vb| {
+                        let crate::ast::VerifyKind::Law(law) = &vb.kind else {
+                            return false;
+                        };
+                        law.name == application.law_name
+                            && ctx
+                                .symbol_table
+                                .resolve_fn_id_in(&vb.fn_name, Some(&module.prefix))
+                                == Some(application.fn_id)
+                            && ctx.with_module_scope(Some(&module.prefix), || {
+                                super::law_search::reusable_ordinary_law(vb, law, ctx, recursion)
+                            })
+                    })
+                });
+            if cites.iter().any(|(name, _)| name == &lemma) || imported {
                 let args = application
                     .arguments
                     .iter()

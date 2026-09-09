@@ -38,17 +38,11 @@ pub(super) fn check(source: &str, backend: &str) -> Option<serde_json::Value> {
         )
         .unwrap();
         for law in manifest["laws"].as_array().unwrap() {
-            assert_eq!(
-                law["tier"],
-                if output.status.success() {
-                    "universal"
-                } else {
-                    "failed"
-                },
-                "{law}"
-            );
+            if output.status.success() {
+                assert_eq!(law["tier"], "universal", "{law}");
+            }
             assert!(
-                !output.status.success()
+                law["tier"] != "universal"
                     || law["axioms"].as_array().unwrap().iter().all(|a| matches!(
                         a.as_str(),
                         Some("propext" | "Classical.choice" | "Quot.sound")
