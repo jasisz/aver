@@ -496,27 +496,6 @@ pub struct LawTheorem {
     /// explanations and guard, in discovery order. Samples do not contribute.
     /// Search data only: callbacks and builtin implementations are not expanded.
     pub function_cone: Vec<FnId>,
-    /// The owning declaration and its pure dependencies, separately from
-    /// observers mentioned only in the claim. Search data, never a premise.
-    pub target_function_cone: Vec<FnId>,
-    /// Canonically resolved pure builtins reached by the owning declaration.
-    pub target_builtins: Vec<String>,
-    /// False when a callback or unresolved call prevents a closed static cone.
-    pub target_calls_static: bool,
-    /// Optional unfolding budgets, in `because` order followed by the claim.
-    /// These guide proof search only; they neither restrict the quantified
-    /// domain nor replace any source premise, supplier, or proof obligation.
-    pub unfolding: Vec<Option<LawUnfolding>>,
-}
-
-#[derive(Debug, Clone)]
-pub struct LawUnfolding {
-    /// Small literal countdown plus headroom for wrappers and the base case.
-    pub depth: u32,
-    /// Canonical recursive declarations in this obligation's source cone.
-    pub functions: Vec<FnId>,
-    /// Concrete instances of the recursive sequence reversal operation.
-    pub reverse_elements: Vec<crate::ast::Type>,
 }
 
 #[derive(Debug, Clone)]

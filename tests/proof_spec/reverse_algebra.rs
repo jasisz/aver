@@ -3,32 +3,73 @@ use super::*;
 const ALGEBRA: &str = include_str!("../fixtures/source_recursion/reverse_algebra.av");
 const SIGNED: &str = include_str!("../fixtures/source_recursion/signed_frame.av");
 
+// The acyclic-constructor strategy has been withdrawn. The Aver fixtures
+// remain diagnostic inputs in tools/proof_search_matrix.py; they are not
+// counted as universally proved by these independent library checks.
 #[test]
-fn reverse_algebra_and_acyclic_frames_pass_both_checkers() {
-    for (label, source) in [
-        ("algebra", ALGEBRA.to_string()),
-        ("signed", SIGNED.to_string()),
+fn reverse_library_checks_general_equations_and_rejects_false_order() {
+    if Command::new("dafny").arg("--version").output().is_err() {
+        return;
+    }
+    let library = include_str!("../../src/codegen/dafny/prelude/list.dfy");
+    for (label, claim, body, expected) in [
         (
-            "renamed",
-            SIGNED
-                .replace("8", "10")
-                .replace("4", "5")
-                .replace("encode", "place")
-                .replace("read", "consume"),
+            "positive",
+            "ListReverse(ListReverse(xs + ys)) == xs + ys",
+            "ListReverseInvolution(xs + ys);",
+            true,
         ),
+        ("negative", "ListReverse(xs) == xs", "", false),
     ] {
-        let dir = temp_output_dir(&format!("aver-reverse-{label}"));
+        let dir = temp_output_dir("aver-reverse-library");
         std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("main.av");
+        let path = dir.join("library.dfy");
+        std::fs::write(&path, format!(
+            "datatype Option<T> = None | Some(value: T)\n{library}\nlemma {{:induction false}} Check(xs: seq<bool>, ys: seq<bool>)\n ensures {claim}\n{{ {body} }}\n"
+        )).unwrap();
+        let output = Command::new("dafny")
+            .arg("verify")
+            .arg(&path)
+            .args(["--verification-time-limit", "5"])
+            .output()
+            .unwrap();
+        let text = format_output(&output);
+        assert_eq!(output.status.success(), expected, "{label}: {text}");
+        assert!(text.contains("Dafny program verifier finished"), "{text}");
+        assert!(
+            !text.contains("time out") && !text.contains("timed out"),
+            "{text}"
+        );
+        if expected {
+            assert!(text.contains("0 errors"), "{text}");
+        } else {
+            assert!(text.contains("1 error"), "{text}");
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
+#[test]
+fn reversal_does_not_install_a_constructor_specific_induction_policy() {
+    let dir = temp_output_dir("aver-reverse-no-policy");
+    std::fs::create_dir_all(&dir).unwrap();
+    for (label, source) in [("algebra", ALGEBRA), ("signed", SIGNED)] {
+        let path = dir.join(format!("{label}.av"));
         std::fs::write(&path, source).unwrap();
-        for backend in ["dafny", "lean"] {
-            let Some(summary) = super::source_recursion::check(path.to_str().unwrap(), backend)
-            else {
-                continue;
-            };
-            assert_eq!(summary["passed"], true, "{label}/{backend}: {summary}");
-            if backend == "lean" {
-                assert_eq!(summary["universal_laws"], 3);
+        let out = dir.join(label);
+        let output = Command::new(env!("CARGO_BIN_EXE_aver"))
+            .args(["proof", path.to_str().unwrap(), "--backend", "dafny", "-o"])
+            .arg(&out)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{}", format_output(&output));
+        // The library contains definitions/calls of its own. No source theorem
+        // receives the retired universal reversal pool or its explicit trigger.
+        for entry in std::fs::read_dir(out).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_some_and(|e| e == "dfy") {
+                let text = std::fs::read_to_string(path).unwrap();
+                assert!(!text.contains("{:trigger ListReverse("), "{text}");
             }
         }
     }

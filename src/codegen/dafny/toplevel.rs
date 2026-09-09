@@ -3743,13 +3743,8 @@ pub(super) fn emit_verify_law(
     } else {
         super::law_induction::plan(vb, law, ctx)
     };
-    if source_induction.is_some()
-        || (law.givens.iter().any(|g| g.type_name.starts_with("List<"))
-            && super::law_induction::acyclic_reversal(vb, law, ctx))
-    {
-        // Explicit source calls supply their own induction instances. Acyclic
-        // reversal constructors use checked algebra instead. Neither needs
-        // Dafny's unrelated parameter-order induction heuristic.
+    if source_induction.is_some() {
+        // Explicit source calls supply their own checked induction instances.
         if let Some(header) = lines
             .iter_mut()
             .rev()
@@ -3785,7 +3780,7 @@ pub(super) fn emit_verify_law(
     // step, below).
     let cites = eligible_cites(vb, law, ctx, opaque_fns, native_emitted);
     if !needs_bounded_form {
-        lines.extend(super::law_induction::sequence_identities(vb, law, ctx));
+        lines.extend(super::law_induction::sequence_identities(law, ctx));
     }
 
     // Hoist additive-op facts at the top of the body (inductive paths only;
@@ -3919,7 +3914,7 @@ pub(super) fn emit_verify_law(
             }
         }
         let any_recursive = called.iter().any(|f| is_directly_recursive(f, ctx));
-        if any_recursive && !super::law_induction::acyclic_reversal(vb, law, ctx) {
+        if any_recursive {
             let list_param = aver_name_to_dafny(&law.givens[list_given_idx].name);
             let lemma_name = format!("{}_{}", fn_name, law_name);
             // A THREADED accumulator given recurses at the value the fold feeds

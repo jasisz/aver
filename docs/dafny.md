@@ -308,19 +308,29 @@ See [docs/transpilation.md](transpilation.md) for a side-by-side comparison.
 
 In short: Lean is the gold standard (kernel-verified proofs), Dafny is the quick check (Z3-automated, zero tactic effort). Use both.
 
-### Reversal algebra for acyclic constructors
+### Proof arguments and search policy
 
-A nonrecursive encoder can have a law that also calls a recursive decoder.
-ProofIR records the owning declaration's dependency cone and canonical builtin
-calls separately from the full claim cone. When that constructor uses
-`List.reverse` and reaches no recursive function, Dafny tries sequence algebra
-without adding an unrelated list induction. An existing source-recursion plan
-still takes priority.
+Source lowering records claims, premises, source dependencies and induction
+arguments in ProofIR. A separate `codegen::proof_search` pass may add concrete
+`LawApplication` suggestions. Its explicit `ApplicationSearchBudget` limits
+discovery; `ApplicationSearchReport` records counts and steps reaching limits.
+Running it with a zero budget removes suggestions without changing the source
+obligations or induction. Both backends still check suppliers and applications.
 
-The generated list library proves reversal of concatenation and double reversal
-for arbitrary element types by explicit, decreasing recursion. Selected laws
-call those checked lemmas to obtain quantified equations. They are not axioms;
-the ordinary full-file check verifies the library, suppliers and original law.
-Recursive source proofs retain their existing induction search rather than
-receiving an additional universal reversal pool. Lean already has these list
-identities; the same Aver framing fixtures are checked by both backends.
+Dafny's fixed-count unfolding policy lives in
+`codegen::dafny::reasons::unfolding`, outside ProofIR. It retains the existing
+small-literal and scalar-given restrictions and fuel budgets. These are partial
+solver heuristics, not source bounds or a strategy shared with Lean. The
+separate ordinary-law fuel policy in `law_search` also remains Dafny-specific.
+
+The list library checks reverse/append and double-reversal lemmas. Merely
+reaching `List.reverse` from an acyclic constructor no longer enables a
+universal reversal pool or changes induction. That experimental strategy was
+withdrawn after review; signed-frame readback is again an open diagnostic
+target, not a required success or a counted coverage gain.
+
+`tools/proof_search_matrix.py` records actual same-source results and time for
+both backends, including equivalent source refactorings. It records failures
+and timeouts as such; a completed matrix is not a claim that its laws passed.
+
+See the [measured comparison and remaining limits](proof-search-policy.md).

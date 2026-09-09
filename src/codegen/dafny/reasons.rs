@@ -243,7 +243,7 @@ pub(super) fn emit(
         }
         out.push("{".to_string());
         if unfolding.is_none() {
-            out.extend(super::law_induction::sequence_identities(vb, law, ctx));
+            out.extend(super::law_induction::sequence_identities(law, ctx));
         }
         // Suppliers were validated and emitted above even when this obligation
         // can close directly by unfolding. No `using` declaration is trusted.

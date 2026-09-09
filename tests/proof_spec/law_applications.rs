@@ -6,6 +6,11 @@ const SOURCE: &str = include_str!("../fixtures/source_recursion/roundtrip.av");
 fn concrete_applications_roundtrip_passes_both_checkers_after_renaming_and_radix_change() {
     for (label, source) in [
         ("decimal", SOURCE.to_string()),
+        ("equation_reversed", SOURCE.replace(
+            "read(List.reverse(digits(value, [])), 0) => value",
+            "value => read(List.reverse(digits(value, [])), 0)")),
+        ("unrelated", SOURCE.replace("fn read(",
+            "fn same(flag: Bool) -> Bool\n    flag\nverify same law identity\n    given flag: Bool = [false, true]\n    same(flag) => flag\n\nfn read(")),
         (
             "booleans",
             include_str!("../fixtures/source_recursion/boolean_counter.av").to_string(),
@@ -30,7 +35,7 @@ fn concrete_applications_roundtrip_passes_both_checkers_after_renaming_and_radix
             };
             assert_eq!(summary["passed"], true, "{label}/{backend}: {summary}");
             if backend == "lean" {
-                assert_eq!(summary["universal_laws"], 3);
+                assert_eq!(summary["universal_laws"], if label == "unrelated" { 4 } else { 3 });
             }
         }
         let _ = std::fs::remove_dir_all(dir);

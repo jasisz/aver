@@ -21,6 +21,7 @@ pub mod program_view;
 pub mod proof_lower;
 #[cfg(feature = "runtime")]
 pub(crate) mod proof_recognize;
+pub mod proof_search;
 #[cfg(feature = "runtime")]
 pub mod recursion;
 #[cfg(feature = "runtime")]
@@ -1129,7 +1130,9 @@ impl CodegenContext {
         // `refresh_facts` rely on this to see the same proof decisions
         // the production pipeline would emit.
         let inputs = crate::codegen::proof_lower::ProofLowerInputs::from_ctx(self);
-        self.proof_ir = crate::codegen::proof_lower::lower(&inputs);
+        let mut ir = crate::codegen::proof_lower::lower(&inputs);
+        crate::codegen::proof_search::populate(&inputs, &mut ir, Default::default());
+        self.proof_ir = ir;
     }
 
     /// Entry module's name from `items` (the `module X` declaration's

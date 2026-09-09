@@ -1147,6 +1147,7 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
         }
         if cfg.run_law_lower {
             crate::codegen::proof_lower::populate_law_theorems(&inputs, &mut ir);
+            crate::codegen::proof_search::populate(&inputs, &mut ir, Default::default());
             result.pass_diagnostics.push(diag_for_law_lower(&ir));
             fire(&mut cfg, PipelineStage::LawLower, &proof_items);
         }
