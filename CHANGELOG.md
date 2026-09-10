@@ -6,6 +6,8 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Added
 
+- Add `examples/formal/knowledge.av`: content-keyed knowledge with a merge that is proven commutative, associative and idempotent, an admission predicate separate from the merge, and stable-answer laws for its queries.
+
 - **Checked integer descent can guide `because` proofs.** Recursive explanations reuse native integer termination contracts, including floor-division countdowns, with original guards and earlier reasons retained at recursive calls. K5 now proves the magnitude window of its executable Fraction exponent for positive and negative exponents and connects that window to the rounding powers. The below-one exponent uses total floor-halving instead of opaque doubling recursion. Imported binary-window proofs also retain their owning function's contract and tolerate renamed parameters.
 
 - **K5 trunc-sticky composition now has a source-local universal proof.** `StickyScale` composes the integer low-bit law with the precision-scale identities, and `fpSticky.preservesCoarseTruncation` proves equality of the entire truncated records for `1 <= m < n`. The public rational-value law follows with its original guards. `round.av` and imports now have 62 universal laws and 23 universal proof obligations, no bounded laws or `sorry`, without compiler changes or manual proof files.
@@ -47,6 +49,8 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 - **`aver compile --target wasip2` now refuses a program that dials, listens, or asks a socket for its peer.** `Tcp.beginConnect`, `Tcp.dialled`, `Tcp.listen`, `Tcp.accept`, `Tcp.peerAddress`, `Tcp.closeDial`, and `Tcp.closeListener` used to compile on that target and then return `Result.Err("native sockets are unavailable on this target")` at run time. The component's socket binding owns blocking connects and connected-socket I/O only, and that is a property of the target rather than a condition the world might lift on the next call, so a program that needs one of the seven is now told at compile time with `error[capability-target-unsupported]` naming exactly which operations it required. `Tcp.connect`, `close`, `writeLine`, `writeBytes`, `readLine`, `readBytes`, `readSome`, `poll`, `send`, `sendBytes`, and `ping` still compile and run there unchanged, and every other target keeps all eighteen operations. A program built on the `HttpServer` module, which listens, now selects a target that can listen — `wasm-gc`, generated Rust, or the VM.
 
 ### Fixed
+
+- **Lean export of a record or sum type carrying `Bytes` or `Digest32` directly in a field no longer fails to build.** Such a type derives no `BEq` of its own; `==` on it is the `DecidableEq` comparison, which Lean already knows to be lawful. Before, the derived `BEq` and the derived `LawfulBEq` could not be connected across the refinement and the export stopped with an unsolved goal at the type declaration.
 
 - **Dafny induction follows source recursion through ProofIR.** Guarded integer descent now takes precedence over a growing list accumulator. Ordinary laws and universal citation lemmas carry actual recursive accumulator updates; list and string padding get a shared remaining-length measure consumed by Lean and Dafny. Checked sequence identities close countdown and fold composition examples without additional source proof steps or assumptions.
 

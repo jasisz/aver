@@ -1,0 +1,286 @@
+module Knowledge
+    intent =
+        "Knowledge that only grows. A node learns block headers, block bodies"
+        "and verdicts; every fact sits under a content key, so two honest"
+        "contributions to one key carry the same value and the order in"
+        "which they arrive cannot matter."
+        ""
+        "Three pieces, kept apart on purpose:"
+        "  - `admit` decides, from the contribution alone, whether it may enter;"
+        "  - `merge` never fails and never refuses: it inserts under the key;"
+        "  - `body` and `verdict` answer queries, and a stable-answer law says"
+        "    an answer once given is never withdrawn by a later merge."
+        ""
+        "The laws are stated over contributions that agree: two contributions"
+        "to one slot carry one value. For headers and bodies this is what"
+        "admission buys, given that SHA-256 is collision resistant; that is a"
+        "cryptographic assumption, not a theorem, so the laws name the"
+        "agreement as a premise instead of pretending the kernel can derive"
+        "it from the hash. For verdicts it is the node's own determinism."
+    depends [Bytes, Crypto.Digest32]
+    exposes [Verdict, Delta, Knowledge, empty, keyOf, admit, agrees, consistent, merge, mergeAll, body, verdict, count, grows]
+    effects []
+
+type Verdict
+    Valid
+    Invalid
+
+record Knowledge
+    headers: Map<String, Bytes>
+    bodies: Map<String, Bytes>
+    verdicts: Map<String, Verdict>
+
+type Delta
+    Header(String, Bytes)
+    Body(String, Bytes)
+    Verdict(String, String, Verdict)
+
+fn empty() -> Knowledge
+    ? "A node that knows nothing yet."
+    Knowledge(headers = {}, bodies = {}, verdicts = {})
+
+fn keyOf(bytes: Bytes) -> String
+    ? "The content key of a header or a body: the lowercase hex of its SHA-256 digest. One fixed hashing path, used by admission and by the helpers that build admitted contributions."
+    Crypto.Digest32.toHex(Crypto.sha256(bytes))
+
+verify keyOf
+    keyOf(Bytes.fromList([])) => "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    keyOf(Bytes.fromList([97, 98, 99])) => "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+
+fn verdictKey(blockHash: String, contextHash: String) -> String
+    ? "A verdict is keyed by the block it judges and the context it was judged in."
+    blockHash + contextHash
+
+verify verdictKey
+    verdictKey("ab", "cd") => "abcd"
+    verdictKey("", "cd") => "cd"
+
+fn admit(delta: Delta) -> Bool
+    ? "May this contribution enter? Decided from the contribution alone, never from what the node already knows. A header or a body is admitted when its key is the hex SHA-256 of its bytes. A verdict is always admitted: verdicts are produced locally by the node, not received from a peer, so there is nothing on the wire to check."
+    match delta
+        Delta.Header(hash, bytes) -> hash == keyOf(bytes)
+        Delta.Body(hash, bytes) -> hash == keyOf(bytes)
+        Delta.Verdict(_, _, _) -> true
+
+verify admit
+    admit(headerOf(Bytes.fromList([1, 2, 3]))) => true
+    admit(bodyOf(Bytes.fromList([]))) => true
+    admit(Delta.Header("00", Bytes.fromList([1, 2, 3]))) => false
+    admit(Delta.Body("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", Bytes.fromList([97, 98, 99]))) => true
+    admit(Delta.Body("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", Bytes.fromList([97, 98]))) => false
+    admit(Delta.Verdict("ab", "cd", Verdict.Invalid)) => true
+
+fn headerOf(bytes: Bytes) -> Delta
+    ? "An admitted header contribution: the key is computed from the bytes."
+    Delta.Header(keyOf(bytes), bytes)
+
+fn bodyOf(bytes: Bytes) -> Delta
+    ? "An admitted body contribution: the key is computed from the bytes."
+    Delta.Body(keyOf(bytes), bytes)
+
+verify headerOf
+    headerOf(Bytes.fromList([7])) => Delta.Header(keyOf(Bytes.fromList([7])), Bytes.fromList([7]))
+    admit(headerOf(Bytes.fromList([7]))) => true
+
+verify bodyOf
+    bodyOf(Bytes.fromList([7])) => Delta.Body(keyOf(Bytes.fromList([7])), Bytes.fromList([7]))
+    admit(bodyOf(Bytes.fromList([7]))) => true
+
+fn agrees(a: Delta, b: Delta) -> Bool
+    ? "Two contributions agree when they cannot contradict each other: either they land in different slots, or they carry the same value. Admission gives this for headers and bodies as long as SHA-256 has no collision; the node's determinism gives it for verdicts."
+    match a
+        Delta.Header(hashA, bytesA) -> match b
+            Delta.Header(hashB, bytesB) -> Bool.or(hashA != hashB, bytesA == bytesB)
+            _ -> true
+        Delta.Body(hashA, bytesA) -> match b
+            Delta.Body(hashB, bytesB) -> Bool.or(hashA != hashB, bytesA == bytesB)
+            _ -> true
+        Delta.Verdict(blockA, contextA, verdictA) -> match b
+            Delta.Verdict(blockB, contextB, verdictB) -> Bool.or(verdictKey(blockA, contextA) != verdictKey(blockB, contextB), verdictA == verdictB)
+            _ -> true
+
+verify agrees
+    agrees(bodyOf(Bytes.fromList([1])), bodyOf(Bytes.fromList([1]))) => true
+    agrees(bodyOf(Bytes.fromList([1])), bodyOf(Bytes.fromList([2]))) => true
+    agrees(bodyOf(Bytes.fromList([1])), headerOf(Bytes.fromList([1]))) => true
+    agrees(Delta.Body("k", Bytes.fromList([1])), Delta.Body("k", Bytes.fromList([2]))) => false
+    agrees(Delta.Header("k", Bytes.fromList([1])), Delta.Header("k", Bytes.fromList([2]))) => false
+    agrees(Delta.Verdict("b", "c", Verdict.Valid), Delta.Verdict("b", "c", Verdict.Valid)) => true
+    agrees(Delta.Verdict("b", "c", Verdict.Valid), Delta.Verdict("b", "c", Verdict.Invalid)) => false
+
+fn consistent(k: Knowledge, delta: Delta) -> Bool
+    ? "A contribution is consistent with what the node knows when its slot is free or already holds the same value."
+    match delta
+        Delta.Header(hash, bytes) -> agreesWithBytes(Map.get(k.headers, hash), bytes)
+        Delta.Body(hash, bytes) -> agreesWithBytes(Map.get(k.bodies, hash), bytes)
+        Delta.Verdict(blockHash, contextHash, v) -> agreesWithVerdict(Map.get(k.verdicts, verdictKey(blockHash, contextHash)), v)
+
+fn agreesWithBytes(known: Option<Bytes>, bytes: Bytes) -> Bool
+    ? "The slot is free, or it holds these very bytes."
+    match known
+        Option.None -> true
+        Option.Some(old) -> old == bytes
+
+fn agreesWithVerdict(known: Option<Verdict>, v: Verdict) -> Bool
+    ? "The slot is free, or it holds this very verdict."
+    match known
+        Option.None -> true
+        Option.Some(old) -> old == v
+
+verify agreesWithBytes
+    agreesWithBytes(Option.None, Bytes.fromList([1])) => true
+    agreesWithBytes(Option.Some(Bytes.fromList([1])), Bytes.fromList([1])) => true
+    agreesWithBytes(Option.Some(Bytes.fromList([2])), Bytes.fromList([1])) => false
+
+verify agreesWithVerdict
+    agreesWithVerdict(Option.None, Verdict.Valid) => true
+    agreesWithVerdict(Option.Some(Verdict.Valid), Verdict.Valid) => true
+    agreesWithVerdict(Option.Some(Verdict.Invalid), Verdict.Valid) => false
+
+verify consistent
+    consistent(empty(), bodyOf(Bytes.fromList([1]))) => true
+    consistent(merge(empty(), Delta.Header("k", Bytes.fromList([1]))), Delta.Header("k", Bytes.fromList([2]))) => false
+    consistent(merge(empty(), bodyOf(Bytes.fromList([1]))), bodyOf(Bytes.fromList([1]))) => true
+    consistent(merge(empty(), Delta.Body("k", Bytes.fromList([1]))), Delta.Body("k", Bytes.fromList([2]))) => false
+    consistent(merge(empty(), Delta.Verdict("b", "c", Verdict.Valid)), Delta.Verdict("b", "c", Verdict.Invalid)) => false
+
+fn merge(k: Knowledge, delta: Delta) -> Knowledge
+    ? "Insert one contribution under its key. Never fails, never refuses: admission is a separate decision taken before merge. Because keys are content keys, two admitted contributions under one key carry equal values, so inserting twice is inserting once and the order of inserts does not matter."
+    match delta
+        Delta.Header(hash, bytes) -> Knowledge.update(k, headers = Map.set(k.headers, hash, bytes))
+        Delta.Body(hash, bytes) -> Knowledge.update(k, bodies = Map.set(k.bodies, hash, bytes))
+        Delta.Verdict(blockHash, contextHash, v) -> Knowledge.update(k, verdicts = Map.set(k.verdicts, verdictKey(blockHash, contextHash), v))
+
+verify merge
+    body(merge(empty(), bodyOf(Bytes.fromList([1, 2]))), keyOf(Bytes.fromList([1, 2]))) => Option.Some(Bytes.fromList([1, 2]))
+    body(merge(empty(), headerOf(Bytes.fromList([1, 2]))), keyOf(Bytes.fromList([1, 2]))) => Option.None
+    verdict(merge(empty(), Delta.Verdict("b", "c", Verdict.Valid)), "b", "c") => Option.Some(Verdict.Valid)
+
+verify merge law commutative
+    given k: Knowledge = [empty(), merge(empty(), bodyOf(Bytes.fromList([9])))]
+    given a: Delta = [bodyOf(Bytes.fromList([1])), headerOf(Bytes.fromList([1])), Delta.Verdict("b", "c", Verdict.Valid)]
+    given b: Delta = [bodyOf(Bytes.fromList([1])), bodyOf(Bytes.fromList([2])), headerOf(Bytes.fromList([1])), Delta.Verdict("b", "c", Verdict.Valid)]
+    when admit(a)
+    when admit(b)
+    when agrees(a, b)
+    merge(merge(k, a), b) => merge(merge(k, b), a)
+
+verify merge law idempotent
+    given k: Knowledge = [empty(), merge(empty(), bodyOf(Bytes.fromList([9])))]
+    given a: Delta = [bodyOf(Bytes.fromList([1])), headerOf(Bytes.fromList([1])), Delta.Verdict("b", "c", Verdict.Valid)]
+    when admit(a)
+    merge(merge(k, a), a) => merge(k, a)
+
+fn mergeAll(k: Knowledge, deltas: List<Delta>) -> Knowledge
+    ? "Merge contributions one after another, in list order."
+    match deltas
+        [] -> k
+        [head, ..rest] -> mergeAll(merge(k, head), rest)
+
+verify mergeAll
+    mergeAll(empty(), []) => empty()
+    count(mergeAll(empty(), [bodyOf(Bytes.fromList([1])), bodyOf(Bytes.fromList([2]))])) => 2
+
+verify mergeAll law associative
+    given k: Knowledge = [empty(), merge(empty(), bodyOf(Bytes.fromList([9])))]
+    given a: Delta = [bodyOf(Bytes.fromList([1])), Delta.Verdict("b", "c", Verdict.Valid)]
+    given b: Delta = [bodyOf(Bytes.fromList([2])), headerOf(Bytes.fromList([1]))]
+    given c: Delta = [bodyOf(Bytes.fromList([1])), Delta.Verdict("b", "d", Verdict.Invalid)]
+    mergeAll(k, [a, b, c]) => mergeAll(mergeAll(k, [a]), [b, c])
+
+verify mergeAll law orderFree
+    given k: Knowledge = [empty(), merge(empty(), bodyOf(Bytes.fromList([9])))]
+    given a: Delta = [bodyOf(Bytes.fromList([1])), headerOf(Bytes.fromList([1])), Delta.Verdict("b", "c", Verdict.Valid)]
+    given b: Delta = [bodyOf(Bytes.fromList([1])), bodyOf(Bytes.fromList([2])), headerOf(Bytes.fromList([1])), Delta.Verdict("b", "c", Verdict.Valid)]
+    when admit(a)
+    when admit(b)
+    when agrees(a, b)
+    because merge(merge(k, a), b) == merge(merge(k, b), a)
+    mergeAll(k, [a, b]) => mergeAll(k, [b, a])
+
+fn body(k: Knowledge, hash: String) -> Option<Bytes>
+    ? "The body known under a hash, if any. A stable answer: once Some, it stays that Some under every consistent merge."
+    Map.get(k.bodies, hash)
+
+verify body
+    body(empty(), "ab") => Option.None
+    body(merge(empty(), bodyOf(Bytes.fromList([1]))), keyOf(Bytes.fromList([1]))) => Option.Some(Bytes.fromList([1]))
+
+verify body law stable
+    given k: Knowledge = [merge(empty(), bodyOf(Bytes.fromList([1]))), mergeAll(empty(), [bodyOf(Bytes.fromList([1])), headerOf(Bytes.fromList([1]))])]
+    given h: String = ["ab", "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a"]
+    given v: Bytes = [Bytes.fromList([1]), Bytes.fromList([2])]
+    given d: Delta = [bodyOf(Bytes.fromList([1])), bodyOf(Bytes.fromList([2])), headerOf(Bytes.fromList([1])), Delta.Verdict("b", "c", Verdict.Valid)]
+    when body(k, h) == Option.Some(v)
+    when admit(d)
+    when consistent(k, d)
+    because keepsBody(h, v, d)
+    body(merge(k, d), h) => Option.Some(v)
+
+fn keepsBody(hash: String, bytes: Bytes, delta: Delta) -> Bool
+    ? "Why a consistent contribution cannot withdraw a known body: it either lands under another key, or it carries the very bytes already known under this one."
+    match delta
+        Delta.Body(other, otherBytes) -> Bool.or(other != hash, otherBytes == bytes)
+        _ -> true
+
+verify keepsBody
+    keepsBody("ab", Bytes.fromList([1]), headerOf(Bytes.fromList([1]))) => true
+    keepsBody("ab", Bytes.fromList([1]), Delta.Body("cd", Bytes.fromList([2]))) => true
+    keepsBody("ab", Bytes.fromList([1]), Delta.Body("ab", Bytes.fromList([1]))) => true
+    keepsBody("ab", Bytes.fromList([1]), Delta.Body("ab", Bytes.fromList([2]))) => false
+
+fn verdict(k: Knowledge, blockHash: String, contextHash: String) -> Option<Verdict>
+    ? "The verdict known for a block in a context, if any. A stable answer: once Some, it stays that Some under every consistent merge."
+    Map.get(k.verdicts, verdictKey(blockHash, contextHash))
+
+verify verdict
+    verdict(empty(), "b", "c") => Option.None
+    verdict(merge(empty(), Delta.Verdict("b", "c", Verdict.Invalid)), "b", "c") => Option.Some(Verdict.Invalid)
+
+verify verdict law stable
+    given k: Knowledge = [merge(empty(), Delta.Verdict("b", "c", Verdict.Valid)), mergeAll(empty(), [Delta.Verdict("b", "c", Verdict.Invalid), bodyOf(Bytes.fromList([1]))])]
+    given blockHash: String = ["b", "x"]
+    given contextHash: String = ["c"]
+    given v: Verdict = [Verdict.Valid, Verdict.Invalid]
+    given d: Delta = [bodyOf(Bytes.fromList([1])), Delta.Verdict("b", "c", Verdict.Valid), Delta.Verdict("b", "c", Verdict.Invalid), Delta.Verdict("x", "c", Verdict.Invalid)]
+    when verdict(k, blockHash, contextHash) == Option.Some(v)
+    when admit(d)
+    when consistent(k, d)
+    because keepsVerdict(blockHash, contextHash, v, d)
+    verdict(merge(k, d), blockHash, contextHash) => Option.Some(v)
+
+fn keepsVerdict(blockHash: String, contextHash: String, v: Verdict, delta: Delta) -> Bool
+    ? "Why a consistent contribution cannot withdraw a known verdict: it either judges another block or context, or it carries the very verdict already known."
+    match delta
+        Delta.Verdict(otherBlock, otherContext, other) -> Bool.or(verdictKey(otherBlock, otherContext) != verdictKey(blockHash, contextHash), other == v)
+        _ -> true
+
+verify keepsVerdict
+    keepsVerdict("b", "c", Verdict.Valid, bodyOf(Bytes.fromList([1]))) => true
+    keepsVerdict("b", "c", Verdict.Valid, Delta.Verdict("x", "c", Verdict.Invalid)) => true
+    keepsVerdict("b", "c", Verdict.Valid, Delta.Verdict("b", "c", Verdict.Valid)) => true
+    keepsVerdict("b", "c", Verdict.Valid, Delta.Verdict("b", "c", Verdict.Invalid)) => false
+
+fn count(k: Knowledge) -> Int
+    ? "How many bodies the node knows. Deliberately NOT a stable answer: it changes under merge, so it gets no stable-answer theorem. Only queries whose answer, once given, cannot be withdrawn receive one; a count is a snapshot."
+    Map.len(k.bodies)
+
+verify count
+    count(empty()) => 0
+    count(merge(empty(), bodyOf(Bytes.fromList([1])))) => 1
+    count(merge(merge(empty(), bodyOf(Bytes.fromList([1]))), bodyOf(Bytes.fromList([2])))) => 2
+    count(merge(merge(empty(), bodyOf(Bytes.fromList([1]))), bodyOf(Bytes.fromList([1])))) => 1
+
+fn grows(k: Knowledge, delta: Delta) -> Bool
+    ? "k <= merge(k, delta), read on the sizes: no map ever loses an entry under merge."
+    after = merge(k, delta)
+    Bool.and(Map.len(k.headers) <= Map.len(after.headers), Bool.and(Map.len(k.bodies) <= Map.len(after.bodies), Map.len(k.verdicts) <= Map.len(after.verdicts)))
+
+verify grows
+    grows(empty(), bodyOf(Bytes.fromList([1]))) => true
+    grows(merge(empty(), bodyOf(Bytes.fromList([1]))), bodyOf(Bytes.fromList([1]))) => true
+
+verify grows law monotone
+    given k: Knowledge = [empty(), merge(empty(), bodyOf(Bytes.fromList([9]))), merge(empty(), Delta.Verdict("b", "c", Verdict.Valid))]
+    given delta: Delta = [bodyOf(Bytes.fromList([1])), bodyOf(Bytes.fromList([9])), headerOf(Bytes.fromList([1])), Delta.Verdict("b", "c", Verdict.Invalid)]
+    grows(k, delta) holds
