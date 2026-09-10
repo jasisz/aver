@@ -12,6 +12,10 @@ use crate::ir::proof_ir::{
 
 use super::ProofLowerInputs;
 
+mod branches;
+mod substitution;
+use substitution::substitute;
+
 fn ident(expr: &Spanned<Expr>) -> Option<&str> {
     match &expr.node {
         Expr::Ident(name) | Expr::Resolved { name, .. } => Some(name),
@@ -29,50 +33,6 @@ fn int(value: i64) -> Spanned<Expr> {
 
 fn call(name: &str, args: Vec<Spanned<Expr>>) -> Spanned<Expr> {
     Spanned::new(Expr::FnCall(Box::new(var(name)), args), 0)
-}
-
-/// Simultaneous value substitution; callees and fields are not value names.
-/// Binder-bearing expressions are omitted until their scopes are represented
-/// here. Preserving types matters for discharged division and empty containers.
-fn substitute(
-    expr: &Spanned<Expr>,
-    bindings: &BTreeMap<String, Spanned<Expr>>,
-) -> Option<Spanned<Expr>> {
-    let rec = |e| substitute(e, bindings);
-    let node = match &expr.node {
-        Expr::Ident(name) | Expr::Resolved { name, .. } => {
-            let replacement = bindings.get(name)?;
-            return Some(if ident(replacement) == Some(name.as_str()) {
-                expr.clone()
-            } else {
-                replacement.clone()
-            });
-        }
-        Expr::Literal(_) => return Some(expr.clone()),
-        Expr::BinOp(op, a, b) => Expr::BinOp(*op, Box::new(rec(a)?), Box::new(rec(b)?)),
-        Expr::Neg(e) => Expr::Neg(Box::new(rec(e)?)),
-        Expr::List(xs) => Expr::List(xs.iter().map(rec).collect::<Option<_>>()?),
-        Expr::Tuple(xs) => Expr::Tuple(xs.iter().map(rec).collect::<Option<_>>()?),
-        Expr::Attr(base, field) => Expr::Attr(Box::new(rec(base)?), field.clone()),
-        Expr::FnCall(callee, args) => {
-            // A parameter used as a callable needs a callback substitution
-            // contract; do not mistake it for a static source declaration.
-            if ident(callee).is_some_and(|name| bindings.contains_key(name)) {
-                return None;
-            }
-            Expr::FnCall(callee.clone(), args.iter().map(rec).collect::<Option<_>>()?)
-        }
-        Expr::TailCall(tc) => Expr::FnCall(
-            Box::new(var(&tc.target)),
-            tc.args.iter().map(rec).collect::<Option<_>>()?,
-        ),
-        _ => return None,
-    };
-    let result = Spanned::new(node, expr.line);
-    if let Some(ty) = expr.ty() {
-        result.set_ty(ty.clone());
-    }
-    Some(result)
 }
 
 fn self_args<'a>(
@@ -142,25 +102,37 @@ fn recursive_branch<'a>(
             })
         }
         LawInductionMeasure::NonnegativeInt => {
-            // The function contract has checked positivity at every call.
-            // Keep the actual branch test, including its orientation.
-            let recursive = arms.iter().find(|arm| {
-                crate::codegen::expr_walk::any(&arm.body, &mut |e| {
-                    self_args(e, id, inputs, scope).is_some()
+            let recursive: Vec<_> = arms
+                .iter()
+                .filter(|arm| {
+                    crate::codegen::expr_walk::any(&arm.body, &mut |e| {
+                        self_args(e, id, inputs, scope).is_some()
+                    })
                 })
-            })?;
-            let guard = match recursive.pattern {
-                Pattern::Literal(Literal::Bool(true)) => (**subject).clone(),
-                Pattern::Literal(Literal::Bool(false)) => {
-                    call("Bool.not", vec![(**subject).clone()])
-                }
-                _ => return None,
-            };
-            Some(SourceBranch {
-                guard,
-                body: &recursive.body,
-                list_bindings: None,
-            })
+                .collect();
+            if let [arm] = recursive.as_slice() {
+                // Preserve the source step used by ordinary application search
+                // when the outer match has exactly one recursive branch.
+                let guard = match arm.pattern {
+                    Pattern::Literal(Literal::Bool(true)) => (**subject).clone(),
+                    Pattern::Literal(Literal::Bool(false)) => {
+                        call("Bool.not", vec![(**subject).clone()])
+                    }
+                    _ => return None,
+                };
+                Some(SourceBranch {
+                    guard,
+                    body: &arm.body,
+                    list_bindings: None,
+                })
+            } else {
+                // Every recursive path below retains its own Boolean guard.
+                Some(SourceBranch {
+                    guard: Spanned::new(Expr::Literal(Literal::Bool(true)), body.line),
+                    body,
+                    list_bindings: None,
+                })
+            }
         }
     }
 }
@@ -194,7 +166,6 @@ pub(super) fn reason_plans(
                 Expr::FnCall(callee, _) => inputs
                     .symbol_table
                     .resolve_fn_id_in(&crate::checker::expr_to_str(callee), scope)
-                    .filter(|id| inputs.symbol_table.fn_entry(*id).key.scope_str() == scope)
                     .and_then(|id| plan_inner(&obligation, id, inputs, ir, scope, true)),
                 _ => None,
             };
@@ -205,51 +176,6 @@ pub(super) fn reason_plans(
             result
         })
         .collect()
-}
-
-/// Descend through exhaustive Boolean matches without introducing binders.
-/// Preserve the selected path, including reversed true/false arm order.
-fn nested_branch<'a>(
-    mut body: &'a Spanned<Expr>,
-    id: crate::ir::FnId,
-    inputs: &ProofLowerInputs,
-    scope: Option<&str>,
-) -> Option<(&'a Spanned<Expr>, Option<Spanned<Expr>>)> {
-    let mut guard = None;
-    while let Expr::Match { subject, arms } = &body.node {
-        if arms.len() != 2
-            || ![true, false].iter().all(|value| {
-                arms.iter().any(
-                    |arm| matches!(arm.pattern, Pattern::Literal(Literal::Bool(v)) if v == *value),
-                )
-            })
-            || crate::codegen::expr_walk::any(subject, &mut |e| {
-                self_args(e, id, inputs, scope).is_some()
-            })
-        {
-            return None;
-        }
-        let mut recursive = arms.iter().filter(|arm| {
-            crate::codegen::expr_walk::any(&arm.body, &mut |e| {
-                self_args(e, id, inputs, scope).is_some()
-            })
-        });
-        let arm = recursive.next()?;
-        if recursive.next().is_some() {
-            return None;
-        }
-        let condition = match arm.pattern {
-            Pattern::Literal(Literal::Bool(true)) => (**subject).clone(),
-            Pattern::Literal(Literal::Bool(false)) => call("Bool.not", vec![(**subject).clone()]),
-            _ => return None,
-        };
-        guard = Some(match guard {
-            Some(previous) => call("Bool.and", vec![previous, condition]),
-            None => condition,
-        });
-        body = &arm.body;
-    }
-    Some((body, guard))
 }
 
 fn plan_inner(
@@ -269,9 +195,11 @@ fn plan_inner(
         } => (param, LawInductionMeasure::SequenceLength),
         _ => return None,
     };
-    let name = &inputs.symbol_table.fn_entry(id).key.name;
+    let key = &inputs.symbol_table.fn_entry(id).key;
+    let source_scope = key.scope_str();
+    let name = &key.name;
     let fd = inputs
-        .pure_fns_in_scope(scope)
+        .pure_fns_in_scope(source_scope)
         .into_iter()
         .find(|fd| fd.name == *name)?;
     let driver_index = fd.params.iter().position(|(p, _)| p == param)?;
@@ -325,37 +253,20 @@ fn plan_inner(
         guard,
         body: branch,
         list_bindings: pattern,
-    } = recursive_branch(fd, param, measure, id, inputs, scope)?;
+    } = recursive_branch(fd, param, measure, id, inputs, source_scope)?;
     let source_branch = branch;
-    let (branch, branch_guard) = nested_branch(source_branch, id, inputs, scope)?;
-    if crate::codegen::expr_walk::any(branch, &mut |e| matches!(e.node, Expr::Match { .. })) {
-        return None;
-    }
-    let mut recursive_calls = Vec::new();
-    crate::codegen::expr_walk::walk(branch, &mut |e| {
-        if let Some(args) = self_args(e, id, inputs, scope) {
-            recursive_calls.push(args);
-        }
-    });
-    if recursive_calls.len() != 1 {
-        return None;
-    }
-    let recursive_args = recursive_calls[0];
-    if recursive_args.len() != fd.params.len() {
-        return None;
-    }
-    // A plain structural homomorphism already has its own decomposition
-    // strategy. This plan is needed when a list fold changes another input;
-    // selecting an arbitrary occurrence in e.g. f(x ++ y) = f(y) ++ f(x)
-    // would choose an unrelated driver and discard useful algebraic support.
+    let branches = branches::recursive_sites(source_branch, id, inputs, source_scope)?;
+    // Preserve the existing ordinary homomorphism strategy when no sibling
+    // argument changes. Explanations use the exact recursive sites directly.
     if !explanation
         && matches!(measure, LawInductionMeasure::SequenceLength)
-        && fd
-            .params
-            .iter()
-            .zip(recursive_args)
-            .enumerate()
-            .all(|(index, ((name, _), arg))| index == driver_index || ident(arg) == Some(name))
+        && branches.iter().all(|site| {
+            fd.params
+                .iter()
+                .zip(site.arguments)
+                .enumerate()
+                .all(|(index, ((name, _), arg))| index == driver_index || ident(arg) == Some(name))
+        })
     {
         return None;
     }
@@ -389,75 +300,86 @@ fn plan_inner(
     };
     let mut calls = Vec::new();
     for occurrence in occurrences {
-        let args = self_args(occurrence, id, inputs, scope)?;
-        if args.len() != fd.params.len() || ident(&args[driver_index]) != Some(driver.as_str()) {
-            continue;
-        }
-        let mut bindings: BTreeMap<_, _> = fd
-            .params
-            .iter()
-            .zip(args)
-            .map(|((name, _), arg)| (name.clone(), arg.clone()))
-            .collect();
-        let guard = substitute(
-            &guard,
-            &fd.params
+        for site in &branches {
+            let recursive_args = site.arguments;
+            if recursive_args.len() != fd.params.len() {
+                return None;
+            }
+            let args = self_args(occurrence, id, inputs, scope)?;
+            if args.len() != fd.params.len() || ident(&args[driver_index]) != Some(driver.as_str())
+            {
+                continue;
+            }
+            let mut bindings: BTreeMap<_, _> = fd
+                .params
                 .iter()
                 .zip(args)
-                .map(|((n, _), a)| (n.clone(), a.clone()))
-                .collect(),
-        )?;
-        let list_case = pattern.as_ref().map(|(head, tail)| {
-            let head_name = (head != "_").then(&mut fresh);
-            let tail_name = (tail != "_").then(&mut fresh);
-            // Pattern binders shadow function formals. Fresh IR projections
-            // are substituted simultaneously, so law names cannot be captured.
-            if let Some(name) = &head_name {
-                bindings.insert(head.clone(), var(name));
-            }
-            if let Some(name) = &tail_name {
-                bindings.insert(tail.clone(), var(name));
-            }
-            LawInductionListCase {
-                list: inputs.resolve_expr(&args[driver_index], scope),
-                head: head_name,
-                tail: tail_name,
-            }
-        });
-        let mut given_args: BTreeMap<_, _> = law
-            .givens
-            .iter()
-            .map(|g| (g.name.clone(), var(&g.name)))
-            .collect();
-        for (anchor_arg, recursive_arg) in anchor_args.iter().zip(recursive_args) {
-            if let Some(name) = ident(anchor_arg) {
-                given_args.insert(name.to_string(), substitute(recursive_arg, &bindings)?);
-            }
-        }
-        // A conditional theorem supplies an IH only where its recursive
-        // premise holds. Other branches remain independent proof obligations.
-        let premise = match &law.when {
-            Some(premise) => Some(inputs.resolve_expr(&substitute(premise, &given_args)?, scope)),
-            None => None,
-        };
-        calls.push(LawInductionCall {
-            source_call: inputs.resolve_expr(occurrence, scope),
-            source_step: substitute(source_branch, &bindings)
-                .map(|e| inputs.resolve_expr(&e, scope)),
-            applications: Vec::new(),
-            guard: inputs.resolve_expr(&guard, scope),
-            branch_guard: match &branch_guard {
-                Some(guard) => Some(inputs.resolve_expr(&substitute(guard, &bindings)?, scope)),
-                None => None,
-            },
-            premise,
-            list_case,
-            arguments: law
+                .map(|((name, _), arg)| (name.clone(), inputs.resolve_expr(arg, scope)))
+                .collect();
+            let guard = substitute(&inputs.resolve_expr(&guard, source_scope), &bindings)?;
+            let list_case = pattern.as_ref().map(|(head, tail)| {
+                let head_name = (head != "_").then(&mut fresh);
+                let tail_name = (tail != "_").then(&mut fresh);
+                // Pattern binders shadow function formals. Fresh IR projections
+                // are substituted simultaneously, so law names cannot be captured.
+                if let Some(name) = &head_name {
+                    bindings.insert(head.clone(), inputs.resolve_expr(&var(name), scope));
+                }
+                if let Some(name) = &tail_name {
+                    bindings.insert(tail.clone(), inputs.resolve_expr(&var(name), scope));
+                }
+                LawInductionListCase {
+                    list: inputs.resolve_expr(&args[driver_index], scope),
+                    head: head_name,
+                    tail: tail_name,
+                }
+            });
+            let mut given_args: BTreeMap<_, _> = law
                 .givens
                 .iter()
-                .map(|g| inputs.resolve_expr(&given_args[&g.name], scope))
-                .collect(),
-        });
+                .map(|g| (g.name.clone(), inputs.resolve_expr(&var(&g.name), scope)))
+                .collect();
+            for (anchor_arg, recursive_arg) in anchor_args.iter().zip(recursive_args) {
+                if let Some(name) = ident(anchor_arg) {
+                    given_args.insert(
+                        name.to_string(),
+                        substitute(&inputs.resolve_expr(recursive_arg, source_scope), &bindings)?,
+                    );
+                }
+            }
+            // A conditional theorem supplies an IH only where its recursive
+            // premise holds. Other branches remain independent proof obligations.
+            let premise = match &law.when {
+                Some(premise) => Some(substitute(
+                    &inputs.resolve_expr(premise, scope),
+                    &given_args,
+                )?),
+                None => None,
+            };
+            calls.push(LawInductionCall {
+                source_call: inputs.resolve_expr(occurrence, scope),
+                source_step: substitute(
+                    &inputs.resolve_expr(source_branch, source_scope),
+                    &bindings,
+                ),
+                applications: Vec::new(),
+                guard,
+                branch_guard: match &site.guard {
+                    Some(guard) => Some(substitute(
+                        &inputs.resolve_expr(guard, source_scope),
+                        &bindings,
+                    )?),
+                    None => None,
+                },
+                premise,
+                list_case,
+                arguments: law
+                    .givens
+                    .iter()
+                    .map(|g| given_args[&g.name].clone())
+                    .collect(),
+            });
+        }
     }
     (!calls.is_empty()).then(|| LawInduction {
         driver,

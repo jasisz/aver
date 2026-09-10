@@ -50,6 +50,36 @@ cd /tmp/fib-dafny && dafny verify --verify-included-files fibonacci.dfy
 
 Requires [Dafny](https://github.com/dafny-lang/dafny) (4.x+) installed with Z3. On macOS: `brew install dafny`.
 
+## Explanations in Aver
+
+```bash
+aver proof file.av --backend dafny --check --explain
+aver proof file.av --backend dafny --check-json --explain
+```
+
+`--explain` maps checker errors to the Aver law or `because` step: source
+location, goal, givens, original `when`, earlier reasons and explicit citations.
+A timeout is `checker_limit`, not a counterexample. An error outside a mapped
+law is a checker error; its technical details are saved in `proof_backend.log`.
+Dafny does not run Lean's citation probes or suggestion search.
+
+JSON adds `explanations` for open steps and a `claims` inventory. Each claim
+records `exported` separately from `status`: `not_exported`, `unresolved`, or
+`checked`. `checked` requires the complete strict module check, with no errors,
+timeouts, axioms, omissions or declined laws. A lemma without its own error in
+a failing module remains `unresolved`, including earlier reasons and cited
+laws. These statuses describe emitted checks; they do not upgrade an ordinary
+bounded/sample fallback to a universal theorem. Export alone supplies no proof
+credit. Without `--explain` the report schema and the checker gate are unchanged.
+
+Shared ProofIR records induction instances for imported reason functions and
+local value aliases. Explicit Boolean branches carry their own guards and
+recursive arguments; both targets use the same canonical function identities
+and checked measure. Nested binder-bearing matches and unsupported callbacks
+remain outside this planner's scope; backends may use their existing checked
+fallbacks. Every generated recursive lemma call still has to prove its decrease
+and recursive premises.
+
 ## What it generates
 
 An entry `.dfy` file, with dependency module files and a shared prelude when

@@ -77,7 +77,7 @@ fn slice_reasons_use_shared_guards_and_recursive_premises() {
 }
 
 #[test]
-fn nested_reason_guards_use_pattern_scope_and_ambiguous_paths_stay_unplanned() {
+fn nested_reason_guards_use_pattern_scope_and_preserve_both_recursive_paths() {
     let source = include_str!("../../../../tests/fixtures/law_reasons_slices.av");
     let (functions, laws) = source
         .split_once("verify nonnegative law dropPreserves")
@@ -120,7 +120,63 @@ fn nested_reason_guards_use_pattern_scope_and_ambiguous_paths_stay_unplanned() {
         .iter()
         .find(|t| t.law_name == "takePreserves")
         .unwrap();
+    let plan = theorem.reason_inductions[0]
+        .as_ref()
+        .expect("both paths have explicit guards");
+    assert_eq!(plan.calls.len(), 2);
+    let render = |e| super::super::expr::emit_expr(e, &ctx);
+    let paths: Vec<_> = plan
+        .calls
+        .iter()
+        .map(|call| {
+            (
+                render(call.branch_guard.as_ref().unwrap()),
+                render(&call.arguments[1]),
+            )
+        })
+        .collect();
+    assert!(
+        paths
+            .iter()
+            .any(|(guard, arg)| guard == "(n > 0)" && arg == "(n - 1)"),
+        "{paths:?}"
+    );
+    assert!(
+        paths
+            .iter()
+            .any(|(guard, arg)| guard.contains("!(n > 0)") && arg == "(n + 1)"),
+        "{paths:?}"
+    );
+}
+
+#[test]
+fn a_nested_binding_scope_is_not_guessed_and_all_same_leaf_calls_are_retained() {
+    let source = include_str!("../../../../tests/fixtures/law_reasons_slices.av");
+    let nested = source.replace("false -> nonnegative(List.take(xs, n))", "false -> match rest\n                [] -> true\n                [y, ..tail] -> takeReason(tail, n)");
+    let ctx = ctx_from_source(&nested, "SliceReasons");
+    let theorem = ctx
+        .proof_ir
+        .law_theorems
+        .iter()
+        .find(|t| t.law_name == "takePreserves")
+        .unwrap();
     assert!(theorem.reason_inductions[0].is_none());
+    let multiple = source.replace(
+        "takeReason(rest, n - 1)",
+        "Bool.and(takeReason(rest, n - 1), takeReason(rest, n + 1))",
+    );
+    let ctx = ctx_from_source(&multiple, "SliceReasons");
+    let theorem = ctx
+        .proof_ir
+        .law_theorems
+        .iter()
+        .find(|t| t.law_name == "takePreserves")
+        .unwrap();
+    let plan = theorem.reason_inductions[0].as_ref().unwrap();
+    assert_eq!(plan.calls.len(), 2);
+    for call in &plan.calls {
+        assert!(call.branch_guard.is_some());
+    }
 }
 
 #[test]

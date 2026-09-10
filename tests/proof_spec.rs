@@ -1031,3 +1031,8 @@ fn a_method_application_as_a_receiver_is_parenthesised() {
 
 #[path = "proof_spec/reverse_algebra.rs"]
 mod reverse_algebra;
+
+#[path = "proof_spec/dafny_explain.rs"]
+mod dafny_explain;
+#[path = "proof_spec/shared_reason_imports.rs"]
+mod shared_reason_imports;

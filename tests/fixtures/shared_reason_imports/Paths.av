@@ -1,0 +1,14 @@
+module Paths
+    exposes [reason]
+    intent = "Two explicit recursive paths preserve a nonnegative accumulator."
+    effects []
+fn step(n: Int) -> Int
+    n + 1
+fn reason(xs: List<Int>, n: Int) -> Bool
+    next = step(n)
+    alias = next
+    match xs
+        [] -> n >= 0
+        [head, ..tail] -> match head >= 0
+            false -> Bool.and(reason(tail, step(alias)), n >= 0)
+            true -> Bool.and(reason(tail, alias), n >= 0)
