@@ -336,6 +336,37 @@ fn sum(xs: List<Int>) -> Int
         [h, ..t] -> h + sum(t)
 ```
 
+### Yielding functions
+
+A function whose effect list names `yield` never runs as written: every effect call and the self tail call become requests, and the compiler generates the protocol in the same module under the reserved `__` namespace — `__LoopClaimState` (one state sum per request kind, one variant per stop, holding the live variables), `__LoopYieldState`, `__LoopRequest` (one constructor per kind: the operation's arguments plus the state), `__LoopOutcome = Done(<result>) | Waiting(__LoopRequest)`, `__loopStart(<params>)`, `__loopAnswerClaim(__state, __answer)` per kind, `__loopAnswerYield(__state)`. The original function is removed.
+
+```aver
+fn loop(id: Int, done: Int) -> Int
+    ? "Claims handles for id until the pool answers None."
+    ! [Pool.claim, yield]
+    r = Pool.claim(id)
+    match r
+        Option.None -> done
+        Option.Some(h) -> loop(id, done + h)
+
+fn drive(outcome: __LoopOutcome, answers: List<Option<Int>>) -> Int
+    ? "Coordinator: performs the requests and feeds the answers back."
+    match outcome
+        __LoopOutcome.Done(v) -> v
+        __LoopOutcome.Waiting(request) -> match request
+            __LoopRequest.Yield(state) -> drive(__loopAnswerYield(state), answers)
+            __LoopRequest.Claim(peer, state) -> match answers
+                [] -> drive(__loopAnswerClaim(state, Option.None), [])
+                [answer, ..rest] -> drive(__loopAnswerClaim(state, answer), rest)
+```
+
+Rules:
+- `yield` is an effect: declare it in `! [...]` and cover it in the module's `effects [...]`
+- the generated names are compiler-defined and callable; `verify` them, match on them, export them to Lean and Dafny like any other item
+- never call a yielding function directly — `'loop' yields; call '__loopStart(...)' and answer its requests` is the error; a verify case gets the same
+- a non-tail call between yielding functions is an error: pass what comes next as data, or make it a tail call; only a self tail call becomes the `Yield` request
+- stops may sit in bindings, as match subjects, inside arguments and inside match arms; `?` after a request works; a request inside `(a, b)!` and a function value live across a request are rejected by name
+
 ### Builtins and namespaces
 
 Use namespaced builtins only.

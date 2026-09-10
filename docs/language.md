@@ -42,7 +42,11 @@ The leading `__` namespace is reserved for the compiler. User-written names
 for modules, types, variants, fields, functions, operations, resources,
 parameters, bindings, match-pattern binders, and decisions cannot begin with
 two underscores. Double underscores elsewhere in a name remain legal
-(`walk__cursor` is a valid name).
+(`walk__cursor` is a valid name). Names in that namespace that the compiler
+defines — the `__loopStart` / `__LoopOutcome` protocol of a
+[yielding function](#yielding-functions), for example — are ordinary
+functions and types of the module: user code calls them, annotates with
+them, and matches on their constructors like on anything it wrote itself.
 
 ```aver
 name = "Alice"
@@ -397,6 +401,53 @@ backend-independent byte size for an arbitrary `T`.
 Self and mutual tail recursion is optimized automatically. A transform pass after parsing rewrites tail-position calls into a trampoline — no stack growth for recursive functions in tail position. Tail position = last expression in function body, or each arm body in a `match` at tail position.
 
 This is intentionally narrower than “all recursion”. Non-tail recursion can still be expensive on large inputs, so `aver check` warns when a recursive function still has non-tail recursive callsites after TCO. In practice, long linear traversals are best written in accumulator style when scale matters.
+
+## Yielding functions
+
+A function whose effect list names `yield` hands control back at every effect call instead of performing it. The function is written in direct style — read, then the next step — but it never runs as written: the compiler cuts it at every stop and turns it into plain data and pure functions, and a coordinator you write performs the operations and feeds the answers back. `yield` is an effect like any other: it appears in the function's `! [...]`, it must be covered by the module's `effects [...]`, and it propagates to callers.
+
+```aver
+fn loop(id: Int, done: Int) -> Int
+    ? "Claims handles for id until the pool answers None, summing them into done."
+    ! [Pool.claim, yield]
+    r = Pool.claim(id)
+    match r
+        Option.None -> done
+        Option.Some(h) -> loop(id, done + h)
+```
+
+Inside a yielding function every call to an operation of a capability in its effect list is a stop (a request), and the self tail call is a stop of kind `Yield`. Pure calls run inline. For `loop` the compiler generates, in the same module and in the reserved `__` namespace:
+
+- `__LoopClaimState` — one sum type per request kind, with one variant per stop of that kind; a variant holds exactly the variables the rest of that path still reads (`AwaitR(Int, Int)` for `id` and `done`). A stop bound to a name is `Await<Name>`; an unbound stop is `Await<n>` with its ordinal in the function.
+- `__LoopYieldState` — the state of the tail call: its argument tuple (`Await2(Int, Int)`).
+- `__LoopRequest` — one constructor per kind carrying the operation's arguments and the state of that kind: `Claim(Int, __LoopClaimState) | Yield(__LoopYieldState)`.
+- `__LoopOutcome` — `Done(Int) | Waiting(__LoopRequest)`.
+- `__loopStart(id: Int, done: Int) -> __LoopOutcome` — runs to the first stop; it carries the original `? "..."` description.
+- `__loopAnswerClaim(__state: __LoopClaimState, __answer: Option<Int>) -> __LoopOutcome` — matches the state variant and runs to the next stop or to `Done`. The answer type is the operation's result type, so pairing a state with the answer of another kind is a type error.
+- `__loopAnswerYield(__state: __LoopYieldState) -> __LoopOutcome` — re-enters `__loopStart` with the carried arguments.
+
+These names are compiler-defined and callable. The original `loop` is removed after lowering; the coordinator answers the requests instead:
+
+```aver
+fn drive(outcome: __LoopOutcome, answers: List<Option<Int>>) -> Int
+    ? "Answers every Claim request from the list and resumes every Yield request."
+    match outcome
+        __LoopOutcome.Done(v) -> v
+        __LoopOutcome.Waiting(request) -> match request
+            __LoopRequest.Yield(state) -> drive(__loopAnswerYield(state), answers)
+            __LoopRequest.Claim(peer, state) -> match answers
+                [] -> drive(__loopAnswerClaim(state, Option.None), [])
+                [answer, ..rest] -> drive(__loopAnswerClaim(state, answer), rest)
+```
+
+Stops may sit anywhere the function runs unconditionally — in a binding, as a match subject, inside an argument — and inside `match` arms; the same operation may stop several times in one body, and `?` after a request works (`Err` leaves through `Done`). When code follows a stop that sits in a `match` arm of a non-tail statement, the rest of the path becomes a generated continuation function (`__loopJoin1`, `__loopAfterAwaitR`) the arms call. The generated items are ordinary types and pure functions: `aver verify` runs them, every backend compiles them, and `aver proof` exports them to Lean and Dafny like anything else, so the coordinator's laws can reason about the protocol.
+
+Two diagnostics guard the shape:
+
+- calling a yielding function directly, from anywhere — a plain function, another yielding function's argument, a verify case — is a type error: `'loop' yields; call '__loopStart(...)' and answer its requests`;
+- a non-tail call from a yielding function to a yielding function is a type error with the recipe `pass what comes next as data, or make it a tail call`.
+
+The tail-call rule: only a self tail call is lowered, into the `Yield` request. A tail call to a different yielding function is rejected in this phase (its request and outcome types are its own), and so is a request inside an independent product `(a, b)!` or a function value live across a stop; the message names the construct. Inside a yielding function every effect call is a request and the coordinator performs it — the manifest-level rule from the concurrency epic that lets a program mark only some capabilities as handled by itself, together with nested states for non-tail calls between yielding functions and a `runAll` coordinator in the standard library, is the next phase.
 
 ## Modules
 
