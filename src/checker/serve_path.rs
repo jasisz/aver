@@ -11,18 +11,22 @@
 //! The condition is purely structural, over the module's own call graph:
 //!
 //! - `F` calls `Tcp.poll` directly.
-//! - The recursive components are computed on the call graph WITHOUT `F`'s
-//!   node. A cycle that passes through `F` passes through its wait, so it
-//!   disappears with `F` and is never a stall; a cycle that avoids `F`'s
-//!   wait survives the cut and is one.
+//! - The recursive components are computed on the call graph WITHOUT every
+//!   function that calls `Tcp.poll` directly, `F` among them: the same
+//!   predicate the walk's stop rule uses. A cycle that passes through a
+//!   poller passes through its wait, so it disappears with the poller and
+//!   is never a stall; a cycle that avoids every wait survives the cut and
+//!   is one.
 //! - The walk starts at `F`'s callees, never re-enters `F`, and stops at
 //!   any function that itself calls `Tcp.poll` directly: that is the next
 //!   turn boundary, not a stall. `Tcp.poll` is never a blocking effect for
 //!   this check.
 //! - `G` is reached, is recursive in the reduced graph, and declares an
-//!   INPUT operation: any `Disk.read*`, `Disk.size`, `Tcp.read*`,
-//!   `Tcp.accept`, `Tcp.dialled`, `Tcp.peerAddress`, or the bare namespaces
-//!   `Disk` / `Tcp`. Writes alone (`Disk.write*`, `Disk.append*`,
+//!   INPUT operation: any `Disk.read*`, `Disk.size`, `Disk.listDir`,
+//!   `Disk.exists`, `Tcp.read*`, `Tcp.accept`, `Tcp.dialled`,
+//!   `Tcp.peerAddress`, `Tcp.send`, `Tcp.sendBytes`, `Tcp.ping`,
+//!   `Tcp.connect` (each dials or round-trips on the network), or the bare
+//!   namespaces `Disk` / `Tcp`. Writes alone (`Disk.write*`, `Disk.append*`,
 //!   `Tcp.write*`, `Tcp.close`) do not qualify: a loop that only writes
 //!   what it already holds is bounded by this turn's data, and the turn
 //!   budget in `verify` covers its length.
@@ -76,19 +80,22 @@ pub fn collect_serve_path_warnings(items: &[TopLevel], fn_sigs: &FnSigMap) -> Ve
             .is_some_and(|list| list.iter().any(|callee| callee == POLL))
     };
 
+    // The loops that survive without the pollers: a cycle through a poller
+    // passes through its wait and is gone; a cycle that avoids every wait
+    // stays. The cut is the walk's stop rule, so it is the same for every
+    // `F` and is computed once.
+    let sccs = recursive_sccs_without(&user_fns, &callees, &polls_directly);
+    let scc_ids: HashMap<&str, usize> = sccs
+        .iter()
+        .enumerate()
+        .flat_map(|(id, scc)| scc.iter().map(move |name| (name.as_str(), id)))
+        .collect();
+
     let mut warnings = Vec::new();
     for fd in &fns {
         if !polls_directly(&fd.name) {
             continue;
         }
-        // The loops that survive without `F`: a cycle through `F` passes
-        // through its wait and is gone; a cycle that avoids it stays.
-        let sccs = recursive_sccs_without(&user_fns, &callees, &fd.name);
-        let scc_ids: HashMap<&str, usize> = sccs
-            .iter()
-            .enumerate()
-            .flat_map(|(id, scc)| scc.iter().map(move |name| (name.as_str(), id)))
-            .collect();
         // The shrinking-list test is a property of the component, computed once.
         let mut bounded_walks: HashMap<usize, bool> = HashMap::new();
         let mut is_bounded_walk = |scc: usize| -> bool {
@@ -99,8 +106,8 @@ pub fn collect_serve_path_warnings(items: &[TopLevel], fn_sigs: &FnSigMap) -> Ve
             })
         };
         // A callee the walk does not enter: `F` itself, or another turn
-        // boundary.
-        let stops_at = |name: &str| name == fd.name || polls_directly(name);
+        // boundary. The same cut the reduced graph was built with.
+        let stops_at = &polls_directly;
 
         let mut reported: BTreeSet<usize> = BTreeSet::new();
         let mut seen: HashSet<String> = HashSet::new();
@@ -149,19 +156,20 @@ pub fn collect_serve_path_warnings(items: &[TopLevel], fn_sigs: &FnSigMap) -> Ve
     warnings
 }
 
-/// The recursive components of the module-local call graph with `removed`
-/// taken out: every user function but `removed` is a node, and an edge into
-/// `removed` is dropped. A component is recursive when it has more than one
-/// member or a member that calls itself. Members are sorted, and so are the
-/// components, by their first member.
+/// The recursive components of the module-local call graph with every
+/// function matching `removed` taken out: every other user function is a
+/// node, and an edge into a removed function is dropped. A component is
+/// recursive when it has more than one member or a member that calls
+/// itself. Members are sorted, and so are the components, by their first
+/// member.
 fn recursive_sccs_without(
     user_fns: &HashSet<&str>,
     callees: &HashMap<&str, Vec<String>>,
-    removed: &str,
+    removed: &dyn Fn(&str) -> bool,
 ) -> Vec<Vec<String>> {
     let mut nodes: Vec<String> = user_fns
         .iter()
-        .filter(|name| **name != removed)
+        .filter(|name| !removed(name))
         .map(|name| name.to_string())
         .collect();
     nodes.sort();
@@ -172,9 +180,7 @@ fn recursive_sccs_without(
                 .get(name.as_str())
                 .map(|list| {
                     list.iter()
-                        .filter(|callee| {
-                            user_fns.contains(callee.as_str()) && callee.as_str() != removed
-                        })
+                        .filter(|callee| user_fns.contains(callee.as_str()) && !removed(callee))
                         .cloned()
                         .collect()
                 })
@@ -219,16 +225,28 @@ fn input_effects(fn_sigs: &FnSigMap, name: &str) -> Option<String> {
     (!inputs.is_empty()).then(|| inputs.join(", "))
 }
 
-/// An effect that reads the world: `Disk.read*`, `Disk.size`, `Tcp.read*`,
-/// `Tcp.accept`, `Tcp.dialled`, `Tcp.peerAddress`, or a bare `Disk` / `Tcp`
+/// An effect that reads the world: `Disk.read*`, `Disk.size`,
+/// `Disk.listDir`, `Disk.exists`, `Tcp.read*`, `Tcp.accept`, `Tcp.dialled`,
+/// `Tcp.peerAddress`, the dialling and round-tripping `Tcp.send`,
+/// `Tcp.sendBytes`, `Tcp.ping`, `Tcp.connect`, or a bare `Disk` / `Tcp`
 /// namespace. Writes alone do not make a loop a stall: what they write is
 /// bounded by this turn's data. `Tcp.poll` is a wait, never an input.
 fn is_input_effect(effect: &str) -> bool {
     match effect.split_once('.') {
         None => effect == "Disk" || effect == "Tcp",
-        Some(("Disk", op)) => op.starts_with("read") || op == "size",
+        Some(("Disk", op)) => op.starts_with("read") || matches!(op, "size" | "listDir" | "exists"),
         Some(("Tcp", op)) => {
-            op.starts_with("read") || matches!(op, "accept" | "dialled" | "peerAddress")
+            op.starts_with("read")
+                || matches!(
+                    op,
+                    "accept"
+                        | "dialled"
+                        | "peerAddress"
+                        | "send"
+                        | "sendBytes"
+                        | "ping"
+                        | "connect"
+                )
         }
         Some(_) => false,
     }
@@ -671,6 +689,88 @@ fn turn(n: Int) -> Result<Unit, String>
     drain(n + List.len(ready))
 "#;
         assert!(warnings_for(src).is_empty());
+    }
+
+    #[test]
+    fn a_cycle_through_a_second_poller_is_cut_at_its_wait() {
+        // `reader` and `poller` recurse through each other, but `poller`
+        // waits: the cycle passes through a turn boundary and is gone from
+        // the reduced graph, for `serve` as much as for `poller` itself.
+        let src = r#"
+fn serve(n: Int) -> Result<Unit, String>
+    ! [Tcp.poll, Disk.readText]
+    sockets: Map<Int, Tcp.Socket> = {}
+    ready = Tcp.poll(sockets, 100)?
+    _read = reader(List.len(ready))?
+    poller(n)
+
+fn reader(n: Int) -> Result<Unit, String>
+    ! [Tcp.poll, Disk.readText]
+    _line = Disk.readText("queue.log")?
+    poller(n)
+
+fn poller(n: Int) -> Result<Unit, String>
+    ! [Tcp.poll, Disk.readText]
+    sockets: Map<Int, Tcp.Socket> = {}
+    ready = Tcp.poll(sockets, 100)?
+    match n < 1
+        true -> Result.Ok(Unit)
+        false -> reader(n - 1)
+"#;
+        assert!(warnings_for(src).is_empty());
+    }
+
+    #[test]
+    fn a_loop_that_dials_out_on_every_step_is_reported() {
+        let src = r#"
+fn notify(n: Int) -> Result<Unit, String>
+    ! [Tcp.send]
+    match n < 1
+        true -> Result.Ok(Unit)
+        false -> match Tcp.send("127.0.0.1", 6379, "PING")
+            Result.Err(reason) -> Result.Err(reason)
+            Result.Ok(_) -> notify(n - 1)
+
+fn turn(n: Int) -> Result<Unit, String>
+    ! [Tcp.poll, Tcp.send]
+    sockets: Map<Int, Tcp.Socket> = {}
+    ready = Tcp.poll(sockets, 100)?
+    notify(n + List.len(ready))
+"#;
+        let warnings = warnings_for(src);
+        assert_eq!(warnings.len(), 1, "warnings={warnings:?}");
+        assert!(
+            warnings[0]
+                .message
+                .starts_with("`notify` is an effectful loop")
+        );
+        assert!(warnings[0].extra_spans[0].label.contains("Tcp.send"));
+    }
+
+    #[test]
+    fn input_effects_name_the_dialling_and_world_reading_operations() {
+        for effect in [
+            "Tcp.send",
+            "Tcp.sendBytes",
+            "Tcp.ping",
+            "Tcp.connect",
+            "Disk.listDir",
+            "Disk.exists",
+            "Disk.readText",
+            "Tcp.accept",
+            "Tcp",
+        ] {
+            assert!(is_input_effect(effect), "{effect}");
+        }
+        for effect in [
+            "Tcp.poll",
+            "Tcp.close",
+            "Tcp.writeBytes",
+            "Disk.appendText",
+            "Console.print",
+        ] {
+            assert!(!is_input_effect(effect), "{effect}");
+        }
     }
 
     #[test]

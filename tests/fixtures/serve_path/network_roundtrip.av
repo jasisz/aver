@@ -1,0 +1,33 @@
+module NetworkRoundtrip
+    intent =
+        "A poll loop whose handler notifies a peer once per pending entry,"
+        "dialling out with Tcp.send on every step. Each send is a round-trip"
+        "on the network, so the loop reads the world as surely as a Disk"
+        "read does, and it counts down rather than walking the ready list:"
+        "the warning, once."
+    exposes [serve]
+    effects [Tcp.poll, Tcp.send]
+
+fn serve(rounds: Int) -> Result<Unit, String>
+    ? "One wait per round; the handler notifies for every key that was ready."
+    ! [Tcp.poll, Tcp.send]
+    sockets: Map<Int, Tcp.Socket> = {}
+    ready = Tcp.poll(sockets, 100)?
+    _notified = handle(List.len(ready))?
+    match rounds < 1
+        true -> Result.Ok(Unit)
+        false -> serve(rounds - 1)
+
+fn handle(pending: Int) -> Result<Unit, String>
+    ? "Hands the pending count to the notifier."
+    ! [Tcp.send]
+    notify(pending)
+
+fn notify(pending: Int) -> Result<Unit, String>
+    ? "Dials the peer once per pending entry, counting down to zero."
+    ! [Tcp.send]
+    match pending < 1
+        true -> Result.Ok(Unit)
+        false -> match Tcp.send("127.0.0.1", 6379, "PING")
+            Result.Err(reason) -> Result.Err(reason)
+            Result.Ok(_) -> notify(pending - 1)

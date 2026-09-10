@@ -16,8 +16,10 @@
 //! server (silent), that server plus a counter-driven walk that reads
 //! (warns once), the same walk that only appends (silent), a poller and
 //! handler that recurse through each other (the handler's drain warns), a
-//! poller that hands off to another poller (silent), and a shutdown that
-//! walks the session list once (silent).
+//! poller that hands off to another poller (silent), a shutdown that
+//! walks the session list once (silent), a reader whose cycle passes
+//! through a second poller's wait (silent), and a counter loop that dials
+//! out with `Tcp.send` on every step (warns once).
 #![cfg(feature = "runtime")]
 
 #[path = "support/aver_cmd.rs"]
@@ -192,4 +194,31 @@ fn a_shutdown_that_walks_the_session_list_once_is_silent() {
     let dir = project("serve-path-shutdown", "shutdown.av", None);
     let out = check(&dir);
     assert!(!stdout_of(&out).contains(SLUG), "{}", format_output(&out));
+}
+
+#[test]
+fn a_cycle_that_passes_through_a_second_pollers_wait_is_silent() {
+    // `reader` and `poller` recurse through each other, but `poller` waits:
+    // the cycle is cut at its turn boundary for `serve` as well.
+    let dir = project("serve-path-poller-cycle", "poller_cycle.av", None);
+    let out = check(&dir);
+    assert!(!stdout_of(&out).contains(SLUG), "{}", format_output(&out));
+    assert_eq!(out.status.code(), Some(0), "{}", format_output(&out));
+}
+
+#[test]
+fn a_counter_loop_that_dials_out_on_every_step_is_reported_once() {
+    let dir = project("serve-path-network-roundtrip", "network_roundtrip.av", None);
+    let out = check(&dir);
+    let text = stdout_of(&out);
+    assert!(
+        text.contains(
+            "`notify` is an effectful loop that runs to completion inside one turn of `serve`"
+        ),
+        "{}",
+        format_output(&out)
+    );
+    assert_eq!(text.matches(SLUG).count(), 1, "{}", format_output(&out));
+    // On `serve`'s call into the path: `_notified = handle(List.len(ready))?`.
+    assert!(text.contains("main.av:16"), "{}", format_output(&out));
 }
