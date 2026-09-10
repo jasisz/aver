@@ -54,6 +54,7 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Fixed
 
+- **A record or sum type with a `Bytes` or `Digest32` field now exports to Lean without an unsolved goal.** Such a type derived its own `BEq` and then asked Lean to derive `LawfulBEq` for it; the derived comparison goes through the subtype instance and the derivation stopped at the type declaration. A non-recursive type with a refinement directly in a field now derives no `BEq` of its own, so `==` is the `DecidableEq` comparison Lean already knows to be lawful; a refinement under `List`, `Option` or `Map` and every recursive type keep their previous derivation, which builds.
 - **Dafny induction follows source recursion through ProofIR.** Guarded integer descent now takes precedence over a growing list accumulator. Ordinary laws and universal citation lemmas carry actual recursive accumulator updates; list and string padding get a shared remaining-length measure consumed by Lean and Dafny. Checked sequence identities close countdown and fold composition examples without additional source proof steps or assumptions.
 
 - **Empty lists take their element type from the other side of equality.** `items == []` and `[] != items` now preserve the checked element type, including nested lists and tuple literals. This reuses the expected-type inference already used for `Option.None`, preventing generated Rust from comparing `AverIntList` with an unresolved generic list.
