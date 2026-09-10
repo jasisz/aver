@@ -4,14 +4,14 @@ module OwnLoop
         "before it does more work, which is exactly the shape the warning"
         "asks for, so no warning."
     exposes [serve]
-    effects [Tcp.poll, Disk.appendText]
+    effects [Tcp.poll, Disk.readText]
 
 fn serve(n: Int) -> Result<Unit, String>
-    ? "Waits, appends one line, waits again."
-    ! [Tcp.poll, Disk.appendText]
+    ? "Waits, reads one entry, waits again."
+    ! [Tcp.poll, Disk.readText]
     sockets: Map<Int, Tcp.Socket> = {}
     ready = Tcp.poll(sockets, 100)?
-    _written = Disk.appendText("out.log", "line")?
+    _entry = Disk.readText("queue.log")?
     match n < List.len(ready)
         true -> Result.Ok(Unit)
         false -> serve(n - 1)

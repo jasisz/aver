@@ -30,8 +30,14 @@ use support::scratch_dir::{ScratchDir, temp_dir};
 const SLUG: &str = "warning[turn-budget]:";
 
 fn project(prefix: &str, aver_toml: &str) -> ScratchDir {
+    project_with("serve.av", prefix, aver_toml)
+}
+
+fn project_with(fixture: &str, prefix: &str, aver_toml: &str) -> ScratchDir {
     let dir = temp_dir(prefix);
-    let source = repo_root().join("tests/fixtures/verify_turn_budget/serve.av");
+    let source = repo_root()
+        .join("tests/fixtures/verify_turn_budget")
+        .join(fixture);
     std::fs::copy(&source, dir.join("main.av")).expect("stage the fixture module");
     std::fs::write(dir.join("aver.toml"), aver_toml).expect("stage aver.toml");
     dir
@@ -51,14 +57,20 @@ fn stdout_of(out: &std::process::Output) -> String {
 }
 
 #[test]
-fn a_long_pure_loop_between_two_polls_trips_the_budget_once_and_names_the_loop() {
+fn a_long_pure_loop_between_two_polls_trips_the_budget_once_per_case_and_names_the_loop() {
     let dir = project("turn-budget-trips", "[verify]\nturn-budget = 1000\n");
     let out = verify(&dir);
     let text = stdout_of(&out);
 
     assert!(text.contains(SLUG), "{}", format_output(&out));
+    // The two cases are the same expression; the index tells them apart.
     assert!(
-        text.contains("case `serve(20000) == Result.Ok(20000)`: one turn ran "),
+        text.contains("serve case 1 `serve(20000) == Result.Ok(20000)`: one turn ran "),
+        "{}",
+        format_output(&out)
+    );
+    assert!(
+        text.contains("serve case 2 `serve(20000) == Result.Ok(20000)`: one turn ran "),
         "{}",
         format_output(&out)
     );
@@ -67,10 +79,53 @@ fn a_long_pure_loop_between_two_polls_trips_the_budget_once_and_names_the_loop()
         "{}",
         format_output(&out)
     );
-    assert_eq!(text.matches(SLUG).count(), 1, "{}", format_output(&out));
+    // Once per case, and no more: each case has one turn that crosses.
+    assert_eq!(text.matches(SLUG).count(), 2, "{}", format_output(&out));
     // The case itself passed, and a warning does not fail the run.
     assert!(text.contains("✓ serve"), "{}", format_output(&out));
     assert_eq!(out.status.code(), Some(0), "{}", format_output(&out));
+}
+
+/// The count resets on every `Tcp.poll`, live or stubbed. The case runs
+/// eleven turns of about forty thousand steps each — well past a budget of
+/// 150,000 in total — while no single turn comes near it. Remove the
+/// `turn_start` reset on `Tcp.poll` in `src/vm/execute/host.rs` and this
+/// test fails: the count would then run from the start of the case and
+/// cross the budget during the fourth turn.
+#[test]
+fn many_short_turns_stay_quiet_because_the_count_resets_on_every_poll() {
+    let dir = project_with(
+        "turns.av",
+        "turn-budget-resets",
+        "[verify]\nturn-budget = 150000\n",
+    );
+    let out = verify(&dir);
+    let text = stdout_of(&out);
+    assert!(!text.contains(SLUG), "{}", format_output(&out));
+    assert!(text.contains("✓ serveMany"), "{}", format_output(&out));
+    assert_eq!(out.status.code(), Some(0), "{}", format_output(&out));
+}
+
+/// The same eleven turns under a budget one turn does cross: the reset
+/// is what keeps the test above quiet, not the size of the case.
+#[test]
+fn the_same_short_turns_are_reported_once_when_one_turn_alone_crosses_the_budget() {
+    let dir = project_with(
+        "turns.av",
+        "turn-budget-one-turn",
+        "[verify]\nturn-budget = 10000\n",
+    );
+    let out = verify(&dir);
+    let text = stdout_of(&out);
+    assert!(
+        text.contains(
+            "serveMany case 1 `serveMany(5000, 10, 0) == Result.Ok(55000)`: one turn ran "
+        ),
+        "{}",
+        format_output(&out)
+    );
+    assert_eq!(text.matches(SLUG).count(), 1, "{}", format_output(&out));
+    assert!(text.contains("✓ serveMany"), "{}", format_output(&out));
 }
 
 #[test]

@@ -1,0 +1,34 @@
+module Shutdown
+    intent =
+        "A poll loop whose last turn closes every session and the listener."
+        "closeSessions walks the session list it was handed, one session per"
+        "step, so it is a bounded walk, not a stall; nothing is reported."
+    exposes [run]
+    effects [Tcp.poll, Tcp.close, Tcp.closeListener]
+
+record Pool
+    listener: Tcp.Listener
+    sockets: Map<Int, Tcp.Socket>
+    connections: Map<Int, Tcp.Connection>
+
+fn run(pool: Pool, rounds: Int) -> Result<Unit, String>
+    ? "Waits once per round; the last round shuts everything down."
+    ! [Tcp.poll, Tcp.close, Tcp.closeListener]
+    ready = Tcp.poll(pool.sockets, 100)?
+    match rounds < List.len(ready)
+        true -> shutdown(pool)
+        false -> run(pool, rounds - 1)
+
+fn shutdown(pool: Pool) -> Result<Unit, String>
+    ? "Closes every accepted connection and releases the listener last."
+    ! [Tcp.close, Tcp.closeListener]
+    closeSessions(Map.values(pool.connections), pool.listener)
+
+fn closeSessions(sessions: List<Tcp.Connection>, listener: Tcp.Listener) -> Result<Unit, String>
+    ? "Session cleanup is best-effort; listener cleanup remains observable."
+    ! [Tcp.close, Tcp.closeListener]
+    match sessions
+        [] -> Tcp.closeListener(listener)
+        [connection, ..rest] -> match Tcp.close(connection)
+            Result.Err(_) -> closeSessions(rest, listener)
+            Result.Ok(_) -> closeSessions(rest, listener)

@@ -2,7 +2,8 @@ module Serve
     intent =
         "One turn of a server: wait, do a long pure computation, wait again."
         "The computation between the two waits is what [verify] turn-budget"
-        "measures; nothing here is near the per-case step budget."
+        "measures; nothing here is near the per-case step budget. The case"
+        "is stated twice so the report has to tell the two apart."
     exposes [serve]
     effects [Tcp.poll]
 
@@ -27,4 +28,5 @@ fn serve(work: Int) -> Result<Int, String>
 
 verify serve trace
     given poller: Tcp.poll = [pollStub]
+    serve(20000) => Result.Ok(20000)
     serve(20000) => Result.Ok(20000)

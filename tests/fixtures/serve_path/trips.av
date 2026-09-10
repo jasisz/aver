@@ -1,32 +1,32 @@
 module Trips
     intent =
-        "A poll loop that, once something is ready, drains a whole queue to"
-        "disk before it waits again. The drain is the effectful loop the"
-        "serve-path warning is about: it runs inside one turn of the poller."
+        "A poll loop that, once something is ready, drains a whole queue from"
+        "disk before it waits again. The drain reads on every step and is the"
+        "effectful loop the serve-path warning is about: it runs inside one turn."
     exposes [turn]
-    effects [Tcp.poll, Disk.appendText]
+    effects [Tcp.poll, Disk.readText]
 
 fn drain(n: Int) -> Result<Unit, String>
-    ? "Appends n lines, one per step."
-    ! [Disk.appendText]
+    ? "Reads n entries, one per step."
+    ! [Disk.readText]
     match n < 1
         true -> Result.Ok(Unit)
         false -> drainStep(n)
 
 fn drainStep(n: Int) -> Result<Unit, String>
-    ? "Appends one line, then continues the drain."
-    ! [Disk.appendText]
-    _written = Disk.appendText("out.log", "line")?
+    ? "Reads one entry, then continues the drain."
+    ! [Disk.readText]
+    _entry = Disk.readText("queue.log")?
     drain(n - 1)
 
 fn flush(n: Int) -> Result<Unit, String>
     ? "Hands the queue to the drain."
-    ! [Disk.appendText]
+    ! [Disk.readText]
     drain(n)
 
 fn turn(n: Int) -> Result<Unit, String>
     ? "One wait, then the whole drain."
-    ! [Tcp.poll, Disk.appendText]
+    ! [Tcp.poll, Disk.readText]
     sockets: Map<Int, Tcp.Socket> = {}
     ready = Tcp.poll(sockets, 100)?
     flush(n + List.len(ready))

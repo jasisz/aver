@@ -2,13 +2,22 @@
 //! one of its turns to an effectful loop.
 //!
 //! A function that polls is a turn of an event loop. When a turn reaches a
-//! recursive function that does `Disk.*` or `Tcp.*` work outside the poller's
-//! own loop, that function runs to completion before the next wait, and the
-//! peers that became ready meanwhile are not served until it returns. The
-//! condition is structural: the module's call graph, its recursive SCCs, and
-//! the declared effect sets. Four fixtures pin its edges: the shape that
-//! trips it, the same loop reached without a poll, the poller whose loop is
-//! its own, and the `[[check.suppress]]` waiver.
+//! loop that reads from `Disk` or `Tcp` on every step and whose recursion
+//! survives with the poller's node removed from the call graph, that loop
+//! runs to completion before the next wait, and the peers that became ready
+//! meanwhile are not served until it returns. The condition is structural:
+//! the module's call graph without the poller, its recursive SCCs, and the
+//! declared effect sets, minus two shapes: a loop that walks a list it was
+//! handed, one element per step, is bounded by that list and is how a
+//! server serves the keys a poll returned; and a loop that only writes what
+//! it holds is bounded by this turn's data. The fixtures pin the edges: the
+//! shape that trips it, the same loop reached without a poll, the poller
+//! whose loop is its own, the `[[check.suppress]]` waiver, the reference
+//! server (silent), that server plus a counter-driven walk that reads
+//! (warns once), the same walk that only appends (silent), a poller and
+//! handler that recurse through each other (the handler's drain warns), a
+//! poller that hands off to another poller (silent), and a shutdown that
+//! walks the session list once (silent).
 #![cfg(feature = "runtime")]
 
 #[path = "support/aver_cmd.rs"]
@@ -110,4 +119,77 @@ fn a_check_suppress_rule_with_a_reason_waives_it() {
         "{}",
         format_output(&out)
     );
+}
+
+#[test]
+fn the_reference_server_serving_each_ready_key_once_is_silent() {
+    let dir = project("serve-path-canonical", "canonical.av", None);
+    let out = check(&dir);
+    assert!(!stdout_of(&out).contains(SLUG), "{}", format_output(&out));
+    assert_eq!(out.status.code(), Some(0), "{}", format_output(&out));
+}
+
+#[test]
+fn a_counter_driven_walk_that_reads_called_from_a_handler_is_reported_once_and_named() {
+    let dir = project("serve-path-counter-walk", "counter_walk.av", None);
+    let out = check(&dir);
+    let text = stdout_of(&out);
+    assert!(
+        text.contains(
+            "`replayLog` is an effectful loop that runs to completion inside one turn of `serve`"
+        ),
+        "{}",
+        format_output(&out)
+    );
+    // The ready-list walk `dispatch` is the server shape, not a second loop.
+    assert!(
+        !text.contains("`dispatch` is an effectful loop"),
+        "{}",
+        format_output(&out)
+    );
+    assert_eq!(text.matches(SLUG).count(), 1, "{}", format_output(&out));
+    // On `serve`'s call into the path: `next = dispatch(pool, ready)?`.
+    assert!(text.contains("main.av:18"), "{}", format_output(&out));
+}
+
+#[test]
+fn a_counter_driven_walk_that_only_appends_is_silent() {
+    // Same server and walk as `counter_walk.av`, but the loop only writes
+    // what it already holds: bounded by this turn's data, so no warning.
+    let dir = project("serve-path-writes-only", "writes_only.av", None);
+    let out = check(&dir);
+    assert!(!stdout_of(&out).contains(SLUG), "{}", format_output(&out));
+    assert_eq!(out.status.code(), Some(0), "{}", format_output(&out));
+}
+
+#[test]
+fn a_handler_that_recurses_through_the_poller_is_walked_and_its_drain_reported() {
+    let dir = project("serve-path-mutual", "mutual.av", None);
+    let out = check(&dir);
+    let text = stdout_of(&out);
+    assert!(
+        text.contains(
+            "`drain` is an effectful loop that runs to completion inside one turn of `serve`"
+        ),
+        "{}",
+        format_output(&out)
+    );
+    assert_eq!(text.matches(SLUG).count(), 1, "{}", format_output(&out));
+    // On `serve`'s call to its sibling `handle`, which is where the turn
+    // hands control to the path.
+    assert!(text.contains("main.av:15"), "{}", format_output(&out));
+}
+
+#[test]
+fn a_poller_that_hands_off_to_another_poller_each_step_is_silent() {
+    let dir = project("serve-path-handoff", "handoff.av", None);
+    let out = check(&dir);
+    assert!(!stdout_of(&out).contains(SLUG), "{}", format_output(&out));
+}
+
+#[test]
+fn a_shutdown_that_walks_the_session_list_once_is_silent() {
+    let dir = project("serve-path-shutdown", "shutdown.av", None);
+    let out = check(&dir);
+    assert!(!stdout_of(&out).contains(SLUG), "{}", format_output(&out));
 }

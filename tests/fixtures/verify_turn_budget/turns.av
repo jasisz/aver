@@ -1,0 +1,31 @@
+module Turns
+    intent =
+        "Many short turns: wait, a little pure work, wait again, repeated."
+        "Every turn stays well under the budget while the whole case runs"
+        "past it, so only a count that resets on Tcp.poll stays quiet."
+    exposes [serveMany]
+    effects [Tcp.poll]
+
+fn pollStub(branch: BranchPath, call: Int, sockets: Map<Int, Tcp.Socket>, timeoutMs: Int) -> Result<List<Int>, String>
+    ? "Nothing is ever ready."
+    Result.Ok([])
+
+fn spin(n: Int, acc: Int) -> Int
+    ? "Counts n down to zero, counting acc up; the loop is one turn's work."
+    match n < 1
+        true -> acc
+        false -> spin(n - 1, acc + 1)
+
+fn serveMany(work: Int, turns: Int, total: Int) -> Result<Int, String>
+    ? "Waits, runs work steps of pure computation, and repeats turns more times."
+    ! [Tcp.poll]
+    sockets: Map<Int, Tcp.Socket> = {}
+    ready = Tcp.poll(sockets, 0)?
+    done = total + spin(work, 0) + List.len(ready)
+    match turns < 1
+        true -> Result.Ok(done)
+        false -> serveMany(work, turns - 1, done)
+
+verify serveMany
+    given poller: Tcp.poll = [pollStub]
+    serveMany(5000, 10, 0) => Result.Ok(55000)

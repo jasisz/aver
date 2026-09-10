@@ -3,22 +3,22 @@ module NoPoll
         "The same drain, reached from a function that never waits on"
         "Tcp.poll. Nothing is stalled behind it, so nothing is reported."
     exposes [run]
-    effects [Disk.appendText]
+    effects [Disk.readText]
 
 fn drain(n: Int) -> Result<Unit, String>
-    ? "Appends n lines, one per step."
-    ! [Disk.appendText]
+    ? "Reads n entries, one per step."
+    ! [Disk.readText]
     match n < 1
         true -> Result.Ok(Unit)
         false -> drainStep(n)
 
 fn drainStep(n: Int) -> Result<Unit, String>
-    ? "Appends one line, then continues the drain."
-    ! [Disk.appendText]
-    _written = Disk.appendText("out.log", "line")?
+    ? "Reads one entry, then continues the drain."
+    ! [Disk.readText]
+    _entry = Disk.readText("queue.log")?
     drain(n - 1)
 
 fn run(n: Int) -> Result<Unit, String>
     ? "Drains the queue as a command of its own."
-    ! [Disk.appendText]
+    ! [Disk.readText]
     drain(n)

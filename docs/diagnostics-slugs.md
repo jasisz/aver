@@ -60,7 +60,7 @@ When a real signature shape is deliberately uninhabited, keep the residue explic
 | Slug | Severity | Fires when | Repair |
 |---|---|---|---|
 | `independence-hazard` | warning | Independent product branches use effects that may conflict under reordering. | Keep sequential or suppress with `[[check.suppress]]` + reason. |
-| `serve-path` | warning | A function that calls `Tcp.poll` reaches, outside its own recursive loop, a recursive function whose effects include `Disk.*` or `Tcp.*`; that loop runs to completion inside one turn, so peers waiting on the poll are not served until it returns. | Do one step of the loop per turn, run it as its own command, or suppress with `[[check.suppress]]` + reason. |
+| `serve-path` | warning | A function that calls `Tcp.poll` reaches, without re-entering itself or another function that polls, a function that is recursive once the poller's own node is removed from the call graph, whose effects include an input operation (`Disk.read*`, `Disk.size`, `Tcp.read*`, `Tcp.accept`, `Tcp.dialled`, `Tcp.peerAddress`, or bare `Disk`/`Tcp`), and whose recursion is not a walk over a list it was handed (`[_, ..rest]` passed back at the same position); that loop runs to completion inside one turn, so peers waiting on the poll are not served until it returns. Writes alone (`Disk.write*`, `Disk.append*`, `Tcp.write*`, `Tcp.close`) do not qualify: a loop that only writes what it holds is bounded by this turn's data. | Do one step of the loop per turn, run it as its own command, or suppress with `[[check.suppress]]` + reason. |
 
 ## Decisions / exposure
 

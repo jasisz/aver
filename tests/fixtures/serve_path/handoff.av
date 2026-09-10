@@ -1,0 +1,46 @@
+module Handoff
+    intent =
+        "A poller that hands off to another poller each step. Every step"
+        "waits before it works, so the pair is a chain of turns, not a loop"
+        "that runs inside one; the first wait sees nothing stalled behind it."
+    exposes [run]
+    effects [Tcp.poll, Tcp.readSome]
+
+record Pool
+    sockets: Map<Int, Tcp.Socket>
+    connections: Map<Int, Tcp.Connection>
+
+fn run(pool: Pool, rounds: Int) -> Result<Unit, String>
+    ? "One wait, then the alternating pollers take over."
+    ! [Tcp.poll, Tcp.readSome]
+    first = Tcp.poll(pool.sockets, 0)?
+    pollEven(pool, rounds + List.len(first))
+
+fn pollEven(pool: Pool, rounds: Int) -> Result<Unit, String>
+    ? "Waits, serves the first ready key, and hands off to pollOdd."
+    ! [Tcp.poll, Tcp.readSome]
+    ready = Tcp.poll(pool.sockets, 100)?
+    _served = serveFirst(pool, ready)?
+    match rounds < 1
+        true -> Result.Ok(Unit)
+        false -> pollOdd(pool, rounds - 1)
+
+fn pollOdd(pool: Pool, rounds: Int) -> Result<Unit, String>
+    ? "Waits, serves the first ready key, and hands off to pollEven."
+    ! [Tcp.poll, Tcp.readSome]
+    ready = Tcp.poll(pool.sockets, 100)?
+    _served = serveFirst(pool, ready)?
+    match rounds < 1
+        true -> Result.Ok(Unit)
+        false -> pollEven(pool, rounds - 1)
+
+fn serveFirst(pool: Pool, ready: List<Int>) -> Result<Unit, String>
+    ? "Reads one chunk from the first ready peer, if any."
+    ! [Tcp.readSome]
+    match ready
+        [] -> Result.Ok(Unit)
+        [key, .._] -> match Map.get(pool.connections, key)
+            Option.None -> Result.Ok(Unit)
+            Option.Some(connection) -> match Tcp.readSome(connection, 4096)
+                Result.Err(reason) -> Result.Err(reason)
+                Result.Ok(_) -> Result.Ok(Unit)

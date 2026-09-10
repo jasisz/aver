@@ -2221,6 +2221,11 @@ fn run_verify_vm_plans_parallel(
                     case.case_index = case_index;
                     case.case_total = case_total;
                 }
+                // A single-case plan reports its turn overrun as case 0;
+                // give it the index the case has in the block.
+                for overrun in &mut result.turn_overruns {
+                    overrun.case_index = case_index;
+                }
                 if result.is_law {
                     for (case, _, _) in &mut result.failures {
                         let expr = result
