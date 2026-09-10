@@ -150,8 +150,8 @@ pub(super) struct Definitions {
     pub(super) simp: String,
     pub(super) grind: String,
     pub(super) unfold_once: Vec<(String, bool)>,
-    /// The cone, the claim, the guard or an explanation calls a `Map.*`
-    /// operation, so the solver cites the prelude's facts about `Map.set`.
+    /// The cone, the claim, the guard or an explanation calls `Map.set`, so
+    /// the solver cites the prelude's facts about it.
     pub(super) map_facts: bool,
 }
 
@@ -175,13 +175,13 @@ pub(super) fn definitions(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContex
         .iter()
         .chain(law.when.iter())
         .chain([&law.lhs, &law.rhs])
-        .any(|expr| super::super::shared::expr_calls_builtin_namespace(expr, "Map"));
+        .any(|expr| super::super::shared::expr_calls_builtin(expr, "Map.set"));
     for &id in cone {
         let key = &ctx.symbol_table.fn_entry(id).key;
         let Some(fd) = ctx.fn_def_by_name(&key.name, key.scope_str()) else {
             continue;
         };
-        map_facts |= super::super::shared::fn_body_calls_builtin_namespace(fd, "Map");
+        map_facts |= super::super::shared::fn_body_calls_builtin(fd, "Map.set");
         let recursive = ctx.recursive_fns.contains(&id);
         // Subtractive countdown equations expose fixed-width steps. Keep
         // floor-division recursion opaque: its equations recursively grow

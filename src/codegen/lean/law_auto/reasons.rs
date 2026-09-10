@@ -102,7 +102,7 @@ fn solver(
 ) -> Vec<String> {
     // Cited theorems remain available to grind, but are not unconditional
     // rewrite rules: an accumulator equation can rewrite its own result.
-    // A cone that touches a map gets the prelude's facts about `Map.set`;
+    // A cone that calls `Map.set` gets the prelude's facts about it;
     // the same names make the demand-driven prelude ship their proofs.
     let map_facts = if definitions.map_facts {
         crate::codegen::lean::prelude::MAP_SET_FACT_LEMMAS.join(", ")

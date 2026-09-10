@@ -292,18 +292,19 @@ pub(crate) fn prelude_spec_lemmas_for_builtins(builtins: &[String]) -> Vec<Strin
     if has("Int.fromString") && has("String.fromInt") {
         lemmas.push("Int.fromString_fromInt".to_string());
     }
-    if builtins.iter().any(|b| b.starts_with("Map.")) {
+    if has("Map.set") {
         lemmas.extend(MAP_SET_FACT_LEMMAS.iter().map(|s| s.to_string()));
     }
     lemmas
 }
 
 /// The hand-proved `AverMap` facts about `set` that a proof search cites
-/// whenever its cone touches any `Map.*` operation: a get after a set under
-/// the same key, under another key, a second set under one key, and the
-/// length never shrinking. Keyed on the builtin namespace alone, never on
-/// what the law says; each name is what makes the demand-driven map
-/// prelude ship the lemma text.
+/// whenever its cone calls `Map.set`: a get after a set under the same key,
+/// under another key, a second set under one key, and the length never
+/// shrinking. Keyed on the builtin call alone, never on what the law says;
+/// a cone that only reads a map (`Map.get`, `Map.len`) has nothing for them
+/// to rewrite. Each name is what makes the demand-driven map prelude ship
+/// the lemma text.
 pub(crate) const MAP_SET_FACT_LEMMAS: [&str; 4] = [
     "AverMap.get_set_self",
     "AverMap.get_set_ne",
@@ -1460,7 +1461,7 @@ fn generate_map_prelude(body: &str, include_all_helpers: bool) -> String {
     let needs_get_set_ne = include_all_helpers || body.contains("AverMap.get_set_ne");
     let needs_has_set = include_all_helpers || mentions_exact(body, "AverMap.has_set");
     let needs_len_set_ge = include_all_helpers || mentions_exact(body, "AverMap.len_set_ge");
-    let needs_set_set_self = include_all_helpers || body.contains("AverMap.set_set_self");
+    let needs_set_set_self = include_all_helpers || mentions_exact(body, "AverMap.set_set_self");
 
     if needs_has_set_self {
         parts.push(AVER_MAP_PRELUDE_HAS_SET_SELF.to_string());
