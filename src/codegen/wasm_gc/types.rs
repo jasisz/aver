@@ -788,7 +788,9 @@ impl TypeRegistry {
                     "Tcp.sendBytes"
                         | "Tcp.readBytes"
                         | "Tcp.readSome"
+                        | "Tcp.readNow"
                         | "Tcp.writeBytes"
+                        | "Tcp.writeNow"
                         | "Tcp.poll"
                 )
             }),
@@ -873,6 +875,17 @@ impl TypeRegistry {
         if needs_option_tcp_connection && !option_types.contains_key("Option<Tcp.Connection>") {
             option_types.insert("Option<Tcp.Connection>".to_string(), next_idx);
             option_order.push("Option<Tcp.Connection>".to_string());
+            next_idx += 1;
+        }
+        // `Tcp.readNow` returns `Result<Option<Bytes>, String>`; the inner
+        // option slot must exist even when no user signature spells it.
+        let needs_option_bytes = items.iter().any(|item| match item {
+            TopLevel::FnDef(fd) => fd.effects.iter().any(|effect| effect.node == "Tcp.readNow"),
+            _ => false,
+        });
+        if needs_option_bytes && !option_types.contains_key("Option<Bytes>") {
+            option_types.insert("Option<Bytes>".to_string(), next_idx);
+            option_order.push("Option<Bytes>".to_string());
             next_idx += 1;
         }
         // Record field walk — `record GameState { lastAiResult:
@@ -1300,9 +1313,14 @@ impl TypeRegistry {
                 b"Tcp.readSome: maxBytes must be positive".as_ref(),
                 b"Tcp.readSome: maxBytes exceeds the 10485760 byte limit".as_ref(),
                 b"Tcp.readSome: maxBytes exceeds the read limit".as_ref(),
+                b"Tcp.readNow: maxBytes must be positive".as_ref(),
+                b"Tcp.readNow: maxBytes exceeds the 10485760 byte limit".as_ref(),
+                b"Tcp.readNow: maxBytes exceeds the read limit".as_ref(),
+                b"Tcp.writeNow: malformed Bytes carrier".as_ref(),
                 b"Tcp.poll: timeoutMs is negative".as_ref(),
                 b"Tcp.poll: timeoutMs exceeds the poll limit".as_ref(),
-                b"Tcp.poll: wasip2 supports only Tcp.Socket.Connected values".as_ref(),
+                b"Tcp.poll: wasip2 supports only Tcp.Socket.Connected and Tcp.Socket.Sending values"
+                    .as_ref(),
                 b"tcp: read failed".as_ref(),
                 // Phase 4.7+ — port validation. VM message verbatim
                 // (`Tcp: port N is out of range (0\u{2013}65535)`)
@@ -2311,8 +2329,10 @@ fn builtin_touches_int(name: &str) -> bool {
             | "Tcp.listen"
             | "Tcp.readBytes"
             | "Tcp.readSome"
+            | "Tcp.readNow"
             | "Tcp.poll"
             | "Tcp.writeBytes"
+            | "Tcp.writeNow"
             | "Crypto.sha256"
     )
 }
@@ -3108,8 +3128,10 @@ fn effect_implies_builtin_record(effect: &str, record_name: &str) -> bool {
         // *consume* one through their first parameter, so even a
         // program that only reads / writes / closes still needs the
         // slot allocated.
-        "Tcp.connect" | "Tcp.poll" | "Tcp.writeLine" | "Tcp.writeBytes" | "Tcp.readLine"
-        | "Tcp.readBytes" | "Tcp.readSome" | "Tcp.close" => "Tcp.Connection",
+        "Tcp.connect" | "Tcp.poll" | "Tcp.writeLine" | "Tcp.writeBytes" | "Tcp.writeNow"
+        | "Tcp.readLine" | "Tcp.readBytes" | "Tcp.readSome" | "Tcp.readNow" | "Tcp.close" => {
+            "Tcp.Connection"
+        }
         // HTTP verb effects all return Result<Http.Response, String> —
         // ensure the response record slot is allocated even when no
         // user fn signature mentions it.

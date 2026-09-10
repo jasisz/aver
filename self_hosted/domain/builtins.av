@@ -998,11 +998,15 @@ fn valVariantToTcpSocket(name: String, fields: List<Val>) -> Result<Tcp.Socket, 
         "Tcp.Socket.Connected" -> match Domain.Builtins.Helpers.oneArg(fields)
             Result.Ok(connV) -> Result.Ok(Tcp.Socket.Connected(valToTcpConn(connV)?))
             Result.Err(_) -> Result.Err("Tcp.Socket.Connected takes one resource")
+        "Tcp.Socket.Sending" -> match Domain.Builtins.Helpers.oneArg(fields)
+            Result.Ok(connV) -> Result.Ok(Tcp.Socket.Sending(valToTcpConn(connV)?))
+            Result.Err(_) -> Result.Err("Tcp.Socket.Sending takes one resource")
         _ -> Result.Err("expected Tcp.Socket value")
 
 verify valVariantToTcpSocket
     valVariantToTcpSocket("Other.State", []) => Result.Err("expected Tcp.Socket value")
     valVariantToTcpSocket("Tcp.Socket.Connected", []) => Result.Err("Tcp.Socket.Connected takes one resource")
+    valVariantToTcpSocket("Tcp.Socket.Sending", []) => Result.Err("Tcp.Socket.Sending takes one resource")
 
 fn tcpSocketEntriesToMap(entries: List<Tuple<String, Val>>, acc: Map<Int, Tcp.Socket>) -> Result<Map<Int, Tcp.Socket>, String>
     ? "Recover integer caller keys and typed socket states from a self-host Val map."

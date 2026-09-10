@@ -2,7 +2,7 @@ module Tcp
     kind = capability
     semantics = effectful
     depends [Bytes]
-    exposes [Connection, Dial, Listener, Socket, send, sendBytes, ping, connect, beginConnect, dialled, listen, accept, peerAddress, poll, writeLine, writeBytes, readLine, readBytes, readSome, close, closeDial, closeListener]
+    exposes [Connection, Dial, Listener, Socket, send, sendBytes, ping, connect, beginConnect, dialled, listen, accept, peerAddress, poll, writeLine, writeBytes, writeNow, readLine, readBytes, readSome, readNow, close, closeDial, closeListener]
 
 resource Connection
 resource Dial
@@ -12,6 +12,7 @@ type Socket
     Listening(Tcp.Listener)
     Dialing(Tcp.Dial)
     Connected(Tcp.Connection)
+    Sending(Tcp.Connection)
 
 operation send(host: String, port: Int, data: String) -> Result<String, String>
     ? "Opens a connection, writes text, reads the response to EOF, and closes."
@@ -68,7 +69,7 @@ operation peerAddress(connection: Tcp.Connection) -> Result<String, String>
     hostile = [peerAddressNormalOk, peerAddressAlwaysErr]
 
 operation poll(sockets: Map<Int, Tcp.Socket>, timeoutMs: Int) -> Result<List<Int>, String>
-    ? "Returns every ready caller-owned key in ascending order from one socket-state map: readable connections, settled or expired dials, and listeners with a pending client. False-positive readiness is allowed."
+    ? "Returns every ready caller-owned key in ascending order from one socket-state map: readable connections under Connected, writable connections under Sending, settled or expired dials, and listeners with a pending client. A Sending key is ready when the next writeNow on that connection will accept at least one byte or fail; a caller who wants both directions for one connection registers two keys. False-positive readiness is allowed."
     oracle = generativeOutput
     replay = recorded
     hostile = [pollNoneReady, pollEverythingReady, pollAlwaysErr]
@@ -84,6 +85,12 @@ operation writeBytes(connection: Tcp.Connection, payload: Bytes) -> Result<Unit,
     oracle = generativeOutput
     replay = recorded
     hostile = [writeBytesNormalOk, writeBytesAlwaysErr]
+
+operation writeNow(connection: Tcp.Connection, payload: Bytes) -> Result<Int, String>
+    ? "Writes as many payload bytes as the socket accepts right now, never blocking, and returns that count, from 0 to the payload length. 0 for a non-empty payload means the socket would block; a partial count is normal and the caller sends the rest later."
+    oracle = generativeOutput
+    replay = recorded
+    hostile = [writeNowNormalOk, writeNowPartial, writeNowWouldBlock, writeNowAlwaysErr]
 
 operation readLine(connection: Tcp.Connection) -> Result<String, String>
     ? "Reads through LF from a persistent connection and strips trailing CRLF."
@@ -102,6 +109,12 @@ operation readSome(connection: Tcp.Connection, maxBytes: Int) -> Result<Bytes, S
     oracle = generativeOutput
     replay = recorded
     hostile = [readSomeNormalOk, readSomeEof, readSomeAlwaysErr]
+
+operation readNow(connection: Tcp.Connection, maxBytes: Int) -> Result<Option<Bytes>, String>
+    ? "Reads one available chunk of at most maxBytes without blocking. None means nothing is available right now; Some(empty) means clean EOF, the same convention readSome uses; Some(bytes) is the chunk; Err is a transport failure."
+    oracle = generativeOutput
+    replay = recorded
+    hostile = [readNowNormalOk, readNowWouldBlock, readNowEof, readNowAlwaysErr]
 
 operation close(connection: Tcp.Connection) -> Result<Unit, String>
     ? "Closes a persistent connection and invalidates its handle."
@@ -237,6 +250,25 @@ fn writeBytesAlwaysErr(branch: BranchPath, call: Int, connection: Tcp.Connection
     ? "hostile: byte write fails"
     Result.Err("hostile: write failed")
 
+fn writeNowNormalOk(branch: BranchPath, call: Int, connection: Tcp.Connection, payload: Bytes) -> Result<Int, String>
+    ? "honest: the socket accepts the whole payload at once"
+    Result.Ok(Bytes.len(payload))
+
+fn writeNowPartial(branch: BranchPath, call: Int, connection: Tcp.Connection, payload: Bytes) -> Result<Int, String>
+    ? "honest boundary: the socket accepts half of the payload, at least one byte when there is one"
+    match Bytes.len(payload)
+        0 -> Result.Ok(0)
+        1 -> Result.Ok(1)
+        total -> Result.Ok(Int.div(total, 2))
+
+fn writeNowWouldBlock(branch: BranchPath, call: Int, connection: Tcp.Connection, payload: Bytes) -> Result<Int, String>
+    ? "hostile boundary: the socket buffer is full and no byte is accepted"
+    Result.Ok(0)
+
+fn writeNowAlwaysErr(branch: BranchPath, call: Int, connection: Tcp.Connection, payload: Bytes) -> Result<Int, String>
+    ? "hostile: non-blocking write fails"
+    Result.Err("hostile: write failed")
+
 fn readLineNormalOk(branch: BranchPath, call: Int, connection: Tcp.Connection) -> Result<String, String>
     ? "honest: peer sends a plausible line"
     Result.Ok("hello")
@@ -283,6 +315,30 @@ fn readSomeEof(branch: BranchPath, call: Int, connection: Tcp.Connection, maxByt
 
 fn readSomeAlwaysErr(branch: BranchPath, call: Int, connection: Tcp.Connection, maxBytes: Int) -> Result<Bytes, String>
     ? "hostile: chunk read fails"
+    Result.Err("hostile: read failed")
+
+fn readNowNormalOk(branch: BranchPath, call: Int, connection: Tcp.Connection, maxBytes: Int) -> Result<Option<Bytes>, String>
+    ? "honest: one byte is available without filling the requested maximum"
+    match maxBytes > 9223372036854775807
+        true -> Result.Err("Tcp.readNow: maxBytes {maxBytes} exceeds the read limit")
+        false -> match maxBytes < 0 - 9223372036854775808
+            true -> Result.Err("Tcp.readNow: maxBytes {maxBytes} exceeds the read limit")
+            false -> match maxBytes <= 0
+                true -> Result.Err("Tcp.readNow: maxBytes {maxBytes} must be positive")
+                false -> match maxBytes > 10485760
+                    true -> Result.Err("Tcp.readNow: maxBytes {maxBytes} exceeds the 10485760 byte limit")
+                    false -> Result.Ok(Option.Some(Bytes.fromList([0])))
+
+fn readNowWouldBlock(branch: BranchPath, call: Int, connection: Tcp.Connection, maxBytes: Int) -> Result<Option<Bytes>, String>
+    ? "honest boundary: nothing is available right now"
+    Result.Ok(Option.None)
+
+fn readNowEof(branch: BranchPath, call: Int, connection: Tcp.Connection, maxBytes: Int) -> Result<Option<Bytes>, String>
+    ? "honest boundary: clean EOF returns Some(empty Bytes)"
+    Result.Ok(Option.Some(Bytes.empty()))
+
+fn readNowAlwaysErr(branch: BranchPath, call: Int, connection: Tcp.Connection, maxBytes: Int) -> Result<Option<Bytes>, String>
+    ? "hostile: non-blocking chunk read fails"
     Result.Err("hostile: read failed")
 
 fn closeNormalOk(branch: BranchPath, call: Int, connection: Tcp.Connection) -> Result<Unit, String>

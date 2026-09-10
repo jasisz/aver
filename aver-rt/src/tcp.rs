@@ -16,6 +16,10 @@ pub enum TcpSocket {
     Listening(TcpListener),
     Dialing(TcpDial),
     Connected(TcpConnection),
+    /// The same connection as `Connected`, polled for write readiness: the
+    /// key is ready when the next [`write_now`] accepts at least one byte or
+    /// fails.
+    Sending(TcpConnection),
 }
 
 /// Deployment settings for the standard native Tcp provider.
@@ -151,6 +155,29 @@ pub fn write_bytes(conn: &TcpConnection, payload: &[u8]) -> Result<(), String> {
     })
 }
 
+/// Non-blocking sibling of [`write_bytes`].
+///
+/// Writes as many payload bytes as the socket accepts right now and returns
+/// that count, from zero to the payload length. Zero for a non-empty payload
+/// means the socket would block; a partial count is ordinary and the caller
+/// sends the remainder later, typically after a [`poll`] on
+/// [`TcpSocket::Sending`]. The stream is switched to non-blocking mode for
+/// this one call and restored afterwards, so the blocking operations keep
+/// their contracts. A real I/O error poisons the connection exactly as
+/// `write_bytes` does.
+pub fn write_now(conn: &TcpConnection, payload: &[u8]) -> Result<i64, String> {
+    with_connection_io(conn, "Tcp.writeNow", |reader| {
+        if payload.is_empty() {
+            return Ok(0);
+        }
+        match nonblocking_call(reader.get_mut(), |stream| stream.write(payload)) {
+            Ok(written) => Ok(written as i64),
+            Err(error) if would_block(&error) => Ok(0),
+            Err(error) => Err(error),
+        }
+    })
+}
+
 pub fn read_line(conn: &TcpConnection) -> Result<String, String> {
     with_connection_io(conn, "Tcp.readLine", |reader| {
         let mut line = String::new();
@@ -222,6 +249,69 @@ pub fn read_some(conn: &TcpConnection, max_bytes: i64) -> Result<Vec<u8>, String
         buf.truncate(read);
         Ok(buf)
     })
+}
+
+/// Non-blocking sibling of [`read_some`].
+///
+/// `Ok(None)` means nothing is available right now (the read would block).
+/// `Ok(Some(empty))` is clean EOF, the same convention `read_some` uses, and
+/// `Ok(Some(bytes))` is one available chunk of at most `max_bytes`. Bytes a
+/// previous `read_line` left in the buffer count as available. The stream is
+/// switched to non-blocking mode for this one call and restored afterwards.
+pub fn read_now(conn: &TcpConnection, max_bytes: i64) -> Result<Option<Vec<u8>>, String> {
+    if max_bytes <= 0 {
+        return Err(format!(
+            "Tcp.readNow: maxBytes {max_bytes} must be positive"
+        ));
+    }
+    let limit = usize::try_from(max_bytes).unwrap_or(usize::MAX);
+    if limit > BODY_LIMIT {
+        return Err(format!(
+            "Tcp.readNow: maxBytes {max_bytes} exceeds the {BODY_LIMIT} byte limit"
+        ));
+    }
+    with_connection_io(conn, "Tcp.readNow", |reader| {
+        let buffered = reader.buffer().len().min(limit);
+        if buffered > 0 {
+            let chunk = reader.buffer()[..buffered].to_vec();
+            reader.consume(buffered);
+            return Ok(Some(chunk));
+        }
+        let mut buf = vec![0u8; limit];
+        match nonblocking_call(reader.get_mut(), |stream| stream.read(&mut buf)) {
+            Ok(read) => {
+                buf.truncate(read);
+                Ok(Some(buf))
+            }
+            Err(error) if would_block(&error) => Ok(None),
+            Err(error) => Err(error),
+        }
+    })
+}
+
+/// Run one socket call in non-blocking mode and restore blocking mode
+/// afterwards, whatever the call returned. A failure to restore the mode is
+/// reported as the error because a connection left non-blocking would make
+/// every later blocking read or write misbehave.
+fn nonblocking_call<T>(
+    stream: &mut TcpStream,
+    io: impl FnOnce(&mut TcpStream) -> io::Result<T>,
+) -> io::Result<T> {
+    stream.set_nonblocking(true)?;
+    let outcome = io(stream);
+    let restored = stream.set_nonblocking(false);
+    match (outcome, restored) {
+        (Ok(value), Ok(())) => Ok(value),
+        (Err(error), _) => Err(error),
+        (Ok(_), Err(error)) => Err(error),
+    }
+}
+
+fn would_block(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+    )
 }
 
 #[cfg(not(target_family = "wasm"))]
@@ -622,6 +712,100 @@ mod tests {
         written_rx.recv().expect("peer wrote bytes");
 
         assert_eq!(read_some(&connection, 64).expect("read some"), [1, 2, 3]);
+
+        close(&connection).expect("close client");
+        release_tx.send(()).expect("release peer");
+        server.join().expect("server thread");
+    }
+
+    #[test]
+    fn read_now_reports_would_block_then_data_then_eof_and_serves_buffered_bytes() {
+        let (written_tx, written_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let (connection, server) = loopback_connection(move |mut stream| {
+            release_rx.recv().expect("wait for the idle probe");
+            stream
+                .write_all(b"hi\r\nrest")
+                .expect("write line and trailing bytes");
+            written_tx.send(()).expect("announce write");
+            stream.shutdown(Shutdown::Write).expect("finish the stream");
+        });
+
+        assert_eq!(read_now(&connection, 64).expect("idle read"), None);
+        assert_eq!(
+            reactor::connection_timeouts(&connection),
+            Some((None, None))
+        );
+        release_tx.send(()).expect("release peer");
+        written_rx.recv().expect("peer wrote bytes");
+
+        assert_eq!(read_line(&connection).expect("read line"), "hi");
+        assert_eq!(
+            read_now(&connection, 2).expect("buffered chunk"),
+            Some(b"re".to_vec())
+        );
+        assert_eq!(
+            read_now(&connection, 64).expect("buffered rest"),
+            Some(b"st".to_vec())
+        );
+        assert_eq!(
+            poll(&[TcpSocket::Connected(connection.clone())], 1_000).expect("eof is readable"),
+            [0]
+        );
+        assert_eq!(
+            read_now(&connection, 64).expect("clean eof"),
+            Some(Vec::new())
+        );
+        assert!(read_now(&connection, 0).is_err());
+        assert!(reactor::connection_exists(&connection));
+
+        close(&connection).expect("close client");
+        server.join().expect("server thread");
+    }
+
+    #[test]
+    fn write_now_accepts_bytes_until_the_peer_stops_reading_and_polls_sending() {
+        let (release_tx, release_rx) = mpsc::channel();
+        let (connection, server) = loopback_connection(move |_| {
+            release_rx.recv().expect("hold quiet peer open");
+        });
+
+        assert_eq!(write_now(&connection, &[]).expect("empty write"), 0);
+        assert_eq!(write_now(&connection, &[1, 2, 3]).expect("idle write"), 3);
+        assert_eq!(
+            poll(
+                &[
+                    TcpSocket::Connected(connection.clone()),
+                    TcpSocket::Sending(connection.clone()),
+                ],
+                1_000
+            )
+            .expect("writable idle socket"),
+            [1]
+        );
+        assert_eq!(
+            reactor::connection_timeouts(&connection),
+            Some((None, None))
+        );
+
+        // Fill the kernel buffers. Loopback acknowledgements keep freeing a
+        // little space right after the first refusal, so the settled state is
+        // "writeNow accepted nothing and Sending stays quiet for a while".
+        let payload = vec![7u8; 64 * 1024];
+        let mut settled = false;
+        for _ in 0..4096 {
+            let accepted = write_now(&connection, &payload).expect("non-blocking write");
+            assert!((0..=payload.len() as i64).contains(&accepted));
+            if accepted == 0
+                && poll(&[TcpSocket::Sending(connection.clone())], 50)
+                    .expect("poll a full socket")
+                    .is_empty()
+            {
+                settled = true;
+                break;
+            }
+        }
+        assert!(settled, "the kernel buffer never filled");
 
         close(&connection).expect("close client");
         release_tx.send(()).expect("release peer");

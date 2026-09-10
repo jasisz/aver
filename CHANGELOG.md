@@ -6,6 +6,12 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Added
 
+- **`Tcp.readNow(connection, maxBytes) -> Result<Option<Bytes>, String>` reads without blocking.** `Ok(None)` means nothing is available right now, `Ok(Some(empty))` is clean EOF exactly as `readSome` reports it, and `Ok(Some(bytes))` is one chunk of at most `maxBytes`. Native VM, generated Rust, the wasm-gc host (`aver.tcp_read_now`), and wasip2 (`input-stream.read`) all bind it.
+
+- **`Tcp.writeNow(connection, payload) -> Result<Int, String>` writes without blocking.** It returns how many payload bytes the socket accepted this call, from 0 to the payload length; 0 for a non-empty payload means the socket would block and a partial count is normal, so the caller keeps the remainder for later. Available on every target, with the wasip2 lowering built on `check-write`, `write`, and `flush`.
+
+- **`Tcp.Socket.Sending(connection)` polls a connection for write readiness.** `Tcp.poll` reports a `Sending` key when the next `writeNow` will accept at least one byte or fail; `Connected` keeps meaning read readiness, and a caller who wants both directions registers the same connection under two keys.
+
 - **Checked integer descent can guide `because` proofs.** Recursive explanations reuse native integer termination contracts, including floor-division countdowns, with original guards and earlier reasons retained at recursive calls. K5 now proves the magnitude window of its executable Fraction exponent for positive and negative exponents and connects that window to the rounding powers. The below-one exponent uses total floor-halving instead of opaque doubling recursion. Imported binary-window proofs also retain their owning function's contract and tolerate renamed parameters.
 
 - **K5 trunc-sticky composition now has a source-local universal proof.** `StickyScale` composes the integer low-bit law with the precision-scale identities, and `fpSticky.preservesCoarseTruncation` proves equality of the entire truncated records for `1 <= m < n`. The public rational-value law follows with its original guards. `round.av` and imports now have 62 universal laws and 23 universal proof obligations, no bounded laws or `sorry`, without compiler changes or manual proof files.

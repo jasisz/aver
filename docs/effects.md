@@ -48,7 +48,7 @@ The wasm-gc column covers the **default invocation** (`--target wasm-gc`, host w
 | `Random.int` | ✅ | ✅ | ✅ wasmtime / `Math.random` | ✅ `wasi:random/random.get-random-u64` + range scale | Oracle (`[min, max]` lemma) | Oracle |
 | `Random.float` | ✅ | ✅ | ✅ wasmtime / `Math.random` | ✅ `wasi:random/random.get-random-u64` → `[0.0, 1.0)` | Oracle (`[0.0, 1.0)` lemma) | Oracle |
 | `Process.stopRequested` | ✅ SIGINT/SIGTERM | ✅ SIGINT/SIGTERM | ✅ wasmtime SIGINT/SIGTERM / `false` in browser and Worker hosts | n/a — WASI 0.2 has no process-signal binding | Oracle (monotonic across calls) | Oracle (monotonic across calls) |
-| `Tcp.connect` / `close` / `writeLine` / `writeBytes` / `readLine` / `readBytes` / `readSome` / `poll` / `send` / `sendBytes` / `ping` | ✅ | ✅ | ✅ wasmtime / ❌ in JS hosts | ✅ `wasi:sockets`; `poll` uses input-stream subscriptions + `wasi:io/poll` | Oracle | Oracle |
+| `Tcp.connect` / `close` / `writeLine` / `writeBytes` / `writeNow` / `readLine` / `readBytes` / `readSome` / `readNow` / `poll` / `send` / `sendBytes` / `ping` | ✅ | ✅ | ✅ wasmtime / ❌ in JS hosts | ✅ `wasi:sockets`; `poll` uses input-stream and output-stream subscriptions + `wasi:io/poll`; `readNow` / `writeNow` use the non-blocking `read` / `check-write` + `write` + `flush` stream methods | Oracle | Oracle |
 | `Tcp.beginConnect` / `dialled` / `listen` / `accept` / `peerAddress` / `closeDial` / `closeListener` | ✅ | ✅ | ✅ wasmtime / ❌ in JS hosts | n/a — this target binds no dial, listener, or peer-address socket resource. Rejected at compile time | Oracle | Oracle |
 | `Terminal.*` (12 methods) | ✅ via `crossterm` (`terminal` feature) | ✅ via `crossterm` | ✅ wasmtime / ❌ in JS hosts | n/a — WASI 0.2 has no terminal interface | Oracle | Oracle |
 | `Time.now` (ISO string) | ✅ | ✅ | ✅ wasmtime / `new Date().toISOString()` | ✅ `wasi:clocks/wall-clock.now` + guest-side civil_from_days | Oracle | Oracle |
@@ -106,7 +106,7 @@ aver run app.av --wasip2  -- alpha beta   # embedded wasmtime + wasmtime-wasi
 
 What lands today (0.18) vs. deferred:
 
-- ✅ Console, Args.get, Env.get, Time, Random, Disk, outgoing Http, and the blocking and connected half of Tcp — `connect`, `close`, `writeLine`, `writeBytes`, `readLine`, `readBytes`, `readSome`, `poll`, `send`, `sendBytes`, `ping` — including binary reads and writes.
+- ✅ Console, Args.get, Env.get, Time, Random, Disk, outgoing Http, and the connected half of Tcp — `connect`, `close`, `writeLine`, `writeBytes`, `writeNow`, `readLine`, `readBytes`, `readSome`, `readNow`, `poll`, `send`, `sendBytes`, `ping` — including binary reads and writes, the two non-blocking primitives, and `Sending` write-readiness polling.
 - ✅ Incoming HTTP through `--world wasi:http/proxy --handler <fn>`.
 - n/a Process.stopRequested, Env.set, Terminal.* — structurally absent from WASI 0.2 (no process-signal binding, a read-only environment, and no terminal interface). Rejected at compile time.
 - n/a Tcp.beginConnect, dialled, listen, accept, peerAddress, closeDial, closeListener — this target binds no dial, listener, or peer-address socket resource, so a program that listens or dials without blocking selects `wasm-gc`, generated Rust, or the VM. Rejected at compile time.
