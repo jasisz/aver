@@ -404,6 +404,44 @@ fn chunk(conn: Tcp.Connection, maxBytes: Int) -> Result<Bytes, String>
 }
 
 #[test]
+fn tcp_read_now_write_now_and_sending_poll_compile_and_validate_as_component() {
+    let source = r#"module Probe
+    intent = "Compile the non-blocking connected-socket operations."
+    depends [Bytes]
+    exposes [take, offer, writable]
+    effects [Tcp.readNow, Tcp.writeNow, Tcp.poll]
+
+fn take(conn: Tcp.Connection, maxBytes: Int) -> Result<Option<Bytes>, String>
+    ? "Read what is available right now; None means it would block."
+    ! [Tcp.readNow]
+    Tcp.readNow(conn, maxBytes)
+
+fn offer(conn: Tcp.Connection, payload: Bytes) -> Result<Int, String>
+    ? "Write what the socket accepts right now and report the count."
+    ! [Tcp.writeNow]
+    Tcp.writeNow(conn, payload)
+
+fn writable(conn: Tcp.Connection, timeoutMs: Int) -> Result<List<Int>, String>
+    ? "Wait for write readiness on one connection."
+    ! [Tcp.poll]
+    Tcp.poll({1 => Tcp.Socket.Sending(conn), 2 => Tcp.Socket.Connected(conn)}, timeoutMs)
+"#;
+    let (items, type_aliases) =
+        parse_pipeline_with_module_root(source, Some(env!("CARGO_MANIFEST_DIR")))
+            .unwrap_or_else(|e| panic!("{e}\n--- source ---\n{source}"));
+    let core_bytes = compile_core_flattened(&items, &type_aliases)
+        .unwrap_or_else(|e| panic!("wasip2 core compile: {e}\n--- source ---\n{source}"));
+    let (component_bytes, _) = aver::codegen::wasip2::compile_to_component(
+        &core_bytes,
+        aver::codegen::wasip2::Wasip2World::CliCommand,
+    )
+    .unwrap_or_else(|e| panic!("wasip2 component wrap: {e}\n--- source ---\n{source}"));
+    wasmparser::Validator::new_with_features(wasmparser::WasmFeatures::default())
+        .validate_all(&component_bytes)
+        .unwrap_or_else(|e| panic!("component validate: {e}\n--- source ---\n{source}"));
+}
+
+#[test]
 fn tcp_write_bytes_compiles_and_validates_as_component() {
     let source = r#"module Probe
     intent = "Compile exact binary writes on a persistent connection."

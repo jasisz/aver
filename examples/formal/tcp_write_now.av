@@ -1,0 +1,39 @@
+module TcpWriteNowExample
+    intent =
+        "Send a frame through non-blocking writes and keep the unsent remainder as data."
+        "Tcp.writeNow accepts between zero and all of the payload; the pure core decides what is left."
+        "Tcp.readNow answers None when nothing is there yet, so a poll loop never blocks on a read."
+    depends [Bytes]
+    exposes [stillToSend, pushOnce, availableNow]
+    effects [Tcp.writeNow, Tcp.readNow]
+
+fn stillToSend(total: Int, accepted: Int) -> Int
+    ? "How many payload bytes remain after the socket accepted a prefix."
+    total - accepted
+
+verify stillToSend law acceptedNothingKeepsEverything
+    given total: Int = [0, 1, 64, 65536]
+    stillToSend(total, 0) => total
+
+verify stillToSend law acceptedEverythingLeavesNothing
+    given total: Int = [0, 1, 64, 65536]
+    stillToSend(total, total) => 0
+
+verify stillToSend law acceptedPrefixNeverOvershoots
+    given total: Int = [1, 64, 65536]
+    given accepted: Int = [0, 1, 64]
+    when accepted >= 0
+    stillToSend(total, accepted) <= total holds
+
+fn pushOnce(connection: Tcp.Connection, payload: Bytes) -> Result<Bytes, String>
+    ? "One non-blocking write; the result is what still has to be sent later."
+    ! [Tcp.writeNow]
+    accepted = Tcp.writeNow(connection, payload)?
+    Result.Ok(Bytes.drop(payload, accepted))
+
+fn availableNow(connection: Tcp.Connection) -> Result<Int, String>
+    ? "How many bytes one non-blocking read yields right now; 0 covers would-block and EOF alike."
+    ! [Tcp.readNow]
+    match Tcp.readNow(connection, 64)?
+        Option.None -> Result.Ok(0)
+        Option.Some(bytes) -> Result.Ok(Bytes.len(bytes))

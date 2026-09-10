@@ -173,9 +173,15 @@ pub(super) enum EffectName {
     TcpPeerAddress,
     TcpWriteLine,
     TcpWriteBytes,
+    /// `Tcp.writeNow(conn, payload) -> Result<Int, String>`: the
+    /// non-blocking write that returns how many bytes were accepted.
+    TcpWriteNow,
     TcpReadLine,
     TcpReadBytes,
     TcpReadSome,
+    /// `Tcp.readNow(conn, maxBytes) -> Result<Option<Bytes>, String>`:
+    /// the non-blocking chunk read; `None` means it would block.
+    TcpReadNow,
     TcpPoll,
     TcpClose,
     TcpCloseDial,
@@ -274,9 +280,11 @@ impl EffectName {
         Self::TcpPeerAddress,
         Self::TcpWriteLine,
         Self::TcpWriteBytes,
+        Self::TcpWriteNow,
         Self::TcpReadLine,
         Self::TcpReadBytes,
         Self::TcpReadSome,
+        Self::TcpReadNow,
         Self::TcpPoll,
         Self::TcpClose,
         Self::TcpCloseDial,
@@ -366,9 +374,11 @@ impl EffectName {
             "Tcp.peerAddress" => Some(Self::TcpPeerAddress),
             "Tcp.writeLine" => Some(Self::TcpWriteLine),
             "Tcp.writeBytes" => Some(Self::TcpWriteBytes),
+            "Tcp.writeNow" => Some(Self::TcpWriteNow),
             "Tcp.readLine" => Some(Self::TcpReadLine),
             "Tcp.readBytes" => Some(Self::TcpReadBytes),
             "Tcp.readSome" => Some(Self::TcpReadSome),
+            "Tcp.readNow" => Some(Self::TcpReadNow),
             "Tcp.poll" => Some(Self::TcpPoll),
             "Tcp.close" => Some(Self::TcpClose),
             "Tcp.closeDial" => Some(Self::TcpCloseDial),
@@ -456,9 +466,11 @@ impl EffectName {
             Self::TcpPeerAddress => "Tcp.peerAddress",
             Self::TcpWriteLine => "Tcp.writeLine",
             Self::TcpWriteBytes => "Tcp.writeBytes",
+            Self::TcpWriteNow => "Tcp.writeNow",
             Self::TcpReadLine => "Tcp.readLine",
             Self::TcpReadBytes => "Tcp.readBytes",
             Self::TcpReadSome => "Tcp.readSome",
+            Self::TcpReadNow => "Tcp.readNow",
             Self::TcpPoll => "Tcp.poll",
             Self::TcpClose => "Tcp.close",
             Self::TcpCloseDial => "Tcp.closeDial",
@@ -548,9 +560,11 @@ impl EffectName {
             Self::TcpPeerAddress => ("aver", "tcp_peer_address"),
             Self::TcpWriteLine => ("aver", "tcp_write_line"),
             Self::TcpWriteBytes => ("aver", "tcp_write_bytes"),
+            Self::TcpWriteNow => ("aver", "tcp_write_now"),
             Self::TcpReadLine => ("aver", "tcp_read_line"),
             Self::TcpReadBytes => ("aver", "tcp_read_bytes"),
             Self::TcpReadSome => ("aver", "tcp_read_some"),
+            Self::TcpReadNow => ("aver", "tcp_read_now"),
             Self::TcpPoll => ("aver", "tcp_poll"),
             Self::TcpClose => ("aver", "tcp_close"),
             Self::TcpCloseDial => ("aver", "tcp_close_dial"),
@@ -675,9 +689,13 @@ impl EffectName {
             }
             // Keep the count boxed so an arbitrary-precision Int can become a
             // catchable Result.Err instead of trapping at the host ABI.
-            Self::TcpReadBytes | Self::TcpReadSome => Ok(vec![any_ref_ty(), any_ref_ty()]),
+            Self::TcpReadBytes | Self::TcpReadSome | Self::TcpReadNow => {
+                Ok(vec![any_ref_ty(), any_ref_ty()])
+            }
             Self::TcpPoll => Ok(vec![map_int_tcp_socket_ref_ty(registry)?, any_ref_ty()]),
-            Self::TcpWriteLine | Self::TcpWriteBytes => Ok(vec![any_ref_ty(), any_ref_ty()]),
+            Self::TcpWriteLine | Self::TcpWriteBytes | Self::TcpWriteNow => {
+                Ok(vec![any_ref_ty(), any_ref_ty()])
+            }
             Self::TcpSend => Ok(vec![any_ref_ty(), ValType::I64, any_ref_ty()]),
             // Bytes is a nominal record. Keep the import parameter as anyref,
             // like Tcp.Connection, so the host can project its `values`
@@ -803,6 +821,11 @@ impl EffectName {
             Self::TcpSendBytes | Self::TcpReadBytes | Self::TcpReadSome => {
                 Ok(vec![result_ref_ty(registry, "Result<Bytes,String>")?])
             }
+            Self::TcpReadNow => Ok(vec![result_ref_ty(
+                registry,
+                "Result<Option<Bytes>,String>",
+            )?]),
+            Self::TcpWriteNow => Ok(vec![result_ref_ty(registry, "Result<Int,String>")?]),
             Self::TcpPoll => Ok(vec![result_ref_ty(registry, "Result<List<Int>,String>")?]),
             Self::TcpWriteLine
             | Self::TcpWriteBytes
@@ -1253,14 +1276,34 @@ impl EffectName {
                 Wasip2ImportSlot::IoStreamsResourceDropOutputStream,
                 Wasip2ImportSlot::SocketsTcpResourceDropTcpSocket,
             ],
+            // `Tcp.writeNow` asks the stream how much it accepts right now,
+            // writes at most that much, and requests a flush without
+            // waiting for it.
+            Self::TcpWriteNow => &[
+                Wasip2ImportSlot::OutputStreamCheckWrite,
+                Wasip2ImportSlot::OutputStreamWrite,
+                Wasip2ImportSlot::OutputStreamFlush,
+                Wasip2ImportSlot::IoStreamsResourceDropInputStream,
+                Wasip2ImportSlot::IoStreamsResourceDropOutputStream,
+                Wasip2ImportSlot::SocketsTcpResourceDropTcpSocket,
+            ],
             Self::TcpReadLine | Self::TcpReadBytes | Self::TcpReadSome => &[
                 Wasip2ImportSlot::InputStreamBlockingRead,
                 Wasip2ImportSlot::IoStreamsResourceDropInputStream,
                 Wasip2ImportSlot::IoStreamsResourceDropOutputStream,
                 Wasip2ImportSlot::SocketsTcpResourceDropTcpSocket,
             ],
+            // `Tcp.readNow` is the non-blocking `input-stream.read`: an empty
+            // list means nothing is available yet, `closed` is clean EOF.
+            Self::TcpReadNow => &[
+                Wasip2ImportSlot::InputStreamRead,
+                Wasip2ImportSlot::IoStreamsResourceDropInputStream,
+                Wasip2ImportSlot::IoStreamsResourceDropOutputStream,
+                Wasip2ImportSlot::SocketsTcpResourceDropTcpSocket,
+            ],
             Self::TcpPoll => &[
                 Wasip2ImportSlot::InputStreamSubscribe,
+                Wasip2ImportSlot::OutputStreamSubscribe,
                 Wasip2ImportSlot::ClocksMonotonicSubscribeDuration,
                 Wasip2ImportSlot::IoPollPoll,
                 Wasip2ImportSlot::IoPollResourceDropPollable,

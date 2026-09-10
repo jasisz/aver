@@ -578,6 +578,63 @@ fn main() -> Bool
 }
 
 #[test]
+fn standard_tcp_read_now_is_served_through_the_registry() {
+    use std::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
+    let port = listener.local_addr().expect("listener address").port();
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let peer = std::thread::spawn(move || {
+        let (stream, _) = listener.accept().expect("accept readNow client");
+        release_rx.recv().expect("hold the quiet peer open");
+        drop(stream);
+    });
+
+    let root = temp_root("tcp-read-now");
+    fs::write(
+        root.join("main.av"),
+        format!(
+            "\
+module Client
+    exposes [main]
+    effects [Tcp.connect, Tcp.readNow, Tcp.close]
+
+fn main() -> Result<Bool, String>
+    ! [Tcp.connect, Tcp.readNow, Tcp.close]
+    conn = Tcp.connect(\"127.0.0.1\", {port})?
+    idle = Tcp.readNow(conn, 16)?
+    Tcp.close(conn)?
+    match idle
+        Option.None -> Result.Ok(true)
+        Option.Some(_) -> Result.Ok(false)
+"
+        ),
+    )
+    .expect("write entry");
+
+    let (mut machine, _contracts) = compile_vm(&root, "main.av");
+    let value = machine
+        .run()
+        .expect("default Tcp provider")
+        .to_value(&machine.arena);
+    assert_eq!(value, Value::Ok(Box::new(Value::Bool(true))));
+
+    let (mut machine, contracts) = compile_vm(&root, "main.av");
+    let mut providers = ProviderRegistry::for_program(contracts).expect("standard registry");
+    providers.unbind("Tcp");
+    machine.set_provider_registry(Arc::new(providers));
+    let error = machine
+        .run()
+        .expect_err("Tcp must not bypass the provider registry");
+    let message = error.to_string();
+    assert!(message.contains("error[capability-provider-missing]"));
+    assert!(message.contains("Tcp.") && message.contains("contract_hash sha256:"));
+
+    release_tx.send(()).expect("release peer");
+    peer.join().expect("peer thread");
+}
+
+#[test]
 fn standard_random_uses_the_default_provider_and_cannot_bypass_it() {
     let root = temp_root("random-fault-injection");
     fs::write(

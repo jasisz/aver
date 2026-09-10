@@ -181,7 +181,7 @@ pub const RECORD_COMPUTE_DOMAIN_LINE: &str =
 
 /// Identity of the exact checker-owned Lean wall shipped by this release.
 pub const CURRENT_WALL_ID: &str =
-    "sha256:a58a73db59651f0a58a214ea949b472ad5cd7a5237c488a0906a71d9b43a6986";
+    "sha256:510afd368403d01b96fc9e734275eb4c0605f6d555cd3e29d39f463cafe2a864";
 
 /// Complete host-import surface admitted by the wasm-gc certificate format.
 ///
@@ -252,9 +252,11 @@ pub const WASM_GC_CAPABILITIES: &[(&str, &str)] = &[
     ("aver", "tcp_peer_address"),
     ("aver", "tcp_write_line"),
     ("aver", "tcp_write_bytes"),
+    ("aver", "tcp_write_now"),
     ("aver", "tcp_read_line"),
     ("aver", "tcp_read_bytes"),
     ("aver", "tcp_read_some"),
+    ("aver", "tcp_read_now"),
     ("aver", "tcp_poll"),
     ("aver", "tcp_close"),
     ("aver", "tcp_close_dial"),
@@ -295,6 +297,11 @@ pub const WASIP2_CAPABILITIES: &[(&str, &str)] = &[
         "[method]input-stream.blocking-read",
     ),
     ("wasi:io/streams@0.2.4", "[method]input-stream.subscribe"),
+    ("wasi:io/streams@0.2.4", "[method]input-stream.read"),
+    ("wasi:io/streams@0.2.4", "[method]output-stream.check-write"),
+    ("wasi:io/streams@0.2.4", "[method]output-stream.write"),
+    ("wasi:io/streams@0.2.4", "[method]output-stream.flush"),
+    ("wasi:io/streams@0.2.4", "[method]output-stream.subscribe"),
     ("wasi:clocks/monotonic-clock@0.2.4", "subscribe-duration"),
     ("wasi:io/poll@0.2.4", "poll"),
     ("wasi:io/poll@0.2.4", "[resource-drop]pollable"),
@@ -540,7 +547,7 @@ mod tests {
 
     #[test]
     fn capability_pairs_are_unique() {
-        assert_eq!(WASIP2_CAPABILITIES.len(), 75);
+        assert_eq!(WASIP2_CAPABILITIES.len(), 80);
         for registry in [WASM_GC_CAPABILITIES, WASIP2_CAPABILITIES] {
             let unique = registry
                 .iter()

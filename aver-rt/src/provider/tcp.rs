@@ -160,6 +160,9 @@ fn socket_map(
             "Connected" => crate::tcp::TcpSocket::Connected(
                 resource::<crate::TcpConnection>(operation, &fields[0], "Tcp.Connection")?.clone(),
             ),
+            "Sending" => crate::tcp::TcpSocket::Sending(
+                resource::<crate::TcpConnection>(operation, &fields[0], "Tcp.Connection")?.clone(),
+            ),
             other => {
                 return Err(ProviderFault::new(
                     "invalid_arguments",
@@ -378,6 +381,19 @@ impl CapabilityProvider for StandardTcpProvider {
                     |_| ProviderValue::Unit,
                 )
             }
+            "Tcp.writeNow" => {
+                let [connection_value, ProviderValue::Bytes(payload)] = args else {
+                    return Err(invalid_arguments(
+                        operation,
+                        "(Tcp.Connection connection, Bytes payload)",
+                        args.len(),
+                    ));
+                };
+                tcp_result(
+                    crate::tcp::write_now(connection(operation, connection_value)?, payload),
+                    |accepted| ProviderValue::Int(crate::AverInt::from(accepted)),
+                )
+            }
             "Tcp.readLine" => {
                 let [connection_value] = args else {
                     return Err(invalid_arguments(
@@ -425,6 +441,28 @@ impl CapabilityProvider for StandardTcpProvider {
                 tcp_result(
                     crate::tcp::read_some(connection(operation, connection_value)?, max_bytes),
                     ProviderValue::Bytes,
+                )
+            }
+            "Tcp.readNow" => {
+                let [connection_value, ProviderValue::Int(max_bytes)] = args else {
+                    return Err(invalid_arguments(
+                        operation,
+                        "(Tcp.Connection connection, Int maxBytes)",
+                        args.len(),
+                    ));
+                };
+                let Some(max_bytes) = max_bytes.to_i64() else {
+                    return Ok(ProviderValue::ResultErr(Box::new(ProviderValue::String(
+                        format!("Tcp.readNow: maxBytes {max_bytes} exceeds the read limit"),
+                    ))));
+                };
+                tcp_result(
+                    crate::tcp::read_now(connection(operation, connection_value)?, max_bytes),
+                    |chunk| {
+                        chunk.map_or(ProviderValue::OptionNone, |bytes| {
+                            ProviderValue::OptionSome(Box::new(ProviderValue::Bytes(bytes)))
+                        })
+                    },
                 )
             }
             "Tcp.close" => {
@@ -540,6 +578,118 @@ mod tests {
             })
             .collect::<Vec<_>>();
         assert_eq!(ready, [crate::AverInt::from(10), large]);
+
+        crate::tcp::close(&connection).expect("close client");
+        release_tx.send(()).expect("release peer");
+        server.join().expect("server thread");
+    }
+
+    #[test]
+    fn read_now_and_write_now_cross_the_provider_boundary_as_aver_values() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind loopback listener");
+        let port = listener.local_addr().expect("listener address").port();
+        let (written_tx, written_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept loopback connection");
+            stream.write_all(&[9, 8]).expect("write ready bytes");
+            written_tx.send(()).expect("announce write");
+            release_rx.recv().expect("hold peer open");
+        });
+        let connection =
+            crate::tcp::connect("127.0.0.1", i64::from(port)).expect("connect loopback client");
+        written_rx.recv().expect("peer wrote bytes");
+        assert_eq!(
+            crate::tcp::poll(
+                &[crate::tcp::TcpSocket::Connected(connection.clone())],
+                1_000
+            )
+            .expect("wait for the peer's bytes"),
+            [0]
+        );
+        let resource = ProviderResource::new(connection.clone());
+        let provider = StandardTcpProvider::default();
+
+        let written = provider
+            .invoke(
+                &context("Tcp.writeNow"),
+                &[
+                    ProviderValue::Resource(resource.clone()),
+                    ProviderValue::Bytes(vec![1, 2, 3]),
+                ],
+            )
+            .expect("provider invocation");
+        let ProviderValue::ResultOk(written) = written else {
+            panic!("Tcp.writeNow should succeed: {written:?}");
+        };
+        let ProviderValue::Int(written) = *written else {
+            panic!("Tcp.writeNow should return Int");
+        };
+        assert_eq!(written, crate::AverInt::from(3));
+
+        let read = provider
+            .invoke(
+                &context("Tcp.readNow"),
+                &[
+                    ProviderValue::Resource(resource.clone()),
+                    ProviderValue::Int(crate::AverInt::from(64)),
+                ],
+            )
+            .expect("provider invocation");
+        let ProviderValue::ResultOk(read) = read else {
+            panic!("Tcp.readNow should succeed: {read:?}");
+        };
+        let ProviderValue::OptionSome(read) = *read else {
+            panic!("Tcp.readNow should see the peer's bytes");
+        };
+        let ProviderValue::Bytes(read) = *read else {
+            panic!("Tcp.readNow should return Bytes");
+        };
+        assert_eq!(read, vec![9, 8]);
+        let idle = provider
+            .invoke(
+                &context("Tcp.readNow"),
+                &[
+                    ProviderValue::Resource(resource.clone()),
+                    ProviderValue::Int(crate::AverInt::from(64)),
+                ],
+            )
+            .expect("provider invocation");
+        let ProviderValue::ResultOk(idle) = idle else {
+            panic!("Tcp.readNow should succeed on an idle socket: {idle:?}");
+        };
+        assert!(
+            matches!(*idle, ProviderValue::OptionNone),
+            "idle readNow must be None: {idle:?}"
+        );
+
+        let sending = ProviderValue::Variant {
+            type_name: "Tcp.Socket".to_string(),
+            variant: "Sending".to_string(),
+            fields: vec![ProviderValue::Resource(resource)],
+        };
+        let polled = provider
+            .invoke(
+                &context("Tcp.poll"),
+                &[
+                    ProviderValue::Map(vec![(
+                        ProviderValue::Int(crate::AverInt::from(4)),
+                        sending,
+                    )]),
+                    ProviderValue::Int(crate::AverInt::from(1_000)),
+                ],
+            )
+            .expect("provider invocation");
+        let ProviderValue::ResultOk(polled) = polled else {
+            panic!("Tcp.poll should succeed: {polled:?}");
+        };
+        let ProviderValue::List(polled) = *polled else {
+            panic!("Tcp.poll should return List<Int>");
+        };
+        let [ProviderValue::Int(key)] = polled.as_slice() else {
+            panic!("Sending key must be ready: {polled:?}");
+        };
+        assert_eq!(*key, crate::AverInt::from(4));
 
         crate::tcp::close(&connection).expect("close client");
         release_tx.send(()).expect("release peer");

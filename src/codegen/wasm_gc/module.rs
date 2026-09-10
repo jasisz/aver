@@ -2818,9 +2818,11 @@ pub(super) fn emit_module_with(
                 tcp_close_fn_idx: tcp.close.as_ref().map(|t| t.fn_idx),
                 tcp_write_line_fn_idx: tcp.write_line.as_ref().map(|t| t.fn_idx),
                 tcp_write_bytes_fn_idx: tcp.write_bytes.as_ref().map(|t| t.fn_idx),
+                tcp_write_now_fn_idx: tcp.write_now.as_ref().map(|t| t.fn_idx),
                 tcp_read_line_fn_idx: tcp.read_line.as_ref().map(|t| t.fn_idx),
                 tcp_read_bytes_fn_idx: tcp.read_bytes.as_ref().map(|t| t.fn_idx),
                 tcp_read_some_fn_idx: tcp.read_some.as_ref().map(|t| t.fn_idx),
+                tcp_read_now_fn_idx: tcp.read_now.as_ref().map(|t| t.fn_idx),
                 tcp_poll_fn_idx: tcp.poll.as_ref().map(|t| t.fn_idx),
                 tcp_send_fn_idx: tcp.send.as_ref().map(|t| t.fn_idx),
                 tcp_send_bytes_fn_idx: tcp.send_bytes.as_ref().map(|t| t.fn_idx),
@@ -4958,6 +4960,88 @@ pub(super) fn emit_module_with(
         };
         codes.function(&super::wasip2_tcp::emit_tcp_write_bytes(tw, &helpers));
     }
+    if let Some(tw) = &tcp.write_now {
+        let (_, parse_id_fn) = tcp
+            .parse_id
+            .expect("tcp.write_now gated on tcp_parse_id allocation");
+        let cabi_realloc_fn = cabi_realloc.as_ref().map(|c| c.fn_idx).ok_or_else(|| {
+            WasmGcError::Validation("tcp.write_now emit requires cabi_realloc fn idx".into())
+        })?;
+        let lookup = |slot: super::wasip2_imports::Wasip2ImportSlot,
+                      name: &'static str|
+         -> Result<u32, WasmGcError> {
+            wasip2_imports.lookup_wasm_fn_idx(slot).ok_or_else(|| {
+                WasmGcError::Validation(format!("tcp.write_now emit requires {name} fn idx"))
+            })
+        };
+        let result_ok_fn = factory_exports
+            .result_int_string_ok
+            .ok_or_else(|| {
+                WasmGcError::Validation(
+                    "tcp.write_now emit requires Result<Int,String> Ok factory".into(),
+                )
+            })?
+            .fn_idx;
+        let result_err_fn = factory_exports
+            .result_int_string_err
+            .ok_or_else(|| {
+                WasmGcError::Validation(
+                    "tcp.write_now emit requires Result<Int,String> Err factory".into(),
+                )
+            })?
+            .fn_idx;
+        let aint_from_i64_fn = registry.aint_from_i64_fn_idx.ok_or_else(|| {
+            WasmGcError::Validation(
+                "tcp.write_now emit requires __aint_from_i64 for the accepted count".into(),
+            )
+        })?;
+        let tcp_pool_global = wasip2_globals
+            .as_ref()
+            .and_then(|g| g.tcp_pool)
+            .ok_or_else(|| {
+                WasmGcError::Validation("tcp.write_now emit requires tcp_pool global".into())
+            })?;
+        let helpers = super::wasip2_tcp::TcpWriteNowHelperFns {
+            parse_id_fn,
+            cabi_realloc_fn,
+            check_write_fn: lookup(
+                super::wasip2_imports::Wasip2ImportSlot::OutputStreamCheckWrite,
+                "OutputStreamCheckWrite",
+            )?,
+            write_fn: lookup(
+                super::wasip2_imports::Wasip2ImportSlot::OutputStreamWrite,
+                "OutputStreamWrite",
+            )?,
+            flush_fn: lookup(
+                super::wasip2_imports::Wasip2ImportSlot::OutputStreamFlush,
+                "OutputStreamFlush",
+            )?,
+            result_ok_fn,
+            result_err_fn,
+            aint_from_i64_fn,
+            tcp_pool_global,
+            drop_input_stream_fn: lookup(
+                super::wasip2_imports::Wasip2ImportSlot::IoStreamsResourceDropInputStream,
+                "IoStreamsResourceDropInputStream",
+            )?,
+            drop_output_stream_fn: lookup(
+                super::wasip2_imports::Wasip2ImportSlot::IoStreamsResourceDropOutputStream,
+                "IoStreamsResourceDropOutputStream",
+            )?,
+            drop_tcp_socket_fn: lookup(
+                super::wasip2_imports::Wasip2ImportSlot::SocketsTcpResourceDropTcpSocket,
+                "SocketsTcpResourceDropTcpSocket",
+            )?,
+            bump_alloc_ptr_global: wasip2_globals
+                .as_ref()
+                .map(|g| g.bump_alloc_ptr)
+                .expect("tcp.write_now emit requires bump_alloc_ptr global"),
+            bytes_unpack_fn: packed_sequence_helpers
+                .ops_for("Bytes")
+                .map(|ops| ops.unpack),
+        };
+        codes.function(&super::wasip2_tcp::emit_tcp_write_now(tw, &helpers));
+    }
     if let Some(tr) = &tcp.read_line {
         let (_, parse_id_fn) = tcp
             .parse_id
@@ -5148,6 +5232,80 @@ pub(super) fn emit_module_with(
         };
         codes.function(&super::wasip2_tcp::emit_tcp_read_some(tr, &helpers));
     }
+    if let Some(tr) = &tcp.read_now {
+        let (_, parse_id_fn) = tcp
+            .parse_id
+            .expect("tcp.read_now gated on tcp_parse_id allocation");
+        let cabi_realloc_fn = cabi_realloc.as_ref().map(|c| c.fn_idx).ok_or_else(|| {
+            WasmGcError::Validation("tcp.read_now emit requires cabi_realloc fn idx".into())
+        })?;
+        let lookup = |slot: super::wasip2_imports::Wasip2ImportSlot,
+                      name: &'static str|
+         -> Result<u32, WasmGcError> {
+            wasip2_imports.lookup_wasm_fn_idx(slot).ok_or_else(|| {
+                WasmGcError::Validation(format!("tcp.read_now emit requires {name} fn idx"))
+            })
+        };
+        let factory = |slot: Option<FactorySlot>, name: &'static str| -> Result<u32, WasmGcError> {
+            slot.map(|slot| slot.fn_idx).ok_or_else(|| {
+                WasmGcError::Validation(format!("tcp.read_now emit requires the {name} factory"))
+            })
+        };
+        let aint_from_i64_fn = registry.aint_from_i64_fn_idx.ok_or_else(|| {
+            WasmGcError::Validation(
+                "tcp.read_now emit requires __aint_from_i64 for List<Int> result".into(),
+            )
+        })?;
+        let tcp_pool_global = wasip2_globals
+            .as_ref()
+            .and_then(|g| g.tcp_pool)
+            .ok_or_else(|| {
+                WasmGcError::Validation("tcp.read_now emit requires tcp_pool global".into())
+            })?;
+        let helpers = super::wasip2_tcp::TcpReadNowHelperFns {
+            parse_id_fn,
+            cabi_realloc_fn,
+            read_fn: lookup(
+                super::wasip2_imports::Wasip2ImportSlot::InputStreamRead,
+                "InputStreamRead",
+            )?,
+            result_bytes_ok_fn: factory(
+                factory_exports.result_bytes_string_ok,
+                "Result<Bytes,String> Ok",
+            )?,
+            result_some_fn: factory(
+                factory_exports.result_option_bytes_string_some,
+                "Result<Option<Bytes>,String> Some",
+            )?,
+            result_none_fn: factory(
+                factory_exports.result_option_bytes_string_none,
+                "Result<Option<Bytes>,String> None",
+            )?,
+            result_err_fn: factory(
+                factory_exports.result_option_bytes_string_err,
+                "Result<Option<Bytes>,String> Err",
+            )?,
+            aint_from_i64_fn,
+            tcp_pool_global,
+            drop_input_stream_fn: lookup(
+                super::wasip2_imports::Wasip2ImportSlot::IoStreamsResourceDropInputStream,
+                "IoStreamsResourceDropInputStream",
+            )?,
+            drop_output_stream_fn: lookup(
+                super::wasip2_imports::Wasip2ImportSlot::IoStreamsResourceDropOutputStream,
+                "IoStreamsResourceDropOutputStream",
+            )?,
+            drop_tcp_socket_fn: lookup(
+                super::wasip2_imports::Wasip2ImportSlot::SocketsTcpResourceDropTcpSocket,
+                "SocketsTcpResourceDropTcpSocket",
+            )?,
+            bump_alloc_ptr_global: wasip2_globals
+                .as_ref()
+                .map(|g| g.bump_alloc_ptr)
+                .expect("tcp.read_now emit requires bump_alloc_ptr global"),
+        };
+        codes.function(&super::wasip2_tcp::emit_tcp_read_now(tr, &helpers));
+    }
     if let Some(tp) = &tcp.poll {
         let (_, parse_id_fn) = tcp
             .parse_id
@@ -5179,6 +5337,10 @@ pub(super) fn emit_module_with(
             input_subscribe_fn: lookup(
                 super::wasip2_imports::Wasip2ImportSlot::InputStreamSubscribe,
                 "InputStreamSubscribe",
+            )?,
+            output_subscribe_fn: lookup(
+                super::wasip2_imports::Wasip2ImportSlot::OutputStreamSubscribe,
+                "OutputStreamSubscribe",
             )?,
             timeout_subscribe_fn: lookup(
                 super::wasip2_imports::Wasip2ImportSlot::ClocksMonotonicSubscribeDuration,
@@ -7655,6 +7817,12 @@ struct FactoryExports {
     result_option_tcp_connection_string_some: Option<FactorySlot>,
     result_option_tcp_connection_string_none: Option<FactorySlot>,
     result_option_tcp_connection_string_err: Option<FactorySlot>,
+    /// `Result<Option<Bytes>, String>` builders for `Tcp.readNow`: the host
+    /// materialises the `Bytes` through the ordinary
+    /// `__rt_result_bytes_string_ok` path and lifts the payload here.
+    result_option_bytes_string_some: Option<FactorySlot>,
+    result_option_bytes_string_none: Option<FactorySlot>,
+    result_option_bytes_string_err: Option<FactorySlot>,
     /// `__rt_result_tcp_connection_string_ok(c)` /
     /// `__rt_result_tcp_connection_string_err(e)` — emitted when
     /// `Tcp.connect` is registered.
@@ -7941,10 +8109,12 @@ fn allocate_factory_exports(
         );
     }
 
-    if effect_registry
-        .iter()
-        .any(|e| matches!(e, EffectName::DiskSize | EffectName::RandomInt))
-    {
+    if effect_registry.iter().any(|e| {
+        matches!(
+            e,
+            EffectName::DiskSize | EffectName::RandomInt | EffectName::TcpWriteNow
+        )
+    }) {
         let result_idx =
             registry
                 .result_type_idx("Result<Int,String>")
@@ -8052,9 +8222,11 @@ fn allocate_factory_exports(
                 | EffectName::TcpPeerAddress
                 | EffectName::TcpWriteLine
                 | EffectName::TcpWriteBytes
+                | EffectName::TcpWriteNow
                 | EffectName::TcpReadLine
                 | EffectName::TcpReadBytes
                 | EffectName::TcpReadSome
+                | EffectName::TcpReadNow
                 | EffectName::TcpPoll
                 | EffectName::TcpClose
         )
@@ -8127,7 +8299,7 @@ fn allocate_factory_exports(
             .ok_or(WasmGcError::Validation(
                 "Tcp.poll requires the Tcp.Socket sum slot".into(),
             ))?;
-        for variant in ["Listening", "Dialing", "Connected"] {
+        for variant in ["Listening", "Dialing", "Connected", "Sending"] {
             registry
                 .variant_in("Tcp.Socket", variant)
                 .or_else(|| registry.variant_in("Socket", variant))
@@ -8276,6 +8448,47 @@ fn allocate_factory_exports(
         let _ = option_idx;
         types.ty().function([ref_null(string_idx)], [result_ref]);
         fx.result_option_tcp_connection_string_err = Some(FactorySlot {
+            type_idx: *next_type_idx,
+            fn_idx: *next_fn_idx,
+        });
+        *next_type_idx += 1;
+        *next_fn_idx += 1;
+    }
+    if effect_registry.iter().any(|e| e == EffectName::TcpReadNow) {
+        let bytes_idx = registry
+            .packed_sequence("Bytes")
+            .map(|packed| packed.type_idx)
+            .or_else(|| registry.record_type_idx("Bytes"))
+            .ok_or(WasmGcError::Validation(
+                "Tcp.readNow factories require Bytes".into(),
+            ))?;
+        let result_idx = registry
+            .result_type_idx("Result<Option<Bytes>,String>")
+            .ok_or(WasmGcError::Validation(
+                "Tcp.readNow factories require Result<Option<Bytes>,String>".into(),
+            ))?;
+        let string_idx = registry
+            .string_array_type_idx
+            .ok_or(WasmGcError::Validation(
+                "Tcp.readNow factories require String".into(),
+            ))?;
+        let result_ref = ref_null(result_idx);
+        types.ty().function([ref_null(bytes_idx)], [result_ref]);
+        fx.result_option_bytes_string_some = Some(FactorySlot {
+            type_idx: *next_type_idx,
+            fn_idx: *next_fn_idx,
+        });
+        *next_type_idx += 1;
+        *next_fn_idx += 1;
+        types.ty().function([], [result_ref]);
+        fx.result_option_bytes_string_none = Some(FactorySlot {
+            type_idx: *next_type_idx,
+            fn_idx: *next_fn_idx,
+        });
+        *next_type_idx += 1;
+        *next_fn_idx += 1;
+        types.ty().function([ref_null(string_idx)], [result_ref]);
+        fx.result_option_bytes_string_err = Some(FactorySlot {
             type_idx: *next_type_idx,
             fn_idx: *next_fn_idx,
         });
@@ -8454,6 +8667,7 @@ fn allocate_factory_exports(
             EffectName::TcpSendBytes
                 | EffectName::TcpReadBytes
                 | EffectName::TcpReadSome
+                | EffectName::TcpReadNow
                 | EffectName::DiskReadBytes
                 | EffectName::DiskReadBytesAt
         )
@@ -8766,6 +8980,27 @@ impl FactoryExports {
                 s.fn_idx,
             );
         }
+        if let Some(s) = self.result_option_bytes_string_some {
+            exports.export(
+                "__rt_result_option_bytes_string_some",
+                ExportKind::Func,
+                s.fn_idx,
+            );
+        }
+        if let Some(s) = self.result_option_bytes_string_none {
+            exports.export(
+                "__rt_result_option_bytes_string_none",
+                ExportKind::Func,
+                s.fn_idx,
+            );
+        }
+        if let Some(s) = self.result_option_bytes_string_err {
+            exports.export(
+                "__rt_result_option_bytes_string_err",
+                ExportKind::Func,
+                s.fn_idx,
+            );
+        }
         if let Some(s) = self.result_tcp_connection_string_ok {
             exports.export(
                 "__rt_result_tcp_connection_string_ok",
@@ -8970,6 +9205,21 @@ impl FactoryExports {
                     .expect("checked at allocation"),
             )?);
         }
+        if self.result_option_bytes_string_some.is_some() {
+            codes.function(&emit_factory_result_option_bytes_string_some(registry)?);
+        }
+        if self.result_option_bytes_string_none.is_some() {
+            codes.function(&emit_factory_result_option_bytes_string_none(registry)?);
+        }
+        if self.result_option_bytes_string_err.is_some() {
+            codes.function(&emit_factory_result_err(
+                registry,
+                "Result<Option<Bytes>,String>",
+                registry
+                    .option_type_idx("Option<Bytes>")
+                    .expect("checked at allocation"),
+            )?);
+        }
         if self.result_tcp_connection_string_ok.is_some() {
             codes.function(&emit_factory_result_ok(
                 registry,
@@ -9112,6 +9362,9 @@ impl FactoryExports {
             self.result_option_tcp_connection_string_some,
             self.result_option_tcp_connection_string_none,
             self.result_option_tcp_connection_string_err,
+            self.result_option_bytes_string_some,
+            self.result_option_bytes_string_none,
+            self.result_option_bytes_string_err,
             self.result_tcp_connection_string_ok,
             self.result_tcp_connection_string_err,
             self.http_response_make,
@@ -9435,7 +9688,8 @@ fn emit_factory_tcp_resource_id(
 }
 
 /// Return the nominal `Tcp.Socket` variant tag used by the host boundary:
-/// Listening=0, Dialing=1, Connected=2, and -1 for null/invalid input.
+/// Listening=0, Dialing=1, Connected=2, Sending=3, and -1 for null/invalid
+/// input.
 fn emit_factory_tcp_socket_kind(
     registry: &TypeRegistry,
 ) -> Result<wasm_encoder::Function, WasmGcError> {
@@ -9451,6 +9705,7 @@ fn emit_factory_tcp_socket_kind(
     let listening = variant_idx("Listening");
     let dialing = variant_idx("Dialing");
     let connected = variant_idx("Connected");
+    let sending = variant_idx("Sending");
 
     let mut f = Function::new([]);
     f.instruction(&Instruction::LocalGet(0));
@@ -9468,7 +9723,13 @@ fn emit_factory_tcp_socket_kind(
     f.instruction(&Instruction::If(BlockType::Result(ValType::I32)));
     f.instruction(&Instruction::I32Const(2));
     f.instruction(&Instruction::Else);
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::RefTestNonNull(HeapType::Concrete(sending)));
+    f.instruction(&Instruction::If(BlockType::Result(ValType::I32)));
+    f.instruction(&Instruction::I32Const(3));
+    f.instruction(&Instruction::Else);
     f.instruction(&Instruction::I32Const(-1));
+    f.instruction(&Instruction::End);
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::End);
@@ -9559,6 +9820,7 @@ fn emit_factory_tcp_socket_id(
     let listening = variant_idx("Listening");
     let dialing = variant_idx("Dialing");
     let connected = variant_idx("Connected");
+    let sending = variant_idx("Sending");
     let listener = registry
         .record_type_idx("Tcp.Listener")
         .expect("checked at allocation");
@@ -9603,6 +9865,9 @@ fn emit_factory_tcp_socket_id(
     });
     f.instruction(&Instruction::Else);
     f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::RefTestNonNull(HeapType::Concrete(connected)));
+    f.instruction(&Instruction::If(string_result));
+    f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::RefCastNonNull(HeapType::Concrete(connected)));
     f.instruction(&Instruction::StructGet {
         struct_type_index: connected,
@@ -9612,6 +9877,18 @@ fn emit_factory_tcp_socket_id(
         struct_type_index: connection,
         field_index: 0,
     });
+    f.instruction(&Instruction::Else);
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::RefCastNonNull(HeapType::Concrete(sending)));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: sending,
+        field_index: 0,
+    });
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: connection,
+        field_index: 0,
+    });
+    f.instruction(&Instruction::End);
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::End);
@@ -9704,6 +9981,64 @@ fn emit_factory_result_option_tcp_connection_string_none(
     f.instruction(&Instruction::I32Const(1));
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::RefNull(HeapType::Concrete(conn_idx)));
+    f.instruction(&Instruction::StructNew(option_idx));
+    f.instruction(&Instruction::RefNull(HeapType::Concrete(string_idx)));
+    f.instruction(&Instruction::StructNew(result_idx));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+fn bytes_payload_type_idx(registry: &TypeRegistry) -> u32 {
+    registry
+        .packed_sequence("Bytes")
+        .map(|packed| packed.type_idx)
+        .or_else(|| registry.record_type_idx("Bytes"))
+        .expect("checked at allocation")
+}
+
+/// `Result<Option<Bytes>, String>::Ok(Some(bytes))` from a `Bytes` ref the
+/// host already materialised through the `Result<Bytes, String>` factory.
+fn emit_factory_result_option_bytes_string_some(
+    registry: &TypeRegistry,
+) -> Result<wasm_encoder::Function, WasmGcError> {
+    let option_idx = registry
+        .option_type_idx("Option<Bytes>")
+        .expect("checked at allocation");
+    let result_idx = registry
+        .result_type_idx("Result<Option<Bytes>,String>")
+        .expect("checked at allocation");
+    let string_idx = registry
+        .string_array_type_idx
+        .expect("checked at allocation");
+    let mut f = Function::new([]);
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructNew(option_idx));
+    f.instruction(&Instruction::RefNull(HeapType::Concrete(string_idx)));
+    f.instruction(&Instruction::StructNew(result_idx));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+/// `Result<Option<Bytes>, String>::Ok(None)` — `Tcp.readNow` would block.
+fn emit_factory_result_option_bytes_string_none(
+    registry: &TypeRegistry,
+) -> Result<wasm_encoder::Function, WasmGcError> {
+    let bytes_idx = bytes_payload_type_idx(registry);
+    let option_idx = registry
+        .option_type_idx("Option<Bytes>")
+        .expect("checked at allocation");
+    let result_idx = registry
+        .result_type_idx("Result<Option<Bytes>,String>")
+        .expect("checked at allocation");
+    let string_idx = registry
+        .string_array_type_idx
+        .expect("checked at allocation");
+    let mut f = Function::new([]);
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::RefNull(HeapType::Concrete(bytes_idx)));
     f.instruction(&Instruction::StructNew(option_idx));
     f.instruction(&Instruction::RefNull(HeapType::Concrete(string_idx)));
     f.instruction(&Instruction::StructNew(result_idx));

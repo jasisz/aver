@@ -2577,7 +2577,16 @@ pub fn valVariantToTcpSocket(
                         Err(_) => Err(AverStr::from("Tcp.Socket.Connected takes one resource")),
                     }
                 } else {
-                    Err(AverStr::from("expected Tcp.Socket value"))
+                    if &*__dispatch_subject == "Tcp.Socket.Sending" {
+                        match crate::aver_generated::domain::builtins::helpers::oneArg(fields) {
+                            Ok(connV @ _) => Ok(crate::aver_generated::tcp::Socket::Sending(
+                                crate::aver_generated::domain::builtins::valToTcpConn(&connV)?,
+                            )),
+                            Err(_) => Err(AverStr::from("Tcp.Socket.Sending takes one resource")),
+                        }
+                    } else {
+                        Err(AverStr::from("expected Tcp.Socket value"))
+                    }
                 }
             }
         }

@@ -1520,6 +1520,7 @@ fn valid_tcp_socket_sum_dispatches_to_resource_specific_operations() {
         "        Tcp.Socket.Listening(listener) -> Tcp.closeListener(listener)\n",
         "        Tcp.Socket.Dialing(dial) -> Tcp.closeDial(dial)\n",
         "        Tcp.Socket.Connected(connection) -> Tcp.close(connection)\n",
+        "        Tcp.Socket.Sending(connection) -> Tcp.close(connection)\n",
     );
     assert_no_errors(src);
 }

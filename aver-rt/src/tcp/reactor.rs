@@ -304,10 +304,9 @@ pub(super) fn poll(sockets: &[TcpSocket], timeout_ms: i64) -> Result<Vec<usize>,
 }
 
 #[derive(Clone, Copy)]
-enum PollKind {
-    Connection,
-    Dial,
-    Listener,
+enum PollInterest {
+    Readable,
+    Writable,
 }
 
 enum PollSource<'a> {
@@ -315,10 +314,13 @@ enum PollSource<'a> {
     Listener(&'a StdTcpListener),
 }
 
+/// One registered OS source. A connection polled under both `Connected` and
+/// `Sending` shares one group with both interests, because the poller admits
+/// each file descriptor once.
 struct PollGroup<'a> {
     source: PollSource<'a>,
-    kind: PollKind,
-    positions: Vec<usize>,
+    readable: Vec<usize>,
+    writable: Vec<usize>,
 }
 
 fn poll_borrowed<'a>(
@@ -330,9 +332,7 @@ fn poll_borrowed<'a>(
 ) -> Result<Vec<usize>, String> {
     let mut ready = Vec::new();
     let mut groups = Vec::<PollGroup<'a>>::new();
-    let mut connection_groups = HashMap::<String, usize>::new();
-    let mut dial_groups = HashMap::<String, usize>::new();
-    let mut listener_groups = HashMap::<String, usize>::new();
+    let mut group_index = HashMap::<String, usize>::new();
 
     let now = Instant::now();
     let mut nearest_deadline = None::<Duration>;
@@ -348,13 +348,27 @@ fn poll_borrowed<'a>(
                 } else {
                     push_group(
                         &mut groups,
-                        &mut connection_groups,
+                        &mut group_index,
                         id,
                         PollSource::Stream(reader.get_ref()),
-                        PollKind::Connection,
+                        PollInterest::Readable,
                         position,
                     );
                 }
+            }
+            TcpSocket::Sending(connection) => {
+                let id: &str = &connection.id;
+                let Some(reader) = connection_map.get(id) else {
+                    return Err(format!("Tcp.poll: unknown connection '{}'", connection.id));
+                };
+                push_group(
+                    &mut groups,
+                    &mut group_index,
+                    id,
+                    PollSource::Stream(reader.get_ref()),
+                    PollInterest::Writable,
+                    position,
+                );
             }
             TcpSocket::Dialing(dial) => {
                 let id: &str = &dial.id;
@@ -373,10 +387,10 @@ fn poll_borrowed<'a>(
                     }
                     push_group(
                         &mut groups,
-                        &mut dial_groups,
+                        &mut group_index,
                         id,
                         PollSource::Stream(&pending.stream),
-                        PollKind::Dial,
+                        PollInterest::Writable,
                         position,
                     );
                 }
@@ -388,10 +402,10 @@ fn poll_borrowed<'a>(
                 };
                 push_group(
                     &mut groups,
-                    &mut listener_groups,
+                    &mut group_index,
                     id,
                     PollSource::Listener(&state.listener),
-                    PollKind::Listener,
+                    PollInterest::Readable,
                     position,
                 );
             }
@@ -400,10 +414,8 @@ fn poll_borrowed<'a>(
 
     let poller = polling::Poller::new().map_err(|error| format_io_error("Tcp.poll", &error))?;
     for (key, group) in groups.iter().enumerate() {
-        let event = match group.kind {
-            PollKind::Dial => polling::Event::writable(key),
-            PollKind::Connection | PollKind::Listener => polling::Event::readable(key),
-        };
+        let event =
+            polling::Event::new(key, !group.readable.is_empty(), !group.writable.is_empty());
         unsafe {
             match group.source {
                 PollSource::Stream(stream) => poller.add(stream, event),
@@ -447,34 +459,37 @@ fn push_group<'a>(
     index: &mut HashMap<String, usize>,
     id: &str,
     source: PollSource<'a>,
-    kind: PollKind,
+    interest: PollInterest,
     position: usize,
 ) {
-    if let Some(group) = index.get(id).copied() {
-        groups[group].positions.push(position);
-    } else {
-        index.insert(id.to_string(), groups.len());
-        groups.push(PollGroup {
-            source,
-            kind,
-            positions: vec![position],
-        });
+    let group = match index.get(id).copied() {
+        Some(group) => group,
+        None => {
+            index.insert(id.to_string(), groups.len());
+            groups.push(PollGroup {
+                source,
+                readable: Vec::new(),
+                writable: Vec::new(),
+            });
+            groups.len() - 1
+        }
+    };
+    match interest {
+        PollInterest::Readable => groups[group].readable.push(position),
+        PollInterest::Writable => groups[group].writable.push(position),
     }
 }
 
 fn collect_events(events: &polling::Events, groups: &[PollGroup<'_>], ready: &mut Vec<usize>) {
     for event in events.iter() {
         if let Some(group) = groups.get(event.key) {
-            let signalled = match group.kind {
-                PollKind::Dial => event.writable || event.is_err().unwrap_or(false),
-                PollKind::Connection | PollKind::Listener => {
-                    event.readable || event.is_err().unwrap_or(false)
-                }
-            };
-            if !signalled {
-                continue;
+            let failed = event.is_err().unwrap_or(false);
+            if event.readable || failed {
+                ready.extend(&group.readable);
             }
-            ready.extend(&group.positions);
+            if event.writable || failed {
+                ready.extend(&group.writable);
+            }
         }
     }
 }
