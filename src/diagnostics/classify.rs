@@ -359,6 +359,12 @@ pub(crate) fn classify_finding(msg: &str) -> (&'static str, Option<String>) {
         && msg.contains("potentially conflicting effects")
     {
         ("independence-hazard", split_repair(msg))
+    } else if msg.contains("is an effectful loop that runs to completion inside one turn of") {
+        (
+            "serve-path",
+            msg.split_once("until it returns. ")
+                .map(|(_, repair)| repair.trim_end_matches('.').to_string()),
+        )
     } else if msg.contains("unused effect") {
         (
             "unused-effect",

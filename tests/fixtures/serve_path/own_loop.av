@@ -1,0 +1,17 @@
+module OwnLoop
+    intent =
+        "A poller whose recursive loop is its own: every step waits again"
+        "before it does more work, which is exactly the shape the warning"
+        "asks for, so no warning."
+    exposes [serve]
+    effects [Tcp.poll, Disk.appendText]
+
+fn serve(n: Int) -> Result<Unit, String>
+    ? "Waits, appends one line, waits again."
+    ! [Tcp.poll, Disk.appendText]
+    sockets: Map<Int, Tcp.Socket> = {}
+    ready = Tcp.poll(sockets, 100)?
+    _written = Disk.appendText("out.log", "line")?
+    match n < List.len(ready)
+        true -> Result.Ok(Unit)
+        false -> serve(n - 1)

@@ -127,6 +127,8 @@ budget for the function it knows about, in `aver.toml`, with a written reason
 fuel by one documented factor, so a case is runnable on both lanes or on
 neither.
 
+A second, per-turn budget is off by default. `[verify] turn-budget = N` makes each case count VM steps since its last `Tcp.poll` effect (or since the case began), and a turn that runs past N is reported once per case as `warning[turn-budget]: case ...: one turn ran N steps without waiting; deepest function on the stack at the limit: ...`. It is a warning, never a failure: the case was answered, it just did not wait often enough while doing so. Only VM steps count — time spent inside a provider, live or stubbed, is not measured — and with the budget off nothing is counted at all. `aver check` reports the static shape behind most of these as `warning[serve-path]`.
+
 A file whose program `verify` could not run — a type error anywhere in it,
 a backend or provider failure, a refusal by verify itself — is **not
 checked**, and the report says so rather than leaving it out. Such files are
@@ -491,6 +493,7 @@ reason = "Its Result error arm is uninhabited by constructible inputs."
 [verify]
 step-limit = 1_000_000          # per-case opcode budget (default)
 max-cases  = 10_000             # ceiling on `given`-domain expansion (default)
+turn-budget = 50_000            # steps one turn may run between two Tcp.poll waits (default: off)
 
 [[verify.costly]]
 fn         = "checkScript"
@@ -522,7 +525,8 @@ An empty pattern, unsupported `*` placement, or a `..`-rooted pattern is also a 
 - An entry that matched no verify block during a run is reported on stderr — separately for "matched no verified file" and "matched files but no block of that fn" — and never changes the exit code. An entry another entry out-granted is not reported: it matched a live block, and losing a tie-break says nothing about whether the declaration is still true of the project.
 - `max-cases` is the ceiling on how many cases one verify block may expand into, on both sides: the `given` domain the parser expands and the `--hostile` cartesian the runner expands on top of it. Both fail loudly with the count rather than truncating, because a truncated case list is a claim you did not make. Each expanded case clones an expression pair, so raising this costs parse-time memory in proportion to the new ceiling. `[verify] max-cases` moves it for the whole project; a `[[verify.costly]]` entry moves it for the blocks of the one function it names, which is usually what a wide corpus actually means.
 - The ceiling belongs to the file, not to one command. Every command that reads your `.av` files parses them under it — `check`, `run`, `compile`, `proof`, `audit`, `format`, `shape`, `context`, `why`, `capabilities`, `replay`, `bench` — as does the dependency walk each of them performs. A `given` domain your project declared legal is legal at every door, a domain over the ceiling is refused at every door, and the message names the number that actually applied rather than the built-in one.
-- Neither setting changes what a program means. The same source verifies the same way under any budget; it just gets more or less room to finish.
+- `turn-budget` is a second counter, per turn rather than per case, and off unless set. A turn is the run of VM steps since the case's last `Tcp.poll` effect, or since the case began; a turn past the budget earns the case one `warning[turn-budget]` naming the innermost function at the limit. It never fails the run. Only VM steps are counted, so time inside a provider is invisible to it, and with the budget off the VM does no extra counting. `[[verify.costly]]` does not raise it: a slow case and a turn that never waits are different facts.
+- None of these settings changes what a program means. The same source verifies the same way under any budget; it just gets more or less room to finish.
 
 `[[check.suppress]]` rules in detail:
 

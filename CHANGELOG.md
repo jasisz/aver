@@ -6,6 +6,10 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Added
 
+- **`aver check` warns when a `Tcp.poll` loop hands one of its turns to an effectful loop.** `warning[serve-path]` fires on the call from a function that polls into a recursive function that performs `Disk.*` or `Tcp.*` work outside the poller's own loop: that work runs to completion before the next wait, so peers that became ready in the meantime are not served until it returns. One warning per (poller, loop) pair, suppressible with `[[check.suppress]]` and a reason.
+
+- **`aver verify` can measure how long one turn of a case runs without waiting.** `[verify] turn-budget = N` in `aver.toml` (off by default) counts VM steps since the case's last `Tcp.poll`; a turn that crosses N is reported once per case as `warning[turn-budget]`, naming the innermost function at the limit. A warning, never a failure; only VM steps count, time inside a provider is not measured, and with the budget off nothing is counted.
+
 - **Checked integer descent can guide `because` proofs.** Recursive explanations reuse native integer termination contracts, including floor-division countdowns, with original guards and earlier reasons retained at recursive calls. K5 now proves the magnitude window of its executable Fraction exponent for positive and negative exponents and connects that window to the rounding powers. The below-one exponent uses total floor-halving instead of opaque doubling recursion. Imported binary-window proofs also retain their owning function's contract and tolerate renamed parameters.
 
 - **K5 trunc-sticky composition now has a source-local universal proof.** `StickyScale` composes the integer low-bit law with the precision-scale identities, and `fpSticky.preservesCoarseTruncation` proves equality of the entire truncated records for `1 <= m < n`. The public rational-value law follows with its original guards. `round.av` and imports now have 62 universal laws and 23 universal proof obligations, no bounded laws or `sorry`, without compiler changes or manual proof files.

@@ -120,6 +120,10 @@ Today the heuristic is intentionally small and conservative:
 
 This is a heuristic, not a proof system. It does not yet reason about concrete resource identity such as "same file path" or "same environment key". Use it as a review signal: if the warning is intentional, suppress it with `[[check.suppress]]` and a reason in `aver.toml`.
 
+### Serve-path warnings
+
+`aver check` also emits `warning[serve-path]` for a poll loop that hands one of its turns to an effectful loop. A function that calls `Tcp.poll` directly is a turn of an event loop; if, without going back through its own recursive loop, it reaches a recursive function whose declared effects include a `Disk.*` or `Tcp.*` operation, that function runs to completion before the next wait, and every peer that became ready in the meantime is not served until it returns. The condition is purely structural — the module's call graph, its recursive components, and the declared effect sets — and the warning sits on the poller's call into the path, once per (poller, loop) pair. The repair is to do one step of the loop per turn, or to run the loop as its own command. `aver verify` can measure the same thing dynamically with `[verify] turn-budget`. As with the hazard heuristics, an intentional case is suppressed with `[[check.suppress]]` and a reason.
+
 ## Examples
 
 ### Flat: multiple independent effects

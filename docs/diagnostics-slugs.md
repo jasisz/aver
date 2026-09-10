@@ -60,6 +60,7 @@ When a real signature shape is deliberately uninhabited, keep the residue explic
 | Slug | Severity | Fires when | Repair |
 |---|---|---|---|
 | `independence-hazard` | warning | Independent product branches use effects that may conflict under reordering. | Keep sequential or suppress with `[[check.suppress]]` + reason. |
+| `serve-path` | warning | A function that calls `Tcp.poll` reaches, outside its own recursive loop, a recursive function whose effects include `Disk.*` or `Tcp.*`; that loop runs to completion inside one turn, so peers waiting on the poll are not served until it returns. | Do one step of the loop per turn, run it as its own command, or suppress with `[[check.suppress]]` + reason. |
 
 ## Decisions / exposure
 
@@ -90,6 +91,7 @@ When a real signature shape is deliberately uninhabited, keep the residue explic
 | `verify-provider-setup` | fail | The configured provider host was built, but a binding could not be installed for this file's exact capability contract. | Inspect `fields.provider_error`; fix the binding contract hash, operation set, or provider factory. This is not a source type error. |
 | `verify-runtime-error` | fail | Verify case crashed during evaluation (div-by-zero, pattern fail, etc.). | Fix the crash; add a case for the boundary if intentional. |
 | `verify-declined` | fail | Verify case exceeded its per-case step budget, so it was not answered — neither a pass nor a counter-example. | Raise the budget for that fn with an `aver.toml` `[[verify.costly]]` entry and say why the case is expensive; or shrink the case. |
+| `turn-budget` | warning | With `[verify] turn-budget = N` set, one turn of a case — the VM steps since its last `Tcp.poll`, or since the case began — ran past N; reported once per case with the innermost function at the limit. Only VM steps count. | Wait more often: do one step of the named loop per turn, or move it out of the poll loop. |
 | `verify-unexpected-err` | fail | Case propagated a `Result.Err` via `?` the case didn't account for. | Either expect the `Err` in the case or handle it inside the function. |
 | `replay-output-mismatch` | fail | Replayed recording's output differs from the recorded run. | Inspect `fields.diff`; update the function or re-record. |
 | `replay-error` | fail | Replay couldn't complete (format mismatch, missing effects, crash). | Check `fields.error`; format drift usually means re-record. |
