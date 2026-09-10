@@ -6,7 +6,7 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Added
 
-- Add `examples/formal/knowledge.av`: content-keyed knowledge with a merge that is proven commutative, associative and idempotent, an admission predicate separate from the merge, and stable-answer laws for its queries.
+- **`examples/formal/knowledge.av` states knowledge that only grows as laws on a content-keyed merge.** An admission predicate kept apart from the merge, a merge with commutativity, idempotence and an append law over `mergeAll`, and stable-answer laws for the body and verdict queries, all under an explicit agreement premise that two plain verify cases show to be load-bearing. The kernel closes the append law, the reasons of both stable-answer laws and the step from the order-freedom reason to its claim; commutativity and idempotence are checked on the listed samples only, and the final stable-answer steps, the order-freedom reason and the monotone count stay open in Lean until the prelude carries facts about `Map.set`.
 
 - **Checked integer descent can guide `because` proofs.** Recursive explanations reuse native integer termination contracts, including floor-division countdowns, with original guards and earlier reasons retained at recursive calls. K5 now proves the magnitude window of its executable Fraction exponent for positive and negative exponents and connects that window to the rounding powers. The below-one exponent uses total floor-halving instead of opaque doubling recursion. Imported binary-window proofs also retain their owning function's contract and tolerate renamed parameters.
 

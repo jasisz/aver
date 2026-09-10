@@ -9,7 +9,7 @@ module Knowledge
         "  - `admit` decides, from the contribution alone, whether it may enter;"
         "  - `merge` never fails and never refuses: it inserts under the key;"
         "  - `body` and `verdict` answer queries, and a stable-answer law says"
-        "    an answer once given is never withdrawn by a later merge."
+        "    an answer once given is never withdrawn by a later consistent merge."
         ""
         "The laws are stated over contributions that agree: two contributions"
         "to one slot carry one value. For headers and bodies this is what"
@@ -17,8 +17,25 @@ module Knowledge
         "cryptographic assumption, not a theorem, so the laws name the"
         "agreement as a premise instead of pretending the kernel can derive"
         "it from the hash. For verdicts it is the node's own determinism."
+        "Without that premise the laws are false, and two plain verify cases"
+        "below show it: two verdicts for one block in one context with"
+        "different values do not commute, and they do not agree."
+        ""
+        "Proof status (aver proof --backend lean --check):"
+        "  - closed by the kernel for every input: `mergeAll law appends`,"
+        "    the reasons of `body law stable` and `verdict law stable`, and"
+        "    the step from the reason of `mergeAll law orderFree` to its claim;"
+        "  - checked on the listed samples only: `merge law commutative`,"
+        "    `merge law idempotent`;"
+        "  - open: the reason of `mergeAll law orderFree` (merge commutes),"
+        "    the final step of `body law stable` and `verdict law stable`, and"
+        "    `count law monotone`. Each needs a fact about `Map.set` that the"
+        "    Lean prelude does not carry yet: two sets under different keys"
+        "    commute, a set under a key already holding the value is the"
+        "    identity, a get after a set under another key is unchanged, and"
+        "    a set never shrinks the map."
     depends [Bytes, Crypto.Digest32]
-    exposes [Verdict, Delta, Knowledge, empty, keyOf, admit, agrees, consistent, merge, mergeAll, body, verdict, count, grows]
+    exposes [Verdict, Delta, Knowledge, empty, keyOf, admit, agrees, consistent, merge, mergeAll, body, verdict, count]
     effects []
 
 type Verdict
@@ -145,7 +162,7 @@ verify consistent
     consistent(merge(empty(), Delta.Verdict("b", "c", Verdict.Valid)), Delta.Verdict("b", "c", Verdict.Invalid)) => false
 
 fn merge(k: Knowledge, delta: Delta) -> Knowledge
-    ? "Insert one contribution under its key. Never fails, never refuses: admission is a separate decision taken before merge. Because keys are content keys, two admitted contributions under one key carry equal values, so inserting twice is inserting once and the order of inserts does not matter."
+    ? "Insert one contribution under its key. Never fails, never refuses: admission is a separate decision taken before merge. A later contribution to an occupied slot replaces what was there; the laws below say when that cannot change anything: inserting the same contribution twice is inserting once, and two contributions that agree (different slots, or one slot and one value) can be merged in either order. For admitted headers and bodies agreement follows from the key being the hash of the value; for verdicts it is a premise the node has to keep."
     match delta
         Delta.Header(hash, bytes) -> Knowledge.update(k, headers = Map.set(k.headers, hash, bytes))
         Delta.Body(hash, bytes) -> Knowledge.update(k, bodies = Map.set(k.bodies, hash, bytes))
@@ -155,11 +172,13 @@ verify merge
     body(merge(empty(), bodyOf(Bytes.fromList([1, 2]))), keyOf(Bytes.fromList([1, 2]))) => Option.Some(Bytes.fromList([1, 2]))
     body(merge(empty(), headerOf(Bytes.fromList([1, 2]))), keyOf(Bytes.fromList([1, 2]))) => Option.None
     verdict(merge(empty(), Delta.Verdict("b", "c", Verdict.Valid)), "b", "c") => Option.Some(Verdict.Valid)
+    verdict(merge(merge(empty(), Delta.Verdict("b", "c", Verdict.Valid)), Delta.Verdict("b", "c", Verdict.Invalid)), "b", "c") => Option.Some(Verdict.Invalid)
+    merge(merge(empty(), Delta.Verdict("b", "c", Verdict.Valid)), Delta.Verdict("b", "c", Verdict.Invalid)) == merge(merge(empty(), Delta.Verdict("b", "c", Verdict.Invalid)), Delta.Verdict("b", "c", Verdict.Valid)) => false
 
 verify merge law commutative
     given k: Knowledge = [empty(), merge(empty(), bodyOf(Bytes.fromList([9])))]
-    given a: Delta = [bodyOf(Bytes.fromList([1])), headerOf(Bytes.fromList([1])), Delta.Verdict("b", "c", Verdict.Valid)]
-    given b: Delta = [bodyOf(Bytes.fromList([1])), bodyOf(Bytes.fromList([2])), headerOf(Bytes.fromList([1])), Delta.Verdict("b", "c", Verdict.Valid)]
+    given a: Delta = [bodyOf(Bytes.fromList([1])), headerOf(Bytes.fromList([1])), Delta.Verdict("b", "c", Verdict.Valid), Delta.Verdict("b", "c", Verdict.Invalid)]
+    given b: Delta = [bodyOf(Bytes.fromList([1])), bodyOf(Bytes.fromList([2])), headerOf(Bytes.fromList([1])), Delta.Verdict("b", "c", Verdict.Valid), Delta.Verdict("b", "c", Verdict.Invalid)]
     when admit(a)
     when admit(b)
     when agrees(a, b)
@@ -181,17 +200,16 @@ verify mergeAll
     mergeAll(empty(), []) => empty()
     count(mergeAll(empty(), [bodyOf(Bytes.fromList([1])), bodyOf(Bytes.fromList([2]))])) => 2
 
-verify mergeAll law associative
+verify mergeAll law appends
     given k: Knowledge = [empty(), merge(empty(), bodyOf(Bytes.fromList([9])))]
-    given a: Delta = [bodyOf(Bytes.fromList([1])), Delta.Verdict("b", "c", Verdict.Valid)]
-    given b: Delta = [bodyOf(Bytes.fromList([2])), headerOf(Bytes.fromList([1]))]
-    given c: Delta = [bodyOf(Bytes.fromList([1])), Delta.Verdict("b", "d", Verdict.Invalid)]
-    mergeAll(k, [a, b, c]) => mergeAll(mergeAll(k, [a]), [b, c])
+    given xs: List<Delta> = [[], [bodyOf(Bytes.fromList([1]))], [bodyOf(Bytes.fromList([1])), Delta.Verdict("b", "c", Verdict.Valid)]]
+    given ys: List<Delta> = [[], [headerOf(Bytes.fromList([1]))], [bodyOf(Bytes.fromList([2])), bodyOf(Bytes.fromList([1]))]]
+    mergeAll(k, List.concat(xs, ys)) => mergeAll(mergeAll(k, xs), ys)
 
 verify mergeAll law orderFree
     given k: Knowledge = [empty(), merge(empty(), bodyOf(Bytes.fromList([9])))]
-    given a: Delta = [bodyOf(Bytes.fromList([1])), headerOf(Bytes.fromList([1])), Delta.Verdict("b", "c", Verdict.Valid)]
-    given b: Delta = [bodyOf(Bytes.fromList([1])), bodyOf(Bytes.fromList([2])), headerOf(Bytes.fromList([1])), Delta.Verdict("b", "c", Verdict.Valid)]
+    given a: Delta = [bodyOf(Bytes.fromList([1])), headerOf(Bytes.fromList([1])), Delta.Verdict("b", "c", Verdict.Valid), Delta.Verdict("b", "c", Verdict.Invalid)]
+    given b: Delta = [bodyOf(Bytes.fromList([1])), bodyOf(Bytes.fromList([2])), headerOf(Bytes.fromList([1])), Delta.Verdict("b", "c", Verdict.Valid), Delta.Verdict("b", "c", Verdict.Invalid)]
     when admit(a)
     when admit(b)
     when agrees(a, b)
@@ -262,7 +280,7 @@ verify keepsVerdict
     keepsVerdict("b", "c", Verdict.Valid, Delta.Verdict("b", "c", Verdict.Invalid)) => false
 
 fn count(k: Knowledge) -> Int
-    ? "How many bodies the node knows. Deliberately NOT a stable answer: it changes under merge, so it gets no stable-answer theorem. Only queries whose answer, once given, cannot be withdrawn receive one; a count is a snapshot."
+    ? "How many bodies the node knows. Deliberately NOT a stable answer: it changes under merge, so it gets no stable-answer theorem. Only queries whose answer, once given, cannot be withdrawn receive one; a count is a snapshot. What a count does get is a direction: a merge never lowers it, stated as the monotone law on the sizes."
     Map.len(k.bodies)
 
 verify count
@@ -271,16 +289,7 @@ verify count
     count(merge(merge(empty(), bodyOf(Bytes.fromList([1]))), bodyOf(Bytes.fromList([2])))) => 2
     count(merge(merge(empty(), bodyOf(Bytes.fromList([1]))), bodyOf(Bytes.fromList([1])))) => 1
 
-fn grows(k: Knowledge, delta: Delta) -> Bool
-    ? "k <= merge(k, delta), read on the sizes: no map ever loses an entry under merge."
-    after = merge(k, delta)
-    Bool.and(Map.len(k.headers) <= Map.len(after.headers), Bool.and(Map.len(k.bodies) <= Map.len(after.bodies), Map.len(k.verdicts) <= Map.len(after.verdicts)))
-
-verify grows
-    grows(empty(), bodyOf(Bytes.fromList([1]))) => true
-    grows(merge(empty(), bodyOf(Bytes.fromList([1]))), bodyOf(Bytes.fromList([1]))) => true
-
-verify grows law monotone
+verify count law monotone
     given k: Knowledge = [empty(), merge(empty(), bodyOf(Bytes.fromList([9]))), merge(empty(), Delta.Verdict("b", "c", Verdict.Valid))]
     given delta: Delta = [bodyOf(Bytes.fromList([1])), bodyOf(Bytes.fromList([9])), headerOf(Bytes.fromList([1])), Delta.Verdict("b", "c", Verdict.Invalid)]
-    grows(k, delta) holds
+    count(merge(k, delta)) >= count(k) holds
