@@ -1044,6 +1044,58 @@ pub(super) fn find_fn_def_by_call_name<'a>(
     find_fn_def(ctx, short)
 }
 
+/// Whether `expr` calls the builtin `builtin` (`"Map.set"`) by its exact
+/// dotted name. Only builtin callees are compared; user names stay unread.
+pub(super) fn expr_calls_builtin(expr: &Spanned<Expr>, builtin: &str) -> bool {
+    crate::codegen::expr_walk::any(expr, &mut |node| match &node.node {
+        Expr::FnCall(callee, _) => callee_matches_name(callee, builtin),
+        _ => false,
+    })
+}
+
+/// The first law given whose declared type is a user sum type, as the Lean
+/// binder a `cases` can split. Chosen by type shape alone: the given's name,
+/// its position in the claim and the variants' names are never read. The
+/// given's type is resolved through the symbol table under the active module
+/// scope, so a same-bare-name type in another module never stands in for it.
+pub(super) fn first_user_sum_given(ctx: &CodegenContext, law: &VerifyLaw) -> Option<String> {
+    let scope = ctx.active_module_scope();
+    let is_user_sum = |type_name: &str| {
+        let type_name = type_name.trim();
+        let key = match ctx
+            .symbol_table
+            .resolve_type_id_in(type_name, scope.as_deref())
+        {
+            Some(id) => ctx.symbol_table.type_entry(id).key.clone(),
+            None => match scope.as_deref() {
+                Some(prefix) => crate::ir::TypeKey::in_module(prefix, type_name),
+                None => crate::ir::TypeKey::entry(type_name),
+            },
+        };
+        ctx.modules
+            .iter()
+            .flat_map(|m| m.type_defs.iter())
+            .chain(ctx.type_defs.iter())
+            .any(|td| {
+                matches!(td, crate::ast::TypeDef::Sum { .. })
+                    && crate::codegen::common::type_key_for_decl(ctx, td) == key
+            })
+    };
+    law.givens
+        .iter()
+        .find(|g| is_user_sum(&g.type_name))
+        .map(|g| aver_name_to_lean(&g.name))
+}
+
+/// [`expr_calls_builtin`] over every statement of a fn body.
+pub(super) fn fn_body_calls_builtin(fd: &crate::ast::FnDef, builtin: &str) -> bool {
+    fd.body.stmts().iter().any(|stmt| match stmt {
+        crate::ast::Stmt::Expr(e) | crate::ast::Stmt::Binding(_, _, e) => {
+            expr_calls_builtin(e, builtin)
+        }
+    })
+}
+
 pub(super) fn expr_dotted_name(expr: &Spanned<Expr>) -> Option<String> {
     match &expr.node {
         Expr::Ident(name) | Expr::Resolved { name, .. } => Some(name.clone()),
