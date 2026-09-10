@@ -57,7 +57,7 @@ fn a_bodyless_predicate_dependency_cannot_become_a_trusted_invariant() {
     assert_eq!(ctx.proof_ir.refined_types.len(), 1);
     let error = emit(&ctx).unwrap_err();
     assert!(
-        error.contains("predicate") && error.contains("String.toLower"),
+        error.contains("predicate") && error.contains("String.byteLength"),
         "{error}"
     );
 }

@@ -7,7 +7,7 @@ record Token
     value: Int
 
 fn valid(value: Int) -> Bool
-    String.toLower(String.fromInt(value)) == "1"
+    String.byteLength(String.fromInt(value)) == 1
 
 fn fromInt(value: Int) -> Result<Token, String>
     match valid(value)

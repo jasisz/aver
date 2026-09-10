@@ -12,6 +12,7 @@ mod law_search;
 mod lemmas;
 mod propagation;
 mod reasons;
+mod string_case;
 mod toplevel;
 
 use crate::ast::{FnDef, TopLevel, VerifyKind};
@@ -757,6 +758,7 @@ fn dafny_helper_block(key: &str) -> Option<&'static str> {
         "AverList" => Some(DAFNY_HELPER_AVER_LIST),
         "StringHelpers" => Some(DAFNY_HELPER_STRING_HELPERS),
         "StringOpaque" => Some(DAFNY_HELPER_STRING_OPAQUE),
+        "StringCase" => Some(string_case::source()),
         "StringUtf8" => Some(DAFNY_HELPER_STRING_UTF8),
         "NumericParse" => Some(DAFNY_HELPER_NUMERIC_PARSE),
         "StringCodePoint" => Some(DAFNY_HELPER_CODE_POINT),
@@ -1029,8 +1031,6 @@ function {:fuel 4} StringTrim(s: string): string
 "#;
 
 const DAFNY_HELPER_STRING_OPAQUE: &str = r#"
-function StringToUpper(s: string): string
-function StringToLower(s: string): string
 function StringByteLength(s: string): int
 function ListReverseStr(xs: seq<string>): seq<string>
 "#;

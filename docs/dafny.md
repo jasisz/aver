@@ -100,8 +100,11 @@ branch is replaced with a default value or assumed success.
 Primitive interpolation has exact decimal `Int`, lowercase `Bool` and identity
 `String` rendering. Structural text helpers define character indexing, slicing,
 joining, substring tests, splitting, replacement and Unicode whitespace trimming.
-UTF-8 and Unicode case operations remain separate legacy opaque helpers; using
-an exact text operation no longer imports an unrelated UTF-8 axiom.
+`String.toLower` and `String.toUpper` have full Unicode definitions, including
+multi-scalar expansions and context-sensitive final sigma. Lean and Dafny use
+the same mapping and context tables as wasm-gc, checked exhaustively against
+the VM's Rust standard library. Case conversion imports no UTF-8 axioms;
+UTF-8 and byte-length operations retain their separate legacy opaque helpers.
 
 Named callbacks are admitted only after checking their complete pure bodies and
 termination. A callback that reintroduces an active function is refused. Arbitrary

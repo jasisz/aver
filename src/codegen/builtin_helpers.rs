@@ -107,15 +107,16 @@ pub const BUILTIN_HELPERS: &[BuiltinHelper] = &[
               Lean: native `String.*`. Dafny: exact structural sequence definitions.",
     },
     BuiltinHelper {
-        key: "StringOpaque",
-        body_tokens: &[
-            "StringToUpper(",
-            "StringToLower(",
-            "StringByteLength(",
-            "ListReverseStr(",
-        ],
+        key: "StringCase",
+        body_tokens: &["StringToUpper(", "StringToLower(", "AverUnicodeCase."],
         depends_on: &[],
-        doc: "Dafny-only uninterpreted Unicode case conversion and byte-length declarations.",
+        doc: "Lean and Dafny Unicode case definitions from shared VM-checked mapping and context tables.",
+    },
+    BuiltinHelper {
+        key: "StringOpaque",
+        body_tokens: &["StringByteLength(", "ListReverseStr("],
+        depends_on: &[],
+        doc: "Dafny-only uninterpreted byte-length and legacy string-list declarations.",
     },
     BuiltinHelper {
         key: "StringUtf8",
@@ -459,6 +460,7 @@ mod tests {
                 "OptionDatatype",
                 "AverList",
                 "StringHelpers",
+                "StringCase",
                 "StringOpaque",
                 "StringUtf8",
                 "StringCodePoint",

@@ -1,0 +1,30 @@
+module UnicodeCaseFalse
+    intent = "Samples omit Unicode counterexamples; both judges must reject the incorrect laws."
+    effects []
+
+fn lower(text: String) -> String
+    String.toLower(text)
+
+fn upper(text: String) -> String
+    String.toUpper(text)
+
+verify lower law cannotDropExpansion
+    given text: String = [""]
+    when text == "İ"
+    because lower("İ") == "i"
+    using []
+    lower(text) => "i"
+
+verify lower law cannotIgnoreContext
+    given text: String = [""]
+    when text == "ΟΣ"
+    because lower("ΟΣ") == "οσ"
+    using []
+    lower(text) => "οσ"
+
+verify lower law cannotKeepNonAsciiCapital
+    given text: String = [""]
+    when text == "İ"
+    because lower("İ") == "İ"
+    using []
+    lower(text) => "İ"

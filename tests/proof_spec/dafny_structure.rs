@@ -14,12 +14,19 @@ fn command(fixture: &str, operation: &str) -> Command {
 }
 
 fn run(fixture: &str) -> Option<(serde_json::Value, PathBuf)> {
-    if Command::new("dafny").arg("--version").output().is_err() {
+    run_backend(fixture, "dafny")
+}
+
+fn run_backend(fixture: &str, backend: &str) -> Option<(serde_json::Value, PathBuf)> {
+    if Command::new(backend).arg("--version").output().is_err() {
         return None;
     }
-    let dir = temp_output_dir(&format!("aver-structure-{}", fixture.replace('/', "-")));
+    let dir = temp_output_dir(&format!(
+        "aver-structure-{backend}-{}",
+        fixture.replace('/', "-")
+    ));
     let output = command(fixture, "proof")
-        .args(["--backend", "dafny", "--check-json", "-o"])
+        .args(["--backend", backend, "--check-json", "-o"])
         .arg(&dir)
         .output()
         .expect("run structural proof");
@@ -47,6 +54,65 @@ fn assert_no_trust_or_refusal(summary: &serde_json::Value) {
 }
 
 #[test]
+fn unicode_case_matches_vm_and_both_proof_backends() {
+    for (fixture, passed) in [
+        ("strings/case_positive", true),
+        ("strings/case_false", false),
+    ] {
+        let samples = command(fixture, "verify").output().expect("VM samples");
+        assert!(samples.status.success(), "{}", format_output(&samples));
+        for backend in ["dafny", "lean"] {
+            let Some((summary, dir)) = run_backend(fixture, backend) else {
+                continue;
+            };
+            assert_no_trust_or_refusal(&summary);
+            assert_eq!(summary["passed"], passed, "{fixture}: {summary}");
+            if backend == "dafny" {
+                assert_eq!(
+                    summary["errors"].as_u64().unwrap() == 0,
+                    passed,
+                    "{summary}"
+                );
+                let common = std::fs::read_to_string(dir.join("common.dfy")).unwrap();
+                assert!(common.contains("StringCaseBefore"));
+                assert!(!common.contains("{:axiom}"));
+                assert!(!common.contains("function StringByteLength"));
+            } else {
+                assert_eq!(summary["build_errors"], 0, "{summary}");
+                assert_eq!(summary["bounded_laws"], 0, "{summary}");
+                assert_eq!(
+                    summary["sorries"].as_u64().unwrap() == 0,
+                    passed,
+                    "{summary}"
+                );
+                if passed {
+                    assert_eq!(summary["universal_laws"], 13, "{summary}");
+                    let manifest: serde_json::Value = serde_json::from_str(
+                        &std::fs::read_to_string(dir.join("proof_manifest.json")).unwrap(),
+                    )
+                    .unwrap();
+                    let laws = manifest["laws"].as_array().unwrap();
+                    assert_eq!(laws.len(), 13);
+                    for law in laws {
+                        assert_eq!(law["tier"], "universal", "{law}");
+                        assert!(
+                            law["axioms"].as_array().unwrap().iter().all(|axiom| {
+                                matches!(
+                                    axiom.as_str(),
+                                    Some("propext" | "Quot.sound" | "Classical.choice")
+                                )
+                            }),
+                            "{law}"
+                        );
+                    }
+                }
+            }
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+}
+
+#[test]
 fn dafny_structure_source_laws_are_checked_without_opaque_assumptions() {
     for fixture in [
         "containers",
@@ -60,6 +126,7 @@ fn dafny_structure_source_laws_are_checked_without_opaque_assumptions() {
         "refinement",
         "refinement_update",
         "bytes",
+        "bytes_hex",
     ] {
         let Some((summary, dir)) = run(fixture) else {
             continue;
@@ -102,7 +169,6 @@ fn dafny_structure_missing_semantics_and_hidden_callback_cycles_remain_explicit(
         "strings/unsupported_float",
         "callbacks_unsupported",
         "refinement_opaque",
-        "bytes_hex_opaque",
     ] {
         let Some((summary, dir)) = run(fixture) else {
             continue;

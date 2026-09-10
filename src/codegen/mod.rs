@@ -28,6 +28,8 @@ pub mod recursion;
 pub mod rust;
 pub mod scc;
 pub(crate) mod source_aliases;
+#[cfg(any(feature = "runtime", feature = "wasm-compile"))]
+pub(crate) mod unicode_case;
 pub mod wasip2;
 #[cfg(feature = "wasm-compile")]
 pub mod wasm_gc;

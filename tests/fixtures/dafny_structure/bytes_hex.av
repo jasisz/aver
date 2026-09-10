@@ -1,5 +1,5 @@
-module DafnyBytesHexOpaque
-    intent = "The byte type does not grant admission to an unmodelled hexadecimal parser dependency."
+module DafnyBytesHex
+    intent = "Hex parsing is admitted through its checked Unicode case dependency."
     depends [Bytes]
     effects []
 

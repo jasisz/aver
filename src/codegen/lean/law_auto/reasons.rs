@@ -119,6 +119,10 @@ fn solver(
     .join(", ");
     let mut lines = vec![
         format!("{indent}first"),
+        // Definitionally equal expressions need no rewrite theorem. In
+        // particular, closed `because` computations are checked by kernel
+        // reduction, without native_decide or a builtin-specific lemma list.
+        format!("{indent}| rfl"),
         format!("{indent}| (simp_all +zetaDelta [{simp_defs}]; done)"),
     ];
     // Apply a cited conclusion before arithmetic normalization can erase its
