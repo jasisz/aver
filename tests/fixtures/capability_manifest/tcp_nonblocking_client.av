@@ -1,0 +1,17 @@
+module TcpNonblockingClient
+    intent = "show the non-blocking connected-socket Tcp operations every target binds"
+    depends [Bytes]
+    exposes [main]
+    effects [Tcp.connect, Tcp.writeNow, Tcp.readNow, Tcp.poll, Tcp.close]
+
+fn main() -> Result<Int, String>
+    ? "Open one connection, offer bytes without blocking, wait for readiness, and read what arrived."
+    ! [Tcp.connect, Tcp.writeNow, Tcp.readNow, Tcp.poll, Tcp.close]
+    connection = Tcp.connect("127.0.0.1", 9)?
+    accepted = Tcp.writeNow(connection, Bytes.fromList([80, 73, 78, 71]))?
+    _ready = Tcp.poll({1 => Tcp.Socket.Sending(connection), 2 => Tcp.Socket.Connected(connection)}, 100)?
+    received = match Tcp.readNow(connection, 64)?
+        Option.None -> 0
+        Option.Some(bytes) -> Bytes.len(bytes)
+    Tcp.close(connection)?
+    Result.Ok(accepted + received)

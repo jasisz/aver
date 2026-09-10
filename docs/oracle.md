@@ -130,7 +130,7 @@ Oracle has a fixed built-in effect set:
 | `Disk` | `writeText`, `appendText`, `writeBytes`, `appendBytes`, `delete`, `deleteDir`, `makeDir`, `sync` | generative + output |
 | `Http` | `get`, `head`, `delete`, `post`, `put`, `patch` | generative + output |
 | `Tcp` | `send`, `sendBytes`, `ping` | generative + output |
-| `Tcp` | `connect`, `readLine`, `readBytes`, `writeLine`, `writeBytes`, `close` | generative + output |
+| `Tcp` | `connect`, `readLine`, `readBytes`, `readNow`, `writeLine`, `writeBytes`, `writeNow`, `close` | generative + output |
 | `Console` | `print`, `error`, `warn` | output |
 | `Terminal` | `readKey` | generative |
 | `Terminal` | `size` | snapshot |
@@ -424,7 +424,9 @@ user already wrote is not re-run.
 | `Disk.{writeText,appendText,writeBytes,appendBytes,delete,deleteDir,makeDir,sync}` | `normal_ok`, `always_err` |
 | `Tcp.{send,sendBytes,ping,readLine,writeLine,close,closeDial,closeListener,peerAddress}` | `normal_ok`, `always_err` |
 | `Tcp.readBytes` | `normal_ok`, `short_read`, `always_err` |
+| `Tcp.readNow` | `normal_ok`, `would_block` (`None`), `eof` (`Some(empty)`), `always_err` |
 | `Tcp.writeBytes` | `normal_ok`, `always_err` |
+| `Tcp.writeNow` | `normal_ok` (whole payload), `partial`, `would_block` (0), `always_err` |
 | `Tcp.connect` | `normal_ok` (fresh connection resource), `always_err` |
 | `Tcp.beginConnect` / `Tcp.listen` | `normal_ok` (fresh resource), `always_err` |
 | `Tcp.dialled` | `connected`, `still_pending`, `refused` |

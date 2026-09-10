@@ -511,6 +511,105 @@ fn main() -> Int
     );
 }
 
+#[test]
+fn tcp_read_now_and_write_now_use_the_declared_wasm_gc_host_imports() {
+    let source = r#"module NonblockingTcp
+    intent = "offer and take bytes without blocking"
+    depends [Bytes]
+    effects [Tcp.readNow, Tcp.writeNow, Tcp.poll]
+
+fn offer(conn: Tcp.Connection, payload: Bytes) -> Result<Int, String>
+    ? "Write what the socket accepts right now."
+    ! [Tcp.writeNow]
+    Tcp.writeNow(conn, payload)
+
+fn take(conn: Tcp.Connection) -> Result<Option<Bytes>, String>
+    ? "Read what is available right now."
+    ! [Tcp.readNow]
+    Tcp.readNow(conn, 64)
+
+fn writable(conn: Tcp.Connection) -> Result<List<Int>, String>
+    ? "Wait for write readiness only."
+    ! [Tcp.poll]
+    Tcp.poll({1 => Tcp.Socket.Sending(conn)}, 10)
+
+fn main() -> Int
+    0
+"#;
+    // The contract types (`Tcp.Socket`, `Bytes`) live in the embedded
+    // standard modules, so this goes through the multi-module path.
+    let deps = [
+        ("Bytes", include_str!("../stdlib/bytes.av")),
+        ("Tcp", include_str!("../stdlib/capabilities/tcp.av")),
+    ];
+    let bytes = compile_multi_module_bytes(source, &deps);
+    wasmparser::Validator::new()
+        .validate_all(&bytes)
+        .unwrap_or_else(|e| panic!("wasmparser validate: {e}"));
+    let mut imports = std::collections::BTreeSet::new();
+    let mut exports = std::collections::BTreeSet::new();
+    for payload in wasmparser::Parser::new(0).parse_all(&bytes) {
+        match payload.expect("parse wasm-gc") {
+            wasmparser::Payload::ImportSection(reader) => {
+                for import in reader.into_imports().flatten() {
+                    if import.module == "aver" {
+                        imports.insert(import.name.to_string());
+                    }
+                }
+            }
+            wasmparser::Payload::ExportSection(reader) => {
+                for export in reader.into_iter().flatten() {
+                    exports.insert(export.name.to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    for name in ["tcp_read_now", "tcp_write_now", "tcp_poll"] {
+        assert!(imports.contains(name), "missing host import aver.{name}");
+    }
+    for name in [
+        "__rt_result_option_bytes_string_some",
+        "__rt_result_option_bytes_string_none",
+        "__rt_result_option_bytes_string_err",
+        "__rt_result_int_string_ok",
+        "__rt_result_int_string_err",
+        "__rt_tcp_socket_kind",
+    ] {
+        assert!(exports.contains(name), "missing factory export {name}");
+    }
+    assert_eq!(run_int_multi(source, &deps), 0);
+
+    // The same program lowered for wasip2 must emit valid canonical-ABI
+    // helpers for the non-blocking stream methods and the output-stream
+    // pollable, importing exactly those WASI functions.
+    let core =
+        compile_multi_module_bytes_for(source, &deps, aver::codegen::wasm_gc::TargetMode::Wasip2);
+    wasmparser::Validator::new()
+        .validate_all(&core)
+        .unwrap_or_else(|e| panic!("wasip2 core validate: {e}"));
+    let mut wasi_imports = std::collections::BTreeSet::new();
+    for payload in wasmparser::Parser::new(0).parse_all(&core) {
+        if let wasmparser::Payload::ImportSection(reader) = payload.expect("parse wasip2 core") {
+            for import in reader.into_imports().flatten() {
+                if import.module == "wasi:io/streams@0.2.4" {
+                    wasi_imports.insert(import.name.to_string());
+                }
+            }
+        }
+    }
+    for name in [
+        "[method]input-stream.read",
+        "[method]output-stream.check-write",
+        "[method]output-stream.write",
+        "[method]output-stream.flush",
+        "[method]output-stream.subscribe",
+        "[method]input-stream.subscribe",
+    ] {
+        assert!(wasi_imports.contains(name), "missing WASI import {name}");
+    }
+}
+
 /// Multi-module compile: parses entry + dep sources, runs the
 /// pipeline with `WithLoaded`, flattens dep fns into the entry
 /// namespace, runs the post-link resolver pass, and emits wasm
@@ -518,6 +617,21 @@ fn main() -> Int
 /// exercise cross-module identity through the wasm-gc backend's
 /// `flatten_multimodule` + `WasmGcLinkedView` (epic #170 Phase 6).
 fn compile_multi_module_bytes(entry_src: &str, dep_sources: &[(&str, &str)]) -> Vec<u8> {
+    compile_multi_module_bytes_for(
+        entry_src,
+        dep_sources,
+        aver::codegen::wasm_gc::TargetMode::AverBridge,
+    )
+}
+
+/// [`compile_multi_module_bytes`] with an explicit emission mode, so a test
+/// can validate the `--target wasip2` core module (canonical-ABI WASI
+/// lowerings) without the component wrapper.
+fn compile_multi_module_bytes_for(
+    entry_src: &str,
+    dep_sources: &[(&str, &str)],
+    target: aver::codegen::wasm_gc::TargetMode,
+) -> Vec<u8> {
     let mut entry_items = parse_source(entry_src).unwrap_or_else(|e| {
         panic!("entry parse failed: {e}\n--- entry ---\n{entry_src}");
     });
@@ -569,7 +683,7 @@ fn compile_multi_module_bytes(entry_src: &str, dep_sources: &[(&str, &str)]) -> 
         &entry_items,
         result.analysis.as_ref(),
         None,
-        aver::codegen::wasm_gc::TargetMode::AverBridge,
+        target,
         &type_aliases,
     )
     .unwrap_or_else(|e| {

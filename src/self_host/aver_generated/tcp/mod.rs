@@ -263,6 +263,7 @@ pub enum Socket {
     Listening(Listener),
     Dialing(Dial),
     Connected(Connection),
+    Sending(Connection),
 }
 
 impl aver_rt::AverDisplay for Socket {
@@ -271,6 +272,7 @@ impl aver_rt::AverDisplay for Socket {
             Socket::Listening(f0) => format!("Listening({})", f0.aver_display_inner()),
             Socket::Dialing(f0) => format!("Dialing({})", f0.aver_display_inner()),
             Socket::Connected(f0) => format!("Connected({})", f0.aver_display_inner()),
+            Socket::Sending(f0) => format!("Sending({})", f0.aver_display_inner()),
         }
     }
     fn aver_display_inner(&self) -> String {
@@ -299,6 +301,11 @@ impl aver_rt::provider::ProviderCodec for Socket {
             Self::Connected(field0) => aver_rt::provider::ProviderValue::Variant {
                 type_name: "Tcp.Socket".to_string(),
                 variant: "Connected".to_string(),
+                fields: vec![field0.into_provider_value(registry, capability)?],
+            },
+            Self::Sending(field0) => aver_rt::provider::ProviderValue::Variant {
+                type_name: "Tcp.Socket".to_string(),
+                variant: "Sending".to_string(),
                 fields: vec![field0.into_provider_value(registry, capability)?],
             },
         })
@@ -366,6 +373,18 @@ impl aver_rt::provider::ProviderCodec for Socket {
                 "variant 'Tcp.Socket.Connected' expected 1 field(s), got {}",
                 field_count
             )),
+            "Sending" if field_count == 1 => Ok(Self::Sending(
+                <Tcp_Connection as aver_rt::provider::ProviderCodec>::from_provider_value(
+                    fields.next().expect("validated variant field 0"),
+                    registry,
+                    capability,
+                    minted_resource,
+                )?,
+            )),
+            "Sending" => Err(format!(
+                "variant 'Tcp.Socket.Sending' expected 1 field(s), got {}",
+                field_count
+            )),
             other => Err(format!("unknown variant 'Tcp.Socket.{}'", other)),
         }
     }
@@ -408,6 +427,17 @@ impl aver_replay::ReplayValue for Socket {
                 payload.insert(
                     "name".to_string(),
                     serde_json::Value::String("Connected".to_string()),
+                );
+                payload.insert(
+                    "fields".to_string(),
+                    serde_json::Value::Array(vec![ReplayValue::to_replay_json(f0)]),
+                );
+                aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
+            }
+            Socket::Sending(f0) => {
+                payload.insert(
+                    "name".to_string(),
+                    serde_json::Value::String("Sending".to_string()),
                 );
                 payload.insert(
                     "fields".to_string(),
@@ -460,6 +490,13 @@ impl aver_replay::ReplayValue for Socket {
                     fields
                         .get(0)
                         .ok_or_else(|| format!("$variant Connected missing field #{}", 0))?,
+                )?,
+            )),
+            "Sending" => Ok(Socket::Sending(
+                <Connection as ReplayValue>::from_replay_json(
+                    fields
+                        .get(0)
+                        .ok_or_else(|| format!("$variant Sending missing field #{}", 0))?,
                 )?,
             )),
             _ => Err(format!("unknown variant '{}' for Socket", variant_name)),

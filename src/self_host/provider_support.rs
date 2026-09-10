@@ -75,8 +75,8 @@ fn build_registry(
         ),
         ProviderContractSpec::new(
             "Tcp",
-            "sha256:2f32788e56fb4be7a05fa348315e52285e09c8e671ba02c05285105a68911af9",
-            "sha256:4d6a91832fe25919d9dcce68bb86397a72f959e24c4a685923abde7d3359a407",
+            "sha256:10f829be40b2a37a45976de2a7b6dfef677401f3902cea7985e866ece638f5d0",
+            "sha256:e70d746252e06c515e7bc9c2a2ebdda8c126b9bcc1cf17bd7a17513f7df23203",
             vec![
                 "Tcp.accept".to_string(),
                 "Tcp.beginConnect".to_string(),
@@ -91,11 +91,13 @@ fn build_registry(
                 "Tcp.poll".to_string(),
                 "Tcp.readBytes".to_string(),
                 "Tcp.readLine".to_string(),
+                "Tcp.readNow".to_string(),
                 "Tcp.readSome".to_string(),
                 "Tcp.send".to_string(),
                 "Tcp.sendBytes".to_string(),
                 "Tcp.writeBytes".to_string(),
                 "Tcp.writeLine".to_string(),
+                "Tcp.writeNow".to_string(),
             ],
         ),
         ProviderContractSpec::new(
@@ -207,7 +209,7 @@ fn build_registry(
     if include_defaults {
         registry.bind(ProviderBinding::new(
             "Tcp",
-            "sha256:2f32788e56fb4be7a05fa348315e52285e09c8e671ba02c05285105a68911af9",
+            "sha256:10f829be40b2a37a45976de2a7b6dfef677401f3902cea7985e866ece638f5d0",
             vec![
                 "Tcp.accept".to_string(),
                 "Tcp.beginConnect".to_string(),
@@ -222,11 +224,13 @@ fn build_registry(
                 "Tcp.poll".to_string(),
                 "Tcp.readBytes".to_string(),
                 "Tcp.readLine".to_string(),
+                "Tcp.readNow".to_string(),
                 "Tcp.readSome".to_string(),
                 "Tcp.send".to_string(),
                 "Tcp.sendBytes".to_string(),
                 "Tcp.writeBytes".to_string(),
                 "Tcp.writeLine".to_string(),
+                "Tcp.writeNow".to_string(),
             ],
             std::sync::Arc::new(aver_rt::provider::StandardTcpProvider::new(
                 standard_tcp_settings,

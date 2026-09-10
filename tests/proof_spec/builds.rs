@@ -41,6 +41,26 @@ fn dafny_export_accepts_recursive_process_polling_boundary() {
 }
 
 #[test]
+fn proof_export_builds_nonblocking_tcp_shell_with_option_bytes_oracle() {
+    // `Tcp.readNow` is the first standard operation whose oracle returns
+    // `Result<Option<Bytes>, String>` and `Tcp.writeNow` the first whose
+    // result is a plain accepted count. The pure laws are trivial; the point
+    // is that the effect-lifted shells elaborate in Lean.
+    assert_proof_builds(
+        "examples/formal/tcp_write_now.av",
+        "aver-proof-tcp-write-now",
+    );
+}
+
+#[test]
+fn dafny_export_accepts_nonblocking_tcp_shell() {
+    assert_dafny_verifies_and_passes(
+        "examples/formal/tcp_write_now.av",
+        "aver-dafny-tcp-write-now",
+    );
+}
+
+#[test]
 fn proof_export_builds_log_line_length_when_lake_is_available() {
     // Pure builtin String-length additivity (`String.len(a + b) =
     // String.len(a) + String.len(b)`) on a life-like log-line byte-budget

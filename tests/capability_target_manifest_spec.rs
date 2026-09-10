@@ -320,6 +320,68 @@ fn wasip2_compile_rejects_tcp_listeners_with_the_target_matrix_reason() {
 }
 
 #[test]
+fn tcp_nonblocking_operations_are_provided_on_every_target() {
+    let output = run_capabilities("tcp_nonblocking_client.av", true);
+    assert!(
+        output.status.success(),
+        "capabilities failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("valid Tcp manifest JSON");
+    let rows = json["rows"].as_array().expect("rows array");
+    for target in ["vm", "rust", "wasm-gc", "wasip2"] {
+        let row = rows
+            .iter()
+            .find(|row| row["capability"] == "Tcp" && row["target"] == target)
+            .expect("Tcp target row");
+        assert_eq!(
+            row["status"]["kind"], "provided",
+            "readNow, writeNow, and Sending polling must bind on {target}: {row}"
+        );
+        assert_eq!(
+            row["requiredOperations"]
+                .as_array()
+                .expect("required operation list")
+                .iter()
+                .map(|value| value.as_str().expect("operation name"))
+                .collect::<Vec<_>>(),
+            [
+                "Tcp.close",
+                "Tcp.connect",
+                "Tcp.poll",
+                "Tcp.readNow",
+                "Tcp.writeNow"
+            ]
+        );
+    }
+}
+
+#[test]
+#[cfg(feature = "wasip2")]
+fn wasip2_compiles_the_nonblocking_socket_operations() {
+    let root = fixture_root();
+    let output_dir = temp_output("tcp-nonblocking-wasip2");
+    let output = Command::new(aver_bin())
+        .arg("compile")
+        .arg(root.join("tcp_nonblocking_client.av"))
+        .arg("--module-root")
+        .arg(&root)
+        .args(["--target", "wasip2", "-o"])
+        .arg(&output_dir)
+        .output()
+        .expect("compile non-blocking Tcp for wasip2");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.status.success(), "compile failed:\n{text}");
+    assert!(text.contains("provided by aver.standard.Tcp/wasip2-wasi@"));
+    std::fs::remove_dir_all(output_dir).expect("remove generated component");
+}
+
+#[test]
 #[cfg(feature = "wasip2")]
 fn wasip2_still_compiles_the_connected_socket_operations() {
     let root = fixture_root();
