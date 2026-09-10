@@ -457,15 +457,16 @@ pub(super) fn cmd_repl() {
         // compiler-written, and built in `repl_execute` BELOW this
         // point — passing the user slice keeps them out of the ban's
         // reach even if that ever stops being true.
-        let user_program: Vec<TopLevel> = accumulated
+        let mut user_program: Vec<TopLevel> = accumulated
             .iter()
             .chain(new_items.iter())
             .cloned()
             .collect();
-        let tc = aver::ir::pipeline::typecheck_gate(
-            &user_program,
+        let user_program_len = user_program.len();
+        let tc = aver::ir::pipeline::front_gate(
+            &mut user_program,
             &TypecheckMode::Full { base_dir: None },
-            &user_program,
+            user_program_len,
         );
         if !tc.errors.is_empty() {
             print_type_errors(&tc.errors);

@@ -301,7 +301,7 @@ pub(super) fn collect_builtin_calls_expr(
             {
                 let head = name.split('.').next().unwrap_or(&name);
                 let leaf = name.rsplit('.').next().unwrap_or(&name);
-                if head.chars().next().is_some_and(|c| c.is_uppercase())
+                if crate::ast::name_is_type_like(head)
                     && leaf.chars().next().is_some_and(|c| c.is_lowercase())
                 {
                     out.insert(name);

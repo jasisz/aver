@@ -2126,11 +2126,11 @@ fn audit_unit(
         analyze_source(source, &opts)
     } else {
         let mut transformed = unit.items.clone();
-        aver::ir::pipeline::tco(&mut transformed);
-        let tc_result = aver::ir::pipeline::typecheck_gate(
-            &transformed,
+        let user_program_len = transformed.len();
+        let tc_result = aver::ir::pipeline::front_gate(
+            &mut transformed,
             &aver::ir::TypecheckMode::WithCheckedLoaded(&unit.loaded),
-            &unit.items,
+            user_program_len,
         );
         preparation_failed |= !tc_result.errors.is_empty();
         let mut report =
@@ -4680,6 +4680,7 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
         // Run the full pipeline so the resolved HIR is available to lower.
         "mir" => Some(PipelineStage::NameResolve),
         "tco" => Some(PipelineStage::Tco),
+        "yield_lower" => Some(PipelineStage::YieldLower),
         "typecheck" => Some(PipelineStage::Typecheck),
         "interp_lower" => Some(PipelineStage::InterpLower),
         "buffer_build" => Some(PipelineStage::BufferBuild),
@@ -4701,7 +4702,7 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
                 "{}",
                 format!(
                     "unknown --emit-ir-after stage '{}'; expected one of: \
-                     parse, tco, typecheck, interp_lower, buffer_build, chars_fusion, string_index, list_build, byte_sink, resolve, last_use, analyze, escape, build_symbols, name_resolve, refinement_lower, contract_lower, law_lower, mir",
+                     parse, tco, yield_lower, typecheck, interp_lower, buffer_build, chars_fusion, string_index, list_build, byte_sink, resolve, last_use, analyze, escape, build_symbols, name_resolve, refinement_lower, contract_lower, law_lower, mir",
                     other
                 )
                 .red()

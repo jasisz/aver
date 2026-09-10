@@ -738,9 +738,9 @@ fn prepare_verify_for_items_vm_with_loaded(
     loaded: Vec<crate::source::LoadedModule>,
     source_file: &str,
 ) -> Result<PreparedVmVerify, String> {
-    crate::ir::pipeline::tco(&mut items);
     let mode = crate::ir::TypecheckMode::WithCheckedLoaded(&loaded);
-    let typecheck = crate::ir::pipeline::typecheck_gate(&items, &mode, &items);
+    let user_program_len = items.len();
+    let typecheck = crate::ir::pipeline::front_gate(&mut items, &mode, user_program_len);
     if !typecheck.errors.is_empty() {
         return Err(format_type_errors(&typecheck.errors));
     }
@@ -866,11 +866,9 @@ fn run_verify_for_items_vm_impl(
     provider_bindings: &[crate::provider::ProviderBinding],
     parallel_cases: bool,
 ) -> Result<Vec<VerifyResult>, String> {
-    crate::ir::pipeline::tco(&mut items);
-
     // Everything appended below this line is compiler-fabricated, so
     // this is where the program the user wrote ends — the scope the
-    // shadowing ban in `pipeline::typecheck_gate` is entitled to read.
+    // shadowing ban in `pipeline::front` is entitled to read.
     let user_program_len = items.len();
 
     if mode == ExpansionMode::Hostile {
@@ -901,21 +899,21 @@ fn run_verify_for_items_vm_impl(
         None
     };
 
-    // `pipeline::typecheck_gate`, not the bare `pipeline::typecheck`:
-    // verify cannot use `pipeline::run` (it has to merge verify blocks,
-    // expand hostile cases and build its VM plans BETWEEN typecheck and
-    // resolve, and the orchestrator has no seam there), but the gate it
-    // owes its users is the same one every other front door passes
-    // through — type errors AND the shadowing ban (#954). Without this
-    // the #951 program, whose three executors disagreed about a call
-    // through a binder spelling a module fn's name, was still EXECUTED
-    // by `aver verify` while `run` and `compile` refused it.
+    // `pipeline::front`, not the bare `pipeline::typecheck`: verify
+    // cannot use `pipeline::run` (it has to merge verify blocks, expand
+    // hostile cases and build its VM plans BETWEEN typecheck and
+    // resolve, and the orchestrator has no seam there), but the front
+    // door it owes its users is the same one every other door passes
+    // through — TCO, the `yield` lowering, type errors AND the shadowing
+    // ban (#954). Without this the #951 program, whose three executors
+    // disagreed about a call through a binder spelling a module fn's
+    // name, was still EXECUTED by `aver verify` while `run` and
+    // `compile` refused it.
     let typecheck_mode = match prepared_deps.as_ref() {
         Some(prepared) => crate::ir::TypecheckMode::WithCheckedLoaded(&prepared.loaded),
         None => crate::ir::TypecheckMode::Full { base_dir },
     };
-    let tc_result =
-        crate::ir::pipeline::typecheck_gate(&items, &typecheck_mode, &items[..user_program_len]);
+    let tc_result = crate::ir::pipeline::front_gate(&mut items, &typecheck_mode, user_program_len);
     if !tc_result.errors.is_empty() {
         return Err(format_type_errors(&tc_result.errors));
     }
@@ -1273,8 +1271,6 @@ fn run_verify_for_items_vm_with_loaded_impl(
     provider_bindings: &[crate::provider::ProviderBinding],
     dependencies_checked: bool,
 ) -> Result<Vec<VerifyResult>, String> {
-    crate::ir::pipeline::tco(&mut items);
-
     // End of the program the user wrote — see the disk-loader path.
     let user_program_len = items.len();
 
@@ -1290,8 +1286,7 @@ fn run_verify_for_items_vm_with_loaded_impl(
     } else {
         crate::ir::TypecheckMode::WithLoaded(&loaded)
     };
-    let tc_result =
-        crate::ir::pipeline::typecheck_gate(&items, &typecheck_mode, &items[..user_program_len]);
+    let tc_result = crate::ir::pipeline::front_gate(&mut items, &typecheck_mode, user_program_len);
     if !tc_result.errors.is_empty() {
         return Err(format_type_errors(&tc_result.errors));
     }

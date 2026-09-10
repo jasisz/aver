@@ -557,10 +557,7 @@ pub(crate) fn type_is_compound(ty: &str) -> bool {
         || trimmed.starts_with("Tuple<")
         || trimmed.starts_with("Result<")
         || trimmed.starts_with("Option<")
-        || (trimmed
-            .chars()
-            .next()
-            .is_some_and(|c| c.is_ascii_uppercase())
+        || (crate::ast::name_is_type_like(trimmed)
             && !matches!(trimmed, "Int" | "Float" | "Bool" | "String" | "Unit"))
 }
 

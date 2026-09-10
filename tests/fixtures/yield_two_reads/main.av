@@ -1,0 +1,46 @@
+module YieldTwoReads
+    intent = "Fixture: two requests of one kind in one body and a request inside a match arm; the Claim state is a sum with one variant per stop."
+    depends [Pool]
+    effects [Pool.claim, yield, Console.print]
+    exposes [drive, main]
+
+fn pair(id: Int) -> Int
+    ? "Claims two handles for id and, when both exist, a third for their sum; returns what it could add up."
+    ! [Pool.claim, yield]
+    first = Pool.claim(id)
+    second = Pool.claim(id + 1)
+    match first
+        Option.None -> 0
+        Option.Some(a) -> match second
+            Option.None -> a
+            Option.Some(b) -> match Pool.claim(a + b)
+                Option.None -> a + b
+                Option.Some(c) -> a + b + c
+
+fn drive(outcome: __PairOutcome, answers: List<Option<Int>>) -> Int
+    ? "Coordinator: answers every Claim request from the answers list (None once the list is empty) and returns the final result."
+    match outcome
+        __PairOutcome.Done(v) -> v
+        __PairOutcome.Waiting(request) -> match request
+            __PairRequest.Claim(peer, state) -> match answers
+                [] -> drive(__pairAnswerClaim(state, Option.None), [])
+                [answer, ..rest] -> drive(__pairAnswerClaim(state, answer), rest)
+
+verify drive
+    drive(__pairStart(1), [Option.Some(2), Option.Some(3), Option.Some(10)]) => 15
+    drive(__pairStart(1), [Option.Some(2), Option.Some(3)]) => 5
+    drive(__pairStart(1), [Option.Some(2)]) => 2
+    drive(__pairStart(1), []) => 0
+
+verify __pairStart
+    __pairStart(1) => __PairOutcome.Waiting(__PairRequest.Claim(1, __PairClaimState.AwaitFirst(1)))
+
+verify __pairAnswerClaim
+    __pairAnswerClaim(__PairClaimState.AwaitFirst(1), Option.Some(2)) => __PairOutcome.Waiting(__PairRequest.Claim(2, __PairClaimState.AwaitSecond(Option.Some(2))))
+    __pairAnswerClaim(__PairClaimState.AwaitSecond(Option.Some(2)), Option.Some(3)) => __PairOutcome.Waiting(__PairRequest.Claim(5, __PairClaimState.Await3(2, 3)))
+    __pairAnswerClaim(__PairClaimState.Await3(2, 3), Option.None) => __PairOutcome.Done(5)
+
+fn main() -> Unit
+    ! [Console.print]
+    result = drive(__pairStart(1), [Option.Some(2), Option.Some(3), Option.Some(10)])
+    Console.print("pair = {result}")

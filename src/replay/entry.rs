@@ -132,7 +132,7 @@ fn literal_to_value(lit: &Literal) -> Value {
 }
 
 fn is_upper_camel(name: &str) -> bool {
-    name.chars().next().is_some_and(|c| c.is_ascii_uppercase())
+    crate::ast::name_is_type_like(name)
 }
 
 fn dotted_upper_path(expr: &Expr) -> Option<String> {

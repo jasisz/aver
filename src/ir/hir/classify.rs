@@ -163,10 +163,7 @@ fn classify_field_access<'a>(
     // classifier's heuristic). If the field access is on a value
     // expression (e.g. a record), emit the generic FieldAccess.
     let dotted = resolved_to_dotted(full_expr);
-    let starts_upper = dotted
-        .as_deref()
-        .and_then(|d| d.chars().next())
-        .is_some_and(|c| c.is_uppercase());
+    let starts_upper = dotted.as_deref().is_some_and(crate::ast::name_is_type_like);
 
     if !starts_upper {
         return Some(ResolvedLeafOp::FieldAccess { object, field_name });

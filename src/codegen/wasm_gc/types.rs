@@ -3348,14 +3348,17 @@ pub(super) fn strip_inner_dotted_prefixes(s: &str) -> String {
             while j < bytes.len() && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_') {
                 j += 1;
             }
-            if j > start && j < bytes.len() && bytes[j] == b'.' && bytes[start].is_ascii_uppercase()
+            if j > start
+                && j < bytes.len()
+                && bytes[j] == b'.'
+                && crate::ast::name_is_type_like(&s[start..j])
             {
                 let after_dot = j + 1;
                 let mut k = after_dot;
                 while k < bytes.len() && (bytes[k].is_ascii_alphanumeric() || bytes[k] == b'_') {
                     k += 1;
                 }
-                if k > after_dot && bytes[after_dot].is_ascii_uppercase() {
+                if k > after_dot && crate::ast::name_is_type_like(&s[after_dot..k]) {
                     // Emit the bare suffix, skip the prefix + dot.
                     out.push_str(&s[after_dot..k]);
                     i = k;

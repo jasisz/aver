@@ -1,0 +1,48 @@
+module YieldThreeKinds
+    intent = "Fixture: three request kinds (Claim, Release, Yield) in one yield function, driven by a coordinator that answers each kind from its own list."
+    depends [Pool]
+    effects [Pool.claim, Pool.release, yield, Console.print]
+    exposes [drive, main]
+
+fn loop(id: Int, held: Int, total: Int) -> Int
+    ? "Claims a handle for id, releases the one held so far, and loops while the pool keeps answering; returns the sum of the handles."
+    ! [Pool.claim, Pool.release, yield]
+    match Pool.claim(id)
+        Option.None -> total
+        Option.Some(h) -> match Pool.release(held)
+            true -> loop(id, h, total + h)
+            false -> total
+
+fn drive(outcome: __LoopOutcome, claims: List<Option<Int>>, releases: List<Bool>) -> Int
+    ? "Coordinator: answers Claim requests from claims, Release requests from releases (false once exhausted), resumes every Yield request, and returns the final result."
+    match outcome
+        __LoopOutcome.Done(v) -> v
+        __LoopOutcome.Waiting(request) -> match request
+            __LoopRequest.Yield(state) -> drive(__loopAnswerYield(state), claims, releases)
+            __LoopRequest.Claim(peer, state) -> match claims
+                [] -> drive(__loopAnswerClaim(state, Option.None), [], releases)
+                [answer, ..rest] -> drive(__loopAnswerClaim(state, answer), rest, releases)
+            __LoopRequest.Release(handle, state) -> match releases
+                [] -> drive(__loopAnswerRelease(state, false), claims, [])
+                [answer, ..rest] -> drive(__loopAnswerRelease(state, answer), claims, rest)
+
+verify drive
+    drive(__loopStart(1, 0, 0), [Option.Some(3), Option.Some(4), Option.None], [true, true]) => 7
+    drive(__loopStart(1, 0, 0), [Option.Some(3), Option.Some(4), Option.None], [true, false]) => 3
+    drive(__loopStart(1, 0, 0), [Option.None], []) => 0
+
+verify __loopStart
+    __loopStart(1, 0, 0) => __LoopOutcome.Waiting(__LoopRequest.Claim(1, __LoopClaimState.Await1(1, 0, 0)))
+
+verify __loopAnswerClaim
+    __loopAnswerClaim(__LoopClaimState.Await1(1, 0, 0), Option.Some(3)) => __LoopOutcome.Waiting(__LoopRequest.Release(0, __LoopReleaseState.Await2(1, 0, 3)))
+    __loopAnswerClaim(__LoopClaimState.Await1(1, 0, 0), Option.None) => __LoopOutcome.Done(0)
+
+verify __loopAnswerRelease
+    __loopAnswerRelease(__LoopReleaseState.Await2(1, 0, 3), true) => __LoopOutcome.Waiting(__LoopRequest.Yield(__LoopYieldState.Await3(1, 3, 3)))
+    __loopAnswerRelease(__LoopReleaseState.Await2(1, 0, 3), false) => __LoopOutcome.Done(0)
+
+fn main() -> Unit
+    ! [Console.print]
+    result = drive(__loopStart(1, 0, 0), [Option.Some(3), Option.Some(4), Option.None], [true, true])
+    Console.print("total = {result}")

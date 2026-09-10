@@ -51,6 +51,13 @@ use crate::types::checker::{
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum PipelineStage {
     Tco,
+    /// `yield` lowering (#1329): every `yield` function becomes state
+    /// types, a request sum, an outcome sum and pure answer functions of
+    /// the module. Runs between TCO and the type checker inside
+    /// [`front`], ABOVE the proof line: the generated items are ordinary
+    /// items of the program and both proof exporters see them. Fires
+    /// only when a function was lowered.
+    YieldLower,
     Typecheck,
     InterpLower,
     BufferBuild,
@@ -134,6 +141,7 @@ impl PipelineStage {
     pub const fn name(self) -> &'static str {
         match self {
             Self::Tco => "tco",
+            Self::YieldLower => "yield_lower",
             Self::Typecheck => "typecheck",
             Self::InterpLower => "interp_lower",
             Self::BufferBuild => "buffer_build",
@@ -534,6 +542,8 @@ pub struct PipelineResult {
     /// inspect `.errors` and decide what to do — the orchestrator does not
     /// exit on its own.
     pub typecheck: Option<TypeCheckResult>,
+    /// What the `yield` lowering did; `None` when no function was lowered.
+    pub yield_lowering: Option<crate::yield_lowering::YieldLoweringReport>,
     /// Buffer-build pass report — sinks fired, synthesized fns,
     /// per-sink rewrite counts. `None` when the pass was disabled.
     pub buffer_build: Option<BufferBuildPassReport>,
@@ -756,6 +766,145 @@ pub fn typecheck_gate(
     tc
 }
 
+/// [`front`] with TCO on and no hook, for the doors that only need the
+/// gate's verdict: the lowered `items` and the typecheck result.
+pub fn front_gate(
+    items: &mut Vec<TopLevel>,
+    mode: &TypecheckMode<'_>,
+    user_program_len: usize,
+) -> TypeCheckResult {
+    front(
+        items,
+        FrontConfig {
+            run_tco: true,
+            typecheck: Some(mode),
+            user_program_len,
+            on_after_pass: None,
+        },
+    )
+    .typecheck
+    .expect("front runs the gate when a typecheck mode is given")
+}
+
+/// What [`front`] runs.
+pub struct FrontConfig<'a, 'b> {
+    pub run_tco: bool,
+    /// `Some(mode)` lowers `yield` functions and runs the typecheck gate
+    /// with that driver; `None` runs neither (a `yield` function cannot be
+    /// lowered without types).
+    pub typecheck: Option<&'b TypecheckMode<'a>>,
+    /// Length of the prefix of `items` the user wrote — everything past it
+    /// is compiler-fabricated (hostile stubs, REPL wrappers) and outside
+    /// the shadowing ban's scope. See [`typecheck_gate`].
+    pub user_program_len: usize,
+    /// Fired after each stage that ran, as [`PipelineConfig::on_after_pass`].
+    pub on_after_pass: Option<&'b mut AfterPassHook<'a>>,
+}
+
+pub struct FrontResult {
+    pub pass_diagnostics: Vec<PassDiagnostic>,
+    /// `Some` iff a `yield` function was lowered.
+    pub yield_lowering: Option<crate::yield_lowering::YieldLoweringReport>,
+    /// `Some` iff `FrontConfig::typecheck` was set. A lowering diagnostic
+    /// lands here as an ordinary type error.
+    pub typecheck: Option<TypeCheckResult>,
+}
+
+/// The FRONT DOOR: TCO, `yield` lowering and the typecheck gate, in that
+/// order, as one entry. Every door that type-checks a program — [`run`],
+/// both verify lanes, `aver check`, `aver audit`, the provider host, the
+/// REPL — goes through here, so every one of them sees the lowered
+/// module: a `yield` function never reaches a checker, a backend or a
+/// proof exporter as written.
+///
+/// The lowering needs the types of the `yield` function's bindings and
+/// the checker needs the generated items, so the gate runs in two phases
+/// when the program has a `yield` function: the program is checked as
+/// written on a copy (errors inside a `yield` function stop here; errors
+/// elsewhere may only concern the names about to be generated and are
+/// left to the second phase), the `yield` functions are lowered from
+/// that stamped copy, and the lowered module is checked in full. The
+/// shadowing ban reads the copy: the program the user wrote.
+pub fn front(items: &mut Vec<TopLevel>, cfg: FrontConfig<'_, '_>) -> FrontResult {
+    let FrontConfig {
+        run_tco,
+        typecheck: mode,
+        user_program_len,
+        mut on_after_pass,
+    } = cfg;
+    let mut result = FrontResult {
+        pass_diagnostics: Vec::new(),
+        yield_lowering: None,
+        typecheck: None,
+    };
+    let mut fire = |stage: PipelineStage, items: &[TopLevel]| {
+        if let Some(cb) = on_after_pass.as_mut() {
+            cb(stage, items);
+        }
+    };
+
+    if run_tco {
+        let pre = pass_diag::collect(items);
+        tco(items);
+        let post = pass_diag::collect(items);
+        result
+            .pass_diagnostics
+            .push(diag_for_tco(&pre, &post, items));
+        fire(PipelineStage::Tco, items);
+    }
+
+    let Some(mode) = mode else {
+        return result;
+    };
+    let user_program_len = user_program_len.min(items.len());
+
+    let tc = if crate::yield_lowering::has_yield_fns(items) {
+        // A deep copy: `FnDef.body` is shared behind an `Arc`, and the
+        // first check must stamp the copy's bodies, not the program's —
+        // the coordinator's references to not-yet-generated names would
+        // otherwise carry `Invalid` stamps into the lowered module.
+        let written: Vec<TopLevel> = items
+            .iter()
+            .map(|item| match item {
+                TopLevel::FnDef(fd) => TopLevel::FnDef(crate::ast::FnDef {
+                    body: std::sync::Arc::new(fd.body.as_ref().clone()),
+                    ..fd.clone()
+                }),
+                other => other.clone(),
+            })
+            .collect();
+        let phase_one = typecheck(&written, mode);
+        match crate::yield_lowering::lower(items, &written, &phase_one.errors) {
+            Ok(report) => {
+                if std::env::var_os("AVER_YIELD_DUMP").is_some() {
+                    eprintln!("{}", report.generated_source());
+                }
+                result.yield_lowering = Some(report);
+                fire(PipelineStage::YieldLower, items);
+                let mut tc = typecheck(items, mode);
+                if tc.errors.is_empty() {
+                    tc.errors.extend(crate::resolver::check_shadowing(
+                        &written[..user_program_len],
+                    ));
+                }
+                tc
+            }
+            Err(errors) => TypeCheckResult {
+                errors,
+                ..phase_one
+            },
+        }
+    } else {
+        typecheck_gate(items, mode, &items[..user_program_len])
+    };
+    result
+        .pass_diagnostics
+        .push(diag_for_typecheck(&tc, items.len()));
+    fire(PipelineStage::Typecheck, items);
+    result.typecheck = Some(tc);
+    result
+}
+
 /// Lower `"a${x}b"` interpolation literals into the buffer pipeline.
 /// Skipped by proof exporters (Lean/Dafny) which want the source-level form.
 pub fn interp_lower(items: &mut [TopLevel]) {
@@ -857,28 +1006,24 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
         || cfg.run_contract_lower
         || cfg.run_law_lower;
 
-    if cfg.run_tco {
-        let pre = pass_diag::collect(items);
-        tco(items);
-        let post = pass_diag::collect(items);
-        result
-            .pass_diagnostics
-            .push(diag_for_tco(&pre, &post, items));
-        fire(&mut cfg, PipelineStage::Tco, items);
-    }
-
-    if let Some(mode) = cfg.typecheck.as_ref() {
-        // The gate — type checker plus the shadowing ban (#954) — reads
-        // the pre-fabrication AST, above the synthesizing passes below.
-        // Nothing has been appended to `items` here, so the ban's scope
-        // is the whole program. See [`typecheck_gate`].
-        let tc = typecheck_gate(items, mode, items);
+    // The front door: TCO, `yield` lowering and the typecheck gate, in
+    // the one order every other door uses too. Nothing has been appended
+    // to `items` here, so the shadowing ban's scope is the whole program.
+    let user_program_len = items.len();
+    let front = front(
+        items,
+        FrontConfig {
+            run_tco: cfg.run_tco,
+            typecheck: cfg.typecheck.as_ref(),
+            user_program_len,
+            on_after_pass: cfg.on_after_pass.as_mut(),
+        },
+    );
+    result.pass_diagnostics.extend(front.pass_diagnostics);
+    result.yield_lowering = front.yield_lowering;
+    if let Some(tc) = front.typecheck {
         let has_errors = !tc.errors.is_empty();
-        result
-            .pass_diagnostics
-            .push(diag_for_typecheck(&tc, items.len()));
         result.typecheck = Some(tc);
-        fire(&mut cfg, PipelineStage::Typecheck, items);
         if has_errors {
             return result;
         }

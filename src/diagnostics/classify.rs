@@ -300,6 +300,39 @@ pub(crate) fn classify_type_error(msg: &str) -> TypeErrorClassification {
         );
     }
 
+    // Keyed on the wording built by `crate::yield_lowering`.
+    if msg.contains("yields; call '") {
+        return (
+            "yield-direct-call",
+            None,
+            Vec::new(),
+            Some(
+                "A yield function is not called: call its generated __<fn>Start(...) and answer the requests its Outcome carries"
+                    .to_string(),
+            ),
+        );
+    }
+    if msg.contains("outside tail position; pass what comes next as data") {
+        return (
+            "yield-non-tail-call",
+            None,
+            Vec::new(),
+            Some("Pass what comes next as data, or make it a tail call".to_string()),
+        );
+    }
+    if msg.contains("is not supported by yield lowering")
+        || msg.contains("would be live across a request")
+        || msg.contains("is not lowered as a Yield request in this phase")
+        || msg.contains("has its own request and outcome types")
+    {
+        return (
+            "yield-unsupported",
+            None,
+            Vec::new(),
+            Some("Restructure the yield function as the message says, or move the construct into a plain function it calls".to_string()),
+        );
+    }
+
     if msg.contains("but the match subject is") {
         return (
             "pattern-subject-mismatch",

@@ -367,11 +367,11 @@ fn plan_for_programs(
             }
 
             let mut items = module.items.clone();
-            aver::ir::pipeline::tco(&mut items);
-            let tc = aver::ir::pipeline::typecheck_gate(
-                &items,
+            let user_program_len = items.len();
+            let tc = aver::ir::pipeline::front_gate(
+                &mut items,
                 &aver::ir::TypecheckMode::WithCheckedLoaded(&loaded),
-                &items,
+                user_program_len,
             );
             if !tc.errors.is_empty() {
                 checked.insert(
