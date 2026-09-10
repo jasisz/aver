@@ -329,6 +329,15 @@ impl<'a> Lowering<'a> {
             return self.type_text(Some(&ty), line, &format!("the live variable '{name}'"));
         }
         if let Some((_, ty)) = self.fd.params.iter().find(|(p, _)| p == name) {
+            // A callback parameter is only ever used as a callee, which
+            // carries no stamp; its declared type says what it is.
+            if ty.trim_start().starts_with("Fn(") {
+                return self.type_text(
+                    Some(&crate::types::parse_type_str(ty)),
+                    line,
+                    &format!("the live variable '{name}'"),
+                );
+            }
             return Ok(ty.clone());
         }
         self.internal(

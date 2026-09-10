@@ -5506,3 +5506,184 @@ fn law_template_typing_keeps_sample_literal_discharge_independent() {
     assert_eq!(block.cases[1].0.ty(), Some(&result));
     assert_eq!(block.cases[1].1.ty(), Some(&result));
 }
+
+// ---------------------------------------------------------------------------
+// `yield` functions (jasisz/aver#1329, phase one)
+//
+// The lowering runs in the pipeline front door between TCO and the checker,
+// so these go through `pipeline::front_gate` rather than `run_type_check`.
+// ---------------------------------------------------------------------------
+
+fn front_errors(src: &str) -> Vec<String> {
+    let mut items = parse(src);
+    let user_program_len = items.len();
+    aver::ir::pipeline::front_gate(
+        &mut items,
+        &aver::ir::TypecheckMode::Full { base_dir: None },
+        user_program_len,
+    )
+    .errors
+    .into_iter()
+    .map(|e| e.message)
+    .collect()
+}
+
+fn assert_front_error_containing(src: &str, snippet: &str) {
+    let errs = front_errors(src);
+    assert!(
+        errs.iter().any(|e| e.contains(snippet)),
+        "expected error containing {:?}, got:\n  {}",
+        snippet,
+        if errs.is_empty() {
+            "<no errors>".to_string()
+        } else {
+            errs.join("\n  ")
+        }
+    );
+}
+
+const YIELD_MODULE: &str = "module Demo\n    effects [Console.print, Console.readLine, yield]\n\n";
+
+const YIELD_LOOP: &str = r#"fn loop(seen: Int) -> Int
+    ? "Reads lines until the console fails, counting them."
+    ! [Console.readLine, yield]
+    line = Console.readLine()
+    match line
+        Result.Err(_) -> seen
+        Result.Ok(_) -> loop(seen + 1)
+"#;
+
+const YIELD_COORDINATOR: &str = r#"
+fn drive(outcome: __LoopOutcome, lines: List<Result<String, String>>) -> Int
+    ? "Answers every ReadLine request from lines and resumes every Yield request."
+    match outcome
+        __LoopOutcome.Done(v) -> v
+        __LoopOutcome.Waiting(request) -> match request
+            __LoopRequest.Yield(state) -> drive(__loopAnswerYield(state), lines)
+            __LoopRequest.ReadLine(state) -> match lines
+                [] -> drive(__loopAnswerReadLine(state, Result.Err("eof")), [])
+                [l, ..rest] -> drive(__loopAnswerReadLine(state, l), rest)
+"#;
+
+#[test]
+fn yield_effect_parses_and_the_function_lowers_without_errors() {
+    let errs = front_errors(&format!("{YIELD_MODULE}{YIELD_LOOP}"));
+    assert!(
+        errs.is_empty(),
+        "unexpected errors:\n  {}",
+        errs.join("\n  ")
+    );
+}
+
+#[test]
+fn yield_propagates_as_an_effect_through_the_module_boundary() {
+    let src = format!("module Demo\n    effects [Console.readLine]\n\n{YIELD_LOOP}");
+    assert_front_error_containing(&src, "'yield' which is not in the declared boundary");
+}
+
+#[test]
+fn plain_call_to_a_yield_function_is_an_error_with_a_recipe() {
+    let src = format!("{YIELD_MODULE}{YIELD_LOOP}\nfn main() -> Int\n    loop(0)\n");
+    assert_front_error_containing(
+        &src,
+        "Function 'main' calls 'loop' directly, but 'loop' yields; call '__loopStart(...)' and answer its requests",
+    );
+}
+
+#[test]
+fn verify_case_calling_a_yield_function_gets_the_same_recipe() {
+    let src = format!("{YIELD_MODULE}{YIELD_LOOP}\nverify loop\n    loop(0) => 0\n");
+    assert_front_error_containing(
+        &src,
+        "verify block for 'loop' calls 'loop' directly, but 'loop' yields; call '__loopStart(...)'",
+    );
+}
+
+#[test]
+fn non_tail_call_to_a_yield_function_is_an_error_with_a_recipe() {
+    let src = format!(
+        "{YIELD_MODULE}{YIELD_LOOP}\nfn outer(n: Int) -> Int\n    ? \"Counts one more than loop.\"\n    ! [Console.readLine, yield]\n    loop(n) + 1\n"
+    );
+    assert_front_error_containing(
+        &src,
+        "Function 'outer' calls yield function 'loop' outside tail position; pass what comes next as data, or make it a tail call",
+    );
+}
+
+#[test]
+fn tail_call_to_another_yield_function_is_rejected_in_phase_one() {
+    let src = format!(
+        "{YIELD_MODULE}{YIELD_LOOP}\nfn outer(n: Int) -> Int\n    ? \"Hands over to loop.\"\n    ! [Console.readLine, yield]\n    loop(n)\n"
+    );
+    assert_front_error_containing(
+        &src,
+        "Function 'outer' tail-calls yield function 'loop', which has its own request and outcome types",
+    );
+}
+
+#[test]
+fn generated_names_are_referenceable_from_a_coordinator() {
+    let errs = front_errors(&format!("{YIELD_MODULE}{YIELD_LOOP}{YIELD_COORDINATOR}"));
+    assert!(
+        errs.is_empty(),
+        "unexpected errors:\n  {}",
+        errs.join("\n  ")
+    );
+}
+
+#[test]
+fn wrong_state_and_answer_pairing_is_a_type_error() {
+    let src = format!(
+        "{YIELD_MODULE}{YIELD_LOOP}\nfn bad(state: __LoopYieldState) -> __LoopOutcome\n    ? \"Answers a ReadLine with a Yield state.\"\n    __loopAnswerReadLine(state, Result.Ok(\"x\"))\n"
+    );
+    let errs = front_errors(&src);
+    assert!(
+        errs.iter()
+            .any(|e| e.contains("__LoopReadLineState") && e.contains("__LoopYieldState")),
+        "expected a mismatch naming both state types, got:\n  {}",
+        errs.join("\n  ")
+    );
+}
+
+#[test]
+fn unsupported_construct_in_a_yield_function_is_named() {
+    let src = format!(
+        "{YIELD_MODULE}fn both() -> Unit\n    ? \"Prints twice at once.\"\n    ! [Console.print, yield]\n    _ = (Console.print(\"a\"), Console.print(\"b\"))!\n    Console.print(\"c\")\n"
+    );
+    assert_front_error_containing(
+        &src,
+        "Function 'both': a request inside an independent product `(a, b)!` is not supported by yield lowering",
+    );
+}
+
+#[test]
+fn callback_live_across_a_request_is_rejected() {
+    let src = format!(
+        "{YIELD_MODULE}fn apply(f: Fn(Int) -> Int, n: Int) -> Int\n    ? \"Prints, then applies f.\"\n    ! [Console.print, yield]\n    Console.print(\"x\")\n    f(n)\n"
+    );
+    assert_front_error_containing(
+        &src,
+        "the live variable 'f' is a function value and would be live across a request",
+    );
+}
+
+#[test]
+fn yield_function_without_a_stop_is_an_error() {
+    let src = format!(
+        "{YIELD_MODULE}fn still(n: Int) -> Int\n    ? \"Never stops.\"\n    ! [yield]\n    n + 1\n"
+    );
+    assert_front_error_containing(&src, "declares `yield` but never stops");
+}
+
+#[test]
+fn error_propagation_inside_a_yield_function_lowers() {
+    let src = format!(
+        "{YIELD_MODULE}fn first(seen: Int) -> Result<Int, String>\n    ? \"Reads one line, echoes it, and counts it.\"\n    ! [Console.print, Console.readLine, yield]\n    line = Console.readLine()?\n    Console.print(line)\n    Result.Ok(seen + 1)\n"
+    );
+    let errs = front_errors(&src);
+    assert!(
+        errs.is_empty(),
+        "unexpected errors:\n  {}",
+        errs.join("\n  ")
+    );
+}
