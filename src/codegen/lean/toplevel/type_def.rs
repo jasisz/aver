@@ -430,20 +430,76 @@ fn emit_sum_type(
             .all(|field| field_is_inhabitable(field, ctx, scope, &mut Vec::new()))
     });
     // #14: Recursive types cannot derive DecidableEq automatically
-    lines.push(derives_line(inhabited, !is_recursive));
-    if equality::reflects_equality(&crate::types::Type::named(name), ctx, scope) {
+    lines.extend(equality_lines(
+        name,
+        variants
+            .iter()
+            .flat_map(|v| v.fields.iter().map(String::as_str)),
+        inhabited,
+        is_recursive,
+        ctx,
+        scope,
+    ));
+    lines.join("\n")
+}
+
+/// The `deriving` clause and, when the type reflects equality, the line that
+/// proves the derived `BEq` lawful.
+///
+/// A non-recursive type with a refinement (`Bytes`, `Digest32` — a `Subtype`
+/// in Lean) directly in a field takes the other route: it derives no `BEq` of
+/// its own, so `==` on it is the `DecidableEq` comparison, and Lean's
+/// `instBEqOfDecidableEq` already carries `ReflBEq` and `LawfulBEq`. The
+/// derived `BEq` handler compares such a field through the subtype's own
+/// instance and the `LawfulBEq` deriving handler then cannot connect the two
+/// (`(x == y) = true → Delta.header s x = Delta.header s y` stays an unsolved
+/// goal, a hard build error). A refinement nested under `List`/`Option`/`Map`
+/// is compared through that container's instance and derives fine.
+fn equality_lines<'a>(
+    name: &str,
+    mut fields: impl Iterator<Item = &'a str>,
+    inhabited: bool,
+    is_recursive: bool,
+    ctx: &CodegenContext,
+    scope: Option<&str>,
+) -> Vec<String> {
+    let reflects = equality::reflects_equality(&crate::types::Type::named(name), ctx, scope);
+    let direct_refined = fields.any(|field| is_direct_refined_field(field, ctx, scope));
+    if !is_recursive && reflects && direct_refined {
+        return vec![derives_line(inhabited, true, false)];
+    }
+    let mut lines = vec![derives_line(inhabited, !is_recursive, true)];
+    if reflects {
         lines.push(format!(
             "deriving instance ReflBEq, LawfulBEq for {}",
             aver_name_to_lean(name)
         ));
     }
-    lines.join("\n")
+    lines
 }
 
-/// The `deriving` clause: `Repr` and `BEq` always, then the two that a shape
-/// can decline.
-fn derives_line(inhabited: bool, decidable_eq: bool) -> String {
-    let mut derives = vec!["Repr", "BEq"];
+/// Is this field annotation a refined type itself, not merely one mentioned
+/// under a container?
+fn is_direct_refined_field(field: &str, ctx: &CodegenContext, scope: Option<&str>) -> bool {
+    let ty = crate::types::parse_type_str(field.trim());
+    match &ty {
+        crate::types::Type::Named { id: Some(_), .. } => {
+            crate::codegen::common::find_refined_type_for_named(ctx, &ty).is_some()
+        }
+        crate::types::Type::Named { id: None, name } => {
+            crate::codegen::common::find_refined_type_scoped(ctx, name, scope).is_some()
+        }
+        _ => false,
+    }
+}
+
+/// The `deriving` clause: `Repr` always, then the three that a shape can
+/// decline.
+fn derives_line(inhabited: bool, decidable_eq: bool, beq: bool) -> String {
+    let mut derives = vec!["Repr"];
+    if beq {
+        derives.push("BEq");
+    }
     if inhabited {
         derives.push("Inhabited");
     }
@@ -492,13 +548,14 @@ fn emit_product_type(
     let inhabited = fields
         .iter()
         .all(|(_, field)| field_is_inhabitable(field, ctx, scope, &mut Vec::new()));
-    lines.push(derives_line(inhabited, !is_recursive));
-    if equality::reflects_equality(&crate::types::Type::named(name), ctx, scope) {
-        lines.push(format!(
-            "deriving instance ReflBEq, LawfulBEq for {}",
-            aver_name_to_lean(name)
-        ));
-    }
+    lines.extend(equality_lines(
+        name,
+        fields.iter().map(|(_, field)| field.as_str()),
+        inhabited,
+        is_recursive,
+        ctx,
+        scope,
+    ));
     lines.join("\n")
 }
 
