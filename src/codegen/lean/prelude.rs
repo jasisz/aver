@@ -647,6 +647,59 @@ theorem has_set [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (w k : 
     AverMap.has (AverMap.set m w v) k = (decide (k = w) || AverMap.has m k) := by
   simpa [AverMap.has, AverMap.set] using any_set_go w k v m"#;
 
+/// `Map.len(m) <= Map.len(Map.set(m, k, v))` — `set` never shrinks a map.
+/// `set.go` replaces one entry, inserts one in front of the rest, or keeps
+/// the head and recurses; every branch keeps at least the entries it walked
+/// past, so the length is `>=` the length before — induction on `m`. Stated
+/// in `Nat` on `AverMap.len`; `omega` reads the `Int` cast of the lowered
+/// `>=` goal through it.
+const AVER_MAP_PRELUDE_LEN_SET_GE: &str = r#"private theorem set_go_len_ge [DecidableEq α] [AverKeyOrder α] (k : α) (v : β) :
+    ∀ (m : List (α × β)), m.length ≤ (AverMap.set.go k v m).length := by
+  intro m
+  induction m with
+  | nil =>
+      simp [AverMap.set.go]
+  | cons p tl ih =>
+      simp only [AverMap.set.go]
+      split
+      · simp
+      · split
+        · simp
+        · simp
+          omega
+
+theorem len_set_ge [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (k : α) (v : β) :
+    AverMap.len m ≤ AverMap.len (AverMap.set m k v) := by
+  simpa [AverMap.len, AverMap.set] using set_go_len_ge k v m"#;
+
+/// `Map.set(Map.set(m, k, v), k, w) == Map.set(m, k, w)` — a second set under
+/// the same key overwrites the first, so setting the same key and value
+/// twice is one set (idempotence of a keyed insert). `set.go` takes the same
+/// branch for both walks at every entry it does not own (same `k = k'` and
+/// `AverKeyOrder.lt k k'` decisions), and where it placed `(k, v)` the
+/// second walk finds `k` and replaces it — induction on `m`, no order laws
+/// needed. Different keys are another matter: whether two sets under
+/// different keys commute depends on `AverKeyOrder.lt` being a strict total
+/// order, which the class does not promise (the fallback instance appends),
+/// so no such lemma lives here.
+const AVER_MAP_PRELUDE_SET_SET_SELF: &str = r#"private theorem set_go_set_go_self [DecidableEq α] [AverKeyOrder α] (k : α) (v w : β) :
+    ∀ (m : List (α × β)), AverMap.set.go k w (AverMap.set.go k v m) = AverMap.set.go k w m := by
+  intro m
+  induction m with
+  | nil =>
+      simp [AverMap.set.go]
+  | cons p tl ih =>
+      cases p with
+      | mk k' v' =>
+          by_cases h : k = k'
+          · simp [AverMap.set.go, h]
+          · cases hlt : AverKeyOrder.lt k k' <;>
+              simp [AverMap.set.go, h, hlt, ih]
+
+theorem set_set_self [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (k : α) (v w : β) :
+    AverMap.set (AverMap.set m k v) k w = AverMap.set m k w := by
+  simpa [AverMap.set] using set_go_set_go_self k v w m"#;
+
 const AVER_MAP_PRELUDE_END: &str = r#"end AverMap"#;
 
 const LEAN_PRELUDE_AVER_LIST: &str = r#"namespace AverList
@@ -1265,10 +1318,12 @@ fn generate_prelude_for_body(body: &str, include_all_helpers: bool) -> String {
 /// distinct from `AverMap.has_set_self` / `AverMap.has_set_other`, of which it
 /// is a prefix. Matched only when the next char after `has_set` is not an
 /// identifier continuation, so the `_self`/`_other` siblings don't trigger it.
-fn mentions_has_set(body: &str) -> bool {
-    const NEEDLE: &str = "AverMap.has_set";
-    body.match_indices(NEEDLE).any(|(idx, _)| {
-        body[idx + NEEDLE.len()..]
+/// Does `body` mention `needle` as a whole name — not as the prefix of a
+/// longer one (`AverMap.has_set` vs `AverMap.has_set_self`, `AverMap.len_set_ge`
+/// vs `AverMap.len_set_ge_one`)?
+fn mentions_exact(body: &str, needle: &str) -> bool {
+    body.match_indices(needle).any(|(idx, _)| {
+        body[idx + needle.len()..]
             .chars()
             .next()
             .is_none_or(|c| !(c.is_alphanumeric() || c == '_'))
@@ -1387,7 +1442,9 @@ fn generate_map_prelude(body: &str, include_all_helpers: bool) -> String {
     // `get_set_ne` (general different-key get) and `has_set` (general-key
     // membership-after-set) — the map-fold-homomorphism cons different-key arm.
     let needs_get_set_ne = include_all_helpers || body.contains("AverMap.get_set_ne");
-    let needs_has_set = include_all_helpers || mentions_has_set(body);
+    let needs_has_set = include_all_helpers || mentions_exact(body, "AverMap.has_set");
+    let needs_len_set_ge = include_all_helpers || mentions_exact(body, "AverMap.len_set_ge");
+    let needs_set_set_self = include_all_helpers || body.contains("AverMap.set_set_self");
 
     if needs_has_set_self {
         parts.push(AVER_MAP_PRELUDE_HAS_SET_SELF.to_string());
@@ -1409,6 +1466,12 @@ fn generate_map_prelude(body: &str, include_all_helpers: bool) -> String {
     }
     if needs_has_set {
         parts.push(AVER_MAP_PRELUDE_HAS_SET.to_string());
+    }
+    if needs_len_set_ge {
+        parts.push(AVER_MAP_PRELUDE_LEN_SET_GE.to_string());
+    }
+    if needs_set_set_self {
+        parts.push(AVER_MAP_PRELUDE_SET_SET_SELF.to_string());
     }
 
     parts.push(AVER_MAP_PRELUDE_END.to_string());
