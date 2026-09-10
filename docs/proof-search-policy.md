@@ -43,7 +43,7 @@ visibility. A false imported supplier still fails universal verification even
 when every supplied VM sample passes. This does not increase search budgets or
 restore the withdrawn reversal strategy. Callable aliases, capture requiring
 alpha-renaming and the remaining backend-specific guided induction analyses
-are outside this change.
+were outside that alias/import checkpoint.
 
 Re-running the same seven-source matrix on 2026-09-09 with compiler SHA-256
 `338f1c3583f5fdd4a5c406b624835f4402fc58f1325ac9bb025714eaf2c4f51d`
@@ -53,6 +53,23 @@ including the two open Dafny reversal cases. All source hashes match the
 original checkpoint's after-run below; the binary stayed unchanged and no
 outer timeout fired. This uses the same strict source-law count and checker
 budgets, not just a successful process exit.
+
+## Guarded explanation follow-up
+
+Guided laws also record one optional `LawInduction` plan per `because` step.
+The plan follows the explanation function's actual recursive arguments and
+retains the law guard plus all preceding explanations at those arguments.
+Exhaustive nested Boolean matches contribute path conditions after the list's
+head and tail have been bound. Value substitution preserves source and law
+scopes even when their names overlap. These plans currently cover a single
+recursive path in a function owned by the law's module; other shapes retain
+the existing backend strategies.
+
+Dafny emits checked recursive lemma calls from these plans, while Lean uses
+the same source call and measure to select induction. Both still prove the
+complete obligation. Dafny additionally checks the general cons equation for
+`List.take` locally in laws that use it. This does not change the builtin's
+definition or add axioms, and keeps that equation out of unrelated SMT queries.
 
 ## Original checkpoint comparison (#1324)
 

@@ -2530,6 +2530,7 @@ pub fn populate_law_theorems(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
         );
 
         let induction = law_induction::plan(law, fn_id, inputs, ir, law_scope_ref);
+        let reason_inductions = law_induction::reason_plans(law, inputs, ir, law_scope_ref);
         let function_cone = law_dependencies::collect(law, inputs, law_scope_ref);
 
         ir.law_theorems.push(LawTheorem {
@@ -2541,6 +2542,7 @@ pub fn populate_law_theorems(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
             claim_rhs: inputs.resolve_expr(&law.rhs, law_scope_ref),
             strategy,
             induction,
+            reason_inductions,
             function_cone,
         });
     }

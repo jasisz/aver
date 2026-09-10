@@ -170,7 +170,8 @@ pub(in crate::codegen::lean) fn emit_reason_law(
     let plans = law
         .because
         .iter()
-        .map(|r| induction::plan(r, law, ctx))
+        .enumerate()
+        .map(|(index, r)| induction::plan(vb, index, r, law, ctx))
         .collect::<Vec<_>>();
     let definitions = induction::definitions(vb, law, ctx);
     let params = claim

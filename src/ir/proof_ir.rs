@@ -492,6 +492,10 @@ pub struct LawTheorem {
     /// These are proof candidates, never assumptions: each backend must prove
     /// the recursive call's premises and strict decrease.
     pub induction: Option<LawInduction>,
+    /// Plans for the separately checked `because` obligations, in source order.
+    /// Each plan retains the law guard and every preceding explanation as
+    /// recursive-call premises. A plan supplies no proof credit by itself.
+    pub reason_inductions: Vec<Option<LawInduction>>,
     /// Transitive statically resolved pure declarations used by the claim,
     /// explanations and guard, in discovery order. Samples do not contribute.
     /// Search data only: callbacks and builtin implementations are not expanded.
@@ -528,6 +532,9 @@ pub struct LawInductionCall {
     pub applications: Vec<LawApplication>,
     /// Source branch guard, evaluated before introducing pattern projections.
     pub guard: Spanned<crate::ir::hir::ResolvedExpr>,
+    /// Conditions inside the source's recursive branch, evaluated after the
+    /// pattern projections. They only restrict where to try a recursive call.
+    pub branch_guard: Option<Spanned<crate::ir::hir::ResolvedExpr>>,
     /// The theorem premise at the recursive arguments. Evaluated after
     /// `list_case` bindings, since it may mention the projected head or tail.
     /// Where it is false, the original claim still needs an independent proof.

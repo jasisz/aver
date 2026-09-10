@@ -15,20 +15,27 @@ use super::expr::{aver_name_to_dafny, emit_expr};
 /// a cited payload law applies; it does not assume anything about the payload.
 pub(super) fn sequence_identities(law: &VerifyLaw, ctx: &CodegenContext) -> Vec<String> {
     let mut elements = std::collections::BTreeSet::new();
+    let mut take_elements = std::collections::BTreeSet::new();
     let scope = ctx.active_module_scope();
     for expr in [&law.lhs, &law.rhs].into_iter().chain(law.because.iter()) {
         crate::codegen::expr_walk::walk(expr, &mut |e| {
             if let Some(crate::ast::Type::List(element)) = e.ty()
                 && crate::types::checker::type_is_fully_concrete(element)
             {
-                elements.insert(super::toplevel::type_to_dafny_in_scope(
-                    element,
-                    scope.as_deref(),
-                ));
+                let element = super::toplevel::type_to_dafny_in_scope(element, scope.as_deref());
+                elements.insert(element.clone());
+                if let crate::ir::hir::ResolvedExpr::Call(
+                    crate::ir::hir::ResolvedCallee::Builtin(name),
+                    _,
+                ) = ctx.resolve_expr(e, scope.as_deref()).node
+                    && name == "List.take"
+                {
+                    take_elements.insert(element);
+                }
             }
         });
     }
-    elements
+    let mut lines: Vec<_> = elements
         .into_iter()
         .flat_map(|element| {
             [
@@ -37,7 +44,14 @@ pub(super) fn sequence_identities(law: &VerifyLaw, ctx: &CodegenContext) -> Vec<
                 format!("  forall head: {element}, xs: seq<{element}>, ys: seq<{element}> ensures ([head] + xs) + ys == [head] + (xs + ys) {{ }}"),
             ]
         })
-        .collect()
+        .collect();
+    // A checked cons equation relates the concrete slice to structural list
+    // recursion. Keep it local to laws using take: a recursive postcondition
+    // on ListTake itself expands SMT search in every unrelated consumer.
+    for element in take_elements {
+        lines.push(format!("  forall xs: seq<{element}>, n: int | |xs| > 0 && n > 0 ensures ListTake(xs, n) == [xs[0]] + ListTake(xs[1..], n - 1) {{ }}"));
+    }
+    lines
 }
 
 pub(super) fn plan<'a>(
@@ -113,12 +127,23 @@ pub(super) fn calls(
             .map(|a| emit_expr(a, ctx))
             .collect::<Vec<_>>()
             .join(", ");
-        if let Some(premise) = &call.premise {
-            lines.push(format!("    if {} {{", emit_expr(premise, ctx)));
-            lines.push(format!("      {name}({args});"));
-            lines.push("    }".to_string());
+        if let Some(guard) = &call.branch_guard {
+            lines.push(format!("    if {} {{", emit_expr(guard, ctx)));
+        }
+        let indent = if call.branch_guard.is_some() {
+            "      "
         } else {
-            lines.push(format!("    {name}({args});"));
+            "    "
+        };
+        if let Some(premise) = &call.premise {
+            lines.push(format!("{indent}if {} {{", emit_expr(premise, ctx)));
+            lines.push(format!("{indent}  {name}({args});"));
+            lines.push(format!("{indent}}}"));
+        } else {
+            lines.push(format!("{indent}{name}({args});"));
+        }
+        if call.branch_guard.is_some() {
+            lines.push("    }".to_string());
         }
         for application in &call.applications {
             let key = &ctx.symbol_table.fn_entry(application.fn_id).key;

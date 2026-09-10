@@ -207,7 +207,22 @@ pub(super) fn emit(
             Some(reason) => vec![reason],
             None => vec![&law.lhs, &law.rhs],
         };
-        let driver = induction_driver(&source_expressions, law, ctx);
+        let shared = ctx
+            .law_target_fn_id(&vb.fn_name)
+            .and_then(|id| {
+                ctx.proof_ir
+                    .law_theorems
+                    .iter()
+                    .find(|t| t.fn_id == id && t.law_name == law.name)
+            })
+            .and_then(|t| t.reason_inductions.get(index))
+            .and_then(Option::as_ref);
+        let driver = shared
+            .map(|plan| Induction {
+                variables: arguments(law),
+                decreases: super::law_induction::measure(plan),
+            })
+            .or_else(|| induction_driver(&source_expressions, law, ctx));
         let unfolding = if driver.is_none() {
             unfolding::attributes(vb, law, index, ctx)
         } else {
@@ -267,9 +282,19 @@ pub(super) fn emit(
             out.push("  }".to_string());
         }
         if list_induction {
-            for expr in &source_expressions {
-                if let Some(calls) = induction::emit_list_calls(expr, law, &step_name, ctx) {
-                    out.extend(calls);
+            if let Some(plan) = shared {
+                out.extend(super::law_induction::calls(
+                    plan,
+                    &step_name,
+                    &[],
+                    ctx,
+                    recursion,
+                ));
+            } else {
+                for expr in &source_expressions {
+                    if let Some(calls) = induction::emit_list_calls(expr, law, &step_name, ctx) {
+                        out.extend(calls);
+                    }
                 }
             }
         }

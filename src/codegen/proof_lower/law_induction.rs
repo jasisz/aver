@@ -96,7 +96,7 @@ struct SourceBranch<'a> {
 }
 
 /// A single outer branch exposes an unambiguous source guard and substitution.
-/// Nested matches/local bindings stay with existing strategies, never guessed.
+/// Nested Boolean branches are handled separately; binding scopes are not guessed.
 fn recursive_branch<'a>(
     fd: &'a FnDef,
     driver: &str,
@@ -172,6 +172,94 @@ pub(super) fn plan(
     ir: &ProofIR,
     scope: Option<&str>,
 ) -> Option<LawInduction> {
+    plan_inner(law, id, inputs, ir, scope, false)
+}
+
+/// An explanation is a separate theorem, whose premises include all earlier
+/// steps. Reuse the ordinary source-call planner on that exact obligation.
+pub(super) fn reason_plans(
+    law: &VerifyLaw,
+    inputs: &ProofLowerInputs,
+    ir: &ProofIR,
+    scope: Option<&str>,
+) -> Vec<Option<LawInduction>> {
+    let mut obligation = law.clone();
+    obligation.because.clear();
+    obligation.rhs = Spanned::new(Expr::Literal(Literal::Bool(true)), 0);
+    law.because
+        .iter()
+        .map(|reason| {
+            obligation.lhs = reason.clone();
+            let result = match &reason.node {
+                Expr::FnCall(callee, _) => inputs
+                    .symbol_table
+                    .resolve_fn_id_in(&crate::checker::expr_to_str(callee), scope)
+                    .filter(|id| inputs.symbol_table.fn_entry(*id).key.scope_str() == scope)
+                    .and_then(|id| plan_inner(&obligation, id, inputs, ir, scope, true)),
+                _ => None,
+            };
+            obligation.when = Some(match obligation.when.take() {
+                Some(previous) => call("Bool.and", vec![previous, reason.clone()]),
+                None => reason.clone(),
+            });
+            result
+        })
+        .collect()
+}
+
+/// Descend through exhaustive Boolean matches without introducing binders.
+/// Preserve the selected path, including reversed true/false arm order.
+fn nested_branch<'a>(
+    mut body: &'a Spanned<Expr>,
+    id: crate::ir::FnId,
+    inputs: &ProofLowerInputs,
+    scope: Option<&str>,
+) -> Option<(&'a Spanned<Expr>, Option<Spanned<Expr>>)> {
+    let mut guard = None;
+    while let Expr::Match { subject, arms } = &body.node {
+        if arms.len() != 2
+            || ![true, false].iter().all(|value| {
+                arms.iter().any(
+                    |arm| matches!(arm.pattern, Pattern::Literal(Literal::Bool(v)) if v == *value),
+                )
+            })
+            || crate::codegen::expr_walk::any(subject, &mut |e| {
+                self_args(e, id, inputs, scope).is_some()
+            })
+        {
+            return None;
+        }
+        let mut recursive = arms.iter().filter(|arm| {
+            crate::codegen::expr_walk::any(&arm.body, &mut |e| {
+                self_args(e, id, inputs, scope).is_some()
+            })
+        });
+        let arm = recursive.next()?;
+        if recursive.next().is_some() {
+            return None;
+        }
+        let condition = match arm.pattern {
+            Pattern::Literal(Literal::Bool(true)) => (**subject).clone(),
+            Pattern::Literal(Literal::Bool(false)) => call("Bool.not", vec![(**subject).clone()]),
+            _ => return None,
+        };
+        guard = Some(match guard {
+            Some(previous) => call("Bool.and", vec![previous, condition]),
+            None => condition,
+        });
+        body = &arm.body;
+    }
+    Some((body, guard))
+}
+
+fn plan_inner(
+    law: &VerifyLaw,
+    id: crate::ir::FnId,
+    inputs: &ProofLowerInputs,
+    ir: &ProofIR,
+    scope: Option<&str>,
+    explanation: bool,
+) -> Option<LawInduction> {
     let (param, measure) = match ir.fn_contracts.get(&id)?.recursion.as_ref()? {
         RecursionContract::WellFoundedToNat { param, .. } => {
             (param, LawInductionMeasure::NonnegativeInt)
@@ -238,6 +326,8 @@ pub(super) fn plan(
         body: branch,
         list_bindings: pattern,
     } = recursive_branch(fd, param, measure, id, inputs, scope)?;
+    let source_branch = branch;
+    let (branch, branch_guard) = nested_branch(source_branch, id, inputs, scope)?;
     if crate::codegen::expr_walk::any(branch, &mut |e| matches!(e.node, Expr::Match { .. })) {
         return None;
     }
@@ -258,7 +348,8 @@ pub(super) fn plan(
     // strategy. This plan is needed when a list fold changes another input;
     // selecting an arbitrary occurrence in e.g. f(x ++ y) = f(y) ++ f(x)
     // would choose an unrelated driver and discard useful algebraic support.
-    if matches!(measure, LawInductionMeasure::SequenceLength)
+    if !explanation
+        && matches!(measure, LawInductionMeasure::SequenceLength)
         && fd
             .params
             .iter()
@@ -280,7 +371,7 @@ pub(super) fn plan(
                 .map(|f| f.name.clone()),
         )
         .collect();
-    for expr in [&law.lhs, &law.rhs, branch] {
+    for expr in [&law.lhs, &law.rhs, source_branch] {
         crate::codegen::expr_walk::walk(expr, &mut |e| {
             if let Some(name) = ident(e) {
                 occupied.insert(name.to_string());
@@ -351,9 +442,14 @@ pub(super) fn plan(
         };
         calls.push(LawInductionCall {
             source_call: inputs.resolve_expr(occurrence, scope),
-            source_step: substitute(branch, &bindings).map(|e| inputs.resolve_expr(&e, scope)),
+            source_step: substitute(source_branch, &bindings)
+                .map(|e| inputs.resolve_expr(&e, scope)),
             applications: Vec::new(),
             guard: inputs.resolve_expr(&guard, scope),
+            branch_guard: match &branch_guard {
+                Some(guard) => Some(inputs.resolve_expr(&substitute(guard, &bindings)?, scope)),
+                None => None,
+            },
             premise,
             list_case,
             arguments: law

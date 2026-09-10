@@ -38,22 +38,29 @@ fn lean_name(fd: &FnDef, ctx: &CodegenContext) -> String {
     }
 }
 
-pub(super) fn plan(expr: &Spanned<Expr>, law: &VerifyLaw, ctx: &CodegenContext) -> Option<String> {
+pub(super) fn plan(
+    vb: &VerifyBlock,
+    index: usize,
+    expr: &Spanned<Expr>,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+) -> Option<String> {
     let scope = ctx.active_module_scope();
     let fd = callee(expr, ctx, scope.as_deref())?;
     if !fd.effects.is_empty() {
         return None;
     }
     // LawLower records the canonical source call and its checked input once.
-    // Reuse that plan when this explanation is the law's anchored call;
+    // Reuse the plan for this separately checked explanation;
     // backend-specific functional/measure tactics still prove every branch.
-    if let Some(id) = common::fn_id_for_decl(ctx, fd)
+    if let Some(id) = ctx.law_target_fn_id(&vb.fn_name)
         && let Some(shared) = ctx
             .proof_ir
             .law_theorems
             .iter()
             .find(|t| t.fn_id == id && t.law_name == law.name)
-            .and_then(|t| t.induction.as_ref())
+            .and_then(|t| t.reason_inductions.get(index))
+            .and_then(Option::as_ref)
         && shared.source_call.node == resolve_rewrite_output(expr, ctx, None).node
     {
         let call = emit_expr(&shared.source_call, ctx);
