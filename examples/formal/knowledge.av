@@ -29,11 +29,11 @@ module Knowledge
         "    `merge law idempotent`;"
         "  - open: the reason of `mergeAll law orderFree` (merge commutes),"
         "    the final step of `body law stable` and `verdict law stable`, and"
-        "    `count law monotone`. Each needs a fact about `Map.set` that the"
-        "    Lean prelude does not carry yet: two sets under different keys"
-        "    commute, a set under a key already holding the value is the"
-        "    identity, a get after a set under another key is unchanged, and"
-        "    a set never shrinks the map."
+        "    `count law monotone`. The prelude carries the one-key facts these"
+        "    steps need (a get after a set, a set over a set under one key, a"
+        "    set never shrinks the map), but the proof search does not cite"
+        "    them yet; order-freedom also needs that two sets under different"
+        "    keys commute, which the map model does not state for its keys."
     depends [Bytes, Crypto.Digest32]
     exposes [Verdict, Delta, Knowledge, empty, keyOf, admit, agrees, consistent, merge, mergeAll, body, verdict, count]
     effects []
