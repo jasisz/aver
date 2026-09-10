@@ -794,6 +794,14 @@ fn prelude_includes_map_set_helper_lemmas() {
         prelude.contains("theorem get_set_self [DecidableEq α]"),
         "missing AverMap.get_set_self helper theorem"
     );
+    assert!(
+        prelude.contains("theorem len_set_ge [DecidableEq α]"),
+        "missing AverMap.len_set_ge helper theorem"
+    );
+    assert!(
+        prelude.contains("theorem set_set_self [DecidableEq α]"),
+        "missing AverMap.set_set_self helper theorem"
+    );
 }
 
 #[test]
