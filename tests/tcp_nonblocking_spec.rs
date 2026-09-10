@@ -222,16 +222,18 @@ fn sendingReady(conn: Tcp.Connection, timeoutMs: Int) -> Result<List<Int>, Strin
     ! [Tcp.poll]
     Tcp.poll({{7 => Tcp.Socket.Sending(conn)}}, timeoutMs)
 
-fn fill(conn: Tcp.Connection, chunk: Bytes, budget: Int) -> Result<String, String>
+fn fill(conn: Tcp.Connection, chunk: Bytes, budget: Int, refused: Bool) -> Result<String, String>
     ? "Write until the kernel refuses and the socket stays unwritable, or the budget runs out."
     ! [Tcp.writeNow, Tcp.poll]
     match budget
-        0 -> Result.Ok("budget")
+        0 -> match refused
+            true -> Result.Ok("budget-after-refusal")
+            false -> Result.Ok("budget-never-refused")
         _ -> match Tcp.writeNow(conn, chunk)?
             0 -> match sendingReady(conn, 50)?
                 [] -> Result.Ok("settled")
-                _ -> fill(conn, chunk, budget - 1)
-            _ -> fill(conn, chunk, budget - 1)
+                _ -> fill(conn, chunk, budget - 1, true)
+            _ -> fill(conn, chunk, budget - 1, refused)
 
 fn probe() -> Result<String, String>
     ? "Write three bytes, confirm write readiness, then fill the socket."
@@ -242,7 +244,7 @@ fn probe() -> Result<String, String>
     readiness = match List.len(ready)
         1 -> "sending"
         _ -> "quiet"
-    outcome = fill(conn, payload()?, 4096)?
+    outcome = fill(conn, payload()?, 4096, false)?
     Tcp.close(conn)?
     Result.Ok("{{first}}|{{readiness}}|{{outcome}}")
 
@@ -271,6 +273,14 @@ fn loopback_listener() -> (TcpListener, u16) {
     (listener, port)
 }
 
+/// The would-block path is forced by a peer that never reads: `writeNow` must
+/// eventually return 0, after which a `Sending` poll with a short timeout must
+/// stay quiet. Loopback acknowledgements can free a little space right after
+/// a refusal, so the program keeps writing while `Sending` wakes; only a
+/// refusal followed by a quiet poll counts as settled. A platform whose socket
+/// buffers swallow the whole bounded budget (4096 writes of 64 KiB) without a
+/// single refusal cannot exercise the path, and the case is skipped with that
+/// reason instead of failing or passing silently.
 fn assert_write_now_line(line: &str) {
     let parts: Vec<&str> = line.trim_end().split('|').collect();
     assert_eq!(parts.len(), 3, "unexpected summary: {line}");
@@ -279,10 +289,14 @@ fn assert_write_now_line(line: &str) {
         "an idle socket accepts the whole payload: {line}"
     );
     assert_eq!(parts[1], "sending", "an idle socket is writable: {line}");
-    assert!(
-        parts[2] == "settled" || parts[2] == "budget",
-        "filling must end with a refused write or exhaust its budget: {line}"
-    );
+    match parts[2] {
+        "settled" => {}
+        "budget-never-refused" => eprintln!(
+            "skipped: the socket buffers absorbed the whole write budget, \
+             so writeNow never hit the would-block path on this platform"
+        ),
+        other => panic!("a refused write must be followed by a quiet Sending poll: {other}"),
+    }
 }
 
 #[test]

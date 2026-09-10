@@ -540,7 +540,7 @@ requested count and decodes nothing.
 
 `Tcp.poll` is the one event-loop wait. The caller owns the `Int` keys in its
 `Map<Int, Tcp.Socket>`, so the same keys can index protocol metadata without
-making provider resources comparable. The standard provider watches all three
+making provider resources comparable. The standard provider watches all four
 states with one poller and returns every readiness event it observes as a
 sorted, duplicate-free subset of the supplied keys. An unknown or stale
 resource makes the whole call `Err` rather than disappearing from the result.

@@ -292,18 +292,26 @@ pub fn read_now(conn: &TcpConnection, max_bytes: i64) -> Result<Option<Vec<u8>>,
 /// Run one socket call in non-blocking mode and restore blocking mode
 /// afterwards, whatever the call returned. A failure to restore the mode is
 /// reported as the error because a connection left non-blocking would make
-/// every later blocking read or write misbehave.
+/// every later blocking read or write misbehave; it also wins over a
+/// would-block outcome, which is otherwise not an error at all. A call that a
+/// signal interrupts (`Interrupted`) is retried once; a second interruption is
+/// reported as would-block, which the callers translate into "nothing now".
 fn nonblocking_call<T>(
     stream: &mut TcpStream,
-    io: impl FnOnce(&mut TcpStream) -> io::Result<T>,
+    mut io: impl FnMut(&mut TcpStream) -> io::Result<T>,
 ) -> io::Result<T> {
     stream.set_nonblocking(true)?;
-    let outcome = io(stream);
+    let mut outcome = io(stream);
+    if matches!(&outcome, Err(error) if error.kind() == io::ErrorKind::Interrupted) {
+        outcome = io(stream);
+    }
     let restored = stream.set_nonblocking(false);
     match (outcome, restored) {
         (Ok(value), Ok(())) => Ok(value),
-        (Err(error), _) => Err(error),
         (Ok(_), Err(error)) => Err(error),
+        (Err(error), Ok(())) => Err(error),
+        (Err(error), Err(restore_error)) if would_block(&error) => Err(restore_error),
+        (Err(error), Err(_)) => Err(error),
     }
 }
 
@@ -757,6 +765,39 @@ mod tests {
             Some(Vec::new())
         );
         assert!(read_now(&connection, 0).is_err());
+        assert!(reactor::connection_exists(&connection));
+
+        close(&connection).expect("close client");
+        server.join().expect("server thread");
+    }
+
+    #[test]
+    fn read_now_leaves_the_connection_blocking_for_read_some() {
+        let delay = Duration::from_millis(150);
+        let (release_tx, release_rx) = mpsc::channel();
+        let (connection, server) = loopback_connection(move |mut stream| {
+            release_rx.recv().expect("wait for the idle probe");
+            thread::sleep(delay);
+            stream.write_all(b"late").expect("write after the delay");
+            stream.shutdown(Shutdown::Write).expect("finish the stream");
+        });
+
+        assert_eq!(read_now(&connection, 64).expect("idle read"), None);
+        release_tx.send(()).expect("release peer");
+
+        // A stream left non-blocking would make this read fail at once with
+        // "I/O timed out"; a blocking one waits for the delayed bytes.
+        let started = Instant::now();
+        assert_eq!(read_some(&connection, 64).expect("blocking read"), b"late");
+        assert!(
+            started.elapsed() >= delay,
+            "read_some returned before the peer wrote: {:?}",
+            started.elapsed()
+        );
+        assert_eq!(
+            read_some(&connection, 64).expect("clean eof"),
+            Vec::<u8>::new()
+        );
         assert!(reactor::connection_exists(&connection));
 
         close(&connection).expect("close client");
