@@ -1575,3 +1575,100 @@ fn proof_export_two_cons_peel_gets_a_dafny_decreases_not_an_axiom() {
 
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn proof_export_types_with_a_refined_field_take_the_decidable_eq_route() {
+    // A record or sum type with a `Bytes` or `Digest32` field used to derive
+    // its own `BEq` and then ask Lean to derive `LawfulBEq` for it. The
+    // derived `BEq` compares the field through the subtype instance and the
+    // `LawfulBEq` handler cannot connect the two: the export stopped with an
+    // unsolved goal at the type declaration. Such a type now derives no `BEq`
+    // of its own, so `==` is the `DecidableEq` comparison, which Lean already
+    // knows to be lawful.
+    //
+    // A recursive type with a refinement directly in a field keeps the old
+    // route (derived `BEq`, opaque `DecidableEq`); it never asked for
+    // `LawfulBEq`, because equality reflection declines every recursive
+    // type, so the derivation that failed is not emitted for it either.
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = temp_output_dir("aver-proof-refined-field-equality");
+    let mut command = Command::new(aver_bin);
+    command
+        .current_dir(&repo_root)
+        .arg("proof")
+        .arg("tests/fixtures/refined_field_equality.av")
+        .arg("--module-root")
+        .arg(root.join("no-project-modules"))
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&root);
+    let lake = Command::new("lake").arg("--version").output().is_ok();
+    if lake {
+        command.arg("--check").arg("--check-json");
+    } else {
+        eprintln!("skipping the lake build: `lake` not available");
+    }
+    let output = command
+        .output()
+        .expect("aver proof for types with a refined field");
+    assert!(
+        output.status.success(),
+        "the export of types with a refined field failed:\n{}",
+        format_output(&output)
+    );
+    let lean = std::fs::read_to_string(root.join("RefinedFieldEquality.lean"))
+        .expect("read RefinedFieldEquality.lean");
+
+    // The non-recursive shapes: `DecidableEq` in the deriving line, no
+    // `BEq` there, and no `LawfulBEq` derivation for them anywhere.
+    assert!(
+        lean.contains(
+            "structure Sealed where\n  name : String\n  payload : Bytes.Bytes\n  deriving Repr, DecidableEq\n"
+        ),
+        "a record with a Bytes field must derive DecidableEq and no BEq of its own:\n{lean}"
+    );
+    assert!(
+        lean.contains(
+            "inductive Fact where\n  | note (_ : String)\n  | digest (_ : Crypto.Digest32.Digest32)\n  deriving Repr, Inhabited, DecidableEq\n"
+        ),
+        "a sum type with a Digest32 variant must derive DecidableEq and no BEq of its own:\n{lean}"
+    );
+    assert!(
+        !lean.contains("deriving instance ReflBEq, LawfulBEq"),
+        "no type in this module may ask for a derived LawfulBEq:\n{lean}"
+    );
+
+    // The recursive shape: the old route, and no `LawfulBEq` line either.
+    assert!(
+        lean.contains(
+            "inductive Chain where\n  | end'\n  | link (_ : Bytes.Bytes) (_ : Chain)\n  deriving Repr, BEq, Inhabited\n"
+        ) && lean.contains("instance : DecidableEq Chain := Chain.compDecEq"),
+        "a recursive sum type with a Bytes field keeps the derived BEq and the opaque DecidableEq:\n{lean}"
+    );
+
+    if lake {
+        let json_line = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .rev()
+            .find(|l| l.starts_with('{'))
+            .map(str::to_owned)
+            .unwrap_or_else(|| {
+                panic!(
+                    "`aver proof --check --check-json` produced no JSON line:\n{}",
+                    format_output(&output)
+                )
+            });
+        let summary: serde_json::Value =
+            serde_json::from_str(&json_line).expect("summary line parses as JSON");
+        assert_eq!(
+            summary["build_errors"].as_u64(),
+            Some(0),
+            "every type declaration with a refined field must build:\n{}",
+            format_output(&output)
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(&root);
+}

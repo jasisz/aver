@@ -423,13 +423,13 @@ lowerings to the same exact contract. Signatures, resource ownership,
 Oracle classification, hostile profiles, replay semantics, and target
 accounting derive from that source contract.
 
-`--target wasip2` binds eleven of the eighteen operations: `connect`,
-`writeLine`, `writeBytes`, `readLine`, `readBytes`, `readSome`, `poll`,
-`close`, and the three one-shot calls. The seven dial and listener operations —
-`beginConnect`, `dialled`, `listen`, `accept`, `peerAddress`, `closeDial`,
-`closeListener` — are refused at compile time on that target with
-`capability-target-unsupported`; see [`docs/wasip2.md`](wasip2.md). Every other
-shipped target binds all eighteen.
+`--target wasip2` binds thirteen of the twenty operations: `connect`,
+`writeLine`, `writeBytes`, `writeNow`, `readLine`, `readBytes`, `readSome`,
+`readNow`, `poll`, `close`, and the three one-shot calls. The seven dial and
+listener operations — `beginConnect`, `dialled`, `listen`, `accept`,
+`peerAddress`, `closeDial`, `closeListener` — are refused at compile time on
+that target with `capability-target-unsupported`; see
+[`docs/wasip2.md`](wasip2.md). Every other shipped target binds all twenty.
 
 **One-shot (stateless):**
 
@@ -451,10 +451,12 @@ shipped target binds all eighteen.
 | `Tcp.peerAddress` | `Tcp.Connection -> Result<String, String>` | Returns the remote endpoint, including brackets around an IPv6 address. Not on wasip2. |
 | `Tcp.writeLine` | `(Tcp.Connection, String) -> Result<Unit, String>` | Appends `\r\n` on the wire. |
 | `Tcp.writeBytes` | `(Tcp.Connection, Bytes) -> Result<Unit, String>` | Exact bytes; nothing appended, nothing encoded. |
+| `Tcp.writeNow` | `(Tcp.Connection, Bytes) -> Result<Int, String>` | Never blocks. Returns how many payload bytes the socket accepted this call, from 0 to the payload length; 0 for a non-empty payload means the socket would block, and a partial count is normal. |
 | `Tcp.readLine` | `Tcp.Connection -> Result<String, String>` | Strips the trailing `\r\n`; `Ok("")` on a clean EOF before any byte. |
 | `Tcp.readBytes` | `(Tcp.Connection, Int) -> Result<Bytes, String>` | Reads exactly N bytes, no decoding. Short read is an error. |
 | `Tcp.readSome` | `(Tcp.Connection, Int) -> Result<Bytes, String>` | Reads 1–N bytes without waiting to fill N; empty `Bytes` means clean EOF. |
-| `Tcp.poll` | `(Map<Int, Tcp.Socket>, Int) -> Result<List<Int>, String>` | One wait over connected peers, in-flight dials, and listeners. Returns sorted caller IDs; `[]` means timeout. On wasip2 only connected peers, because that target mints no dial or listener. |
+| `Tcp.readNow` | `(Tcp.Connection, Int) -> Result<Option<Bytes>, String>` | Never blocks. `None` means nothing is available right now; `Some(empty)` means clean EOF, as `readSome` reports it; `Some(bytes)` is one chunk of at most N bytes. |
+| `Tcp.poll` | `(Map<Int, Tcp.Socket>, Int) -> Result<List<Int>, String>` | One wait over readable connections (`Connected`), writable connections (`Sending`), in-flight dials, and listeners. Returns sorted caller IDs; `[]` means timeout. On wasip2 only the two connection states, because that target mints no dial or listener. |
 | `Tcp.close` | `Tcp.Connection -> Result<Unit, String>` | `Err("tcp: unknown connection ...")` on a double-close. |
 | `Tcp.closeDial` | `Tcp.Dial -> Result<Unit, String>` | Cancels an in-flight attempt and invalidates the handle. Not on wasip2. |
 | `Tcp.closeListener` | `Tcp.Listener -> Result<Unit, String>` | Releases the bound port; accepted connections remain live. Not on wasip2. |
@@ -464,27 +466,31 @@ shipped target binds all eighteen.
 reads, equality, hashing, and pattern matches are rejected by the type checker.
 The distinction is typestate: `writeBytes` is not merely likely to fail on a
 dial or listener; those calls do not typecheck. `Tcp.Socket` is an ordinary
-represented sum used to keep all three states in one caller-owned map:
+represented sum used to keep every polled state in one caller-owned map:
 
 ```aver
 type Socket
     Listening(Tcp.Listener)
     Dialing(Tcp.Dial)
     Connected(Tcp.Connection)
+    Sending(Tcp.Connection)
 ```
 
 The sum removes the old cross-map invariant. One key names exactly one socket
 state, and exhaustive matching says what may happen next: `Listening` can be
-accepted, `Dialing` can become `Connected`, and `Connected` can be read or
-written. Native VM and generated Rust carry provider host tokens inside the
-resource payloads; backend-specific socket tables and handles remain
-implementation details.
+accepted, `Dialing` can become `Connected`, `Connected` can be read, and
+`Sending` can be written. `Connected` and `Sending` wrap the same resource: they
+are two readiness interests on one connection, so a caller who wants both
+directions registers the connection under two keys. Native VM and generated
+Rust carry provider host tokens inside the resource payloads; backend-specific
+socket tables and handles remain implementation details.
 
 Persistent session I/O has deliberately **no read or write deadline**. A
-session operation may therefore wait indefinitely until it completes, reaches
-EOF, or gets an actual I/O error. Once `readBytes`, `readSome`, `readLine`,
-`writeBytes`, or `writeLine` begins touching the socket, any error removes that
-connection from the provider pool. A failed exact read may already have
+blocking session operation may therefore wait indefinitely until it completes,
+reaches EOF, or gets an actual I/O error; `readNow` and `writeNow` are the two
+operations that never wait. Once `readBytes`, `readSome`, `readNow`,
+`readLine`, `writeBytes`, `writeNow`, or `writeLine` begins touching the
+socket, any error removes that connection from the provider pool. A failed exact read may already have
 consumed part of a frame, and a failed write may already have sent part of its
 payload; allowing a retry on the same handle would silently desynchronise the
 protocol. Argument validation happens first, so a negative or oversized
@@ -534,7 +540,7 @@ requested count and decodes nothing.
 
 `Tcp.poll` is the one event-loop wait. The caller owns the `Int` keys in its
 `Map<Int, Tcp.Socket>`, so the same keys can index protocol metadata without
-making provider resources comparable. The standard provider watches all three
+making provider resources comparable. The standard provider watches all four
 states with one poller and returns every readiness event it observes as a
 sorted, duplicate-free subset of the supplied keys. An unknown or stale
 resource makes the whole call `Err` rather than disappearing from the result.
@@ -544,10 +550,12 @@ attempt cannot remain asleep behind a longer idle timeout.
 Whatever runs between two polls is one turn, and every peer waits for it: `aver check` flags a turn that hands control to an effectful loop as `warning[serve-path]`, and `aver verify` measures turns against `[verify] turn-budget`.
 
 A `Connected` key is ready for buffered input, stream readability, EOF, or an
-observable error. A `Dialing` key is ready when establishment settles or its
-deadline expires. A `Listening` key is ready when a client can be accepted.
-Readiness is still a hint: false wakes are legal, so `dialled` and `accept` may
-return `Ok(None)`, and the following operation can fail. Completeness is a
+observable error. A `Sending` key is ready when the next `writeNow` on that
+connection will accept at least one byte or fail. A `Dialing` key is ready when
+establishment settles or its deadline expires. A `Listening` key is ready when a
+client can be accepted. Readiness is still a hint: false wakes are legal, so
+`dialled` and `accept` may return `Ok(None)`, `readNow` may return `Ok(None)`,
+`writeNow` may accept nothing, and the following operation can fail. Completeness is a
 provider/runtime obligation over hidden host readiness, not a fabricated pure
 Oracle law; the standard implementation tests that simultaneous connection,
 dial, and listener events are all returned.
@@ -561,6 +569,16 @@ back to exact-count blocking. Empty `Bytes` is reserved for clean EOF.
 
 The returned payload is nominal `Bytes`; use `Bytes.octets` only when ordinary
 list operations are needed.
+
+`readNow(connection, maxBytes)` is the non-blocking form of `readSome`: the
+same one bounded read, but it returns immediately. `Ok(None)` means nothing is
+available right now, the case in which `readSome` would have waited.
+`Ok(Some(empty))` is clean EOF, exactly as `readSome` reports it, and
+`Ok(Some(bytes))` is one chunk of at most `maxBytes`. `Err` is a transport
+failure and poisons the connection. Bytes a previous `readLine` left buffered
+count as available. The argument rules are those of `readSome`: `maxBytes`
+must be positive and is capped at 10 MiB, and an invalid maximum is a
+catchable error that leaves the handle live.
 
 A short read is an error rather than a truncated success, because fewer bytes
 than a length prefix promised means the peer went away mid-message. The count is
@@ -577,6 +595,17 @@ with `Bytes.fromList` or `Bytes.fromHex`; an invalid octet returns `Result.Err`
 at that refinement boundary before any wire I/O, so a bad payload never
 half-writes. An empty payload is a no-op. `Tcp.writeLine` is unchanged and
 remains right for line-oriented text.
+
+`Tcp.writeNow` is the non-blocking form of `writeBytes`. It writes as many
+payload bytes as the socket accepts right now and returns that count, from 0
+to the payload length. 0 for a non-empty payload means the socket would block;
+a partial count is normal, and the caller keeps the remainder (`Bytes.drop`)
+for a later call, typically after `poll` reports the connection's `Sending` key.
+An empty payload returns 0 without touching the socket. `Err` is a transport
+failure and poisons the connection, so a refused or partial write is never an
+error. The native provider switches the stream to non-blocking mode for that
+one call and restores it afterwards, so the blocking operations keep their
+contracts on the same connection.
 
 ### `Random` namespace — use granular effects (`! [Random.int]`, `! [Random.float]`)
 

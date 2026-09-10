@@ -909,6 +909,54 @@ pub(super) fn emit_tcp_read_some_wasip2(
     Ok(())
 }
 
+pub(super) fn emit_tcp_read_now_wasip2(
+    func: &mut wasm_encoder::Function,
+    args: &[Spanned<MirExpr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let lowering = ctx.wasip2_lowering.ok_or_else(|| {
+        WasmGcError::Validation("Tcp.readNow on wasip2: lowering ctx missing".into())
+    })?;
+    if args.len() != 2 {
+        return Err(WasmGcError::Validation(format!(
+            "Tcp.readNow on `--target wasip2` expects 2 args (conn, maxBytes), got {}",
+            args.len()
+        )));
+    }
+    let helper = lowering.tcp_read_now_fn_idx.ok_or_else(|| {
+        WasmGcError::Validation("Tcp.readNow on wasip2: helper fn idx missing".into())
+    })?;
+    emit_mir_expr(func, &args[0], slots, ctx)?;
+    emit_mir_expr(func, &args[1], slots, ctx)?;
+    func.instruction(&Instruction::Call(helper));
+    Ok(())
+}
+
+pub(super) fn emit_tcp_write_now_wasip2(
+    func: &mut wasm_encoder::Function,
+    args: &[Spanned<MirExpr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let lowering = ctx.wasip2_lowering.ok_or_else(|| {
+        WasmGcError::Validation("Tcp.writeNow on wasip2: lowering ctx missing".into())
+    })?;
+    if args.len() != 2 {
+        return Err(WasmGcError::Validation(format!(
+            "Tcp.writeNow on `--target wasip2` expects 2 args (conn, payload), got {}",
+            args.len()
+        )));
+    }
+    let helper = lowering.tcp_write_now_fn_idx.ok_or_else(|| {
+        WasmGcError::Validation("Tcp.writeNow on wasip2: helper fn idx missing".into())
+    })?;
+    emit_mir_expr(func, &args[0], slots, ctx)?;
+    emit_mir_expr(func, &args[1], slots, ctx)?;
+    func.instruction(&Instruction::Call(helper));
+    Ok(())
+}
+
 pub(super) fn emit_tcp_poll_wasip2(
     func: &mut wasm_encoder::Function,
     args: &[Spanned<MirExpr>],

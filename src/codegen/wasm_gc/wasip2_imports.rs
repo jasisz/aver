@@ -121,6 +121,43 @@ define_wasip2_import_slots! {
     /// pollable that becomes ready when a read can make progress.
     /// Canonical-ABI signature: `(this: i32) -> i32`.
     InputStreamSubscribe,
+    /// `wasi:io/streams.[method]input-stream.read:
+    /// func(this: borrow<input-stream>, len: u64) ->
+    ///   result<list<u8>, stream-error>`.
+    ///
+    /// The non-blocking twin of `blocking-read`, same retptr layout.
+    /// An `Ok` with an empty list means no byte is available yet; the
+    /// `closed` error is clean EOF. Drives `Tcp.readNow`.
+    ///   `(handle: i32, len: i64, retptr: i32) -> ()`.
+    InputStreamRead,
+    /// `wasi:io/streams.[method]output-stream.check-write:
+    /// func(this: borrow<output-stream>) -> result<u64, stream-error>`.
+    ///
+    /// Reports how many bytes a following `write` may carry without
+    /// blocking. Result lowered via retptr (16 bytes: `tag i8` at
+    /// offset 0, the `u64` permit at offset 8 for Ok, or
+    /// `(err_tag i8, err_handle i32)` at offset 8 for Err).
+    ///   `(handle: i32, retptr: i32) -> ()`.
+    OutputStreamCheckWrite,
+    /// `wasi:io/streams.[method]output-stream.write:
+    /// func(this: borrow<output-stream>, contents: list<u8>) ->
+    ///   result<_, stream-error>`.
+    ///
+    /// Never blocks; the caller must stay within the last
+    /// `check-write` permit. Same lowering as
+    /// `blocking-write-and-flush`:
+    ///   `(handle: i32, buf_ptr: i32, buf_len: i32, retptr: i32)`.
+    OutputStreamWrite,
+    /// `wasi:io/streams.[method]output-stream.flush:
+    /// func(this: borrow<output-stream>) -> result<_, stream-error>`.
+    ///
+    /// Requests that buffered output be sent without waiting for it.
+    ///   `(handle: i32, retptr: i32) -> ()`.
+    OutputStreamFlush,
+    /// `wasi:io/streams.[method]output-stream.subscribe` returns a
+    /// pollable that becomes ready when a write can make progress.
+    /// Canonical-ABI signature: `(this: i32) -> i32`.
+    OutputStreamSubscribe,
     /// `wasi:clocks/monotonic-clock.subscribe-duration:
     /// func(when: duration) -> pollable` where
     /// `type duration = u64` (nanoseconds).
@@ -814,6 +851,21 @@ impl Wasip2ImportSlot {
             Wasip2ImportSlot::InputStreamSubscribe => {
                 ("wasi:io/streams@0.2.4", "[method]input-stream.subscribe")
             }
+            Wasip2ImportSlot::InputStreamRead => {
+                ("wasi:io/streams@0.2.4", "[method]input-stream.read")
+            }
+            Wasip2ImportSlot::OutputStreamCheckWrite => {
+                ("wasi:io/streams@0.2.4", "[method]output-stream.check-write")
+            }
+            Wasip2ImportSlot::OutputStreamWrite => {
+                ("wasi:io/streams@0.2.4", "[method]output-stream.write")
+            }
+            Wasip2ImportSlot::OutputStreamFlush => {
+                ("wasi:io/streams@0.2.4", "[method]output-stream.flush")
+            }
+            Wasip2ImportSlot::OutputStreamSubscribe => {
+                ("wasi:io/streams@0.2.4", "[method]output-stream.subscribe")
+            }
             Wasip2ImportSlot::ClocksMonotonicSubscribeDuration => {
                 ("wasi:clocks/monotonic-clock@0.2.4", "subscribe-duration")
             }
@@ -1047,8 +1099,19 @@ impl Wasip2ImportSlot {
             // `blocking-read(this, len) -> result<list<u8>, stream-error>`
             // — `this` borrows the input-stream handle (i32), `len` is
             // u64, return lowered via retptr.
-            Wasip2ImportSlot::InputStreamBlockingRead => {
+            Wasip2ImportSlot::InputStreamBlockingRead | Wasip2ImportSlot::InputStreamRead => {
                 vec![ValType::I32, ValType::I64, ValType::I32]
+            }
+            // `check-write(this) -> result<u64, stream-error>` and
+            // `flush(this) -> result<_, stream-error>` both return through a
+            // guest-supplied retptr.
+            Wasip2ImportSlot::OutputStreamCheckWrite | Wasip2ImportSlot::OutputStreamFlush => {
+                vec![ValType::I32, ValType::I32]
+            }
+            // `write(this, contents) -> result<_, stream-error>` — same
+            // shape as `blocking-write-and-flush`.
+            Wasip2ImportSlot::OutputStreamWrite => {
+                vec![ValType::I32, ValType::I32, ValType::I32, ValType::I32]
             }
             // `now: () -> datetime` — datetime exceeds 8-byte flat
             // limit, so it returns via retptr supplied by the guest.
@@ -1074,7 +1137,9 @@ impl Wasip2ImportSlot {
             // `[resource-drop]pollable(this: pollable)` — single
             // i32 handle, no return.
             Wasip2ImportSlot::IoPollResourceDropPollable => vec![ValType::I32],
-            Wasip2ImportSlot::InputStreamSubscribe => vec![ValType::I32],
+            Wasip2ImportSlot::InputStreamSubscribe | Wasip2ImportSlot::OutputStreamSubscribe => {
+                vec![ValType::I32]
+            }
             // `get-directories: () -> list<...>` — list lowered
             // via retptr (8 bytes: list_ptr + list_len).
             Wasip2ImportSlot::FilesystemPreopensGetDirectories => vec![ValType::I32],
@@ -1353,10 +1418,15 @@ impl Wasip2ImportSlot {
             | Wasip2ImportSlot::CliGetStderr
             | Wasip2ImportSlot::CliStdinGetStdin
             | Wasip2ImportSlot::ClocksMonotonicSubscribeDuration
-            | Wasip2ImportSlot::InputStreamSubscribe => vec![ValType::I32],
+            | Wasip2ImportSlot::InputStreamSubscribe
+            | Wasip2ImportSlot::OutputStreamSubscribe => vec![ValType::I32],
             // Result lowered via retptr — no inline return.
             Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush
+            | Wasip2ImportSlot::OutputStreamCheckWrite
+            | Wasip2ImportSlot::OutputStreamWrite
+            | Wasip2ImportSlot::OutputStreamFlush
             | Wasip2ImportSlot::InputStreamBlockingRead
+            | Wasip2ImportSlot::InputStreamRead
             | Wasip2ImportSlot::IoPollPoll
             | Wasip2ImportSlot::IoPollResourceDropPollable
             | Wasip2ImportSlot::ClocksWallClockNow

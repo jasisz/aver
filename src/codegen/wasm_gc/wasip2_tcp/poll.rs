@@ -4,9 +4,10 @@
 //! duration pollable occupies the final slot and represents timeout. The
 //! returned dense poll indices are mapped back to the caller's `Map<Int,
 //! Tcp.Socket>` keys, sorted with Aver's arbitrary-precision comparator, and
-//! materialised without narrowing the IDs. WASI currently supports only the
-//! `Connected` state; listener and non-blocking dial resources remain an
-//! explicit Level-B error on this target.
+//! materialised without narrowing the IDs. WASI supports the `Connected`
+//! state (input-stream pollable) and the `Sending` state (output-stream
+//! pollable); listener and non-blocking dial resources remain an explicit
+//! Level-B error on this target.
 
 use wasm_encoder::{Function, Instruction, ValType};
 
@@ -25,6 +26,7 @@ pub(in crate::codegen::wasm_gc) struct TcpPollIndices {
     pub int_key_box_type_idx: u32,
     pub tcp_socket_type_idx: u32,
     pub tcp_connected_variant_type_idx: u32,
+    pub tcp_sending_variant_type_idx: u32,
     pub tcp_connection_type_idx: u32,
     pub tcp_slot_type_idx: u32,
     pub tcp_pool_type_idx: u32,
@@ -42,6 +44,7 @@ pub(in crate::codegen::wasm_gc) struct TcpPollHelperFns {
     pub parse_id_fn: u32,
     pub cabi_realloc_fn: u32,
     pub input_subscribe_fn: u32,
+    pub output_subscribe_fn: u32,
     pub timeout_subscribe_fn: u32,
     pub poll_fn: u32,
     pub drop_pollable_fn: u32,
@@ -138,7 +141,7 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_poll(
         heap_type: HeapType::Concrete(indices.list_int_type_idx),
     });
     // Params 0=Map, 1=timeout. Locals 2..23 are i32 scratch/cursors;
-    // 24..30 are typed GC refs.
+    // 24..30 are typed GC refs; 31 is the Sending flag for the current entry.
     let mut function = Function::new(vec![
         (22, ValType::I32),
         (1, slot_ref),
@@ -148,6 +151,7 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_poll(
         (1, key_box_ref),
         (1, list_ref),
         (1, socket_ref),
+        (1, ValType::I32),
     ]);
     let saved_alloc = 2;
     let capacity = 3;
@@ -178,6 +182,7 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_poll(
     let key_box = 28;
     let list = 29;
     let socket = 30;
+    let is_sending = 31;
     let mem4 = MemArg {
         offset: 0,
         align: 2,
@@ -321,10 +326,18 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_poll(
     function.instruction(&Instruction::LocalGet(map_cursor));
     function.instruction(&Instruction::ArrayGet(indices.map_values_array_type_idx));
     function.instruction(&Instruction::LocalSet(socket));
+    // `Sending` polls the same connection for write readiness.
+    function.instruction(&Instruction::LocalGet(socket));
+    function.instruction(&Instruction::RefTestNonNull(HeapType::Concrete(
+        indices.tcp_sending_variant_type_idx,
+    )));
+    function.instruction(&Instruction::LocalSet(is_sending));
     function.instruction(&Instruction::LocalGet(socket));
     function.instruction(&Instruction::RefTestNonNull(HeapType::Concrete(
         indices.tcp_connected_variant_type_idx,
     )));
+    function.instruction(&Instruction::LocalGet(is_sending));
+    function.instruction(&Instruction::I32Or);
     function.instruction(&Instruction::I32Eqz);
     function.instruction(&Instruction::If(BlockType::Empty));
     emit_error(
@@ -333,6 +346,17 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_poll(
         indices.unsupported_socket_len,
     );
     function.instruction(&Instruction::End);
+    function.instruction(&Instruction::LocalGet(is_sending));
+    function.instruction(&Instruction::If(BlockType::Result(connection_ref)));
+    function.instruction(&Instruction::LocalGet(socket));
+    function.instruction(&Instruction::RefCastNonNull(HeapType::Concrete(
+        indices.tcp_sending_variant_type_idx,
+    )));
+    function.instruction(&Instruction::StructGet {
+        struct_type_index: indices.tcp_sending_variant_type_idx,
+        field_index: 0,
+    });
+    function.instruction(&Instruction::Else);
     function.instruction(&Instruction::LocalGet(socket));
     function.instruction(&Instruction::RefCastNonNull(HeapType::Concrete(
         indices.tcp_connected_variant_type_idx,
@@ -341,6 +365,7 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_poll(
         struct_type_index: indices.tcp_connected_variant_type_idx,
         field_index: 0,
     });
+    function.instruction(&Instruction::End);
     function.instruction(&Instruction::LocalSet(connection));
     function.instruction(&Instruction::LocalGet(connection));
     function.instruction(&Instruction::StructGet {
@@ -404,12 +429,23 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_poll(
     function.instruction(&Instruction::End);
     function.instruction(&Instruction::End);
 
+    // Subscribe the output stream for `Sending`, the input stream otherwise.
+    function.instruction(&Instruction::LocalGet(is_sending));
+    function.instruction(&Instruction::If(BlockType::Result(ValType::I32)));
+    function.instruction(&Instruction::LocalGet(slot));
+    function.instruction(&Instruction::StructGet {
+        struct_type_index: indices.tcp_slot_type_idx,
+        field_index: 2,
+    });
+    function.instruction(&Instruction::Call(helpers.output_subscribe_fn));
+    function.instruction(&Instruction::Else);
     function.instruction(&Instruction::LocalGet(slot));
     function.instruction(&Instruction::StructGet {
         struct_type_index: indices.tcp_slot_type_idx,
         field_index: 1,
     });
     function.instruction(&Instruction::Call(helpers.input_subscribe_fn));
+    function.instruction(&Instruction::End);
     function.instruction(&Instruction::LocalSet(pollable));
     function.instruction(&Instruction::LocalGet(input_ptr));
     function.instruction(&Instruction::LocalGet(connection_count));

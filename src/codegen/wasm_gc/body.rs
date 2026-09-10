@@ -509,6 +509,9 @@ pub(super) struct Wasip2Lowering {
     /// Payload remains the nominal `Bytes` ref until the native helper
     /// materialises its private list carrier into linear memory.
     pub(super) tcp_write_bytes_fn_idx: Option<u32>,
+    /// `__rt_tcp_write_now(conn, payload) -> ref Result<Int, String>`: the
+    /// non-blocking write returning the accepted byte count.
+    pub(super) tcp_write_now_fn_idx: Option<u32>,
     /// Phase 4.4b (0.20) — `__rt_tcp_read_line(conn) -> ref
     /// Result<String, String>` helper wasm fn idx. Loops 1-byte
     /// blocking-read against slot.in_stream, terminates on '\n',
@@ -520,6 +523,8 @@ pub(super) struct Wasip2Lowering {
     pub(super) tcp_read_bytes_fn_idx: Option<u32>,
     /// `__rt_tcp_read_some(conn, maxBytes) -> ref Result<Bytes, String>`.
     pub(super) tcp_read_some_fn_idx: Option<u32>,
+    /// `__rt_tcp_read_now(conn, maxBytes) -> ref Result<Option<Bytes>, String>`.
+    pub(super) tcp_read_now_fn_idx: Option<u32>,
     /// `__rt_tcp_poll(Map<Int, Socket>, timeoutMs) ->
     /// ref Result<List<Int>, String>`.
     pub(super) tcp_poll_fn_idx: Option<u32>,
