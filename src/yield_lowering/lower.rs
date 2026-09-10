@@ -105,6 +105,15 @@ struct Segment {
     tail: Spanned<Expr>,
 }
 
+/// The rest of a path after a cut, lowered, with the variables it reads
+/// from before the cut (name and type, in scope order) and whether it
+/// reads the value the cut binds.
+struct Continuation {
+    fields: Vec<(String, String)>,
+    segment: Segment,
+    uses_bind: bool,
+}
+
 pub(super) struct Generated {
     /// The protocol a coordinator refers to: types, `Start`, answer functions.
     pub public_names: Vec<String>,
@@ -702,7 +711,7 @@ impl<'a> Lowering<'a> {
         scope: &mut Vec<String>,
         ret: &Ret,
         line: usize,
-    ) -> Result<(Vec<(String, String)>, Segment, bool), ()> {
+    ) -> Result<Continuation, ()> {
         let mut bound = HashSet::new();
         bound.extend(bind.iter().cloned());
         let mut free = free_idents_of_block(&rest, &tail, &bound);
@@ -722,7 +731,11 @@ impl<'a> Lowering<'a> {
         scope.extend(bind.iter().cloned());
         let segment = self.lower_block(rest, tail, scope, ret);
         scope.truncate(depth);
-        Ok((fields, segment?, uses_bind))
+        Ok(Continuation {
+            fields,
+            segment: segment?,
+            uses_bind,
+        })
     }
 
     fn waiting(
@@ -778,8 +791,11 @@ impl<'a> Lowering<'a> {
             fields: Vec::new(),
             arm: ident("__answer", line),
         });
-        let (fields, mut segment, uses_bind) =
-            self.continuation(&bind, rest, tail, scope, ret, line)?;
+        let Continuation {
+            fields,
+            mut segment,
+            uses_bind,
+        } = self.continuation(&bind, rest, tail, scope, ret, line)?;
 
         // The rest reads the answer under the user's name; the answer
         // function has it as `__answer` (a `Unit` answer as the value).
@@ -837,8 +853,11 @@ impl<'a> Lowering<'a> {
             return self.internal(line, "a `?` that is not a `?`");
         };
         let ok_type = self.stamp_text(&prop, "the value of a `?`")?;
-        let (fields, segment, uses_bind) =
-            self.continuation(&bind, rest, tail, scope, ret, line)?;
+        let Continuation {
+            fields,
+            segment,
+            uses_bind,
+        } = self.continuation(&bind, rest, tail, scope, ret, line)?;
         let ok_binder = match (&bind, uses_bind) {
             (Some(name), true) => name.clone(),
             _ => "_".to_string(),
@@ -891,8 +910,11 @@ impl<'a> Lowering<'a> {
             Some(_) => Some(self.stamp_text(&branch, "the value of a match")?),
             None => None,
         };
-        let (fields, segment, uses_bind) =
-            self.continuation(&bind, rest, tail, scope, ret, line)?;
+        let Continuation {
+            fields,
+            segment,
+            uses_bind,
+        } = self.continuation(&bind, rest, tail, scope, ret, line)?;
         // The rest follows in place only when it does not read the value:
         // a bound value needs a binder, and the one binder an expression
         // offers — an irrefutable pattern — is not lowered over every
