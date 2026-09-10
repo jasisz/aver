@@ -749,6 +749,10 @@ fn resolved_law_simp_defs(
         theorem
             .function_cone
             .iter()
+            // The target remains a source declaration even when the claim
+            // consists only of builtins, or its oracle lift is effectful and
+            // therefore absent from the pure dependency cone.
+            .chain(std::iter::once(&id))
             .filter(|id| {
                 !blind
                     || !ctx.proof_ir.fn_contracts.get(id).is_some_and(|c| {
