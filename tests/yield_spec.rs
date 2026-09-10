@@ -102,6 +102,21 @@ fn three_kinds_run_and_verify_on_wasm_gc() {
     assert_verify_passes("yield_three_kinds", &["verify", "--wasm-gc"], "8/8");
 }
 
+// ── Continuations: a request in a non-tail match arm, a Unit answer, `?` ─
+
+#[test]
+fn continuations_run_and_verify_on_the_vm() {
+    assert_runs_and_prints("yield_continuations", &["run"], "sum = 8");
+    assert_verify_passes("yield_continuations", &["verify"], "6/6");
+}
+
+#[cfg(feature = "wasm")]
+#[test]
+fn continuations_run_and_verify_on_wasm_gc() {
+    assert_runs_and_prints("yield_continuations", &["run", "--wasm-gc"], "sum = 8");
+    assert_verify_passes("yield_continuations", &["verify", "--wasm-gc"], "6/6");
+}
+
 // ── The generated Aver, verbatim ────────────────────────────────────────
 
 /// The generated items are ordinary types and pure functions of the

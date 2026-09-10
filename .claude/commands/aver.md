@@ -280,7 +280,7 @@ fn sum(xs: List<Int>) -> Int
 
 ### Yielding functions
 
-A function whose effect list names `yield` never runs as written: every effect call and the self tail call become requests, and the compiler generates the protocol in the same module under the reserved `__` namespace — `__LoopClaimState` (one state sum per request kind, one variant per stop, holding the live variables), `__LoopYieldState`, `__LoopRequest` (one constructor per kind: the operation's arguments plus the state), `__LoopOutcome = Done(<result>) | Waiting(__LoopRequest)`, `__loopStart(<params>)`, `__loopAnswerClaim(__state, __answer)` per kind, `__loopAnswerYield(__state)`. The original function is removed.
+A function whose effect list names `yield` never runs as written: every effect call and the self tail call become requests, and the compiler generates the protocol in the same module under the reserved `__` namespace — `__LoopClaimState` (one state sum per request kind, one variant per stop, holding the live variables), `__LoopYieldState`, `__LoopRequest` (one constructor per kind: the operation's arguments plus the state), `__LoopOutcome = Done(<result>) | Waiting(__LoopRequest)`, `__loopStart(<params>)`, `__loopAnswerClaim(__state, __answer)` per kind (state only when the operation returns `Unit`), `__loopAnswerYield(__state)`. The original function is removed.
 
 ```aver
 fn loop(id: Int, done: Int) -> Int

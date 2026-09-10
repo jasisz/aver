@@ -423,7 +423,7 @@ Inside a yielding function every call to an operation of a capability in its eff
 - `__LoopRequest` — one constructor per kind carrying the operation's arguments and the state of that kind: `Claim(Int, __LoopClaimState) | Yield(__LoopYieldState)`.
 - `__LoopOutcome` — `Done(Int) | Waiting(__LoopRequest)`.
 - `__loopStart(id: Int, done: Int) -> __LoopOutcome` — runs to the first stop; it carries the original `? "..."` description.
-- `__loopAnswerClaim(__state: __LoopClaimState, __answer: Option<Int>) -> __LoopOutcome` — matches the state variant and runs to the next stop or to `Done`. The answer type is the operation's result type, so pairing a state with the answer of another kind is a type error.
+- `__loopAnswerClaim(__state: __LoopClaimState, __answer: Option<Int>) -> __LoopOutcome` — matches the state variant and runs to the next stop or to `Done`. The answer type is the operation's result type, so pairing a state with the answer of another kind is a type error. An operation whose result is `Unit` has no answer to pass: its answer function takes the state only (`__loopAnswerPrint(__state)`).
 - `__loopAnswerYield(__state: __LoopYieldState) -> __LoopOutcome` — re-enters `__loopStart` with the carried arguments.
 
 These names are compiler-defined and callable. The original `loop` is removed after lowering; the coordinator answers the requests instead:

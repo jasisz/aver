@@ -231,14 +231,51 @@ pub(super) fn stamped_use(stmts: &[Stmt], tail: &Spanned<Expr>, name: &str) -> O
     found
 }
 
-/// Rename every reference to the generated temporary `from` into `to`.
-/// Temporaries are unique and never shadowed, so no scope check is needed.
-pub(super) fn rename_ident(expr: &mut Spanned<Expr>, from: &str, to: &str) {
-    if let Expr::Ident(name) = &mut expr.node
-        && name == from
-    {
-        *name = to.to_string();
-        return;
+/// Replace every free reference to `from` by `replacement`. A match arm
+/// whose pattern binds `from` again is left alone: sibling arms may bind
+/// one name each, and only the references outside them are ours.
+pub(super) fn substitute_free(expr: &mut Spanned<Expr>, from: &str, replacement: &Spanned<Expr>) {
+    match &mut expr.node {
+        Expr::Ident(name) if name == from => {
+            let line = expr.line;
+            let mut value = replacement.clone();
+            value.line = line;
+            *expr = value;
+        }
+        Expr::Match { subject, arms } => {
+            substitute_free(subject, from, replacement);
+            for arm in arms {
+                let mut binders = Vec::new();
+                pattern_binders(&arm.pattern, &mut binders);
+                if !binders.iter().any(|b| b == from) {
+                    substitute_free(&mut arm.body, from, replacement);
+                }
+            }
+        }
+        _ => expr_walk::for_each_child_mut(expr, &mut |child| {
+            substitute_free(child, from, replacement)
+        }),
     }
-    expr_walk::for_each_child_mut(expr, &mut |child| rename_ident(child, from, to));
+}
+
+/// [`substitute_free`] over a statement sequence and its tail, stopping at
+/// a statement that rebinds `from`.
+pub(super) fn substitute_free_in_block(
+    stmts: &mut [Stmt],
+    tail: &mut Spanned<Expr>,
+    from: &str,
+    replacement: &Spanned<Expr>,
+) {
+    for stmt in stmts.iter_mut() {
+        match stmt {
+            Stmt::Binding(name, _, expr) => {
+                substitute_free(expr, from, replacement);
+                if name == from {
+                    return;
+                }
+            }
+            Stmt::Expr(expr) => substitute_free(expr, from, replacement),
+        }
+    }
+    substitute_free(tail, from, replacement);
 }

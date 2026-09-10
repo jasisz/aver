@@ -1,0 +1,49 @@
+module YieldContinuations
+    intent = "Fixture: a request inside a match arm of a non-tail statement, a request whose answer is Unit, a ? after a request, a namespace effect entry, and statements after a stop — the shapes that need generated continuation functions."
+    effects [Console, yield]
+    exposes [drive, main]
+
+fn talk(n: Int, acc: Int) -> Result<Int, String>
+    ? "Reads a name (asking again when the first read fails), greets it, reads a second line with ?, and loops n times summing the lengths."
+    ! [Console, yield]
+    first = Console.readLine()
+    label = match first
+        Result.Ok(line) -> line
+        Result.Err(_) -> match Console.readLine()
+            Result.Ok(again) -> again
+            Result.Err(_) -> "nobody"
+    Console.print("hello {label}")
+    second = Console.readLine()?
+    len = String.len(label) + String.len(second)
+    match n
+        0 -> Result.Ok(acc + len)
+        _ -> talk(n - 1, acc + len)
+
+fn drive(outcome: __TalkOutcome, lines: List<Result<String, String>>) -> Result<Int, String>
+    ? "Answers ReadLine requests from lines (Err once empty), acknowledges Print requests, and resumes Yield requests."
+    match outcome
+        __TalkOutcome.Done(v) -> v
+        __TalkOutcome.Waiting(request) -> match request
+            __TalkRequest.Yield(state) -> drive(__talkAnswerYield(state), lines)
+            __TalkRequest.Print(message, state) -> drive(__talkAnswerPrint(state), lines)
+            __TalkRequest.ReadLine(state) -> match lines
+                [] -> drive(__talkAnswerReadLine(state, Result.Err("eof")), [])
+                [l, ..rest] -> drive(__talkAnswerReadLine(state, l), rest)
+
+verify drive
+    drive(__talkStart(0, 0), [Result.Ok("ab"), Result.Ok("cde")]) => Result.Ok(5)
+    drive(__talkStart(0, 0), [Result.Err("x"), Result.Ok("ab"), Result.Ok("cde")]) => Result.Ok(5)
+    drive(__talkStart(1, 0), [Result.Ok("ab"), Result.Ok("cde"), Result.Ok("q"), Result.Ok("rs")]) => Result.Ok(8)
+    drive(__talkStart(0, 0), [Result.Ok("ab")]) => Result.Err("eof")
+
+verify __talkStart
+    __talkStart(2, 0) => __TalkOutcome.Waiting(__TalkRequest.ReadLine(__TalkReadLineState.AwaitFirst(2, 0)))
+
+verify __talkAnswerPrint
+    __talkAnswerPrint(__TalkPrintState.Await2(2, 0, "ab")) => __TalkOutcome.Waiting(__TalkRequest.ReadLine(__TalkReadLineState.Await3(2, 0, "ab")))
+
+fn main() -> Unit
+    ! [Console.print]
+    match drive(__talkStart(1, 0), [Result.Ok("ab"), Result.Ok("cde"), Result.Ok("q"), Result.Ok("rs")])
+        Result.Ok(v) -> Console.print("sum = {v}")
+        Result.Err(e) -> Console.print("err = {e}")

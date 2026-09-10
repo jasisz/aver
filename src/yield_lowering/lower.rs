@@ -682,11 +682,11 @@ impl<'a> Lowering<'a> {
                 call(name, args, line)
             }
             Ret::Inline { bind, body } => match bind {
-                Some(bind) => match_expr(
-                    value,
-                    vec![MatchArm::new(Pattern::Ident(bind.clone()), body.clone())],
-                    line,
-                ),
+                Some(bind) => {
+                    let mut body = body.clone();
+                    substitute_free(&mut body, bind, &value);
+                    body
+                }
                 None => body.clone(),
             },
         }
@@ -763,6 +763,13 @@ impl<'a> Lowering<'a> {
         }
         let kind = self.kind_index(&kind_name, arg_types, Some(answer_type.clone()), line)?;
         let variant = self.variant_name(kind, bind.as_deref());
+        // `Unit` carries nothing: the answer function takes the state only,
+        // and a binding of the answer reads as the `Unit` value itself.
+        let answer: Spanned<Expr> = if answer_type == "Unit" {
+            Spanned::new(Expr::Literal(Literal::Unit), line)
+        } else {
+            ident("__answer", line)
+        };
         // Reserve the variant's place before the continuation registers
         // the stops after it, so variants keep source order.
         let slot = self.kinds[kind].variants.len();
@@ -771,40 +778,24 @@ impl<'a> Lowering<'a> {
             fields: Vec::new(),
             arm: ident("__answer", line),
         });
-        let (fields, segment, uses_bind) =
+        let (fields, mut segment, uses_bind) =
             self.continuation(&bind, rest, tail, scope, ret, line)?;
 
+        // The rest reads the answer under the user's name; the answer
+        // function has it as `__answer` (a `Unit` answer as the value).
+        // Substituting keeps the user's spans and needs no binder — an
+        // irrefutable pattern would be one, and the backends do not lower
+        // a bare binder over every subject type alike.
+        if let (Some(name), true) = (&bind, uses_bind) {
+            substitute_free_in_block(&mut segment.stmts, &mut segment.tail, name, &answer);
+        }
         let arm = if segment.stmts.is_empty() {
-            let mut body = segment.tail;
-            match (&bind, uses_bind) {
-                (Some(name), true) if is_temp(name) => {
-                    rename_ident(&mut body, name, "__answer");
-                    body
-                }
-                // `r = op(...)` followed by `match r`: match the answer
-                // itself when nothing else reads `r`.
-                (Some(name), true) if matches_only(&body, name) => {
-                    let Expr::Match { arms, .. } = body.node else {
-                        unreachable!("matches_only checked the shape");
-                    };
-                    match_expr(ident("__answer", line), arms, body.line)
-                }
-                (Some(name), true) => match_expr(
-                    ident("__answer", line),
-                    vec![MatchArm::new(Pattern::Ident(name.clone()), body)],
-                    line,
-                ),
-                _ => body,
-            }
+            segment.tail
         } else {
             let name = self.names.after(&variant);
-            let mut params = fields.clone();
-            let mut call_args: Vec<Spanned<Expr>> =
+            let params = fields.clone();
+            let call_args: Vec<Spanned<Expr>> =
                 fields.iter().map(|(n, _)| ident(n, line)).collect();
-            if let (Some(bind), true) = (&bind, uses_bind) {
-                params.push((bind.clone(), answer_type.clone()));
-                call_args.push(ident("__answer", line));
-            }
             self.helpers.push(fn_def(
                 name.clone(),
                 params,
@@ -902,9 +893,14 @@ impl<'a> Lowering<'a> {
         };
         let (fields, segment, uses_bind) =
             self.continuation(&bind, rest, tail, scope, ret, line)?;
-        let inner_ret = if segment.stmts.is_empty() {
+        // The rest follows in place only when it does not read the value:
+        // a bound value needs a binder, and the one binder an expression
+        // offers — an irrefutable pattern — is not lowered over every
+        // subject type by every backend. A continuation function binds it
+        // as a parameter instead.
+        let inner_ret = if segment.stmts.is_empty() && !uses_bind {
             Ret::Inline {
-                bind: bind.filter(|_| uses_bind),
+                bind: None,
                 body: segment.tail,
             }
         } else {
@@ -1105,7 +1101,9 @@ impl<'a> Lowering<'a> {
             let mut params = vec![("__state".to_string(), state)];
             let desc = match &kind.answer_type {
                 Some(answer) => {
-                    params.push(("__answer".to_string(), answer.clone()));
+                    if answer != "Unit" {
+                        params.push(("__answer".to_string(), answer.clone()));
+                    }
                     format!(
                         "Resumes '{}' after the coordinator answered its {} request.",
                         fd.name, kind.name
@@ -1134,15 +1132,6 @@ impl<'a> Lowering<'a> {
             items,
         })
     }
-}
-
-/// `expr` is `match name` whose arms never read `name` again.
-fn matches_only(expr: &Spanned<Expr>, name: &str) -> bool {
-    let Expr::Match { subject, arms } = &expr.node else {
-        return false;
-    };
-    matches!(&subject.node, Expr::Ident(n) if n == name)
-        && !arms.iter().any(|arm| mentions(&[], &arm.body, name))
 }
 
 fn is_temp(name: &str) -> bool {
