@@ -49,6 +49,7 @@ impl Checker<'_> {
                 }
             }
             ("String.len", [Type::Str]) => Type::Int,
+            ("String.toLower" | "String.toUpper", [Type::Str]) => Type::Str,
             ("String.fromInt", [Type::Int]) | ("String.fromBool", [Type::Bool]) => Type::Str,
             ("String.charAt", [Type::Str, Type::Int]) => Type::Option(Box::new(Type::Str)),
             ("String.chars", [Type::Str]) => Type::List(Box::new(Type::Str)),

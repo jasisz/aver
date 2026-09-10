@@ -247,7 +247,15 @@ pub(super) fn plain_supplier(
             super::super::law_induction::plan(citation.block, citation.law, ctx)
         })
         .filter(|_| !reuse);
+    let source_key =
+        ctx.with_module_scope(citation.scope, || key(citation.block, citation.law, ctx))?;
+    let source_id = format!(
+        "{}.{}",
+        ctx.symbol_table.fn_entry(source_key.0).key.canonical(),
+        source_key.1
+    );
     let mut lines = vec![
+        format!("// aver:dafny-citation {name} {source_id}"),
         format!(
             "// Checked universal citation: {}",
             label(citation.block, citation.law)
@@ -288,7 +296,13 @@ pub(super) fn plain_supplier(
                 ctx,
             ));
             if let Some(plan) = induction {
-                lines.extend(super::super::law_induction::calls(plan, &name, &[], ctx));
+                lines.extend(super::super::law_induction::calls(
+                    plan,
+                    &name,
+                    &[],
+                    ctx,
+                    recursion,
+                ));
             }
         });
     }

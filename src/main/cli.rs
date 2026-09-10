@@ -703,9 +703,10 @@ pub(super) enum Commands {
         /// Explain open proof steps in Aver: source locations, goals,
         /// assumptions, previous because results, and explicit using
         /// requirements, plus isolated citation applications and their
-        /// remaining premises where supported. Check mode only; Lean backend only. JSON adds
+        /// remaining premises where supported (Lean). Check mode only. JSON adds
         /// `explanations` keyed by law/step. Checker limits are distinguished
-        /// from unproved statements; technical output is saved in
+        /// from unproved statements. Dafny adds `claims` with exported/checked/unresolved
+        /// status; a failing module grants no per-law credit. Technical output is saved in
         /// proof_backend.log (citation probes: proof_citations.log;
         /// unavailable helper suggestions: proof_candidates.log).
         /// Existing `open_goals` / manifest `open_goal`

@@ -7,9 +7,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::ast::{Expr, FnDef, Literal, Spanned, Stmt, Type, VerifyLaw};
 use crate::ir::FnId;
 use crate::ir::hir::{ResolvedCallee, ResolvedExpr};
-use crate::ir::proof_ir::{LawUnfolding, ProofIR, RecursionContract};
+use crate::ir::proof_ir::{ProofIR, RecursionContract};
 
-use super::ProofLowerInputs;
+use crate::codegen::proof_lower::ProofLowerInputs;
+
+use super::UnfoldingHint;
 
 fn definition<'a>(inputs: &ProofLowerInputs<'a>, id: FnId) -> Option<&'a FnDef> {
     let key = &inputs.symbol_table.fn_entry(id).key;
@@ -99,7 +101,7 @@ pub(super) fn plan(
     inputs: &ProofLowerInputs,
     ir: &ProofIR,
     scope: Option<&str>,
-) -> Option<LawUnfolding> {
+) -> Option<UnfoldingHint> {
     // A fixed countdown does not bound an independently quantified sequence.
     // Keep citation/induction search for those obligations: deeper unfolding
     // alone can lose proofs about an arbitrary suffix or accumulator.
@@ -187,7 +189,7 @@ pub(super) fn plan(
         }
     }
     functions.sort();
-    supported.then_some(LawUnfolding {
+    supported.then_some(UnfoldingHint {
         depth,
         functions,
         reverse_elements,

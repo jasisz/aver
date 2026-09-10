@@ -1,0 +1,38 @@
+module SliceReasons
+    intent = "A guarded recursive explanation preserves a list predicate through slicing."
+    effects []
+
+fn nonnegative(xs: List<Int>) -> Bool
+    match xs
+        [] -> true
+        [x, ..rest] -> Bool.and(x >= 0, nonnegative(rest))
+
+fn dropReason(xs: List<Int>, n: Int) -> Bool
+    match xs
+        [] -> nonnegative(List.drop(xs, n))
+        [x, ..rest] -> match n <= 0
+            true -> nonnegative(List.drop(xs, n))
+            false -> Bool.and(dropReason(rest, n - 1), nonnegative(List.drop(xs, n)))
+
+fn takeReason(xs: List<Int>, n: Int) -> Bool
+    match xs
+        [] -> nonnegative(List.take(xs, n))
+        [x, ..rest] -> match n > 0
+            true -> Bool.and(takeReason(rest, n - 1), nonnegative(List.take(xs, n)))
+            false -> nonnegative(List.take(xs, n))
+
+verify nonnegative law dropPreserves
+    given xs: List<Int> = [[], [0, 2], [-1]]
+    given n: Int = [-1, 0, 1, 2, 3]
+    when nonnegative(xs)
+    because dropReason(xs, n)
+    using []
+    nonnegative(List.drop(xs, n)) holds
+
+verify nonnegative law takePreserves
+    given xs: List<Int> = [[], [0, 2], [-1]]
+    given n: Int = [-1, 0, 1, 2, 3]
+    when nonnegative(xs)
+    because takeReason(xs, n)
+    using []
+    nonnegative(List.take(xs, n)) holds

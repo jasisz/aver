@@ -42,6 +42,144 @@ verify advance law explained
 "#;
 
 #[test]
+fn slice_reasons_use_shared_guards_and_recursive_premises() {
+    let source = include_str!("../../../../tests/fixtures/law_reasons_slices.av");
+    let ctx = ctx_from_source(source, "SliceReasons");
+    for theorem in &ctx.proof_ir.law_theorems {
+        let plan = theorem.reason_inductions[0].as_ref().expect("reason plan");
+        assert_eq!(plan.driver, "xs");
+        let call = &plan.calls[0];
+        let expression = |e| super::super::expr::emit_expr(e, &ctx);
+        assert!(expression(call.branch_guard.as_ref().unwrap()).contains('n'));
+        assert!(
+            expression(call.premise.as_ref().unwrap()).contains("nonnegative(averInductionPart")
+        );
+        assert_eq!(expression(&call.arguments[1]), "(n - 1)");
+    }
+    // The second step may only invoke itself with the first step established
+    // at the recursive arguments, even if that premise is unrelated to lists.
+    let source = source.replace(
+        "    because takeReason",
+        "    because n >= 0\n    because takeReason",
+    );
+    let ctx = ctx_from_source(&source, "SliceReasons");
+    let plan = ctx
+        .proof_ir
+        .law_theorems
+        .iter()
+        .find(|t| t.law_name == "takePreserves")
+        .unwrap()
+        .reason_inductions[1]
+        .as_ref()
+        .unwrap();
+    let premise = super::super::expr::emit_expr(plan.calls[0].premise.as_ref().unwrap(), &ctx);
+    assert!(premise.contains("(n - 1) >= 0"), "{premise}");
+}
+
+#[test]
+fn nested_reason_guards_use_pattern_scope_and_preserve_both_recursive_paths() {
+    let source = include_str!("../../../../tests/fixtures/law_reasons_slices.av");
+    let (functions, laws) = source
+        .split_once("verify nonnegative law dropPreserves")
+        .unwrap();
+    // The source head and the law's counter share a spelling, but belong to
+    // different scopes. The branch uses the head; recursion decrements the counter.
+    let shadowed = format!(
+        "{}verify nonnegative law dropPreserves{}",
+        functions.replace("match n > 0", "match x > 0"),
+        laws.replace("given n:", "given x:")
+            .replace("(xs, n)", "(xs, x)")
+    );
+    let ctx = ctx_from_source(&shadowed, "SliceReasons");
+    let plan = ctx
+        .proof_ir
+        .law_theorems
+        .iter()
+        .find(|t| t.law_name == "takePreserves")
+        .unwrap()
+        .reason_inductions[0]
+        .as_ref()
+        .unwrap();
+    let call = &plan.calls[0];
+    let head = call.list_case.as_ref().unwrap().head.as_ref().unwrap();
+    let guard = super::super::expr::emit_expr(call.branch_guard.as_ref().unwrap(), &ctx);
+    assert_eq!(guard, format!("({head} > 0)"));
+    assert_eq!(
+        super::super::expr::emit_expr(&call.arguments[1], &ctx),
+        "(x - 1)"
+    );
+
+    let ambiguous = source.replace(
+        "false -> nonnegative(List.take(xs, n))",
+        "false -> takeReason(rest, n + 1)",
+    );
+    let ctx = ctx_from_source(&ambiguous, "SliceReasons");
+    let theorem = ctx
+        .proof_ir
+        .law_theorems
+        .iter()
+        .find(|t| t.law_name == "takePreserves")
+        .unwrap();
+    let plan = theorem.reason_inductions[0]
+        .as_ref()
+        .expect("both paths have explicit guards");
+    assert_eq!(plan.calls.len(), 2);
+    let render = |e| super::super::expr::emit_expr(e, &ctx);
+    let paths: Vec<_> = plan
+        .calls
+        .iter()
+        .map(|call| {
+            (
+                render(call.branch_guard.as_ref().unwrap()),
+                render(&call.arguments[1]),
+            )
+        })
+        .collect();
+    assert!(
+        paths
+            .iter()
+            .any(|(guard, arg)| guard == "(n > 0)" && arg == "(n - 1)"),
+        "{paths:?}"
+    );
+    assert!(
+        paths
+            .iter()
+            .any(|(guard, arg)| guard.contains("!(n > 0)") && arg == "(n + 1)"),
+        "{paths:?}"
+    );
+}
+
+#[test]
+fn a_nested_binding_scope_is_not_guessed_and_all_same_leaf_calls_are_retained() {
+    let source = include_str!("../../../../tests/fixtures/law_reasons_slices.av");
+    let nested = source.replace("false -> nonnegative(List.take(xs, n))", "false -> match rest\n                [] -> true\n                [y, ..tail] -> takeReason(tail, n)");
+    let ctx = ctx_from_source(&nested, "SliceReasons");
+    let theorem = ctx
+        .proof_ir
+        .law_theorems
+        .iter()
+        .find(|t| t.law_name == "takePreserves")
+        .unwrap();
+    assert!(theorem.reason_inductions[0].is_none());
+    let multiple = source.replace(
+        "takeReason(rest, n - 1)",
+        "Bool.and(takeReason(rest, n - 1), takeReason(rest, n + 1))",
+    );
+    let ctx = ctx_from_source(&multiple, "SliceReasons");
+    let theorem = ctx
+        .proof_ir
+        .law_theorems
+        .iter()
+        .find(|t| t.law_name == "takePreserves")
+        .unwrap();
+    let plan = theorem.reason_inductions[0].as_ref().unwrap();
+    assert_eq!(plan.calls.len(), 2);
+    for call in &plan.calls {
+        assert!(call.branch_guard.is_some());
+    }
+}
+
+#[test]
 fn mutual_admission_requires_every_native_member_and_checks_its_body() {
     let source = "fn scan(xs: List<Int>, acc: List<Int>) -> List<Int>\n    match xs\n        [] -> acc\n        [head, ..tail] -> step(head, tail, acc)\nfn step(head: Int, rest: List<Int>, acc: List<Int>) -> List<Int>\n    scan(rest, List.prepend(head, acc))\nverify scan law identity\n    given xs: List<Int> = [[]]\n    given acc: List<Int> = [[]]\n    because true\n    using []\n    scan(xs, acc) => scan(xs, acc)\n";
     for (native_names, unsupported, admitted) in [

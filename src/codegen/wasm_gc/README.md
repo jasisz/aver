@@ -218,7 +218,7 @@ Audited 2026-05-02 against `src/codegen/wasm/abi.rs` + `src/types/checker/builti
 | Bool      | and/or/not ✅ |
 | Int       | toString/toFloat/abs/min/max/mod ✅, fromString ✅ |
 | Float     | toString/floor/ceil/round/abs/sqrt/min/max/pi/fromInt ✅, fromString ✅ |
-| String    | len/length/byteLength/startsWith/endsWith/contains/slice/toUpper/toLower/trim/split/join/fromInt/fromFloat/fromBool/charAt/chars/replace ✅ (`toUpper`/`toLower` are full Unicode — expansions such as `ß` → `SS` and the final-sigma rule included — from the tables in `builtins/case_tables.rs`; `trim` strips the same Unicode `White_Space` scalar values as Rust `str::trim`; `startsWith` compares bytes, which is what the VM's `str::starts_with` does too) |
+| String    | len/length/byteLength/startsWith/endsWith/contains/slice/toUpper/toLower/trim/split/join/fromInt/fromFloat/fromBool/charAt/chars/replace ✅ (`toUpper`/`toLower` are full Unicode — expansions such as `ß` → `SS` and the final-sigma rule included — from the shared tables in `../unicode_case/tables.rs`, packed by `builtins/case_tables.rs`; `trim` strips the same Unicode `White_Space` scalar values as Rust `str::trim`; `startsWith` compares bytes, which is what the VM's `str::starts_with` does too) |
 | Char      | toCode/fromCode ✅ |
 | Option    | Some/None/withDefault/toResult ✅ |
 | Result    | Ok/Err/withDefault ✅ |

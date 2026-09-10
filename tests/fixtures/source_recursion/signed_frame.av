@@ -1,0 +1,56 @@
+module SignedFrame
+    intent = "A sign belongs either in the high digit or in a separate tag."
+
+fn read(digits: List<Int>, acc: Int) -> Int
+    match digits
+        [] -> acc
+        [head, ..tail] -> read(tail, acc * 8 + head)
+
+verify read law suffix
+    given digits: List<Int> = [[], [1], [2, 3]]
+    given last: Int = [-1, 0, 7]
+    given acc: Int = [-1, 0, 3]
+    read(List.concat(digits, [last]), acc) => read(digits, acc) * 8 + last
+
+verify read law head
+    given first: Int = [-1, 0, 4]
+    given tail: List<Int> = [[], [2, 3]]
+    given acc: Int = [-1, 0, 3]
+    read(List.prepend(first, tail), acc) => read(tail, acc * 8 + first)
+
+fn signed(value: Int, negative: Bool) -> Int
+    match negative
+        true -> 0 - value
+        false -> value
+
+fn magnitude(top: Int) -> Int
+    match top >= 4
+        true -> top - 4
+        false -> top
+
+fn readSigned(packet: List<Int>) -> Int
+    match List.reverse(packet)
+        [] -> 0
+        [top, ..rest] -> signed(read(List.prepend(magnitude(top), rest), 0), top >= 4)
+
+fn signTag(negative: Bool) -> Int
+    match negative
+        true -> 4
+        false -> 0
+
+fn addSign(top: Int, negative: Bool) -> Int
+    match negative
+        true -> top + 4
+        false -> top
+
+fn encode(top: Int, rest: List<Int>, negative: Bool) -> List<Int>
+    match top >= 4
+        true -> List.concat(List.reverse(List.prepend(top, rest)), [signTag(negative)])
+        false -> List.reverse(List.prepend(addSign(top, negative), rest))
+
+verify encode law roundtrip
+    given top: Int = [0, 1, 3, 4, 8, 99]
+    given rest: List<Int> = [[], [2, 3], [-1, 9]]
+    given negative: Bool = [false, true]
+    when top >= 0
+    readSigned(encode(top, rest, negative)) => signed(read(List.prepend(top, rest), 0), negative)

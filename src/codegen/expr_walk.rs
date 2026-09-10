@@ -106,6 +106,81 @@ pub fn for_each_child<'a, F: FnMut(&'a Spanned<Expr>)>(expr: &'a Spanned<Expr>, 
     }
 }
 
+/// Mutable immediate-child traversal; scope-sensitive passes handle binders themselves.
+pub fn for_each_child_mut<'a, F: FnMut(&'a mut Spanned<Expr>)>(
+    expr: &'a mut Spanned<Expr>,
+    f: &mut F,
+) {
+    match &mut expr.node {
+        // Leaves. Spelled out rather than covered by a wildcard so that
+        // "this variant has no sub-expressions" is a statement someone made,
+        // not the absence of one.
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } | Expr::Constructor(_, None) => {}
+
+        Expr::FnCall(callee, args) => {
+            f(callee);
+            for a in args {
+                f(a);
+            }
+        }
+        // The TCO transform rewrites in-SCC tail calls into this before the
+        // typechecker runs, so a mutual-recursion cone is made of these, not
+        // of `FnCall`. `target` is a name, not a sub-expression.
+        Expr::TailCall(tc) => {
+            for a in &mut tc.args {
+                f(a);
+            }
+        }
+        // Proof export runs with interpolation lowering OFF (it wants
+        // source-level IR), so an interpolated segment still holds the call
+        // the user wrote.
+        Expr::InterpolatedStr(parts) => {
+            for p in parts {
+                match p {
+                    StrPart::Parsed(inner) => f(inner),
+                    StrPart::Literal(_) => {}
+                }
+            }
+        }
+        Expr::Attr(inner, _)
+        | Expr::ErrorProp(inner)
+        | Expr::Neg(inner)
+        | Expr::Constructor(_, Some(inner)) => f(inner),
+        Expr::BinOp(_, l, r) => {
+            f(l);
+            f(r);
+        }
+        Expr::Match { subject, arms } => {
+            f(subject);
+            for a in arms {
+                f(&mut a.body);
+            }
+        }
+        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
+            for i in items {
+                f(i);
+            }
+        }
+        Expr::MapLiteral(entries) => {
+            for (k, v) in entries {
+                f(k);
+                f(v);
+            }
+        }
+        Expr::RecordCreate { fields, .. } => {
+            for (_, v) in fields {
+                f(v);
+            }
+        }
+        Expr::RecordUpdate { base, updates, .. } => {
+            f(base);
+            for (_, v) in updates {
+                f(v);
+            }
+        }
+    }
+}
+
 /// [`for_each_child`], applied transitively: `f` sees `expr` and every
 /// expression below it, parents before children.
 pub fn walk<'a, F: FnMut(&'a Spanned<Expr>)>(expr: &'a Spanned<Expr>, f: &mut F) {

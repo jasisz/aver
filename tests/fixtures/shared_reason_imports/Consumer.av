@@ -1,0 +1,13 @@
+module Consumer
+    depends [Paths]
+    intent = "Imported recursion keeps its helpers while law guards use local names."
+    effects []
+fn step(n: Int) -> Int
+    n - 100
+verify step law importedPaths
+    given xs: List<Int> = [[], [1], [1, 2]]
+    given n: Int = [101, 102]
+    when step(n) >= -100
+    because Paths.reason(xs, n)
+    using []
+    step(n) >= -100 holds

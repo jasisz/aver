@@ -301,6 +301,88 @@ fn slice_reasons_use_integer_counts_without_losing_their_premises() {
 }
 
 #[test]
+fn guarded_slice_explanations_pass_both_judges_and_reject_a_missing_guard() {
+    let fixture = "tests/fixtures/law_reasons_slices.av";
+    for (backend, tool) in [("lean", "lake"), ("dafny", "dafny")] {
+        if Command::new(tool).arg("--version").output().is_err() {
+            continue;
+        }
+        let dir = temp_output_dir(&format!("aver-guarded-slice-{backend}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        let run = |source: &std::path::Path, output: &str| {
+            Command::new(env!("CARGO_BIN_EXE_aver"))
+                .arg("proof")
+                .arg(source)
+                .args(["--backend", backend, "--check-json", "-o"])
+                .arg(dir.join(output))
+                .output()
+                .unwrap()
+        };
+        let checked = run(std::path::Path::new(fixture), "positive");
+        assert!(
+            checked.status.success(),
+            "{backend}: {}",
+            format_output(&checked)
+        );
+        if backend == "lean" {
+            let manifest: serde_json::Value = serde_json::from_str(
+                &std::fs::read_to_string(dir.join("positive/proof_manifest.json")).unwrap(),
+            )
+            .unwrap();
+            let laws = manifest["laws"].as_array().unwrap();
+            assert_eq!(laws.len(), 2);
+            for law in laws {
+                assert_eq!(law["tier"], "universal", "{law}");
+                assert!(
+                    law["axioms"].as_array().unwrap().iter().all(|a| matches!(
+                        a.as_str(),
+                        Some("propext" | "Classical.choice" | "Quot.sound")
+                    )),
+                    "{law}"
+                );
+            }
+        }
+        let source = std::fs::read_to_string(fixture)
+            .unwrap()
+            .replace("    when nonnegative(xs)\n", "")
+            .replace("[[], [0, 2], [-1]]", "[[], [0, 2]]");
+        let false_source = dir.join("unguarded.av");
+        std::fs::write(&false_source, source).unwrap();
+        let samples = Command::new(env!("CARGO_BIN_EXE_aver"))
+            .arg("verify")
+            .arg(&false_source)
+            .output()
+            .unwrap();
+        assert!(samples.status.success(), "{}", format_output(&samples));
+        let rejected = run(&false_source, "negative");
+        assert!(
+            !rejected.status.success(),
+            "{backend} admitted a missing premise"
+        );
+        let stdout = String::from_utf8_lossy(&rejected.stdout);
+        let summary: serde_json::Value = serde_json::from_str(
+            stdout
+                .lines()
+                .rev()
+                .find(|line| line.starts_with('{'))
+                .unwrap_or_else(|| panic!("{}", format_output(&rejected))),
+        )
+        .unwrap();
+        if backend == "lean" {
+            assert_eq!(summary["build_errors"], 0, "{summary}");
+            assert_eq!(summary["universal_laws"], 0, "{summary}");
+            assert!(summary["sorries"].as_u64().unwrap() > 0, "{summary}");
+        } else {
+            for field in ["axioms", "omitted", "timeouts"] {
+                assert_eq!(summary[field], 0, "{summary}");
+            }
+            assert!(summary["errors"].as_u64().unwrap() > 0, "{summary}");
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
+#[test]
 fn list_descent_outlives_a_sibling_counter_in_both_proof_models() {
     for (backend, tool) in [("lean", "lake"), ("dafny", "dafny")] {
         if Command::new(tool).arg("--version").output().is_err() {

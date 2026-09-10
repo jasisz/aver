@@ -308,6 +308,12 @@ validated structural checkpoint.
 
 ## Fixed-count unfolding checkpoint
 
+Historical implementation note: the budget field described below was later
+removed from ProofIR. The same bounded policy now lives in Dafny's emitter;
+see [Proof arguments and search policy](dafny.md#proof-arguments-and-search-policy).
+The checkpoint measurements below are historical, not a new census.
+
+
 The unchanged BTC `Message` module now passes all ten laws with its imports
 checked, including the 2/4/8-byte read-after-write laws. Strict whole-module
 BTC coverage rises from **7/104 to 17/104** (`Message` plus `ScriptMath`).

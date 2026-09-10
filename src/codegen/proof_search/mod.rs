@@ -9,13 +9,37 @@ use std::collections::BTreeSet;
 use crate::ast::{TopLevel, VerifyKind};
 use crate::ir::proof_ir::{LawApplication, LawTheorem, ProofIR};
 
-use super::ProofLowerInputs;
+use crate::codegen::proof_lower::ProofLowerInputs;
 use terms::{Bindings, Term};
 
-const ROUNDS: usize = 4;
-const TERMS: usize = 64;
-const NODES: usize = 512;
-const APPLICATIONS: usize = 32;
+/// Limits candidate discovery only. Both backends recheck all applications.
+#[derive(Debug, Clone, Copy)]
+pub struct ApplicationSearchBudget {
+    pub rounds: usize,
+    pub terms: usize,
+    pub nodes: usize,
+    pub applications: usize,
+}
+
+impl Default for ApplicationSearchBudget {
+    fn default() -> Self {
+        Self {
+            rounds: 4,
+            terms: 64,
+            nodes: 512,
+            applications: 32,
+        }
+    }
+}
+
+/// Diagnostic search outcome; no field grants proof credit.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct ApplicationSearchReport {
+    pub disabled: bool,
+    pub applications: usize,
+    /// Steps whose search reached a resource limit; not a claim of incompleteness.
+    pub limited_steps: usize,
+}
 
 struct Rule<'a> {
     theorem: &'a LawTheorem,
@@ -24,7 +48,13 @@ struct Rule<'a> {
     variables: BTreeSet<String>,
 }
 
-fn rewrite(t: &Term, rule: &Rule, applications: &mut Vec<LawApplication>) -> Term {
+fn rewrite(
+    t: &Term,
+    rule: &Rule,
+    applications: &mut Vec<LawApplication>,
+    budget: ApplicationSearchBudget,
+    limited: &mut bool,
+) -> Term {
     let mut bindings = Bindings::new();
     if terms::matches(&rule.lhs, t, &rule.variables, &mut bindings) {
         let args: Option<Vec<_>> = rule
@@ -39,13 +69,15 @@ fn rewrite(t: &Term, rule: &Rule, applications: &mut Vec<LawApplication>) -> Ter
             // particular, an empty-seed identity can be a looping local simp
             // fact before its empty containers have been normalized by Lean.
             if &rhs == t {
-                return terms::map(t, &mut |child| rewrite(child, rule, applications));
+                return terms::map(t, &mut |child| {
+                    rewrite(child, rule, applications, budget, limited)
+                });
             }
             if !applications.iter().any(|a| {
                 a.fn_id == rule.theorem.fn_id
                     && a.law_name == rule.theorem.law_name
                     && a.arguments == arguments
-            }) && applications.len() < APPLICATIONS
+            }) && applications.len() < budget.applications
             {
                 applications.push(LawApplication {
                     fn_id: rule.theorem.fn_id,
@@ -53,16 +85,39 @@ fn rewrite(t: &Term, rule: &Rule, applications: &mut Vec<LawApplication>) -> Ter
                     arguments,
                 });
             }
+            if applications.len() >= budget.applications {
+                *limited = true;
+            }
             // Permutation rules may be useful calls, but must not grow the pool.
             if !terms::matches(&rule.lhs, &rule.rhs, &rule.variables, &mut Bindings::new()) {
                 return rhs;
             }
         }
     }
-    terms::map(t, &mut |child| rewrite(child, rule, applications))
+    terms::map(t, &mut |child| {
+        rewrite(child, rule, applications, budget, limited)
+    })
 }
 
-pub(super) fn populate(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
+pub fn populate(
+    inputs: &ProofLowerInputs,
+    ir: &mut ProofIR,
+    budget: ApplicationSearchBudget,
+) -> ApplicationSearchReport {
+    let mut report = ApplicationSearchReport::default();
+    // Re-running search replaces suggestions; it never changes the claim or
+    // the source-derived induction itself.
+    for theorem in &mut ir.law_theorems {
+        if let Some(induction) = &mut theorem.induction {
+            for call in &mut induction.calls {
+                call.applications.clear();
+            }
+        }
+    }
+    if budget.rounds == 0 || budget.terms < 2 || budget.nodes == 0 || budget.applications == 0 {
+        report.disabled = true;
+        return report;
+    }
     // Backend signatures can be specialized; the first supported common lane
     // is ordinary, unconditional laws with plain scalar/sequence binders.
     fn plain(ty: &str) -> bool {
@@ -93,9 +148,11 @@ pub(super) fn populate(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
             eligible.insert((id, law.name.clone()));
         }
     }
-    for index in 0..ir.law_theorems.len() {
-        let (earlier, remaining) = ir.law_theorems.split_at_mut(index);
-        let theorem = &mut remaining[0];
+    // IR storage order is entry-first, not dependency order. Keep source order
+    // within a module, and use the module DAG plus exported-law visibility
+    // across modules. A dependency can never borrow a consumer's theorem.
+    let suppliers = ir.law_theorems.clone();
+    for (index, theorem) in ir.law_theorems.iter_mut().enumerate() {
         if !terms::supported(&theorem.claim_lhs) || !terms::supported(&theorem.claim_rhs) {
             continue;
         }
@@ -103,20 +160,39 @@ pub(super) fn populate(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
             continue;
         };
         let scope = inputs.symbol_table.fn_entry(theorem.fn_id).key.scope_str();
-        let rules: Vec<_> = earlier
+        let rules: Vec<_> = suppliers
             .iter()
-            .filter(|t| {
+            .enumerate()
+            .filter(|(supplier_index, t)| {
+                let owner = inputs.symbol_table.fn_entry(t.fn_id).key.scope_str();
+                let available = if owner == scope {
+                    *supplier_index < index
+                } else {
+                    owner.is_some_and(|owner| {
+                        let Some(donor) = inputs.dep_modules.iter().position(|m| m.prefix == owner) else {
+                            return false;
+                        };
+                        let before_consumer = scope.is_none_or(|scope| {
+                            inputs.dep_modules.iter().position(|m| m.prefix == scope)
+                                .is_some_and(|consumer| donor < consumer)
+                        });
+                        before_consumer && inputs.dep_modules[donor].verify_laws.iter().any(|vb| {
+                            matches!(&vb.kind, VerifyKind::Law(law) if law.name == t.law_name)
+                                && inputs.symbol_table.resolve_fn_id_in(&vb.fn_name, owner.into()) == Some(t.fn_id)
+                        })
+                    })
+                };
                 eligible.contains(&(t.fn_id, t.law_name.clone()))
+                    && available
                     // A concrete user-function signature anchors the match's
                     // argument types. Bare-variable and polymorphic builtin
                     // roots need a separate typed unifier; never guess there.
                     && matches!(t.claim_lhs.node, crate::ir::hir::ResolvedExpr::Call(crate::ir::hir::ResolvedCallee::Fn(_), _))
                     && terms::supported(&t.claim_lhs)
                     && terms::supported(&t.claim_rhs)
-                    && inputs.symbol_table.fn_entry(t.fn_id).key.scope_str() == scope
                     && theorem.function_cone.contains(&t.fn_id)
             })
-            .map(|t| Rule {
+            .map(|(_, t)| Rule {
                 theorem: t,
                 lhs: terms::normalize(&t.claim_lhs),
                 rhs: terms::normalize(&t.claim_rhs),
@@ -135,21 +211,32 @@ pub(super) fn populate(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
                 .map(|t| terms::normalize(&terms::replace(t, &step.source_call, source_step)))
                 .collect();
             let mut frontier = pool.clone();
-            'closure: for _ in 0..ROUNDS {
+            let mut limited = false;
+            'closure: for round in 0..budget.rounds {
                 let mut next = Vec::new();
                 for term in &frontier {
                     for rule in &rules {
-                        let candidate =
-                            terms::normalize(&rewrite(term, rule, &mut step.applications));
-                        if terms::size(&candidate) <= NODES
+                        let candidate = terms::normalize(&rewrite(
+                            term,
+                            rule,
+                            &mut step.applications,
+                            budget,
+                            &mut limited,
+                        ));
+                        let candidate_size = terms::size(&candidate);
+                        if candidate_size <= budget.nodes
                             && !pool.contains(&candidate)
                             && !next.contains(&candidate)
                         {
                             next.push(candidate);
                         }
-                        if pool.len() + next.len() >= TERMS
-                            || step.applications.len() >= APPLICATIONS
+                        if candidate_size > budget.nodes {
+                            limited = true;
+                        }
+                        if pool.len() + next.len() >= budget.terms
+                            || step.applications.len() >= budget.applications
                         {
+                            limited = true;
                             break 'closure;
                         }
                     }
@@ -157,9 +244,15 @@ pub(super) fn populate(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
                 if next.is_empty() {
                     break;
                 }
+                if round + 1 == budget.rounds {
+                    limited = true;
+                }
                 pool.extend(next.iter().cloned());
                 frontier = next;
             }
+            report.applications += step.applications.len();
+            report.limited_steps += usize::from(limited);
         }
     }
+    report
 }

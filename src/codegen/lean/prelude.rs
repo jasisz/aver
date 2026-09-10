@@ -1244,6 +1244,7 @@ fn generate_prelude_for_body(body: &str, include_all_helpers: bool) -> String {
             // of the BranchPath helper key, so all four are no-ops here.
             "ResultDatatype" | "OptionDatatype" | "ResultFromOption" | "BranchPathDatatype"
             | "StringOpaque" | "StringUtf8" => {}
+            "StringCase" => parts.push(super::string_case::source().to_string()),
             other => panic!(
                 "Lean backend has no implementation for builtin helper key '{}'. \
                  Add a match arm in generate_prelude_for_body or remove the key \
@@ -1477,6 +1478,7 @@ pub(super) fn build_common_lean(union_body: &str, cert_model: bool) -> String {
             "StringHadd" => parts.push(generate_string_hadd_prelude(union_body, false)),
             "ResultDatatype" | "OptionDatatype" | "ResultFromOption" | "BranchPathDatatype"
             | "StringOpaque" | "StringUtf8" => {}
+            "StringCase" => parts.push(super::string_case::source().to_string()),
             other => panic!(
                 "Lean backend has no implementation for builtin helper key '{}'. \
                  Add a match arm in build_common_lean or remove the key from BUILTIN_HELPERS.",

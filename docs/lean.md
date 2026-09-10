@@ -21,6 +21,13 @@ cd /tmp/law-auto-lean && lake build
 
 Requires a local Lean 4 toolchain (`lean` + `lake`). Aver generates the project, but does not bundle Lean itself.
 
+`String.toLower` and `String.toUpper` use Aver's full Unicode definitions.
+Lean's native case functions only cover ASCII, so the exporter uses the same
+VM-checked mapping and context tables as Dafny and wasm-gc. This covers both
+expansions (`ß` becomes `SS`, `İ` becomes `i` plus a combining dot) and final sigma.
+Definitionally equal `because` expressions can close by kernel reduction;
+this does not add a `native_decide` assumption to universal laws.
+
 ## What it generates
 
 Generates a Lean 4 project:

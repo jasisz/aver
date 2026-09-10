@@ -1,0 +1,27 @@
+module ReverseAlgebra
+    intent = "Reversing a frame exposes its tag and restores the payload order."
+
+fn frame(tag: Int, payload: List<Int>) -> List<Int>
+    List.concat(List.reverse(payload), [tag])
+
+fn unframe(packet: List<Int>) -> Tuple<Int, List<Int>>
+    match List.reverse(packet)
+        [] -> (0, [])
+        [tag, ..payload] -> (tag, payload)
+
+verify frame law roundtrip
+    given tag: Int = [-1, 0, 7]
+    given payload: List<Int> = [[], [1], [2, 3]]
+    unframe(frame(tag, payload)) => (tag, payload)
+
+fn flip(values: List<Bool>) -> List<Bool>
+    List.reverse(values)
+
+verify flip law twice
+    given values: List<Bool> = [[], [true], [false, true]]
+    flip(flip(values)) => values
+
+verify flip law joinsInReverseOrder
+    given left: List<Bool> = [[], [true], [true, false]]
+    given right: List<Bool> = [[], [false], [false, true]]
+    flip(List.concat(left, right)) => List.concat(flip(right), flip(left))

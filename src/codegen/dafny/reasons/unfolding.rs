@@ -1,31 +1,41 @@
-//! Render an obligation-local search budget from shared ProofIR. Keeping
-//! universal citation lifts out of this context prevents their quantified
-//! calls from multiplying the cost of deeper recursive unfolding.
+//! Dafny-only unfolding policy. These budgets never enter ProofIR: they do
+//! not change a source claim, its premises, or its checked induction arguments.
+mod search;
+#[cfg(test)]
+mod tests;
 
-use crate::ast::{VerifyBlock, VerifyLaw};
+use crate::ast::{Type, VerifyBlock, VerifyLaw};
 use crate::codegen::CodegenContext;
+use crate::codegen::proof_lower::ProofLowerInputs;
+use crate::ir::FnId;
+
+/// Optional solver settings, not a derivation or a bound on quantified inputs.
+struct UnfoldingHint {
+    depth: u32,
+    functions: Vec<FnId>,
+    reverse_elements: Vec<Type>,
+}
 
 pub(super) fn attributes(
-    vb: &VerifyBlock,
+    _vb: &VerifyBlock,
     law: &VerifyLaw,
     index: usize,
     ctx: &CodegenContext,
 ) -> Option<String> {
-    let id = ctx.law_target_fn_id(&vb.fn_name)?;
-    let plan = ctx
-        .proof_ir
-        .law_theorems
-        .iter()
-        .find(|t| t.fn_id == id && t.law_name == law.name)?
-        .unfolding
-        .get(index)?
-        .as_ref()?;
-    let mut targets: Vec<_> = plan
+    let expressions = if index == law.because.len() {
+        vec![&law.lhs, &law.rhs]
+    } else {
+        vec![law.because.get(index)?]
+    };
+    let scope = ctx.active_module_scope();
+    let inputs = ProofLowerInputs::from_ctx(ctx);
+    let hint = search::plan(law, &expressions, &inputs, &ctx.proof_ir, scope.as_deref())?;
+    let mut targets: Vec<_> = hint
         .functions
         .iter()
         .map(|id| super::super::expr::function_name(*id, ctx))
         .collect();
-    targets.extend(plan.reverse_elements.iter().map(|t| {
+    targets.extend(hint.reverse_elements.iter().map(|t| {
         format!(
             "ListReverse<{}>",
             super::super::toplevel::type_to_dafny_in_scope(t, None)
@@ -34,7 +44,7 @@ pub(super) fn attributes(
     Some(
         targets
             .iter()
-            .map(|name| format!("{{:fuel {name}, {}}}", plan.depth))
+            .map(|name| format!("{{:fuel {name}, {}}}", hint.depth))
             .collect::<Vec<_>>()
             .join(" "),
     )

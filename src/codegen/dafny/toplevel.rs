@@ -3743,9 +3743,8 @@ pub(super) fn emit_verify_law(
     } else {
         super::law_induction::plan(vb, law, ctx)
     };
-    if let Some(plan) = source_induction {
-        // Explicit source calls supply the induction instances; suppress the
-        // target's unrelated parameter-order heuristic.
+    if source_induction.is_some() {
+        // Explicit source calls supply their own checked induction instances.
         if let Some(header) = lines
             .iter_mut()
             .rev()
@@ -3753,6 +3752,8 @@ pub(super) fn emit_verify_law(
         {
             *header = header.replacen("lemma ", "lemma {:induction false} ", 1);
         }
+    }
+    if let Some(plan) = source_induction {
         lines.push(format!(
             "  decreases {}",
             super::law_induction::measure(plan)
@@ -3843,6 +3844,7 @@ pub(super) fn emit_verify_law(
             &format!("{}_{}", fn_name, law_name),
             &cites,
             ctx,
+            recursion,
         ));
         lines.push("}\n".to_string());
         return op_lemma_defs

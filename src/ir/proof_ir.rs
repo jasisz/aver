@@ -492,24 +492,14 @@ pub struct LawTheorem {
     /// These are proof candidates, never assumptions: each backend must prove
     /// the recursive call's premises and strict decrease.
     pub induction: Option<LawInduction>,
+    /// Plans for the separately checked `because` obligations, in source order.
+    /// Each plan retains the law guard and every preceding explanation as
+    /// recursive-call premises. A plan supplies no proof credit by itself.
+    pub reason_inductions: Vec<Option<LawInduction>>,
     /// Transitive statically resolved pure declarations used by the claim,
     /// explanations and guard, in discovery order. Samples do not contribute.
     /// Search data only: callbacks and builtin implementations are not expanded.
     pub function_cone: Vec<FnId>,
-    /// Optional unfolding budgets, in `because` order followed by the claim.
-    /// These guide proof search only; they neither restrict the quantified
-    /// domain nor replace any source premise, supplier, or proof obligation.
-    pub unfolding: Vec<Option<LawUnfolding>>,
-}
-
-#[derive(Debug, Clone)]
-pub struct LawUnfolding {
-    /// Small literal countdown plus headroom for wrappers and the base case.
-    pub depth: u32,
-    /// Canonical recursive declarations in this obligation's source cone.
-    pub functions: Vec<FnId>,
-    /// Concrete instances of the recursive sequence reversal operation.
-    pub reverse_elements: Vec<crate::ast::Type>,
 }
 
 #[derive(Debug, Clone)]
@@ -542,6 +532,9 @@ pub struct LawInductionCall {
     pub applications: Vec<LawApplication>,
     /// Source branch guard, evaluated before introducing pattern projections.
     pub guard: Spanned<crate::ir::hir::ResolvedExpr>,
+    /// Conditions inside the source's recursive branch, evaluated after the
+    /// pattern projections. They only restrict where to try a recursive call.
+    pub branch_guard: Option<Spanned<crate::ir::hir::ResolvedExpr>>,
     /// The theorem premise at the recursive arguments. Evaluated after
     /// `list_case` bindings, since it may mention the projected head or tail.
     /// Where it is false, the original claim still needs an independent proof.

@@ -50,6 +50,36 @@ cd /tmp/fib-dafny && dafny verify --verify-included-files fibonacci.dfy
 
 Requires [Dafny](https://github.com/dafny-lang/dafny) (4.x+) installed with Z3. On macOS: `brew install dafny`.
 
+## Explanations in Aver
+
+```bash
+aver proof file.av --backend dafny --check --explain
+aver proof file.av --backend dafny --check-json --explain
+```
+
+`--explain` maps checker errors to the Aver law or `because` step: source
+location, goal, givens, original `when`, earlier reasons and explicit citations.
+A timeout is `checker_limit`, not a counterexample. An error outside a mapped
+law is a checker error; its technical details are saved in `proof_backend.log`.
+Dafny does not run Lean's citation probes or suggestion search.
+
+JSON adds `explanations` for open steps and a `claims` inventory. Each claim
+records `exported` separately from `status`: `not_exported`, `unresolved`, or
+`checked`. `checked` requires the complete strict module check, with no errors,
+timeouts, axioms, omissions or declined laws. A lemma without its own error in
+a failing module remains `unresolved`, including earlier reasons and cited
+laws. These statuses describe emitted checks; they do not upgrade an ordinary
+bounded/sample fallback to a universal theorem. Export alone supplies no proof
+credit. Without `--explain` the report schema and the checker gate are unchanged.
+
+Shared ProofIR records induction instances for imported reason functions and
+local value aliases. Explicit Boolean branches carry their own guards and
+recursive arguments; both targets use the same canonical function identities
+and checked measure. Nested binder-bearing matches and unsupported callbacks
+remain outside this planner's scope; backends may use their existing checked
+fallbacks. Every generated recursive lemma call still has to prove its decrease
+and recursive premises.
+
 ## What it generates
 
 An entry `.dfy` file, with dependency module files and a shared prelude when
@@ -100,8 +130,11 @@ branch is replaced with a default value or assumed success.
 Primitive interpolation has exact decimal `Int`, lowercase `Bool` and identity
 `String` rendering. Structural text helpers define character indexing, slicing,
 joining, substring tests, splitting, replacement and Unicode whitespace trimming.
-UTF-8 and Unicode case operations remain separate legacy opaque helpers; using
-an exact text operation no longer imports an unrelated UTF-8 axiom.
+`String.toLower` and `String.toUpper` have full Unicode definitions, including
+multi-scalar expansions and context-sensitive final sigma. Lean and Dafny use
+the same mapping and context tables as wasm-gc, checked exhaustively against
+the VM's Rust standard library. Case conversion imports no UTF-8 axioms;
+UTF-8 and byte-length operations retain their separate legacy opaque helpers.
 
 Named callbacks are admitted only after checking their complete pure bodies and
 termination. A callback that reintroduces an active function is refused. Arbitrary
@@ -307,3 +340,30 @@ The budgets are not a target; they are a regression net. The umbrella issue for 
 See [docs/transpilation.md](transpilation.md) for a side-by-side comparison.
 
 In short: Lean is the gold standard (kernel-verified proofs), Dafny is the quick check (Z3-automated, zero tactic effort). Use both.
+
+### Proof arguments and search policy
+
+Source lowering records claims, premises, source dependencies and induction
+arguments in ProofIR. A separate `codegen::proof_search` pass may add concrete
+`LawApplication` suggestions. Its explicit `ApplicationSearchBudget` limits
+discovery; `ApplicationSearchReport` records counts and steps reaching limits.
+Running it with a zero budget removes suggestions without changing the source
+obligations or induction. Both backends still check suppliers and applications.
+
+Dafny's fixed-count unfolding policy lives in
+`codegen::dafny::reasons::unfolding`, outside ProofIR. It retains the existing
+small-literal and scalar-given restrictions and fuel budgets. These are partial
+solver heuristics, not source bounds or a strategy shared with Lean. The
+separate ordinary-law fuel policy in `law_search` also remains Dafny-specific.
+
+The list library checks reverse/append and double-reversal lemmas. Merely
+reaching `List.reverse` from an acyclic constructor no longer enables a
+universal reversal pool or changes induction. That experimental strategy was
+withdrawn after review; signed-frame readback is again an open diagnostic
+target, not a required success or a counted coverage gain.
+
+`tools/proof_search_matrix.py` records actual same-source results and time for
+both backends, including equivalent source refactorings. It records failures
+and timeouts as such; a completed matrix is not a claim that its laws passed.
+
+See the [measured comparison and remaining limits](proof-search-policy.md).

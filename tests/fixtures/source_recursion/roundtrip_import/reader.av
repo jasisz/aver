@@ -1,0 +1,14 @@
+module Reader
+    exposes [read]
+
+fn read(items: List<Int>, acc: Int) -> Int
+    match items
+        [] -> acc
+        [head, ..tail] -> read(tail, acc * 10 + head)
+
+verify read law suffix
+    given items: List<Int> = [[], [1], [2, 3]]
+    given digit: Int = [0, 4, 9]
+    given acc: Int = [0, 1, 20]
+    read(List.concat(items, [digit]), acc) => read(items, acc) * 10 + digit
+

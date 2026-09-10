@@ -18,6 +18,7 @@ mod pattern;
 mod prelude;
 pub(crate) mod recurrence;
 mod sample_literal;
+mod string_case;
 mod syntax;
 pub mod tactic_ir;
 #[cfg(test)]

@@ -199,3 +199,53 @@ fn substitution_does_not_capture_names_in_match_arms() {
     assert_eq!(citation["bindings"], json!({}));
     assert!(citation["requires"][0].as_str().unwrap().contains("x > y"));
 }
+
+#[test]
+fn dafny_imported_steps_keep_source_context_and_no_partial_credit() {
+    let source = "fn f(x: Int) -> Int\n    x\nverify f law chain\n    given x: Int = [2]\n    when x >= 0\n    because x > 0\n    because x > 1\n    using []\n    f(x) => x\n";
+    let catalog = catalog(source, Some("Domain.Lib"), "domain/lib.av");
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("Domain")).unwrap();
+    std::fs::write(dir.path().join("Domain/Lib.dfy"), "// aver:dafny-obligation first Domain.Lib.f.chain.because1\nlemma first()\n{ assert false; }\n// aver:dafny-obligation second Domain.Lib.f.chain.because2\nlemma second()\n{ assert false; }\n// aver:dafny-law parent Domain.Lib.f.chain\nlemma parent() {}\nfunction unrelated(): int { 0 }\n").unwrap();
+    let log = "Domain/Lib.dfy(3,2): Error: assertion might not hold\nDomain/Lib.dfy(6,2): Error: Verification timed out after 30 seconds\nDomain/Lib.dfy(2,2): Related location: this is the postcondition\n";
+    let (reports, claims) = collect_dafny(
+        &catalog,
+        dir.path().to_str().unwrap(),
+        "Domain/Lib.dfy",
+        log,
+        false,
+        true,
+    );
+    let report = &reports["Domain.Lib.f.chain.because2"];
+    assert_eq!(report["status"], "checker_limit");
+    assert_eq!(report["file"], "domain/lib.av");
+    assert_eq!(report["goal"], "x > 1");
+    assert_eq!(report["assumptions"][0]["expression"], "x >= 0");
+    assert_eq!(report["assumptions"][1]["expression"], "x > 0");
+    assert_eq!(report["assumptions"][1]["status"], "unresolved");
+    assert_eq!(reports["Domain.Lib.f.chain.because1"]["status"], "unproved");
+    assert_eq!(claims["Domain.Lib.f.chain"]["status"], "unresolved");
+    assert_eq!(
+        claims["Domain.Lib.f.chain.implication"]["status"],
+        "not_exported"
+    );
+    let (reports, _) = collect_dafny(
+        &catalog,
+        dir.path().to_str().unwrap(),
+        "Domain/Lib.dfy",
+        "Domain/Lib.dfy(9,2): Error: unknown name\n",
+        false,
+        true,
+    );
+    assert_eq!(reports.len(), 1);
+    assert!(reports.contains_key("<proof checker>"));
+    let (reports, _) = collect_dafny(
+        &catalog,
+        dir.path().to_str().unwrap(),
+        "Domain/Lib.dfy",
+        "checker terminated",
+        false,
+        true,
+    );
+    assert!(reports.contains_key("<proof checker>"));
+}

@@ -1,0 +1,100 @@
+module UnicodeCase
+    intent = "Case conversion agrees with the VM on Unicode expansions and context."
+    effects []
+
+fn lower(text: String) -> String
+    String.toLower(text)
+
+fn upper(text: String) -> String
+    String.toUpper(text)
+
+verify lower law ascii
+    given text: String = ["", "A"]
+    when text == "A"
+    because lower("A") == "a"
+    using []
+    lower(text) => "a"
+
+verify lower law expansion
+    given text: String = ["", "İ"]
+    when text == "İ"
+    because lower("İ") == "i̇"
+    using []
+    lower(text) => "i̇"
+
+verify lower law isolatedSigma
+    given text: String = ["", "Σ"]
+    when text == "Σ"
+    because lower("Σ") == "σ"
+    using []
+    lower(text) => "σ"
+
+verify lower law finalSigma
+    given text: String = ["", "ΟΣ"]
+    when text == "ΟΣ"
+    because lower("ΟΣ") == "ος"
+    using []
+    lower(text) => "ος"
+
+verify lower law followingCased
+    given text: String = ["", "ΣΑ"]
+    when text == "ΣΑ"
+    because lower("ΣΑ") == "σα"
+    using []
+    lower(text) => "σα"
+
+verify lower law ignorableBefore
+    given text: String = ["", "ΑʰΣ"]
+    when text == "ΑʰΣ"
+    because lower("ΑʰΣ") == "αʰς"
+    using []
+    lower(text) => "αʰς"
+
+verify lower law ignorableAfter
+    given text: String = ["", "ΑΣʰΑ"]
+    when text == "ΑΣʰΑ"
+    because lower("ΑΣʰΑ") == "ασʰα"
+    using []
+    lower(text) => "ασʰα"
+
+verify lower law combiningMark
+    given text: String = ["", "AΣ́"]
+    when text == "AΣ́"
+    because lower("AΣ́") == "aς́"
+    using []
+    lower(text) => "aς́"
+
+verify lower law punctuationBoundary
+    given text: String = ["", "A-Σ"]
+    when text == "A-Σ"
+    because lower("A-Σ") == "a-σ"
+    using []
+    lower(text) => "a-σ"
+
+verify lower law astral
+    given text: String = ["", "𐐀"]
+    when text == "𐐀"
+    because lower("𐐀") == "𐐨"
+    using []
+    lower(text) => "𐐨"
+
+verify upper law expansion
+    given text: String = ["", "ß"]
+    when text == "ß"
+    because upper("ß") == "SS"
+    using []
+    upper(text) => "SS"
+
+verify upper law threeScalars
+    given text: String = ["", "ΐ"]
+    when text == "ΐ"
+    because upper("ΐ") == "Ϊ́"
+    using []
+    upper(text) => "Ϊ́"
+
+verify upper law astral
+    given text: String = ["", "𐐨"]
+    when text == "𐐨"
+    because upper("𐐨") == "𐐀"
+    using []
+    upper(text) => "𐐀"

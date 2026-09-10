@@ -8014,7 +8014,7 @@ pub(super) fn cmd_proof(
             &ctx.items,
             file,
             &module_root,
-            (explain && matches!(backend, super::cli::ProofBackend::Lean))
+            explain
                 .then(|| proof_explain::Catalog::new(&ctx, file, &module_root))
                 .as_ref(),
         );
@@ -8224,8 +8224,8 @@ fn run_proof_check(
     // refusal. Defaults to 0.
     declined_budget: Option<usize>,
     check_json: bool,
-    // `--explain` (Lean-only): after the counted build + audit succeed, run an
-    // ISOLATED, fail-soft residual probe per OPEN law and populate each
+    // `--explain`: source diagnostics for both backends. Lean additionally runs an
+    // ISOLATED, fail-soft residual probe per OPEN law and populates each
     // `ManifestLaw.open_goal` with the law's `unsolved goals` text (and, with
     // `--check-json`, surface them inline as a top-level `open_goals` object).
     // Off by default; never touches `passed` / exit code / the counted build.
@@ -8703,7 +8703,25 @@ fn run_proof_check(
         write_proof_manifest(output_dir, m);
     }
 
+    let dafny_diagnostics = proof_sources
+        .filter(|_| matches!(backend, super::cli::ProofBackend::Dafny))
+        .map(|sources| {
+            proof_explain::collect_dafny(
+                sources,
+                output_dir,
+                args.last().map(String::as_str).unwrap_or(""),
+                &format!("{stdout}{stderr}"),
+                output.status.success()
+                    && errors == Some(0)
+                    && dafny_timeouts == Some(0)
+                    && axioms == Some(0)
+                    && omitted == Some(0)
+                    && declined_count == 0,
+                !output.status.success() || errors != Some(0) || dafny_timeouts != Some(0),
+            )
+        });
     let mut proof_reports = proof_sources
+        .filter(|_| matches!(backend, super::cli::ProofBackend::Lean))
         .map(|sources| {
             proof_explain::collect(
                 sources,
@@ -8714,8 +8732,12 @@ fn run_proof_check(
             )
         })
         .unwrap_or_default();
+    if let Some((reports, _)) = &dafny_diagnostics {
+        proof_reports = reports.clone();
+    }
     if output.status.success()
         && model_panic_hits == 0
+        && matches!(backend, super::cli::ProofBackend::Lean)
         && let Some(sources) = proof_sources
     {
         proof_explain::attach_citation_attempts(
@@ -8734,6 +8756,9 @@ fn run_proof_check(
     if check_json {
         let mut obj = serde_json::Map::new();
         obj.insert("backend".into(), backend_tag.into());
+        if let Some((_, claims)) = &dafny_diagnostics {
+            obj.insert("claims".into(), serde_json::to_value(claims).unwrap());
+        }
         if !proof_reports.is_empty() {
             obj.insert(
                 "explanations".into(),
@@ -8865,8 +8890,16 @@ fn run_proof_check(
     } else {
         // Stream the verifier's own output so the user sees the
         // diagnostics; we already parsed counts above.
-        if explain && matches!(backend, super::cli::ProofBackend::Lean) {
+        if explain {
             proof_explain::render(&proof_reports);
+            if let Some((_, claims)) = &dafny_diagnostics {
+                for (name, claim) in claims {
+                    println!(
+                        "  {name}: {}",
+                        claim["status"].as_str().unwrap_or("unresolved")
+                    );
+                }
+            }
             if let Some((open, goal_json)) = &candidate_goals {
                 let suggestions = proof_explain::render_candidates(
                     open,

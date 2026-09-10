@@ -97,11 +97,15 @@ mod wf_fuel;
 mod when_lane;
 
 fn temp_output_dir(prefix: &str) -> PathBuf {
+    // Parallel positive/negative checker runs must never share an output tree,
+    // even when the wall clock returns the same timestamp to both threads.
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let serial = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    std::env::temp_dir().join(format!("{prefix}-{nanos}"))
+    std::env::temp_dir().join(format!("{prefix}-{}-{nanos}-{serial}", std::process::id()))
 }
 
 fn assert_proof_builds(example_path: &str, prefix: &str) {
@@ -1024,3 +1028,11 @@ fn a_method_application_as_a_receiver_is_parenthesised() {
         "aver-proof-chained-receivers",
     );
 }
+
+#[path = "proof_spec/reverse_algebra.rs"]
+mod reverse_algebra;
+
+#[path = "proof_spec/dafny_explain.rs"]
+mod dafny_explain;
+#[path = "proof_spec/shared_reason_imports.rs"]
+mod shared_reason_imports;

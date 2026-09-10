@@ -3,9 +3,103 @@ use super::*;
 const SOURCE: &str = include_str!("../fixtures/source_recursion/roundtrip.av");
 
 #[test]
+fn concrete_applications_cross_imports_and_transitive_modules_with_colliding_names() {
+    let entry = include_str!("../fixtures/source_recursion/roundtrip_import/main.av");
+    let reader = include_str!("../fixtures/source_recursion/roundtrip_import/reader.av");
+    for transitive in [false, true] {
+        let dir = temp_output_dir("aver-imported-applications");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("reader.av"), reader).unwrap();
+        let entry = entry.replace(
+            "fn digits",
+            "fn read(n: Int) -> Int\n    n + 99\n\nfn digits",
+        );
+        if transitive {
+            let entry = entry.replace(
+                "    match value > 0",
+                "    current = value\n    match current > 0",
+            );
+            std::fs::write(
+                dir.join("codec.av"),
+                entry.replace("module Roundtrip", "module Codec\n    exposes [digits]"),
+            )
+            .unwrap();
+            std::fs::write(dir.join("main.av"), "module Main\n    depends [Codec]\n").unwrap();
+        } else {
+            std::fs::write(dir.join("main.av"), entry).unwrap();
+        }
+        for backend in ["dafny", "lean"] {
+            let Some(summary) =
+                super::source_recursion::check(dir.join("main.av").to_str().unwrap(), backend)
+            else {
+                continue;
+            };
+            assert_eq!(
+                summary["passed"], true,
+                "transitive={transitive}/{backend}: {summary}"
+            );
+            if backend == "lean" {
+                assert_eq!(summary["universal_laws"], 3, "{summary}");
+            }
+        }
+    }
+}
+
+#[test]
+fn imported_false_supplier_cannot_gain_universal_credit_from_passing_samples() {
+    let entry = include_str!("../fixtures/source_recursion/roundtrip_import/main.av");
+    let reader = include_str!("../fixtures/source_recursion/roundtrip_import/reader.av")
+        .replace("[0, 1, 20]", "[0]")
+        .replace(
+            "=> read(items, acc) * 10 + digit",
+            "=> read(items, acc) * 10 + digit + acc",
+        );
+    let dir = temp_output_dir("aver-false-imported-application");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("reader.av"), reader).unwrap();
+    let path = dir.join("main.av");
+    std::fs::write(&path, entry).unwrap();
+    let samples = Command::new(env!("CARGO_BIN_EXE_aver"))
+        .arg("verify")
+        .arg(&path)
+        .arg("--module-root")
+        .arg(&dir)
+        .output()
+        .unwrap();
+    assert!(samples.status.success(), "{}", format_output(&samples));
+    for backend in ["dafny", "lean"] {
+        let Some(summary) = super::source_recursion::check(path.to_str().unwrap(), backend) else {
+            continue;
+        };
+        assert_eq!(summary["passed"], false, "{backend}: {summary}");
+        assert!(
+            summary[if backend == "lean" {
+                "sorries"
+            } else {
+                "errors"
+            }]
+            .as_u64()
+            .unwrap()
+                > 0,
+            "{summary}"
+        );
+    }
+}
+
+#[test]
 fn concrete_applications_roundtrip_passes_both_checkers_after_renaming_and_radix_change() {
     for (label, source) in [
         ("decimal", SOURCE.to_string()),
+        ("alias", SOURCE.replace("    match value > 0", "    current = value\n    match current > 0")),
+        ("alias_chain", SOURCE.replace("    match value > 0", "    initial = value\n    current = initial\n    match current > 0")),
+        ("alias_arguments", SOURCE.replace("    match value > 0", "    current = value\n    match current > 0")
+            .replace("true -> digits(Int.div(value, 10), List.prepend(Int.mod(value, 10), acc))",
+                "true -> digits(Int.div(current, 10), List.prepend(Int.mod(current, 10), acc))")),
+        ("equation_reversed", SOURCE.replace(
+            "read(List.reverse(digits(value, [])), 0) => value",
+            "value => read(List.reverse(digits(value, [])), 0)")),
+        ("unrelated", SOURCE.replace("fn read(",
+            "fn same(flag: Bool) -> Bool\n    flag\nverify same law identity\n    given flag: Bool = [false, true]\n    same(flag) => flag\n\nfn read(")),
         (
             "booleans",
             include_str!("../fixtures/source_recursion/boolean_counter.av").to_string(),
@@ -30,7 +124,7 @@ fn concrete_applications_roundtrip_passes_both_checkers_after_renaming_and_radix
             };
             assert_eq!(summary["passed"], true, "{label}/{backend}: {summary}");
             if backend == "lean" {
-                assert_eq!(summary["universal_laws"], 3);
+                assert_eq!(summary["universal_laws"], if label == "unrelated" { 4 } else { 3 });
             }
         }
         let _ = std::fs::remove_dir_all(dir);
