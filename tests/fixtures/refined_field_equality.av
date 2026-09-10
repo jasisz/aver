@@ -1,0 +1,49 @@
+module RefinedFieldEquality
+    intent =
+        "Types that carry a refinement (Bytes, Digest32) directly in a field,"
+        "recursive and not, so the Lean export can be checked to build."
+    depends [Bytes, Crypto.Digest32]
+    exposes [Sealed, Fact, Chain, sameSealed, sameFact, chainLength]
+    effects []
+
+record Sealed
+    name: String
+    payload: Bytes
+
+type Fact
+    Note(String)
+    Digest(Digest32)
+
+type Chain
+    End
+    Link(Bytes, Chain)
+
+fn sameSealed(a: Sealed, b: Sealed) -> Bool
+    ? "Structural equality of two sealed records."
+    a == b
+
+fn sameFact(a: Fact, b: Fact) -> Bool
+    ? "Structural equality of two facts."
+    a == b
+
+fn chainLength(chain: Chain) -> Int
+    ? "How many links the chain has."
+    match chain
+        Chain.End -> 0
+        Chain.Link(_, rest) -> 1 + chainLength(rest)
+
+verify sameSealed
+    sameSealed(Sealed(name = "a", payload = Bytes.fromList([1])), Sealed(name = "a", payload = Bytes.fromList([1]))) => true
+    sameSealed(Sealed(name = "a", payload = Bytes.fromList([1])), Sealed(name = "a", payload = Bytes.fromList([2]))) => false
+
+verify sameFact
+    sameFact(Fact.Note("a"), Fact.Note("a")) => true
+    sameFact(Fact.Note("a"), Fact.Note("b")) => false
+
+verify sameFact law reflexive
+    given a: Fact = [Fact.Note("a"), Fact.Note("b")]
+    sameFact(a, a) holds
+
+verify chainLength
+    chainLength(Chain.End) => 0
+    chainLength(Chain.Link(Bytes.fromList([1]), Chain.Link(Bytes.fromList([2]), Chain.End))) => 2

@@ -481,9 +481,13 @@ fn equality_lines<'a>(
 /// Is this field annotation a refined type itself, not merely one mentioned
 /// under a container?
 fn is_direct_refined_field(field: &str, ctx: &CodegenContext, scope: Option<&str>) -> bool {
-    match crate::types::parse_type_str(field.trim()) {
-        crate::types::Type::Named { name, .. } => {
-            crate::codegen::common::find_refined_type_scoped(ctx, &name, scope).is_some()
+    let ty = crate::types::parse_type_str(field.trim());
+    match &ty {
+        crate::types::Type::Named { id: Some(_), .. } => {
+            crate::codegen::common::find_refined_type_for_named(ctx, &ty).is_some()
+        }
+        crate::types::Type::Named { id: None, name } => {
+            crate::codegen::common::find_refined_type_scoped(ctx, name, scope).is_some()
         }
         _ => false,
     }
