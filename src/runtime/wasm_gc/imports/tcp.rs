@@ -8,17 +8,19 @@ use std::str::FromStr;
 
 use super::super::RunWasmGcHost;
 use super::super::decode::{
-    decode_result_bytes, decode_result_string, decode_result_tcp_connection, decode_result_unit,
-    expect_marker, expect_record,
+    decode_result_bytes, decode_result_int, decode_result_string, decode_result_tcp_connection,
+    decode_result_unit, expect_marker, expect_record,
 };
 use super::factories::{
-    host_result_err_bytes, host_result_err_list_int, host_result_err_string,
-    host_result_err_unit_string, host_result_ok_bytes, host_result_ok_list_int_refs,
-    host_result_ok_string, host_result_ok_unit, host_result_option_tcp_connection_err,
-    host_result_option_tcp_connection_none, host_result_option_tcp_connection_some,
-    host_result_tcp_connection_err, host_result_tcp_connection_ok, host_result_tcp_dial_err,
-    host_result_tcp_dial_ok, host_result_tcp_listener_err, host_result_tcp_listener_ok,
-    host_tcp_connection_id, host_tcp_connection_make, host_tcp_socket_kind,
+    host_result_err_bytes, host_result_err_int, host_result_err_list_int, host_result_err_string,
+    host_result_err_unit_string, host_result_ok_bytes, host_result_ok_int,
+    host_result_ok_list_int_refs, host_result_ok_string, host_result_ok_unit,
+    host_result_option_bytes_err, host_result_option_bytes_none, host_result_option_bytes_some,
+    host_result_option_tcp_connection_err, host_result_option_tcp_connection_none,
+    host_result_option_tcp_connection_some, host_result_tcp_connection_err,
+    host_result_tcp_connection_ok, host_result_tcp_dial_err, host_result_tcp_dial_ok,
+    host_result_tcp_listener_err, host_result_tcp_listener_ok, host_tcp_connection_id,
+    host_tcp_connection_make, host_tcp_socket_kind,
 };
 use super::lm::{lm_string_from_host, lm_string_to_host, val_i64};
 use super::replay_glue::{
@@ -342,6 +344,30 @@ pub(super) fn dispatch(
             record_effect_if_recording(caller, "Tcp.writeBytes", args, outcome, caller_fn);
             Ok(true)
         }
+        "tcp_write_now" => {
+            let id = host_tcp_connection_id(caller, params.first())?.unwrap_or_default();
+            let conn_arg = json_connection(&id);
+            let (payload, payload_json) =
+                decode_byte_payload(caller, params.get(1), "Tcp.writeNow")?;
+            let args = vec![conn_arg, payload_json];
+            if let Some(cached) = try_replay(caller, "Tcp.writeNow", args.clone())? {
+                let result = decode_result_int(caller, &cached)?;
+                results[0] = Val::AnyRef(result);
+                return Ok(true);
+            }
+            let conn = aver_rt::TcpConnection::from_parts(id, String::new(), 0);
+            let written = payload.and_then(|payload| aver_rt::tcp::write_now(&conn, &payload));
+            let (result_ref, outcome) = match written {
+                Ok(accepted) => (
+                    host_result_ok_int(caller, accepted)?,
+                    json_ok(aver::replay::JsonValue::from(accepted)),
+                ),
+                Err(error) => (host_result_err_int(caller, &error)?, json_err(&error)),
+            };
+            results[0] = Val::AnyRef(result_ref);
+            record_effect_if_recording(caller, "Tcp.writeNow", args, outcome, caller_fn);
+            Ok(true)
+        }
         "tcp_read_line" => {
             let id = host_tcp_connection_id(caller, params.first())?.unwrap_or_default();
             let conn_arg = json_record(
@@ -472,6 +498,33 @@ pub(super) fn dispatch(
             let (result_ref, outcome) = bytes_outcome(caller, read)?;
             results[0] = Val::AnyRef(result_ref);
             record_effect_if_recording(caller, "Tcp.readSome", args, outcome, caller_fn);
+            Ok(true)
+        }
+        "tcp_read_now" => {
+            let id = host_tcp_connection_id(caller, params.first())?.unwrap_or_default();
+            let conn_arg = json_connection(&id);
+            let max_bytes = params
+                .get(1)
+                .ok_or_else(|| wasmtime::Error::msg("Tcp.readNow: missing maxBytes"))?;
+            let max_bytes =
+                decode_guest_int(caller, max_bytes, "Tcp.readNow: malformed maxBytes carrier")?;
+            let args = vec![conn_arg, guest_int_json(&max_bytes)];
+            if let Some(cached) = try_replay(caller, "Tcp.readNow", args.clone())? {
+                let result = decode_result_option_bytes(caller, &cached)?;
+                results[0] = Val::AnyRef(result);
+                return Ok(true);
+            }
+            let conn = aver_rt::TcpConnection::from_parts(id, String::new(), 0);
+            let read = match max_bytes.value {
+                Some(value) => aver_rt::tcp::read_now(&conn, value),
+                None => Err(format!(
+                    "Tcp.readNow: maxBytes {} exceeds the read limit",
+                    max_bytes.display
+                )),
+            };
+            let (result_ref, outcome) = option_bytes_outcome(caller, read)?;
+            results[0] = Val::AnyRef(result_ref);
+            record_effect_if_recording(caller, "Tcp.readNow", args, outcome, caller_fn);
             Ok(true)
         }
         "tcp_close" => {
@@ -974,6 +1027,15 @@ fn decode_poll_entries(
                 )),
                 json_connection(&id),
             ),
+            3 => (
+                "Sending",
+                aver_rt::tcp::TcpSocket::Sending(aver_rt::TcpConnection::from_parts(
+                    id.clone(),
+                    String::new(),
+                    0,
+                )),
+                json_connection(&id),
+            ),
             _ => {
                 return Err(wasmtime::Error::msg("Tcp.poll: unknown Tcp.Socket variant"));
             }
@@ -1046,6 +1108,94 @@ pub(super) fn guest_int_json(value: &GuestInt) -> aver::replay::JsonValue {
             );
             aver::replay::JsonValue::Object(opaque)
         }
+    }
+}
+
+fn bytes_json(bytes: &[u8]) -> aver::replay::JsonValue {
+    json_record(
+        "Bytes",
+        vec![(
+            "values",
+            aver::replay::JsonValue::Array(
+                bytes
+                    .iter()
+                    .copied()
+                    .map(i64::from)
+                    .map(aver::replay::JsonValue::from)
+                    .collect(),
+            ),
+        )],
+    )
+}
+
+fn option_bytes_outcome(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    outcome: Result<Option<Vec<u8>>, String>,
+) -> Result<
+    (
+        Option<wasmtime::Rooted<wasmtime::AnyRef>>,
+        aver::replay::JsonValue,
+    ),
+    wasmtime::Error,
+> {
+    match outcome {
+        Ok(Some(bytes)) => {
+            let ints = bytes.iter().copied().map(i64::from).collect::<Vec<_>>();
+            Ok((
+                host_result_option_bytes_some(caller, &ints)?,
+                json_ok(json_some(bytes_json(&bytes))),
+            ))
+        }
+        Ok(None) => Ok((host_result_option_bytes_none(caller)?, json_ok(json_none()))),
+        Err(error) => Ok((
+            host_result_option_bytes_err(caller, &error)?,
+            json_err(&error),
+        )),
+    }
+}
+
+fn decode_result_option_bytes(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    json: &aver::replay::JsonValue,
+) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
+    let (marker, value) = expect_marker(json, &["$ok", "$err"])?;
+    match marker {
+        "$err" => match value {
+            aver::replay::JsonValue::String(error) => host_result_option_bytes_err(caller, error),
+            _ => Err(wasmtime::Error::msg(
+                "replay decode Result<Option<Bytes>,String>: Err is not String",
+            )),
+        },
+        "$ok" => {
+            let (option, value) = expect_marker(value, &["$some", "$none"])?;
+            match option {
+                "$none" => host_result_option_bytes_none(caller),
+                "$some" => {
+                    let fields = expect_record(value, "Bytes")?;
+                    let items = match fields.get("values") {
+                        Some(aver::replay::JsonValue::Array(items)) => items,
+                        _ => {
+                            return Err(wasmtime::Error::msg(
+                                "replay decode Bytes: missing List<Int> values field",
+                            ));
+                        }
+                    };
+                    let ints = items
+                        .iter()
+                        .map(|item| {
+                            item.as_i64().ok_or_else(|| {
+                                wasmtime::Error::msg(format!(
+                                    "replay decode Bytes.values: element is {item:?}"
+                                ))
+                            })
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    host_result_option_bytes_some(caller, &ints)
+                }
+                _ => unreachable!(),
+            }
+        }
+        _ => unreachable!(),
     }
 }
 

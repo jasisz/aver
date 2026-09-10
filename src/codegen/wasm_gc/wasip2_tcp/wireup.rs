@@ -30,8 +30,8 @@ use super::super::types::TypeRegistry;
 use super::super::wasip2_imports::{Wasip2ImportRegistry, Wasip2ImportSlot};
 use super::{
     TcpCloseIndices, TcpConnectIndices, TcpPingIndices, TcpPollIndices, TcpReadBytesIndices,
-    TcpReadLineIndices, TcpReadSomeIndices, TcpSendBytesIndices, TcpSendIndices,
-    TcpWriteBytesIndices, TcpWriteLineIndices,
+    TcpReadLineIndices, TcpReadNowIndices, TcpReadSomeIndices, TcpSendBytesIndices, TcpSendIndices,
+    TcpWriteBytesIndices, TcpWriteLineIndices, TcpWriteNowIndices,
 };
 
 /// Per-helper allocation bundle. Every field is `Option<_>`: `None`
@@ -46,9 +46,11 @@ pub(in crate::codegen::wasm_gc) struct TcpHelpers {
     pub parse_id: Option<(u32, u32)>,
     pub write_line: Option<TcpWriteLineIndices>,
     pub write_bytes: Option<TcpWriteBytesIndices>,
+    pub write_now: Option<TcpWriteNowIndices>,
     pub read_line: Option<TcpReadLineIndices>,
     pub read_bytes: Option<TcpReadBytesIndices>,
     pub read_some: Option<TcpReadSomeIndices>,
+    pub read_now: Option<TcpReadNowIndices>,
     pub poll: Option<TcpPollIndices>,
     pub close: Option<TcpCloseIndices>,
     pub send: Option<TcpSendIndices>,
@@ -110,9 +112,11 @@ pub(in crate::codegen::wasm_gc) fn allocate(
                 effect,
                 EffectName::TcpWriteLine
                     | EffectName::TcpWriteBytes
+                    | EffectName::TcpWriteNow
                     | EffectName::TcpReadLine
                     | EffectName::TcpReadBytes
                     | EffectName::TcpReadSome
+                    | EffectName::TcpReadNow
                     | EffectName::TcpPoll
                     | EffectName::TcpClose
             )
@@ -134,6 +138,18 @@ pub(in crate::codegen::wasm_gc) fn allocate(
     let write_bytes = declares(EffectName::TcpWriteBytes)
         .then(|| {
             allocate_write_bytes(
+                registry,
+                wasip2_imports,
+                parse_id,
+                types,
+                next_type_idx,
+                next_builtin_fn_idx,
+            )
+        })
+        .flatten();
+    let write_now = declares(EffectName::TcpWriteNow)
+        .then(|| {
+            allocate_write_now(
                 registry,
                 wasip2_imports,
                 parse_id,
@@ -170,6 +186,18 @@ pub(in crate::codegen::wasm_gc) fn allocate(
     let read_some = declares(EffectName::TcpReadSome)
         .then(|| {
             allocate_read_some(
+                registry,
+                wasip2_imports,
+                parse_id,
+                types,
+                next_type_idx,
+                next_builtin_fn_idx,
+            )
+        })
+        .flatten();
+    let read_now = declares(EffectName::TcpReadNow)
+        .then(|| {
+            allocate_read_now(
                 registry,
                 wasip2_imports,
                 parse_id,
@@ -242,9 +270,11 @@ pub(in crate::codegen::wasm_gc) fn allocate(
         parse_id,
         write_line,
         write_bytes,
+        write_now,
         read_line,
         read_bytes,
         read_some,
+        read_now,
         poll,
         close,
         send,
@@ -275,6 +305,9 @@ pub(in crate::codegen::wasm_gc) fn register_funcs(
     if let Some(t) = &helpers.write_bytes {
         funcs.function(t.fn_type);
     }
+    if let Some(t) = &helpers.write_now {
+        funcs.function(t.fn_type);
+    }
     if let Some(t) = &helpers.read_line {
         funcs.function(t.fn_type);
     }
@@ -282,6 +315,9 @@ pub(in crate::codegen::wasm_gc) fn register_funcs(
         funcs.function(t.fn_type);
     }
     if let Some(t) = &helpers.read_some {
+        funcs.function(t.fn_type);
+    }
+    if let Some(t) = &helpers.read_now {
         funcs.function(t.fn_type);
     }
     if let Some(t) = &helpers.poll {
@@ -536,6 +572,76 @@ fn allocate_write_bytes(
     })
 }
 
+fn allocate_write_now(
+    registry: &TypeRegistry,
+    wasip2_imports: &Wasip2ImportRegistry,
+    parse_id: Option<(u32, u32)>,
+    types: &mut TypeSection,
+    next_type_idx: &mut u32,
+    next_builtin_fn_idx: &mut u32,
+) -> Option<TcpWriteNowIndices> {
+    let string_idx = registry.string_array_type_idx?;
+    let bytes_idx = registry
+        .packed_sequence("Bytes")
+        .map(|packed| packed.type_idx)
+        .or_else(|| registry.record_type_idx("Bytes"))?;
+    let list_idx = registry.list_type_idx("List<Int>")?;
+    let aint_idx = registry.aint_struct_idx?;
+    let conn_idx = registry.record_type_idx("Tcp.Connection")?;
+    let slot_idx = registry.tcp_slot_type_idx?;
+    let pool_idx = registry.tcp_pool_type_idx?;
+    let result_idx = registry.result_type_idx("Result<Int,String>")?;
+    let malformed = b"Tcp.writeNow: malformed Bytes carrier";
+    let malformed_seg = registry.string_literal_segment(malformed)?;
+    let write_err = b"tcp: write failed";
+    let write_err_seg = registry.string_literal_segment(write_err)?;
+    let unknown = b"tcp: unknown connection";
+    let unknown_seg = registry.string_literal_segment(unknown)?;
+    for slot in [
+        Wasip2ImportSlot::OutputStreamCheckWrite,
+        Wasip2ImportSlot::OutputStreamWrite,
+        Wasip2ImportSlot::OutputStreamFlush,
+    ] {
+        wasip2_imports.lookup_wasm_fn_idx(slot)?;
+    }
+    parse_id?;
+
+    let conn_ref = ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(conn_idx),
+    });
+    let bytes_ref = ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(bytes_idx),
+    });
+    let result_ref = ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(result_idx),
+    });
+    types.ty().function([conn_ref, bytes_ref], [result_ref]);
+    let fn_type = *next_type_idx;
+    *next_type_idx += 1;
+    let fn_idx = *next_builtin_fn_idx;
+    *next_builtin_fn_idx += 1;
+    Some(TcpWriteNowIndices {
+        fn_type,
+        fn_idx,
+        string_type_idx: string_idx,
+        bytes_type_idx: bytes_idx,
+        list_int_type_idx: list_idx,
+        aint_struct_type_idx: aint_idx,
+        tcp_connection_type_idx: conn_idx,
+        tcp_slot_type_idx: slot_idx,
+        tcp_pool_type_idx: pool_idx,
+        malformed_segment_idx: malformed_seg,
+        malformed_len: malformed.len() as u32,
+        write_err_segment_idx: write_err_seg,
+        write_err_len: write_err.len() as u32,
+        unknown_segment_idx: unknown_seg,
+        unknown_len: unknown.len() as u32,
+    })
+}
+
 fn allocate_read_line(
     registry: &TypeRegistry,
     wasip2_imports: &Wasip2ImportRegistry,
@@ -713,6 +819,75 @@ fn allocate_read_some(
     })
 }
 
+fn allocate_read_now(
+    registry: &TypeRegistry,
+    wasip2_imports: &Wasip2ImportRegistry,
+    parse_id: Option<(u32, u32)>,
+    types: &mut TypeSection,
+    next_type_idx: &mut u32,
+    next_builtin_fn_idx: &mut u32,
+) -> Option<TcpReadNowIndices> {
+    let string_idx = registry.string_array_type_idx?;
+    let connection_idx = registry.record_type_idx("Tcp.Connection")?;
+    let slot_idx = registry.tcp_slot_type_idx?;
+    let pool_idx = registry.tcp_pool_type_idx?;
+    let int_idx = registry.aint_struct_idx?;
+    let list_int_idx = registry.list_type_idx("List<Int>")?;
+    let result_bytes_idx = registry.result_type_idx("Result<Bytes,String>")?;
+    let result_idx = registry.result_type_idx("Result<Option<Bytes>,String>")?;
+    let positive = b"Tcp.readNow: maxBytes must be positive";
+    let limit = b"Tcp.readNow: maxBytes exceeds the 10485760 byte limit";
+    let read_limit = b"Tcp.readNow: maxBytes exceeds the read limit";
+    let read_error = b"tcp: read failed";
+    let unknown = b"tcp: unknown connection";
+    let positive_segment_idx = registry.string_literal_segment(positive)?;
+    let limit_segment_idx = registry.string_literal_segment(limit)?;
+    let read_limit_segment_idx = registry.string_literal_segment(read_limit)?;
+    let read_error_segment_idx = registry.string_literal_segment(read_error)?;
+    let unknown_segment_idx = registry.string_literal_segment(unknown)?;
+    wasip2_imports.lookup_wasm_fn_idx(Wasip2ImportSlot::InputStreamRead)?;
+    parse_id?;
+
+    let connection_ref = ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(connection_idx),
+    });
+    let int_ref = ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(int_idx),
+    });
+    let result_ref = ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(result_idx),
+    });
+    types.ty().function([connection_ref, int_ref], [result_ref]);
+    let fn_type = *next_type_idx;
+    *next_type_idx += 1;
+    let fn_idx = *next_builtin_fn_idx;
+    *next_builtin_fn_idx += 1;
+    Some(TcpReadNowIndices {
+        fn_type,
+        fn_idx,
+        string_type_idx: string_idx,
+        tcp_connection_type_idx: connection_idx,
+        tcp_slot_type_idx: slot_idx,
+        tcp_pool_type_idx: pool_idx,
+        aint_struct_type_idx: int_idx,
+        list_int_type_idx: list_int_idx,
+        result_bytes_type_idx: result_bytes_idx,
+        positive_segment_idx,
+        positive_len: positive.len() as u32,
+        limit_segment_idx,
+        limit_len: limit.len() as u32,
+        read_limit_segment_idx,
+        read_limit_len: read_limit.len() as u32,
+        read_error_segment_idx,
+        read_error_len: read_error.len() as u32,
+        unknown_segment_idx,
+        unknown_len: unknown.len() as u32,
+    })
+}
+
 fn allocate_poll(
     registry: &TypeRegistry,
     wasip2_imports: &Wasip2ImportRegistry,
@@ -732,19 +907,25 @@ fn allocate_poll(
         .variant_in("Tcp.Socket", "Connected")
         .or_else(|| registry.variant_in("Socket", "Connected"))?
         .type_idx;
+    let sending_idx = registry
+        .variant_in("Tcp.Socket", "Sending")
+        .or_else(|| registry.variant_in("Socket", "Sending"))?
+        .type_idx;
     let connection_idx = registry.record_type_idx("Tcp.Connection")?;
     let slot_idx = registry.tcp_slot_type_idx?;
     let pool_idx = registry.tcp_pool_type_idx?;
     let negative = b"Tcp.poll: timeoutMs is negative";
     let poll_limit = b"Tcp.poll: timeoutMs exceeds the poll limit";
     let unknown = b"tcp: unknown connection";
-    let unsupported_socket = b"Tcp.poll: wasip2 supports only Tcp.Socket.Connected values";
+    let unsupported_socket =
+        b"Tcp.poll: wasip2 supports only Tcp.Socket.Connected and Tcp.Socket.Sending values";
     let negative_segment_idx = registry.string_literal_segment(negative)?;
     let poll_limit_segment_idx = registry.string_literal_segment(poll_limit)?;
     let unknown_segment_idx = registry.string_literal_segment(unknown)?;
     let unsupported_socket_segment_idx = registry.string_literal_segment(unsupported_socket)?;
     for slot in [
         Wasip2ImportSlot::InputStreamSubscribe,
+        Wasip2ImportSlot::OutputStreamSubscribe,
         Wasip2ImportSlot::ClocksMonotonicSubscribeDuration,
         Wasip2ImportSlot::IoPollPoll,
         Wasip2ImportSlot::IoPollResourceDropPollable,
@@ -783,6 +964,7 @@ fn allocate_poll(
         int_key_box_type_idx: key_box_idx,
         tcp_socket_type_idx: socket_idx,
         tcp_connected_variant_type_idx: connected_idx,
+        tcp_sending_variant_type_idx: sending_idx,
         tcp_connection_type_idx: connection_idx,
         tcp_slot_type_idx: slot_idx,
         tcp_pool_type_idx: pool_idx,

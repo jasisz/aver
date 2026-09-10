@@ -419,6 +419,60 @@ pub(crate) fn host_result_option_tcp_connection_err(
     )
 }
 
+/// `Result<Option<Bytes>, String>::Ok(Some(bytes))`. The `Bytes` value is
+/// built through the ordinary `Result<Bytes, String>` factory (which owns the
+/// packed fast path) and its payload is lifted into the option shape.
+pub(crate) fn host_result_option_bytes_some(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    items: &[i64],
+) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
+    use wasmtime::Val;
+    let Some(bytes_result) = host_result_ok_bytes(caller, items)? else {
+        return Ok(None);
+    };
+    let payload = bytes_result
+        .as_struct(&*caller)?
+        .ok_or_else(|| wasmtime::Error::msg("Tcp.readNow: malformed Result<Bytes> carrier"))?
+        .field(&mut *caller, 1)?;
+    let factory = caller
+        .get_export("__rt_result_option_bytes_string_some")
+        .and_then(|e| e.into_func());
+    let Some(factory) = factory else {
+        return Ok(None);
+    };
+    let mut out = [Val::AnyRef(None)];
+    factory.call(&mut *caller, &[payload], &mut out)?;
+    Ok(match out[0] {
+        Val::AnyRef(value) => value,
+        _ => None,
+    })
+}
+
+pub(crate) fn host_result_option_bytes_none(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
+    use wasmtime::Val;
+    let factory = caller
+        .get_export("__rt_result_option_bytes_string_none")
+        .and_then(|e| e.into_func());
+    let Some(factory) = factory else {
+        return Ok(None);
+    };
+    let mut out = [Val::AnyRef(None)];
+    factory.call(&mut *caller, &[], &mut out)?;
+    Ok(match out[0] {
+        Val::AnyRef(value) => value,
+        _ => None,
+    })
+}
+
+pub(crate) fn host_result_option_bytes_err(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    error: &str,
+) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
+    host_result_one_string_arg(caller, "__rt_result_option_bytes_string_err", error)
+}
+
 /// `Result<Unit, String>::Ok(())` via the matching factory export.
 pub(crate) fn host_result_ok_unit(
     caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,

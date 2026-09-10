@@ -22,8 +22,10 @@ mod ids;
 mod io;
 mod lifecycle;
 mod poll;
+mod read_now;
 mod read_some;
 pub(in crate::codegen::wasm_gc) mod wireup;
+mod write_now;
 
 pub(super) use connect::{
     TcpConnectDns, TcpConnectHelperFns, TcpConnectIndices, TcpConnectMaterialize, TcpConnectPool,
@@ -41,7 +43,9 @@ pub(super) use lifecycle::{
     emit_tcp_send, emit_tcp_send_bytes,
 };
 pub(super) use poll::{TcpPollHelperFns, TcpPollIndices, emit_tcp_poll};
+pub(super) use read_now::{TcpReadNowHelperFns, TcpReadNowIndices, emit_tcp_read_now};
 pub(super) use read_some::{TcpReadSomeHelperFns, TcpReadSomeIndices, emit_tcp_read_some};
+pub(super) use write_now::{TcpWriteNowHelperFns, TcpWriteNowIndices, emit_tcp_write_now};
 
 /// Phase 4.2.2f — restore the `bump_alloc_ptr` global to the
 /// cursor saved on helper entry. Inlined at every exit so the
