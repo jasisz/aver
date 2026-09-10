@@ -150,6 +150,9 @@ pub(super) struct Definitions {
     pub(super) simp: String,
     pub(super) grind: String,
     pub(super) unfold_once: Vec<(String, bool)>,
+    /// The cone, the claim, the guard or an explanation calls a `Map.*`
+    /// operation, so the solver cites the prelude's facts about `Map.set`.
+    pub(super) map_facts: bool,
 }
 
 pub(super) fn definitions(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContext) -> Definitions {
@@ -167,11 +170,18 @@ pub(super) fn definitions(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContex
     let seen: HashSet<_> = cone.iter().copied().collect();
     let mut out = BTreeMap::new();
     let mut unfold_once = Vec::new();
+    let mut map_facts = law
+        .because
+        .iter()
+        .chain(law.when.iter())
+        .chain([&law.lhs, &law.rhs])
+        .any(|expr| super::super::shared::expr_calls_builtin_namespace(expr, "Map"));
     for &id in cone {
         let key = &ctx.symbol_table.fn_entry(id).key;
         let Some(fd) = ctx.fn_def_by_name(&key.name, key.scope_str()) else {
             continue;
         };
+        map_facts |= super::super::shared::fn_body_calls_builtin_namespace(fd, "Map");
         let recursive = ctx.recursive_fns.contains(&id);
         // Subtractive countdown equations expose fixed-width steps. Keep
         // floor-division recursion opaque: its equations recursively grow
@@ -246,6 +256,7 @@ pub(super) fn definitions(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContex
         .join(", ");
     Definitions {
         heads,
+        map_facts,
         unfold_once: unfold_once
             .into_iter()
             .map(|name| {

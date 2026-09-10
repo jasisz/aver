@@ -292,8 +292,24 @@ pub(crate) fn prelude_spec_lemmas_for_builtins(builtins: &[String]) -> Vec<Strin
     if has("Int.fromString") && has("String.fromInt") {
         lemmas.push("Int.fromString_fromInt".to_string());
     }
+    if builtins.iter().any(|b| b.starts_with("Map.")) {
+        lemmas.extend(MAP_SET_FACT_LEMMAS.iter().map(|s| s.to_string()));
+    }
     lemmas
 }
+
+/// The hand-proved `AverMap` facts about `set` that a proof search cites
+/// whenever its cone touches any `Map.*` operation: a get after a set under
+/// the same key, under another key, a second set under one key, and the
+/// length never shrinking. Keyed on the builtin namespace alone, never on
+/// what the law says; each name is what makes the demand-driven map
+/// prelude ship the lemma text.
+pub(crate) const MAP_SET_FACT_LEMMAS: [&str; 4] = [
+    "AverMap.get_set_self",
+    "AverMap.get_set_ne",
+    "AverMap.set_set_self",
+    "AverMap.len_set_ge",
+];
 
 /// Oracle v1: BranchPath mirrors the Aver-source opaque builtin. The
 /// dewey-decimal string under the hood is not user-observable — users

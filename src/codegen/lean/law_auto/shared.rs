@@ -1044,6 +1044,44 @@ pub(super) fn find_fn_def_by_call_name<'a>(
     find_fn_def(ctx, short)
 }
 
+/// Whether `expr` calls any operation of the builtin namespace `ns`
+/// (`Map.set`, `Map.get`, ... for `"Map"`). A shape test on the callee's
+/// head segment only; the operation and every user name stay unread.
+pub(super) fn expr_calls_builtin_namespace(expr: &Spanned<Expr>, ns: &str) -> bool {
+    crate::codegen::expr_walk::any(expr, &mut |node| match &node.node {
+        Expr::FnCall(callee, _) => expr_dotted_name(callee)
+            .is_some_and(|name| name.split_once('.').is_some_and(|(head, _)| head == ns)),
+        _ => false,
+    })
+}
+
+/// The first law given whose declared type is a user sum type, as the Lean
+/// binder a `cases` can split. Chosen by type shape alone: the given's name,
+/// its position in the claim and the variants' names are never read.
+pub(super) fn first_user_sum_given(ctx: &CodegenContext, law: &VerifyLaw) -> Option<String> {
+    let is_user_sum = |type_name: &str| {
+        let bare = type_name.rsplit('.').next().unwrap_or(type_name);
+        ctx.modules
+            .iter()
+            .flat_map(|m| m.type_defs.iter())
+            .chain(ctx.type_defs.iter())
+            .any(|td| matches!(td, crate::ast::TypeDef::Sum { name, .. } if name == bare))
+    };
+    law.givens
+        .iter()
+        .find(|g| is_user_sum(&g.type_name))
+        .map(|g| aver_name_to_lean(&g.name))
+}
+
+/// [`expr_calls_builtin_namespace`] over every statement of a fn body.
+pub(super) fn fn_body_calls_builtin_namespace(fd: &crate::ast::FnDef, ns: &str) -> bool {
+    fd.body.stmts().iter().any(|stmt| match stmt {
+        crate::ast::Stmt::Expr(e) | crate::ast::Stmt::Binding(_, _, e) => {
+            expr_calls_builtin_namespace(e, ns)
+        }
+    })
+}
+
 pub(super) fn expr_dotted_name(expr: &Spanned<Expr>) -> Option<String> {
     match &expr.node {
         Expr::Ident(name) | Expr::Resolved { name, .. } => Some(name.clone()),

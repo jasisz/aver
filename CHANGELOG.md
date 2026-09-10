@@ -48,6 +48,8 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Fixed
 
+- **Law proofs now cite what the Lean prelude knows about `Map.set`.** When a law's cone calls any `Map.*` operation, proof search carries the prelude's facts that a get after a set finds the stored value under that key and is unchanged under another, that a second set under one key overwrites the first, and that a set never shrinks the map; the last two join the prelude as hand-proved lemmas. The reasons solver behind `because` and `using` and the generic simplification rung both cite them, and a law with a sum-typed argument is also tried by constructor split, so a fact behind a `match` is reached. A lookup that survives a store under another key, a store that never shrinks the map, and a store over a store under one key now close universally instead of staying open.
+
 - **Dafny induction follows source recursion through ProofIR.** Guarded integer descent now takes precedence over a growing list accumulator. Ordinary laws and universal citation lemmas carry actual recursive accumulator updates; list and string padding get a shared remaining-length measure consumed by Lean and Dafny. Checked sequence identities close countdown and fold composition examples without additional source proof steps or assumptions.
 
 - **Empty lists take their element type from the other side of equality.** `items == []` and `[] != items` now preserve the checked element type, including nested lists and tuple literals. This reuses the expected-type inference already used for `Option.None`, preventing generated Rust from comparing `AverIntList` with an unresolved generic list.

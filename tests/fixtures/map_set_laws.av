@@ -1,0 +1,56 @@
+module MapSetLaws
+    intent =
+        "Three facts about a keyed store that the Lean map prelude already"
+        "carries: a lookup survives a store under another key, a store never"
+        "shrinks the map, and a second store under the same key is one store."
+    effects []
+
+fn put(m: Map<String, Int>, k: String, v: Int) -> Map<String, Int>
+    ? "Store v under k."
+    Map.set(m, k, v)
+
+fn size(m: Map<String, Int>) -> Int
+    ? "How many keys the store holds."
+    Map.len(m)
+
+fn look(m: Map<String, Int>, k: String) -> Option<Int>
+    ? "The value under k, if any."
+    Map.get(m, k)
+
+type Change
+    Put(String, Int)
+    Nothing
+
+fn apply(m: Map<String, Int>, change: Change) -> Map<String, Int>
+    ? "Apply one change to the store."
+    match change
+        Change.Put(k, v) -> put(m, k, v)
+        Change.Nothing -> m
+
+verify look
+    look({}, "a") => Option.None
+    look(put({}, "a", 1), "a") => Option.Some(1)
+    look(put(put({}, "a", 1), "b", 2), "a") => Option.Some(1)
+
+verify look law stableUnderOtherKey
+    given m: Map<String, Int> = [{"a" => 1}, {"a" => 1, "b" => 2}]
+    given k: String = ["a"]
+    given k2: String = ["b", "z"]
+    given v: Int = [1]
+    given v2: Int = [7]
+    when look(m, k) == Option.Some(v)
+    when k != k2
+    using []
+    look(put(m, k2, v2), k) => Option.Some(v)
+
+verify size law neverShrinks
+    given m: Map<String, Int> = [{}, {"a" => 1}, {"a" => 1, "b" => 2}]
+    given change: Change = [Change.Nothing, Change.Put("a", 5), Change.Put("c", 3)]
+    size(apply(m, change)) >= size(m) holds
+
+verify put law overwrites
+    given m: Map<String, Int> = [{}, {"a" => 1}, {"a" => 1, "b" => 2}]
+    given k: String = ["a", "z"]
+    given v: Int = [1]
+    given w: Int = [2]
+    put(put(m, k, v), k, w) => put(m, k, w)

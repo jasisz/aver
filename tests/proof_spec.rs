@@ -73,6 +73,8 @@ mod lemmas;
 mod list_prefix_guard;
 #[path = "proof_spec/literalization.rs"]
 mod literalization;
+#[path = "proof_spec/map_set_laws.rs"]
+mod map_set_laws;
 #[path = "proof_spec/opaque_closure.rs"]
 mod opaque_closure;
 #[path = "proof_spec/oracle_verify.rs"]
