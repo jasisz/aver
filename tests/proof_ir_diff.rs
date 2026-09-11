@@ -39,6 +39,7 @@ fn build_ctx(src: &str) -> CodegenContext {
     let mut pipeline_result = aver::ir::pipeline::run(
         &mut items,
         aver::ir::PipelineConfig {
+            marked: aver::config::MarkedCapabilities::none(),
             run_tco: true,
             typecheck: Some(aver::ir::TypecheckMode::Full { base_dir: None }),
             run_interp_lower: false,
@@ -117,6 +118,7 @@ fn build_ctx_with_modules(entry_src: &str, deps: &[(&str, &str)]) -> CodegenCont
     let mut pipeline_result = aver::ir::pipeline::run(
         &mut items,
         aver::ir::PipelineConfig {
+            marked: aver::config::MarkedCapabilities::none(),
             run_tco: true,
             typecheck: Some(aver::ir::TypecheckMode::WithLoaded(&loaded)),
             run_interp_lower: false,
@@ -480,6 +482,7 @@ fn persisted_classification_equals_explain_passes_interval_analysis() {
     let diag = aver::ir::pipeline::run(
         &mut items,
         aver::ir::PipelineConfig {
+            marked: aver::config::MarkedCapabilities::none(),
             run_tco: true,
             typecheck: Some(aver::ir::TypecheckMode::Full { base_dir: None }),
             run_interp_lower: false,
