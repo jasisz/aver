@@ -1,0 +1,10 @@
+[providers]
+schema = 1
+
+[[providers.bindings]]
+capability = "Alpha"
+work = "Node.scoreAlpha"
+
+[[providers.bindings]]
+capability = "Beta"
+work = "Node.scoreBeta"

@@ -149,6 +149,52 @@ fn a_cancelled_job_refuses_to_be_taken() {
 }
 
 #[test]
+fn a_job_kind_refuses_a_job_another_job_kind_started() {
+    // Every job kind of a program shares one engine and `Work.Job` is one
+    // stdlib type, so the type checker cannot tell two kinds' handles apart.
+    // The runtime must: answering with the other kind's result would hand the
+    // program a value it never asked for.
+    let out = aver("work_jobs_two_kinds", &["run"]);
+    assert!(out.status.success(), "{}", format_output(&out));
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        text.contains("beta: work: this job was not started by job kind 'Beta'"),
+        "{}",
+        format_output(&out)
+    );
+    assert!(text.contains("alpha: scored 5"), "{}", format_output(&out));
+}
+
+#[test]
+fn a_manifest_that_does_not_load_reports_its_own_error() {
+    // A manifest whose `[work]` section is wrong is not a manifest without
+    // bindings: reporting it as a missing binding names a cause that is not
+    // there and offers a repair that cannot help.
+    let dir = scratch("manifest");
+    let source = fixture("work_jobs");
+    for name in ["main.av", "node.av", "validation.av", "aver.toml"] {
+        std::fs::copy(source.join(name), dir.join(name)).expect("fixture file copies");
+    }
+    let manifest = dir.join("aver.toml");
+    let text = std::fs::read_to_string(&manifest).expect("manifest reads");
+    std::fs::write(&manifest, format!("{text}\n[work]\nmax-jobs = 0\n")).expect("manifest writes");
+
+    let mut command = Command::new(aver_bin());
+    command.current_dir(&dir);
+    command.arg("run").arg("main.av");
+    command.arg("--module-root").arg(&dir);
+    let out = command.output().expect("aver runs");
+    let text = combined(&out);
+    assert!(
+        text.contains("[work].max-jobs must be a positive integer, got 0"),
+        "{}",
+        format_output(&out)
+    );
+    assert!(!text.contains("work-binding"), "{}", format_output(&out));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn a_second_job_at_the_limit_refuses_instead_of_blocking_the_turn() {
     let out = aver("work_jobs_limit", &["run"]);
     assert!(out.status.success(), "{}", format_output(&out));
@@ -170,6 +216,16 @@ fn a_given_on_take_verifies_a_function_that_collects_a_job() {
     );
 }
 
+// TODO(owner): the law this test asserts holds over an empty wait set, so
+// `pollEverythingReady` has no key to invent and nothing about job readiness
+// is proved. The law that would prove it — begin a job under a `given` stub,
+// poll `{1 => Wait.Item.Job(job)}`, and check the reported keys never exceed
+// the set — cannot be written today: verify answers it with
+// `Runtime error: unknown boundary type 'Work.Job'`, and the same shape over
+// `Tcp.poll` with a stubbed `Tcp.Connection` fails identically, so the limit
+// is verify's value codec for capability resources under a stub, not this
+// leg. Closing it is a change to `src/provider/value.rs` that touches every
+// capability resource, which this brief does not cover.
 #[test]
 fn a_hostile_wait_that_reports_everything_ready_leaves_the_law_standing() {
     let out = aver("work_jobs", &["verify", "--hostile"]);
