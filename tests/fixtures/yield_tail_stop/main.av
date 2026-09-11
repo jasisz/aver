@@ -1,6 +1,6 @@
 module YieldTailStop
     intent = "Fixture: a request in tail position is a stop — as the last expression of a body, and as the leaf of a match arm, both when the arm is the function's own tail and when a binding reads the branch."
-    depends [Pool]
+    depends [Pool, Pooled]
     effects [Pool.claim, yield, Console.print]
     exposes [driveOne, drivePick, main]
 

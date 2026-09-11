@@ -5514,18 +5514,19 @@ fn law_template_typing_keeps_sample_literal_discharge_independent() {
 // so these go through `pipeline::front_gate` rather than `run_type_check`.
 // ---------------------------------------------------------------------------
 
-fn front_errors(src: &str) -> Vec<String> {
-    let mut items = parse(src);
-    let user_program_len = items.len();
-    aver::ir::pipeline::front_gate(
-        &mut items,
-        &aver::ir::TypecheckMode::Full { base_dir: None },
-        user_program_len,
+/// The project these sources belong to: it declares the `Say` capability and
+/// marks it `answer = "Said"` in its `aver.toml`, which is what makes a call
+/// to `Say.readLine` a stop at all. A stop is a call to a capability the
+/// manifest says the program answers, so a lowering test needs a manifest.
+fn yield_unit_root() -> String {
+    format!(
+        "{}/tests/fixtures/yield_continuations",
+        env!("CARGO_MANIFEST_DIR")
     )
-    .errors
-    .into_iter()
-    .map(|e| e.message)
-    .collect()
+}
+
+fn front_errors(src: &str) -> Vec<String> {
+    front_errors_against(src, &yield_unit_root())
 }
 
 fn assert_front_error_containing(src: &str, snippet: &str) {
@@ -5542,12 +5543,13 @@ fn assert_front_error_containing(src: &str, snippet: &str) {
     );
 }
 
-const YIELD_MODULE: &str = "module Demo\n    effects [Console.print, Console.readLine, yield]\n\n";
+const YIELD_MODULE: &str =
+    "module Demo\n    depends [Say]\n    effects [Say.print, Say.readLine, yield]\n\n";
 
 const YIELD_LOOP: &str = r#"fn loop(seen: Int) -> Int
-    ? "Reads lines until the console fails, counting them."
-    ! [Console.readLine, yield]
-    line = Console.readLine()
+    ? "Reads lines until the reader fails, counting them."
+    ! [Say.readLine, yield]
+    line = Say.readLine()
     match line
         Result.Err(_) -> seen
         Result.Ok(_) -> loop(seen + 1)
@@ -5577,7 +5579,7 @@ fn yield_effect_parses_and_the_function_lowers_without_errors() {
 
 #[test]
 fn yield_propagates_as_an_effect_through_the_module_boundary() {
-    let src = format!("module Demo\n    effects [Console.readLine]\n\n{YIELD_LOOP}");
+    let src = format!("module Demo\n    depends [Say]\n    effects [Say.readLine]\n\n{YIELD_LOOP}");
     assert_front_error_containing(&src, "'yield' which is not in the declared boundary");
 }
 
@@ -5646,7 +5648,7 @@ fn calling_the_yield_function_after_its_definition_gets_only_the_recipe() {
 #[test]
 fn non_tail_call_to_a_yield_function_is_an_error_with_a_recipe() {
     let src = format!(
-        "{YIELD_MODULE}{YIELD_LOOP}\nfn outer(n: Int) -> Int\n    ? \"Counts one more than loop.\"\n    ! [Console.readLine, yield]\n    loop(n) + 1\n"
+        "{YIELD_MODULE}{YIELD_LOOP}\nfn outer(n: Int) -> Int\n    ? \"Counts one more than loop.\"\n    ! [Say.readLine, yield]\n    loop(n) + 1\n"
     );
     assert_front_error_containing(
         &src,
@@ -5657,7 +5659,7 @@ fn non_tail_call_to_a_yield_function_is_an_error_with_a_recipe() {
 #[test]
 fn tail_call_to_another_yield_function_is_rejected_in_phase_one() {
     let src = format!(
-        "{YIELD_MODULE}{YIELD_LOOP}\nfn outer(n: Int) -> Int\n    ? \"Hands over to loop.\"\n    ! [Console.readLine, yield]\n    loop(n)\n"
+        "{YIELD_MODULE}{YIELD_LOOP}\nfn outer(n: Int) -> Int\n    ? \"Hands over to loop.\"\n    ! [Say.readLine, yield]\n    loop(n)\n"
     );
     assert_front_error_containing(
         &src,
@@ -5692,7 +5694,7 @@ fn wrong_state_and_answer_pairing_is_a_type_error() {
 #[test]
 fn unsupported_construct_in_a_yield_function_is_named() {
     let src = format!(
-        "{YIELD_MODULE}fn both() -> Unit\n    ? \"Prints twice at once.\"\n    ! [Console.print, yield]\n    _ = (Console.print(\"a\"), Console.print(\"b\"))!\n    Console.print(\"c\")\n"
+        "{YIELD_MODULE}fn both() -> Unit\n    ? \"Prints twice at once.\"\n    ! [Say.print, yield]\n    _ = (Say.print(\"a\"), Say.print(\"b\"))!\n    Say.print(\"c\")\n"
     );
     assert_front_error_containing(
         &src,
@@ -5703,7 +5705,7 @@ fn unsupported_construct_in_a_yield_function_is_named() {
 #[test]
 fn callback_live_across_a_request_is_rejected() {
     let src = format!(
-        "{YIELD_MODULE}fn apply(f: Fn(Int) -> Int, n: Int) -> Int\n    ? \"Prints, then applies f.\"\n    ! [Console.print, yield]\n    Console.print(\"x\")\n    f(n)\n"
+        "{YIELD_MODULE}fn apply(f: Fn(Int) -> Int, n: Int) -> Int\n    ? \"Prints, then applies f.\"\n    ! [Say.print, yield]\n    Say.print(\"x\")\n    f(n)\n"
     );
     assert_front_error_containing(
         &src,
@@ -5722,7 +5724,7 @@ fn yield_function_without_a_stop_is_an_error() {
 #[test]
 fn error_propagation_inside_a_yield_function_lowers() {
     let src = format!(
-        "{YIELD_MODULE}fn first(seen: Int) -> Result<Int, String>\n    ? \"Reads one line, echoes it, and counts it.\"\n    ! [Console.print, Console.readLine, yield]\n    line = Console.readLine()?\n    Console.print(line)\n    Result.Ok(seen + 1)\n"
+        "{YIELD_MODULE}fn first(seen: Int) -> Result<Int, String>\n    ? \"Reads one line, echoes it, and counts it.\"\n    ! [Say.print, Say.readLine, yield]\n    line = Say.readLine()?\n    Say.print(line)\n    Result.Ok(seen + 1)\n"
     );
     let errs = front_errors(&src);
     assert!(
@@ -5756,6 +5758,7 @@ fn front_errors_against(src: &str, base_dir: &str) -> Vec<String> {
             base_dir: Some(base_dir),
         },
         user_program_len,
+        &aver::config::MarkedCapabilities::for_project_dir(Some(base_dir)),
     )
     .errors
     .into_iter()
@@ -5851,7 +5854,7 @@ fn a_capability_namespace_and_yield_stay_legal_bare_effects() {
 
 #[test]
 fn a_shadowing_arm_does_not_type_a_live_variables_state_field() {
-    let src = "module Demo\n    effects [Console, yield]\n\nfn probe(s: Int, v: Result<String, String>) -> Int\n    ? \"Stops, then reads s only in the arm that does not rebind it.\"\n    ! [Console, yield]\n    Console.print(\"go\")\n    match v\n        Result.Ok(s) -> String.len(s)\n        Result.Err(_) -> s\n";
+    let src = "module Demo\n    depends [Say]\n    effects [Say.print, yield]\n\nfn probe(s: Int, v: Result<String, String>) -> Int\n    ? \"Stops, then reads s only in the arm that does not rebind it.\"\n    ! [Say.print, yield]\n    Say.print(\"go\")\n    match v\n        Result.Ok(s) -> String.len(s)\n        Result.Err(_) -> s\n";
     let errs = front_errors(src);
     assert_eq!(
         errs.len(),

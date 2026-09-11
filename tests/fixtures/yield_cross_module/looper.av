@@ -1,6 +1,6 @@
 module Looper
     intent = "Fixture library: exposes a yielding function, so what its importers see is the generated protocol — the exposes list names it, not the function the lowering removes."
-    depends [Pool]
+    depends [Pool, Pooled]
     effects [Pool.claim, yield]
     exposes [loop]
 

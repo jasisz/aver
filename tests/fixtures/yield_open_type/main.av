@@ -1,6 +1,6 @@
 module YieldOpenType
     intent = "Fixture: a live variable whose type the checker never settles, so the lowering asks for an annotation instead of writing an open type into a request state."
-    depends [Pool]
+    depends [Pool, Pooled]
     effects [Pool.claim, yield]
     exposes [main]
 

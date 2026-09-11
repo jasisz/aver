@@ -1,6 +1,6 @@
 module Looper
     intent = "Fixture library: a yielding function the lowering cannot finish, so the importer is told why instead of being told the protocol is missing."
-    depends [Pool]
+    depends [Pool, Pooled]
     effects [Pool.claim, yield]
     exposes [loop]
 

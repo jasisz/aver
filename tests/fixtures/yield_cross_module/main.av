@@ -1,6 +1,6 @@
 module CrossModule
     intent = "Fixture: a dependent module drives a yielding function of another module through the protocol that module exposes."
-    depends [Looper]
+    depends [Looper, Pooled]
     effects [Console.print]
     exposes [drive, main]
 

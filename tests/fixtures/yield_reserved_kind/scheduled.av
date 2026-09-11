@@ -1,0 +1,11 @@
+module Scheduled
+    intent = "Fixture answer module: the tick this program hands back when a process offers to step aside."
+    depends [Sched, Wait]
+    effects []
+
+record State
+    tick: Int
+
+fn yield(state: State, slot: Int) -> Tuple<State, Sched.__YieldReply>
+    ? "Answers with the tick the process resumes at."
+    (state, Sched.__YieldReply.Now(state.tick))

@@ -1,19 +1,20 @@
 module YieldContinuations
-    intent = "Fixture: a request inside a match arm of a non-tail statement, a request whose answer is Unit, a ? after a request, a namespace effect entry, and statements after a stop — the shapes that need generated continuation functions."
-    effects [Console, yield]
+    intent = "Fixture: a request inside a match arm of a non-tail statement, a request whose answer is Unit, a ? after a request, and statements after a stop — the shapes that need generated continuation functions."
+    depends [Say, Said]
+    effects [Say.readLine, Say.print, Console.print, yield]
     exposes [drive, main]
 
 fn talk(n: Int, acc: Int) -> Result<Int, String>
     ? "Reads a name (asking again when the first read fails), greets it, reads a second line with ?, and loops n times summing the lengths."
-    ! [Console, yield]
-    first = Console.readLine()
+    ! [Say.readLine, Say.print, yield]
+    first = Say.readLine()
     label = match first
         Result.Ok(line) -> line
-        Result.Err(_) -> match Console.readLine()
+        Result.Err(_) -> match Say.readLine()
             Result.Ok(again) -> again
             Result.Err(_) -> "nobody"
-    Console.print("hello {label}")
-    second = Console.readLine()?
+    Say.print("hello {label}")
+    second = Say.readLine()?
     len = String.len(label) + String.len(second)
     match n
         0 -> Result.Ok(acc + len)

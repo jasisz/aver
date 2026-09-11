@@ -374,6 +374,7 @@ fn lower_fixture(fixture_name: &str) -> (Vec<String>, String, Vec<aver::ast::Top
                 base_dir: Some(&base_dir),
             }),
             user_program_len,
+            marked: &aver::config::MarkedCapabilities::for_project_dir(Some(&base_dir)),
             on_after_pass: None,
         },
     );
