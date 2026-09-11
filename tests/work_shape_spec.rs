@@ -77,6 +77,37 @@ fn a_bound_job_kind_runs_on_the_vm() {
     );
 }
 
+#[test]
+fn a_job_kind_the_program_actually_calls_passes_every_door() {
+    // Declaring a job kind is not the interesting case: calling it is. A
+    // program that reaches `Validation.begin` must still pass the manifest
+    // gate, because the `work` binding is what says who answers it.
+    assert_no_work_diagnostic("work_shape_used", &["check"]);
+    let out = aver("work_shape_used", &["check"]);
+    assert!(out.status.success(), "{}", format_output(&out));
+
+    // No backend runs a job yet, so the VM reports the missing provider for
+    // the operation itself; what it must never do is demand a Rust provider
+    // package for a capability the manifest already binds to a function.
+    let out = aver("work_shape_used", &["run"]);
+    let text = combined(&out);
+    assert!(
+        !text.contains("missing required custom capability binding"),
+        "a work binding satisfies static composition:\n{}",
+        format_output(&out)
+    );
+    assert!(
+        text.contains("capability provider missing for 'Validation.begin'"),
+        "{}",
+        format_output(&out)
+    );
+    assert!(
+        text.contains("is a job kind bound to work = \"Node.validate\""),
+        "{}",
+        format_output(&out)
+    );
+}
+
 // ── work-shape ──────────────────────────────────────────────────────────
 
 #[test]
@@ -111,6 +142,33 @@ fn take_must_be_able_to_report_a_running_job() {
     );
 }
 
+#[test]
+fn a_task_carrying_a_capability_resource_is_a_shape_error() {
+    assert_reports(
+        "work_shape_resource_task",
+        &["check"],
+        "error[work-shape]: operation 'Validation.begin' takes a task containing capability resource 'Tcp.Connection'",
+    );
+}
+
+#[test]
+fn begin_takes_exactly_the_task() {
+    assert_reports(
+        "work_shape_begin_arity",
+        &["check"],
+        "error[work-shape]: operation 'Validation.begin' must take exactly one task parameter; it takes 2",
+    );
+}
+
+#[test]
+fn take_takes_exactly_the_job_handle() {
+    assert_reports(
+        "work_shape_take_parameter",
+        &["check"],
+        "error[work-shape]: operation 'Validation.take' must take exactly one Work.Job parameter",
+    );
+}
+
 // ── work-binding ────────────────────────────────────────────────────────
 
 #[test]
@@ -137,6 +195,55 @@ fn a_capability_module_checked_alone_needs_no_binding() {
         !text.contains("error[work-binding]"),
         "a capability module is not yet a program:\n{}",
         format_output(&out)
+    );
+}
+
+#[test]
+fn a_directory_is_the_same_program_door_as_a_file() {
+    // `aver verify .` is the ordinary project form; it must refuse exactly
+    // what `aver verify main.av` refuses.
+    let dir = fixture("work_shape_unbound");
+    let mut command = Command::new(aver_bin());
+    command.current_dir(repo_root());
+    command
+        .arg("verify")
+        .arg(&dir)
+        .arg("--module-root")
+        .arg(&dir);
+    let out = command.output().expect("aver runs");
+    let text = combined(&out);
+    assert!(
+        text.contains("error[work-binding]: job kind 'Validation' has no `work` binding"),
+        "{}",
+        format_output(&out)
+    );
+    assert_eq!(
+        text.matches("error[work-binding]").count(),
+        1,
+        "one finding per program, however many files the door walked:\n{}",
+        format_output(&out)
+    );
+    assert!(!out.status.success(), "{}", format_output(&out));
+}
+
+#[test]
+fn a_bound_function_naming_nothing_in_the_program_is_refused() {
+    assert_reports(
+        "work_shape_unknown_function",
+        &["check"],
+        "binds work = \"Node.inspect\", but this program has no function 'Node.inspect'",
+    );
+}
+
+#[test]
+fn a_same_named_record_of_another_module_is_not_the_task_type() {
+    // Nominal identity, not the last path segment: `Node.Task` and
+    // `Validation.Task` are two types, and the bound function must take the
+    // one `begin` hands it.
+    assert_reports(
+        "work_shape_nominal_task",
+        &["check"],
+        "whose parameter is Node.Task; 'Validation.begin' hands it Validation.Task",
     );
 }
 

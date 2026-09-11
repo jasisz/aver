@@ -1,0 +1,11 @@
+module Main
+    depends [Node, Validation]
+    intent = "A program that starts one bound job instead of only declaring the job kind."
+    effects [Console, Validation.begin]
+
+fn main() -> Unit
+    ? "Starts one validation job and says which way it went."
+    ! [Console.print, Validation.begin]
+    match Validation.begin("abcd")
+        Result.Ok(job) -> Console.print("job started")
+        Result.Err(reason) -> Console.print(reason)
