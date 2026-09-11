@@ -178,6 +178,46 @@ fn check_does_not_report_the_lowered_function_as_an_unused_expose() {
     );
 }
 
+// ── A live variable whose type the checker never settled ────────────────
+
+/// `seen = {}` is `Map<K, V>` and nothing in the body says what it holds.
+/// Writing that into a state variant would declare `K` and `V` nowhere and
+/// report three type errors about generated names; the lowering stops
+/// instead, with one error at the user's binding about the user's
+/// variable, and generates nothing.
+#[test]
+fn an_unsettled_live_variable_asks_for_an_annotation_at_its_binding() {
+    let out = aver("yield_open_type", &["check"]);
+    assert!(
+        !out.status.success(),
+        "the module must not check:\n{}",
+        format_output(&out)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let errors: Vec<&str> = stdout
+        .lines()
+        .filter(|line| line.contains("error["))
+        .collect();
+    assert_eq!(errors.len(), 1, "one error only:\n{}", format_output(&out));
+    assert!(
+        errors[0].contains("The type of 'seen' is not settled ('Map<K, V>')")
+            && errors[0].contains("'seen: <type> = ...'"),
+        "{}",
+        format_output(&out)
+    );
+    // At the binding, and with no generated name anywhere in the output.
+    assert!(
+        stdout.contains("main.av:10:1"),
+        "expected the error at the binding on line 10:\n{}",
+        format_output(&out)
+    );
+    assert!(
+        !stdout.contains("__Loop") && !stdout.contains("__loop"),
+        "a function that fails to lower generates nothing:\n{}",
+        format_output(&out)
+    );
+}
+
 // ── The generated Aver, verbatim ────────────────────────────────────────
 
 /// The generated items are ordinary types and pure functions of the

@@ -208,7 +208,7 @@ pub(super) fn mentions(stmts: &[Stmt], tail: &Spanned<Expr>, name: &str) -> bool
     }) || hit(tail)
 }
 
-/// The first type stamp recorded on a *free* use of `name` in the block.
+/// The type stamp recorded on a *free* use of `name` in the block.
 ///
 /// Free is the point: a `match` arm whose pattern binds `name` again is
 /// talking about a different variable that happens to share the spelling,
@@ -216,15 +216,31 @@ pub(super) fn mentions(stmts: &[Stmt], tail: &Spanned<Expr>, name: &str) -> bool
 /// and [`substitute_free`] follow. Reading the stamp off a shadowing arm
 /// typed the state field after the wrong variable, which turned a plain
 /// shadowing mistake into type errors about generated names.
+///
+/// Of the free uses, the first one the checker settled wins: a stamp is
+/// set once, so the earliest use of a binding the checker resolved only
+/// later still carries the open type (`Map<K, V>`) while a use past that
+/// point carries the settled one. The first stamp of any kind is the
+/// fallback, so the caller can tell "no type recorded" from "a type left
+/// open everywhere".
 pub(super) fn stamped_use(stmts: &[Stmt], tail: &Spanned<Expr>, name: &str) -> Option<Type> {
-    fn visit(expr: &Spanned<Expr>, name: &str, found: &mut Option<Type>) {
-        if found.is_some() {
+    struct Found {
+        first: Option<Type>,
+        settled: Option<Type>,
+    }
+    fn visit(expr: &Spanned<Expr>, name: &str, found: &mut Found) {
+        if found.settled.is_some() {
             return;
         }
         match &expr.node {
             Expr::Ident(n) if n == name => {
                 if let Some(ty) = expr.ty() {
-                    *found = Some(ty.clone());
+                    if found.first.is_none() {
+                        found.first = Some(ty.clone());
+                    }
+                    if crate::types::checker::type_is_fully_concrete(ty) {
+                        found.settled = Some(ty.clone());
+                    }
                 }
             }
             Expr::Match { subject, arms } => {
@@ -241,7 +257,10 @@ pub(super) fn stamped_use(stmts: &[Stmt], tail: &Spanned<Expr>, name: &str) -> O
             _ => expr_walk::for_each_child(expr, &mut |child| visit(child, name, found)),
         }
     }
-    let mut found: Option<Type> = None;
+    let mut found = Found {
+        first: None,
+        settled: None,
+    };
     for stmt in stmts {
         match stmt {
             Stmt::Binding(bind, _, expr) => {
@@ -249,14 +268,14 @@ pub(super) fn stamped_use(stmts: &[Stmt], tail: &Spanned<Expr>, name: &str) -> O
                 // Past a statement that rebinds the name, every use is the
                 // new binding's, as in `substitute_free_in_block`.
                 if bind == name {
-                    return found;
+                    return found.settled.or(found.first);
                 }
             }
             Stmt::Expr(expr) => visit(expr, name, &mut found),
         }
     }
     visit(tail, name, &mut found);
-    found
+    found.settled.or(found.first)
 }
 
 /// Replace every free reference to `from` by `replacement`. A match arm

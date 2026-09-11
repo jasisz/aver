@@ -1,0 +1,10 @@
+module Pool
+    intent = "Fixture capability: hands out Int handles to a peer; no host provider, the coordinator answers it."
+    kind = capability
+    semantics = effectful
+    exposes [claim]
+
+operation claim(peer: Int) -> Option<Int>
+    ? "Asks the host for the next handle owned by peer, or None when the peer has nothing left."
+    oracle = generative
+    replay = recorded

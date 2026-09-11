@@ -308,9 +308,10 @@ impl<'a> Lowering<'a> {
                 line,
                 format!("{what} is a function value and would be live across a request; a request state carries data only — pass what the function computes instead"),
             ),
-            Some(Type::Var(name)) => {
-                self.internal(line, &format!("{what} has the unresolved type variable '{name}'"))
-            }
+            Some(ty) if !crate::types::checker::type_is_fully_concrete(ty) => self.internal(
+                line,
+                &format!("{what} has the open type '{}'", ty.display()),
+            ),
             Some(ty) => Ok(ty.display()),
         }
     }
@@ -320,8 +321,9 @@ impl<'a> Lowering<'a> {
         self.type_text(ty.as_ref(), expr.line, what)
     }
 
-    /// Type of a live variable, read from the stamp on its first use in
-    /// the continuation; a parameter falls back to its declared type.
+    /// Type of a live variable, read from the stamp the checker settled on
+    /// for a use of it in the continuation; a parameter falls back to its
+    /// declared type.
     fn live_type(
         &mut self,
         name: &str,
@@ -335,6 +337,25 @@ impl<'a> Lowering<'a> {
             Ret::Done | Ret::Join { .. } => None,
         });
         if let Some(ty) = stamped {
+            // A type the checker never settled — `{}` bound to a name
+            // nothing ever fixes is `Map<K, V>` — must not be written
+            // into a state variant: `K` and `V` are declared nowhere, so
+            // the second check would report the generated type, the
+            // generated variant and the generated constructor, three
+            // complaints about names the user never wrote. One
+            // diagnostic instead, at the binding, about the binding.
+            if !matches!(ty, Type::Invalid | Type::Fn(..))
+                && !crate::types::checker::type_is_fully_concrete(&ty)
+            {
+                let at = self.binding_line(name).unwrap_or(line);
+                return self.fail(
+                    at,
+                    format!(
+                        "The type of '{name}' is not settled ('{}'); a request state cannot carry an open type — give the binding a type: '{name}: <type> = ...'",
+                        ty.display()
+                    ),
+                );
+            }
             return self.type_text(Some(&ty), line, &format!("the live variable '{name}'"));
         }
         if let Some((_, ty)) = self.fd.params.iter().find(|(p, _)| p == name) {
@@ -353,6 +374,17 @@ impl<'a> Lowering<'a> {
             line,
             &format!("no type recorded for the live variable '{name}'"),
         )
+    }
+
+    /// Where the function as written binds `name`, so a diagnostic about a
+    /// variable points at the user's line for it rather than at the stop
+    /// the lowering happened to reach it from. `None` for a name bound by
+    /// a pattern or a parameter, which has no statement of its own.
+    fn binding_line(&self, name: &str) -> Option<usize> {
+        self.fd.body.stmts().iter().find_map(|stmt| match stmt {
+            Stmt::Binding(bound, _, value) if bound == name => Some(value.line),
+            _ => None,
+        })
     }
 
     fn fresh_temp(&mut self) -> String {
