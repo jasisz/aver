@@ -1,0 +1,12 @@
+[providers]
+schema = 1
+
+[[providers.bindings]]
+capability = "Pool"
+answer = "Ledger"
+
+[[providers.bindings]]
+capability = "Validation"
+work = "Node.validate"
+task = "Node.nextTask"
+landed = "Node.validated"

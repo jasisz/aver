@@ -1,0 +1,24 @@
+module Ledger
+    intent = "An answer module that threads one state for Pool and another for Chain."
+    depends [Chain, Pool]
+    exposes [State, Store, claim, gone, nextTarget]
+    effects []
+
+record State
+    free: List<Int>
+    stopping: Bool
+
+record Store
+    tip: Int
+
+fn claim(state: State, key: Int) -> Pool.Assignment
+    ? "The next height for this peer."
+    Pool.Assignment.Idle
+
+fn gone(state: State, key: Int) -> Unit
+    ? "A peer that left gives its height back."
+    Unit
+
+fn nextTarget(store: Store, height: Int) -> Option<String>
+    ? "Which hash is next at this height."
+    Option.None

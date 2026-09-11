@@ -1,0 +1,19 @@
+module Ledger
+    intent = "An answer module that prints while it answers."
+    depends [Pool]
+    exposes [State, claim, gone]
+    effects [Console]
+
+record State
+    free: List<Int>
+    stopping: Bool
+
+fn claim(state: State, key: Int) -> Pool.Assignment
+    ? "The next height for this peer, announced as it is handed out."
+    ! [Console.print]
+    Console.print("claim {key}")
+    Pool.Assignment.Idle
+
+fn gone(state: State, key: Int) -> Unit
+    ? "A peer that left gives its height back."
+    Unit

@@ -1,0 +1,9 @@
+module Main
+    depends [Ledger, Pool]
+    intent = "A program whose answer module is itself a process."
+    effects [Console]
+
+fn main() -> Unit
+    ? "Reports that the program is wired."
+    ! [Console.print]
+    Console.print("answers ready")

@@ -637,6 +637,15 @@ fn check_answer_module(
         }
         let key = answer_key(module, operation);
         let Some((params, result, effects)) = fn_sigs.get(&key) else {
+            // A `yield` function is cut into generated pieces before any
+            // signature is read, so its own name is gone by the time the gate
+            // looks; the pieces it left behind are how the gate knows.
+            if lowered_yield_function(fn_sigs, module, &operation.name) {
+                findings.push(answer_shape_error(format!(
+                    "aver.toml marks capability '{capability}' as answered by '{module}', and '{key}' declares `yield`; an answer is computed inside the turn, so it cannot itself be a process the turn has to drive"
+                )));
+                continue;
+            }
             findings.push(answer_binding_error(format!(
                 "capability '{capability}' is answered by module '{module}', so every one of its operations needs an answer function; this program has no function '{key}'"
             )));
@@ -650,6 +659,12 @@ fn check_answer_module(
                 "aver.toml marks capability '{capability}' as answered by '{module}', and '{key}' declares `yield`; an answer is computed inside the turn, so it cannot itself be a process the turn has to drive"
             )));
             continue;
+        }
+        if !effects.is_empty() {
+            findings.push(answer_shape_warning(format!(
+                "aver.toml marks capability '{capability}' as answered by '{module}', and '{key}' declares effects [{}]; an answer runs inside the turn, so this is allowed, but it can stall every other process",
+                effects.join(", ")
+            )));
         }
         let Some(state) = &state else { continue };
         let mut expected_params = vec![state.clone()];
@@ -682,12 +697,6 @@ fn check_answer_module(
                 render_signature(&actual_params, &actual_result)
             )));
             continue;
-        }
-        if !effects.is_empty() {
-            findings.push(answer_shape_warning(format!(
-                "aver.toml marks capability '{capability}' as answered by '{module}', and '{key}' declares effects [{}]; an answer runs inside the turn, so this is allowed, but it can stall every other process",
-                effects.join(", ")
-            )));
         }
     }
 
@@ -898,6 +907,16 @@ fn compiler_shipped_reason(capability: &str) -> Option<String> {
         ));
     }
     None
+}
+
+/// Whether `module.name` was a `yield` function: the lowering replaced it
+/// with `__<name>Start` and one answer function per request kind.
+fn lowered_yield_function(
+    fn_sigs: &std::collections::HashMap<String, FnSignature>,
+    module: &str,
+    name: &str,
+) -> bool {
+    fn_sigs.contains_key(&format!("{module}.__{name}Start"))
 }
 
 fn module_has_functions(

@@ -1,0 +1,10 @@
+[providers]
+schema = 1
+
+[[providers.bindings]]
+capability = "Pool"
+answer = "Ledger"
+
+[[providers.bindings]]
+capability = "Chain"
+answer = "Ledger"

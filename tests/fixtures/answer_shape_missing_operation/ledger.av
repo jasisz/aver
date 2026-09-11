@@ -1,0 +1,13 @@
+module Ledger
+    intent = "An answer module missing one of the capability's operations."
+    depends [Pool]
+    exposes [State, claim]
+    effects []
+
+record State
+    free: List<Int>
+    stopping: Bool
+
+fn claim(state: State, key: Int) -> Pool.Assignment
+    ? "The next height for this peer."
+    Pool.Assignment.Idle

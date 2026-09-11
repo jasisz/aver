@@ -1,0 +1,9 @@
+module Main
+    depends [Ledger]
+    intent = "A program that tries to answer a standard capability with a module of its own."
+    effects [Console]
+
+fn main() -> Unit
+    ? "Reports that the program is wired."
+    ! [Console.print]
+    Console.print("answers ready")

@@ -1,0 +1,9 @@
+module Main
+    depends [Pool]
+    intent = "A program whose answer binding names a module it does not have."
+    effects [Console]
+
+fn main() -> Unit
+    ? "Reports that the program is wired."
+    ! [Console.print]
+    Console.print("answers ready")

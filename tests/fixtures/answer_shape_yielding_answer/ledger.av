@@ -1,0 +1,18 @@
+module Ledger
+    intent = "An answer module that is itself a process."
+    depends [Pool]
+    exposes [State, claim, gone]
+    effects [yield]
+
+record State
+    free: List<Int>
+    stopping: Bool
+
+fn claim(state: State, key: Int) -> Pool.Assignment
+    ? "The next height for this peer, asked again next turn."
+    ! [yield]
+    claim(state, key)
+
+fn gone(state: State, key: Int) -> Unit
+    ? "A peer that left gives its height back."
+    Unit
