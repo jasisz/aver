@@ -323,18 +323,23 @@ pub fn check_bindings(
             )));
             continue;
         }
-        if !same_type(&params[0], &shape.task) {
+        // The bound function writes its own module's types bare; the
+        // capability writes its own bare too. Canonicalise each side in the
+        // scope that wrote it before the nominal comparison.
+        let param = canonicalize_type_names(params[0].clone(), binding.module());
+        let result = canonicalize_type_names(result.clone(), binding.module());
+        if !same_type(&param, &shape.task) {
             errors.push(binding_error(format!(
                 "job kind '{}' binds work = \"{}\", whose parameter is {}; '{}.begin' hands it {}",
                 shape.capability,
                 binding.function,
-                params[0].display(),
+                param.display(),
                 shape.capability,
                 shape.task.display()
             )));
             continue;
         }
-        if !same_type(result, &shape.payload) {
+        if !same_type(&result, &shape.payload) {
             errors.push(binding_error(format!(
                 "job kind '{}' binds work = \"{}\", which returns {}; '{}.take' yields {}",
                 shape.capability,
@@ -348,17 +353,14 @@ pub fn check_bindings(
     errors
 }
 
-/// Nominal identity for the binding comparison. A capability's own boundary
-/// type is written bare inside the capability and qualified everywhere else,
-/// so the last segment decides, and only for named types.
+/// Nominal identity for the binding comparison. Both sides are canonicalised
+/// to the scope that wrote them first — the capability for the task and the
+/// payload, the binding's module for the bound function — so a named type
+/// carries the module that owns it and two same-named records of different
+/// modules are two types, as they are everywhere else in the language.
 fn same_type(left: &Type, right: &Type) -> bool {
-    fn last(name: &str) -> &str {
-        name.rsplit('.').next().unwrap_or(name)
-    }
     match (left, right) {
-        (Type::Named { name: left, .. }, Type::Named { name: right, .. }) => {
-            last(left) == last(right)
-        }
+        (Type::Named { name: left, .. }, Type::Named { name: right, .. }) => left == right,
         (Type::Result(la, lb), Type::Result(ra, rb)) | (Type::Map(la, lb), Type::Map(ra, rb)) => {
             same_type(la, ra) && same_type(lb, rb)
         }
