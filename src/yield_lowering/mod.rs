@@ -54,8 +54,11 @@ impl YieldLoweringReport {
     }
 }
 
+/// The language's own effect: bare and lowercase, never a capability.
+pub const YIELD_EFFECT: &str = "yield";
+
 pub fn is_yield_fn(fd: &FnDef) -> bool {
-    fd.effects.iter().any(|e| e.node == "yield")
+    fd.effects.iter().any(|e| e.node == YIELD_EFFECT)
 }
 
 pub fn has_yield_fns(items: &[TopLevel]) -> bool {
@@ -67,6 +70,37 @@ pub fn has_yield_fns(items: &[TopLevel]) -> bool {
 /// The start function a coordinator calls instead of `fn_name`.
 pub fn start_name(fn_name: &str) -> String {
     lower::Names::new(fn_name).start()
+}
+
+/// The start function under the spelling the call site used: `loop` from
+/// the same module is `__loopStart`, `Looper.loop` from a dependency is
+/// `Looper.__loopStart` (the exporter rewrites its `exposes` to match).
+pub fn qualified_start_name(callee: &str) -> String {
+    match callee.rsplit_once('.') {
+        Some((module, name)) => format!("{module}.{}", start_name(name)),
+        None => start_name(callee),
+    }
+}
+
+/// Decision 4: a yielding function is called only through its generated
+/// entry points, so a plain call to one — in this module or in a
+/// dependency — is an error carrying the recipe, never a missing-effect
+/// complaint about `yield`.
+pub fn direct_call_recipe(caller: &str, callee: &str) -> String {
+    format!(
+        "Function '{caller}' calls '{callee}' directly, but '{callee}' yields; call '{}(...)' and answer its requests",
+        qualified_start_name(callee)
+    )
+}
+
+/// The same recipe at a call site that survives the lowering: the name is
+/// gone from the module's surface, and the protocol standing in its place
+/// is the evidence of why.
+pub fn removed_call_recipe(callee: &str) -> String {
+    format!(
+        "'{callee}' yields; call '{}(...)' and answer its requests",
+        qualified_start_name(callee)
+    )
 }
 
 fn error_at(line: usize, message: String) -> TypeError {
@@ -247,11 +281,7 @@ fn scan_expr(
 
 fn report_call(fd: &FnDef, callee: &str, tail: bool, line: usize, errors: &mut Vec<TypeError>) {
     let message = if !is_yield_fn(fd) {
-        format!(
-            "Function '{}' calls '{callee}' directly, but '{callee}' yields; call '{}(...)' and answer its requests",
-            fd.name,
-            start_name(callee)
-        )
+        direct_call_recipe(&fd.name, callee)
     } else if !tail {
         format!(
             "Function '{}' calls yield function '{callee}' outside tail position; pass what comes next as data, or make it a tail call",

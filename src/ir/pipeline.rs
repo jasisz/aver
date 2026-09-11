@@ -825,6 +825,39 @@ pub struct FrontResult {
 /// left to the second phase), the `yield` functions are lowered from
 /// that stamped copy, and the lowered module is checked in full. The
 /// shadowing ban reads the copy: the program the user wrote.
+/// Lower the `yield` functions of the dependency modules an importer is
+/// about to read, so it sees the protocol the exporter generated — the
+/// rewritten `exposes`, `__fStart`, the state and outcome types — exactly
+/// as if the dependency had been written that way. Without this the
+/// importer reads pristine source, where the exposed name is the function
+/// the lowering removes and no generated name exists at all.
+///
+/// The loader stores modules leaves-first, so lowering in order lets a
+/// yield module that depends on another see the lowered one. A module
+/// without a `yield` function is left untouched, which is every module in
+/// almost every program: the extra type check is paid only where a
+/// dependency really yields.
+pub fn lower_loaded_yield_modules(loaded: &mut [LoadedModule]) {
+    for index in 0..loaded.len() {
+        if !crate::yield_lowering::has_yield_fns(&loaded[index].items) {
+            continue;
+        }
+        let deps: Vec<LoadedModule> = loaded[..index].to_vec();
+        let mut items = std::mem::take(&mut loaded[index].items);
+        let user_program_len = items.len();
+        front(
+            &mut items,
+            FrontConfig {
+                run_tco: true,
+                typecheck: Some(&TypecheckMode::WithCheckedLoaded(&deps)),
+                user_program_len,
+                on_after_pass: None,
+            },
+        );
+        loaded[index].items = items;
+    }
+}
+
 pub fn front(items: &mut Vec<TopLevel>, cfg: FrontConfig<'_, '_>) -> FrontResult {
     let FrontConfig {
         run_tco,

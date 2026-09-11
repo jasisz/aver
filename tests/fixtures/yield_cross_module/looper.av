@@ -1,0 +1,13 @@
+module Looper
+    intent = "Fixture library: exposes a yielding function, so what its importers see is the generated protocol — the exposes list names it, not the function the lowering removes."
+    depends [Pool]
+    effects [Pool.claim, yield]
+    exposes [loop]
+
+fn loop(id: Int, seen: Int) -> Int
+    ? "Claims the handle of id, adds it to seen, and loops until id runs down to zero."
+    ! [Pool.claim, yield]
+    handle = Pool.claim(id)
+    match id
+        0 -> seen + handle
+        _ -> loop(id - 1, seen + handle)

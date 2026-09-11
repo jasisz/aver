@@ -509,12 +509,14 @@ impl Program {
         let mut loading = vec![target_key];
         validate_program_module_name(module, &module.dep_name)?;
         collect_dependency_keys(module, &by_name, &mut reachable, &mut loading)?;
-        Ok(self
+        let mut modules: Vec<LoadedModule> = self
             .modules
             .iter()
             .filter(|candidate| reachable.contains(&canonicalize_path(&candidate.path)))
             .map(ProgramModule::as_loaded)
-            .collect())
+            .collect();
+        crate::ir::pipeline::lower_loaded_yield_modules(&mut modules);
+        Ok(modules)
     }
 }
 
@@ -883,6 +885,7 @@ pub fn load_module_tree_from_map(
     for dep in root_deps {
         load_recursive_from_map(dep, files, &mut loaded, &mut loading, &mut result)?;
     }
+    crate::ir::pipeline::lower_loaded_yield_modules(&mut result);
     Ok(result)
 }
 
@@ -978,11 +981,13 @@ pub fn load_module_tree(
         let resolved = walk.resolve(name, None)?;
         walk.load(name, resolved)?;
     }
-    Ok(walk
+    let mut modules: Vec<LoadedModule> = walk
         .modules
         .into_iter()
         .map(|module| module.as_loaded())
-        .collect())
+        .collect();
+    crate::ir::pipeline::lower_loaded_yield_modules(&mut modules);
+    Ok(modules)
 }
 
 /// Convert pre-loaded modules (parsed virtual-fs items from the

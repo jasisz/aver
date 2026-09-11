@@ -1194,7 +1194,25 @@ impl TypeChecker {
                     } else {
                         self.current_fn_line.unwrap_or(1)
                     };
-                    for effect in &effects {
+                    // Decision 4 of jasisz/aver#1329: a yielding function is
+                    // called only through its generated entry points, so the
+                    // recipe replaces every propagation error for this call —
+                    // the caller must not declare `yield`, it must call
+                    // `__fStart`. A bare callee is the yield lowering's own
+                    // business (it scans the module it lowers); a qualified
+                    // one lives in a dependency module the lowering never
+                    // sees, and only the checker knows its effects.
+                    let calls_a_yield_fn = callee_name.contains('.')
+                        && effects
+                            .iter()
+                            .any(|e| e == crate::yield_lowering::YIELD_EFFECT);
+                    if calls_a_yield_fn {
+                        self.error_at_line(
+                            err_line,
+                            crate::yield_lowering::direct_call_recipe(caller_name, &callee_name),
+                        );
+                    }
+                    for effect in effects.iter().filter(|_| !calls_a_yield_fn) {
                         // A direct callback parameter typed `Fn(...) ! [_]`
                         // forwards the concrete callback's effects to the
                         // outer call site. `_` is not an effect the helper

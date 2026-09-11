@@ -5731,3 +5731,67 @@ fn error_propagation_inside_a_yield_function_lowers() {
         errs.join("\n  ")
     );
 }
+
+// ---------------------------------------------------------------------------
+// `yield` across the module boundary (jasisz/aver#1329, phase one)
+//
+// A dependency is lowered by the loader before any importer reads it
+// (`pipeline::lower_loaded_yield_modules`), so an importer sees the protocol
+// the exporter now exposes and never the function the lowering removed.
+// ---------------------------------------------------------------------------
+
+fn yield_cross_module_root() -> String {
+    format!(
+        "{}/tests/fixtures/yield_cross_module",
+        env!("CARGO_MANIFEST_DIR")
+    )
+}
+
+fn front_errors_against(src: &str, base_dir: &str) -> Vec<String> {
+    let mut items = parse(src);
+    let user_program_len = items.len();
+    aver::ir::pipeline::front_gate(
+        &mut items,
+        &aver::ir::TypecheckMode::Full {
+            base_dir: Some(base_dir),
+        },
+        user_program_len,
+    )
+    .errors
+    .into_iter()
+    .map(|e| e.message)
+    .collect()
+}
+
+#[test]
+fn an_importer_resolves_the_generated_protocol_of_a_dependency() {
+    let src = include_str!("fixtures/yield_cross_module/main.av");
+    let errs = front_errors_against(src, &yield_cross_module_root());
+    assert!(
+        errs.is_empty(),
+        "unexpected errors:\n  {}",
+        errs.join("\n  ")
+    );
+}
+
+#[test]
+fn a_plain_call_into_a_dependency_yield_function_gets_the_qualified_recipe() {
+    let src = "module Client\n    intent = \"Calls the library's yielding function as if it were an ordinary one.\"\n    depends [Looper]\n    exposes [total]\n\nfn total() -> Int\n    ? \"Sums the handles Looper hands out.\"\n    Looper.loop(2, 0)\n";
+    let errs = front_errors_against(src, &yield_cross_module_root());
+    assert!(
+        errs.iter().any(|e| e.contains(
+            "'Looper.loop' yields; call 'Looper.__loopStart(...)' and answer its requests"
+        )),
+        "expected the qualified recipe, got:\n  {}",
+        errs.join("\n  ")
+    );
+    // Addendum 2: the recipe replaces the propagation error, and the
+    // removed name never reads as a typo.
+    for error in &errs {
+        assert!(
+            !error.contains("does not declare it") && !error.contains("Unknown member"),
+            "the recipe should be the only word on this call:\n  {}",
+            errs.join("\n  ")
+        );
+    }
+}

@@ -145,6 +145,24 @@ fn tail_stop_lean_check_builds_with_zero_errors_and_no_sorry() {
     );
 }
 
+// ── Across the module boundary: the importer drives the dependency ──────
+
+/// The loader lowers a dependency before any importer reads it, so what
+/// `CrossModule` sees of `Looper` is the protocol `Looper` now exposes:
+/// `Looper.__loopStart`, `Looper.__LoopOutcome` and the answer functions.
+#[test]
+fn cross_module_runs_and_verifies_on_the_vm() {
+    assert_runs_and_prints("yield_cross_module", &["run"], "total = 6");
+    assert_verify_passes("yield_cross_module", &["verify"], "4/4");
+}
+
+#[cfg(feature = "wasm")]
+#[test]
+fn cross_module_runs_and_verifies_on_wasm_gc() {
+    assert_runs_and_prints("yield_cross_module", &["run", "--wasm-gc"], "total = 6");
+    assert_verify_passes("yield_cross_module", &["verify", "--wasm-gc"], "4/4");
+}
+
 // ── The generated Aver, verbatim ────────────────────────────────────────
 
 /// The generated items are ordinary types and pure functions of the
