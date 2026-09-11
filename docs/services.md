@@ -637,7 +637,20 @@ work = "Node.validate"
 
 `work` names one module-qualified function of the same program, `validate(task: T) -> R`, with no effect list: a job runs off the turn, so the function that runs it must be pure, and its parameter and result must be exactly the `begin` task type and the `take` payload type — the same type of the same module, not merely a record of the same name. `work` is mutually exclusive with the `crate`/`package`/`factory` binding a native Rust provider uses — a job kind is answered by the program, never by a host package — and one capability takes one binding. A Work-shaped capability with no binding, a binding naming a function that does not exist, has effects, or has the wrong types, is `error[work-binding]`, reported at the program door by `aver run`, `aver check` and `aver verify` rather than silently changing what the program means. A capability module checked on its own is not yet a program, so it needs no binding.
 
-No backend runs a job in this build: a program that calls `begin` on the VM reports `error[capability-provider-missing]` for that operation, and the job engine that answers it is the next change. The bytecode VM is where the first one will run, so `aver compile --target rust`, `--target wasm-gc`, `--target wasip2` and `aver run --wasm-gc` / `--wasip2` already refuse a program with a job kind with `error[work-target]`; those backends follow later still.
+The bytecode VM runs a job: `begin` starts the bound function on its own thread and returns the handle at once, `take` answers `Ok(None)` while the job runs and `Ok(Some(result))` once it finished, `Work.cancel` stops it, and `Wait.poll` returns as soon as a socket is ready, a job settles, or the timeout elapses. `begin` never blocks the turn: at the job limit it answers `Err("work: job limit N reached")`. A second `take` of the same job answers `Err("work: job already taken")`, and taking a cancelled job answers `Err("work: job cancelled")`. When the program ends, jobs still running are cancelled and the runtime waits for them only briefly.
+
+How many jobs may run at once is a deployment choice, so it lives in the manifest too. Without it a program gets the host's own available parallelism:
+
+```toml
+[work]
+max-jobs = 4
+```
+
+`max-jobs` must be a positive integer; zero would mean a program that can never start a job, and is refused when `aver.toml` is read.
+
+Recording a turn records `begin` with its task and the handle it minted, `take` with the answer it gave, and `poll` with the keys it reported, exactly as `Tcp.dial` records a `Dial`. Replaying it hands the program the recorded answers back in the turns they were recorded in — a faster or slower machine must not move a result into a different turn — and runs the bound function again beside them, because a job is pure and recomputing it is the check worth having. When a recorded `take` said `Some(v)` and the recomputation produces a different value, replay stops and names the job kind, the job and both values. A job whose recording ends before anything took it is cancelled when the recording ends.
+
+Only the bytecode VM answers a job in this build. `aver compile --target rust`, `--target wasm-gc`, `--target wasip2` and `aver run --wasm-gc` / `--wasip2` refuse a program with a job kind with `error[work-target]`; those backends follow later.
 
 ### `Random` namespace — use granular effects (`! [Random.int]`, `! [Random.float]`)
 
