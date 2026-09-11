@@ -156,13 +156,30 @@ fn the_segment_before_a_request_carries_the_effect_it_performs() {
     );
 }
 
+/// A `yield` function may name a whole namespace in its effect list, and an
+/// operation of it performed in place is named by the operation, not by the
+/// namespace: the generated segment declares `Console.print`. That bare entry
+/// is the path the stop predicate used to read and decision 4 repurposed, so
+/// one fixture keeps it walked.
+#[test]
+fn a_namespace_effect_entry_names_the_operation_the_segment_performs() {
+    assert_runs_and_prints("yield_namespace_effect", &["run"], "total = 9");
+    assert_verify_passes("yield_namespace_effect", &["verify"], "2/2");
+    let (lowered, generated, _) = lower_fixture("yield_namespace_effect");
+    assert_eq!(lowered, vec!["walk".to_string()]);
+    assert!(
+        generated.contains("! [Console.print]"),
+        "the namespace entry admits the operation and the segment declares it:\n{generated}"
+    );
+}
+
 // ── A program that answers a capability runs on the VM ──────────────────
 
-/// The reply sums of an answered capability carry `Wait.Wake`, so the
-/// capability module depends on `Wait` — a reserved contract only the VM
-/// answers in this build. Every door that prepares a non-VM target therefore
-/// refuses the program by name, as it already refuses a job kind. The VM runs
-/// and verifies all of these, above.
+/// A marked capability's generated reply types carry `Wait.Wake`, a sum that
+/// reaches `Work.Job`, and no backend but the VM has a representation for one.
+/// So every door that prepares a non-VM target refuses a program that answers
+/// a capability, by name and for that reason, as it already refuses a job
+/// kind. The VM runs and verifies all of these, above.
 #[cfg(feature = "wasm")]
 #[test]
 fn an_answered_capability_is_refused_on_wasm_gc() {
@@ -182,7 +199,8 @@ fn an_answered_capability_is_refused_on_wasm_gc() {
         );
         assert!(
             text.contains("error[work-target]")
-                && text.contains("a reserved contract only the VM answers"),
+                && text.contains("is answered by module")
+                && text.contains("no representation for yet"),
             "{fixture}:\n{}",
             format_output(&out)
         );
