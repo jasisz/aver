@@ -81,12 +81,10 @@ enum Ret {
         live: Vec<String>,
         takes_value: bool,
     },
-    /// It is bound and the (already lowered, statement-free) rest
-    /// follows in place: `match v` / `bind -> body`.
-    Inline {
-        bind: Option<String>,
-        body: Spanned<Expr>,
-    },
+    /// The (already lowered, statement-free) rest follows in place, with
+    /// no binder: nothing built this join over a bound value, so `body`
+    /// never needs to see one substituted in.
+    Inline { body: Spanned<Expr> },
 }
 
 impl Ret {
@@ -94,11 +92,9 @@ impl Ret {
         match self {
             Ret::Done => Vec::new(),
             Ret::Join { live, .. } => live.clone(),
-            Ret::Inline { bind, body } => {
-                let mut bound = HashSet::new();
-                bound.extend(bind.iter().cloned());
+            Ret::Inline { body } => {
                 let mut out = HashSet::new();
-                free_idents(body, &bound, &mut out);
+                free_idents(body, &HashSet::new(), &mut out);
                 out.into_iter().collect()
             }
         }
@@ -125,11 +121,8 @@ pub(super) struct Generated {
     pub items: Vec<TopLevel>,
 }
 
-pub(super) fn lower_fn(
-    fd: &FnDef,
-    yield_fns: &HashSet<String>,
-) -> Result<Generated, Vec<TypeError>> {
-    let mut lowering = Lowering::new(fd, yield_fns);
+pub(super) fn lower_fn(fd: &FnDef) -> Result<Generated, Vec<TypeError>> {
+    let mut lowering = Lowering::new(fd);
     match lowering.run() {
         Ok(generated) => Ok(generated),
         Err(()) => Err(lowering.errors),
@@ -151,7 +144,7 @@ struct Lowering<'a> {
 }
 
 impl<'a> Lowering<'a> {
-    fn new(fd: &'a FnDef, _yield_fns: &HashSet<String>) -> Self {
+    fn new(fd: &'a FnDef) -> Self {
         let effect_entries: Vec<String> = fd
             .effects
             .iter()
@@ -347,7 +340,7 @@ impl<'a> Lowering<'a> {
         line: usize,
     ) -> Result<String, ()> {
         let stamped = stamped_use(rest, tail, name).or_else(|| match ret {
-            Ret::Inline { body, .. } => stamped_use(&[], body, name),
+            Ret::Inline { body } => stamped_use(&[], body, name),
             Ret::Done | Ret::Join { .. } => None,
         });
         if let Some(ty) = stamped {
@@ -748,14 +741,7 @@ impl<'a> Lowering<'a> {
                 }
                 call(name, args, line)
             }
-            Ret::Inline { bind, body } => match bind {
-                Some(bind) => {
-                    let mut body = body.clone();
-                    substitute_free(&mut body, bind, &value);
-                    body
-                }
-                None => body.clone(),
-            },
+            Ret::Inline { body } => body.clone(),
         }
     }
 
@@ -979,10 +965,7 @@ impl<'a> Lowering<'a> {
         // subject type by every backend. A continuation function binds it
         // as a parameter instead.
         let inner_ret = if segment.stmts.is_empty() && !uses_bind {
-            Ret::Inline {
-                bind: None,
-                body: segment.tail,
-            }
+            Ret::Inline { body: segment.tail }
         } else {
             let value_type = value_type.unwrap_or_default();
             let (name, _) = self.join_fn(

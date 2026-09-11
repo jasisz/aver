@@ -196,7 +196,7 @@ pub fn lower(
             out.push(item);
             continue;
         }
-        match lower::lower_fn(fd, &yield_fns) {
+        match lower::lower_fn(fd) {
             Ok(generated) => {
                 report.lowered.push(fd.name.clone());
                 report.generated.extend(generated.items.iter().cloned());
