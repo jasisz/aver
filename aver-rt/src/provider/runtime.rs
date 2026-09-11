@@ -287,7 +287,7 @@ impl NativeProviderRegistry {
             .any(|binding| binding.id == handle.binding_id);
         if !known {
             return Err(format!(
-                "resource '{expected_type}' belongs to a provider binding this program does not have"
+                "resource '{expected_type}' belongs to a different provider binding"
             ));
         }
         self.resources

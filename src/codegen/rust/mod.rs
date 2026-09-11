@@ -2782,6 +2782,7 @@ fn main() -> Result<String, String>
             shape_layers: Vec::new(),
             shape_expected: Vec::new(),
             provider_manifest: None,
+            work_max_jobs: None,
         });
 
         let out = transpile(&mut ctx);
@@ -2877,6 +2878,7 @@ fn main() -> Result<Tuple<Int, Int>, String>
             shape_layers: Vec::new(),
             shape_expected: Vec::new(),
             provider_manifest: None,
+            work_max_jobs: None,
         });
 
         let out = transpile(&mut ctx);

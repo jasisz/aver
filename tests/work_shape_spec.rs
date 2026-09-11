@@ -86,26 +86,23 @@ fn a_job_kind_the_program_actually_calls_passes_every_door() {
     let out = aver("work_shape_used", &["check"]);
     assert!(out.status.success(), "{}", format_output(&out));
 
-    // No backend runs a job yet, so the VM reports the missing provider for
-    // the operation itself; what it must never do is demand a Rust provider
-    // package for a capability the manifest already binds to a function.
+    // The VM answers the job kind from the manifest binding; what it must
+    // never do is demand a Rust provider package for a capability the
+    // manifest already binds to a function of the program.
     let out = aver("work_shape_used", &["run"]);
     let text = combined(&out);
+    assert!(out.status.success(), "{}", format_output(&out));
     assert!(
         !text.contains("missing required custom capability binding"),
         "a work binding satisfies static composition:\n{}",
         format_output(&out)
     );
     assert!(
-        text.contains("capability provider missing for 'Validation.begin'"),
-        "{}",
+        !text.contains("capability provider missing for 'Validation.begin'"),
+        "a bound job kind has its provider:\n{}",
         format_output(&out)
     );
-    assert!(
-        text.contains("is a job kind bound to work = \"Node.validate\""),
-        "{}",
-        format_output(&out)
-    );
+    assert!(text.contains("job started"), "{}", format_output(&out));
 }
 
 // ── work-shape ──────────────────────────────────────────────────────────

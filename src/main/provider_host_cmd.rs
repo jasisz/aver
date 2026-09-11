@@ -527,8 +527,8 @@ pub(super) fn missing_provider_repair(
     });
     if let Some(binding) = work_binding {
         return Some(format!(
-            "hint: capability '{capability}' is a job kind bound to work = \"{}\", and no backend runs a job in this build yet.\n\
-             Nothing else is missing: the binding is what will start '{}' off the turn once jobs run.",
+            "hint: capability '{capability}' is a job kind bound to work = \"{}\", and only the bytecode VM runs a job in this build.\n\
+             Run it on the VM with `aver {command} {file} --module-root {module_root}`; nothing else is missing, because the binding is what starts '{}' off the turn.",
             binding.function, binding.function
         ));
     }
