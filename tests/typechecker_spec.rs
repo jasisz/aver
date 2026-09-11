@@ -5795,3 +5795,44 @@ fn a_plain_call_into_a_dependency_yield_function_gets_the_qualified_recipe() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// What a bare name in an effect list may be (jasisz/aver#1329, addendum 1)
+// ---------------------------------------------------------------------------
+
+const UNKNOWN_EFFECT_RECIPE: &str = "an effect is a capability operation written 'Namespace.operation', a whole capability namespace written 'Namespace', or the language's own 'yield'";
+
+#[test]
+fn an_unknown_bare_effect_in_a_function_list_names_itself_with_the_recipe() {
+    let src = "module Demo\n\nfn go(n: Int) -> Int\n    ? \"Adds one.\"\n    ! [foo]\n    n + 1\n";
+    assert_front_error_containing(src, "Unknown effect 'foo'");
+    assert_front_error_containing(src, UNKNOWN_EFFECT_RECIPE);
+}
+
+#[test]
+fn an_unknown_bare_effect_in_a_module_list_names_itself_with_the_recipe() {
+    let src =
+        "module Demo\n    effects [foo]\n\nfn go(n: Int) -> Int\n    ? \"Adds one.\"\n    n + 1\n";
+    assert_front_error_containing(src, "Unknown effect 'foo'");
+    assert_front_error_containing(src, UNKNOWN_EFFECT_RECIPE);
+}
+
+/// The rule exists for this: `yeild` used to buy neither the effect nor a
+/// word about it, so the function silently kept running as written.
+#[test]
+fn a_misspelled_yield_is_an_unknown_effect() {
+    let src =
+        "module Demo\n\nfn go(n: Int) -> Int\n    ? \"Adds one.\"\n    ! [yeild]\n    n + 1\n";
+    assert_front_error_containing(src, "Unknown effect 'yeild'");
+}
+
+#[test]
+fn a_capability_namespace_and_yield_stay_legal_bare_effects() {
+    let src = "module Demo\n    effects [Console, yield]\n\nfn talk(n: Int) -> Int\n    ? \"Greets n times.\"\n    ! [Console, yield]\n    Console.print(\"hi\")\n    match n\n        0 -> 0\n        _ -> talk(n - 1)\n";
+    let errs = front_errors(src);
+    assert!(
+        errs.is_empty(),
+        "unexpected errors:\n  {}",
+        errs.join("\n  ")
+    );
+}

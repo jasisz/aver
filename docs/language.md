@@ -404,7 +404,7 @@ This is intentionally narrower than “all recursion”. Non-tail recursion can 
 
 ## Yielding functions
 
-A function whose effect list names `yield` hands control back at every effect call instead of performing it. The function is written in direct style — read, then the next step — but it never runs as written: the compiler cuts it at every stop and turns it into plain data and pure functions, and a coordinator you write performs the operations and feeds the answers back. `yield` is an effect like any other: it appears in the function's `! [...]` and it must be covered by the module's `effects [...]`. A yielding function is called only through its generated entry points: `__<fn>Start` and the answer functions are pure, so a coordinator that calls them declares no `yield`.
+A function whose effect list names `yield` hands control back at every effect call instead of performing it. The function is written in direct style — read, then the next step — but it never runs as written: the compiler cuts it at every stop and turns it into plain data and pure functions, and a coordinator you write performs the operations and feeds the answers back. `yield` is an effect like any other: it appears in the function's `! [...]` and it must be covered by the module's `effects [...]`. A bare name in an effect list — a function's `! [...]` or a module's `effects [...]` — is either `yield` or a capability namespace such as `Console`; anything else is an error naming the unknown effect, so a misspelled `yeild` cannot pass for one. A yielding function is called only through its generated entry points: `__<fn>Start` and the answer functions are pure, so a coordinator that calls them declares no `yield`.
 
 ```aver
 fn loop(id: Int, done: Int) -> Int
