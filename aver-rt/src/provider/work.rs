@@ -54,7 +54,7 @@ impl CapabilityProvider for StandardWorkProvider {
                     ));
                 };
                 job(operation, handle)?.cancel();
-                Ok(ProviderValue::ResultOk(Box::new(ProviderValue::Unit)))
+                Ok(ProviderValue::Unit)
             }
             other => Err(ProviderFault::new(
                 "unknown_operation",

@@ -8,7 +8,7 @@ fn main() -> Result<Unit, String>
     ? "Starts one long countdown, cancels it, and prints why it cannot be taken."
     ! [Console.print, Validation.begin, Validation.take, Work.cancel]
     job = Validation.begin(400000000)?
-    Work.cancel(job)?
+    Work.cancel(job)
     match Validation.take(job)
         Result.Ok(_answer) -> Result.Err("work: a cancelled job still answered")
         Result.Err(reason) -> said(reason)

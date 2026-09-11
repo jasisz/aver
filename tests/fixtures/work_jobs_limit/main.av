@@ -17,3 +17,4 @@ fn said(first: Work.Job, reason: String) -> Result<Unit, String>
     ! [Console.print, Work.cancel]
     Console.print(reason)
     Work.cancel(first)
+    Result.Ok(Unit)
