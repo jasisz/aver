@@ -1,0 +1,9 @@
+module Main
+    depends [Node, Validation]
+    intent = "A job kind bound to a function that takes a same-named record, where the name is also a standard module name."
+    effects [Console]
+
+fn main() -> Unit
+    ? "Reports that the job kind is wired."
+    ! [Console.print]
+    Console.print("jobs ready")

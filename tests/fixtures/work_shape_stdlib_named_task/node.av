@@ -1,0 +1,11 @@
+module Node
+    intent = "A function whose own record shares a standard module name."
+    effects []
+    exposes [validate, Http]
+
+record Http
+    label: Int
+
+fn validate(task: Http) -> Int
+    ? "Scores one task by its label."
+    task.label
