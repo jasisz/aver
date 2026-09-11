@@ -828,7 +828,14 @@ impl<'a> Lowering<'a> {
             ident("__answer", line)
         };
         // Reserve the variant's place before the continuation registers
-        // the stops after it, so variants keep source order.
+        // the stops after it, so two stops of the same kind on one
+        // straight-line path number in source order. That guarantee does
+        // not reach across a join: `emit_join` lowers the arms' shared
+        // tail before the arms themselves (the tail's join function has
+        // to exist, by name, for an arm to call it), so a stop in the
+        // code after a `match` can claim an earlier number than a stop
+        // inside one of the match's own arms, even though the arm's stop
+        // reads first in the source.
         let slot = self.kinds[kind].variants.len();
         self.kinds[kind].variants.push(Variant {
             name: variant.clone(),
