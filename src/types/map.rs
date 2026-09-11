@@ -69,7 +69,9 @@ fn sort_entries_nv(entries: &mut [(NanValue, NanValue)], arena: &Arena) {
 /// so ordering by it would make a neutral refactor change how every map on
 /// that key iterates. A variant orders by constructor name for the same
 /// reason, then by its payload.
-fn compare_keys(a: &Value, b: &Value) -> Ordering {
+/// The one order a map shows its keys in, shared with the replay codec so a
+/// recording lists entries the way every other door does.
+pub(crate) fn compare_keys(a: &Value, b: &Value) -> Ordering {
     fn seq(xs: &[Value], ys: &[Value]) -> Ordering {
         for (x, y) in xs.iter().zip(ys.iter()) {
             let ord = compare_keys(x, y);

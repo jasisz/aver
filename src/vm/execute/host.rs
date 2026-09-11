@@ -475,6 +475,8 @@ impl VM {
             }
         }
 
+        self.prepare_work_provider(&name);
+
         self.runtime.invoke_capability(
             &self.code.symbols,
             symbol_id,
@@ -482,5 +484,31 @@ impl VM {
             args,
             &mut self.arena,
         )
+    }
+
+    /// Hand a job kind the compiled program its jobs run, the first time the
+    /// program reaches one of its operations.
+    ///
+    /// It cannot be handed over earlier: a job's body is an ordinary function
+    /// of this program, so it needs the globals, and the globals are only
+    /// initialised once the VM has run the top level. The freeze itself is
+    /// the same one `(a, b)!` uses for its branches.
+    fn prepare_work_provider(&mut self, operation: &str) {
+        let Some((module, _)) = operation.rsplit_once('.') else {
+            return;
+        };
+        if !self
+            .runtime
+            .provider_registry()
+            .work_needs_base_context(module)
+        {
+            return;
+        }
+        let (code, globals, arena) = self.build_parallel_base_context();
+        self.runtime
+            .provider_registry()
+            .install_work_base_context(std::sync::Arc::new(crate::provider::WorkBaseContext::new(
+                code, globals, arena,
+            )));
     }
 }

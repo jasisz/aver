@@ -504,6 +504,9 @@ files      = ["domain/scriptcases*.av"]
 step-limit = 50_000_000          # raise the per-case budget for this fn
 max-cases  = 40_000              # raise the case ceiling for this fn
 reason     = "Bitcoin Core corpus includes consensus-max 10,000-byte scripts"
+
+[work]
+max-jobs = 4                     # jobs running at once (default: host parallelism)
 ```
 
 Effect-host / path / key allowlists narrow which hosts, files, and env keys the runtime will admit. Tcp's positive-integer settings configure connection establishment, one-shot request idle timeouts, and one shared limit for established/accepted connections plus in-flight dials; they never impose a deadline on persistent session I/O. Unknown or misplaced keys inside an effect section are errors. `[[check.suppress]]` lets a project waive specific lint slugs in specific paths, optionally for one exact function, with a reason.
@@ -518,6 +521,8 @@ Disk path patterns have deliberately small, explicit semantics:
 | `**` | Invalid; use `./**` or `/**` to state the intended boundary |
 
 An empty pattern, unsupported `*` placement, or a `..`-rooted pattern is also a config-load error. An absent `paths` key or `paths = []` keeps the existing allow-all behavior. Matching is string-only: Aver normalizes `.` and `..` in the caller-supplied path without resolving it against the working directory or touching the filesystem. A project-relative pattern therefore does not admit an absolute spelling of the same in-project file.
+
+`[work] max-jobs` bounds how many jobs a program runs at once. It must be a positive integer; without it a program gets the host's own available parallelism. At the limit, a job kind's `begin` answers `Err("work: job limit N reached")` instead of blocking the turn.
 
 `[verify]` budgets in detail:
 

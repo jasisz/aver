@@ -1,0 +1,11 @@
+module Node
+    intent = "A function whose own Task record is not the capability's Task record."
+    effects []
+    exposes [validate, Task]
+
+record Task
+    label: Int
+
+fn validate(task: Task) -> Int
+    ? "Scores one task by its label."
+    task.label

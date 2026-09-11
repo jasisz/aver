@@ -1,0 +1,20 @@
+module Main
+    depends [Node, Validation, Work]
+    intent = "Shows that a second job refuses at the limit instead of blocking the turn."
+    exposes [main]
+    effects [Console.print, Validation.begin, Work.cancel]
+
+fn main() -> Result<Unit, String>
+    ? "Starts one long countdown, asks for a second one at a limit of one, and prints the refusal."
+    ! [Console.print, Validation.begin, Work.cancel]
+    first = Validation.begin(400000000)?
+    match Validation.begin(1)
+        Result.Ok(_second) -> Result.Err("work: the job limit did not hold")
+        Result.Err(reason) -> said(first, reason)
+
+fn said(first: Work.Job, reason: String) -> Result<Unit, String>
+    ? "Says why the second job was refused and stops the first one."
+    ! [Console.print, Work.cancel]
+    Console.print(reason)
+    Work.cancel(first)
+    Result.Ok(Unit)

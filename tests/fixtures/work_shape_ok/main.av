@@ -1,0 +1,9 @@
+module Main
+    depends [Node, Validation]
+    intent = "A program whose Validation job kind is bound to a pure function."
+    effects [Console]
+
+fn main() -> Unit
+    ? "Reports that the job kind is wired."
+    ! [Console.print]
+    Console.print("jobs ready")

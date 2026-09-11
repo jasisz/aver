@@ -77,7 +77,7 @@ pub(super) fn validate_hostile_profiles(
     }
 }
 
-fn canonicalize_type_names(ty: Type, scope: &str) -> Type {
+pub(super) fn canonicalize_type_names(ty: Type, scope: &str) -> Type {
     match ty {
         Type::Named { id, name } => {
             if name.contains('.') || name == crate::types::branch_path::TYPE_NAME {
@@ -144,6 +144,23 @@ pub(super) fn validate_operation_boundaries(
                 minted_resource(scope, ok, resources, tainted)
             }
             Type::Option(inner) => minted_resource(scope, inner, resources, tainted),
+            // A resource this capability declares itself is minted under this
+            // capability's own name.
+            Type::Named { name, .. }
+                if !name.contains('.')
+                    && resources.contains(name.rsplit('.').next().unwrap_or(name)) =>
+            {
+                Ok(Some(format!("{scope}.{name}")))
+            }
+            // A resource another embedded capability declares keeps that
+            // capability's name: `Validation.begin` mints a `Work.Job`, not a
+            // `Validation.Job`, and every reader of the handle agrees on which
+            // type it is.
+            Type::Named { name, .. }
+                if crate::stdlib::embedded_capability_resources().contains(name) =>
+            {
+                Ok(Some(name.clone()))
+            }
             Type::Named { name, .. }
                 if resources.contains(name.rsplit('.').next().unwrap_or(name)) =>
             {
@@ -423,8 +440,20 @@ impl BoundaryTypeVisitor<'_, '_> {
                         .iter()
                         .any(|dependency| dependency == "Bytes")
                     && matches!(name.as_str(), "Bytes" | "Bytes.Bytes");
+                // A compiler-embedded capability resource is representation-less:
+                // there is no layout for `contract_hash` to bind, and the owning
+                // contract ships with the compiler. Naming one still requires an
+                // explicit `depends`, so a coincidental local spelling cannot
+                // acquire the privilege.
+                let is_embedded_resource = name.split_once('.').is_some_and(|(owner, _)| {
+                    self.dependencies
+                        .iter()
+                        .any(|dependency| dependency == owner)
+                }) && crate::stdlib::embedded_capability_resources()
+                    .contains(name);
                 if !belongs_to_capability
                     && !is_standard_bytes
+                    && !is_embedded_resource
                     && self.seen.insert((position.to_string(), name.to_string()))
                 {
                     self.errors.push(CapabilityError::at(

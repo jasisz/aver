@@ -78,8 +78,15 @@ pub(super) fn to_provider_value(
             if !contracts.resource_types().any(|known| known == &canonical) {
                 return Err(format!("type '{}' is not a capability resource", canonical));
             }
+            // A resource is minted by whichever capability returns it, which
+            // need not be the capability that declares the type: `Work.Job` is
+            // declared by `Work`, minted by every job kind, and read by `Work`
+            // and `Wait`. Binding identity therefore cannot decide on its own.
+            // Prefer it where it holds, and otherwise accept a handle whose
+            // type matches and whose minting binding is still installed.
             native
                 .resolve_resource(scope, &canonical, handle)
+                .or_else(|_| native.resolve_foreign_resource(&canonical, handle))
                 .map(ProviderValue::Resource)
         }
         (Type::Named { name, .. }, value) => {

@@ -894,3 +894,32 @@ pub fn replay_effect_error_diagnostic(
         from_hostile: false,
     }
 }
+
+/// Build a `Diagnostic` for one `work-shape` / `work-binding` / `work-target`
+/// finding. The whole program owns these, so they are anchored on the module
+/// declaration of the file being analysed rather than on a single expression.
+pub(crate) fn work_diagnostic(
+    finding: &crate::capability::work::WorkDiagnostic,
+    line: usize,
+    source_index: &SourceIndex<'_>,
+    file: &str,
+) -> Diagnostic {
+    Diagnostic {
+        severity: Severity::Error,
+        slug: finding.slug,
+        summary: finding.message.clone(),
+        span: Span {
+            file: file.to_string(),
+            line,
+            col: 0,
+        },
+        fn_name: None,
+        intent: None,
+        fields: Vec::new(),
+        conflict: None,
+        repair: Repair::default(),
+        regions: AnnotatedRegion::single(source_index.extract(line, 0), None),
+        related: Vec::new(),
+        from_hostile: false,
+    }
+}

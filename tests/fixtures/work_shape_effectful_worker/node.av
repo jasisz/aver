@@ -1,0 +1,10 @@
+module Node
+    intent = "An effectful function a job may not be bound to."
+    effects [Console]
+    exposes [validate]
+
+fn validate(task: String) -> Int
+    ? "Scores one task and says so out loud."
+    ! [Console.print]
+    Console.print(task)
+    String.len(task)

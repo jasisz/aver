@@ -21,10 +21,12 @@ pub(crate) enum StandardCapabilityBinding {
     Tcp,
     Terminal,
     Time,
+    Wait,
+    Work,
 }
 
 impl StandardCapabilityBinding {
-    pub(crate) const ALL: [Self; 10] = [
+    pub(crate) const ALL: [Self; 12] = [
         Self::Args,
         Self::Console,
         Self::Disk,
@@ -35,6 +37,8 @@ impl StandardCapabilityBinding {
         Self::Tcp,
         Self::Terminal,
         Self::Time,
+        Self::Wait,
+        Self::Work,
     ];
 
     pub(crate) const fn module(self) -> &'static str {
@@ -49,6 +53,8 @@ impl StandardCapabilityBinding {
             Self::Tcp => "Tcp",
             Self::Terminal => "Terminal",
             Self::Time => "Time",
+            Self::Wait => "Wait",
+            Self::Work => "Work",
         }
     }
 
@@ -64,6 +70,8 @@ impl StandardCapabilityBinding {
             Self::Tcp => Arc::new(aver_rt::provider::StandardTcpProvider::default()),
             Self::Terminal => Arc::new(aver_rt::provider::StandardTerminalProvider),
             Self::Time => Arc::new(aver_rt::provider::StandardTimeProvider),
+            Self::Wait => Arc::new(aver_rt::provider::StandardWaitProvider),
+            Self::Work => Arc::new(aver_rt::provider::StandardWorkProvider),
         }
     }
 
@@ -79,6 +87,8 @@ impl StandardCapabilityBinding {
             Self::Tcp => "aver_rt::provider::StandardTcpProvider",
             Self::Terminal => "aver_rt::provider::StandardTerminalProvider",
             Self::Time => "aver_rt::provider::StandardTimeProvider",
+            Self::Wait => "aver_rt::provider::StandardWaitProvider",
+            Self::Work => "aver_rt::provider::StandardWorkProvider",
         }
     }
 
@@ -94,6 +104,8 @@ impl StandardCapabilityBinding {
             Self::Tcp => aver_rt::provider::STANDARD_TCP_FINGERPRINT,
             Self::Terminal => aver_rt::provider::STANDARD_TERMINAL_FINGERPRINT,
             Self::Time => aver_rt::provider::STANDARD_TIME_FINGERPRINT,
+            Self::Wait => aver_rt::provider::STANDARD_WAIT_FINGERPRINT,
+            Self::Work => aver_rt::provider::STANDARD_WORK_FINGERPRINT,
         }
     }
 
@@ -157,6 +169,16 @@ impl StandardCapabilityBinding {
             }
             (Self::Time, CapabilityTarget::WasmGc) => Some("aver.standard.Time/wasm-gc-imports"),
             (Self::Time, CapabilityTarget::Wasip2) => Some("aver.standard.Time/wasip2-wasi"),
+            (Self::Wait, CapabilityTarget::Vm) => {
+                Some(aver_rt::provider::STANDARD_WAIT_NATIVE_IDENTITY)
+            }
+            (Self::Work, CapabilityTarget::Vm) => {
+                Some(aver_rt::provider::STANDARD_WORK_NATIVE_IDENTITY)
+            }
+            (
+                Self::Wait | Self::Work,
+                CapabilityTarget::Rust | CapabilityTarget::WasmGc | CapabilityTarget::Wasip2,
+            ) => None,
         }
     }
 
@@ -167,6 +189,9 @@ impl StandardCapabilityBinding {
             }
             (Self::Terminal, CapabilityTarget::Wasip2) => {
                 "WASI 0.2 has no portable raw-terminal, cursor, color, key-input, or terminal-size interface"
+            }
+            (Self::Wait | Self::Work, _) => {
+                "jobs and the wait that watches them run on the VM in this build; the Rust, wasm-gc and wasip2 backends follow in a later change"
             }
             _ => {
                 "the compiler ships no binding for this standard capability on the selected target"
@@ -211,9 +236,16 @@ mod tests {
     #[test]
     fn execution_catalog_exactly_covers_embedded_standard_capabilities() {
         let catalog = super::StandardCapabilityBinding::ALL.map(|binding| binding.module());
+        let embedded = crate::stdlib::STANDARD_CAPABILITY_MODULES
+            .iter()
+            .chain(crate::stdlib::RESERVED_CAPABILITY_MODULES)
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>();
         assert_eq!(
-            catalog.as_slice(),
-            crate::stdlib::STANDARD_CAPABILITY_MODULES
+            catalog
+                .into_iter()
+                .collect::<std::collections::BTreeSet<_>>(),
+            embedded
         );
     }
 

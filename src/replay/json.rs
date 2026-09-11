@@ -133,9 +133,14 @@ pub fn value_to_json(value: &Value) -> Result<JsonValue, String> {
             Ok(wrap_marker("$tuple", JsonValue::Array(arr)))
         }
         Value::Map(entries) => {
-            if entries.keys().all(|k| matches!(k, Value::Str(_))) {
+            // A map is sorted by key everywhere the language shows it, and a
+            // recording is compared byte for byte on replay, so the entries
+            // go out in key order and never in the store's internal order.
+            let mut sorted = entries.iter().collect::<Vec<_>>();
+            sorted.sort_by(|(k1, _), (k2, _)| crate::types::map::compare_keys(k1, k2));
+            if sorted.iter().all(|(k, _)| matches!(k, Value::Str(_))) {
                 let mut obj = Map::new();
-                for (k, v) in entries {
+                for (k, v) in sorted {
                     let Value::Str(key) = k else {
                         unreachable!("checked above");
                     };
@@ -143,8 +148,8 @@ pub fn value_to_json(value: &Value) -> Result<JsonValue, String> {
                 }
                 Ok(JsonValue::Object(obj))
             } else {
-                let mut pairs = Vec::with_capacity(entries.len());
-                for (k, v) in entries {
+                let mut pairs = Vec::with_capacity(sorted.len());
+                for (k, v) in sorted {
                     pairs.push(JsonValue::Array(vec![value_to_json(k)?, value_to_json(v)?]));
                 }
                 Ok(wrap_marker("$map", JsonValue::Array(pairs)))

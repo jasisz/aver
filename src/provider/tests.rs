@@ -969,7 +969,7 @@ fn target_manifest_is_total_and_standard_capabilities_have_explicit_rows() {
     .into_iter()
     .collect();
     let manifest = CapabilityTargetManifest::build(&registry, &required).expect("manifest");
-    assert_eq!(manifest.rows().len(), 40);
+    assert_eq!(manifest.rows().len(), 48);
     for (capability, operations, required_operation, native, wasm_gc, wasip2, fingerprint) in [
         (
             "Disk",
@@ -1135,7 +1135,15 @@ fn shipped_provenance_projects_only_provided_manifest_rows() {
                     "Args", "Console", "Disk", "Env", "Http", "Random", "Tcp", "Time",
                 ]
             }
-            CapabilityTarget::Vm | CapabilityTarget::Rust | CapabilityTarget::WasmGc => {
+            // Only the VM answers the job handle and the one wait of a turn
+            // in this build; the other three targets have no row for them.
+            CapabilityTarget::Vm => {
+                vec![
+                    "Args", "Console", "Disk", "Env", "Http", "Process", "Random", "Tcp",
+                    "Terminal", "Time", "Wait", "Work",
+                ]
+            }
+            CapabilityTarget::Rust | CapabilityTarget::WasmGc => {
                 vec![
                     "Args", "Console", "Disk", "Env", "Http", "Process", "Random", "Tcp",
                     "Terminal", "Time",
@@ -1161,6 +1169,8 @@ fn shipped_provenance_projects_only_provided_manifest_rows() {
                 "Tcp" => aver_rt::provider::STANDARD_TCP_FINGERPRINT,
                 "Terminal" => aver_rt::provider::STANDARD_TERMINAL_FINGERPRINT,
                 "Time" => aver_rt::provider::STANDARD_TIME_FINGERPRINT,
+                "Wait" => aver_rt::provider::STANDARD_WAIT_FINGERPRINT,
+                "Work" => aver_rt::provider::STANDARD_WORK_FINGERPRINT,
                 other => panic!("unexpected standard capability {other}"),
             };
             assert_eq!(entry.fingerprint, expected);

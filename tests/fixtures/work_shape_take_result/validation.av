@@ -1,0 +1,16 @@
+module Validation
+    kind = capability
+    semantics = effectful
+    depends [Work]
+    intent = "A job kind whose take has no pending case."
+    exposes [begin, take]
+
+operation begin(task: String) -> Result<Work.Job, String>
+    ? "Starts one validation off the turn and returns its job handle at once."
+    oracle = generativeOutput
+    replay = recorded
+
+operation take(job: Work.Job) -> Result<Int, String>
+    ? "Collects one validation without the pending case."
+    oracle = generativeOutput
+    replay = recorded

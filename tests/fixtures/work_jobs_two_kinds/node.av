@@ -1,0 +1,12 @@
+module Node
+    intent = "The pure functions the two job kinds of this program run."
+    exposes [scoreAlpha, scoreBeta]
+    effects []
+
+fn scoreAlpha(task: String) -> Int
+    ? "Scores one task by its length."
+    String.len(task)
+
+fn scoreBeta(task: String) -> Int
+    ? "Scores one task by twice its length."
+    String.len(task) * 2

@@ -20,7 +20,7 @@ use std::path::Path;
 mod providers;
 pub use providers::{
     PROVIDER_MANIFEST_SCHEMA, ProviderPackageBinding, ProviderPackageManifest,
-    ProviderPackageSource,
+    ProviderPackageSource, ProviderWorkBinding,
 };
 
 /// Runtime policy for a single effect namespace.
@@ -332,6 +332,9 @@ pub struct ProjectConfig {
     pub shape_expected: Vec<ShapeExpected>,
     /// Explicit static Cargo composition for native Rust capability providers.
     pub provider_manifest: Option<ProviderPackageManifest>,
+    /// `[work] max-jobs`: how many jobs of this program may run at once.
+    /// `None` means the host's own available parallelism.
+    pub work_max_jobs: Option<usize>,
 }
 
 impl ProjectConfig {
@@ -475,6 +478,7 @@ impl ProjectConfig {
         let independence_mode = parse_independence_mode(&table)?;
         let (shape_layers, shape_expected) = parse_shape(&table)?;
         let provider_manifest = providers::parse_provider_manifest(&table)?;
+        let work_max_jobs = parse_work_max_jobs(&table)?;
 
         Ok(ProjectConfig {
             effect_policies,
@@ -486,7 +490,14 @@ impl ProjectConfig {
             shape_layers,
             shape_expected,
             provider_manifest,
+            work_max_jobs,
         })
+    }
+
+    /// How many jobs this project lets run at once.
+    pub fn work_max_jobs(&self) -> usize {
+        self.work_max_jobs
+            .unwrap_or_else(aver_rt::work::JobEngine::default_limit)
     }
 
     /// The per-case verify step budget this project asks for, before any
@@ -2719,4 +2730,36 @@ mode = "yolo"
 "#;
         assert!(ProjectConfig::parse(toml).is_err());
     }
+}
+
+/// `[work] max-jobs`: the ceiling on jobs running at once.
+///
+/// A limit of zero would mean a program that can never start a job, which is
+/// a manifest mistake rather than a policy; say so instead of running it.
+fn parse_work_max_jobs(table: &toml::Table) -> Result<Option<usize>, String> {
+    let Some(value) = table.get("work") else {
+        return Ok(None);
+    };
+    let work = value
+        .as_table()
+        .ok_or_else(|| "aver.toml: [work] must be a table".to_string())?;
+    for key in work.keys() {
+        if key != "max-jobs" {
+            return Err(format!("aver.toml: [work] has no key '{key}'"));
+        }
+    }
+    let Some(limit) = work.get("max-jobs") else {
+        return Ok(None);
+    };
+    let limit = limit
+        .as_integer()
+        .ok_or_else(|| "aver.toml: [work].max-jobs must be an integer".to_string())?;
+    if limit < 1 {
+        return Err(format!(
+            "aver.toml: [work].max-jobs must be a positive integer, got {limit}"
+        ));
+    }
+    usize::try_from(limit)
+        .map(Some)
+        .map_err(|_| format!("aver.toml: [work].max-jobs {limit} is larger than this host allows"))
 }

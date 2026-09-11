@@ -1,0 +1,33 @@
+module Wait
+    kind = capability
+    semantics = effectful
+    depends [Tcp, Work]
+    exposes [Item, poll]
+
+type Item
+    Socket(Tcp.Socket)
+    Job(Work.Job)
+
+operation poll(items: Map<Int, Wait.Item>, timeoutMs: Int) -> Result<List<Int>, String>
+    ? "Returns every ready caller-owned key in ascending order from one wait set. A Socket item is ready under exactly the Tcp.poll rule: readable connections under Connected, writable connections under Sending, settled or expired dials, and listeners with a pending client. A Sending key is ready when the next writeNow on that connection will accept at least one byte or fail; a caller who wants both directions for one connection registers two keys. A Job item is ready once its job has finished or was cancelled. False-positive readiness is allowed."
+    oracle = generativeOutput
+    replay = recorded
+    hostile = [pollNoneReady, pollEverythingReady, pollAlwaysErr]
+
+fn pollNoneReady(branch: BranchPath, call: Int, items: Map<Int, Wait.Item>, timeoutMs: Int) -> Result<List<Int>, String>
+    ? "honest: nothing becomes ready before the timeout"
+    match timeoutMs > 9223372036854775807
+        true -> Result.Err("Wait.poll: timeoutMs {timeoutMs} exceeds the poll limit")
+        false -> match timeoutMs < 0 - 9223372036854775808
+            true -> Result.Err("Wait.poll: timeoutMs {timeoutMs} exceeds the poll limit")
+            false -> match timeoutMs < 0
+                true -> Result.Err("Wait.poll: timeoutMs {timeoutMs} is negative")
+                false -> Result.Ok([])
+
+fn pollEverythingReady(branch: BranchPath, call: Int, items: Map<Int, Wait.Item>, timeoutMs: Int) -> Result<List<Int>, String>
+    ? "hostile but legal: every supplied item reports ready, exercising complete dispatch without starving any state"
+    Result.Ok(Map.keys(items))
+
+fn pollAlwaysErr(branch: BranchPath, call: Int, items: Map<Int, Wait.Item>, timeoutMs: Int) -> Result<List<Int>, String>
+    ? "hostile: readiness polling fails"
+    Result.Err("hostile: poll failed")
