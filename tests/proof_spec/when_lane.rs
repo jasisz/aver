@@ -20,6 +20,7 @@ use super::*;
 ///   - the shape-gated `grind` rung closes the unconditional nonlinear
 ///     polynomial ring identity `nrNewErrNum ≍ nrOldErrSq`
 ///     (`s⁴ - d·(x·(2s² - dx)) = (s² - dx)²`).
+///
 /// Only `mulLeTrans` (`a·c ≤ m`, a `prod ≤ var` transitivity needing a
 /// `≤`-chain witness this step does not synthesize) keeps its sound bounded
 /// sampled fallback — bounded, not a sorry. axioms stay within {propext,

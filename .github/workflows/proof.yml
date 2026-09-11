@@ -51,14 +51,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Install Lean (via elan)
-        # Elan with a real default toolchain — `--default-toolchain none`
-        # leaves `lake` as a wrapper that errors on every call because
-        # it has no toolchain to delegate to (works for a project dir
-        # with its own `lean-toolchain` file, broken for the upfront
-        # `lake --version` sanity check). Pinning `stable` makes the
-        # bare-PATH lake binary executable; emitted proof projects with
-        # a different `lean-toolchain` still trigger elan to fetch the
-        # matching version on first `lake build`.
+        # Keep a default for test helpers that check Lake outside a project.
+        # The lake_toolchain regression separately runs the proof CLI with an
+        # isolated Elan home and no default: the generated project's pin must
+        # govern both availability checks and builds in that environment.
         run: |
           # `curl | sh` hides a failing curl behind a shell that succeeds on
           # empty input, so the retry below could not see it without this.
