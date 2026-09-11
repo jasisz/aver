@@ -13,6 +13,22 @@ pub struct ProviderPackageManifest {
     /// itself. These bind no Cargo package, so they never reach the static
     /// Rust composition plan.
     pub work_bindings: Vec<ProviderWorkBinding>,
+    /// Capabilities answered by a module of the program itself. These bind no
+    /// Cargo package either: the program is the provider, and its operations
+    /// become requests a coordinator answers.
+    pub answer_bindings: Vec<ProviderAnswerBinding>,
+}
+
+/// One `answer = "Module"` binding: every operation of this capability is
+/// answered by that module of the program, one function per operation over
+/// one state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderAnswerBinding {
+    pub capability: String,
+    /// Module name exactly as written, e.g. `Ledger` or `Infra.Ledger`.
+    pub module: String,
+    /// Position of the declaring `[[providers.bindings]]` entry, for diagnostics.
+    pub index: usize,
 }
 
 /// One `work = "Module.function"` binding: the job kind a capability declares
@@ -24,6 +40,11 @@ pub struct ProviderWorkBinding {
     pub function: String,
     /// Position of the declaring `[[providers.bindings]]` entry, for diagnostics.
     pub index: usize,
+    /// `task = "Module.function"`: where the turn takes the next task from.
+    /// The two ends of the job seam are declared together or not at all.
+    pub task: Option<String>,
+    /// `landed = "Module.function"`: where a finished job's result goes.
+    pub landed: Option<String>,
 }
 
 impl ProviderWorkBinding {
@@ -135,6 +156,7 @@ pub(super) fn parse_provider_manifest(
     };
     let mut bindings = Vec::with_capacity(binding_values.len());
     let mut work_bindings = Vec::new();
+    let mut answer_bindings = Vec::new();
     let mut capabilities = BTreeSet::new();
     let mut crate_names = BTreeSet::new();
     for (index, value) in binding_values.iter().enumerate() {
@@ -152,11 +174,42 @@ pub(super) fn parse_provider_manifest(
                 "version",
                 "path",
                 "work",
+                "answer",
+                "task",
+                "landed",
             ],
             &context,
         )?;
         let capability = required_string(table, "capability", &context)?;
         validate_dotted_identifier(&capability, "capability", &context)?;
+        if let Some(module) = optional_string(table, "answer", &context)? {
+            for conflicting in ["crate", "package", "factory", "version", "path", "work"] {
+                if table.contains_key(conflicting) {
+                    return Err(format!(
+                        "error[answer-binding]: aver.toml: {context} capability '{capability}' declares both `answer` and `{conflicting}`; a capability is answered by a host package, or by a pure function of the program through the job engine, or by a module of the program — never by two of them"
+                    ));
+                }
+            }
+            for seam in ["task", "landed"] {
+                if table.contains_key(seam) {
+                    return Err(format!(
+                        "error[work-binding]: aver.toml: {context} capability '{capability}' declares `{seam}` beside `answer`; the job seam belongs on the `work` binding of a job kind, because it says where that job's task comes from and where its result lands"
+                    ));
+                }
+            }
+            validate_answer_module(&module, &context, &capability)?;
+            if !capabilities.insert(capability.clone()) {
+                return Err(format!(
+                    "aver.toml: {context} duplicates capability '{capability}'"
+                ));
+            }
+            answer_bindings.push(ProviderAnswerBinding {
+                capability,
+                module,
+                index,
+            });
+            continue;
+        }
         if let Some(function) = optional_string(table, "work", &context)? {
             for conflicting in ["crate", "package", "factory", "version", "path"] {
                 if table.contains_key(conflicting) {
@@ -166,6 +219,25 @@ pub(super) fn parse_provider_manifest(
                 }
             }
             validate_work_function(&function, &context, &capability)?;
+            let task = optional_string(table, "task", &context)?;
+            let landed = optional_string(table, "landed", &context)?;
+            match (&task, &landed) {
+                (Some(task), Some(landed)) => {
+                    validate_seam_function(task, "task", &context, &capability)?;
+                    validate_seam_function(landed, "landed", &context, &capability)?;
+                }
+                (None, None) => {}
+                (present, _) => {
+                    let (declared, missing) = if present.is_some() {
+                        ("task", "landed")
+                    } else {
+                        ("landed", "task")
+                    };
+                    return Err(format!(
+                        "error[work-binding]: aver.toml: {context} capability '{capability}' declares `{declared}` without `{missing}`; the job seam has two ends — where a task comes from and where its result lands — and the turn needs both"
+                    ));
+                }
+            }
             if !capabilities.insert(capability.clone()) {
                 return Err(format!(
                     "aver.toml: {context} duplicates capability '{capability}'"
@@ -175,8 +247,17 @@ pub(super) fn parse_provider_manifest(
                 capability,
                 function,
                 index,
+                task,
+                landed,
             });
             continue;
+        }
+        for seam in ["task", "landed"] {
+            if table.contains_key(seam) {
+                return Err(format!(
+                    "error[work-binding]: aver.toml: {context} capability '{capability}' declares `{seam}` without `work`; the job seam is the two ends of one job kind, so it lives on that kind's `work` binding"
+                ));
+            }
         }
         let crate_name = required_string(table, "crate", &context)?;
         validate_rust_identifier(&crate_name, "crate", &context)?;
@@ -225,7 +306,42 @@ pub(super) fn parse_provider_manifest(
         schema: PROVIDER_MANIFEST_SCHEMA,
         bindings,
         work_bindings,
+        answer_bindings,
     }))
+}
+
+/// An `answer` value names one module of the program: `Ledger`, or
+/// `Infra.Ledger` for a nested module path. It names no function, because the
+/// binding covers every operation of the capability at once.
+fn validate_answer_module(value: &str, context: &str, capability: &str) -> Result<(), String> {
+    let malformed = || {
+        format!(
+            "error[answer-binding]: aver.toml: {context} capability '{capability}': answer '{value}' must name one module of the program, for example 'Ledger'"
+        )
+    };
+    for segment in value.split('.') {
+        if !is_plain_identifier(segment) || !segment.starts_with(|ch: char| ch.is_ascii_uppercase())
+        {
+            return Err(malformed());
+        }
+    }
+    Ok(())
+}
+
+/// A `task` or `landed` value names one module-qualified function, exactly as
+/// `work` does.
+fn validate_seam_function(
+    value: &str,
+    field: &str,
+    context: &str,
+    capability: &str,
+) -> Result<(), String> {
+    if validate_work_function(value, context, capability).is_err() {
+        return Err(format!(
+            "error[work-binding]: aver.toml: {context} capability '{capability}': {field} '{value}' must name one module-qualified function of the program, for example 'Ledger.nextTask'"
+        ));
+    }
+    Ok(())
 }
 
 /// A `work` value names one module-qualified function of the program:
@@ -543,6 +659,109 @@ factory = "binding"
             (
                 "[providers]\nschema=1\n[[providers.bindings]]\ncapability='Validation'\nwork='Node.validate'\n[[providers.bindings]]\ncapability='Validation'\nwork='Node.other'\n",
                 "duplicates capability 'Validation'",
+            ),
+        ] {
+            let error = parse(source).expect_err("manifest must fail");
+            assert!(
+                error.contains(expected),
+                "expected '{expected}' in: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn parses_answer_bindings_and_the_job_seam() {
+        let manifest = parse(
+            r#"
+[providers]
+schema = 1
+
+[[providers.bindings]]
+capability = "Pool"
+answer = "Ledger"
+
+[[providers.bindings]]
+capability = "Blocks"
+answer = "Ledger"
+
+[[providers.bindings]]
+capability = "Validation"
+work = "Node.validate"
+task = "Ledger.nextTask"
+landed = "Ledger.validated"
+"#,
+        )
+        .expect("valid manifest")
+        .expect("provider section");
+        assert!(manifest.bindings.is_empty());
+        assert_eq!(manifest.answer_bindings.len(), 2);
+        assert_eq!(manifest.answer_bindings[0].capability, "Pool");
+        assert_eq!(manifest.answer_bindings[0].module, "Ledger");
+        assert_eq!(manifest.answer_bindings[1].module, "Ledger");
+        assert_eq!(manifest.work_bindings.len(), 1);
+        assert_eq!(
+            manifest.work_bindings[0].task.as_deref(),
+            Some("Ledger.nextTask")
+        );
+        assert_eq!(
+            manifest.work_bindings[0].landed.as_deref(),
+            Some("Ledger.validated")
+        );
+    }
+
+    #[test]
+    fn a_work_binding_without_a_seam_still_parses() {
+        let manifest = parse(
+            "[providers]\nschema=1\n[[providers.bindings]]\ncapability='Validation'\nwork='Node.validate'\n",
+        )
+        .expect("valid manifest")
+        .expect("provider section");
+        assert_eq!(manifest.work_bindings[0].task, None);
+        assert_eq!(manifest.work_bindings[0].landed, None);
+    }
+
+    #[test]
+    fn rejects_malformed_and_conflicting_answer_and_seam_keys() {
+        for (source, expected) in [
+            (
+                "[providers]\nschema=1\n[[providers.bindings]]\ncapability='Pool'\nanswer='ledger'\n",
+                "must name one module of the program",
+            ),
+            (
+                "[providers]\nschema=1\n[[providers.bindings]]\ncapability='Pool'\nanswer='Ledger.claim'\n",
+                "must name one module of the program",
+            ),
+            (
+                "[providers]\nschema=1\n[[providers.bindings]]\ncapability='Pool'\nanswer='Ledger'\ncrate='p'\npackage='p'\nfactory='binding'\nversion='1'\n",
+                "declares both `answer` and `crate`",
+            ),
+            (
+                "[providers]\nschema=1\n[[providers.bindings]]\ncapability='Pool'\nanswer='Ledger'\nwork='Node.validate'\n",
+                "declares both `answer` and `work`",
+            ),
+            (
+                "[providers]\nschema=1\n[[providers.bindings]]\ncapability='Pool'\nanswer='Ledger'\ntask='Ledger.nextTask'\nlanded='Ledger.validated'\n",
+                "declares `task` beside `answer`",
+            ),
+            (
+                "[providers]\nschema=1\n[[providers.bindings]]\ncapability='Validation'\nwork='Node.validate'\ntask='Ledger.nextTask'\n",
+                "declares `task` without `landed`",
+            ),
+            (
+                "[providers]\nschema=1\n[[providers.bindings]]\ncapability='Validation'\nwork='Node.validate'\nlanded='Ledger.validated'\n",
+                "declares `landed` without `task`",
+            ),
+            (
+                "[providers]\nschema=1\n[[providers.bindings]]\ncapability='Validation'\nwork='Node.validate'\ntask='nextTask'\nlanded='Ledger.validated'\n",
+                "task 'nextTask' must name one module-qualified function",
+            ),
+            (
+                "[providers]\nschema=1\n[[providers.bindings]]\ncapability='Clock'\ncrate='clock_provider'\npackage='clock-provider'\nfactory='binding'\nversion='1'\ntask='Ledger.nextTask'\n",
+                "declares `task` without `work`",
+            ),
+            (
+                "[providers]\nschema=1\n[[providers.bindings]]\ncapability='Pool'\nanswer='Ledger'\n[[providers.bindings]]\ncapability='Pool'\nanswer='Other'\n",
+                "duplicates capability 'Pool'",
             ),
         ] {
             let error = parse(source).expect_err("manifest must fail");
