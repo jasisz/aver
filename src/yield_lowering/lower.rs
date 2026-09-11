@@ -49,6 +49,11 @@ impl Names {
     }
 }
 
+/// The kind of the self tail call, and the one kind name no operation may
+/// be given: `__fAnswerYield` re-enters the function, it does not answer a
+/// capability, and the two carry different data.
+const YIELD_KIND: &str = "Yield";
+
 /// One request kind: an operation the function stops on, or `Yield`.
 struct Kind {
     name: String,
@@ -227,7 +232,9 @@ impl<'a> Lowering<'a> {
 
     /// Request kinds are named after the operation (`Pool.claim` → `Claim`).
     /// Two operations of different capabilities with one short name keep
-    /// their capability in the kind (`TcpRead` / `DiskRead`).
+    /// their capability in the kind (`TcpRead` / `DiskRead`), and so does
+    /// an operation whose own leaf name is the reserved [`YIELD_KIND`]
+    /// (`Sched.yield` → `SchedYield`): the tail call owns that name.
     fn name_kinds(&mut self) {
         let mut ops: Vec<String> = Vec::new();
         for stmt in self.fd.body.stmts() {
@@ -246,9 +253,16 @@ impl<'a> Lowering<'a> {
         for op in &ops {
             let short = leaf(op);
             let ambiguous = ops.iter().any(|other| other != op && leaf(other) == short);
-            let kind = if ambiguous {
+            let kind = if ambiguous || short == YIELD_KIND {
                 let ns = op.rsplit('.').nth(1).map(capitalize).unwrap_or_default();
-                format!("{ns}{short}")
+                let qualified = format!("{ns}{short}");
+                // An operation with no capability to name it by would land
+                // back on the reserved name; nothing may.
+                if qualified == YIELD_KIND {
+                    format!("{short}Op")
+                } else {
+                    qualified
+                }
             } else {
                 short
             };
@@ -1058,18 +1072,18 @@ impl<'a> Lowering<'a> {
         if args.len() != self.fd.params.len() {
             return self.internal(line, "a self tail call with the wrong arity");
         }
-        let kind = self.kind_index("Yield", Vec::new(), None, line)?;
+        let kind = self.kind_index(YIELD_KIND, Vec::new(), None, line)?;
         let variant = self.variant_name(kind, None);
         let fields: Vec<(String, String)> = self.fd.params.clone();
         let resume_args: Vec<Spanned<Expr>> = fields.iter().map(|(n, _)| ident(n, line)).collect();
         let arm = call(&self.names.start(), resume_args, line);
-        let state = ctor(&self.names.state("Yield"), &variant, args, line);
+        let state = ctor(&self.names.state(YIELD_KIND), &variant, args, line);
         self.kinds[kind].variants.push(Variant {
             name: variant,
             fields,
             arm,
         });
-        Ok(self.waiting("Yield", Vec::new(), state, line))
+        Ok(self.waiting(YIELD_KIND, Vec::new(), state, line))
     }
 
     // ── Assembly ─────────────────────────────────────────────────────

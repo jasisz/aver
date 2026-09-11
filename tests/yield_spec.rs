@@ -349,6 +349,30 @@ fn assert_removed(items: &[aver::ast::TopLevel], fn_name: &str) {
     );
 }
 
+/// `Yield` is the kind of the self tail call, and an operation may not
+/// take that name: `Sched.yield` is `SchedYield`, the way any other clash
+/// of leaf names is resolved. The two kinds carry different data, so
+/// merging them reported that two requests of kind 'Yield' disagree about
+/// their argument and answer types — about a name the user never wrote.
+#[test]
+fn an_operation_named_yield_keeps_off_the_tail_call_kind() {
+    let (lowered, generated, _) = lower_fixture("yield_reserved_kind");
+    assert_eq!(lowered, vec!["loop".to_string()]);
+    for text in [
+        "type __LoopSchedYieldState",
+        "type __LoopYieldState",
+        "    SchedYield(Int, __LoopSchedYieldState)",
+        "    Yield(__LoopYieldState)",
+        "fn __loopAnswerSchedYield(__state: __LoopSchedYieldState, __answer: Int) -> __LoopOutcome",
+        "fn __loopAnswerYield(__state: __LoopYieldState) -> __LoopOutcome",
+    ] {
+        assert!(
+            generated.contains(text),
+            "expected {text:?} in:\n{generated}"
+        );
+    }
+}
+
 #[test]
 fn spike_generates_exactly_the_pinned_protocol() {
     let (lowered, generated, items) = lower_fixture("yield_spike");
