@@ -837,7 +837,23 @@ pub struct FrontResult {
 /// without a `yield` function is left untouched, which is every module in
 /// almost every program: the extra type check is paid only where a
 /// dependency really yields.
-pub fn lower_loaded_yield_modules(loaded: &mut [LoadedModule]) {
+///
+/// Returns the errors of every dependency whose lowering FAILED, each
+/// carrying that dependency's file as its origin. The caller hands them to
+/// the importer's door: a module that could not be lowered has no protocol
+/// in it, and the importer would otherwise be told only that `__fStart`
+/// does not exist — true, and useless. `module_root` only shortens the
+/// file name in the diagnostic, exactly as it does for a dependency's type
+/// errors.
+///
+/// A dependency that lowered cleanly reports nothing here: its own type
+/// errors reach the same door through the checker's walk of dependency
+/// bodies, which stamps the same origin.
+pub fn lower_loaded_yield_modules(
+    loaded: &mut [LoadedModule],
+    module_root: Option<&str>,
+) -> Vec<crate::types::checker::TypeError> {
+    let mut errors = Vec::new();
     for index in 0..loaded.len() {
         if !crate::yield_lowering::has_yield_fns(&loaded[index].items) {
             continue;
@@ -845,7 +861,7 @@ pub fn lower_loaded_yield_modules(loaded: &mut [LoadedModule]) {
         let deps: Vec<LoadedModule> = loaded[..index].to_vec();
         let mut items = std::mem::take(&mut loaded[index].items);
         let user_program_len = items.len();
-        front(
+        let front = front(
             &mut items,
             FrontConfig {
                 run_tco: true,
@@ -855,6 +871,37 @@ pub fn lower_loaded_yield_modules(loaded: &mut [LoadedModule]) {
             },
         );
         loaded[index].items = items;
+        if front.yield_lowering.is_some() {
+            continue;
+        }
+        let Some(tc) = front.typecheck else { continue };
+        let origin = dependency_origin(&loaded[index].path, module_root);
+        errors.extend(tc.errors.into_iter().map(|mut error| {
+            if error.origin.is_none() {
+                error.origin = Some(origin.clone());
+            }
+            error
+        }));
+    }
+    errors
+}
+
+/// The file a dependency's diagnostics point at, shortened against the
+/// module root and carrying the source so the renderer can show the line.
+fn dependency_origin(
+    path: &std::path::Path,
+    module_root: Option<&str>,
+) -> crate::types::checker::TypeErrorOrigin {
+    let file = module_root
+        .and_then(|root| path.strip_prefix(root).ok())
+        .unwrap_or(path)
+        .display()
+        .to_string();
+    crate::types::checker::TypeErrorOrigin {
+        file,
+        source: std::fs::read_to_string(path)
+            .ok()
+            .map(std::sync::Arc::<str>::from),
     }
 }
 

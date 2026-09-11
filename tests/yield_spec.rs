@@ -178,6 +178,41 @@ fn check_does_not_report_the_lowered_function_as_an_unused_expose() {
     );
 }
 
+/// A dependency whose lowering fails has no protocol in it. Its importer
+/// is told why, against the dependency's own file — and the function it
+/// could not lower is still in the module as written, so the importer's
+/// own call to it is answered with the recipe rather than with a name
+/// that vanished.
+#[test]
+fn a_dependency_that_cannot_be_lowered_reports_at_the_importers_door() {
+    let dir = fixture("yield_broken_dep");
+    let out = Command::new(aver_bin())
+        .current_dir(repo_root())
+        .arg("check")
+        .arg(&dir)
+        .arg("--module-root")
+        .arg(&dir)
+        .output()
+        .expect("aver runs");
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    let (_, importer) = stdout
+        .rsplit_once("Input: ")
+        .unwrap_or_else(|| panic!("no per-input sections in:\n{stdout}"));
+    assert!(
+        importer.starts_with("main.av"),
+        "the last section should be the importer's:\n{importer}"
+    );
+    assert!(
+        importer.contains("The type of 'kept' is not settled")
+            && importer.contains("looper.av:10:1"),
+        "the dependency's reason, against the dependency's file:\n{importer}"
+    );
+    assert!(
+        importer.contains("Function 'main' calls 'Looper.loop' directly"),
+        "the function that failed to lower is still in the module:\n{importer}"
+    );
+}
+
 // ── A live variable whose type the checker never settled ────────────────
 
 /// `seen = {}` is `Map<K, V>` and nothing in the body says what it holds.

@@ -203,7 +203,14 @@ pub fn lower(
                 exposes_rewrite.push((fd.name.clone(), generated.public_names));
                 out.extend(generated.items);
             }
-            Err(mut fn_errors) => errors.append(&mut fn_errors),
+            // The function stays in the module exactly as written. It
+            // will not run — the errors below stop this door — but every
+            // later diagnostic is then about the user's own code instead
+            // of about a function that silently vanished.
+            Err(mut fn_errors) => {
+                errors.append(&mut fn_errors);
+                out.push(item);
+            }
         }
     }
     *items = out;

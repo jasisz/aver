@@ -20,9 +20,13 @@ impl TypeChecker {
             roots.extend(crate::stdlib::implicit_stdlib_deps(items));
             roots.sort();
             roots.dedup();
-            match crate::source::load_module_tree(&roots, base) {
-                Ok(modules) => {
+            match crate::source::load_module_tree_with_lowering(&roots, base) {
+                Ok((modules, lowering_errors)) => {
                     loaded_modules = modules;
+                    // A dependency that could not be lowered: the reason
+                    // belongs here, at the door of the module reading it,
+                    // and already names the dependency's own file.
+                    self.errors.extend(lowering_errors);
                 }
                 Err(e) => self.error(e),
             }

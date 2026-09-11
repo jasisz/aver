@@ -1,0 +1,14 @@
+module Looper
+    intent = "Fixture library: a yielding function the lowering cannot finish, so the importer is told why instead of being told the protocol is missing."
+    depends [Pool]
+    effects [Pool.claim, yield]
+    exposes [loop]
+
+fn loop(id: Int, seen: Int) -> Int
+    ? "Carries an empty map across the request; nothing in the body ever says what the map holds."
+    ! [Pool.claim, yield]
+    kept = {}
+    handle = Pool.claim(id)
+    match id
+        0 -> seen + handle + Map.len(kept)
+        _ -> loop(id - 1, seen + handle)

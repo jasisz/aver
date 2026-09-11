@@ -515,7 +515,11 @@ impl Program {
             .filter(|candidate| reachable.contains(&canonicalize_path(&candidate.path)))
             .map(ProgramModule::as_loaded)
             .collect();
-        crate::ir::pipeline::lower_loaded_yield_modules(&mut modules);
+        // Each module of this program is prepared as a unit of its own,
+        // through its own front door: a dependency that fails to lower
+        // reports it there, against its own file, so the errors this call
+        // hands back would be the same ones twice.
+        let _ = crate::ir::pipeline::lower_loaded_yield_modules(&mut modules, None);
         Ok(modules)
     }
 }
@@ -885,7 +889,9 @@ pub fn load_module_tree_from_map(
     for dep in root_deps {
         load_recursive_from_map(dep, files, &mut loaded, &mut loading, &mut result)?;
     }
-    crate::ir::pipeline::lower_loaded_yield_modules(&mut result);
+    // The playground analyses every file of the project separately, so a
+    // module that fails to lower reports it under its own name there.
+    let _ = crate::ir::pipeline::lower_loaded_yield_modules(&mut result, None);
     Ok(result)
 }
 
@@ -968,13 +974,17 @@ fn find_file_key_in_map(dep_name: &str, files: &HashMap<String, String>) -> Opti
     None
 }
 
-/// Load a dependency tree starting from `root_deps`.
+/// Load a dependency tree starting from `root_deps`, with the `yield`
+/// functions of every module lowered, and the diagnostics of any module
+/// whose lowering FAILED: the importer about to read them reports those,
+/// because they say why the protocol it is looking for is not there.
+///
 /// Returns modules in dependency order (leaves first).
 /// Validates module declarations and detects circular imports.
-pub fn load_module_tree(
+pub fn load_module_tree_with_lowering(
     root_deps: &[String],
     module_root: &str,
-) -> Result<Vec<LoadedModule>, String> {
+) -> Result<(Vec<LoadedModule>, Vec<crate::types::checker::TypeError>), String> {
     let mut cache = ProgramLoadCache::default();
     let mut walk = Walk::new(module_root, LoadMode::Strict, &mut cache);
     for name in root_deps {
@@ -986,8 +996,20 @@ pub fn load_module_tree(
         .into_iter()
         .map(|module| module.as_loaded())
         .collect();
-    crate::ir::pipeline::lower_loaded_yield_modules(&mut modules);
-    Ok(modules)
+    let errors = crate::ir::pipeline::lower_loaded_yield_modules(&mut modules, Some(module_root));
+    Ok((modules, errors))
+}
+
+/// [`load_module_tree_with_lowering`] for the callers that run once a door
+/// has already type-checked the program: code generation, the VM compiler,
+/// the replay backends, the test harnesses that build a dependency list by
+/// hand. A dependency that cannot be lowered has been reported by then,
+/// and saying it again here would say it twice.
+pub fn load_module_tree(
+    root_deps: &[String],
+    module_root: &str,
+) -> Result<Vec<LoadedModule>, String> {
+    load_module_tree_with_lowering(root_deps, module_root).map(|(modules, _)| modules)
 }
 
 /// Convert pre-loaded modules (parsed virtual-fs items from the

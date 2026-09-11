@@ -1,0 +1,10 @@
+module CrossModule
+    intent = "Fixture: the importer of a dependency whose yield function could not be lowered."
+    depends [Looper]
+    effects [Console.print]
+    exposes [main]
+
+fn main() -> Unit
+    ! [Console.print]
+    total = Looper.loop(2, 0)
+    Console.print("total = {total}")
