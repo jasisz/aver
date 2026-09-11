@@ -120,8 +120,12 @@ fn quietView() -> View
     ? "One view with room for another job and nothing ready."
     View(pending = Map.set(Map.set({}, 1, Pending.Peer(1, Wait.Wake.NextTurn)), 3, Pending.Ticker(1, Wait.Wake.NextTurn)), ready = [], jobs = 0, room = 1, stopping = false)
 
+fn stoppingView() -> View
+    ? "One view with a job running, no room for another and the run already stopping: what a peer is admitted against at the worst moment of a turn."
+    View(pending = Map.set(Map.set({}, 1, Pending.Peer(5, Wait.Wake.NextTurn)), 2, Pending.Walk(2, Wait.Wake.NextTurn)), ready = [1], jobs = 1, room = 0, stopping = true)
+
 verify admit law readyPeerBeforeNewJob
-    given view: View = [busyView(), quietView()]
+    given view: View = [busyView(), quietView(), stoppingView()]
     given id: Int = [1, 2, 3]
     when isPeer(view, id)
     because isPeer(view, id)

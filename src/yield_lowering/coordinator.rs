@@ -30,6 +30,14 @@ use super::{FnSigs, ProcessProtocol};
 /// The `__Run` field a job table lives in.
 const JOBS_FIELD: &str = "jobs";
 
+/// The fields the generated run table writes itself. An answer module whose
+/// name would take one of them is refused rather than generating a record
+/// with the field declared twice.
+const RUN_FIELDS: [&str; 5] = ["slots", JOBS_FIELD, "dropped", "stopping", "nextId"];
+
+/// The operation the end of a run performs on a job that is still running.
+const CANCEL: &str = "Work.cancel";
+
 /// The fields the view record has to declare, in order, with the type each
 /// one carries. `pending`'s value type is the program's own `Pending` sum,
 /// so it is checked separately.
@@ -155,6 +163,16 @@ pub(super) fn generate(
             return Err(errors);
         }
     };
+    // The turn asks the answer state for the next task once per slot of room,
+    // and starting a job does not change that state, so a limit above one
+    // would start the same task once per slot. Refuse it rather than run it.
+    if !jobs.is_empty() && plan.max_jobs != 1 {
+        let job = &jobs[0];
+        errors.push(error(line, format!(
+            "aver.toml declares [run], so the generated turn starts the jobs of kind '{}' itself: it asks '{}' for the next task once per slot of room, and starting a job does not change the state that answered. This program's limit is {}, so one task would be started up to {} times. Declare `[work] max-jobs = 1`, or remove [run] and drive the job seam by hand",
+            job.capability, job.task, plan.max_jobs, plan.max_jobs
+        )));
+    }
     errors.extend(check_policies(plan, fn_sigs, line));
     let (marker, view_errors) = check_view(items, protocols, plan, line);
     errors.extend(view_errors);
@@ -162,17 +180,24 @@ pub(super) fn generate(
         return Err(errors);
     }
 
-    let serve_effects = serve_effect_list(protocols, generated, &answers, fn_sigs);
-    let module_effects = turn_effect_list(&serve_effects, &jobs);
+    let process_effects = process_effect_lists(protocols, generated, &answers, fn_sigs);
+    let serve_effects = serve_effect_list(&process_effects);
+    let turn_effects = turn_effect_list(&serve_effects, &jobs);
+    let main_effects = main_effect_list(&turn_effects, &process_effects, &jobs);
     let source = write_loop(
         protocols,
         plan,
         &answers,
         &jobs,
         &marker,
+        &process_effects,
         &serve_effects,
-        &module_effects,
+        &turn_effects,
+        &main_effects,
     );
+    // The module's own boundary has to admit everything generated into it,
+    // and the entry point is the widest of the generated functions.
+    let module_effects = main_effects;
     match parse_generated(&source) {
         Ok(items) => Ok(GeneratedLoop {
             source,
@@ -258,9 +283,23 @@ fn resolve_answers(
             )));
             continue;
         }
+        let field = field_name(module);
+        if RUN_FIELDS.contains(&field.as_str()) {
+            errors.push(error(line, format!(
+                "aver.toml declares [run], so the generated run table holds the state of module '{module}' in a field named '{field}', and the loop writes a field of its own by that name. Rename the module"
+            )));
+            continue;
+        }
+        if let Some(other) = answers.iter().find(|answer| answer.field == field) {
+            errors.push(error(line, format!(
+                "aver.toml declares [run], so the generated run table holds the state of module '{module}' in a field named '{field}', and it already holds the state of module '{}' there. Rename one of them",
+                other.module
+            )));
+            continue;
+        }
         answers.push(Answer {
             module: module.clone(),
-            field: field_name(module),
+            field,
             state,
             capabilities: plan
                 .answers
@@ -562,14 +601,17 @@ fn bare(name: &str) -> &str {
 /// `AVER_YIELD_DUMP=1` has to be able to read back, and the shapes here are
 /// the proposal's own text. The parse that follows is the one check that the
 /// generator wrote Aver rather than something that looks like it.
+#[allow(clippy::too_many_arguments)]
 fn write_loop(
     protocols: &[ProcessProtocol],
     plan: &RunPlan,
     answers: &[Answer],
     jobs: &[Job],
     marker: &str,
+    process_effects: &[ProcessEffects],
     serve_effects: &[String],
     turn_effects: &[String],
+    main_effects: &[String],
 ) -> String {
     let mut out = String::new();
     let view = plan.policies.view_name().to_string();
@@ -616,11 +658,11 @@ fn write_loop(
             format!("    ! [{}]\n", list.join(", "))
         }
     };
-    for protocol in protocols {
+    for (protocol, performs) in protocols.iter().zip(process_effects) {
         let upper = marker_variant(&protocol.fn_name);
         out.push_str(&format!(
             "\nfn __seat{upper}(run: __Run) -> __Run\n    ? \"Seats the '{}' process under its own slot id, at its first request.\"\n{}    __seated{upper}(run, {}())\n",
-            protocol.fn_name, effects(serve_effects), protocol.start
+            protocol.fn_name, effects(&performs.seat), protocol.start
         ));
         out.push_str(&format!(
             "\nfn __seated{upper}(run: __Run, outcome: {}) -> __Run\n    ? \"A process that is already done is not seated; one that is waiting takes the next free slot id.\"\n    match outcome\n        {}.Done(_) -> run\n        {}.Waiting(request) -> __Run.update(run, slots = Map.set(run.slots, run.nextId, __Slot(seq = 1, pending = __Process.{upper}(request), waiting = Wait.Wake.NextTurn)), nextId = run.nextId + 1)\n",
@@ -642,8 +684,12 @@ fn write_loop(
             protocol.outcome
         ));
         out.push_str(&format!(
-            "\nfn __settled{upper}(run: __Run, id: Int, seq: Int, outcome: {}) -> __Run\n    ? \"What an answer for the current instance leaves behind: an empty slot when the process is done, the next request under the next instance number otherwise.\"\n    match outcome\n        {}.Done(_) -> __Run.update(run, slots = Map.remove(run.slots, id))\n        {}.Waiting(request) -> __Run.update(run, slots = Map.set(run.slots, id, __Slot(seq = __nextInstance(seq), pending = __Process.{upper}(request), waiting = Wait.Wake.NextTurn)))\n",
+            "\nfn __settled{upper}(run: __Run, id: Int, seq: Int, outcome: {}) -> __Run\n    ? \"What an answer for the current instance leaves behind: an empty slot when the process is done, the next request under the next instance number otherwise.\"\n    match outcome\n        {}.Done(_) -> __Run.update(run, slots = Map.remove(run.slots, id))\n        {}.Waiting(request) -> __Run.update(run, slots = Map.set(run.slots, id, __settledSlot{upper}(seq, request)))\n",
             protocol.outcome, protocol.outcome, protocol.outcome
+        ));
+        out.push_str(&format!(
+            "\nfn __settledSlot{upper}(seq: Int, request: {}) -> __Slot\n    ? \"The slot an answer for instance 'seq' writes back under that id: the next request of '{}', under the instance number after 'seq'.\"\n    __Slot(seq = __nextInstance(seq), pending = __Process.{upper}(request), waiting = Wait.Wake.NextTurn)\n",
+            protocol.request, protocol.fn_name
         ));
         out.push_str(&format!(
             "\nfn __settleKeepsOrShrinks{upper}(run: __Run, id: Int) -> Bool\n    ? \"Why settling never seats a second process: this id is already seated, so every arm either counts a late answer, or removes that one slot, or replaces it.\"\n    Map.has(run.slots, id)\n"
@@ -717,8 +763,8 @@ fn write_loop(
             "        __Process.{upper}(request) -> __serve{upper}(run, id, slot.seq, request)\n"
         ));
     }
-    for protocol in protocols {
-        out.push_str(&write_serve(protocol, answers, serve_effects));
+    for (protocol, performs) in protocols.iter().zip(process_effects) {
+        out.push_str(&write_serve(protocol, answers, performs));
     }
 
     // ── The job seam ───────────────────────────────────────────────
@@ -764,30 +810,52 @@ fn write_loop(
         });
     out.push_str(&format!(
         "\nfn main() -> Result<Unit, String>\n    ? \"Seats one of every process this program writes and turns until the policy stops the run.\"\n{}    __over(__runAll({seated})?)\n",
-        effects(turn_effects)
+        effects(main_effects)
     ));
-    out.push_str("\nfn __over(run: __Run) -> Result<Unit, String>\n    ? \"The run is over: every process that finished left its slot, and whatever is still seated stays where it is.\"\n    Result.Ok(Unit)\n");
+    if has_jobs {
+        out.push_str(&format!(
+            "\nfn __over(run: __Run) -> Result<Unit, String>\n    ? \"The run is over: every process that finished left its slot, whatever is still seated stays where it is, and every job still running is cancelled rather than abandoned.\"\n    ! [{CANCEL}]\n    __cancelEach(run, Map.keys(run.{JOBS_FIELD}))\n"
+        ));
+        out.push_str(&format!(
+            "\nfn __cancelEach(run: __Run, keys: List<Int>) -> Result<Unit, String>\n    ? \"Every job the run still holds a handle for, in key order.\"\n    ! [{CANCEL}]\n    match keys\n        [] -> Result.Ok(Unit)\n        [key, ..rest] -> __cancelEach(__cancelOne(run, key), rest)\n"
+        ));
+        out.push_str(&format!(
+            "\nfn __cancelOne(run: __Run, key: Int) -> __Run\n    ? \"One running job, cancelled and dropped from the table. A job that finished before the cancel is not this path's business; it shows up in take.\"\n    ! [{CANCEL}]\n    match Map.get(run.{JOBS_FIELD}, key)\n        Option.None -> run\n        Option.Some(job) -> __cancelled(run, key, {CANCEL}(job))\n"
+        ));
+        out.push_str(&format!(
+            "\nfn __cancelled(run: __Run, key: Int, cancelled: Unit) -> __Run\n    ? \"The table once one job has been cancelled: the handle is gone, so nothing cancels it twice.\"\n    __Run.update(run, {JOBS_FIELD} = Map.remove(run.{JOBS_FIELD}, key))\n"
+        ));
+    } else {
+        out.push_str("\nfn __over(run: __Run) -> Result<Unit, String>\n    ? \"The run is over: every process that finished left its slot, and whatever is still seated stays where it is.\"\n    Result.Ok(Unit)\n");
+    }
 
     // ── The invariants ─────────────────────────────────────────────
-    out.push_str(&write_laws(protocols, answers, serve_effects));
+    out.push_str(&write_laws(protocols, answers));
     out
 }
 
 /// The dispatch of one process: one arm per request kind, and one function
 /// per kind that reads the reply the answer module gave.
-fn write_serve(protocol: &ProcessProtocol, answers: &[Answer], serve_effects: &[String]) -> String {
+fn write_serve(
+    protocol: &ProcessProtocol,
+    answers: &[Answer],
+    performs: &ProcessEffects,
+) -> String {
     let upper = marker_variant(&protocol.fn_name);
-    let effects = if serve_effects.is_empty() {
-        String::new()
-    } else {
-        format!("    ! [{}]\n", serve_effects.join(", "))
+    let list = |effects: &[String]| {
+        if effects.is_empty() {
+            String::new()
+        } else {
+            format!("    ! [{}]\n", effects.join(", "))
+        }
     };
+    let effects = list(&performs.serve);
     let mut out = format!(
         "\nfn __serve{upper}(run: __Run, id: Int, seq: Int, request: {}) -> __Run\n    ? \"One arm per request kind of '{}'. This is the match a program writes by hand today.\"\n{effects}    match request\n",
         protocol.request, protocol.fn_name
     );
     let mut bodies = String::new();
-    for kind in &protocol.kinds {
+    for (kind, resumes) in protocol.kinds.iter().zip(&performs.kinds) {
         let Some(operation) = &kind.operation else {
             out.push_str(&format!(
                 "        {}.{}(state) -> __settle{upper}(run, id, seq, {}(state))\n",
@@ -829,8 +897,12 @@ fn write_serve(protocol: &ProcessProtocol, answers: &[Answer], serve_effects: &[
             Some(_) => "__answer",
         };
         bodies.push_str(&format!(
-            "\nfn __serve{upper}{}(run: __Run, id: Int, seq: Int, state: {}, answered: Tuple<{}, {reply}>) -> __Run\n    ? \"A Now settles the slot with the answer function of this kind; a Later parks the request and discards the state the module returned, so a Later cannot change it.\"\n    match answered\n        (__next, __reply) -> match __reply\n            {reply}.Later(__wake) -> __park(run, id, __wake)\n            {reply}.Now({now_binder}) -> __settle{upper}(__Run.update(run, {} = __next), id, seq, {resume})\n",
-            kind.name, kind.state, answer.state, answer.field
+            "\nfn __serve{upper}{}(run: __Run, id: Int, seq: Int, state: {}, answered: Tuple<{}, {reply}>) -> __Run\n    ? \"A Now settles the slot with the answer function of this kind; a Later parks the request and discards the state the module returned, so a Later cannot change it.\"\n{}    match answered\n        (__next, __reply) -> match __reply\n            {reply}.Later(__wake) -> __park(run, id, __wake)\n            {reply}.Now({now_binder}) -> __settle{upper}(__Run.update(run, {} = __next), id, seq, {resume})\n",
+            kind.name,
+            kind.state,
+            answer.state,
+            list(resumes),
+            answer.field
         ));
     }
     out.push_str(&bodies);
@@ -894,18 +966,13 @@ fn write_job(job: &Job, answers: &[Answer]) -> String {
 /// see of it: neither the instance number nor any answer state moves. I1 is
 /// the size comparison the proposal expected to stay open, written with its
 /// `because` so the report can say where it stands.
-fn write_laws(
-    protocols: &[ProcessProtocol],
-    answers: &[Answer],
-    serve_effects: &[String],
-) -> String {
+fn write_laws(protocols: &[ProcessProtocol], answers: &[Answer]) -> String {
     let mut out = String::new();
-    let _ = serve_effects;
     // The sample seats each process at the request it re-enters itself with.
     // A process takes no parameters, so that request carries nothing, which
     // is what makes the sample — and every law below it — pure even when the
     // process performs something in place on its way to its first stop.
-    let mut sampled: Vec<&ProcessProtocol> = Vec::new();
+    let mut sampled: Vec<(&ProcessProtocol, String)> = Vec::new();
     for protocol in protocols {
         let Some(kind) = protocol.kinds.iter().find(|kind| kind.operation.is_none()) else {
             continue;
@@ -914,15 +981,19 @@ fn write_laws(
             continue;
         };
         let upper = marker_variant(&protocol.fn_name);
+        let waiting = format!(
+            "{}.Waiting({}.{}({}.{variant}))",
+            protocol.outcome, protocol.request, kind.name, kind.state
+        );
         out.push_str(&format!(
-            "\nfn __sampleSeat{upper}(run: __Run) -> __Run\n    ? \"The '{}' process, seated at the request it re-enters itself with. Pure, so the laws below can sample it.\"\n    __seated{upper}(run, {}.Waiting({}.{}({}.{variant})))\n",
-            protocol.fn_name, protocol.outcome, protocol.request, kind.name, kind.state
+            "\nfn __sampleSeat{upper}(run: __Run) -> __Run\n    ? \"The '{}' process, seated at the request it re-enters itself with. Pure, so the laws below can sample it.\"\n    __seated{upper}(run, {waiting})\n",
+            protocol.fn_name
         ));
-        sampled.push(protocol);
+        sampled.push((protocol, waiting));
     }
     let seated = sampled
         .iter()
-        .fold("__fresh()".to_string(), |inner, protocol| {
+        .fold("__fresh()".to_string(), |inner, (protocol, _)| {
             format!("__sampleSeat{}({inner})", marker_variant(&protocol.fn_name))
         });
     out.push_str(&format!(
@@ -947,7 +1018,33 @@ fn write_laws(
             answer.field
         ));
     }
-    out.push_str("\nverify __nextInstance law nowRaisesTheInstance\n    given seq: Int = [0, 1, 7]\n    __nextInstance(seq) > seq holds\n");
+    out.push_str("\nverify __nextInstance law theNextInstanceIsHigher\n    given seq: Int = [0, 1, 7]\n    __nextInstance(seq) > seq holds\n");
+    // I3 per call, in the two halves the wall can carry. The first is about
+    // the slot table's contents: the slot an answer for the current instance
+    // writes back under that id carries a strictly higher instance number
+    // than the one it answered, so the instance just answered is never
+    // current again and a second answer to it is the late answer the two
+    // laws above drop. The second is the read-back: the slot written under an
+    // id is the slot read from it, which is the one-key `Map.set` fact.
+    for (protocol, _) in &sampled {
+        let upper = marker_variant(&protocol.fn_name);
+        let Some(request) = sample_request(protocol) else {
+            continue;
+        };
+        out.push_str(&format!(
+            "\nverify __settledSlot{upper} law nowRaisesTheInstance\n    given seq: Int = [0, 1, 7]\n    given request: {} = [{request}]\n    __settledSlot{upper}(seq, request).seq > seq holds\n",
+            protocol.request
+        ));
+    }
+    if let Some((protocol, _)) = sampled.first()
+        && let Some(request) = sample_request(protocol)
+    {
+        let upper = marker_variant(&protocol.fn_name);
+        out.push_str(&format!(
+            "\nverify __current law theSlotWrittenIsTheSlotRead\n    given slots: Map<Int, __Slot> = [{{}}, __sampleRun().slots]\n    given id: Int = [{}]\n    given slot: __Slot = [__settledSlot{upper}(1, {request})]\n    Map.get(Map.set(slots, id, slot), id) => Option.Some(slot)\n",
+            ids.join(", ")
+        ));
+    }
     for protocol in protocols {
         let upper = marker_variant(&protocol.fn_name);
         let domain = format!(
@@ -973,6 +1070,20 @@ fn write_laws(
     out
 }
 
+/// One request of a process that a law can write down: the one it re-enters
+/// itself with, which carries nothing but the segment it resumes at.
+fn sample_request(protocol: &ProcessProtocol) -> Option<String> {
+    let kind = protocol
+        .kinds
+        .iter()
+        .find(|kind| kind.operation.is_none())?;
+    let (variant, _) = kind.variants.iter().find(|(_, arity)| *arity == 0)?;
+    Some(format!(
+        "{}.{}({}.{variant})",
+        protocol.request, kind.name, kind.state
+    ))
+}
+
 /// The module answering one capability, matched the way an effect entry is:
 /// a manifest names the capability as the program writes it in `depends`.
 fn answering_module<'a>(answers: &'a [Answer], capability: &str) -> Option<&'a Answer> {
@@ -984,41 +1095,97 @@ fn answering_module<'a>(answers: &'a [Answer], capability: &str) -> Option<&'a A
     })
 }
 
-/// The effects the serve path performs: whatever the answer functions it
-/// calls declare. A program whose answer modules are pure keeps the whole
-/// serve path pure, and the turn then performs only the wait and the jobs.
-fn serve_effect_list(
+/// What the generated functions of one process perform, each one carrying its
+/// own path rather than the program's.
+///
+/// Decision 4's rule is per segment — a generated protocol function carries
+/// exactly the unmarked operations on its own segment's path — and the loop's
+/// own functions are held to the same rule: seating a process performs what
+/// that process performs on its way to its first request, and serving one
+/// request kind performs what the answer module performs plus what the
+/// segment the answer resumes performs. A process that touches nothing keeps
+/// every function the loop generates for it pure, however loud its neighbour
+/// is, so one generative effect anywhere does not oracle-lift the whole loop.
+struct ProcessEffects {
+    /// What `__seat<P>` performs: the start function's own segment.
+    seat: Vec<String>,
+    /// What `__serve<P>` performs: every kind of this process.
+    serve: Vec<String>,
+    /// What `__serve<P><Kind>` performs, aligned with `protocol.kinds`: the
+    /// answer function of that kind, because its caller performed the answer
+    /// module's operation already.
+    kinds: Vec<Vec<String>>,
+}
+
+fn sorted(found: std::collections::BTreeSet<String>) -> Vec<String> {
+    found.into_iter().collect()
+}
+
+/// One entry per process, in the order the protocols are given.
+fn process_effect_lists(
     protocols: &[ProcessProtocol],
     generated: &[TopLevel],
     answers: &[Answer],
     fn_sigs: &FnSigs,
-) -> Vec<String> {
-    let mut found: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    // Decision 4: a generated protocol function carries the unmarked
-    // operations its own segment performs. The serve path calls them, so it
-    // performs them too.
-    for item in generated {
-        if let TopLevel::FnDef(fd) = item {
-            found.extend(fd.effects.iter().map(|effect| effect.node.clone()));
-        }
-    }
-    for protocol in protocols {
-        for kind in &protocol.kinds {
-            let Some(operation) = &kind.operation else {
-                continue;
-            };
-            let Some((capability, op)) = operation.rsplit_once('.') else {
-                continue;
-            };
-            let Some(answer) = answering_module(answers, capability) else {
-                continue;
-            };
-            if let Some((_, _, effects)) = fn_sigs.get(&format!("{}.{op}", answer.module)) {
-                found.extend(effects.iter().cloned());
+) -> Vec<ProcessEffects> {
+    let declared = |name: &str| -> Vec<String> {
+        generated
+            .iter()
+            .find_map(|item| match item {
+                TopLevel::FnDef(fd) if fd.name == name => {
+                    Some(fd.effects.iter().map(|e| e.node.clone()).collect())
+                }
+                _ => None,
+            })
+            .unwrap_or_default()
+    };
+    let answered = |kind: &super::ProtocolKind| -> Vec<String> {
+        let Some(operation) = &kind.operation else {
+            return Vec::new();
+        };
+        let Some((capability, op)) = operation.rsplit_once('.') else {
+            return Vec::new();
+        };
+        let Some(answer) = answering_module(answers, capability) else {
+            return Vec::new();
+        };
+        fn_sigs
+            .get(&format!("{}.{op}", answer.module))
+            .map(|(_, _, effects)| effects.clone())
+            .unwrap_or_default()
+    };
+    protocols
+        .iter()
+        .map(|protocol| {
+            let kinds: Vec<Vec<String>> = protocol
+                .kinds
+                .iter()
+                .map(|kind| declared(&kind.answer_fn))
+                .collect();
+            let mut serve: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+            for (kind, resumed) in protocol.kinds.iter().zip(&kinds) {
+                serve.extend(resumed.iter().cloned());
+                serve.extend(answered(kind));
             }
-        }
-    }
-    found.into_iter().collect()
+            ProcessEffects {
+                seat: declared(&protocol.start),
+                serve: sorted(serve),
+                kinds,
+            }
+        })
+        .collect()
+}
+
+/// What the whole serve path performs: the dispatch reaches every process, so
+/// `__serve`, `__serveSlot`, `__serveEach` and `__serveIf` carry the union of
+/// what the processes carry — and nothing else.
+fn serve_effect_list(effects: &[ProcessEffects]) -> Vec<String> {
+    sorted(
+        effects
+            .iter()
+            .flat_map(|process| process.serve.iter().cloned())
+            .collect(),
+    )
 }
 
 /// What a whole turn performs: the stop observation, the one wait, the serve
@@ -1031,6 +1198,19 @@ fn turn_effect_list(serve: &[String], jobs: &[Job]) -> Vec<String> {
     for job in jobs {
         found.insert(format!("{}.begin", job.capability));
         found.insert(format!("{}.take", job.capability));
+    }
+    found.into_iter().collect()
+}
+
+/// What the generated entry point performs: it seats every process, turns,
+/// and cancels whatever job is still running when the run is over.
+fn main_effect_list(turn: &[String], effects: &[ProcessEffects], jobs: &[Job]) -> Vec<String> {
+    let mut found: std::collections::BTreeSet<String> = turn.iter().cloned().collect();
+    for process in effects {
+        found.extend(process.seat.iter().cloned());
+    }
+    if !jobs.is_empty() {
+        found.insert(CANCEL.to_string());
     }
     found.into_iter().collect()
 }
