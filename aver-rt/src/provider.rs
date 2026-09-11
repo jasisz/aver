@@ -15,6 +15,7 @@ mod process;
 mod runtime;
 mod tcp;
 mod terminal;
+mod work;
 
 use std::any::Any;
 use std::collections::BTreeSet;
@@ -48,6 +49,10 @@ pub use runtime::{
 pub use tcp::{STANDARD_TCP_FINGERPRINT, STANDARD_TCP_NATIVE_IDENTITY, StandardTcpProvider};
 pub use terminal::{
     STANDARD_TERMINAL_FINGERPRINT, STANDARD_TERMINAL_NATIVE_IDENTITY, StandardTerminalProvider,
+};
+pub use work::{
+    STANDARD_WAIT_FINGERPRINT, STANDARD_WAIT_NATIVE_IDENTITY, STANDARD_WORK_FINGERPRINT,
+    STANDARD_WORK_NATIVE_IDENTITY, StandardWaitProvider, StandardWorkProvider,
 };
 
 /// Whether two recorded/live identities name compiler-shipped adapters for
