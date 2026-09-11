@@ -611,10 +611,13 @@ impl VmRuntime {
                     seq, expected, got
                 )),
                 ReplayFailure::ArgsMismatch {
-                    seq, effect_type, ..
+                    seq,
+                    effect_type,
+                    expected,
+                    got,
                 } => VmError::runtime(format!(
-                    "Replay args mismatch at #{} for '{}'",
-                    seq, effect_type
+                    "Replay args mismatch at #{} for '{}': recorded {}, got {}",
+                    seq, effect_type, expected, got
                 )),
                 ReplayFailure::Unconsumed { remaining } => VmError::runtime(format!(
                     "Replay finished with {} unconsumed recorded effect(s)",
