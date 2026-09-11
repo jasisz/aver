@@ -274,6 +274,11 @@ pub struct VerifySettings {
     /// `[verify] max-cases` — the cap on `given`-domain expansion, for every
     /// function no `[[verify.costly]]` entry raises.
     pub max_cases: Option<usize>,
+    /// `[verify] turn-budget` — how many VM steps one turn (the run between
+    /// two `Tcp.poll` effects, or from the start of the case) may take before
+    /// `aver verify` warns. `None` = off, and off costs nothing: the VM only
+    /// measures turns while a budget is installed.
+    pub turn_budget: Option<u64>,
     /// `[[verify.costly]]` entries, in file order.
     pub costly: Vec<VerifyCostly>,
 }
@@ -493,6 +498,12 @@ impl ProjectConfig {
     /// The ceiling on how many cases a `given` domain may expand into.
     pub fn verify_max_cases(&self) -> usize {
         self.verify.max_cases.unwrap_or(DEFAULT_VERIFY_MAX_CASES)
+    }
+
+    /// `[verify] turn-budget`: the VM steps one turn may run before `aver
+    /// verify` warns, or `None` when the project leaves the budget off.
+    pub fn verify_turn_budget(&self) -> Option<u64> {
+        self.verify.turn_budget
     }
 
     /// Whether the `[[verify.costly]]` entry at `idx` covers `file_path` by
@@ -1181,6 +1192,7 @@ fn parse_verify_settings(table: &toml::Table) -> Result<VerifySettings, String> 
 
     let step_limit = parse_positive_u64(verify_table, "[verify]", "step-limit")?;
     let max_cases = parse_positive_u64(verify_table, "[verify]", "max-cases")?.map(|n| n as usize);
+    let turn_budget = parse_positive_u64(verify_table, "[verify]", "turn-budget")?;
 
     let arr = match verify_table.get("costly") {
         Some(toml::Value::Array(a)) => a.clone(),
@@ -1296,6 +1308,7 @@ fn parse_verify_settings(table: &toml::Table) -> Result<VerifySettings, String> 
     Ok(VerifySettings {
         step_limit,
         max_cases,
+        turn_budget,
         costly,
     })
 }

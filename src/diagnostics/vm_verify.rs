@@ -1024,6 +1024,9 @@ pub struct CaseBudget {
     pub default_limit: u64,
     /// Index of the `[[verify.costly]]` entry that raised `limit`, if any.
     pub raised_by: Option<usize>,
+    /// `[verify] turn-budget`: VM steps one turn may run between two
+    /// `Tcp.poll` waits before the case earns a warning. `None` = off.
+    pub turn_budget: Option<u64>,
 }
 
 impl CaseBudget {
@@ -1034,6 +1037,7 @@ impl CaseBudget {
             limit: crate::config::DEFAULT_VERIFY_STEP_LIMIT,
             default_limit: crate::config::DEFAULT_VERIFY_STEP_LIMIT,
             raised_by: None,
+            turn_budget: None,
         }
     }
 
@@ -1047,6 +1051,7 @@ impl CaseBudget {
             limit,
             default_limit: config.verify_step_limit(),
             raised_by,
+            turn_budget: config.verify_turn_budget(),
         }
     }
 
@@ -2134,6 +2139,7 @@ fn empty_verify_result(
             default_limit: budget.default_limit,
             raised_by: raised_by.map(str::to_string),
         },
+        turn_overruns: Vec::new(),
         case_results: Vec::with_capacity(plan.cases.len()),
         failures: Vec::new(),
     }
@@ -2145,8 +2151,35 @@ fn merge_verify_result(target: &mut VerifyResult, mut case: VerifyResult) {
     target.failed += case.failed;
     target.skipped += case.skipped;
     target.declined += case.declined;
+    target.turn_overruns.append(&mut case.turn_overruns);
     target.case_results.append(&mut case.case_results);
     target.failures.append(&mut case.failures);
+}
+
+/// Record the turn the VM flagged during the call just made, once per case.
+/// The VM keeps only the first overrun of a call and `take` clears it, so a
+/// guard, left and right evaluation of one case report one line, not three.
+#[cfg(feature = "runtime")]
+fn note_turn_overrun(
+    machine: &mut vm::VM,
+    budget: &CaseBudget,
+    case_index: usize,
+    case_expr: &str,
+    out: &mut Vec<crate::checker::VerifyTurnOverrun>,
+) {
+    let Some((steps, deepest_fn)) = machine.take_turn_overrun() else {
+        return;
+    };
+    if out.iter().any(|overrun| overrun.case_index == case_index) {
+        return;
+    }
+    out.push(crate::checker::VerifyTurnOverrun {
+        case_index,
+        case_expr: case_expr.to_string(),
+        steps,
+        limit: budget.turn_budget.unwrap_or(steps),
+        deepest_fn,
+    });
 }
 
 #[cfg(feature = "runtime")]
@@ -2188,6 +2221,11 @@ fn run_verify_vm_plans_parallel(
                     case.case_index = case_index;
                     case.case_total = case_total;
                 }
+                // A single-case plan reports its turn overrun as case 0;
+                // give it the index the case has in the block.
+                for overrun in &mut result.turn_overruns {
+                    overrun.case_index = case_index;
+                }
                 if result.is_law {
                     for (case, _, _) in &mut result.failures {
                         let expr = result
@@ -2226,12 +2264,15 @@ fn run_verify_vm(
     // Per-case cap, installed per block: the VM resets the counter at the top
     // of every `run_named_function`, so cases never share it.
     machine.set_step_limit(Some(budget.limit));
+    // Off unless the project asked for it; the VM measures nothing then.
+    machine.set_turn_limit(budget.turn_budget);
     let mut passed = 0;
     let mut failed = 0;
     let mut skipped = 0;
     let mut declined = 0;
     let mut failures = Vec::new();
     let mut case_results = Vec::new();
+    let mut turn_overruns = Vec::new();
     let is_law = matches!(block.kind, VerifyKind::Law(_));
     let case_total = block.cases.len();
     let plain_verify_fn =
@@ -2377,6 +2418,7 @@ fn run_verify_vm(
         if let Some(guard_name) = &case_fns.guard {
             let guard_result = vm_call_guard_helper(machine, guard_name);
             case_steps = case_steps.max(machine.last_step_count());
+            note_turn_overrun(machine, budget, idx, &case_str, &mut turn_overruns);
             // Drain any trace events emitted while the guard ran so
             // they don't bleed into the case's trace assertions. The
             // public wrapper also stops trace collection as a side
@@ -2513,6 +2555,7 @@ fn run_verify_vm(
         // projection path below.
         let left_result = vm_call_verify_helper(machine, &case_fns.left);
         case_steps = case_steps.max(machine.last_step_count());
+        note_turn_overrun(machine, budget, idx, &case_str, &mut turn_overruns);
         let (lhs_trace_events, lhs_trace_coords): (
             Vec<Value>,
             Vec<crate::vm::runtime::TraceCoord>,
@@ -2535,6 +2578,7 @@ fn run_verify_vm(
 
         let right_result = vm_call_verify_helper(machine, &case_fns.right);
         case_steps = case_steps.max(machine.last_step_count());
+        note_turn_overrun(machine, budget, idx, &case_str, &mut turn_overruns);
 
         if has_stubs {
             machine.clear_oracle_stubs();
@@ -2659,6 +2703,7 @@ fn run_verify_vm(
 
     let block_label = crate::checker::verify_block_label(block);
     machine.set_plain_verify_fn(None);
+    machine.set_turn_limit(None);
     VerifyResult {
         fn_name: block.fn_name.clone(),
         is_law: matches!(&block.kind, VerifyKind::Law(_)),
@@ -2672,6 +2717,7 @@ fn run_verify_vm(
             default_limit: budget.default_limit,
             raised_by: raised_by.map(str::to_string),
         },
+        turn_overruns,
         case_results,
         failures,
     }

@@ -547,6 +547,8 @@ resource makes the whole call `Err` rather than disappearing from the result.
 The requested timeout is clipped to the nearest dial deadline, so an expiring
 attempt cannot remain asleep behind a longer idle timeout.
 
+Whatever runs between two polls is one turn, and every peer waits for it: `aver check` flags a turn that hands control to an effectful loop as `warning[serve-path]`, and `aver verify` measures turns against `[verify] turn-budget`.
+
 A `Connected` key is ready for buffered input, stream readability, EOF, or an
 observable error. A `Sending` key is ready when the next `writeNow` on that
 connection will accept at least one byte or fail. A `Dialing` key is ready when

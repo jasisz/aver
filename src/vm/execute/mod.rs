@@ -57,6 +57,20 @@ pub struct VM {
     /// which is the only way a raised budget can be shown to have bought
     /// something.
     last_step_count: u64,
+    /// `[verify] turn-budget`: how many dispatched opcodes one turn — the
+    /// run since the last `Tcp.poll` effect, or since the call began — may
+    /// take before the VM records an overrun. `None` (default, and every
+    /// `aver run`) measures nothing: the only cost of the feature is one
+    /// `Option` test inside the dispatch loop's amortised 256-op check.
+    turn_limit: Option<u64>,
+    /// `step_count` at the last `Tcp.poll` of the running call; `0` until
+    /// the first one. The turn's length is `step_count - turn_start`, so no
+    /// second counter runs on the hot path.
+    turn_start: u64,
+    /// The first turn of the running call that crossed `turn_limit`: its
+    /// length and the function executing when it did. Left in place across
+    /// calls until the verify runner takes it, so one case reports once.
+    turn_overrun: Option<(u64, u32)>,
     /// Verify compiles the whole module but executes one concrete case at a
     /// time. It still validates checked contract/model identities up front,
     /// while an absent custom binding is allowed to fail only if that case
@@ -181,6 +195,9 @@ impl VM {
             step_limit: None,
             step_count: 0,
             last_step_count: 0,
+            turn_limit: None,
+            turn_start: 0,
+            turn_overrun: None,
             defer_missing_capability_providers_to_dispatch: false,
             slot_uniqueness: VmSlotUniquenessStats::default(),
             runtime_ownership: VmRuntimeOwnershipStats::default(),
@@ -201,6 +218,22 @@ impl VM {
     /// consumed, whether it returned a value or hit the step limit.
     pub fn last_step_count(&self) -> u64 {
         self.last_step_count
+    }
+
+    /// Install or remove the per-turn budget (`[verify] turn-budget`). Only
+    /// dispatched opcodes are measured; time spent inside a provider is not.
+    pub fn set_turn_limit(&mut self, limit: Option<u64>) {
+        self.turn_limit = limit;
+        self.turn_start = 0;
+        self.turn_overrun = None;
+    }
+
+    /// The first turn since the last take that ran past the turn budget, as
+    /// (steps the turn had run, name of the innermost function at that
+    /// moment). `None` while the budget is off or nothing crossed it.
+    pub fn take_turn_overrun(&mut self) -> Option<(u64, String)> {
+        let (steps, fn_id) = self.turn_overrun.take()?;
+        Some((steps, self.code.get(fn_id).name.clone()))
     }
 
     /// Keep contract/hash preflight, but let an absent provider fail at the

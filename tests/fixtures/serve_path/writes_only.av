@@ -1,0 +1,53 @@
+module WritesOnly
+    intent =
+        "The reference server, plus a per-key handler that flushes a counter"
+        "to a log by appending one line per step. The walk only writes what"
+        "it already holds, so it is bounded by this turn's data; the turn"
+        "budget in verify covers its length, and check says nothing."
+    exposes [serve]
+    effects [Tcp.poll, Tcp.readSome, Tcp.writeBytes, Disk.appendText]
+
+record Pool
+    sockets: Map<Int, Tcp.Socket>
+    connections: Map<Int, Tcp.Connection>
+    served: Int
+
+fn serve(pool: Pool, rounds: Int) -> Result<Int, String>
+    ? "One wait per round; every key that became ready is served once."
+    ! [Tcp.poll, Tcp.readSome, Tcp.writeBytes, Disk.appendText]
+    ready = Tcp.poll(pool.sockets, 100)?
+    next = dispatch(pool, ready)?
+    match rounds < 1
+        true -> Result.Ok(next.served)
+        false -> serve(next, rounds - 1)
+
+fn dispatch(pool: Pool, ready: List<Int>) -> Result<Pool, String>
+    ? "Serves each ready key once, in the order the poll returned them."
+    ! [Tcp.readSome, Tcp.writeBytes, Disk.appendText]
+    match ready
+        [] -> Result.Ok(pool)
+        [key, ..rest] -> dispatch(serveKey(pool, key)?, rest)
+
+fn serveKey(pool: Pool, key: Int) -> Result<Pool, String>
+    ? "Echoes one chunk back to the peer behind the key, if it is still known."
+    ! [Tcp.readSome, Tcp.writeBytes, Disk.appendText]
+    match Map.get(pool.connections, key)
+        Option.None -> Result.Ok(pool)
+        Option.Some(connection) -> echo(pool, connection)
+
+fn echo(pool: Pool, connection: Tcp.Connection) -> Result<Pool, String>
+    ? "Reads what the peer sent, writes it back, then flushes the log."
+    ! [Tcp.readSome, Tcp.writeBytes, Disk.appendText]
+    chunk = Tcp.readSome(connection, 4096)?
+    _written = Tcp.writeBytes(connection, chunk)?
+    _flushed = flushLog(pool.served)?
+    Result.Ok(Pool(sockets = pool.sockets, connections = pool.connections, served = pool.served + 1))
+
+fn flushLog(pending: Int) -> Result<Unit, String>
+    ? "Appends one line per pending entry, counting down to zero."
+    ! [Disk.appendText]
+    match pending < 1
+        true -> Result.Ok(Unit)
+        false -> match Disk.appendText("served.log", "line")
+            Result.Err(reason) -> Result.Err(reason)
+            Result.Ok(_) -> flushLog(pending - 1)
