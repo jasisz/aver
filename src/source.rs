@@ -1060,16 +1060,18 @@ pub fn loaded_to_module_info(loaded: &[LoadedModule]) -> Vec<crate::codegen::Mod
 }
 
 /// Both views of a dependency graph prepared for one entry pipeline.
-/// `modules` is target-lowered codegen input; `loaded` is the pristine,
-/// already-checked closure the entry uses to rebuild import surfaces without
-/// walking dependency bodies again.
+/// `modules` is target-lowered codegen input; `loaded` is the already-checked
+/// closure the entry uses to rebuild import surfaces without walking
+/// dependency bodies again — lowered wherever a module has `yield`
+/// functions, unchanged otherwise.
 pub struct PreparedCompileDeps {
     pub modules: Vec<crate::codegen::ModuleInfo>,
     pub loaded: Vec<LoadedModule>,
 }
 
 /// Prepare a codegen dependency graph once, leaves-first, and retain the
-/// pristine loaded closure for the entry module's `WithCheckedLoaded` pass.
+/// loaded closure — lowered for any module with `yield` functions — for the
+/// entry module's `WithCheckedLoaded` pass.
 ///
 /// This is the library counterpart of the CLI's target-aware loader. The old
 /// implementation selected `Full` separately for every dependency, causing

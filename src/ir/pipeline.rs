@@ -829,8 +829,9 @@ pub struct FrontResult {
 /// about to read, so it sees the protocol the exporter generated — the
 /// rewritten `exposes`, `__fStart`, the state and outcome types — exactly
 /// as if the dependency had been written that way. Without this the
-/// importer reads pristine source, where the exposed name is the function
-/// the lowering removes and no generated name exists at all.
+/// importer reads the dependency's source as written, where the exposed
+/// name is the function the lowering removes and no generated name exists
+/// at all.
 ///
 /// The loader stores modules leaves-first, so lowering in order lets a
 /// yield module that depends on another see the lowered one. A module
@@ -1051,7 +1052,8 @@ pub fn resolve(items: &mut [TopLevel]) {
 /// default in place (#950, see [`resolve`]'s caution). It also gives
 /// the freshly appended dep-module fns real ownership facts (their
 /// Vector / Map params get flagged, their dead fresh locals keep the
-/// in-place fast path) instead of whatever their pristine load carried.
+/// in-place fast path) instead of whatever their load carried before this
+/// re-resolve — lowered already, for a dependency with `yield` functions.
 pub fn resolve_and_reannotate(items: &mut [TopLevel]) {
     resolve(items);
     last_use(items);
