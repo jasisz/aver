@@ -670,7 +670,20 @@ fn work_input_rejections(
             capabilities.merge(part);
         }
     }
+    // A manifest that does not load is not a manifest without bindings: it is
+    // a manifest whose own error the command reports on its way to the
+    // backend. Judging bindings against it would accuse the program of a
+    // missing binding that is written right there in `aver.toml`.
+    let Ok(config) = aver::config::ProjectConfig::load_from_dir(Path::new(module_root)) else {
+        return empty;
+    };
+    let manifest = config.and_then(|config| config.provider_manifest);
+    let answers = manifest
+        .as_ref()
+        .map(|manifest| !manifest.answer_bindings.is_empty())
+        .unwrap_or(false);
     if aver::capability::work::job_kinds(&capabilities).is_empty()
+        && !answers
         && (target == aver::capability::work::WorkTarget::Vm
             || aver::capability::work::reserved_contract_in_use(&capabilities).is_none())
     {
@@ -696,14 +709,6 @@ fn work_input_rejections(
         // judged against signatures that did not survive the typecheck.
         return empty;
     }
-    // A manifest that does not load is not a manifest without bindings: it is
-    // a manifest whose own error the command reports on its way to the
-    // backend. Judging bindings against it would accuse the program of a
-    // missing binding that is written right there in `aver.toml`.
-    let Ok(config) = aver::config::ProjectConfig::load_from_dir(Path::new(module_root)) else {
-        return empty;
-    };
-    let manifest = config.and_then(|config| config.provider_manifest);
     aver::capability::work::gate(
         &tc.capabilities,
         manifest.as_ref(),
@@ -712,6 +717,9 @@ fn work_input_rejections(
         target,
     )
     .iter()
+    // A warning is something `aver check` tells the program's author; only an
+    // error stops the command on its way to the backend.
+    .filter(|finding| finding.is_error())
     .map(aver::capability::work::WorkDiagnostic::rendered)
     .collect()
 }

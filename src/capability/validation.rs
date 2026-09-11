@@ -80,7 +80,14 @@ pub(super) fn validate_hostile_profiles(
 pub(super) fn canonicalize_type_names(ty: Type, scope: &str) -> Type {
     match ty {
         Type::Named { id, name } => {
-            if name.contains('.') || name == crate::types::branch_path::TYPE_NAME {
+            // A bare name the compiler ships — `Bytes` is the one that reaches
+            // a capability boundary today — belongs to no module of the
+            // program, so scoping it would turn one type into as many types as
+            // there are modules naming it.
+            if name.contains('.')
+                || name == crate::types::branch_path::TYPE_NAME
+                || crate::stdlib::find(&name).is_some()
+            {
                 Type::Named { id, name }
             } else {
                 Type::Named {

@@ -905,7 +905,10 @@ pub(crate) fn work_diagnostic(
     file: &str,
 ) -> Diagnostic {
     Diagnostic {
-        severity: Severity::Error,
+        severity: match finding.severity {
+            crate::capability::work::WorkSeverity::Error => Severity::Error,
+            crate::capability::work::WorkSeverity::Warning => Severity::Warning,
+        },
         slug: finding.slug,
         summary: finding.message.clone(),
         span: Span {
