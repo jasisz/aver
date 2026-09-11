@@ -312,24 +312,47 @@ fn tail_stop_generates_exactly_the_pinned_protocol() {
     assert_removed(&items, "pick");
 }
 
-/// `aver context` goes through the same `front` entry as every other
-/// door (diagnostics/context.rs::compute_context_fn_flags), so it sees
-/// the lowered module: the generated names appear in its dump and the
-/// removed `loop` does not.
+/// `aver context` renders the LOWERED module, entry and dependency
+/// alike (diagnostics/context.rs::build_context_for_items): the
+/// protocol's functions are listed with their generated signatures —
+/// which the module as written does not contain at all — and the
+/// function they replaced is listed nowhere.
 #[test]
-fn context_dump_shows_the_generated_names_not_the_removed_function() {
-    let out = aver("yield_spike", &["context"]);
+fn context_dump_renders_the_lowered_module_for_the_entry_and_its_dependency() {
+    // The entry module: `loop` is private there, so its protocol shows
+    // up under the coordinator that drives it.
+    let out = aver("yield_spike", &["context", "--focus", "drive"]);
     assert!(out.status.success(), "{}", format_output(&out));
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    // `drive`'s signature and verify examples are lowered-module names:
-    // `__LoopOutcome` from the parameter type, `__loopStart` from the
-    // verify examples it calls.
-    for name in ["__LoopOutcome", "__loopStart"] {
-        assert!(stdout.contains(name), "expected {name:?} in:\n{stdout}");
+    let spike = String::from_utf8_lossy(&out.stdout).to_string();
+    for signature in [
+        "`__loopStart(id: Int, done: Int) -> __LoopOutcome`",
+        "`__loopAnswerClaim(__state: __LoopClaimState, __answer: Option<Int>) -> __LoopOutcome`",
+    ] {
+        assert!(
+            spike.contains(signature),
+            "expected {signature} in:\n{spike}"
+        );
     }
     assert!(
-        !stdout.contains("fn loop("),
-        "the removed `loop` should not appear:\n{stdout}"
+        !spike.contains("loop(id: Int, done: Int) -> Int"),
+        "the removed `loop` should not be listed:\n{spike}"
+    );
+
+    // The dependency, as its importer's dump describes it.
+    let out = aver("yield_cross_module", &["context"]);
+    assert!(out.status.success(), "{}", format_output(&out));
+    let dump = String::from_utf8_lossy(&out.stdout).to_string();
+    let looper = dump
+        .split_once("## Module: Looper")
+        .map(|(_, rest)| rest.split("## Module:").next().unwrap_or(rest).to_string())
+        .unwrap_or_else(|| panic!("no Looper section in:\n{dump}"));
+    assert!(
+        looper.contains("`__loopStart(id: Int, seen: Int) -> __LoopOutcome`"),
+        "expected Looper.__loopStart in:\n{looper}"
+    );
+    assert!(
+        !looper.contains("loop(id: Int, seen: Int) -> Int"),
+        "the removed Looper.loop should not be listed:\n{looper}"
     );
 }
 
