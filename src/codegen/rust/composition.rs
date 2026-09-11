@@ -150,10 +150,22 @@ pub(crate) fn plan_for_project(
         });
     }
 
+    // A job kind is answered by a pure function of the program, not by a
+    // provider package, so its `work` binding is what satisfies it here; the
+    // stdlib job and wait capabilities are answered by the runtime itself.
+    // Neither belongs in the Rust composition plan.
+    let work_bound = manifest
+        .work_bindings
+        .iter()
+        .map(|binding| binding.capability.clone())
+        .collect::<BTreeSet<_>>();
     let missing = required_capabilities
         .iter()
         .filter(|capability| {
-            compiler_defaults.binding(capability).is_none() && !configured.contains(*capability)
+            compiler_defaults.binding(capability).is_none()
+                && !configured.contains(*capability)
+                && !work_bound.contains(*capability)
+                && !crate::stdlib::RESERVED_CAPABILITY_MODULES.contains(&capability.as_str())
         })
         .cloned()
         .collect::<Vec<_>>();

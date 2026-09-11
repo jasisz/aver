@@ -506,16 +506,32 @@ pub(super) fn missing_provider_repair(
     let marker = "capability provider missing for '";
     let operation = error.split_once(marker)?.1.split_once('\'')?.0;
     let capability = operation.rsplit_once('.')?.0;
-    let configured = aver::config::ProjectConfig::load_from_dir(Path::new(module_root))
+    let manifest = aver::config::ProjectConfig::load_from_dir(Path::new(module_root))
         .ok()
         .flatten()
-        .and_then(|config| config.provider_manifest)
-        .is_some_and(|manifest| {
-            manifest
-                .bindings
-                .iter()
-                .any(|binding| binding.capability == capability)
-        });
+        .and_then(|config| config.provider_manifest);
+    let configured = manifest.as_ref().is_some_and(|manifest| {
+        manifest
+            .bindings
+            .iter()
+            .any(|binding| binding.capability == capability)
+    });
+    // A job kind is answered by a function of the program, never by a
+    // provider package: pointing its user at [[providers.bindings]] would
+    // send them to the one binding that conflicts with the one they wrote.
+    let work_binding = manifest.as_ref().and_then(|manifest| {
+        manifest
+            .work_bindings
+            .iter()
+            .find(|binding| binding.capability == capability)
+    });
+    if let Some(binding) = work_binding {
+        return Some(format!(
+            "hint: capability '{capability}' is a job kind bound to work = \"{}\", and no backend runs a job in this build yet.\n\
+             Nothing else is missing: the binding is what will start '{}' off the turn once jobs run.",
+            binding.function, binding.function
+        ));
+    }
 
     let mut repair = if configured {
         format!(
@@ -608,12 +624,41 @@ pub(super) fn work_program_rejection(command: &Commands) -> Option<String> {
         }
         _ => return None,
     };
-    if !Path::new(&input).is_file() {
-        return None;
-    }
+    // `aver verify` and `aver compile` accept a directory as well as a file;
+    // the door is the same for every program the command was pointed at.
+    let inputs = if Path::new(&input).is_file() {
+        vec![input]
+    } else {
+        resolve_av_inputs(&input).ok()?
+    };
     let module_root = super::shared::resolve_module_root(module_root.as_deref());
     let mut cache = aver::source::ProgramLoadCache::default();
-    let program = load_report_program_with_cache(&input, &module_root, &mut cache).ok()?;
+    let mut findings = Vec::new();
+    for input in inputs {
+        for rendered in work_input_rejections(&input, &module_root, target, &mut cache) {
+            if !findings.contains(&rendered) {
+                findings.push(rendered);
+            }
+        }
+    }
+    if findings.is_empty() {
+        return None;
+    }
+    Some(findings.join("\n"))
+}
+
+/// The same door for one program file: its job kinds, its manifest bindings
+/// and the target it was asked for, rendered as complete diagnostic lines.
+fn work_input_rejections(
+    input: &str,
+    module_root: &str,
+    target: aver::capability::work::WorkTarget,
+    cache: &mut aver::source::ProgramLoadCache,
+) -> Vec<String> {
+    let empty = Vec::new();
+    let Ok(program) = load_report_program_with_cache(input, module_root, cache) else {
+        return empty;
+    };
     let mut capabilities = aver::capability::CapabilityRegistry::default();
     for module in program.report_units() {
         if module.fault.is_some() {
@@ -626,14 +671,18 @@ pub(super) fn work_program_rejection(command: &Commands) -> Option<String> {
         }
     }
     if aver::capability::work::job_kinds(&capabilities).is_empty() {
-        return None;
+        return empty;
     }
 
     // A job kind is present, so the bound function's own signature decides.
-    let entry = program.report_units().last()?;
+    let Some(entry) = program.report_units().last() else {
+        return empty;
+    };
     let mut items = entry.items.clone();
     let user_program_len = items.len();
-    let loaded = program.loaded_dependencies_for(entry).ok()?;
+    let Ok(loaded) = program.loaded_dependencies_for(entry) else {
+        return empty;
+    };
     let tc = aver::ir::pipeline::front_gate(
         &mut items,
         &aver::ir::TypecheckMode::WithLoaded(&loaded),
@@ -642,27 +691,20 @@ pub(super) fn work_program_rejection(command: &Commands) -> Option<String> {
     if !tc.errors.is_empty() {
         // Type errors are the command's own report; a binding cannot be
         // judged against signatures that did not survive the typecheck.
-        return None;
+        return empty;
     }
-    let manifest = aver::config::ProjectConfig::load_from_dir(Path::new(&module_root))
+    let manifest = aver::config::ProjectConfig::load_from_dir(Path::new(module_root))
         .ok()
         .flatten()
         .and_then(|config| config.provider_manifest);
-    let findings = aver::capability::work::gate(
+    aver::capability::work::gate(
         &tc.capabilities,
         manifest.as_ref(),
         &tc.fn_sigs,
         aver::visibility::module_decl(&entry.items).map(|module| module.name.as_str()),
         target,
-    );
-    if findings.is_empty() {
-        return None;
-    }
-    Some(
-        findings
-            .iter()
-            .map(aver::capability::work::WorkDiagnostic::rendered)
-            .collect::<Vec<_>>()
-            .join("\n"),
     )
+    .iter()
+    .map(aver::capability::work::WorkDiagnostic::rendered)
+    .collect()
 }
