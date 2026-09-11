@@ -119,6 +119,8 @@ pub(super) struct Generated {
     /// The protocol a coordinator refers to: types, `Start`, answer functions.
     pub public_names: Vec<String>,
     pub items: Vec<TopLevel>,
+    /// The same protocol as data, for the generator of the loop.
+    pub protocol: super::ProcessProtocol,
 }
 
 pub(super) fn lower_fn(
@@ -1354,9 +1356,34 @@ impl<'a> Lowering<'a> {
         }
         items.extend(self.helpers.drain(..).map(TopLevel::FnDef));
         self.assign_effects(&mut items);
+        let protocol = super::ProcessProtocol {
+            fn_name: fd.name.clone(),
+            params: fd.params.clone(),
+            return_type: fd.return_type.clone(),
+            start: names.start(),
+            request: names.request(),
+            outcome: names.outcome(),
+            kinds: self
+                .kinds
+                .iter()
+                .map(|kind| super::ProtocolKind {
+                    name: kind.name.clone(),
+                    operation: self
+                        .kind_names
+                        .iter()
+                        .find(|(_, named)| *named == &kind.name)
+                        .map(|(operation, _)| operation.clone()),
+                    arg_types: kind.arg_types.clone(),
+                    answer_type: kind.answer_type.clone(),
+                    state: names.state(&kind.name),
+                    answer_fn: names.answer(&kind.name),
+                })
+                .collect(),
+        };
         Ok(Generated {
             public_names,
             items,
+            protocol,
         })
     }
 }

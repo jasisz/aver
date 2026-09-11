@@ -1295,11 +1295,7 @@ fn run_verify_for_items_vm_with_loaded_impl(
     } else {
         crate::ir::TypecheckMode::WithLoaded(&loaded)
     };
-    let marked = crate::config::MarkedCapabilities::from_manifest(
-        config
-            .as_ref()
-            .and_then(|config| config.provider_manifest.as_ref()),
-    );
+    let marked = crate::config::MarkedCapabilities::from_config(config.as_ref());
     let tc_result =
         crate::ir::pipeline::front_gate(&mut items, &typecheck_mode, user_program_len, &marked);
     if !tc_result.errors.is_empty() {

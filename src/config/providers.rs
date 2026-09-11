@@ -121,16 +121,44 @@ impl ProviderPackageManifest {
     }
 }
 
-/// The capabilities a program answers itself: one name per `answer = "Module"`
-/// binding of its manifest.
+/// The seam between one job kind and the answer state the turn already holds:
+/// where the next task comes from, and where a finished job's result lands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JobSeam {
+    /// The job-kind capability, e.g. `Validation`.
+    pub capability: String,
+    /// `task = "Module.function"`.
+    pub task: String,
+    /// `landed = "Module.function"`.
+    pub landed: String,
+}
+
+/// Everything the generated loop is built from, resolved from the manifest
+/// once: the three policies and the view record, which module answers which
+/// capability, the job seams, and the job limit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunPlan {
+    pub policies: RunPolicies,
+    /// Capability → answering module, in manifest order.
+    pub answers: Vec<(String, String)>,
+    /// One entry per job kind whose `work` binding declares both seam ends.
+    pub jobs: Vec<JobSeam>,
+    /// `[work] max-jobs`, or the host's own limit when the manifest is quiet.
+    pub max_jobs: usize,
+}
+
+/// The manifest facts the front door has to know before it lowers anything:
+/// which capabilities the program answers itself, and whether it asked for
+/// its loop to be generated.
 ///
-/// This is the set the `yield` lowering reads to decide what a stop is, so it
-/// is carried as a set of names rather than as the manifest: the front door
-/// should not learn to read TOML, and every door that lowers a program has to
-/// agree with every other about which calls are requests.
+/// Both are carried as resolved data rather than as the manifest, because the
+/// front door should not learn to read TOML and every door that lowers a
+/// program has to agree with every other about what a request is and what the
+/// loop is built from.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MarkedCapabilities {
     names: BTreeSet<String>,
+    run: Option<RunPlan>,
 }
 
 impl MarkedCapabilities {
@@ -160,21 +188,68 @@ impl MarkedCapabilities {
                     .collect()
             })
             .unwrap_or_default();
-        Self { names }
+        Self { names, run: None }
     }
 
-    /// The set the project rooted at `base_dir` declares. A directory with no
-    /// `aver.toml`, an unreadable one, or none given at all is the empty set:
-    /// markedness is a project fact, and a scratch buffer is not a project.
+    /// The same, plus the `[run]` table's plan when the project asked for its
+    /// loop to be generated.
+    pub fn from_config(config: Option<&crate::config::ProjectConfig>) -> Self {
+        let Some(config) = config else {
+            return Self::none();
+        };
+        let mut facts = Self::from_manifest(config.provider_manifest.as_ref());
+        facts.run = config.run_policies.as_ref().map(|policies| RunPlan {
+            policies: policies.clone(),
+            answers: config
+                .provider_manifest
+                .as_ref()
+                .map(|manifest| {
+                    manifest
+                        .answer_bindings
+                        .iter()
+                        .map(|binding| (binding.capability.clone(), binding.module.clone()))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            jobs: config
+                .provider_manifest
+                .as_ref()
+                .map(|manifest| {
+                    manifest
+                        .work_bindings
+                        .iter()
+                        .filter_map(|binding| {
+                            Some(JobSeam {
+                                capability: binding.capability.clone(),
+                                task: binding.task.clone()?,
+                                landed: binding.landed.clone()?,
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            max_jobs: config.work_max_jobs(),
+        });
+        facts
+    }
+
+    /// The facts the project rooted at `base_dir` declares. A directory with
+    /// no `aver.toml`, an unreadable one, or none given at all marks nothing
+    /// and asks for no loop: both are project facts, and a scratch buffer is
+    /// not a project.
     pub fn for_project_dir(base_dir: Option<&str>) -> Self {
         let Some(base) = base_dir else {
             return Self::none();
         };
-        let manifest = crate::config::ProjectConfig::load_from_dir(Path::new(base))
+        let config = crate::config::ProjectConfig::load_from_dir(Path::new(base))
             .ok()
-            .flatten()
-            .and_then(|config| config.provider_manifest);
-        Self::from_manifest(manifest.as_ref())
+            .flatten();
+        Self::from_config(config.as_ref())
+    }
+
+    /// What the manifest asked the loop to be built from, if it asked at all.
+    pub fn run(&self) -> Option<&RunPlan> {
+        self.run.as_ref()
     }
 
     pub fn is_empty(&self) -> bool {

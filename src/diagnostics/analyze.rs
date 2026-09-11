@@ -201,9 +201,7 @@ fn analyze_source_impl(
     // program the checker read; `items` stays the source as written.
     let mut transformed = items.clone();
     let user_program_len = transformed.len();
-    let marked = crate::config::MarkedCapabilities::from_manifest(
-        project_provider_manifest(options).as_ref(),
-    );
+    let marked = crate::config::MarkedCapabilities::from_config(project_config(options).as_ref());
     let tc_result =
         crate::ir::pipeline::front_gate(&mut transformed, &mode, user_program_len, &marked);
 
@@ -742,6 +740,15 @@ fn parse_error_repair(body: &str) -> super::model::Repair {
         primary: hint.map(String::from),
         ..Repair::default()
     }
+}
+
+/// The project this source belongs to, when it belongs to one. Scratch
+/// buffers and the playground have no `aver.toml`.
+fn project_config(options: &AnalyzeOptions) -> Option<crate::config::ProjectConfig> {
+    let base = options.module_base_dir.as_deref()?;
+    crate::config::ProjectConfig::load_from_dir(std::path::Path::new(base))
+        .ok()
+        .flatten()
 }
 
 /// The provider manifest of the project this source belongs to, when it

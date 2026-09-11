@@ -679,6 +679,7 @@ fn work_input_rejections(
     let Ok(config) = aver::config::ProjectConfig::load_from_dir(Path::new(module_root)) else {
         return empty;
     };
+    let marked = aver::config::MarkedCapabilities::from_config(config.as_ref());
     let manifest = config.and_then(|config| config.provider_manifest);
     let answers = manifest
         .as_ref()
@@ -705,7 +706,7 @@ fn work_input_rejections(
         &mut items,
         &aver::ir::TypecheckMode::WithLoaded(&loaded),
         user_program_len,
-        &aver::config::MarkedCapabilities::from_manifest(manifest.as_ref()),
+        &marked,
     );
     if !tc.errors.is_empty() {
         // Type errors are the command's own report; a binding cannot be

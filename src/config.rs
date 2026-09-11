@@ -19,8 +19,9 @@ use std::path::Path;
 
 mod providers;
 pub use providers::{
-    MarkedCapabilities, PROVIDER_MANIFEST_SCHEMA, ProviderAnswerBinding, ProviderPackageBinding,
-    ProviderPackageManifest, ProviderPackageSource, ProviderWorkBinding, RunPolicies,
+    JobSeam, MarkedCapabilities, PROVIDER_MANIFEST_SCHEMA, ProviderAnswerBinding,
+    ProviderPackageBinding, ProviderPackageManifest, ProviderPackageSource, ProviderWorkBinding,
+    RunPlan, RunPolicies,
 };
 
 /// Runtime policy for a single effect namespace.

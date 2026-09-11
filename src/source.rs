@@ -800,11 +800,7 @@ impl<'a> Walk<'a> {
                     .flatten()
             })
             .clone();
-        let marked = crate::config::MarkedCapabilities::from_manifest(
-            verify_config
-                .as_ref()
-                .and_then(|config| config.provider_manifest.as_ref()),
-        );
+        let marked = crate::config::MarkedCapabilities::from_config(verify_config.as_ref());
         Self {
             module_root,
             mode,
@@ -1009,7 +1005,7 @@ fn marked_capabilities_in_map(
     let Ok(config) = crate::config::ProjectConfig::parse(content) else {
         return crate::config::MarkedCapabilities::none();
     };
-    crate::config::MarkedCapabilities::from_manifest(config.provider_manifest.as_ref())
+    crate::config::MarkedCapabilities::from_config(Some(&config))
 }
 
 fn load_recursive_from_map(

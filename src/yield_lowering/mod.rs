@@ -52,6 +52,51 @@ pub struct YieldLoweringReport {
     pub lowered: Vec<String>,
     /// The generated items, in the order they were spliced into the module.
     pub generated: Vec<TopLevel>,
+    /// One entry per lowered function: the protocol the loop generator
+    /// dispatches over.
+    pub protocols: Vec<ProcessProtocol>,
+}
+
+/// What the loop generator has to know about one lowered process.
+///
+/// The lowering already knows all of it — it named the kinds, it wrote the
+/// state types and it remembers which operation each kind is a request for —
+/// and reconstructing any of that from the generated items would be reading
+/// names back out of strings. So it is handed over as data.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProcessProtocol {
+    /// The function as the program wrote it, e.g. `peer`.
+    pub fn_name: String,
+    /// Its parameters, in order. A seated process takes none.
+    pub params: Vec<(String, String)>,
+    /// What it answers when it is done.
+    pub return_type: String,
+    /// `__peerStart`.
+    pub start: String,
+    /// `__PeerRequest`.
+    pub request: String,
+    /// `__PeerOutcome`.
+    pub outcome: String,
+    /// One per request kind, in the order the request sum declares them.
+    pub kinds: Vec<ProtocolKind>,
+}
+
+/// One request kind of one process.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProtocolKind {
+    /// `Claim`, or `Yield` for the self tail call.
+    pub name: String,
+    /// The dotted operation this kind is a request for; `None` for `Yield`,
+    /// which is answered by the process itself.
+    pub operation: Option<String>,
+    /// The operation's declared argument types, in order.
+    pub arg_types: Vec<String>,
+    /// The operation's result type; `None` for `Yield`.
+    pub answer_type: Option<String>,
+    /// `__PeerClaimState`.
+    pub state: String,
+    /// `__peerAnswerClaim`.
+    pub answer_fn: String,
 }
 
 impl YieldLoweringReport {
@@ -208,6 +253,7 @@ pub fn lower(
         match lower::lower_fn(fd, marked, fn_sigs) {
             Ok(generated) => {
                 report.lowered.push(fd.name.clone());
+                report.protocols.push(generated.protocol.clone());
                 report.generated.extend(generated.items.iter().cloned());
                 exposes_rewrite.push((fd.name.clone(), generated.public_names));
                 out.extend(generated.items);
