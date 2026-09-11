@@ -948,7 +948,6 @@ fn write_laws(
         ));
     }
     out.push_str("\nverify __nextInstance law nowRaisesTheInstance\n    given seq: Int = [0, 1, 7]\n    __nextInstance(seq) > seq holds\n");
-
     for protocol in protocols {
         let upper = marker_variant(&protocol.fn_name);
         let domain = format!(

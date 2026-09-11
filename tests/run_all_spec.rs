@@ -141,17 +141,52 @@ fn a_recorded_run_of_the_slice_replays_to_the_same_run() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A hostile world leaves every invariant of the loop standing, and it is
+/// worth saying why it must: the loop's invariants are laws over pure
+/// functions of the slot table, which no wait and no provider can reach. The
+/// hostile profiles that do fire here are the ones a process performs in
+/// place on its way to its first request — the sample run seats every
+/// process, so every such profile is exercised under every law below it.
+///
+/// `Wait.poll`'s own hostile profiles are not among them, and cannot be
+/// today: a law that reaches the wait has to be stated over a function that
+/// performs `Wait.poll`, and such a law does not reach the Lean wall —
+/// measured on `tests/fixtures/work_jobs`, whose `readyCount law` makes
+/// `aver proof --backend lean` fail with five build errors, because an
+/// oracle-lifted function's law renders its sample theorems without the
+/// oracle arguments. Generating such a law into every program that asks for
+/// a loop would break `aver proof` for all of them, so this leg does not.
 #[test]
-fn a_hostile_wait_leaves_every_invariant_of_the_loop_standing() {
-    let out = aver(SLICE, &["verify", "--hostile"]);
-    assert!(out.status.success(), "{}", format_output(&out));
-    let text = combined(&out);
-    assert!(text.contains("0 failed"), "{}", format_output(&out));
+fn a_hostile_world_leaves_every_invariant_of_the_loop_standing() {
+    let plain = aver(SLICE, &["verify"]);
+    let hostile = aver(SLICE, &["verify", "--hostile"]);
+    assert!(hostile.status.success(), "{}", format_output(&hostile));
+    let text = combined(&hostile);
+    assert!(text.contains("0 failed"), "{}", format_output(&hostile));
     assert!(
         text.contains("__settlePeer law lateAnswerIsDropped"),
         "{}",
-        format_output(&out)
+        format_output(&hostile)
     );
+    // The hostile run expands into strictly more cases than the honest one,
+    // so the profiles are actually being installed rather than skipped.
+    assert!(
+        cases(&combined(&hostile)) > cases(&combined(&plain)),
+        "hostile ran no more cases than the honest run:\n{}",
+        format_output(&hostile)
+    );
+}
+
+/// The `N/M cases passed` count from a verify summary line.
+fn cases(text: &str) -> usize {
+    text.lines()
+        .find_map(|line| {
+            let (_, rest) = line.split_once("| ")?;
+            let (count, _) = rest.split_once(" cases passed")?;
+            let (passed, _) = count.rsplit_once('/')?;
+            passed.rsplit(' ').next()?.parse::<usize>().ok()
+        })
+        .unwrap_or(0)
 }
 
 #[test]
