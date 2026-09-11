@@ -460,14 +460,31 @@ impl ProgramModule {
 #[derive(Clone, Debug, Default)]
 pub struct Program {
     pub modules: Vec<ProgramModule>,
-    /// Per-path memo of a dependency's already-lowered form, filled in by
+    /// Per-path memo of a `yield` dependency's already-lowered form,
+    /// computed once when the program is loaded (see
+    /// [`compute_lowering_memo`]) and consulted by
     /// [`Self::loaded_dependencies_for`]. A whole-program walk calls that
     /// method once per report unit, and units share most of their
     /// dependency cone, so without this a shared `yield` dependency would
     /// be re-typechecked and re-lowered from scratch by every unit that
     /// reaches it instead of once for the whole run.
-    lowering_cache: std::cell::RefCell<HashMap<PathBuf, LoadedModule>>,
+    ///
+    /// A module without a `yield` function never enters this map: it is
+    /// neither cloned nor stored, so a program without `yield` anywhere
+    /// pays nothing extra to build or consult it. Being a plain map filled
+    /// once at construction rather than a `RefCell` mutated lazily also
+    /// keeps `Program` `Sync`.
+    lowering_memo: HashMap<PathBuf, LoadedModule>,
 }
+
+// Report units are prepared with `rayon` across worker threads; a `Program`
+// shared by reference into that pool must stay `Sync`. The lowering memo is
+// a plain map filled once at construction rather than a `RefCell` mutated
+// per lookup, so this holds.
+const _: fn() = || {
+    fn assert_sync<T: Sync>() {}
+    assert_sync::<Program>();
+};
 
 impl Program {
     pub fn entry(&self) -> &ProgramModule {
@@ -522,16 +539,15 @@ impl Program {
             .filter(|candidate| reachable.contains(&canonicalize_path(&candidate.path)))
             .map(ProgramModule::as_loaded)
             .collect();
-        // A dependency this program has already lowered for a different
-        // report unit is substituted in already-lowered: `has_yield_fns`
-        // below then sees none left to cut, so the pipeline call skips it
+        // A `yield` dependency was already lowered once for the whole
+        // program at load time: substitute that in so `has_yield_fns`
+        // below sees none left to cut, and the pipeline call skips it
         // instead of repeating the check-lower-check it already paid for.
-        {
-            let cache = self.lowering_cache.borrow();
-            for entry in modules.iter_mut() {
-                if let Some(lowered) = cache.get(&entry.path) {
-                    *entry = lowered.clone();
-                }
+        // A module that never had a `yield` function is never in the memo,
+        // so it keeps the plain clone `as_loaded` produced above.
+        for entry in modules.iter_mut() {
+            if let Some(lowered) = self.lowering_memo.get(&entry.path) {
+                *entry = lowered.clone();
             }
         }
         // Each module of this program is prepared as a unit of its own,
@@ -539,22 +555,43 @@ impl Program {
         // reports it there, against its own file, so the errors this call
         // hands back would be the same ones twice.
         let _ = crate::ir::pipeline::lower_loaded_yield_modules(&mut modules, None);
-        {
-            let mut cache = self.lowering_cache.borrow_mut();
-            for entry in &modules {
-                // A module that still has `yield` functions failed to
-                // lower; leave it uncached so the next caller retries it
-                // (and hits the same errors) instead of memoizing a
-                // broken half-state.
-                if !crate::yield_lowering::has_yield_fns(&entry.items) {
-                    cache
-                        .entry(entry.path.clone())
-                        .or_insert_with(|| entry.clone());
-                }
-            }
-        }
         Ok(modules)
     }
+}
+
+/// Lowered form of every dependency that contains a `yield` function,
+/// computed once for the whole program. `dependencies` must be leaves-first
+/// (the invariant [`Program::modules`] already keeps), so a module later in
+/// the slice can see an earlier one's lowered form as its own dependency.
+///
+/// A module without a `yield` function is checked with a plain reference
+/// scan (`has_yield_fns` takes `&[TopLevel]`) and is never cloned or
+/// entered here: the whole-program clone below runs only when at least one
+/// dependency actually needs lowering, and even then a module that stays
+/// yield-free after lowering is dropped from the result, not memoized.
+fn compute_lowering_memo(dependencies: &[ProgramModule]) -> HashMap<PathBuf, LoadedModule> {
+    let yielding: Vec<usize> = dependencies
+        .iter()
+        .enumerate()
+        .filter(|(_, module)| crate::yield_lowering::has_yield_fns(&module.items))
+        .map(|(index, _)| index)
+        .collect();
+    if yielding.is_empty() {
+        return HashMap::new();
+    }
+    let mut loaded: Vec<LoadedModule> = dependencies.iter().map(ProgramModule::as_loaded).collect();
+    let _ = crate::ir::pipeline::lower_loaded_yield_modules(&mut loaded, None);
+    let mut memo = HashMap::new();
+    for index in yielding {
+        let entry = &loaded[index];
+        // A module that still has `yield` functions failed to lower;
+        // leave it out so the next caller retries it (and hits the same
+        // errors) instead of memoizing a broken half-state.
+        if !crate::yield_lowering::has_yield_fns(&entry.items) {
+            memo.insert(entry.path.clone(), entry.clone());
+        }
+    }
+    memo
 }
 
 fn validate_program_module_name(module: &ProgramModule, dep_name: &str) -> Result<(), LoadError> {
@@ -715,9 +752,11 @@ pub fn load_program_with_cache(
         discovery_index: 0,
         fault: None,
     });
+    let dependency_count = modules.len().saturating_sub(1);
+    let lowering_memo = compute_lowering_memo(&modules[..dependency_count]);
     Ok(Program {
         modules,
-        lowering_cache: Default::default(),
+        lowering_memo,
     })
 }
 
@@ -1503,5 +1542,39 @@ mod tests {
         let err =
             parse_source(src).expect_err("unqualified constructor patterns should be rejected");
         assert!(err.contains("Constructor patterns must be qualified"));
+    }
+
+    #[test]
+    fn lowering_memo_holds_only_modules_with_yield_functions() {
+        // `yield_cross_module` is Pool (a capability, no `yield`), Looper (a
+        // `yield` function), and the entry CrossModule that drives it. The
+        // memo built at load time must name only Looper: a program without
+        // `yield` anywhere never builds this map at all (see
+        // `super::compute_lowering_memo`), so this fixture is what actually
+        // exercises the "yield modules only" half of that guarantee.
+        let root = format!(
+            "{}/tests/fixtures/yield_cross_module",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let main_path = std::path::Path::new(&root).join("main.av");
+        let source = std::fs::read_to_string(&main_path).expect("read fixture entry");
+        let items = parse_source(&source).expect("parse fixture entry");
+        let mut cache = ProgramLoadCache::default();
+        let program = load_program_with_cache(
+            &main_path,
+            &source,
+            &items,
+            &root,
+            LoadMode::Strict,
+            &mut cache,
+        )
+        .expect("load yield_cross_module fixture");
+        let memoized = program
+            .lowering_memo
+            .keys()
+            .filter_map(|path| path.file_name())
+            .filter_map(|name| name.to_str())
+            .collect::<Vec<_>>();
+        assert_eq!(memoized, vec!["looper.av"]);
     }
 }
