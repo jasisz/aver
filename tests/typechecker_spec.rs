@@ -5600,6 +5600,50 @@ fn verify_case_calling_a_yield_function_gets_the_same_recipe() {
 }
 
 #[test]
+fn calling_the_yield_function_before_its_definition_gets_only_the_recipe() {
+    let src = format!("{YIELD_MODULE}fn main() -> Int\n    loop(0)\n\n{YIELD_LOOP}");
+    let errs = front_errors(&src);
+    assert_eq!(
+        errs.len(),
+        1,
+        "expected exactly one error, got:\n  {}",
+        errs.join("\n  ")
+    );
+    assert!(
+        errs[0].contains("Function 'main' calls 'loop' directly, but 'loop' yields; call '__loopStart(...)' and answer its requests"),
+        "unexpected error text: {}",
+        errs[0]
+    );
+    assert!(
+        !errs[0].to_lowercase().contains("missing effect"),
+        "error should not mention a missing effect:\n  {}",
+        errs[0]
+    );
+}
+
+#[test]
+fn calling_the_yield_function_after_its_definition_gets_only_the_recipe() {
+    let src = format!("{YIELD_MODULE}{YIELD_LOOP}\nfn main() -> Int\n    loop(0)\n");
+    let errs = front_errors(&src);
+    assert_eq!(
+        errs.len(),
+        1,
+        "expected exactly one error, got:\n  {}",
+        errs.join("\n  ")
+    );
+    assert!(
+        errs[0].contains("Function 'main' calls 'loop' directly, but 'loop' yields; call '__loopStart(...)' and answer its requests"),
+        "unexpected error text: {}",
+        errs[0]
+    );
+    assert!(
+        !errs[0].to_lowercase().contains("missing effect"),
+        "error should not mention a missing effect:\n  {}",
+        errs[0]
+    );
+}
+
+#[test]
 fn non_tail_call_to_a_yield_function_is_an_error_with_a_recipe() {
     let src = format!(
         "{YIELD_MODULE}{YIELD_LOOP}\nfn outer(n: Int) -> Int\n    ? \"Counts one more than loop.\"\n    ! [Console.readLine, yield]\n    loop(n) + 1\n"
