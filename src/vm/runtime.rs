@@ -738,6 +738,23 @@ impl VmRuntime {
             return self.replay_work(&operation, args, arena);
         }
 
+        // `Work.cancel` belongs to the stdlib capability, not to a job kind,
+        // so it takes the recorded path below. The recomputed job behind the
+        // recorded handle still has to stop where the recording stopped it,
+        // instead of running on until the replay ends.
+        if capability.effectful
+            && self.execution_mode() == VmExecutionMode::Replay
+            && self.providers.has_work_bindings()
+            && operation.canonical_name == "Work.cancel"
+            && let Some(token) = args
+                .first()
+                .map(|value| value.to_value(arena))
+                .as_ref()
+                .and_then(job_token)
+        {
+            self.providers.work_replay_cancel(token);
+        }
+
         if capability.effectful && self.execution_mode() == VmExecutionMode::Replay {
             match capability.replay {
                 Some(crate::capability::ReplaySemantics::Recorded)

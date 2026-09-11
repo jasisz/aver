@@ -693,10 +693,14 @@ fn work_input_rejections(
         // judged against signatures that did not survive the typecheck.
         return empty;
     }
-    let manifest = aver::config::ProjectConfig::load_from_dir(Path::new(module_root))
-        .ok()
-        .flatten()
-        .and_then(|config| config.provider_manifest);
+    // A manifest that does not load is not a manifest without bindings: it is
+    // a manifest whose own error the command reports on its way to the
+    // backend. Judging bindings against it would accuse the program of a
+    // missing binding that is written right there in `aver.toml`.
+    let Ok(config) = aver::config::ProjectConfig::load_from_dir(Path::new(module_root)) else {
+        return empty;
+    };
+    let manifest = config.and_then(|config| config.provider_manifest);
     aver::capability::work::gate(
         &tc.capabilities,
         manifest.as_ref(),

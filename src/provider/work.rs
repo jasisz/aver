@@ -60,6 +60,13 @@ pub struct WorkProvider {
     /// Jobs recomputed during replay, keyed by the trace token the recording
     /// gave the handle that started them.
     replayed: std::sync::Mutex<std::collections::BTreeMap<u64, aver_rt::work::Job>>,
+    /// The jobs this job kind started itself.
+    ///
+    /// Every job kind of a program shares one engine, and `Work.Job` is one
+    /// stdlib type, so a handle minted by one kind type-checks as an argument
+    /// to another kind's `take`. Nothing but the runtime can tell them apart,
+    /// so the runtime remembers whose job is whose.
+    minted: std::sync::Mutex<std::collections::BTreeSet<u64>>,
 }
 
 /// A job's task and its result are ordinary data; the Work shape check has
@@ -97,6 +104,7 @@ impl WorkProvider {
             base: OnceLock::new(),
             identity: format!("aver.work.{capability}/vm"),
             replayed: std::sync::Mutex::new(std::collections::BTreeMap::new()),
+            minted: std::sync::Mutex::new(std::collections::BTreeSet::new()),
         }
     }
 
@@ -169,9 +177,14 @@ impl WorkProvider {
             )
         };
         match self.engine.begin(Box::new(body)) {
-            Ok(job) => Ok(ProviderValue::ResultOk(Box::new(ProviderValue::Resource(
-                job.into_resource(),
-            )))),
+            Ok(job) => {
+                if let Ok(mut minted) = self.minted.lock() {
+                    minted.insert(job.id());
+                }
+                Ok(ProviderValue::ResultOk(Box::new(ProviderValue::Resource(
+                    job.into_resource(),
+                ))))
+            }
             Err(message) => Ok(ProviderValue::ResultErr(Box::new(ProviderValue::String(
                 message,
             )))),
@@ -221,6 +234,14 @@ impl WorkProvider {
             replayed.insert(token, job);
         }
         Ok(())
+    }
+
+    /// Whether this job kind is the one that started the job with this id.
+    fn started_here(&self, id: u64) -> bool {
+        self.minted
+            .lock()
+            .map(|minted| minted.contains(&id))
+            .unwrap_or(false)
     }
 
     fn replayed_job(&self, token: u64) -> Option<aver_rt::work::Job> {
@@ -301,8 +322,9 @@ fn run_bound_function(
     vm.set_provider_registry(child_providers);
     vm.defer_missing_capability_providers_to_dispatch(true);
     vm.set_cancelled(cancel);
-    vm.run_top_level()
-        .map_err(|error| format!("work: {function}: {error}"))?;
+    // The base context was frozen from a VM that had already run the top
+    // level, so its globals are initialised: running the top level again here
+    // would repeat the whole program's setup once per job.
     let argument = crate::nan_value::NanValue::from_value(&task, &mut vm.arena);
     let produced = vm
         .run_named_function(function, &[argument])
@@ -338,7 +360,18 @@ impl CapabilityProvider for WorkProvider {
         };
         match operation.rsplit_once('.').map(|(_, name)| name) {
             Some("begin") => self.begin(single.clone()),
-            Some("take") => Ok(Self::answer(self.job(operation, single)?.take())),
+            Some("take") => {
+                let job = self.job(operation, single)?;
+                if !self.started_here(job.id()) {
+                    return Ok(ProviderValue::ResultErr(Box::new(ProviderValue::String(
+                        format!(
+                            "work: this job was not started by job kind '{}'",
+                            self.capability
+                        ),
+                    ))));
+                }
+                Ok(Self::answer(job.take()))
+            }
             _ => Err(ProviderFault::new(
                 "unknown_operation",
                 format!(

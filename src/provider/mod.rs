@@ -379,8 +379,9 @@ impl ProviderRegistry {
         &mut self,
         module_root: &std::path::Path,
     ) -> Result<(), String> {
-        let config = crate::config::ProjectConfig::load_from_dir(module_root)
-            .map_err(|error| format!("aver.toml: {error}"))?;
+        // The loader's own errors already name the file they came from, so
+        // repeating it here would say `aver.toml` twice in one line.
+        let config = crate::config::ProjectConfig::load_from_dir(module_root)?;
         let Some(config) = config else {
             return Ok(());
         };
