@@ -979,25 +979,43 @@ pub fn load_module_tree_from_map(
     root_deps: &[String],
     files: &HashMap<String, String>,
 ) -> Result<Vec<LoadedModule>, String> {
+    let marked = marked_capabilities_in_map(files);
     let mut result = Vec::new();
     let mut loaded: HashSet<String> = HashSet::new();
     let mut loading: Vec<String> = Vec::new();
     for dep in root_deps {
-        load_recursive_from_map(dep, files, &mut loaded, &mut loading, &mut result)?;
+        load_recursive_from_map(dep, files, &marked, &mut loaded, &mut loading, &mut result)?;
     }
     // The playground analyses every file of the project separately, so a
     // module that fails to lower reports it under its own name there.
-    let _ = crate::ir::pipeline::lower_loaded_yield_modules(
-        &mut result,
-        None,
-        &crate::config::MarkedCapabilities::none(),
-    );
+    let _ = crate::ir::pipeline::lower_loaded_yield_modules(&mut result, None, &marked);
     Ok(result)
+}
+
+/// The capabilities a virtual project answers itself, read from the
+/// `aver.toml` of its own file map.
+///
+/// A browser project is a project: it has a manifest if the author wrote one,
+/// and without this the playground would cut no `yield` function at all and
+/// tell its author to edit a file the playground does not have. A map with no
+/// manifest, or one that does not parse, marks nothing — the same answer a
+/// directory without an `aver.toml` gives.
+fn marked_capabilities_in_map(
+    files: &HashMap<String, String>,
+) -> crate::config::MarkedCapabilities {
+    let Some(content) = files.get("aver.toml") else {
+        return crate::config::MarkedCapabilities::none();
+    };
+    let Ok(config) = crate::config::ProjectConfig::parse(content) else {
+        return crate::config::MarkedCapabilities::none();
+    };
+    crate::config::MarkedCapabilities::from_manifest(config.provider_manifest.as_ref())
 }
 
 fn load_recursive_from_map(
     dep_name: &str,
     files: &HashMap<String, String>,
+    marked: &crate::config::MarkedCapabilities,
     loaded: &mut HashSet<String>,
     loading: &mut Vec<String>,
     result: &mut Vec<LoadedModule>,
@@ -1031,9 +1049,13 @@ fn load_recursive_from_map(
     }
     loading.push(key.clone());
 
-    let items =
+    let mut items =
         parse_source(&source).map_err(|e| format!("Parse error in '{}': {}", dep_name, e))?;
     require_module_declaration(&items, &key)?;
+    // An answered capability gains its reply sums, and `depends [Wait]` for
+    // the type they carry, before this walk follows its edges — exactly as the
+    // filesystem walk does it.
+    crate::capability::answer::generate_reply_types(&mut items, marked);
 
     if let Some(module) = visibility::module_decl(&items) {
         let expected = dep_name.rsplit('.').next().unwrap_or(dep_name);
@@ -1044,13 +1066,13 @@ fn load_recursive_from_map(
             ));
         }
         for sub_dep in &module.depends {
-            load_recursive_from_map(sub_dep, files, loaded, loading, result)?;
+            load_recursive_from_map(sub_dep, files, marked, loaded, loading, result)?;
         }
         // Standard modules implied by source-typed builtins load even when
         // this module's `depends` never names them — same contract as the
         // filesystem loaders (`load_compile_deps` and friends).
         for implied in crate::stdlib::implicit_stdlib_deps(&items) {
-            load_recursive_from_map(&implied, files, loaded, loading, result)?;
+            load_recursive_from_map(&implied, files, marked, loaded, loading, result)?;
         }
     }
 
@@ -1430,6 +1452,53 @@ mod tests {
             .expect("canonical virtual path should load");
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].dep_name, "Domain.User");
+    }
+
+    #[test]
+    fn a_virtual_project_reads_its_own_manifest_for_what_it_answers() {
+        let mut files = std::collections::HashMap::new();
+        files.insert(
+            "aver.toml".to_string(),
+            "[providers]\nschema = 1\n\n[[providers.bindings]]\ncapability = \"Pool\"\nanswer = \"Pooled\"\n".to_string(),
+        );
+        files.insert(
+            "pool.av".to_string(),
+            "module Pool\n    kind = capability\n    semantics = effectful\n    intent = \"test\"\n    exposes [claim]\n\noperation claim(peer: Int) -> Int\n    ? \"The handle for one peer.\"\n    oracle = generative\n    replay = recorded\n".to_string(),
+        );
+        files.insert(
+            "looper.av".to_string(),
+            "module Looper\n    intent = \"test\"\n    depends [Pool]\n    effects [Pool.claim, yield]\n    exposes [loop]\n\nfn loop(n: Int) -> Int\n    ? \"Asks the pool once.\"\n    ! [Pool.claim, yield]\n    Pool.claim(n)\n".to_string(),
+        );
+        let loaded = load_module_tree_from_map(&["Looper".to_string()], &files)
+            .expect("the virtual project loads");
+        let looper = loaded
+            .iter()
+            .find(|module| module.dep_name == "Looper")
+            .expect("Looper is loaded");
+        let names: Vec<&str> = looper
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                crate::ast::TopLevel::FnDef(fd) => Some(fd.name.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            names.contains(&"__loopStart") && !names.contains(&"loop"),
+            "the manifest in the file map is what says Pool.claim is a request: {names:?}"
+        );
+        let pool = loaded
+            .iter()
+            .find(|module| module.dep_name == "Pool")
+            .expect("Pool is loaded");
+        assert!(
+            pool.items.iter().any(|item| matches!(
+                item,
+                crate::ast::TopLevel::TypeDef(crate::ast::TypeDef::Sum { name, .. })
+                    if name == "__ClaimReply"
+            )),
+            "the answered capability carries its generated reply sum here too"
+        );
     }
 
     #[test]
