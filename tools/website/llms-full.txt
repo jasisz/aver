@@ -49,6 +49,9 @@ aver run file.av --module-root . --wasip2
 
 - Aver program args are available through `Args.get()`
 - `--record <dir>` records effect traces for replay
+- `AVER_YIELD_DUMP=1` (env var, any door that type-checks a program) prints the
+  generated Aver for every lowered `yield` function to stderr — a debugging
+  aid for the state types, request/outcome sums and answer functions it built
 - A file names a program: the entry module plus everything it reaches
   through `depends [...]`, plus the `[providers]` bindings of the project's
   `aver.toml`. When the program reaches a capability that `aver.toml` binds
