@@ -1741,16 +1741,20 @@ fn check_units(
     json: bool,
     tracker: &mut SuppressionTracker,
     unused_exposes: &HashMap<String, Vec<CheckFinding>>,
+    reported_unit_keys: &HashSet<String>,
 ) -> Vec<(String, bool)> {
     let mut outcomes = Vec::with_capacity(units.len());
     // A diagnostic belongs to the module whose file it points at. When that
-    // module is itself a unit of this program it reports the diagnostic, so
-    // another unit (typically the entry, whose typecheck surfaces dependency
-    // errors) must not repeat it.
-    let unit_keys: std::collections::HashSet<String> = units
-        .iter()
-        .map(|(path, _, _)| canonical_path_key(path))
-        .collect();
+    // module is itself a unit of the run it reports the diagnostic there, so
+    // another unit (typically an importer, whose typecheck surfaces
+    // dependency errors) must not repeat it. `reported_unit_keys` is every
+    // module the whole run (every input's program, not only this one) has
+    // already claimed as a unit of its own — a directory `check` walks
+    // several programs that can share a dependency, and that dependency's
+    // own section is decided once, by whichever program reached it first
+    // (see `reported` in `cmd_check`), so this must be the same run-wide
+    // set rather than just this program's own units.
+    let unit_keys = reported_unit_keys;
 
     for (idx, (path, source, items)) in units.iter().enumerate() {
         let shown_path = display_check_path(path, module_root);
@@ -2421,6 +2425,18 @@ pub(super) fn cmd_check(path: &str, module_root_override: Option<&str>, verbose:
         })
         .collect::<Vec<_>>();
 
+    // Every module claimed as some input's own unit above, keyed the same
+    // way a diagnostic's span is (`span_file_key`/`canonical_path_key`). A
+    // shared dependency's lowering error is attributed to its own file by
+    // `dependency_origin`, and every importer that reads it recomputes and
+    // re-reports the same error; this run-wide set lets `check_units` keep
+    // it only in the one program section that owns the dependency's own
+    // unit, across every input rather than just the current one.
+    let reported_unit_keys: HashSet<String> = reported
+        .iter()
+        .map(|path| path.to_string_lossy().to_string())
+        .collect();
+
     // Unused exposes are judged over the union of those programs, so a name
     // one input's program exports for another input's program counts as
     // used.
@@ -2471,6 +2487,7 @@ pub(super) fn cmd_check(path: &str, module_root_override: Option<&str>, verbose:
                     json,
                     &mut tracker,
                     &unused_exposes,
+                    &reported_unit_keys,
                 );
                 checked_modules += outcomes.len();
                 failed_modules.extend(

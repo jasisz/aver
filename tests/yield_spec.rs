@@ -178,11 +178,12 @@ fn check_does_not_report_the_lowered_function_as_an_unused_expose() {
     );
 }
 
-/// A dependency whose lowering fails has no protocol in it. Its importer
-/// is told why, against the dependency's own file — and the function it
-/// could not lower is still in the module as written, so the importer's
-/// own call to it is answered with the recipe rather than with a name
-/// that vanished.
+/// A dependency whose lowering fails has no protocol in it. A directory
+/// report tells you why exactly once, in the dependency's own section
+/// (against the dependency's own file) — not again in every importer's
+/// section. The function it could not lower is still in the module as
+/// written, so the importer's own call to it is separately answered with
+/// the direct-call recipe rather than with a name that vanished.
 #[test]
 fn a_dependency_that_cannot_be_lowered_reports_at_the_importers_door() {
     let dir = fixture("yield_broken_dep");
@@ -195,7 +196,7 @@ fn a_dependency_that_cannot_be_lowered_reports_at_the_importers_door() {
         .output()
         .expect("aver runs");
     let stdout = String::from_utf8_lossy(&out.stdout).to_string();
-    let (_, importer) = stdout
+    let (dependency, importer) = stdout
         .rsplit_once("Input: ")
         .unwrap_or_else(|| panic!("no per-input sections in:\n{stdout}"));
     assert!(
@@ -203,9 +204,16 @@ fn a_dependency_that_cannot_be_lowered_reports_at_the_importers_door() {
         "the last section should be the importer's:\n{importer}"
     );
     assert!(
-        importer.contains("The type of 'kept' is not settled")
-            && importer.contains("looper.av:10:1"),
-        "the dependency's reason, against the dependency's file:\n{importer}"
+        dependency.contains("The type of 'kept' is not settled")
+            && dependency.contains("looper.av:10:1"),
+        "the dependency's reason, against the dependency's own section:\n{dependency}"
+    );
+    assert_eq!(
+        importer
+            .matches("The type of 'kept' is not settled")
+            .count(),
+        0,
+        "the dependency's reason must not repeat in the importer's section:\n{importer}"
     );
     assert!(
         importer.contains("Function 'main' calls 'Looper.loop' directly"),
