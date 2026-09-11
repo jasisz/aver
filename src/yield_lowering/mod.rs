@@ -291,6 +291,33 @@ pub fn lower(
         _ => None,
     });
     let plan = marked.run();
+    // A program that asks for its loop to be generated has that loop in one
+    // module, and the loop seats the processes it can see. A process written
+    // one module over would be lowered to its protocol and then never seated,
+    // never dispatched and never answered, which is the one shape of this
+    // class that would fail silently. Say so instead.
+    if let Some(plan) = plan
+        && !coordinator::is_run_module(module_name.as_deref(), Some(plan))
+        && let Some(module_name) = module_name.as_deref()
+    {
+        let line = items
+            .iter()
+            .find_map(|item| match item {
+                TopLevel::Module(module) => Some(module.line),
+                _ => None,
+            })
+            .unwrap_or(1);
+        for lowered in &report.lowered {
+            errors.push(error_at(line, format!(
+                "aver.toml declares [run], so the loop of this program is generated into module '{}' and seats the processes written there; module '{module_name}' writes process '{lowered}', and nothing seats it. Move it into '{}', or remove [run] and drive the protocol by hand",
+                plan.policies.module(),
+                plan.policies.module()
+            )));
+        }
+    }
+    if !errors.is_empty() {
+        return Err(errors);
+    }
     if coordinator::is_run_module(module_name.as_deref(), plan) {
         let plan = plan.expect("checked by is_run_module");
         let generated =
