@@ -61,6 +61,9 @@ mod floor_window;
 mod fuel_when_cites;
 #[path = "proof_spec/k5_sticky.rs"]
 mod k5_sticky;
+#[cfg(unix)]
+#[path = "proof_spec/lake_toolchain.rs"]
+mod lake_toolchain;
 #[path = "proof_spec/law_applications.rs"]
 mod law_applications;
 #[path = "proof_spec/law_reasons.rs"]

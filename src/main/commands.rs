@@ -11510,8 +11510,11 @@ fn run_lean_speculative(
         return;
     }
 
+    // Elan resolves the pinned toolchain from the generated project even when
+    // the caller has no default toolchain. Match the build's working directory.
     let lake_ok = Command::new("lake")
         .arg("--version")
+        .current_dir(output_dir)
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false);
@@ -11661,6 +11664,7 @@ fn run_lean_minimize(
 
     let lake_ok = Command::new("lake")
         .arg("--version")
+        .current_dir(output_dir)
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false);
