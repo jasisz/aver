@@ -10,8 +10,11 @@
 //! There is no passing answer module here yet. An answer function returns
 //! `Tuple<S, Cap.__OpReply>`, and a user-written type name cannot begin with
 //! `__`; the reply sums are generated into the capability module by the
-//! lowering, which is the next leg. Until then every fixture is a refusal,
-//! and the refusal is the rule.
+//! lowering, which is the next leg. Until then every fixture here is a
+//! refusal, and the refusal is the rule. The accept path — the expected
+//! parameters, the expected reply name, and a well-typed job seam over them —
+//! is checked in `src/capability/work.rs` against a synthetic signature map,
+//! so this leg and the one that generates the reply sums agree on the name.
 
 #[path = "support/aver_cmd.rs"]
 mod aver_cmd;
@@ -70,6 +73,24 @@ fn an_answer_naming_no_module_of_the_program_is_refused() {
         "answer_shape_unknown_module",
         &["check"],
         "binds capability 'Pool' to answer = \"Ledger\", but this program has no module 'Ledger'",
+    );
+}
+
+#[test]
+fn a_capability_module_cannot_be_named_as_an_answer_module() {
+    assert_reports(
+        "answer_shape_capability_module",
+        &["check"],
+        "binds capability 'Pool' to answer = \"Pool\", but 'Pool' is a capability module; an answer module is an ordinary module of the program that computes the answer",
+    );
+}
+
+#[test]
+fn the_state_an_answer_module_holds_is_its_first_parameter() {
+    assert_reports(
+        "answer_shape_foreign_state",
+        &["check"],
+        "'Ledger.claim' answers 'Pool.claim', so its first parameter is the state module 'Ledger' holds, a type that module declares; it is Int",
     );
 }
 
@@ -176,12 +197,34 @@ fn a_seam_end_names_a_function_of_an_answer_module() {
     for field in ["task = \"Node.nextTask\"", "landed = \"Node.validated\""] {
         assert!(
             text.contains(&format!(
-                "job kind 'Validation' binds {field}, but module 'Node' answers no capability of this program"
+                "job kind 'Validation' binds {field}, but no `answer` binding in aver.toml names module 'Node'"
             )),
             "{}",
             format_output(&out)
         );
     }
+}
+
+#[test]
+fn a_module_that_sees_the_job_kind_but_not_the_answer_module_is_not_accused() {
+    // The seam is checked against the answer module's state, and a module
+    // whose own closure does not reach that module simply cannot see it. The
+    // manifest binds it all the same, so there is nothing to report here.
+    let dir = fixture("answer_seam_partial_closure");
+    let mut command = Command::new(aver_bin());
+    command.current_dir(repo_root());
+    command
+        .arg("check")
+        .arg(dir.join("runner.av"))
+        .arg("--module-root")
+        .arg(&dir);
+    let out = command.output().expect("aver runs");
+    let text = combined(&out);
+    assert!(
+        !text.contains("error["),
+        "a partial closure is not a manifest error:\n{}",
+        format_output(&out)
+    );
 }
 
 #[test]
