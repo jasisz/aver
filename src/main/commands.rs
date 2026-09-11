@@ -1733,6 +1733,7 @@ pub(super) fn cmd_run_self_hosted(
 /// Check and report `units` in order. `unused_exposes` carries the
 /// cross-module findings, keyed by canonical path, judged over every unit
 /// the command was pointed at. Returns `(path, has_errors)` per unit.
+#[allow(clippy::too_many_arguments)]
 fn check_units(
     units: &[ReportUnit],
     module_root: &str,
