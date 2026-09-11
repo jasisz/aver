@@ -412,6 +412,143 @@ fn validate_answer_module(value: &str, context: &str, capability: &str) -> Resul
     Ok(())
 }
 
+/// The `[run]` table: the three policies of the generated loop and the record
+/// its view is.
+///
+/// A program that declares it says "generate the loop for me". The loop then
+/// seats one of every process this program writes, asks `order` which of them
+/// to serve this turn and in what order, asks `admit` about each, and stops
+/// when `stop` says so — three pure functions over one record the program
+/// declares, and nothing else the program has to write.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunPolicies {
+    /// `order = "Node.order"`: the ids to serve this turn, in order.
+    pub order: String,
+    /// `admit = "Node.admit"`: whether to serve one id in this turn.
+    pub admit: String,
+    /// `stop = "Node.stop"`: whether the run is over.
+    pub stop: String,
+    /// `view = "Node.View"`: the record the three of them read.
+    pub view: String,
+}
+
+impl RunPolicies {
+    /// The module every one of the four names has to live in: the entry
+    /// module, because that is where the loop is generated and what it can
+    /// see.
+    pub fn module(&self) -> &str {
+        self.view
+            .rsplit_once('.')
+            .map(|(module, _)| module)
+            .unwrap_or("")
+    }
+
+    /// The bare name of the view record inside that module.
+    pub fn view_name(&self) -> &str {
+        self.view
+            .rsplit_once('.')
+            .map(|(_, name)| name)
+            .unwrap_or(self.view.as_str())
+    }
+}
+
+/// `[run]`: the four names of the generated loop, all four or none.
+pub(super) fn parse_run_policies(root: &toml::Table) -> Result<Option<RunPolicies>, String> {
+    let Some(value) = root.get("run") else {
+        return Ok(None);
+    };
+    let table = value
+        .as_table()
+        .ok_or_else(|| "aver.toml: [run] must be a table".to_string())?;
+    reject_unknown_keys(table, &["order", "admit", "stop", "view"], "[run]")?;
+    for key in ["order", "admit", "stop", "view"] {
+        if !table.contains_key(key) {
+            return Err(format!(
+                "error[run-binding]: aver.toml: [run] declares no `{key}`; the generated loop reads all four of order, admit, stop and view, so a program that asks for it names all four"
+            ));
+        }
+    }
+    let order = required_string(table, "order", "[run]")?;
+    let admit = required_string(table, "admit", "[run]")?;
+    let stop = required_string(table, "stop", "[run]")?;
+    let view = required_string(table, "view", "[run]")?;
+    for (field, value) in [("order", &order), ("admit", &admit), ("stop", &stop)] {
+        validate_policy_function(value, field)?;
+    }
+    validate_view_type(&view)?;
+    let policies = RunPolicies {
+        order,
+        admit,
+        stop,
+        view,
+    };
+    let module = policies.module().to_string();
+    for (field, value) in [
+        ("order", &policies.order),
+        ("admit", &policies.admit),
+        ("stop", &policies.stop),
+    ] {
+        let owner = value.rsplit_once('.').map(|(owner, _)| owner).unwrap_or("");
+        if owner != module {
+            return Err(format!(
+                "error[run-binding]: aver.toml: [run] names {field} '{value}' in module '{owner}' and view '{}' in module '{module}'; the loop is generated into one module and reads all four there",
+                policies.view
+            ));
+        }
+    }
+    Ok(Some(policies))
+}
+
+/// A policy value names one module-qualified function of the program.
+fn validate_policy_function(value: &str, field: &str) -> Result<(), String> {
+    let malformed = || {
+        format!(
+            "error[run-binding]: aver.toml: [run] {field} '{value}' must name one module-qualified function of the program, for example 'Node.{field}'"
+        )
+    };
+    let Some((module, function)) = value.rsplit_once('.') else {
+        return Err(malformed());
+    };
+    if module.is_empty() || function.is_empty() {
+        return Err(malformed());
+    }
+    for segment in module.split('.') {
+        if !is_plain_identifier(segment) || !segment.starts_with(|ch: char| ch.is_ascii_uppercase())
+        {
+            return Err(malformed());
+        }
+    }
+    if !is_plain_identifier(function) || !function.starts_with(|ch: char| ch.is_ascii_lowercase()) {
+        return Err(malformed());
+    }
+    Ok(())
+}
+
+/// A `view` value names one record type of the program: `Node.View`.
+fn validate_view_type(value: &str) -> Result<(), String> {
+    let malformed = || {
+        format!(
+            "error[run-binding]: aver.toml: [run] view '{value}' must name one record type of the program, for example 'Node.View'"
+        )
+    };
+    let Some((module, name)) = value.rsplit_once('.') else {
+        return Err(malformed());
+    };
+    if module.is_empty() || name.is_empty() {
+        return Err(malformed());
+    }
+    for segment in module.split('.') {
+        if !is_plain_identifier(segment) || !segment.starts_with(|ch: char| ch.is_ascii_uppercase())
+        {
+            return Err(malformed());
+        }
+    }
+    if !is_plain_identifier(name) || !name.starts_with(|ch: char| ch.is_ascii_uppercase()) {
+        return Err(malformed());
+    }
+    Ok(())
+}
+
 /// A `task` or `landed` value names one module-qualified function, exactly as
 /// `work` does.
 fn validate_seam_function(
@@ -610,6 +747,64 @@ mod tests {
     fn parse(source: &str) -> Result<Option<ProviderPackageManifest>, String> {
         let table: toml::Table = source.parse().expect("test TOML parses");
         parse_provider_manifest(&table)
+    }
+
+    fn run(source: &str) -> Result<Option<RunPolicies>, String> {
+        let table: toml::Table = source.parse().expect("test TOML parses");
+        parse_run_policies(&table)
+    }
+
+    #[test]
+    fn parses_the_run_table() {
+        let policies = run("[run]\norder = \"Node.order\"\nadmit = \"Node.admit\"\nstop = \"Node.stop\"\nview = \"Node.View\"\n")
+            .expect("valid manifest")
+            .expect("run section");
+        assert_eq!(policies.order, "Node.order");
+        assert_eq!(policies.admit, "Node.admit");
+        assert_eq!(policies.stop, "Node.stop");
+        assert_eq!(policies.view, "Node.View");
+        assert_eq!(policies.module(), "Node");
+        assert_eq!(policies.view_name(), "View");
+    }
+
+    #[test]
+    fn a_manifest_without_a_run_table_asks_for_no_loop() {
+        assert_eq!(
+            run("[providers]\nschema = 1\n").expect("valid manifest"),
+            None
+        );
+    }
+
+    #[test]
+    fn rejects_a_partial_or_scattered_run_table() {
+        for (source, expected) in [
+            (
+                "[run]\norder = \"Node.order\"\nadmit = \"Node.admit\"\nstop = \"Node.stop\"\n",
+                "[run] declares no `view`",
+            ),
+            (
+                "[run]\norder = \"Node.order\"\nadmit = \"Node.admit\"\nstop = \"Node.stop\"\nview = \"Node.View\"\nseat = \"Node.seat\"\n",
+                "contains unknown field 'seat'",
+            ),
+            (
+                "[run]\norder = \"order\"\nadmit = \"Node.admit\"\nstop = \"Node.stop\"\nview = \"Node.View\"\n",
+                "order 'order' must name one module-qualified function",
+            ),
+            (
+                "[run]\norder = \"Node.order\"\nadmit = \"Node.admit\"\nstop = \"Node.stop\"\nview = \"Node.view\"\n",
+                "view 'Node.view' must name one record type",
+            ),
+            (
+                "[run]\norder = \"Other.order\"\nadmit = \"Node.admit\"\nstop = \"Node.stop\"\nview = \"Node.View\"\n",
+                "the loop is generated into one module and reads all four there",
+            ),
+        ] {
+            let error = run(source).expect_err("manifest must fail");
+            assert!(
+                error.contains(expected),
+                "expected '{expected}' in: {error}"
+            );
+        }
     }
 
     #[test]
