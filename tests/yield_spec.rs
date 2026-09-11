@@ -60,31 +60,12 @@ fn spike_verify_blocks_pass_on_the_vm() {
     assert_verify_passes("yield_spike", &["verify"], "6/6");
 }
 
-#[cfg(feature = "wasm")]
-#[test]
-fn spike_loop_runs_to_done_15_on_wasm_gc() {
-    assert_runs_and_prints("yield_spike", &["run", "--wasm-gc"], "Done(15) ok");
-}
-
-#[cfg(feature = "wasm")]
-#[test]
-fn spike_verify_blocks_pass_on_wasm_gc() {
-    assert_verify_passes("yield_spike", &["verify", "--wasm-gc"], "6/6");
-}
-
 // ── Two requests of one kind and a request inside a match arm ───────────
 
 #[test]
 fn two_reads_run_and_verify_on_the_vm() {
     assert_runs_and_prints("yield_two_reads", &["run"], "pair = 15");
     assert_verify_passes("yield_two_reads", &["verify"], "8/8");
-}
-
-#[cfg(feature = "wasm")]
-#[test]
-fn two_reads_run_and_verify_on_wasm_gc() {
-    assert_runs_and_prints("yield_two_reads", &["run", "--wasm-gc"], "pair = 15");
-    assert_verify_passes("yield_two_reads", &["verify", "--wasm-gc"], "8/8");
 }
 
 // ── Three request kinds: Claim, Release and Yield ───────────────────────
@@ -95,13 +76,6 @@ fn three_kinds_run_and_verify_on_the_vm() {
     assert_verify_passes("yield_three_kinds", &["verify"], "8/8");
 }
 
-#[cfg(feature = "wasm")]
-#[test]
-fn three_kinds_run_and_verify_on_wasm_gc() {
-    assert_runs_and_prints("yield_three_kinds", &["run", "--wasm-gc"], "total = 7");
-    assert_verify_passes("yield_three_kinds", &["verify", "--wasm-gc"], "8/8");
-}
-
 // ── Continuations: a request in a non-tail match arm, a Unit answer, `?` ─
 
 #[test]
@@ -110,30 +84,12 @@ fn continuations_run_and_verify_on_the_vm() {
     assert_verify_passes("yield_continuations", &["verify"], "6/6");
 }
 
-#[cfg(feature = "wasm")]
-#[test]
-fn continuations_run_and_verify_on_wasm_gc() {
-    assert_runs_and_prints("yield_continuations", &["run", "--wasm-gc"], "sum = 8");
-    assert_verify_passes("yield_continuations", &["verify", "--wasm-gc"], "6/6");
-}
-
 // ── A request in tail position: last expression, and match-arm leaf ─────
 
 #[test]
 fn tail_stop_runs_and_verifies_on_the_vm() {
     assert_runs_and_prints("yield_tail_stop", &["run"], "one = 10, pick = 6");
     assert_verify_passes("yield_tail_stop", &["verify"], "13/13");
-}
-
-#[cfg(feature = "wasm")]
-#[test]
-fn tail_stop_runs_and_verifies_on_wasm_gc() {
-    assert_runs_and_prints(
-        "yield_tail_stop",
-        &["run", "--wasm-gc"],
-        "one = 10, pick = 6",
-    );
-    assert_verify_passes("yield_tail_stop", &["verify", "--wasm-gc"], "13/13");
 }
 
 #[test]
@@ -200,6 +156,39 @@ fn the_segment_before_a_request_carries_the_effect_it_performs() {
     );
 }
 
+// ── A program that answers a capability runs on the VM ──────────────────
+
+/// The reply sums of an answered capability carry `Wait.Wake`, so the
+/// capability module depends on `Wait` — a reserved contract only the VM
+/// answers in this build. Every door that prepares a non-VM target therefore
+/// refuses the program by name, as it already refuses a job kind. The VM runs
+/// and verifies all of these, above.
+#[cfg(feature = "wasm")]
+#[test]
+fn an_answered_capability_is_refused_on_wasm_gc() {
+    for fixture in [
+        "yield_spike",
+        "yield_two_reads",
+        "yield_three_kinds",
+        "yield_continuations",
+        "yield_tail_stop",
+        "yield_cross_module",
+    ] {
+        let out = aver(fixture, &["run", "--wasm-gc"]);
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            text.contains("error[work-target]")
+                && text.contains("a reserved contract only the VM answers"),
+            "{fixture}:\n{}",
+            format_output(&out)
+        );
+    }
+}
+
 // ── Across the module boundary: the importer drives the dependency ──────
 
 /// The loader lowers a dependency before any importer reads it, so what
@@ -209,13 +198,6 @@ fn the_segment_before_a_request_carries_the_effect_it_performs() {
 fn cross_module_runs_and_verifies_on_the_vm() {
     assert_runs_and_prints("yield_cross_module", &["run"], "total = 6");
     assert_verify_passes("yield_cross_module", &["verify"], "4/4");
-}
-
-#[cfg(feature = "wasm")]
-#[test]
-fn cross_module_runs_and_verifies_on_wasm_gc() {
-    assert_runs_and_prints("yield_cross_module", &["run", "--wasm-gc"], "total = 6");
-    assert_verify_passes("yield_cross_module", &["verify", "--wasm-gc"], "4/4");
 }
 
 /// The check door judges the surface an importer sees. `loop` is not on
