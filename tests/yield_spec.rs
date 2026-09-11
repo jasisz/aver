@@ -117,6 +117,34 @@ fn continuations_run_and_verify_on_wasm_gc() {
     assert_verify_passes("yield_continuations", &["verify", "--wasm-gc"], "6/6");
 }
 
+// ── A request in tail position: last expression, and match-arm leaf ─────
+
+#[test]
+fn tail_stop_runs_and_verifies_on_the_vm() {
+    assert_runs_and_prints("yield_tail_stop", &["run"], "one = 10, pick = 6");
+    assert_verify_passes("yield_tail_stop", &["verify"], "13/13");
+}
+
+#[cfg(feature = "wasm")]
+#[test]
+fn tail_stop_runs_and_verifies_on_wasm_gc() {
+    assert_runs_and_prints(
+        "yield_tail_stop",
+        &["run", "--wasm-gc"],
+        "one = 10, pick = 6",
+    );
+    assert_verify_passes("yield_tail_stop", &["verify", "--wasm-gc"], "13/13");
+}
+
+#[test]
+fn tail_stop_lean_check_builds_with_zero_errors_and_no_sorry() {
+    assert_lean_check_clean(
+        "yield_tail_stop",
+        "YieldTailStop.lean",
+        &["def __oneStart", "def __pickAnswerClaim"],
+    );
+}
+
 // ── The generated Aver, verbatim ────────────────────────────────────────
 
 /// The generated items are ordinary types and pure functions of the
@@ -153,9 +181,71 @@ fn __loopAnswerYield(__state: __LoopYieldState) -> __LoopOutcome
         __LoopYieldState.Await2(id, done) -> __loopStart(id, done)
 "#;
 
-#[test]
-fn spike_generates_exactly_the_pinned_protocol() {
-    let dir = fixture("yield_spike");
+/// A tail request is cut like any other: `__oneStart` stops at once with
+/// an empty state variant and the answer *is* the result, and `pick`'s two
+/// match-arm leaves stop with the live variables their continuation reads.
+const TAIL_STOP_GENERATED: &str = r#"type __OneClaimState
+    Await1
+
+type __OneRequest
+    Claim(Int, __OneClaimState)
+
+type __OneOutcome
+    Done(Int)
+    Waiting(__OneRequest)
+
+fn __oneStart(id: Int) -> __OneOutcome
+    ? "Claims the handle of id; the request is the last expression of the body."
+    (__OneOutcome).Waiting((__OneRequest).Claim(id, (__OneClaimState).Await1))
+
+fn __oneAnswerClaim(__state: __OneClaimState, __answer: Int) -> __OneOutcome
+    ? "Resumes 'one' after the coordinator answered its Claim request."
+    match __state
+        __OneClaimState.Await1 -> (__OneOutcome).Done(__answer)
+
+type __PickClaimState
+    Await1
+    Await3(Int, Int)
+
+type __PickYieldState
+    Await2(Int, Int)
+
+type __PickRequest
+    Claim(Int, __PickClaimState)
+    Yield(__PickYieldState)
+
+type __PickOutcome
+    Done(Int)
+    Waiting(__PickRequest)
+
+fn __pickStart(id: Int, left: Int) -> __PickOutcome
+    ? "Adds a claimed handle to id once per round, then claims the handle of the total; both claims sit at the leaf of a match arm."
+    match left
+        0 -> __pickJoin1(id, left, 0)
+        _ -> (__PickOutcome).Waiting((__PickRequest).Claim(id, (__PickClaimState).Await3(id, left)))
+
+fn __pickAnswerClaim(__state: __PickClaimState, __answer: Int) -> __PickOutcome
+    ? "Resumes 'pick' after the coordinator answered its Claim request."
+    match __state
+        __PickClaimState.Await1 -> (__PickOutcome).Done(__answer)
+        __PickClaimState.Await3(id, left) -> __pickJoin1(id, left, __answer)
+
+fn __pickAnswerYield(__state: __PickYieldState) -> __PickOutcome
+    ? "Re-enters 'pick' at its tail call with the arguments the Yield request carries."
+    match __state
+        __PickYieldState.Await2(id, left) -> __pickStart(id, left)
+
+fn __pickJoin1(id: Int, left: Int, extra: Int) -> __PickOutcome
+    ? "Continues 'pick' after the branch at line 15."
+    match left
+        0 -> (__PickOutcome).Waiting((__PickRequest).Claim((id + extra), (__PickClaimState).Await1))
+        _ -> (__PickOutcome).Waiting((__PickRequest).Yield((__PickYieldState).Await2((id + extra), (left - 1))))
+"#;
+
+/// Run a fixture through the front door and return what the lowering did
+/// together with the lowered module.
+fn lower_fixture(fixture_name: &str) -> (Vec<String>, String, Vec<aver::ast::TopLevel>) {
+    let dir = fixture(fixture_name);
     let source = std::fs::read_to_string(dir.join("main.av")).expect("fixture source");
     let mut items = aver::source::parse_source(&source).expect("fixture parses");
     let user_program_len = items.len();
@@ -173,15 +263,35 @@ fn spike_generates_exactly_the_pinned_protocol() {
     );
     let errors = front.typecheck.expect("gate ran").errors;
     assert!(errors.is_empty(), "{errors:?}");
-    let report = front.yield_lowering.expect("loop was lowered");
-    assert_eq!(report.lowered, vec!["loop".to_string()]);
-    assert_eq!(report.generated_source(), SPIKE_GENERATED);
-    // The original function is gone: its protocol replaced it in place.
+    let report = front.yield_lowering.expect("the module was lowered");
+    (report.lowered.clone(), report.generated_source(), items)
+}
+
+fn assert_removed(items: &[aver::ast::TopLevel], fn_name: &str) {
     assert!(
         !items
             .iter()
-            .any(|item| matches!(item, aver::ast::TopLevel::FnDef(fd) if fd.name == "loop"))
+            .any(|item| matches!(item, aver::ast::TopLevel::FnDef(fd) if fd.name == fn_name)),
+        "'{fn_name}' should have been replaced by its protocol"
     );
+}
+
+#[test]
+fn spike_generates_exactly_the_pinned_protocol() {
+    let (lowered, generated, items) = lower_fixture("yield_spike");
+    assert_eq!(lowered, vec!["loop".to_string()]);
+    assert_eq!(generated, SPIKE_GENERATED);
+    // The original function is gone: its protocol replaced it in place.
+    assert_removed(&items, "loop");
+}
+
+#[test]
+fn tail_stop_generates_exactly_the_pinned_protocol() {
+    let (lowered, generated, items) = lower_fixture("yield_tail_stop");
+    assert_eq!(lowered, vec!["one".to_string(), "pick".to_string()]);
+    assert_eq!(generated, TAIL_STOP_GENERATED);
+    assert_removed(&items, "one");
+    assert_removed(&items, "pick");
 }
 
 /// `aver context` goes through the same `front` entry as every other
@@ -212,6 +322,18 @@ fn context_dump_shows_the_generated_names_not_the_removed_function() {
 /// function and the package builds with zero errors and zero `sorry`.
 #[test]
 fn spike_lean_check_builds_with_zero_errors_and_no_sorry() {
+    assert_lean_check_clean(
+        "yield_spike",
+        "YieldSpike.lean",
+        &[
+            "inductive __LoopRequest",
+            "def __loopStart",
+            "def __loopAnswerClaim",
+        ],
+    );
+}
+
+fn assert_lean_check_clean(fixture_name: &str, lean_file: &str, names: &[&str]) {
     if Command::new("lake").arg("--version").output().is_err() {
         eprintln!("skipping yield Lean check: `lake` not available");
         return;
@@ -224,7 +346,7 @@ fn spike_lean_check_builds_with_zero_errors_and_no_sorry() {
             .unwrap_or(0)
     ));
     let out = aver(
-        "yield_spike",
+        fixture_name,
         &[
             "proof",
             "--backend",
@@ -263,12 +385,8 @@ fn spike_lean_check_builds_with_zero_errors_and_no_sorry() {
         "{}",
         format_output(&out)
     );
-    let lean = std::fs::read_to_string(output_dir.join("YieldSpike.lean")).expect("Lean output");
-    for name in [
-        "inductive __LoopRequest",
-        "def __loopStart",
-        "def __loopAnswerClaim",
-    ] {
+    let lean = std::fs::read_to_string(output_dir.join(lean_file)).expect("Lean output");
+    for name in names {
         assert!(lean.contains(name), "{name} missing from:\n{lean}");
     }
     let _ = std::fs::remove_dir_all(&output_dir);

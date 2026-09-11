@@ -1,0 +1,64 @@
+module YieldTailStop
+    intent = "Fixture: a request in tail position is a stop — as the last expression of a body, and as the leaf of a match arm, both when the arm is the function's own tail and when a binding reads the branch."
+    depends [Pool]
+    effects [Pool.claim, yield, Console.print]
+    exposes [driveOne, drivePick, main]
+
+fn one(id: Int) -> Int
+    ? "Claims the handle of id; the request is the last expression of the body."
+    ! [Pool.claim, yield]
+    Pool.claim(id)
+
+fn pick(id: Int, left: Int) -> Int
+    ? "Adds a claimed handle to id once per round, then claims the handle of the total; both claims sit at the leaf of a match arm."
+    ! [Pool.claim, yield]
+    extra = match left
+        0 -> 0
+        _ -> Pool.claim(id)
+    match left
+        0 -> Pool.claim(id + extra)
+        _ -> pick(id + extra, left - 1)
+
+fn driveOne(outcome: __OneOutcome) -> Int
+    ? "Coordinator for one: answers every Claim request with twice the peer it names."
+    match outcome
+        __OneOutcome.Done(v) -> v
+        __OneOutcome.Waiting(request) -> match request
+            __OneRequest.Claim(peer, state) -> driveOne(__oneAnswerClaim(state, peer * 2))
+
+fn drivePick(outcome: __PickOutcome) -> Int
+    ? "Coordinator for pick: answers every Claim request with twice the peer it names and resumes every Yield request."
+    match outcome
+        __PickOutcome.Done(v) -> v
+        __PickOutcome.Waiting(request) -> match request
+            __PickRequest.Claim(peer, state) -> drivePick(__pickAnswerClaim(state, peer * 2))
+            __PickRequest.Yield(state) -> drivePick(__pickAnswerYield(state))
+
+verify driveOne
+    driveOne(__OneOutcome.Done(3)) => 3
+    driveOne(__OneOutcome.Waiting(__OneRequest.Claim(4, __OneClaimState.Await1))) => 8
+    driveOne(__oneStart(5)) => 10
+    driveOne(__oneStart(0)) => 0
+
+verify drivePick
+    drivePick(__PickOutcome.Done(3)) => 3
+    drivePick(__PickOutcome.Waiting(__PickRequest.Claim(4, __PickClaimState.Await1))) => 8
+    drivePick(__pickStart(2, 0)) => 4
+    drivePick(__pickStart(1, 1)) => 6
+    drivePick(__pickStart(1, 2)) => 18
+
+verify __oneStart
+    __oneStart(5) => __OneOutcome.Waiting(__OneRequest.Claim(5, __OneClaimState.Await1))
+
+verify __oneAnswerClaim
+    __oneAnswerClaim(__OneClaimState.Await1, 10) => __OneOutcome.Done(10)
+
+verify __pickAnswerClaim
+    __pickAnswerClaim(__PickClaimState.Await1, 6) => __PickOutcome.Done(6)
+    __pickAnswerClaim(__PickClaimState.Await3(1, 1), 2) => __PickOutcome.Waiting(__PickRequest.Yield(__PickYieldState.Await2(3, 0)))
+
+fn main() -> Unit
+    ! [Console.print]
+    a = driveOne(__oneStart(5))
+    b = drivePick(__pickStart(1, 1))
+    Console.print("one = {a}, pick = {b}")

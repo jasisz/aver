@@ -609,6 +609,18 @@ impl<'a> Lowering<'a> {
                 tail = extracted;
                 continue;
             }
+            // A request or a `?` in tail position — the last expression of
+            // the body, or the leaf of a `match` arm — is a cut like any
+            // other: `extract_top` leaves the shape it sits in alone, so
+            // bind it here and let the next turn of the loop cut at the
+            // binding, with the rest of the path being "hand the value to
+            // `ret`".
+            if self.stop_op(&extracted).is_some() || matches!(extracted.node, Expr::ErrorProp(_)) {
+                let temp = self.fresh_temp();
+                tail = spanned_like(&extracted, Expr::Ident(temp.clone()));
+                pending.push_back(Stmt::Binding(temp, None, extracted));
+                continue;
+            }
             let lowered = self.lower_tail(extracted, scope, ret)?;
             return Ok(Segment {
                 stmts: out,
