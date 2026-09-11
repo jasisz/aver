@@ -1,0 +1,12 @@
+module Walker
+    intent = "Fixture: a process written outside the module the [run] table names."
+    depends [Pool, Pooled]
+    effects [Pool.claim, yield]
+    exposes [walking]
+
+fn walking() -> Unit
+    ? "Claims handles until the pool answers None, one module away from the loop."
+    ! [Pool.claim, yield]
+    match Pool.claim()
+        Option.None -> Unit
+        Option.Some(_) -> walking()

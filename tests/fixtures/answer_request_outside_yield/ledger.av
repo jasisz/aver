@@ -1,0 +1,15 @@
+module Ledger
+    intent = "The answer this program gives to Pool, from one state."
+    depends [Pool, Wait]
+    exposes [State, claim]
+    effects []
+
+record State
+    tip: Int
+
+fn claim(state: State, key: Int) -> Tuple<State, Pool.__ClaimReply>
+    ? "Hands this peer the height after the tip."
+    (state, Pool.__ClaimReply.Now(Pool.Assignment.Height(state.tip + key)))
+
+verify claim
+    claim(State(tip = 1), 2) => (State(tip = 1), Pool.__ClaimReply.Now(Pool.Assignment.Height(3)))

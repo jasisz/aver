@@ -1,0 +1,36 @@
+module Wire
+    kind = capability
+    semantics = effectful
+    depends [Bytes]
+    intent = "Request-level socket I/O, keyed by peer, plus the two ways a peer arrives. Answered by the program."
+    exposes [Arrival, Heard, accept, dialled, read, write]
+
+type Arrival
+    Peer(Int)
+    Closed
+
+type Heard
+    Data(Bytes)
+    TimedOut
+    EndOfStream
+    Failed(String)
+
+operation accept() -> Wire.Arrival
+    ? "The next peer the listener has for us, or Closed once the listener is done."
+    oracle = generative
+    replay = recorded
+
+operation dialled() -> Wire.Arrival
+    ? "The next dial that settled, or Closed once no dial is outstanding."
+    oracle = generative
+    replay = recorded
+
+operation read(key: Int, max: Int, deadlineMs: Int) -> Wire.Heard
+    ? "The next chunk from one peer, or why there is none."
+    oracle = generative
+    replay = recorded
+
+operation write(key: Int, payload: Bytes) -> Result<Unit, String>
+    ? "Hands a whole payload to one peer; the answer comes after the last byte."
+    oracle = generativeOutput
+    replay = recorded

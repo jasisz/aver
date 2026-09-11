@@ -475,6 +475,10 @@ pub struct Program {
     /// once at construction rather than a `RefCell` mutated lazily also
     /// keeps `Program` `Sync`.
     lowering_memo: HashMap<PathBuf, LoadedModule>,
+    /// The capabilities this program's manifest answers with a module of it,
+    /// carried so every re-lowering of a dependency cuts its `yield`
+    /// functions at exactly the calls the whole-program walk cut them at.
+    marked: crate::config::MarkedCapabilities,
 }
 
 // Report units are prepared with `rayon` across worker threads; a `Program`
@@ -554,7 +558,7 @@ impl Program {
         // through its own front door: a dependency that fails to lower
         // reports it there, against its own file, so the errors this call
         // hands back would be the same ones twice.
-        let _ = crate::ir::pipeline::lower_loaded_yield_modules(&mut modules, None);
+        let _ = crate::ir::pipeline::lower_loaded_yield_modules(&mut modules, None, &self.marked);
         Ok(modules)
     }
 }
@@ -569,7 +573,10 @@ impl Program {
 /// entered here: the whole-program clone below runs only when at least one
 /// dependency actually needs lowering, and even then a module that stays
 /// yield-free after lowering is dropped from the result, not memoized.
-fn compute_lowering_memo(dependencies: &[ProgramModule]) -> HashMap<PathBuf, LoadedModule> {
+fn compute_lowering_memo(
+    dependencies: &[ProgramModule],
+    marked: &crate::config::MarkedCapabilities,
+) -> HashMap<PathBuf, LoadedModule> {
     let yielding: Vec<usize> = dependencies
         .iter()
         .enumerate()
@@ -580,7 +587,7 @@ fn compute_lowering_memo(dependencies: &[ProgramModule]) -> HashMap<PathBuf, Loa
         return HashMap::new();
     }
     let mut loaded: Vec<LoadedModule> = dependencies.iter().map(ProgramModule::as_loaded).collect();
-    let _ = crate::ir::pipeline::lower_loaded_yield_modules(&mut loaded, None);
+    let _ = crate::ir::pipeline::lower_loaded_yield_modules(&mut loaded, None, marked);
     let mut memo = HashMap::new();
     for index in yielding {
         let entry = &loaded[index];
@@ -732,6 +739,7 @@ pub fn load_program_with_cache(
 ) -> Result<Program, LoadError> {
     let mut walk = Walk::new(module_root, mode, cache);
     walk.follow_edges(entry_path, entry_items)?;
+    let marked = walk.marked.clone();
     let mut modules = walk.modules;
     let entry_name = visibility::module_decl(entry_items)
         .map(|module| module.name.clone())
@@ -753,10 +761,11 @@ pub fn load_program_with_cache(
         fault: None,
     });
     let dependency_count = modules.len().saturating_sub(1);
-    let lowering_memo = compute_lowering_memo(&modules[..dependency_count]);
+    let lowering_memo = compute_lowering_memo(&modules[..dependency_count], &marked);
     Ok(Program {
         modules,
         lowering_memo,
+        marked,
     })
 }
 
@@ -769,6 +778,11 @@ struct Walk<'a> {
     /// ceiling itself is resolved per file, because `[[verify.costly]]`
     /// scopes itself by file glob as well as by function name.
     verify_config: Option<crate::config::ProjectConfig>,
+    /// The capabilities this project answers itself. A module that declares
+    /// one of them gains its generated reply sums, and `depends [Wait]` for
+    /// the type they carry, before this walk follows its edges — so `Wait`
+    /// loads as an ordinary written dependency.
+    marked: crate::config::MarkedCapabilities,
     loaded: HashSet<PathBuf>,
     loading: Vec<PathBuf>,
     modules: Vec<ProgramModule>,
@@ -786,10 +800,12 @@ impl<'a> Walk<'a> {
                     .flatten()
             })
             .clone();
+        let marked = crate::config::MarkedCapabilities::from_config(verify_config.as_ref());
         Self {
             module_root,
             mode,
             verify_config,
+            marked,
             loaded: HashSet::new(),
             loading: Vec::new(),
             modules: Vec::new(),
@@ -895,7 +911,8 @@ impl<'a> Walk<'a> {
             }
         });
         let source = cached.source.clone();
-        let items = cached.items.clone();
+        let mut items = cached.items.clone();
+        crate::capability::answer::generate_reply_types(&mut items, &self.marked);
         let path = cached.path.clone();
         let is_stdlib = cached.is_stdlib;
         let fault = cached.fault.as_ref().map(|fault| match fault {
@@ -958,21 +975,43 @@ pub fn load_module_tree_from_map(
     root_deps: &[String],
     files: &HashMap<String, String>,
 ) -> Result<Vec<LoadedModule>, String> {
+    let marked = marked_capabilities_in_map(files);
     let mut result = Vec::new();
     let mut loaded: HashSet<String> = HashSet::new();
     let mut loading: Vec<String> = Vec::new();
     for dep in root_deps {
-        load_recursive_from_map(dep, files, &mut loaded, &mut loading, &mut result)?;
+        load_recursive_from_map(dep, files, &marked, &mut loaded, &mut loading, &mut result)?;
     }
     // The playground analyses every file of the project separately, so a
     // module that fails to lower reports it under its own name there.
-    let _ = crate::ir::pipeline::lower_loaded_yield_modules(&mut result, None);
+    let _ = crate::ir::pipeline::lower_loaded_yield_modules(&mut result, None, &marked);
     Ok(result)
+}
+
+/// The capabilities a virtual project answers itself, read from the
+/// `aver.toml` of its own file map.
+///
+/// A browser project is a project: it has a manifest if the author wrote one,
+/// and without this the playground would cut no `yield` function at all and
+/// tell its author to edit a file the playground does not have. A map with no
+/// manifest, or one that does not parse, marks nothing — the same answer a
+/// directory without an `aver.toml` gives.
+fn marked_capabilities_in_map(
+    files: &HashMap<String, String>,
+) -> crate::config::MarkedCapabilities {
+    let Some(content) = files.get("aver.toml") else {
+        return crate::config::MarkedCapabilities::none();
+    };
+    let Ok(config) = crate::config::ProjectConfig::parse(content) else {
+        return crate::config::MarkedCapabilities::none();
+    };
+    crate::config::MarkedCapabilities::from_config(Some(&config))
 }
 
 fn load_recursive_from_map(
     dep_name: &str,
     files: &HashMap<String, String>,
+    marked: &crate::config::MarkedCapabilities,
     loaded: &mut HashSet<String>,
     loading: &mut Vec<String>,
     result: &mut Vec<LoadedModule>,
@@ -1006,9 +1045,13 @@ fn load_recursive_from_map(
     }
     loading.push(key.clone());
 
-    let items =
+    let mut items =
         parse_source(&source).map_err(|e| format!("Parse error in '{}': {}", dep_name, e))?;
     require_module_declaration(&items, &key)?;
+    // An answered capability gains its reply sums, and `depends [Wait]` for
+    // the type they carry, before this walk follows its edges — exactly as the
+    // filesystem walk does it.
+    crate::capability::answer::generate_reply_types(&mut items, marked);
 
     if let Some(module) = visibility::module_decl(&items) {
         let expected = dep_name.rsplit('.').next().unwrap_or(dep_name);
@@ -1019,13 +1062,13 @@ fn load_recursive_from_map(
             ));
         }
         for sub_dep in &module.depends {
-            load_recursive_from_map(sub_dep, files, loaded, loading, result)?;
+            load_recursive_from_map(sub_dep, files, marked, loaded, loading, result)?;
         }
         // Standard modules implied by source-typed builtins load even when
         // this module's `depends` never names them — same contract as the
         // filesystem loaders (`load_compile_deps` and friends).
         for implied in crate::stdlib::implicit_stdlib_deps(&items) {
-            load_recursive_from_map(&implied, files, loaded, loading, result)?;
+            load_recursive_from_map(&implied, files, marked, loaded, loading, result)?;
         }
     }
 
@@ -1071,7 +1114,11 @@ pub fn load_module_tree_with_lowering(
         .into_iter()
         .map(|module| module.as_loaded())
         .collect();
-    let errors = crate::ir::pipeline::lower_loaded_yield_modules(&mut modules, Some(module_root));
+    let errors = crate::ir::pipeline::lower_loaded_yield_modules(
+        &mut modules,
+        Some(module_root),
+        &crate::config::MarkedCapabilities::for_project_dir(Some(module_root)),
+    );
     Ok((modules, errors))
 }
 
@@ -1142,6 +1189,11 @@ pub fn loaded_to_module_info(loaded: &[LoadedModule]) -> Vec<crate::codegen::Mod
 pub struct PreparedCompileDeps {
     pub modules: Vec<crate::codegen::ModuleInfo>,
     pub loaded: Vec<LoadedModule>,
+    /// The capabilities this project answers itself, read from its manifest
+    /// once. Every door that lowers the entry against these dependencies
+    /// passes it on, so the entry's `yield` functions are cut at exactly the
+    /// calls the dependencies' were.
+    pub marked: crate::config::MarkedCapabilities,
 }
 
 /// Prepare a codegen dependency graph once, leaves-first, and retain the
@@ -1202,6 +1254,7 @@ fn load_compile_deps_with_runtime_strings(
         }
     }
 
+    let marked = program.marked.clone();
     let neutral_policy = crate::ir::NeutralAllocPolicy;
     let mut modules = Vec::with_capacity(program.dependencies().len());
     for module in program.dependencies() {
@@ -1213,6 +1266,7 @@ fn load_compile_deps_with_runtime_strings(
             &mut module_items,
             crate::ir::PipelineConfig {
                 typecheck: Some(crate::ir::TypecheckMode::WithCheckedLoaded(&loaded)),
+                marked: marked.clone(),
                 run_interp_lower: false,
                 run_buffer_build: runtime_strings,
                 run_chars_fusion: runtime_strings,
@@ -1246,7 +1300,11 @@ fn load_compile_deps_with_runtime_strings(
     let loaded = program
         .loaded_dependencies_for(program.entry())
         .map_err(|error| error.to_string())?;
-    Ok(PreparedCompileDeps { modules, loaded })
+    Ok(PreparedCompileDeps {
+        modules,
+        loaded,
+        marked,
+    })
 }
 
 #[cfg(test)]
@@ -1390,6 +1448,53 @@ mod tests {
             .expect("canonical virtual path should load");
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].dep_name, "Domain.User");
+    }
+
+    #[test]
+    fn a_virtual_project_reads_its_own_manifest_for_what_it_answers() {
+        let mut files = std::collections::HashMap::new();
+        files.insert(
+            "aver.toml".to_string(),
+            "[providers]\nschema = 1\n\n[[providers.bindings]]\ncapability = \"Pool\"\nanswer = \"Pooled\"\n".to_string(),
+        );
+        files.insert(
+            "pool.av".to_string(),
+            "module Pool\n    kind = capability\n    semantics = effectful\n    intent = \"test\"\n    exposes [claim]\n\noperation claim(peer: Int) -> Int\n    ? \"The handle for one peer.\"\n    oracle = generative\n    replay = recorded\n".to_string(),
+        );
+        files.insert(
+            "looper.av".to_string(),
+            "module Looper\n    intent = \"test\"\n    depends [Pool]\n    effects [Pool.claim, yield]\n    exposes [loop]\n\nfn loop(n: Int) -> Int\n    ? \"Asks the pool once.\"\n    ! [Pool.claim, yield]\n    Pool.claim(n)\n".to_string(),
+        );
+        let loaded = load_module_tree_from_map(&["Looper".to_string()], &files)
+            .expect("the virtual project loads");
+        let looper = loaded
+            .iter()
+            .find(|module| module.dep_name == "Looper")
+            .expect("Looper is loaded");
+        let names: Vec<&str> = looper
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                crate::ast::TopLevel::FnDef(fd) => Some(fd.name.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            names.contains(&"__loopStart") && !names.contains(&"loop"),
+            "the manifest in the file map is what says Pool.claim is a request: {names:?}"
+        );
+        let pool = loaded
+            .iter()
+            .find(|module| module.dep_name == "Pool")
+            .expect("Pool is loaded");
+        assert!(
+            pool.items.iter().any(|item| matches!(
+                item,
+                crate::ast::TopLevel::TypeDef(crate::ast::TypeDef::Sum { name, .. })
+                    if name == "__ClaimReply"
+            )),
+            "the answered capability carries its generated reply sum here too"
+        );
     }
 
     #[test]

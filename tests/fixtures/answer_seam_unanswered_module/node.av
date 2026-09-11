@@ -1,0 +1,16 @@
+module Node
+    intent = "The pure function that runs one validation job."
+    effects []
+    exposes [validate]
+
+fn validate(task: String) -> Int
+    ? "Scores one task by its length."
+    String.len(task)
+
+fn nextTask(state: Int) -> Option<String>
+    ? "A seam end written in a module that answers no capability."
+    Option.None
+
+fn validated(state: Int, score: Int) -> Int
+    ? "A seam end written in a module that answers no capability."
+    state + score

@@ -728,8 +728,9 @@ pub fn prepare_verify_for_items_vm_with_checked_loaded(
     items: Vec<TopLevel>,
     loaded: Vec<crate::source::LoadedModule>,
     source_file: &str,
+    marked: &crate::config::MarkedCapabilities,
 ) -> Result<PreparedVmVerify, String> {
-    prepare_verify_for_items_vm_with_loaded(items, loaded, source_file)
+    prepare_verify_for_items_vm_with_loaded(items, loaded, source_file, marked)
 }
 
 #[cfg(feature = "runtime")]
@@ -737,10 +738,11 @@ fn prepare_verify_for_items_vm_with_loaded(
     mut items: Vec<TopLevel>,
     loaded: Vec<crate::source::LoadedModule>,
     source_file: &str,
+    marked: &crate::config::MarkedCapabilities,
 ) -> Result<PreparedVmVerify, String> {
     let mode = crate::ir::TypecheckMode::WithCheckedLoaded(&loaded);
     let user_program_len = items.len();
-    let typecheck = crate::ir::pipeline::front_gate(&mut items, &mode, user_program_len);
+    let typecheck = crate::ir::pipeline::front_gate(&mut items, &mode, user_program_len, marked);
     if !typecheck.errors.is_empty() {
         return Err(format_type_errors(&typecheck.errors));
     }
@@ -913,7 +915,9 @@ fn run_verify_for_items_vm_impl(
         Some(prepared) => crate::ir::TypecheckMode::WithCheckedLoaded(&prepared.loaded),
         None => crate::ir::TypecheckMode::Full { base_dir },
     };
-    let tc_result = crate::ir::pipeline::front_gate(&mut items, &typecheck_mode, user_program_len);
+    let marked = crate::config::MarkedCapabilities::for_project_dir(base_dir);
+    let tc_result =
+        crate::ir::pipeline::front_gate(&mut items, &typecheck_mode, user_program_len, &marked);
     if !tc_result.errors.is_empty() {
         return Err(format_type_errors(&tc_result.errors));
     }
@@ -1291,7 +1295,9 @@ fn run_verify_for_items_vm_with_loaded_impl(
     } else {
         crate::ir::TypecheckMode::WithLoaded(&loaded)
     };
-    let tc_result = crate::ir::pipeline::front_gate(&mut items, &typecheck_mode, user_program_len);
+    let marked = crate::config::MarkedCapabilities::from_config(config.as_ref());
+    let tc_result =
+        crate::ir::pipeline::front_gate(&mut items, &typecheck_mode, user_program_len, &marked);
     if !tc_result.errors.is_empty() {
         return Err(format_type_errors(&tc_result.errors));
     }

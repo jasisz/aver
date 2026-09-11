@@ -1,6 +1,6 @@
 module YieldTwoReads
     intent = "Fixture: two requests of one kind in one body and a request inside a match arm; the Claim state is a sum with one variant per stop."
-    depends [Pool]
+    depends [Pool, Pooled]
     effects [Pool.claim, yield, Console.print]
     exposes [drive, main]
 

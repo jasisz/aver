@@ -1,6 +1,6 @@
 module YieldReservedKind
     intent = "Fixture: an operation whose leaf name is the reserved kind of the self tail call, so the two must not become one request kind."
-    depends [Sched]
+    depends [Sched, Scheduled]
     effects [Sched.yield, yield]
     exposes [main]
 

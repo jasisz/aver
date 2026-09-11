@@ -2,11 +2,16 @@ module Wait
     kind = capability
     semantics = effectful
     depends [Tcp, Work]
-    exposes [Item, poll]
+    exposes [Item, Wake, poll]
 
 type Item
     Socket(Tcp.Socket)
     Job(Work.Job)
+
+type Wake
+    Item(Wait.Item)
+    After(Int)
+    NextTurn
 
 operation poll(items: Map<Int, Wait.Item>, timeoutMs: Int) -> Result<List<Int>, String>
     ? "Returns every ready caller-owned key in ascending order from one wait set. A Socket item is ready under exactly the Tcp.poll rule: readable connections under Connected, writable connections under Sending, settled or expired dials, and listeners with a pending client. A Sending key is ready when the next writeNow on that connection will accept at least one byte or fail; a caller who wants both directions for one connection registers two keys. A Job item is ready once its job has finished or was cancelled. False-positive readiness is allowed."

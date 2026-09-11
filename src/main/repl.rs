@@ -463,10 +463,13 @@ pub(super) fn cmd_repl() {
             .cloned()
             .collect();
         let user_program_len = user_program.len();
+        // The REPL is a scratch buffer, not a project: nothing is marked,
+        // so every call it accepts runs in place.
         let tc = aver::ir::pipeline::front_gate(
             &mut user_program,
             &TypecheckMode::Full { base_dir: None },
             user_program_len,
+            &aver::config::MarkedCapabilities::none(),
         );
         if !tc.errors.is_empty() {
             print_type_errors(&tc.errors);

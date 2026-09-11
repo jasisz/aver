@@ -1,0 +1,14 @@
+module Runner
+    depends [Node, Validation, Work]
+    intent = "A module that starts and scores jobs without ever seeing the answer module."
+    effects [Validation.begin]
+    exposes [start, score]
+
+fn start(task: String) -> Result<Work.Job, String>
+    ? "Starts one validation job off the turn."
+    ! [Validation.begin]
+    Validation.begin(task)
+
+fn score(task: String) -> Int
+    ? "Scores one task without the job engine."
+    Node.validate(task)

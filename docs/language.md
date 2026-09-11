@@ -404,7 +404,7 @@ This is intentionally narrower than “all recursion”. Non-tail recursion can 
 
 ## Yielding functions
 
-A function whose effect list names `yield` hands control back at every effect call instead of performing it. The function is written in direct style — read, then the next step — but it never runs as written: the compiler cuts it at every stop and turns it into plain data and pure functions, and a coordinator you write performs the operations and feeds the answers back. `yield` is an effect like any other: it appears in the function's `! [...]` and it must be covered by the module's `effects [...]`. A bare name in an effect list — a function's `! [...]` or a module's `effects [...]` — is `yield`, the forwarding marker `_`, or a standard capability namespace such as `Console`; a program-defined capability is named by its operations, never bare, so anything else — including a misspelled `yeild` or a bare program-defined capability name — is an error naming the unknown or disallowed effect. A yielding function is called only through its generated entry points: `__<fn>Start` and the answer functions are pure, so a coordinator that calls them declares no `yield`.
+A function whose effect list names `yield` hands control back instead of performing the operations this program answers itself. A capability is answered by the program when its `[[providers.bindings]]` entry in `aver.toml` carries `answer = "<Module>"`, naming the module that computes the answer; every operation of such a capability is a request, and everything else the function calls runs where it is written. The function is written in direct style — read, then the next step — but it never runs as written: the compiler cuts it at every stop and turns it into plain data and pure functions, and a coordinator you write performs the operations and feeds the answers back. `yield` is an effect like any other: it appears in the function's `! [...]` and it must be covered by the module's `effects [...]`. A bare name in an effect list — a function's `! [...]` or a module's `effects [...]` — is `yield`, the forwarding marker `_`, or a standard capability namespace such as `Console`; a program-defined capability is named by its operations, never bare, so anything else — including a misspelled `yeild` or a bare program-defined capability name — is an error naming the unknown or disallowed effect. A yielding function is called only through its generated entry points: `__<fn>Start` and the answer functions are pure, so a coordinator that calls them declares no `yield`.
 
 ```aver
 fn loop(id: Int, done: Int) -> Int
@@ -416,7 +416,7 @@ fn loop(id: Int, done: Int) -> Int
         Option.Some(h) -> loop(id, done + h)
 ```
 
-Inside a yielding function every call to an operation of a capability in its effect list is a stop (a request), and the self tail call is a stop of kind `Yield`. Pure calls run inline. For `loop` the compiler generates, in the same module and in the reserved `__` namespace:
+Inside a yielding function a call to an operation of an answered capability is a stop (a request), and the self tail call is a stop of kind `Yield`. Everything else runs inline, including an operation of a capability nobody answers: that one runs inside the turn, where it is written, and the generated function holding it declares it in its own `! [...]`. A function that declares `yield` and never stops — it calls no answered operation and does not tail-call itself — is an error that names both repairs: mark the capability, or drop `yield`. The mirror of that rule is `error[intercept-outside-yield]`: a function without `yield` that performs an operation of an answered capability has made a request nobody will answer, and the message names the answer module's own function to call instead. A program that answers a capability runs on the bytecode VM in this release; `aver run --wasm-gc`, `--wasip2` and the Rust backend refuse it with `error[work-target]`, because the generated reply types carry `Wait.Wake` and only the VM has a representation for the job handle it reaches. For `loop` the compiler generates, in the same module and in the reserved `__` namespace:
 
 - `__LoopClaimState` — one sum type per request kind, with one variant per stop of that kind; a variant holds exactly the variables the rest of that path still reads (`AwaitR(Int, Int)` for `id` and `done`). A stop bound to a name is `Await<Name>`; an unbound stop is `Await<n>` with its ordinal in the function.
 - `__LoopYieldState` — the state of the tail call: its argument tuple (`Await2(Int, Int)`).
@@ -449,7 +449,119 @@ Two diagnostics guard the shape:
 - calling a yielding function directly, from anywhere — a plain function, another yielding function's argument, a verify case, a dependent module — is a type error: `'loop' yields; call '__loopStart(...)' and answer its requests`;
 - a non-tail call from a yielding function to a yielding function is a type error with the recipe `pass what comes next as data, or make it a tail call`.
 
-The tail-call rule: only a self tail call is lowered, into the `Yield` request. A tail call to a different yielding function is rejected in this phase (its request and outcome types are its own), and so is a request inside an independent product `(a, b)!` or a function value live across a stop; the message names the construct. Inside a yielding function every effect call is a request and the coordinator performs it — the manifest-level rule from the concurrency epic that lets a program mark only some capabilities as handled by itself, together with nested states for non-tail calls between yielding functions and a `runAll` coordinator in the standard library, is the next phase.
+The tail-call rule: only a self tail call is lowered, into the `Yield` request. A tail call to a different yielding function is rejected in this phase (its request and outcome types are its own), and so is a request inside an independent product `(a, b)!` or a function value live across a stop; the message names the construct. A request in a product fires less often than it used to, because only an answered operation inside the product is refused. Nested states for non-tail calls between yielding functions are the next phase; the coordinator that drives every process of a program is generated already, and the next section is about it.
+
+## The coordinator
+
+Writing that coordinator by hand is the part nobody enjoys: a slot table, an instance number per request, a wait set, a poll timeout, one dispatch arm per request kind per process, the seam a job result comes back through, and the turn around all of it. So a program does not write it. A program that puts a `[run]` table in its `aver.toml` writes **processes, answer modules and three policies, and nothing else** — no coordinator, no `main`, no seating, no slot table. The compiler generates the rest into the entry module, in the reserved `__` namespace, by the same pass that generates the protocol. The generated names stay callable, so a program that wants its own loop over the protocol still has one; that is a door, not the road.
+
+The worked example is `tests/fixtures/run_all_slice/` (`examples/concurrency/README.md` points at it and says why it lives there): a peer that fetches block bodies, a walk that connects them, an accepting process, a dialling process and a ticker — five processes, three answer modules, one job kind, three policies, and not one line between them.
+
+**What the program writes.** The manifest says who answers what and asks for the loop:
+
+```toml
+[[providers.bindings]]
+capability = "Wire"
+answer = "Sockets"
+
+[[providers.bindings]]
+capability = "Validation"
+work = "Ledger.validate"
+task = "Ledger.nextTask"
+landed = "Ledger.validated"
+
+[run]
+order = "Node.order"
+admit = "Node.admit"
+stop = "Node.stop"
+view = "Node.View"
+```
+
+The processes are ordinary yielding functions, in direct style, written in the module the `[run]` table names, each taking no parameters and answering `Unit` — the loop seats one of each at start-up, and a seated process asks the module that answers its first request for whatever it needs. A yielding function in any other module of such a program is `error[run-binding]`: the loop is generated into one module and seats what it can see, so a process one module over would be lowered to its protocol and then never seated, never dispatched and never answered.
+
+```aver
+fn peer() -> Unit
+    ? "Ask the pool what to fetch, ask that peer for it, hand the body over, go round."
+    ! [Pool.claim, Pool.gone, Wire.write, Wire.read, Blocks.deliver, Console.print, yield]
+    Console.print("peer: asking the pool for work")
+    match Pool.claim()
+        Pool.Assignment.Stop -> Unit
+        Pool.Assignment.Work(key, height) -> match Wire.write(key, Ledger.blockOf(height))
+            Result.Err(_) -> Pool.gone(key)
+            Result.Ok(_) -> match Wire.read(key, 4000000, 30000)
+                Wire.Heard.Data(raw) -> match Blocks.deliver(key, height, raw)
+                    Blocks.Receipt.Accepted -> peer()
+                    Blocks.Receipt.Refused(_) -> Pool.gone(key)
+                Wire.Heard.EndOfStream -> Pool.gone(key)
+                Wire.Heard.Failed(_) -> Pool.gone(key)
+                Wire.Heard.TimedOut -> Pool.gone(key)
+```
+
+`Console.print` there is not a request: `Console` is nobody's to answer, so it runs in place, inside the turn, and the generated function that holds it declares it. `Pool.gone` answers `Unit`, and a match arm is one expression, so a `Unit`-answering stop is the end of that branch — which is why an operation a process has to continue after answers a sum rather than `Unit`.
+
+The answer modules are ordinary modules with one state each. Every operation of every capability they answer gets one function, threading that state and answering `Now(v)` or `Later(wake)`, and every one of them declares `fresh()`, the state before anything has happened, because that is where the loop starts them:
+
+```aver
+fn claim(state: State) -> Tuple<State, Pool.__ClaimReply>
+    ? "The next height for the next idle peer, Stop once every height has been handed out, and a Later with a deadline while no peer is free to take one."
+    match state.nextHeight > state.lastHeight
+        true -> (state, Pool.__ClaimReply.Now(Pool.Assignment.Stop))
+        false -> claimIdle(state, state.idle)
+```
+
+A `Later` leaves the request where it is, with the same instance number, and **the coordinator discards the state the module returned** — so "a `Later` changes nothing" is true by construction, not by a rule anybody has to keep. What it does carry is `Wait.Wake`, saying what would make asking again worth it: `Item(Wait.Item)` parks on a socket or a job, `After(ms)` sets a deadline the turn's poll uses as its timeout, and `NextTurn` asks to be re-asked immediately — which makes that turn poll with a zero timeout for as long as such a request exists, so prefer `Item` or `After` when either will do.
+
+Finally the view and the three policies. The view is a record the program declares and the loop fills; the checker holds it to exactly that shape and prints the declaration it wants under `error[view-shape]`:
+
+```aver
+type Pending
+    Accepting(Int, Wait.Wake)
+    Dialling(Int, Wait.Wake)
+    Ticker(Int, Wait.Wake)
+    Peer(Int, Wait.Wake)
+    Walk(Int, Wait.Wake)
+
+record View
+    pending: Map<Int, Pending>
+    ready: List<Int>
+    jobs: Int
+    room: Int
+    stopping: Bool
+
+fn order(view: View) -> List<Int>
+    ? "Every seated process, in slot order. The loop asks admit about each one in turn."
+    Map.keys(view.pending)
+
+fn admit(view: View, id: Int) -> Bool
+    ? "Whether to serve this id in this turn."
+    match Map.get(view.pending, id)
+        Option.None -> false
+        Option.Some(marker) -> admitted(view, marker)
+
+fn stop(view: View) -> Bool
+    ? "The run ends when the process asked us to, and not before: the flag was read by the turn and reaches here as data."
+    view.stopping
+```
+
+One constructor per process, carrying the instance number of the request that process is waiting on and the wake it is parked on. The view carries no capability resource on purpose: a law's `given` domain is a list of sample values written in Aver, a program cannot construct a `Tcp.Connection` or a `Work.Job`, and a policy that read the whole run could therefore never have a law with a non-trivial sample. This one can, and the example's priority law is exactly that — a ready peer request is admitted whatever the job table looks like, so the turn, which serves before it starts another job, serves the peer first.
+
+**What the compiler generates.** `AVER_YIELD_DUMP=1 aver check main.av --module-root .` prints the whole of it after the protocol. In outline:
+
+- `__Process` and `__Slot` and `__Run` — the slot table (`Map<Int, __Slot>`), one field per answer module holding its state, the job table, the count of answers that arrived too late, the stop flag as data, and the next free id.
+- `__seat<P>` / `__seated<P>` — one of every process, seated at its first request under its own slot id.
+- `__current`, `__nextInstance`, `__settle<P>`, `__settledSlot<P>`, `__park` — the two invariants of the table. An answer that carries the current instance replaces that process's one slot and raises its number; an answer that carries an older one changes nothing and is counted. A `Later` parks the request where it stands.
+- `__view`, `__pendingOf`, `__markerOf` — the view the policies read, filled from the run.
+- `__waitSet`, `__timeout` — one wait per turn, keyed by slot id, plus one key per running job; the timeout is zero while any request asked for the next turn, the soonest `After` deadline otherwise, and one second when nothing carries either.
+- `__serve`, `__serve<P>`, `__serve<P><Kind>` — the dispatch: one arm per request kind of each process, calling the answer module's own function and settling or parking on what it answered. There is no arm for an unanswered operation, because the lowering only makes a request out of an answered one.
+- `__takeEach<J>`, `__landed<J>`, `__startJobs<J>` — the job seam. A job result is a coordinator event, not an answer to a request: it goes into the answer state through `landed` and resumes nobody, and the turn starts another while there is room under `[work] max-jobs` and `task` has one.
+- `__turn`, `__serveEach`, `__runAll`, `main` — observe the stop flag, wait once, serve what the policy ordered and admitted, take what finished, start what fits; turn until the policy says stop or nothing is seated.
+- `__over`, `__cancelEach` — the end of a run. A program with a job kind cancels every job it is still holding a handle for rather than abandoning it, so `main` performs `Work.cancel`.
+
+Each of those carries its own effects, not the program's: `__seat<P>` performs what that process performs on its way to its first request, `__serve<P><Kind>` performs what the answer module performs plus what the segment it resumes performs, and a process that touches nothing has every function the loop generates for it pure — so one generative effect in one process cannot oracle-lift the laws about another. Only `__serve`, `__serveEach`, `__serveIf` and the turn carry the union, because the dispatch reaches every process. The entry module's own `effects [...]` is widened to admit what is generated into it: the wait, the stop observation, both ends of every job kind and the cancel are added to the list the source declares, because the module boundary has to hold the loop as well as the processes.
+
+**And the laws.** The generator emits the loop's invariants as `verify` laws over the generated functions, so the program does not write those either. Per process: a late answer leaves the slot table and every answer state exactly as they were, a late answer is counted, and settling never grows the table. Over `__park`: a `Later` moves neither the instance number nor any answer state. Over `__settledSlot<P>`: the slot an answer for the current instance writes back carries a strictly higher instance number than the one it answered, so the instance just answered can never be current again and a second answer to it is a late answer. Over `__current`: the slot written under an id is the slot read back from it. `aver verify` runs them and `aver proof --backend lean --check` puts them on the Lean wall, where twenty-two of the example's twenty-seven laws close as universals. The five that do not are one per process, all the same one: the size comparison in "settling never grows the table" needs a fact about `Map.set` on a key already present that the Lean prelude does not carry yet. Its status is `sorry`, not bounded, and it is named in the example's own report rather than hidden. The two halves above are stated apart for the same reason: composed into one claim — the instance `__current` reads after a settle is higher than the one before it — the statement needs that same one-key `Map.set` fact inside a record update, and it does not close today.
+
+Two limits worth knowing before you reach them. A process takes no parameters and answers `Unit`, because the loop seats it and has nothing to hand it and nowhere to put its result — everything a process needs comes from the module that answers its first request. And the `task` seam hands the turn the next task without threading the state back, so a program whose loop is generated and whose manifest declares a job kind is held to `[work] max-jobs = 1`: any other limit is `error[run-binding]`, because the turn would ask the same unchanged answer state for a task once per slot of room and start that one task once per slot. Raising the limit waits for a seam that threads the state back.
 
 ## Modules
 

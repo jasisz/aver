@@ -17,6 +17,7 @@ use sha2::{Digest, Sha256};
 
 use crate::ast::{CapabilityItem, Expr, FnDef, Module, Stmt, TopLevel, Type, TypeDef};
 
+pub mod answer;
 mod descriptor;
 #[cfg(test)]
 mod tests;
@@ -30,6 +31,12 @@ use validation::{
     resource_tainted_type_names, type_def_name, validate_boundary_type_ownership,
     validate_hostile_profiles, validate_operation_boundaries, validate_resource_map_keys,
 };
+
+/// A type name as one module writes it, qualified to the module that
+/// declares it: `State` inside `Ledger` is `Ledger.State` everywhere else.
+pub fn canonicalize_type_names(ty: Type, scope: &str) -> Type {
+    validation::canonicalize_type_names(ty, scope)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CapabilitySemantics {

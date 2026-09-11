@@ -119,10 +119,16 @@ pub(super) struct Generated {
     /// The protocol a coordinator refers to: types, `Start`, answer functions.
     pub public_names: Vec<String>,
     pub items: Vec<TopLevel>,
+    /// The same protocol as data, for the generator of the loop.
+    pub protocol: super::ProcessProtocol,
 }
 
-pub(super) fn lower_fn(fd: &FnDef) -> Result<Generated, Vec<TypeError>> {
-    let mut lowering = Lowering::new(fd);
+pub(super) fn lower_fn(
+    fd: &FnDef,
+    marked: &crate::config::MarkedCapabilities,
+    fn_sigs: &super::FnSigs,
+) -> Result<Generated, Vec<TypeError>> {
+    let mut lowering = Lowering::new(fd, marked, fn_sigs);
     match lowering.run() {
         Ok(generated) => Ok(generated),
         Err(()) => Err(lowering.errors),
@@ -132,6 +138,16 @@ pub(super) fn lower_fn(fd: &FnDef) -> Result<Generated, Vec<TypeError>> {
 struct Lowering<'a> {
     fd: &'a FnDef,
     names: Names,
+    /// The capabilities this program answers itself. A call to an operation
+    /// of one of them is a stop; every other call runs in place. Decided by
+    /// the manifest, not by the function's effect list (proposal §3.1).
+    marked: &'a crate::config::MarkedCapabilities,
+    /// Declared effects per function of the program as written, so a
+    /// generated function can carry exactly the in-place effects its own
+    /// segment performs (decision 4).
+    fn_sigs: &'a super::FnSigs,
+    /// The function's own effect list minus `yield`: what an in-place
+    /// effect call looks like.
     effect_entries: Vec<String>,
     /// Canonical operation → request kind name, disambiguated up front.
     kind_names: HashMap<String, String>,
@@ -144,7 +160,11 @@ struct Lowering<'a> {
 }
 
 impl<'a> Lowering<'a> {
-    fn new(fd: &'a FnDef) -> Self {
+    fn new(
+        fd: &'a FnDef,
+        marked: &'a crate::config::MarkedCapabilities,
+        fn_sigs: &'a super::FnSigs,
+    ) -> Self {
         let effect_entries: Vec<String> = fd
             .effects
             .iter()
@@ -154,6 +174,8 @@ impl<'a> Lowering<'a> {
         let mut lowering = Self {
             fd,
             names: Names::new(&fd.name),
+            marked,
+            fn_sigs,
             effect_entries,
             kind_names: HashMap::new(),
             kinds: Vec::new(),
@@ -193,6 +215,10 @@ impl<'a> Lowering<'a> {
 
     // ── Stops and kinds ──────────────────────────────────────────────
 
+    /// An operation this function declares as one of its effects. The
+    /// lowering no longer cuts at these — only a marked capability is a stop
+    /// — but a generated function still has to declare the ones its own
+    /// segment performs in place.
     fn is_effect_name(&self, name: &str) -> bool {
         self.effect_entries.iter().any(|entry| {
             if entry == name || name.ends_with(&format!(".{entry}")) {
@@ -207,12 +233,42 @@ impl<'a> Lowering<'a> {
     }
 
     /// The operation a stop calls, when `expr` is a stop.
+    ///
+    /// A stop is a call to an operation of a capability the manifest says
+    /// this program answers. Nothing else is: an unmarked operation runs
+    /// where it is written, inside the turn (decision 4).
     fn stop_op(&self, expr: &Spanned<Expr>) -> Option<String> {
         let Expr::FnCall(callee, _) = &expr.node else {
             return None;
         };
         let name = dotted_name(callee)?;
-        self.is_effect_name(&name).then_some(name)
+        self.marked.answers(&name).then_some(name)
+    }
+
+    /// Whether `expr` performs an effect where it stands: a call to an
+    /// unmarked operation this function declares, or a call to a function
+    /// of the program that declares effects of its own. A stop is not one —
+    /// it is a request, and the lowering cuts at it.
+    fn performs_effect(&self, expr: &Spanned<Expr>) -> bool {
+        expr_walk::any(expr, &mut |e| {
+            let Expr::FnCall(callee, _) = &e.node else {
+                return false;
+            };
+            let Some(name) = dotted_name(callee) else {
+                return false;
+            };
+            if self.marked.answers(&name) {
+                return false;
+            }
+            self.is_effect_name(&name) || self.called_effects(&name).is_some_and(|e| !e.is_empty())
+        })
+    }
+
+    /// The effects the program declares for a function it calls by name.
+    fn called_effects(&self, name: &str) -> Option<&'a [String]> {
+        self.fn_sigs
+            .get(name)
+            .map(|(_, _, effects)| effects.as_slice())
     }
 
     /// Whether `expr` holds anything the lowering has to cut at: a stop, or
@@ -411,9 +467,13 @@ impl<'a> Lowering<'a> {
         expr: &Spanned<Expr>,
         hoisted: &mut Vec<Stmt>,
     ) -> Result<Spanned<Expr>, ()> {
+        // Nothing of this statement is evaluated after its own expression,
+        // so the outer flag is false here; the positions inside it learn
+        // from their own later siblings whether a cut follows them.
+        let cut = false;
         match &expr.node {
             Expr::Match { subject, arms } => {
-                let subject = self.extract(subject, hoisted)?;
+                let subject = self.extract(subject, hoisted, cut)?;
                 Ok(spanned_like(
                     expr,
                     Expr::Match {
@@ -423,21 +483,21 @@ impl<'a> Lowering<'a> {
                 ))
             }
             Expr::ErrorProp(inner) => {
-                let inner = self.extract(inner, hoisted)?;
+                let inner = self.extract(inner, hoisted, cut)?;
                 Ok(spanned_like(expr, Expr::ErrorProp(Box::new(inner))))
             }
             Expr::FnCall(callee, args) if self.stop_op(expr).is_some() => {
-                let args = self.extract_all(args, hoisted)?;
+                let args = self.extract_all(args, hoisted, cut)?;
                 Ok(spanned_like(expr, Expr::FnCall(callee.clone(), args)))
             }
             Expr::TailCall(tc) => {
-                let args = self.extract_all(&tc.args, hoisted)?;
+                let args = self.extract_all(&tc.args, hoisted, cut)?;
                 Ok(spanned_like(
                     expr,
                     Expr::TailCall(Box::new(TailCallData::new(tc.target.clone(), args))),
                 ))
             }
-            _ => self.extract(expr, hoisted),
+            _ => self.extract(expr, hoisted, cut),
         }
     }
 
@@ -445,8 +505,30 @@ impl<'a> Lowering<'a> {
         &mut self,
         exprs: &[Spanned<Expr>],
         hoisted: &mut Vec<Stmt>,
+        cut: bool,
     ) -> Result<Vec<Spanned<Expr>>, ()> {
-        exprs.iter().map(|e| self.extract(e, hoisted)).collect()
+        let positions: Vec<&Spanned<Expr>> = exprs.iter().collect();
+        let flags = self.cut_flags(&positions, cut);
+        let mut out = Vec::with_capacity(exprs.len());
+        for (expr, cut) in exprs.iter().zip(flags) {
+            out.push(self.extract(expr, hoisted, cut)?);
+        }
+        Ok(out)
+    }
+
+    /// For a run of positions in evaluation order, whether each one has a
+    /// cut after it: a later position holding a stop or a `?`, or a cut in
+    /// the expression this run sits in (`outer`). Only such a position needs
+    /// its in-place effect hoisted — an effect with nothing cut after it
+    /// keeps its place on its own.
+    fn cut_flags(&self, positions: &[&Spanned<Expr>], outer: bool) -> Vec<bool> {
+        let mut flags = vec![outer; positions.len()];
+        let mut later = outer;
+        for index in (0..positions.len()).rev() {
+            flags[index] = later;
+            later = later || self.needs_lowering(positions[index]);
+        }
+        flags
     }
 
     fn hoist(&mut self, expr: Spanned<Expr>, hoisted: &mut Vec<Stmt>) -> Spanned<Expr> {
@@ -457,21 +539,38 @@ impl<'a> Lowering<'a> {
     }
 
     /// Hoist stops, `?`, and branches that hold stops out of `expr`, which
-    /// sits in a position that is evaluated unconditionally. Sibling
-    /// computations are pure inside a `yield` function, so moving a stop
-    /// ahead of them changes no observable order.
+    /// sits in a position that is evaluated unconditionally.
+    ///
+    /// `cut` says something evaluated after this expression is cut out of
+    /// the statement. Such an expression is then hoisted into its own
+    /// binding even when it holds no stop, as long as it performs an effect:
+    /// since decision 4 a `yield` process may perform an unmarked operation
+    /// in place, so siblings are no longer pure and a stop moved ahead of one
+    /// would reorder two observable things. Hoisting both, in evaluation
+    /// order, into the same statement list keeps the order the program wrote.
+    /// An effect with nothing cut after it is left alone: the rebuilt
+    /// expression follows the bindings hoisted out of it, so it already runs
+    /// after them.
     fn extract(
         &mut self,
         expr: &Spanned<Expr>,
         hoisted: &mut Vec<Stmt>,
+        cut: bool,
     ) -> Result<Spanned<Expr>, ()> {
         if !self.needs_lowering(expr) {
+            if cut && self.performs_effect(expr) {
+                return Ok(self.hoist(expr.clone(), hoisted));
+            }
             return Ok(expr.clone());
         }
         let line = expr.line;
         let node = match &expr.node {
             Expr::Match { subject, arms } => {
-                let subject = self.extract(subject, hoisted)?;
+                // The subject runs before the arms either way, and the whole
+                // match is hoisted as one binding when an arm is cut, so a
+                // subject that performs an effect keeps its place without
+                // being hoisted on its own.
+                let subject = self.extract(subject, hoisted, false)?;
                 let rebuilt = spanned_like(
                     expr,
                     Expr::Match {
@@ -487,7 +586,7 @@ impl<'a> Lowering<'a> {
                 });
             }
             Expr::FnCall(callee, args) => {
-                let args = self.extract_all(args, hoisted)?;
+                let args = self.extract_all(args, hoisted, cut)?;
                 let rebuilt = spanned_like(expr, Expr::FnCall(callee.clone(), args));
                 return Ok(if self.stop_op(expr).is_some() {
                     self.hoist(rebuilt, hoisted)
@@ -496,7 +595,7 @@ impl<'a> Lowering<'a> {
                 });
             }
             Expr::ErrorProp(inner) => {
-                let inner = self.extract(inner, hoisted)?;
+                let inner = self.extract(inner, hoisted, cut)?;
                 let rebuilt = spanned_like(expr, Expr::ErrorProp(Box::new(inner)));
                 return Ok(self.hoist(rebuilt, hoisted));
             }
@@ -510,46 +609,71 @@ impl<'a> Lowering<'a> {
                 );
             }
             Expr::TailCall(tc) => {
-                let args = self.extract_all(&tc.args, hoisted)?;
+                let args = self.extract_all(&tc.args, hoisted, cut)?;
                 Expr::TailCall(Box::new(TailCallData::new(tc.target.clone(), args)))
             }
-            Expr::BinOp(op, l, r) => Expr::BinOp(
-                *op,
-                Box::new(self.extract(l, hoisted)?),
-                Box::new(self.extract(r, hoisted)?),
-            ),
-            Expr::Neg(inner) => Expr::Neg(Box::new(self.extract(inner, hoisted)?)),
+            Expr::BinOp(op, l, r) => {
+                let left_cut = cut || self.needs_lowering(r);
+                Expr::BinOp(
+                    *op,
+                    Box::new(self.extract(l, hoisted, left_cut)?),
+                    Box::new(self.extract(r, hoisted, cut)?),
+                )
+            }
+            Expr::Neg(inner) => Expr::Neg(Box::new(self.extract(inner, hoisted, cut)?)),
             Expr::Attr(inner, field) => {
-                Expr::Attr(Box::new(self.extract(inner, hoisted)?), field.clone())
+                Expr::Attr(Box::new(self.extract(inner, hoisted, cut)?), field.clone())
             }
-            Expr::Constructor(name, Some(inner)) => {
-                Expr::Constructor(name.clone(), Some(Box::new(self.extract(inner, hoisted)?)))
-            }
+            Expr::Constructor(name, Some(inner)) => Expr::Constructor(
+                name.clone(),
+                Some(Box::new(self.extract(inner, hoisted, cut)?)),
+            ),
             Expr::InterpolatedStr(parts) => {
+                let positions: Vec<&Spanned<Expr>> = parts
+                    .iter()
+                    .filter_map(|part| match part {
+                        StrPart::Literal(_) => None,
+                        StrPart::Parsed(inner) => Some(inner.as_ref()),
+                    })
+                    .collect();
+                let mut flags = self.cut_flags(&positions, cut).into_iter();
                 let mut out = Vec::with_capacity(parts.len());
                 for part in parts {
                     out.push(match part {
                         StrPart::Literal(s) => StrPart::Literal(s.clone()),
                         StrPart::Parsed(inner) => {
-                            StrPart::Parsed(Box::new(self.extract(inner, hoisted)?))
+                            let cut = flags.next().unwrap_or(cut);
+                            StrPart::Parsed(Box::new(self.extract(inner, hoisted, cut)?))
                         }
                     });
                 }
                 Expr::InterpolatedStr(out)
             }
-            Expr::List(items) => Expr::List(self.extract_all(items, hoisted)?),
-            Expr::Tuple(items) => Expr::Tuple(self.extract_all(items, hoisted)?),
+            Expr::List(items) => Expr::List(self.extract_all(items, hoisted, cut)?),
+            Expr::Tuple(items) => Expr::Tuple(self.extract_all(items, hoisted, cut)?),
             Expr::MapLiteral(entries) => {
+                let positions: Vec<&Spanned<Expr>> =
+                    entries.iter().flat_map(|(k, v)| [k, v]).collect();
+                let mut flags = self.cut_flags(&positions, cut).into_iter();
                 let mut out = Vec::with_capacity(entries.len());
                 for (k, v) in entries {
-                    out.push((self.extract(k, hoisted)?, self.extract(v, hoisted)?));
+                    let key_cut = flags.next().unwrap_or(cut);
+                    let value_cut = flags.next().unwrap_or(cut);
+                    out.push((
+                        self.extract(k, hoisted, key_cut)?,
+                        self.extract(v, hoisted, value_cut)?,
+                    ));
                 }
                 Expr::MapLiteral(out)
             }
             Expr::RecordCreate { type_name, fields } => {
+                let positions: Vec<&Spanned<Expr>> =
+                    fields.iter().map(|(_, value)| value).collect();
+                let mut flags = self.cut_flags(&positions, cut).into_iter();
                 let mut out = Vec::with_capacity(fields.len());
                 for (name, value) in fields {
-                    out.push((name.clone(), self.extract(value, hoisted)?));
+                    let cut = flags.next().unwrap_or(cut);
+                    out.push((name.clone(), self.extract(value, hoisted, cut)?));
                 }
                 Expr::RecordCreate {
                     type_name: type_name.clone(),
@@ -561,10 +685,16 @@ impl<'a> Lowering<'a> {
                 base,
                 updates,
             } => {
-                let base = self.extract(base, hoisted)?;
+                let positions: Vec<&Spanned<Expr>> = std::iter::once(base.as_ref())
+                    .chain(updates.iter().map(|(_, value)| value))
+                    .collect();
+                let mut flags = self.cut_flags(&positions, cut).into_iter();
+                let base_cut = flags.next().unwrap_or(cut);
+                let base = self.extract(base, hoisted, base_cut)?;
                 let mut out = Vec::with_capacity(updates.len());
                 for (name, value) in updates {
-                    out.push((name.clone(), self.extract(value, hoisted)?));
+                    let cut = flags.next().unwrap_or(cut);
+                    out.push((name.clone(), self.extract(value, hoisted, cut)?));
                 }
                 Expr::RecordUpdate {
                     type_name: type_name.clone(),
@@ -711,7 +841,10 @@ impl<'a> Lowering<'a> {
         }
     }
 
-    /// A match arm is a block with no statements of its own.
+    /// A match arm body is one expression, so an arm that lowers to
+    /// statements — an in-place effect hoisted out so it keeps its place
+    /// before the request beside it (decision 4) — gets a function of its
+    /// own to hold them, called with the variables it reads.
     fn lower_arm(
         &mut self,
         body: Spanned<Expr>,
@@ -719,11 +852,26 @@ impl<'a> Lowering<'a> {
         ret: &Ret,
     ) -> Result<Spanned<Expr>, ()> {
         let line = body.line;
+        let written = body.clone();
         let segment = self.lower_block(Vec::new(), body, scope, ret)?;
-        if !segment.stmts.is_empty() {
-            return self.internal(line, "a match arm produced statements");
+        if segment.stmts.is_empty() {
+            return Ok(segment.tail);
         }
-        Ok(segment.tail)
+        let mut free = free_idents_of_block(&[], &written, &HashSet::new());
+        free.extend(ret.live_names());
+        let mut live: Vec<String> = Vec::new();
+        for name in scope.iter() {
+            if free.contains(name) && !live.contains(name) {
+                live.push(name.clone());
+            }
+        }
+        let mut fields = Vec::with_capacity(live.len());
+        for name in &live {
+            let ty = self.live_type(name, &[], &written, ret, line)?;
+            fields.push((name.clone(), ty));
+        }
+        let (name, args) = self.join_fn(&fields, None, "", segment, line);
+        Ok(call(&name, args, line))
     }
 
     fn apply_ret(&self, value: Spanned<Expr>, ret: &Ret) -> Spanned<Expr> {
@@ -860,9 +1008,19 @@ impl<'a> Lowering<'a> {
             segment.tail
         } else {
             let name = self.names.after(&variant);
-            let params = fields.clone();
-            let call_args: Vec<Spanned<Expr>> =
+            let mut params = fields.clone();
+            let mut call_args: Vec<Spanned<Expr>> =
                 fields.iter().map(|(n, _)| ident(n, line)).collect();
+            // The answer is not part of the state — it arrives with the
+            // answer function — so it is a parameter of the continuation
+            // and not a field of the variant, and it is passed only when
+            // the continuation still reads it after the substitution above.
+            if free_idents_of_block(&segment.stmts, &segment.tail, &HashSet::new())
+                .contains("__answer")
+            {
+                params.push(("__answer".to_string(), answer_type.clone()));
+                call_args.push(ident("__answer", line));
+            }
             self.helpers.push(fn_def(
                 name.clone(),
                 params,
@@ -1093,7 +1251,7 @@ impl<'a> Lowering<'a> {
         if self.kinds.is_empty() {
             return self.fail(
                 fd.line,
-                "declares `yield` but never stops: no call to a declared effect and no tail call; remove `yield` from its effect list".to_string(),
+                "declares `yield` but never stops: it calls no operation of a capability this program answers, and it does not tail-call itself. Mark the capability it should wait on — `answer = \"<Module>\"` on its `[[providers.bindings]]` entry in aver.toml — or remove `yield` from its effect list".to_string(),
             );
         }
 
@@ -1197,10 +1355,145 @@ impl<'a> Lowering<'a> {
             public_names.push(name);
         }
         items.extend(self.helpers.drain(..).map(TopLevel::FnDef));
+        self.assign_effects(&mut items);
+        let protocol = super::ProcessProtocol {
+            fn_name: fd.name.clone(),
+            params: fd.params.clone(),
+            return_type: fd.return_type.clone(),
+            start: names.start(),
+            request: names.request(),
+            outcome: names.outcome(),
+            kinds: self
+                .kinds
+                .iter()
+                .map(|kind| super::ProtocolKind {
+                    name: kind.name.clone(),
+                    operation: self
+                        .kind_names
+                        .iter()
+                        .find(|(_, named)| *named == &kind.name)
+                        .map(|(operation, _)| operation.clone()),
+                    arg_types: kind.arg_types.clone(),
+                    answer_type: kind.answer_type.clone(),
+                    state: names.state(&kind.name),
+                    answer_fn: names.answer(&kind.name),
+                    variants: kind
+                        .variants
+                        .iter()
+                        .map(|variant| (variant.name.clone(), variant.fields.len()))
+                        .collect(),
+                })
+                .collect(),
+        };
         Ok(Generated {
             public_names,
             items,
+            protocol,
         })
+    }
+}
+
+impl Lowering<'_> {
+    /// Decision 4: a generated function carries exactly the unmarked
+    /// operations its own segment performs, computed here and declared by
+    /// nobody. A process that calls no unmarked operation keeps every
+    /// generated function pure, as they all were before this leg.
+    ///
+    /// A segment that calls another generated function — a continuation
+    /// helper, or `Start` from an answered `Yield` — performs what that one
+    /// performs, so the direct sets are closed over the generated call graph
+    /// before they are written down.
+    fn assign_effects(&self, items: &mut [TopLevel]) {
+        let positions: Vec<usize> = items
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| matches!(item, TopLevel::FnDef(_)))
+            .map(|(pos, _)| pos)
+            .collect();
+        let index: HashMap<String, usize> = positions
+            .iter()
+            .enumerate()
+            .filter_map(|(slot, pos)| match &items[*pos] {
+                TopLevel::FnDef(fd) => Some((fd.name.clone(), slot)),
+                _ => None,
+            })
+            .collect();
+        let mut direct: Vec<std::collections::BTreeSet<String>> = Vec::new();
+        let mut calls: Vec<Vec<usize>> = Vec::new();
+        for pos in &positions {
+            let TopLevel::FnDef(fd) = &items[*pos] else {
+                continue;
+            };
+            let mut own = std::collections::BTreeSet::new();
+            let mut called = Vec::new();
+            for stmt in fd.body.stmts() {
+                let expr = match stmt {
+                    Stmt::Binding(_, _, expr) | Stmt::Expr(expr) => expr,
+                };
+                expr_walk::walk(expr, &mut |e| {
+                    let name = match &e.node {
+                        Expr::FnCall(callee, _) => dotted_name(callee),
+                        Expr::TailCall(tc) => Some(tc.target.clone()),
+                        _ => None,
+                    };
+                    let Some(name) = name else { return };
+                    if let Some(slot) = index.get(&name) {
+                        called.push(*slot);
+                        return;
+                    }
+                    if self.marked.answers(&name) {
+                        return;
+                    }
+                    if self.is_effect_name(&name) {
+                        own.insert(name);
+                        return;
+                    }
+                    if let Some(effects) = self.called_effects(&name) {
+                        // A callee that declares a marked operation is a
+                        // plain function performing a request, which
+                        // `intercept-outside-yield` refuses by name. Its
+                        // effects are carried here as they are declared:
+                        // dropping the marked one would leave the generated
+                        // function calling an effect it does not declare, and
+                        // a second error about a generated name is not a
+                        // better report of the same mistake.
+                        own.extend(
+                            effects
+                                .iter()
+                                .filter(|effect| *effect != super::YIELD_EFFECT)
+                                .cloned(),
+                        );
+                    }
+                });
+            }
+            direct.push(own);
+            calls.push(called);
+        }
+        loop {
+            let mut changed = false;
+            for slot in 0..direct.len() {
+                let grown: Vec<String> = calls[slot]
+                    .iter()
+                    .flat_map(|callee| direct[*callee].iter().cloned())
+                    .collect();
+                for effect in grown {
+                    changed |= direct[slot].insert(effect);
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        for (slot, pos) in positions.iter().enumerate() {
+            let TopLevel::FnDef(fd) = &mut items[*pos] else {
+                continue;
+            };
+            let line = fd.line;
+            fd.effects = direct[slot]
+                .iter()
+                .map(|effect| Spanned::new(effect.clone(), line))
+                .collect();
+        }
     }
 }
 

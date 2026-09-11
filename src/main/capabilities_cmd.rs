@@ -20,6 +20,7 @@ fn load_capability_target_manifest(
             typecheck: Some(aver::ir::TypecheckMode::WithCheckedLoaded(
                 &prepared_deps.loaded,
             )),
+            marked: prepared_deps.marked.clone(),
             dep_modules: &modules,
             run_interp_lower: false,
             run_buffer_build: false,

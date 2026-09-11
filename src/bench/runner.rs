@@ -85,6 +85,7 @@ fn run_vm(manifest: &Manifest) -> Result<BenchReport, RunError> {
         &mut items,
         PipelineConfig {
             typecheck: Some(TypecheckMode::WithCheckedLoaded(&prepared_deps.loaded)),
+            marked: prepared_deps.marked.clone(),
             dep_modules: &dep_modules,
             on_after_pass: Some(Box::new(|stage: PipelineStage, _| {
                 passes_applied.borrow_mut().push(stage.name().to_string());

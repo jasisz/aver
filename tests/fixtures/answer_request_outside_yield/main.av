@@ -1,0 +1,17 @@
+module Main
+    depends [Ledger, Pool]
+    intent = "A program that performs an answered operation outside a process."
+    effects [Pool.claim, Console.print]
+    exposes [main]
+
+fn seat(key: Int) -> Int
+    ? "Asks the pool from a plain function, which is where the request has no answer."
+    ! [Pool.claim]
+    match Pool.claim(key)
+        Pool.Assignment.Idle -> 0
+        Pool.Assignment.Height(h) -> h
+
+fn main() -> Unit
+    ? "Reports what the pool handed back."
+    ! [Console.print]
+    Console.print("seated 0")

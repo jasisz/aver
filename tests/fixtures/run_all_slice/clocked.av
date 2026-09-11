@@ -1,0 +1,22 @@
+module Clocked
+    intent = "The answers this program gives to Clock: a fixed number of ticks, then Closed."
+    depends [Wait, Clock]
+    exposes [State, fresh, tick]
+    effects []
+
+record State
+    left: Int
+
+fn fresh() -> State
+    ? "Four ticks to give out."
+    State(left = 4)
+
+fn tick(state: State) -> Tuple<State, Clock.__TickReply>
+    ? "The next tick, or Closed once this clock has given out every one it had. A clock with a deadline of its own would read one; this one is pure, so the example runs the same way every time."
+    match state.left == 0
+        true -> (state, Clock.__TickReply.Now(Clock.Tick.Closed))
+        false -> (State.update(state, left = state.left - 1), Clock.__TickReply.Now(Clock.Tick.Tock))
+
+verify tick
+    tick(fresh()) => (State.update(fresh(), left = 3), Clock.__TickReply.Now(Clock.Tick.Tock))
+    tick(State.update(fresh(), left = 0)) => (State.update(fresh(), left = 0), Clock.__TickReply.Now(Clock.Tick.Closed))

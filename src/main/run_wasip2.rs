@@ -117,6 +117,7 @@ fn build_component(
         &mut items,
         PipelineConfig {
             typecheck: Some(TypecheckMode::WithCheckedLoaded(&prepared_deps.loaded)),
+            marked: prepared_deps.marked.clone(),
             alloc_policy: Some(&neutral_policy),
             dep_modules: &dep_modules,
             // Native concat remains the better interpolation shape. Joined

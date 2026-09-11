@@ -112,10 +112,12 @@ pub fn run_verify_for_items_wasm_gc_with_mode(
 
     // The same front door the VM verify lane and every other door use:
     // TCO, the `yield` lowering, type errors AND the shadowing ban (#954).
+    let marked = crate::config::MarkedCapabilities::for_project_dir(base_dir);
     let tc = crate::ir::pipeline::front_gate(
         &mut items,
         &crate::ir::TypecheckMode::Full { base_dir },
         user_program_len,
+        &marked,
     );
     if !tc.errors.is_empty() {
         return Err(format_type_errors(&tc.errors));

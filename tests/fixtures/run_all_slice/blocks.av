@@ -1,0 +1,20 @@
+module Blocks
+    kind = capability
+    semantics = effectful
+    depends [Bytes]
+    intent = "Block bodies by height and the hand-over of a freshly read body."
+    exposes [Receipt, deliver, body]
+
+type Receipt
+    Accepted
+    Refused(String)
+
+operation deliver(key: Int, height: Int, block: Bytes) -> Blocks.Receipt
+    ? "Hands one block body over; the peer does not wait for validation."
+    oracle = generative
+    replay = recorded
+
+operation body(height: Int) -> Bytes
+    ? "The validated body at this height."
+    oracle = generative
+    replay = recorded

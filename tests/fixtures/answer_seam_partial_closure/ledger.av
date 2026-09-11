@@ -1,0 +1,27 @@
+module Ledger
+    intent = "An answer module holding the state both ends of the well-typed job seam reach."
+    depends [Pool]
+    exposes [State, claim, gone, nextTask, validated]
+    effects []
+
+record State
+    free: List<Int>
+    pending: List<String>
+    stopping: Bool
+
+fn claim(state: State, key: Int) -> Pool.Assignment
+    ? "The next height for this peer."
+    Pool.Assignment.Idle
+
+fn gone(state: State, key: Int) -> Unit
+    ? "A peer that left gives its height back."
+    Unit
+
+fn nextTask(state: State) -> Option<String>
+    ? "What the turn should start a validation job on, if anything."
+    Option.None
+
+fn validated(state: State, score: Int) -> State
+    ? "Where a finished job's result lands."
+    State.update(state, stopping = score == 0)
+

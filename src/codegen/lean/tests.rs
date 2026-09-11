@@ -99,6 +99,9 @@ fn ctx_from_source(source: &str, project_name: &str) -> CodegenContext {
             typecheck: Some(crate::ir::TypecheckMode::Full {
                 base_dir: Some(env!("CARGO_MANIFEST_DIR")),
             }),
+            marked: crate::config::MarkedCapabilities::for_project_dir(Some(env!(
+                "CARGO_MANIFEST_DIR"
+            ))),
             run_interp_lower: false,
             run_buffer_build: false,
             run_chars_fusion: false,

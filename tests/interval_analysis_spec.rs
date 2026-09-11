@@ -26,6 +26,7 @@ fn analyze_src(src: &str) -> IntervalAnalysisResult {
     let result = aver::ir::pipeline::run(
         &mut items,
         PipelineConfig {
+            marked: aver::config::MarkedCapabilities::none(),
             run_tco: true,
             typecheck: Some(TypecheckMode::Full { base_dir: None }),
             run_interp_lower: false,

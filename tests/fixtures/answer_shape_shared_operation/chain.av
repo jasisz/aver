@@ -1,0 +1,14 @@
+module Chain
+    kind = capability
+    semantics = effectful
+    intent = "Chain selection: the claim on the height a walk is at."
+    exposes [Landed, claim]
+
+type Landed
+    Connected
+    Rejected(String)
+
+operation claim(height: Int) -> Chain.Landed
+    ? "Claims the right to connect this height."
+    oracle = generative
+    replay = recorded

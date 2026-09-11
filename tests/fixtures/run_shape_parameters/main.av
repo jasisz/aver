@@ -1,0 +1,34 @@
+module Node
+    intent = "Fixture: a process that takes a parameter, which the generated loop has nothing to seat it with."
+    depends [Process, Wait, Pool, Pooled]
+    effects [Pool.claim, yield]
+    exposes [Pending, View, order, admit, stop]
+
+type Pending
+    Looping(Int, Wait.Wake)
+
+record View
+    pending: Map<Int, Pending>
+    ready: List<Int>
+    jobs: Int
+    room: Int
+    stopping: Bool
+
+fn looping(seed: Int) -> Unit
+    ? "Claims handles until the pool answers None."
+    ! [Pool.claim, yield]
+    match Pool.claim()
+        Option.None -> Unit
+        Option.Some(_) -> looping(seed)
+
+fn order(view: View) -> List<Int>
+    ? "Every seated process, in slot order."
+    Map.keys(view.pending)
+
+fn admit(view: View, id: Int) -> Bool
+    ? "Everything seated is served."
+    Map.has(view.pending, id)
+
+fn stop(view: View) -> Bool
+    ? "The run ends when the process asked us to."
+    view.stopping

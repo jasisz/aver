@@ -86,6 +86,61 @@ pub(crate) fn find(name: &str) -> Option<EmbeddedModule> {
     }
 }
 
+/// Every module name [`find`] resolves, in one list so a reader can see the
+/// shipped set without reading the match arm by arm.
+pub(crate) const EMBEDDED_MODULES: &[&str] = &[
+    "Bytes",
+    "Crypto.Digest32",
+    "HttpWire",
+    "HttpServer",
+    "Args",
+    "Console",
+    "Env",
+    "Http",
+    "Terminal",
+    "Time",
+    "Random",
+    "Process",
+    "Disk",
+    "Tcp",
+    "Work",
+    "Wait",
+];
+
+/// Bare type names the compiler ships.
+///
+/// A standard module that declares a type of its own name — `Bytes` is the
+/// only one today — lends that bare name to every signature in the tree, so
+/// the name belongs to the compiler rather than to the module writing the
+/// signature. Every other shipped type is named through its module
+/// (`Wait.Item`, `Tcp.Connection`), so a program that declares `record Item`,
+/// or `record Http`, keeps its own type: a module name alone is not a type
+/// name, and treating it as one makes two different records compare equal.
+pub(crate) fn bare_stdlib_type_names() -> &'static std::collections::BTreeSet<String> {
+    static NAMES: std::sync::OnceLock<std::collections::BTreeSet<String>> =
+        std::sync::OnceLock::new();
+    NAMES.get_or_init(|| {
+        let mut names = std::collections::BTreeSet::new();
+        for module in EMBEDDED_MODULES {
+            let embedded = find(module).expect("embedded module source must be present");
+            let items = crate::source::parse_source(embedded.source).expect("embedded must parse");
+            for item in &items {
+                let declared = match item {
+                    crate::ast::TopLevel::TypeDef(crate::ast::TypeDef::Sum { name, .. })
+                    | crate::ast::TopLevel::TypeDef(crate::ast::TypeDef::Product {
+                        name, ..
+                    }) => name.as_str(),
+                    _ => continue,
+                };
+                if declared == *module {
+                    names.insert(declared.to_string());
+                }
+            }
+        }
+        names
+    })
+}
+
 /// Provider-backed standard capability modules. Operation identities and
 /// semantics are derived from their embedded Aver contracts rather than
 /// repeated in a Rust table.

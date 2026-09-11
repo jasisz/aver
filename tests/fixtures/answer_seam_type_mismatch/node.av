@@ -1,0 +1,8 @@
+module Node
+    intent = "The pure function that runs one validation job."
+    effects []
+    exposes [validate]
+
+fn validate(task: String) -> Int
+    ? "Scores one task by its length."
+    String.len(task)

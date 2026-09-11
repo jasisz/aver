@@ -1,6 +1,6 @@
 module YieldThreeKinds
     intent = "Fixture: three request kinds (Claim, Release, Yield) in one yield function, driven by a coordinator that answers each kind from its own list."
-    depends [Pool]
+    depends [Pool, Pooled]
     effects [Pool.claim, Pool.release, yield, Console.print]
     exposes [drive, main]
 

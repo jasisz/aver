@@ -1,0 +1,17 @@
+module Ledger
+    intent = "An answer module whose first parameter is the key rather than the state."
+    depends [Pool]
+    exposes [State, claim, gone]
+    effects []
+
+record State
+    free: List<Int>
+    stopping: Bool
+
+fn claim(key: Int, state: State) -> Pool.Assignment
+    ? "The next height for this peer, with the state in the wrong place."
+    Pool.Assignment.Idle
+
+fn gone(state: State, key: Int) -> Unit
+    ? "A peer that left gives its height back."
+    Unit

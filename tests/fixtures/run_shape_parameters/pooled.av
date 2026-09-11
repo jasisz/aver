@@ -1,0 +1,21 @@
+module Pooled
+    intent = "Fixture answer module: the answer this program gives to Pool, from one state."
+    depends [Pool, Wait]
+    exposes [State, fresh, claim]
+    effects []
+
+record State
+    left: Int
+
+fn fresh() -> State
+    ? "Two handles to give out."
+    State(left = 2)
+
+fn claim(state: State) -> Tuple<State, Pool.__ClaimReply>
+    ? "One handle, until there are none."
+    match state.left == 0
+        true -> (state, Pool.__ClaimReply.Now(Option.None))
+        false -> (State.update(state, left = state.left - 1), Pool.__ClaimReply.Now(Option.Some(state.left)))
+
+verify claim
+    claim(fresh()) => (State.update(fresh(), left = 1), Pool.__ClaimReply.Now(Option.Some(2)))

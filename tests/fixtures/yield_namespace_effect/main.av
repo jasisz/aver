@@ -1,0 +1,27 @@
+module YieldNamespaceEffect
+    intent = "Fixture: a process names a whole namespace in its effect list and performs one of its operations in place, beside a request."
+    depends [Pool, Pooled]
+    effects [Pool.claim, Console, yield]
+    exposes [drive, main]
+
+fn walk(id: Int) -> Int
+    ? "Says which peer it is about to ask for, then adds the handle the pool answers with."
+    ! [Pool.claim, Console, yield]
+    Console.print("asking {id}")
+    Pool.claim(id) + id
+
+fn drive(outcome: __WalkOutcome) -> Int
+    ? "Coordinator: answers every Claim request with twice the peer it names."
+    match outcome
+        __WalkOutcome.Done(v) -> v
+        __WalkOutcome.Waiting(request) -> match request
+            __WalkRequest.Claim(peer, state) -> drive(__walkAnswerClaim(state, peer * 2))
+
+verify drive
+    drive(__WalkOutcome.Done(1)) => 1
+    drive(__WalkOutcome.Waiting(__WalkRequest.Claim(3, __WalkClaimState.Await1(3)))) => 9
+
+fn main() -> Unit
+    ! [Console.print]
+    total = drive(__walkStart(3))
+    Console.print("total = {total}")

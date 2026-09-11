@@ -1,6 +1,6 @@
 module YieldSpike
     intent = "Fixture: a yield function lowered to state types, a Request sum, an Outcome sum and pure answer functions, driven by a hand-written coordinator."
-    depends [Pool]
+    depends [Pool, Pooled]
     effects [Pool.claim, yield, Console.print]
     exposes [drive, main]
 

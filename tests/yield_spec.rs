@@ -60,31 +60,12 @@ fn spike_verify_blocks_pass_on_the_vm() {
     assert_verify_passes("yield_spike", &["verify"], "6/6");
 }
 
-#[cfg(feature = "wasm")]
-#[test]
-fn spike_loop_runs_to_done_15_on_wasm_gc() {
-    assert_runs_and_prints("yield_spike", &["run", "--wasm-gc"], "Done(15) ok");
-}
-
-#[cfg(feature = "wasm")]
-#[test]
-fn spike_verify_blocks_pass_on_wasm_gc() {
-    assert_verify_passes("yield_spike", &["verify", "--wasm-gc"], "6/6");
-}
-
 // ── Two requests of one kind and a request inside a match arm ───────────
 
 #[test]
 fn two_reads_run_and_verify_on_the_vm() {
     assert_runs_and_prints("yield_two_reads", &["run"], "pair = 15");
     assert_verify_passes("yield_two_reads", &["verify"], "8/8");
-}
-
-#[cfg(feature = "wasm")]
-#[test]
-fn two_reads_run_and_verify_on_wasm_gc() {
-    assert_runs_and_prints("yield_two_reads", &["run", "--wasm-gc"], "pair = 15");
-    assert_verify_passes("yield_two_reads", &["verify", "--wasm-gc"], "8/8");
 }
 
 // ── Three request kinds: Claim, Release and Yield ───────────────────────
@@ -95,13 +76,6 @@ fn three_kinds_run_and_verify_on_the_vm() {
     assert_verify_passes("yield_three_kinds", &["verify"], "8/8");
 }
 
-#[cfg(feature = "wasm")]
-#[test]
-fn three_kinds_run_and_verify_on_wasm_gc() {
-    assert_runs_and_prints("yield_three_kinds", &["run", "--wasm-gc"], "total = 7");
-    assert_verify_passes("yield_three_kinds", &["verify", "--wasm-gc"], "8/8");
-}
-
 // ── Continuations: a request in a non-tail match arm, a Unit answer, `?` ─
 
 #[test]
@@ -110,30 +84,12 @@ fn continuations_run_and_verify_on_the_vm() {
     assert_verify_passes("yield_continuations", &["verify"], "6/6");
 }
 
-#[cfg(feature = "wasm")]
-#[test]
-fn continuations_run_and_verify_on_wasm_gc() {
-    assert_runs_and_prints("yield_continuations", &["run", "--wasm-gc"], "sum = 8");
-    assert_verify_passes("yield_continuations", &["verify", "--wasm-gc"], "6/6");
-}
-
 // ── A request in tail position: last expression, and match-arm leaf ─────
 
 #[test]
 fn tail_stop_runs_and_verifies_on_the_vm() {
     assert_runs_and_prints("yield_tail_stop", &["run"], "one = 10, pick = 6");
     assert_verify_passes("yield_tail_stop", &["verify"], "13/13");
-}
-
-#[cfg(feature = "wasm")]
-#[test]
-fn tail_stop_runs_and_verifies_on_wasm_gc() {
-    assert_runs_and_prints(
-        "yield_tail_stop",
-        &["run", "--wasm-gc"],
-        "one = 10, pick = 6",
-    );
-    assert_verify_passes("yield_tail_stop", &["verify", "--wasm-gc"], "13/13");
 }
 
 #[test]
@@ -145,6 +101,112 @@ fn tail_stop_lean_check_builds_with_zero_errors_and_no_sorry() {
     );
 }
 
+// ── An unmarked effect in place, beside a request ───────────────────────
+
+/// Decision 4: a process may perform an operation nobody answers where it
+/// stands. `walk` announces the peer in the same expression that asks the
+/// pool for it, so the announcement is written before the request and must
+/// happen before it: the lowering hoists both, in the order the program
+/// wrote them, instead of moving the stop to the front. Without that the
+/// announcement lands in the answer function and the run prints it after
+/// the coordinator's own line.
+#[test]
+fn an_in_place_effect_before_a_request_stays_before_it() {
+    let out = aver("yield_in_place", &["run"]);
+    assert!(out.status.success(), "{}", format_output(&out));
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    let asking = stdout
+        .find("asking 1")
+        .unwrap_or_else(|| panic!("no announcement in:\n{stdout}"));
+    let answering = stdout
+        .find("answering 1")
+        .unwrap_or_else(|| panic!("no answer line in:\n{stdout}"));
+    assert!(
+        asking < answering,
+        "the announcement is written before the request, so it runs before it:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("total = 2"),
+        "expected the handle to reach the sum:\n{stdout}"
+    );
+}
+
+/// The same fact read off the generated Aver: the segment that runs before
+/// the stop holds the call and declares its effect, and the segment that
+/// resumes after the answer holds neither.
+#[test]
+fn the_segment_before_a_request_carries_the_effect_it_performs() {
+    let (lowered, generated, _) = lower_fixture("yield_in_place");
+    assert_eq!(lowered, vec!["walk".to_string()]);
+    let start = generated
+        .split_once("fn __walkStart")
+        .map(|(_, rest)| rest.split("\n\nfn ").next().unwrap_or(rest).to_string())
+        .unwrap_or_else(|| panic!("no __walkStart in:\n{generated}"));
+    assert!(
+        start.contains("! [Console.print]") && start.contains("announce(id)"),
+        "the announcement belongs to the first segment:\n{start}"
+    );
+    let answer = generated
+        .split_once("fn __walkAnswerClaim")
+        .map(|(_, rest)| rest.split("\n\nfn ").next().unwrap_or(rest).to_string())
+        .unwrap_or_else(|| panic!("no __walkAnswerClaim in:\n{generated}"));
+    assert!(
+        !answer.contains("announce(") && !answer.contains("! ["),
+        "the answer segment performs nothing:\n{answer}"
+    );
+}
+
+/// A `yield` function may name a whole namespace in its effect list, and an
+/// operation of it performed in place is named by the operation, not by the
+/// namespace: the generated segment declares `Console.print`. That bare entry
+/// is the path the stop predicate used to read and decision 4 repurposed, so
+/// one fixture keeps it walked.
+#[test]
+fn a_namespace_effect_entry_names_the_operation_the_segment_performs() {
+    assert_runs_and_prints("yield_namespace_effect", &["run"], "total = 9");
+    assert_verify_passes("yield_namespace_effect", &["verify"], "2/2");
+    let (lowered, generated, _) = lower_fixture("yield_namespace_effect");
+    assert_eq!(lowered, vec!["walk".to_string()]);
+    assert!(
+        generated.contains("! [Console.print]"),
+        "the namespace entry admits the operation and the segment declares it:\n{generated}"
+    );
+}
+
+// ── A program that answers a capability runs on the VM ──────────────────
+
+/// A marked capability's generated reply types carry `Wait.Wake`, a sum that
+/// reaches `Work.Job`, and no backend but the VM has a representation for one.
+/// So every door that prepares a non-VM target refuses a program that answers
+/// a capability, by name and for that reason, as it already refuses a job
+/// kind. The VM runs and verifies all of these, above.
+#[cfg(feature = "wasm")]
+#[test]
+fn an_answered_capability_is_refused_on_wasm_gc() {
+    for fixture in [
+        "yield_spike",
+        "yield_two_reads",
+        "yield_three_kinds",
+        "yield_continuations",
+        "yield_tail_stop",
+        "yield_cross_module",
+    ] {
+        let out = aver(fixture, &["run", "--wasm-gc"]);
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            text.contains("error[work-target]")
+                && text.contains("is answered by module")
+                && text.contains("no representation for yet"),
+            "{fixture}:\n{}",
+            format_output(&out)
+        );
+    }
+}
+
 // ── Across the module boundary: the importer drives the dependency ──────
 
 /// The loader lowers a dependency before any importer reads it, so what
@@ -154,13 +216,6 @@ fn tail_stop_lean_check_builds_with_zero_errors_and_no_sorry() {
 fn cross_module_runs_and_verifies_on_the_vm() {
     assert_runs_and_prints("yield_cross_module", &["run"], "total = 6");
     assert_verify_passes("yield_cross_module", &["verify"], "4/4");
-}
-
-#[cfg(feature = "wasm")]
-#[test]
-fn cross_module_runs_and_verifies_on_wasm_gc() {
-    assert_runs_and_prints("yield_cross_module", &["run", "--wasm-gc"], "total = 6");
-    assert_verify_passes("yield_cross_module", &["verify", "--wasm-gc"], "4/4");
 }
 
 /// The check door judges the surface an importer sees. `loop` is not on
@@ -374,6 +429,7 @@ fn lower_fixture(fixture_name: &str) -> (Vec<String>, String, Vec<aver::ast::Top
                 base_dir: Some(&base_dir),
             }),
             user_program_len,
+            marked: &aver::config::MarkedCapabilities::for_project_dir(Some(&base_dir)),
             on_after_pass: None,
         },
     );

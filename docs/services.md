@@ -616,7 +616,7 @@ Contract sources: `stdlib/capabilities/work.av` and `stdlib/capabilities/wait.av
 | `Work.cancel` | `(Work.Job) -> Unit` | Stops a running job at the runtime's next cancellation check, drops a finished job's result, and changes nothing for a job already cancelled or taken. It answers nothing and refuses nothing; a job that finished before the cancel shows up in `take`, so that is where a hostile world lives. |
 | `Wait.poll` | `(Map<Int, Wait.Item>, Int) -> Result<List<Int>, String>` | One wait over sockets and jobs together. Returns sorted caller keys; `[]` means timeout. |
 
-`Work.Job` is a provider-owned resource, exactly like `Tcp.Connection`: a program can hold it, pass it, and put it in a wait set, but it cannot construct it, read it, compare it, or use it as a `Map` key. `Wait.Item` is the sum that lets one wait set hold both kinds of thing: `Socket(Tcp.Socket)` for everything `Tcp.poll` watches and `Job(Work.Job)` for a running job. A `Socket` item follows the `Tcp.poll` readiness rule verbatim; a `Job` key is ready once its job has finished or was cancelled. False-positive readiness is legal on both, so the operation the caller runs next still has to handle "nothing yet".
+`Work.Job` is a provider-owned resource, exactly like `Tcp.Connection`: a program can hold it, pass it, and put it in a wait set, but it cannot construct it, read it, compare it, or use it as a `Map` key. `Wait.Item` is the sum that lets one wait set hold both kinds of thing: `Socket(Tcp.Socket)` for everything `Tcp.poll` watches and `Job(Work.Job)` for a running job. A `Socket` item follows the `Tcp.poll` readiness rule verbatim; a `Job` key is ready once its job has finished or was cancelled. False-positive readiness is legal on both, so the operation the caller runs next still has to handle "nothing yet". `Wait.Wake` is the companion sum a module answering a capability uses to say why it has no answer yet: `Item(Wait.Item)` parks the request on a socket or a job, `After(Int)` asks to be tried again after that many milliseconds, and `NextTurn` asks to be tried again on the next turn.
 
 The stdlib deliberately owns only the handle and the cancel. What a job takes and what it returns is the program's own business, so a *job kind* is an ordinary program capability of **Work shape**: `kind = capability`, `depends [Work]`, and exactly two operations —
 
@@ -651,6 +651,41 @@ max-jobs = 4
 Recording a turn records `begin` with its task and the handle it minted, `take` with the answer it gave, and `poll` with the keys it reported, exactly as `Tcp.dial` records a `Dial`. Replaying it hands the program the recorded answers back in the turns they were recorded in — a faster or slower machine must not move a result into a different turn — and runs the bound function again beside them, because a job is pure and recomputing it is the check worth having. When a recorded `take` said `Some(v)` and the recomputation produces a different value, replay stops and names the job kind, the job and both values. A job whose recording ends before anything took it is cancelled when the recording ends.
 
 Only the bytecode VM answers a job in this build. `aver compile --target rust`, `--target wasm-gc`, `--target wasip2` and `aver run --wasm-gc` / `--wasip2` refuse a program with a job kind with `error[work-target]`; those backends follow later.
+
+### Capabilities the program answers — `answer`, `task`, `landed` and `[run]`
+
+A job kind is answered by the runtime running a pure function off the turn. The other way a program answers a capability of its own is to answer it *inside* the turn, from a module of its own, and that is one more key on the same `[[providers.bindings]]` entry:
+
+```toml
+[[providers.bindings]]
+capability = "Wire"
+answer = "Sockets"
+
+[[providers.bindings]]
+capability = "Pool"
+answer = "Ledger"
+
+[[providers.bindings]]
+capability = "Validation"
+work = "Ledger.validate"
+task = "Ledger.nextTask"
+landed = "Ledger.validated"
+
+[work]
+max-jobs = 1
+
+[run]
+order = "Node.order"
+admit = "Node.admit"
+stop = "Node.stop"
+view = "Node.View"
+```
+
+`answer = "<Module>"` names one module of the program that answers **every** operation of that capability: one function per operation, `op(state: S, a1: T1, …) -> Tuple<S, Cap.__<Op>Reply>`, with the same state `S` across every operation of every capability the module answers. It is mutually exclusive with `crate`/`package`/`factory`/`version`/`path` and with `work` — a capability is answered by a host package, or by a pure function of the program through the job engine, or by a module of the program, never by two of them — and only a capability this program declares may carry it: `Console`, `Disk`, `Tcp`, `Time`, `Wait`, `Work` and the rest are answered by the runtime's own providers and the turn calls them itself. Marking an operation makes every call to it a request, which is legal only inside a function whose effect list names `yield`; see [Yielding functions](language.md#yielding-functions) for what the compiler generates from that, and [The coordinator](language.md#the-coordinator) for the loop that answers it.
+
+`task` and `landed` are the two ends of the seam between a job kind and the answer state the turn already holds: `task = "Module.function"` is `(S) -> Option<T>`, where the turn takes its next task from, and `landed = "Module.function"` is `(S, R) -> S`, where a finished job's result goes. `T` is the `begin` task type and `R` the `take` payload type; the module must be one bound with `answer`, because the state both ends read is the state the turn already carries. Both are declared or neither, both name a pure function, and they live on the `work` binding rather than beside `answer` because they belong to one job kind. Getting any of that wrong is `error[work-binding]`.
+
+`[run]` is the table that asks for the loop itself to be generated. All four keys are required and all four name things in one module — the entry module, which is where the loop is generated and what it can see. `order`, `admit` and `stop` are three pure policies, `order(view: View) -> List<Int>`, `admit(view: View, id: Int) -> Bool` and `stop(view: View) -> Bool`; `view` names the record they read, which the program declares and the loop fills. A `[run]` table with a missing key, a key that is not `Module.function` / `Module.Type`, or four names that do not share a module is refused when `aver.toml` is read; everything the loop is generated from — a process with parameters, a process written in another module of the program, an answer module with no `fresh`, a policy with effects — is `error[run-binding]`, and a view record or marker sum that is not the shape the loop fills is `error[view-shape]`, which prints the declaration it wants. A program whose loop is generated and whose manifest declares a job kind keeps `[work] max-jobs = 1`: the generated turn takes its next task from an answer state that starting a job does not change, so any other limit would start one task once per slot of room, and it is refused under `run-binding` rather than run. The entry module's own `effects [...]` is widened by what is generated into it — `Process.stopRequested`, `Wait.poll`, both ends of every job kind and `Work.cancel` — because the module boundary has to hold the generated loop as well as the processes the program wrote.
 
 ### `Random` namespace — use granular effects (`! [Random.int]`, `! [Random.float]`)
 

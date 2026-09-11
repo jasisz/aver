@@ -1,0 +1,15 @@
+module Said
+    intent = "Fixture answer module: the answers this program gives to Say, from one state."
+    depends [Say, Wait]
+    effects []
+
+record State
+    line: String
+
+fn print(state: State, message: String) -> Tuple<State, Say.__PrintReply>
+    ? "Takes the line the process wrote."
+    (state, Say.__PrintReply.Now(Unit))
+
+fn readLine(state: State) -> Tuple<State, Say.__ReadLineReply>
+    ? "Hands the process the line this state holds."
+    (state, Say.__ReadLineReply.Now(Result.Ok(state.line)))

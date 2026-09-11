@@ -1,0 +1,15 @@
+module Pooled
+    intent = "Fixture answer module: the answers this program gives to Pool's two operations, from one state."
+    depends [Pool, Wait]
+    effects []
+
+record State
+    left: Int
+
+fn claim(state: State, peer: Int) -> Tuple<State, Pool.__ClaimReply>
+    ? "Hands the peer its own number back as a handle."
+    (state, Pool.__ClaimReply.Now(Option.Some(peer)))
+
+fn release(state: State, handle: Int) -> Tuple<State, Pool.__ReleaseReply>
+    ? "Takes a handle back and says it was one this state had handed out."
+    (state, Pool.__ReleaseReply.Now(true))

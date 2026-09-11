@@ -194,6 +194,8 @@ pub struct PipelineConfig<'a> {
     pub run_tco: bool,
     /// `Some(mode)` runs the type checker with that driver; `None` skips it.
     pub typecheck: Option<TypecheckMode<'a>>,
+    /// The capabilities this program answers itself; see [`FrontConfig`].
+    pub marked: crate::config::MarkedCapabilities,
     pub run_interp_lower: bool,
     /// Whether to run the buffer-build deforestation pass. Every runtime
     /// backend owns the closed growable `Buffer` carrier; wasm-gc/wasip2 use
@@ -322,6 +324,7 @@ impl<'a> Default for PipelineConfig<'a> {
         Self {
             run_tco: true,
             typecheck: None,
+            marked: crate::config::MarkedCapabilities::none(),
             run_interp_lower: true,
             run_buffer_build: true,
             run_chars_fusion: true,
@@ -772,6 +775,7 @@ pub fn front_gate(
     items: &mut Vec<TopLevel>,
     mode: &TypecheckMode<'_>,
     user_program_len: usize,
+    marked: &crate::config::MarkedCapabilities,
 ) -> TypeCheckResult {
     front(
         items,
@@ -779,6 +783,7 @@ pub fn front_gate(
             run_tco: true,
             typecheck: Some(mode),
             user_program_len,
+            marked,
             on_after_pass: None,
         },
     )
@@ -797,6 +802,13 @@ pub struct FrontConfig<'a, 'b> {
     /// is compiler-fabricated (hostile stubs, REPL wrappers) and outside
     /// the shadowing ban's scope. See [`typecheck_gate`].
     pub user_program_len: usize,
+    /// The capabilities this program answers itself, read from its
+    /// `aver.toml` before the front door is entered. The `yield` lowering
+    /// cuts a body at a call to one of them and nowhere else, so every door
+    /// that lowers a program must pass the same set or two doors would
+    /// disagree about what a request is. A program with no manifest marks
+    /// nothing.
+    pub marked: &'b crate::config::MarkedCapabilities,
     /// Fired after each stage that ran, as [`PipelineConfig::on_after_pass`].
     pub on_after_pass: Option<&'b mut AfterPassHook<'a>>,
 }
@@ -853,6 +865,7 @@ pub struct FrontResult {
 pub fn lower_loaded_yield_modules(
     loaded: &mut [LoadedModule],
     module_root: Option<&str>,
+    marked: &crate::config::MarkedCapabilities,
 ) -> Vec<crate::types::checker::TypeError> {
     let mut errors = Vec::new();
     for index in 0..loaded.len() {
@@ -868,6 +881,7 @@ pub fn lower_loaded_yield_modules(
                 run_tco: true,
                 typecheck: Some(&TypecheckMode::WithCheckedLoaded(&deps)),
                 user_program_len,
+                marked,
                 on_after_pass: None,
             },
         );
@@ -911,6 +925,7 @@ pub fn front(items: &mut Vec<TopLevel>, cfg: FrontConfig<'_, '_>) -> FrontResult
         run_tco,
         typecheck: mode,
         user_program_len,
+        marked,
         mut on_after_pass,
     } = cfg;
     let mut result = FrontResult {
@@ -955,10 +970,23 @@ pub fn front(items: &mut Vec<TopLevel>, cfg: FrontConfig<'_, '_>) -> FrontResult
             })
             .collect();
         let phase_one = typecheck(&written, mode);
-        match crate::yield_lowering::lower(items, &written, &phase_one.errors) {
+        match crate::yield_lowering::lower(
+            items,
+            &written,
+            &phase_one.errors,
+            marked,
+            &phase_one.fn_sigs,
+        ) {
             Ok(report) => {
                 if std::env::var_os("AVER_YIELD_DUMP").is_some() {
                     eprintln!("{}", report.generated_source());
+                }
+                // The lowering and the loop generator both write recursive
+                // functions, and both write them after the tail-call pass has
+                // run. Run it once more over what they left: a generated turn
+                // that grows the stack once per turn is not a loop.
+                if run_tco {
+                    tco(items);
                 }
                 result.yield_lowering = Some(report);
                 fire(PipelineStage::YieldLower, items);
@@ -1098,6 +1126,7 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
             run_tco: cfg.run_tco,
             typecheck: cfg.typecheck.as_ref(),
             user_program_len,
+            marked: &cfg.marked,
             on_after_pass: cfg.on_after_pass.as_mut(),
         },
     );

@@ -1,0 +1,15 @@
+module Say
+    intent = "Fixture capability: the lines a process reads and writes, answered by the program."
+    kind = capability
+    semantics = effectful
+    exposes [print, readLine]
+
+operation print(message: String) -> Unit
+    ? "Writes one line for the process."
+    oracle = output
+    replay = reissued
+
+operation readLine() -> Result<String, String>
+    ? "Reads one line for the process, or reports EOF or a host input failure."
+    oracle = generative
+    replay = recorded

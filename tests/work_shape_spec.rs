@@ -245,6 +245,18 @@ fn a_same_named_record_of_another_module_is_not_the_task_type() {
 }
 
 #[test]
+fn a_record_named_after_a_standard_module_is_still_its_own_modules_type() {
+    // A module name the compiler ships is not a type name. A program may
+    // declare `record Http`, and two such records of two modules are two
+    // types, exactly as `Task` is.
+    assert_reports(
+        "work_shape_stdlib_named_task",
+        &["check"],
+        "whose parameter is Node.Http; 'Validation.begin' hands it Validation.Http",
+    );
+}
+
+#[test]
 fn a_bound_function_with_effects_is_refused() {
     assert_reports(
         "work_shape_effectful_worker",

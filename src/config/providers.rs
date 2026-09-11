@@ -13,6 +13,22 @@ pub struct ProviderPackageManifest {
     /// itself. These bind no Cargo package, so they never reach the static
     /// Rust composition plan.
     pub work_bindings: Vec<ProviderWorkBinding>,
+    /// Capabilities answered by a module of the program itself. These bind no
+    /// Cargo package either: the program is the provider, and its operations
+    /// become requests a coordinator answers.
+    pub answer_bindings: Vec<ProviderAnswerBinding>,
+}
+
+/// One `answer = "Module"` binding: every operation of this capability is
+/// answered by that module of the program, one function per operation over
+/// one state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderAnswerBinding {
+    pub capability: String,
+    /// Module name exactly as written, e.g. `Ledger` or `Infra.Ledger`.
+    pub module: String,
+    /// Position of the declaring `[[providers.bindings]]` entry, for diagnostics.
+    pub index: usize,
 }
 
 /// One `work = "Module.function"` binding: the job kind a capability declares
@@ -24,6 +40,11 @@ pub struct ProviderWorkBinding {
     pub function: String,
     /// Position of the declaring `[[providers.bindings]]` entry, for diagnostics.
     pub index: usize,
+    /// `task = "Module.function"`: where the turn takes the next task from.
+    /// The two ends of the job seam are declared together or not at all.
+    pub task: Option<String>,
+    /// `landed = "Module.function"`: where a finished job's result goes.
+    pub landed: Option<String>,
 }
 
 impl ProviderWorkBinding {
@@ -100,6 +121,165 @@ impl ProviderPackageManifest {
     }
 }
 
+/// The seam between one job kind and the answer state the turn already holds:
+/// where the next task comes from, and where a finished job's result lands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JobSeam {
+    /// The job-kind capability, e.g. `Validation`.
+    pub capability: String,
+    /// `task = "Module.function"`.
+    pub task: String,
+    /// `landed = "Module.function"`.
+    pub landed: String,
+}
+
+/// Everything the generated loop is built from, resolved from the manifest
+/// once: the three policies and the view record, which module answers which
+/// capability, the job seams, and the job limit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunPlan {
+    pub policies: RunPolicies,
+    /// Capability → answering module, in manifest order.
+    pub answers: Vec<(String, String)>,
+    /// One entry per job kind whose `work` binding declares both seam ends.
+    pub jobs: Vec<JobSeam>,
+    /// `[work] max-jobs`, or the host's own limit when the manifest is quiet.
+    pub max_jobs: usize,
+}
+
+/// The manifest facts the front door has to know before it lowers anything:
+/// which capabilities the program answers itself, and whether it asked for
+/// its loop to be generated.
+///
+/// Both are carried as resolved data rather than as the manifest, because the
+/// front door should not learn to read TOML and every door that lowers a
+/// program has to agree with every other about what a request is and what the
+/// loop is built from.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MarkedCapabilities {
+    names: BTreeSet<String>,
+    run: Option<RunPlan>,
+}
+
+impl MarkedCapabilities {
+    /// The empty set: a program with no `aver.toml`, or one whose manifest
+    /// marks nothing. Every call of such a program runs in place.
+    pub fn none() -> Self {
+        Self::default()
+    }
+
+    /// The capabilities `manifest` answers with a module of the program.
+    ///
+    /// A capability this compiler ships a provider for is never in the set,
+    /// however the manifest names it: decision 2 says only a
+    /// program-declared capability may be answered, and the checker reports
+    /// the binding under `answer-binding`. Taking it here as well keeps the
+    /// refusal from being preceded by its own consequences — a reply sum
+    /// generated into `Tcp`, and a `depends [Wait]` edge back to a module
+    /// `Wait` already depends on, which reads as a circular import.
+    pub fn from_manifest(manifest: Option<&ProviderPackageManifest>) -> Self {
+        let names = manifest
+            .map(|manifest| {
+                manifest
+                    .answer_bindings
+                    .iter()
+                    .map(|binding| binding.capability.clone())
+                    .filter(|capability| !crate::stdlib::has_shipped_provider(capability))
+                    .collect()
+            })
+            .unwrap_or_default();
+        Self { names, run: None }
+    }
+
+    /// The same, plus the `[run]` table's plan when the project asked for its
+    /// loop to be generated.
+    pub fn from_config(config: Option<&crate::config::ProjectConfig>) -> Self {
+        let Some(config) = config else {
+            return Self::none();
+        };
+        let mut facts = Self::from_manifest(config.provider_manifest.as_ref());
+        facts.run = config.run_policies.as_ref().map(|policies| RunPlan {
+            policies: policies.clone(),
+            answers: config
+                .provider_manifest
+                .as_ref()
+                .map(|manifest| {
+                    manifest
+                        .answer_bindings
+                        .iter()
+                        .map(|binding| (binding.capability.clone(), binding.module.clone()))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            jobs: config
+                .provider_manifest
+                .as_ref()
+                .map(|manifest| {
+                    manifest
+                        .work_bindings
+                        .iter()
+                        .filter_map(|binding| {
+                            Some(JobSeam {
+                                capability: binding.capability.clone(),
+                                task: binding.task.clone()?,
+                                landed: binding.landed.clone()?,
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            max_jobs: config.work_max_jobs(),
+        });
+        facts
+    }
+
+    /// The facts the project rooted at `base_dir` declares. A directory with
+    /// no `aver.toml`, an unreadable one, or none given at all marks nothing
+    /// and asks for no loop: both are project facts, and a scratch buffer is
+    /// not a project.
+    pub fn for_project_dir(base_dir: Option<&str>) -> Self {
+        let Some(base) = base_dir else {
+            return Self::none();
+        };
+        let config = crate::config::ProjectConfig::load_from_dir(Path::new(base))
+            .ok()
+            .flatten();
+        Self::from_config(config.as_ref())
+    }
+
+    /// What the manifest asked the loop to be built from, if it asked at all.
+    pub fn run(&self) -> Option<&RunPlan> {
+        self.run.as_ref()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.names.is_empty()
+    }
+
+    /// Whether this capability module is answered by the program.
+    pub fn marks(&self, capability: &str) -> bool {
+        self.names.contains(capability)
+    }
+
+    /// Whether `operation` — a dotted call such as `Pool.claim` — belongs to a
+    /// marked capability. A manifest names the capability as the program
+    /// writes it in `depends`, so a call written through a longer path
+    /// (`Infra.Pool.claim`) is matched on the suffix, exactly as an effect
+    /// entry is.
+    pub fn answers(&self, operation: &str) -> bool {
+        let Some((namespace, _)) = operation.rsplit_once('.') else {
+            return false;
+        };
+        self.names
+            .iter()
+            .any(|name| namespace == name || namespace.ends_with(&format!(".{name}")))
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &str> {
+        self.names.iter().map(String::as_str)
+    }
+}
+
 pub(super) fn parse_provider_manifest(
     root: &toml::Table,
 ) -> Result<Option<ProviderPackageManifest>, String> {
@@ -135,6 +315,7 @@ pub(super) fn parse_provider_manifest(
     };
     let mut bindings = Vec::with_capacity(binding_values.len());
     let mut work_bindings = Vec::new();
+    let mut answer_bindings = Vec::new();
     let mut capabilities = BTreeSet::new();
     let mut crate_names = BTreeSet::new();
     for (index, value) in binding_values.iter().enumerate() {
@@ -152,11 +333,42 @@ pub(super) fn parse_provider_manifest(
                 "version",
                 "path",
                 "work",
+                "answer",
+                "task",
+                "landed",
             ],
             &context,
         )?;
         let capability = required_string(table, "capability", &context)?;
         validate_dotted_identifier(&capability, "capability", &context)?;
+        if let Some(module) = optional_string(table, "answer", &context)? {
+            for conflicting in ["crate", "package", "factory", "version", "path", "work"] {
+                if table.contains_key(conflicting) {
+                    return Err(format!(
+                        "error[answer-binding]: aver.toml: {context} capability '{capability}' declares both `answer` and `{conflicting}`; a capability is answered by a host package, or by a pure function of the program through the job engine, or by a module of the program — never by two of them"
+                    ));
+                }
+            }
+            for seam in ["task", "landed"] {
+                if table.contains_key(seam) {
+                    return Err(format!(
+                        "error[work-binding]: aver.toml: {context} capability '{capability}' declares `{seam}` beside `answer`; the job seam belongs on the `work` binding of a job kind, because it says where that job's task comes from and where its result lands"
+                    ));
+                }
+            }
+            validate_answer_module(&module, &context, &capability)?;
+            if !capabilities.insert(capability.clone()) {
+                return Err(format!(
+                    "aver.toml: {context} duplicates capability '{capability}'"
+                ));
+            }
+            answer_bindings.push(ProviderAnswerBinding {
+                capability,
+                module,
+                index,
+            });
+            continue;
+        }
         if let Some(function) = optional_string(table, "work", &context)? {
             for conflicting in ["crate", "package", "factory", "version", "path"] {
                 if table.contains_key(conflicting) {
@@ -166,6 +378,25 @@ pub(super) fn parse_provider_manifest(
                 }
             }
             validate_work_function(&function, &context, &capability)?;
+            let task = optional_string(table, "task", &context)?;
+            let landed = optional_string(table, "landed", &context)?;
+            match (&task, &landed) {
+                (Some(task), Some(landed)) => {
+                    validate_seam_function(task, "task", &context, &capability)?;
+                    validate_seam_function(landed, "landed", &context, &capability)?;
+                }
+                (None, None) => {}
+                (present, _) => {
+                    let (declared, missing) = if present.is_some() {
+                        ("task", "landed")
+                    } else {
+                        ("landed", "task")
+                    };
+                    return Err(format!(
+                        "error[work-binding]: aver.toml: {context} capability '{capability}' declares `{declared}` without `{missing}`; the job seam has two ends — where a task comes from and where its result lands — and the turn needs both"
+                    ));
+                }
+            }
             if !capabilities.insert(capability.clone()) {
                 return Err(format!(
                     "aver.toml: {context} duplicates capability '{capability}'"
@@ -175,8 +406,17 @@ pub(super) fn parse_provider_manifest(
                 capability,
                 function,
                 index,
+                task,
+                landed,
             });
             continue;
+        }
+        for seam in ["task", "landed"] {
+            if table.contains_key(seam) {
+                return Err(format!(
+                    "error[work-binding]: aver.toml: {context} capability '{capability}' declares `{seam}` without `work`; the job seam is the two ends of one job kind, so it lives on that kind's `work` binding"
+                ));
+            }
         }
         let crate_name = required_string(table, "crate", &context)?;
         validate_rust_identifier(&crate_name, "crate", &context)?;
@@ -225,7 +465,179 @@ pub(super) fn parse_provider_manifest(
         schema: PROVIDER_MANIFEST_SCHEMA,
         bindings,
         work_bindings,
+        answer_bindings,
     }))
+}
+
+/// An `answer` value names one module of the program: `Ledger`, or
+/// `Infra.Ledger` for a nested module path. It names no function, because the
+/// binding covers every operation of the capability at once.
+fn validate_answer_module(value: &str, context: &str, capability: &str) -> Result<(), String> {
+    let malformed = || {
+        format!(
+            "error[answer-binding]: aver.toml: {context} capability '{capability}': answer '{value}' must name one module of the program, for example 'Ledger'"
+        )
+    };
+    for segment in value.split('.') {
+        if !is_plain_identifier(segment) || !segment.starts_with(|ch: char| ch.is_ascii_uppercase())
+        {
+            return Err(malformed());
+        }
+    }
+    Ok(())
+}
+
+/// The `[run]` table: the three policies of the generated loop and the record
+/// its view is.
+///
+/// A program that declares it says "generate the loop for me". The loop then
+/// seats one of every process this program writes, asks `order` which of them
+/// to serve this turn and in what order, asks `admit` about each, and stops
+/// when `stop` says so — three pure functions over one record the program
+/// declares, and nothing else the program has to write.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunPolicies {
+    /// `order = "Node.order"`: the ids to serve this turn, in order.
+    pub order: String,
+    /// `admit = "Node.admit"`: whether to serve one id in this turn.
+    pub admit: String,
+    /// `stop = "Node.stop"`: whether the run is over.
+    pub stop: String,
+    /// `view = "Node.View"`: the record the three of them read.
+    pub view: String,
+}
+
+impl RunPolicies {
+    /// The module every one of the four names has to live in: the entry
+    /// module, because that is where the loop is generated and what it can
+    /// see.
+    pub fn module(&self) -> &str {
+        self.view
+            .rsplit_once('.')
+            .map(|(module, _)| module)
+            .unwrap_or("")
+    }
+
+    /// The bare name of the view record inside that module.
+    pub fn view_name(&self) -> &str {
+        self.view
+            .rsplit_once('.')
+            .map(|(_, name)| name)
+            .unwrap_or(self.view.as_str())
+    }
+}
+
+/// `[run]`: the four names of the generated loop, all four or none.
+pub(super) fn parse_run_policies(root: &toml::Table) -> Result<Option<RunPolicies>, String> {
+    let Some(value) = root.get("run") else {
+        return Ok(None);
+    };
+    let table = value
+        .as_table()
+        .ok_or_else(|| "aver.toml: [run] must be a table".to_string())?;
+    reject_unknown_keys(table, &["order", "admit", "stop", "view"], "[run]")?;
+    for key in ["order", "admit", "stop", "view"] {
+        if !table.contains_key(key) {
+            return Err(format!(
+                "error[run-binding]: aver.toml: [run] declares no `{key}`; the generated loop reads all four of order, admit, stop and view, so a program that asks for it names all four"
+            ));
+        }
+    }
+    let order = required_string(table, "order", "[run]")?;
+    let admit = required_string(table, "admit", "[run]")?;
+    let stop = required_string(table, "stop", "[run]")?;
+    let view = required_string(table, "view", "[run]")?;
+    for (field, value) in [("order", &order), ("admit", &admit), ("stop", &stop)] {
+        validate_policy_function(value, field)?;
+    }
+    validate_view_type(&view)?;
+    let policies = RunPolicies {
+        order,
+        admit,
+        stop,
+        view,
+    };
+    let module = policies.module().to_string();
+    for (field, value) in [
+        ("order", &policies.order),
+        ("admit", &policies.admit),
+        ("stop", &policies.stop),
+    ] {
+        let owner = value.rsplit_once('.').map(|(owner, _)| owner).unwrap_or("");
+        if owner != module {
+            return Err(format!(
+                "error[run-binding]: aver.toml: [run] names {field} '{value}' in module '{owner}' and view '{}' in module '{module}'; the loop is generated into one module and reads all four there",
+                policies.view
+            ));
+        }
+    }
+    Ok(Some(policies))
+}
+
+/// A policy value names one module-qualified function of the program.
+fn validate_policy_function(value: &str, field: &str) -> Result<(), String> {
+    let malformed = || {
+        format!(
+            "error[run-binding]: aver.toml: [run] {field} '{value}' must name one module-qualified function of the program, for example 'Node.{field}'"
+        )
+    };
+    let Some((module, function)) = value.rsplit_once('.') else {
+        return Err(malformed());
+    };
+    if module.is_empty() || function.is_empty() {
+        return Err(malformed());
+    }
+    for segment in module.split('.') {
+        if !is_plain_identifier(segment) || !segment.starts_with(|ch: char| ch.is_ascii_uppercase())
+        {
+            return Err(malformed());
+        }
+    }
+    if !is_plain_identifier(function) || !function.starts_with(|ch: char| ch.is_ascii_lowercase()) {
+        return Err(malformed());
+    }
+    Ok(())
+}
+
+/// A `view` value names one record type of the program: `Node.View`.
+fn validate_view_type(value: &str) -> Result<(), String> {
+    let malformed = || {
+        format!(
+            "error[run-binding]: aver.toml: [run] view '{value}' must name one record type of the program, for example 'Node.View'"
+        )
+    };
+    let Some((module, name)) = value.rsplit_once('.') else {
+        return Err(malformed());
+    };
+    if module.is_empty() || name.is_empty() {
+        return Err(malformed());
+    }
+    for segment in module.split('.') {
+        if !is_plain_identifier(segment) || !segment.starts_with(|ch: char| ch.is_ascii_uppercase())
+        {
+            return Err(malformed());
+        }
+    }
+    if !is_plain_identifier(name) || !name.starts_with(|ch: char| ch.is_ascii_uppercase()) {
+        return Err(malformed());
+    }
+    Ok(())
+}
+
+/// A `task` or `landed` value names one module-qualified function, exactly as
+/// `work` does.
+fn validate_seam_function(
+    value: &str,
+    field: &str,
+    context: &str,
+    capability: &str,
+) -> Result<(), String> {
+    if validate_work_function(value, context, capability).is_err() {
+        return Err(format!(
+            "error[work-binding]: aver.toml: {context} capability '{capability}': {field} '{value}' must name one module-qualified function of the program, for example 'Ledger.nextTask'"
+        ));
+    }
+    Ok(())
 }
 
 /// A `work` value names one module-qualified function of the program:
@@ -412,6 +824,64 @@ mod tests {
         parse_provider_manifest(&table)
     }
 
+    fn run(source: &str) -> Result<Option<RunPolicies>, String> {
+        let table: toml::Table = source.parse().expect("test TOML parses");
+        parse_run_policies(&table)
+    }
+
+    #[test]
+    fn parses_the_run_table() {
+        let policies = run("[run]\norder = \"Node.order\"\nadmit = \"Node.admit\"\nstop = \"Node.stop\"\nview = \"Node.View\"\n")
+            .expect("valid manifest")
+            .expect("run section");
+        assert_eq!(policies.order, "Node.order");
+        assert_eq!(policies.admit, "Node.admit");
+        assert_eq!(policies.stop, "Node.stop");
+        assert_eq!(policies.view, "Node.View");
+        assert_eq!(policies.module(), "Node");
+        assert_eq!(policies.view_name(), "View");
+    }
+
+    #[test]
+    fn a_manifest_without_a_run_table_asks_for_no_loop() {
+        assert_eq!(
+            run("[providers]\nschema = 1\n").expect("valid manifest"),
+            None
+        );
+    }
+
+    #[test]
+    fn rejects_a_partial_or_scattered_run_table() {
+        for (source, expected) in [
+            (
+                "[run]\norder = \"Node.order\"\nadmit = \"Node.admit\"\nstop = \"Node.stop\"\n",
+                "[run] declares no `view`",
+            ),
+            (
+                "[run]\norder = \"Node.order\"\nadmit = \"Node.admit\"\nstop = \"Node.stop\"\nview = \"Node.View\"\nseat = \"Node.seat\"\n",
+                "contains unknown field 'seat'",
+            ),
+            (
+                "[run]\norder = \"order\"\nadmit = \"Node.admit\"\nstop = \"Node.stop\"\nview = \"Node.View\"\n",
+                "order 'order' must name one module-qualified function",
+            ),
+            (
+                "[run]\norder = \"Node.order\"\nadmit = \"Node.admit\"\nstop = \"Node.stop\"\nview = \"Node.view\"\n",
+                "view 'Node.view' must name one record type",
+            ),
+            (
+                "[run]\norder = \"Other.order\"\nadmit = \"Node.admit\"\nstop = \"Node.stop\"\nview = \"Node.View\"\n",
+                "the loop is generated into one module and reads all four there",
+            ),
+        ] {
+            let error = run(source).expect_err("manifest must fail");
+            assert!(
+                error.contains(expected),
+                "expected '{expected}' in: {error}"
+            );
+        }
+    }
+
     #[test]
     fn parses_registry_and_local_bindings() {
         let manifest = parse(
@@ -543,6 +1013,109 @@ factory = "binding"
             (
                 "[providers]\nschema=1\n[[providers.bindings]]\ncapability='Validation'\nwork='Node.validate'\n[[providers.bindings]]\ncapability='Validation'\nwork='Node.other'\n",
                 "duplicates capability 'Validation'",
+            ),
+        ] {
+            let error = parse(source).expect_err("manifest must fail");
+            assert!(
+                error.contains(expected),
+                "expected '{expected}' in: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn parses_answer_bindings_and_the_job_seam() {
+        let manifest = parse(
+            r#"
+[providers]
+schema = 1
+
+[[providers.bindings]]
+capability = "Pool"
+answer = "Ledger"
+
+[[providers.bindings]]
+capability = "Blocks"
+answer = "Ledger"
+
+[[providers.bindings]]
+capability = "Validation"
+work = "Node.validate"
+task = "Ledger.nextTask"
+landed = "Ledger.validated"
+"#,
+        )
+        .expect("valid manifest")
+        .expect("provider section");
+        assert!(manifest.bindings.is_empty());
+        assert_eq!(manifest.answer_bindings.len(), 2);
+        assert_eq!(manifest.answer_bindings[0].capability, "Pool");
+        assert_eq!(manifest.answer_bindings[0].module, "Ledger");
+        assert_eq!(manifest.answer_bindings[1].module, "Ledger");
+        assert_eq!(manifest.work_bindings.len(), 1);
+        assert_eq!(
+            manifest.work_bindings[0].task.as_deref(),
+            Some("Ledger.nextTask")
+        );
+        assert_eq!(
+            manifest.work_bindings[0].landed.as_deref(),
+            Some("Ledger.validated")
+        );
+    }
+
+    #[test]
+    fn a_work_binding_without_a_seam_still_parses() {
+        let manifest = parse(
+            "[providers]\nschema=1\n[[providers.bindings]]\ncapability='Validation'\nwork='Node.validate'\n",
+        )
+        .expect("valid manifest")
+        .expect("provider section");
+        assert_eq!(manifest.work_bindings[0].task, None);
+        assert_eq!(manifest.work_bindings[0].landed, None);
+    }
+
+    #[test]
+    fn rejects_malformed_and_conflicting_answer_and_seam_keys() {
+        for (source, expected) in [
+            (
+                "[providers]\nschema=1\n[[providers.bindings]]\ncapability='Pool'\nanswer='ledger'\n",
+                "must name one module of the program",
+            ),
+            (
+                "[providers]\nschema=1\n[[providers.bindings]]\ncapability='Pool'\nanswer='Ledger.claim'\n",
+                "must name one module of the program",
+            ),
+            (
+                "[providers]\nschema=1\n[[providers.bindings]]\ncapability='Pool'\nanswer='Ledger'\ncrate='p'\npackage='p'\nfactory='binding'\nversion='1'\n",
+                "declares both `answer` and `crate`",
+            ),
+            (
+                "[providers]\nschema=1\n[[providers.bindings]]\ncapability='Pool'\nanswer='Ledger'\nwork='Node.validate'\n",
+                "declares both `answer` and `work`",
+            ),
+            (
+                "[providers]\nschema=1\n[[providers.bindings]]\ncapability='Pool'\nanswer='Ledger'\ntask='Ledger.nextTask'\nlanded='Ledger.validated'\n",
+                "declares `task` beside `answer`",
+            ),
+            (
+                "[providers]\nschema=1\n[[providers.bindings]]\ncapability='Validation'\nwork='Node.validate'\ntask='Ledger.nextTask'\n",
+                "declares `task` without `landed`",
+            ),
+            (
+                "[providers]\nschema=1\n[[providers.bindings]]\ncapability='Validation'\nwork='Node.validate'\nlanded='Ledger.validated'\n",
+                "declares `landed` without `task`",
+            ),
+            (
+                "[providers]\nschema=1\n[[providers.bindings]]\ncapability='Validation'\nwork='Node.validate'\ntask='nextTask'\nlanded='Ledger.validated'\n",
+                "task 'nextTask' must name one module-qualified function",
+            ),
+            (
+                "[providers]\nschema=1\n[[providers.bindings]]\ncapability='Clock'\ncrate='clock_provider'\npackage='clock-provider'\nfactory='binding'\nversion='1'\ntask='Ledger.nextTask'\n",
+                "declares `task` without `work`",
+            ),
+            (
+                "[providers]\nschema=1\n[[providers.bindings]]\ncapability='Pool'\nanswer='Ledger'\n[[providers.bindings]]\ncapability='Pool'\nanswer='Other'\n",
+                "duplicates capability 'Pool'",
             ),
         ] {
             let error = parse(source).expect_err("manifest must fail");
