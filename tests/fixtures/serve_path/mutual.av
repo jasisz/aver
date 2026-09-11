@@ -1,0 +1,32 @@
+module Mutual
+    intent =
+        "A poller and its handler recurse through each other: serve waits,"
+        "handle does the work and calls serve again. The handler is part of"
+        "the poller's own loop, so it is walked, and the drain it calls is"
+        "the effectful loop that stalls the turn."
+    exposes [serve]
+    effects [Tcp.poll, Disk.readText]
+
+fn serve(rounds: Int) -> Result<Unit, String>
+    ? "Waits, then hands the ready keys to the handler."
+    ! [Tcp.poll, Disk.readText]
+    sockets: Map<Int, Tcp.Socket> = {}
+    ready = Tcp.poll(sockets, 100)?
+    handle(rounds, ready)
+
+fn handle(rounds: Int, ready: List<Int>) -> Result<Unit, String>
+    ? "Reads as many entries as keys were ready, then waits again."
+    ! [Tcp.poll, Disk.readText]
+    _drained = drain(List.len(ready))?
+    match rounds < 1
+        true -> Result.Ok(Unit)
+        false -> serve(rounds - 1)
+
+fn drain(n: Int) -> Result<Unit, String>
+    ? "Reads n entries, one per step."
+    ! [Disk.readText]
+    match n < 1
+        true -> Result.Ok(Unit)
+        false -> match Disk.readText("queue.log")
+            Result.Err(reason) -> Result.Err(reason)
+            Result.Ok(_) -> drain(n - 1)

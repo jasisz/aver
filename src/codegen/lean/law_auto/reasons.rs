@@ -102,13 +102,23 @@ fn solver(
 ) -> Vec<String> {
     // Cited theorems remain available to grind, but are not unconditional
     // rewrite rules: an accumulator equation can rewrite its own result.
-    let simp_defs = std::iter::once(definitions.simp.clone())
+    // A cone that calls `Map.set` gets the prelude's facts about it;
+    // the same names make the demand-driven prelude ship their proofs.
+    let map_facts = if definitions.map_facts {
+        crate::codegen::lean::prelude::MAP_SET_FACT_LEMMAS.join(", ")
+    } else {
+        String::new()
+    };
+    let simp_defs = [definitions.simp.as_str(), map_facts.as_str()]
+        .into_iter()
         .filter(|s| !s.is_empty())
+        .map(str::to_string)
         .chain((0..fact_count).map(|i| format!("-_fact{i}")))
         .collect::<Vec<_>>()
         .join(", ");
     let grind_defs = [
         definitions.grind.as_str(),
+        map_facts.as_str(),
         // Aver counts are Ints; use the guarded library equations instead of
         // unfolding take's Nat recursion behind an opaque Int.toNat argument.
         "List.take_cons, List.drop_cons, Int.toNat_of_nonpos, List.reverse_eq_nil_iff",

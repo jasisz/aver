@@ -770,6 +770,9 @@ fn run_verify_cases_in_wasmtime(
                 default_limit: case_fuel(budget.default_limit),
                 raised_by: raised.map(str::to_string),
             },
+            // Fuel, not opcodes, and no `Tcp.poll` seam on this lane: turns
+            // are not measured here.
+            turn_overruns: Vec::new(),
             case_results,
             failures: Vec::new(),
         });

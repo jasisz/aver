@@ -77,9 +77,11 @@ impl VM {
     /// per-call local did.
     pub(super) fn execute_until(&mut self, caller_depth: usize) -> Result<NanValue, VmError> {
         let outer = std::mem::take(&mut self.step_count);
+        let outer_turn_start = std::mem::take(&mut self.turn_start);
         let result = self.execute_dispatch_loop(caller_depth);
         self.last_step_count = self.step_count;
         self.step_count = outer;
+        self.turn_start = outer_turn_start;
         result
     }
 
@@ -200,6 +202,17 @@ impl VM {
                     && self.step_count >= limit
                 {
                     return Err(VmError::StepLimit { limit, line: 0 });
+                }
+                // Turn budget (`[verify] turn-budget`): the turn's length is
+                // derived from `step_count`, so nothing is counted per op;
+                // with the budget off this is one `None` test per 256 ops.
+                if let Some(turn_limit) = self.turn_limit
+                    && self.turn_overrun.is_none()
+                {
+                    let turn_steps = self.step_count.saturating_sub(self.turn_start);
+                    if turn_steps >= turn_limit {
+                        self.turn_overrun = Some((turn_steps, fn_id));
+                    }
                 }
             }
             self.step_count += 1;

@@ -2295,12 +2295,22 @@ fn emit_simp_over_prelude_lemmas_law(
         push_unique(&mut simp_set, lemma);
     }
     push_unique(&mut simp_set, "Int.add_sub_cancel".to_string());
+    let simp_set = simp_set.join(", ");
+    let mut branches = vec![format!("simp [{simp_set}]; done")];
+    // A map fact only applies once the claim reaches the map operation, and
+    // a sum-typed given can keep it behind a `match` the flat simp never
+    // enters. Split the first such given by constructor and simp each case
+    // over the same set. Shape-gated on the cone touching a map and on the
+    // given's type being a user sum; tried after the flat simp, so a law the
+    // flat simp closes keeps its proof.
+    if builtins.iter().any(|b| b.starts_with("Map."))
+        && let Some(split) = shared::first_user_sum_given(ctx, law)
+    {
+        branches.push(format!("cases {split} <;> simp [{simp_set}]; done"));
+    }
     Some(AutoProof {
         support_lines: Vec::new(),
-        body: intro_then_first(
-            proof_intro_names,
-            vec![format!("simp [{}]; done", simp_set.join(", "))],
-        ),
+        body: intro_then_first(proof_intro_names, branches),
         replaces_theorem: false,
         first_arm_is_guaranteed_closer: false,
     })
