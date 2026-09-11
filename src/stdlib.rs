@@ -347,12 +347,31 @@ fn collect_standard_modules_from_type(ty: &crate::types::Type, deps: &mut Vec<St
 /// a `depends [Time]`, `depends [Random]`, `depends [Process]`, or
 /// `depends [Disk]` merely to use a built-in standard capability.
 pub(crate) fn standard_capability_modules() -> Vec<crate::source::LoadedModule> {
-    STANDARD_CAPABILITY_MODULES
-        .iter()
+    loaded_capability_modules(STANDARD_CAPABILITY_MODULES.iter().copied())
+}
+
+/// Every capability the compiler embeds, reserved ones included.
+///
+/// Reserved modules are not visible without `depends`, but they are still
+/// compiler-shipped contracts with compiler-shipped providers, so the
+/// canonical registry and the execution catalog must both know them.
+pub(crate) fn embedded_capability_modules() -> Vec<crate::source::LoadedModule> {
+    loaded_capability_modules(
+        STANDARD_CAPABILITY_MODULES
+            .iter()
+            .chain(RESERVED_CAPABILITY_MODULES)
+            .copied(),
+    )
+}
+
+fn loaded_capability_modules(
+    names: impl Iterator<Item = &'static str>,
+) -> Vec<crate::source::LoadedModule> {
+    names
         .map(|name| {
             let module = find(name).expect("standard capability source must be embedded");
             crate::source::LoadedModule {
-                dep_name: (*name).to_string(),
+                dep_name: name.to_string(),
                 items: standard_capability_items(name)
                     .expect("standard capability source must be embedded")
                     .to_vec(),
@@ -375,6 +394,7 @@ pub(crate) fn standard_capability_items(module: &str) -> Option<&'static [crate:
         .get_or_init(|| {
             STANDARD_CAPABILITY_MODULES
                 .iter()
+                .chain(RESERVED_CAPABILITY_MODULES)
                 .map(|name| {
                     let source = find(name).expect("standard capability source must be embedded");
                     let items = crate::source::parse_source(source.source)
@@ -399,7 +419,7 @@ pub(crate) fn standard_capability_registry_ref() -> &'static crate::capability::
         std::sync::OnceLock::new();
     REGISTRY.get_or_init(|| {
         let mut registry = crate::capability::CapabilityRegistry::default();
-        for module in standard_capability_modules() {
+        for module in embedded_capability_modules() {
             let (next, errors) =
                 crate::capability::CapabilityRegistry::from_module(&module.dep_name, &module.items);
             assert!(

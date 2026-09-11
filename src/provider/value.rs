@@ -78,9 +78,15 @@ pub(super) fn to_provider_value(
             if !contracts.resource_types().any(|known| known == &canonical) {
                 return Err(format!("type '{}' is not a capability resource", canonical));
             }
-            native
-                .resolve_resource(scope, &canonical, handle)
-                .map(ProviderValue::Resource)
+            if owning_module(&canonical) == Some(scope) {
+                native
+                    .resolve_resource(scope, &canonical, handle)
+                    .map(ProviderValue::Resource)
+            } else {
+                native
+                    .resolve_foreign_resource(&canonical, handle)
+                    .map(ProviderValue::Resource)
+            }
         }
         (Type::Named { name, .. }, value) => {
             let canonical = canonical_type(scope, name);
@@ -387,6 +393,11 @@ fn represented_from_provider(
             actual.shape()
         )),
     }
+}
+
+/// The capability a canonical resource type belongs to.
+fn owning_module(canonical: &str) -> Option<&str> {
+    canonical.rsplit_once('.').map(|(module, _)| module)
 }
 
 fn canonical_type(scope: &str, name: &str) -> String {

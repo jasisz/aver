@@ -262,6 +262,43 @@ impl NativeProviderRegistry {
             .ok_or_else(|| format!("resource '{}' is stale", expected_type))
     }
 
+    /// Resolve a resource whose type belongs to a capability other than the
+    /// one now reading it.
+    ///
+    /// `Work.Job` is minted by a job kind, cancelled through `Work` and waited
+    /// on through `Wait`: three bindings, one type. Binding identity is what
+    /// stops a handle of capability A being passed to capability B's own
+    /// resource slot, so for a type neither of them owns the check that
+    /// carries the weight is the type name plus a live minting binding.
+    pub fn resolve_foreign_resource(
+        &self,
+        expected_type: &str,
+        handle: &ProviderResourceHandle,
+    ) -> Result<ProviderResource, String> {
+        if handle.type_name != expected_type {
+            return Err(format!(
+                "resource has type '{}', expected resource type '{}'",
+                handle.type_name, expected_type
+            ));
+        }
+        let known = self
+            .bindings
+            .values()
+            .any(|binding| binding.id == handle.binding_id);
+        if !known {
+            return Err(format!(
+                "resource '{expected_type}' belongs to a provider binding this program does not have"
+            ));
+        }
+        self.resources
+            .lock()
+            .map_err(|_| "resource store poisoned".to_string())?
+            .resources
+            .get(&(handle.binding_id, handle.slot, handle.generation))
+            .cloned()
+            .ok_or_else(|| format!("resource '{expected_type}' is stale"))
+    }
+
     pub fn store_resource(
         &self,
         capability: &str,

@@ -144,6 +144,23 @@ pub(super) fn validate_operation_boundaries(
                 minted_resource(scope, ok, resources, tainted)
             }
             Type::Option(inner) => minted_resource(scope, inner, resources, tainted),
+            // A resource this capability declares itself is minted under this
+            // capability's own name.
+            Type::Named { name, .. }
+                if !name.contains('.')
+                    && resources.contains(name.rsplit('.').next().unwrap_or(name)) =>
+            {
+                Ok(Some(format!("{scope}.{name}")))
+            }
+            // A resource another embedded capability declares keeps that
+            // capability's name: `Validation.begin` mints a `Work.Job`, not a
+            // `Validation.Job`, and every reader of the handle agrees on which
+            // type it is.
+            Type::Named { name, .. }
+                if crate::stdlib::embedded_capability_resources().contains(name) =>
+            {
+                Ok(Some(name.clone()))
+            }
             Type::Named { name, .. }
                 if resources.contains(name.rsplit('.').next().unwrap_or(name)) =>
             {

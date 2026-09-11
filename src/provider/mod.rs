@@ -11,6 +11,7 @@ mod target;
 #[cfg(test)]
 mod tests;
 mod value;
+pub mod work;
 
 use crate::capability::{CapabilityOperation, CapabilityRegistry};
 pub use aver_rt::provider::{
@@ -23,6 +24,7 @@ pub use target::{
     TargetBindingStatus, TargetProvider, UnsupportedReason, required_capability_operations,
     shipped_target_provenance, standard_operations_bound_on,
 };
+pub use work::{WorkBaseContext, WorkProvider};
 
 pub type CapabilityResourceHandle = ProviderResourceHandle;
 
@@ -48,6 +50,8 @@ pub struct ProviderRegistry {
     /// identity strings are host-supplied metadata and therefore cannot prove
     /// ownership: an explicit provider may deliberately use the same label.
     standard_tcp_binding_id: Option<u64>,
+    /// Job kinds answered by a function of this program, keyed by capability.
+    work: std::collections::BTreeMap<String, std::sync::Arc<work::WorkProvider>>,
 }
 
 impl ProviderRegistry {
@@ -147,6 +151,7 @@ impl ProviderRegistry {
             standard_args_binding_id: None,
             standard_tcp_settings: aver_rt::tcp::TcpSettings::default(),
             standard_tcp_binding_id: None,
+            work: std::collections::BTreeMap::new(),
         }
     }
 
@@ -231,6 +236,99 @@ impl ProviderRegistry {
 
     pub fn standard_tcp_settings(&self) -> aver_rt::tcp::TcpSettings {
         self.standard_tcp_settings
+    }
+
+    /// Install one provider per job kind the manifest binds to a function of
+    /// this program. `limit` bounds the jobs that may run at once.
+    ///
+    /// A capability the program does not declare is skipped in silence: the
+    /// manifest gate at the program door has already reported it.
+    pub fn install_work_bindings(
+        &mut self,
+        bindings: &[crate::config::ProviderWorkBinding],
+        limit: usize,
+    ) -> Result<(), String> {
+        if bindings.is_empty() {
+            return Ok(());
+        }
+        let engine = aver_rt::work::JobEngine::new(limit);
+        let contracts = std::sync::Arc::new(self.contracts.clone());
+        for binding in bindings {
+            let Some(contract) = self.contracts.contract(&binding.capability).cloned() else {
+                continue;
+            };
+            let Some((task, payload)) = work::boundary_types(&self.contracts, &binding.capability)
+            else {
+                continue;
+            };
+            let operations = self
+                .contracts
+                .operations()
+                .filter(|operation| operation.module == binding.capability)
+                .map(|operation| operation.canonical_name.clone())
+                .collect::<Vec<_>>();
+            let provider = std::sync::Arc::new(work::WorkProvider::new(
+                &binding.capability,
+                &binding.function,
+                task,
+                payload,
+                contracts.clone(),
+                engine.clone(),
+            ));
+            let installed = ProviderBinding::new(
+                binding.capability.clone(),
+                contract.contract_hash.clone(),
+                operations,
+                provider.clone(),
+            );
+            if self.binding(&binding.capability).is_some() {
+                self.replace_binding(installed)?;
+            } else {
+                self.bind(installed)?;
+            }
+            self.work.insert(binding.capability.clone(), provider);
+        }
+        Ok(())
+    }
+
+    /// Whether a job kind of this program is still waiting for the compiled
+    /// program its jobs run.
+    pub fn work_needs_base_context(&self, capability: &str) -> bool {
+        self.work
+            .get(capability)
+            .is_some_and(|provider| !provider.has_base_context())
+    }
+
+    /// Hand every job kind the compiled program its jobs run.
+    pub fn install_work_base_context(&self, base: std::sync::Arc<work::WorkBaseContext>) {
+        for provider in self.work.values() {
+            provider.install_base_context(base.clone());
+        }
+    }
+
+    /// The job kind that owns one operation, if any.
+    pub fn work_provider_for(
+        &self,
+        operation: &str,
+    ) -> Option<&std::sync::Arc<work::WorkProvider>> {
+        let (module, _) = operation.rsplit_once('.')?;
+        self.work.get(module)
+    }
+
+    /// Cancel every running job and wait a bounded moment for them.
+    pub fn shutdown_jobs(&self) {
+        let mut engines = Vec::new();
+        for provider in self.work.values() {
+            if !engines
+                .iter()
+                .any(|engine| std::sync::Arc::ptr_eq(engine, provider.engine()))
+            {
+                engines.push(provider.engine().clone());
+            }
+        }
+        for engine in engines {
+            engine.shutdown();
+        }
     }
 
     pub fn bind(&mut self, binding: ProviderBinding) -> Result<(), String> {

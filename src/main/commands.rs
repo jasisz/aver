@@ -1145,6 +1145,25 @@ fn report_dead_suppressions(
     }
 }
 
+/// Install one provider per job kind the project binds to a function of the
+/// program, so `begin` and `take` have something to answer them.
+///
+/// The gate at the program door has already refused a job kind with no
+/// binding, so a manifest without `work` entries leaves the registry alone.
+fn install_work_bindings(
+    mut providers: aver::provider::ProviderRegistry,
+    module_root: &str,
+) -> Result<aver::provider::ProviderRegistry, String> {
+    let Some(config) = super::shared::load_runtime_policy(module_root)? else {
+        return Ok(providers);
+    };
+    let Some(manifest) = &config.provider_manifest else {
+        return Ok(providers);
+    };
+    providers.install_work_bindings(&manifest.work_bindings, config.work_max_jobs())?;
+    Ok(providers)
+}
+
 pub(super) fn cmd_run_vm(
     file: &str,
     module_root_override: Option<&str>,
@@ -1246,6 +1265,13 @@ pub(super) fn cmd_run_vm(
         tc_result.capabilities.clone(),
         provider_bindings.iter().cloned(),
     ) {
+        Ok(providers) => providers,
+        Err(error) => {
+            eprintln!("{}", error.red());
+            process::exit(1);
+        }
+    };
+    let providers = match install_work_bindings(providers, &module_root) {
         Ok(providers) => std::sync::Arc::new(providers),
         Err(error) => {
             eprintln!("{}", error.red());

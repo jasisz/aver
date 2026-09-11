@@ -1,0 +1,53 @@
+module Main
+    depends [Node, Validation, Wait, Work]
+    intent = "A coordinator that starts one job per input, waits for all of them in one wait set, and prints every score."
+    exposes [main]
+    effects [Console.print, Validation.begin, Validation.take, Wait.poll]
+
+fn main() -> Result<Unit, String>
+    ? "Starts one validation job per input and prints each score as it lands."
+    ! [Console.print, Validation.begin, Validation.take, Wait.poll]
+    first = Validation.begin("alpha")?
+    second = Validation.begin("beta-two")?
+    pending: Map<Int, Wait.Item> = {1 => Wait.Item.Job(first), 2 => Wait.Item.Job(second)}
+    collect(pending, 50)
+
+fn collect(pending: Map<Int, Wait.Item>, turns: Int) -> Result<Unit, String>
+    ? "One turn per call: wait once, collect whatever is ready, and stop when the wait set is empty."
+    ! [Console.print, Validation.take, Wait.poll]
+    match Map.len(pending) == 0
+        true -> Result.Ok(Unit)
+        false -> match turns < 1
+            true -> Result.Err("work: the jobs did not finish within the turns allowed")
+            false -> turn(pending, turns)
+
+fn turn(pending: Map<Int, Wait.Item>, turns: Int) -> Result<Unit, String>
+    ? "The body of one turn: the one wait, then the keys it reported."
+    ! [Console.print, Validation.take, Wait.poll]
+    ready = Wait.poll(pending, 200)?
+    remaining = harvest(pending, ready)?
+    collect(remaining, turns - 1)
+
+fn harvest(pending: Map<Int, Wait.Item>, ready: List<Int>) -> Result<Map<Int, Wait.Item>, String>
+    ? "Takes every key the wait reported, printing each score, and answers with the keys still running."
+    ! [Console.print, Validation.take]
+    match ready
+        [] -> Result.Ok(pending)
+        [key, ..rest] -> match Map.get(pending, key)
+            Option.None -> harvest(pending, rest)
+            Option.Some(item) -> harvestItem(pending, key, item, rest)
+
+fn harvestItem(pending: Map<Int, Wait.Item>, key: Int, item: Wait.Item, rest: List<Int>) -> Result<Map<Int, Wait.Item>, String>
+    ? "One reported key: a job that finished is printed and dropped, a job still running stays in the wait set."
+    ! [Console.print, Validation.take]
+    match item
+        Wait.Item.Socket(_socket) -> harvest(pending, rest)
+        Wait.Item.Job(job) -> match Validation.take(job)?
+            Option.None -> harvest(pending, rest)
+            Option.Some(score) -> scored(pending, key, score, rest)
+
+fn scored(pending: Map<Int, Wait.Item>, key: Int, score: Int, rest: List<Int>) -> Result<Map<Int, Wait.Item>, String>
+    ? "Says what one job scored and drops its key from the wait set."
+    ! [Console.print, Validation.take]
+    Console.print("job {key} scored {score}")
+    harvest(Map.remove(pending, key), rest)
