@@ -145,6 +145,61 @@ fn tail_stop_lean_check_builds_with_zero_errors_and_no_sorry() {
     );
 }
 
+// ── An unmarked effect in place, beside a request ───────────────────────
+
+/// Decision 4: a process may perform an operation nobody answers where it
+/// stands. `walk` announces the peer in the same expression that asks the
+/// pool for it, so the announcement is written before the request and must
+/// happen before it: the lowering hoists both, in the order the program
+/// wrote them, instead of moving the stop to the front. Without that the
+/// announcement lands in the answer function and the run prints it after
+/// the coordinator's own line.
+#[test]
+fn an_in_place_effect_before_a_request_stays_before_it() {
+    let out = aver("yield_in_place", &["run"]);
+    assert!(out.status.success(), "{}", format_output(&out));
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    let asking = stdout
+        .find("asking 1")
+        .unwrap_or_else(|| panic!("no announcement in:\n{stdout}"));
+    let answering = stdout
+        .find("answering 1")
+        .unwrap_or_else(|| panic!("no answer line in:\n{stdout}"));
+    assert!(
+        asking < answering,
+        "the announcement is written before the request, so it runs before it:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("total = 2"),
+        "expected the handle to reach the sum:\n{stdout}"
+    );
+}
+
+/// The same fact read off the generated Aver: the segment that runs before
+/// the stop holds the call and declares its effect, and the segment that
+/// resumes after the answer holds neither.
+#[test]
+fn the_segment_before_a_request_carries_the_effect_it_performs() {
+    let (lowered, generated, _) = lower_fixture("yield_in_place");
+    assert_eq!(lowered, vec!["walk".to_string()]);
+    let start = generated
+        .split_once("fn __walkStart")
+        .map(|(_, rest)| rest.split("\n\nfn ").next().unwrap_or(rest).to_string())
+        .unwrap_or_else(|| panic!("no __walkStart in:\n{generated}"));
+    assert!(
+        start.contains("! [Console.print]") && start.contains("announce(id)"),
+        "the announcement belongs to the first segment:\n{start}"
+    );
+    let answer = generated
+        .split_once("fn __walkAnswerClaim")
+        .map(|(_, rest)| rest.split("\n\nfn ").next().unwrap_or(rest).to_string())
+        .unwrap_or_else(|| panic!("no __walkAnswerClaim in:\n{generated}"));
+    assert!(
+        !answer.contains("announce(") && !answer.contains("! ["),
+        "the answer segment performs nothing:\n{answer}"
+    );
+}
+
 // ── Across the module boundary: the importer drives the dependency ──────
 
 /// The loader lowers a dependency before any importer reads it, so what

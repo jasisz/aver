@@ -1,0 +1,35 @@
+module YieldInPlace
+    intent = "Fixture: a process performs an unmarked effect in place, in the same expression as a request; the request must not be hoisted ahead of it."
+    depends [Pool, Pooled]
+    effects [Pool.claim, Console.print, yield]
+    exposes [drive, main]
+
+fn walk(id: Int) -> Int
+    ? "Announces the peer it is about to ask for, then adds the handle the pool answers with."
+    ! [Pool.claim, Console.print, yield]
+    announce(id) + Pool.claim(id)
+
+fn announce(id: Int) -> Int
+    ? "Says which peer is about to be asked for, and adds nothing to the total."
+    ! [Console.print]
+    Console.print("asking {id}")
+    0
+
+fn drive(outcome: __WalkOutcome) -> Int
+    ? "Coordinator: answers every Claim request with twice the peer it names, saying so as it goes."
+    ! [Console.print]
+    match outcome
+        __WalkOutcome.Done(v) -> v
+        __WalkOutcome.Waiting(request) -> match request
+            __WalkRequest.Claim(peer, state) -> answering(peer, state)
+
+fn answering(peer: Int, state: __WalkClaimState) -> Int
+    ? "Says the request is being answered, then resumes the process with the handle."
+    ! [Console.print]
+    Console.print("answering {peer}")
+    drive(__walkAnswerClaim(state, peer * 2))
+
+fn main() -> Unit
+    ! [Console.print]
+    total = drive(__walkStart(1))
+    Console.print("total = {total}")
