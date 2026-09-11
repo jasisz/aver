@@ -20,6 +20,7 @@ mod string_index;
 pub mod tcp;
 #[cfg(feature = "terminal")]
 pub mod terminal;
+pub mod work;
 
 pub use bytebuilder::{ByteBuilder, byte_builder_finalize, byte_builder_new, byte_builder_push};
 pub use display::{AverDisplay, aver_display};

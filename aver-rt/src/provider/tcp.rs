@@ -92,7 +92,7 @@ fn listener<'a>(
     resource(operation, value, "Tcp.Listener")
 }
 
-fn resource<'a, T: 'static>(
+pub(super) fn resource<'a, T: 'static>(
     operation: &str,
     value: &'a ProviderValue,
     expected: &str,
@@ -130,50 +130,59 @@ fn socket_map(
                 "Tcp.poll expects Int map keys",
             ));
         };
-        let ProviderValue::Variant {
-            type_name,
-            variant,
-            fields,
-        } = socket
-        else {
-            return Err(ProviderFault::new(
-                "invalid_arguments",
-                "Tcp.poll expects Tcp.Socket map values",
-            ));
-        };
-        if type_name != "Tcp.Socket" || fields.len() != 1 {
-            return Err(ProviderFault::new(
-                "invalid_arguments",
-                format!(
-                    "Tcp.poll expects one-field Tcp.Socket variants, got {type_name}.{variant} with {} field(s)",
-                    fields.len()
-                ),
-            ));
-        }
-        let socket = match variant.as_str() {
-            "Listening" => crate::tcp::TcpSocket::Listening(
-                resource::<crate::TcpListener>(operation, &fields[0], "Tcp.Listener")?.clone(),
-            ),
-            "Dialing" => crate::tcp::TcpSocket::Dialing(
-                resource::<crate::TcpDial>(operation, &fields[0], "Tcp.Dial")?.clone(),
-            ),
-            "Connected" => crate::tcp::TcpSocket::Connected(
-                resource::<crate::TcpConnection>(operation, &fields[0], "Tcp.Connection")?.clone(),
-            ),
-            "Sending" => crate::tcp::TcpSocket::Sending(
-                resource::<crate::TcpConnection>(operation, &fields[0], "Tcp.Connection")?.clone(),
-            ),
-            other => {
-                return Err(ProviderFault::new(
-                    "invalid_arguments",
-                    format!("Tcp.poll received unknown Tcp.Socket variant '{other}'"),
-                ));
-            }
-        };
         keys.push(key.clone());
-        sockets.push(socket);
+        sockets.push(tcp_socket(operation, socket)?);
     }
     Ok((keys, sockets))
+}
+
+/// Recover the host socket a `Tcp.Socket` variant names. `Wait.poll` reads
+/// the same variant through its own item type, so the rule that decides what
+/// a socket is lives in one place.
+pub(super) fn tcp_socket(
+    operation: &str,
+    value: &ProviderValue,
+) -> Result<crate::tcp::TcpSocket, ProviderFault> {
+    let ProviderValue::Variant {
+        type_name,
+        variant,
+        fields,
+    } = value
+    else {
+        return Err(ProviderFault::new(
+            "invalid_arguments",
+            format!("{operation} expects Tcp.Socket values"),
+        ));
+    };
+    if type_name != "Tcp.Socket" || fields.len() != 1 {
+        return Err(ProviderFault::new(
+            "invalid_arguments",
+            format!(
+                "{operation} expects one-field Tcp.Socket variants, got {type_name}.{variant} with {} field(s)",
+                fields.len()
+            ),
+        ));
+    }
+    Ok(match variant.as_str() {
+        "Listening" => crate::tcp::TcpSocket::Listening(
+            resource::<crate::TcpListener>(operation, &fields[0], "Tcp.Listener")?.clone(),
+        ),
+        "Dialing" => crate::tcp::TcpSocket::Dialing(
+            resource::<crate::TcpDial>(operation, &fields[0], "Tcp.Dial")?.clone(),
+        ),
+        "Connected" => crate::tcp::TcpSocket::Connected(
+            resource::<crate::TcpConnection>(operation, &fields[0], "Tcp.Connection")?.clone(),
+        ),
+        "Sending" => crate::tcp::TcpSocket::Sending(
+            resource::<crate::TcpConnection>(operation, &fields[0], "Tcp.Connection")?.clone(),
+        ),
+        other => {
+            return Err(ProviderFault::new(
+                "invalid_arguments",
+                format!("{operation} received unknown Tcp.Socket variant '{other}'"),
+            ));
+        }
+    })
 }
 
 impl CapabilityProvider for StandardTcpProvider {

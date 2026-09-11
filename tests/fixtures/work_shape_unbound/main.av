@@ -1,0 +1,9 @@
+module Main
+    depends [Node, Validation]
+    intent = "A program that declares a job kind and binds nothing."
+    effects [Console]
+
+fn main() -> Unit
+    ? "Reports that the job kind is wired."
+    ! [Console.print]
+    Console.print("jobs ready")

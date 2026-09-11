@@ -9,6 +9,39 @@ pub const PROVIDER_MANIFEST_SCHEMA: u32 = 1;
 pub struct ProviderPackageManifest {
     pub schema: u32,
     pub bindings: Vec<ProviderPackageBinding>,
+    /// Work-shaped capabilities answered by a pure function of the program
+    /// itself. These bind no Cargo package, so they never reach the static
+    /// Rust composition plan.
+    pub work_bindings: Vec<ProviderWorkBinding>,
+}
+
+/// One `work = "Module.function"` binding: the job kind a capability declares
+/// is run by this module-qualified pure function of the program.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderWorkBinding {
+    pub capability: String,
+    /// Module-qualified function name exactly as written, e.g. `Node.validate`.
+    pub function: String,
+    /// Position of the declaring `[[providers.bindings]]` entry, for diagnostics.
+    pub index: usize,
+}
+
+impl ProviderWorkBinding {
+    /// The module that must define the bound function.
+    pub fn module(&self) -> &str {
+        self.function
+            .rsplit_once('.')
+            .map(|(module, _)| module)
+            .unwrap_or("")
+    }
+
+    /// The bare function name inside that module.
+    pub fn function_name(&self) -> &str {
+        self.function
+            .rsplit_once('.')
+            .map(|(_, name)| name)
+            .unwrap_or(self.function.as_str())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -101,6 +134,7 @@ pub(super) fn parse_provider_manifest(
         })?,
     };
     let mut bindings = Vec::with_capacity(binding_values.len());
+    let mut work_bindings = Vec::new();
     let mut capabilities = BTreeSet::new();
     let mut crate_names = BTreeSet::new();
     for (index, value) in binding_values.iter().enumerate() {
@@ -117,11 +151,33 @@ pub(super) fn parse_provider_manifest(
                 "factory",
                 "version",
                 "path",
+                "work",
             ],
             &context,
         )?;
         let capability = required_string(table, "capability", &context)?;
         validate_dotted_identifier(&capability, "capability", &context)?;
+        if let Some(function) = optional_string(table, "work", &context)? {
+            for conflicting in ["crate", "package", "factory", "version", "path"] {
+                if table.contains_key(conflicting) {
+                    return Err(format!(
+                        "error[work-binding]: aver.toml: {context} capability '{capability}' declares both `work` and `{conflicting}`; a job kind is answered by a function of the program, never by a provider package"
+                    ));
+                }
+            }
+            validate_work_function(&function, &context, &capability)?;
+            if !capabilities.insert(capability.clone()) {
+                return Err(format!(
+                    "aver.toml: {context} duplicates capability '{capability}'"
+                ));
+            }
+            work_bindings.push(ProviderWorkBinding {
+                capability,
+                function,
+                index,
+            });
+            continue;
+        }
         let crate_name = required_string(table, "crate", &context)?;
         validate_rust_identifier(&crate_name, "crate", &context)?;
         let package = required_string(table, "package", &context)?;
@@ -168,7 +224,34 @@ pub(super) fn parse_provider_manifest(
     Ok(Some(ProviderPackageManifest {
         schema: PROVIDER_MANIFEST_SCHEMA,
         bindings,
+        work_bindings,
     }))
+}
+
+/// A `work` value names one module-qualified function of the program:
+/// `Module.function`, or `Outer.Inner.function` for a nested module path.
+fn validate_work_function(value: &str, context: &str, capability: &str) -> Result<(), String> {
+    let malformed = || {
+        format!(
+            "error[work-binding]: aver.toml: {context} capability '{capability}': work '{value}' must name one module-qualified function of the program, for example 'Node.validate'"
+        )
+    };
+    let Some((module, function)) = value.rsplit_once('.') else {
+        return Err(malformed());
+    };
+    if module.is_empty() || function.is_empty() {
+        return Err(malformed());
+    }
+    for segment in module.split('.') {
+        if !is_plain_identifier(segment) || !segment.starts_with(|ch: char| ch.is_ascii_uppercase())
+        {
+            return Err(malformed());
+        }
+    }
+    if !is_plain_identifier(function) || !function.starts_with(|ch: char| ch.is_ascii_lowercase()) {
+        return Err(malformed());
+    }
+    Ok(())
 }
 
 fn reject_unknown_keys(table: &toml::Table, allowed: &[&str], context: &str) -> Result<(), String> {
@@ -400,6 +483,66 @@ factory = "binding"
             (
                 "[providers]\nschema = 1\nunknown=true\n",
                 "[providers] contains unknown field 'unknown'",
+            ),
+        ] {
+            let error = parse(source).expect_err("manifest must fail");
+            assert!(
+                error.contains(expected),
+                "expected '{expected}' in: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn parses_work_bindings_beside_package_bindings() {
+        let manifest = parse(
+            r#"
+[providers]
+schema = 1
+
+[[providers.bindings]]
+capability = "Validation"
+work = "Node.validate"
+
+[[providers.bindings]]
+capability = "Clock"
+crate = "clock_provider"
+package = "aver-clock-provider"
+version = "=0.1.0"
+factory = "binding"
+"#,
+        )
+        .expect("valid manifest")
+        .expect("provider section");
+        assert_eq!(manifest.bindings.len(), 1);
+        assert_eq!(manifest.work_bindings.len(), 1);
+        assert_eq!(manifest.work_bindings[0].capability, "Validation");
+        assert_eq!(manifest.work_bindings[0].module(), "Node");
+        assert_eq!(manifest.work_bindings[0].function_name(), "validate");
+    }
+
+    #[test]
+    fn rejects_malformed_and_conflicting_work_bindings() {
+        for (source, expected) in [
+            (
+                "[providers]\nschema=1\n[[providers.bindings]]\ncapability='Validation'\nwork='validate'\n",
+                "must name one module-qualified function",
+            ),
+            (
+                "[providers]\nschema=1\n[[providers.bindings]]\ncapability='Validation'\nwork='Node.Validate'\n",
+                "must name one module-qualified function",
+            ),
+            (
+                "[providers]\nschema=1\n[[providers.bindings]]\ncapability='Validation'\nwork='node.validate'\n",
+                "must name one module-qualified function",
+            ),
+            (
+                "[providers]\nschema=1\n[[providers.bindings]]\ncapability='Validation'\nwork='Node.validate'\ncrate='p'\npackage='p'\nfactory='binding'\nversion='1'\n",
+                "declares both `work` and `crate`",
+            ),
+            (
+                "[providers]\nschema=1\n[[providers.bindings]]\ncapability='Validation'\nwork='Node.validate'\n[[providers.bindings]]\ncapability='Validation'\nwork='Node.other'\n",
+                "duplicates capability 'Validation'",
             ),
         ] {
             let error = parse(source).expect_err("manifest must fail");

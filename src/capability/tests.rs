@@ -423,3 +423,42 @@ fn profile_source_counts_separate_model_local_and_user_adversaries() {
     registry.merge(observations);
     assert_eq!(registry.profile_source_counts("Entropy.draw"), (1, 1));
 }
+
+#[test]
+fn embedded_reserved_capabilities_validate_and_expose_the_job_handle() {
+    for module in crate::stdlib::RESERVED_CAPABILITY_MODULES {
+        let embedded = crate::stdlib::find(module).expect("reserved capability is embedded");
+        let items = crate::source::parse_source(embedded.source).expect("reserved source parses");
+        let (registry, errors) = CapabilityRegistry::from_module(module, &items);
+        assert!(errors.is_empty(), "{module} contract errors: {errors:?}");
+        assert!(
+            registry.contract(module).is_some(),
+            "{module} has no contract"
+        );
+    }
+    assert!(
+        crate::stdlib::embedded_capability_resources().contains("Work.Job"),
+        "Work.Job must be an embedded capability resource"
+    );
+}
+
+#[test]
+fn a_dependent_capability_may_name_an_embedded_capability_resource() {
+    let source = "module Validation\n    kind = capability\n    semantics = effectful\n    depends [Work]\n\noperation begin(task: String) -> Result<Work.Job, String>\n    ? \"starts one validation job\"\n    oracle = generativeOutput\n    replay = recorded\n\noperation take(job: Work.Job) -> Result<Option<Int>, String>\n    ? \"collects one finished validation job\"\n    oracle = generativeOutput\n    replay = recorded\n";
+    let items = crate::source::parse_source(source).expect("parse job kind");
+    let (_, errors) = CapabilityRegistry::from_module("Validation", &items);
+    assert!(errors.is_empty(), "job-kind contract errors: {errors:?}");
+}
+
+#[test]
+fn an_undeclared_embedded_capability_resource_is_still_rejected() {
+    let source = "module Validation\n    kind = capability\n    semantics = effectful\n\noperation begin(task: String) -> Result<Work.Job, String>\n    ? \"starts one validation job\"\n    oracle = generativeOutput\n    replay = recorded\n";
+    let items = crate::source::parse_source(source).expect("parse job kind");
+    let (_, errors) = CapabilityRegistry::from_module("Validation", &items);
+    assert!(
+        errors.iter().any(|error| error
+            .message
+            .contains("cross-module boundary type 'Work.Job'")),
+        "expected a cross-module boundary error: {errors:?}"
+    );
+}

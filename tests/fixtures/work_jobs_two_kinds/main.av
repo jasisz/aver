@@ -1,0 +1,32 @@
+module Main
+    depends [Node, Alpha, Beta, Wait, Work]
+    intent = "Hands one job kind's handle to the other kind's take, and then to its own."
+    exposes [main]
+    effects [Console.print, Alpha.begin, Alpha.take, Beta.take, Wait.poll]
+
+fn main() -> Result<Unit, String>
+    ? "Starts one alpha job, asks Beta for its answer, and then asks Alpha."
+    ! [Console.print, Alpha.begin, Alpha.take, Beta.take, Wait.poll]
+    job = Alpha.begin("alpha")?
+    pending: Map<Int, Wait.Item> = {1 => Wait.Item.Job(job)}
+    _ready = Wait.poll(pending, 2000)?
+    report(Beta.take(job), Alpha.take(job))
+
+fn report(foreign: Result<Option<Int>, String>, mine: Result<Option<Int>, String>) -> Result<Unit, String>
+    ? "Says what the other job kind answered and what the job's own kind answered."
+    ! [Console.print]
+    Console.print("beta: {shown(foreign)}")
+    Console.print("alpha: {shown(mine)}")
+    Result.Ok(Unit)
+
+fn shown(answer: Result<Option<Int>, String>) -> String
+    ? "Renders one take's answer as a line."
+    match answer
+        Result.Ok(inner) -> shownOption(inner)
+        Result.Err(reason) -> reason
+
+fn shownOption(inner: Option<Int>) -> String
+    ? "Renders the answer a successful take carries."
+    match inner
+        Option.Some(score) -> "scored {score}"
+        Option.None -> "still running"

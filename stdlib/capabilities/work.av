@@ -1,0 +1,11 @@
+module Work
+    kind = capability
+    semantics = effectful
+    exposes [Job, cancel]
+
+resource Job
+
+operation cancel(job: Work.Job) -> Unit
+    ? "Cancels one job. A running job stops at the runtime's next cancellation check, a finished job drops its result, and cancelling an already cancelled or taken job changes nothing. There is nothing to answer and nothing to refuse: a job that finished before the cancel shows up in take, not here."
+    oracle = generativeOutput
+    replay = recorded

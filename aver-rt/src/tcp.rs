@@ -333,6 +333,21 @@ pub fn poll(_sockets: &[TcpSocket], _timeout_ms: i64) -> Result<Vec<usize>, Stri
 }
 
 #[cfg(not(target_family = "wasm"))]
+pub use reactor::PollWaker;
+
+/// Poll `sockets` on a caller-owned poller, so something other than a socket
+/// can end the wait early by ringing it.
+#[cfg(not(target_family = "wasm"))]
+pub fn poll_with_waker(
+    sockets: &[TcpSocket],
+    timeout_ms: i64,
+    waker: &PollWaker,
+    operation: &str,
+) -> Result<Vec<usize>, String> {
+    reactor::poll_with_waker(sockets, timeout_ms, waker, operation)
+}
+
+#[cfg(not(target_family = "wasm"))]
 pub fn listen(port: i64, backlog: i64) -> Result<TcpListener, String> {
     listen_with_settings(port, backlog, TcpSettings::default())
 }

@@ -1,0 +1,21 @@
+module Validation
+    kind = capability
+    semantics = effectful
+    depends [Work]
+    intent = "A job kind that declares a third operation."
+    exposes [begin, take]
+
+operation begin(task: String) -> Result<Work.Job, String>
+    ? "Starts one validation off the turn and returns its job handle at once."
+    oracle = generativeOutput
+    replay = recorded
+
+operation take(job: Work.Job) -> Result<Option<Int>, String>
+    ? "Collects one finished validation: None while it runs, Some(score) once it finished."
+    oracle = generativeOutput
+    replay = recorded
+
+operation abandon(job: Work.Job) -> Unit
+    ? "A third operation a job kind may not declare."
+    oracle = generativeOutput
+    replay = recorded

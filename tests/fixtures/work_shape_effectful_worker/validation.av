@@ -1,0 +1,16 @@
+module Validation
+    kind = capability
+    semantics = effectful
+    depends [Work]
+    intent = "A job kind bound to an effectful function."
+    exposes [begin, take]
+
+operation begin(task: String) -> Result<Work.Job, String>
+    ? "Starts one validation off the turn and returns its job handle at once."
+    oracle = generativeOutput
+    replay = recorded
+
+operation take(job: Work.Job) -> Result<Option<Int>, String>
+    ? "Collects one finished validation: None while it runs, Some(score) once it finished."
+    oracle = generativeOutput
+    replay = recorded

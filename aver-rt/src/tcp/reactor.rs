@@ -285,8 +285,49 @@ pub(super) fn peer_address(connection: &TcpConnection) -> Result<String, String>
 }
 
 pub(super) fn poll(sockets: &[TcpSocket], timeout_ms: i64) -> Result<Vec<usize>, String> {
+    let waker = PollWaker::new("Tcp.poll")?;
+    poll_with_waker(sockets, timeout_ms, &waker, "Tcp.poll")
+}
+
+/// One wait's own poller, seen from outside the reactor.
+///
+/// A wait that also watches jobs registers this with the job engine before it
+/// sleeps: a job that settles rings the poller and the wait returns at once,
+/// instead of sitting out the whole timeout on its sockets.
+#[derive(Clone)]
+pub struct PollWaker {
+    poller: std::sync::Arc<polling::Poller>,
+}
+
+impl PollWaker {
+    pub fn new(operation: &str) -> Result<Self, String> {
+        Ok(Self {
+            poller: std::sync::Arc::new(
+                polling::Poller::new().map_err(|error| format_io_error(operation, &error))?,
+            ),
+        })
+    }
+
+    /// Wake the wait that is sleeping on this poller, if any.
+    pub fn wake(&self) {
+        let _ = self.poller.notify();
+    }
+}
+
+impl crate::work::CompletionWaker for PollWaker {
+    fn wake(&self) {
+        PollWaker::wake(self);
+    }
+}
+
+pub(super) fn poll_with_waker(
+    sockets: &[TcpSocket],
+    timeout_ms: i64,
+    waker: &PollWaker,
+    operation: &str,
+) -> Result<Vec<usize>, String> {
     if timeout_ms < 0 {
-        return Err(format!("Tcp.poll: timeoutMs {timeout_ms} is negative"));
+        return Err(format!("{operation}: timeoutMs {timeout_ms} is negative"));
     }
     CONNECTIONS.with(|connection_map| {
         DIALS.with(|dial_map| {
@@ -297,6 +338,8 @@ pub(super) fn poll(sockets: &[TcpSocket], timeout_ms: i64) -> Result<Vec<usize>,
                     &connection_map.borrow(),
                     &dial_map.borrow(),
                     &listener_map.borrow(),
+                    &waker.poller,
+                    operation,
                 )
             })
         })
@@ -323,12 +366,15 @@ struct PollGroup<'a> {
     writable: Vec<usize>,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn poll_borrowed<'a>(
     sockets: &[TcpSocket],
     timeout_ms: i64,
     connection_map: &'a HashMap<String, BufReader<TcpStream>>,
     dial_map: &'a HashMap<String, PendingDial>,
     listener_map: &'a HashMap<String, ListenerState>,
+    poller: &polling::Poller,
+    operation: &str,
 ) -> Result<Vec<usize>, String> {
     let mut ready = Vec::new();
     let mut groups = Vec::<PollGroup<'a>>::new();
@@ -341,7 +387,10 @@ fn poll_borrowed<'a>(
             TcpSocket::Connected(connection) => {
                 let id: &str = &connection.id;
                 let Some(reader) = connection_map.get(id) else {
-                    return Err(format!("Tcp.poll: unknown connection '{}'", connection.id));
+                    return Err(format!(
+                        "{operation}: unknown connection '{}'",
+                        connection.id
+                    ));
                 };
                 if !reader.buffer().is_empty() {
                     ready.push(position);
@@ -359,7 +408,10 @@ fn poll_borrowed<'a>(
             TcpSocket::Sending(connection) => {
                 let id: &str = &connection.id;
                 let Some(reader) = connection_map.get(id) else {
-                    return Err(format!("Tcp.poll: unknown connection '{}'", connection.id));
+                    return Err(format!(
+                        "{operation}: unknown connection '{}'",
+                        connection.id
+                    ));
                 };
                 push_group(
                     &mut groups,
@@ -373,7 +425,7 @@ fn poll_borrowed<'a>(
             TcpSocket::Dialing(dial) => {
                 let id: &str = &dial.id;
                 let Some(pending) = dial_map.get(id) else {
-                    return Err(format!("Tcp.poll: unknown dial '{}'", dial.id));
+                    return Err(format!("{operation}: unknown dial '{}'", dial.id));
                 };
                 if now >= pending.deadline {
                     ready.push(position);
@@ -398,7 +450,7 @@ fn poll_borrowed<'a>(
             TcpSocket::Listening(listener) => {
                 let id: &str = &listener.id;
                 let Some(state) = listener_map.get(id) else {
-                    return Err(format!("Tcp.poll: unknown listener '{}'", listener.id));
+                    return Err(format!("{operation}: unknown listener '{}'", listener.id));
                 };
                 push_group(
                     &mut groups,
@@ -412,7 +464,6 @@ fn poll_borrowed<'a>(
         }
     }
 
-    let poller = polling::Poller::new().map_err(|error| format_io_error("Tcp.poll", &error))?;
     for (key, group) in groups.iter().enumerate() {
         let event =
             polling::Event::new(key, !group.readable.is_empty(), !group.writable.is_empty());
@@ -421,7 +472,7 @@ fn poll_borrowed<'a>(
                 PollSource::Stream(stream) => poller.add(stream, event),
                 PollSource::Listener(listener) => poller.add(listener, event),
             }
-            .map_err(|error| format_io_error("Tcp.poll", &error))?;
+            .map_err(|error| format_io_error(operation, &error))?;
         }
     }
 
@@ -436,7 +487,7 @@ fn poll_borrowed<'a>(
     let mut events = polling::Events::with_capacity(capacity);
     poller
         .wait(&mut events, Some(timeout))
-        .map_err(|error| format_io_error("Tcp.poll", &error))?;
+        .map_err(|error| format_io_error(operation, &error))?;
     collect_events(&events, &groups, &mut ready);
 
     let after_wait = Instant::now();

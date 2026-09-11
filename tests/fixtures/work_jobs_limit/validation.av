@@ -1,0 +1,16 @@
+module Validation
+    kind = capability
+    semantics = effectful
+    depends [Work]
+    intent = "One job kind: counting down off the turn, slowly enough to be cancelled."
+    exposes [begin, take]
+
+operation begin(task: Int) -> Result<Work.Job, String>
+    ? "Starts one countdown off the turn and returns its job handle at once."
+    oracle = generativeOutput
+    replay = recorded
+
+operation take(job: Work.Job) -> Result<Option<Int>, String>
+    ? "Collects one finished countdown: None while it runs, Some(0) once it finished."
+    oracle = generativeOutput
+    replay = recorded

@@ -373,8 +373,9 @@ verify frameVerdict law neverReads
     /// invent merely to make a sweep wider.
     #[test]
     fn every_classified_non_output_effect_ships_enough_hostile_profiles() {
+        use crate::types::Type;
         use crate::types::checker::effect_classification::{
-            EffectDimension, classifications_for_proof_subset,
+            EffectDimension, classifications_for_proof_subset, oracle_signature,
         };
 
         const MIN_PROFILES: usize = 2;
@@ -385,8 +386,16 @@ verify frameVerdict law neverReads
                 continue;
             }
             let count = hostile_profiles_for(c.method).len();
-            let floor = if c.method == "Time.sleep" {
-                1
+            // An operation that answers `Unit` has one possible answer, so a
+            // second world could only repeat the first; whatever an adversary
+            // can do to it shows up in the answers of the operations that read
+            // its effect (`Work.cancel` is seen through `take`).
+            let answers_unit = matches!(
+                oracle_signature(c.method),
+                Some(Type::Fn(_, ref ret, _)) if **ret == Type::Unit
+            );
+            let floor = if c.method == "Time.sleep" || answers_unit {
+                usize::from(!answers_unit)
             } else {
                 MIN_PROFILES
             };

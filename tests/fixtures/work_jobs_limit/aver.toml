@@ -1,0 +1,9 @@
+[providers]
+schema = 1
+
+[[providers.bindings]]
+capability = "Validation"
+work = "Node.countdown"
+
+[work]
+max-jobs = 1

@@ -74,6 +74,14 @@ pub(crate) fn find(name: &str) -> Option<EmbeddedModule> {
             virtual_path: "<aver-stdlib>/capabilities/tcp.av",
             source: include_str!("../stdlib/capabilities/tcp.av"),
         }),
+        "Work" => Some(EmbeddedModule {
+            virtual_path: "<aver-stdlib>/capabilities/work.av",
+            source: include_str!("../stdlib/capabilities/work.av"),
+        }),
+        "Wait" => Some(EmbeddedModule {
+            virtual_path: "<aver-stdlib>/capabilities/wait.av",
+            source: include_str!("../stdlib/capabilities/wait.av"),
+        }),
         _ => None,
     }
 }
@@ -84,6 +92,45 @@ pub(crate) fn find(name: &str) -> Option<EmbeddedModule> {
 pub(crate) const STANDARD_CAPABILITY_MODULES: &[&str] = &[
     "Args", "Console", "Disk", "Env", "Http", "Process", "Random", "Tcp", "Terminal", "Time",
 ];
+
+/// Capability modules the compiler embeds and reserves for the runtime's own
+/// adapters. They resolve through `depends [...]` like any other standard
+/// module, and naming one of their types (`Work.Job`, `Wait.Item`) or calling
+/// one of their operations makes the module an implicit dependency, exactly
+/// as it does for a standard module; only the VM answers them in this build.
+pub(crate) const RESERVED_CAPABILITY_MODULES: &[&str] = &["Wait", "Work"];
+
+/// Canonical resource names (`Module.Resource`) of every embedded capability.
+///
+/// A resource has no layout: its only contract identity is the owning
+/// capability's contract, which the compiler ships. That is what lets one
+/// capability name another's resource at its own boundary without weakening
+/// the rule that a *represented* boundary type must be declared locally.
+pub(crate) fn embedded_capability_resources() -> &'static std::collections::BTreeSet<String> {
+    static RESOURCES: std::sync::OnceLock<std::collections::BTreeSet<String>> =
+        std::sync::OnceLock::new();
+    RESOURCES.get_or_init(|| {
+        let mut resources = std::collections::BTreeSet::new();
+        for module in STANDARD_CAPABILITY_MODULES
+            .iter()
+            .chain(RESERVED_CAPABILITY_MODULES)
+        {
+            let embedded = find(module).expect("embedded capability source must be present");
+            let items = crate::source::parse_source(embedded.source)
+                .expect("embedded capability must parse");
+            for item in &items {
+                if let crate::ast::TopLevel::Capability(crate::ast::CapabilityItem::Resource {
+                    name,
+                    ..
+                }) = item
+                {
+                    resources.insert(format!("{module}.{name}"));
+                }
+            }
+        }
+        resources
+    })
+}
 
 /// Host-backed calls whose signatures cross nominal record types owned by
 /// embedded standard modules, paired with the modules those types live in.
@@ -261,7 +308,7 @@ fn collect_standard_modules_from_type(ty: &crate::types::Type, deps: &mut Vec<St
     match ty {
         Type::Named { name, .. } => {
             if let Some((module, _)) = name.split_once('.')
-                && is_standard_capability(module)
+                && has_shipped_provider(module)
                 && !deps.iter().any(|dependency| dependency == module)
             {
                 deps.push(module.to_string());
@@ -295,18 +342,23 @@ fn collect_standard_modules_from_type(ty: &crate::types::Type, deps: &mut Vec<St
     }
 }
 
-/// Parse the standard capability contracts shipped by the compiler.
+/// Parse every capability contract the compiler embeds, reserved ones
+/// included.
 ///
-/// They are globally reserved and automatically visible; callers do not need
-/// a `depends [Time]`, `depends [Random]`, `depends [Process]`, or
-/// `depends [Disk]` merely to use a built-in standard capability.
-pub(crate) fn standard_capability_modules() -> Vec<crate::source::LoadedModule> {
+/// The standard ones are globally reserved and automatically visible; callers
+/// do not need a `depends [Time]`, `depends [Random]`, `depends [Process]`, or
+/// `depends [Disk]` merely to use a built-in standard capability. A reserved
+/// one needs `depends`, but it is still a compiler-shipped contract with a
+/// compiler-shipped provider, so the canonical registry must know it.
+pub(crate) fn embedded_capability_modules() -> Vec<crate::source::LoadedModule> {
     STANDARD_CAPABILITY_MODULES
         .iter()
+        .chain(RESERVED_CAPABILITY_MODULES)
+        .copied()
         .map(|name| {
             let module = find(name).expect("standard capability source must be embedded");
             crate::source::LoadedModule {
-                dep_name: (*name).to_string(),
+                dep_name: name.to_string(),
                 items: standard_capability_items(name)
                     .expect("standard capability source must be embedded")
                     .to_vec(),
@@ -329,6 +381,7 @@ pub(crate) fn standard_capability_items(module: &str) -> Option<&'static [crate:
         .get_or_init(|| {
             STANDARD_CAPABILITY_MODULES
                 .iter()
+                .chain(RESERVED_CAPABILITY_MODULES)
                 .map(|name| {
                     let source = find(name).expect("standard capability source must be embedded");
                     let items = crate::source::parse_source(source.source)
@@ -353,7 +406,7 @@ pub(crate) fn standard_capability_registry_ref() -> &'static crate::capability::
         std::sync::OnceLock::new();
     REGISTRY.get_or_init(|| {
         let mut registry = crate::capability::CapabilityRegistry::default();
-        for module in standard_capability_modules() {
+        for module in embedded_capability_modules() {
             let (next, errors) =
                 crate::capability::CapabilityRegistry::from_module(&module.dep_name, &module.items);
             assert!(
@@ -369,6 +422,15 @@ pub(crate) fn standard_capability_registry_ref() -> &'static crate::capability::
 
 pub(crate) fn is_standard_capability(module: &str) -> bool {
     STANDARD_CAPABILITY_MODULES.contains(&module)
+}
+
+/// Whether the compiler ships a provider for this capability.
+///
+/// Wider than [`is_standard_capability`]: a reserved capability is not
+/// visible without `depends`, but `Work` and `Wait` are still answered by
+/// compiler-shipped adapters, so the target manifest must say so.
+pub(crate) fn has_shipped_provider(module: &str) -> bool {
+    is_standard_capability(module) || RESERVED_CAPABILITY_MODULES.contains(&module)
 }
 
 /// Source-module dependencies needed when a standard hostile profile is

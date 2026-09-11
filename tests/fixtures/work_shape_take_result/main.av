@@ -1,0 +1,9 @@
+module Main
+    depends [Node, Validation]
+    intent = "A program whose job kind cannot report a running job."
+    effects [Console]
+
+fn main() -> Unit
+    ? "Reports that the job kind is wired."
+    ! [Console.print]
+    Console.print("jobs ready")
