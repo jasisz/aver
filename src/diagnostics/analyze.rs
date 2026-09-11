@@ -201,7 +201,11 @@ fn analyze_source_impl(
     // program the checker read; `items` stays the source as written.
     let mut transformed = items.clone();
     let user_program_len = transformed.len();
-    let tc_result = crate::ir::pipeline::front_gate(&mut transformed, &mode, user_program_len);
+    let marked = crate::config::MarkedCapabilities::from_manifest(
+        project_provider_manifest(options).as_ref(),
+    );
+    let tc_result =
+        crate::ir::pipeline::front_gate(&mut transformed, &mode, user_program_len, &marked);
 
     analyze_prechecked_items_impl(
         source,

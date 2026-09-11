@@ -186,9 +186,9 @@ impl MarkedCapabilities {
         let Some((namespace, _)) = operation.rsplit_once('.') else {
             return false;
         };
-        self.names.iter().any(|name| {
-            namespace == name || namespace.ends_with(&format!(".{name}"))
-        })
+        self.names
+            .iter()
+            .any(|name| namespace == name || namespace.ends_with(&format!(".{name}")))
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &str> {

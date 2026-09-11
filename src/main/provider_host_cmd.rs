@@ -330,6 +330,7 @@ fn plan_for_programs(
     module_root: &str,
     manifest: &aver::config::ProviderPackageManifest,
 ) -> Result<ProgramPlan, String> {
+    let marked = aver::config::MarkedCapabilities::from_manifest(Some(manifest));
     let mut capabilities = aver::capability::CapabilityRegistry::default();
     let mut required = BTreeSet::new();
     let mut planned = HashSet::new();
@@ -372,6 +373,7 @@ fn plan_for_programs(
                 &mut items,
                 &aver::ir::TypecheckMode::WithCheckedLoaded(&loaded),
                 user_program_len,
+                &marked,
             );
             if !tc.errors.is_empty() {
                 checked.insert(
@@ -703,6 +705,7 @@ fn work_input_rejections(
         &mut items,
         &aver::ir::TypecheckMode::WithLoaded(&loaded),
         user_program_len,
+        &aver::config::MarkedCapabilities::from_manifest(manifest.as_ref()),
     );
     if !tc.errors.is_empty() {
         // Type errors are the command's own report; a binding cannot be

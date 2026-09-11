@@ -1221,6 +1221,7 @@ pub(super) fn cmd_run_vm(
             typecheck: Some(aver::ir::TypecheckMode::WithCheckedLoaded(
                 &prepared_deps.loaded,
             )),
+            marked: prepared_deps.marked.clone(),
             dep_modules: &dep_modules,
             ..Default::default()
         },
@@ -2182,6 +2183,7 @@ fn audit_unit(
             &mut transformed,
             &aver::ir::TypecheckMode::WithCheckedLoaded(&unit.loaded),
             user_program_len,
+            &aver::config::MarkedCapabilities::for_project_dir(Some(module_root)),
         );
         preparation_failed |= !tc_result.errors.is_empty();
         let mut report =
@@ -3617,6 +3619,7 @@ pub(super) fn cmd_verify(
         })
         .collect();
     let config = load_runtime_policy(&module_root);
+    let marked = aver::config::MarkedCapabilities::for_project_dir(Some(&module_root));
     let pool = if jobs > 1 {
         match rayon::ThreadPoolBuilder::new().num_threads(jobs).build() {
             Ok(pool) => Some(pool),
@@ -3644,6 +3647,7 @@ pub(super) fn cmd_verify(
                     unit.items.clone(),
                     std::mem::take(&mut unit.loaded),
                     &unit.path,
+                    &marked,
                 )
             };
             unit.prepared = Some(prepared);
@@ -4093,6 +4097,7 @@ fn build_codegen_context(
         DepLowering::fully_lowered(dep_lowering, with_self_host_support),
     );
     let modules = prepared_deps.modules;
+    let marked = prepared_deps.marked;
     let typecheck_mode = if with_self_host_support {
         aver::ir::TypecheckMode::WithCheckedLoadedSelfHost(&prepared_deps.loaded)
     } else {
@@ -4103,6 +4108,7 @@ fn build_codegen_context(
         &mut items,
         aver::ir::PipelineConfig {
             typecheck: Some(typecheck_mode),
+            marked,
             run_interp_lower: apply_traversal_lowering,
             run_buffer_build: apply_traversal_lowering,
             run_chars_fusion: apply_traversal_lowering,
@@ -4847,6 +4853,7 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
         &mut items,
         PipelineConfig {
             typecheck: Some(TypecheckMode::WithCheckedLoaded(&prepared_deps.loaded)),
+            marked: prepared_deps.marked.clone(),
             // `--emit-ir` is a diagnostic, so attach the neutral policy
             // — the dump's `[no_alloc]` annotation matches the shared
             // VM/WASM baseline. Codegen pipelines should pass their
@@ -5202,6 +5209,7 @@ pub(super) fn cmd_explain_passes(file: &str, module_root_override: Option<&str>,
         &mut items,
         PipelineConfig {
             typecheck: Some(TypecheckMode::WithCheckedLoaded(&prepared_deps.loaded)),
+            marked: prepared_deps.marked.clone(),
             alloc_policy: Some(&neutral_policy),
             dep_modules: &dep_modules,
             run_refinement_lower: true,
@@ -5552,6 +5560,7 @@ pub(super) fn cmd_explain_mir_coverage(
         &mut items,
         PipelineConfig {
             typecheck: Some(TypecheckMode::WithCheckedLoaded(&prepared_deps.loaded)),
+            marked: prepared_deps.marked.clone(),
             // Rust coverage needs the symbol table to resolve `FnId` /
             // `TypeId` / `CtorId` through `MirEmitCtx`. Cheap to build;
             // the VM/wasm-gc paths read it too once a ctx is assembled.
@@ -6794,6 +6803,7 @@ fn cmd_compile_wasm_gc(
         &mut items,
         PipelineConfig {
             typecheck: Some(TypecheckMode::WithCheckedLoaded(&prepared_deps.loaded)),
+            marked: prepared_deps.marked.clone(),
             alloc_policy: Some(&neutral_policy),
             dep_modules: &dep_modules,
             // Interpolation keeps the backend's native variadic concat shape;
@@ -7381,6 +7391,7 @@ fn cmd_compile_wasip2(
             &mut items,
             PipelineConfig {
                 typecheck: Some(TypecheckMode::WithCheckedLoaded(&prepared_deps.loaded)),
+                marked: prepared_deps.marked.clone(),
                 alloc_policy: Some(&neutral_policy),
                 dep_modules: &dep_modules,
                 run_interp_lower: false,
@@ -12025,6 +12036,9 @@ pub(super) struct PreparedCompileDeps {
     /// so its host can recompute their hashes without the project tree.
     #[cfg_attr(not(feature = "wasm"), allow(dead_code))]
     pub(super) sources: std::collections::BTreeMap<String, String>,
+    /// The capabilities this project answers itself, so the entry's `yield`
+    /// functions are cut where its dependencies' were.
+    pub(super) marked: aver::config::MarkedCapabilities,
 }
 
 impl DepLowering {
@@ -12119,6 +12133,7 @@ pub(super) fn load_compile_deps_prepared(
         )),
         Err(error) => fail(error.to_string()),
     };
+    let marked = aver::config::MarkedCapabilities::for_project_dir(Some(module_root));
     // Keep loader faults in discovery order: the first broken edge a user
     // wrote remains the first diagnostic even though successful body checks
     // below run leaves-first.
@@ -12152,6 +12167,7 @@ pub(super) fn load_compile_deps_prepared(
             &mut module_items,
             aver::ir::PipelineConfig {
                 typecheck: Some(dep_typecheck_mode),
+                marked: marked.clone(),
                 run_interp_lower: lowering.interp_lower,
                 run_buffer_build: lowering.buffer_build,
                 run_chars_fusion: lowering.chars_fusion,
@@ -12194,6 +12210,7 @@ pub(super) fn load_compile_deps_prepared(
         modules,
         loaded,
         sources,
+        marked,
     }
 }
 

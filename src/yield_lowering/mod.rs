@@ -36,6 +36,13 @@ use crate::ast::*;
 use crate::codegen::expr_walk;
 use crate::types::checker::TypeError;
 
+/// The signature map the first type check produced: parameters, result and
+/// declared effects per function name. The lowering reads only the effects,
+/// and only to give a generated function the in-place effects its own
+/// segment performs (decision 4).
+pub(crate) type FnSigs =
+    std::collections::HashMap<String, (Vec<crate::ast::Type>, crate::ast::Type, Vec<String>)>;
+
 mod build;
 mod lower;
 
@@ -137,6 +144,8 @@ pub fn lower(
     items: &mut Vec<TopLevel>,
     stamped: &[TopLevel],
     stamped_errors: &[TypeError],
+    marked: &crate::config::MarkedCapabilities,
+    fn_sigs: &FnSigs,
 ) -> Result<YieldLoweringReport, Vec<TypeError>> {
     debug_assert_eq!(items.len(), stamped.len());
     let yield_fns: HashSet<String> = stamped
@@ -196,7 +205,7 @@ pub fn lower(
             out.push(item);
             continue;
         }
-        match lower::lower_fn(fd) {
+        match lower::lower_fn(fd, marked, fn_sigs) {
             Ok(generated) => {
                 report.lowered.push(fd.name.clone());
                 report.generated.extend(generated.items.iter().cloned());

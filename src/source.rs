@@ -475,6 +475,10 @@ pub struct Program {
     /// once at construction rather than a `RefCell` mutated lazily also
     /// keeps `Program` `Sync`.
     lowering_memo: HashMap<PathBuf, LoadedModule>,
+    /// The capabilities this program's manifest answers with a module of it,
+    /// carried so every re-lowering of a dependency cuts its `yield`
+    /// functions at exactly the calls the whole-program walk cut them at.
+    marked: crate::config::MarkedCapabilities,
 }
 
 // Report units are prepared with `rayon` across worker threads; a `Program`
@@ -554,7 +558,7 @@ impl Program {
         // through its own front door: a dependency that fails to lower
         // reports it there, against its own file, so the errors this call
         // hands back would be the same ones twice.
-        let _ = crate::ir::pipeline::lower_loaded_yield_modules(&mut modules, None);
+        let _ = crate::ir::pipeline::lower_loaded_yield_modules(&mut modules, None, &self.marked);
         Ok(modules)
     }
 }
@@ -569,7 +573,10 @@ impl Program {
 /// entered here: the whole-program clone below runs only when at least one
 /// dependency actually needs lowering, and even then a module that stays
 /// yield-free after lowering is dropped from the result, not memoized.
-fn compute_lowering_memo(dependencies: &[ProgramModule]) -> HashMap<PathBuf, LoadedModule> {
+fn compute_lowering_memo(
+    dependencies: &[ProgramModule],
+    marked: &crate::config::MarkedCapabilities,
+) -> HashMap<PathBuf, LoadedModule> {
     let yielding: Vec<usize> = dependencies
         .iter()
         .enumerate()
@@ -580,7 +587,7 @@ fn compute_lowering_memo(dependencies: &[ProgramModule]) -> HashMap<PathBuf, Loa
         return HashMap::new();
     }
     let mut loaded: Vec<LoadedModule> = dependencies.iter().map(ProgramModule::as_loaded).collect();
-    let _ = crate::ir::pipeline::lower_loaded_yield_modules(&mut loaded, None);
+    let _ = crate::ir::pipeline::lower_loaded_yield_modules(&mut loaded, None, marked);
     let mut memo = HashMap::new();
     for index in yielding {
         let entry = &loaded[index];
@@ -732,6 +739,7 @@ pub fn load_program_with_cache(
 ) -> Result<Program, LoadError> {
     let mut walk = Walk::new(module_root, mode, cache);
     walk.follow_edges(entry_path, entry_items)?;
+    let marked = walk.marked.clone();
     let mut modules = walk.modules;
     let entry_name = visibility::module_decl(entry_items)
         .map(|module| module.name.clone())
@@ -753,10 +761,11 @@ pub fn load_program_with_cache(
         fault: None,
     });
     let dependency_count = modules.len().saturating_sub(1);
-    let lowering_memo = compute_lowering_memo(&modules[..dependency_count]);
+    let lowering_memo = compute_lowering_memo(&modules[..dependency_count], &marked);
     Ok(Program {
         modules,
         lowering_memo,
+        marked,
     })
 }
 
@@ -978,7 +987,11 @@ pub fn load_module_tree_from_map(
     }
     // The playground analyses every file of the project separately, so a
     // module that fails to lower reports it under its own name there.
-    let _ = crate::ir::pipeline::lower_loaded_yield_modules(&mut result, None);
+    let _ = crate::ir::pipeline::lower_loaded_yield_modules(
+        &mut result,
+        None,
+        &crate::config::MarkedCapabilities::none(),
+    );
     Ok(result)
 }
 
@@ -1083,7 +1096,11 @@ pub fn load_module_tree_with_lowering(
         .into_iter()
         .map(|module| module.as_loaded())
         .collect();
-    let errors = crate::ir::pipeline::lower_loaded_yield_modules(&mut modules, Some(module_root));
+    let errors = crate::ir::pipeline::lower_loaded_yield_modules(
+        &mut modules,
+        Some(module_root),
+        &crate::config::MarkedCapabilities::for_project_dir(Some(module_root)),
+    );
     Ok((modules, errors))
 }
 
@@ -1154,6 +1171,11 @@ pub fn loaded_to_module_info(loaded: &[LoadedModule]) -> Vec<crate::codegen::Mod
 pub struct PreparedCompileDeps {
     pub modules: Vec<crate::codegen::ModuleInfo>,
     pub loaded: Vec<LoadedModule>,
+    /// The capabilities this project answers itself, read from its manifest
+    /// once. Every door that lowers the entry against these dependencies
+    /// passes it on, so the entry's `yield` functions are cut at exactly the
+    /// calls the dependencies' were.
+    pub marked: crate::config::MarkedCapabilities,
 }
 
 /// Prepare a codegen dependency graph once, leaves-first, and retain the
@@ -1214,6 +1236,7 @@ fn load_compile_deps_with_runtime_strings(
         }
     }
 
+    let marked = program.marked.clone();
     let neutral_policy = crate::ir::NeutralAllocPolicy;
     let mut modules = Vec::with_capacity(program.dependencies().len());
     for module in program.dependencies() {
@@ -1225,6 +1248,7 @@ fn load_compile_deps_with_runtime_strings(
             &mut module_items,
             crate::ir::PipelineConfig {
                 typecheck: Some(crate::ir::TypecheckMode::WithCheckedLoaded(&loaded)),
+                marked: marked.clone(),
                 run_interp_lower: false,
                 run_buffer_build: runtime_strings,
                 run_chars_fusion: runtime_strings,
@@ -1258,7 +1282,11 @@ fn load_compile_deps_with_runtime_strings(
     let loaded = program
         .loaded_dependencies_for(program.entry())
         .map_err(|error| error.to_string())?;
-    Ok(PreparedCompileDeps { modules, loaded })
+    Ok(PreparedCompileDeps {
+        modules,
+        loaded,
+        marked,
+    })
 }
 
 #[cfg(test)]

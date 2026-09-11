@@ -743,7 +743,9 @@ fn lower_for_context(
     let mode = crate::ir::TypecheckMode::Full {
         base_dir: module_root,
     };
-    let tc_result = crate::ir::pipeline::front_gate(&mut transformed, &mode, user_program_len);
+    let marked = crate::config::MarkedCapabilities::for_project_dir(module_root);
+    let tc_result =
+        crate::ir::pipeline::front_gate(&mut transformed, &mode, user_program_len, &marked);
     let tco_fns = transformed
         .iter()
         .filter_map(|item| match item {
