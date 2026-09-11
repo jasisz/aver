@@ -163,6 +163,21 @@ fn cross_module_runs_and_verifies_on_wasm_gc() {
     assert_verify_passes("yield_cross_module", &["verify", "--wasm-gc"], "4/4");
 }
 
+/// The check door judges the surface an importer sees. `loop` is not on
+/// it — the lowering took it off and put the protocol `CrossModule`
+/// drives in its place — so it is not an export nobody uses.
+#[test]
+fn check_does_not_report_the_lowered_function_as_an_unused_expose() {
+    let out = aver("yield_cross_module", &["check"]);
+    assert!(out.status.success(), "{}", format_output(&out));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !stdout.contains("unused-expose"),
+        "nothing in this program is an unused export:\n{}",
+        format_output(&out)
+    );
+}
+
 // ── The generated Aver, verbatim ────────────────────────────────────────
 
 /// The generated items are ordinary types and pure functions of the

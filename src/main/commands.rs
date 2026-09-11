@@ -826,6 +826,29 @@ fn collect_used_exposes_for_importer(
 /// (an entry, or a leaf pointed at directly) is not judged, since its
 /// importers are not in view. The finding names that scope: a sibling
 /// program outside the checked inputs is not consulted.
+/// The exposed names this check judges: the surface of the module as the
+/// rest of the compiler reads it, with the `yield` lowering applied.
+///
+/// An importer never sees a `yield` function — the lowering removes it and
+/// exposes its protocol under generated names in the reserved `__`
+/// namespace instead — so neither the removed name nor the generated ones
+/// are judged: neither is a name the user could stop exposing. Every
+/// hand-written name beside them is judged exactly as before.
+fn judged_exposed_names(exposes: &[String], items: &[TopLevel]) -> Vec<String> {
+    let lowered_away = |name: &String| {
+        name.starts_with("__")
+            || items.iter().any(|item| {
+                matches!(item, TopLevel::FnDef(fd)
+                    if &fd.name == name && aver::yield_lowering::is_yield_fn(fd))
+            })
+    };
+    exposes
+        .iter()
+        .filter(|name| !lowered_away(name))
+        .cloned()
+        .collect()
+}
+
 fn collect_unused_exposes_findings(units: &[&ReportUnit], module_root: &str) -> Vec<CheckFinding> {
     let mut module_info_by_path = HashMap::new();
 
@@ -867,7 +890,7 @@ fn collect_unused_exposes_findings(units: &[&ReportUnit], module_root: &str) -> 
                 file: path.clone(),
                 module_name: module.name.clone(),
                 exposes_line: module.exposes_line.unwrap_or(module.line),
-                exposed_names: module.exposes.clone(),
+                exposed_names: judged_exposed_names(&module.exposes, items),
                 exposed_name_set,
                 exposed_type_names,
             },
