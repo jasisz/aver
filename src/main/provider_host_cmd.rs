@@ -670,7 +670,10 @@ fn work_input_rejections(
             capabilities.merge(part);
         }
     }
-    if aver::capability::work::job_kinds(&capabilities).is_empty() {
+    if aver::capability::work::job_kinds(&capabilities).is_empty()
+        && (target == aver::capability::work::WorkTarget::Vm
+            || aver::capability::work::reserved_contract_in_use(&capabilities).is_none())
+    {
         return empty;
     }
 

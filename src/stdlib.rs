@@ -93,10 +93,11 @@ pub(crate) const STANDARD_CAPABILITY_MODULES: &[&str] = &[
     "Args", "Console", "Disk", "Env", "Http", "Process", "Random", "Tcp", "Terminal", "Time",
 ];
 
-/// Capability modules the compiler embeds and reserves, but which no native
-/// provider answers yet. They resolve through `depends [...]` like any other
-/// standard module; unlike `STANDARD_CAPABILITY_MODULES` they are neither
-/// globally visible without `depends` nor expected in the execution catalog.
+/// Capability modules the compiler embeds and reserves for the runtime's own
+/// adapters. They resolve through `depends [...]` like any other standard
+/// module, and naming one of their types (`Work.Job`, `Wait.Item`) or calling
+/// one of their operations makes the module an implicit dependency, exactly
+/// as it does for a standard module; only the VM answers them in this build.
 pub(crate) const RESERVED_CAPABILITY_MODULES: &[&str] = &["Wait", "Work"];
 
 /// Canonical resource names (`Module.Resource`) of every embedded capability.
@@ -307,7 +308,7 @@ fn collect_standard_modules_from_type(ty: &crate::types::Type, deps: &mut Vec<St
     match ty {
         Type::Named { name, .. } => {
             if let Some((module, _)) = name.split_once('.')
-                && is_standard_capability(module)
+                && has_shipped_provider(module)
                 && !deps.iter().any(|dependency| dependency == module)
             {
                 deps.push(module.to_string());

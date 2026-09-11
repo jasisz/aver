@@ -245,6 +245,16 @@ pub fn gate(
         fn_sigs,
         entry_module,
     ));
+    if target != WorkTarget::Vm
+        && shapes.is_empty()
+        && let Some(reserved) = reserved_contract_in_use(registry)
+    {
+        errors.push(WorkDiagnostic::new(WORK_TARGET, format!(
+            "Work-bound capabilities run on the VM in this build; the Rust, wasm-gc and wasip2 backends follow in a later change. The program depends on '{}', a reserved contract only the VM answers, and the requested target is {}.",
+            reserved,
+            target.label()
+        )));
+    }
     if !shapes.is_empty() && target != WorkTarget::Vm {
         errors.push(WorkDiagnostic::new(WORK_TARGET, format!(
             "Work-bound capabilities run on the VM in this build; the Rust, wasm-gc and wasip2 backends follow in a later change. '{}' is a job kind and the requested target is {}",
@@ -253,6 +263,16 @@ pub fn gate(
         )));
     }
     errors
+}
+
+/// The first reserved contract (`Wait`, `Work`) the program depends on, if any.
+/// A program can use `Wait.poll` over sockets alone, without a job kind, and
+/// no non-VM backend lowers it yet, so the target gate refuses that too.
+pub fn reserved_contract_in_use(registry: &CapabilityRegistry) -> Option<&'static str> {
+    crate::stdlib::RESERVED_CAPABILITY_MODULES
+        .iter()
+        .copied()
+        .find(|module| registry.contract(module).is_some())
 }
 
 /// Check every job kind of the program against the manifest's `work` bindings

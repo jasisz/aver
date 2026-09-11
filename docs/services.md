@@ -613,7 +613,7 @@ Contract sources: `stdlib/capabilities/work.av` and `stdlib/capabilities/wait.av
 
 | Function | Signature | Notes |
 |---|---|---|
-| `Work.cancel` | `(Work.Job) -> Unit` | Stops a running job at the runtime's next cancellation check, drops a finished job's result, and changes nothing for a job already cancelled or taken. |
+| `Work.cancel` | `(Work.Job) -> Result<Unit, String>` | Stops a running job at the runtime's next cancellation check, drops a finished job's result, and changes nothing for a job already cancelled or taken. The runtime answers `Ok(Unit)`; the hostile profile `cancelAlwaysErr` refuses every cancel, so a coordinator handles the refusal like any other `Result`. |
 | `Wait.poll` | `(Map<Int, Wait.Item>, Int) -> Result<List<Int>, String>` | One wait over sockets and jobs together. Returns sorted caller keys; `[]` means timeout. |
 
 `Work.Job` is a provider-owned resource, exactly like `Tcp.Connection`: a program can hold it, pass it, and put it in a wait set, but it cannot construct it, read it, compare it, or use it as a `Map` key. `Wait.Item` is the sum that lets one wait set hold both kinds of thing: `Socket(Tcp.Socket)` for everything `Tcp.poll` watches and `Job(Work.Job)` for a running job. A `Socket` item follows the `Tcp.poll` readiness rule verbatim; a `Job` key is ready once its job has finished or was cancelled. False-positive readiness is legal on both, so the operation the caller runs next still has to handle "nothing yet".

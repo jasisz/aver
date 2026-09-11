@@ -5,7 +5,16 @@ module Work
 
 resource Job
 
-operation cancel(job: Work.Job) -> Unit
-    ? "Cancels one job. A running job stops at the runtime's next cancellation check, a finished job drops its result, and cancelling an already cancelled or taken job changes nothing."
+operation cancel(job: Work.Job) -> Result<Unit, String>
+    ? "Cancels one job. A running job stops at the runtime's next cancellation check, a finished job drops its result, and cancelling an already cancelled or taken job changes nothing. The runtime answers Ok; a hostile world may refuse."
     oracle = generativeOutput
     replay = recorded
+    hostile = [cancelNormalOk, cancelAlwaysErr]
+
+fn cancelNormalOk(branch: BranchPath, call: Int, job: Work.Job) -> Result<Unit, String>
+    ? "honest: the cancel is accepted"
+    Result.Ok(Unit)
+
+fn cancelAlwaysErr(branch: BranchPath, call: Int, job: Work.Job) -> Result<Unit, String>
+    ? "hostile: every cancel is refused"
+    Result.Err("hostile: cancel refused")
