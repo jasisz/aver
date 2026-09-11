@@ -320,3 +320,54 @@ fn the_job_seam_has_two_ends() {
         "declares `task` without `landed`",
     );
 }
+
+/// `Wait` depends on `Tcp`, so generating reply sums into `Tcp` and giving it
+/// `depends [Wait]` would close a loop and the program would be refused for a
+/// circular import rather than for the binding that caused it. Nothing is
+/// generated into a capability the compiler ships, so every door reports the
+/// binding itself and nothing else.
+#[test]
+fn answering_a_shipped_capability_reachable_from_wait_reports_the_binding_only() {
+    let expected = "error[answer-binding]: aver.toml: [[providers.bindings]] index 0 binds capability 'Tcp' with `answer`";
+    for door in ["check", "run", "verify"] {
+        assert_reports("answer_shape_reserved_reachable", &[door], expected);
+        let out = aver("answer_shape_reserved_reachable", &[door]);
+        let text = combined(&out);
+        assert!(
+            !text.contains("Circular import") && !text.contains("__ReadReply"),
+            "{door} reports the binding, not what generating into Tcp would have caused:\n{}",
+            format_output(&out)
+        );
+    }
+}
+
+// ── intercept-outside-yield: a request is only a request in a process ────
+
+/// An operation of an answered capability is a request, and only a `yield`
+/// function makes one: the lowering cuts a process at the call and hands it
+/// to the coordinator. A plain function calling the same operation has
+/// nobody to answer it — the capability has no provider, and no request kind
+/// was generated for the call — so both program doors refuse it and the
+/// message names the answer function to call instead.
+#[test]
+fn an_answered_operation_outside_a_process_is_refused_at_the_check_door() {
+    assert_reports(
+        "answer_request_outside_yield",
+        &["check"],
+        "error[intercept-outside-yield]: 'Pool.claim' is answered by this program",
+    );
+    assert_reports(
+        "answer_request_outside_yield",
+        &["check"],
+        "Add `yield` to 'Main.seat', or call 'Ledger.claim(state, key)' directly",
+    );
+}
+
+#[test]
+fn an_answered_operation_outside_a_process_is_refused_at_the_run_door() {
+    assert_reports(
+        "answer_request_outside_yield",
+        &["run"],
+        "error[intercept-outside-yield]: 'Pool.claim' is answered by this program",
+    );
+}

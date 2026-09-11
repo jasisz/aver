@@ -93,6 +93,7 @@ pub const WORK_BINDING: &str = "work-binding";
 pub const WORK_TARGET: &str = "work-target";
 pub const ANSWER_SHAPE: &str = "answer-shape";
 pub const ANSWER_BINDING: &str = "answer-binding";
+pub const INTERCEPT_OUTSIDE_YIELD: &str = "intercept-outside-yield";
 
 /// Every capability of `registry` that names `Work.Job` at its boundary,
 /// paired with its checked shape or the `work-shape` diagnostic it fails.
@@ -277,6 +278,7 @@ pub fn gate(
         .unwrap_or(&[]);
     let (answers, answer_errors) = check_answers(registry, answer_bindings, fn_sigs, entry_module);
     errors.extend(answer_errors);
+    errors.extend(requests_outside_a_process(registry, &answers, fn_sigs));
     errors.extend(check_bindings(
         registry,
         &shapes,
@@ -291,11 +293,21 @@ pub fn gate(
     ));
     if target != WorkTarget::Vm
         && shapes.is_empty()
-        && let Some(reserved) = reserved_contract_in_use(registry)
+        && let Some(reserved) = reserved_contract_performed(registry, fn_sigs)
     {
         errors.push(WorkDiagnostic::new(WORK_TARGET, format!(
-            "Work-bound capabilities run on the VM in this build; the Rust, wasm-gc and wasip2 backends follow in a later change. The program depends on '{}', a reserved contract only the VM answers, and the requested target is {}.",
+            "Work-bound capabilities run on the VM in this build; the Rust, wasm-gc and wasip2 backends follow in a later change. The program performs an operation of '{}', a reserved contract only the VM answers, and the requested target is {}.",
             reserved,
+            target.label()
+        )));
+    }
+    if target != WorkTarget::Vm
+        && let Some(answered) = answers.first()
+    {
+        errors.push(WorkDiagnostic::new(WORK_TARGET, format!(
+            "A capability answered by the program runs on the VM in this build; the Rust, wasm-gc and wasip2 backends follow in a later change. '{}' is answered by module '{}', and the reply types generated for it carry `Wait.Wake`, which those backends have no representation for yet; the requested target is {}.",
+            answered.capabilities.first().map(String::as_str).unwrap_or(answered.module.as_str()),
+            answered.module,
             target.label()
         )));
     }
@@ -309,14 +321,159 @@ pub fn gate(
     errors
 }
 
+/// An operation of an answered capability performed outside a process.
+///
+/// A marked operation is a request, and a request is only a request inside a
+/// function whose effect list names `yield`: the lowering cuts such a
+/// function at it and the operation disappears from every effect list it
+/// leaves behind. So a marked operation still standing in a declared effect
+/// list after the lowering is a call from a plain function, and it has no
+/// answer — no provider is bound to the capability, and no request kind was
+/// generated for it. Saying so here is what makes proposal §2.4's "an
+/// unanswered request kind is impossible by construction" true.
+fn requests_outside_a_process(
+    registry: &CapabilityRegistry,
+    answers: &[AnswerShape],
+    fn_sigs: &std::collections::HashMap<String, FnSignature>,
+) -> Vec<WorkDiagnostic> {
+    let mut answered: BTreeMap<&str, &str> = BTreeMap::new();
+    for shape in answers {
+        for capability in &shape.capabilities {
+            answered.insert(capability.as_str(), shape.module.as_str());
+        }
+    }
+    let mut findings = Vec::new();
+    for name in program_functions(registry, fn_sigs) {
+        // A generated function is nobody's to fix. It carries what the plain
+        // function it calls declares, and that function is where this is
+        // reported.
+        if name
+            .rsplit('.')
+            .next()
+            .is_some_and(|bare| bare.starts_with("__"))
+        {
+            continue;
+        }
+        let (_, _, effects) = &fn_sigs[name];
+        // A process is where a request belongs. One that did not lower has
+        // its own error from the lowering, and this is not a second one.
+        if effects
+            .iter()
+            .any(|effect| effect == crate::yield_lowering::YIELD_EFFECT)
+        {
+            continue;
+        }
+        for effect in effects {
+            let Some((capability, operation)) = effect.rsplit_once('.') else {
+                continue;
+            };
+            let Some(module) = answered.get(capability) else {
+                continue;
+            };
+            findings.push(WorkDiagnostic::new(
+                INTERCEPT_OUTSIDE_YIELD,
+                format!(
+                    "'{effect}' is answered by this program — aver.toml binds capability \"{capability}\" to module '{module}' — so it is a request, and a request is only legal in a function whose effect list names `yield`. Add `yield` to '{name}', or call '{module}.{operation}({})' directly if what you wanted was the answer itself",
+                    answer_call_arguments(registry, capability, operation)
+                ),
+            ));
+        }
+    }
+    findings
+}
+
+/// The functions the program itself writes, in name order: everything in the
+/// signature map that is not a capability's own operation, counted once.
+///
+/// A capability declares `Pool.claim` and the map carries it as a function
+/// whose only effect is itself; that is the declaration of a request, not a
+/// call to one. The entry module's own functions are in the map twice, bare
+/// and qualified, and the qualified name is the one that says where they are.
+fn program_functions<'a>(
+    registry: &CapabilityRegistry,
+    fn_sigs: &'a std::collections::HashMap<String, FnSignature>,
+) -> Vec<&'a String> {
+    let mut names: Vec<&String> = fn_sigs.keys().collect();
+    names.sort();
+    let qualified: BTreeSet<&str> = names
+        .iter()
+        .filter_map(|name| name.rsplit_once('.'))
+        .map(|(_, bare)| bare)
+        .collect();
+    names
+        .into_iter()
+        .filter(|name| match name.rsplit_once('.') {
+            Some((module, _)) => registry.contract(module).is_none(),
+            None => !qualified.contains(name.as_str()),
+        })
+        .collect()
+}
+
+/// How the answer function of one operation reads at a call site: the state
+/// first, then the operation's own parameters by the names the capability
+/// gave them.
+fn answer_call_arguments(
+    registry: &CapabilityRegistry,
+    capability: &str,
+    operation: &str,
+) -> String {
+    let mut names = vec!["state".to_string()];
+    if let Some(declared) = operations_of(registry, capability)
+        .into_iter()
+        .find(|candidate| candidate.name == operation)
+    {
+        names.extend(declared.params.iter().map(|(name, _)| name.clone()));
+    }
+    names.join(", ")
+}
+
 /// The first reserved contract (`Wait`, `Work`) the program depends on, if any.
-/// A program can use `Wait.poll` over sockets alone, without a job kind, and
-/// no non-VM backend lowers it yet, so the target gate refuses that too.
+/// Cheap and wide: a front door reads it to decide whether the gate is worth
+/// running at all, never to refuse a target.
 pub fn reserved_contract_in_use(registry: &CapabilityRegistry) -> Option<&'static str> {
     crate::stdlib::RESERVED_CAPABILITY_MODULES
         .iter()
         .copied()
         .find(|module| registry.contract(module).is_some())
+}
+
+/// The first reserved contract the program performs an operation of, if any.
+/// A program can use `Wait.poll` over sockets alone, without a job kind, and
+/// no non-VM backend lowers it yet, so the target gate refuses that too.
+///
+/// A `depends` edge is not enough, and the difference is the whole of this
+/// function: an answered capability's generated reply sums name `Wait.Wake`,
+/// so every program that answers a capability depends on `Wait` while never
+/// polling it. Such a program is data and pure functions, which every backend
+/// compiles.
+fn reserved_contract_performed(
+    registry: &CapabilityRegistry,
+    fn_sigs: &std::collections::HashMap<String, FnSignature>,
+) -> Option<&'static str> {
+    crate::stdlib::RESERVED_CAPABILITY_MODULES
+        .iter()
+        .copied()
+        .find(|module| {
+            registry.contract(module).is_some() && performs_operation_of(registry, fn_sigs, module)
+        })
+}
+
+/// Whether any function of the program declares an effect of `module`, as the
+/// operation (`Wait.poll`) or as the bare namespace (`Wait`).
+fn performs_operation_of(
+    registry: &CapabilityRegistry,
+    fn_sigs: &std::collections::HashMap<String, FnSignature>,
+    module: &str,
+) -> bool {
+    let prefix = format!("{module}.");
+    program_functions(registry, fn_sigs)
+        .into_iter()
+        .any(|name| {
+            let (_, _, effects) = &fn_sigs[name];
+            effects
+                .iter()
+                .any(|effect| effect == module || effect.starts_with(&prefix))
+        })
 }
 
 /// The two binding kinds of the manifest that name a function or a module of
