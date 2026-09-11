@@ -981,6 +981,13 @@ pub fn front(items: &mut Vec<TopLevel>, cfg: FrontConfig<'_, '_>) -> FrontResult
                 if std::env::var_os("AVER_YIELD_DUMP").is_some() {
                     eprintln!("{}", report.generated_source());
                 }
+                // The lowering and the loop generator both write recursive
+                // functions, and both write them after the tail-call pass has
+                // run. Run it once more over what they left: a generated turn
+                // that grows the stack once per turn is not a loop.
+                if run_tco {
+                    tco(items);
+                }
                 result.yield_lowering = Some(report);
                 fire(PipelineStage::YieldLower, items);
                 let mut tc = typecheck(items, mode);

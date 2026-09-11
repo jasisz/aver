@@ -44,6 +44,7 @@ pub(crate) type FnSigs =
     std::collections::HashMap<String, (Vec<crate::ast::Type>, crate::ast::Type, Vec<String>)>;
 
 mod build;
+mod coordinator;
 mod lower;
 
 #[derive(Debug, Clone, Default)]
@@ -55,6 +56,8 @@ pub struct YieldLoweringReport {
     /// One entry per lowered function: the protocol the loop generator
     /// dispatches over.
     pub protocols: Vec<ProcessProtocol>,
+    /// The generated loop, as source, when the manifest asked for one.
+    pub loop_source: Option<String>,
 }
 
 /// What the loop generator has to know about one lowered process.
@@ -97,12 +100,19 @@ pub struct ProtocolKind {
     pub state: String,
     /// `__peerAnswerClaim`.
     pub answer_fn: String,
+    /// The state type's variants: one per stop of this kind, with how many
+    /// live variables it carries.
+    pub variants: Vec<(String, usize)>,
 }
 
 impl YieldLoweringReport {
     /// The generated items rendered as Aver source.
     pub fn generated_source(&self) -> String {
-        crate::ast::unparse::unparse(&self.generated).unwrap_or_default()
+        let protocol = crate::ast::unparse::unparse(&self.generated).unwrap_or_default();
+        match &self.loop_source {
+            Some(loop_source) => format!("{protocol}\n{loop_source}"),
+            None => protocol,
+        }
     }
 }
 
@@ -271,6 +281,43 @@ pub fn lower(
     *items = out;
     if !errors.is_empty() {
         return Err(errors);
+    }
+
+    // The loop the manifest asked for, generated into the module the `[run]`
+    // table names — the entry module, and no other, because that is where the
+    // policies and the view are and where a program is entered.
+    let module_name = items.iter().find_map(|item| match item {
+        TopLevel::Module(module) => Some(module.name.clone()),
+        _ => None,
+    });
+    let plan = marked.run();
+    if coordinator::is_run_module(module_name.as_deref(), plan) {
+        let plan = plan.expect("checked by is_run_module");
+        match coordinator::generate(items, &report.generated, &report.protocols, plan, fn_sigs) {
+            Ok(generated) => {
+                report.loop_source = Some(generated.source);
+                report.generated.extend(generated.items.iter().cloned());
+                items.extend(generated.items);
+                // The program declared the effects its processes perform; the
+                // turn performs the wait, the stop observation and both ends
+                // of every job kind besides, and the module's own boundary has
+                // to admit what is generated into it.
+                for item in items.iter_mut() {
+                    let TopLevel::Module(module) = item else {
+                        continue;
+                    };
+                    let Some(declared) = module.effects.as_mut() else {
+                        continue;
+                    };
+                    for effect in &generated.module_effects {
+                        if !declared.iter().any(|entry| entry == effect) {
+                            declared.push(effect.clone());
+                        }
+                    }
+                }
+            }
+            Err(found) => return Err(found),
+        }
     }
 
     // An exposed `yield` function exposes its protocol instead.

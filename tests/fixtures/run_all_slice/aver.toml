@@ -1,0 +1,46 @@
+[providers]
+schema = 1
+
+# Sockets answers the request-level I/O the peer, the accepting and the
+# dialling processes wait on. It owns the listener, the dials and the peers.
+[[providers.bindings]]
+capability = "Wire"
+answer = "Sockets"
+
+# One module answers three capabilities: the pool, the block store and chain
+# selection are one state in this program, as they are one record in a node.
+[[providers.bindings]]
+capability = "Pool"
+answer = "Ledger"
+
+[[providers.bindings]]
+capability = "Blocks"
+answer = "Ledger"
+
+[[providers.bindings]]
+capability = "Chain"
+answer = "Ledger"
+
+# The clock the ticker waits on.
+[[providers.bindings]]
+capability = "Clock"
+answer = "Clocked"
+
+# A job kind: the runtime runs Ledger.validate off the turn, takes its next
+# task from Ledger.nextTask and lands its result in Ledger.validated.
+[[providers.bindings]]
+capability = "Validation"
+work = "Ledger.validate"
+task = "Ledger.nextTask"
+landed = "Ledger.validated"
+
+[work]
+max-jobs = 1
+
+# The three policies and the view record. Declaring this table is what asks
+# for the loop to be generated.
+[run]
+order = "Node.order"
+admit = "Node.admit"
+stop = "Node.stop"
+view = "Node.View"

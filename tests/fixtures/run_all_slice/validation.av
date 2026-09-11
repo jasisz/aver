@@ -1,0 +1,16 @@
+module Validation
+    kind = capability
+    semantics = effectful
+    depends [Bytes, Work]
+    intent = "The job kind that validates one block body off the turn."
+    exposes [begin, take]
+
+operation begin(task: Tuple<Int, Bytes>) -> Result<Work.Job, String>
+    ? "Starts one validation of the body fetched for this height."
+    oracle = generative
+    replay = recorded
+
+operation take(job: Work.Job) -> Result<Option<Int>, String>
+    ? "The height whose body this validation accepted, 0 for a body it rejected, or None while it is still running."
+    oracle = generative
+    replay = recorded

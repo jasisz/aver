@@ -1,0 +1,52 @@
+module Sockets
+    intent = "The answers this program gives to Wire: who has arrived, and the one payload each peer is holding."
+    depends [Bytes, Wait, Wire]
+    exposes [State, fresh, accept, dialled, read, write]
+    effects []
+
+record State
+    inbound: List<Int>
+    outbound: List<Int>
+    wanted: Map<Int, Bytes>
+
+fn fresh() -> State
+    ? "Two peers waiting on the listener, one dial about to settle, and nothing asked for yet."
+    State(inbound = [1, 2], outbound = [3], wanted = {})
+
+fn accept(state: State) -> Tuple<State, Wire.__AcceptReply>
+    ? "The next peer the listener has, or Closed once it has handed over the last one."
+    match state.inbound
+        [] -> (state, Wire.__AcceptReply.Now(Wire.Arrival.Closed))
+        [key, ..rest] -> (State.update(state, inbound = rest), Wire.__AcceptReply.Now(Wire.Arrival.Peer(key)))
+
+fn dialled(state: State) -> Tuple<State, Wire.__DialledReply>
+    ? "The next dial that settled, or Closed once none is outstanding."
+    match state.outbound
+        [] -> (state, Wire.__DialledReply.Now(Wire.Arrival.Closed))
+        [key, ..rest] -> (State.update(state, outbound = rest), Wire.__DialledReply.Now(Wire.Arrival.Peer(key)))
+
+fn read(state: State, key: Int, max: Int, deadlineMs: Int) -> Tuple<State, Wire.__ReadReply>
+    ? "What one peer sent back: the body it was asked for, or a failure when it was asked for nothing."
+    heard(state, key, Map.get(state.wanted, key))
+
+fn heard(state: State, key: Int, held: Option<Bytes>) -> Tuple<State, Wire.__ReadReply>
+    ? "One attempt, against what this peer was asked for."
+    match held
+        Option.None -> (state, Wire.__ReadReply.Now(Wire.Heard.Failed("peer {key} was asked for nothing")))
+        Option.Some(payload) -> (State.update(state, wanted = Map.remove(state.wanted, key)), Wire.__ReadReply.Now(Wire.Heard.Data(payload)))
+
+fn write(state: State, key: Int, payload: Bytes) -> Tuple<State, Wire.__WriteReply>
+    ? "Hands a whole payload to one peer and remembers what it was asked for."
+    (State.update(state, wanted = Map.set(state.wanted, key, payload)), Wire.__WriteReply.Now(Result.Ok(Unit)))
+
+verify accept
+    accept(fresh()) => (State.update(fresh(), inbound = [2]), Wire.__AcceptReply.Now(Wire.Arrival.Peer(1)))
+    accept(State.update(fresh(), inbound = [])) => (State.update(fresh(), inbound = []), Wire.__AcceptReply.Now(Wire.Arrival.Closed))
+
+verify dialled
+    dialled(fresh()) => (State.update(fresh(), outbound = []), Wire.__DialledReply.Now(Wire.Arrival.Peer(3)))
+    dialled(State.update(fresh(), outbound = [])) => (State.update(fresh(), outbound = []), Wire.__DialledReply.Now(Wire.Arrival.Closed))
+
+verify heard
+    heard(fresh(), 1, Option.None) => (fresh(), Wire.__ReadReply.Now(Wire.Heard.Failed("peer 1 was asked for nothing")))
+    heard(State.update(fresh(), wanted = Map.set({}, 1, String.toUtf8("block 1"))), 1, Option.Some(String.toUtf8("block 1"))) => (fresh(), Wire.__ReadReply.Now(Wire.Heard.Data(String.toUtf8("block 1"))))

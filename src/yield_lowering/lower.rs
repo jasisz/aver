@@ -1377,6 +1377,11 @@ impl<'a> Lowering<'a> {
                     answer_type: kind.answer_type.clone(),
                     state: names.state(&kind.name),
                     answer_fn: names.answer(&kind.name),
+                    variants: kind
+                        .variants
+                        .iter()
+                        .map(|variant| (variant.name.clone(), variant.fields.len()))
+                        .collect(),
                 })
                 .collect(),
         };
