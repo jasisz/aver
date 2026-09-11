@@ -51,3 +51,22 @@ fn scored(pending: Map<Int, Wait.Item>, key: Int, score: Int, rest: List<Int>) -
     ! [Console.print, Validation.take]
     Console.print("job {key} scored {score}")
     harvest(Map.remove(pending, key), rest)
+
+fn scoreOnce(task: String) -> Result<Option<Int>, String>
+    ? "Starts one job and asks once for its answer, without waiting."
+    ! [Validation.begin, Validation.take]
+    job = Validation.begin(task)?
+    Validation.take(job)
+
+fn startedJob(path: BranchPath, call: Int, job: Work.Job, task: String) -> Result<Work.Job, String>
+    ? "A Validation.begin stub: every task starts, and the handle is the one the oracle was given."
+    Result.Ok(job)
+
+fn finishedJob(path: BranchPath, call: Int, job: Work.Job) -> Result<Option<Int>, String>
+    ? "A Validation.take stub: the job is already done and scored seven."
+    Result.Ok(Option.Some(7))
+
+verify scoreOnce
+    given begun: Validation.begin = [startedJob]
+    given taken: Validation.take = [finishedJob]
+    scoreOnce("alpha") => Result.Ok(Option.Some(7))

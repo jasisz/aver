@@ -437,6 +437,15 @@ pub(crate) fn is_standard_capability(module: &str) -> bool {
     STANDARD_CAPABILITY_MODULES.contains(&module)
 }
 
+/// Whether the compiler ships a provider for this capability.
+///
+/// Wider than [`is_standard_capability`]: a reserved capability is not
+/// visible without `depends`, but `Work` and `Wait` are still answered by
+/// compiler-shipped adapters, so the target manifest must say so.
+pub(crate) fn has_shipped_provider(module: &str) -> bool {
+    is_standard_capability(module) || RESERVED_CAPABILITY_MODULES.contains(&module)
+}
+
 /// Source-module dependencies needed when a standard hostile profile is
 /// lifted into the entry module as a synthetic verify function.
 pub(crate) fn standard_capability_profile_dependencies(method: &str) -> Vec<String> {

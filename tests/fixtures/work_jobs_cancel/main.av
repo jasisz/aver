@@ -1,0 +1,20 @@
+module Main
+    depends [Node, Validation, Work]
+    intent = "Cancels one long job before it can finish and shows what taking a cancelled job answers."
+    exposes [main]
+    effects [Console.print, Validation.begin, Validation.take, Work.cancel]
+
+fn main() -> Result<Unit, String>
+    ? "Starts one long countdown, cancels it, and prints why it cannot be taken."
+    ! [Console.print, Validation.begin, Validation.take, Work.cancel]
+    job = Validation.begin(400000000)?
+    Work.cancel(job)
+    match Validation.take(job)
+        Result.Ok(_answer) -> Result.Err("work: a cancelled job still answered")
+        Result.Err(reason) -> said(reason)
+
+fn said(reason: String) -> Result<Unit, String>
+    ? "Says why the cancelled job could not be taken."
+    ! [Console.print]
+    Console.print(reason)
+    Result.Ok(Unit)

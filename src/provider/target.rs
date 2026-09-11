@@ -311,7 +311,7 @@ fn binding_status(
 fn exact_standard_binding(
     contract: &CapabilityContract,
 ) -> Option<super::standard::StandardCapabilityBinding> {
-    if !crate::stdlib::is_standard_capability(&contract.module) {
+    if !crate::stdlib::has_shipped_provider(&contract.module) {
         return None;
     }
     let canonical = crate::stdlib::standard_capability_registry();
