@@ -149,7 +149,7 @@ fn is_capitalized_dotted_path(expr: &Spanned<Expr>) -> bool {
 }
 
 fn starts_capitalized(s: &str) -> bool {
-    s.chars().next().is_some_and(|c| c.is_ascii_uppercase())
+    crate::ast::name_is_type_like(s)
 }
 
 #[cfg(test)]

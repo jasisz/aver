@@ -131,14 +131,14 @@ pub(super) fn type_to_dafny_in_scope(ty: &Type, scope: Option<&str>) -> String {
                 name.replace('.', "_")
             } else if let Some(dot) = name.rfind('.') {
                 let module_part = &name[..dot];
-                let local = &name[dot + 1..];
+                let local = aver_name_to_dafny(&name[dot + 1..]);
                 if scope == Some(module_part) {
-                    local.to_string()
+                    local
                 } else {
                     format!("Aver_{}.{}", module_part.replace('.', "_"), local)
                 }
             } else {
-                name.to_string()
+                aver_name_to_dafny(name)
             }
         }
         Type::Var(_) | Type::Invalid => "/* unknown type */".to_string(),
@@ -206,7 +206,7 @@ pub fn emit_type_def_in_scope(
                 .collect();
             Some(format!(
                 "datatype {} = {}\n",
-                name,
+                aver_name_to_dafny(name),
                 variant_strs.join(" | ")
             ))
         }
@@ -234,6 +234,7 @@ pub fn emit_type_def_in_scope(
                     )
                 })
                 .collect();
+            let name = aver_name_to_dafny(name);
             Some(format!(
                 "datatype {} = {}({})\n",
                 name,

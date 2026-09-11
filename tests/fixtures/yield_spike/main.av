@@ -1,0 +1,42 @@
+module YieldSpike
+    intent = "Fixture: a yield function lowered to state types, a Request sum, an Outcome sum and pure answer functions, driven by a hand-written coordinator."
+    depends [Pool]
+    effects [Pool.claim, yield, Console.print]
+    exposes [drive, main]
+
+fn loop(id: Int, done: Int) -> Int
+    ? "Claims handles for id until the pool answers None, summing the handles into done."
+    ! [Pool.claim, yield]
+    r = Pool.claim(id)
+    match r
+        Option.None -> done
+        Option.Some(h) -> loop(id, done + h)
+
+fn drive(outcome: __LoopOutcome, answers: List<Option<Int>>) -> Int
+    ? "Coordinator: answers every Claim request from the answers list (None once the list is empty), resumes every Yield request, and returns the final result."
+    match outcome
+        __LoopOutcome.Done(v) -> v
+        __LoopOutcome.Waiting(request) -> match request
+            __LoopRequest.Yield(state) -> drive(__loopAnswerYield(state), answers)
+            __LoopRequest.Claim(peer, state) -> match answers
+                [] -> drive(__loopAnswerClaim(state, Option.None), [])
+                [answer, ..rest] -> drive(__loopAnswerClaim(state, answer), rest)
+
+verify drive
+    drive(__loopStart(1, 0), [Option.Some(7), Option.Some(8), Option.None]) => 15
+    drive(__loopStart(1, 0), []) => 0
+    drive(__loopStart(3, 10), [Option.Some(1)]) => 11
+
+verify __loopStart
+    __loopStart(1, 0) => __LoopOutcome.Waiting(__LoopRequest.Claim(1, __LoopClaimState.AwaitR(1, 0)))
+
+verify __loopAnswerClaim
+    __loopAnswerClaim(__LoopClaimState.AwaitR(1, 0), Option.None) => __LoopOutcome.Done(0)
+    __loopAnswerClaim(__LoopClaimState.AwaitR(1, 0), Option.Some(7)) => __LoopOutcome.Waiting(__LoopRequest.Yield(__LoopYieldState.Await2(1, 7)))
+
+fn main() -> Unit
+    ! [Console.print]
+    result = drive(__loopStart(1, 0), [Option.Some(7), Option.Some(8), Option.None])
+    match result == 15
+        true -> Console.print("Done(15) ok")
+        false -> Console.print("FAIL: expected Done(15), got {result}")

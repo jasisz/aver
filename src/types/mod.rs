@@ -106,7 +106,7 @@ pub fn parse_type_str_strict(s: &str) -> Result<Type, String> {
 
             // Capitalized identifier with only alphanumeric/_ and dot chars = user-defined type name
             // Supports dotted names like "Tcp.Connection"
-            if s.chars().next().is_some_and(|c| c.is_uppercase())
+            if crate::ast::name_is_type_like(s)
                 && s.chars()
                     .all(|c| c.is_alphanumeric() || c == '_' || c == '.')
             {
@@ -181,7 +181,7 @@ pub fn parse_type_str(s: &str) -> Type {
             }
             // Capitalized identifier with only alphanumeric/_ and dot chars = user-defined type
             // Supports dotted names like "Tcp.Connection"
-            if s.chars().next().is_some_and(|c| c.is_uppercase())
+            if crate::ast::name_is_type_like(s)
                 && s.chars()
                     .all(|c| c.is_alphanumeric() || c == '_' || c == '.')
                 && s != "Any"

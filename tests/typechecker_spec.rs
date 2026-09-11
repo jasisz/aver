@@ -5506,3 +5506,367 @@ fn law_template_typing_keeps_sample_literal_discharge_independent() {
     assert_eq!(block.cases[1].0.ty(), Some(&result));
     assert_eq!(block.cases[1].1.ty(), Some(&result));
 }
+
+// ---------------------------------------------------------------------------
+// `yield` functions (jasisz/aver#1329, phase one)
+//
+// The lowering runs in the pipeline front door between TCO and the checker,
+// so these go through `pipeline::front_gate` rather than `run_type_check`.
+// ---------------------------------------------------------------------------
+
+fn front_errors(src: &str) -> Vec<String> {
+    let mut items = parse(src);
+    let user_program_len = items.len();
+    aver::ir::pipeline::front_gate(
+        &mut items,
+        &aver::ir::TypecheckMode::Full { base_dir: None },
+        user_program_len,
+    )
+    .errors
+    .into_iter()
+    .map(|e| e.message)
+    .collect()
+}
+
+fn assert_front_error_containing(src: &str, snippet: &str) {
+    let errs = front_errors(src);
+    assert!(
+        errs.iter().any(|e| e.contains(snippet)),
+        "expected error containing {:?}, got:\n  {}",
+        snippet,
+        if errs.is_empty() {
+            "<no errors>".to_string()
+        } else {
+            errs.join("\n  ")
+        }
+    );
+}
+
+const YIELD_MODULE: &str = "module Demo\n    effects [Console.print, Console.readLine, yield]\n\n";
+
+const YIELD_LOOP: &str = r#"fn loop(seen: Int) -> Int
+    ? "Reads lines until the console fails, counting them."
+    ! [Console.readLine, yield]
+    line = Console.readLine()
+    match line
+        Result.Err(_) -> seen
+        Result.Ok(_) -> loop(seen + 1)
+"#;
+
+const YIELD_COORDINATOR: &str = r#"
+fn drive(outcome: __LoopOutcome, lines: List<Result<String, String>>) -> Int
+    ? "Answers every ReadLine request from lines and resumes every Yield request."
+    match outcome
+        __LoopOutcome.Done(v) -> v
+        __LoopOutcome.Waiting(request) -> match request
+            __LoopRequest.Yield(state) -> drive(__loopAnswerYield(state), lines)
+            __LoopRequest.ReadLine(state) -> match lines
+                [] -> drive(__loopAnswerReadLine(state, Result.Err("eof")), [])
+                [l, ..rest] -> drive(__loopAnswerReadLine(state, l), rest)
+"#;
+
+#[test]
+fn yield_effect_parses_and_the_function_lowers_without_errors() {
+    let errs = front_errors(&format!("{YIELD_MODULE}{YIELD_LOOP}"));
+    assert!(
+        errs.is_empty(),
+        "unexpected errors:\n  {}",
+        errs.join("\n  ")
+    );
+}
+
+#[test]
+fn yield_propagates_as_an_effect_through_the_module_boundary() {
+    let src = format!("module Demo\n    effects [Console.readLine]\n\n{YIELD_LOOP}");
+    assert_front_error_containing(&src, "'yield' which is not in the declared boundary");
+}
+
+#[test]
+fn plain_call_to_a_yield_function_is_an_error_with_a_recipe() {
+    let src = format!("{YIELD_MODULE}{YIELD_LOOP}\nfn main() -> Int\n    loop(0)\n");
+    assert_front_error_containing(
+        &src,
+        "Function 'main' calls 'loop' directly, but 'loop' yields; call '__loopStart(...)' and answer its requests",
+    );
+}
+
+#[test]
+fn verify_case_calling_a_yield_function_gets_the_same_recipe() {
+    let src = format!("{YIELD_MODULE}{YIELD_LOOP}\nverify loop\n    loop(0) => 0\n");
+    assert_front_error_containing(
+        &src,
+        "verify block for 'loop' calls 'loop' directly, but 'loop' yields; call '__loopStart(...)'",
+    );
+}
+
+#[test]
+fn calling_the_yield_function_before_its_definition_gets_only_the_recipe() {
+    let src = format!("{YIELD_MODULE}fn main() -> Int\n    loop(0)\n\n{YIELD_LOOP}");
+    let errs = front_errors(&src);
+    assert_eq!(
+        errs.len(),
+        1,
+        "expected exactly one error, got:\n  {}",
+        errs.join("\n  ")
+    );
+    assert!(
+        errs[0].contains("Function 'main' calls 'loop' directly, but 'loop' yields; call '__loopStart(...)' and answer its requests"),
+        "unexpected error text: {}",
+        errs[0]
+    );
+    assert!(
+        !errs[0].to_lowercase().contains("missing effect"),
+        "error should not mention a missing effect:\n  {}",
+        errs[0]
+    );
+}
+
+#[test]
+fn calling_the_yield_function_after_its_definition_gets_only_the_recipe() {
+    let src = format!("{YIELD_MODULE}{YIELD_LOOP}\nfn main() -> Int\n    loop(0)\n");
+    let errs = front_errors(&src);
+    assert_eq!(
+        errs.len(),
+        1,
+        "expected exactly one error, got:\n  {}",
+        errs.join("\n  ")
+    );
+    assert!(
+        errs[0].contains("Function 'main' calls 'loop' directly, but 'loop' yields; call '__loopStart(...)' and answer its requests"),
+        "unexpected error text: {}",
+        errs[0]
+    );
+    assert!(
+        !errs[0].to_lowercase().contains("missing effect"),
+        "error should not mention a missing effect:\n  {}",
+        errs[0]
+    );
+}
+
+#[test]
+fn non_tail_call_to_a_yield_function_is_an_error_with_a_recipe() {
+    let src = format!(
+        "{YIELD_MODULE}{YIELD_LOOP}\nfn outer(n: Int) -> Int\n    ? \"Counts one more than loop.\"\n    ! [Console.readLine, yield]\n    loop(n) + 1\n"
+    );
+    assert_front_error_containing(
+        &src,
+        "Function 'outer' calls yield function 'loop' outside tail position; pass what comes next as data, or make it a tail call",
+    );
+}
+
+#[test]
+fn tail_call_to_another_yield_function_is_rejected_in_phase_one() {
+    let src = format!(
+        "{YIELD_MODULE}{YIELD_LOOP}\nfn outer(n: Int) -> Int\n    ? \"Hands over to loop.\"\n    ! [Console.readLine, yield]\n    loop(n)\n"
+    );
+    assert_front_error_containing(
+        &src,
+        "Function 'outer' tail-calls yield function 'loop', which has its own request and outcome types",
+    );
+}
+
+#[test]
+fn generated_names_are_referenceable_from_a_coordinator() {
+    let errs = front_errors(&format!("{YIELD_MODULE}{YIELD_LOOP}{YIELD_COORDINATOR}"));
+    assert!(
+        errs.is_empty(),
+        "unexpected errors:\n  {}",
+        errs.join("\n  ")
+    );
+}
+
+#[test]
+fn wrong_state_and_answer_pairing_is_a_type_error() {
+    let src = format!(
+        "{YIELD_MODULE}{YIELD_LOOP}\nfn bad(state: __LoopYieldState) -> __LoopOutcome\n    ? \"Answers a ReadLine with a Yield state.\"\n    __loopAnswerReadLine(state, Result.Ok(\"x\"))\n"
+    );
+    let errs = front_errors(&src);
+    assert!(
+        errs.iter()
+            .any(|e| e.contains("__LoopReadLineState") && e.contains("__LoopYieldState")),
+        "expected a mismatch naming both state types, got:\n  {}",
+        errs.join("\n  ")
+    );
+}
+
+#[test]
+fn unsupported_construct_in_a_yield_function_is_named() {
+    let src = format!(
+        "{YIELD_MODULE}fn both() -> Unit\n    ? \"Prints twice at once.\"\n    ! [Console.print, yield]\n    _ = (Console.print(\"a\"), Console.print(\"b\"))!\n    Console.print(\"c\")\n"
+    );
+    assert_front_error_containing(
+        &src,
+        "Function 'both': a request inside an independent product `(a, b)!` is not supported by yield lowering",
+    );
+}
+
+#[test]
+fn callback_live_across_a_request_is_rejected() {
+    let src = format!(
+        "{YIELD_MODULE}fn apply(f: Fn(Int) -> Int, n: Int) -> Int\n    ? \"Prints, then applies f.\"\n    ! [Console.print, yield]\n    Console.print(\"x\")\n    f(n)\n"
+    );
+    assert_front_error_containing(
+        &src,
+        "the live variable 'f' is a function value and would be live across a request",
+    );
+}
+
+#[test]
+fn yield_function_without_a_stop_is_an_error() {
+    let src = format!(
+        "{YIELD_MODULE}fn still(n: Int) -> Int\n    ? \"Never stops.\"\n    ! [yield]\n    n + 1\n"
+    );
+    assert_front_error_containing(&src, "declares `yield` but never stops");
+}
+
+#[test]
+fn error_propagation_inside_a_yield_function_lowers() {
+    let src = format!(
+        "{YIELD_MODULE}fn first(seen: Int) -> Result<Int, String>\n    ? \"Reads one line, echoes it, and counts it.\"\n    ! [Console.print, Console.readLine, yield]\n    line = Console.readLine()?\n    Console.print(line)\n    Result.Ok(seen + 1)\n"
+    );
+    let errs = front_errors(&src);
+    assert!(
+        errs.is_empty(),
+        "unexpected errors:\n  {}",
+        errs.join("\n  ")
+    );
+}
+
+// ---------------------------------------------------------------------------
+// `yield` across the module boundary (jasisz/aver#1329, phase one)
+//
+// A dependency is lowered by the loader before any importer reads it
+// (`pipeline::lower_loaded_yield_modules`), so an importer sees the protocol
+// the exporter now exposes and never the function the lowering removed.
+// ---------------------------------------------------------------------------
+
+fn yield_cross_module_root() -> String {
+    format!(
+        "{}/tests/fixtures/yield_cross_module",
+        env!("CARGO_MANIFEST_DIR")
+    )
+}
+
+fn front_errors_against(src: &str, base_dir: &str) -> Vec<String> {
+    let mut items = parse(src);
+    let user_program_len = items.len();
+    aver::ir::pipeline::front_gate(
+        &mut items,
+        &aver::ir::TypecheckMode::Full {
+            base_dir: Some(base_dir),
+        },
+        user_program_len,
+    )
+    .errors
+    .into_iter()
+    .map(|e| e.message)
+    .collect()
+}
+
+#[test]
+fn an_importer_resolves_the_generated_protocol_of_a_dependency() {
+    let src = include_str!("fixtures/yield_cross_module/main.av");
+    let errs = front_errors_against(src, &yield_cross_module_root());
+    assert!(
+        errs.is_empty(),
+        "unexpected errors:\n  {}",
+        errs.join("\n  ")
+    );
+}
+
+#[test]
+fn a_plain_call_into_a_dependency_yield_function_gets_the_qualified_recipe() {
+    let src = "module Client\n    intent = \"Calls the library's yielding function as if it were an ordinary one.\"\n    depends [Looper]\n    exposes [total]\n\nfn total() -> Int\n    ? \"Sums the handles Looper hands out.\"\n    Looper.loop(2, 0)\n";
+    let errs = front_errors_against(src, &yield_cross_module_root());
+    assert!(
+        errs.iter().any(|e| e.contains(
+            "'Looper.loop' yields; call 'Looper.__loopStart(...)' and answer its requests"
+        )),
+        "expected the qualified recipe, got:\n  {}",
+        errs.join("\n  ")
+    );
+    // Addendum 2: the recipe replaces the propagation error, and the
+    // removed name never reads as a typo.
+    for error in &errs {
+        assert!(
+            !error.contains("does not declare it") && !error.contains("Unknown member"),
+            "the recipe should be the only word on this call:\n  {}",
+            errs.join("\n  ")
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// What a bare name in an effect list may be (jasisz/aver#1329, addendum 1)
+// ---------------------------------------------------------------------------
+
+const UNKNOWN_EFFECT_RECIPE: &str = "an effect is a capability operation written 'Namespace.operation', a whole capability namespace written 'Namespace', or the language's own 'yield'";
+
+#[test]
+fn an_unknown_bare_effect_in_a_function_list_names_itself_with_the_recipe() {
+    let src = "module Demo\n\nfn go(n: Int) -> Int\n    ? \"Adds one.\"\n    ! [foo]\n    n + 1\n";
+    assert_front_error_containing(src, "Unknown effect 'foo'");
+    assert_front_error_containing(src, UNKNOWN_EFFECT_RECIPE);
+}
+
+#[test]
+fn an_unknown_bare_effect_in_a_module_list_names_itself_with_the_recipe() {
+    let src =
+        "module Demo\n    effects [foo]\n\nfn go(n: Int) -> Int\n    ? \"Adds one.\"\n    n + 1\n";
+    assert_front_error_containing(src, "Unknown effect 'foo'");
+    assert_front_error_containing(src, UNKNOWN_EFFECT_RECIPE);
+}
+
+/// The rule exists for this: `yeild` used to buy neither the effect nor a
+/// word about it, so the function silently kept running as written.
+#[test]
+fn a_misspelled_yield_is_an_unknown_effect() {
+    let src =
+        "module Demo\n\nfn go(n: Int) -> Int\n    ? \"Adds one.\"\n    ! [yeild]\n    n + 1\n";
+    assert_front_error_containing(src, "Unknown effect 'yeild'");
+}
+
+#[test]
+fn a_capability_namespace_and_yield_stay_legal_bare_effects() {
+    let src = "module Demo\n    effects [Console, yield]\n\nfn talk(n: Int) -> Int\n    ? \"Greets n times.\"\n    ! [Console, yield]\n    Console.print(\"hi\")\n    match n\n        0 -> 0\n        _ -> talk(n - 1)\n";
+    let errs = front_errors(src);
+    assert!(
+        errs.is_empty(),
+        "unexpected errors:\n  {}",
+        errs.join("\n  ")
+    );
+}
+
+// ---------------------------------------------------------------------------
+// The type of a live variable comes from a use of THAT variable
+// (jasisz/aver#1329, phase one)
+//
+// A state field's type is read off the first use of the variable in the
+// continuation. A `match` arm whose pattern binds the same spelling is a
+// different variable, and reading its stamp typed the field after the wrong
+// one: `s: Int` became a `String` field, and the two type errors that
+// produced were about generated names, which also suppressed the shadowing
+// ban that had the real answer.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_shadowing_arm_does_not_type_a_live_variables_state_field() {
+    let src = "module Demo\n    effects [Console, yield]\n\nfn probe(s: Int, v: Result<String, String>) -> Int\n    ? \"Stops, then reads s only in the arm that does not rebind it.\"\n    ! [Console, yield]\n    Console.print(\"go\")\n    match v\n        Result.Ok(s) -> String.len(s)\n        Result.Err(_) -> s\n";
+    let errs = front_errors(src);
+    assert_eq!(
+        errs.len(),
+        1,
+        "expected only the shadowing ban's own error, got:\n  {}",
+        errs.join("\n  ")
+    );
+    assert!(
+        errs[0].contains("the pattern binding 's' shadows the parameter 's'"),
+        "unexpected error text: {}",
+        errs[0]
+    );
+    assert!(
+        !errs.iter().any(|e| e.contains("__Probe")),
+        "no error should be about a generated name:\n  {}",
+        errs.join("\n  ")
+    );
+}

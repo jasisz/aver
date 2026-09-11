@@ -318,7 +318,7 @@ fn wasm_gc_records_and_replays_per_function_entry() {
         "module PerFnSmoke\n    intent = \"per-fn entry smoke\"\n\n\
          fn add(a: Int, b: Int) -> Int\n    ! [Console.print]\n    \
          Console.print(\"{a}+{b}\")\n    a + b\n\n\
-         fn main() -> Unit\n    ! [Console.print, add]\n    \
+         fn main() -> Unit\n    ! [Console.print]\n    \
          _ = add(2, 3)\n",
     );
     let rec_dir = temp_dir("aver-wasm-gc-rec-perfn-traces");

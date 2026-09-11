@@ -106,7 +106,7 @@ impl Parser {
             // Constructor patterns must be qualified: Shape.Circle, Result.Ok,
             // Domain.Types.TaskEvent.TaskStarted, etc.
             TokenKind::Ident(ref s)
-                if s.chars().next().is_some_and(|c| c.is_uppercase())
+                if crate::ast::name_is_type_like(s)
                     || matches!(self.peek(1).kind, TokenKind::Dot) =>
             {
                 let name = self.parse_qualified_ident()?;

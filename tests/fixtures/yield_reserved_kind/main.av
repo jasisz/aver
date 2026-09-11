@@ -1,0 +1,17 @@
+module YieldReservedKind
+    intent = "Fixture: an operation whose leaf name is the reserved kind of the self tail call, so the two must not become one request kind."
+    depends [Sched]
+    effects [Sched.yield, yield]
+    exposes [main]
+
+fn loop(id: Int, seen: Int) -> Int
+    ? "Steps aside once per round and loops until id runs down to zero."
+    ! [Sched.yield, yield]
+    tick = Sched.yield(id)
+    match id
+        0 -> seen + tick
+        _ -> loop(id - 1, seen + tick)
+
+fn main() -> Unit
+    ? "The coordinator that drives the protocol lives in the test."
+    Unit

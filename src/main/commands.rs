@@ -826,6 +826,29 @@ fn collect_used_exposes_for_importer(
 /// (an entry, or a leaf pointed at directly) is not judged, since its
 /// importers are not in view. The finding names that scope: a sibling
 /// program outside the checked inputs is not consulted.
+/// The exposed names this check judges: the surface of the module as the
+/// rest of the compiler reads it, with the `yield` lowering applied.
+///
+/// An importer never sees a `yield` function — the lowering removes it and
+/// exposes its protocol under generated names in the reserved `__`
+/// namespace instead — so neither the removed name nor the generated ones
+/// are judged: neither is a name the user could stop exposing. Every
+/// hand-written name beside them is judged exactly as before.
+fn judged_exposed_names(exposes: &[String], items: &[TopLevel]) -> Vec<String> {
+    let lowered_away = |name: &String| {
+        name.starts_with("__")
+            || items.iter().any(|item| {
+                matches!(item, TopLevel::FnDef(fd)
+                    if &fd.name == name && aver::yield_lowering::is_yield_fn(fd))
+            })
+    };
+    exposes
+        .iter()
+        .filter(|name| !lowered_away(name))
+        .cloned()
+        .collect()
+}
+
 fn collect_unused_exposes_findings(units: &[&ReportUnit], module_root: &str) -> Vec<CheckFinding> {
     let mut module_info_by_path = HashMap::new();
 
@@ -867,7 +890,7 @@ fn collect_unused_exposes_findings(units: &[&ReportUnit], module_root: &str) -> 
                 file: path.clone(),
                 module_name: module.name.clone(),
                 exposes_line: module.exposes_line.unwrap_or(module.line),
-                exposed_names: module.exposes.clone(),
+                exposed_names: judged_exposed_names(&module.exposes, items),
                 exposed_name_set,
                 exposed_type_names,
             },
@@ -1710,6 +1733,7 @@ pub(super) fn cmd_run_self_hosted(
 /// Check and report `units` in order. `unused_exposes` carries the
 /// cross-module findings, keyed by canonical path, judged over every unit
 /// the command was pointed at. Returns `(path, has_errors)` per unit.
+#[allow(clippy::too_many_arguments)]
 fn check_units(
     units: &[ReportUnit],
     module_root: &str,
@@ -1718,16 +1742,20 @@ fn check_units(
     json: bool,
     tracker: &mut SuppressionTracker,
     unused_exposes: &HashMap<String, Vec<CheckFinding>>,
+    reported_unit_keys: &HashSet<String>,
 ) -> Vec<(String, bool)> {
     let mut outcomes = Vec::with_capacity(units.len());
     // A diagnostic belongs to the module whose file it points at. When that
-    // module is itself a unit of this program it reports the diagnostic, so
-    // another unit (typically the entry, whose typecheck surfaces dependency
-    // errors) must not repeat it.
-    let unit_keys: std::collections::HashSet<String> = units
-        .iter()
-        .map(|(path, _, _)| canonical_path_key(path))
-        .collect();
+    // module is itself a unit of the run it reports the diagnostic there, so
+    // another unit (typically an importer, whose typecheck surfaces
+    // dependency errors) must not repeat it. `reported_unit_keys` is every
+    // module the whole run (every input's program, not only this one) has
+    // already claimed as a unit of its own — a directory `check` walks
+    // several programs that can share a dependency, and that dependency's
+    // own section is decided once, by whichever program reached it first
+    // (see `reported` in `cmd_check`), so this must be the same run-wide
+    // set rather than just this program's own units.
+    let unit_keys = reported_unit_keys;
 
     for (idx, (path, source, items)) in units.iter().enumerate() {
         let shown_path = display_check_path(path, module_root);
@@ -2126,11 +2154,11 @@ fn audit_unit(
         analyze_source(source, &opts)
     } else {
         let mut transformed = unit.items.clone();
-        aver::ir::pipeline::tco(&mut transformed);
-        let tc_result = aver::ir::pipeline::typecheck_gate(
-            &transformed,
+        let user_program_len = transformed.len();
+        let tc_result = aver::ir::pipeline::front_gate(
+            &mut transformed,
             &aver::ir::TypecheckMode::WithCheckedLoaded(&unit.loaded),
-            &unit.items,
+            user_program_len,
         );
         preparation_failed |= !tc_result.errors.is_empty();
         let mut report =
@@ -2398,6 +2426,18 @@ pub(super) fn cmd_check(path: &str, module_root_override: Option<&str>, verbose:
         })
         .collect::<Vec<_>>();
 
+    // Every module claimed as some input's own unit above, keyed the same
+    // way a diagnostic's span is (`span_file_key`/`canonical_path_key`). A
+    // shared dependency's lowering error is attributed to its own file by
+    // `dependency_origin`, and every importer that reads it recomputes and
+    // re-reports the same error; this run-wide set lets `check_units` keep
+    // it only in the one program section that owns the dependency's own
+    // unit, across every input rather than just the current one.
+    let reported_unit_keys: HashSet<String> = reported
+        .iter()
+        .map(|path| path.to_string_lossy().to_string())
+        .collect();
+
     // Unused exposes are judged over the union of those programs, so a name
     // one input's program exports for another input's program counts as
     // used.
@@ -2448,6 +2488,7 @@ pub(super) fn cmd_check(path: &str, module_root_override: Option<&str>, verbose:
                     json,
                     &mut tracker,
                     &unused_exposes,
+                    &reported_unit_keys,
                 );
                 checked_modules += outcomes.len();
                 failed_modules.extend(
@@ -4698,6 +4739,7 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
         // Run the full pipeline so the resolved HIR is available to lower.
         "mir" => Some(PipelineStage::NameResolve),
         "tco" => Some(PipelineStage::Tco),
+        "yield_lower" => Some(PipelineStage::YieldLower),
         "typecheck" => Some(PipelineStage::Typecheck),
         "interp_lower" => Some(PipelineStage::InterpLower),
         "buffer_build" => Some(PipelineStage::BufferBuild),
@@ -4719,7 +4761,7 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
                 "{}",
                 format!(
                     "unknown --emit-ir-after stage '{}'; expected one of: \
-                     parse, tco, typecheck, interp_lower, buffer_build, chars_fusion, string_index, list_build, byte_sink, resolve, last_use, analyze, escape, build_symbols, name_resolve, refinement_lower, contract_lower, law_lower, mir",
+                     parse, tco, yield_lower, typecheck, interp_lower, buffer_build, chars_fusion, string_index, list_build, byte_sink, resolve, last_use, analyze, escape, build_symbols, name_resolve, refinement_lower, contract_lower, law_lower, mir",
                     other
                 )
                 .red()

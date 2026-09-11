@@ -1,0 +1,24 @@
+module CrossModule
+    intent = "Fixture: a dependent module drives a yielding function of another module through the protocol that module exposes."
+    depends [Looper]
+    effects [Console.print]
+    exposes [drive, main]
+
+fn drive(outcome: Looper.__LoopOutcome) -> Int
+    ? "Answers every Claim request with twice the peer it names and resumes every Yield request."
+    match outcome
+        Looper.__LoopOutcome.Done(v) -> v
+        Looper.__LoopOutcome.Waiting(request) -> match request
+            Looper.__LoopRequest.Claim(peer, state) -> drive(Looper.__loopAnswerClaim(state, peer * 2))
+            Looper.__LoopRequest.Yield(state) -> drive(Looper.__loopAnswerYield(state))
+
+verify drive
+    drive(Looper.__LoopOutcome.Done(3)) => 3
+    drive(Looper.__LoopOutcome.Waiting(Looper.__LoopRequest.Claim(4, Looper.__LoopClaimState.AwaitHandle(0, 1)))) => 9
+    drive(Looper.__loopStart(0, 0)) => 0
+    drive(Looper.__loopStart(2, 0)) => 6
+
+fn main() -> Unit
+    ! [Console.print]
+    total = drive(Looper.__loopStart(2, 0))
+    Console.print("total = {total}")

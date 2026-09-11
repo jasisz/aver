@@ -1,0 +1,18 @@
+module YieldOpenType
+    intent = "Fixture: a live variable whose type the checker never settles, so the lowering asks for an annotation instead of writing an open type into a request state."
+    depends [Pool]
+    effects [Pool.claim, yield]
+    exposes [main]
+
+fn loop(id: Int) -> Int
+    ? "Carries an empty map across a request; nothing in the body ever says what the map holds."
+    ! [Pool.claim, yield]
+    seen = {}
+    h = Pool.claim(id)
+    match h
+        Option.None -> Map.len(seen)
+        Option.Some(v) -> loop(id - v)
+
+fn main() -> Unit
+    ? "The program never runs: the module does not lower."
+    Unit

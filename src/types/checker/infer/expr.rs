@@ -1566,10 +1566,20 @@ impl TypeChecker {
                         return Type::Invalid;
                     }
                     if self.has_namespace_prefix(&obj_key) {
-                        self.error(format!(
-                            "Unknown member '{}.{}' (not exposed or missing)",
-                            obj_key, field
-                        ));
+                        // A yielding function is gone from its module's
+                        // surface: the lowering put the protocol there in
+                        // its place. Finding that protocol says the name
+                        // the user wrote was real, so decision 4's recipe
+                        // is the answer rather than "unknown member".
+                        let start = crate::yield_lowering::qualified_start_name(&key);
+                        if self.find_fn_sig(&start).is_some() {
+                            self.error(crate::yield_lowering::removed_call_recipe(&key));
+                        } else {
+                            self.error(format!(
+                                "Unknown member '{}.{}' (not exposed or missing)",
+                                obj_key, field
+                            ));
+                        }
                         obj.set_ty(Type::Invalid);
                         return Type::Invalid;
                     }

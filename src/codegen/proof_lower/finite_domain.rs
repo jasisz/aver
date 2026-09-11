@@ -233,7 +233,7 @@ pub(super) fn is_constructor_literal(expr: &crate::ast::Expr) -> bool {
         Expr::Attr(obj, field) => {
             let head_upper = matches!(
                 &obj.node,
-                Expr::Ident(n) if n.chars().next().is_some_and(|c| c.is_uppercase())
+                Expr::Ident(n) if crate::ast::name_is_type_like(n)
             );
             let field_upper = field.chars().next().is_some_and(|c| c.is_uppercase());
             head_upper && field_upper

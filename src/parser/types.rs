@@ -169,7 +169,7 @@ impl Parser {
                 kind: TokenKind::Ident(next),
                 ..
             }) = self.tokens.get(self.pos + 1)
-            && next.chars().next().is_some_and(|c| c.is_uppercase())
+            && crate::ast::name_is_type_like(next)
         {
             let next = next.clone();
             self.advance(); // dot

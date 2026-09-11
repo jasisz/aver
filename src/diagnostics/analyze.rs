@@ -186,9 +186,6 @@ fn analyze_source_impl(
         }
     };
 
-    let mut transformed = items.clone();
-    crate::ir::pipeline::tco(&mut transformed);
-
     let mode = if let Some(loaded) = options.loaded_modules.as_deref() {
         crate::ir::TypecheckMode::WithLoaded(loaded)
     } else {
@@ -196,11 +193,14 @@ fn analyze_source_impl(
             base_dir: options.module_base_dir.as_deref(),
         }
     };
-    // The same gate `pipeline::run` and both verify doors go through —
-    // type errors and the shadowing ban (#954) in one channel. Nothing
-    // is appended to `items` here, so the ban's scope is the whole
-    // program.
-    let tc_result = crate::ir::pipeline::typecheck_gate(&items, &mode, &items);
+    // The same front door `pipeline::run` and both verify doors go
+    // through — TCO, the `yield` lowering, type errors and the shadowing
+    // ban (#954) in one channel. Nothing is appended to `items` here, so
+    // the ban's scope is the whole program. `transformed` is the lowered
+    // program the checker read; `items` stays the source as written.
+    let mut transformed = items.clone();
+    let user_program_len = transformed.len();
+    let tc_result = crate::ir::pipeline::front_gate(&mut transformed, &mode, user_program_len);
 
     analyze_prechecked_items_impl(
         source,

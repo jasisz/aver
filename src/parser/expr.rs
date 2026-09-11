@@ -2,7 +2,7 @@ use super::*;
 
 impl Parser {
     fn is_upper_camel_segment(name: &str) -> bool {
-        name.chars().next().is_some_and(|c| c.is_uppercase())
+        crate::ast::name_is_type_like(name)
     }
 
     fn is_constructor_path(path: &str) -> bool {
@@ -213,9 +213,7 @@ impl Parser {
                         && path.ends_with(".update")
                     {
                         let prefix = &path[..path.len() - ".update".len()];
-                        if !prefix.is_empty()
-                            && prefix.chars().next().is_some_and(|c| c.is_uppercase())
-                        {
+                        if !prefix.is_empty() && crate::ast::name_is_type_like(prefix) {
                             let update_line = self.current().line;
                             self.advance(); // consume (
                             let base = self.parse_expr()?;
@@ -320,7 +318,7 @@ impl Parser {
             // Detect by checking if token after `(` is `Ident` followed by `=`.
             // Use peek_skip_formatting to handle multiline constructor syntax.
             let is_record_create = if let Expr::Ident(ref name) = atom.node {
-                name.chars().next().is_some_and(|c| c.is_uppercase())
+                crate::ast::name_is_type_like(name)
                     && matches!(&self.peek_skip_formatting(1).kind, TokenKind::Ident(_))
                     && self.peek_skip_formatting(2).kind == TokenKind::Assign
             } else {

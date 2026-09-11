@@ -118,11 +118,24 @@ pub enum Literal {
 /// shape where a module can pass `aver check` and then fail at run time.
 pub fn dotted_name_spells_constructor(name: &str) -> bool {
     let mut tail = name.rsplit('.');
-    let begins_uppercase =
-        |segment: Option<&str>| segment.is_some_and(|s| s.starts_with(char::is_uppercase));
+    let begins_uppercase = |segment: Option<&str>| segment.is_some_and(name_is_type_like);
     let variant = tail.next();
     let type_name = tail.next();
     begins_uppercase(variant) && begins_uppercase(type_name)
+}
+
+/// Whether a bare name segment is spelled like a type, module, namespace or
+/// constructor: it begins with an uppercase letter. The leading `__` is the
+/// compiler's namespace and does not take part in the decision, so the
+/// items a lowering pass generates (`__LoopOutcome`, `__LoopRequest`) are
+/// type-like exactly as their user-spelled counterparts are, and user code
+/// may refer to them in type annotations, constructor calls and patterns.
+/// A single leading underscore keeps its ordinary meaning (`_x` is a
+/// discarded binder, not a type).
+pub fn name_is_type_like(name: &str) -> bool {
+    name.strip_prefix("__")
+        .unwrap_or(name)
+        .starts_with(char::is_uppercase)
 }
 
 /// Literal-divisor discharge predicate, shared by the typechecker and the

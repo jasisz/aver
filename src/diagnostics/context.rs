@@ -92,6 +92,16 @@ pub fn build_context_for_items(
 ) -> FileContext {
     let mut ctx = FileContext::empty(file_label);
 
+    // Everything below reads the LOWERED module, not the file as parsed:
+    // `aver context` describes the program every other door sees, so a
+    // `yield` function shows as the protocol that replaced it — the
+    // generated functions, the rewritten `exposes`, their effects — and
+    // never as the function the lowering removed. Dependencies go through
+    // here too (the caller builds one context per file), so an importer's
+    // dump describes its dependency's protocol as well.
+    let (items, flags) = lower_for_context(items, module_root);
+    let items = &items[..];
+
     let mut declared_module_effects: Option<Vec<String>> = None;
     for item in items {
         match item {
@@ -118,7 +128,6 @@ pub fn build_context_for_items(
         }
     }
 
-    let flags = compute_context_fn_flags(items, module_root);
     let ContextFnFlags {
         auto_tco,
         recursive_callsites,
@@ -721,9 +730,20 @@ fn fn_has_tail_call(fd: &FnDef) -> bool {
     })
 }
 
-fn compute_context_fn_flags(items: &[TopLevel], module_root: Option<&str>) -> ContextFnFlags {
+/// Put `items` through the same `front` entry every other door uses and
+/// return what came out of it: the lowered module and the flags computed
+/// from it. The module is what the whole context record is rendered from
+/// — see [`build_context_for_items`].
+fn lower_for_context(
+    items: &[TopLevel],
+    module_root: Option<&str>,
+) -> (Vec<TopLevel>, ContextFnFlags) {
     let mut transformed = items.to_vec();
-    crate::ir::pipeline::tco(&mut transformed);
+    let user_program_len = transformed.len();
+    let mode = crate::ir::TypecheckMode::Full {
+        base_dir: module_root,
+    };
+    let tc_result = crate::ir::pipeline::front_gate(&mut transformed, &mode, user_program_len);
     let tco_fns = transformed
         .iter()
         .filter_map(|item| match item {
@@ -734,17 +754,11 @@ fn compute_context_fn_flags(items: &[TopLevel], module_root: Option<&str>) -> Co
     let recursive_callsites = recursive_callsite_counts(&transformed);
     let recursive_scc_id = recursive_scc_ids(&transformed);
 
-    let tc_result = crate::ir::pipeline::typecheck(
-        &transformed,
-        &crate::ir::TypecheckMode::Full {
-            base_dir: module_root,
-        },
-    );
-
-    ContextFnFlags {
+    let flags = ContextFnFlags {
         auto_tco: tco_fns,
         recursive_callsites,
         recursive_scc_id,
         fn_sigs: tc_result.fn_sigs,
-    }
+    };
+    (transformed, flags)
 }

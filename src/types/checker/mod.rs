@@ -335,6 +335,7 @@ fn finalize_check_result(mut checker: TypeChecker, items: &[TopLevel]) -> TypeCh
     }
 
     check_capability_effect_shorthand(items, &checker.capabilities, &mut checker.errors);
+    check_bare_effect_names(items, &checker.capabilities, &mut checker.errors);
     check_forwarded_effect_marker(items, &mut checker.errors);
     check_module_effect_boundary(items, &mut checker.errors);
 
@@ -343,6 +344,62 @@ fn finalize_check_result(mut checker: TypeChecker, items: &[TopLevel]) -> TypeCh
         fn_sigs,
         unused_bindings: checker.unused_warnings,
         capabilities: checker.capabilities,
+    }
+}
+
+/// A bare name in an effect list is `yield` — the language's own effect,
+/// lowercase because it is not a capability — or a capability namespace
+/// such as `Console`. Anything else used to pass in silence, so `! [yeild]`
+/// bought neither the effect nor a word about it.
+fn check_bare_effect_names(
+    items: &[TopLevel],
+    capabilities: &crate::capability::CapabilityRegistry,
+    errors: &mut Vec<TypeError>,
+) {
+    let capability_modules: HashSet<&str> = capabilities
+        .contracts()
+        .map(|contract| contract.module.as_str())
+        .collect();
+    let known = |effect: &str| {
+        effect.contains('.')
+            || effect == crate::yield_lowering::YIELD_EFFECT
+            // The callback-forwarding marker has its own rule and its own
+            // diagnostic; saying "unknown effect" over it would mislead.
+            || effect == crate::effects::FORWARDED_CALLBACK_EFFECT
+            || capability_modules.contains(effect)
+            || crate::stdlib::is_standard_capability(effect)
+    };
+    let mut unknown: Vec<(String, usize)> = Vec::new();
+    for item in items {
+        match item {
+            TopLevel::Module(module) => {
+                let line = module.effects_line.unwrap_or(module.line);
+                for effect in module.effects.iter().flatten() {
+                    if !known(effect) {
+                        unknown.push((effect.clone(), line));
+                    }
+                }
+            }
+            TopLevel::FnDef(fd) => {
+                for effect in &fd.effects {
+                    if !known(&effect.node) {
+                        unknown.push((effect.node.clone(), effect.line));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    for (effect, line) in unknown {
+        errors.push(TypeError {
+            message: format!(
+                "Unknown effect '{effect}'; an effect is a capability operation written 'Namespace.operation', a whole capability namespace written 'Namespace', or the language's own 'yield'"
+            ),
+            line,
+            col: 1,
+            origin: None,
+            secondary: None,
+        });
     }
 }
 
