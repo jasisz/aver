@@ -723,7 +723,14 @@ fn fn_has_tail_call(fd: &FnDef) -> bool {
 
 fn compute_context_fn_flags(items: &[TopLevel], module_root: Option<&str>) -> ContextFnFlags {
     let mut transformed = items.to_vec();
-    crate::ir::pipeline::tco(&mut transformed);
+    let user_program_len = transformed.len();
+    // Go through the same `front` entry every other door uses, so a
+    // `yield` function is lowered before flags are computed and `aver
+    // context` sees the generated names, not the function it replaces.
+    let mode = crate::ir::TypecheckMode::Full {
+        base_dir: module_root,
+    };
+    let tc_result = crate::ir::pipeline::front_gate(&mut transformed, &mode, user_program_len);
     let tco_fns = transformed
         .iter()
         .filter_map(|item| match item {
@@ -733,13 +740,6 @@ fn compute_context_fn_flags(items: &[TopLevel], module_root: Option<&str>) -> Co
         .collect::<HashSet<_>>();
     let recursive_callsites = recursive_callsite_counts(&transformed);
     let recursive_scc_id = recursive_scc_ids(&transformed);
-
-    let tc_result = crate::ir::pipeline::typecheck(
-        &transformed,
-        &crate::ir::TypecheckMode::Full {
-            base_dir: module_root,
-        },
-    );
 
     ContextFnFlags {
         auto_tco: tco_fns,

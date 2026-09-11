@@ -184,6 +184,27 @@ fn spike_generates_exactly_the_pinned_protocol() {
     );
 }
 
+/// `aver context` goes through the same `front` entry as every other
+/// door (diagnostics/context.rs::compute_context_fn_flags), so it sees
+/// the lowered module: the generated names appear in its dump and the
+/// removed `loop` does not.
+#[test]
+fn context_dump_shows_the_generated_names_not_the_removed_function() {
+    let out = aver("yield_spike", &["context"]);
+    assert!(out.status.success(), "{}", format_output(&out));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    // `drive`'s signature and verify examples are lowered-module names:
+    // `__LoopOutcome` from the parameter type, `__loopStart` from the
+    // verify examples it calls.
+    for name in ["__LoopOutcome", "__loopStart"] {
+        assert!(stdout.contains(name), "expected {name:?} in:\n{stdout}");
+    }
+    assert!(
+        !stdout.contains("fn loop("),
+        "the removed `loop` should not appear:\n{stdout}"
+    );
+}
+
 // ── The Lean check: generated items are total, no sorry ──────────────────
 
 /// The proof-visible decision at work: `__loopStart`, `__loopAnswerClaim`
