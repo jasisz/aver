@@ -85,6 +85,12 @@ fn main_impl(
     let raw_args = raw_args_override.unwrap_or_else(|| std::env::args_os().collect());
     let cli = Cli::parse_from(raw_args.clone());
 
+    if let Some(error) = provider_host_cmd::work_program_rejection(&cli.command) {
+        use colored::Colorize;
+        eprintln!("{}", error.red());
+        std::process::exit(1);
+    }
+
     if injected_provider_bindings.is_none()
         && let Some(result) = provider_host_cmd::run_if_requested(&cli.command, &raw_args)
     {

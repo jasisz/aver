@@ -549,3 +549,120 @@ mod tests {
         assert!(missing_provider_repair("ordinary error", ".", "run", "app.av").is_none());
     }
 }
+
+/// The one door where a program's job kinds meet the manifest bindings that
+/// run them, for every command that prepares a program for execution.
+///
+/// `aver check` and `aver audit` report the same findings through canonical
+/// source analysis, which owns their spans and their JSON shape; this door
+/// serves the commands that go straight to a backend.
+///
+/// Detection is parse-level: a job kind is a property of a capability
+/// contract, so a program without one pays only for the walk it was going to
+/// do anyway, and the full typecheck runs only when a job kind exists.
+pub(super) fn work_program_rejection(command: &Commands) -> Option<String> {
+    use aver::capability::work::WorkTarget;
+
+    let (input, module_root, target) = match command {
+        Commands::Run {
+            file,
+            module_root,
+            wasm_gc,
+            wasip2,
+            ..
+        } => {
+            let target = if *wasip2 {
+                WorkTarget::Wasip2
+            } else if *wasm_gc {
+                WorkTarget::WasmGc
+            } else {
+                WorkTarget::Vm
+            };
+            (file.clone(), module_root, target)
+        }
+        Commands::Compile {
+            file,
+            module_root,
+            target,
+            ..
+        } => {
+            let target = match target {
+                super::cli::CompileTarget::Rust => WorkTarget::Rust,
+                super::cli::CompileTarget::WasmGc => WorkTarget::WasmGc,
+                super::cli::CompileTarget::Wasip2 => WorkTarget::Wasip2,
+            };
+            (file.clone(), module_root, target)
+        }
+        Commands::Verify {
+            file,
+            module_root,
+            wasm_gc,
+            ..
+        } => {
+            let target = if *wasm_gc {
+                WorkTarget::WasmGc
+            } else {
+                WorkTarget::Vm
+            };
+            (file.clone(), module_root, target)
+        }
+        _ => return None,
+    };
+    if !Path::new(&input).is_file() {
+        return None;
+    }
+    let module_root = super::shared::resolve_module_root(module_root.as_deref());
+    let mut cache = aver::source::ProgramLoadCache::default();
+    let program = load_report_program_with_cache(&input, &module_root, &mut cache).ok()?;
+    let mut capabilities = aver::capability::CapabilityRegistry::default();
+    for module in program.report_units() {
+        if module.fault.is_some() {
+            continue;
+        }
+        let (part, errors) =
+            aver::capability::CapabilityRegistry::from_module(&module.dep_name, &module.items);
+        if errors.is_empty() {
+            capabilities.merge(part);
+        }
+    }
+    if aver::capability::work::job_kinds(&capabilities).is_empty() {
+        return None;
+    }
+
+    // A job kind is present, so the bound function's own signature decides.
+    let entry = program.report_units().last()?;
+    let mut items = entry.items.clone();
+    let user_program_len = items.len();
+    let loaded = program.loaded_dependencies_for(entry).ok()?;
+    let tc = aver::ir::pipeline::front_gate(
+        &mut items,
+        &aver::ir::TypecheckMode::WithLoaded(&loaded),
+        user_program_len,
+    );
+    if !tc.errors.is_empty() {
+        // Type errors are the command's own report; a binding cannot be
+        // judged against signatures that did not survive the typecheck.
+        return None;
+    }
+    let manifest = aver::config::ProjectConfig::load_from_dir(Path::new(&module_root))
+        .ok()
+        .flatten()
+        .and_then(|config| config.provider_manifest);
+    let findings = aver::capability::work::gate(
+        &tc.capabilities,
+        manifest.as_ref(),
+        &tc.fn_sigs,
+        aver::visibility::module_decl(&entry.items).map(|module| module.name.as_str()),
+        target,
+    );
+    if findings.is_empty() {
+        return None;
+    }
+    Some(
+        findings
+            .iter()
+            .map(aver::capability::work::WorkDiagnostic::rendered)
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+}
