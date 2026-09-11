@@ -57,6 +57,9 @@ pub struct WorkProvider {
     engine: Arc<JobEngine>,
     base: OnceLock<Arc<WorkBaseContext>>,
     identity: String,
+    /// Jobs recomputed during replay, keyed by the trace token the recording
+    /// gave the handle that started them.
+    replayed: std::sync::Mutex<std::collections::BTreeMap<u64, aver_rt::work::Job>>,
 }
 
 /// A job's task and its result are ordinary data; the Work shape check has
@@ -68,6 +71,9 @@ fn dataless_registry() -> NativeProviderRegistry {
 }
 
 pub const WORK_FINGERPRINT: &str = concat!("aver-lang/", env!("CARGO_PKG_VERSION"));
+
+/// How long a replayed `take` waits for the job it is comparing against.
+const REPLAY_SETTLE_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
 
 impl WorkProvider {
     pub fn new(
@@ -90,6 +96,7 @@ impl WorkProvider {
             engine,
             base: OnceLock::new(),
             identity: format!("aver.work.{capability}/vm"),
+            replayed: std::sync::Mutex::new(std::collections::BTreeMap::new()),
         }
     }
 
@@ -181,17 +188,85 @@ impl WorkProvider {
         }
     }
 
-    /// The answer a job holds, without collecting it. Replay compares the
-    /// recorded answer against this one.
-    pub fn peek(&self, value: &ProviderValue) -> Result<ProviderValue, ProviderFault> {
-        let operation = format!("{}.take", self.capability);
-        Ok(Self::answer(self.job(&operation, value)?.peek()))
+    /// Start the job a recorded `begin` started, under the trace token that
+    /// recording gave its handle.
+    ///
+    /// Replay hands the program the recorded handle, so the recording's own
+    /// arguments stay exactly what they were; the live job runs beside it and
+    /// is found again by that token.
+    pub fn start_replay_job(&self, token: u64, task: ProviderValue) -> Result<(), String> {
+        let started = match self.begin(task) {
+            Ok(ProviderValue::ResultOk(inner)) => match *inner {
+                ProviderValue::Resource(resource) => {
+                    resource.downcast_ref::<aver_rt::work::Job>().cloned()
+                }
+                _ => None,
+            },
+            Ok(ProviderValue::ResultErr(inner)) => {
+                return Err(match *inner {
+                    ProviderValue::String(message) => message,
+                    other => other.shape(),
+                });
+            }
+            Ok(_) => None,
+            Err(fault) => return Err(fault.to_string()),
+        };
+        let Some(job) = started else {
+            return Err(format!(
+                "job kind '{}' could not start the job it recorded",
+                self.capability
+            ));
+        };
+        if let Ok(mut replayed) = self.replayed.lock() {
+            replayed.insert(token, job);
+        }
+        Ok(())
     }
 
-    /// Drop the answer a job holds, so a replayed take is not collected twice.
-    pub fn discard(&self, value: &ProviderValue) {
-        let operation = format!("{}.take", self.capability);
-        if let Ok(job) = self.job(&operation, value) {
+    fn replayed_job(&self, token: u64) -> Option<aver_rt::work::Job> {
+        self.replayed.lock().ok()?.get(&token).cloned()
+    }
+
+    /// What the recomputed job holds, without collecting it, as an Aver value.
+    /// `None` means this token never named a live job.
+    ///
+    /// The recording says this job had finished by the turn the caller is
+    /// replaying, so waiting a bounded moment for the recomputation asks for
+    /// nothing the recording did not already observe. Without the wait the
+    /// comparison would only ever fire on a machine slower than the one that
+    /// recorded, which is not a check at all.
+    pub fn replay_peek(&self, token: u64) -> Option<Result<Option<crate::value::Value>, String>> {
+        let job = self.replayed_job(token)?;
+        job.settle_by(std::time::Instant::now() + REPLAY_SETTLE_GRACE);
+        Some(match job.peek() {
+            Ok(None) => Ok(None),
+            Ok(Some(value)) => self.decode_payload(value).map(Some),
+            Err(message) => Err(message),
+        })
+    }
+
+    fn decode_payload(&self, value: ProviderValue) -> Result<crate::value::Value, String> {
+        super::value::from_provider_value(
+            value,
+            &self.payload_type,
+            &self.capability,
+            &self.contracts,
+            None,
+            &dataless_registry(),
+        )
+    }
+
+    /// Collect the recomputed job's answer so a second take answers the same
+    /// way the recording did.
+    pub fn replay_consume(&self, token: u64) {
+        if let Some(job) = self.replayed_job(token) {
+            let _ = job.take();
+        }
+    }
+
+    /// Stop the recomputed job a replayed `cancel` cancelled.
+    pub fn replay_cancel(&self, token: u64) {
+        if let Some(job) = self.replayed_job(token) {
             job.cancel();
         }
     }

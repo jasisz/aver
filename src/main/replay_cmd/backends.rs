@@ -183,8 +183,10 @@ pub(super) fn run_vm_replay(
         pipeline_result.analysis.as_ref(),
     )
     .map_err(|e| format!("VM compile error: {}", e))?;
-    let providers = aver::provider::ProviderRegistry::for_program(tc_result.capabilities.clone())
-        .map(std::sync::Arc::new)?;
+    let mut providers =
+        aver::provider::ProviderRegistry::for_program(tc_result.capabilities.clone())?;
+    providers.install_project_work_bindings(std::path::Path::new(replay_module_root))?;
+    let providers = std::sync::Arc::new(providers);
     let mut machine = vm::VM::new(code, globals, arena);
     machine.set_provider_registry(providers);
     apply_runtime_policy_to_vm(&mut machine, replay_module_root)?;
@@ -214,7 +216,11 @@ pub(super) fn run_vm_replay(
 
     let run_out = machine
         .run_named_function(&recording.entry_fn, &nv_args)
-        .map_err(|e| progress_msg(&machine, &e))?;
+        .map_err(|e| progress_msg(&machine, &e));
+    // A recomputed job the recording never took is cancelled when the
+    // recording ends; it is not computed to completion.
+    machine.provider_registry().shutdown_jobs();
+    let run_out = run_out?;
 
     let actual = if run_out.is_err() {
         let inner = run_out.wrapper_inner(&machine.arena);

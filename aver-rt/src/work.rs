@@ -104,6 +104,17 @@ impl Job {
         self.engine.is_ready(self.id)
     }
 
+    /// Block until this job settles or `deadline` passes.
+    pub fn settle_by(&self, deadline: Instant) {
+        while !self.is_ready() && Instant::now() < deadline {
+            let generation = self.engine.generation();
+            if self.is_ready() {
+                return;
+            }
+            self.engine.wait_until(generation, deadline);
+        }
+    }
+
     /// Wrap the handle for the capability boundary.
     pub fn into_resource(self) -> ProviderResource {
         ProviderResource::new(self)

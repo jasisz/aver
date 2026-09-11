@@ -730,6 +730,14 @@ impl VmRuntime {
                 ))
             })?;
 
+        if capability.effectful
+            && self.execution_mode() == VmExecutionMode::Replay
+            && self.providers.has_work_bindings()
+            && is_work_operation(&self.providers, &operation)
+        {
+            return self.replay_work(&operation, args, arena);
+        }
+
         if capability.effectful && self.execution_mode() == VmExecutionMode::Replay {
             match capability.replay {
                 Some(crate::capability::ReplaySemantics::Recorded)
@@ -771,6 +779,70 @@ impl VmRuntime {
                 .record_effect(&info.name, args_json, outcome, "", 0);
         }
         Ok(result_nv)
+    }
+
+    /// Replay one operation of a job: the answer comes from the recording,
+    /// the job itself is recomputed, and the two are compared.
+    ///
+    /// A job is pure, so running the bound function again is the only check
+    /// worth having. The program still sees what it saw when the recording was
+    /// made — the same handle, the same answer, in the same turn — because a
+    /// faster or slower machine must not change which turn a result lands in.
+    fn replay_work(
+        &mut self,
+        operation: &crate::capability::CapabilityOperation,
+        args: &[NanValue],
+        arena: &mut Arena,
+    ) -> Result<NanValue, VmError> {
+        let name = operation.canonical_name.clone();
+        let recorded = self.replay_builtin(&name, args, arena)?;
+        let values: Vec<Value> = args.iter().map(|value| value.to_value(arena)).collect();
+        match operation.name.as_str() {
+            "begin" => {
+                if let Some(token) = minted_job_token(&recorded.to_value(arena))
+                    && let Err(error) = self.providers.work_replay_begin(operation, &values, token)
+                {
+                    return Err(VmError::runtime(format!(
+                        "Replay of '{name}' could not restart its job: {error}"
+                    )));
+                }
+                Ok(recorded)
+            }
+            "take" => {
+                let Some(token) = values.first().and_then(job_token) else {
+                    return Ok(recorded);
+                };
+                let answer = recorded.to_value(arena);
+                let Some(Value::Some(expected)) = result_payload(&answer) else {
+                    return Ok(recorded);
+                };
+                match self.providers.work_replay_peek(&operation.module, token) {
+                    Some(Ok(Some(recomputed))) => {
+                        if recomputed != **expected {
+                            return Err(VmError::runtime(format!(
+                                "Replay divergence: job kind '{}' job #{token} recorded {} but running its bound function again produced {}",
+                                operation.module,
+                                crate::value::aver_repr(expected),
+                                crate::value::aver_repr(&recomputed)
+                            )));
+                        }
+                        self.providers.work_replay_consume(&operation.module, token);
+                    }
+                    Some(Err(error)) => {
+                        return Err(VmError::runtime(format!(
+                            "Replay divergence: job kind '{}' job #{token} recorded {} but running its bound function again failed: {error}",
+                            operation.module,
+                            crate::value::aver_repr(expected)
+                        )));
+                    }
+                    // Still running: the recorded answer stands, and nothing
+                    // is proved either way.
+                    Some(Ok(None)) | None => {}
+                }
+                Ok(recorded)
+            }
+            _ => Ok(recorded),
+        }
     }
 
     fn check_runtime_policy(
@@ -929,4 +1001,38 @@ fn realign_replayed_records(value: Value, arena: &Arena) -> Result<Value, String
         }
         other => other,
     })
+}
+
+/// Whether this operation belongs to a job kind this program answers itself.
+fn is_work_operation(
+    providers: &crate::provider::ProviderRegistry,
+    operation: &crate::capability::CapabilityOperation,
+) -> bool {
+    providers
+        .work_provider_for(&operation.canonical_name)
+        .is_some()
+}
+
+/// The trace token a recorded `begin` gave the handle it minted.
+fn minted_job_token(recorded: &Value) -> Option<u64> {
+    match recorded {
+        Value::Ok(inner) => job_token(inner),
+        _ => None,
+    }
+}
+
+/// The trace token a recorded job handle carries.
+fn job_token(value: &Value) -> Option<u64> {
+    match value {
+        Value::CapabilityResource(handle) => Some(handle.slot()),
+        _ => None,
+    }
+}
+
+/// The `Option` inside a `Result.Ok`, if the value has that shape.
+fn result_payload(value: &Value) -> Option<&Value> {
+    match value {
+        Value::Ok(inner) => Some(inner),
+        _ => None,
+    }
 }

@@ -315,6 +315,87 @@ impl ProviderRegistry {
         self.work.get(module)
     }
 
+    /// Start, during replay, the job a recorded `begin` started.
+    ///
+    /// The job is pure, so recomputing it is the check: what the recording
+    /// says the program saw is returned to the program, and what the function
+    /// produces this time is what `take` compares it against.
+    pub fn work_replay_begin(
+        &self,
+        operation: &CapabilityOperation,
+        args: &[crate::value::Value],
+        token: u64,
+    ) -> Result<(), String> {
+        let Some(provider) = self.work_provider_for(&operation.canonical_name) else {
+            return Ok(());
+        };
+        let Some(((_, task_type), task)) = operation.params.first().zip(args.first()) else {
+            return Err(format!(
+                "{} was replayed without a task",
+                operation.canonical_name
+            ));
+        };
+        let task = value::to_provider_value(
+            task,
+            task_type,
+            &operation.module,
+            &self.contracts,
+            &self.native,
+        )?;
+        provider.start_replay_job(token, task)
+    }
+
+    /// What the recomputed job holds, without collecting it.
+    pub fn work_replay_peek(
+        &self,
+        capability: &str,
+        token: u64,
+    ) -> Option<Result<Option<crate::value::Value>, String>> {
+        self.work.get(capability)?.replay_peek(token)
+    }
+
+    /// Collect the recomputed job's answer, so the live job and the recording
+    /// agree about how many answers this job had.
+    pub fn work_replay_consume(&self, capability: &str, token: u64) {
+        if let Some(provider) = self.work.get(capability) {
+            provider.replay_consume(token);
+        }
+    }
+
+    /// Stop a recomputed job whose recording cancelled it.
+    pub fn work_replay_cancel(&self, token: u64) {
+        for provider in self.work.values() {
+            provider.replay_cancel(token);
+        }
+    }
+
+    /// Install the job kinds this project's `aver.toml` binds to functions of
+    /// the program, with the job limit that manifest asks for.
+    ///
+    /// Every front door that runs a program on the VM comes through here, so
+    /// `aver run`, `aver replay` and `aver verify` agree about what a job kind
+    /// means and how many jobs may run at once.
+    pub fn install_project_work_bindings(
+        &mut self,
+        module_root: &std::path::Path,
+    ) -> Result<(), String> {
+        let config = crate::config::ProjectConfig::load_from_dir(module_root)
+            .map_err(|error| format!("aver.toml: {error}"))?;
+        let Some(config) = config else {
+            return Ok(());
+        };
+        let Some(manifest) = &config.provider_manifest else {
+            return Ok(());
+        };
+        let limit = config.work_max_jobs();
+        self.install_work_bindings(&manifest.work_bindings, limit)
+    }
+
+    /// Whether this program answers any job kind with a function of its own.
+    pub fn has_work_bindings(&self) -> bool {
+        !self.work.is_empty()
+    }
+
     /// Cancel every running job and wait a bounded moment for them.
     pub fn shutdown_jobs(&self) {
         let mut engines = Vec::new();

@@ -1154,13 +1154,7 @@ fn install_work_bindings(
     mut providers: aver::provider::ProviderRegistry,
     module_root: &str,
 ) -> Result<aver::provider::ProviderRegistry, String> {
-    let Some(config) = super::shared::load_runtime_policy(module_root)? else {
-        return Ok(providers);
-    };
-    let Some(manifest) = &config.provider_manifest else {
-        return Ok(providers);
-    };
-    providers.install_work_bindings(&manifest.work_bindings, config.work_max_jobs())?;
+    providers.install_project_work_bindings(std::path::Path::new(module_root))?;
     Ok(providers)
 }
 
@@ -1333,6 +1327,9 @@ pub(super) fn cmd_run_vm(
     } else {
         machine.run()
     };
+    // The turn is over. A job still running has nobody left to take it, so
+    // cancel it and give its thread a bounded moment to notice.
+    machine.provider_registry().shutdown_jobs();
 
     // Persist recording if requested.
     if let Some(dir) = record_dir {
