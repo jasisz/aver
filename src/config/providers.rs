@@ -141,6 +141,14 @@ impl MarkedCapabilities {
     }
 
     /// The capabilities `manifest` answers with a module of the program.
+    ///
+    /// A capability this compiler ships a provider for is never in the set,
+    /// however the manifest names it: decision 2 says only a
+    /// program-declared capability may be answered, and the checker reports
+    /// the binding under `answer-binding`. Taking it here as well keeps the
+    /// refusal from being preceded by its own consequences — a reply sum
+    /// generated into `Tcp`, and a `depends [Wait]` edge back to a module
+    /// `Wait` already depends on, which reads as a circular import.
     pub fn from_manifest(manifest: Option<&ProviderPackageManifest>) -> Self {
         let names = manifest
             .map(|manifest| {
@@ -148,6 +156,7 @@ impl MarkedCapabilities {
                     .answer_bindings
                     .iter()
                     .map(|binding| binding.capability.clone())
+                    .filter(|capability| !crate::stdlib::has_shipped_provider(capability))
                     .collect()
             })
             .unwrap_or_default();

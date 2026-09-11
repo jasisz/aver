@@ -1,0 +1,13 @@
+module Sockets
+    intent = "The state this program would answer from."
+    depends []
+    exposes [State, tip]
+    effects []
+
+record State
+    free: List<Int>
+    stopping: Bool
+
+fn tip(state: State) -> Int
+    ? "How far this program has got."
+    List.len(state.free)

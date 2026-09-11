@@ -1,0 +1,9 @@
+module Main
+    depends [Sockets]
+    intent = "A program that tries to answer Tcp, which Wait itself depends on."
+    effects [Console]
+
+fn main() -> Unit
+    ? "Reports that the program is wired."
+    ! [Console.print]
+    Console.print("answers ready")
