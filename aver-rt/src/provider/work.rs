@@ -123,29 +123,64 @@ fn wait_items(
     Ok(items)
 }
 
-/// Sleep on sockets and jobs at once, returning the ready socket positions.
+/// The waker a settling job rings while this wait sleeps on sockets.
 ///
-/// The wait leaves a waker with the engine before it sleeps, so a job that
-/// settles ends the wait instead of letting it sit out the whole timeout.
+/// It is armed before the wait looks at its jobs, so a job that settles during
+/// that look already has somewhere to ring: arming it afterwards leaves a
+/// window in which a finished job rings nothing and the wait sleeps out its
+/// whole timeout with an answer waiting for it.
+#[cfg(not(target_family = "wasm"))]
+#[derive(Default)]
+struct JobWake {
+    waker: Option<crate::tcp::PollWaker>,
+    /// Held for as long as the wait runs; dropping it unregisters the waker.
+    _guard: Option<crate::work::WakerGuard>,
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn arm_job_wake(
+    engine: Option<&std::sync::Arc<crate::work::JobEngine>>,
+) -> Result<JobWake, String> {
+    let Some(engine) = engine else {
+        return Ok(JobWake::default());
+    };
+    let waker = crate::tcp::PollWaker::new("Wait.poll")?;
+    let guard = engine.wake_with(std::sync::Arc::new(waker.clone()));
+    Ok(JobWake {
+        waker: Some(waker),
+        _guard: Some(guard),
+    })
+}
+
+/// Sleep on the sockets of the wait set, returning the ready positions.
 #[cfg(not(target_family = "wasm"))]
 fn poll_sockets_beside_jobs(
     sockets: &[crate::tcp::TcpSocket],
     timeout_ms: i64,
-    engine: Option<&std::sync::Arc<crate::work::JobEngine>>,
+    wake: &JobWake,
 ) -> Result<Vec<usize>, String> {
-    let Some(engine) = engine else {
-        return crate::tcp::poll(sockets, timeout_ms);
-    };
-    let waker = crate::tcp::PollWaker::new("Wait.poll")?;
-    let _guard = engine.wake_with(std::sync::Arc::new(waker.clone()));
-    crate::tcp::poll_with_waker(sockets, timeout_ms, &waker, "Wait.poll")
+    match &wake.waker {
+        Some(waker) => crate::tcp::poll_with_waker(sockets, timeout_ms, waker, "Wait.poll"),
+        None => crate::tcp::poll(sockets, timeout_ms),
+    }
+}
+
+#[cfg(target_family = "wasm")]
+#[derive(Default)]
+struct JobWake;
+
+#[cfg(target_family = "wasm")]
+fn arm_job_wake(
+    _engine: Option<&std::sync::Arc<crate::work::JobEngine>>,
+) -> Result<JobWake, String> {
+    Ok(JobWake)
 }
 
 #[cfg(target_family = "wasm")]
 fn poll_sockets_beside_jobs(
     sockets: &[crate::tcp::TcpSocket],
     timeout_ms: i64,
-    _engine: Option<&std::sync::Arc<crate::work::JobEngine>>,
+    _wake: &JobWake,
 ) -> Result<Vec<usize>, String> {
     crate::tcp::poll(sockets, timeout_ms)
 }
@@ -205,9 +240,19 @@ impl CapabilityProvider for StandardWaitProvider {
             }
         }
         let engine = jobs.first().map(|(_, handle)| handle.engine().clone());
-        // Read the settle generation before deciding nothing is ready, so a
-        // job that finishes between the two never sleeps out the timeout.
+        // The timeout is the upper bound on this one wait, so the deadline is
+        // taken once, before anything sleeps, and every sleep below stops at
+        // it. Sleeping the full timeout twice — once on the sockets, once on
+        // the engine — would make the wait take twice as long as it promised.
+        let deadline = Instant::now() + Duration::from_millis(timeout_ms as u64);
+        // Read the settle generation and arm the waker before deciding nothing
+        // is ready, so a job that finishes between the two never sleeps out
+        // the timeout.
         let generation = engine.as_ref().map(|engine| engine.generation());
+        let wake = match arm_job_wake(engine.as_ref()) {
+            Ok(wake) => wake,
+            Err(message) => return Ok(err(message)),
+        };
 
         let mut ready = Vec::new();
         for (key, handle) in &jobs {
@@ -216,31 +261,37 @@ impl CapabilityProvider for StandardWaitProvider {
             }
         }
 
-        let socket_timeout = if ready.is_empty() { timeout_ms } else { 0 };
-        match poll_sockets_beside_jobs(&sockets, socket_timeout, engine.as_ref()) {
-            Ok(positions) => {
-                for position in positions {
-                    if let Some(key) = socket_keys.get(position) {
-                        ready.push(key.clone());
+        if !sockets.is_empty() {
+            let socket_timeout = if ready.is_empty() {
+                remaining_ms(deadline)
+            } else {
+                0
+            };
+            match poll_sockets_beside_jobs(&sockets, socket_timeout, &wake) {
+                Ok(positions) => {
+                    for position in positions {
+                        if let Some(key) = socket_keys.get(position) {
+                            ready.push(key.clone());
+                        }
                     }
                 }
+                Err(message) => return Ok(err(message)),
             }
-            Err(message) => return Ok(err(message)),
         }
 
-        if ready.is_empty()
-            && sockets.is_empty()
-            && let (Some(engine), Some(generation)) = (engine.as_ref(), generation)
-        {
-            // A job-only wait has no socket to sleep on; the engine's own
-            // signal is the wait.
-            engine.wait_until(
-                generation,
-                Instant::now() + Duration::from_millis(timeout_ms as u64),
-            );
-        }
-        if sockets.is_empty() && jobs.is_empty() && timeout_ms > 0 {
-            std::thread::sleep(Duration::from_millis(timeout_ms as u64));
+        if ready.is_empty() {
+            if let (Some(engine), Some(generation)) = (engine.as_ref(), generation) {
+                // A job-only wait has no socket to sleep on; the engine's own
+                // signal is the wait. A wait that already slept on its sockets
+                // finds the deadline passed and returns at once.
+                engine.wait_until(generation, deadline);
+            } else if sockets.is_empty() {
+                // Neither socket nor job: the wait is the timeout itself.
+                let left = remaining_ms(deadline);
+                if left > 0 {
+                    std::thread::sleep(Duration::from_millis(left as u64));
+                }
+            }
         }
         for (key, handle) in &jobs {
             if handle.is_ready() {
@@ -256,6 +307,110 @@ impl CapabilityProvider for StandardWaitProvider {
     }
 }
 
+/// How much of this wait's timeout is left, in milliseconds.
+fn remaining_ms(deadline: Instant) -> i64 {
+    let now = Instant::now();
+    if now >= deadline {
+        return 0;
+    }
+    i64::try_from(deadline.duration_since(now).as_millis()).unwrap_or(i64::MAX)
+}
+
 fn err(message: String) -> ProviderValue {
     ProviderValue::ResultErr(Box::new(ProviderValue::String(message)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::work::JobEngine;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    fn context() -> ProviderContext {
+        ProviderContext {
+            capability: "Wait".to_string(),
+            operation: "Wait.poll".to_string(),
+            contract_hash: "test-contract".to_string(),
+            model_hash: "test-model".to_string(),
+        }
+    }
+
+    fn wait_set(job: &Job) -> ProviderValue {
+        ProviderValue::Map(vec![(
+            ProviderValue::Int(crate::AverInt::from_i64(1)),
+            ProviderValue::Variant {
+                type_name: "Wait.Item".to_string(),
+                variant: "Job".to_string(),
+                fields: vec![ProviderValue::Resource(job.clone().into_resource())],
+            },
+        )])
+    }
+
+    fn poll(job: &Job, timeout_ms: i64) -> ProviderValue {
+        StandardWaitProvider
+            .invoke(
+                &context(),
+                &[
+                    wait_set(job),
+                    ProviderValue::Int(crate::AverInt::from_i64(timeout_ms)),
+                ],
+            )
+            .expect("the wait answers")
+    }
+
+    #[test]
+    fn a_job_only_wait_sleeps_its_timeout_once() {
+        let engine = JobEngine::new(2);
+        let release = Arc::new(AtomicBool::new(false));
+        let held = release.clone();
+        let job = engine
+            .begin(Box::new(move |cancel| {
+                while !held.load(Ordering::Relaxed) && !cancel.load(Ordering::Relaxed) {
+                    std::thread::yield_now();
+                }
+                Ok(ProviderValue::Int(crate::AverInt::from_i64(1)))
+            }))
+            .expect("begin");
+
+        let started = Instant::now();
+        let answer = poll(&job, 300);
+        let elapsed = started.elapsed();
+        release.store(true, Ordering::Relaxed);
+
+        assert!(
+            matches!(&answer, ProviderValue::ResultOk(inner) if matches!(&**inner, ProviderValue::List(keys) if keys.is_empty()))
+        );
+        // The timeout is the upper bound on the whole wait, so sleeping it
+        // twice — once on the sockets, once on the engine — is the failure
+        // this guards against. The generous margin keeps a slow machine from
+        // failing a test about a doubled sleep.
+        assert!(
+            elapsed < Duration::from_millis(600),
+            "a 300ms job-only wait took {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn a_settling_job_ends_the_wait_early() {
+        let engine = JobEngine::new(2);
+        let job = engine
+            .begin(Box::new(|_| {
+                std::thread::sleep(Duration::from_millis(50));
+                Ok(ProviderValue::Int(crate::AverInt::from_i64(2)))
+            }))
+            .expect("begin");
+
+        let started = Instant::now();
+        let answer = poll(&job, 5000);
+        let elapsed = started.elapsed();
+
+        assert!(
+            matches!(&answer, ProviderValue::ResultOk(inner) if matches!(&**inner, ProviderValue::List(keys) if keys.len() == 1))
+        );
+        assert!(
+            elapsed < Duration::from_millis(2500),
+            "a job that settled after 50ms left the wait sleeping for {elapsed:?}"
+        );
+    }
 }

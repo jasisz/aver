@@ -175,7 +175,15 @@ impl JobEngine {
         let spawned = std::thread::Builder::new()
             .name(format!("aver-job-{id}"))
             .spawn(move || {
-                let outcome = body(cancel);
+                // A body that unwinds must still settle its slot: otherwise
+                // the job stays Running for ever, the limit keeps counting it
+                // and every `take` answers `Ok(None)` with nothing left to
+                // produce an answer.
+                let outcome =
+                    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| body(cancel))) {
+                        Ok(outcome) => outcome,
+                        Err(_) => Err("work: the job's body stopped unexpectedly".to_string()),
+                    };
                 if let Some(engine) = engine.upgrade() {
                     engine.settle(id, outcome);
                 }
@@ -268,13 +276,17 @@ impl JobEngine {
 
     /// Stop a job. Running work stops at its next cancellation check, a
     /// finished job drops its answer, and cancelling twice changes nothing.
+    /// A job whose answer was already collected is left alone: its story is
+    /// that it was taken, and a later take must still say so.
     pub fn cancel(&self, id: u64) {
         let Ok(mut table) = self.table.lock() else {
             return;
         };
         if let Some(slot) = table.jobs.get_mut(&id) {
             slot.cancel.store(true, Ordering::Relaxed);
-            slot.state = JobState::Cancelled;
+            if !matches!(slot.state, JobState::Taken) {
+                slot.state = JobState::Cancelled;
+            }
             table.settled += 1;
         }
         drop(table);
@@ -344,7 +356,9 @@ impl JobEngine {
             };
             for slot in table.jobs.values_mut() {
                 slot.cancel.store(true, Ordering::Relaxed);
-                slot.state = JobState::Cancelled;
+                if !matches!(slot.state, JobState::Taken) {
+                    slot.state = JobState::Cancelled;
+                }
             }
             table.settled += 1;
         }
@@ -392,11 +406,6 @@ impl Drop for WakerGuard {
             wakers.retain(|waker| Arc::as_ptr(waker) as *const () != mine);
         }
     }
-}
-
-/// The engine a set of job handles belongs to, if they agree on one.
-pub fn engine_of(jobs: &[Job]) -> Option<Arc<JobEngine>> {
-    jobs.first().map(|job| job.engine.clone())
 }
 
 #[cfg(test)]
@@ -462,6 +471,35 @@ mod tests {
         job.cancel();
         assert!(job.is_ready());
         assert_eq!(job.take().err(), Some("work: job cancelled".to_string()));
+    }
+
+    #[test]
+    fn cancelling_a_collected_job_keeps_it_collected() {
+        let engine = JobEngine::new(2);
+        let job = engine.begin(Box::new(|_| Ok(value(5)))).expect("begin");
+        settled(&engine, job.id());
+        assert!(matches!(job.take(), Ok(Some(ProviderValue::Int(_)))));
+        job.cancel();
+        assert_eq!(
+            job.take().err(),
+            Some("work: job already taken".to_string())
+        );
+    }
+
+    #[test]
+    fn a_body_that_stops_unexpectedly_settles_its_slot() {
+        let engine = JobEngine::new(1);
+        let hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let job = engine
+            .begin(Box::new(|_| panic!("the body of a job gave up")))
+            .expect("begin");
+        settled(&engine, job.id());
+        std::panic::set_hook(hook);
+        assert!(job.take().is_err());
+        // The slot the stopped job held is free again, so the limit did not
+        // leak it.
+        assert!(engine.begin(Box::new(|_| Ok(value(1)))).is_ok());
     }
 
     #[test]
