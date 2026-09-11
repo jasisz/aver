@@ -174,6 +174,8 @@ stdlib/
     tcp.av            — Tcp contract, resources, socket sum, laws, and profiles
     terminal.av       — Terminal contract, replay model, profiles, and Size
     time.av           — Time contract, replay model, and hostile profiles
+    wait.av           — Wait contract: one poll over sockets and jobs (reserved)
+    work.av           — Work contract: the running-job handle and cancel (reserved)
   crypto/digest32.av  — exactly-32-byte Digest32 refinement
 ```
 

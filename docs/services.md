@@ -607,6 +607,38 @@ error. The native provider switches the stream to non-blocking mode for that
 one call and restores it afterwards, so the blocking operations keep their
 contracts on the same connection.
 
+### Jobs — `Work` and `Wait`
+
+Contract sources: `stdlib/capabilities/work.av` and `stdlib/capabilities/wait.av`. A job is long pure work a program starts off the turn so the turn can go back to serving peers, and collects in a later turn. Nothing here is a thread the program can see: the program holds a handle, the schedule stays data, and `Wait.poll` is the one wait of a turn.
+
+| Function | Signature | Notes |
+|---|---|---|
+| `Work.cancel` | `(Work.Job) -> Unit` | Stops a running job at the runtime's next cancellation check, drops a finished job's result, and changes nothing for a job already cancelled or taken. |
+| `Wait.poll` | `(Map<Int, Wait.Item>, Int) -> Result<List<Int>, String>` | One wait over sockets and jobs together. Returns sorted caller keys; `[]` means timeout. |
+
+`Work.Job` is a provider-owned resource, exactly like `Tcp.Connection`: a program can hold it, pass it, and put it in a wait set, but it cannot construct it, read it, compare it, or use it as a `Map` key. `Wait.Item` is the sum that lets one wait set hold both kinds of thing: `Socket(Tcp.Socket)` for everything `Tcp.poll` watches and `Job(Work.Job)` for a running job. A `Socket` item follows the `Tcp.poll` readiness rule verbatim; a `Job` key is ready once its job has finished or was cancelled. False-positive readiness is legal on both, so the operation the caller runs next still has to handle "nothing yet".
+
+The stdlib deliberately owns only the handle and the cancel. What a job takes and what it returns is the program's own business, so a *job kind* is an ordinary program capability of **Work shape**: `kind = capability`, `depends [Work]`, and exactly two operations —
+
+```
+operation begin(task: T) -> Result<Work.Job, String>
+operation take(job: Work.Job) -> Result<Option<R>, String>
+```
+
+`T` and `R` are ordinary data of the program (records, sums, lists, maps, scalars); no function types and no capability resources inside either. Parameter names are free; the operation names, their arity and their result shapes are not. A capability that names `Work.Job` at its boundary and does not have this shape is `error[work-shape]`.
+
+Who runs the job is a binding in `aver.toml`, because it is a deployment choice rather than a property of the contract:
+
+```toml
+[[providers.bindings]]
+capability = "Validation"
+work = "Node.validate"
+```
+
+`work` names one module-qualified function of the same program, `validate(task: T) -> R`, with no effect list: a job runs off the turn, so the function that runs it must be pure, and its parameter and result must be exactly the `begin` task type and the `take` payload type. `work` is mutually exclusive with the `crate`/`package`/`factory` binding a native Rust provider uses — a job kind is answered by the program, never by a host package — and one capability takes one binding. A Work-shaped capability with no binding, a binding naming a function that does not exist, has effects, or has the wrong types, is `error[work-binding]`, reported at the program door by `aver run`, `aver check` and `aver verify` rather than silently changing what the program means. A capability module checked on its own is not yet a program, so it needs no binding.
+
+In this build only the bytecode VM answers a job. `aver compile --target rust`, `--target wasm-gc`, `--target wasip2` and `aver run --wasm-gc` / `--wasip2` refuse a program with a job kind with `error[work-target]`; the other backends follow in a later change.
+
 ### `Random` namespace — use granular effects (`! [Random.int]`, `! [Random.float]`)
 
 Contract source: `stdlib/capabilities/random.av`. Native VM and generated Rust share the `aver-rt` Random provider; wasm-gc keeps the existing `aver.random_*` imports and wasip2 keeps its WASI random lowering. Signatures, Oracle classification, hostile profiles, replay semantics, and target accounting all derive from the same contract and model hashes.
