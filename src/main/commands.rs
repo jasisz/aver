@@ -3331,6 +3331,24 @@ fn render_verify_output(
                     );
                 }
 
+                // `[verify] turn-budget`: a case whose single turn ran
+                // past the budget. Advisory, like the vacuous warning
+                // below: the case was answered, it just did not wait.
+                // The case is named the way the costly report above names
+                // it, by its 1-based index, so two cases with the same
+                // expression stay distinguishable.
+                for overrun in &block.turn_overruns {
+                    println!(
+                        "    {} {} case {} `{}`: one turn ran {} steps without waiting; deepest function on the stack at the limit: `{}`",
+                        "warning[turn-budget]:".yellow(),
+                        block.fn_name,
+                        overrun.case_index + 1,
+                        overrun.case_expr,
+                        overrun.steps,
+                        overrun.deepest_fn
+                    );
+                }
+
                 // Vacuous-truth warning. If every hostile-profile case
                 // was skipped by `when`, the law was effectively NOT
                 // exercised under hostile mode — the user's assumption

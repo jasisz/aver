@@ -1,0 +1,31 @@
+module PollerCycle
+    intent =
+        "Two pollers and a reader between them: serve waits and calls both,"
+        "reader reads and hands off to poller, poller waits and hands back"
+        "to reader. Every cycle here passes through a wait, so nothing runs"
+        "to completion inside a turn: silent."
+    exposes [serve]
+    effects [Tcp.poll, Disk.readText]
+
+fn serve(rounds: Int) -> Result<Unit, String>
+    ? "Waits, reads once per ready key, then hands the rest to the other poller."
+    ! [Tcp.poll, Disk.readText]
+    sockets: Map<Int, Tcp.Socket> = {}
+    ready = Tcp.poll(sockets, 100)?
+    _read = reader(List.len(ready))?
+    poller(rounds)
+
+fn reader(rounds: Int) -> Result<Unit, String>
+    ? "Reads one entry, then waits through the other poller."
+    ! [Tcp.poll, Disk.readText]
+    _line = Disk.readText("queue.log")?
+    poller(rounds)
+
+fn poller(rounds: Int) -> Result<Unit, String>
+    ? "Waits, then goes back through the reader until the rounds run out."
+    ! [Tcp.poll, Disk.readText]
+    sockets: Map<Int, Tcp.Socket> = {}
+    ready = Tcp.poll(sockets, 100)?
+    match rounds < 1
+        true -> Result.Ok(Unit)
+        false -> reader(rounds - 1)

@@ -19,8 +19,8 @@ use crate::ast::TopLevel;
 use crate::checker::{
     CheckFinding, check_module_intent_with_sigs_in, collect_cse_warnings_in,
     collect_independence_warnings_in, collect_module_effects_warnings_in,
-    collect_naming_warnings_in, collect_perf_warnings_in, collect_traversal_warnings_in,
-    collect_verify_coverage_warnings_in,
+    collect_naming_warnings_in, collect_perf_warnings_in, collect_serve_path_warnings_in,
+    collect_traversal_warnings_in, collect_verify_coverage_warnings_in,
 };
 #[cfg(feature = "runtime")]
 use crate::checker::{FindingSpan, collect_verify_law_dependency_warnings_in};
@@ -65,6 +65,9 @@ pub struct AnalyzeOptions {
     /// fuse, we warn about.
     pub include_traversal_warnings: bool,
     pub include_independence_warnings: bool,
+    /// `warning[serve-path]`: an effectful loop reached inside one turn of
+    /// a `Tcp.poll` loop.
+    pub include_serve_path_warnings: bool,
     pub include_naming_warnings: bool,
     pub include_non_tail_warnings: bool,
     pub include_unused_bindings: bool,
@@ -103,6 +106,7 @@ impl Default for AnalyzeOptions {
             include_perf_warnings: true,
             include_traversal_warnings: true,
             include_independence_warnings: true,
+            include_serve_path_warnings: true,
             include_naming_warnings: true,
             include_non_tail_warnings: true,
             include_unused_bindings: true,
@@ -402,6 +406,17 @@ fn analyze_prechecked_items_impl(
 
     if options.include_independence_warnings {
         for w in collect_independence_warnings_in(transformed, &tc_result.fn_sigs, None) {
+            diagnostics.push(from_check_finding_with_index(
+                Severity::Warning,
+                &w,
+                &source_index,
+                &options.file_label,
+            ));
+        }
+    }
+
+    if options.include_serve_path_warnings {
+        for w in collect_serve_path_warnings_in(transformed, &tc_result.fn_sigs, None) {
             diagnostics.push(from_check_finding_with_index(
                 Severity::Warning,
                 &w,

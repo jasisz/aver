@@ -1,0 +1,52 @@
+module CounterWalk
+    intent =
+        "The reference server, plus a per-key handler that replays a log by"
+        "counting down, one read per step. The count is not the list the poll"
+        "returned, so the replay runs to its end inside the turn: the warning."
+    exposes [serve]
+    effects [Tcp.poll, Tcp.readSome, Tcp.writeBytes, Disk.readBytesAt]
+
+record Pool
+    sockets: Map<Int, Tcp.Socket>
+    connections: Map<Int, Tcp.Connection>
+    served: Int
+
+fn serve(pool: Pool, rounds: Int) -> Result<Int, String>
+    ? "One wait per round; every key that became ready is served once."
+    ! [Tcp.poll, Tcp.readSome, Tcp.writeBytes, Disk.readBytesAt]
+    ready = Tcp.poll(pool.sockets, 100)?
+    next = dispatch(pool, ready)?
+    match rounds < 1
+        true -> Result.Ok(next.served)
+        false -> serve(next, rounds - 1)
+
+fn dispatch(pool: Pool, ready: List<Int>) -> Result<Pool, String>
+    ? "Serves each ready key once, in the order the poll returned them."
+    ! [Tcp.readSome, Tcp.writeBytes, Disk.readBytesAt]
+    match ready
+        [] -> Result.Ok(pool)
+        [key, ..rest] -> dispatch(serveKey(pool, key)?, rest)
+
+fn serveKey(pool: Pool, key: Int) -> Result<Pool, String>
+    ? "Echoes one chunk back to the peer behind the key, if it is still known."
+    ! [Tcp.readSome, Tcp.writeBytes, Disk.readBytesAt]
+    match Map.get(pool.connections, key)
+        Option.None -> Result.Ok(pool)
+        Option.Some(connection) -> echo(pool, connection)
+
+fn echo(pool: Pool, connection: Tcp.Connection) -> Result<Pool, String>
+    ? "Reads what the peer sent, writes it back, then replays the log."
+    ! [Tcp.readSome, Tcp.writeBytes, Disk.readBytesAt]
+    chunk = Tcp.readSome(connection, 4096)?
+    _written = Tcp.writeBytes(connection, chunk)?
+    _replayed = replayLog(pool.served)?
+    Result.Ok(Pool(sockets = pool.sockets, connections = pool.connections, served = pool.served + 1))
+
+fn replayLog(pending: Int) -> Result<Unit, String>
+    ? "Reads one byte per pending entry, counting down to zero."
+    ! [Disk.readBytesAt]
+    match pending < 1
+        true -> Result.Ok(Unit)
+        false -> match Disk.readBytesAt("served.log", pending, 1)
+            Result.Err(reason) -> Result.Err(reason)
+            Result.Ok(_) -> replayLog(pending - 1)

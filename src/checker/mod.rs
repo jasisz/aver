@@ -8,6 +8,7 @@ mod law;
 mod module_effects;
 mod naming;
 mod perf;
+mod serve_path;
 mod traversal;
 mod verify;
 
@@ -122,6 +123,22 @@ impl Default for VerifyBudgetInfo {
     }
 }
 
+/// One verify case in which a single turn — the VM steps between two
+/// `Tcp.poll` effects, or from the start of the call — ran past the
+/// project's `[verify] turn-budget`. A warning, never a failure: the case
+/// was answered, it just did not wait often enough while doing so.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifyTurnOverrun {
+    pub case_index: usize,
+    pub case_expr: String,
+    /// Steps the turn had run when the budget was crossed.
+    pub steps: u64,
+    /// The budget in force.
+    pub limit: u64,
+    /// The innermost function executing when the budget was crossed.
+    pub deepest_fn: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct VerifyLawContext {
     pub givens: Vec<(String, String)>, // (name, value_repr)
@@ -142,6 +159,9 @@ pub struct VerifyResult {
     pub declined: usize,
     /// The budget these cases ran under.
     pub budget: VerifyBudgetInfo,
+    /// Cases in which one turn ran past `[verify] turn-budget`, at most one
+    /// entry per case. Empty when the budget is off.
+    pub turn_overruns: Vec<VerifyTurnOverrun>,
     pub case_results: Vec<VerifyCaseResult>,
     // Legacy field — kept temporarily for existing consumers
     pub failures: Vec<(String, String, String)>, // (expr_src, expected, actual)
@@ -300,5 +320,6 @@ pub use law::{collect_verify_law_dependency_warnings, collect_verify_law_depende
 pub use module_effects::{collect_module_effects_warnings, collect_module_effects_warnings_in};
 pub use naming::{collect_naming_warnings, collect_naming_warnings_in};
 pub use perf::{collect_perf_warnings, collect_perf_warnings_in};
+pub use serve_path::{collect_serve_path_warnings, collect_serve_path_warnings_in};
 pub use traversal::collect_traversal_warnings_in;
 pub use verify::{expr_to_str, merge_verify_blocks, verify_block_label};

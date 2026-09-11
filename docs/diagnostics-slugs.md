@@ -60,6 +60,7 @@ When a real signature shape is deliberately uninhabited, keep the residue explic
 | Slug | Severity | Fires when | Repair |
 |---|---|---|---|
 | `independence-hazard` | warning | Independent product branches use effects that may conflict under reordering. | Keep sequential or suppress with `[[check.suppress]]` + reason. |
+| `serve-path` | warning | A function that calls `Tcp.poll` reaches, without re-entering itself or another function that polls, a function that is recursive once every function that calls `Tcp.poll` is removed from the call graph, whose effects include an input operation (`Disk.read*`, `Disk.size`, `Disk.listDir`, `Disk.exists`, `Tcp.read*`, `Tcp.accept`, `Tcp.dialled`, `Tcp.peerAddress`, the dialling `Tcp.send`/`Tcp.sendBytes`/`Tcp.ping`/`Tcp.connect`, or bare `Disk`/`Tcp`), and whose recursion is not a walk over a list it was handed (`[_, ..rest]` passed back at the same position); that loop runs to completion inside one turn, so peers waiting on the poll are not served until it returns. Writes alone (`Disk.write*`, `Disk.append*`, `Tcp.write*`, `Tcp.close`) do not qualify: a loop that only writes what it holds is bounded by this turn's data. | Do one step of the loop per turn, run it as its own command, or suppress with `[[check.suppress]]` + reason. |
 
 ## Decisions / exposure
 
@@ -90,6 +91,7 @@ When a real signature shape is deliberately uninhabited, keep the residue explic
 | `verify-provider-setup` | fail | The configured provider host was built, but a binding could not be installed for this file's exact capability contract. | Inspect `fields.provider_error`; fix the binding contract hash, operation set, or provider factory. This is not a source type error. |
 | `verify-runtime-error` | fail | Verify case crashed during evaluation (div-by-zero, pattern fail, etc.). | Fix the crash; add a case for the boundary if intentional. |
 | `verify-declined` | fail | Verify case exceeded its per-case step budget, so it was not answered — neither a pass nor a counter-example. | Raise the budget for that fn with an `aver.toml` `[[verify.costly]]` entry and say why the case is expensive; or shrink the case. |
+| `turn-budget` | warning | With `[verify] turn-budget = N` set, one turn of a case — the VM steps since its last `Tcp.poll`, or since the case began — ran past N; reported once per case with the innermost function at the limit. Only VM steps count. | Wait more often: do one step of the named loop per turn, or move it out of the poll loop. |
 | `verify-unexpected-err` | fail | Case propagated a `Result.Err` via `?` the case didn't account for. | Either expect the `Err` in the case or handle it inside the function. |
 | `replay-output-mismatch` | fail | Replayed recording's output differs from the recorded run. | Inspect `fields.diff`; update the function or re-record. |
 | `replay-error` | fail | Replay couldn't complete (format mismatch, missing effects, crash). | Check `fields.error`; format drift usually means re-record. |

@@ -1,0 +1,42 @@
+module Canonical
+    intent =
+        "The reference server: wait, serve each ready key once, wait again."
+        "The walk over the ready list drops one key per step, so it ends with"
+        "the list Tcp.poll returned; nothing is stalled behind it."
+    exposes [serve]
+    effects [Tcp.poll, Tcp.readSome, Tcp.writeBytes]
+
+record Pool
+    sockets: Map<Int, Tcp.Socket>
+    connections: Map<Int, Tcp.Connection>
+    served: Int
+
+fn serve(pool: Pool, rounds: Int) -> Result<Int, String>
+    ? "One wait per round; every key that became ready is served once."
+    ! [Tcp.poll, Tcp.readSome, Tcp.writeBytes]
+    ready = Tcp.poll(pool.sockets, 100)?
+    next = dispatch(pool, ready)?
+    match rounds < 1
+        true -> Result.Ok(next.served)
+        false -> serve(next, rounds - 1)
+
+fn dispatch(pool: Pool, ready: List<Int>) -> Result<Pool, String>
+    ? "Serves each ready key once, in the order the poll returned them."
+    ! [Tcp.readSome, Tcp.writeBytes]
+    match ready
+        [] -> Result.Ok(pool)
+        [key, ..rest] -> dispatch(serveKey(pool, key)?, rest)
+
+fn serveKey(pool: Pool, key: Int) -> Result<Pool, String>
+    ? "Echoes one chunk back to the peer behind the key, if it is still known."
+    ! [Tcp.readSome, Tcp.writeBytes]
+    match Map.get(pool.connections, key)
+        Option.None -> Result.Ok(pool)
+        Option.Some(connection) -> echo(pool, connection)
+
+fn echo(pool: Pool, connection: Tcp.Connection) -> Result<Pool, String>
+    ? "Reads what the peer sent and writes it back."
+    ! [Tcp.readSome, Tcp.writeBytes]
+    chunk = Tcp.readSome(connection, 4096)?
+    _written = Tcp.writeBytes(connection, chunk)?
+    Result.Ok(Pool(sockets = pool.sockets, connections = pool.connections, served = pool.served + 1))

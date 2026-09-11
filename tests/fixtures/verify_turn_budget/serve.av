@@ -1,0 +1,32 @@
+module Serve
+    intent =
+        "One turn of a server: wait, do a long pure computation, wait again."
+        "The computation between the two waits is what [verify] turn-budget"
+        "measures; nothing here is near the per-case step budget. The case"
+        "is stated twice so the report has to tell the two apart."
+    exposes [serve]
+    effects [Tcp.poll]
+
+fn pollStub(branch: BranchPath, call: Int, sockets: Map<Int, Tcp.Socket>, timeoutMs: Int) -> Result<List<Int>, String>
+    ? "Nothing is ever ready."
+    Result.Ok([])
+
+fn spin(n: Int, acc: Int) -> Int
+    ? "Counts n down to zero, counting acc up; the loop is the whole turn."
+    match n < 1
+        true -> acc
+        false -> spin(n - 1, acc + 1)
+
+fn serve(work: Int) -> Result<Int, String>
+    ? "Waits, runs work steps of pure computation, waits again."
+    ! [Tcp.poll]
+    sockets: Map<Int, Tcp.Socket> = {}
+    first = Tcp.poll(sockets, 0)?
+    done = spin(work, 0)
+    second = Tcp.poll(sockets, 0)?
+    Result.Ok(done + List.len(first) + List.len(second))
+
+verify serve trace
+    given poller: Tcp.poll = [pollStub]
+    serve(20000) => Result.Ok(20000)
+    serve(20000) => Result.Ok(20000)
