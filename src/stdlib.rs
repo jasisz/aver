@@ -341,33 +341,19 @@ fn collect_standard_modules_from_type(ty: &crate::types::Type, deps: &mut Vec<St
     }
 }
 
-/// Parse the standard capability contracts shipped by the compiler.
+/// Parse every capability contract the compiler embeds, reserved ones
+/// included.
 ///
-/// They are globally reserved and automatically visible; callers do not need
-/// a `depends [Time]`, `depends [Random]`, `depends [Process]`, or
-/// `depends [Disk]` merely to use a built-in standard capability.
-pub(crate) fn standard_capability_modules() -> Vec<crate::source::LoadedModule> {
-    loaded_capability_modules(STANDARD_CAPABILITY_MODULES.iter().copied())
-}
-
-/// Every capability the compiler embeds, reserved ones included.
-///
-/// Reserved modules are not visible without `depends`, but they are still
-/// compiler-shipped contracts with compiler-shipped providers, so the
-/// canonical registry and the execution catalog must both know them.
+/// The standard ones are globally reserved and automatically visible; callers
+/// do not need a `depends [Time]`, `depends [Random]`, `depends [Process]`, or
+/// `depends [Disk]` merely to use a built-in standard capability. A reserved
+/// one needs `depends`, but it is still a compiler-shipped contract with a
+/// compiler-shipped provider, so the canonical registry must know it.
 pub(crate) fn embedded_capability_modules() -> Vec<crate::source::LoadedModule> {
-    loaded_capability_modules(
-        STANDARD_CAPABILITY_MODULES
-            .iter()
-            .chain(RESERVED_CAPABILITY_MODULES)
-            .copied(),
-    )
-}
-
-fn loaded_capability_modules(
-    names: impl Iterator<Item = &'static str>,
-) -> Vec<crate::source::LoadedModule> {
-    names
+    STANDARD_CAPABILITY_MODULES
+        .iter()
+        .chain(RESERVED_CAPABILITY_MODULES)
+        .copied()
         .map(|name| {
             let module = find(name).expect("standard capability source must be embedded");
             crate::source::LoadedModule {
