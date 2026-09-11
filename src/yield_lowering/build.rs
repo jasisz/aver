@@ -208,26 +208,54 @@ pub(super) fn mentions(stmts: &[Stmt], tail: &Spanned<Expr>, name: &str) -> bool
     }) || hit(tail)
 }
 
-/// The first type stamp recorded on a use of `name` in the block.
+/// The first type stamp recorded on a *free* use of `name` in the block.
+///
+/// Free is the point: a `match` arm whose pattern binds `name` again is
+/// talking about a different variable that happens to share the spelling,
+/// and its stamp is not this one's — the same scope rule [`free_idents`]
+/// and [`substitute_free`] follow. Reading the stamp off a shadowing arm
+/// typed the state field after the wrong variable, which turned a plain
+/// shadowing mistake into type errors about generated names.
 pub(super) fn stamped_use(stmts: &[Stmt], tail: &Spanned<Expr>, name: &str) -> Option<Type> {
-    let mut found: Option<Type> = None;
-    let mut visit = |expr: &Spanned<Expr>| {
-        expr_walk::walk(expr, &mut |e| {
-            if found.is_none()
-                && let Expr::Ident(n) = &e.node
-                && n == name
-                && let Some(ty) = e.ty()
-            {
-                found = Some(ty.clone());
+    fn visit(expr: &Spanned<Expr>, name: &str, found: &mut Option<Type>) {
+        if found.is_some() {
+            return;
+        }
+        match &expr.node {
+            Expr::Ident(n) if n == name => {
+                if let Some(ty) = expr.ty() {
+                    *found = Some(ty.clone());
+                }
             }
-        });
-    };
-    for stmt in stmts {
-        match stmt {
-            Stmt::Binding(_, _, expr) | Stmt::Expr(expr) => visit(expr),
+            Expr::Match { subject, arms } => {
+                visit(subject, name, found);
+                for arm in arms {
+                    let mut binders = Vec::new();
+                    pattern_binders(&arm.pattern, &mut binders);
+                    if binders.iter().any(|binder| binder == name) {
+                        continue;
+                    }
+                    visit(&arm.body, name, found);
+                }
+            }
+            _ => expr_walk::for_each_child(expr, &mut |child| visit(child, name, found)),
         }
     }
-    visit(tail);
+    let mut found: Option<Type> = None;
+    for stmt in stmts {
+        match stmt {
+            Stmt::Binding(bind, _, expr) => {
+                visit(expr, name, &mut found);
+                // Past a statement that rebinds the name, every use is the
+                // new binding's, as in `substitute_free_in_block`.
+                if bind == name {
+                    return found;
+                }
+            }
+            Stmt::Expr(expr) => visit(expr, name, &mut found),
+        }
+    }
+    visit(tail, name, &mut found);
     found
 }
 

@@ -5836,3 +5836,37 @@ fn a_capability_namespace_and_yield_stay_legal_bare_effects() {
         errs.join("\n  ")
     );
 }
+
+// ---------------------------------------------------------------------------
+// The type of a live variable comes from a use of THAT variable
+// (jasisz/aver#1329, phase one)
+//
+// A state field's type is read off the first use of the variable in the
+// continuation. A `match` arm whose pattern binds the same spelling is a
+// different variable, and reading its stamp typed the field after the wrong
+// one: `s: Int` became a `String` field, and the two type errors that
+// produced were about generated names, which also suppressed the shadowing
+// ban that had the real answer.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_shadowing_arm_does_not_type_a_live_variables_state_field() {
+    let src = "module Demo\n    effects [Console, yield]\n\nfn probe(s: Int, v: Result<String, String>) -> Int\n    ? \"Stops, then reads s only in the arm that does not rebind it.\"\n    ! [Console, yield]\n    Console.print(\"go\")\n    match v\n        Result.Ok(s) -> String.len(s)\n        Result.Err(_) -> s\n";
+    let errs = front_errors(src);
+    assert_eq!(
+        errs.len(),
+        1,
+        "expected only the shadowing ban's own error, got:\n  {}",
+        errs.join("\n  ")
+    );
+    assert!(
+        errs[0].contains("the pattern binding 's' shadows the parameter 's'"),
+        "unexpected error text: {}",
+        errs[0]
+    );
+    assert!(
+        !errs.iter().any(|e| e.contains("__Probe")),
+        "no error should be about a generated name:\n  {}",
+        errs.join("\n  ")
+    );
+}
