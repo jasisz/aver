@@ -74,6 +74,14 @@ pub(crate) fn find(name: &str) -> Option<EmbeddedModule> {
             virtual_path: "<aver-stdlib>/capabilities/tcp.av",
             source: include_str!("../stdlib/capabilities/tcp.av"),
         }),
+        "Work" => Some(EmbeddedModule {
+            virtual_path: "<aver-stdlib>/capabilities/work.av",
+            source: include_str!("../stdlib/capabilities/work.av"),
+        }),
+        "Wait" => Some(EmbeddedModule {
+            virtual_path: "<aver-stdlib>/capabilities/wait.av",
+            source: include_str!("../stdlib/capabilities/wait.av"),
+        }),
         _ => None,
     }
 }
@@ -84,6 +92,44 @@ pub(crate) fn find(name: &str) -> Option<EmbeddedModule> {
 pub(crate) const STANDARD_CAPABILITY_MODULES: &[&str] = &[
     "Args", "Console", "Disk", "Env", "Http", "Process", "Random", "Tcp", "Terminal", "Time",
 ];
+
+/// Capability modules the compiler embeds and reserves, but which no native
+/// provider answers yet. They resolve through `depends [...]` like any other
+/// standard module; unlike `STANDARD_CAPABILITY_MODULES` they are neither
+/// globally visible without `depends` nor expected in the execution catalog.
+pub(crate) const RESERVED_CAPABILITY_MODULES: &[&str] = &["Wait", "Work"];
+
+/// Canonical resource names (`Module.Resource`) of every embedded capability.
+///
+/// A resource has no layout: its only contract identity is the owning
+/// capability's contract, which the compiler ships. That is what lets one
+/// capability name another's resource at its own boundary without weakening
+/// the rule that a *represented* boundary type must be declared locally.
+pub(crate) fn embedded_capability_resources() -> &'static std::collections::BTreeSet<String> {
+    static RESOURCES: std::sync::OnceLock<std::collections::BTreeSet<String>> =
+        std::sync::OnceLock::new();
+    RESOURCES.get_or_init(|| {
+        let mut resources = std::collections::BTreeSet::new();
+        for module in STANDARD_CAPABILITY_MODULES
+            .iter()
+            .chain(RESERVED_CAPABILITY_MODULES)
+        {
+            let embedded = find(module).expect("embedded capability source must be present");
+            let items = crate::source::parse_source(embedded.source)
+                .expect("embedded capability must parse");
+            for item in &items {
+                if let crate::ast::TopLevel::Capability(crate::ast::CapabilityItem::Resource {
+                    name,
+                    ..
+                }) = item
+                {
+                    resources.insert(format!("{module}.{name}"));
+                }
+            }
+        }
+        resources
+    })
+}
 
 /// Host-backed calls whose signatures cross nominal record types owned by
 /// embedded standard modules, paired with the modules those types live in.

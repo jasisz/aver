@@ -423,8 +423,20 @@ impl BoundaryTypeVisitor<'_, '_> {
                         .iter()
                         .any(|dependency| dependency == "Bytes")
                     && matches!(name.as_str(), "Bytes" | "Bytes.Bytes");
+                // A compiler-embedded capability resource is representation-less:
+                // there is no layout for `contract_hash` to bind, and the owning
+                // contract ships with the compiler. Naming one still requires an
+                // explicit `depends`, so a coincidental local spelling cannot
+                // acquire the privilege.
+                let is_embedded_resource = name.split_once('.').is_some_and(|(owner, _)| {
+                    self.dependencies
+                        .iter()
+                        .any(|dependency| dependency == owner)
+                }) && crate::stdlib::embedded_capability_resources()
+                    .contains(name);
                 if !belongs_to_capability
                     && !is_standard_bytes
+                    && !is_embedded_resource
                     && self.seen.insert((position.to_string(), name.to_string()))
                 {
                     self.errors.push(CapabilityError::at(
