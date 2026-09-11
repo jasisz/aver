@@ -505,7 +505,7 @@ fn check_view(
 /// The declaration the `view-shape` diagnostic prints: what this program's
 /// view and marker sum have to be, spelled out.
 fn expected_view(view_name: &str, protocols: &[ProcessProtocol]) -> String {
-    let mut out = format!("    type Pending\n");
+    let mut out = "    type Pending\n".to_string();
     for protocol in protocols {
         out.push_str(&format!(
             "        {}(Int, Wait.Wake)\n",
@@ -687,9 +687,9 @@ fn write_loop(
     out.push_str("\nfn __waitAt(run: __Run, id: Int, acc: Map<Int, Wait.Item>) -> Map<Int, Wait.Item>\n    ? \"What the request seated under one id is waiting on, if anything is seated there.\"\n    match Map.get(run.slots, id)\n        Option.None -> acc\n        Option.Some(slot) -> __waitOn(acc, id, slot.waiting)\n");
     out.push_str("\nfn __waitOn(acc: Map<Int, Wait.Item>, id: Int, wake: Wait.Wake) -> Map<Int, Wait.Item>\n    ? \"Only a request parked on a socket or a job is waited for; a deadline is the poll's own timeout, and a NextTurn is asked again rather than woken.\"\n    match wake\n        Wait.Wake.Item(item) -> Map.set(acc, id, item)\n        Wait.Wake.After(_) -> acc\n        Wait.Wake.NextTurn -> acc\n");
     if has_jobs {
-        out.push_str(&format!(
-            "\nfn __jobItems(run: __Run, keys: List<Int>, acc: Map<Int, Wait.Item>) -> Map<Int, Wait.Item>\n    ? \"One wait-set key per running job.\"\n    match keys\n        [] -> acc\n        [key, ..rest] -> __jobItems(run, rest, __jobItem(run, key, acc))\n"
-        ));
+        out.push_str(
+            "\nfn __jobItems(run: __Run, keys: List<Int>, acc: Map<Int, Wait.Item>) -> Map<Int, Wait.Item>\n    ? \"One wait-set key per running job.\"\n    match keys\n        [] -> acc\n        [key, ..rest] -> __jobItems(run, rest, __jobItem(run, key, acc))\n",
+        );
         out.push_str(&format!(
             "\nfn __jobItem(run: __Run, key: Int, acc: Map<Int, Wait.Item>) -> Map<Int, Wait.Item>\n    ? \"One running job, as the thing the wait watches for it.\"\n    match Map.get(run.{JOBS_FIELD}, key)\n        Option.None -> acc\n        Option.Some(job) -> Map.set(acc, key, Wait.Item.Job(job))\n"
         ));

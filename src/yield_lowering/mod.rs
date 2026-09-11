@@ -293,30 +293,27 @@ pub fn lower(
     let plan = marked.run();
     if coordinator::is_run_module(module_name.as_deref(), plan) {
         let plan = plan.expect("checked by is_run_module");
-        match coordinator::generate(items, &report.generated, &report.protocols, plan, fn_sigs) {
-            Ok(generated) => {
-                report.loop_source = Some(generated.source);
-                report.generated.extend(generated.items.iter().cloned());
-                items.extend(generated.items);
-                // The program declared the effects its processes perform; the
-                // turn performs the wait, the stop observation and both ends
-                // of every job kind besides, and the module's own boundary has
-                // to admit what is generated into it.
-                for item in items.iter_mut() {
-                    let TopLevel::Module(module) = item else {
-                        continue;
-                    };
-                    let Some(declared) = module.effects.as_mut() else {
-                        continue;
-                    };
-                    for effect in &generated.module_effects {
-                        if !declared.iter().any(|entry| entry == effect) {
-                            declared.push(effect.clone());
-                        }
-                    }
+        let generated =
+            coordinator::generate(items, &report.generated, &report.protocols, plan, fn_sigs)?;
+        report.loop_source = Some(generated.source);
+        report.generated.extend(generated.items.iter().cloned());
+        items.extend(generated.items);
+        // The program declared the effects its processes perform; the turn
+        // performs the wait, the stop observation and both ends of every job
+        // kind besides, and the module's own boundary has to admit what is
+        // generated into it.
+        for item in items.iter_mut() {
+            let TopLevel::Module(module) = item else {
+                continue;
+            };
+            let Some(declared) = module.effects.as_mut() else {
+                continue;
+            };
+            for effect in &generated.module_effects {
+                if !declared.iter().any(|entry| entry == effect) {
+                    declared.push(effect.clone());
                 }
             }
-            Err(found) => return Err(found),
         }
     }
 

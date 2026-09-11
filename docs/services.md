@@ -652,6 +652,41 @@ Recording a turn records `begin` with its task and the handle it minted, `take` 
 
 Only the bytecode VM answers a job in this build. `aver compile --target rust`, `--target wasm-gc`, `--target wasip2` and `aver run --wasm-gc` / `--wasip2` refuse a program with a job kind with `error[work-target]`; those backends follow later.
 
+### Capabilities the program answers — `answer`, `task`, `landed` and `[run]`
+
+A job kind is answered by the runtime running a pure function off the turn. The other way a program answers a capability of its own is to answer it *inside* the turn, from a module of its own, and that is one more key on the same `[[providers.bindings]]` entry:
+
+```toml
+[[providers.bindings]]
+capability = "Wire"
+answer = "Sockets"
+
+[[providers.bindings]]
+capability = "Pool"
+answer = "Ledger"
+
+[[providers.bindings]]
+capability = "Validation"
+work = "Ledger.validate"
+task = "Ledger.nextTask"
+landed = "Ledger.validated"
+
+[work]
+max-jobs = 1
+
+[run]
+order = "Node.order"
+admit = "Node.admit"
+stop = "Node.stop"
+view = "Node.View"
+```
+
+`answer = "<Module>"` names one module of the program that answers **every** operation of that capability: one function per operation, `op(state: S, a1: T1, …) -> Tuple<S, Cap.__<Op>Reply>`, with the same state `S` across every operation of every capability the module answers. It is mutually exclusive with `crate`/`package`/`factory`/`version`/`path` and with `work` — a capability is answered by a host package, or by a pure function of the program through the job engine, or by a module of the program, never by two of them — and only a capability this program declares may carry it: `Console`, `Disk`, `Tcp`, `Time`, `Wait`, `Work` and the rest are answered by the runtime's own providers and the turn calls them itself. Marking an operation makes every call to it a request, which is legal only inside a function whose effect list names `yield`; see [Yielding functions](language.md#yielding-functions) for what the compiler generates from that, and [The coordinator](language.md#the-coordinator) for the loop that answers it.
+
+`task` and `landed` are the two ends of the seam between a job kind and the answer state the turn already holds: `task = "Module.function"` is `(S) -> Option<T>`, where the turn takes its next task from, and `landed = "Module.function"` is `(S, R) -> S`, where a finished job's result goes. `T` is the `begin` task type and `R` the `take` payload type; the module must be one bound with `answer`, because the state both ends read is the state the turn already carries. Both are declared or neither, both name a pure function, and they live on the `work` binding rather than beside `answer` because they belong to one job kind. Getting any of that wrong is `error[work-binding]`.
+
+`[run]` is the table that asks for the loop itself to be generated. All four keys are required and all four name things in one module — the entry module, which is where the loop is generated and what it can see. `order`, `admit` and `stop` are three pure policies, `order(view: View) -> List<Int>`, `admit(view: View, id: Int) -> Bool` and `stop(view: View) -> Bool`; `view` names the record they read, which the program declares and the loop fills. A `[run]` table with a missing key, a key that is not `Module.function` / `Module.Type`, or four names that do not share a module is refused when `aver.toml` is read; everything the loop is generated from — a process with parameters, an answer module with no `fresh`, a policy with effects — is `error[run-binding]`, and a view record or marker sum that is not the shape the loop fills is `error[view-shape]`, which prints the declaration it wants.
+
 ### `Random` namespace — use granular effects (`! [Random.int]`, `! [Random.float]`)
 
 Contract source: `stdlib/capabilities/random.av`. Native VM and generated Rust share the `aver-rt` Random provider; wasm-gc keeps the existing `aver.random_*` imports and wasip2 keeps its WASI random lowering. Signatures, Oracle classification, hostile profiles, replay semantics, and target accounting all derive from the same contract and model hashes.

@@ -449,7 +449,116 @@ Two diagnostics guard the shape:
 - calling a yielding function directly, from anywhere — a plain function, another yielding function's argument, a verify case, a dependent module — is a type error: `'loop' yields; call '__loopStart(...)' and answer its requests`;
 - a non-tail call from a yielding function to a yielding function is a type error with the recipe `pass what comes next as data, or make it a tail call`.
 
-The tail-call rule: only a self tail call is lowered, into the `Yield` request. A tail call to a different yielding function is rejected in this phase (its request and outcome types are its own), and so is a request inside an independent product `(a, b)!` or a function value live across a stop; the message names the construct. A request in a product fires less often than it used to, because only an answered operation inside the product is refused. Nested states for non-tail calls between yielding functions, and a generated coordinator that drives every process of a program, are the next phase.
+The tail-call rule: only a self tail call is lowered, into the `Yield` request. A tail call to a different yielding function is rejected in this phase (its request and outcome types are its own), and so is a request inside an independent product `(a, b)!` or a function value live across a stop; the message names the construct. A request in a product fires less often than it used to, because only an answered operation inside the product is refused. Nested states for non-tail calls between yielding functions are the next phase; the coordinator that drives every process of a program is generated already, and the next section is about it.
+
+## The coordinator
+
+Writing that coordinator by hand is the part nobody enjoys: a slot table, an instance number per request, a wait set, a poll timeout, one dispatch arm per request kind per process, the seam a job result comes back through, and the turn around all of it. So a program does not write it. A program that puts a `[run]` table in its `aver.toml` writes **processes, answer modules and three policies, and nothing else** — no coordinator, no `main`, no seating, no slot table. The compiler generates the rest into the entry module, in the reserved `__` namespace, by the same pass that generates the protocol. The generated names stay callable, so a program that wants its own loop over the protocol still has one; that is a door, not the road.
+
+The worked example is `tests/fixtures/run_all_slice/` (`examples/concurrency/README.md` points at it and says why it lives there): a peer that fetches block bodies, a walk that connects them, an accepting process, a dialling process and a ticker — five processes, three answer modules, one job kind, three policies, and not one line between them.
+
+**What the program writes.** The manifest says who answers what and asks for the loop:
+
+```toml
+[[providers.bindings]]
+capability = "Wire"
+answer = "Sockets"
+
+[[providers.bindings]]
+capability = "Validation"
+work = "Ledger.validate"
+task = "Ledger.nextTask"
+landed = "Ledger.validated"
+
+[run]
+order = "Node.order"
+admit = "Node.admit"
+stop = "Node.stop"
+view = "Node.View"
+```
+
+The processes are ordinary yielding functions, in direct style, each taking no parameters and answering `Unit` — the loop seats one of each at start-up, and a seated process asks the module that answers its first request for whatever it needs:
+
+```aver
+fn peer() -> Unit
+    ? "Ask the pool what to fetch, ask that peer for it, hand the body over, go round."
+    ! [Pool.claim, Pool.gone, Wire.write, Wire.read, Blocks.deliver, Console.print, yield]
+    Console.print("peer: asking the pool for work")
+    match Pool.claim()
+        Pool.Assignment.Stop -> Unit
+        Pool.Assignment.Work(key, height) -> match Wire.write(key, Ledger.blockOf(height))
+            Result.Err(_) -> Pool.gone(key)
+            Result.Ok(_) -> match Wire.read(key, 4000000, 30000)
+                Wire.Heard.Data(raw) -> match Blocks.deliver(key, height, raw)
+                    Blocks.Receipt.Accepted -> peer()
+                    Blocks.Receipt.Refused(_) -> Pool.gone(key)
+                Wire.Heard.EndOfStream -> Pool.gone(key)
+                Wire.Heard.Failed(_) -> Pool.gone(key)
+                Wire.Heard.TimedOut -> Pool.gone(key)
+```
+
+`Console.print` there is not a request: `Console` is nobody's to answer, so it runs in place, inside the turn, and the generated function that holds it declares it. `Pool.gone` answers `Unit`, and a match arm is one expression, so a `Unit`-answering stop is the end of that branch — which is why an operation a process has to continue after answers a sum rather than `Unit`.
+
+The answer modules are ordinary modules with one state each. Every operation of every capability they answer gets one function, threading that state and answering `Now(v)` or `Later(wake)`, and every one of them declares `fresh()`, the state before anything has happened, because that is where the loop starts them:
+
+```aver
+fn claim(state: State) -> Tuple<State, Pool.__ClaimReply>
+    ? "The next height for the next idle peer, Stop once every height has been handed out, and a Later with a deadline while no peer is free to take one."
+    match state.nextHeight > state.lastHeight
+        true -> (state, Pool.__ClaimReply.Now(Pool.Assignment.Stop))
+        false -> claimIdle(state, state.idle)
+```
+
+A `Later` leaves the request where it is, with the same instance number, and **the coordinator discards the state the module returned** — so "a `Later` changes nothing" is true by construction, not by a rule anybody has to keep. What it does carry is `Wait.Wake`, saying what would make asking again worth it: `Item(Wait.Item)` parks on a socket or a job, `After(ms)` sets a deadline the turn's poll uses as its timeout, and `NextTurn` asks to be re-asked immediately — which makes that turn poll with a zero timeout for as long as such a request exists, so prefer `Item` or `After` when either will do.
+
+Finally the view and the three policies. The view is a record the program declares and the loop fills; the checker holds it to exactly that shape and prints the declaration it wants under `error[view-shape]`:
+
+```aver
+type Pending
+    Accepting(Int, Wait.Wake)
+    Dialling(Int, Wait.Wake)
+    Ticker(Int, Wait.Wake)
+    Peer(Int, Wait.Wake)
+    Walk(Int, Wait.Wake)
+
+record View
+    pending: Map<Int, Pending>
+    ready: List<Int>
+    jobs: Int
+    room: Int
+    stopping: Bool
+
+fn order(view: View) -> List<Int>
+    ? "Every seated process, in slot order. The loop asks admit about each one in turn."
+    Map.keys(view.pending)
+
+fn admit(view: View, id: Int) -> Bool
+    ? "Whether to serve this id in this turn."
+    match Map.get(view.pending, id)
+        Option.None -> false
+        Option.Some(marker) -> admitted(view, marker)
+
+fn stop(view: View) -> Bool
+    ? "The run ends when the process asked us to, and not before: the flag was read by the turn and reaches here as data."
+    view.stopping
+```
+
+One constructor per process, carrying the instance number of the request that process is waiting on and the wake it is parked on. The view carries no capability resource on purpose: a law's `given` domain is a list of sample values written in Aver, a program cannot construct a `Tcp.Connection` or a `Work.Job`, and a policy that read the whole run could therefore never have a law with a non-trivial sample. This one can, and the example's priority law is exactly that — a ready peer request is admitted whatever the job table looks like, so the turn, which serves before it starts another job, serves the peer first.
+
+**What the compiler generates.** `AVER_YIELD_DUMP=1 aver check main.av --module-root .` prints the whole of it after the protocol. In outline:
+
+- `__Process` and `__Slot` and `__Run` — the slot table (`Map<Int, __Slot>`), one field per answer module holding its state, the job table, the count of answers that arrived too late, the stop flag as data, and the next free id.
+- `__seat<P>` / `__seated<P>` — one of every process, seated at its first request under its own slot id.
+- `__current`, `__nextInstance`, `__settle<P>`, `__park` — the two invariants of the table. An answer that carries the current instance replaces that process's one slot and raises its number; an answer that carries an older one changes nothing and is counted. A `Later` parks the request where it stands.
+- `__view`, `__pendingOf`, `__markerOf` — the view the policies read, filled from the run.
+- `__waitSet`, `__timeout` — one wait per turn, keyed by slot id, plus one key per running job; the timeout is zero while any request asked for the next turn, the soonest `After` deadline otherwise, and one second when nothing carries either.
+- `__serve`, `__serve<P>`, `__serve<P><Kind>` — the dispatch: one arm per request kind of each process, calling the answer module's own function and settling or parking on what it answered. There is no arm for an unanswered operation, because the lowering only makes a request out of an answered one.
+- `__takeEach<J>`, `__landed<J>`, `__startJobs<J>` — the job seam. A job result is a coordinator event, not an answer to a request: it goes into the answer state through `landed` and resumes nobody, and the turn starts another while there is room under `[work] max-jobs` and `task` has one.
+- `__turn`, `__serveEach`, `__runAll`, `main` — observe the stop flag, wait once, serve what the policy ordered and admitted, take what finished, start what fits; turn until the policy says stop or nothing is seated.
+
+**And the laws.** The generator emits the loop's invariants as `verify` laws over the generated functions, so the program does not write those either. Per process: a late answer leaves the slot table and every answer state exactly as they were, a late answer is counted, and settling never grows the table. Over `__park`: a `Later` moves neither the instance number nor any answer state. Over `__nextInstance`: an answer for the current instance raises it, so the instance just answered can never be current again. `aver verify` runs them and `aver proof --backend lean --check` puts them on the Lean wall, where sixteen of the twenty-one obligations of the example close as universals. The five that do not are one per process, all the same one: the size comparison in "settling never grows the table" needs a fact about `Map.set` on a key already present that the Lean prelude does not carry yet, and it is named in the example's own report rather than hidden.
+
+Two limits worth knowing before you reach them. A process takes no parameters and answers `Unit`, because the loop seats it and has nothing to hand it and nowhere to put its result — everything a process needs comes from the module that answers its first request. And the `task` seam hands the turn the next task without threading the state back, so an answer module that keeps handing out the same task while its job runs will see that job started again; keep `[work] max-jobs` at one, or make `landed` idempotent, until that seam threads state.
 
 ## Modules
 
