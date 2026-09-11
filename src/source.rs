@@ -457,9 +457,16 @@ impl ProgramModule {
 /// Modules are deduplicated by canonical path and stored leaves-first, with
 /// the entry last. Embedded standard-library modules participate exactly
 /// like project modules; consumers may choose not to report them.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct Program {
     pub modules: Vec<ProgramModule>,
+    /// Per-path memo of a dependency's already-lowered form, filled in by
+    /// [`Self::loaded_dependencies_for`]. A whole-program walk calls that
+    /// method once per report unit, and units share most of their
+    /// dependency cone, so without this a shared `yield` dependency would
+    /// be re-typechecked and re-lowered from scratch by every unit that
+    /// reaches it instead of once for the whole run.
+    lowering_cache: std::cell::RefCell<HashMap<PathBuf, LoadedModule>>,
 }
 
 impl Program {
@@ -515,11 +522,37 @@ impl Program {
             .filter(|candidate| reachable.contains(&canonicalize_path(&candidate.path)))
             .map(ProgramModule::as_loaded)
             .collect();
+        // A dependency this program has already lowered for a different
+        // report unit is substituted in already-lowered: `has_yield_fns`
+        // below then sees none left to cut, so the pipeline call skips it
+        // instead of repeating the check-lower-check it already paid for.
+        {
+            let cache = self.lowering_cache.borrow();
+            for entry in modules.iter_mut() {
+                if let Some(lowered) = cache.get(&entry.path) {
+                    *entry = lowered.clone();
+                }
+            }
+        }
         // Each module of this program is prepared as a unit of its own,
         // through its own front door: a dependency that fails to lower
         // reports it there, against its own file, so the errors this call
         // hands back would be the same ones twice.
         let _ = crate::ir::pipeline::lower_loaded_yield_modules(&mut modules, None);
+        {
+            let mut cache = self.lowering_cache.borrow_mut();
+            for entry in &modules {
+                // A module that still has `yield` functions failed to
+                // lower; leave it uncached so the next caller retries it
+                // (and hits the same errors) instead of memoizing a
+                // broken half-state.
+                if !crate::yield_lowering::has_yield_fns(&entry.items) {
+                    cache
+                        .entry(entry.path.clone())
+                        .or_insert_with(|| entry.clone());
+                }
+            }
+        }
         Ok(modules)
     }
 }
@@ -682,7 +715,10 @@ pub fn load_program_with_cache(
         discovery_index: 0,
         fault: None,
     });
-    Ok(Program { modules })
+    Ok(Program {
+        modules,
+        lowering_cache: Default::default(),
+    })
 }
 
 /// Depth-first dependency walk shared by every loader.
