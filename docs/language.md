@@ -440,7 +440,7 @@ fn drive(outcome: __LoopOutcome, answers: List<Option<Int>>) -> Int
                 [answer, ..rest] -> drive(__loopAnswerClaim(state, answer), rest)
 ```
 
-Stops may sit anywhere the function runs unconditionally — in a binding, as a match subject, inside an argument — and inside `match` arms; the same operation may stop several times in one body, and `?` after a request works (`Err` leaves through `Done`). When code follows a stop that sits in a `match` arm of a non-tail statement, the rest of the path becomes a generated continuation function (`__loopJoin1`, `__loopAfterAwaitR`) the arms call. The generated items are ordinary types and pure functions: `aver verify` runs them, every backend compiles them, and `aver proof` exports them to Lean and Dafny like anything else, so the coordinator's laws can reason about the protocol.
+Stops may sit anywhere the function runs unconditionally — in a binding, as a match subject, inside an argument — and inside `match` arms; a request in tail position, as the last expression of the body or as the leaf of a `match` arm, is a stop like any other, and the answer to it is what the function returns. The same operation may stop several times in one body, and `?` after a request works (`Err` leaves through `Done`). When code follows a stop that sits in a `match` arm of a non-tail statement, the rest of the path becomes a generated continuation function (`__loopJoin1`, `__loopAfterAwaitR`) the arms call. The generated items are ordinary types and pure functions: `aver verify` runs them, every backend compiles them, and `aver proof` exports them to Lean and Dafny like anything else, so the coordinator's laws can reason about the protocol.
 
 Two diagnostics guard the shape:
 
