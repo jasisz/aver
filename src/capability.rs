@@ -17,6 +17,7 @@ use sha2::{Digest, Sha256};
 
 use crate::ast::{CapabilityItem, Expr, FnDef, Module, Stmt, TopLevel, Type, TypeDef};
 
+pub mod answer;
 mod descriptor;
 #[cfg(test)]
 mod tests;

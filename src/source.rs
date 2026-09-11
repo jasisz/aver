@@ -769,6 +769,11 @@ struct Walk<'a> {
     /// ceiling itself is resolved per file, because `[[verify.costly]]`
     /// scopes itself by file glob as well as by function name.
     verify_config: Option<crate::config::ProjectConfig>,
+    /// The capabilities this project answers itself. A module that declares
+    /// one of them gains its generated reply sums, and `depends [Wait]` for
+    /// the type they carry, before this walk follows its edges — so `Wait`
+    /// loads as an ordinary written dependency.
+    marked: crate::config::MarkedCapabilities,
     loaded: HashSet<PathBuf>,
     loading: Vec<PathBuf>,
     modules: Vec<ProgramModule>,
@@ -786,10 +791,16 @@ impl<'a> Walk<'a> {
                     .flatten()
             })
             .clone();
+        let marked = crate::config::MarkedCapabilities::from_manifest(
+            verify_config
+                .as_ref()
+                .and_then(|config| config.provider_manifest.as_ref()),
+        );
         Self {
             module_root,
             mode,
             verify_config,
+            marked,
             loaded: HashSet::new(),
             loading: Vec::new(),
             modules: Vec::new(),
@@ -895,7 +906,8 @@ impl<'a> Walk<'a> {
             }
         });
         let source = cached.source.clone();
-        let items = cached.items.clone();
+        let mut items = cached.items.clone();
+        crate::capability::answer::generate_reply_types(&mut items, &self.marked);
         let path = cached.path.clone();
         let is_stdlib = cached.is_stdlib;
         let fault = cached.fault.as_ref().map(|fault| match fault {

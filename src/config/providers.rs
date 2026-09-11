@@ -121,6 +121,81 @@ impl ProviderPackageManifest {
     }
 }
 
+/// The capabilities a program answers itself: one name per `answer = "Module"`
+/// binding of its manifest.
+///
+/// This is the set the `yield` lowering reads to decide what a stop is, so it
+/// is carried as a set of names rather than as the manifest: the front door
+/// should not learn to read TOML, and every door that lowers a program has to
+/// agree with every other about which calls are requests.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MarkedCapabilities {
+    names: BTreeSet<String>,
+}
+
+impl MarkedCapabilities {
+    /// The empty set: a program with no `aver.toml`, or one whose manifest
+    /// marks nothing. Every call of such a program runs in place.
+    pub fn none() -> Self {
+        Self::default()
+    }
+
+    /// The capabilities `manifest` answers with a module of the program.
+    pub fn from_manifest(manifest: Option<&ProviderPackageManifest>) -> Self {
+        let names = manifest
+            .map(|manifest| {
+                manifest
+                    .answer_bindings
+                    .iter()
+                    .map(|binding| binding.capability.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        Self { names }
+    }
+
+    /// The set the project rooted at `base_dir` declares. A directory with no
+    /// `aver.toml`, an unreadable one, or none given at all is the empty set:
+    /// markedness is a project fact, and a scratch buffer is not a project.
+    pub fn for_project_dir(base_dir: Option<&str>) -> Self {
+        let Some(base) = base_dir else {
+            return Self::none();
+        };
+        let manifest = crate::config::ProjectConfig::load_from_dir(Path::new(base))
+            .ok()
+            .flatten()
+            .and_then(|config| config.provider_manifest);
+        Self::from_manifest(manifest.as_ref())
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.names.is_empty()
+    }
+
+    /// Whether this capability module is answered by the program.
+    pub fn marks(&self, capability: &str) -> bool {
+        self.names.contains(capability)
+    }
+
+    /// Whether `operation` — a dotted call such as `Pool.claim` — belongs to a
+    /// marked capability. A manifest names the capability as the program
+    /// writes it in `depends`, so a call written through a longer path
+    /// (`Infra.Pool.claim`) is matched on the suffix, exactly as an effect
+    /// entry is.
+    pub fn answers(&self, operation: &str) -> bool {
+        let Some((namespace, _)) = operation.rsplit_once('.') else {
+            return false;
+        };
+        self.names.iter().any(|name| {
+            namespace == name || namespace.ends_with(&format!(".{name}"))
+        })
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &str> {
+        self.names.iter().map(String::as_str)
+    }
+}
+
 pub(super) fn parse_provider_manifest(
     root: &toml::Table,
 ) -> Result<Option<ProviderPackageManifest>, String> {
