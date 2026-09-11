@@ -20,7 +20,7 @@ use std::path::Path;
 mod providers;
 pub use providers::{
     PROVIDER_MANIFEST_SCHEMA, ProviderPackageBinding, ProviderPackageManifest,
-    ProviderPackageSource,
+    ProviderPackageSource, ProviderWorkBinding,
 };
 
 /// Runtime policy for a single effect namespace.

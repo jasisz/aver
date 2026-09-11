@@ -21,6 +21,7 @@ mod descriptor;
 #[cfg(test)]
 mod tests;
 mod validation;
+pub mod work;
 
 use descriptor::{
     hash_descriptor, reachable_type_defs, render_contract_descriptor, render_model_descriptor,

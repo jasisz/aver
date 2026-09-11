@@ -1,0 +1,16 @@
+module Validation
+    kind = capability
+    semantics = effectful
+    depends [Work]
+    intent = "A job kind whose begin does not return a Result."
+    exposes [begin, take]
+
+operation begin(task: String) -> Work.Job
+    ? "Starts one validation and returns the handle without a Result."
+    oracle = generativeOutput
+    replay = recorded
+
+operation take(job: Work.Job) -> Result<Option<Int>, String>
+    ? "Collects one finished validation: None while it runs, Some(score) once it finished."
+    oracle = generativeOutput
+    replay = recorded

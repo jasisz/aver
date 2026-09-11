@@ -1,0 +1,8 @@
+module Node
+    intent = "A function whose result is not what take yields."
+    effects []
+    exposes [validate]
+
+fn validate(task: String) -> String
+    ? "Echoes one task."
+    task

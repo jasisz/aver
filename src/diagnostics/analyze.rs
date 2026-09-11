@@ -11,6 +11,7 @@
 use super::classify::SourceIndex;
 #[cfg(feature = "runtime")]
 use super::factories::verify_provider_setup_diagnostic;
+use super::factories::work_diagnostic;
 use super::factories::{
     from_check_finding_with_index, from_type_error_with_index, unused_binding_diagnostic_with_index,
 };
@@ -259,6 +260,26 @@ fn analyze_prechecked_items_impl(
             te,
             &source_index,
             source,
+            &options.file_label,
+        ));
+    }
+
+    // Job kinds and their manifest bindings. This is the one place where a
+    // program's `work = "Module.function"` bindings meet the modules they
+    // name: every static front door (`aver check`, `aver audit`, the LSP and
+    // the playground) reaches the program through this analysis.
+    let module_decl = crate::visibility::module_decl(items);
+    for finding in crate::capability::work::gate(
+        &tc_result.capabilities,
+        project_provider_manifest(options).as_ref(),
+        &tc_result.fn_sigs,
+        module_decl.map(|module| module.name.as_str()),
+        crate::capability::work::WorkTarget::Vm,
+    ) {
+        diagnostics.push(work_diagnostic(
+            &finding,
+            module_decl.map(|module| module.line).unwrap_or(1),
+            &source_index,
             &options.file_label,
         ));
     }
@@ -717,4 +738,17 @@ fn parse_error_repair(body: &str) -> super::model::Repair {
         primary: hint.map(String::from),
         ..Repair::default()
     }
+}
+
+/// The provider manifest of the project this source belongs to, when it
+/// belongs to one. Scratch buffers and the playground have no `aver.toml`,
+/// so they hold no bindings at all.
+fn project_provider_manifest(
+    options: &AnalyzeOptions,
+) -> Option<crate::config::ProviderPackageManifest> {
+    let base = options.module_base_dir.as_deref()?;
+    crate::config::ProjectConfig::load_from_dir(std::path::Path::new(base))
+        .ok()
+        .flatten()
+        .and_then(|config| config.provider_manifest)
 }

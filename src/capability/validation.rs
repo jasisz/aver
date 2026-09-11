@@ -77,7 +77,7 @@ pub(super) fn validate_hostile_profiles(
     }
 }
 
-fn canonicalize_type_names(ty: Type, scope: &str) -> Type {
+pub(super) fn canonicalize_type_names(ty: Type, scope: &str) -> Type {
     match ty {
         Type::Named { id, name } => {
             if name.contains('.') || name == crate::types::branch_path::TYPE_NAME {
