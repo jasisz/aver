@@ -11,6 +11,7 @@ type Item
 type Wake
     Item(Wait.Item)
     After(Int)
+    Either(Wait.Item, Int)
     NextTurn
 
 operation poll(items: Map<Int, Wait.Item>, timeoutMs: Int) -> Result<List<Int>, String>

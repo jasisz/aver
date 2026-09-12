@@ -1,7 +1,7 @@
 module Ledger
     intent = "The answers this program gives to Pool, Blocks and Chain: one state, pure transitions, plus the two ends of the validation job's seam."
     depends [Bytes, Wait, Pool, Blocks, Chain]
-    exposes [State, fresh, blockOf, claim, gone, joined, swept, deliver, body, nextTarget, commit, nextTask, validated, accepted, validate, checked]
+    exposes [State, fresh, patience, stopped, emptied, nothingPending, givenUp, blockOf, claim, claimIdle, counted, waited, gone, without, keptUnlessKey, joined, swept, deliver, body, nextTarget, targetAbove, waiting, commit, nextTask, validated, accepted, validate, checked]
     effects []
 
 record State
@@ -13,31 +13,81 @@ record State
     bodies: Map<Int, Bytes>
     tip: Int
     swept: Int
+    idleClaims: Int
+    left: Int
     rejected: List<String>
 
 fn fresh() -> State
-    ? "No peer has joined, nothing is fetched, and the run is three blocks long."
-    State(idle = [], busy = {}, nextHeight = 1, lastHeight = 3, queued = [], bodies = {}, tip = 0, swept = 0, rejected = [])
+    ? "No peer has joined, nothing is fetched, nothing has been waited for and nobody has left, and the run is three blocks long."
+    State(idle = [], busy = {}, nextHeight = 1, lastHeight = 3, queued = [], bodies = {}, tip = 0, swept = 0, idleClaims = 0, left = 0, rejected = [])
+
+fn patience() -> Int
+    ? "How many asks this pool answers with nobody idle before it gives up. Each one parks on a five-millisecond deadline, and the turns around it stretch that, so this is a few seconds of waiting for a peer that may never connect: long enough for one that is on its way, short enough that a run nobody connects to still ends."
+    400
+
+fn stopped(state: State) -> Bool
+    ? "Whether this pool will hand out no more work: every height has gone out, it spent its patience waiting for a peer to arrive, or every peer it seated has left it."
+    Bool.or(state.nextHeight > state.lastHeight, Bool.or(state.idleClaims >= patience(), emptied(state)))
+
+fn emptied(state: State) -> Bool
+    ? "Whether the pool had peers and has none left. A peer that left is one this run is finished with, so a pool that has lost every peer it seated has nobody to hand a height to. This is final: once it holds, it holds for the rest of the run, because a peer that arrives later is seated in a pool that already hands out no more work. That is what a run this program means to end wants, and it is a thing to weigh before this example is asked to seat more than one peer."
+    match state.idle
+        [] -> Bool.and(state.left > 0, Map.len(state.busy) == 0)
+        [_, .._] -> false
+
+fn nothingPending(state: State) -> Bool
+    ? "Nothing is on its way to the chain: no peer is fetching a body and nothing is waiting to be validated."
+    match state.queued
+        [] -> Map.len(state.busy) == 0
+        [_, .._] -> false
+
+fn givenUp(state: State) -> Bool
+    ? "Whether nothing will ever validate the body the walk is waiting for: the pool hands out no more work, and nothing is pending that could still bring one."
+    Bool.and(stopped(state), nothingPending(state))
 
 fn blockOf(height: Int) -> Bytes
     ? "The body one height carries. A peer asks for exactly these bytes and hands exactly them back."
     String.toUtf8("block {height}")
 
 fn claim(state: State) -> Tuple<State, Pool.__ClaimReply>
-    ? "The next height for the next idle peer, Stop once every height has been handed out, and a Later with a deadline while no peer is free to take one."
-    match state.nextHeight > state.lastHeight
+    ? "The next height for the next idle peer, Stop once this pool will hand out no more work, and a Later with a deadline while it is still waiting for a peer to take one."
+    match stopped(state)
         true -> (state, Pool.__ClaimReply.Now(Pool.Assignment.Stop))
         false -> claimIdle(state, state.idle)
 
 fn claimIdle(state: State, idle: List<Int>) -> Tuple<State, Pool.__ClaimReply>
-    ? "One height handed to one idle peer. With nobody idle the request parks on a deadline: what frees a peer is another process, not this one."
+    ? "One height handed to one idle peer. With nobody idle the ask parks on a deadline and may spend one of the pool's asks: what frees a peer is another process, not this one, and a pool nobody ever connects to gives up rather than waiting for ever."
     match idle
-        [] -> (state, Pool.__ClaimReply.Later(Wait.Wake.After(5)))
-        [key, ..rest] -> (State.update(state, idle = rest, busy = Map.set(state.busy, key, state.nextHeight), nextHeight = state.nextHeight + 1), Pool.__ClaimReply.Now(Pool.Assignment.Work(key, state.nextHeight)))
+        [] -> waited(counted(state))
+        [key, ..rest] -> (State.update(state, idle = rest, busy = Map.set(state.busy, key, state.nextHeight), nextHeight = state.nextHeight + 1, idleClaims = 0), Pool.__ClaimReply.Now(Pool.Assignment.Work(key, state.nextHeight)))
+
+fn counted(state: State) -> State
+    ? "One ask with nobody idle, counted against this pool's patience only when the pool has no peers at all. A pool whose peers are all out fetching a body is not a pool nobody has joined: it is waiting for work it handed out, and it would spend its whole patience waiting for a slow peer that is doing exactly what it was asked to. What the patience is for is a run nobody ever connects to."
+    match Map.len(state.busy) == 0
+        true -> State.update(state, idleClaims = state.idleClaims + 1)
+        false -> state
+
+fn waited(state: State) -> Tuple<State, Pool.__ClaimReply>
+    ? "One ask answered with nobody idle, once it has been counted: Stop when that was the last of the pool's patience, a deadline while it has some left."
+    match stopped(state)
+        true -> (state, Pool.__ClaimReply.Now(Pool.Assignment.Stop))
+        false -> (state, Pool.__ClaimReply.Later(Wait.Wake.After(5)))
 
 fn gone(state: State, key: Int) -> Tuple<State, Pool.__GoneReply>
-    ? "A peer that left gives its height back."
-    (State.update(state, idle = List.concat(state.idle, [key]), busy = Map.remove(state.busy, key)), Pool.__GoneReply.Now(Unit))
+    ? "A peer that left: it holds no height any more, and it is not in the pool to be handed another one. The pool counts it, because a pool that has lost every peer it seated will hand out no more work and the chain above it has nothing left to wait for."
+    (State.update(state, idle = without(state.idle, key, []), busy = Map.remove(state.busy, key), left = state.left + 1), Pool.__GoneReply.Now(Unit))
+
+fn without(keys: List<Int>, key: Int, acc: List<Int>) -> List<Int>
+    ? "The idle list with one peer taken out, in the order the rest of them joined."
+    match keys
+        [] -> acc
+        [head, ..rest] -> without(rest, key, keptUnlessKey(acc, head, key))
+
+fn keptUnlessKey(acc: List<Int>, candidate: Int, key: Int) -> List<Int>
+    ? "One idle peer, kept unless it is the one that left."
+    match candidate == key
+        true -> acc
+        false -> List.concat(acc, [candidate])
 
 fn joined(state: State, key: Int) -> Tuple<State, Pool.__JoinedReply>
     ? "A peer that arrived, seated in the pool unless the pool is already full."
@@ -71,6 +121,12 @@ fn targetAbove(state: State, height: Int) -> Tuple<State, Chain.__NextTargetRepl
     ? "The height above the tip, once something has validated its body."
     match Map.has(state.bodies, height)
         true -> (state, Chain.__NextTargetReply.Now(Option.Some(height)))
+        false -> waiting(state)
+
+fn waiting(state: State) -> Tuple<State, Chain.__NextTargetReply>
+    ? "The body above the tip is not validated yet. While something may still bring it the walk parks on a deadline; once the pool has given up and nothing is pending, nothing ever will, and the chain ends where it stands rather than turning for ever."
+    match givenUp(state)
+        true -> (state, Chain.__NextTargetReply.Now(Option.None))
         false -> (state, Chain.__NextTargetReply.Later(Wait.Wake.After(2)))
 
 fn commit(state: State, height: Int, summary: String) -> Tuple<State, Chain.__CommitReply>
@@ -121,13 +177,60 @@ fn checked(height: Int, size: Int) -> Int
         true -> 0
         false -> height
 
+verify stopped
+    stopped(fresh()) => false
+    stopped(State.update(fresh(), nextHeight = 4)) => true
+    stopped(State.update(fresh(), idleClaims = 400)) => true
+    stopped(State.update(fresh(), left = 1)) => true
+    stopped(State.update(fresh(), left = 1, idle = [7])) => false
+
+verify emptied
+    emptied(fresh()) => false
+    emptied(State.update(fresh(), left = 1)) => true
+    emptied(State.update(fresh(), left = 1, idle = [7])) => false
+    emptied(State.update(fresh(), left = 1, busy = Map.set({}, 7, 1))) => false
+
+verify nothingPending
+    nothingPending(fresh()) => true
+    nothingPending(State.update(fresh(), busy = Map.set({}, 7, 1))) => false
+    nothingPending(State.update(fresh(), queued = [(1, blockOf(1))])) => false
+
+verify givenUp
+    givenUp(fresh()) => false
+    givenUp(State.update(fresh(), nextHeight = 4)) => true
+    givenUp(State.update(fresh(), nextHeight = 4, queued = [(1, blockOf(1))])) => false
+
 verify claim
-    claim(fresh()) => (fresh(), Pool.__ClaimReply.Later(Wait.Wake.After(5)))
+    claim(fresh()) => (State.update(fresh(), idleClaims = 1), Pool.__ClaimReply.Later(Wait.Wake.After(5)))
     claim(State.update(fresh(), nextHeight = 4)) => (State.update(fresh(), nextHeight = 4), Pool.__ClaimReply.Now(Pool.Assignment.Stop))
+    claim(State.update(fresh(), idleClaims = 400)) => (State.update(fresh(), idleClaims = 400), Pool.__ClaimReply.Now(Pool.Assignment.Stop))
 
 verify claimIdle
-    claimIdle(fresh(), []) => (fresh(), Pool.__ClaimReply.Later(Wait.Wake.After(5)))
+    claimIdle(fresh(), []) => (State.update(fresh(), idleClaims = 1), Pool.__ClaimReply.Later(Wait.Wake.After(5)))
+    claimIdle(State.update(fresh(), idleClaims = 399), []) => (State.update(fresh(), idleClaims = 400), Pool.__ClaimReply.Now(Pool.Assignment.Stop))
+    claimIdle(State.update(fresh(), busy = Map.set({}, 7, 1)), []) => (State.update(fresh(), busy = Map.set({}, 7, 1)), Pool.__ClaimReply.Later(Wait.Wake.After(5)))
     claimIdle(State.update(fresh(), idle = [7]), [7]) => (State.update(fresh(), idle = [], busy = Map.set({}, 7, 1), nextHeight = 2), Pool.__ClaimReply.Now(Pool.Assignment.Work(7, 1)))
+
+verify counted
+    counted(fresh()) => State.update(fresh(), idleClaims = 1)
+    counted(State.update(fresh(), busy = Map.set({}, 7, 1))) => State.update(fresh(), busy = Map.set({}, 7, 1))
+
+verify waited
+    waited(State.update(fresh(), idleClaims = 1)) => (State.update(fresh(), idleClaims = 1), Pool.__ClaimReply.Later(Wait.Wake.After(5)))
+    waited(State.update(fresh(), idleClaims = 400)) => (State.update(fresh(), idleClaims = 400), Pool.__ClaimReply.Now(Pool.Assignment.Stop))
+
+verify gone
+    gone(State.update(fresh(), busy = Map.set({}, 7, 1)), 7) => (State.update(fresh(), left = 1), Pool.__GoneReply.Now(Unit))
+    gone(State.update(fresh(), idle = [7, 8]), 7) => (State.update(fresh(), idle = [8], left = 1), Pool.__GoneReply.Now(Unit))
+
+verify without
+    without([], 7, []) => []
+    without([7, 8], 7, []) => [8]
+    without([8], 7, []) => [8]
+
+verify keptUnlessKey
+    keptUnlessKey([], 7, 7) => []
+    keptUnlessKey([], 8, 7) => [8]
 
 verify joined
     joined(fresh(), 7) => (State.update(fresh(), idle = [7]), Pool.__JoinedReply.Now(Pool.Welcome.Seated))
@@ -148,6 +251,10 @@ verify nextTarget
 verify targetAbove
     targetAbove(fresh(), 1) => (fresh(), Chain.__NextTargetReply.Later(Wait.Wake.After(2)))
     targetAbove(State.update(fresh(), bodies = Map.set({}, 1, blockOf(1))), 1) => (State.update(fresh(), bodies = Map.set({}, 1, blockOf(1))), Chain.__NextTargetReply.Now(Option.Some(1)))
+
+verify waiting
+    waiting(fresh()) => (fresh(), Chain.__NextTargetReply.Later(Wait.Wake.After(2)))
+    waiting(State.update(fresh(), left = 1)) => (State.update(fresh(), left = 1), Chain.__NextTargetReply.Now(Option.None))
 
 verify commit
     commit(fresh(), 1, "7") => (State.update(fresh(), tip = 1), Chain.__CommitReply.Now(Chain.Landed.Connected))
