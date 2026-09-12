@@ -1815,9 +1815,11 @@ const REPLAY_RUNTIME_TEMPLATE: &str = r#"pub mod aver_replay {
         )?
         .parse::<u64>()
         .map_err(|_| "$capabilityResource.trace must be a u64 string".to_string())?;
-        if trace == 0 {
-            return Err("$capabilityResource.trace must be non-zero".to_string());
-        }
+        // Any u64 is a token. This artifact numbers its own from one, but a
+        // recording made by another backend of the same program numbers its
+        // tokens however it likes — the bytecode VM uses the resource slot,
+        // which starts at zero — and the token is only ever compared with
+        // itself, never dereferenced.
         Ok(trace)
     }
 

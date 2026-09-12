@@ -687,8 +687,10 @@ fn work_input_rejections(
         .unwrap_or(false);
     if aver::capability::work::job_kinds(&capabilities).is_empty()
         && !answers
-        && (target == aver::capability::work::WorkTarget::Vm
-            || aver::capability::work::reserved_contract_in_use(&capabilities).is_none())
+        && (matches!(
+            target,
+            aver::capability::work::WorkTarget::Vm | aver::capability::work::WorkTarget::Rust
+        ) || aver::capability::work::reserved_contract_in_use(&capabilities).is_none())
     {
         return empty;
     }

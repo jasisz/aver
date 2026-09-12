@@ -11,6 +11,18 @@ use crate::config::{ProviderPackageManifest, ProviderPackageSource};
 pub(crate) struct ProviderComposition {
     pub manifest_present: bool,
     pub bindings: Vec<ProviderCompositionBinding>,
+    /// The job kinds this program answers with a pure function of its own,
+    /// in capability order. Unlike a package binding these need no Cargo
+    /// dependency: the function is compiled into the same crate.
+    pub work_kinds: Vec<ProviderCompositionWorkKind>,
+}
+
+/// One `work = "Module.function"` binding this program reaches.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ProviderCompositionWorkKind {
+    pub capability: String,
+    /// The bound function, as `aver.toml` names it.
+    pub function: String,
 }
 
 impl ProviderComposition {
@@ -177,10 +189,22 @@ pub(crate) fn plan_for_project(
         ));
     }
 
+    let mut work_kinds = manifest
+        .work_bindings
+        .iter()
+        .filter(|binding| required_capabilities.contains(&binding.capability))
+        .map(|binding| ProviderCompositionWorkKind {
+            capability: binding.capability.clone(),
+            function: binding.function.clone(),
+        })
+        .collect::<Vec<_>>();
+    work_kinds.sort_by(|left, right| left.capability.cmp(&right.capability));
+
     bindings.sort_by(|left, right| left.capability.cmp(&right.capability));
     Ok(ProviderComposition {
         manifest_present: true,
         bindings,
+        work_kinds,
     })
 }
 

@@ -8,7 +8,78 @@ use crate::capability::CapabilityRegistry;
 use crate::provider::required_capability_operations;
 
 use super::syntax::aver_name_to_rust;
-use super::types::type_annotation_to_rust;
+use super::types::type_annotation_to_rust_scoped;
+
+/// One job kind of this program, resolved to what the generated crate needs:
+/// the capability it answers, and the Rust call that runs one task.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct WorkKindEmit {
+    pub capability: String,
+    /// The generated wrapper's own name, e.g. `work_body_Validation`.
+    pub body_fn: String,
+    /// The call that runs one task, with `__task` already decoded.
+    pub call: String,
+}
+
+/// The job engine limit this artifact is built with.
+///
+/// `[work] max-jobs` is part of the program, so a declared limit is a literal
+/// in the generated bootstrap. A manifest that names none leaves the VM's own
+/// default, which is the running host's parallelism — resolving that at
+/// compile time would pin the build machine's core count into the binary.
+fn work_limit_expression(declared: Option<usize>) -> String {
+    match declared {
+        Some(limit) => limit.to_string(),
+        None => "aver_rt::work::JobEngine::default_limit()".to_string(),
+    }
+}
+
+/// Resolve every job kind this program reaches into the Rust call that runs
+/// one of its tasks.
+///
+/// The bound function is an ordinary function of the same program, so it is
+/// called through the crate's own generated module path, and through the same
+/// borrow mask every other call site of it uses — a collection task is passed
+/// by reference exactly where the emitted signature borrows it.
+pub(super) fn plan_work_kinds(
+    ctx: &crate::codegen::CodegenContext,
+    work_kinds: &[super::composition::ProviderCompositionWorkKind],
+) -> Vec<WorkKindEmit> {
+    work_kinds
+        .iter()
+        .map(|kind| {
+            let path = generated_fn_path(&kind.function, ctx);
+            let borrows = super::expr::callee_borrow_mask(&kind.function, 1, ctx)
+                .first()
+                .copied()
+                .unwrap_or(false);
+            let argument = if borrows { "&__task" } else { "__task" };
+            WorkKindEmit {
+                capability: kind.capability.clone(),
+                body_fn: format!("work_body_{}", aver_name_to_rust(&kind.capability)),
+                call: format!("{path}({argument})"),
+            }
+        })
+        .collect()
+}
+
+/// The Rust path naming one `Module.function` of the program being generated.
+fn generated_fn_path(dotted: &str, ctx: &crate::codegen::CodegenContext) -> String {
+    if let Some((prefix, bare)) = crate::codegen::common::resolve_module_call(dotted, ctx) {
+        return format!(
+            "{}::{}",
+            crate::codegen::common::module_prefix_to_rust_path(prefix),
+            aver_name_to_rust(bare)
+        );
+    }
+    // A function of the entry module carries no registered module prefix; the
+    // entry program's own module is always emitted as `aver_generated::entry`.
+    let bare = dotted
+        .rsplit_once('.')
+        .map(|(_, bare)| bare)
+        .unwrap_or(dotted);
+    format!("crate::aver_generated::entry::{}", aver_name_to_rust(bare))
+}
 
 /// Emit the runtime registry shared by every custom-capability call in one
 /// generated artifact. A host may install bindings once before calling an Aver
@@ -18,6 +89,8 @@ pub(super) fn generate_provider_runtime(
     required: &BTreeSet<String>,
     embedded_tcp_settings: Option<crate::config::TcpEffectSettings>,
     runtime_policy_from_env: bool,
+    work_kinds: &[WorkKindEmit],
+    work_max_jobs: Option<usize>,
 ) -> String {
     let mut out = String::new();
     out.push_str(
@@ -87,6 +160,24 @@ pub(super) fn generate_provider_runtime(
         .unwrap();
     }
 
+    for kind in work_kinds {
+        let Some(contract) = contracts.contract(&kind.capability) else {
+            continue;
+        };
+        let operations = contracts
+            .operations()
+            .filter(|operation| operation.module == kind.capability)
+            .map(|operation| format!("{:?}.to_string()", operation.canonical_name))
+            .collect::<Vec<_>>()
+            .join(", ");
+        writeln!(
+            out,
+            "    if include_defaults {{ registry.bind(ProviderBinding::new({:?}, {:?}, vec![{}], std::sync::Arc::new(aver_rt::provider::WorkKindProvider::new({:?}, work_job_engine().clone(), {}))))?; }}",
+            kind.capability, contract.contract_hash, operations, kind.capability, kind.body_fn
+        )
+        .unwrap();
+    }
+
     out.push_str(
         "    let mut supplied = std::collections::BTreeSet::new();\n\
          for binding in bindings {\n\
@@ -125,6 +216,38 @@ pub(super) fn generate_provider_runtime(
              PROVIDERS.get().expect(\"provider registry initialized\")\n\
          }\n\n",
     );
+
+    if !work_kinds.is_empty() {
+        writeln!(
+            out,
+            "/// The one job engine of this artifact. Every job kind shares it, so\n\
+             /// `[work] max-jobs` bounds the program and not one capability of it.\n\
+             fn work_job_engine() -> &'static std::sync::Arc<aver_rt::work::JobEngine> {{\n\
+                 static ENGINE: OnceLock<std::sync::Arc<aver_rt::work::JobEngine>> = OnceLock::new();\n\
+                 ENGINE.get_or_init(|| aver_rt::work::JobEngine::new({}))\n\
+             }}\n",
+            work_limit_expression(work_max_jobs)
+        )
+        .unwrap();
+    }
+    for kind in work_kinds {
+        let capability = &kind.capability;
+        writeln!(
+            out,
+            "/// One task of job kind '{capability}', off the turn: decode it, run the\n\
+             /// function `aver.toml` bound, and hand the answer back as a value.\n\
+             fn {}(__task: ProviderValue) -> Result<ProviderValue, String> {{\n\
+                 let __registry = registry();\n\
+                 let __task = ProviderCodec::from_provider_value(__task, __registry, {capability:?}, None)\n\
+                     .map_err(|why| format!(\"work: job kind '{capability}' was handed an unusable task: {{}}\", why))?;\n\
+                 let __produced = {};\n\
+                 __produced.into_provider_value(__registry, {capability:?})\n\
+                     .map_err(|why| format!(\"work: job kind '{capability}' produced an unusable result: {{}}\", why))\n\
+             }}\n",
+            kind.body_fn, kind.call
+        )
+        .unwrap();
+    }
 
     let required = required
         .iter()
@@ -268,14 +391,22 @@ pub(super) fn emit_resource_type(module: &str, name: &str, with_replay: bool) ->
             "#[derive(Clone, PartialEq, Eq, Hash)]\npub struct {name}(aver_rt::provider::ProviderResourceHandle);"
         )
     };
+    // A resource is minted by whichever capability returns it, which need not
+    // be the capability that declares the type: `Work.Job` is declared by
+    // `Work`, minted by every job kind, and read by `Work` and `Wait`. Prefer
+    // binding identity where it holds, and otherwise accept a handle whose
+    // type matches and whose minting binding is still installed — the same
+    // two-step the VM boundary in `src/provider/value.rs` uses.
+    let resolve = format!(
+        "registry.resolve_resource(capability, {canonical:?}, {{handle}}).or_else(|_| registry.resolve_foreign_resource({canonical:?}, {{handle}})).map(aver_rt::provider::ProviderValue::Resource)"
+    );
     let live_handle = if with_replay {
+        let resolved = resolve.replace("{handle}", "&handle");
         format!(
-            "match self.0 {{\n            {name}State::Live(handle) => registry.resolve_resource(capability, {canonical:?}, &handle).map(aver_rt::provider::ProviderValue::Resource),\n            {name}State::Replay(_) => Err(\"replay-only capability resource '{canonical}' cannot enter a live provider call\".to_string()),\n        }}"
+            "match self.0 {{\n            {name}State::Live(handle) => {resolved},\n            {name}State::Replay(_) => Err(\"replay-only capability resource '{canonical}' cannot enter a live provider call\".to_string()),\n        }}"
         )
     } else {
-        format!(
-            "registry.resolve_resource(capability, {canonical:?}, &self.0).map(aver_rt::provider::ProviderValue::Resource)"
-        )
+        resolve.replace("{handle}", "&self.0")
     };
     let stored = if with_replay {
         format!(
@@ -319,11 +450,10 @@ impl crate::aver_replay::ReplayValue for {name} {{
          }}\n\n\
          impl aver_rt::provider::ProviderCodec for {name} {{\n\
              fn into_provider_value(self, registry: &aver_rt::provider::NativeProviderRegistry, capability: &str) -> Result<aver_rt::provider::ProviderValue, String> {{\n\
-                 if capability != {module:?} {{ return Err(format!(\"resource '{canonical}' belongs to capability '{module}', not '{{}}'\", capability)); }}\n\
                  {live_handle}\n\
              }}\n\n\
              fn from_provider_value(value: aver_rt::provider::ProviderValue, registry: &aver_rt::provider::NativeProviderRegistry, capability: &str, minted_resource: Option<&str>) -> Result<Self, String> {{\n\
-                 if capability != {module:?} || minted_resource != Some({canonical:?}) {{ return Err(\"resource '{canonical}' may only be returned by its minting operation\".to_string()); }}\n\
+                 if minted_resource != Some({canonical:?}) {{ return Err(\"resource '{canonical}' may only be returned by its minting operation\".to_string()); }}\n\
                  match value {{\n\
                      aver_rt::provider::ProviderValue::Resource(resource) => {stored},\n\
                      other => Err(format!(\"expected capability resource {canonical}, got {{}}\", other.shape())),\n\
@@ -337,12 +467,25 @@ impl crate::aver_replay::ReplayValue for {name} {{
 /// Emit the native boundary codec for one capability-owned represented type.
 /// Canonical names stay in ProviderValue while generated Rust keeps its local
 /// bare struct/enum name inside the owning module.
-pub(super) fn emit_represented_type_codec(module: &str, type_def: &TypeDef) -> String {
+pub(super) fn emit_represented_type_codec(
+    module: &str,
+    type_def: &TypeDef,
+    ctx: &crate::codegen::CodegenContext,
+) -> String {
     let bare = crate::codegen::common::type_def_name(type_def);
     let canonical = format!("{module}.{bare}");
+    // Name every field type exactly as the emitted declaration names it: the
+    // codec sits in the capability's own module, so a payload owned by
+    // another module (`Wait.Item.Socket(Tcp.Socket)`, `Wire.Heard.Data(Bytes)`)
+    // must carry that module's path rather than a flat alias it cannot see.
+    let field_type = |source: &str| type_annotation_to_rust_scoped(source, ctx, Some(module));
     let codec = match type_def {
-        TypeDef::Product { name, fields, .. } => emit_record_codec(name, fields, &canonical),
-        TypeDef::Sum { name, variants, .. } => emit_sum_codec(name, variants, &canonical),
+        TypeDef::Product { name, fields, .. } => {
+            emit_record_codec(name, fields, &canonical, &field_type)
+        }
+        TypeDef::Sum { name, variants, .. } => {
+            emit_sum_codec(name, variants, &canonical, &field_type)
+        }
     };
     format!(
         "{codec}\n\n#[allow(non_camel_case_types)]\npub type {} = {bare};",
@@ -350,7 +493,12 @@ pub(super) fn emit_represented_type_codec(module: &str, type_def: &TypeDef) -> S
     )
 }
 
-fn emit_record_codec(name: &str, fields: &[(String, String)], canonical: &str) -> String {
+fn emit_record_codec(
+    name: &str,
+    fields: &[(String, String)],
+    canonical: &str,
+    field_type: &dyn Fn(&str) -> String,
+) -> String {
     let encoded = fields
         .iter()
         .map(|(field, _)| {
@@ -365,7 +513,7 @@ fn emit_record_codec(name: &str, fields: &[(String, String)], canonical: &str) -
         .iter()
         .map(|(field, source_type)| {
             let rust_field = aver_name_to_rust(field);
-            let rust_type = type_annotation_to_rust(source_type);
+            let rust_type = field_type(source_type);
             format!(
                 "            {rust_field}: <{rust_type} as aver_rt::provider::ProviderCodec>::from_provider_value(by_name.remove({field:?}).ok_or_else(|| \"record '{canonical}' is missing field '{field}'\".to_string())?, registry, capability, minted_resource)?,"
             )
@@ -409,8 +557,12 @@ fn emit_record_codec(name: &str, fields: &[(String, String)], canonical: &str) -
     )
 }
 
-fn sum_field_rust_type(owner: &str, source_type: &str) -> String {
-    let rust_type = type_annotation_to_rust(source_type);
+fn sum_field_rust_type(
+    owner: &str,
+    source_type: &str,
+    field_type: &dyn Fn(&str) -> String,
+) -> String {
+    let rust_type = field_type(source_type);
     if source_type == owner {
         format!("std::sync::Arc<{rust_type}>")
     } else {
@@ -418,7 +570,12 @@ fn sum_field_rust_type(owner: &str, source_type: &str) -> String {
     }
 }
 
-fn emit_sum_codec(name: &str, variants: &[TypeVariant], canonical: &str) -> String {
+fn emit_sum_codec(
+    name: &str,
+    variants: &[TypeVariant],
+    canonical: &str,
+    field_type: &dyn Fn(&str) -> String,
+) -> String {
     let encode_arms = variants
         .iter()
         .map(|variant| {
@@ -450,7 +607,7 @@ fn emit_sum_codec(name: &str, variants: &[TypeVariant], canonical: &str) -> Stri
                 .iter()
                 .enumerate()
                 .map(|(index, source_type)| {
-                    let rust_type = sum_field_rust_type(name, source_type);
+                    let rust_type = sum_field_rust_type(name, source_type, field_type);
                     format!(
                         "<{rust_type} as aver_rt::provider::ProviderCodec>::from_provider_value(fields.next().expect(\"validated variant arity\"), registry, capability, minted_resource)?"
                     )
