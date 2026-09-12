@@ -190,6 +190,9 @@ fn an_answered_capability_is_refused_on_wasm_gc() {
         "yield_continuations",
         "yield_tail_stop",
         "yield_cross_module",
+        "yield_tail_into",
+        "yield_nested",
+        "yield_nested_twice",
     ] {
         let out = aver(fixture, &["run", "--wasm-gc"]);
         let text = format!(
@@ -234,6 +237,50 @@ fn tail_into_lean_check_builds_with_zero_errors_and_no_sorry() {
         "YieldTailInto.lean",
         &["def __totalInRestAt1", "def __restStart"],
     );
+}
+
+/// Decision 2: a non-tail call to a helper, with a request inside the helper
+/// and work after the call in the caller.
+#[test]
+fn a_nested_call_runs_and_verifies_on_the_vm() {
+    assert_runs_and_prints("yield_nested", &["run"], "walk = 9");
+    assert_verify_passes("yield_nested", &["verify"], "8/8");
+}
+
+#[test]
+fn nested_generates_exactly_the_pinned_protocol() {
+    let (lowered, generated, items) = lower_fixture("yield_nested");
+    assert_eq!(lowered, vec!["fetch".to_string(), "walk".to_string()]);
+    assert_eq!(generated, NESTED_GENERATED);
+    assert_removed(&items, "fetch");
+    assert_removed(&items, "walk");
+}
+
+#[test]
+fn nested_lean_check_builds_with_zero_errors_and_no_sorry() {
+    assert_lean_check_clean(
+        "yield_nested",
+        "YieldNested.lean",
+        &["inductive __WalkClaimState", "def __walkInFetchAt1"],
+    );
+}
+
+/// A helper with two request kinds, entered twice from one caller: every kind
+/// of the caller gains one variant per call site, and the live variables the
+/// two sites carry differ.
+#[test]
+fn a_helper_nested_twice_runs_and_verifies_on_the_vm() {
+    assert_runs_and_prints("yield_nested_twice", &["run"], "pairUp = 14");
+    assert_verify_passes("yield_nested_twice", &["verify"], "11/11");
+}
+
+#[test]
+fn nested_twice_generates_exactly_the_pinned_protocol() {
+    let (lowered, generated, items) = lower_fixture("yield_nested_twice");
+    assert_eq!(lowered, vec!["swap".to_string(), "pairUp".to_string()]);
+    assert_eq!(generated, NESTED_TWICE_GENERATED);
+    assert_removed(&items, "swap");
+    assert_removed(&items, "pairUp");
 }
 
 // ── Across the module boundary: the importer drives the dependency ──────
@@ -516,6 +563,166 @@ fn __restAnswerYield(__state: __RestYieldState) -> __RestOutcome
     ? "Re-enters 'rest' at its tail call with the arguments the Yield request carries."
     match __state
         __RestYieldState.Await2(left, seen) -> __restStart(left, seen)
+"#;
+
+/// Decision 2: a non-tail call nests the helper's state inside the caller's.
+/// `__WalkClaimState` has one variant for the call site, holding `fetch`'s own
+/// `__FetchClaimState` beside the two variables `walk` still reads, and the
+/// routing function is where a `Done` continues the caller and a `Waiting`
+/// leaves as a request of the caller.
+///
+/// Decision 3 is visible in `__walkStart`: the call is not a stop by itself,
+/// so the segment enters `fetch` in place and only what `fetch` waits on is a
+/// request.
+const NESTED_GENERATED: &str = r#"type __FetchClaimState
+    AwaitHandle(Int)
+
+type __FetchRequest
+    Claim(Int, __FetchClaimState)
+
+type __FetchOutcome
+    Done(Int)
+    Waiting(__FetchRequest)
+
+fn __fetchStart(peer: Int) -> __FetchOutcome
+    ? "Claims the handle of peer and counts the peer itself into it."
+    (__FetchOutcome).Waiting((__FetchRequest).Claim(peer, (__FetchClaimState).AwaitHandle(peer)))
+
+fn __fetchAnswerClaim(__state: __FetchClaimState, __answer: Int) -> __FetchOutcome
+    ? "Resumes 'fetch' after the coordinator answered its Claim request."
+    match __state
+        __FetchClaimState.AwaitHandle(peer) -> (__FetchOutcome).Done((__answer + peer))
+
+type __WalkClaimState
+    InFetchAt1(__FetchClaimState, Int, Int)
+
+type __WalkYieldState
+    Await1(Int, Int)
+
+type __WalkRequest
+    Claim(Int, __WalkClaimState)
+    Yield(__WalkYieldState)
+
+type __WalkOutcome
+    Done(Int)
+    Waiting(__WalkRequest)
+
+fn __walkStart(id: Int, seen: Int) -> __WalkOutcome
+    ? "Fetches one handle per round, adds it to seen and goes round until id runs down."
+    __walkInFetchAt1(__fetchStart(id), id, seen)
+
+fn __walkAnswerClaim(__state: __WalkClaimState, __answer: Int) -> __WalkOutcome
+    ? "Resumes 'walk' after the coordinator answered its Claim request."
+    match __state
+        __WalkClaimState.InFetchAt1(__inner, id, seen) -> __walkInFetchAt1(__fetchAnswerClaim(__inner, __answer), id, seen)
+
+fn __walkAnswerYield(__state: __WalkYieldState) -> __WalkOutcome
+    ? "Re-enters 'walk' at its tail call with the arguments the Yield request carries."
+    match __state
+        __WalkYieldState.Await1(id, seen) -> __walkStart(id, seen)
+
+fn __walkJoin1(id: Int, seen: Int, got: Int) -> __WalkOutcome
+    ? "Continues 'walk' after the branch at line 16."
+    match id
+        0 -> (__WalkOutcome).Done((seen + got))
+        _ -> (__WalkOutcome).Waiting((__WalkRequest).Yield((__WalkYieldState).Await1((id - 1), (seen + got))))
+
+fn __walkInFetchAt1(__outcome: __FetchOutcome, id: Int, seen: Int) -> __WalkOutcome
+    ? "Routes what 'fetch' answered back into 'walk': a result continues here, a request of 'fetch' leaves as a request of 'walk' carrying the nested state."
+    match __outcome
+        __FetchOutcome.Done(got) -> __walkJoin1(id, seen, got)
+        __FetchOutcome.Waiting(__request) -> match __request
+            __FetchRequest.Claim(__a0, __inner) -> (__WalkOutcome).Waiting((__WalkRequest).Claim(__a0, (__WalkClaimState).InFetchAt1(__inner, id, seen)))
+"#;
+
+/// One helper with two request kinds, nested twice: each of the caller's two
+/// state sums gains one variant per call site, the two sites carry different
+/// live variables, and both answer functions route by site.
+const NESTED_TWICE_GENERATED: &str = r#"type __SwapReleaseState
+    Await1(Int)
+
+type __SwapClaimState
+    Await2
+
+type __SwapRequest
+    Release(Int, __SwapReleaseState)
+    Claim(Int, __SwapClaimState)
+
+type __SwapOutcome
+    Done(Int)
+    Waiting(__SwapRequest)
+
+fn __swapStart(handle: Int) -> __SwapOutcome
+    ? "Gives one handle back and, when the pool took it, claims the next one for it."
+    (__SwapOutcome).Waiting((__SwapRequest).Release(handle, (__SwapReleaseState).Await1(handle)))
+
+fn __swapAnswerRelease(__state: __SwapReleaseState, __answer: Bool) -> __SwapOutcome
+    ? "Resumes 'swap' after the coordinator answered its Release request."
+    match __state
+        __SwapReleaseState.Await1(handle) -> match __answer
+            false -> (__SwapOutcome).Done(0)
+            true -> (__SwapOutcome).Waiting((__SwapRequest).Claim(handle, (__SwapClaimState).Await2))
+
+fn __swapAnswerClaim(__state: __SwapClaimState, __answer: Int) -> __SwapOutcome
+    ? "Resumes 'swap' after the coordinator answered its Claim request."
+    match __state
+        __SwapClaimState.Await2 -> (__SwapOutcome).Done(__answer)
+
+type __PairUpReleaseState
+    InSwapAt1(__SwapReleaseState, Int)
+    InSwapAt2(__SwapReleaseState, Int)
+
+type __PairUpClaimState
+    InSwapAt1(__SwapClaimState, Int)
+    InSwapAt2(__SwapClaimState, Int)
+
+type __PairUpRequest
+    Release(Int, __PairUpReleaseState)
+    Claim(Int, __PairUpClaimState)
+
+type __PairUpOutcome
+    Done(Int)
+    Waiting(__PairUpRequest)
+
+fn __pairUpStart(a: Int, b: Int) -> __PairUpOutcome
+    ? "Swaps the handle of a, then the handle of b, and adds what came back."
+    __pairUpInSwapAt1(__swapStart(a), b)
+
+fn __pairUpAnswerRelease(__state: __PairUpReleaseState, __answer: Bool) -> __PairUpOutcome
+    ? "Resumes 'pairUp' after the coordinator answered its Release request."
+    match __state
+        __PairUpReleaseState.InSwapAt1(__inner, b) -> __pairUpInSwapAt1(__swapAnswerRelease(__inner, __answer), b)
+        __PairUpReleaseState.InSwapAt2(__inner, first) -> __pairUpInSwapAt2(__swapAnswerRelease(__inner, __answer), first)
+
+fn __pairUpAnswerClaim(__state: __PairUpClaimState, __answer: Int) -> __PairUpOutcome
+    ? "Resumes 'pairUp' after the coordinator answered its Claim request."
+    match __state
+        __PairUpClaimState.InSwapAt1(__inner, b) -> __pairUpInSwapAt1(__swapAnswerClaim(__inner, __answer), b)
+        __PairUpClaimState.InSwapAt2(__inner, first) -> __pairUpInSwapAt2(__swapAnswerClaim(__inner, __answer), first)
+
+fn __pairUpJoin1(first: Int, second: Int) -> __PairUpOutcome
+    ? "Continues 'pairUp' after the branch at line 18."
+    (__PairUpOutcome).Done((first + second))
+
+fn __pairUpInSwapAt2(__outcome: __SwapOutcome, first: Int) -> __PairUpOutcome
+    ? "Routes what 'swap' answered back into 'pairUp': a result continues here, a request of 'swap' leaves as a request of 'pairUp' carrying the nested state."
+    match __outcome
+        __SwapOutcome.Done(second) -> __pairUpJoin1(first, second)
+        __SwapOutcome.Waiting(__request) -> match __request
+            __SwapRequest.Release(__a0, __inner) -> (__PairUpOutcome).Waiting((__PairUpRequest).Release(__a0, (__PairUpReleaseState).InSwapAt2(__inner, first)))
+            __SwapRequest.Claim(__a0, __inner) -> (__PairUpOutcome).Waiting((__PairUpRequest).Claim(__a0, (__PairUpClaimState).InSwapAt2(__inner, first)))
+
+fn __pairUpJoin2(b: Int, first: Int) -> __PairUpOutcome
+    ? "Continues 'pairUp' after the branch at line 17."
+    __pairUpInSwapAt2(__swapStart(b), first)
+
+fn __pairUpInSwapAt1(__outcome: __SwapOutcome, b: Int) -> __PairUpOutcome
+    ? "Routes what 'swap' answered back into 'pairUp': a result continues here, a request of 'swap' leaves as a request of 'pairUp' carrying the nested state."
+    match __outcome
+        __SwapOutcome.Done(first) -> __pairUpJoin2(b, first)
+        __SwapOutcome.Waiting(__request) -> match __request
+            __SwapRequest.Release(__a0, __inner) -> (__PairUpOutcome).Waiting((__PairUpRequest).Release(__a0, (__PairUpReleaseState).InSwapAt1(__inner, b)))
+            __SwapRequest.Claim(__a0, __inner) -> (__PairUpOutcome).Waiting((__PairUpRequest).Claim(__a0, (__PairUpClaimState).InSwapAt1(__inner, b)))
 "#;
 
 /// Run a fixture through the front door and return what the lowering did
