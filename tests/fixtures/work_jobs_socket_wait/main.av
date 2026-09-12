@@ -1,0 +1,34 @@
+module Main
+    depends [Node, Validation, Tcp, Wait, Work]
+    intent = "Waits once over a listening socket and a job together, and reports which of the two the wait reported."
+    exposes [main]
+    effects [Console.print, Tcp.listen, Tcp.closeListener, Validation.begin, Validation.take, Wait.poll]
+
+fn main() -> Result<Unit, String>
+    ? "Binds a listener nobody calls, starts one short job, waits over both, and prints the keys the wait reported."
+    ! [Console.print, Tcp.listen, Tcp.closeListener, Validation.begin, Validation.take, Wait.poll]
+    listener = Tcp.listen(0, 1)?
+    job = Validation.begin(200000)?
+    items: Map<Int, Wait.Item> = {1 => Wait.Item.Socket(Tcp.Socket.Listening(listener)), 2 => Wait.Item.Job(job)}
+    ready = Wait.poll(items, 2000)?
+    reported(ready)?
+    answered(job)?
+    Tcp.closeListener(listener)
+
+fn reported(ready: List<Int>) -> Result<Unit, String>
+    ? "Prints the one key the wait reported, and refuses any other report."
+    ! [Console.print]
+    match ready
+        [key, ..rest] -> match List.len(rest) == 0
+            true -> match key == 2
+                true -> Result.Ok(Console.print("the wait reported the job"))
+                false -> Result.Err("wait: the listener nobody called was reported ready")
+            false -> Result.Err("wait: the listener nobody called was reported ready")
+        [] -> Result.Err("wait: the one wait reported nothing before its timeout")
+
+fn answered(job: Work.Job) -> Result<Unit, String>
+    ? "Prints what the job answered, so the wait's report is checked against the job itself."
+    ! [Console.print, Validation.take]
+    match Validation.take(job)?
+        Option.None -> Result.Err("work: the wait reported a job that had not finished")
+        Option.Some(answer) -> Result.Ok(Console.print("counted to {answer}"))

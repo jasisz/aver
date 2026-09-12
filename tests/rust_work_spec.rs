@@ -234,6 +234,18 @@ fn work_jobs_cancel_detaches_and_answers_as_the_vm_does() {
     .unwrap_or_else(|error| panic!("{error}"));
 }
 
+/// One wait set holding a socket and a job together. This is the crossing
+/// the relaxed resource codec exists for: a `Wait.Item.Socket` carries a
+/// `Tcp` resource into the `Wait` provider, so the Rust backend must hand a
+/// listener minted by one capability to a poll answered by another, and
+/// report the job's key without ever calling the listener ready. The fixture
+/// binds port 0, so the host picks a free port and the test cannot collide
+/// with anything else running on the machine.
+#[test]
+fn one_wait_set_over_a_socket_and_a_job_matches_the_vm() {
+    assert_same_stdout("work_jobs_socket_wait");
+}
+
 /// At `[work] max-jobs = 1` a second `begin` refuses instead of blocking the
 /// turn, with the engine's own message. The limit reaches the generated
 /// bootstrap from the manifest at compile time, so this also proves the
