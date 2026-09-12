@@ -57,20 +57,27 @@ fn reported(asks: Int, payloads: Int, writeAsks: Int) -> Unit
     Console.print("ticker: asked {asks} times; sockets: {payloads} payloads took {writeAsks} asks")
 
 fn peer() -> Unit
-    ? "Ask the pool what to fetch, ask that peer for it, hand the body over, go round."
+    ? "Ask the pool what to fetch, let the helper fetch it, go round; a peer the helper could not finish with is handed back."
     ! [Pool.claim, Pool.gone, Wire.write, Wire.read, Blocks.deliver, Console.print, yield]
     Console.print("peer: asking the pool for work")
     match Pool.claim()
         Pool.Assignment.Stop -> Unit
-        Pool.Assignment.Work(key, height) -> match Wire.write(key, Ledger.blockOf(height))
-            Result.Err(_) -> Pool.gone(key)
-            Result.Ok(_) -> match Wire.read(key, 4000000, 30000)
-                Wire.Heard.EndOfStream -> Pool.gone(key)
-                Wire.Heard.Failed(_) -> Pool.gone(key)
-                Wire.Heard.TimedOut -> Pool.gone(key)
-                Wire.Heard.Data(raw) -> match Blocks.deliver(key, height, raw)
-                    Blocks.Receipt.Accepted -> peer()
-                    Blocks.Receipt.Refused(_) -> Pool.gone(key)
+        Pool.Assignment.Work(key, height) -> match fetchBody(key, height)
+            true -> peer()
+            false -> Pool.gone(key)
+
+fn fetchBody(key: Int, height: Int) -> Bool
+    ? "One body from one peer: the write, the read and the hand-over. True when the body landed, false when anything on the way said this peer is finished."
+    ! [Wire.write, Wire.read, Blocks.deliver, yield]
+    match Wire.write(key, Ledger.blockOf(height))
+        Result.Err(_) -> false
+        Result.Ok(_) -> match Wire.read(key, 4000000, 30000)
+            Wire.Heard.EndOfStream -> false
+            Wire.Heard.Failed(_) -> false
+            Wire.Heard.TimedOut -> false
+            Wire.Heard.Data(raw) -> match Blocks.deliver(key, height, raw)
+                Blocks.Receipt.Accepted -> true
+                Blocks.Receipt.Refused(_) -> false
 
 fn walk() -> Unit
     ? "One connected block per turn: the next target, its validated body, the commit."

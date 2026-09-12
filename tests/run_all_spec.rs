@@ -297,6 +297,38 @@ fn the_dump_shows_the_loop_that_was_generated() {
     }
 }
 
+/// A process split into a `yield` helper: the loop seats the process, not the
+/// helper. `peer` calls `fetchBody` non-tail, so `fetchBody`'s requests reach
+/// the turn as requests of `peer` carrying the helper's state, and the slot
+/// table has one marker per seated process and none for the helper.
+#[test]
+fn a_yield_helper_is_nested_in_its_caller_and_never_seated() {
+    let dir = fixture(SLICE);
+    let mut command = Command::new(aver_bin());
+    command.current_dir(&dir);
+    command.env("AVER_YIELD_DUMP", "1");
+    command.arg("check").arg("main.av");
+    command.arg("--module-root").arg(&dir);
+    let out = command.output().expect("aver runs");
+    let text = combined(&out);
+    for line in [
+        // The helper has a protocol of its own, and the caller's states hold it.
+        "fn __fetchBodyStart(key: Int, height: Int) -> __FetchBodyOutcome",
+        "    InFetchBodyAt1(__FetchBodyWriteState, Int)",
+        "fn __peerInFetchBodyAt1(__outcome: __FetchBodyOutcome, key: Int) -> __PeerOutcome",
+        // The turn dispatches the helper's kinds as kinds of the caller.
+        "fn __servePeerWrite(",
+        // One marker per seated process, and the helper is not one.
+        "type __Process\n    Accepting(__AcceptingRequest)\n    Dialling(__DiallingRequest)\n    Ticker(__TickerRequest)\n    Peer(__PeerRequest)\n    Walk(__WalkRequest)\n",
+    ] {
+        assert!(text.contains(line), "{line} missing from the dump");
+    }
+    assert!(
+        !text.contains("fn __seatFetchBody"),
+        "the helper is entered through its caller, not seated:\n{text}"
+    );
+}
+
 /// Decision 4's rule is per segment, and the loop's own functions obey it too:
 /// what the loop generates for one process carries what that process performs,
 /// not what the program performs. `peer` and `walk` print on their way to a
