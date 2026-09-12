@@ -1008,6 +1008,13 @@ fn write_job(job: &Job, answers: &[Answer]) -> String {
 /// exactly that, one for the instance and one for the request. I1 is the size
 /// comparison the proposal expected to stay open, written with its `because`
 /// so the report can say where it stands.
+///
+/// The deadline gate is stated twice over, because a wake carries a deadline
+/// in two shapes. `After` is sampled on a slot; `Either` cannot be — its
+/// constructor carries a `Wait.Item`, which carries a socket or a job handle,
+/// and a program can write neither into a `given` domain. So the two `Either`
+/// laws are stated over the gate's own arithmetic instead: askable once the
+/// deadline has passed, and a wait no longer than the deadline asked for.
 fn write_laws(protocols: &[ProcessProtocol]) -> String {
     let mut out = String::new();
     // The sample seats each process at the request it re-enters itself with.
@@ -1092,12 +1099,26 @@ fn write_laws(protocols: &[ProcessProtocol]) -> String {
             ids.join(", ")
         ));
     }
+    // The two halves of `Either`, stated over the gate's own arithmetic
+    // rather than over a sampled slot. A slot parked on `Either` cannot be
+    // written down in a `given` domain at all: the constructor carries a
+    // `Wait.Item`, which carries a socket or a job handle, and a program
+    // cannot construct either. So the deadline half of the gate is stated
+    // where it is decided: a request parked on an item and a deadline at once
+    // is asked once that deadline has passed, whatever the wait reported.
+    out.push_str("\nverify __eitherAskable law anEitherIsAskableOnceItsDeadlineHasPassed\n    given due: Int = [0, 5, 50]\n    given ms: Int = [0, 5, 50]\n    given now: Int = [0 - 5000, 0, 5, 50]\n    given reported: Bool = [false, true]\n    when __eitherDue(due, now)\n    because __eitherDue(due, now)\n    __eitherAskable(due, ms, now, reported) => true\n");
     out.push_str("\nverify __nextInstance law theNextInstanceIsHigher\n    given seq: Int = [0, 1, 7]\n    __nextInstance(seq) > seq holds\n");
     // The wait a deadline contributes is never longer than the deadline asked
     // for. That is the half of the backwards-clock story a law can carry: a
     // reading that jumped back makes `due - now` larger than the request, and
     // the turn would sleep past every other deadline in the program.
     out.push_str("\nverify __remaining law theWaitNeverExceedsTheRequest\n    given due: Int = [0, 5, 50]\n    given now: Int = [0 - 5000, 0, 5, 50]\n    given ms: Int = [0, 5, 50]\n    __remaining(due, now, ms) <= ms holds\n");
+    // The other half of `Either`, stated where a reader looks for it: the
+    // wait a request parked on an item and a deadline at once contributes is
+    // never longer than the deadline it asked for. It is the law above read
+    // through the function the `Either` arm calls, so it cites that law
+    // rather than proving the same arithmetic a second time.
+    out.push_str("\nverify __eitherWait law theEitherWaitNeverExceedsItsDeadline\n    given due: Int = [0, 5, 50]\n    given now: Int = [0 - 5000, 0, 5, 50]\n    given ms: Int = [0, 5, 50]\n    using [__remaining.theWaitNeverExceedsTheRequest]\n    __eitherWait(due, now, ms) <= ms holds\n");
     // I3 per call, in the two halves the wall can carry. The first is about
     // the slot table's contents: the slot an answer for the current instance
     // writes back under that id carries a strictly higher instance number
