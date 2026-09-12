@@ -1,91 +1,218 @@
 module Sockets
-    intent = "The answers this program gives to Wire: who has arrived, how far each payload has been written, and the one payload each peer is holding."
-    depends [Bytes, Wait, Wire]
-    exposes [State, fresh, accept, dialled, read, write, writes]
-    effects []
+    intent = "The answers this program gives to Wire, over real sockets: the listener peers arrive on, the connection each peer key stands for, how far the payload in flight has been written, and how often the wire was asked."
+    depends [Bytes, Wait, Tcp, Wire]
+    exposes [State, fresh, wanted, chunk, portOf, firstPort, keyFor, accept, opening, listening, accepting, closed, arrived, seatedAt, dialled, read, reading, heard, bodyOf, write, writing, offsetOf, offer, offered, whole, parked, dropped, finished, writes]
+    effects [Args.get, Tcp.listen, Tcp.accept, Tcp.closeListener, Tcp.readNow, Tcp.writeNow]
 
 record State
-    inbound: List<Int>
-    outbound: List<Int>
-    wanted: Map<Int, Bytes>
-    holding: Map<Int, Bytes>
+    listener: Option<Tcp.Listener>
+    peers: Map<Int, Tcp.Connection>
+    seated: Int
+    offsets: Map<Int, Int>
     asked: Int
+    reads: Int
     done: Int
+    shut: Bool
 
 fn fresh() -> State
-    ? "Two peers waiting on the listener, one dial about to settle, nothing asked for yet and nothing written."
-    State(inbound = [1, 2], outbound = [3], wanted = {}, holding = {}, asked = 0, done = 0)
+    ? "Nothing bound, nobody accepted, nothing written and nothing asked for, and no listener closed yet. The listener is bound on the first ask, because the state of a run is built before any effect is allowed."
+    State(listener = Option.None, peers = {}, seated = 0, offsets = {}, asked = 0, reads = 0, done = 0, shut = false)
+
+fn wanted() -> Int
+    ? "How many peers this program waits for on its listener before it tells the accepting process the listener is done."
+    1
+
+fn chunk() -> Int
+    ? "How many bytes of a payload this wire offers one socket in one ask. A payload longer than this takes more than one ask however much room the socket has, which is the partial write a real socket eventually forces anyway."
+    4
+
+fn portOf(args: List<String>) -> Int
+    ? "The loopback port this program listens on, taken from the first argument it was run with. Nothing to listen on is port zero, which the provider refuses."
+    match args
+        [] -> 0
+        [first, ..rest] -> firstPort(Int.fromString(first))
+
+fn firstPort(parsed: Result<Int, String>) -> Int
+    ? "One argument read as a port number, or nothing to listen on when it is not one."
+    match parsed
+        Result.Err(_) -> 0
+        Result.Ok(port) -> port
+
+fn keyFor(state: State) -> Int
+    ? "The key the next peer to arrive on this listener is known by for the rest of the run."
+    state.seated + 1
 
 fn accept(state: State) -> Tuple<State, Wire.__AcceptReply>
-    ? "The next peer the listener has, or Closed once it has handed over the last one."
-    match state.inbound
-        [] -> (state, Wire.__AcceptReply.Now(Wire.Arrival.Closed))
-        [key, ..rest] -> (State.update(state, inbound = rest), Wire.__AcceptReply.Now(Wire.Arrival.Peer(key)))
+    ? "The next peer this program has for us. A listener this program has already finished with has no more peers on it, and says so again rather than binding a second one; anything else is an ask at a listener that is still open."
+    ! [Args.get, Tcp.listen, Tcp.accept, Tcp.closeListener]
+    match state.shut
+        true -> (state, Wire.__AcceptReply.Now(Wire.Arrival.Closed))
+        false -> opening(state)
+
+fn opening(state: State) -> Tuple<State, Wire.__AcceptReply>
+    ? "One ask at a listener this program has not finished with. The first ask binds the listener; every ask after that takes one waiting client, or parks on the listener until the wait reports that one is pending."
+    ! [Args.get, Tcp.listen, Tcp.accept, Tcp.closeListener]
+    match state.listener
+        Option.None -> listening(state)
+        Option.Some(listener) -> accepting(state, listener)
+
+fn listening(state: State) -> Tuple<State, Wire.__AcceptReply>
+    ? "The listener this program owns for the rest of the run, bound on the first ask and kept in this state because a Later keeps what the module returned. A port that cannot be bound closes the accepting process instead."
+    ! [Args.get, Tcp.listen]
+    match Tcp.listen(portOf(Args.get()), 8)
+        Result.Err(_) -> (State.update(state, shut = true), Wire.__AcceptReply.Now(Wire.Arrival.Closed))
+        Result.Ok(listener) -> (State.update(state, listener = Option.Some(listener)), Wire.__AcceptReply.Later(Wait.Wake.Item(Wait.Item.Socket(Tcp.Socket.Listening(listener)))))
+
+fn accepting(state: State, listener: Tcp.Listener) -> Tuple<State, Wire.__AcceptReply>
+    ? "One ask at a bound listener: the peers this program waits for, and then the close."
+    ! [Tcp.accept, Tcp.closeListener]
+    match state.seated >= wanted()
+        true -> closed(state, Tcp.closeListener(listener))
+        false -> arrived(state, listener)
+
+fn closed(state: State, shutdown: Result<Unit, String>) -> Tuple<State, Wire.__AcceptReply>
+    ? "Every peer this program waits for has arrived, so the listener is closed and the accepting process is told there are no more. The state remembers that it was closed, because an ask after it is an ask this program answers with the same Closed rather than with a second listener."
+    (State.update(state, listener = Option.None, shut = true), Wire.__AcceptReply.Now(Wire.Arrival.Closed))
+
+fn arrived(state: State, listener: Tcp.Listener) -> Tuple<State, Wire.__AcceptReply>
+    ? "What one non-blocking accept found. A client that was waiting is seated under its own key; nothing waiting parks the request on the listener, and the wait is the only thing that asks it again. A listener that itself failed is a listener this program has no more peers on."
+    ! [Tcp.accept]
+    match Tcp.accept(listener)
+        Result.Err(_) -> (State.update(state, listener = Option.None, shut = true), Wire.__AcceptReply.Now(Wire.Arrival.Closed))
+        Result.Ok(client) -> match client
+            Option.None -> (state, Wire.__AcceptReply.Later(Wait.Wake.Item(Wait.Item.Socket(Tcp.Socket.Listening(listener)))))
+            Option.Some(connection) -> (seatedAt(state, connection), Wire.__AcceptReply.Now(Wire.Arrival.Peer(keyFor(state))))
+
+fn seatedAt(state: State, connection: Tcp.Connection) -> State
+    ? "One accepted client, kept under the key the rest of this program knows it by."
+    State.update(state, peers = Map.set(state.peers, keyFor(state), connection), seated = keyFor(state))
 
 fn dialled(state: State) -> Tuple<State, Wire.__DialledReply>
-    ? "The next dial that settled, or Closed once none is outstanding."
-    match state.outbound
-        [] -> (state, Wire.__DialledReply.Now(Wire.Arrival.Closed))
-        [key, ..rest] -> (State.update(state, outbound = rest), Wire.__DialledReply.Now(Wire.Arrival.Peer(key)))
+    ? "This program dials nobody: every peer it talks to arrived on its own listener, so no dial is ever outstanding."
+    (state, Wire.__DialledReply.Now(Wire.Arrival.Closed))
 
 fn read(state: State, key: Int, max: Int, deadlineMs: Int) -> Tuple<State, Wire.__ReadReply>
-    ? "What one peer sent back: the body it was asked for, or a failure when it was asked for nothing."
-    heard(state, key, Map.get(state.wanted, key))
+    ? "The next chunk from one peer. Every ask is counted, including the ones that park, so a run can say afterwards how often the wait let this wire be asked. The deadline the caller named is not used here: one park names one wake, and what this read waits for is the socket."
+    ! [Tcp.readNow]
+    reading(State.update(state, reads = state.reads + 1), key, max, Map.get(state.peers, key))
 
-fn heard(state: State, key: Int, held: Option<Bytes>) -> Tuple<State, Wire.__ReadReply>
-    ? "One attempt, against what this peer was asked for."
-    match held
-        Option.None -> (state, Wire.__ReadReply.Now(Wire.Heard.Failed("peer {key} was asked for nothing")))
-        Option.Some(payload) -> (State.update(state, wanted = Map.remove(state.wanted, key)), Wire.__ReadReply.Now(Wire.Heard.Data(payload)))
+fn reading(state: State, key: Int, max: Int, peer: Option<Tcp.Connection>) -> Tuple<State, Wire.__ReadReply>
+    ? "One ask at one peer's socket, once the ask has been counted."
+    ! [Tcp.readNow]
+    match peer
+        Option.None -> (state, Wire.__ReadReply.Now(Wire.Heard.Failed("peer {key} is not connected")))
+        Option.Some(connection) -> heard(state, connection, max)
+
+fn heard(state: State, connection: Tcp.Connection, max: Int) -> Tuple<State, Wire.__ReadReply>
+    ? "What one non-blocking read answered. Nothing has arrived yet parks the request on this socket becoming readable, and the wait is the only thing that asks it again."
+    ! [Tcp.readNow]
+    match Tcp.readNow(connection, max)
+        Result.Err(reason) -> (state, Wire.__ReadReply.Now(Wire.Heard.Failed(reason)))
+        Result.Ok(taken) -> match taken
+            Option.None -> (state, Wire.__ReadReply.Later(Wait.Wake.Item(Wait.Item.Socket(Tcp.Socket.Connected(connection)))))
+            Option.Some(payload) -> (state, Wire.__ReadReply.Now(bodyOf(payload)))
+
+fn bodyOf(payload: Bytes) -> Wire.Heard
+    ? "An empty chunk is the clean end of a stream, which is the convention readNow reads by; anything else is a body."
+    match Bytes.len(payload) == 0
+        true -> Wire.Heard.EndOfStream
+        false -> Wire.Heard.Data(payload)
 
 fn write(state: State, key: Int, payload: Bytes) -> Tuple<State, Wire.__WriteReply>
-    ? "One ask at one peer's write. A socket takes what it has room for and no more, so the first ask takes half the payload, records how far it got and parks; the ask after that sends the rest and answers. The offset lives in this state because a Later keeps what the module returned."
-    writing(State.update(state, asked = state.asked + 1), key, payload, Map.get(state.holding, key))
+    ? "One ask at one peer's write. Every ask is counted, so a run can say how many asks its payloads took."
+    ! [Tcp.writeNow]
+    writing(State.update(state, asked = state.asked + 1), key, payload, Map.get(state.peers, key))
 
-fn writing(state: State, key: Int, payload: Bytes, sofar: Option<Bytes>) -> Tuple<State, Wire.__WriteReply>
-    ? "One ask, against how much of this payload the peer has already taken."
-    match sofar
-        Option.None -> (State.update(state, holding = Map.set(state.holding, key, Bytes.take(payload, half(payload)))), Wire.__WriteReply.Later(Wait.Wake.NextTurn))
-        Option.Some(head) -> (finished(state, key, Bytes.concat(head, Bytes.drop(payload, half(payload)))), Wire.__WriteReply.Now(Result.Ok(Unit)))
+fn writing(state: State, key: Int, payload: Bytes, peer: Option<Tcp.Connection>) -> Tuple<State, Wire.__WriteReply>
+    ? "One ask at one peer's socket, against how much of this payload that peer has already taken."
+    ! [Tcp.writeNow]
+    match peer
+        Option.None -> (state, Wire.__WriteReply.Now(Result.Err("peer {key} is not connected")))
+        Option.Some(connection) -> offered(state, key, connection, payload, offsetOf(state, key))
 
-fn finished(state: State, key: Int, whole: Bytes) -> State
-    ? "The state one finished write leaves behind: the peer is holding exactly the bytes that were written to it, and this wire has one more payload behind it."
-    State.update(state, holding = Map.remove(state.holding, key), wanted = Map.set(state.wanted, key, whole), done = state.done + 1)
+fn offsetOf(state: State, key: Int) -> Int
+    ? "How many bytes of the payload in flight this peer has already taken. The offset lives in this state because a Later keeps what the module returned."
+    match Map.get(state.offsets, key)
+        Option.None -> 0
+        Option.Some(sofar) -> sofar
 
-fn half(payload: Bytes) -> Int
-    ? "How much of one payload this socket has room for on the first ask: half of it, rounded down."
-    Bits.shiftRight(Bytes.len(payload), 1)
+fn offer(payload: Bytes, sofar: Int) -> Bytes
+    ? "What one ask offers the socket: what is left of the payload, capped at one chunk."
+    Bytes.take(Bytes.drop(payload, sofar), chunk())
+
+fn offered(state: State, key: Int, connection: Tcp.Connection, payload: Bytes, sofar: Int) -> Tuple<State, Wire.__WriteReply>
+    ? "One ask at one socket. It answers how many of the bytes offered it actually took, which is a count between nothing and the whole offer; a payload with bytes still to go records how far it got and parks on the socket becoming writable again, and the last byte answers the write."
+    ! [Tcp.writeNow]
+    match Tcp.writeNow(connection, offer(payload, sofar))
+        Result.Err(reason) -> (dropped(state, key), Wire.__WriteReply.Now(Result.Err(reason)))
+        Result.Ok(count) -> match whole(payload, sofar, count)
+            true -> (finished(state, key), Wire.__WriteReply.Now(Result.Ok(Unit)))
+            false -> (parked(state, key, sofar, count), Wire.__WriteReply.Later(Wait.Wake.Item(Wait.Item.Socket(Tcp.Socket.Sending(connection)))))
+
+fn whole(payload: Bytes, sofar: Int, count: Int) -> Bool
+    ? "Whether this peer has now taken the whole payload."
+    sofar + count >= Bytes.len(payload)
+
+fn parked(state: State, key: Int, sofar: Int, count: Int) -> State
+    ? "The state a partial write leaves behind: how far this payload got, so the ask after it goes on from there."
+    State.update(state, offsets = Map.set(state.offsets, key, sofar + count))
+
+fn dropped(state: State, key: Int) -> State
+    ? "The state a failed write leaves behind: nothing in flight for this peer."
+    State.update(state, offsets = Map.remove(state.offsets, key))
+
+fn finished(state: State, key: Int) -> State
+    ? "The state one finished write leaves behind: nothing in flight for this peer, and one more payload behind this wire."
+    State.update(state, offsets = Map.remove(state.offsets, key), done = state.done + 1)
 
 fn writes(state: State) -> Tuple<State, Wire.__WritesReply>
-    ? "How many payloads this wire has written and how many asks that took."
-    (state, Wire.__WritesReply.Now(Wire.Tally.Counted(state.done, state.asked)))
+    ? "How many payloads this wire has written, how many asks that took, and how many asks its reads took."
+    (state, Wire.__WritesReply.Now(Wire.Tally.Counted(state.done, state.asked, state.reads)))
 
-verify accept
-    accept(fresh()) => (State.update(fresh(), inbound = [2]), Wire.__AcceptReply.Now(Wire.Arrival.Peer(1)))
-    accept(State.update(fresh(), inbound = [])) => (State.update(fresh(), inbound = []), Wire.__AcceptReply.Now(Wire.Arrival.Closed))
+verify portOf
+    portOf([]) => 0
+    portOf(["0"]) => 0
+    portOf(["not a port"]) => 0
+    portOf(["54321", "ignored"]) => 54321
 
-verify dialled
-    dialled(fresh()) => (State.update(fresh(), outbound = []), Wire.__DialledReply.Now(Wire.Arrival.Peer(3)))
-    dialled(State.update(fresh(), outbound = [])) => (State.update(fresh(), outbound = []), Wire.__DialledReply.Now(Wire.Arrival.Closed))
+verify firstPort
+    firstPort(Result.Ok(7)) => 7
+    firstPort(Result.Err("Int.fromString: not a number")) => 0
 
-verify heard
-    heard(fresh(), 1, Option.None) => (fresh(), Wire.__ReadReply.Now(Wire.Heard.Failed("peer 1 was asked for nothing")))
-    heard(State.update(fresh(), wanted = Map.set({}, 1, String.toUtf8("block 1"))), 1, Option.Some(String.toUtf8("block 1"))) => (fresh(), Wire.__ReadReply.Now(Wire.Heard.Data(String.toUtf8("block 1"))))
+verify keyFor
+    keyFor(fresh()) => 1
+    keyFor(State.update(fresh(), seated = 2)) => 3
 
-verify half
-    half(String.toUtf8("block 1")) => 3
-    half(String.toUtf8("")) => 0
+verify bodyOf
+    bodyOf(String.toUtf8("")) => Wire.Heard.EndOfStream
+    bodyOf(String.toUtf8("block 1")) => Wire.Heard.Data(String.toUtf8("block 1"))
 
-verify write
-    write(fresh(), 1, String.toUtf8("block 1")) => (State.update(fresh(), asked = 1, holding = Map.set({}, 1, String.toUtf8("blo"))), Wire.__WriteReply.Later(Wait.Wake.NextTurn))
-    write(State.update(fresh(), asked = 1, holding = Map.set({}, 1, String.toUtf8("blo"))), 1, String.toUtf8("block 1")) => (State.update(fresh(), asked = 2, done = 1, wanted = Map.set({}, 1, String.toUtf8("block 1"))), Wire.__WriteReply.Now(Result.Ok(Unit)))
+verify offsetOf
+    offsetOf(fresh(), 1) => 0
+    offsetOf(State.update(fresh(), offsets = Map.set({}, 1, 4)), 1) => 4
 
-verify writing
-    writing(State.update(fresh(), asked = 1), 1, String.toUtf8("block 1"), Option.None) => (State.update(fresh(), asked = 1, holding = Map.set({}, 1, String.toUtf8("blo"))), Wire.__WriteReply.Later(Wait.Wake.NextTurn))
-    writing(State.update(fresh(), asked = 2, holding = Map.set({}, 1, String.toUtf8("blo"))), 1, String.toUtf8("block 1"), Option.Some(String.toUtf8("blo"))) => (State.update(fresh(), asked = 2, done = 1, wanted = Map.set({}, 1, String.toUtf8("block 1"))), Wire.__WriteReply.Now(Result.Ok(Unit)))
+verify offer
+    offer(String.toUtf8("block 1"), 0) => String.toUtf8("bloc")
+    offer(String.toUtf8("block 1"), 4) => String.toUtf8("k 1")
+
+verify whole
+    whole(String.toUtf8("block 1"), 0, 4) => false
+    whole(String.toUtf8("block 1"), 4, 3) => true
+
+verify parked
+    parked(fresh(), 1, 0, 4) => State.update(fresh(), offsets = Map.set({}, 1, 4))
+
+verify dropped
+    dropped(State.update(fresh(), offsets = Map.set({}, 1, 4)), 1) => fresh()
 
 verify finished
-    finished(fresh(), 1, String.toUtf8("block 1")) => State.update(fresh(), done = 1, wanted = Map.set({}, 1, String.toUtf8("block 1")))
+    finished(State.update(fresh(), offsets = Map.set({}, 1, 4)), 1) => State.update(fresh(), done = 1)
+
+verify closed
+    closed(State.update(fresh(), seated = 1), Result.Ok(Unit)) => (State.update(fresh(), seated = 1, shut = true), Wire.__AcceptReply.Now(Wire.Arrival.Closed))
+
+verify dialled
+    dialled(fresh()) => (fresh(), Wire.__DialledReply.Now(Wire.Arrival.Closed))
 
 verify writes
-    writes(State.update(fresh(), asked = 6, done = 3)) => (State.update(fresh(), asked = 6, done = 3), Wire.__WritesReply.Now(Wire.Tally.Counted(3, 6)))
+    writes(State.update(fresh(), asked = 6, done = 3, reads = 6)) => (State.update(fresh(), asked = 6, done = 3, reads = 6), Wire.__WritesReply.Now(Wire.Tally.Counted(3, 6, 6)))

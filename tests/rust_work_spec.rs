@@ -17,8 +17,11 @@
 
 #[path = "support/aver_cmd.rs"]
 mod aver_cmd;
+#[path = "support/loopback_peer.rs"]
+mod loopback_peer;
 
 use aver_cmd::{aver_bin, format_output, repo_root};
+use loopback_peer::{free_port, loopback_peer};
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -53,15 +56,23 @@ fn fixture(name: &str) -> PathBuf {
 
 /// `aver run <fixture>/main.av` on the VM — the parity oracle.
 fn run_vm(name: &str) -> Result<String, String> {
+    run_vm_with(name, &[])
+}
+
+/// The same, with arguments the program reads through `Args.get`.
+fn run_vm_with(name: &str, program_args: &[&str]) -> Result<String, String> {
     let dir = fixture(name);
-    let out = Command::new(aver_bin())
+    let mut command = Command::new(aver_bin());
+    command
         .current_dir(repo_root())
         .arg("run")
         .arg(dir.join("main.av"))
         .arg("--module-root")
-        .arg(&dir)
-        .output()
-        .expect("expected `aver run` to execute");
+        .arg(&dir);
+    if !program_args.is_empty() {
+        command.arg("--").args(program_args);
+    }
+    let out = command.output().expect("expected `aver run` to execute");
     if !out.status.success() {
         return Err(format!("VM run of {name} failed:\n{}", format_output(&out)));
     }
@@ -125,7 +136,13 @@ fn cargo_build(project: &Path, crate_name: &str) -> Result<PathBuf, String> {
 }
 
 fn run_binary(bin: &Path) -> Result<String, String> {
+    run_binary_with(bin, &[])
+}
+
+/// The same, with arguments the built binary reads through `Args.get`.
+fn run_binary_with(bin: &Path, program_args: &[&str]) -> Result<String, String> {
     let out = Command::new(bin)
+        .args(program_args)
         .output()
         .map_err(|error| format!("failed to run {}: {error}", bin.display()))?;
     if !out.status.success() {
@@ -178,20 +195,24 @@ fn assert_same_stdout(name: &str) {
 /// property of the backend: the same program reorders itself on one backend
 /// under load. What both backends owe is the same work.
 fn assert_same_lines(name: &str) {
-    against_the_vm(name, &[], |vm, rust| {
-        let sorted = |text: &str| {
-            let mut lines = text.lines().collect::<Vec<_>>();
-            lines.sort_unstable();
-            lines.join("\n")
-        };
-        if sorted(vm) == sorted(rust) {
-            return Ok(());
-        }
-        Err(format!(
-            "{name}: the two backends did different work\n--- VM ---\n{vm}\n--- Rust ---\n{rust}"
-        ))
-    })
-    .unwrap_or_else(|error| panic!("{error}"));
+    against_the_vm(name, &[], |vm, rust| same_lines(name, vm, rust))
+        .unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// The two runs did the same work when they printed the same lines, in
+/// whatever order each of them settled on.
+fn same_lines(name: &str, vm: &str, rust: &str) -> Result<(), String> {
+    let sorted = |text: &str| {
+        let mut lines = text.lines().collect::<Vec<_>>();
+        lines.sort_unstable();
+        lines.join("\n")
+    };
+    if sorted(vm) == sorted(rust) {
+        return Ok(());
+    }
+    Err(format!(
+        "{name}: the two backends did different work\n--- VM ---\n{vm}\n--- Rust ---\n{rust}"
+    ))
 }
 
 // ── The job kinds ───────────────────────────────────────────────────────
@@ -302,9 +323,41 @@ fn an_answered_capability_matches_the_vm() {
 /// the compiled function itself, which is faster than the smallest deadline
 /// in the program, so the two interleave the same work differently. Both
 /// run every process to its end and stop.
+///
+/// The slice answers `Wire` over real sockets, so each backend gets its own
+/// loopback peer on its own free port: parity here is parity over a real
+/// socket conversation, and what both backends owe is the same bodies
+/// fetched in the same number of asks.
 #[test]
 fn run_all_slice_does_the_same_work_as_the_vm() {
-    assert_same_lines("run_all_slice");
+    let name = "run_all_slice";
+    let result = (|| {
+        let vm = with_peer(|port| run_vm_with(name, &[port]))?;
+        let ws = temp_dir(name);
+        let project = ws.join("project");
+        fs::create_dir_all(&project).expect("create project dir");
+        let compared = (|| {
+            compile_rust(name, &project, name, &[])?;
+            let bin = cargo_build(&project, name)?;
+            let rust = with_peer(|port| run_binary_with(&bin, &[port]))?;
+            same_lines(name, &vm, &rust)
+        })();
+        let _ = fs::remove_dir_all(&ws);
+        compared
+    })();
+    result.unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// Runs one backend against a loopback peer, on a port nobody else holds.
+fn with_peer(run: impl FnOnce(&str) -> Result<String, String>) -> Result<String, String> {
+    let port = free_port();
+    let peer = loopback_peer(port);
+    let text = port.to_string();
+    let ran = run(&text);
+    let played = peer.join();
+    let out = ran?;
+    played.map_err(|_| "the loopback peer did not play its whole part".to_string())?;
+    Ok(out)
 }
 
 // ── Recording and replay ────────────────────────────────────────────────

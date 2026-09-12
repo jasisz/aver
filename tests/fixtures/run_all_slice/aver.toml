@@ -2,7 +2,8 @@
 schema = 1
 
 # Sockets answers the request-level I/O the peer, the accepting and the
-# dialling processes wait on. It owns the listener, the dials and the peers.
+# dialling processes wait on. It owns a real loopback listener, bound on the
+# port this program is run with, and the connection behind each peer key.
 [[providers.bindings]]
 capability = "Wire"
 answer = "Sockets"
