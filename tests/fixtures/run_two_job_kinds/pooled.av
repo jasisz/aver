@@ -1,0 +1,64 @@
+module Pooled
+    intent = "Fixture answer module: the answer this program gives to Pool, and both ends of both job seams."
+    depends [Pool, Wait]
+    exposes [State, fresh, claim, scoreAlpha, scoreBeta, alphaTask, alphaLanded, betaTask, betaLanded]
+    effects []
+
+record State
+    left: Int
+    scored: Int
+
+fn fresh() -> State
+    ? "Two handles to give out and nothing scored yet."
+    State(left = 2, scored = 0)
+
+fn claim(state: State) -> Tuple<State, Pool.__ClaimReply>
+    ? "One handle, until there are none."
+    match state.left == 0
+        true -> (state, Pool.__ClaimReply.Now(Option.None))
+        false -> (State.update(state, left = state.left - 1), Pool.__ClaimReply.Now(Option.Some(state.left)))
+
+fn scoreAlpha(task: Int) -> Int
+    ? "What one alpha job computes off the turn."
+    task + 1
+
+fn scoreBeta(task: Int) -> Int
+    ? "What one beta job computes off the turn."
+    task * 2
+
+fn alphaTask(state: State) -> Option<Int>
+    ? "The next alpha task, while there is one."
+    match state.left == 0
+        true -> Option.None
+        false -> Option.Some(state.left)
+
+fn alphaLanded(state: State, score: Int) -> State
+    ? "Where a finished alpha job's score goes."
+    State.update(state, scored = state.scored + score)
+
+fn betaTask(state: State) -> Option<Int>
+    ? "The next beta task, while there is one."
+    match state.left == 0
+        true -> Option.None
+        false -> Option.Some(state.left)
+
+fn betaLanded(state: State, score: Int) -> State
+    ? "Where a finished beta job's score goes."
+    State.update(state, scored = state.scored + score)
+
+verify claim
+    claim(fresh()) => (State.update(fresh(), left = 1), Pool.__ClaimReply.Now(Option.Some(2)))
+
+verify alphaTask
+    alphaTask(fresh()) => Option.Some(2)
+    alphaTask(State(left = 0, scored = 0)) => Option.None
+
+verify betaTask
+    betaTask(fresh()) => Option.Some(2)
+    betaTask(State(left = 0, scored = 0)) => Option.None
+
+verify scoreAlpha
+    scoreAlpha(2) => 3
+
+verify scoreBeta
+    scoreBeta(2) => 4

@@ -1,0 +1,29 @@
+[providers]
+schema = 1
+
+[[providers.bindings]]
+capability = "Pool"
+answer = "Pooled"
+
+# Two job kinds under one generated loop. The generated turn crosses one job
+# seam, so this is refused rather than lowered.
+[[providers.bindings]]
+capability = "Alpha"
+work = "Pooled.scoreAlpha"
+task = "Pooled.alphaTask"
+landed = "Pooled.alphaLanded"
+
+[[providers.bindings]]
+capability = "Beta"
+work = "Pooled.scoreBeta"
+task = "Pooled.betaTask"
+landed = "Pooled.betaLanded"
+
+[work]
+max-jobs = 1
+
+[run]
+order = "Node.order"
+admit = "Node.admit"
+stop = "Node.stop"
+view = "Node.View"

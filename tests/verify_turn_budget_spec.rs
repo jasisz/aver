@@ -106,6 +106,25 @@ fn many_short_turns_stay_quiet_because_the_count_resets_on_every_poll() {
     assert_eq!(out.status.code(), Some(0), "{}", format_output(&out));
 }
 
+/// The same eleven turns, cut by `Wait.poll` instead of `Tcp.poll`. The
+/// generated coordinator waits with `Wait.poll`, so a budget that only reset
+/// on `Tcp.poll` would count a whole run of its turns as one and report a
+/// stall that is not there. Remove `Wait.poll` from the reset in
+/// `src/vm/execute/host.rs` and this test fails.
+#[test]
+fn turns_cut_by_wait_poll_reset_the_count_too() {
+    let dir = project_with(
+        "wait_turns.av",
+        "turn-budget-wait-resets",
+        "[verify]\nturn-budget = 150000\n",
+    );
+    let out = verify(&dir);
+    let text = stdout_of(&out);
+    assert!(!text.contains(SLUG), "{}", format_output(&out));
+    assert!(text.contains("✓ serveMany"), "{}", format_output(&out));
+    assert_eq!(out.status.code(), Some(0), "{}", format_output(&out));
+}
+
 /// The same eleven turns under a budget one turn does cross: the reset
 /// is what keeps the test above quiet, not the size of the case.
 #[test]

@@ -4,6 +4,11 @@
 //! watches sockets through the Tcp reactor and jobs through the engine, and
 //! returns as soon as either is ready or the timeout elapses. Neither needs
 //! to know which job kind started a job: the handle carries its engine.
+//!
+//! One program has one job engine — every job kind of a program is bound to
+//! the same one — so `Wait.poll` sleeps on the engine of the first job in
+//! its wait set and that is the engine of all of them. A debug assertion
+//! holds the build to it.
 
 use std::time::{Duration, Instant};
 
@@ -239,12 +244,27 @@ impl CapabilityProvider for StandardWaitProvider {
                 WaitItem::Job(handle) => jobs.push((key, handle)),
             }
         }
+        // One program has one job engine, so every job in a wait set belongs
+        // to the same one and the first handle's engine is the engine of the
+        // whole set. The debug assertion is where that would be noticed if a
+        // build ever gave a program two.
         let engine = jobs.first().map(|(_, handle)| handle.engine().clone());
+        debug_assert!(
+            engine.as_ref().is_none_or(|engine| jobs
+                .iter()
+                .all(|(_, handle)| std::sync::Arc::ptr_eq(handle.engine(), engine))),
+            "Wait.poll received jobs from more than one engine"
+        );
         // The timeout is the upper bound on this one wait, so the deadline is
         // taken once, before anything sleeps, and every sleep below stops at
         // it. Sleeping the full timeout twice — once on the sockets, once on
         // the engine — would make the wait take twice as long as it promised.
-        let deadline = Instant::now() + Duration::from_millis(timeout_ms as u64);
+        //
+        // A timeout the contract admits can name an instant this host cannot
+        // hold, and adding it would end the turn with a panic rather than a
+        // wait. It is capped instead: past the cap the timeout means "no
+        // deadline within reach", which is the wait that program asked for.
+        let deadline = deadline_for(Instant::now(), timeout_ms);
         // Read the settle generation and arm the waker before deciding nothing
         // is ready, so a job that finishes between the two never sleeps out
         // the timeout.
@@ -284,7 +304,28 @@ impl CapabilityProvider for StandardWaitProvider {
                 // A job-only wait has no socket to sleep on; the engine's own
                 // signal is the wait. A wait that already slept on its sockets
                 // finds the deadline passed and returns at once.
-                engine.wait_until(generation, deadline);
+                //
+                // The engine's settle generation is per engine, not per wait
+                // set, so a job outside this set ends the sleep as well. That
+                // is a wake, not an answer: re-check this set and go back to
+                // sleep while nothing in it is ready and the deadline has not
+                // passed, or the wait returns empty long before it promised.
+                //
+                // The generation is read before every readiness decision,
+                // exactly as it was before the first one: a job of this set
+                // that settles between the decision and the sleep is then a
+                // settle the sleep has not seen yet, so it wakes at once
+                // instead of sleeping out the timeout.
+                let mut generation = generation;
+                loop {
+                    if jobs.iter().any(|(_, handle)| handle.is_ready())
+                        || Instant::now() >= deadline
+                    {
+                        break;
+                    }
+                    engine.wait_until(generation, deadline);
+                    generation = engine.generation();
+                }
             } else if sockets.is_empty() {
                 // Neither socket nor job: the wait is the timeout itself.
                 let left = remaining_ms(deadline);
@@ -305,6 +346,21 @@ impl CapabilityProvider for StandardWaitProvider {
             ready.into_iter().map(ProviderValue::Int).collect(),
         ))))
     }
+}
+
+/// The longest wait this provider names a deadline for. A timeout above it
+/// is a wait with no deadline within reach — a century outlives every
+/// process that could be waiting — and capping it is what keeps a timeout
+/// the contract admits, up to `i64::MAX` milliseconds, from overflowing the
+/// host's own clock.
+pub const MAX_WAIT_MS: i64 = 1000 * 60 * 60 * 24 * 365 * 100;
+
+/// The instant one wait stops at: `now` plus its timeout, capped at
+/// [`MAX_WAIT_MS`] and saturating at whatever this host's clock can hold.
+fn deadline_for(now: Instant, timeout_ms: i64) -> Instant {
+    let capped = timeout_ms.clamp(0, MAX_WAIT_MS);
+    now.checked_add(Duration::from_millis(capped as u64))
+        .unwrap_or(now)
 }
 
 /// What one job of a generated artifact runs: the compiled Aver function the
@@ -527,6 +583,93 @@ mod tests {
             elapsed < Duration::from_millis(600),
             "a 300ms job-only wait took {elapsed:?}"
         );
+    }
+
+    /// The largest timeout the contract admits is larger than any instant
+    /// this host can name. Adding it unchecked panics; the wait must answer.
+    #[test]
+    fn the_largest_admitted_timeout_does_not_panic() {
+        let engine = JobEngine::new(2);
+        let job = engine
+            .begin(Box::new(|_| {
+                Ok(ProviderValue::Int(crate::AverInt::from_i64(4)))
+            }))
+            .expect("begin");
+        // The job settles at once, so the wait answers without ever reaching
+        // its deadline; what is under test is that taking that deadline is
+        // not a panic.
+        let answer = poll(&job, i64::MAX);
+        assert!(
+            matches!(&answer, ProviderValue::ResultOk(inner) if matches!(&**inner, ProviderValue::List(keys) if keys.len() == 1)),
+            "the wait answered {answer:?}"
+        );
+
+        // The deadline such a timeout names is the cap, not the number: past
+        // the cap the wait has no deadline within reach, and the host's own
+        // clock is never asked to hold an instant it cannot.
+        let now = Instant::now();
+        assert_eq!(deadline_for(now, i64::MAX), deadline_for(now, MAX_WAIT_MS));
+        assert_eq!(deadline_for(now, 0), now);
+        assert!(deadline_for(now, i64::MAX) > now + Duration::from_secs(60 * 60 * 24 * 365));
+    }
+
+    /// The engine's settle generation is per engine, so a job outside the
+    /// wait set wakes a job-only wait. Returning on that wake answers `[]`
+    /// while the set's own job is still running and the timeout is far from
+    /// spent: the wait has to look again and go back to sleep.
+    #[test]
+    fn a_job_outside_the_wait_set_does_not_end_the_wait() {
+        let engine = JobEngine::new(4);
+        let release = Arc::new(AtomicBool::new(false));
+        let held = release.clone();
+        // The job the wait is over: slow, and released by hand.
+        let slow = engine
+            .begin(Box::new(move |cancel| {
+                while !held.load(Ordering::Relaxed) && !cancel.load(Ordering::Relaxed) {
+                    std::thread::yield_now();
+                }
+                Ok(ProviderValue::Int(crate::AverInt::from_i64(1)))
+            }))
+            .expect("the slow job starts");
+        // A job nobody is waiting for, which settles first and wakes the
+        // engine while the wait sleeps.
+        let _fast = engine
+            .begin(Box::new(|_| {
+                std::thread::sleep(Duration::from_millis(50));
+                Ok(ProviderValue::Int(crate::AverInt::from_i64(2)))
+            }))
+            .expect("the fast job starts");
+
+        let started = Instant::now();
+        let waiter = {
+            let slow = slow.clone();
+            std::thread::spawn(move || {
+                let answer = StandardWaitProvider
+                    .invoke(
+                        &context(),
+                        &[
+                            wait_set(&slow),
+                            ProviderValue::Int(crate::AverInt::from_i64(3000)),
+                        ],
+                    )
+                    .expect("the wait answers");
+                (answer, started.elapsed())
+            })
+        };
+        // Well after the fast job settled, release the one the wait is over.
+        std::thread::sleep(Duration::from_millis(400));
+        release.store(true, Ordering::Relaxed);
+        let (answer, elapsed) = waiter.join().expect("the wait thread finishes");
+
+        assert!(
+            matches!(&answer, ProviderValue::ResultOk(inner) if matches!(&**inner, ProviderValue::List(keys) if keys.len() == 1)),
+            "the wait answered {answer:?} rather than its own ready job"
+        );
+        assert!(
+            elapsed >= Duration::from_millis(300),
+            "the wait returned after {elapsed:?}, before the job it was over settled"
+        );
+        let _ = slow;
     }
 
     #[test]

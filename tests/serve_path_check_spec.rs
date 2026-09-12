@@ -63,6 +63,25 @@ fn stdout_of(out: &std::process::Output) -> String {
     String::from_utf8_lossy(&out.stdout).to_string()
 }
 
+/// `Wait.poll` is a wait for this check exactly as `Tcp.poll` is: it is the
+/// wait the generated coordinator performs, and a turn it cuts stalls the
+/// same peers. Key the check on `Tcp.poll` alone and this fixture is silent.
+#[test]
+fn a_drain_reached_from_a_wait_poll_turn_is_reported_too() {
+    let dir = project("serve-path-wait-poll", "wait_trips.av", None);
+    let out = check(&dir);
+    let text = stdout_of(&out);
+
+    assert!(text.contains(SLUG), "{}", format_output(&out));
+    assert!(
+        text.contains(
+            "`drain` is an effectful loop that runs to completion inside one turn of `turn`; peers waiting on `Wait.poll` are not served until it returns."
+        ),
+        "{}",
+        format_output(&out)
+    );
+}
+
 #[test]
 fn a_drain_reached_from_a_poll_turn_is_reported_at_the_call_into_it() {
     let dir = project("serve-path-trips", "trips.av", None);

@@ -1,0 +1,55 @@
+module Pooled
+    intent = "Fixture answer module: the answer this program gives to Pool, and both ends of the job seam."
+    depends [Pool, Wait]
+    exposes [State, fresh, claim, score, nextTask, landed]
+    effects []
+
+record State
+    left: Int
+    scored: Int
+
+fn fresh() -> State
+    ? "One handle to give out and nothing scored yet."
+    State(left = 1, scored = 0)
+
+fn claim(state: State) -> Tuple<State, Pool.__ClaimReply>
+    ? "One handle, until there are none."
+    match state.left == 0
+        true -> (state, Pool.__ClaimReply.Now(Option.None))
+        false -> (State.update(state, left = state.left - 1), Pool.__ClaimReply.Now(Option.Some(state.left)))
+
+fn spin(n: Int, acc: Int) -> Int
+    ? "Counts n down, carrying acc; this is the work a job does."
+    match n < 1
+        true -> acc
+        false -> spin(n - 1, acc)
+
+fn score(task: Int) -> Int
+    ? "What one job computes off the turn. Slow on purpose: a take taken right after the job began must find it still running."
+    spin(5000000, task + 1)
+
+fn nextTask(state: State) -> Option<Int>
+    ? "One task, and only out of the state a run starts from."
+    match state.left == 1
+        true -> Option.Some(state.left)
+        false -> Option.None
+
+fn landed(state: State, points: Int) -> State
+    ? "Where a finished job's score goes."
+    State.update(state, scored = state.scored + points)
+
+verify claim
+    claim(fresh()) => (State.update(fresh(), left = 0), Pool.__ClaimReply.Now(Option.Some(1)))
+
+verify spin
+    spin(3, 7) => 7
+
+verify score
+    score(1) => 2
+
+verify nextTask
+    nextTask(fresh()) => Option.Some(1)
+    nextTask(State(left = 0, scored = 0)) => Option.None
+
+verify landed
+    landed(fresh(), 4) => State(left = 1, scored = 4)

@@ -210,6 +210,9 @@ fn the_dump_shows_the_loop_that_was_generated() {
         "Ledger.claim(run.ledger)",
         "Validation.begin(payload)?",
         "verify __settlePeer law lateAnswerIsDropped",
+        // The view is built again per id on purpose, and the generated
+        // description says so rather than leaving a reader to wonder.
+        "It is built again for every id the turn asks about, deliberately",
         // The run ends by cancelling what is still running rather than
         // dropping its handles.
         "fn __cancelEach(run: __Run, keys: List<Int>) -> Result<Unit, String>",
@@ -342,6 +345,81 @@ fn a_job_limit_above_one_is_refused_because_the_turn_would_start_one_task_twice(
         format_output(&out)
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `Wait.poll`'s contract allows false-positive readiness: a job may be
+/// reported ready and still be running, and then `take` answers `Ok(None)`.
+/// The seam must keep the handle for a later turn rather than drop it while
+/// the computation continues. The fixture takes a job it has just started —
+/// which is exactly what a wait is allowed to report — and then, once the
+/// job has really settled, takes it again.
+#[test]
+fn a_job_reported_ready_before_it_finished_keeps_its_handle_and_lands_later() {
+    let out = aver("run_false_ready", &["run"]);
+    assert!(out.status.success(), "{}", format_output(&out));
+    assert!(
+        combined(&out).contains("kept the handle, then landed: jobs 0 scored 2"),
+        "{}",
+        format_output(&out)
+    );
+}
+
+#[test]
+fn the_false_ready_slice_checks_clean() {
+    let out = aver("run_false_ready", &["check"]);
+    assert!(out.status.success(), "{}", format_output(&out));
+}
+
+/// The same claim at the lowering: `__taken<Kind>` hands the whole run to
+/// `__landed<Kind>` with the key, and only the arm that carries a result
+/// removes the job.
+#[test]
+fn the_generated_take_removes_a_job_only_when_it_carried_a_result() {
+    let dir = fixture(SLICE);
+    let mut command = Command::new(aver_bin());
+    command.current_dir(&dir);
+    command.env("AVER_YIELD_DUMP", "1");
+    command.arg("check").arg("main.av");
+    command.arg("--module-root").arg(&dir);
+    let out = command.output().expect("aver runs");
+    let text = combined(&out);
+    for line in [
+        "fn __takenValidation(run: __Run, key: Int) -> Result<__Run, String>",
+        "Option.Some(job) -> __landedValidation(run, key, Validation.take(job)?)",
+        "fn __landedValidation(run: __Run, key: Int, result: Option<Int>) -> Result<__Run, String>",
+        "Option.None -> Result.Ok(run)",
+        "Option.Some(payload) -> Result.Ok(__Run.update(run, jobs = Map.remove(run.jobs, key), ledger = Ledger.validated(run.ledger, payload)))",
+    ] {
+        assert!(text.contains(line), "{line} missing from the dump");
+    }
+    // The removal happens where the result is, not before the take.
+    assert!(
+        !text.contains("__landedValidation(__Run.update(run, jobs = Map.remove(run.jobs, key))"),
+        "the take still drops the handle before it knows what the job answered"
+    );
+}
+
+/// The generated turn crosses one job seam: it takes and starts the jobs of
+/// `jobs[0]` and nothing else, while the checker admits any number of job
+/// kinds. A second kind would be declared, accepted and then never started
+/// or taken, so it is refused with the reason, at every door, exactly as the
+/// `max-jobs` refusal is.
+#[test]
+fn two_job_kinds_under_one_generated_loop_are_refused() {
+    let sentence = "the generated turn crosses the seam of one job kind, and this program declares 2: Alpha, Beta. One job kind per generated loop is the limit in this build";
+    for command in ["check", "run"] {
+        let out = aver("run_two_job_kinds", &[command]);
+        assert!(!out.status.success(), "{command}: {}", format_output(&out));
+        assert!(
+            combined(&out).contains(sentence),
+            "{command}: {}",
+            format_output(&out)
+        );
+    }
+    assert!(
+        combined(&aver("run_two_job_kinds", &["check"])).contains("error[run-binding]:"),
+        "the refusal is slugged"
+    );
 }
 
 #[test]
