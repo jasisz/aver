@@ -1,0 +1,16 @@
+module Beta
+    kind = capability
+    semantics = effectful
+    depends [Work]
+    intent = "The other job kind of the same fixture, scoring a handle twice over."
+    exposes [begin, take]
+
+operation begin(task: Int) -> Result<Work.Job, String>
+    ? "Starts one beta scoring off the turn and returns its job handle at once."
+    oracle = generativeOutput
+    replay = recorded
+
+operation take(job: Work.Job) -> Result<Option<Int>, String>
+    ? "Collects one finished beta scoring: None while it runs, Some(score) once it finished."
+    oracle = generativeOutput
+    replay = recorded

@@ -163,6 +163,18 @@ pub(super) fn generate(
             return Err(errors);
         }
     };
+    // The turn crosses one job seam: it reads `jobs[0]` where it writes the
+    // take and the start, so a second job kind would be declared, admitted
+    // by the checker, and then never started or taken. Refuse it here rather
+    // than generate a loop that quietly serves one of them.
+    if jobs.len() > 1 {
+        let kinds: Vec<&str> = jobs.iter().map(|job| job.capability.as_str()).collect();
+        errors.push(error(line, format!(
+            "aver.toml declares [run], so the generated turn crosses the seam of one job kind, and this program declares {}: {}. One job kind per generated loop is the limit in this build. Keep one `work` binding, or remove [run] and drive the job seam by hand",
+            kinds.len(),
+            kinds.join(", ")
+        )));
+    }
     // The turn asks the answer state for the next task once per slot of room,
     // and starting a job does not change that state, so a limit above one
     // would start the same task once per slot. Refuse it rather than run it.

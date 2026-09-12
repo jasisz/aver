@@ -344,6 +344,29 @@ fn a_job_limit_above_one_is_refused_because_the_turn_would_start_one_task_twice(
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The generated turn crosses one job seam: it takes and starts the jobs of
+/// `jobs[0]` and nothing else, while the checker admits any number of job
+/// kinds. A second kind would be declared, accepted and then never started
+/// or taken, so it is refused with the reason, at every door, exactly as the
+/// `max-jobs` refusal is.
+#[test]
+fn two_job_kinds_under_one_generated_loop_are_refused() {
+    let sentence = "the generated turn crosses the seam of one job kind, and this program declares 2: Alpha, Beta. One job kind per generated loop is the limit in this build";
+    for command in ["check", "run"] {
+        let out = aver("run_two_job_kinds", &[command]);
+        assert!(!out.status.success(), "{command}: {}", format_output(&out));
+        assert!(
+            combined(&out).contains(sentence),
+            "{command}: {}",
+            format_output(&out)
+        );
+    }
+    assert!(
+        combined(&aver("run_two_job_kinds", &["check"])).contains("error[run-binding]:"),
+        "the refusal is slugged"
+    );
+}
+
 #[test]
 fn a_view_that_is_not_the_shape_the_loop_fills_is_refused_with_the_declaration_it_wants() {
     let out = aver("run_view_shape", &["check"]);
