@@ -237,6 +237,21 @@ pub(super) struct TypeRegistry {
     /// declared. The runtime allocates the array lazily on first
     /// `Tcp.connect` call via `array.new_default` against this idx.
     pub(super) tcp_pool_type_idx: Option<u32>,
+    /// jasisz/aver#1329 — `(struct (mut i64 id) (mut i32 state)
+    /// (mut i32 kind) (mut anyref value))`: the representation of the
+    /// stdlib job handle `Work.Job`.
+    ///
+    /// A job runs inline at `begin` on both wasm targets, so the handle a
+    /// job kind mints is also the slot holding its answer: `id` is the
+    /// handle's identity, `state` is finished / taken / cancelled, `kind`
+    /// names the job kind that minted it, and `value` carries the answer
+    /// the bound function already computed. Aliasing is exactly what a
+    /// resource wants — two copies of one handle are one job — so no
+    /// separate table is needed and none is emitted.
+    ///
+    /// `None` when no `Work.Job` is reachable, so a program without jobs
+    /// carries no job bytes at all.
+    pub(super) job_struct_idx: Option<u32>,
     /// Arbitrary-precision `Int` (`Int = ℤ`, the only wasm-gc Int
     /// semantics). `true` when any Int arithmetic is reachable — a SIZE
     /// reachability gate, NOT a semantics flag (so pure-String/Float/
@@ -597,6 +612,18 @@ impl TypeRegistry {
             (Some(slot_idx), Some(pool_idx))
         } else {
             (None, None)
+        };
+
+        // jasisz/aver#1329 — the `Work.Job` handle slot. Allocated
+        // whenever the program reaches the stdlib job handle, directly or
+        // through `Wait.Item.Job`, which every answered capability's
+        // generated reply sum reaches through `Wait.Wake`.
+        let job_struct_idx = if items_reference_name(items, crate::capability::work::WORK_JOB) {
+            let idx = next_idx;
+            next_idx += 1;
+            Some(idx)
+        } else {
+            None
         };
 
         // `$AverInt` + `(array i64)` magnitude slots. `Int = ℤ` is now
@@ -1424,6 +1451,7 @@ impl TypeRegistry {
             eligible_carrier_fields: std::collections::HashSet::new(),
             tcp_slot_type_idx,
             tcp_pool_type_idx,
+            job_struct_idx,
             bignum,
             aint_struct_idx,
             aint_mag_array_idx,
@@ -2794,6 +2822,16 @@ pub(super) fn aver_to_wasm(
             }
         }
     }
+    // jasisz/aver#1329 — the stdlib job handle. A provider resource like
+    // `Tcp.Dial`, so it lowers to a reference to its own compiler-owned
+    // struct; the program can carry one and compare two, and nothing else.
+    if trimmed == crate::capability::work::WORK_JOB
+        && let Some(reg) = registry
+        && let Some(idx) = reg.job_struct_idx
+    {
+        return Ok(Some(struct_ref(idx)));
+    }
+
     // Built-in opaque types — `BranchPath`, `Trace`, `EffectEvent`
     // are introduced by the verify / oracle / effect-lifting pipeline
     // and only reach runtime fns whose bodies are dead from a `_start`

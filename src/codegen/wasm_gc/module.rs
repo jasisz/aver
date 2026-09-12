@@ -6098,12 +6098,16 @@ fn emit_user_types(
                 for v in variants {
                     let mut fields = Vec::new();
                     for ty in &v.fields {
-                        let val_ty = super::types::aver_to_wasm(ty, Some(registry))?.ok_or(
-                            WasmGcError::Validation(format!(
-                                "variant `{}` field of type {ty} has no wasm representation",
-                                v.name
-                            )),
-                        )?;
+                        // `Unit` has no stack value, and a variant field that
+                        // is one keeps the same unobservable `i32` placeholder
+                        // a record field of that type already keeps
+                        // (`record_field_val_type`). An operation returning
+                        // `Unit` is answered with `__OpReply.Now(Unit)`, so a
+                        // program answering one of its own capabilities
+                        // reaches this shape as soon as it declares such an
+                        // operation.
+                        let val_ty =
+                            super::types::aver_to_wasm(ty, Some(registry))?.unwrap_or(ValType::I32);
                         fields.push(wasm_encoder::FieldType {
                             element_type: wasm_encoder::StorageType::Val(val_ty),
                             mutable: false,
@@ -6319,6 +6323,45 @@ fn emit_user_types(
                 },
                 wasm_encoder::FieldType {
                     element_type: StorageType::Val(ValType::I32),
+                    mutable: true,
+                },
+            ]),
+        ));
+    }
+
+    // jasisz/aver#1329 — the `Work.Job` handle.
+    //   0  id      the handle's identity, minted per job kind call
+    //   1  state   0 finished, 1 taken, 2 cancelled
+    //   2  kind    the job kind that minted it
+    //   3  value   the answer the bound function already computed
+    // A job runs inline at `begin` on this backend, so the handle is the
+    // whole job: no table, and two copies of one handle are one job.
+    if let Some(job_idx) = registry.job_struct_idx {
+        entries.push((
+            job_idx,
+            mk_struct(vec![
+                wasm_encoder::FieldType {
+                    element_type: wasm_encoder::StorageType::Val(ValType::I64),
+                    mutable: true,
+                },
+                wasm_encoder::FieldType {
+                    element_type: wasm_encoder::StorageType::Val(ValType::I32),
+                    mutable: true,
+                },
+                wasm_encoder::FieldType {
+                    element_type: wasm_encoder::StorageType::Val(ValType::I32),
+                    mutable: true,
+                },
+                wasm_encoder::FieldType {
+                    element_type: wasm_encoder::StorageType::Val(wasm_encoder::ValType::Ref(
+                        wasm_encoder::RefType {
+                            nullable: true,
+                            heap_type: wasm_encoder::HeapType::Abstract {
+                                shared: false,
+                                ty: wasm_encoder::AbstractHeapType::Any,
+                            },
+                        },
+                    )),
                     mutable: true,
                 },
             ]),

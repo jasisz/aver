@@ -142,6 +142,23 @@ pub(super) fn collect_results_from_builtin_uses(
                             "String.fromUtf8" => {
                                 intern_result("Result<String,String>", out, order, next_idx)
                             }
+                            // `Vector.new(n, fill)` answers
+                            // `Result<Vector<T>, String>`, and `T` is the
+                            // fill argument's own type — the same stamp the
+                            // vector walk reads. Without the carrier slot a
+                            // `Vector.new(...)?` has no registered Result to
+                            // unwrap, which is what a hostile profile of the
+                            // `Tcp` contract writes.
+                            "Vector.new" if args.len() == 2 => {
+                                if let Some(fill_ty) = args[1].ty() {
+                                    let canonical: String =
+                                        format!("Result<Vector<{}>,String>", fill_ty.display())
+                                            .chars()
+                                            .filter(|c| !c.is_whitespace())
+                                            .collect();
+                                    intern_result(&canonical, out, order, next_idx);
+                                }
+                            }
                             _ => {}
                         }
                     }
