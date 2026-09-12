@@ -225,6 +225,18 @@ pub(super) enum EffectName {
     /// `(job: Work.Job) -> Unit` — the module has already cancelled the
     /// handle; this is what the recording sees.
     WorkCancel,
+    /// `(kind: Int, task: Option<T>, job: Work.Job) -> Unit` — the module
+    /// has already run the bound function and minted the handle; this puts
+    /// `<Kind>.begin` in the recording with the task it was given and the
+    /// handle it answered. The task rides boxed in an `Option` so one import
+    /// serves a task of any type, including a scalar.
+    WorkBegin,
+    /// `(kind: Int, job: Work.Job, answer: Result<Option<R>, String>)
+    /// -> Result<Option<R>, String>` — the module has already computed the
+    /// answer; this records `<Kind>.take` with it, and in replay hands back
+    /// the recorded one instead, so a turn that answered `None` on the VM
+    /// answers `None` here too.
+    WorkTake,
 }
 
 impl EffectName {
@@ -316,6 +328,8 @@ impl EffectName {
         Self::RecordExitGroup,
         Self::WaitPoll,
         Self::WorkCancel,
+        Self::WorkBegin,
+        Self::WorkTake,
     ];
 
     pub(super) fn from_dotted(s: &str) -> Option<Self> {
@@ -509,6 +523,11 @@ impl EffectName {
             Self::RecordExitGroup => "__record_exit_group",
             Self::WaitPoll => "Wait.poll",
             Self::WorkCancel => "Work.cancel",
+            // Not standard capability operations: one job kind's `begin` and
+            // `take` are the program's own, and these two imports are the
+            // recorder's view of them.
+            Self::WorkBegin => "__work_begin",
+            Self::WorkTake => "__work_take",
         }
     }
 
@@ -602,6 +621,8 @@ impl EffectName {
             Self::RecordExitGroup => ("aver", "record_exit_group"),
             Self::WaitPoll => ("aver", "wait_poll"),
             Self::WorkCancel => ("aver", "work_cancel"),
+            Self::WorkBegin => ("aver", "work_begin"),
+            Self::WorkTake => ("aver", "work_take"),
         }
     }
 
@@ -721,6 +742,10 @@ impl EffectName {
             // The handle only has to be identifiable: the module has already
             // cancelled it, and the recording names the job it was.
             Self::WorkCancel => Ok(vec![any_ref_ty()]),
+            // The kind index says which job kind's operation this is; the
+            // rest crosses as `anyref` because one import serves every kind.
+            Self::WorkBegin => Ok(vec![ValType::I32, any_ref_ty(), any_ref_ty()]),
+            Self::WorkTake => Ok(vec![ValType::I32, any_ref_ty(), any_ref_ty()]),
             Self::TcpWriteLine | Self::TcpWriteBytes | Self::TcpWriteNow => {
                 Ok(vec![any_ref_ty(), any_ref_ty()])
             }
@@ -872,7 +897,8 @@ impl EffectName {
             )?]),
             Self::RecordEnterGroup | Self::RecordSetBranch | Self::RecordExitGroup => Ok(vec![]),
             Self::WaitPoll => Ok(vec![result_ref_ty(registry, "Result<List<Int>,String>")?]),
-            Self::WorkCancel => Ok(vec![]),
+            Self::WorkCancel | Self::WorkBegin => Ok(vec![]),
+            Self::WorkTake => Ok(vec![any_ref_ty()]),
         }
     }
 }
@@ -1455,7 +1481,11 @@ impl EffectName {
             // nothing is imported for it. It is the one operation the
             // manifest binds on wasip2 that names no canonical-ABI slot; see
             // `wasip2_slots_and_wasip2_lowering_partition_the_effects_the_same_way`.
-            | Self::WorkCancel => &[],
+            | Self::WorkCancel
+            // A component records nothing, so its job kinds reach no import
+            // at all: `--record` is refused on wasip2.
+            | Self::WorkBegin
+            | Self::WorkTake => &[],
         }
     }
 }

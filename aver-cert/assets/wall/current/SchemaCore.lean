@@ -100,7 +100,9 @@ def WASM_GC_CAPABILITY_REGISTRY : List (String × String) := [
   ("aver", "record_set_branch"),
   ("aver", "record_exit_group"),
   ("aver", "wait_poll"),
-  ("aver", "work_cancel")
+  ("aver", "work_cancel"),
+  ("aver", "work_begin"),
+  ("aver", "work_take")
 ]
 
 /-- Exact standard canonical-ABI import surface emitted into wasip2 core

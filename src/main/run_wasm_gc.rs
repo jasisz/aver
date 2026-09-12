@@ -395,6 +395,20 @@ fn wasm_gc_provider_provenance(
             .into_iter()
             .filter(|entry| custom.contains(entry.capability.as_str())),
     );
+    // jasisz/aver#1329 — a job kind is answered by the program, so it has no
+    // interface above and no host provider below; it still belongs in the
+    // recording's header, because a replay checks every capability the run
+    // named against the contracts the program declares now.
+    provenance.extend(custom_plan.job_kinds().iter().filter_map(|kind| {
+        let contract = capabilities.contract(&kind.shape.capability)?;
+        Some(aver::replay::CapabilityProvenance {
+            capability: kind.shape.capability.clone(),
+            contract_hash: contract.contract_hash.clone(),
+            model_hash: contract.model_hash.clone(),
+            provider: format!("aver.work.{}/wasm-gc", kind.shape.capability),
+            fingerprint: aver::provider::work::WORK_FINGERPRINT.to_string(),
+        })
+    }));
     provenance.sort_by(|left, right| left.capability.cmp(&right.capability));
     provenance
 }

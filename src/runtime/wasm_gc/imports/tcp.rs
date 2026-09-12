@@ -1163,7 +1163,10 @@ fn json_wait_item(variant: &str, payload: aver::replay::JsonValue) -> aver::repl
 }
 
 /// The `$capabilityResource` shape a provider-owned handle records as.
-pub(super) fn json_capability_resource(type_name: &str, trace: i64) -> aver::replay::JsonValue {
+pub(in crate::runtime::wasm_gc) fn json_capability_resource(
+    type_name: &str,
+    trace: i64,
+) -> aver::replay::JsonValue {
     let mut payload = serde_json::Map::new();
     payload.insert(
         "trace".to_string(),

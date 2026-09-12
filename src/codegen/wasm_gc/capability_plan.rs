@@ -157,18 +157,26 @@ impl CapabilityWasmGcPlan {
                 );
             }
         }
-        let force_bignum = interfaces.iter().any(|interface| {
-            interface.operations.iter().any(|operation| {
-                operation.abi_params.iter().any(|ty| {
-                    type_contains_int(ty, registry, &interface.capability, &mut HashSet::new())
-                }) || type_contains_int(
-                    &operation.abi_result,
-                    registry,
-                    &interface.capability,
-                    &mut HashSet::new(),
-                )
+        // A job kind's task and answer cross to the recorder through the same
+        // ABI, so an `Int` in either needs the full-ℤ host bridges too.
+        let job_bignum = job_kinds.iter().any(|kind| {
+            kind.recorded_types().iter().any(|ty| {
+                type_contains_int(ty, registry, &kind.shape.capability, &mut HashSet::new())
             })
         });
+        let force_bignum = job_bignum
+            || interfaces.iter().any(|interface| {
+                interface.operations.iter().any(|operation| {
+                    operation.abi_params.iter().any(|ty| {
+                        type_contains_int(ty, registry, &interface.capability, &mut HashSet::new())
+                    }) || type_contains_int(
+                        &operation.abi_result,
+                        registry,
+                        &interface.capability,
+                        &mut HashSet::new(),
+                    )
+                })
+            });
 
         Ok(Self {
             interfaces,

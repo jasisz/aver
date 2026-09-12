@@ -97,13 +97,30 @@ impl JobKindPlan {
     /// so the registry would allocate no slot for the very values the inline
     /// lowering builds. These are the spellings it needs.
     pub fn boundary_type_strings(&self) -> Vec<String> {
+        let task = self.shape.task.display();
         let payload = self.shape.payload.display();
         vec![
-            self.shape.task.display(),
+            task.clone(),
             payload.clone(),
+            // The task rides boxed when the recorder is told about a `begin`:
+            // an `Option` is a struct whatever the task is, including a
+            // scalar, so one host import serves every job kind.
+            format!("Option<{task}>"),
             format!("Option<{payload}>"),
             format!("Result<Option<{payload}>,String>"),
             format!("Result<{WORK_JOB},String>"),
+        ]
+    }
+
+    /// The two boundary types a recording crosses: the task as the host reads
+    /// it, and the answer `take` hands back.
+    pub fn recorded_types(&self) -> [Type; 2] {
+        [
+            Type::Option(Box::new(self.shape.task.clone())),
+            Type::Result(
+                Box::new(Type::Option(Box::new(self.shape.payload.clone()))),
+                Box::new(Type::Str),
+            ),
         ]
     }
 }

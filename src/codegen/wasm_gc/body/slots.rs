@@ -27,7 +27,7 @@ use super::infer::{
 
 /// Per-fn slot table — one entry per local (param or binding) in
 /// resolver-allocation order. Slot N maps to `wasm local N`.
-pub(super) struct SlotTable {
+pub(in crate::codegen::wasm_gc) struct SlotTable {
     /// Element index = slot number; element value = wasm ValType.
     pub(super) by_slot: Vec<ValType>,
     /// Optional scratch slot of `(ref null eq)` reserved for multi-arm
@@ -173,6 +173,9 @@ pub(super) struct SlotTable {
     /// Lazily allocated for the same reason the record scratch above is: a
     /// program with no job reserves nothing and its bytes are untouched.
     job_handle_scratch: RefCell<Option<u32>>,
+    /// One local per job kind this fn starts a job of. See
+    /// `job_task_scratch`.
+    job_task_scratch: RefCell<HashMap<i32, u32>>,
     /// Lazily allocated locals, appended after `by_slot` in
     /// `extra_locals`. Index `i` here is wasm local `by_slot.len() + i`.
     lazy_locals: RefCell<Vec<ValType>>,
@@ -462,8 +465,21 @@ impl SlotTable {
             record_field_scratch: RefCell::new(HashMap::new()),
             record_base_scratch: RefCell::new(HashMap::new()),
             job_handle_scratch: RefCell::new(None),
+            job_task_scratch: RefCell::new(HashMap::new()),
             lazy_locals: RefCell::new(Vec::new()),
         })
+    }
+
+    /// Reserve (once per fn per job kind) the local one `begin` parks its
+    /// task in. The task is read twice — the bound function runs it, and the
+    /// recorder is told what it was — and it arrives as a value on the stack.
+    pub(in crate::codegen::wasm_gc) fn job_task_scratch(&self, kind: i32, ty: ValType) -> u32 {
+        if let Some(found) = self.job_task_scratch.borrow().get(&kind) {
+            return *found;
+        }
+        let idx = self.push_lazy_local(ty);
+        self.job_task_scratch.borrow_mut().insert(kind, idx);
+        idx
     }
 
     /// Reserve (once per fn) the local a job handle is parked in.

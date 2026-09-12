@@ -2185,8 +2185,9 @@ fn emit_mir_job_call(
             args.len()
         )));
     }
+    let handle = slots.job_handle_scratch(jobs.job_struct_idx);
     if let Some(kind) = jobs.kind_for_begin(dotted) {
-        return match super::super::jobs::emit_begin(func, kind, jobs, ctx.registry, |func| {
+        return match super::super::jobs::emit_begin(func, kind, jobs, handle, slots, ctx, |func| {
             emit_mir_expr(func, &args[0], slots, ctx)
         })? {
             Some(()) => Ok(MirBuiltinEmit::Produced(
@@ -2198,13 +2199,12 @@ fn emit_mir_job_call(
     if emit_mir_expr(func, &args[0], slots, ctx)?.is_none() {
         return Ok(MirBuiltinEmit::Fallback);
     }
-    let handle = slots.job_handle_scratch(jobs.job_struct_idx);
     if let Some(kind) = jobs.kind_for_take(dotted) {
         super::super::jobs::emit_take(func, kind, jobs, handle, ctx)?;
         return Ok(MirBuiltinEmit::Produced(
             aver_type_str_of(expr).trim() != "Unit",
         ));
     }
-    super::super::jobs::emit_cancel(func, jobs, handle);
+    super::super::jobs::emit_cancel(func, jobs, handle, ctx)?;
     Ok(MirBuiltinEmit::Produced(false))
 }

@@ -66,6 +66,17 @@ pub(super) use factories::{
     host_tcp_connection_make, host_terminal_size_make,
 };
 pub(super) use lm::{lm_string_from_host, lm_string_to_host};
+pub(super) use tcp::json_capability_resource;
+
+/// The `$capabilityResource` a `Work.Job` handle records as.
+pub(super) fn json_work_job(id: i64) -> aver::replay::JsonValue {
+    json_capability_resource("Work.Job", id)
+}
+
+/// `Ok(<the handle>)`, the outcome a recorded `begin` carries.
+pub(super) fn json_ok_work_job(id: i64) -> aver::replay::JsonValue {
+    replay_glue::json_ok(json_work_job(id))
+}
 
 use http::{HttpVerb, http_body_dispatch, http_simple_dispatch};
 

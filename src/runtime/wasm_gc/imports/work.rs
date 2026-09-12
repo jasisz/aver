@@ -88,7 +88,60 @@ pub(super) fn dispatch(
             );
             Ok(true)
         }
+        "work_begin" => {
+            let kind = kind_index(params.first(), "Work.begin")?;
+            let handle = job_handle_id(
+                caller,
+                params
+                    .get(2)
+                    .ok_or_else(|| wasmtime::Error::msg("Work.begin: missing job handle"))?,
+            )?;
+            let task = params.get(1).copied();
+            super::super::provider_host::record_job_operation(
+                caller,
+                kind,
+                false,
+                task.as_ref(),
+                handle,
+                caller_fn,
+            )?;
+            Ok(true)
+        }
+        "work_take" => {
+            let kind = kind_index(params.first(), "Work.take")?;
+            let handle = job_handle_id(
+                caller,
+                params
+                    .get(1)
+                    .ok_or_else(|| wasmtime::Error::msg("Work.take: missing job handle"))?,
+            )?;
+            let answer = params.get(2).copied();
+            let replayed = super::super::provider_host::record_job_operation(
+                caller,
+                kind,
+                true,
+                answer.as_ref(),
+                handle,
+                caller_fn,
+            )?;
+            // Outside replay the module's own answer is the answer.
+            results[0] = match replayed {
+                Some(recorded) => Val::AnyRef(recorded),
+                None => answer.unwrap_or(Val::AnyRef(None)),
+            };
+            Ok(true)
+        }
         _ => Ok(false),
+    }
+}
+
+/// The job kind one of the two recording imports names.
+fn kind_index(value: Option<&wasmtime::Val>, operation: &str) -> Result<i32, wasmtime::Error> {
+    match value {
+        Some(wasmtime::Val::I32(kind)) => Ok(*kind),
+        _ => Err(wasmtime::Error::msg(format!(
+            "{operation}: missing the job kind index"
+        ))),
     }
 }
 

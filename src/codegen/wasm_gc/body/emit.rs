@@ -232,7 +232,7 @@ pub(super) fn emit_branch_marker(func: &mut Function, ctx: &EmitCtx<'_>, branch_
 /// effect call site with the originating fn just calls this — no
 /// AST walker, no rozjazdy walker↔codegen. Hot path: 2-3 bytes
 /// (`i32.const <idx>`), zero allocation.
-pub(super) fn emit_caller_fn_idx(
+pub(in crate::codegen::wasm_gc) fn emit_caller_fn_idx(
     func: &mut Function,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {

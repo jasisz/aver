@@ -72,6 +72,10 @@ pub(super) struct JobKindLowering {
     pub(super) work_fn_idx: u32,
     /// The payload type `R` as Aver spells it.
     pub(super) payload_aver: String,
+    /// The task type `T` as Aver spells it.
+    pub(super) task_aver: String,
+    /// `Option<T>` slot — how the task crosses to the recorder.
+    pub(super) option_task_idx: u32,
     /// `Option<R>` slot.
     pub(super) option_payload_idx: u32,
     /// `Result<Option<R>, String>` slot — what `take` answers and what the
@@ -149,10 +153,31 @@ pub(super) fn emit_begin(
     func: &mut Function,
     kind: &JobKindLowering,
     jobs: &JobLowering,
-    registry: &TypeRegistry,
+    handle_local: u32,
+    slots: &super::body::SlotTable,
+    ctx: &EmitCtx<'_>,
     emit_task: impl FnOnce(&mut Function) -> Result<Option<bool>, WasmGcError>,
 ) -> Result<Option<()>, WasmGcError> {
-    func.instruction(&Instruction::I32Const(RESULT_OK_TAG));
+    // The task is read twice: the bound function runs it, and — where the
+    // recorder exists — the turn is told what it was. Park it once.
+    let task_local =
+        match crate::codegen::wasm_gc::types::aver_to_wasm(&kind.task_aver, Some(ctx.registry))? {
+            Some(ty) => {
+                if emit_task(func)?.is_none() {
+                    return Ok(None);
+                }
+                let local = slots.job_task_scratch(kind.kind_tag, ty);
+                func.instruction(&Instruction::LocalSet(local));
+                Some(local)
+            }
+            // A `Unit` task has no wasm value at all; the expression still runs.
+            None => {
+                if emit_task(func)?.is_none() {
+                    return Ok(None);
+                }
+                None
+            }
+        };
 
     // The handle's id, then the bump. `global.get` leaves the id on the
     // stack and the second read is what the increment is written from, so
@@ -169,19 +194,44 @@ pub(super) fn emit_begin(
     // The answer, built as `Result.Ok(Option.Some(<the function's result>))`.
     func.instruction(&Instruction::I32Const(RESULT_OK_TAG));
     func.instruction(&Instruction::I32Const(OPTION_SOME_TAG));
-    if emit_task(func)?.is_none() {
-        return Ok(None);
+    if let Some(local) = task_local {
+        func.instruction(&Instruction::LocalGet(local));
     }
     func.instruction(&Instruction::Call(kind.work_fn_idx));
     func.instruction(&Instruction::StructNew(kind.option_payload_idx));
-    super::body::emit_default_value(func, "String", registry)?;
+    super::body::emit_default_value(func, "String", ctx.registry)?;
     func.instruction(&Instruction::StructNew(kind.take_result_idx));
 
     func.instruction(&Instruction::StructNew(jobs.job_struct_idx));
-    super::body::emit_default_value(func, "String", registry)?;
+    func.instruction(&Instruction::LocalSet(handle_local));
+
+    // What the recorder sees: `<Kind>.begin` with the task it was given and
+    // the handle it answered, in the turn it happened in. Only the bridge
+    // target has a recorder; a component records nothing.
+    if let Some(&record) = ctx.fn_map.effects.get(WORK_BEGIN_EFFECT) {
+        func.instruction(&Instruction::I32Const(kind.kind_tag));
+        func.instruction(&Instruction::I32Const(OPTION_SOME_TAG));
+        match task_local {
+            Some(local) => func.instruction(&Instruction::LocalGet(local)),
+            None => func.instruction(&Instruction::I32Const(0)),
+        };
+        func.instruction(&Instruction::StructNew(kind.option_task_idx));
+        func.instruction(&Instruction::LocalGet(handle_local));
+        super::body::emit_caller_fn_idx(func, ctx)?;
+        func.instruction(&Instruction::Call(record));
+    }
+
+    func.instruction(&Instruction::I32Const(RESULT_OK_TAG));
+    func.instruction(&Instruction::LocalGet(handle_local));
+    super::body::emit_default_value(func, "String", ctx.registry)?;
     func.instruction(&Instruction::StructNew(kind.begin_result_idx));
     Ok(Some(()))
 }
+
+/// The canonical name the `begin` recording import is keyed by.
+pub(super) const WORK_BEGIN_EFFECT: &str = "__work_begin";
+/// The canonical name the `take` recording import is keyed by.
+pub(super) const WORK_TAKE_EFFECT: &str = "__work_take";
 
 /// `take(job)`: the four answers the VM gives, in the VM's words.
 ///
@@ -198,6 +248,15 @@ pub(super) fn emit_take(
 
     func.instruction(&Instruction::LocalSet(handle_local));
     let result_block = BlockType::Result(struct_ref(kind.take_result_idx));
+    // The recorder's view of `<Kind>.take`: the handle it was given and the
+    // answer this turn produced. In replay the host hands back the recorded
+    // answer instead, so a turn that answered `None` on the VM answers
+    // `None` here too.
+    let record = ctx.fn_map.effects.get(WORK_TAKE_EFFECT).copied();
+    if record.is_some() {
+        func.instruction(&Instruction::I32Const(kind.kind_tag));
+        func.instruction(&Instruction::LocalGet(handle_local));
+    }
 
     // A handle belongs to the kind that started it. `Work.Job` is one type,
     // so this is the only thing that can tell two kinds apart.
@@ -273,6 +332,13 @@ pub(super) fn emit_take(
     func.instruction(&Instruction::End);
     func.instruction(&Instruction::End);
     func.instruction(&Instruction::End);
+    if let Some(record) = record {
+        super::body::emit_caller_fn_idx(func, ctx)?;
+        func.instruction(&Instruction::Call(record));
+        func.instruction(&Instruction::RefCastNullable(HeapType::Concrete(
+            kind.take_result_idx,
+        )));
+    }
     Ok(())
 }
 
@@ -280,10 +346,21 @@ pub(super) fn emit_take(
 /// taking, and change nothing for one already taken or already cancelled.
 ///
 /// It answers `Unit`, so the handle is consumed and nothing is left behind.
-pub(super) fn emit_cancel(func: &mut Function, jobs: &JobLowering, handle_local: u32) {
+pub(super) fn emit_cancel(
+    func: &mut Function,
+    jobs: &JobLowering,
+    handle_local: u32,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
     use wasm_encoder::BlockType;
 
     func.instruction(&Instruction::LocalSet(handle_local));
+    // The turn's record of the cancel, in the order the VM records it.
+    if let Some(&record) = ctx.fn_map.effects.get(crate::capability::work::WORK_CANCEL) {
+        func.instruction(&Instruction::LocalGet(handle_local));
+        super::body::emit_caller_fn_idx(func, ctx)?;
+        func.instruction(&Instruction::Call(record));
+    }
     func.instruction(&Instruction::LocalGet(handle_local));
     func.instruction(&Instruction::StructGet {
         struct_type_index: jobs.job_struct_idx,
@@ -310,6 +387,7 @@ pub(super) fn emit_cancel(func: &mut Function, jobs: &JobLowering, handle_local:
         field_index: 3,
     });
     func.instruction(&Instruction::End);
+    Ok(())
 }
 
 /// Resolve one plan's job kinds against the emitted module's slots.
@@ -344,6 +422,15 @@ pub(super) fn build_lowering(
             ))
         })?;
         let payload_aver = kind.shape.payload.display();
+        let task_aver = kind.shape.task.display();
+        let option_task_canonical = format!("Option<{task_aver}>");
+        let option_task_idx = registry
+            .option_type_idx(&option_task_canonical)
+            .ok_or_else(|| {
+                WasmGcError::Validation(format!(
+                    "job kind '{capability}' needs the `{option_task_canonical}` slot but none was registered"
+                ))
+            })?;
         let option_canonical = format!("Option<{payload_aver}>");
         let option_payload_idx = registry.option_type_idx(&option_canonical).ok_or_else(|| {
             WasmGcError::Validation(format!(
@@ -369,6 +456,8 @@ pub(super) fn build_lowering(
             kind_tag: index as i32,
             work_fn_idx,
             payload_aver,
+            task_aver,
+            option_task_idx,
             option_payload_idx,
             take_result_idx,
             begin_result_idx,

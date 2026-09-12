@@ -804,6 +804,16 @@ pub(super) fn emit_module_with(
         }
     }
 
+    // jasisz/aver#1329 — a job kind is answered by the module, so nothing in
+    // the program's effect lists reaches these two. They exist for the
+    // recorder: with them a wasm-gc recording has the VM's shape, and a VM
+    // recording replays here. A component records nothing, so only the
+    // bridge target registers them.
+    if !job_kinds.is_empty() && matches!(target, super::TargetMode::AverBridge) {
+        effect_registry.register(EffectName::WorkBegin);
+        effect_registry.register(EffectName::WorkTake);
+    }
+
     // List<String>/List<Char> show up as soon as the program reaches
     // for `String.split` or any List<String> literal. Their per-T
     // `contains` helper compares heads via `__wasmgc_string_eq`, so
