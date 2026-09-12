@@ -533,7 +533,7 @@ What a `Later` carries is a `Wait.Wake`, and the wake **gates the ask**: a parke
 
 A freshly seated process and a process whose request was just answered are askable at once.
 
-The worked example of `After` is a clock that gives out a tick fifty milliseconds after it was asked for one. The first ask arms the deadline and parks; the ask after the deadline has passed is the tick. Four ticks are eight asks, whatever else the run is doing and however many turns it takes:
+The worked example of `After` is a clock that gives out a tick fifty milliseconds after it was asked for one. The first ask arms the deadline and parks; the ask after the deadline has passed is the tick. Four ticks are eight asks — two per tick, whatever else the run is doing and however many turns it takes — plus the closing ask that answers `Closed`, which is why the slice's run ends with a ticker asked nine times:
 
 ```aver
 fn tick(state: State) -> Tuple<State, Clock.__TickReply>
