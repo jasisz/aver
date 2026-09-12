@@ -1135,15 +1135,15 @@ fn shipped_provenance_projects_only_provided_manifest_rows() {
                     "Args", "Console", "Disk", "Env", "Http", "Random", "Tcp", "Time",
                 ]
             }
-            // Only the VM answers the job handle and the one wait of a turn
-            // in this build; the other three targets have no row for them.
-            CapabilityTarget::Vm => {
+            // The VM and the Rust backend answer the job handle and the one
+            // wait of a turn; neither wasm target has a row for them.
+            CapabilityTarget::Vm | CapabilityTarget::Rust => {
                 vec![
                     "Args", "Console", "Disk", "Env", "Http", "Process", "Random", "Tcp",
                     "Terminal", "Time", "Wait", "Work",
                 ]
             }
-            CapabilityTarget::Rust | CapabilityTarget::WasmGc => {
+            CapabilityTarget::WasmGc => {
                 vec![
                     "Args", "Console", "Disk", "Env", "Http", "Process", "Random", "Tcp",
                     "Terminal", "Time",
