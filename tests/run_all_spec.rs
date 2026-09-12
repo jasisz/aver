@@ -24,8 +24,8 @@ use aver_cmd::{aver_bin, format_output, repo_root};
 use loopback_peer::{free_port, loopback_peer, silent_peer};
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::process::{Command, Output, Stdio};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const SLICE: &str = "run_all_slice";
 
@@ -58,6 +58,66 @@ fn aver(fixture_name: &str, args: &[&str]) -> Output {
     command.arg("--module-root").arg(&dir);
     command.args(&args[1..]);
     command.output().expect("aver runs")
+}
+
+/// The same run, with a wall-clock bound on it.
+///
+/// The two tests that pin "this slice ends on its own" exist to catch a run
+/// that turns for ever, and a child process nobody bounds would hang the
+/// suite rather than fail it. The bound is generous — those runs take about
+/// five seconds, so a minute is a run that is not going to end rather than a
+/// slow machine — and a run that reaches it is killed before the failure is
+/// reported, so nothing is left behind holding a port.
+fn aver_within(fixture_name: &str, args: &[&str], seconds: u64) -> Output {
+    use std::io::Read;
+
+    let dir = fixture(fixture_name);
+    let mut command = Command::new(aver_bin());
+    command.current_dir(&dir);
+    command.arg(args[0]).arg("main.av");
+    command.arg("--module-root").arg(&dir);
+    command.args(&args[1..]);
+    command.stdout(Stdio::piped());
+    command.stderr(Stdio::piped());
+    let mut child = command.spawn().expect("aver starts");
+    let mut child_stdout = child.stdout.take().expect("aver's stdout is piped");
+    let mut child_stderr = child.stderr.take().expect("aver's stderr is piped");
+    // The pipes are drained while the run is still going, because a run that
+    // filled one would block on it and look like the hang this bound is for.
+    let stdout_reader = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let _ = child_stdout.read_to_end(&mut bytes);
+        bytes
+    });
+    let stderr_reader = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let _ = child_stderr.read_to_end(&mut bytes);
+        bytes
+    });
+    let deadline = Instant::now() + Duration::from_secs(seconds);
+    let mut overran = false;
+    let status = loop {
+        match child.try_wait().expect("aver is waitable") {
+            Some(status) => break status,
+            None if Instant::now() >= deadline => {
+                overran = true;
+                let _ = child.kill();
+                break child.wait().expect("aver is waitable");
+            }
+            None => std::thread::sleep(Duration::from_millis(20)),
+        }
+    };
+    let out = Output {
+        status,
+        stdout: stdout_reader.join().expect("aver's stdout was read"),
+        stderr: stderr_reader.join().expect("aver's stderr was read"),
+    };
+    assert!(
+        !overran,
+        "the run did not end within {seconds} seconds:\n{}",
+        format_output(&out)
+    );
+    out
 }
 
 fn combined(out: &Output) -> String {
@@ -163,7 +223,7 @@ fn a_read_that_hears_nothing_runs_out_its_deadline_and_the_peer_is_handed_back()
     let port = free_port();
     let peer = silent_peer(port);
     let port = port.to_string();
-    let out = aver(SLICE, &["run", "--", &port]);
+    let out = aver_within(SLICE, &["run", "--", &port], 60);
     assert!(out.status.success(), "{}", format_output(&out));
     let text = combined(&out);
     assert!(
@@ -179,10 +239,14 @@ fn a_read_that_hears_nothing_runs_out_its_deadline_and_the_peer_is_handed_back()
         "{}",
         format_output(&out)
     );
-    // The run reached its end rather than turning for ever around a chain
-    // whose bodies nobody will fetch.
-    assert!(
-        text.contains("walk: looking for the next block to connect"),
+    // The walk looked for a target once and never again: with a silent peer
+    // no body is ever fetched, so a second line here would mean the chain
+    // moved. The run reached its end rather than turning for ever around a
+    // chain whose bodies nobody will fetch.
+    assert_eq!(
+        text.matches("walk: looking for the next block to connect")
+            .count(),
+        1,
         "{}",
         format_output(&out)
     );
@@ -201,7 +265,7 @@ fn a_read_that_hears_nothing_runs_out_its_deadline_and_the_peer_is_handed_back()
 #[test]
 fn a_run_of_the_slice_with_nobody_on_the_other_end_gives_up_and_ends() {
     let port = free_port().to_string();
-    let out = aver(SLICE, &["run", "--", &port]);
+    let out = aver_within(SLICE, &["run", "--", &port], 60);
     assert!(out.status.success(), "{}", format_output(&out));
     let text = combined(&out);
     assert!(
