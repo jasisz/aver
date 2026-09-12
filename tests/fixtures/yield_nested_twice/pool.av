@@ -1,0 +1,15 @@
+module Pool
+    intent = "Fixture capability with two operations; no host provider, the coordinator answers both."
+    kind = capability
+    semantics = effectful
+    exposes [claim, release]
+
+operation claim(peer: Int) -> Int
+    ? "Asks the host for the handle that belongs to peer."
+    oracle = generative
+    replay = recorded
+
+operation release(handle: Int) -> Bool
+    ? "Gives a handle back; false when the host refused."
+    oracle = generative
+    replay = recorded

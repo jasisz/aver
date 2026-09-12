@@ -1,0 +1,46 @@
+module YieldNested
+    intent = "Fixture: a non-tail call to a yield helper. The helper stops on its own request, the caller keeps its live variables beside the helper's state, and the work after the call runs when the helper is Done."
+    depends [Pool, Pooled]
+    effects [Pool.claim, yield, Console.print]
+    exposes [drive, main]
+
+fn fetch(peer: Int) -> Int
+    ? "Claims the handle of peer and counts the peer itself into it."
+    ! [Pool.claim, yield]
+    handle = Pool.claim(peer)
+    handle + peer
+
+fn walk(id: Int, seen: Int) -> Int
+    ? "Fetches one handle per round, adds it to seen and goes round until id runs down."
+    ! [Pool.claim, yield]
+    got = fetch(id)
+    match id
+        0 -> seen + got
+        _ -> walk(id - 1, seen + got)
+
+fn drive(outcome: __WalkOutcome) -> Int
+    ? "Coordinator: answers every Claim request with twice the peer it names and resumes every Yield request. A request of 'fetch' reaches it as a request of 'walk'."
+    match outcome
+        __WalkOutcome.Done(v) -> v
+        __WalkOutcome.Waiting(request) -> match request
+            __WalkRequest.Claim(peer, state) -> drive(__walkAnswerClaim(state, peer * 2))
+            __WalkRequest.Yield(state) -> drive(__walkAnswerYield(state))
+
+verify drive
+    drive(__WalkOutcome.Done(3)) => 3
+    drive(__WalkOutcome.Waiting(__WalkRequest.Yield(__WalkYieldState.Await1(0, 4)))) => 4
+    drive(__walkStart(0, 0)) => 0
+    drive(__walkStart(1, 0)) => 3
+    drive(__walkStart(2, 0)) => 9
+
+verify __walkStart
+    __walkStart(2, 0) => __WalkOutcome.Waiting(__WalkRequest.Claim(2, __WalkClaimState.InFetchAt1(__FetchClaimState.AwaitHandle(2), 2, 0)))
+
+verify __walkAnswerClaim
+    __walkAnswerClaim(__WalkClaimState.InFetchAt1(__FetchClaimState.AwaitHandle(0), 0, 4), 0) => __WalkOutcome.Done(4)
+    __walkAnswerClaim(__WalkClaimState.InFetchAt1(__FetchClaimState.AwaitHandle(2), 2, 0), 4) => __WalkOutcome.Waiting(__WalkRequest.Yield(__WalkYieldState.Await1(1, 6)))
+
+fn main() -> Unit
+    ! [Console.print]
+    result = drive(__walkStart(2, 0))
+    Console.print("walk = {result}")

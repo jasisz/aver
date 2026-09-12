@@ -1,0 +1,50 @@
+module YieldTailInto
+    intent = "Fixture: a tail call from one yield function to another enters that function's protocol — the caller stops with a Yield request and the answer is the helper's own Start."
+    depends [Pool, Pooled]
+    effects [Pool.claim, yield, Console.print]
+    exposes [drive, main]
+
+fn total(id: Int) -> Int
+    ? "Claims the handle of id and hands the rest of the work to 'rest' in tail position."
+    ! [Pool.claim, yield]
+    first = Pool.claim(id)
+    rest(first, 0)
+
+fn rest(left: Int, seen: Int) -> Int
+    ? "Claims one handle per round until left runs down, summing the handles into seen."
+    ! [Pool.claim, yield]
+    handle = Pool.claim(left)
+    match left
+        0 -> seen + handle
+        _ -> rest(left - 1, seen + handle)
+
+fn drive(outcome: __TotalOutcome) -> Int
+    ? "Coordinator: answers every Claim request with twice the peer it names and resumes every Yield request, whether it re-enters 'total' or enters 'rest'."
+    match outcome
+        __TotalOutcome.Done(v) -> v
+        __TotalOutcome.Waiting(request) -> match request
+            __TotalRequest.Claim(peer, state) -> drive(__totalAnswerClaim(state, peer * 2))
+            __TotalRequest.Yield(state) -> drive(__totalAnswerYield(state))
+
+verify drive
+    drive(__TotalOutcome.Done(3)) => 3
+    drive(__TotalOutcome.Waiting(__TotalRequest.Yield(__TotalYieldState.InRestAt1(__RestYieldState.Await2(0, 7))))) => 7
+    drive(__totalStart(0)) => 0
+    drive(__totalStart(1)) => 6
+    drive(__totalStart(2)) => 20
+
+verify __totalStart
+    __totalStart(2) => __TotalOutcome.Waiting(__TotalRequest.Claim(2, __TotalClaimState.AwaitFirst))
+
+verify __totalAnswerClaim
+    __totalAnswerClaim(__TotalClaimState.AwaitFirst, 4) => __TotalOutcome.Waiting(__TotalRequest.Yield(__TotalYieldState.Await2(4, 0)))
+    __totalAnswerClaim(__TotalClaimState.InRestAt1(__RestClaimState.AwaitHandle(0, 20)), 0) => __TotalOutcome.Done(20)
+
+verify __totalAnswerYield
+    __totalAnswerYield(__TotalYieldState.Await2(0, 5)) => __TotalOutcome.Waiting(__TotalRequest.Claim(0, __TotalClaimState.InRestAt1(__RestClaimState.AwaitHandle(0, 5))))
+    __totalAnswerYield(__TotalYieldState.InRestAt1(__RestYieldState.Await2(0, 5))) => __TotalOutcome.Waiting(__TotalRequest.Claim(0, __TotalClaimState.InRestAt1(__RestClaimState.AwaitHandle(0, 5))))
+
+fn main() -> Unit
+    ! [Console.print]
+    result = drive(__totalStart(2))
+    Console.print("total = {result}")

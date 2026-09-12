@@ -1,0 +1,23 @@
+module YieldMutualNesting
+    intent = "Refusal fixture: two yield functions that call each other. A nested state holds the callee's state inside the caller's, so a cycle has no innermost state to start from."
+    depends [Pool, Pooled]
+    effects [Pool.claim, yield, Console.print]
+    exposes [main]
+
+fn ping(n: Int) -> Int
+    ? "Claims the handle of n, hands it to pong and counts the round."
+    ! [Pool.claim, yield]
+    handle = Pool.claim(n)
+    pong(handle) + 1
+
+fn pong(n: Int) -> Int
+    ? "Claims the handle of n and hands it back to ping unless n has run down."
+    ! [Pool.claim, yield]
+    handle = Pool.claim(n)
+    match n
+        0 -> handle
+        _ -> ping(handle)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("unreachable: this program does not lower")
