@@ -33,7 +33,7 @@ const JOBS_FIELD: &str = "jobs";
 /// The fields the generated run table writes itself. An answer module whose
 /// name would take one of them is refused rather than generating a record
 /// with the field declared twice.
-const RUN_FIELDS: [&str; 5] = ["slots", JOBS_FIELD, "dropped", "stopping", "nextId"];
+const RUN_FIELDS: [&str; 6] = ["slots", JOBS_FIELD, "dropped", "stopping", "now", "nextId"];
 
 /// The operation the end of a run performs on a job that is still running.
 const CANCEL: &str = "Work.cancel";
@@ -41,8 +41,9 @@ const CANCEL: &str = "Work.cancel";
 /// The fields the view record has to declare, in order, with the type each
 /// one carries. `pending`'s value type is the program's own `Pending` sum,
 /// so it is checked separately.
-const VIEW_FIELDS: [(&str, &str); 4] = [
+const VIEW_FIELDS: [(&str, &str); 5] = [
     ("ready", "List<Int>"),
+    ("askable", "List<Int>"),
     ("jobs", "Int"),
     ("room", "Int"),
     ("stopping", "Bool"),
@@ -641,7 +642,7 @@ fn write_loop(
             protocol.request
         ));
     }
-    out.push_str("\nrecord __Slot\n    seq: Int\n    pending: __Process\n    waiting: Wait.Wake\n");
+    out.push_str("\nrecord __Slot\n    seq: Int\n    pending: __Process\n    waiting: Wait.Wake\n    due: Int\n");
     out.push_str("\nrecord __Run\n    slots: Map<Int, __Slot>\n");
     for answer in answers {
         out.push_str(&format!("    {}: {}\n", answer.field, answer.state));
@@ -649,7 +650,7 @@ fn write_loop(
     if has_jobs {
         out.push_str(&format!("    {JOBS_FIELD}: Map<Int, Work.Job>\n"));
     }
-    out.push_str("    dropped: Int\n    stopping: Bool\n    nextId: Int\n");
+    out.push_str("    dropped: Int\n    stopping: Bool\n    now: Int\n    nextId: Int\n");
 
     out.push_str(&format!(
         "\nfn __maxJobs() -> Int\n    ? \"The job limit this program was built with, from [work] max-jobs in aver.toml.\"\n    {}\n",
@@ -663,7 +664,7 @@ fn write_loop(
     if has_jobs {
         out.push_str(", jobs = {}");
     }
-    out.push_str(", dropped = 0, stopping = false, nextId = 1)\n");
+    out.push_str(", dropped = 0, stopping = false, now = 0, nextId = 1)\n");
 
     // ── Seating ────────────────────────────────────────────────────
     let effects = |list: &[String]| {
@@ -680,7 +681,7 @@ fn write_loop(
             protocol.fn_name, effects(&performs.seat), protocol.start
         ));
         out.push_str(&format!(
-            "\nfn __seated{upper}(run: __Run, outcome: {}) -> __Run\n    ? \"A process that is already done is not seated; one that is waiting takes the next free slot id.\"\n    match outcome\n        {}.Done(_) -> run\n        {}.Waiting(request) -> __Run.update(run, slots = Map.set(run.slots, run.nextId, __Slot(seq = 1, pending = __Process.{upper}(request), waiting = Wait.Wake.NextTurn)), nextId = run.nextId + 1)\n",
+            "\nfn __seated{upper}(run: __Run, outcome: {}) -> __Run\n    ? \"A process that is already done is not seated; one that is waiting takes the next free slot id.\"\n    match outcome\n        {}.Done(_) -> run\n        {}.Waiting(request) -> __Run.update(run, slots = Map.set(run.slots, run.nextId, __Slot(seq = 1, pending = __Process.{upper}(request), waiting = Wait.Wake.NextTurn, due = 0)), nextId = run.nextId + 1)\n",
             protocol.outcome, protocol.outcome, protocol.outcome
         ));
     }
@@ -688,8 +689,9 @@ fn write_loop(
     // ── The slot table and its two invariants ──────────────────────
     out.push_str("\nfn __current(run: __Run, id: Int) -> Int\n    ? \"The instance number of the request one process is waiting on, or -1 when nothing is seated under that id.\"\n    match Map.get(run.slots, id)\n        Option.None -> 0 - 1\n        Option.Some(slot) -> slot.seq\n");
     out.push_str("\nfn __nextInstance(seq: Int) -> Int\n    ? \"The instance number an answer for the current one leaves behind. It rises, so the instance just answered can never be current again.\"\n    seq + 1\n");
-    out.push_str("\nfn __parked(slot: __Slot, wake: Wait.Wake) -> __Slot\n    ? \"The slot a Later leaves behind: the same instance and the same request, now remembering what would make asking again worth it.\"\n    __Slot(seq = slot.seq, pending = slot.pending, waiting = wake)\n");
-    out.push_str("\nfn __park(run: __Run, id: Int, wake: Wait.Wake) -> __Run\n    ? \"A Later: the request stays where it is with the same instance number. The state the answer module returned was already written back, because a Later is where a module records its own progress.\"\n    match Map.get(run.slots, id)\n        Option.None -> run\n        Option.Some(slot) -> __Run.update(run, slots = Map.set(run.slots, id, __parked(slot, wake)))\n");
+    out.push_str("\nfn __parked(slot: __Slot, wake: Wait.Wake, now: Int) -> __Slot\n    ? \"The slot a Later leaves behind: the same instance and the same request, now remembering what would make asking again worth it. A deadline is turned into the clock reading it falls due at, because ms is how long from now and the turn asks against the clock.\"\n    __Slot(seq = slot.seq, pending = slot.pending, waiting = wake, due = __dueOf(wake, now))\n");
+    out.push_str("\nfn __dueOf(wake: Wait.Wake, now: Int) -> Int\n    ? \"The clock reading a request parked on a deadline may be asked again at. A request parked on a socket, on a job, or on the next turn carries none.\"\n    match wake\n        Wait.Wake.After(ms) -> now + ms\n        Wait.Wake.Item(_) -> 0\n        Wait.Wake.NextTurn -> 0\n");
+    out.push_str("\nfn __park(run: __Run, id: Int, wake: Wait.Wake) -> __Run\n    ? \"A Later: the request stays where it is with the same instance number. The state the answer module returned was already written back, because a Later is where a module records its own progress.\"\n    match Map.get(run.slots, id)\n        Option.None -> run\n        Option.Some(slot) -> __Run.update(run, slots = Map.set(run.slots, id, __parked(slot, wake, run.now)))\n");
     out.push_str("\nfn __staleInstance(run: __Run, id: Int, seq: Int) -> Bool\n    ? \"Why an answer carrying this instance number changes nothing: it is not the number the slot under this id is waiting on.\"\n    seq != __current(run, id)\n");
 
     for protocol in protocols {
@@ -703,7 +705,7 @@ fn write_loop(
             protocol.outcome, protocol.outcome, protocol.outcome
         ));
         out.push_str(&format!(
-            "\nfn __settledSlot{upper}(seq: Int, request: {}) -> __Slot\n    ? \"The slot an answer for instance 'seq' writes back under that id: the next request of '{}', under the instance number after 'seq'.\"\n    __Slot(seq = __nextInstance(seq), pending = __Process.{upper}(request), waiting = Wait.Wake.NextTurn)\n",
+            "\nfn __settledSlot{upper}(seq: Int, request: {}) -> __Slot\n    ? \"The slot an answer for instance 'seq' writes back under that id: the next request of '{}', under the instance number after 'seq'.\"\n    __Slot(seq = __nextInstance(seq), pending = __Process.{upper}(request), waiting = Wait.Wake.NextTurn, due = 0)\n",
             protocol.request, protocol.fn_name
         ));
         out.push_str(&format!(
@@ -721,7 +723,7 @@ fn write_loop(
         }
     ));
     out.push_str(&format!(
-        "\nfn __viewOf(run: __Run, ready: List<Int>, jobs: Int) -> {view}\n    ? \"The view, once the turn has counted the jobs it is running.\"\n    {view}(pending = __pendingOf(run, Map.keys(run.slots), {{}}), ready = ready, jobs = jobs, room = __maxJobs() - jobs, stopping = run.stopping)\n"
+        "\nfn __viewOf(run: __Run, ready: List<Int>, jobs: Int) -> {view}\n    ? \"The view, once the turn has counted the jobs it is running.\"\n    {view}(pending = __pendingOf(run, Map.keys(run.slots), {{}}), ready = ready, askable = __askableOf(run, ready, Map.keys(run.slots), []), jobs = jobs, room = __maxJobs() - jobs, stopping = run.stopping)\n"
     ));
     out.push_str(&format!(
         "\nfn __pendingOf(run: __Run, ids: List<Int>, acc: Map<Int, {marker}>) -> Map<Int, {marker}>\n    ? \"One marker per seated process, in key order.\"\n    match ids\n        [] -> acc\n        [id, ..rest] -> __pendingOf(run, rest, __pendingAt(run, id, acc))\n"
@@ -739,6 +741,12 @@ fn write_loop(
         ));
     }
 
+    // ── The gate: which slots this turn may ask ────────────────────
+    out.push_str("\nfn __askableOf(run: __Run, ready: List<Int>, ids: List<Int>, acc: List<Int>) -> List<Int>\n    ? \"The ids this turn may ask, in slot order. A wake gates the ask: the turn asks a slot when what that slot is waiting for has happened, and never otherwise.\"\n    match ids\n        [] -> acc\n        [id, ..rest] -> __askableOf(run, ready, rest, __askableAt(run, ready, id, acc))\n");
+    out.push_str("\nfn __askableAt(run: __Run, ready: List<Int>, id: Int, acc: List<Int>) -> List<Int>\n    ? \"One id, kept when its wake has fired.\"\n    match __askable(run, ready, id)\n        false -> acc\n        true -> List.concat(acc, [id])\n");
+    out.push_str("\nfn __askable(run: __Run, ready: List<Int>, id: Int) -> Bool\n    ? \"Whether the turn may ask the request seated under this id. Nothing is seated there, nothing to ask.\"\n    match Map.get(run.slots, id)\n        Option.None -> false\n        Option.Some(slot) -> __askableSlot(slot, ready, id, run.now)\n");
+    out.push_str("\nfn __askableSlot(slot: __Slot, ready: List<Int>, id: Int, now: Int) -> Bool\n    ? \"What one wake gates. A request to be asked again next turn is askable at once, which is also where a freshly seated process and one whose request was just answered stand. A request parked on a socket or a job is asked in a turn whose wait reported its key, and false readiness is allowed: the module may answer Later again. A request parked on a deadline is asked once the turn's clock reading has reached it.\"\n    match slot.waiting\n        Wait.Wake.NextTurn -> true\n        Wait.Wake.Item(_) -> List.contains(ready, id)\n        Wait.Wake.After(_) -> slot.due <= now\n");
+
     // ── The wait and the timeout ───────────────────────────────────
     out.push_str(&format!(
         "\nfn __waitSet(run: __Run, ids: List<Int>, acc: Map<Int, Wait.Item>) -> Map<Int, Wait.Item>\n    ? \"The one wait of a turn, keyed by slot id: what each parked request is waiting on{}.\"\n    match ids\n        [] -> {}\n        [id, ..rest] -> __waitSet(run, rest, __waitAt(run, id, acc))\n",
@@ -755,10 +763,12 @@ fn write_loop(
             "\nfn __jobItem(run: __Run, key: Int, acc: Map<Int, Wait.Item>) -> Map<Int, Wait.Item>\n    ? \"One running job, as the thing the wait watches for it.\"\n    match Map.get(run.{JOBS_FIELD}, key)\n        Option.None -> acc\n        Option.Some(job) -> Map.set(acc, key, Wait.Item.Job(job))\n"
         ));
     }
-    out.push_str("\nfn __timeout(run: __Run) -> Int\n    ? \"How long this turn may wait: nothing at all while some request is to be asked again, the soonest deadline when one is pending, and one second when neither.\"\n    __deadline(run, Map.keys(run.slots), 0 - 1)\n");
+    out.push_str("\nfn __timeout(run: __Run) -> Int\n    ? \"How long this turn may wait: nothing at all while some request is to be asked again, the soonest deadline still ahead of the turn's clock reading when one is pending, and one second when neither.\"\n    __deadline(run, Map.keys(run.slots), 0 - 1)\n");
     out.push_str("\nfn __deadline(run: __Run, ids: List<Int>, best: Int) -> Int\n    ? \"The soonest deadline across every seated slot, or -1 when none carries one.\"\n    match ids\n        [] -> __tick(best)\n        [id, ..rest] -> __deadline(run, rest, __deadlineAt(run, id, best))\n");
-    out.push_str("\nfn __deadlineAt(run: __Run, id: Int, best: Int) -> Int\n    ? \"What one id contributes to the turn's wait.\"\n    match Map.get(run.slots, id)\n        Option.None -> best\n        Option.Some(slot) -> __soonest(best, slot.waiting)\n");
-    out.push_str("\nfn __soonest(best: Int, wake: Wait.Wake) -> Int\n    ? \"A request to be asked again next turn wins outright; two deadlines keep the nearer; a socket or a job carries none.\"\n    match wake\n        Wait.Wake.NextTurn -> 0\n        Wait.Wake.Item(_) -> best\n        Wait.Wake.After(ms) -> __nearer(best, ms)\n");
+    out.push_str("\nfn __deadlineAt(run: __Run, id: Int, best: Int) -> Int\n    ? \"What one id contributes to the turn's wait.\"\n    match Map.get(run.slots, id)\n        Option.None -> best\n        Option.Some(slot) -> __soonest(best, slot, run.now)\n");
+    out.push_str("\nfn __soonest(best: Int, slot: __Slot, now: Int) -> Int\n    ? \"A request to be asked again next turn wins outright; two deadlines keep the nearer; a socket or a job carries none.\"\n    match slot.waiting\n        Wait.Wake.NextTurn -> 0\n        Wait.Wake.Item(_) -> best\n        Wait.Wake.After(_) -> __nearer(best, __remaining(slot.due, now))\n");
+    out.push_str("\nfn __remaining(due: Int, now: Int) -> Int\n    ? \"How much of one deadline is left, and never less than nothing: a deadline the clock has already reached is asked again in this turn rather than waited on.\"\n    __atLeastZero(due - now)\n");
+    out.push_str("\nfn __atLeastZero(value: Int) -> Int\n    ? \"A whole number, floored at nothing.\"\n    match value < 0\n        true -> 0\n        false -> value\n");
     out.push_str("\nfn __nearer(best: Int, ms: Int) -> Int\n    ? \"The nearer of two deadlines, where -1 means none yet.\"\n    match best < 0\n        true -> ms\n        false -> __smaller(best, ms)\n");
     out.push_str("\nfn __smaller(left: Int, right: Int) -> Int\n    ? \"The smaller of two whole numbers.\"\n    match left < right\n        true -> left\n        false -> right\n");
     out.push_str("\nfn __tick(best: Int) -> Int\n    ? \"The wait of a turn with no deadline in it: one second.\"\n    match best < 0\n        true -> 1000\n        false -> best\n");
@@ -789,7 +799,7 @@ fn write_loop(
 
     // ── The turn and the loop ──────────────────────────────────────
     out.push_str(&format!(
-        "\nfn __turn(run: __Run) -> Result<__Run, String>\n    ? \"One turn: observe the stop flag, wait once, serve the admitted slots in the policy's order{}.\"\n{}    observed = __Run.update(run, stopping = Process.stopRequested())\n    ready = Wait.poll(__waitSet(observed, Map.keys(observed.slots), {{}}), __timeout(observed))?\n    served = __serveEach(observed, ready, {}(__view(observed, ready)))\n{}",
+        "\nfn __turn(run: __Run) -> Result<__Run, String>\n    ? \"One turn: observe the stop flag and the clock, wait once, serve the askable slots the policy admits, in its order{}.\"\n{}    observed = __Run.update(run, stopping = Process.stopRequested(), now = Time.unixMs())\n    ready = Wait.poll(__waitSet(observed, Map.keys(observed.slots), {{}}), __timeout(observed))?\n    served = __serveEach(observed, ready, {}(__view(observed, ready)))\n{}",
         if has_jobs { ", take every job that finished, and start jobs while there is room" } else { "" },
         effects(turn_effects),
         bare(&plan.policies.order),
@@ -809,7 +819,11 @@ fn write_loop(
         effects(serve_effects)
     ));
     out.push_str(&format!(
-        "\nfn __serveIf(run: __Run, ready: List<Int>, id: Int) -> __Run\n    ? \"One id, served only if the policy admits it. The view it is admitted against is taken again here, so a slot an earlier id of this turn removed is already gone from it.\"\n{}    match {}(__view(run, ready), id)\n        false -> run\n        true -> __serve(run, id)\n",
+        "\nfn __serveIf(run: __Run, ready: List<Int>, id: Int) -> __Run\n    ? \"One id, asked only when its wake has fired. The policy orders the whole view and is asked about the askable ids only; a slot that is not askable is not asked whatever the order said.\"\n{}    match __askable(run, ready, id)\n        false -> run\n        true -> __serveAdmitted(run, ready, id)\n",
+        effects(serve_effects)
+    ));
+    out.push_str(&format!(
+        "\nfn __serveAdmitted(run: __Run, ready: List<Int>, id: Int) -> __Run\n    ? \"One askable id, served only if the policy admits it. The view it is admitted against is taken again here, so a slot an earlier id of this turn removed is already gone from it.\"\n{}    match {}(__view(run, ready), id)\n        false -> run\n        true -> __serve(run, id)\n",
         effects(serve_effects),
         bare(&plan.policies.admit)
     ));
@@ -1051,7 +1065,17 @@ fn write_laws(protocols: &[ProcessProtocol]) -> String {
     ));
     if sample_slot.is_some() {
         out.push_str(&format!(
-            "\nverify __parked law laterKeepsTheRequest\n    given slot: __Slot = [__sampleSlot()]\n{wake_domain}    __parked(slot, wake).pending => slot.pending\n"
+            "\nverify __parked law laterKeepsTheRequest\n    given slot: __Slot = [__sampleSlot()]\n{wake_domain}    given now: Int = [0, 7]\n    __parked(slot, wake, now).pending => slot.pending\n"
+        ));
+        // The wake gates the ask, and the half a law can carry is the
+        // deadline: an `Int` comparison the wall closes over a sampled
+        // domain. The socket-and-job half is `List.contains(ready, id)`,
+        // which says nothing a law can check without the wait itself.
+        out.push_str("\nfn __parkedAfter(slot: __Slot, now: Int) -> Bool\n    ? \"Why a parked request is not asked yet: it is waiting on a deadline this clock reading has not reached.\"\n    match slot.waiting\n        Wait.Wake.NextTurn -> false\n        Wait.Wake.Item(_) -> false\n        Wait.Wake.After(_) -> now < slot.due\n");
+        out.push_str(&format!(
+            "\nverify __askableSlot law aDeadlineGatesTheAsk\n    given slot: __Slot = [__parked(__sampleSlot(), Wait.Wake.After(5), 0), __parked(__sampleSlot(), Wait.Wake.NextTurn, 0)]\n    given ready: List<Int> = [[], [{}]]\n    given id: Int = [{}]\n    given now: Int = [0, 1, 4, 5, 9]\n    when __parkedAfter(slot, now)\n    because __parkedAfter(slot, now)\n    __askableSlot(slot, ready, id, now) => false\n",
+            ids.join(", "),
+            ids.join(", ")
         ));
     }
     out.push_str("\nverify __nextInstance law theNextInstanceIsHigher\n    given seq: Int = [0, 1, 7]\n    __nextInstance(seq) > seq holds\n");
@@ -1210,8 +1234,8 @@ fn process_effect_lists(
 }
 
 /// What the whole serve path performs: the dispatch reaches every process, so
-/// `__serve`, `__serveSlot`, `__serveEach` and `__serveIf` carry the union of
-/// what the processes carry — and nothing else.
+/// `__serve`, `__serveSlot`, `__serveEach`, `__serveIf` and `__serveAdmitted`
+/// carry the union of what the processes carry — and nothing else.
 fn serve_effect_list(effects: &[ProcessEffects]) -> Vec<String> {
     sorted(
         effects
@@ -1221,11 +1245,13 @@ fn serve_effect_list(effects: &[ProcessEffects]) -> Vec<String> {
     )
 }
 
-/// What a whole turn performs: the stop observation, the one wait, the serve
-/// path, and both ends of every job kind.
+/// What a whole turn performs: the stop observation, the clock reading the
+/// wake gate is measured against, the one wait, the serve path, and both ends
+/// of every job kind.
 fn turn_effect_list(serve: &[String], jobs: &[Job]) -> Vec<String> {
     let mut found: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     found.insert("Process.stopRequested".to_string());
+    found.insert("Time.unixMs".to_string());
     found.insert("Wait.poll".to_string());
     found.extend(serve.iter().cloned());
     for job in jobs {

@@ -14,6 +14,7 @@ type Pending
 record View
     pending: Map<Int, Pending>
     ready: List<Int>
+    askable: List<Int>
     jobs: Int
     room: Int
     stopping: Bool
@@ -114,15 +115,15 @@ fn isPeerMarker(marker: Pending) -> Bool
 
 fn busyView() -> View
     ? "One view with every process seated, a job running and no room for another."
-    View(pending = Map.set(Map.set({}, 1, Pending.Peer(3, Wait.Wake.NextTurn)), 2, Pending.Walk(1, Wait.Wake.After(2))), ready = [2], jobs = 1, room = 0, stopping = false)
+    View(pending = Map.set(Map.set({}, 1, Pending.Peer(3, Wait.Wake.NextTurn)), 2, Pending.Walk(1, Wait.Wake.After(2))), ready = [2], askable = [1, 2], jobs = 1, room = 0, stopping = false)
 
 fn quietView() -> View
     ? "One view with room for another job and nothing ready."
-    View(pending = Map.set(Map.set({}, 1, Pending.Peer(1, Wait.Wake.NextTurn)), 3, Pending.Ticker(1, Wait.Wake.NextTurn)), ready = [], jobs = 0, room = 1, stopping = false)
+    View(pending = Map.set(Map.set({}, 1, Pending.Peer(1, Wait.Wake.NextTurn)), 3, Pending.Ticker(1, Wait.Wake.NextTurn)), ready = [], askable = [1, 3], jobs = 0, room = 1, stopping = false)
 
 fn stoppingView() -> View
     ? "One view with a job running, no room for another and the run already stopping: what a peer is admitted against at the worst moment of a turn."
-    View(pending = Map.set(Map.set({}, 1, Pending.Peer(5, Wait.Wake.NextTurn)), 2, Pending.Walk(2, Wait.Wake.NextTurn)), ready = [1], jobs = 1, room = 0, stopping = true)
+    View(pending = Map.set(Map.set({}, 1, Pending.Peer(5, Wait.Wake.NextTurn)), 2, Pending.Walk(2, Wait.Wake.NextTurn)), ready = [1], askable = [1, 2], jobs = 1, room = 0, stopping = true)
 
 verify admit law readyPeerBeforeNewJob
     given view: View = [busyView(), quietView(), stoppingView()]
@@ -137,8 +138,8 @@ verify admitted
     admitted(busyView(), Pending.Dialling(1, Wait.Wake.NextTurn)) => true
     admitted(busyView(), Pending.Ticker(1, Wait.Wake.NextTurn)) => true
     admitted(busyView(), Pending.Walk(1, Wait.Wake.NextTurn)) => true
-    admitted(View(pending = {}, ready = [], jobs = 0, room = 1, stopping = true), Pending.Walk(1, Wait.Wake.NextTurn)) => false
-    admitted(View(pending = {}, ready = [], jobs = 0, room = 1, stopping = true), Pending.Ticker(1, Wait.Wake.NextTurn)) => false
+    admitted(View(pending = {}, ready = [], askable = [], jobs = 0, room = 1, stopping = true), Pending.Walk(1, Wait.Wake.NextTurn)) => false
+    admitted(View(pending = {}, ready = [], askable = [], jobs = 0, room = 1, stopping = true), Pending.Ticker(1, Wait.Wake.NextTurn)) => false
 
 verify isPeer
     isPeer(busyView(), 1) => true

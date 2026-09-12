@@ -267,7 +267,7 @@ fn the_loop_carries_each_processs_own_effects_and_not_the_programs() {
     assert_eq!(
         declared_effects(&text, "main"),
         Some(
-            "Console.print, Process.stopRequested, Validation.begin, Validation.take, Wait.poll, Work.cancel"
+            "Console.print, Process.stopRequested, Time.unixMs, Validation.begin, Validation.take, Wait.poll, Work.cancel"
                 .to_string()
         )
     );
@@ -519,7 +519,7 @@ fn the_generated_invariants_reach_the_lean_wall() {
     );
     assert_eq!(
         summary["universal_laws"].as_u64(),
-        Some(20),
+        Some(21),
         "universal-law drift:\n{}",
         format_output(&out)
     );
@@ -538,6 +538,7 @@ fn the_generated_invariants_reach_the_lean_wall() {
     let obligations = &summary["obligations"];
     for closed in [
         "__park.laterKeepsTheInstance.implication",
+        "__askableSlot.aDeadlineGatesTheAsk.implication",
         "__settlePeer.lateAnswerIsDropped.implication",
         "__settlePeer.lateAnswerIsRecorded.implication",
         "admit.readyPeerBeforeNewJob.implication",
@@ -553,6 +554,27 @@ fn the_generated_invariants_reach_the_lean_wall() {
         obligations["__settlePeer.oneSlotPerProcess.implication"].as_str(),
         Some("failed"),
         "I1 closed — lower the budget and say so:\n{}",
+        format_output(&out)
+    );
+    // The laws with no `when` carry no implication obligation of their own, so
+    // the way to pin that `laterKeepsTheRequest` closed is that nothing but I1
+    // is open at all: no build error, nothing bounded, and these five sorries.
+    let open: Vec<&str> = summary["sorry_laws"]
+        .as_array()
+        .expect("sorry_laws is a list")
+        .iter()
+        .filter_map(|law| law.as_str())
+        .collect();
+    assert_eq!(
+        open,
+        [
+            "__settleAccepting.oneSlotPerProcess.implication",
+            "__settleDialling.oneSlotPerProcess.implication",
+            "__settlePeer.oneSlotPerProcess.implication",
+            "__settleTicker.oneSlotPerProcess.implication",
+            "__settleWalk.oneSlotPerProcess.implication",
+        ],
+        "a law other than I1 is open:\n{}",
         format_output(&out)
     );
     let _ = std::fs::remove_dir_all(&out_dir);
