@@ -522,7 +522,7 @@ Disk path patterns have deliberately small, explicit semantics:
 
 An empty pattern, unsupported `*` placement, or a `..`-rooted pattern is also a config-load error. An absent `paths` key or `paths = []` keeps the existing allow-all behavior. Matching is string-only: Aver normalizes `.` and `..` in the caller-supplied path without resolving it against the working directory or touching the filesystem. A project-relative pattern therefore does not admit an absolute spelling of the same in-project file.
 
-`[work] max-jobs` bounds how many jobs a program runs at once. It must be a positive integer; without it a program gets the host's own available parallelism. At the limit, a job kind's `begin` answers `Err("work: job limit N reached")` instead of blocking the turn.
+`[work] max-jobs` bounds how many jobs a program runs at once. It must be a positive integer; without it a program gets the host's own available parallelism. At the limit, a job kind's `begin` answers `Err("work: job limit N reached")` instead of blocking the turn. It decides nothing on `wasm-gc` and `wasip2`, where a job runs inline at `begin` and is over before the next expression: a manifest that sets it for one of those targets gets `warning[work-max-jobs-ignored]` at the program door, naming the key and the target, and the program runs.
 
 `[verify]` budgets in detail:
 

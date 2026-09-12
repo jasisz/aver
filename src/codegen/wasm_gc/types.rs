@@ -241,18 +241,18 @@ pub(super) struct TypeRegistry {
     /// (mut i32 kind) (mut anyref value))`: the representation of the
     /// stdlib job handle `Work.Job`.
     ///
-    /// Nothing mints one in this build. A handle reaches these targets only
-    /// as a type — through `Wait.Wake` into `Wait.Item` into every answered
-    /// capability's generated reply sum — so what the struct has to support
-    /// today is being carried, compared and hashed, and only field 0 is ever
-    /// read (by the hash). The other three fields are the shape the planned
-    /// inline lowering wants and are written by nothing here: a job is meant
-    /// to run inline at `begin` on a single-threaded target, which makes the
-    /// handle its own answer slot — `id` its identity, `state` finished /
-    /// taken / cancelled, `kind` the job kind that minted it, `value` the
-    /// answer the bound function already computed — so no separate table is
-    /// needed. See `TODO(owner)` in `src/capability/work.rs`: that lowering
-    /// is jasisz/aver#1329 decision 1 and is not in this build.
+    /// The handle is the whole job. A job runs inline at `begin` on a
+    /// single-threaded target, so there is nothing to look up elsewhere:
+    /// `id` is its identity and the token a recording names it by, `state` is
+    /// finished / taken / cancelled, `kind` is the job kind that minted it,
+    /// and `value` is the answer the bound function already computed, kept as
+    /// the exact `Result<Option<R>, String>` its `take` will hand back. That
+    /// is why no table, counter or global beside the id is needed, and why
+    /// two copies of one handle are one job. See `src/codegen/wasm_gc/jobs.rs`.
+    ///
+    /// A handle also reaches a program that starts no job, as a type — through
+    /// `Wait.Wake` into `Wait.Item` into every answered capability's generated
+    /// reply sum — where it is only carried, compared and hashed.
     ///
     /// `None` when no `Work.Job` is reachable, so a program without jobs
     /// carries no job bytes at all.

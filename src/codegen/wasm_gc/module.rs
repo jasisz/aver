@@ -6412,11 +6412,9 @@ fn emit_user_types(
     //   1  state   0 finished, 1 taken, 2 cancelled
     //   2  kind    the job kind that minted it
     //   3  value   the answer the bound function already computed
-    // Fields 1 to 3 are the shape the planned inline lowering wants, where
-    // a job runs at `begin` and the handle is the whole job: no table, and
-    // two copies of one handle are one job. Nothing mints a handle on this
-    // backend yet, so nothing writes them — see `TODO(owner)` in
-    // `src/capability/work.rs`.
+    // The handle is the whole job: it runs at `begin`, so there is no table
+    // beside it and two copies of one handle are one job. `jobs.rs` writes
+    // every field.
     if let Some(job_idx) = registry.job_struct_idx {
         entries.push((
             job_idx,
