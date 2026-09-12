@@ -361,10 +361,7 @@ impl<'a> Lowering<'a> {
         if name == &self.fd.name {
             return None;
         }
-        self.nesting
-            .yield_fns
-            .contains(name)
-            .then(|| name.clone())
+        self.nesting.yield_fns.contains(name).then(|| name.clone())
     }
 
     /// Whether `expr` holds anything the lowering has to cut at: a stop, a
@@ -915,8 +912,7 @@ impl<'a> Lowering<'a> {
             // A nested call in the function's own tail position enters the
             // helper's protocol (decision 1); anywhere else its value feeds
             // what follows, so it is bound here and cut at the binding.
-            let nested_here =
-                self.nested_callee(&extracted).is_some() && !matches!(ret, Ret::Done);
+            let nested_here = self.nested_callee(&extracted).is_some() && !matches!(ret, Ret::Done);
             if self.stop_op(&extracted).is_some()
                 || matches!(extracted.node, Expr::ErrorProp(_))
                 || nested_here
@@ -1376,8 +1372,12 @@ impl<'a> Lowering<'a> {
         let mut reserved = Vec::with_capacity(protocol.kinds.len());
         for kind in &protocol.kinds {
             let name = self.nested_kind_name(kind);
-            let index =
-                self.kind_index(&name, kind.arg_types.clone(), kind.answer_type.clone(), line)?;
+            let index = self.kind_index(
+                &name,
+                kind.arg_types.clone(),
+                kind.answer_type.clone(),
+                line,
+            )?;
             let slot = self.kinds[index].variants.len();
             self.kinds[index].variants.push(Variant {
                 name: variant.to_string(),
@@ -1490,6 +1490,7 @@ impl<'a> Lowering<'a> {
     /// `x = g(args)` with more work after it: the helper's state goes inside
     /// the caller's, one variant per kind of the helper, and the rest of the
     /// caller's path is what `Done` continues into (decision 2).
+    #[allow(clippy::too_many_arguments)]
     fn emit_nested(
         &mut self,
         call_expr: Spanned<Expr>,
@@ -1506,7 +1507,10 @@ impl<'a> Lowering<'a> {
         };
         let args = args.clone();
         let Some(protocol) = self.nesting.protocols.get(callee).cloned() else {
-            return self.internal(line, &format!("no protocol for the yield helper '{callee}'"));
+            return self.internal(
+                line,
+                &format!("no protocol for the yield helper '{callee}'"),
+            );
         };
         if args.len() != protocol.params.len() {
             return self.internal(line, "a call to a yield helper with the wrong arity");
@@ -1539,7 +1543,15 @@ impl<'a> Lowering<'a> {
         };
         self.fill_nested(&protocol, &variant, &reserved, &helper, &fields, line);
         self.nest_router(
-            &helper, callee, &protocol, &variant, &reserved, &fields, &done_binder, done_body, line,
+            &helper,
+            callee,
+            &protocol,
+            &variant,
+            &reserved,
+            &fields,
+            &done_binder,
+            done_body,
+            line,
         );
         let mut call_args = vec![call(&protocol.start, args, line)];
         call_args.extend(fields.iter().map(|(name, _)| ident(name, line)));
@@ -1561,7 +1573,10 @@ impl<'a> Lowering<'a> {
             return self.internal(line, "a tail call outside tail position");
         }
         let Some(protocol) = self.nesting.protocols.get(callee).cloned() else {
-            return self.internal(line, &format!("no protocol for the yield helper '{callee}'"));
+            return self.internal(
+                line,
+                &format!("no protocol for the yield helper '{callee}'"),
+            );
         };
         if args.len() != protocol.params.len() {
             return self.internal(line, "a tail call into a yield helper with the wrong arity");

@@ -5646,24 +5646,50 @@ fn calling_the_yield_function_after_its_definition_gets_only_the_recipe() {
 }
 
 #[test]
-fn non_tail_call_to_a_yield_function_is_an_error_with_a_recipe() {
+fn non_tail_call_to_a_yield_function_nests_the_callee() {
     let src = format!(
         "{YIELD_MODULE}{YIELD_LOOP}\nfn outer(n: Int) -> Int\n    ? \"Counts one more than loop.\"\n    ! [Say.readLine, yield]\n    loop(n) + 1\n"
     );
-    assert_front_error_containing(
-        &src,
-        "Function 'outer' calls yield function 'loop' outside tail position; pass what comes next as data, or make it a tail call",
+    let errs = front_errors(&src);
+    assert!(
+        errs.is_empty(),
+        "a helper is nested, not refused:\n  {}",
+        errs.join("\n  ")
     );
 }
 
 #[test]
-fn tail_call_to_another_yield_function_is_rejected_in_phase_one() {
+fn tail_call_to_another_yield_function_enters_its_protocol() {
     let src = format!(
         "{YIELD_MODULE}{YIELD_LOOP}\nfn outer(n: Int) -> Int\n    ? \"Hands over to loop.\"\n    ! [Say.readLine, yield]\n    loop(n)\n"
     );
+    let errs = front_errors(&src);
+    assert!(
+        errs.is_empty(),
+        "a tail call enters the helper's protocol:\n  {}",
+        errs.join("\n  ")
+    );
+}
+
+#[test]
+fn a_yield_function_calling_itself_outside_tail_position_is_an_error_with_a_recipe() {
+    let src = format!(
+        "{YIELD_MODULE}fn loop(seen: Int) -> Int\n    ? \"Reads lines until the reader fails, counting them.\"\n    ! [Say.readLine, yield]\n    line = Say.readLine()\n    match line\n        Result.Err(_) -> seen\n        Result.Ok(_) -> loop(seen) + 1\n"
+    );
     assert_front_error_containing(
         &src,
-        "Function 'outer' tail-calls yield function 'loop', which has its own request and outcome types",
+        "Function 'loop' calls itself outside tail position; pass what comes next as data, or make it a tail call",
+    );
+}
+
+#[test]
+fn two_yield_functions_that_call_each_other_are_refused_with_the_cycle() {
+    let src = format!(
+        "{YIELD_MODULE}fn ping(n: Int) -> Int\n    ? \"Hands one line to pong.\"\n    ! [Say.readLine, yield]\n    line = Say.readLine()\n    match line\n        Result.Err(_) -> n\n        Result.Ok(_) -> pong(n) + 1\n\nfn pong(n: Int) -> Int\n    ? \"Hands one line back to ping.\"\n    ! [Say.readLine, yield]\n    line = Say.readLine()\n    match line\n        Result.Err(_) -> n\n        Result.Ok(_) -> ping(n)\n"
+    );
+    assert_front_error_containing(
+        &src,
+        "Mutual nesting is not supported by yield lowering: ping calls pong calls ping",
     );
 }
 
@@ -5698,7 +5724,7 @@ fn unsupported_construct_in_a_yield_function_is_named() {
     );
     assert_front_error_containing(
         &src,
-        "Function 'both': a request inside an independent product `(a, b)!` is not supported by yield lowering",
+        "Function 'both': a request, or a call to a yield helper, inside an independent product `(a, b)!` is not supported by yield lowering",
     );
 }
 
