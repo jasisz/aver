@@ -454,7 +454,7 @@ fn compiled_rust_map_values_is_key_sorted_and_stable_across_runs() {
 ///
 /// Making a map iterate one way everywhere moved four separate pieces of
 /// emitted proof text: an `AverKeyOrder` class with one instance per modelled
-/// key type, `AverMap.set` doing sorted insertion instead of append,
+/// key type, `AverMap.set` becoming canonical on its key instead of appending,
 /// `AverMap.fromList` becoming a fold over `set` instead of the identity, and
 /// scalar map literals being emitted in key order rather than written order.
 /// A regression in any of them changes what the kernel is asked to prove
@@ -464,8 +464,11 @@ fn compiled_rust_map_values_is_key_sorted_and_stable_across_runs() {
 /// `tests/fixtures/map_model_shape.av` exercises all four in one file and
 /// `aver verify` passes on it, so the pinned text is text the VM agrees with.
 /// Refresh with `INSTA_UPDATE=always` (or `cargo insta review`) after an
-/// intended model change, and read the diff — a reordered literal or a `set`
-/// that stopped sorting is the regression this exists to catch.
+/// intended model change, and read the diff — the invariant to check is key
+/// canonicality: `set` replaces in place when the key is already there and
+/// inserts in sorted position when it is not, so a map holds each key once and
+/// in key order. A reordered literal, a `set` that appends, or a `set` that
+/// stopped replacing in place is the regression this exists to catch.
 #[test]
 fn the_exported_map_model_is_pinned() {
     let out_dir = temp_output_dir("aver-map-model-shape");

@@ -1804,8 +1804,10 @@ fn emit_verify_law_forall_auto_proof_inner(
         })
         .or_else(|| {
             // `Map.len(Map.set(m, k, v)) >= 1 => true` — `set` always yields a
-            // non-empty map. Unlike the empty-map facts this needs real
-            // induction (`set.go` length is `>= 1`), so it leans on the
+            // non-empty map. Unlike the empty-map facts this is not a
+            // definitional unfold: it splits on whether the map already holds
+            // the key (replace keeps a non-empty map's length, insert adds one
+            // entry), so it leans on the
             // hand-proved prelude lemma `AverMap.len_set_ge_one` (stated in the
             // exact lowered goal shape); the rung just `exact`s it. Shape-driven
             // on the `Map.len(Map.set(…)) >= 1` lhs, so it claims nothing else.
@@ -2638,8 +2640,9 @@ fn expr_is_empty_map(e: &crate::ast::Spanned<crate::ast::Expr>, ctx: &CodegenCon
 
 /// `Map.len(Map.set(m, k, v)) >= 1 => true` — `set` always yields a
 /// non-empty map. Unlike the empty-map facts this is not a definitional
-/// unfold: it needs induction on `m` (`set.go` length is `>= 1`). The
-/// hand-proved prelude lemma `AverMap.len_set_ge_one` carries that induction
+/// unfold: it splits on whether the map already holds the key (replace keeps a
+/// non-empty map's length, insert adds one entry). The hand-proved prelude
+/// lemma `AverMap.len_set_ge_one` carries that case split
 /// and is stated in the exact lowered goal shape, so the rung discharges the
 /// law with a bare `exact AverMap.len_set_ge_one _ _ _` (the placeholders
 /// unify the map/key/value from the goal). Citing the lemma demand-ships it.

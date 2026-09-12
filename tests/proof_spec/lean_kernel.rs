@@ -1312,8 +1312,9 @@ fn proof_lean_proves_int_abs_identities_kernel_clean() {
 #[test]
 fn proof_lean_proves_map_set_nonempty_kernel_clean() {
     // `Map.len(Map.set(m, k, v)) >= 1 => true` — `set` always yields a
-    // non-empty map. Unlike the empty-map facts this needs real induction
-    // (`set.go` length is `>= 1`), carried by the hand-proved prelude lemma
+    // non-empty map. Unlike the empty-map facts this splits on whether the map
+    // already holds the key (replace keeps a non-empty map's length, insert
+    // adds one entry), carried by the hand-proved prelude lemma
     // `AverMap.len_set_ge_one` (stated in the exact lowered goal shape and
     // demand-shipped). The `emit_map_len_set_positive_law` rung discharges the
     // law with `exact AverMap.len_set_ge_one _ _ _`. Was a bare sorry before.
