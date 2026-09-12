@@ -357,6 +357,17 @@ impl JobEngine {
         }
     }
 
+    /// Whether the table still holds a slot for this id: a running job, or a
+    /// dead one whose tombstone has not been forgotten yet. Anything a job
+    /// kind remembers about an id is worth remembering exactly this long,
+    /// because past it every answer is `work: unknown job`.
+    pub fn knows(&self, id: u64) -> bool {
+        self.table
+            .lock()
+            .map(|table| table.jobs.contains_key(&id))
+            .unwrap_or(true)
+    }
+
     /// The current settle generation. Read it before deciding nothing is
     /// ready, and hand it to [`JobEngine::wait_until`] so a job that settles
     /// in between is not slept through.
@@ -598,6 +609,29 @@ mod tests {
         job.cancel();
         let dead = engine.table.lock().expect("the table").dead.len();
         assert_eq!(dead, 1, "cancelling one job left {dead} tombstones");
+    }
+
+    /// What a job kind may forget about an id is what the engine has already
+    /// forgotten: a slot still in the table, dead or alive, is one the engine
+    /// knows, and only an evicted one is not.
+    #[test]
+    fn the_engine_knows_a_slot_until_it_evicts_it() {
+        let engine = JobEngine::new(8);
+        let collect = |engine: &Arc<JobEngine>| {
+            let job = engine.begin(Box::new(|_| Ok(value(1)))).expect("begin");
+            settled(engine, job.id());
+            assert!(matches!(job.take(), Ok(Some(_))));
+            job
+        };
+        let oldest = collect(&engine);
+        assert!(engine.knows(oldest.id()), "a dead slot is one it knows");
+        for _ in 0..DEAD_SLOT_LIMIT {
+            collect(&engine);
+        }
+        assert!(
+            !engine.knows(oldest.id()),
+            "an evicted slot is still reported as known"
+        );
     }
 
     #[test]

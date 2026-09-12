@@ -58,9 +58,9 @@ pub struct WorkProvider {
     base: OnceLock<Arc<WorkBaseContext>>,
     identity: String,
     /// Jobs recomputed during replay, keyed by the trace token the recording
-    /// gave the handle that started them. Bounded like the engine's own dead
-    /// slots: a recording long enough to pass the bound has already replayed
-    /// its oldest jobs.
+    /// gave the handle that started them. Bounded like the minted ids: a
+    /// recomputed job is dropped once the engine has forgotten its slot, and
+    /// never while the slot is still there to answer for it.
     replayed: std::sync::Mutex<BoundedJobs>,
     /// The jobs this job kind started itself.
     ///
@@ -76,8 +76,14 @@ pub struct WorkProvider {
     minted: std::sync::Mutex<BoundedIds>,
 }
 
-/// The ids one job kind minted, oldest first, bounded by the number of dead
-/// slots the engine itself keeps.
+/// The ids one job kind minted, oldest first, forgotten only once the engine
+/// has forgotten the slot they name.
+///
+/// Counting mints would be the wrong bound: a program that starts more jobs
+/// than the engine keeps dead slots would drop the id of a job whose slot is
+/// still there, and `take` would then say a live handle was never started by
+/// this kind, which is false. An id leaves this set when the engine no longer
+/// knows it, which is exactly when every answer about it is `unknown job`.
 #[derive(Default)]
 struct BoundedIds {
     order: std::collections::VecDeque<u64>,
@@ -85,14 +91,19 @@ struct BoundedIds {
 }
 
 impl BoundedIds {
-    fn insert(&mut self, id: u64) {
+    fn insert(&mut self, id: u64, forgotten: &dyn Fn(u64) -> bool) {
         if !self.ids.insert(id) {
             return;
         }
         self.order.push_back(id);
-        while self.order.len() > aver_rt::work::DEAD_SLOT_LIMIT
-            && let Some(oldest) = self.order.pop_front()
-        {
+        while self.order.len() > aver_rt::work::DEAD_SLOT_LIMIT {
+            let Some(&oldest) = self.order.front() else {
+                break;
+            };
+            if !forgotten(oldest) {
+                break;
+            }
+            self.order.pop_front();
             self.ids.remove(&oldest);
         }
     }
@@ -114,9 +125,21 @@ impl BoundedJobs {
         if self.jobs.insert(token, job).is_none() {
             self.order.push_back(token);
         }
-        while self.order.len() > aver_rt::work::DEAD_SLOT_LIMIT
-            && let Some(oldest) = self.order.pop_front()
-        {
+        while self.order.len() > aver_rt::work::DEAD_SLOT_LIMIT {
+            let Some(&oldest) = self.order.front() else {
+                break;
+            };
+            // The same bound the minted ids keep: a recomputed job is worth
+            // remembering while the engine still holds its slot, and no
+            // longer.
+            let kept = self
+                .jobs
+                .get(&oldest)
+                .is_some_and(|job| job.engine().knows(job.id()));
+            if kept {
+                break;
+            }
+            self.order.pop_front();
             self.jobs.remove(&oldest);
         }
     }
@@ -236,7 +259,8 @@ impl WorkProvider {
         match self.engine.begin(Box::new(body)) {
             Ok(job) => {
                 if let Ok(mut minted) = self.minted.lock() {
-                    minted.insert(job.id());
+                    let engine = &self.engine;
+                    minted.insert(job.id(), &|id| !engine.knows(id));
                 }
                 Ok(ProviderValue::ResultOk(Box::new(ProviderValue::Resource(
                     job.into_resource(),
@@ -468,16 +492,52 @@ mod tests {
     fn minted_ids_are_bounded_and_forget_the_oldest_first() {
         let bound = aver_rt::work::DEAD_SLOT_LIMIT as u64;
         let mut minted = BoundedIds::default();
+        let engine_forgot_everything = |_| true;
         for id in 1..=bound {
-            minted.insert(id);
+            minted.insert(id, &engine_forgot_everything);
         }
         assert!(minted.contains(1));
         assert!(minted.contains(bound));
 
-        minted.insert(bound + 1);
+        minted.insert(bound + 1, &engine_forgot_everything);
         assert!(!minted.contains(1), "the oldest id outlived the bound");
         assert!(minted.contains(2));
         assert!(minted.contains(bound + 1));
+    }
+
+    /// An id whose slot the engine still holds stays, however many jobs came
+    /// after it: dropping it would make `take` say a live handle was never
+    /// started by this job kind, which is not true of it.
+    #[test]
+    fn an_id_the_engine_still_knows_is_kept_past_the_bound() {
+        let bound = aver_rt::work::DEAD_SLOT_LIMIT as u64;
+        let mut minted = BoundedIds::default();
+        let only_the_second_is_gone = |id| id == 2;
+        for id in 1..=(bound + 10) {
+            minted.insert(id, &only_the_second_is_gone);
+        }
+        assert!(
+            minted.contains(1),
+            "an id the engine still knows was forgotten"
+        );
+        assert!(minted.contains(2), "eviction stopped at the oldest kept id");
+        assert!(minted.contains(bound + 10));
+    }
+
+    /// Once the engine forgets the oldest slots, the ids naming them leave in
+    /// the same order, and the newest are the ones that stay.
+    #[test]
+    fn ids_leave_as_the_engine_forgets_their_slots() {
+        let bound = aver_rt::work::DEAD_SLOT_LIMIT as u64;
+        let mut minted = BoundedIds::default();
+        let gone_below_three = |id| id < 3;
+        for id in 1..=(bound + 2) {
+            minted.insert(id, &gone_below_three);
+        }
+        assert!(!minted.contains(1));
+        assert!(!minted.contains(2));
+        assert!(minted.contains(3), "a kept id stopped the eviction");
+        assert!(minted.contains(bound + 2));
     }
 
     /// Minting the same id twice is one entry, so a repeated id cannot push
@@ -485,8 +545,8 @@ mod tests {
     #[test]
     fn minting_the_same_id_twice_keeps_one_entry() {
         let mut minted = BoundedIds::default();
-        minted.insert(7);
-        minted.insert(7);
+        minted.insert(7, &|_| true);
+        minted.insert(7, &|_| true);
         assert_eq!(minted.order.len(), 1);
         assert!(minted.contains(7));
     }
