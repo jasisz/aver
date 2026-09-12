@@ -38,30 +38,24 @@ fn dialling() -> Unit
             Pool.Welcome.Refused -> dialling()
 
 fn ticker() -> Unit
-    ? "One sweep of the pool per tick, until the clock closes. It is the last process to finish, so it is the one that says what the clock and the wire did over the run."
-    ! [Clock.tick, Pool.swept, Wire.writes, Console.print, yield]
+    ? "One sweep of the pool per tick, until the clock closes, which is when it says how often the deadline let it be asked."
+    ! [Clock.tick, Pool.swept, Console.print, yield]
     match Clock.tick()
-        Clock.Tick.Closed(asks) -> reportRun(asks, Wire.writes())
+        Clock.Tick.Closed(asks) -> reported(asks)
         Clock.Tick.Tock -> match Pool.swept()
             Pool.Sweep.Swept(_) -> ticker()
 
-fn reportRun(asks: Int, tally: Wire.Tally) -> Unit
-    ? "What the clock and the wire did over this run, once the clock has closed."
+fn reported(asks: Int) -> Unit
+    ? "What the clock did over this run, once it has closed."
     ! [Console.print]
-    match tally
-        Wire.Tally.Counted(payloads, writeAsks) -> reported(asks, payloads, writeAsks)
-
-fn reported(asks: Int, payloads: Int, writeAsks: Int) -> Unit
-    ? "The one line a run of this slice ends with."
-    ! [Console.print]
-    Console.print("ticker: asked {asks} times; sockets: {payloads} payloads took {writeAsks} asks")
+    Console.print("ticker: asked {asks} times")
 
 fn peer() -> Unit
-    ? "Ask the pool what to fetch, let the helper fetch it, go round; a peer the helper could not finish with is handed back."
-    ! [Pool.claim, Pool.gone, Wire.write, Wire.read, Blocks.deliver, Console.print, yield]
+    ? "Ask the pool what to fetch, let the helper fetch it, go round; a peer the helper could not finish with is handed back. It is the process that used the wire, so it is the one that says what the wire did once there is nothing left to fetch."
+    ! [Pool.claim, Pool.gone, Wire.write, Wire.read, Wire.writes, Blocks.deliver, Console.print, yield]
     Console.print("peer: asking the pool for work")
     match Pool.claim()
-        Pool.Assignment.Stop -> Unit
+        Pool.Assignment.Stop -> reportWire(Wire.writes())
         Pool.Assignment.Work(key, height) -> match fetchBody(key, height)
             true -> peer()
             false -> Pool.gone(key)
@@ -78,6 +72,17 @@ fn fetchBody(key: Int, height: Int) -> Bool
             Wire.Heard.Data(raw) -> match Blocks.deliver(key, height, raw)
                 Blocks.Receipt.Accepted -> true
                 Blocks.Receipt.Refused(_) -> false
+
+fn reportWire(tally: Wire.Tally) -> Unit
+    ? "What the wire did over this run: how many payloads it wrote, how many asks the writes took, and how many asks the reads took."
+    ! [Console.print]
+    match tally
+        Wire.Tally.Counted(payloads, writeAsks, readAsks) -> counted(payloads, writeAsks, readAsks)
+
+fn counted(payloads: Int, writeAsks: Int, readAsks: Int) -> Unit
+    ? "The one line the wire's own process ends with."
+    ! [Console.print]
+    Console.print("sockets: {payloads} payloads took {writeAsks} asks and {readAsks} reads")
 
 fn walk() -> Unit
     ? "One connected block per turn: the next target, its validated body, the commit."
