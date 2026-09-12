@@ -948,11 +948,11 @@ fn write_job(job: &Job, answers: &[Answer]) -> String {
         job.capability
     ));
     out.push_str(&format!(
-        "\nfn __taken{upper}(run: __Run, key: Int) -> Result<__Run, String>\n    ? \"One reported key: a key that is not a running job of this kind is not this seam's business.\"\n    ! [{}.take]\n    match Map.get(run.{JOBS_FIELD}, key)\n        Option.None -> Result.Ok(run)\n        Option.Some(job) -> __landed{upper}(__Run.update(run, {JOBS_FIELD} = Map.remove(run.{JOBS_FIELD}, key)), {}.take(job)?)\n",
+        "\nfn __taken{upper}(run: __Run, key: Int) -> Result<__Run, String>\n    ? \"One reported key: a key that is not a running job of this kind is not this seam's business. The job stays in the table until its own result says it is over, because a wait may report a job ready before it has finished.\"\n    ! [{}.take]\n    match Map.get(run.{JOBS_FIELD}, key)\n        Option.None -> Result.Ok(run)\n        Option.Some(job) -> __landed{upper}(run, key, {}.take(job)?)\n",
         job.capability, job.capability
     ));
     out.push_str(&format!(
-        "\nfn __landed{upper}(run: __Run, result: {}) -> Result<__Run, String>\n    ? \"Where a finished job's result goes: the `landed` function of the answer state, which resumes nobody.\"\n    match result\n        Option.None -> Result.Ok(run)\n        Option.Some(payload) -> Result.Ok(__Run.update(run, {landed_field} = {}(run.{landed_field}, payload)))\n",
+        "\nfn __landed{upper}(run: __Run, key: Int, result: {}) -> Result<__Run, String>\n    ? \"Where a finished job's result goes: the `landed` function of the answer state, which resumes nobody. A job reported ready that has not finished answers nothing, and keeps both its handle and the run it was taken from, so a later turn collects it.\"\n    match result\n        Option.None -> Result.Ok(run)\n        Option.Some(payload) -> Result.Ok(__Run.update(run, {JOBS_FIELD} = Map.remove(run.{JOBS_FIELD}, key), {landed_field} = {}(run.{landed_field}, payload)))\n",
         job.payload_type, job.landed
     ));
     out.push_str(&format!(

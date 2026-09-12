@@ -1,0 +1,67 @@
+module Node
+    intent = "Fixture: a wait that reports a job ready before it finished. The generated seam must keep the handle and collect the result on a later take."
+    depends [Process, Wait, Work, Pool, Validation, Pooled]
+    effects [Console.print, Pool.claim, Validation.begin, Validation.take, Wait.poll, yield]
+    exposes [Pending, View, order, admit, stop]
+
+type Pending
+    Probing(Int, Wait.Wake)
+
+record View
+    pending: Map<Int, Pending>
+    ready: List<Int>
+    jobs: Int
+    room: Int
+    stopping: Bool
+
+fn probing() -> Unit
+    ? "Reports what the job seam does with a job reported ready before it finished, then claims its one handle and is done."
+    ! [Console.print, Pool.claim, Validation.begin, Validation.take, Wait.poll, yield]
+    Console.print(probe())
+    match Pool.claim()
+        Option.None -> Unit
+        Option.Some(_) -> Unit
+
+fn probe() -> String
+    ? "Starts one job and takes it at once: the job is still running, which is exactly what a wait is allowed to report ready."
+    ! [Validation.begin, Validation.take, Wait.poll]
+    match __startJobsValidation(__fresh())
+        Result.Err(reason) -> "begin refused: {reason}"
+        Result.Ok(started) -> probeEarly(started)
+
+fn probeEarly(started: __Run) -> String
+    ? "The take of a job that has not finished: it answers nothing, and the run it answers with still holds the handle."
+    ! [Validation.take, Wait.poll]
+    match __takenValidation(started, 1)
+        Result.Err(reason) -> "early take refused: {reason}"
+        Result.Ok(after) -> match Map.get(after.jobs, 1)
+            Option.None -> "the early take dropped the handle"
+            Option.Some(job) -> probePolled(after, Wait.poll({1 => Wait.Item.Job(job)}, 5000))
+
+fn probePolled(after: __Run, ready: Result<List<Int>, String>) -> String
+    ? "Once the job has really settled, the same key is taken again."
+    ! [Validation.take]
+    match ready
+        Result.Err(reason) -> "wait refused: {reason}"
+        Result.Ok(_) -> probeLate(__takenValidation(after, 1))
+
+fn probeLate(taken: Result<__Run, String>) -> String
+    ? "What the later take left behind: no handle, and the score landed in the answer state."
+    match taken
+        Result.Err(reason) -> "late take refused: {reason}"
+        Result.Ok(landed) -> "kept the handle, then landed: jobs {Map.len(landed.jobs)} scored {landed.pooled.scored}"
+
+fn order(view: View) -> List<Int>
+    ? "Every seated process, in slot order."
+    Map.keys(view.pending)
+
+fn admit(view: View, id: Int) -> Bool
+    ? "Everything seated is served."
+    Map.has(view.pending, id)
+
+fn stop(view: View) -> Bool
+    ? "The run ends when the process asked us to."
+    view.stopping
+
+verify probeLate
+    probeLate(Result.Err("no such job")) => "late take refused: no such job"
