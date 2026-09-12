@@ -142,23 +142,6 @@ pub(super) fn collect_results_from_builtin_uses(
                             "String.fromUtf8" => {
                                 intern_result("Result<String,String>", out, order, next_idx)
                             }
-                            // `Vector.new(n, fill)` answers
-                            // `Result<Vector<T>, String>`, and `T` is the
-                            // fill argument's own type — the same stamp the
-                            // vector walk reads. Without the carrier slot a
-                            // `Vector.new(...)?` has no registered Result to
-                            // unwrap, which is what a hostile profile of the
-                            // `Tcp` contract writes.
-                            "Vector.new" if args.len() == 2 => {
-                                if let Some(fill_ty) = args[1].ty() {
-                                    let canonical: String =
-                                        format!("Result<Vector<{}>,String>", fill_ty.display())
-                                            .chars()
-                                            .filter(|c| !c.is_whitespace())
-                                            .collect();
-                                    intern_result(&canonical, out, order, next_idx);
-                                }
-                            }
                             _ => {}
                         }
                     }
@@ -184,7 +167,27 @@ pub(super) fn collect_results_from_builtin_uses(
                 }
             }
             ResolvedExpr::Attr(obj, _) => walk(&obj.node, out, order, next_idx),
-            ResolvedExpr::ErrorProp(inner) => walk(&inner.node, out, order, next_idx),
+            ResolvedExpr::ErrorProp(inner) => {
+                // `Vector.new(n, fill)` answers `Result<Vector<T>, String>`,
+                // and `T` is the fill argument's own type — the same stamp
+                // the vector walk reads. Only an unwrapped call needs the
+                // carrier slot, so this is asked here rather than at every
+                // `Vector.new`: a program that never writes `?` after one
+                // keeps the slots it already had.
+                if let ResolvedExpr::Call(crate::ir::hir::ResolvedCallee::Builtin(dotted), args) =
+                    &inner.node
+                    && dotted == "Vector.new"
+                    && args.len() == 2
+                    && let Some(fill_ty) = args[1].ty()
+                {
+                    let canonical: String = format!("Result<Vector<{}>,String>", fill_ty.display())
+                        .chars()
+                        .filter(|c| !c.is_whitespace())
+                        .collect();
+                    intern_result(&canonical, out, order, next_idx);
+                }
+                walk(&inner.node, out, order, next_idx)
+            }
             ResolvedExpr::Ctor(_, args) => {
                 for a in args {
                     walk(&a.node, out, order, next_idx);
