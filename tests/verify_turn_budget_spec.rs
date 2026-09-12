@@ -106,8 +106,6 @@ fn many_short_turns_stay_quiet_because_the_count_resets_on_every_poll() {
     assert_eq!(out.status.code(), Some(0), "{}", format_output(&out));
 }
 
-/// The same eleven turns under a budget one turn does cross: the reset
-/// is what keeps the test above quiet, not the size of the case.
 /// The same eleven turns, cut by `Wait.poll` instead of `Tcp.poll`. The
 /// generated coordinator waits with `Wait.poll`, so a budget that only reset
 /// on `Tcp.poll` would count a whole run of its turns as one and report a
@@ -127,6 +125,8 @@ fn turns_cut_by_wait_poll_reset_the_count_too() {
     assert_eq!(out.status.code(), Some(0), "{}", format_output(&out));
 }
 
+/// The same eleven turns under a budget one turn does cross: the reset
+/// is what keeps the test above quiet, not the size of the case.
 #[test]
 fn the_same_short_turns_are_reported_once_when_one_turn_alone_crosses_the_budget() {
     let dir = project_with(
