@@ -4,6 +4,11 @@
 //! watches sockets through the Tcp reactor and jobs through the engine, and
 //! returns as soon as either is ready or the timeout elapses. Neither needs
 //! to know which job kind started a job: the handle carries its engine.
+//!
+//! One program has one job engine — every job kind of a program is bound to
+//! the same one — so `Wait.poll` sleeps on the engine of the first job in
+//! its wait set and that is the engine of all of them. A debug assertion
+//! holds the build to it.
 
 use std::time::{Duration, Instant};
 
@@ -239,12 +244,27 @@ impl CapabilityProvider for StandardWaitProvider {
                 WaitItem::Job(handle) => jobs.push((key, handle)),
             }
         }
+        // One program has one job engine, so every job in a wait set belongs
+        // to the same one and the first handle's engine is the engine of the
+        // whole set. The debug assertion is where that would be noticed if a
+        // build ever gave a program two.
         let engine = jobs.first().map(|(_, handle)| handle.engine().clone());
+        debug_assert!(
+            engine.as_ref().is_none_or(|engine| jobs
+                .iter()
+                .all(|(_, handle)| std::sync::Arc::ptr_eq(handle.engine(), engine))),
+            "Wait.poll received jobs from more than one engine"
+        );
         // The timeout is the upper bound on this one wait, so the deadline is
         // taken once, before anything sleeps, and every sleep below stops at
         // it. Sleeping the full timeout twice — once on the sockets, once on
         // the engine — would make the wait take twice as long as it promised.
-        let deadline = Instant::now() + Duration::from_millis(timeout_ms as u64);
+        //
+        // A timeout the contract admits can name an instant this host cannot
+        // hold, and adding it would end the turn with a panic rather than a
+        // wait. It is capped instead: past the cap the timeout means "no
+        // deadline within reach", which is the wait that program asked for.
+        let deadline = deadline_for(Instant::now(), timeout_ms);
         // Read the settle generation and arm the waker before deciding nothing
         // is ready, so a job that finishes between the two never sleeps out
         // the timeout.
@@ -305,6 +325,21 @@ impl CapabilityProvider for StandardWaitProvider {
             ready.into_iter().map(ProviderValue::Int).collect(),
         ))))
     }
+}
+
+/// The longest wait this provider names a deadline for. A timeout above it
+/// is a wait with no deadline within reach — a century outlives every
+/// process that could be waiting — and capping it is what keeps a timeout
+/// the contract admits, up to `i64::MAX` milliseconds, from overflowing the
+/// host's own clock.
+pub const MAX_WAIT_MS: i64 = 1000 * 60 * 60 * 24 * 365 * 100;
+
+/// The instant one wait stops at: `now` plus its timeout, capped at
+/// [`MAX_WAIT_MS`] and saturating at whatever this host's clock can hold.
+fn deadline_for(now: Instant, timeout_ms: i64) -> Instant {
+    let capped = timeout_ms.clamp(0, MAX_WAIT_MS);
+    now.checked_add(Duration::from_millis(capped as u64))
+        .unwrap_or(now)
 }
 
 /// How much of this wait's timeout is left, in milliseconds.
@@ -389,6 +424,34 @@ mod tests {
             elapsed < Duration::from_millis(600),
             "a 300ms job-only wait took {elapsed:?}"
         );
+    }
+
+    /// The largest timeout the contract admits is larger than any instant
+    /// this host can name. Adding it unchecked panics; the wait must answer.
+    #[test]
+    fn the_largest_admitted_timeout_does_not_panic() {
+        let engine = JobEngine::new(2);
+        let job = engine
+            .begin(Box::new(|_| {
+                Ok(ProviderValue::Int(crate::AverInt::from_i64(4)))
+            }))
+            .expect("begin");
+        // The job settles at once, so the wait answers without ever reaching
+        // its deadline; what is under test is that taking that deadline is
+        // not a panic.
+        let answer = poll(&job, i64::MAX);
+        assert!(
+            matches!(&answer, ProviderValue::ResultOk(inner) if matches!(&**inner, ProviderValue::List(keys) if keys.len() == 1)),
+            "the wait answered {answer:?}"
+        );
+
+        // The deadline such a timeout names is the cap, not the number: past
+        // the cap the wait has no deadline within reach, and the host's own
+        // clock is never asked to hold an instant it cannot.
+        let now = Instant::now();
+        assert_eq!(deadline_for(now, i64::MAX), deadline_for(now, MAX_WAIT_MS));
+        assert_eq!(deadline_for(now, 0), now);
+        assert!(deadline_for(now, i64::MAX) > now + Duration::from_secs(60 * 60 * 24 * 365));
     }
 
     #[test]
