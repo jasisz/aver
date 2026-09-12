@@ -28,14 +28,8 @@ impl aver_rt::provider::ProviderCodec for Connection {
         registry: &aver_rt::provider::NativeProviderRegistry,
         capability: &str,
     ) -> Result<aver_rt::provider::ProviderValue, String> {
-        if capability != "Tcp" {
-            return Err(format!(
-                "resource 'Tcp.Connection' belongs to capability 'Tcp', not '{}'",
-                capability
-            ));
-        }
         match self.0 {
-            ConnectionState::Live(handle) => registry.resolve_resource(capability, "Tcp.Connection", &handle).map(aver_rt::provider::ProviderValue::Resource),
+            ConnectionState::Live(handle) => registry.resolve_resource(capability, "Tcp.Connection", &handle).or_else(|_| registry.resolve_foreign_resource("Tcp.Connection", &handle)).map(aver_rt::provider::ProviderValue::Resource),
             ConnectionState::Replay(_) => Err("replay-only capability resource 'Tcp.Connection' cannot enter a live provider call".to_string()),
         }
     }
@@ -46,7 +40,7 @@ impl aver_rt::provider::ProviderCodec for Connection {
         capability: &str,
         minted_resource: Option<&str>,
     ) -> Result<Self, String> {
-        if capability != "Tcp" || minted_resource != Some("Tcp.Connection") {
+        if minted_resource != Some("Tcp.Connection") {
             return Err(
                 "resource 'Tcp.Connection' may only be returned by its minting operation"
                     .to_string(),
@@ -111,15 +105,10 @@ impl aver_rt::provider::ProviderCodec for Dial {
         registry: &aver_rt::provider::NativeProviderRegistry,
         capability: &str,
     ) -> Result<aver_rt::provider::ProviderValue, String> {
-        if capability != "Tcp" {
-            return Err(format!(
-                "resource 'Tcp.Dial' belongs to capability 'Tcp', not '{}'",
-                capability
-            ));
-        }
         match self.0 {
             DialState::Live(handle) => registry
                 .resolve_resource(capability, "Tcp.Dial", &handle)
+                .or_else(|_| registry.resolve_foreign_resource("Tcp.Dial", &handle))
                 .map(aver_rt::provider::ProviderValue::Resource),
             DialState::Replay(_) => Err(
                 "replay-only capability resource 'Tcp.Dial' cannot enter a live provider call"
@@ -134,7 +123,7 @@ impl aver_rt::provider::ProviderCodec for Dial {
         capability: &str,
         minted_resource: Option<&str>,
     ) -> Result<Self, String> {
-        if capability != "Tcp" || minted_resource != Some("Tcp.Dial") {
+        if minted_resource != Some("Tcp.Dial") {
             return Err(
                 "resource 'Tcp.Dial' may only be returned by its minting operation".to_string(),
             );
@@ -198,15 +187,10 @@ impl aver_rt::provider::ProviderCodec for Listener {
         registry: &aver_rt::provider::NativeProviderRegistry,
         capability: &str,
     ) -> Result<aver_rt::provider::ProviderValue, String> {
-        if capability != "Tcp" {
-            return Err(format!(
-                "resource 'Tcp.Listener' belongs to capability 'Tcp', not '{}'",
-                capability
-            ));
-        }
         match self.0 {
             ListenerState::Live(handle) => registry
                 .resolve_resource(capability, "Tcp.Listener", &handle)
+                .or_else(|_| registry.resolve_foreign_resource("Tcp.Listener", &handle))
                 .map(aver_rt::provider::ProviderValue::Resource),
             ListenerState::Replay(_) => Err(
                 "replay-only capability resource 'Tcp.Listener' cannot enter a live provider call"
@@ -221,7 +205,7 @@ impl aver_rt::provider::ProviderCodec for Listener {
         capability: &str,
         minted_resource: Option<&str>,
     ) -> Result<Self, String> {
-        if capability != "Tcp" || minted_resource != Some("Tcp.Listener") {
+        if minted_resource != Some("Tcp.Listener") {
             return Err(
                 "resource 'Tcp.Listener' may only be returned by its minting operation".to_string(),
             );
@@ -338,7 +322,7 @@ impl aver_rt::provider::ProviderCodec for Socket {
         let mut fields = fields.into_iter();
         match variant.as_str() {
             "Listening" if field_count == 1 => Ok(Self::Listening(
-                <Tcp_Listener as aver_rt::provider::ProviderCodec>::from_provider_value(
+                <Listener as aver_rt::provider::ProviderCodec>::from_provider_value(
                     fields.next().expect("validated variant field 0"),
                     registry,
                     capability,
@@ -350,7 +334,7 @@ impl aver_rt::provider::ProviderCodec for Socket {
                 field_count
             )),
             "Dialing" if field_count == 1 => Ok(Self::Dialing(
-                <Tcp_Dial as aver_rt::provider::ProviderCodec>::from_provider_value(
+                <Dial as aver_rt::provider::ProviderCodec>::from_provider_value(
                     fields.next().expect("validated variant field 0"),
                     registry,
                     capability,
@@ -362,7 +346,7 @@ impl aver_rt::provider::ProviderCodec for Socket {
                 field_count
             )),
             "Connected" if field_count == 1 => Ok(Self::Connected(
-                <Tcp_Connection as aver_rt::provider::ProviderCodec>::from_provider_value(
+                <Connection as aver_rt::provider::ProviderCodec>::from_provider_value(
                     fields.next().expect("validated variant field 0"),
                     registry,
                     capability,
@@ -374,7 +358,7 @@ impl aver_rt::provider::ProviderCodec for Socket {
                 field_count
             )),
             "Sending" if field_count == 1 => Ok(Self::Sending(
-                <Tcp_Connection as aver_rt::provider::ProviderCodec>::from_provider_value(
+                <Connection as aver_rt::provider::ProviderCodec>::from_provider_value(
                     fields.next().expect("validated variant field 0"),
                     registry,
                     capability,

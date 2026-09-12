@@ -352,8 +352,13 @@ fn a_work_binding_on_a_capability_that_is_not_a_job_kind_is_refused() {
 
 // ── work-target ─────────────────────────────────────────────────────────
 
+/// The Rust backend answers a job kind since jasisz/aver#1329: the job
+/// engine and the job-kind adapter are in `aver-rt`, and the bound function
+/// is compiled into the same crate. What the generated program then does
+/// with a job is `tests/rust_work_spec.rs`; here the point is only that the
+/// door opened.
 #[test]
-fn the_rust_backend_refuses_a_program_with_a_job_kind() {
+fn the_rust_backend_accepts_a_program_with_a_job_kind() {
     let out = aver(
         "work_shape_ok",
         &[
@@ -367,13 +372,9 @@ fn the_rust_backend_refuses_a_program_with_a_job_kind() {
         ],
     );
     let text = combined(&out);
-    assert!(
-        text.contains("error[work-target]: Work-bound capabilities run on the VM in this build"),
-        "{}",
-        format_output(&out)
-    );
-    assert!(text.contains("the requested target is rust"), "{text}");
-    assert!(!out.status.success(), "{}", format_output(&out));
+    assert!(!text.contains("error[work-target]"), "{text}");
+    assert!(out.status.success(), "{}", format_output(&out));
+    let _ = std::fs::remove_dir_all(std::env::temp_dir().join("aver-work-target-rust"));
 }
 
 #[test]
@@ -381,10 +382,38 @@ fn the_wasm_gc_runner_refuses_a_program_with_a_job_kind() {
     let out = aver("work_shape_ok", &["run", "--wasm-gc"]);
     let text = combined(&out);
     assert!(
-        text.contains("error[work-target]: Work-bound capabilities run on the VM in this build"),
+        text.contains(
+            "error[work-target]: Work-bound capabilities run on the VM and the Rust backend in this build"
+        ),
         "{}",
         format_output(&out)
     );
     assert!(text.contains("the requested target is wasm-gc"), "{text}");
+    assert!(!out.status.success(), "{}", format_output(&out));
+}
+
+#[test]
+fn the_wasip2_backend_refuses_a_program_with_a_job_kind() {
+    let out = aver(
+        "work_shape_ok",
+        &[
+            "compile",
+            "--target",
+            "wasip2",
+            "-o",
+            &std::env::temp_dir()
+                .join("aver-work-target-wasip2")
+                .to_string_lossy(),
+        ],
+    );
+    let text = combined(&out);
+    assert!(
+        text.contains(
+            "error[work-target]: Work-bound capabilities run on the VM and the Rust backend in this build"
+        ),
+        "{}",
+        format_output(&out)
+    );
+    assert!(text.contains("the requested target is wasip2"), "{text}");
     assert!(!out.status.success(), "{}", format_output(&out));
 }
