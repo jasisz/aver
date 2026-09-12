@@ -545,6 +545,23 @@ pub fn check_bindings(
             )));
             continue;
         };
+        // A job runs off the turn, and both runtimes reach its function
+        // through the module that owns it: the VM asks the module table for
+        // `Module.function`, and the generated crate calls the module's own
+        // Rust path. The entry module is not in either — it is the unit the
+        // command was pointed at, not a module of the program — so a binding
+        // that names it is refused here, at the one door both backends read,
+        // rather than failing as a runtime error on one and an uncompilable
+        // crate on the other.
+        if entry_module == Some(binding.module()) {
+            errors.push(binding_error(format!(
+                "job kind '{}' binds work = \"{}\", but '{}' is the entry module this command was pointed at; a job reaches its function through the module that owns it, so move that function into a module of its own and bind it there",
+                shape.capability,
+                binding.function,
+                binding.module()
+            )));
+            continue;
+        }
         let Some((params, result, effects)) = fn_sigs.get(&binding.function) else {
             errors.push(binding_error(format!(
                 "job kind '{}' binds work = \"{}\", but this program has no function '{}'",
@@ -1344,5 +1361,47 @@ operation take(job: Work.Job) -> Result<Option<Int>, String>
             None,
         );
         assert!(errors.is_empty(), "unexpected seam errors: {errors:?}");
+    }
+
+    #[test]
+    fn a_work_binding_naming_the_entry_module_is_refused() {
+        let registry = registry_of(&[("Validation", VALIDATION)]);
+        let mut sigs = std::collections::HashMap::new();
+        sigs.insert(
+            "Main.validate".to_string(),
+            (vec![Type::Str], Type::Int, Vec::new()),
+        );
+        let work_bindings = vec![ProviderWorkBinding {
+            capability: "Validation".to_string(),
+            function: "Main.validate".to_string(),
+            index: 0,
+            task: None,
+            landed: None,
+        }];
+        let mut shapes = Vec::new();
+        let mut declared = BTreeSet::new();
+        for (module, outcome) in job_kinds(&registry) {
+            declared.insert(module);
+            shapes.push(outcome.expect("Validation is a job kind"));
+        }
+        let errors = check_bindings(
+            &registry,
+            &shapes,
+            &declared,
+            ManifestBindings {
+                work: &work_bindings,
+                answer: &[],
+            },
+            &[],
+            &sigs,
+            Some("Main"),
+        );
+        assert_eq!(errors.len(), 1, "unexpected findings: {errors:?}");
+        assert_eq!(errors[0].slug, WORK_BINDING);
+        assert!(
+            errors[0].message.contains("is the entry module"),
+            "unexpected message: {}",
+            errors[0].message
+        );
     }
 }

@@ -72,8 +72,10 @@ fn generated_fn_path(dotted: &str, ctx: &crate::codegen::CodegenContext) -> Stri
             aver_name_to_rust(bare)
         );
     }
-    // A function of the entry module carries no registered module prefix; the
-    // entry program's own module is always emitted as `aver_generated::entry`.
+    // A dotted name that resolves to no module of the program does not reach
+    // this far: `work-binding` refuses a binding naming the entry module, and
+    // a binding naming nothing at all, before any target is asked to lower
+    // it. The entry module's own path is still the honest answer here.
     let bare = dotted
         .rsplit_once('.')
         .map(|(_, bare)| bare)
