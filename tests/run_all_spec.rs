@@ -41,8 +41,19 @@ fn slice_with_peer(extra: &[&str]) -> Output {
     args.push(&port);
     let out = aver(SLICE, &args);
     assert!(out.status.success(), "{}", format_output(&out));
-    peer.join()
-        .expect("the loopback peer played its whole part");
+    // A peer that could not play its whole part says why beside what the
+    // slice printed: the slice's own account of the conversation is the only
+    // way to tell a read that timed out from a pool that gave up.
+    if let Err(reason) = peer.join() {
+        panic!(
+            "the loopback peer did not play its whole part: {:?}\n{}",
+            reason
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| reason.downcast_ref::<&str>().map(|s| s.to_string())),
+            format_output(&out)
+        );
+    }
     out
 }
 
@@ -257,11 +268,13 @@ fn a_read_that_hears_nothing_runs_out_its_deadline_and_the_peer_is_handed_back()
 ///
 /// Every process here waits for something that will never come: the accepting
 /// process for a client on its listener, the peer for a height the pool has
-/// nobody to give it, the walk for a body nobody will fetch. Each of the three
-/// is bounded — the listener and the pool each spend a fixed number of asks
-/// and then stop, and the chain ends where it stands once the pool hands out
-/// no more work and nothing is pending — so the run prints its summary and
-/// exits instead of turning for ever.
+/// nobody to give it, the walk for a body nobody will fetch. The pool spends a
+/// fixed number of idle asks and then stops, the chain ends where it stands
+/// once the pool is done, and the program's `stop` policy ends the run once
+/// the accepting process is the only one still seated — the listener itself
+/// never gives up, which is what keeps a client that connects while the pool
+/// still has work from being reset by a listener that closed under it — so the
+/// run prints its summary and exits instead of turning for ever.
 #[test]
 fn a_run_of_the_slice_with_nobody_on_the_other_end_gives_up_and_ends() {
     let port = free_port().to_string();

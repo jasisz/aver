@@ -1,7 +1,7 @@
 module Sockets
     intent = "The answers this program gives to Wire, over real sockets: the listener peers arrive on, the connection each peer key stands for, how far the payload in flight has been written, and how often the wire was asked."
     depends [Bytes, Wait, Tcp, Wire]
-    exposes [State, fresh, wanted, patience, patienceMs, chunk, portOf, firstPort, keyFor, nobody, accept, opening, listening, accepting, closed, arrived, seatedAt, dialled, read, asking, armed, dueOf, leftOf, disarmed, reading, heard, quiet, bodyOf, write, writing, offsetOf, offer, offered, whole, parked, dropped, finished, writes]
+    exposes [State, fresh, wanted, chunk, portOf, firstPort, keyFor, nobody, accept, opening, listening, accepting, closed, arrived, seatedAt, dialled, read, asking, armed, dueOf, leftOf, disarmed, reading, heard, quiet, bodyOf, write, writing, offsetOf, offer, offered, whole, parked, dropped, finished, writes]
     effects [Args.get, Time.unixMs, Tcp.listen, Tcp.accept, Tcp.closeListener, Tcp.readNow, Tcp.writeNow]
 
 record State
@@ -23,14 +23,6 @@ fn fresh() -> State
 fn wanted() -> Int
     ? "How many peers this program waits for on its listener before it tells the accepting process the listener is done."
     1
-
-fn patience() -> Int
-    ? "How many asks this program answers at a listener nobody is knocking on before it stops listening. Each one parks on the listener and on a deadline at once, so this is a couple of seconds of waiting for a client that may never come: long enough for one that is on its way, short enough that a run nobody connects to still ends."
-    20
-
-fn patienceMs() -> Int
-    ? "How long an ask at an empty listener waits before it is asked again whatever the wait reported. The listener is in the wait set as well, so a client that arrives sooner is served sooner; this is only how often a listener nobody is knocking on is looked at again."
-    100
 
 fn chunk() -> Int
     ? "How many bytes of a payload this wire offers one socket in one ask. A payload longer than this takes more than one ask however much room the socket has, which is the partial write a real socket eventually forces anyway."
@@ -71,7 +63,7 @@ fn listening(state: State) -> Tuple<State, Wire.__AcceptReply>
     ! [Args.get, Tcp.listen]
     match Tcp.listen(portOf(Args.get()), 8)
         Result.Err(_) -> (State.update(state, shut = true), Wire.__AcceptReply.Now(Wire.Arrival.Closed))
-        Result.Ok(listener) -> (State.update(state, listener = Option.Some(listener)), Wire.__AcceptReply.Later(Wait.Wake.Either(Wait.Item.Socket(Tcp.Socket.Listening(listener)), patienceMs())))
+        Result.Ok(listener) -> (State.update(state, listener = Option.Some(listener)), Wire.__AcceptReply.Later(Wait.Wake.Item(Wait.Item.Socket(Tcp.Socket.Listening(listener)))))
 
 fn accepting(state: State, listener: Tcp.Listener) -> Tuple<State, Wire.__AcceptReply>
     ? "One ask at a bound listener: the peers this program waits for, and then the close."
@@ -94,11 +86,8 @@ fn arrived(state: State, listener: Tcp.Listener) -> Tuple<State, Wire.__AcceptRe
             Option.Some(connection) -> (seatedAt(state, connection), Wire.__AcceptReply.Now(Wire.Arrival.Peer(keyFor(state))))
 
 fn nobody(state: State, listener: Tcp.Listener) -> Tuple<State, Wire.__AcceptReply>
-    ? "One accept that found nobody waiting, counted. The request parks on the listener and on a deadline at once, so a client that knocks is served at once and a listener nobody knocks on is looked at again anyway; the ask after the last of this program's patience closes it instead, because a run nobody ever connects to ends rather than listening for ever."
-    ! [Tcp.closeListener]
-    match state.waited >= patience()
-        true -> closed(state, Tcp.closeListener(listener))
-        false -> (State.update(state, waited = state.waited + 1), Wire.__AcceptReply.Later(Wait.Wake.Either(Wait.Item.Socket(Tcp.Socket.Listening(listener)), patienceMs())))
+    ? "One accept that found nobody waiting, counted. The request parks on the listener alone: a client that knocks is served on the turn the wait reports it, and a listener nobody knocks on is not looked at again until then. This module never gives up on its listener; when nobody arrives, the run ends because the program's stop policy says a listener is the only thing left seated, not because the listener closed."
+    (State.update(state, waited = state.waited + 1), Wire.__AcceptReply.Later(Wait.Wake.Item(Wait.Item.Socket(Tcp.Socket.Listening(listener)))))
 
 fn seatedAt(state: State, connection: Tcp.Connection) -> State
     ? "One accepted client, kept under the key the rest of this program knows it by. The asks this program spent waiting for it are behind it."
