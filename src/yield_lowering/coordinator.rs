@@ -686,7 +686,7 @@ fn write_loop(
     out.push_str("\nfn __current(run: __Run, id: Int) -> Int\n    ? \"The instance number of the request one process is waiting on, or -1 when nothing is seated under that id.\"\n    match Map.get(run.slots, id)\n        Option.None -> 0 - 1\n        Option.Some(slot) -> slot.seq\n");
     out.push_str("\nfn __nextInstance(seq: Int) -> Int\n    ? \"The instance number an answer for the current one leaves behind. It rises, so the instance just answered can never be current again.\"\n    seq + 1\n");
     out.push_str("\nfn __parked(slot: __Slot, wake: Wait.Wake) -> __Slot\n    ? \"The slot a Later leaves behind: the same instance and the same request, now remembering what would make asking again worth it.\"\n    __Slot(seq = slot.seq, pending = slot.pending, waiting = wake)\n");
-    out.push_str("\nfn __park(run: __Run, id: Int, wake: Wait.Wake) -> __Run\n    ? \"A Later: the request stays where it is with the same instance number, and the state the answer module returned is discarded.\"\n    match Map.get(run.slots, id)\n        Option.None -> run\n        Option.Some(slot) -> __Run.update(run, slots = Map.set(run.slots, id, __parked(slot, wake)))\n");
+    out.push_str("\nfn __park(run: __Run, id: Int, wake: Wait.Wake) -> __Run\n    ? \"A Later: the request stays where it is with the same instance number. The state the answer module returned was already written back, because a Later is where a module records its own progress.\"\n    match Map.get(run.slots, id)\n        Option.None -> run\n        Option.Some(slot) -> __Run.update(run, slots = Map.set(run.slots, id, __parked(slot, wake)))\n");
     out.push_str("\nfn __staleInstance(run: __Run, id: Int, seq: Int) -> Bool\n    ? \"Why an answer carrying this instance number changes nothing: it is not the number the slot under this id is waiting on.\"\n    seq != __current(run, id)\n");
 
     for protocol in protocols {
@@ -842,7 +842,7 @@ fn write_loop(
     }
 
     // ── The invariants ─────────────────────────────────────────────
-    out.push_str(&write_laws(protocols, answers));
+    out.push_str(&write_laws(protocols));
     out
 }
 
@@ -909,11 +909,12 @@ fn write_serve(
             Some(_) => "__answer",
         };
         bodies.push_str(&format!(
-            "\nfn __serve{upper}{}(run: __Run, id: Int, seq: Int, state: {}, answered: Tuple<{}, {reply}>) -> __Run\n    ? \"A Now settles the slot with the answer function of this kind; a Later parks the request and discards the state the module returned, so a Later cannot change it.\"\n{}    match answered\n        (__next, __reply) -> match __reply\n            {reply}.Later(__wake) -> __park(run, id, __wake)\n            {reply}.Now({now_binder}) -> __settle{upper}(__Run.update(run, {} = __next), id, seq, {resume})\n",
+            "\nfn __serve{upper}{}(run: __Run, id: Int, seq: Int, state: {}, answered: Tuple<{}, {reply}>) -> __Run\n    ? \"A Now settles the slot with the answer function of this kind; a Later keeps the state the module returned and parks the request, so a Later records the module's progress and leaves the request alone.\"\n{}    match answered\n        (__next, __reply) -> match __reply\n            {reply}.Later(__wake) -> __park(__Run.update(run, {} = __next), id, __wake)\n            {reply}.Now({now_binder}) -> __settle{upper}(__Run.update(run, {} = __next), id, seq, {resume})\n",
             kind.name,
             kind.state,
             answer.state,
             list(resumes),
+            answer.field,
             answer.field
         ));
     }
@@ -972,13 +973,14 @@ fn write_job(job: &Job, answers: &[Answer]) -> String {
 /// I2 (an answer applies only to the current instance, and a late one is
 /// dropped and counted) and I3 (an answer for the current instance raises
 /// that instance, so the same one can never be answered twice) are stated
-/// here. I4 — a `Later` leaves the answer state unchanged — is by
-/// construction, because every `__serve<P><Kind>` discards the state the
-/// module returned on its `Later` arm; the two laws below say what a law can
-/// see of it: neither the instance number nor any answer state moves. I1 is
-/// the size comparison the proposal expected to stay open, written with its
-/// `because` so the report can say where it stands.
-fn write_laws(protocols: &[ProcessProtocol], answers: &[Answer]) -> String {
+/// here. I4 is now about the request rather than the state: a `Later` keeps
+/// whatever state the answer module returned, because that is where a module
+/// records its own progress, and what it leaves alone is the request — the
+/// same instance number and the same request value. The two laws below say
+/// exactly that, one for the instance and one for the request. I1 is the size
+/// comparison the proposal expected to stay open, written with its `because`
+/// so the report can say where it stands.
+fn write_laws(protocols: &[ProcessProtocol]) -> String {
     let mut out = String::new();
     // The sample seats each process at the request it re-enters itself with.
     // A process takes no parameters, so that request carries nothing, which
@@ -1011,7 +1013,21 @@ fn write_laws(protocols: &[ProcessProtocol], answers: &[Answer]) -> String {
     out.push_str(&format!(
         "\nfn __sampleRun() -> __Run\n    ? \"One run with one of every process seated: the sample the laws below are stated over.\"\n    {seated}\n"
     ));
-    out.push_str("\nfn __slotIsSeated(run: __Run, id: Int) -> Bool\n    ? \"Why a Later moves nothing: the slot written back is the slot that was already there, carrying the instance number it already had.\"\n    Map.has(run.slots, id)\n");
+    out.push_str("\nfn __slotIsSeated(run: __Run, id: Int) -> Bool\n    ? \"Why a Later moves the request nowhere: the slot written back is the slot that was already there, carrying the instance number and the request it already had.\"\n    Map.has(run.slots, id)\n");
+    // One slot a law can write down: the first sampled process's own next
+    // request, as the slot an answer for instance 1 wrote back.
+    let sample_slot = sampled.first().and_then(|(protocol, _)| {
+        let request = sample_request(protocol)?;
+        Some(format!(
+            "__settledSlot{}(1, {request})",
+            marker_variant(&protocol.fn_name)
+        ))
+    });
+    if let Some(sample) = &sample_slot {
+        out.push_str(&format!(
+            "\nfn __sampleSlot() -> __Slot\n    ? \"One seated slot the laws below sample: the next request of the first process this program writes.\"\n    {sample}\n"
+        ));
+    }
 
     let ids: Vec<String> = (1..=sampled.len() + 1).map(|id| id.to_string()).collect();
     let wake_domain = "    given wake: Wait.Wake = [Wait.Wake.NextTurn, Wait.Wake.After(5)]\n";
@@ -1022,12 +1038,9 @@ fn write_laws(protocols: &[ProcessProtocol], answers: &[Answer]) -> String {
     out.push_str(&format!(
         "\nverify __park law laterKeepsTheInstance\n{park_domain}    __current(__park(run, id, wake), id) => __current(run, id)\n"
     ));
-    for answer in answers {
+    if sample_slot.is_some() {
         out.push_str(&format!(
-            "\nverify __park law laterLeaves{}Alone\n{park_domain}    __park(run, id, wake).{} => run.{}\n",
-            marker_variant(&answer.field),
-            answer.field,
-            answer.field
+            "\nverify __parked law laterKeepsTheRequest\n    given slot: __Slot = [__sampleSlot()]\n{wake_domain}    __parked(slot, wake).pending => slot.pending\n"
         ));
     }
     out.push_str("\nverify __nextInstance law theNextInstanceIsHigher\n    given seq: Int = [0, 1, 7]\n    __nextInstance(seq) > seq holds\n");
@@ -1048,12 +1061,9 @@ fn write_laws(protocols: &[ProcessProtocol], answers: &[Answer]) -> String {
             protocol.request
         ));
     }
-    if let Some((protocol, _)) = sampled.first()
-        && let Some(request) = sample_request(protocol)
-    {
-        let upper = marker_variant(&protocol.fn_name);
+    if sample_slot.is_some() {
         out.push_str(&format!(
-            "\nverify __current law theSlotWrittenIsTheSlotRead\n    given slots: Map<Int, __Slot> = [{{}}, __sampleRun().slots]\n    given id: Int = [{}]\n    given slot: __Slot = [__settledSlot{upper}(1, {request})]\n    Map.get(Map.set(slots, id, slot), id) => Option.Some(slot)\n",
+            "\nverify __current law theSlotWrittenIsTheSlotRead\n    given slots: Map<Int, __Slot> = [{{}}, __sampleRun().slots]\n    given id: Int = [{}]\n    given slot: __Slot = [__sampleSlot()]\n    Map.get(Map.set(slots, id, slot), id) => Option.Some(slot)\n",
             ids.join(", ")
         ));
     }

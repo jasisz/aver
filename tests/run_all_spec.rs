@@ -100,7 +100,7 @@ fn the_generated_invariants_and_the_programs_priority_law_hold() {
     let text = combined(&out);
     for law in [
         "__park law laterKeepsTheInstance",
-        "__park law laterLeavesLedgerAlone",
+        "__parked law laterKeepsTheRequest",
         "__nextInstance law theNextInstanceIsHigher",
         "__settledSlotPeer law nowRaisesTheInstance",
         "__current law theSlotWrittenIsTheSlotRead",
@@ -534,7 +534,7 @@ fn the_generated_invariants_reach_the_lean_wall() {
     let obligations = &summary["obligations"];
     for closed in [
         "__park.laterKeepsTheInstance.implication",
-        "__park.laterLeavesLedgerAlone.implication",
+        "__parked.laterKeepsTheRequest.implication",
         "__settlePeer.lateAnswerIsDropped.implication",
         "__settlePeer.lateAnswerIsRecorded.implication",
         "admit.readyPeerBeforeNewJob.implication",
