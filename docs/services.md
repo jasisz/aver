@@ -662,7 +662,9 @@ Two differences from the VM are worth knowing. `Work.cancel` drops the job's ans
 
 A recording made on the VM replays on the built binary. The reverse is not ready: a generated binary writes its recording header with an empty `program_file` and `.` for the module root, because the binary is the program and has no source path to name, and `aver replay` needs both to load the program it replays. Point `aver replay` at a Rust recording and it stops on that header rather than on anything the run did.
 
-`--target wasm-gc`, `--target wasip2` and `aver run --wasm-gc` / `--wasip2` still refuse a program with a job kind with `error[work-target]`; those two backends follow later.
+#### On wasm-gc and wasip2
+
+`--target wasm-gc`, `--target wasip2` and `aver run --wasm-gc` / `--wasip2` still refuse a program with a job kind, and a program that performs `Wait.poll` or `Work.cancel` without declaring one, with `error[work-target]`. A component and a wasm-gc module are single-threaded, so a job on those targets would run inline at `begin` rather than beside the turn; the lowering that does so is not in this build, and neither target binds the `Wait` and `Work` contracts. What those two targets do run since this change is a capability the program answers with `answer = "Module"`: the state types, the reply sums and the answer functions the lowering leaves behind are data and pure functions, and the job handle `Work.Job` that every reply sum reaches through `Wait.Wake` now has a wasm representation of its own — one job kinds will mint when their own lowering lands.
 
 ### Capabilities the program answers — `answer`, `task`, `landed` and `[run]`
 
