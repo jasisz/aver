@@ -710,7 +710,7 @@ fn write_loop(
 
     // ── The view ───────────────────────────────────────────────────
     out.push_str(&format!(
-        "\nfn __view(run: __Run, ready: List<Int>) -> {view}\n    ? \"The resource-free summary of a run that the three policies read, and the only shape a law about them can sample.\"\n    __viewOf(run, ready, {})\n",
+        "\nfn __view(run: __Run, ready: List<Int>) -> {view}\n    ? \"The resource-free summary of a run that the three policies read, and the only shape a law about them can sample. It is built again for every id the turn asks about, deliberately: a policy reads the seating this turn has already changed, not the seating the turn began with.\"\n    __viewOf(run, ready, {})\n",
         if has_jobs {
             format!("Map.len(run.{JOBS_FIELD})")
         } else {
@@ -806,7 +806,7 @@ fn write_loop(
         effects(serve_effects)
     ));
     out.push_str(&format!(
-        "\nfn __serveIf(run: __Run, ready: List<Int>, id: Int) -> __Run\n    ? \"One id, served only if the policy admits it.\"\n{}    match {}(__view(run, ready), id)\n        false -> run\n        true -> __serve(run, id)\n",
+        "\nfn __serveIf(run: __Run, ready: List<Int>, id: Int) -> __Run\n    ? \"One id, served only if the policy admits it. The view it is admitted against is taken again here, so a slot an earlier id of this turn removed is already gone from it.\"\n{}    match {}(__view(run, ready), id)\n        false -> run\n        true -> __serve(run, id)\n",
         effects(serve_effects),
         bare(&plan.policies.admit)
     ));

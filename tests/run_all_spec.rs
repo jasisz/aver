@@ -210,6 +210,9 @@ fn the_dump_shows_the_loop_that_was_generated() {
         "Ledger.claim(run.ledger)",
         "Validation.begin(payload)?",
         "verify __settlePeer law lateAnswerIsDropped",
+        // The view is built again per id on purpose, and the generated
+        // description says so rather than leaving a reader to wonder.
+        "It is built again for every id the turn asks about, deliberately",
         // The run ends by cancelling what is still running rather than
         // dropping its handles.
         "fn __cancelEach(run: __Run, keys: List<Int>) -> Result<Unit, String>",

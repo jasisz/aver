@@ -1,6 +1,6 @@
 module Node
     intent = "The follow slice as processes: a peer, a walk, an accepting process, a dialling process and a ticker, with three policies over one view. The loop between them is generated."
-    depends [Bytes, Process, Wait, Work, Wire, Pool, Blocks, Chain, Clock, Validation, Sockets, Ledger, Clocked]
+    depends [Bytes, Wait, Work, Wire, Pool, Blocks, Chain, Clock, Validation, Sockets, Ledger, Clocked]
     effects [Wire.accept, Wire.dialled, Wire.read, Wire.write, Pool.claim, Pool.gone, Pool.joined, Pool.swept, Blocks.deliver, Blocks.body, Chain.nextTarget, Chain.commit, Clock.tick, Console.print, yield]
     exposes [Pending, View, order, admit, stop]
 
