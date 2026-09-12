@@ -207,6 +207,35 @@ fn an_answered_capability_is_refused_on_wasm_gc() {
     }
 }
 
+// ── A process split into yield helpers ──────────────────────────────────
+
+/// Decision 1: a tail call between two `yield` functions. `total` claims one
+/// handle and hands the rest of the work to `rest`; the run drives one
+/// protocol, `total`'s, from start to `Done`.
+#[test]
+fn a_tail_call_into_another_process_runs_and_verifies_on_the_vm() {
+    assert_runs_and_prints("yield_tail_into", &["run"], "total = 20");
+    assert_verify_passes("yield_tail_into", &["verify"], "10/10");
+}
+
+#[test]
+fn tail_into_generates_exactly_the_pinned_protocol() {
+    let (lowered, generated, items) = lower_fixture("yield_tail_into");
+    assert_eq!(lowered, vec!["total".to_string(), "rest".to_string()]);
+    assert_eq!(generated, TAIL_INTO_GENERATED);
+    assert_removed(&items, "total");
+    assert_removed(&items, "rest");
+}
+
+#[test]
+fn tail_into_lean_check_builds_with_zero_errors_and_no_sorry() {
+    assert_lean_check_clean(
+        "yield_tail_into",
+        "YieldTailInto.lean",
+        &["def __totalInRestAt1", "def __restStart"],
+    );
+}
+
 // ── Across the module boundary: the importer drives the dependency ──────
 
 /// The loader lowers a dependency before any importer reads it, so what
@@ -411,6 +440,82 @@ fn __pickJoin1(id: Int, left: Int, extra: Int) -> __PickOutcome
     match left
         0 -> (__PickOutcome).Waiting((__PickRequest).Claim((id + extra), (__PickClaimState).Await1))
         _ -> (__PickOutcome).Waiting((__PickRequest).Yield((__PickYieldState).Await2((id + extra), (left - 1))))
+"#;
+
+/// Decision 1: a tail call to another `yield` function enters that
+/// function's protocol. `total` stops with a `Yield` request carrying what
+/// `rest` is entered with — the caller has nothing left, so nothing of it is
+/// kept — and every request `rest` makes on its way leaves as a request of
+/// `total` carrying `rest`'s own state inside `__Total<Kind>State`.
+const TAIL_INTO_GENERATED: &str = r#"type __TotalClaimState
+    AwaitFirst
+    InRestAt1(__RestClaimState)
+
+type __TotalYieldState
+    Await2(Int, Int)
+    InRestAt1(__RestYieldState)
+
+type __TotalRequest
+    Claim(Int, __TotalClaimState)
+    Yield(__TotalYieldState)
+
+type __TotalOutcome
+    Done(Int)
+    Waiting(__TotalRequest)
+
+fn __totalStart(id: Int) -> __TotalOutcome
+    ? "Claims the handle of id and hands the rest of the work to 'rest' in tail position."
+    (__TotalOutcome).Waiting((__TotalRequest).Claim(id, (__TotalClaimState).AwaitFirst))
+
+fn __totalAnswerClaim(__state: __TotalClaimState, __answer: Int) -> __TotalOutcome
+    ? "Resumes 'total' after the coordinator answered its Claim request."
+    match __state
+        __TotalClaimState.AwaitFirst -> (__TotalOutcome).Waiting((__TotalRequest).Yield((__TotalYieldState).Await2(__answer, 0)))
+        __TotalClaimState.InRestAt1(__inner) -> __totalInRestAt1(__restAnswerClaim(__inner, __answer))
+
+fn __totalAnswerYield(__state: __TotalYieldState) -> __TotalOutcome
+    ? "Re-enters 'total' at its tail call with the arguments the Yield request carries."
+    match __state
+        __TotalYieldState.Await2(left, seen) -> __totalInRestAt1(__restStart(left, seen))
+        __TotalYieldState.InRestAt1(__inner) -> __totalInRestAt1(__restAnswerYield(__inner))
+
+fn __totalInRestAt1(__outcome: __RestOutcome) -> __TotalOutcome
+    ? "Routes what 'rest' answered back into 'total': a result continues here, a request of 'rest' leaves as a request of 'total' carrying the nested state."
+    match __outcome
+        __RestOutcome.Done(__value) -> (__TotalOutcome).Done(__value)
+        __RestOutcome.Waiting(__request) -> match __request
+            __RestRequest.Claim(__a0, __inner) -> (__TotalOutcome).Waiting((__TotalRequest).Claim(__a0, (__TotalClaimState).InRestAt1(__inner)))
+            __RestRequest.Yield(__inner) -> (__TotalOutcome).Waiting((__TotalRequest).Yield((__TotalYieldState).InRestAt1(__inner)))
+
+type __RestClaimState
+    AwaitHandle(Int, Int)
+
+type __RestYieldState
+    Await2(Int, Int)
+
+type __RestRequest
+    Claim(Int, __RestClaimState)
+    Yield(__RestYieldState)
+
+type __RestOutcome
+    Done(Int)
+    Waiting(__RestRequest)
+
+fn __restStart(left: Int, seen: Int) -> __RestOutcome
+    ? "Claims one handle per round until left runs down, summing the handles into seen."
+    (__RestOutcome).Waiting((__RestRequest).Claim(left, (__RestClaimState).AwaitHandle(left, seen)))
+
+fn __restAnswerClaim(__state: __RestClaimState, __answer: Int) -> __RestOutcome
+    ? "Resumes 'rest' after the coordinator answered its Claim request."
+    match __state
+        __RestClaimState.AwaitHandle(left, seen) -> match left
+            0 -> (__RestOutcome).Done((seen + __answer))
+            _ -> (__RestOutcome).Waiting((__RestRequest).Yield((__RestYieldState).Await2((left - 1), (seen + __answer))))
+
+fn __restAnswerYield(__state: __RestYieldState) -> __RestOutcome
+    ? "Re-enters 'rest' at its tail call with the arguments the Yield request carries."
+    match __state
+        __RestYieldState.Await2(left, seen) -> __restStart(left, seen)
 "#;
 
 /// Run a fixture through the front door and return what the lowering did
