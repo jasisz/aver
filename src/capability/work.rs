@@ -1335,7 +1335,14 @@ operation take(job: Work.Job) -> Result<Option<Int>, String>
         );
         sigs.insert(
             "Ledger.validated".to_string(),
-            (vec![state(), Type::Int], state(), Vec::new()),
+            (
+                vec![
+                    state(),
+                    Type::Result(Box::new(Type::Int), Box::new(Type::Str)),
+                ],
+                state(),
+                Vec::new(),
+            ),
         );
         sigs.insert(
             "Node.validate".to_string(),
