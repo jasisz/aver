@@ -223,9 +223,17 @@ fn take_shape_error(module: &str, actual: &Type) -> WorkDiagnostic {
     ))
 }
 
-/// One target the program can be prepared for. The VM and the Rust backend
-/// answer a job in this build; the two wasm targets have no representation
-/// for the job handle yet, and decision 7 of the epic brief keeps them honest.
+/// One target the program can be prepared for.
+///
+/// Every target answers a capability the program answers itself: the state
+/// types, the reply sums and the pure answer functions the lowering leaves
+/// behind are ordinary data and ordinary functions, and the two wasm targets
+/// gained the representations those reply sums reach — the job handle
+/// `Work.Job`, equality on a sum that carries it, and a `Unit` variant field.
+///
+/// A job itself is the narrower question: `begin` and `take` are answered by
+/// a function of the program, and the one wait that watches a job is
+/// `Wait.poll`. Both run on the VM and the Rust backend in this build.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkTarget {
     Vm,
@@ -244,9 +252,8 @@ impl WorkTarget {
         }
     }
 
-    /// Whether this target runs jobs, the wait that watches them, and the
-    /// capabilities a program answers itself.
-    fn answers_jobs(self) -> bool {
+    /// Whether this target runs jobs and the wait that watches them.
+    fn runs_jobs(self) -> bool {
         matches!(self, WorkTarget::Vm | WorkTarget::Rust)
     }
 }
@@ -298,29 +305,23 @@ pub fn gate(
         fn_sigs,
         entry_module,
     ));
-    if !target.answers_jobs()
+    // A capability the program answers is not refused on any target: the
+    // lowering leaves behind data and pure functions, and the wasm targets
+    // represent every type those reach. Only the two questions below are
+    // still the VM's and the Rust backend's alone.
+    if !target.runs_jobs()
         && shapes.is_empty()
         && let Some(reserved) = reserved_contract_performed(registry, fn_sigs)
     {
         errors.push(WorkDiagnostic::new(WORK_TARGET, format!(
-            "Work-bound capabilities run on the VM and the Rust backend in this build; the wasm-gc and wasip2 backends follow in a later change. The program performs an operation of '{}', a reserved contract those two targets do not answer, and the requested target is {}.",
+            "The one wait of a turn runs on the VM and the Rust backend in this build; the wasm-gc and wasip2 backends follow in a later change. The program performs an operation of '{}', a reserved contract neither wasm target binds, and the requested target is {}.",
             reserved,
             target.label()
         )));
     }
-    if !target.answers_jobs()
-        && let Some(answered) = answers.first()
-    {
+    if !shapes.is_empty() && !target.runs_jobs() {
         errors.push(WorkDiagnostic::new(WORK_TARGET, format!(
-            "A capability answered by the program runs on the VM and the Rust backend in this build; the wasm-gc and wasip2 backends follow in a later change. '{}' is answered by module '{}', and the reply types generated for it carry `Wait.Wake`, which those backends have no representation for yet; the requested target is {}.",
-            answered.capabilities.first().map(String::as_str).unwrap_or(answered.module.as_str()),
-            answered.module,
-            target.label()
-        )));
-    }
-    if !shapes.is_empty() && !target.answers_jobs() {
-        errors.push(WorkDiagnostic::new(WORK_TARGET, format!(
-            "Work-bound capabilities run on the VM and the Rust backend in this build; the wasm-gc and wasip2 backends follow in a later change. '{}' is a job kind and the requested target is {}",
+            "A job kind runs on the VM and the Rust backend in this build; the wasm-gc and wasip2 backends follow in a later change. '{}' is a job kind and the requested target is {}",
             shapes[0].capability,
             target.label()
         )));

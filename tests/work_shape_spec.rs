@@ -419,7 +419,7 @@ fn the_wasm_gc_runner_refuses_a_program_with_a_job_kind() {
     let text = combined(&out);
     assert!(
         text.contains(
-            "error[work-target]: Work-bound capabilities run on the VM and the Rust backend in this build"
+            "error[work-target]: A job kind runs on the VM and the Rust backend in this build"
         ),
         "{}",
         format_output(&out)
@@ -445,7 +445,7 @@ fn the_wasip2_backend_refuses_a_program_with_a_job_kind() {
     let text = combined(&out);
     assert!(
         text.contains(
-            "error[work-target]: Work-bound capabilities run on the VM and the Rust backend in this build"
+            "error[work-target]: A job kind runs on the VM and the Rust backend in this build"
         ),
         "{}",
         format_output(&out)
