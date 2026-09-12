@@ -173,37 +173,79 @@ fn a_namespace_effect_entry_names_the_operation_the_segment_performs() {
     );
 }
 
-// ── A program that answers a capability runs on the VM ──────────────────
+// ── A program that answers a capability runs on every backend ───────────
 
 /// A marked capability's generated reply types carry `Wait.Wake`, a sum that
-/// reaches `Work.Job`, and no backend but the VM has a representation for one.
-/// So every door that prepares a non-VM target refuses a program that answers
-/// a capability, by name and for that reason, as it already refuses a job
-/// kind. The VM runs and verifies all of these, above.
+/// reaches `Work.Job`; the wasm-gc backend now represents the job handle,
+/// equality on a sum that carries it, and a `Unit` variant field, so the
+/// programs above run there too. What the lowering leaves behind is data and
+/// pure functions, and every backend compiles those.
 #[cfg(feature = "wasm")]
 #[test]
-fn an_answered_capability_is_refused_on_wasm_gc() {
-    for fixture in [
-        "yield_spike",
-        "yield_two_reads",
-        "yield_three_kinds",
-        "yield_continuations",
+fn spike_loop_runs_to_done_15_on_wasm_gc() {
+    assert_runs_and_prints("yield_spike", &["run", "--wasm-gc"], "Done(15) ok");
+}
+
+#[cfg(feature = "wasm")]
+#[test]
+fn spike_verify_blocks_pass_on_wasm_gc() {
+    assert_verify_passes("yield_spike", &["verify", "--wasm-gc"], "6/6");
+}
+
+#[cfg(feature = "wasm")]
+#[test]
+fn two_reads_run_and_verify_on_wasm_gc() {
+    assert_runs_and_prints("yield_two_reads", &["run", "--wasm-gc"], "pair = 15");
+    assert_verify_passes("yield_two_reads", &["verify", "--wasm-gc"], "8/8");
+}
+
+#[cfg(feature = "wasm")]
+#[test]
+fn three_kinds_run_and_verify_on_wasm_gc() {
+    assert_runs_and_prints("yield_three_kinds", &["run", "--wasm-gc"], "total = 7");
+    assert_verify_passes("yield_three_kinds", &["verify", "--wasm-gc"], "8/8");
+}
+
+#[cfg(feature = "wasm")]
+#[test]
+fn continuations_run_and_verify_on_wasm_gc() {
+    assert_runs_and_prints("yield_continuations", &["run", "--wasm-gc"], "sum = 8");
+    assert_verify_passes("yield_continuations", &["verify", "--wasm-gc"], "6/6");
+}
+
+#[cfg(feature = "wasm")]
+#[test]
+fn tail_stop_runs_and_verifies_on_wasm_gc() {
+    assert_runs_and_prints(
         "yield_tail_stop",
-        "yield_cross_module",
+        &["run", "--wasm-gc"],
+        "one = 10, pick = 6",
+    );
+    assert_verify_passes("yield_tail_stop", &["verify", "--wasm-gc"], "13/13");
+}
+
+#[cfg(feature = "wasm")]
+#[test]
+fn cross_module_runs_and_verifies_on_wasm_gc() {
+    assert_runs_and_prints("yield_cross_module", &["run", "--wasm-gc"], "total = 6");
+    assert_verify_passes("yield_cross_module", &["verify", "--wasm-gc"], "4/4");
+}
+
+/// The same programs as components. `aver run --wasip2` builds the core
+/// module through the same emitter and wraps it, so what this adds over the
+/// wasm-gc lane is the canonical-ABI envelope around the same reply sums.
+#[cfg(all(feature = "wasm", feature = "wasip2"))]
+#[test]
+fn an_answered_capability_runs_on_wasip2() {
+    for (fixture, expected) in [
+        ("yield_spike", "Done(15) ok"),
+        ("yield_two_reads", "pair = 15"),
+        ("yield_three_kinds", "total = 7"),
+        ("yield_continuations", "sum = 8"),
+        ("yield_tail_stop", "one = 10, pick = 6"),
+        ("yield_cross_module", "total = 6"),
     ] {
-        let out = aver(fixture, &["run", "--wasm-gc"]);
-        let text = format!(
-            "{}{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
-        assert!(
-            text.contains("error[work-target]")
-                && text.contains("is answered by module")
-                && text.contains("no representation for yet"),
-            "{fixture}:\n{}",
-            format_output(&out)
-        );
+        assert_runs_and_prints(fixture, &["run", "--wasip2"], expected);
     }
 }
 
