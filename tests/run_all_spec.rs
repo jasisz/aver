@@ -177,6 +177,7 @@ fn the_generated_invariants_and_the_programs_priority_law_hold() {
         "__park law laterKeepsTheInstance",
         "__parked law laterKeepsTheRequest",
         "__nextInstance law theNextInstanceIsHigher",
+        "__remaining law theWaitNeverExceedsTheRequest",
         "__settledSlotPeer law nowRaisesTheInstance",
         "__current law theSlotWrittenIsTheSlotRead",
         "__settlePeer law lateAnswerIsDropped",
@@ -547,8 +548,9 @@ fn a_process_the_loop_cannot_seat_is_refused_at_every_door() {
 /// and every answer module, I3's per-call half in its two halves — the slot an
 /// answer for the current instance writes back carries a strictly higher
 /// instance number than the one it answered, and the slot written under an id
-/// is the slot read from it — I1 for every process, and the program's own
-/// priority law. No law is bounded and none is a `sorry`.
+/// is the slot read from it — I1 for every process, the wait one deadline
+/// contributes never being longer than the `ms` that deadline asked for, and
+/// the program's own priority law. No law is bounded and none is a `sorry`.
 ///
 /// I1's implication was the last one open: a size comparison across one
 /// `Map.set` or one `Map.remove` inside a record update. It needed two facts
@@ -594,7 +596,7 @@ fn the_generated_invariants_reach_the_lean_wall() {
     );
     assert_eq!(
         summary["universal_laws"].as_u64(),
-        Some(26),
+        Some(27),
         "universal-law drift:\n{}",
         format_output(&out)
     );
