@@ -283,6 +283,66 @@ fn nested_twice_generates_exactly_the_pinned_protocol() {
     assert_removed(&items, "pairUp");
 }
 
+// ── What nesting still refuses ──────────────────────────────────────────
+
+fn assert_refused(fixture_name: &str, slug: &str, wording: &[&str]) {
+    let out = aver(fixture_name, &["check"]);
+    assert!(
+        !out.status.success(),
+        "the module must not check:\n{}",
+        format_output(&out)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    let errors: Vec<&str> = stdout
+        .lines()
+        .filter(|line| line.contains("error["))
+        .collect();
+    assert_eq!(errors.len(), 1, "one error only:\n{stdout}");
+    assert!(
+        errors[0].contains(slug),
+        "expected {slug} in:\n{}",
+        errors[0]
+    );
+    for text in wording {
+        assert!(
+            errors[0].contains(text),
+            "expected {text:?} in:\n{}",
+            errors[0]
+        );
+    }
+}
+
+/// Decision 2: mutual nesting is refused, not attempted. `ping` calls `pong`
+/// and `pong` calls `ping`, so each one's state would have to hold the
+/// other's, and the message says where the cycle runs and how to break it.
+#[test]
+fn mutual_nesting_is_refused_with_the_cycle_it_found() {
+    assert_refused(
+        "yield_mutual_nesting",
+        "error[yield-unsupported]",
+        &[
+            "Mutual nesting is not supported by yield lowering",
+            "ping calls pong calls ping",
+            "pass what comes next as data in one of them",
+        ],
+    );
+}
+
+/// The branches of an independent product run independently, and a request
+/// leaves a process one at a time, so a call into a helper's protocol inside
+/// one is refused exactly as a request written there is.
+#[test]
+fn a_nested_call_inside_an_independent_product_is_refused() {
+    assert_refused(
+        "yield_nested_product",
+        "error[yield-unsupported]",
+        &[
+            "a call to a yield helper, inside an independent product",
+            "perform them one after another",
+        ],
+    );
+}
+
 // ── Across the module boundary: the importer drives the dependency ──────
 
 /// The loader lowers a dependency before any importer reads it, so what
