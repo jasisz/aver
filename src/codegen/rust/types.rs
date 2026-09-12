@@ -66,12 +66,6 @@ pub fn type_to_rust(ty: &Type) -> String {
     }
 }
 
-/// Convert an Aver type annotation string to a Rust type string.
-pub fn type_annotation_to_rust(ann: &str) -> String {
-    let ty = crate::types::parse_type_str(ann);
-    type_to_rust(&ty)
-}
-
 /// Convert a resolved Aver type to Rust while preserving user-type ownership.
 ///
 /// The context-free renderer above remains appropriate for compiler-owned

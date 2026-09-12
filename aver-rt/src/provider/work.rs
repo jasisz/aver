@@ -307,6 +307,144 @@ impl CapabilityProvider for StandardWaitProvider {
     }
 }
 
+/// What one job of a generated artifact runs: the compiled Aver function the
+/// manifest bound to the job kind, wrapped so the engine sees only values.
+///
+/// A function pointer rather than a boxed closure because the generated crate
+/// has exactly one such wrapper per job kind and nothing to capture: the task
+/// and the result cross as [`ProviderValue`], and the codecs that convert them
+/// are the crate's own.
+pub type WorkKindBody = fn(ProviderValue) -> Result<ProviderValue, String>;
+
+pub const WORK_KIND_NATIVE_FINGERPRINT: &str = concat!("aver-rt/", env!("CARGO_PKG_VERSION"));
+
+/// One job kind of a generated artifact, bound to one pure function of the
+/// program compiled beside it.
+///
+/// The bytecode VM answers a job kind with a child VM over the same program
+/// (`src/provider/work.rs` in the compiler); a generated artifact has the
+/// function itself, so the seam is this much smaller. The answers are the
+/// same, deliberately: `Ok(None)` while the job runs, `Ok(Some(r))` once,
+/// `Err("work: job already taken")`, `Err("work: job cancelled")`, and the
+/// engine's own `work: job limit N reached` from `begin`.
+pub struct WorkKindProvider {
+    capability: String,
+    identity: String,
+    engine: std::sync::Arc<crate::work::JobEngine>,
+    body: WorkKindBody,
+    /// The jobs this job kind started itself.
+    ///
+    /// Every job kind of a program shares one engine and `Work.Job` is one
+    /// type, so a handle minted by one kind type-checks as an argument to
+    /// another kind's `take`. Only the runtime can tell them apart.
+    ///
+    /// An id is never removed, not by `take` and not by `cancel`: a taken or
+    /// cancelled job must still be recognised as this kind's, so that a
+    /// second `take` answers "already taken" rather than "not started by job
+    /// kind". The set therefore grows by one `u64` per job for the life of
+    /// the process, which is the price of that answer staying right.
+    minted: std::sync::Mutex<std::collections::BTreeSet<u64>>,
+}
+
+impl WorkKindProvider {
+    pub fn new(
+        capability: &str,
+        engine: std::sync::Arc<crate::work::JobEngine>,
+        body: WorkKindBody,
+    ) -> Self {
+        Self {
+            capability: capability.to_string(),
+            identity: format!("aver.work.{capability}/native"),
+            engine,
+            body,
+            minted: std::sync::Mutex::new(std::collections::BTreeSet::new()),
+        }
+    }
+
+    pub fn engine(&self) -> &std::sync::Arc<crate::work::JobEngine> {
+        &self.engine
+    }
+
+    fn begin(&self, task: ProviderValue) -> ProviderValue {
+        let body = self.body;
+        match self.engine.begin(Box::new(move |_cancel| body(task))) {
+            Ok(job) => {
+                if let Ok(mut minted) = self.minted.lock() {
+                    minted.insert(job.id());
+                }
+                ProviderValue::ResultOk(Box::new(ProviderValue::Resource(job.into_resource())))
+            }
+            Err(message) => ProviderValue::ResultErr(Box::new(ProviderValue::String(message))),
+        }
+    }
+
+    fn started_here(&self, id: u64) -> bool {
+        self.minted
+            .lock()
+            .map(|minted| minted.contains(&id))
+            .unwrap_or(false)
+    }
+
+    fn answer(outcome: Result<Option<ProviderValue>, String>) -> ProviderValue {
+        match outcome {
+            Ok(Some(value)) => {
+                ProviderValue::ResultOk(Box::new(ProviderValue::OptionSome(Box::new(value))))
+            }
+            Ok(None) => ProviderValue::ResultOk(Box::new(ProviderValue::OptionNone)),
+            Err(message) => ProviderValue::ResultErr(Box::new(ProviderValue::String(message))),
+        }
+    }
+}
+
+impl CapabilityProvider for WorkKindProvider {
+    fn identity(&self) -> &str {
+        &self.identity
+    }
+
+    fn fingerprint(&self) -> &str {
+        WORK_KIND_NATIVE_FINGERPRINT
+    }
+
+    fn invoke(
+        &self,
+        context: &ProviderContext,
+        args: &[ProviderValue],
+    ) -> Result<ProviderValue, ProviderFault> {
+        let operation = context.operation.as_str();
+        let [single] = args else {
+            return Err(ProviderFault::new(
+                "invalid_arguments",
+                format!(
+                    "{operation} expects exactly one argument, got {}",
+                    args.len()
+                ),
+            ));
+        };
+        match operation.rsplit_once('.').map(|(_, name)| name) {
+            Some("begin") => Ok(self.begin(single.clone())),
+            Some("take") => {
+                let job = job(operation, single)?;
+                if !self.started_here(job.id()) {
+                    return Ok(ProviderValue::ResultErr(Box::new(ProviderValue::String(
+                        format!(
+                            "work: this job was not started by job kind '{}'",
+                            self.capability
+                        ),
+                    ))));
+                }
+                Ok(Self::answer(job.take()))
+            }
+            _ => Err(ProviderFault::new(
+                "unknown_operation",
+                format!(
+                    "job kind '{}' does not implement '{operation}'",
+                    self.capability
+                ),
+            )),
+        }
+    }
+}
+
 /// How much of this wait's timeout is left, in milliseconds.
 fn remaining_ms(deadline: Instant) -> i64 {
     let now = Instant::now();

@@ -169,16 +169,13 @@ impl StandardCapabilityBinding {
             }
             (Self::Time, CapabilityTarget::WasmGc) => Some("aver.standard.Time/wasm-gc-imports"),
             (Self::Time, CapabilityTarget::Wasip2) => Some("aver.standard.Time/wasip2-wasi"),
-            (Self::Wait, CapabilityTarget::Vm) => {
+            (Self::Wait, CapabilityTarget::Vm | CapabilityTarget::Rust) => {
                 Some(aver_rt::provider::STANDARD_WAIT_NATIVE_IDENTITY)
             }
-            (Self::Work, CapabilityTarget::Vm) => {
+            (Self::Work, CapabilityTarget::Vm | CapabilityTarget::Rust) => {
                 Some(aver_rt::provider::STANDARD_WORK_NATIVE_IDENTITY)
             }
-            (
-                Self::Wait | Self::Work,
-                CapabilityTarget::Rust | CapabilityTarget::WasmGc | CapabilityTarget::Wasip2,
-            ) => None,
+            (Self::Wait | Self::Work, CapabilityTarget::WasmGc | CapabilityTarget::Wasip2) => None,
         }
     }
 
@@ -191,7 +188,7 @@ impl StandardCapabilityBinding {
                 "WASI 0.2 has no portable raw-terminal, cursor, color, key-input, or terminal-size interface"
             }
             (Self::Wait | Self::Work, _) => {
-                "jobs and the wait that watches them run on the VM in this build; the Rust, wasm-gc and wasip2 backends follow in a later change"
+                "jobs and the wait that watches them run on the VM and the Rust backend in this build; the wasm-gc and wasip2 backends follow in a later change"
             }
             _ => {
                 "the compiler ships no binding for this standard capability on the selected target"

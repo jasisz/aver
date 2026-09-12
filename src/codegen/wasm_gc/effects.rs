@@ -933,9 +933,10 @@ mod certificate_format_tests {
                 assert!(EffectName::from_dotted("Args._get").is_some());
                 continue;
             }
-            // `Wait` and `Work` are answered by the VM only in this build: a
-            // program that depends on either is refused before codegen on
-            // every other target (`work-target`), so no route exists yet.
+            // `Wait` and `Work` are answered by the VM and the Rust backend
+            // in this build: a program that depends on either is refused
+            // before codegen on both wasm targets (`work-target`), so no
+            // route exists yet.
             if crate::stdlib::RESERVED_CAPABILITY_MODULES.contains(&operation.module.as_str()) {
                 continue;
             }

@@ -6716,6 +6716,9 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
         &mut ctx,
         provider_manifest,
         &known_provider_capabilities,
+        project_config
+            .as_ref()
+            .and_then(|config| config.work_max_jobs),
     ) {
         Ok(output) => output,
         Err(error) => {
