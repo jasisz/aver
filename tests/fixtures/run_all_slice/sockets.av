@@ -1,7 +1,7 @@
 module Sockets
     intent = "The answers this program gives to Wire, over real sockets: the listener peers arrive on, the connection each peer key stands for, how far the payload in flight has been written, and how often the wire was asked."
     depends [Bytes, Wait, Tcp, Wire]
-    exposes [State, fresh, wanted, chunk, portOf, firstPort, keyFor, accept, opening, listening, accepting, closed, arrived, seatedAt, dialled, read, asking, armed, dueOf, leftOf, disarmed, reading, heard, quiet, bodyOf, write, writing, offsetOf, offer, offered, whole, parked, dropped, finished, writes]
+    exposes [State, fresh, wanted, patience, patienceMs, chunk, portOf, firstPort, keyFor, nobody, accept, opening, listening, accepting, closed, arrived, seatedAt, dialled, read, asking, armed, dueOf, leftOf, disarmed, reading, heard, quiet, bodyOf, write, writing, offsetOf, offer, offered, whole, parked, dropped, finished, writes]
     effects [Args.get, Time.unixMs, Tcp.listen, Tcp.accept, Tcp.closeListener, Tcp.readNow, Tcp.writeNow]
 
 record State
@@ -10,18 +10,27 @@ record State
     seated: Int
     offsets: Map<Int, Int>
     deadlines: Map<Int, Int>
+    waited: Int
     asked: Int
     reads: Int
     done: Int
     shut: Bool
 
 fn fresh() -> State
-    ? "Nothing bound, nobody accepted, nothing written and nothing asked for, no read in flight, and no listener closed yet. The listener is bound on the first ask, because the state of a run is built before any effect is allowed."
-    State(listener = Option.None, peers = {}, seated = 0, offsets = {}, deadlines = {}, asked = 0, reads = 0, done = 0, shut = false)
+    ? "Nothing bound, nobody accepted, nothing written and nothing asked for, no read in flight, nothing waited for on the listener, and no listener closed yet. The listener is bound on the first ask, because the state of a run is built before any effect is allowed."
+    State(listener = Option.None, peers = {}, seated = 0, offsets = {}, deadlines = {}, waited = 0, asked = 0, reads = 0, done = 0, shut = false)
 
 fn wanted() -> Int
     ? "How many peers this program waits for on its listener before it tells the accepting process the listener is done."
     1
+
+fn patience() -> Int
+    ? "How many asks this program answers at a listener nobody is knocking on before it stops listening. Each one parks on the listener and on a deadline at once, so this is a couple of seconds of waiting for a client that may never come: long enough for one that is on its way, short enough that a run nobody connects to still ends."
+    20
+
+fn patienceMs() -> Int
+    ? "How long an ask at an empty listener waits before it is asked again whatever the wait reported. The listener is in the wait set as well, so a client that arrives sooner is served sooner; this is only how often a listener nobody is knocking on is looked at again."
+    100
 
 fn chunk() -> Int
     ? "How many bytes of a payload this wire offers one socket in one ask. A payload longer than this takes more than one ask however much room the socket has, which is the partial write a real socket eventually forces anyway."
@@ -62,7 +71,7 @@ fn listening(state: State) -> Tuple<State, Wire.__AcceptReply>
     ! [Args.get, Tcp.listen]
     match Tcp.listen(portOf(Args.get()), 8)
         Result.Err(_) -> (State.update(state, shut = true), Wire.__AcceptReply.Now(Wire.Arrival.Closed))
-        Result.Ok(listener) -> (State.update(state, listener = Option.Some(listener)), Wire.__AcceptReply.Later(Wait.Wake.Item(Wait.Item.Socket(Tcp.Socket.Listening(listener)))))
+        Result.Ok(listener) -> (State.update(state, listener = Option.Some(listener)), Wire.__AcceptReply.Later(Wait.Wake.Either(Wait.Item.Socket(Tcp.Socket.Listening(listener)), patienceMs())))
 
 fn accepting(state: State, listener: Tcp.Listener) -> Tuple<State, Wire.__AcceptReply>
     ? "One ask at a bound listener: the peers this program waits for, and then the close."
@@ -76,17 +85,24 @@ fn closed(state: State, shutdown: Result<Unit, String>) -> Tuple<State, Wire.__A
     (State.update(state, listener = Option.None, shut = true), Wire.__AcceptReply.Now(Wire.Arrival.Closed))
 
 fn arrived(state: State, listener: Tcp.Listener) -> Tuple<State, Wire.__AcceptReply>
-    ? "What one non-blocking accept found. A client that was waiting is seated under its own key; nothing waiting parks the request on the listener, and the wait is the only thing that asks it again. A listener that itself failed is a listener this program has no more peers on."
-    ! [Tcp.accept]
+    ? "What one non-blocking accept found. A client that was waiting is seated under its own key; nobody waiting is one more ask this program has spent on an empty listener. A listener that itself failed is a listener this program has no more peers on."
+    ! [Tcp.accept, Tcp.closeListener]
     match Tcp.accept(listener)
         Result.Err(_) -> (State.update(state, listener = Option.None, shut = true), Wire.__AcceptReply.Now(Wire.Arrival.Closed))
         Result.Ok(client) -> match client
-            Option.None -> (state, Wire.__AcceptReply.Later(Wait.Wake.Item(Wait.Item.Socket(Tcp.Socket.Listening(listener)))))
+            Option.None -> nobody(state, listener)
             Option.Some(connection) -> (seatedAt(state, connection), Wire.__AcceptReply.Now(Wire.Arrival.Peer(keyFor(state))))
 
+fn nobody(state: State, listener: Tcp.Listener) -> Tuple<State, Wire.__AcceptReply>
+    ? "One accept that found nobody waiting, counted. The request parks on the listener and on a deadline at once, so a client that knocks is served at once and a listener nobody knocks on is looked at again anyway; the ask after the last of this program's patience closes it instead, because a run nobody ever connects to ends rather than listening for ever."
+    ! [Tcp.closeListener]
+    match state.waited >= patience()
+        true -> closed(state, Tcp.closeListener(listener))
+        false -> (State.update(state, waited = state.waited + 1), Wire.__AcceptReply.Later(Wait.Wake.Either(Wait.Item.Socket(Tcp.Socket.Listening(listener)), patienceMs())))
+
 fn seatedAt(state: State, connection: Tcp.Connection) -> State
-    ? "One accepted client, kept under the key the rest of this program knows it by."
-    State.update(state, peers = Map.set(state.peers, keyFor(state), connection), seated = keyFor(state))
+    ? "One accepted client, kept under the key the rest of this program knows it by. The asks this program spent waiting for it are behind it."
+    State.update(state, peers = Map.set(state.peers, keyFor(state), connection), seated = keyFor(state), waited = 0)
 
 fn dialled(state: State) -> Tuple<State, Wire.__DialledReply>
     ? "This program dials nobody: every peer it talks to arrived on its own listener, so no dial is ever outstanding."

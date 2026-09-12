@@ -189,6 +189,33 @@ fn a_read_that_hears_nothing_runs_out_its_deadline_and_the_peer_is_handed_back()
     peer.join().expect("the silent peer played its whole part");
 }
 
+/// The slice gives up on its own, so a run nobody connects to still ends.
+///
+/// Every process here waits for something that will never come: the accepting
+/// process for a client on its listener, the peer for a height the pool has
+/// nobody to give it, the walk for a body nobody will fetch. Each of the three
+/// is bounded — the listener and the pool each spend a fixed number of asks
+/// and then stop, and the chain ends where it stands once the pool hands out
+/// no more work and nothing is pending — so the run prints its summary and
+/// exits instead of turning for ever.
+#[test]
+fn a_run_of_the_slice_with_nobody_on_the_other_end_gives_up_and_ends() {
+    let port = free_port().to_string();
+    let out = aver(SLICE, &["run", "--", &port]);
+    assert!(out.status.success(), "{}", format_output(&out));
+    let text = combined(&out);
+    assert!(
+        text.contains("sockets: 0 payloads took 0 asks and 0 reads"),
+        "the peer never reached the pool's Stop:\n{}",
+        format_output(&out)
+    );
+    assert!(
+        text.contains("ticker: asked 9 times"),
+        "{}",
+        format_output(&out)
+    );
+}
+
 /// A job that will never produce a result reaches `landed` as the error it is:
 /// the answer state records the rejection, the handle leaves the table, and
 /// the run reaches its end instead of stopping on the take.
