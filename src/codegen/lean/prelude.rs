@@ -485,6 +485,15 @@ end AverMeasure"#;
 /// reconstructible here. Laws that OBSERVE iteration order over those key
 /// types are refused before they reach this model
 /// (`codegen::common::law_map_order_refusal`).
+///
+/// A law's map variable ranges over EVERY `List (α × β)`, including the ones
+/// no program can build — unsorted, or holding one key twice — so `set` is
+/// split by membership rather than written as one walk: `replace` for a key
+/// the map already holds, `insert` (the sorted walk) for one it does not. On a
+/// canonical map the two give exactly the list the single walk gave, and on a
+/// non-canonical one `set` is still key-canonical, which is what makes "a set
+/// under a key already present does not change the size" a theorem instead of
+/// a false statement about a list where the key sits after a greater one.
 const AVER_MAP_PRELUDE_BASE: &str = r#"class AverKeyOrder (α : Type u) where
   lt : α → α → Bool
 instance : AverKeyOrder Int := ⟨fun a b => decide (a < b)⟩
