@@ -62,16 +62,22 @@ fn peer() -> Unit
 
 fn fetchBody(key: Int, height: Int) -> Bool
     ? "One body from one peer: the write, the read and the hand-over. True when the body landed, false when anything on the way said this peer is finished."
-    ! [Wire.write, Wire.read, Blocks.deliver, yield]
+    ! [Wire.write, Wire.read, Blocks.deliver, Console.print, yield]
     match Wire.write(key, Ledger.blockOf(height))
         Result.Err(_) -> false
-        Result.Ok(_) -> match Wire.read(key, 4000000, 30000)
+        Result.Ok(_) -> match Wire.read(key, 4000000, 2000)
             Wire.Heard.EndOfStream -> false
             Wire.Heard.Failed(_) -> false
-            Wire.Heard.TimedOut -> false
+            Wire.Heard.TimedOut -> timedOut(key)
             Wire.Heard.Data(raw) -> match Blocks.deliver(key, height, raw)
                 Blocks.Receipt.Accepted -> true
                 Blocks.Receipt.Refused(_) -> false
+
+fn timedOut(key: Int) -> Bool
+    ? "A peer that said nothing before this read's deadline ran out: the body did not arrive, so this run is finished with that peer."
+    ! [Console.print]
+    Console.print("peer: {key} said nothing in time")
+    false
 
 fn reportWire(tally: Wire.Tally) -> Unit
     ? "What the wire did over this run: how many payloads it wrote, how many asks the writes took, and how many asks the reads took."
@@ -118,8 +124,25 @@ fn admitted(view: View, marker: Pending) -> Bool
         Pending.Walk(_, _) -> Bool.not(view.stopping)
 
 fn stop(view: View) -> Bool
-    ? "The run ends when the process asked us to, and not before: the flag was read by the turn and reaches here as data."
-    view.stopping
+    ? "The run ends when the process asked us to, or when the listener is the only thing still seated: with the pool stopped and the walk and the ticker gone, a client that arrived now would find no work, so waiting for one is over. The flag was read by the turn and reaches here as data."
+    Bool.or(view.stopping, onlyTheListener(view, Map.keys(view.pending)))
+
+fn onlyTheListener(view: View, keys: List<Int>) -> Bool
+    ? "Whether every seated process under these keys is the accepting one."
+    match keys
+        [] -> true
+        [key, ..rest] -> match Map.get(view.pending, key)
+            Option.None -> onlyTheListener(view, rest)
+            Option.Some(marker) -> Bool.and(isAcceptingMarker(marker), onlyTheListener(view, rest))
+
+fn isAcceptingMarker(marker: Pending) -> Bool
+    ? "Whether one marker stands for the accepting process."
+    match marker
+        Pending.Accepting(_, _) -> true
+        Pending.Peer(_, _) -> false
+        Pending.Dialling(_, _) -> false
+        Pending.Ticker(_, _) -> false
+        Pending.Walk(_, _) -> false
 
 fn isPeer(view: View, id: Int) -> Bool
     ? "Whether the slot under this id holds the peer process."
@@ -147,6 +170,25 @@ fn quietView() -> View
 fn stoppingView() -> View
     ? "One view with a job running, no room for another and the run already stopping: what a peer is admitted against at the worst moment of a turn."
     View(pending = Map.set(Map.set({}, 1, Pending.Peer(5, Wait.Wake.NextTurn)), 2, Pending.Walk(2, Wait.Wake.NextTurn)), ready = [1], askable = [1, 2], jobs = 1, room = 0, stopping = true)
+
+fn listeningView() -> View
+    ? "One view where the accepting process is the only one still seated."
+    View.update(quietView(), pending = Map.set({}, 4, Pending.Accepting(1, Wait.Wake.NextTurn)))
+
+verify stop
+    stop(busyView()) => false
+    stop(quietView()) => false
+    stop(stoppingView()) => true
+    stop(listeningView()) => true
+
+verify onlyTheListener
+    onlyTheListener(listeningView(), [4]) => true
+    onlyTheListener(busyView(), [1, 2]) => false
+    onlyTheListener(quietView(), []) => true
+
+verify isAcceptingMarker
+    isAcceptingMarker(Pending.Accepting(1, Wait.Wake.NextTurn)) => true
+    isAcceptingMarker(Pending.Walk(1, Wait.Wake.After(2))) => false
 
 verify admit law readyPeerBeforeNewJob
     given view: View = [busyView(), quietView(), stoppingView()]

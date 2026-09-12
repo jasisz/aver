@@ -13,7 +13,7 @@
 #![allow(dead_code)]
 
 use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::TcpStream;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -37,8 +37,22 @@ pub const ECHO_DELAY: Duration = Duration::from_millis(250);
 /// itself: a `Tcp.Listener` the slice owns is the whole point of its
 /// `Sockets` module, and a fixed port would collide with a parallel run.
 pub fn free_port() -> u16 {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind a loopback listener");
-    listener.local_addr().expect("listener address").port()
+    // Not a port the kernel just handed out: a port nobody has bound.
+    //
+    // The old way bound an ephemeral listener, read its port and dropped it.
+    // The tests of one binary run in parallel, and the slice takes about a
+    // second to bind after it is spawned, so while it was still parsing, a
+    // sibling test's throwaway listener could come up on the very same port
+    // and accept this test's peer into its backlog; dropping it reset the
+    // peer, and the slice then bound the port and waited for a client that was
+    // already gone. No listener is bound here at all: ports are handed out
+    // from a counter seeded by the process id, in a range below the kernel's
+    // ephemeral ports, so a peer can only ever connect to the slice it belongs
+    // to, and the first connect attempts are refused until that slice binds.
+    static NEXT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
+    let base = 20_000 + (std::process::id() % 20_000) as u16;
+    let taken = NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    base + (taken % 9_000)
 }
 
 /// Connects to the slice's listener, which is bound inside the first turn —
@@ -58,6 +72,20 @@ pub fn connect_when_bound(port: u16) -> TcpStream {
             }
         }
     }
+}
+
+/// One peer that connects, takes whatever the slice writes it, and answers
+/// nothing at all. The connection stays open — a peer that closed it would be
+/// an end of stream rather than a silence — until the run ends and its side
+/// of the socket goes with it, which is what the `read_to_end` here waits for.
+/// The slice's read therefore finds nothing on every ask until the deadline it
+/// was given runs out, and that is what makes `Wire.Heard.TimedOut` reachable.
+pub fn silent_peer(port: u16) -> thread::JoinHandle<()> {
+    thread::spawn(move || {
+        let mut stream = connect_when_bound(port);
+        let mut taken = Vec::new();
+        let _ = stream.read_to_end(&mut taken);
+    })
 }
 
 /// One peer that takes every body the slice writes it — in as many pieces as
