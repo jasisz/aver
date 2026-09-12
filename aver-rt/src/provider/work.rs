@@ -337,6 +337,12 @@ pub struct WorkKindProvider {
     /// Every job kind of a program shares one engine and `Work.Job` is one
     /// type, so a handle minted by one kind type-checks as an argument to
     /// another kind's `take`. Only the runtime can tell them apart.
+    ///
+    /// An id is never removed, not by `take` and not by `cancel`: a taken or
+    /// cancelled job must still be recognised as this kind's, so that a
+    /// second `take` answers "already taken" rather than "not started by job
+    /// kind". The set therefore grows by one `u64` per job for the life of
+    /// the process, which is the price of that answer staying right.
     minted: std::sync::Mutex<std::collections::BTreeSet<u64>>,
 }
 

@@ -1048,6 +1048,17 @@ mod policy_tests {
     }
 }
 
+/// The replay runtime emitted into a generated crate.
+///
+/// TODO(owner): a recorded `take` answer that is a capability-owned record is
+/// written into the recording with its qualified type name (`Scorer.Report`)
+/// while the same run's recorded task is written bare (`Task`), so nothing
+/// decodes it: this runtime panics with a type mismatch and `aver replay`
+/// calls it a divergence. The naming comes from the VM's job recording
+/// (jasisz/aver#1337), not from this backend, and both backends refuse, so it
+/// is not a parity break — but until the recorded name agrees with itself,
+/// decision 5 of the Rust-backend brief is demonstrated for scalar answers
+/// only, and the refusal here should be a diagnostic rather than a panic.
 const REPLAY_RUNTIME_TEMPLATE: &str = r#"pub mod aver_replay {
     use std::cell::RefCell;
     use std::collections::{BTreeMap, BTreeSet};
