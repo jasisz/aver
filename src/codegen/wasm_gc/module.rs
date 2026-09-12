@@ -8458,14 +8458,14 @@ fn allocate_factory_exports(
                 .ok_or(WasmGcError::Validation(
                     "Tcp.poll requires the Map<Int, Tcp.Socket> slots".into(),
                 ))?;
-            let key_box =
-                registry
-                    .primitive_key_box
-                    .get("Int")
-                    .copied()
-                    .ok_or(WasmGcError::Validation(
-                        "Tcp.poll requires the boxed Int map-key slot".into(),
-                    ))?;
+            // The keys this poll reads are boxed `Int`s, so the slot has to be
+            // there; nothing below names it, the presence is the whole check.
+            registry
+                .primitive_key_box
+                .get("Int")
+                .ok_or(WasmGcError::Validation(
+                    "Tcp.poll requires the boxed Int map-key slot".into(),
+                ))?;
             let map_ref = ref_null(map.map);
             let int_ref = registry
                 .aint_struct_idx
@@ -8497,7 +8497,6 @@ fn allocate_factory_exports(
             });
             *next_type_idx += 1;
             *next_fn_idx += 1;
-            let _ = key_box;
         }
 
         let string_idx = registry

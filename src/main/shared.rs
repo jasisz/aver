@@ -63,6 +63,7 @@ pub(super) fn apply_runtime_policy_to_vm(
 /// what keeps a manifest key from quietly meaning something different per
 /// target. `has_job_kinds` keeps the warning off a program that sets the key
 /// but starts no job on this target.
+#[cfg(any(feature = "wasm", feature = "wasip2"))]
 pub(super) fn bind_and_warn_about_jobs(
     config: Option<&aver::config::ProjectConfig>,
     target: &str,
