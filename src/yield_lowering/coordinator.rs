@@ -715,7 +715,7 @@ fn write_loop(
 
     // ── The view ───────────────────────────────────────────────────
     out.push_str(&format!(
-        "\nfn __view(run: __Run, ready: List<Int>) -> {view}\n    ? \"The resource-free summary of a run that the three policies read, and the only shape a law about them can sample. It is built again for every id the turn asks about, deliberately: a policy reads the seating this turn has already changed, not the seating the turn began with.\"\n    __viewOf(run, ready, {})\n",
+        "\nfn __view(run: __Run, ready: List<Int>) -> {view}\n    ? \"The resource-free summary of a run that the three policies read, and the only shape a law about them can sample. It is built again for every id the turn asks about, deliberately: a policy reads the seating this turn has already changed, not the seating the turn began with.\"\n    __viewOf(run, ready, {}, Map.keys(run.slots))\n",
         if has_jobs {
             format!("Map.len(run.{JOBS_FIELD})")
         } else {
@@ -723,7 +723,7 @@ fn write_loop(
         }
     ));
     out.push_str(&format!(
-        "\nfn __viewOf(run: __Run, ready: List<Int>, jobs: Int) -> {view}\n    ? \"The view, once the turn has counted the jobs it is running.\"\n    {view}(pending = __pendingOf(run, Map.keys(run.slots), {{}}), ready = ready, askable = __askableOf(run, ready, Map.keys(run.slots), []), jobs = jobs, room = __maxJobs() - jobs, stopping = run.stopping)\n"
+        "\nfn __viewOf(run: __Run, ready: List<Int>, jobs: Int, ids: List<Int>) -> {view}\n    ? \"The view, once the turn has counted the jobs it is running and the ids it is summarising. The ids are handed in rather than read twice, so a program that asks for a loop is never warned about a repetition it did not write.\"\n    {view}(pending = __pendingOf(run, ids, {{}}), ready = ready, askable = __askableOf(run, ready, ids, []), jobs = jobs, room = __maxJobs() - jobs, stopping = run.stopping)\n"
     ));
     out.push_str(&format!(
         "\nfn __pendingOf(run: __Run, ids: List<Int>, acc: Map<Int, {marker}>) -> Map<Int, {marker}>\n    ? \"One marker per seated process, in key order.\"\n    match ids\n        [] -> acc\n        [id, ..rest] -> __pendingOf(run, rest, __pendingAt(run, id, acc))\n"
