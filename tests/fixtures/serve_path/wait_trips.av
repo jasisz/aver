@@ -1,0 +1,33 @@
+module WaitTrips
+    intent =
+        "The same stall as trips.av, over the wait the generated coordinator"
+        "performs: one Wait.poll turn that drains a whole queue from disk"
+        "before it waits again. Wait.poll ends a turn exactly as Tcp.poll does."
+    depends [Wait]
+    exposes [turn]
+    effects [Wait.poll, Disk.readText]
+
+fn drain(n: Int) -> Result<Unit, String>
+    ? "Reads n entries, one per step."
+    ! [Disk.readText]
+    match n < 1
+        true -> Result.Ok(Unit)
+        false -> drainStep(n)
+
+fn drainStep(n: Int) -> Result<Unit, String>
+    ? "Reads one entry, then continues the drain."
+    ! [Disk.readText]
+    _entry = Disk.readText("queue.log")?
+    drain(n - 1)
+
+fn flush(n: Int) -> Result<Unit, String>
+    ? "Hands the queue to the drain."
+    ! [Disk.readText]
+    drain(n)
+
+fn turn(n: Int) -> Result<Unit, String>
+    ? "One wait, then the whole drain."
+    ! [Wait.poll, Disk.readText]
+    items: Map<Int, Wait.Item> = {}
+    ready = Wait.poll(items, 100)?
+    flush(n + List.len(ready))

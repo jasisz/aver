@@ -1,7 +1,9 @@
 //! `warning[serve-path]`: an effectful loop that runs to completion inside
-//! one turn of a `Tcp.poll` loop.
+//! one turn of a poll loop.
 //!
-//! A function that calls `Tcp.poll` directly is a turn of an event loop:
+//! A function that calls a wait directly — `Tcp.poll` over sockets, or
+//! `Wait.poll` over sockets and jobs together, which is the wait the
+//! generated coordinator performs — is a turn of an event loop:
 //! between two waits it serves whatever became ready. If, inside that turn,
 //! it reaches a loop that reads from `Disk` or `Tcp` on every step and
 //! whose recursion is not bounded by the list it was handed, that loop runs
@@ -10,16 +12,16 @@
 //!
 //! The condition is purely structural, over the module's own call graph:
 //!
-//! - `F` calls `Tcp.poll` directly.
+//! - `F` calls a wait directly.
 //! - The recursive components are computed on the call graph WITHOUT every
-//!   function that calls `Tcp.poll` directly, `F` among them: the same
+//!   function that calls a wait directly, `F` among them: the same
 //!   predicate the walk's stop rule uses. A cycle that passes through a
 //!   poller passes through its wait, so it disappears with the poller and
 //!   is never a stall; a cycle that avoids every wait survives the cut and
 //!   is one.
 //! - The walk starts at `F`'s callees, never re-enters `F`, and stops at
-//!   any function that itself calls `Tcp.poll` directly: that is the next
-//!   turn boundary, not a stall. `Tcp.poll` is never a blocking effect for
+//!   any function that itself calls a wait directly: that is the next
+//!   turn boundary, not a stall. A wait is never a blocking effect for
 //!   this check.
 //! - `G` is reached, is recursive in the reduced graph, and declares an
 //!   INPUT operation: any `Disk.read*`, `Disk.size`, `Disk.listDir`,
@@ -49,7 +51,10 @@ use crate::call_graph;
 
 use super::{CheckFinding, FindingSpan, FnSigMap, dotted_name};
 
-const POLL: &str = "Tcp.poll";
+/// The waits a turn ends at. `Tcp.poll` waits on sockets alone; `Wait.poll`
+/// waits on sockets and jobs together, and is the wait the generated
+/// coordinator uses. Both end a turn, so both cut the call graph here.
+const POLLS: [&str; 2] = ["Tcp.poll", "Wait.poll"];
 
 pub fn collect_serve_path_warnings(items: &[TopLevel], fn_sigs: &FnSigMap) -> Vec<CheckFinding> {
     let fns: Vec<&FnDef> = items
@@ -77,7 +82,19 @@ pub fn collect_serve_path_warnings(items: &[TopLevel], fn_sigs: &FnSigMap) -> Ve
     let polls_directly = |name: &str| {
         callees
             .get(name)
-            .is_some_and(|list| list.iter().any(|callee| callee == POLL))
+            .is_some_and(|list| list.iter().any(|callee| POLLS.contains(&callee.as_str())))
+    };
+    // The wait a poller actually calls, so the warning names the one whose
+    // peers are stalled rather than assuming sockets.
+    let wait_of = |name: &str| -> &'static str {
+        callees
+            .get(name)
+            .and_then(|list| {
+                POLLS
+                    .into_iter()
+                    .find(|poll| list.iter().any(|callee| callee == poll))
+            })
+            .unwrap_or(POLLS[0])
     };
 
     // The loops that survive without the pollers: a cycle through a poller
@@ -132,8 +149,9 @@ pub fn collect_serve_path_warnings(items: &[TopLevel], fn_sigs: &FnSigMap) -> Ve
                         file: None,
                         fn_name: Some(fd.name.clone()),
                         message: format!(
-                            "`{name}` is an effectful loop that runs to completion inside one turn of `{f}`; peers waiting on `Tcp.poll` are not served until it returns. Do one step of `{name}` per turn, or run `{name}` as its own command.",
-                            f = fd.name
+                            "`{name}` is an effectful loop that runs to completion inside one turn of `{f}`; peers waiting on `{wait}` are not served until it returns. Do one step of `{name}` per turn, or run `{name}` as its own command.",
+                            f = fd.name,
+                            wait = wait_of(&fd.name)
                         ),
                         extra_spans: vec![FindingSpan {
                             line: def_lines.get(name.as_str()).copied().unwrap_or(fd.line),
@@ -230,7 +248,8 @@ fn input_effects(fn_sigs: &FnSigMap, name: &str) -> Option<String> {
 /// `Tcp.peerAddress`, the dialling and round-tripping `Tcp.send`,
 /// `Tcp.sendBytes`, `Tcp.ping`, `Tcp.connect`, or a bare `Disk` / `Tcp`
 /// namespace. Writes alone do not make a loop a stall: what they write is
-/// bounded by this turn's data. `Tcp.poll` is a wait, never an input.
+/// bounded by this turn's data. `Tcp.poll` and `Wait.poll` are waits, never
+/// inputs.
 fn is_input_effect(effect: &str) -> bool {
     match effect.split_once('.') {
         None => effect == "Disk" || effect == "Tcp",

@@ -429,8 +429,10 @@ impl VM {
 
         self.runtime.sync_caller_fn_id(caller_fn_id);
         // A wait ends the turn, whether the poll is live or a verify stub:
-        // the turn budget measures what runs between two waits.
-        if self.turn_limit.is_some() && name == "Tcp.poll" {
+        // the turn budget measures what runs between two waits. `Wait.poll`
+        // is a wait exactly as `Tcp.poll` is — it is the one the generated
+        // coordinator performs — so it ends a turn too.
+        if self.turn_limit.is_some() && matches!(name.as_str(), "Tcp.poll" | "Wait.poll") {
             self.turn_start = self.step_count;
         }
         let required_effects = self

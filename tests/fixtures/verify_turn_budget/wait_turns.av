@@ -1,0 +1,33 @@
+module WaitTurns
+    intent =
+        "Many short turns cut by Wait.poll rather than Tcp.poll: wait, a"
+        "little pure work, wait again, repeated. Every turn stays well under"
+        "the budget while the whole case runs past it, so only a count that"
+        "resets on Wait.poll as well stays quiet."
+    depends [Wait]
+    exposes [serveMany]
+    effects [Wait.poll]
+
+fn pollStub(branch: BranchPath, call: Int, items: Map<Int, Wait.Item>, timeoutMs: Int) -> Result<List<Int>, String>
+    ? "Nothing is ever ready."
+    Result.Ok([])
+
+fn spin(n: Int, acc: Int) -> Int
+    ? "Counts n down to zero, counting acc up; the loop is one turn's work."
+    match n < 1
+        true -> acc
+        false -> spin(n - 1, acc + 1)
+
+fn serveMany(work: Int, turns: Int, total: Int) -> Result<Int, String>
+    ? "Waits, runs work steps of pure computation, and repeats turns more times."
+    ! [Wait.poll]
+    items: Map<Int, Wait.Item> = {}
+    ready = Wait.poll(items, 0)?
+    done = total + spin(work, 0) + List.len(ready)
+    match turns < 1
+        true -> Result.Ok(done)
+        false -> serveMany(work, turns - 1, done)
+
+verify serveMany
+    given poller: Wait.poll = [pollStub]
+    serveMany(5000, 10, 0) => Result.Ok(55000)
