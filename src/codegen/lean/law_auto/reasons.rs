@@ -105,21 +105,14 @@ fn solver(
     // A cone that calls `Map.set` gets the prelude's facts about it, and one
     // that calls `Map.remove` the removal's own size fact; the same names make
     // the demand-driven prelude ship their proofs.
-    let map_facts = definitions
-        .map_facts
-        .then_some(crate::codegen::lean::prelude::MAP_SET_FACT_LEMMAS.as_slice())
-        .into_iter()
-        .flatten()
-        .chain(
-            definitions
-                .map_remove_facts
-                .then_some(crate::codegen::lean::prelude::MAP_REMOVE_FACT_LEMMAS.as_slice())
-                .into_iter()
-                .flatten(),
-        )
-        .copied()
-        .collect::<Vec<_>>()
-        .join(", ");
+    let mut cited: Vec<&str> = Vec::new();
+    if definitions.map_facts {
+        cited.extend(crate::codegen::lean::prelude::MAP_SET_FACT_LEMMAS);
+    }
+    if definitions.map_remove_facts {
+        cited.extend(crate::codegen::lean::prelude::MAP_REMOVE_FACT_LEMMAS);
+    }
+    let map_facts = cited.join(", ");
     let simp_defs = [definitions.simp.as_str(), map_facts.as_str()]
         .into_iter()
         .filter(|s| !s.is_empty())
