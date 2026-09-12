@@ -5,22 +5,25 @@ schema = 1
 capability = "Pool"
 answer = "Pooled"
 
-# Two job kinds under one generated loop. The generated turn crosses one job
-# seam, so this is refused rather than lowered.
+# Two job kinds under one generated loop, sharing one table and one limit.
+# Each seam is three ends: the task to start, the consumption of a task whose
+# job began, and the state update a finished job lands.
 [[providers.bindings]]
 capability = "Alpha"
 work = "Pooled.scoreAlpha"
 task = "Pooled.alphaTask"
+started = "Pooled.alphaStarted"
 landed = "Pooled.alphaLanded"
 
 [[providers.bindings]]
 capability = "Beta"
 work = "Pooled.scoreBeta"
 task = "Pooled.betaTask"
+started = "Pooled.betaStarted"
 landed = "Pooled.betaLanded"
 
 [work]
-max-jobs = 1
+max-jobs = 3
 
 [run]
 order = "Node.order"

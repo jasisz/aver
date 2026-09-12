@@ -1,7 +1,7 @@
 module Ledger
     intent = "The answers this program gives to Pool, Blocks and Chain: one state, pure transitions, plus the two ends of the validation job's seam."
     depends [Bytes, Wait, Pool, Blocks, Chain]
-    exposes [State, fresh, blockOf, claim, gone, joined, swept, deliver, body, nextTarget, commit, nextTask, validated, accepted, validate, checked]
+    exposes [State, fresh, blockOf, claim, gone, joined, swept, deliver, body, nextTarget, commit, nextTask, taskStarted, validated, accepted, validate, checked]
     effects []
 
 record State
@@ -85,6 +85,22 @@ fn nextTask(state: State) -> Option<Tuple<Int, Bytes>>
         [] -> Option.None
         [head, ..rest] -> Option.Some(head)
 
+fn taskStarted(state: State, task: Tuple<Int, Bytes>) -> State
+    ? "A task whose validation job just began leaves the queue it was offered from — every copy of it — so the next ask is offered a different one. Named by aver.toml's started key."
+    State.update(state, queued = withoutTask(state.queued, task, []))
+
+fn withoutTask(queued: List<Tuple<Int, Bytes>>, task: Tuple<Int, Bytes>, acc: List<Tuple<Int, Bytes>>) -> List<Tuple<Int, Bytes>>
+    ? "The queue with every copy of one task taken out, in the order the rest were queued."
+    match queued
+        [] -> acc
+        [head, ..rest] -> withoutTask(rest, task, keptUnlessTask(acc, head, task))
+
+fn keptUnlessTask(acc: List<Tuple<Int, Bytes>>, entry: Tuple<Int, Bytes>, task: Tuple<Int, Bytes>) -> List<Tuple<Int, Bytes>>
+    ? "One queued entry, kept unless it is the task that just started."
+    match entry == task
+        true -> acc
+        false -> List.concat(acc, [entry])
+
 fn validated(state: State, outcome: Result<Int, String>) -> State
     ? "Where a validation that is over lands. Named by aver.toml's landed key. It resumes nobody: the peer that delivered this body moved on and its instance number changed. A validation that will never produce a height — cancelled, stopped, or forgotten by the engine — is recorded as a rejection instead, and the run goes on without it."
     match outcome
@@ -156,6 +172,31 @@ verify commit
 verify nextTask
     nextTask(fresh()) => Option.None
     nextTask(State.update(fresh(), queued = [(1, blockOf(1))])) => Option.Some((1, blockOf(1)))
+
+verify withoutTask law theStartedTaskIsOut
+    given queued: List<Tuple<Int, Bytes>> = [[], [(1, blockOf(1))], [(1, blockOf(1)), (2, blockOf(2))]]
+    given task: Tuple<Int, Bytes> = [(1, blockOf(1)), (2, blockOf(2))]
+    given acc: List<Tuple<Int, Bytes>> = [[], [(3, blockOf(3))]]
+    List.contains(withoutTask(queued, task, acc), task) => List.contains(acc, task)
+
+verify taskStarted law aStartedTaskIsNotAskedAgain
+    given state: State = [fresh(), State.update(fresh(), queued = [(1, blockOf(1))]), State.update(fresh(), queued = [(1, blockOf(1)), (2, blockOf(2))])]
+    given task: Tuple<Int, Bytes> = [(1, blockOf(1)), (2, blockOf(2))]
+    when nextTask(state) == Option.Some(task)
+    using [withoutTask.theStartedTaskIsOut]
+    nextTask(taskStarted(state, task)) != Option.Some(task) holds
+
+verify taskStarted
+    taskStarted(fresh(), (1, blockOf(1))) => fresh()
+    taskStarted(State.update(fresh(), queued = [(1, blockOf(1)), (2, blockOf(2))]), (1, blockOf(1))) => State.update(fresh(), queued = [(2, blockOf(2))])
+
+verify withoutTask
+    withoutTask([], (1, blockOf(1)), []) => []
+    withoutTask([(1, blockOf(1)), (2, blockOf(2))], (1, blockOf(1)), []) => [(2, blockOf(2))]
+
+verify keptUnlessTask
+    keptUnlessTask([], (1, blockOf(1)), (1, blockOf(1))) => []
+    keptUnlessTask([], (2, blockOf(2)), (1, blockOf(1))) => [(2, blockOf(2))]
 
 verify validated
     validated(State.update(fresh(), queued = [(1, blockOf(1))]), Result.Ok(1)) => State.update(fresh(), bodies = Map.set({}, 1, blockOf(1)))

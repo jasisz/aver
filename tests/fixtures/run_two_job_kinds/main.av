@@ -1,7 +1,7 @@
 module Node
-    intent = "Fixture: a generated loop whose manifest declares two job kinds, which this build refuses."
+    intent = "Fixture: two job kinds under one generated loop with max-jobs = 3. Four tasks share the table and the limit; the run ends when the pool reports what they scored, which is the proof each of them landed once."
     depends [Process, Wait, Work, Pool, Alpha, Beta, Pooled]
-    effects [Pool.claim, yield]
+    effects [Console.print, Pool.claim, yield]
     exposes [Pending, View, order, admit, stop]
 
 type Pending
@@ -16,11 +16,11 @@ record View
     stopping: Bool
 
 fn looping() -> Unit
-    ? "Claims handles until the pool answers None."
-    ! [Pool.claim, yield]
+    ? "Claims handles until the pool finishes it — which happens only once every task has landed — and says what they scored."
+    ! [Console.print, Pool.claim, yield]
     match Pool.claim()
-        Option.None -> Unit
-        Option.Some(_) -> looping()
+        Pool.Assignment.Handle(_) -> looping()
+        Pool.Assignment.Finished(scored) -> Console.print("all jobs landed: scored {scored}")
 
 fn order(view: View) -> List<Int>
     ? "Every seated process, in slot order."

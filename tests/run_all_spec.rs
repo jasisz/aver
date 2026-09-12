@@ -327,7 +327,13 @@ fn the_dump_shows_the_loop_that_was_generated() {
         "fn main() -> Result<Unit, String>",
         "fn __servePeer(run: __Run, id: Int, seq: Int, request: __PeerRequest) -> __Run",
         "Ledger.claim(run.ledger)",
-        "Validation.begin(payload)?",
+        // The job seam's third end: `begin` answers a Result the turn matches
+        // on, and only the Ok half records the start through `started`.
+        "Option.Some(task) -> __beganValidation(run, task, (Validation).begin(task))",
+        "Result.Ok(job) -> __startJobsValidation(__seatedJobValidation(run, task, job))",
+        "ledger = __consumedValidation(run.ledger, task)",
+        "fn __consumedValidation(state: Ledger.State, task: Tuple<Int, Bytes>) -> Ledger.State",
+        "(Ledger).taskStarted(state, task)",
         "verify __settlePeer law lateAnswerIsDropped",
         // The view is built again per id on purpose, and the generated
         // description says so rather than leaving a reader to wonder.
@@ -335,7 +341,7 @@ fn the_dump_shows_the_loop_that_was_generated() {
         // The run ends by cancelling what is still running rather than
         // dropping its handles.
         "fn __cancelEach(run: __Run, keys: List<Int>) -> Result<Unit, String>",
-        "Option.Some(job) -> __cancelled(run, key, (Work).cancel(job))",
+        "Option.Some(job) -> __cancelled(run, key, (Work).cancel(__jobHandle(job)))",
     ] {
         assert!(text.contains(line), "{line} missing from the dump");
     }
@@ -479,12 +485,13 @@ fn a_process_written_outside_the_module_the_loop_is_generated_into_is_refused() 
     );
 }
 
-/// The turn asks the answer state for the next task once per slot of room, and
-/// starting a job does not change that state, so a limit above one would start
-/// the same task once per slot. That is refused with the reason rather than
-/// run.
+/// A limit above one runs rather than being refused: `started` consumes the
+/// task the moment its job begins, so the turn's next ask is offered a
+/// different one and the slots of room start different tasks. The slice is
+/// raised to `max-jobs = 4` and played against the same loopback peer; the
+/// three bodies are fetched, validated and connected exactly as before.
 #[test]
-fn a_job_limit_above_one_is_refused_because_the_turn_would_start_one_task_twice() {
+fn a_job_limit_above_one_runs_the_same_slice() {
     let dir = scratch("max-jobs");
     let slice = fixture(SLICE);
     for entry in std::fs::read_dir(&slice).expect("the slice") {
@@ -500,14 +507,37 @@ fn a_job_limit_above_one_is_refused_because_the_turn_would_start_one_task_twice(
         .replace("max-jobs = 1", "max-jobs = 4");
     std::fs::write(&manifest, raised).expect("raising the limit");
 
+    let port = free_port();
+    let peer = loopback_peer(port);
     let mut command = Command::new(aver_bin());
     command.current_dir(&dir);
-    command.arg("check").arg("main.av");
-    command.arg("--module-root").arg(&dir);
+    command
+        .arg("run")
+        .arg("main.av")
+        .arg("--module-root")
+        .arg(&dir)
+        .arg("--")
+        .arg(port.to_string());
     let out = command.output().expect("aver runs");
-    let text = combined(&out);
+    assert!(out.status.success(), "{}", format_output(&out));
+    peer.join()
+        .expect("the loopback peer played its whole part");
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(
+        text.matches("peer: asking the pool for work").count(),
+        4,
+        "{}",
+        format_output(&out)
+    );
+    assert_eq!(
+        text.matches("walk: looking for the next block to connect")
+            .count(),
+        4,
+        "{}",
+        format_output(&out)
+    );
     assert!(
-        text.contains("error[run-binding]:") && text.contains("This program's limit is 4"),
+        text.contains("sockets: 3 payloads took 6 asks and 6 reads"),
         "{}",
         format_output(&out)
     );
@@ -551,8 +581,15 @@ fn the_generated_take_removes_a_job_only_when_its_outcome_is_final() {
     let out = command.output().expect("aver runs");
     let text = combined(&out);
     for line in [
+        // The table holds one `__Job` sum over every kind, so a take key is
+        // read against the whole table and dispatched on the variant.
+        "type __Job\n    Validation(Work.Job)",
+        "jobs: Map<Int, __Job>",
+        "fn __jobHandle(job: __Job) -> Work.Job",
+        "__Job.Validation(handle) -> handle",
         "fn __takenValidation(run: __Run, key: Int) -> __Run",
-        "Option.Some(job) -> __reportedValidation(run, key, (Validation).take(job))",
+        "Option.Some(job) -> match job",
+        "__Job.Validation(handle) -> __reportedValidation(run, key, (Validation).take(handle))",
         "fn __reportedValidation(run: __Run, key: Int, taken: Result<Option<Int>, String>) -> __Run",
         "Result.Err(reason) -> __landedValidation(run, key, (Result).Err(reason))",
         "fn __finishedValidation(run: __Run, key: Int, payload: Option<Int>) -> __Run",
@@ -570,27 +607,119 @@ fn the_generated_take_removes_a_job_only_when_its_outcome_is_final() {
     );
 }
 
-/// The generated turn crosses one job seam: it takes and starts the jobs of
-/// `jobs[0]` and nothing else, while the checker admits any number of job
-/// kinds. A second kind would be declared, accepted and then never started
-/// or taken, so it is refused with the reason, at every door, exactly as the
-/// `max-jobs` refusal is.
+/// Two job kinds under one generated loop: the turn takes and starts both
+/// kinds over one table and one shared `max-jobs` limit. The fixture queues
+/// two tasks of each kind and parks the process until all four have landed;
+/// the score it reports — 65 — is only what 2+3+20+40 makes, which is the
+/// proof that each of the four tasks was started once and landed once.
 #[test]
-fn two_job_kinds_under_one_generated_loop_are_refused() {
-    let sentence = "the generated turn crosses the seam of one job kind, and this program declares 2: Alpha, Beta. One job kind per generated loop is the limit in this build";
-    for command in ["check", "run"] {
-        let out = aver("run_two_job_kinds", &[command]);
-        assert!(!out.status.success(), "{command}: {}", format_output(&out));
-        assert!(
-            combined(&out).contains(sentence),
-            "{command}: {}",
-            format_output(&out)
-        );
-    }
+fn two_job_kinds_under_one_generated_loop_each_land_once() {
+    let out = aver("run_two_job_kinds", &["run"]);
+    assert!(out.status.success(), "{}", format_output(&out));
     assert!(
-        combined(&aver("run_two_job_kinds", &["check"])).contains("error[run-binding]:"),
-        "the refusal is slugged"
+        combined(&out).contains("all jobs landed: scored 65"),
+        "{}",
+        format_output(&out)
     );
+    for command in ["check", "verify"] {
+        let out = aver("run_two_job_kinds", &[command]);
+        assert!(out.status.success(), "{command}: {}", format_output(&out));
+    }
+    let verified = combined(&aver("run_two_job_kinds", &["verify"]));
+    for law in [
+        "__consumedAlpha law aStartedTaskIsNotAskedAgain",
+        "__consumedBeta law aStartedTaskIsNotAskedAgain",
+        "__startableAlpha law aFullTableAsksNothing",
+        "__startableBeta law aFullTableAsksNothing",
+    ] {
+        assert!(verified.contains(law), "{law} missing from:\n{verified}");
+    }
+    assert!(verified.contains("0 failed"), "{verified}");
+}
+
+/// One table and one limit for every kind: `__Job` is the generated sum that
+/// lets `jobs: Map<Int, __Job>` carry both kinds, `__jobHandle` unwraps it for
+/// the wait and the cancel, and a take dispatches on the variant before it
+/// reaches this kind's `take`. The room the ask checks is `max-jobs` minus
+/// the whole table, not minus this kind's own count.
+#[test]
+fn the_two_kinds_share_one_table_and_one_limit() {
+    let dir = fixture("run_two_job_kinds");
+    let mut command = Command::new(aver_bin());
+    command.current_dir(&dir);
+    command.env("AVER_YIELD_DUMP", "1");
+    command.arg("check").arg("main.av");
+    command.arg("--module-root").arg(&dir);
+    let out = command.output().expect("aver runs");
+    let text = combined(&out);
+    for line in [
+        "type __Job\n    Alpha(Work.Job)\n    Beta(Work.Job)",
+        "jobs: Map<Int, __Job>",
+        "fn __jobHandle(job: __Job) -> Work.Job",
+        "__Job.Alpha(handle) -> handle",
+        "__Job.Beta(handle) -> handle",
+        "fn __roomLeft(run: __Run) -> Int",
+        "__maxJobs() - Map.len(run.jobs)",
+        "fn __takeEachAlpha(run: __Run, ready: List<Int>) -> __Run",
+        "fn __takeEachBeta(run: __Run, ready: List<Int>) -> __Run",
+        "__Job.Alpha(handle) -> __reportedAlpha(run, key, (Alpha).take(handle))",
+        "__Job.Beta(_) -> run",
+        "__Job.Beta(handle) -> __reportedBeta(run, key, (Beta).take(handle))",
+        "__Job.Alpha(_) -> run",
+        "fn __startJobsAlpha(run: __Run) -> __Run",
+        "fn __startJobsBeta(run: __Run) -> __Run",
+        "Option.Some(task) -> __beganAlpha(run, task, (Alpha).begin(task))",
+        "Option.Some(task) -> __beganBeta(run, task, (Beta).begin(task))",
+        "pooled = __consumedAlpha(run.pooled, task)",
+        "pooled = __consumedBeta(run.pooled, task)",
+        "(Pooled).alphaStarted(state, task)",
+        "(Pooled).betaStarted(state, task)",
+        // The turn takes every kind first and then starts every kind, so a
+        // job that landed this turn frees room the same turn can use.
+        "taken0 = __takeEachAlpha(served, ready)",
+        "taken1 = __takeEachBeta(taken0, ready)",
+        "started0 = __startJobsAlpha(taken1)",
+        "Result.Ok(__startJobsBeta(started0))",
+    ] {
+        assert!(text.contains(line), "{line} missing from the dump");
+    }
+}
+
+/// A recorded run of the two-kind fixture replays to the same run: every job
+/// outcome the recording carried comes back out of the replay, kind by kind.
+#[test]
+fn a_recorded_run_of_two_job_kinds_replays_to_the_same_run() {
+    let dir = scratch("two-kinds-replay");
+    let mut recorded = Command::new(aver_bin());
+    recorded
+        .current_dir(fixture("run_two_job_kinds"))
+        .arg("run")
+        .arg("main.av")
+        .arg("--module-root")
+        .arg(fixture("run_two_job_kinds"))
+        .arg("--record")
+        .arg(&dir);
+    let out = recorded.output().expect("aver runs");
+    assert!(out.status.success(), "{}", format_output(&out));
+    assert!(
+        combined(&out).contains("all jobs landed: scored 65"),
+        "{}",
+        format_output(&out)
+    );
+
+    let recording = only_recording(&dir);
+    let mut command = Command::new(aver_bin());
+    command.current_dir(fixture("run_two_job_kinds"));
+    command.arg("replay").arg(&recording);
+    command.arg("--check-args");
+    let replayed = command.output().expect("aver replays");
+    assert!(replayed.status.success(), "{}", format_output(&replayed));
+    assert!(
+        combined(&replayed).contains("Output:  MATCH"),
+        "{}",
+        format_output(&replayed)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -689,7 +818,7 @@ fn the_generated_invariants_reach_the_lean_wall() {
     );
     assert_eq!(
         summary["universal_laws"].as_u64(),
-        Some(28),
+        Some(32),
         "universal-law drift:\n{}",
         format_output(&out)
     );

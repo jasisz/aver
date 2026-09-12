@@ -28,11 +28,13 @@ capability = "Clock"
 answer = "Clocked"
 
 # A job kind: the runtime runs Ledger.validate off the turn, takes its next
-# task from Ledger.nextTask and lands its result in Ledger.validated.
+# task from Ledger.nextTask, records the start in Ledger.taskStarted and
+# lands its result in Ledger.validated.
 [[providers.bindings]]
 capability = "Validation"
 work = "Ledger.validate"
 task = "Ledger.nextTask"
+started = "Ledger.taskStarted"
 landed = "Ledger.validated"
 
 [work]

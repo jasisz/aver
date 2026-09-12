@@ -1,10 +1,14 @@
 module Pool
     kind = capability
     semantics = effectful
-    intent = "Fixture capability: hands out Int handles; the program answers it."
-    exposes [claim]
+    intent = "Fixture capability: hands out Int handles; the program answers it. When every job has landed it reports what they scored."
+    exposes [Assignment, claim]
 
-operation claim() -> Option<Int>
-    ? "The next handle, or None when there is nothing left."
+type Assignment
+    Handle(Int)
+    Finished(Int)
+
+operation claim() -> Pool.Assignment
+    ? "The next handle while there is one, or what all four jobs scored once they have landed."
     oracle = generative
     replay = recorded
