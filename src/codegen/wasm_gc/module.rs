@@ -180,9 +180,22 @@ pub(super) fn emit_module_with(
         .map(|plan| plan.resource_types().iter().cloned().collect())
         .unwrap_or_default();
     let force_bignum = capability_wasm_gc_plan.is_some_and(|plan| plan.force_bignum());
-    let capability_boundary_types = capability_wasm_gc_plan
+    let mut capability_boundary_types = capability_wasm_gc_plan
         .map(|plan| plan.boundary_type_strings())
         .unwrap_or_default();
+    // jasisz/aver#1329 — a job kind is answered by the program on both wasm
+    // targets, so it is in whichever plan reached this emitter rather than in
+    // an import table. The task and payload types can be spelled nowhere else
+    // in the program, so the registry is told about them here.
+    let job_kinds: &[crate::capability::work::JobKindPlan] =
+        match (capability_wasm_gc_plan, capability_wit_plan) {
+            (Some(plan), _) if matches!(target, super::TargetMode::AverBridge) => plan.job_kinds(),
+            (_, Some(plan)) if matches!(target, super::TargetMode::Wasip2) => {
+                capability_boundary_types.extend(plan.job_boundary_type_strings());
+                plan.job_kinds()
+            }
+            _ => &[],
+        };
     let mut registry = TypeRegistry::build_with_handler_and_capabilities(
         items,
         &resolved_fn_defs,
@@ -190,6 +203,7 @@ pub(super) fn emit_module_with(
         capability_resources,
         force_bignum,
         &capability_boundary_types,
+        job_kinds,
     );
     // Identity-preserving qualified spellings for sole-declarer dep types,
     // derived by `flatten_multimodule` from its collision info. Entry-side
@@ -2752,6 +2766,25 @@ pub(super) fn emit_module_with(
         }
         None => None,
     };
+    // jasisz/aver#1329 — the one piece of module state a job needs: the
+    // counter that mints handle ids. Everything else about a job lives in
+    // the handle, because the job ran at `begin`. Appended last so every
+    // other global keeps its index.
+    let job_next_id_global: Option<u32> = if job_kinds.is_empty() {
+        None
+    } else {
+        globals.global(
+            wasm_encoder::GlobalType {
+                val_type: ValType::I64,
+                mutable: true,
+                shared: false,
+            },
+            &wasm_encoder::ConstExpr::i64_const(0),
+        );
+        let idx = next_global_idx;
+        next_global_idx += 1;
+        Some(idx)
+    };
     if next_global_idx > 0 {
         module.section(&globals);
     }
@@ -2957,8 +2990,24 @@ pub(super) fn emit_module_with(
     } else {
         None
     };
+    // jasisz/aver#1329 — resolve each job kind against this module: the
+    // wasm index of the function the manifest bound, the slots its answer is
+    // built from, and the global that mints handle ids.
+    let jobs = super::jobs::build_lowering(
+        job_kinds,
+        &registry,
+        |function| {
+            let flattened = function.replace('.', "_");
+            fn_defs
+                .iter()
+                .position(|fd| fd.name == flattened || fd.name == function)
+                .map(|i| import_count + 1 + (i as u32))
+        },
+        job_next_id_global.unwrap_or_default(),
+    )?;
     let fn_map = FnMap {
         by_id,
+        jobs,
         builtins: builtin_idx_lookup,
         effects: effect_idx_lookup.clone(),
         map_helpers: map_helpers_lookup,

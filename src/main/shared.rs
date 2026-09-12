@@ -54,6 +54,34 @@ pub(super) fn apply_runtime_policy_to_vm(
     Ok(())
 }
 
+/// Hand one wasm plan its `work = "Module.function"` bindings, and say so
+/// when the manifest also sets a job limit the target cannot honour.
+///
+/// A job on wasm-gc and wasip2 runs inline at `begin` — a component and a
+/// wasm-gc module are single-threaded — so at most one job is ever running
+/// and `[work] max-jobs` decides nothing. Saying it at the program door is
+/// what keeps a manifest key from quietly meaning something different per
+/// target. `has_job_kinds` keeps the warning off a program that sets the key
+/// but starts no job on this target.
+pub(super) fn bind_and_warn_about_jobs(
+    config: Option<&aver::config::ProjectConfig>,
+    target: &str,
+    bind: impl FnOnce(&[aver::config::ProviderWorkBinding]),
+    has_job_kinds: bool,
+) {
+    let manifest = config.and_then(|config| config.provider_manifest.as_ref());
+    bind(manifest.map_or(&[], |manifest| manifest.work_bindings.as_slice()));
+    if has_job_kinds && config.and_then(|config| config.work_max_jobs).is_some() {
+        eprintln!(
+            "{}",
+            format!(
+                "warning[work-max-jobs-ignored]: aver.toml sets `[work] max-jobs`, and a job on {target} runs inline at `begin` because the target is single-threaded, so the key changes nothing here"
+            )
+            .yellow()
+        );
+    }
+}
+
 /// Explain when wasip2 cannot preserve Aver's Tcp deployment policy.
 ///
 /// Persistent-session reads and writes deliberately have no Aver deadline, so

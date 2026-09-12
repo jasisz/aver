@@ -364,6 +364,7 @@ impl TypeRegistry {
             std::collections::HashSet::new(),
             false,
             &[],
+            &[],
         )
     }
 
@@ -374,6 +375,7 @@ impl TypeRegistry {
         capability_resources: std::collections::HashSet<String>,
         force_bignum: bool,
         capability_boundary_types: &[String],
+        job_kinds: &[crate::capability::work::JobKindPlan],
     ) -> Self {
         // _handler_active is consumed by `items_reference_name`
         // overrides below so the rest of the builder stays
@@ -623,7 +625,12 @@ impl TypeRegistry {
         // whenever the program reaches the stdlib job handle, directly or
         // through `Wait.Item.Job`, which every answered capability's
         // generated reply sum reaches through `Wait.Wake`.
-        let job_struct_idx = if items_reference_name(items, crate::capability::work::WORK_JOB) {
+        // A program with a job kind always needs the slot: the inline
+        // lowering mints handles whether or not the source ever spells the
+        // type.
+        let job_struct_idx = if !job_kinds.is_empty()
+            || items_reference_name(items, crate::capability::work::WORK_JOB)
+        {
             let idx = next_idx;
             next_idx += 1;
             Some(idx)
@@ -1282,6 +1289,12 @@ impl TypeRegistry {
         }) {
             intern_synthetic(b"negative shift count".to_vec());
             intern_synthetic(aver_rt::shift_count_too_large_message().into_bytes());
+        }
+        // A job kind's inline lowering answers a second take, a cancelled
+        // job and a foreign handle with fixed messages the program itself
+        // never spells, so they need segments of their own.
+        for message in super::jobs::job_error_messages(job_kinds) {
+            intern_synthetic(message);
         }
         if resolved_fn_defs
             .iter()

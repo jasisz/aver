@@ -159,9 +159,10 @@ impl CapabilityWitInterfacePlan {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct CapabilityWitPlan {
     interfaces: Vec<CapabilityWitInterfacePlan>,
+    job_kinds: Vec<crate::capability::work::JobKindPlan>,
 }
 
 impl CapabilityWitPlan {
@@ -185,6 +186,19 @@ impl CapabilityWitPlan {
             required_capabilities.insert(operation.module.clone());
         }
 
+        // A job kind is answered by the program, so a component imports
+        // nothing for it: the core module runs the bound function itself. It
+        // rides in the plan as a job kind, which is how the manifest binding
+        // reaches wasm codegen on this target too.
+        let mut job_kinds = Vec::new();
+        for (_, outcome) in crate::capability::work::job_kinds(registry) {
+            if let Ok(shape) = outcome
+                && let Some(kind) = crate::capability::work::JobKindPlan::new(registry, shape)
+            {
+                job_kinds.push(kind);
+            }
+        }
+
         let mut interfaces = Vec::with_capacity(required_capabilities.len());
         for capability in required_capabilities {
             let contract = registry
@@ -193,9 +207,52 @@ impl CapabilityWitPlan {
             if is_canonical_standard_capability(contract) {
                 continue;
             }
+            if job_kinds
+                .iter()
+                .any(|kind| kind.shape.capability == capability)
+            {
+                continue;
+            }
             interfaces.push(CapabilityWitInterfacePlan::build(registry, contract)?);
         }
-        Ok(Self { interfaces })
+        Ok(Self {
+            interfaces,
+            job_kinds,
+        })
+    }
+
+    /// Fill in each job kind's `work = "Module.function"` from the manifest.
+    pub fn bind_work_functions(&mut self, bindings: &[crate::config::ProviderWorkBinding]) {
+        crate::capability::work::bind_work_functions(&mut self.job_kinds, bindings);
+    }
+
+    pub fn job_kinds(&self) -> &[crate::capability::work::JobKindPlan] {
+        &self.job_kinds
+    }
+
+    /// The operations a job kind answers, `Validation.begin` and
+    /// `Validation.take`.
+    ///
+    /// No host provider is preflighted for these and no import is emitted:
+    /// the program answers them itself, through the function `work` binds.
+    pub fn job_operations(&self) -> Vec<String> {
+        self.job_kinds
+            .iter()
+            .flat_map(|kind| {
+                [
+                    kind.begin.canonical_name.clone(),
+                    kind.take.canonical_name.clone(),
+                ]
+            })
+            .collect()
+    }
+
+    /// Type spellings every job kind's inline lowering needs a slot for.
+    pub fn job_boundary_type_strings(&self) -> Vec<String> {
+        self.job_kinds
+            .iter()
+            .flat_map(crate::capability::work::JobKindPlan::boundary_type_strings)
+            .collect()
     }
 
     pub fn interfaces(&self) -> &[CapabilityWitInterfacePlan] {

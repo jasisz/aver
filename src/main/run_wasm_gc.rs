@@ -230,12 +230,33 @@ pub(super) fn try_run_wasm_gc(
             binding.provider_identity()
         ));
     }
-    let custom_plan = aver::codegen::wasm_gc::CapabilityWasmGcPlan::build(capabilities, &required)?;
+    let mut custom_plan =
+        aver::codegen::wasm_gc::CapabilityWasmGcPlan::build(capabilities, &required)?;
+    // A job kind is answered by a function of the program, and this is where
+    // that manifest binding reaches wasm codegen.
+    let has_job_kinds = !custom_plan.job_kinds().is_empty();
+    super::shared::bind_and_warn_about_jobs(
+        project_config.as_ref(),
+        "--wasm-gc",
+        |bindings| custom_plan.bind_work_functions(bindings),
+        has_job_kinds,
+    );
     let providers = aver::provider::ProviderRegistry::for_program_with_bindings(
         capabilities.clone(),
         provider_bindings.iter().cloned(),
     )?;
-    if let Err(preflight) = providers.preflight(required.iter().map(String::as_str)) {
+    // A job kind is answered by the program, so no host provider answers
+    // `begin` or `take` and none is preflighted for them.
+    let job_operations = custom_plan
+        .job_operations()
+        .into_iter()
+        .collect::<std::collections::BTreeSet<_>>();
+    let host_answered = required
+        .iter()
+        .filter(|operation| !job_operations.contains(operation.as_str()))
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    if let Err(preflight) = providers.preflight(host_answered.iter().copied()) {
         let mut error = preflight;
         for interface in custom_plan.interfaces() {
             error.push_str(&format!(
@@ -260,7 +281,7 @@ pub(super) fn try_run_wasm_gc(
         providers.validate_replay_provenance_for_operations(
             &recording.capabilities,
             &recording.effects,
-            required.iter().map(String::as_str),
+            host_answered.iter().copied(),
         )?;
     }
     let type_aliases = flatten_multimodule(

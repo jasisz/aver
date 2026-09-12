@@ -17,7 +17,7 @@ use super::EmitCtx;
 /// `struct.new`'s requirement that every field has an initial value
 /// — the value field of a None-tagged Option is never read by
 /// well-typed Aver code (pattern match dispatches on tag first).
-pub(super) fn emit_default_value(
+pub(in crate::codegen::wasm_gc) fn emit_default_value(
     func: &mut Function,
     aver_ty: &str,
     registry: &TypeRegistry,
@@ -248,7 +248,7 @@ pub(super) fn emit_caller_fn_idx(
 /// slice. Looks up the literal in the registry's passive-segment
 /// table; the segment is intern-ed by `collect_string_literals_in_*`
 /// during pre-emit discovery.
-pub(super) fn emit_string_literal_bytes(
+pub(in crate::codegen::wasm_gc) fn emit_string_literal_bytes(
     func: &mut Function,
     bytes: &[u8],
     ctx: &EmitCtx<'_>,

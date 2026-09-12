@@ -38,6 +38,7 @@ pub(super) mod hash_helpers;
 mod infer;
 mod slots;
 
+pub(super) use emit::{emit_default_value, emit_string_literal_bytes};
 pub(super) use from_mir::emit_fn_body_via_mir;
 pub use from_mir::{CoverageReport, coverage_report};
 use slots::SlotTable;
@@ -108,6 +109,13 @@ pub(super) struct FnMap {
     /// flags are monotonic, so the repeated passes agree by construction.
     pub(super) aint_cmp_called: std::cell::Cell<bool>,
     pub(super) aint_eq_called: std::cell::Cell<bool>,
+    /// jasisz/aver#1329 — the job kinds this program declares, resolved
+    /// against the emitted module. `None` when it declares none, which is
+    /// every program that starts no job. A job kind is answered by the
+    /// program, so it rides here rather than in `effects`: the call sites
+    /// for `begin`, `take` and `Work.cancel` lower inline, on both wasm
+    /// targets, and no import is involved.
+    pub(super) jobs: Option<super::jobs::JobLowering>,
 }
 
 impl FnMap {

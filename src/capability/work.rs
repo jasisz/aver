@@ -26,6 +26,12 @@ pub const WAIT_MODULE: &str = "Wait";
 /// The canonical name of the running-job handle.
 pub const WORK_JOB: &str = "Work.Job";
 
+/// The canonical name of the one operation the job capability owns.
+pub const WORK_CANCEL: &str = "Work.cancel";
+
+/// The canonical name of the one wait of a turn.
+pub const WAIT_POLL: &str = "Wait.poll";
+
 /// The checked surface of one job-kind capability.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WorkShape {
@@ -35,6 +41,88 @@ pub struct WorkShape {
     pub task: Type,
     /// The `take` payload type, canonicalised to the capability's scope.
     pub payload: Type,
+}
+
+/// One job kind as the wasm backends need it: the checked shape, the two
+/// operation names a call site spells, and the program function the manifest
+/// bound to run it.
+///
+/// A job kind is answered by the program on every backend, so it is never a
+/// host import, a WIT interface or a host adapter entry. The wasm plans carry
+/// it instead: `CapabilityWasmGcPlan` and `CapabilityWitPlan` already reach
+/// `emit_module_with`, and this is what the emitter reads to lower `begin`,
+/// `take` and the handle they mint inline.
+///
+/// `function` is `None` until the manifest is read — `build` sees only the
+/// contracts — and a program that ever runs a job has it filled in by
+/// `bind_work_functions`, because `check_bindings` refuses a job kind with no
+/// binding at the program door.
+#[derive(Debug, Clone, PartialEq)]
+pub struct JobKindPlan {
+    /// The checked shape: capability, task type and payload type.
+    pub shape: WorkShape,
+    /// The operation that starts a job, `Validation.begin`, verbatim.
+    pub begin: crate::capability::CapabilityOperation,
+    /// The operation that collects one, `Validation.take`, verbatim.
+    pub take: crate::capability::CapabilityOperation,
+    /// `work = "Node.validate"`, the pure function of the program one job runs.
+    pub function: Option<String>,
+}
+
+impl JobKindPlan {
+    /// The plan for one checked job-kind shape, before the manifest is read.
+    ///
+    /// `None` when the registry no longer holds both operations, which
+    /// `check_shape` has already accepted, so this is a defensive `Option`
+    /// rather than a case a program reaches.
+    pub fn new(registry: &CapabilityRegistry, shape: WorkShape) -> Option<Self> {
+        let begin = registry
+            .operation(&format!("{}.begin", shape.capability))?
+            .clone();
+        let take = registry
+            .operation(&format!("{}.take", shape.capability))?
+            .clone();
+        Some(Self {
+            shape,
+            begin,
+            take,
+            function: None,
+        })
+    }
+
+    /// Type spellings the wasm type registry has to carry for this job kind.
+    ///
+    /// The task and payload types can be spelled nowhere else in the program
+    /// — a `begin` whose result is matched in place never annotates either —
+    /// so the registry would allocate no slot for the very values the inline
+    /// lowering builds. These are the spellings it needs.
+    pub fn boundary_type_strings(&self) -> Vec<String> {
+        let payload = self.shape.payload.display();
+        vec![
+            self.shape.task.display(),
+            payload.clone(),
+            format!("Option<{payload}>"),
+            format!("Result<Option<{payload}>,String>"),
+            format!("Result<{WORK_JOB},String>"),
+        ]
+    }
+}
+
+/// Fill each job kind's `work = "Module.function"` in from the manifest.
+///
+/// Kept beside the plan so both wasm plans bind a job kind the same way.
+pub fn bind_work_functions(
+    kinds: &mut [JobKindPlan],
+    bindings: &[crate::config::ProviderWorkBinding],
+) {
+    for kind in kinds {
+        if let Some(binding) = bindings
+            .iter()
+            .find(|binding| binding.capability == kind.shape.capability)
+        {
+            kind.function = Some(binding.function.clone());
+        }
+    }
 }
 
 /// Whether a finding blocks the program or only tells its author something.
@@ -135,6 +223,16 @@ pub fn job_kinds(
             (module, outcome)
         })
         .collect()
+}
+
+/// Whether `module` is a job kind of `registry`.
+///
+/// Naming `Work.Job` at the boundary is the whole test, so this is the same
+/// question `job_kinds` answers, asked about one capability.
+pub fn is_job_kind(registry: &CapabilityRegistry, module: &str) -> bool {
+    job_kinds(registry)
+        .iter()
+        .any(|(declared, _)| declared == module)
 }
 
 fn check_shape(
@@ -253,8 +351,13 @@ impl WorkTarget {
     }
 
     /// Whether this target runs jobs and the wait that watches them.
+    ///
+    /// All four do. The VM and the Rust backend run a job beside the turn on
+    /// a thread; wasm-gc and wasip2 run it inline at `begin`, because a
+    /// component and a wasm-gc module are single-threaded. The semantics are
+    /// the same on all four — only the wall clock differs.
     fn runs_jobs(self) -> bool {
-        matches!(self, WorkTarget::Vm | WorkTarget::Rust)
+        true
     }
 }
 

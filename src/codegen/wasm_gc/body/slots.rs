@@ -166,6 +166,13 @@ pub(super) struct SlotTable {
     /// The `(ref null $T)` local holding a `T.update` base while the
     /// overrides are parked — see `record_field_scratch`.
     record_base_scratch: RefCell<HashMap<String, u32>>,
+    /// The one `(ref null $job)` local a job-kind `take` and a
+    /// `Work.cancel` park their handle in. Both read the handle more than
+    /// once — a `take` reads its kind, its state and its answer — and the
+    /// handle arrives as a value on the stack, so it is stashed once.
+    /// Lazily allocated for the same reason the record scratch above is: a
+    /// program with no job reserves nothing and its bytes are untouched.
+    job_handle_scratch: RefCell<Option<u32>>,
     /// Lazily allocated locals, appended after `by_slot` in
     /// `extra_locals`. Index `i` here is wasm local `by_slot.len() + i`.
     lazy_locals: RefCell<Vec<ValType>>,
@@ -454,8 +461,19 @@ impl SlotTable {
             aint_operand_scratch,
             record_field_scratch: RefCell::new(HashMap::new()),
             record_base_scratch: RefCell::new(HashMap::new()),
+            job_handle_scratch: RefCell::new(None),
             lazy_locals: RefCell::new(Vec::new()),
         })
+    }
+
+    /// Reserve (once per fn) the local a job handle is parked in.
+    pub(super) fn job_handle_scratch(&self, job_struct_idx: u32) -> u32 {
+        if let Some(found) = *self.job_handle_scratch.borrow() {
+            return found;
+        }
+        let idx = self.push_lazy_local(struct_ref(job_struct_idx));
+        *self.job_handle_scratch.borrow_mut() = Some(idx);
+        idx
     }
 
     pub(super) fn extra_locals(&self, params_count: usize) -> Vec<ValType> {
