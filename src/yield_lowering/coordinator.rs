@@ -642,7 +642,7 @@ fn write_loop(
             protocol.request
         ));
     }
-    out.push_str("\nrecord __Slot\n    seq: Int\n    pending: __Process\n    waiting: Wait.Wake\n    due: Int\n");
+    out.push_str("\nrecord __Slot\n    seq: Int\n    pending: __Process\n    waiting: Wait.Wake\n    due: Int\n    ms: Int\n");
     out.push_str("\nrecord __Run\n    slots: Map<Int, __Slot>\n");
     for answer in answers {
         out.push_str(&format!("    {}: {}\n", answer.field, answer.state));
@@ -681,7 +681,7 @@ fn write_loop(
             protocol.fn_name, effects(&performs.seat), protocol.start
         ));
         out.push_str(&format!(
-            "\nfn __seated{upper}(run: __Run, outcome: {}) -> __Run\n    ? \"A process that is already done is not seated; one that is waiting takes the next free slot id.\"\n    match outcome\n        {}.Done(_) -> run\n        {}.Waiting(request) -> __Run.update(run, slots = Map.set(run.slots, run.nextId, __Slot(seq = 1, pending = __Process.{upper}(request), waiting = Wait.Wake.NextTurn, due = 0)), nextId = run.nextId + 1)\n",
+            "\nfn __seated{upper}(run: __Run, outcome: {}) -> __Run\n    ? \"A process that is already done is not seated; one that is waiting takes the next free slot id.\"\n    match outcome\n        {}.Done(_) -> run\n        {}.Waiting(request) -> __Run.update(run, slots = Map.set(run.slots, run.nextId, __Slot(seq = 1, pending = __Process.{upper}(request), waiting = Wait.Wake.NextTurn, due = 0, ms = 0)), nextId = run.nextId + 1)\n",
             protocol.outcome, protocol.outcome, protocol.outcome
         ));
     }
@@ -689,8 +689,9 @@ fn write_loop(
     // ── The slot table and its two invariants ──────────────────────
     out.push_str("\nfn __current(run: __Run, id: Int) -> Int\n    ? \"The instance number of the request one process is waiting on, or -1 when nothing is seated under that id.\"\n    match Map.get(run.slots, id)\n        Option.None -> 0 - 1\n        Option.Some(slot) -> slot.seq\n");
     out.push_str("\nfn __nextInstance(seq: Int) -> Int\n    ? \"The instance number an answer for the current one leaves behind. It rises, so the instance just answered can never be current again.\"\n    seq + 1\n");
-    out.push_str("\nfn __parked(slot: __Slot, wake: Wait.Wake, now: Int) -> __Slot\n    ? \"The slot a Later leaves behind: the same instance and the same request, now remembering what would make asking again worth it. A deadline is turned into the clock reading it falls due at, because ms is how long from now and the turn asks against the clock.\"\n    __Slot(seq = slot.seq, pending = slot.pending, waiting = wake, due = __dueOf(wake, now))\n");
+    out.push_str("\nfn __parked(slot: __Slot, wake: Wait.Wake, now: Int) -> __Slot\n    ? \"The slot a Later leaves behind: the same instance and the same request, now remembering what would make asking again worth it. A deadline is turned into the clock reading it falls due at, because ms is how long from now and the turn asks against the clock; the ms that was asked for is kept beside it, so a clock that steps backwards cannot strand the request behind a due it will never reach.\"\n    __Slot(seq = slot.seq, pending = slot.pending, waiting = wake, due = __dueOf(wake, now), ms = __msOf(wake))\n");
     out.push_str("\nfn __dueOf(wake: Wait.Wake, now: Int) -> Int\n    ? \"The clock reading a request parked on a deadline may be asked again at. A request parked on a socket, on a job, or on the next turn carries none.\"\n    match wake\n        Wait.Wake.After(ms) -> now + ms\n        Wait.Wake.Item(_) -> 0\n        Wait.Wake.NextTurn -> 0\n");
+    out.push_str("\nfn __msOf(wake: Wait.Wake) -> Int\n    ? \"How long the request asked to be left alone for. A request parked on a socket, on a job, or on the next turn asked for nothing.\"\n    match wake\n        Wait.Wake.After(ms) -> ms\n        Wait.Wake.Item(_) -> 0\n        Wait.Wake.NextTurn -> 0\n");
     out.push_str("\nfn __park(run: __Run, id: Int, wake: Wait.Wake) -> __Run\n    ? \"A Later: the request stays where it is with the same instance number. The state the answer module returned was already written back, because a Later is where a module records its own progress.\"\n    match Map.get(run.slots, id)\n        Option.None -> run\n        Option.Some(slot) -> __Run.update(run, slots = Map.set(run.slots, id, __parked(slot, wake, run.now)))\n");
     out.push_str("\nfn __staleInstance(run: __Run, id: Int, seq: Int) -> Bool\n    ? \"Why an answer carrying this instance number changes nothing: it is not the number the slot under this id is waiting on.\"\n    seq != __current(run, id)\n");
 
@@ -705,7 +706,7 @@ fn write_loop(
             protocol.outcome, protocol.outcome, protocol.outcome
         ));
         out.push_str(&format!(
-            "\nfn __settledSlot{upper}(seq: Int, request: {}) -> __Slot\n    ? \"The slot an answer for instance 'seq' writes back under that id: the next request of '{}', under the instance number after 'seq'.\"\n    __Slot(seq = __nextInstance(seq), pending = __Process.{upper}(request), waiting = Wait.Wake.NextTurn, due = 0)\n",
+            "\nfn __settledSlot{upper}(seq: Int, request: {}) -> __Slot\n    ? \"The slot an answer for instance 'seq' writes back under that id: the next request of '{}', under the instance number after 'seq'.\"\n    __Slot(seq = __nextInstance(seq), pending = __Process.{upper}(request), waiting = Wait.Wake.NextTurn, due = 0, ms = 0)\n",
             protocol.request, protocol.fn_name
         ));
         out.push_str(&format!(
@@ -745,7 +746,7 @@ fn write_loop(
     out.push_str("\nfn __askableOf(run: __Run, ready: List<Int>, ids: List<Int>, acc: List<Int>) -> List<Int>\n    ? \"The ids this turn may ask, in slot order. A wake gates the ask: the turn asks a slot when what that slot is waiting for has happened, and never otherwise.\"\n    match ids\n        [] -> acc\n        [id, ..rest] -> __askableOf(run, ready, rest, __askableAt(run, ready, id, acc))\n");
     out.push_str("\nfn __askableAt(run: __Run, ready: List<Int>, id: Int, acc: List<Int>) -> List<Int>\n    ? \"One id, kept when its wake has fired.\"\n    match __askable(run, ready, id)\n        false -> acc\n        true -> List.concat(acc, [id])\n");
     out.push_str("\nfn __askable(run: __Run, ready: List<Int>, id: Int) -> Bool\n    ? \"Whether the turn may ask the request seated under this id. Nothing is seated there, nothing to ask.\"\n    match Map.get(run.slots, id)\n        Option.None -> false\n        Option.Some(slot) -> __askableSlot(slot, ready, id, run.now)\n");
-    out.push_str("\nfn __askableSlot(slot: __Slot, ready: List<Int>, id: Int, now: Int) -> Bool\n    ? \"What one wake gates. A request to be asked again next turn is askable at once, which is also where a freshly seated process and one whose request was just answered stand. A request parked on a socket or a job is asked in a turn whose wait reported its key, and false readiness is allowed: the module may answer Later again. A request parked on a deadline is asked once the turn's clock reading has reached it.\"\n    match slot.waiting\n        Wait.Wake.NextTurn -> true\n        Wait.Wake.Item(_) -> List.contains(ready, id)\n        Wait.Wake.After(_) -> slot.due <= now\n");
+    out.push_str("\nfn __askableSlot(slot: __Slot, ready: List<Int>, id: Int, now: Int) -> Bool\n    ? \"What one wake gates. A request to be asked again next turn is askable at once, which is also where a freshly seated process and one whose request was just answered stand. A request parked on a socket or a job is asked in a turn whose wait reported its key, and false readiness is allowed: the module may answer Later again. A request parked on a deadline is asked once the turn's clock reading has reached it, or once that reading has fallen further back than the deadline asked for: a wall clock that steps backwards would otherwise leave the request waiting for a reading that never comes.\"\n    match slot.waiting\n        Wait.Wake.NextTurn -> true\n        Wait.Wake.Item(_) -> List.contains(ready, id)\n        Wait.Wake.After(_) -> Bool.or(slot.due <= now, now < slot.due - slot.ms)\n");
 
     // ── The wait and the timeout ───────────────────────────────────
     out.push_str(&format!(
@@ -766,9 +767,8 @@ fn write_loop(
     out.push_str("\nfn __timeout(run: __Run) -> Int\n    ? \"How long this turn may wait: nothing at all while some request is to be asked again, the soonest deadline still ahead of the turn's clock reading when one is pending, and one second when neither.\"\n    __deadline(run, Map.keys(run.slots), 0 - 1)\n");
     out.push_str("\nfn __deadline(run: __Run, ids: List<Int>, best: Int) -> Int\n    ? \"The soonest deadline across every seated slot, or -1 when none carries one.\"\n    match ids\n        [] -> __tick(best)\n        [id, ..rest] -> __deadline(run, rest, __deadlineAt(run, id, best))\n");
     out.push_str("\nfn __deadlineAt(run: __Run, id: Int, best: Int) -> Int\n    ? \"What one id contributes to the turn's wait.\"\n    match Map.get(run.slots, id)\n        Option.None -> best\n        Option.Some(slot) -> __soonest(best, slot, run.now)\n");
-    out.push_str("\nfn __soonest(best: Int, slot: __Slot, now: Int) -> Int\n    ? \"A request to be asked again next turn wins outright; two deadlines keep the nearer; a socket or a job carries none.\"\n    match slot.waiting\n        Wait.Wake.NextTurn -> 0\n        Wait.Wake.Item(_) -> best\n        Wait.Wake.After(_) -> __nearer(best, __remaining(slot.due, now))\n");
-    out.push_str("\nfn __remaining(due: Int, now: Int) -> Int\n    ? \"How much of one deadline is left, and never less than nothing: a deadline the clock has already reached is asked again in this turn rather than waited on.\"\n    __atLeastZero(due - now)\n");
-    out.push_str("\nfn __atLeastZero(value: Int) -> Int\n    ? \"A whole number, floored at nothing.\"\n    match value < 0\n        true -> 0\n        false -> value\n");
+    out.push_str("\nfn __soonest(best: Int, slot: __Slot, now: Int) -> Int\n    ? \"A request to be asked again next turn wins outright; two deadlines keep the nearer; a socket or a job carries none.\"\n    match slot.waiting\n        Wait.Wake.NextTurn -> 0\n        Wait.Wake.Item(_) -> best\n        Wait.Wake.After(_) -> __nearer(best, __remaining(slot.due, now, slot.ms))\n");
+    out.push_str("\nfn __remaining(due: Int, now: Int, ms: Int) -> Int\n    ? \"How much of one deadline is left: never less than nothing, because a deadline the clock has already reached is asked again in this turn rather than waited on, and never more than the ms that was asked for, because a clock that stepped backwards would otherwise put the turn to sleep for longer than any request in the program asked for.\"\n    Int.min(Int.max(due - now, 0), ms)\n");
     out.push_str("\nfn __nearer(best: Int, ms: Int) -> Int\n    ? \"The nearer of two deadlines, where -1 means none yet.\"\n    match best < 0\n        true -> ms\n        false -> __smaller(best, ms)\n");
     out.push_str("\nfn __smaller(left: Int, right: Int) -> Int\n    ? \"The smaller of two whole numbers.\"\n    match left < right\n        true -> left\n        false -> right\n");
     out.push_str("\nfn __tick(best: Int) -> Int\n    ? \"The wait of a turn with no deadline in it: one second.\"\n    match best < 0\n        true -> 1000\n        false -> best\n");
@@ -799,7 +799,7 @@ fn write_loop(
 
     // ── The turn and the loop ──────────────────────────────────────
     out.push_str(&format!(
-        "\nfn __turn(run: __Run) -> Result<__Run, String>\n    ? \"One turn: observe the stop flag and the clock, wait once, serve the askable slots the policy admits, in its order{}.\"\n{}    observed = __Run.update(run, stopping = Process.stopRequested(), now = Time.unixMs())\n    ready = Wait.poll(__waitSet(observed, Map.keys(observed.slots), {{}}), __timeout(observed))?\n    served = __serveEach(observed, ready, {}(__view(observed, ready)))\n{}",
+        "\nfn __turn(run: __Run) -> Result<__Run, String>\n    ? \"One turn: observe the stop flag, wait once, read the clock the wait came back at, serve the askable slots the policy admits, in its order{}. The clock is read after the wait and before the turn serves, so a deadline that fell due while the turn was waiting is askable in this turn rather than the next one; the wait of the turn after this one is measured against the same reading.\"\n{}    observed = __Run.update(run, stopping = Process.stopRequested())\n    ready = Wait.poll(__waitSet(observed, Map.keys(observed.slots), {{}}), __timeout(observed))?\n    timed = __Run.update(observed, now = Time.unixMs())\n    served = __serveEach(timed, ready, {}(__view(timed, ready)))\n{}",
         if has_jobs { ", take every job that finished, and start jobs while there is room" } else { "" },
         effects(turn_effects),
         bare(&plan.policies.order),
@@ -1071,14 +1071,30 @@ fn write_laws(protocols: &[ProcessProtocol]) -> String {
         // deadline: an `Int` comparison the wall closes over a sampled
         // domain. The socket-and-job half is `List.contains(ready, id)`,
         // which says nothing a law can check without the wait itself.
-        out.push_str("\nfn __parkedAfter(slot: __Slot, now: Int) -> Bool\n    ? \"Why a parked request is not asked yet: it is waiting on a deadline this clock reading has not reached.\"\n    match slot.waiting\n        Wait.Wake.NextTurn -> false\n        Wait.Wake.Item(_) -> false\n        Wait.Wake.After(_) -> now < slot.due\n");
+        out.push_str("\nfn __parkedAfter(slot: __Slot, now: Int) -> Bool\n    ? \"Why a parked request is not asked yet: it is waiting on a deadline this clock reading has not reached, and the reading has not fallen back behind the moment the request was parked either.\"\n    match slot.waiting\n        Wait.Wake.NextTurn -> false\n        Wait.Wake.Item(_) -> false\n        Wait.Wake.After(_) -> Bool.and(now < slot.due, now >= slot.due - slot.ms)\n");
         out.push_str(&format!(
             "\nverify __askableSlot law aDeadlineGatesTheAsk\n    given slot: __Slot = [__parked(__sampleSlot(), Wait.Wake.After(5), 0), __parked(__sampleSlot(), Wait.Wake.NextTurn, 0)]\n    given ready: List<Int> = [[], [{}]]\n    given id: Int = [{}]\n    given now: Int = [0, 1, 4, 5, 9]\n    when __parkedAfter(slot, now)\n    because __parkedAfter(slot, now)\n    __askableSlot(slot, ready, id, now) => false\n",
             ids.join(", "),
             ids.join(", ")
         ));
+        // The other side of the same gate: a reading that has fallen back
+        // further than the request asked for makes the slot askable again.
+        // Without this the branch that keeps a backwards clock from
+        // stranding a request is asserted by no law at all — the law above
+        // guards it out, because its premise is exactly its negation.
+        out.push_str("\nfn __steppedBack(slot: __Slot, now: Int) -> Bool\n    ? \"Why a parked request is asked again although its deadline has not been reached: the clock reading has fallen back behind the moment the request was parked, so the reading the deadline was set against will never come.\"\n    match slot.waiting\n        Wait.Wake.NextTurn -> false\n        Wait.Wake.Item(_) -> false\n        Wait.Wake.After(_) -> now < slot.due - slot.ms\n");
+        out.push_str(&format!(
+            "\nverify __askableSlot law aBackwardsClockNeverStrandsARequest\n    given slot: __Slot = [__parked(__sampleSlot(), Wait.Wake.After(5), 0), __parked(__sampleSlot(), Wait.Wake.NextTurn, 0)]\n    given ready: List<Int> = [[], [{}]]\n    given id: Int = [{}]\n    given now: Int = [0 - 5000, 0 - 1, 0, 4]\n    when __steppedBack(slot, now)\n    because __steppedBack(slot, now)\n    __askableSlot(slot, ready, id, now) => true\n",
+            ids.join(", "),
+            ids.join(", ")
+        ));
     }
     out.push_str("\nverify __nextInstance law theNextInstanceIsHigher\n    given seq: Int = [0, 1, 7]\n    __nextInstance(seq) > seq holds\n");
+    // The wait a deadline contributes is never longer than the deadline asked
+    // for. That is the half of the backwards-clock story a law can carry: a
+    // reading that jumped back makes `due - now` larger than the request, and
+    // the turn would sleep past every other deadline in the program.
+    out.push_str("\nverify __remaining law theWaitNeverExceedsTheRequest\n    given due: Int = [0, 5, 50]\n    given now: Int = [0 - 5000, 0, 5, 50]\n    given ms: Int = [0, 5, 50]\n    __remaining(due, now, ms) <= ms holds\n");
     // I3 per call, in the two halves the wall can carry. The first is about
     // the slot table's contents: the slot an answer for the current instance
     // writes back under that id carries a strictly higher instance number
