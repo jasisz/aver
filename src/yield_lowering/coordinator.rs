@@ -1015,6 +1015,14 @@ fn write_job(job: &Job, answers: &[Answer]) -> String {
 /// and a program can write neither into a `given` domain. So the two `Either`
 /// laws are stated over the gate's own arithmetic instead: askable once the
 /// deadline has passed, and a wait no longer than the deadline asked for.
+///
+/// TODO(owner): decision 5 asks for the first of those two laws over a slot,
+/// and a slot parked on `Either` is not writable in a `given` domain for the
+/// reason above, so the law is stated one unfolding below it. `__askableSlot`'s
+/// `Either` arm is `__eitherAskable(slot.due, slot.ms, now, ...)` and nothing
+/// else, so the slot-level claim follows from this one by unfolding that arm;
+/// what is not stated is that step itself. Decide whether that is the shape to
+/// keep or whether the `given` domain should grow a way to name such a slot.
 fn write_laws(protocols: &[ProcessProtocol]) -> String {
     let mut out = String::new();
     // The sample seats each process at the request it re-enters itself with.

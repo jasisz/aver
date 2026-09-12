@@ -581,7 +581,7 @@ The worked example of `Either` is the same `Sockets` module's read. It records t
 
 ```aver
 fn read(state: State, key: Int, max: Int, deadlineMs: Int) -> Tuple<State, Wire.__ReadReply>
-    ? "The next chunk from one peer, against the deadline the caller named. The clock is read here because the deadline is this module's to keep: what the caller named is a length, and what a park is measured against is a reading."
+    ? "The next chunk from one peer, against the deadline the caller named. Every ask is counted, including the ones that park, so a run can say afterwards how often the wait let this wire be asked. The clock is read here because the deadline is this module's to keep: what the caller named is a length, and what a park is measured against is a reading."
     ! [Time.unixMs, Tcp.readNow]
     asking(State.update(state, reads = state.reads + 1), key, max, deadlineMs, Time.unixMs())
 
