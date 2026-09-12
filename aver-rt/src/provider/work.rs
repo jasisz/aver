@@ -310,14 +310,20 @@ impl CapabilityProvider for StandardWaitProvider {
                 // is a wake, not an answer: re-check this set and go back to
                 // sleep while nothing in it is ready and the deadline has not
                 // passed, or the wait returns empty long before it promised.
+                //
+                // The generation is read before every readiness decision,
+                // exactly as it was before the first one: a job of this set
+                // that settles between the decision and the sleep is then a
+                // settle the sleep has not seen yet, so it wakes at once
+                // instead of sleeping out the timeout.
                 let mut generation = generation;
                 loop {
-                    engine.wait_until(generation, deadline);
                     if jobs.iter().any(|(_, handle)| handle.is_ready())
                         || Instant::now() >= deadline
                     {
                         break;
                     }
+                    engine.wait_until(generation, deadline);
                     generation = engine.generation();
                 }
             } else if sockets.is_empty() {
