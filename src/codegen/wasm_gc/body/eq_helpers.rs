@@ -844,6 +844,19 @@ fn emit_inner_eq_dispatch(
         other if helper_idx_map.contains_key(other) => {
             f.instruction(&Instruction::Call(helper_idx_map[other]));
         }
+        // Flattening renames a dependency's type to its bare name unless two
+        // declarers collide, so a qualified spelling that reached here
+        // through a contract boundary (`Wait.Item`) finds its helper under
+        // the bare one. Every other name-keyed lookup in this backend does
+        // the same fallback.
+        other
+            if other
+                .rsplit_once('.')
+                .is_some_and(|(_, bare)| helper_idx_map.contains_key(bare)) =>
+        {
+            let bare = other.rsplit_once('.').expect("checked above").1;
+            f.instruction(&Instruction::Call(helper_idx_map[bare]));
+        }
         other => {
             return Err(WasmGcError::Validation(format!(
                 "carrier eq inner type `{other}` has no eq dispatch"

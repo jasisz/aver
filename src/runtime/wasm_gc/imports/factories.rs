@@ -279,6 +279,31 @@ pub(crate) fn host_tcp_socket_kind(
     })
 }
 
+/// Which `Wait.Item` variant one wait-set value is: `0` Socket, `1` Job.
+pub(crate) fn host_wait_item_kind(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    val: Option<&wasmtime::Val>,
+) -> Result<Option<i32>, wasmtime::Error> {
+    use wasmtime::Val;
+    let any_ref = match val {
+        Some(Val::AnyRef(r)) => *r,
+        _ => return Ok(None),
+    };
+    let Some(_) = any_ref else { return Ok(None) };
+    let getter = caller
+        .get_export("__rt_wait_item_kind")
+        .and_then(|e| e.into_func());
+    let Some(getter) = getter else {
+        return Ok(None);
+    };
+    let mut out = [Val::I32(-1)];
+    getter.call(&mut *caller, &[Val::AnyRef(any_ref)], &mut out)?;
+    Ok(match out[0] {
+        Val::I32(kind) if kind >= 0 => Some(kind),
+        _ => None,
+    })
+}
+
 pub(crate) fn host_result_tcp_connection_ok(
     caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
     conn: Option<wasmtime::Rooted<wasmtime::AnyRef>>,

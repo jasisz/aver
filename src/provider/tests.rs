@@ -1132,11 +1132,13 @@ fn shipped_provenance_projects_only_provided_manifest_rows() {
         let expected_capabilities = match target {
             CapabilityTarget::Wasip2 => {
                 vec![
-                    "Args", "Console", "Disk", "Env", "Http", "Random", "Tcp", "Time",
+                    "Args", "Console", "Disk", "Env", "Http", "Random", "Tcp", "Time", "Wait",
+                    "Work",
                 ]
             }
-            // The VM and the Rust backend answer the job handle and the one
-            // wait of a turn; neither wasm target has a row for them.
+            // Every target answers the job handle and the one wait of a turn
+            // since jasisz/aver#1329: a thread beside the turn on the VM and
+            // the Rust backend, inline at `begin` on the two wasm targets.
             CapabilityTarget::Vm | CapabilityTarget::Rust => {
                 vec![
                     "Args", "Console", "Disk", "Env", "Http", "Process", "Random", "Tcp",
@@ -1146,7 +1148,7 @@ fn shipped_provenance_projects_only_provided_manifest_rows() {
             CapabilityTarget::WasmGc => {
                 vec![
                     "Args", "Console", "Disk", "Env", "Http", "Process", "Random", "Tcp",
-                    "Terminal", "Time",
+                    "Terminal", "Time", "Wait", "Work",
                 ]
             }
         };

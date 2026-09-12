@@ -536,6 +536,9 @@ pub(super) struct Wasip2Lowering {
     /// `__rt_tcp_poll(Map<Int, Socket>, timeoutMs) ->
     /// ref Result<List<Int>, String>`.
     pub(super) tcp_poll_fn_idx: Option<u32>,
+    /// jasisz/aver#1329 — `__rt_wait_poll`, the one wait of a turn. The same
+    /// helper shape as the socket poll, over `Map<Int, Wait.Item>`.
+    pub(super) wait_poll_fn_idx: Option<u32>,
     /// Phase 4.5a (0.20) — `__rt_tcp_send(host, port, data) ->
     /// ref Result<String, String>` helper wasm fn idx. One-shot
     /// orchestrator: connect + writeLine + readLine + close.

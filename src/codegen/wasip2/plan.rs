@@ -261,7 +261,10 @@ impl CapabilityWitPlan {
 }
 
 fn is_canonical_standard_capability(contract: &CapabilityContract) -> bool {
-    if !crate::stdlib::is_standard_capability(&contract.module) {
+    // `Wait` and `Work` are reserved rather than standard — a program sees
+    // them only through `depends` — but the compiler ships their answer on
+    // every target, so they are never a program-defined interface either.
+    if !crate::stdlib::has_shipped_provider(&contract.module) {
         return false;
     }
     crate::stdlib::standard_capability_registry()

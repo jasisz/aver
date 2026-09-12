@@ -20,7 +20,7 @@ use super::factories::{
     host_result_option_tcp_connection_some, host_result_tcp_connection_err,
     host_result_tcp_connection_ok, host_result_tcp_dial_err, host_result_tcp_dial_ok,
     host_result_tcp_listener_err, host_result_tcp_listener_ok, host_tcp_connection_id,
-    host_tcp_connection_make, host_tcp_socket_kind,
+    host_tcp_connection_make, host_tcp_socket_kind, host_wait_item_kind,
 };
 use super::lm::{lm_string_from_host, lm_string_to_host, val_i64};
 use super::replay_glue::{
@@ -232,7 +232,7 @@ pub(super) fn dispatch(
                 Some(timeout) => aver_rt::tcp::poll(
                     &entries
                         .iter()
-                        .map(|entry| entry.socket.clone())
+                        .filter_map(|entry| entry.socket.clone())
                         .collect::<Vec<_>>(),
                     timeout,
                 ),
@@ -918,52 +918,90 @@ fn socket_resource_id(
         .ok_or_else(|| wasmtime::Error::msg("Tcp.poll: malformed socket resource id"))
 }
 
-struct PollEntry {
-    provider_order: Vec<u8>,
-    numeric: BigInt,
-    key_ref: wasmtime::Rooted<wasmtime::AnyRef>,
-    key_json: aver::replay::JsonValue,
-    socket: aver_rt::tcp::TcpSocket,
-    socket_json: aver::replay::JsonValue,
+pub(super) struct PollEntry {
+    pub(super) provider_order: Vec<u8>,
+    pub(super) numeric: BigInt,
+    pub(super) key_ref: wasmtime::Rooted<wasmtime::AnyRef>,
+    pub(super) key_json: aver::replay::JsonValue,
+    /// `None` for a job: jasisz/aver#1329 lets one wait set hold both, and a
+    /// job is watched by the module rather than by the reactor.
+    pub(super) socket: Option<aver_rt::tcp::TcpSocket>,
+    pub(super) socket_json: aver::replay::JsonValue,
 }
 
+/// Decode one `Map<Int, Tcp.Socket>` into the entries `Tcp.poll` watches.
 fn decode_poll_entries(
     caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
     value: Option<&wasmtime::Val>,
 ) -> Result<Vec<PollEntry>, wasmtime::Error> {
+    decode_map_entries(caller, value, "Tcp.poll", false)
+}
+
+/// Decode one `Map<Int, Wait.Item>` into the entries the one wait of a turn
+/// watches: sockets the reactor polls, and jobs that are ready the moment
+/// they began (jasisz/aver#1329).
+pub(super) fn decode_wait_entries(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    value: Option<&wasmtime::Val>,
+) -> Result<Vec<PollEntry>, wasmtime::Error> {
+    decode_map_entries(caller, value, "Wait.poll", true)
+}
+
+fn decode_map_entries(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    value: Option<&wasmtime::Val>,
+    operation: &str,
+    wait_items: bool,
+) -> Result<Vec<PollEntry>, wasmtime::Error> {
     use wasmtime::Val;
     let map_ref = match value {
         Some(Val::AnyRef(Some(value))) => *value,
-        _ => return Err(wasmtime::Error::msg("Tcp.poll: sockets must be a Map")),
+        _ => {
+            return Err(wasmtime::Error::msg(format!(
+                "{operation}: sockets must be a Map"
+            )));
+        }
     };
     let map = map_ref
         .as_struct(&*caller)?
-        .ok_or_else(|| wasmtime::Error::msg("Tcp.poll: malformed sockets Map"))?;
+        .ok_or_else(|| wasmtime::Error::msg(format!("{operation}: malformed sockets Map")))?;
     let capacity = match map.field(&mut *caller, 1)? {
         Val::I32(capacity) if capacity >= 0 => capacity as u32,
-        _ => return Err(wasmtime::Error::msg("Tcp.poll: malformed Map capacity")),
+        _ => {
+            return Err(wasmtime::Error::msg(format!(
+                "{operation}: malformed Map capacity"
+            )));
+        }
     };
     if capacity == 0 {
         return Ok(Vec::new());
     }
     let keys_ref = match map.field(&mut *caller, 2)? {
         Val::AnyRef(Some(value)) => value,
-        _ => return Err(wasmtime::Error::msg("Tcp.poll: malformed Map keys")),
+        _ => {
+            return Err(wasmtime::Error::msg(format!(
+                "{operation}: malformed Map keys"
+            )));
+        }
     };
     let values_ref = match map.field(&mut *caller, 3)? {
         Val::AnyRef(Some(value)) => value,
-        _ => return Err(wasmtime::Error::msg("Tcp.poll: malformed Map values")),
+        _ => {
+            return Err(wasmtime::Error::msg(format!(
+                "{operation}: malformed Map values"
+            )));
+        }
     };
     let keys = keys_ref
         .as_array(&*caller)?
-        .ok_or_else(|| wasmtime::Error::msg("Tcp.poll: malformed Map keys array"))?;
+        .ok_or_else(|| wasmtime::Error::msg(format!("{operation}: malformed Map keys array")))?;
     let values = values_ref
         .as_array(&*caller)?
-        .ok_or_else(|| wasmtime::Error::msg("Tcp.poll: malformed Map values array"))?;
+        .ok_or_else(|| wasmtime::Error::msg(format!("{operation}: malformed Map values array")))?;
     if keys.len(&*caller)? < capacity || values.len(&*caller)? < capacity {
-        return Err(wasmtime::Error::msg(
-            "Tcp.poll: Map arrays are shorter than its capacity",
-        ));
+        return Err(wasmtime::Error::msg(format!(
+            "{operation}: Map arrays are shorter than its capacity"
+        )));
     }
 
     let mut entries = Vec::new();
@@ -971,34 +1009,76 @@ fn decode_poll_entries(
         let key_box_ref = match keys.get(&mut *caller, index)? {
             Val::AnyRef(Some(value)) => value,
             Val::AnyRef(None) => continue,
-            _ => return Err(wasmtime::Error::msg("Tcp.poll: malformed Int key box")),
+            _ => {
+                return Err(wasmtime::Error::msg(format!(
+                    "{operation}: malformed Int key box"
+                )));
+            }
         };
         let key_box = key_box_ref
             .as_struct(&*caller)?
-            .ok_or_else(|| wasmtime::Error::msg("Tcp.poll: malformed Int key box"))?;
+            .ok_or_else(|| wasmtime::Error::msg(format!("{operation}: malformed Int key box")))?;
         let key = key_box.field(&mut *caller, 0)?;
         let key_ref = match &key {
             Val::AnyRef(Some(value)) => *value,
-            _ => return Err(wasmtime::Error::msg("Tcp.poll: malformed Int key")),
+            _ => {
+                return Err(wasmtime::Error::msg(format!(
+                    "{operation}: malformed Int key"
+                )));
+            }
         };
         let key = decode_guest_int(caller, &key, "Tcp.poll: malformed Int key")?;
         let key_value = aver_rt::AverInt::from_str(&key.display)
-            .map_err(|_| wasmtime::Error::msg("Tcp.poll: malformed Int key"))?;
+            .map_err(|_| wasmtime::Error::msg(format!("{operation}: malformed Int key")))?;
         let provider_order = aver_rt::provider::provider_value_order_key(
             &aver_rt::provider::ProviderValue::Int(key_value),
         )
         .map_err(wasmtime::Error::msg)?;
 
-        let socket_value = values.get(&mut *caller, index)?;
-        let kind = host_tcp_socket_kind(caller, Some(&socket_value))?
-            .ok_or_else(|| wasmtime::Error::msg("Tcp.poll: malformed Tcp.Socket value"))?;
+        let mut socket_value = values.get(&mut *caller, index)?;
+        // One wait set holds both kinds of thing. A `Wait.Item.Job` is ready
+        // by construction on this target — the job ran at `begin` — so it
+        // needs no socket at all; a `Wait.Item.Socket` unwraps to exactly the
+        // value `Tcp.poll` would have been handed.
+        if wait_items {
+            match host_wait_item_kind(caller, Some(&socket_value))? {
+                Some(1) => {
+                    let job_id = wait_item_job_id(caller, &socket_value)?;
+                    entries.push(PollEntry {
+                        provider_order,
+                        numeric: key.big.clone(),
+                        key_ref,
+                        key_json: guest_int_json(&key),
+                        socket: None,
+                        socket_json: json_wait_item(
+                            "Job",
+                            json_capability_resource("Work.Job", job_id),
+                        ),
+                    });
+                    continue;
+                }
+                Some(0) => {
+                    socket_value = wait_item_payload(caller, &socket_value)?;
+                }
+                _ => {
+                    return Err(wasmtime::Error::msg("Wait.poll: malformed Wait.Item value"));
+                }
+            }
+        }
+        let kind = host_tcp_socket_kind(caller, Some(&socket_value))?.ok_or_else(|| {
+            wasmtime::Error::msg(format!("{operation}: malformed Tcp.Socket value"))
+        })?;
         let wrapper_ref = match socket_value {
             Val::AnyRef(Some(value)) => value,
-            _ => return Err(wasmtime::Error::msg("Tcp.poll: malformed Tcp.Socket value")),
+            _ => {
+                return Err(wasmtime::Error::msg(format!(
+                    "{operation}: malformed Tcp.Socket value"
+                )));
+            }
         };
-        let wrapper = wrapper_ref
-            .as_struct(&*caller)?
-            .ok_or_else(|| wasmtime::Error::msg("Tcp.poll: malformed Tcp.Socket variant"))?;
+        let wrapper = wrapper_ref.as_struct(&*caller)?.ok_or_else(|| {
+            wasmtime::Error::msg(format!("{operation}: malformed Tcp.Socket variant"))
+        })?;
         let resource = wrapper.field(&mut *caller, 0)?;
         let id = socket_resource_id(caller, &resource)?;
         let (variant, socket, resource_json) = match kind {
@@ -1037,22 +1117,116 @@ fn decode_poll_entries(
                 json_connection(&id),
             ),
             _ => {
-                return Err(wasmtime::Error::msg("Tcp.poll: unknown Tcp.Socket variant"));
+                return Err(wasmtime::Error::msg(format!(
+                    "{operation}: unknown Tcp.Socket variant"
+                )));
             }
         };
+        let socket_json = json_socket(variant, resource_json);
         entries.push(PollEntry {
             provider_order,
             numeric: key.big.clone(),
             key_ref,
             key_json: guest_int_json(&key),
-            socket,
-            socket_json: json_socket(variant, resource_json),
+            socket: Some(socket),
+            socket_json: if wait_items {
+                json_wait_item("Socket", socket_json)
+            } else {
+                socket_json
+            },
         });
     }
     Ok(entries)
 }
 
-fn poll_map_json(entries: &[PollEntry]) -> aver::replay::JsonValue {
+/// The `$variant` shape one `Wait.Item` records as, matching the VM's.
+fn json_wait_item(variant: &str, payload: aver::replay::JsonValue) -> aver::replay::JsonValue {
+    let mut fields = serde_json::Map::new();
+    fields.insert(
+        "type".to_string(),
+        aver::replay::JsonValue::String("Item".to_string()),
+    );
+    fields.insert(
+        "name".to_string(),
+        aver::replay::JsonValue::String(variant.to_string()),
+    );
+    fields.insert(
+        "fields".to_string(),
+        aver::replay::JsonValue::Array(vec![payload]),
+    );
+    let mut wrapper = serde_json::Map::new();
+    wrapper.insert(
+        "$variant".to_string(),
+        aver::replay::JsonValue::Object(fields),
+    );
+    aver::replay::JsonValue::Object(wrapper)
+}
+
+/// The `$capabilityResource` shape a provider-owned handle records as.
+pub(super) fn json_capability_resource(type_name: &str, trace: i64) -> aver::replay::JsonValue {
+    let mut payload = serde_json::Map::new();
+    payload.insert(
+        "trace".to_string(),
+        aver::replay::JsonValue::String(trace.to_string()),
+    );
+    payload.insert(
+        "type".to_string(),
+        aver::replay::JsonValue::String(type_name.to_string()),
+    );
+    let mut wrapper = serde_json::Map::new();
+    wrapper.insert(
+        "$capabilityResource".to_string(),
+        aver::replay::JsonValue::Object(payload),
+    );
+    aver::replay::JsonValue::Object(wrapper)
+}
+
+/// The one reference a `Wait.Item` variant carries.
+fn wait_item_payload(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    value: &wasmtime::Val,
+) -> Result<wasmtime::Val, wasmtime::Error> {
+    use wasmtime::Val;
+    let item_ref = match value {
+        Val::AnyRef(Some(value)) => *value,
+        _ => return Err(wasmtime::Error::msg("Wait.poll: malformed Wait.Item value")),
+    };
+    let item = item_ref
+        .as_struct(&*caller)?
+        .ok_or_else(|| wasmtime::Error::msg("Wait.poll: malformed Wait.Item value"))?;
+    item.field(&mut *caller, 0)
+}
+
+/// The id a `Wait.Item.Job` handle carries, which is the handle's identity
+/// and the trace token a recording names it by.
+fn wait_item_job_id(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    value: &wasmtime::Val,
+) -> Result<i64, wasmtime::Error> {
+    let handle = wait_item_payload(caller, value)?;
+    job_handle_id(caller, &handle)
+}
+
+/// The id field of one `Work.Job` handle.
+pub(super) fn job_handle_id(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    value: &wasmtime::Val,
+) -> Result<i64, wasmtime::Error> {
+    use wasmtime::Val;
+    let handle_ref = match value {
+        Val::AnyRef(Some(value)) => *value,
+        _ => return Err(wasmtime::Error::msg("work: malformed job handle")),
+    };
+    let handle = handle_ref
+        .as_struct(&*caller)?
+        .ok_or_else(|| wasmtime::Error::msg("work: malformed job handle"))?;
+    match handle.field(&mut *caller, 0)? {
+        Val::I64(id) => Ok(id),
+        _ => Err(wasmtime::Error::msg("work: malformed job handle id")),
+    }
+}
+
+pub(super) fn poll_map_json(entries: &[PollEntry]) -> aver::replay::JsonValue {
     let pairs = entries
         .iter()
         .map(|entry| {
@@ -1064,7 +1238,7 @@ fn poll_map_json(entries: &[PollEntry]) -> aver::replay::JsonValue {
     aver::replay::JsonValue::Object(marker)
 }
 
-fn replay_poll_result(
+pub(super) fn replay_poll_result(
     caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
     cached: &aver::replay::JsonValue,
     entries: &[PollEntry],

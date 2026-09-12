@@ -13,7 +13,19 @@ use wasm_encoder::{Function, Instruction, ValType};
 
 use super::restore_bump;
 
+/// jasisz/aver#1329 — what the one wait of a turn adds to the socket poll:
+/// the two `Wait.Item` variants it has to tell apart. A `Socket` item is
+/// unwrapped to exactly the value `Tcp.poll` would have been handed; a `Job`
+/// item is ready at once, because a job on this target ran at `begin`.
+pub(in crate::codegen::wasm_gc) struct WaitItemIndices {
+    pub root_type_idx: u32,
+    pub socket_variant_type_idx: u32,
+    pub job_variant_type_idx: u32,
+}
+
 pub(in crate::codegen::wasm_gc) struct TcpPollIndices {
+    /// `Some` for the one wait of a turn, `None` for the socket poll.
+    pub wait_items: Option<WaitItemIndices>,
     pub fn_type: u32,
     pub fn_idx: u32,
     pub string_type_idx: u32,
@@ -140,19 +152,39 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_poll(
         nullable: true,
         heap_type: HeapType::Concrete(indices.list_int_type_idx),
     });
+    // jasisz/aver#1329 — the one wait of a turn walks a `Map<Int, Wait.Item>`
+    // instead of a `Map<Int, Tcp.Socket>`, so its value local carries the
+    // item and one more ref local carries the socket a `Socket` item wraps.
+    // It also needs a ready buffer of its own: a job key is ready before any
+    // pollable is subscribed, and the host's poll output has room only for
+    // what the poll itself reported. Both extras are allocated only for the
+    // wait, so the socket poll's bytes are the ones it always had.
+    let wait = indices.wait_items.as_ref();
+    let extra = u32::from(wait.is_some());
+    let value_ref = match wait {
+        Some(items) => ValType::Ref(RefType {
+            nullable: true,
+            heap_type: HeapType::Concrete(items.root_type_idx),
+        }),
+        None => socket_ref,
+    };
     // Params 0=Map, 1=timeout. Locals 2..23 are i32 scratch/cursors;
     // 24..30 are typed GC refs; 31 is the Sending flag for the current entry.
-    let mut function = Function::new(vec![
-        (22, ValType::I32),
+    let mut locals = vec![
+        (22 + extra, ValType::I32),
         (1, slot_ref),
         (1, keys_ref),
         (1, values_ref),
         (1, connection_ref),
         (1, key_box_ref),
         (1, list_ref),
-        (1, socket_ref),
+        (1, value_ref),
         (1, ValType::I32),
-    ]);
+    ];
+    if wait.is_some() {
+        locals.push((1, socket_ref));
+    }
+    let mut function = Function::new(locals);
     let saved_alloc = 2;
     let capacity = 3;
     let map_cursor = 4;
@@ -175,14 +207,26 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_poll(
     let previous_index = 21;
     let cleanup_cursor = 22;
     let timer_index = 23;
-    let slot = 24;
-    let keys = 25;
-    let values = 26;
-    let connection = 27;
-    let key_box = 28;
-    let list = 29;
-    let socket = 30;
-    let is_sending = 31;
+    // Only the wait has these two: its own ready buffer, and the socket a
+    // `Wait.Item.Socket` unwraps to.
+    let ready_ptr = 24;
+    let slot = 24 + extra;
+    let keys = 25 + extra;
+    let values = 26 + extra;
+    let connection = 27 + extra;
+    let key_box = 28 + extra;
+    let list = 29 + extra;
+    let socket = 30 + extra;
+    let is_sending = 31 + extra;
+    let item_socket = 32 + extra;
+    // Where ready Map slots are collected. The socket poll reuses the host's
+    // own poll output; the wait cannot, because its job keys are ready before
+    // a single pollable was subscribed.
+    let ready_buffer = if wait.is_some() {
+        ready_ptr
+    } else {
+        output_ptr
+    };
     let mem4 = MemArg {
         offset: 0,
         align: 2,
@@ -263,7 +307,7 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_poll(
     function.instruction(&Instruction::I32Const(0));
     function.instruction(&Instruction::I32Const(4));
     function.instruction(&Instruction::LocalGet(capacity));
-    function.instruction(&Instruction::I32Const(2));
+    function.instruction(&Instruction::I32Const(if wait.is_some() { 3 } else { 2 }));
     function.instruction(&Instruction::I32Mul);
     function.instruction(&Instruction::I32Const(1));
     function.instruction(&Instruction::I32Add);
@@ -279,6 +323,18 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_poll(
     function.instruction(&Instruction::I32Mul);
     function.instruction(&Instruction::I32Add);
     function.instruction(&Instruction::LocalSet(mapping_ptr));
+    if wait.is_some() {
+        function.instruction(&Instruction::LocalGet(mapping_ptr));
+        function.instruction(&Instruction::LocalGet(capacity));
+        function.instruction(&Instruction::I32Const(4));
+        function.instruction(&Instruction::I32Mul);
+        function.instruction(&Instruction::I32Add);
+        function.instruction(&Instruction::LocalSet(ready_ptr));
+        // A job key is ready before anything is polled, so the ready count
+        // starts here rather than after the poll.
+        function.instruction(&Instruction::I32Const(0));
+        function.instruction(&Instruction::LocalSet(ready_len));
+    }
     function.instruction(&Instruction::I32Const(0));
     function.instruction(&Instruction::I32Const(0));
     function.instruction(&Instruction::I32Const(4));
@@ -326,6 +382,39 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_poll(
     function.instruction(&Instruction::LocalGet(map_cursor));
     function.instruction(&Instruction::ArrayGet(indices.map_values_array_type_idx));
     function.instruction(&Instruction::LocalSet(socket));
+    // One wait set holds both kinds of thing. A `Wait.Item.Job` is ready by
+    // construction here — the job ran at `begin` — so its key goes straight
+    // into the ready buffer and nothing is subscribed for it. A
+    // `Wait.Item.Socket` unwraps to exactly the value the socket poll walks.
+    if let Some(items) = wait {
+        function.instruction(&Instruction::LocalGet(socket));
+        function.instruction(&Instruction::RefTestNonNull(HeapType::Concrete(
+            items.job_variant_type_idx,
+        )));
+        function.instruction(&Instruction::If(BlockType::Empty));
+        function.instruction(&Instruction::LocalGet(ready_ptr));
+        function.instruction(&Instruction::LocalGet(ready_len));
+        function.instruction(&Instruction::I32Const(4));
+        function.instruction(&Instruction::I32Mul);
+        function.instruction(&Instruction::I32Add);
+        function.instruction(&Instruction::LocalGet(map_cursor));
+        function.instruction(&Instruction::I32Store(mem4));
+        function.instruction(&Instruction::LocalGet(ready_len));
+        function.instruction(&Instruction::I32Const(1));
+        function.instruction(&Instruction::I32Add);
+        function.instruction(&Instruction::LocalSet(ready_len));
+        function.instruction(&Instruction::Else);
+        function.instruction(&Instruction::LocalGet(socket));
+        function.instruction(&Instruction::RefCastNonNull(HeapType::Concrete(
+            items.socket_variant_type_idx,
+        )));
+        function.instruction(&Instruction::StructGet {
+            struct_type_index: items.socket_variant_type_idx,
+            field_index: 0,
+        });
+        function.instruction(&Instruction::LocalSet(item_socket));
+    }
+    let socket = if wait.is_some() { item_socket } else { socket };
     // `Sending` polls the same connection for write readiness.
     function.instruction(&Instruction::LocalGet(socket));
     function.instruction(&Instruction::RefTestNonNull(HeapType::Concrete(
@@ -467,6 +556,10 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_poll(
     function.instruction(&Instruction::LocalSet(connection_count));
     function.instruction(&Instruction::LocalGet(connection_count));
     function.instruction(&Instruction::LocalSet(total_pollables));
+    if wait.is_some() {
+        // Close the `Job` / `Socket` arms opened above.
+        function.instruction(&Instruction::End);
+    }
     function.instruction(&Instruction::End);
     function.instruction(&Instruction::LocalGet(map_cursor));
     function.instruction(&Instruction::I32Const(1));
@@ -480,6 +573,14 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_poll(
     // exceed u64; such a timeout is observationally "effectively forever".
     function.instruction(&Instruction::LocalGet(connection_count));
     function.instruction(&Instruction::LocalSet(timer_index));
+    // A wait set holding a job is ready at once, so the turn does not sleep:
+    // a job on this target is done the moment it began.
+    if wait.is_some() {
+        function.instruction(&Instruction::LocalGet(ready_len));
+        function.instruction(&Instruction::If(BlockType::Result(ValType::I64)));
+        function.instruction(&Instruction::I64Const(0));
+        function.instruction(&Instruction::Else);
+    }
     function.instruction(&Instruction::LocalGet(1));
     function.instruction(&Instruction::StructGet {
         struct_type_index: indices.aint_struct_type_idx,
@@ -498,6 +599,9 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_poll(
     function.instruction(&Instruction::I64Const(1_000_000));
     function.instruction(&Instruction::I64Mul);
     function.instruction(&Instruction::End);
+    if wait.is_some() {
+        function.instruction(&Instruction::End);
+    }
     function.instruction(&Instruction::Call(helpers.timeout_subscribe_fn));
     function.instruction(&Instruction::LocalSet(pollable));
     function.instruction(&Instruction::LocalGet(input_ptr));
@@ -535,8 +639,10 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_poll(
     // Rewrite ready dense indices to Map slot indices, excluding the timer.
     function.instruction(&Instruction::I32Const(0));
     function.instruction(&Instruction::LocalSet(output_cursor));
-    function.instruction(&Instruction::I32Const(0));
-    function.instruction(&Instruction::LocalSet(ready_len));
+    if wait.is_none() {
+        function.instruction(&Instruction::I32Const(0));
+        function.instruction(&Instruction::LocalSet(ready_len));
+    }
     function.instruction(&Instruction::Block(BlockType::Empty));
     function.instruction(&Instruction::Loop(BlockType::Empty));
     function.instruction(&Instruction::LocalGet(output_cursor));
@@ -560,7 +666,7 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_poll(
     function.instruction(&Instruction::I32Add);
     function.instruction(&Instruction::I32Load(mem4));
     function.instruction(&Instruction::LocalSet(ready_map_index));
-    function.instruction(&Instruction::LocalGet(output_ptr));
+    function.instruction(&Instruction::LocalGet(ready_buffer));
     function.instruction(&Instruction::LocalGet(ready_len));
     function.instruction(&Instruction::I32Const(4));
     function.instruction(&Instruction::I32Mul);
@@ -589,7 +695,7 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_poll(
     function.instruction(&Instruction::LocalGet(ready_len));
     function.instruction(&Instruction::I32GeU);
     function.instruction(&Instruction::BrIf(1));
-    function.instruction(&Instruction::LocalGet(output_ptr));
+    function.instruction(&Instruction::LocalGet(ready_buffer));
     function.instruction(&Instruction::LocalGet(sort_cursor));
     function.instruction(&Instruction::I32Const(4));
     function.instruction(&Instruction::I32Mul);
@@ -603,7 +709,7 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_poll(
     function.instruction(&Instruction::LocalGet(sort_hole));
     function.instruction(&Instruction::I32Eqz);
     function.instruction(&Instruction::BrIf(1));
-    function.instruction(&Instruction::LocalGet(output_ptr));
+    function.instruction(&Instruction::LocalGet(ready_buffer));
     function.instruction(&Instruction::LocalGet(sort_hole));
     function.instruction(&Instruction::I32Const(1));
     function.instruction(&Instruction::I32Sub);
@@ -631,7 +737,7 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_poll(
     function.instruction(&Instruction::I32LtS);
     function.instruction(&Instruction::I32Eqz);
     function.instruction(&Instruction::BrIf(1));
-    function.instruction(&Instruction::LocalGet(output_ptr));
+    function.instruction(&Instruction::LocalGet(ready_buffer));
     function.instruction(&Instruction::LocalGet(sort_hole));
     function.instruction(&Instruction::I32Const(4));
     function.instruction(&Instruction::I32Mul);
@@ -645,7 +751,7 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_poll(
     function.instruction(&Instruction::Br(0));
     function.instruction(&Instruction::End);
     function.instruction(&Instruction::End);
-    function.instruction(&Instruction::LocalGet(output_ptr));
+    function.instruction(&Instruction::LocalGet(ready_buffer));
     function.instruction(&Instruction::LocalGet(sort_hole));
     function.instruction(&Instruction::I32Const(4));
     function.instruction(&Instruction::I32Mul);
@@ -676,7 +782,7 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_poll(
     function.instruction(&Instruction::I32Const(1));
     function.instruction(&Instruction::I32Sub);
     function.instruction(&Instruction::LocalSet(output_cursor));
-    function.instruction(&Instruction::LocalGet(output_ptr));
+    function.instruction(&Instruction::LocalGet(ready_buffer));
     function.instruction(&Instruction::LocalGet(output_cursor));
     function.instruction(&Instruction::I32Const(4));
     function.instruction(&Instruction::I32Mul);

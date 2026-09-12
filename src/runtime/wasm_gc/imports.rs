@@ -52,6 +52,8 @@ mod tcp;
 mod terminal;
 #[path = "imports/time.rs"]
 mod time;
+#[path = "imports/work.rs"]
+mod work;
 
 pub(super) use factories::{
     host_http_response_make, host_map_string_list_string_empty, host_option_string_none,
@@ -141,6 +143,9 @@ pub(super) fn dispatch_aver_import(
         return Ok(true);
     }
     if time::dispatch(name, caller, params, results, caller_fn_ref)? {
+        return Ok(true);
+    }
+    if work::dispatch(name, caller, params, results, caller_fn_ref)? {
         return Ok(true);
     }
     match name {

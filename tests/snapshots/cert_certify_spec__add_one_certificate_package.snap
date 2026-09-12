@@ -5,7 +5,7 @@ expression: golden
 == cert-manifest.json ==
 {
   "schema_version": 8,
-  "format": {"version": 1, "wall_id": "sha256:510afd368403d01b96fc9e734275eb4c0605f6d555cd3e29d39f463cafe2a864"},
+  "format": {"version": 1, "wall_id": "sha256:903f7def95e471b02ae10dbbdbb209d59d411092e783092aca83598102979ddf"},
   "wasm": "add_one.wasm",
   "wasm_sha256": "4b86ac5e745a7f0aeef0d24178a3f47ed09b4f98ffc36216aedf252c9cb20583",
   "target": "wasm-gc",

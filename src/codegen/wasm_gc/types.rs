@@ -607,8 +607,14 @@ impl TypeRegistry {
         // the connection pipeline) lives in module.rs. Both slots land
         // adjacent so the array type can reference the slot type without
         // crossing a rec-group boundary.
+        // jasisz/aver#1329 — the one wait of a turn watches sockets through the
+        // same connection pool, so a program that performs it needs the pool
+        // even when it never names a `Tcp.*` effect of its own: its wait set
+        // can hold a socket another module opened.
         let needs_tcp = items.iter().any(|item| match item {
-            TopLevel::FnDef(fd) => fd.effects.iter().any(|e| e.node.starts_with("Tcp.")),
+            TopLevel::FnDef(fd) => fd.effects.iter().any(|e| {
+                e.node.starts_with("Tcp.") || e.node == crate::capability::work::WAIT_POLL
+            }),
             _ => false,
         });
         let (tcp_slot_type_idx, tcp_pool_type_idx) = if needs_tcp {
@@ -1725,6 +1731,27 @@ impl TypeRegistry {
         }
         let bare = name.rsplit_once('.').map_or(name, |(_, b)| b);
         self.sum_roots.get(bare).copied()
+    }
+
+    /// The spelling `variants` keys a sum's `parent` by.
+    ///
+    /// Flattening renames a dependency's type to its bare name unless two
+    /// declarers collide, so a qualified spelling that reached codegen
+    /// through a contract boundary (`Wait.Item`) has to fall back to the
+    /// bare one the registry actually holds. Every other lookup here does
+    /// the same fallback; this is it for the variant table.
+    pub(super) fn sum_variant_parent<'a>(&'a self, name: &'a str) -> Option<&'a str> {
+        let declared = |candidate: &str| {
+            self.variants
+                .values()
+                .flatten()
+                .any(|variant| variant.parent == candidate)
+        };
+        if declared(name) {
+            return Some(name);
+        }
+        let bare = name.rsplit_once('.').map_or(name, |(_, bare)| bare);
+        declared(bare).then_some(bare)
     }
 
     /// Look up a variant by bare name. Returns the first registered

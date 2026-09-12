@@ -963,17 +963,45 @@ pub(super) fn emit_tcp_poll_wasip2(
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
+    emit_poll_wasip2(func, args, slots, ctx, false)
+}
+
+/// jasisz/aver#1329 — the one wait of a turn, over `Map<Int, Wait.Item>`.
+/// The helper it calls is the socket poll taught one more variant layer: a
+/// `Socket` item is unwrapped and polled, a `Job` item is ready at once.
+pub(super) fn emit_wait_poll_wasip2(
+    func: &mut wasm_encoder::Function,
+    args: &[Spanned<MirExpr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    emit_poll_wasip2(func, args, slots, ctx, true)
+}
+
+fn emit_poll_wasip2(
+    func: &mut wasm_encoder::Function,
+    args: &[Spanned<MirExpr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+    wait: bool,
+) -> Result<(), WasmGcError> {
+    let operation = if wait { "Wait.poll" } else { "Tcp.poll" };
     let lowering = ctx.wasip2_lowering.ok_or_else(|| {
-        WasmGcError::Validation("Tcp.poll on wasip2: lowering ctx missing".into())
+        WasmGcError::Validation(format!("{operation} on wasip2: lowering ctx missing"))
     })?;
     if args.len() != 2 {
         return Err(WasmGcError::Validation(format!(
-            "Tcp.poll on `--target wasip2` expects 2 args (sockets, timeoutMs), got {}",
+            "{operation} on `--target wasip2` expects 2 args (items, timeoutMs), got {}",
             args.len()
         )));
     }
-    let helper = lowering.tcp_poll_fn_idx.ok_or_else(|| {
-        WasmGcError::Validation("Tcp.poll on wasip2: helper fn idx missing".into())
+    let helper = if wait {
+        lowering.wait_poll_fn_idx
+    } else {
+        lowering.tcp_poll_fn_idx
+    }
+    .ok_or_else(|| {
+        WasmGcError::Validation(format!("{operation} on wasip2: helper fn idx missing"))
     })?;
     emit_mir_expr(func, &args[0], slots, ctx)?;
     emit_mir_expr(func, &args[1], slots, ctx)?;

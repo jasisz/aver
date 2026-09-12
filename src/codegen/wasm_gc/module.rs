@@ -196,6 +196,22 @@ pub(super) fn emit_module_with(
             }
             _ => &[],
         };
+    // jasisz/aver#1329 — the one wait of a turn carries its whole wait set
+    // across the boundary, and a program can perform it without ever
+    // annotating the map: `Wait.poll({}, 0)` is a complete call. Name the
+    // types here so the registry always has a slot for them.
+    if fn_defs.iter().any(|fd| {
+        fd.effects
+            .iter()
+            .any(|effect| effect.node == crate::capability::work::WAIT_POLL)
+    }) {
+        capability_boundary_types.extend([
+            "Map<Int,Wait.Item>".to_string(),
+            "Wait.Item".to_string(),
+            "List<Int>".to_string(),
+            "Result<List<Int>,String>".to_string(),
+        ]);
+    }
     let mut registry = TypeRegistry::build_with_handler_and_capabilities(
         items,
         &resolved_fn_defs,
@@ -2857,6 +2873,7 @@ pub(super) fn emit_module_with(
                 tcp_read_some_fn_idx: tcp.read_some.as_ref().map(|t| t.fn_idx),
                 tcp_read_now_fn_idx: tcp.read_now.as_ref().map(|t| t.fn_idx),
                 tcp_poll_fn_idx: tcp.poll.as_ref().map(|t| t.fn_idx),
+                wait_poll_fn_idx: tcp.wait.as_ref().map(|t| t.fn_idx),
                 tcp_send_fn_idx: tcp.send.as_ref().map(|t| t.fn_idx),
                 tcp_send_bytes_fn_idx: tcp.send_bytes.as_ref().map(|t| t.fn_idx),
                 tcp_ping_fn_idx: tcp.ping.as_ref().map(|t| t.fn_idx),
@@ -5355,7 +5372,9 @@ pub(super) fn emit_module_with(
         };
         codes.function(&super::wasip2_tcp::emit_tcp_read_now(tr, &helpers));
     }
-    if let Some(tp) = &tcp.poll {
+    // The one wait of a turn reuses every index the socket poll needs, over
+    // its own `Map<Int, Wait.Item>` (jasisz/aver#1329).
+    for tp in [tcp.poll.as_ref(), tcp.wait.as_ref()].into_iter().flatten() {
         let (_, parse_id_fn) = tcp
             .parse_id
             .expect("tcp.poll gated on tcp_parse_id allocation");
@@ -7904,6 +7923,12 @@ struct FactoryExports {
     /// One stable host token for any `Tcp.Socket` variant. Listener and Dial
     /// resources and Connection records all carry their token in field 0.
     tcp_socket_id: Option<FactorySlot>,
+    /// `__rt_wait_item_kind(item) -> i32` — nominal discriminator for the two
+    /// `Wait.Item` variants, `0` for `Socket` and `1` for `Job`
+    /// (jasisz/aver#1329). The host splits one wait set into the sockets it
+    /// polls and the job keys that are ready by construction, and it cannot
+    /// tell the two apart from field shapes: both carry one reference.
+    wait_item_kind: Option<FactorySlot>,
     /// Resource/result builders for the reactor lifecycle operations.
     result_tcp_dial_string_ok: Option<FactorySlot>,
     result_tcp_dial_string_err: Option<FactorySlot>,
@@ -8388,7 +8413,14 @@ fn allocate_factory_exports(
             &mut fx.tcp_listener_id,
         )?;
     }
-    if effect_registry.iter().any(|e| e == EffectName::TcpPoll) {
+    // The one wait of a turn watches the same sockets `Tcp.poll` does, so it
+    // needs the same two socket probes. It does not need the `Map<Int,
+    // Tcp.Socket>` accessors: its own map is a `Map<Int, Wait.Item>`, and a
+    // program that only ever waits has no socket map at all.
+    let polls_sockets = effect_registry
+        .iter()
+        .any(|e| e == EffectName::TcpPoll || e == EffectName::WaitPoll);
+    if polls_sockets {
         let root_idx = registry
             .sum_root_type_idx("Tcp.Socket")
             .ok_or(WasmGcError::Validation(
@@ -8412,64 +8444,92 @@ fn allocate_factory_exports(
         *next_type_idx += 1;
         *next_fn_idx += 1;
 
-        let map = registry
-            .map_slots("Map<Int,Tcp.Socket>")
-            .ok_or(WasmGcError::Validation(
-                "Tcp.poll requires the Map<Int, Tcp.Socket> slots".into(),
-            ))?;
-        let key_box =
-            registry
-                .primitive_key_box
-                .get("Int")
-                .copied()
+        if effect_registry.iter().any(|e| e == EffectName::TcpPoll) {
+            let map = registry
+                .map_slots("Map<Int,Tcp.Socket>")
                 .ok_or(WasmGcError::Validation(
-                    "Tcp.poll requires the boxed Int map-key slot".into(),
+                    "Tcp.poll requires the Map<Int, Tcp.Socket> slots".into(),
                 ))?;
-        let map_ref = ref_null(map.map);
-        let socket_ref = ref_null(root_idx);
-        let int_ref = registry
-            .aint_struct_idx
-            .map(ref_null)
-            .unwrap_or(ValType::I64);
+            let key_box =
+                registry
+                    .primitive_key_box
+                    .get("Int")
+                    .copied()
+                    .ok_or(WasmGcError::Validation(
+                        "Tcp.poll requires the boxed Int map-key slot".into(),
+                    ))?;
+            let map_ref = ref_null(map.map);
+            let int_ref = registry
+                .aint_struct_idx
+                .map(ref_null)
+                .unwrap_or(ValType::I64);
 
-        types.ty().function([map_ref], [ValType::I32]);
-        fx.tcp_poll_capacity = Some(FactorySlot {
-            type_idx: *next_type_idx,
-            fn_idx: *next_fn_idx,
-        });
-        *next_type_idx += 1;
-        *next_fn_idx += 1;
+            types.ty().function([map_ref], [ValType::I32]);
+            fx.tcp_poll_capacity = Some(FactorySlot {
+                type_idx: *next_type_idx,
+                fn_idx: *next_fn_idx,
+            });
+            *next_type_idx += 1;
+            *next_fn_idx += 1;
 
-        types.ty().function([map_ref, ValType::I32], [int_ref]);
-        fx.tcp_poll_key_at = Some(FactorySlot {
-            type_idx: *next_type_idx,
-            fn_idx: *next_fn_idx,
-        });
-        *next_type_idx += 1;
-        *next_fn_idx += 1;
+            types.ty().function([map_ref, ValType::I32], [int_ref]);
+            fx.tcp_poll_key_at = Some(FactorySlot {
+                type_idx: *next_type_idx,
+                fn_idx: *next_fn_idx,
+            });
+            *next_type_idx += 1;
+            *next_fn_idx += 1;
 
-        types.ty().function([map_ref, ValType::I32], [socket_ref]);
-        fx.tcp_poll_socket_at = Some(FactorySlot {
-            type_idx: *next_type_idx,
-            fn_idx: *next_fn_idx,
-        });
-        *next_type_idx += 1;
-        *next_fn_idx += 1;
+            types
+                .ty()
+                .function([map_ref, ValType::I32], [ref_null(root_idx)]);
+            fx.tcp_poll_socket_at = Some(FactorySlot {
+                type_idx: *next_type_idx,
+                fn_idx: *next_fn_idx,
+            });
+            *next_type_idx += 1;
+            *next_fn_idx += 1;
+            let _ = key_box;
+        }
 
         let string_idx = registry
             .string_array_type_idx
             .ok_or(WasmGcError::Validation(
                 "Tcp.poll socket IDs require the String slot".into(),
             ))?;
-        types.ty().function([socket_ref], [ref_null(string_idx)]);
+        types
+            .ty()
+            .function([ref_null(root_idx)], [ref_null(string_idx)]);
         fx.tcp_socket_id = Some(FactorySlot {
             type_idx: *next_type_idx,
             fn_idx: *next_fn_idx,
         });
         *next_type_idx += 1;
         *next_fn_idx += 1;
-
-        let _ = key_box;
+    }
+    if effect_registry.iter().any(|e| e == EffectName::WaitPoll) {
+        let root_idx = registry
+            .sum_root_type_idx("Wait.Item")
+            .ok_or(WasmGcError::Validation(
+                "Wait.poll requires the Wait.Item sum slot".into(),
+            ))?;
+        for variant in ["Socket", "Job"] {
+            registry
+                .variant_in("Wait.Item", variant)
+                .or_else(|| registry.variant_in("Item", variant))
+                .ok_or_else(|| {
+                    WasmGcError::Validation(format!(
+                        "Wait.poll requires the Wait.Item.{variant} variant slot"
+                    ))
+                })?;
+        }
+        types.ty().function([ref_null(root_idx)], [ValType::I32]);
+        fx.wait_item_kind = Some(FactorySlot {
+            type_idx: *next_type_idx,
+            fn_idx: *next_fn_idx,
+        });
+        *next_type_idx += 1;
+        *next_fn_idx += 1;
     }
     if effect_registry
         .iter()
@@ -8826,7 +8886,12 @@ fn allocate_factory_exports(
         *next_fn_idx += 1;
     }
 
-    if effect_registry.iter().any(|e| e == EffectName::TcpPoll) {
+    // The one wait of a turn answers the same `Result<List<Int>, String>` the
+    // socket poll does, and the host builds it through the same factories.
+    if effect_registry
+        .iter()
+        .any(|e| e == EffectName::TcpPoll || e == EffectName::WaitPoll)
+    {
         let result_idx =
             registry
                 .result_type_idx("Result<List<Int>,String>")
@@ -9026,6 +9091,9 @@ impl FactoryExports {
         }
         if let Some(s) = self.tcp_poll_socket_at {
             exports.export("__rt_tcp_poll_socket_at", ExportKind::Func, s.fn_idx);
+        }
+        if let Some(s) = self.wait_item_kind {
+            exports.export("__rt_wait_item_kind", ExportKind::Func, s.fn_idx);
         }
         if let Some(s) = self.tcp_socket_id {
             exports.export("__rt_tcp_socket_id", ExportKind::Func, s.fn_idx);
@@ -9253,6 +9321,9 @@ impl FactoryExports {
         if self.tcp_socket_id.is_some() {
             codes.function(&emit_factory_tcp_socket_id(registry)?);
         }
+        if self.wait_item_kind.is_some() {
+            codes.function(&emit_factory_wait_item_kind(registry)?);
+        }
         if self.result_tcp_dial_string_ok.is_some() {
             codes.function(&emit_factory_result_resource_string_ok(
                 registry,
@@ -9450,6 +9521,7 @@ impl FactoryExports {
             self.tcp_poll_key_at,
             self.tcp_poll_socket_at,
             self.tcp_socket_id,
+            self.wait_item_kind,
             self.result_tcp_dial_string_ok,
             self.result_tcp_dial_string_err,
             self.result_tcp_listener_string_ok,
@@ -9895,6 +9967,43 @@ fn emit_factory_tcp_poll_socket_at(
     });
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::ArrayGet(map.values_array));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+/// Tell the two `Wait.Item` variants apart: `0` is `Socket`, `1` is `Job`.
+///
+/// The host splits one wait set into sockets it polls and job keys that are
+/// ready the moment their job began, and both variants carry exactly one
+/// reference, so nothing structural distinguishes them.
+fn emit_factory_wait_item_kind(
+    registry: &TypeRegistry,
+) -> Result<wasm_encoder::Function, WasmGcError> {
+    use wasm_encoder::{BlockType, HeapType};
+
+    let variant_idx = |name: &str| {
+        registry
+            .variant_in("Wait.Item", name)
+            .or_else(|| registry.variant_in("Item", name))
+            .map(|info| info.type_idx)
+            .expect("checked at allocation")
+    };
+    let socket = variant_idx("Socket");
+    let job = variant_idx("Job");
+    let mut f = Function::new([]);
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::RefTestNonNull(HeapType::Concrete(socket)));
+    f.instruction(&Instruction::If(BlockType::Result(ValType::I32)));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::Else);
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::RefTestNonNull(HeapType::Concrete(job)));
+    f.instruction(&Instruction::If(BlockType::Result(ValType::I32)));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::Else);
+    f.instruction(&Instruction::I32Const(-1));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
     f.instruction(&Instruction::End);
     Ok(f)
 }

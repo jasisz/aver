@@ -212,6 +212,19 @@ pub(super) enum EffectName {
     RecordSetBranch,
     /// `() -> Unit` — close the most recently opened scope.
     RecordExitGroup,
+    // ── The one wait of a turn, and the cancel that ends a job
+    //    (jasisz/aver#1329). Both targets run jobs inline, so `Work.cancel`
+    //    is answered by the module itself and this import exists only so the
+    //    recorder sees it in the turn it happened in, exactly as the VM
+    //    records it. `Wait.poll` is the other half: on wasm-gc the host
+    //    answers it, because the sockets it watches are the host's and every
+    //    job key is ready by construction.
+    /// `(items: Map<Int, Wait.Item>, timeoutMs: Int)
+    /// -> Result<List<Int>, String>` — one wait over sockets and jobs.
+    WaitPoll,
+    /// `(job: Work.Job) -> Unit` — the module has already cancelled the
+    /// handle; this is what the recording sees.
+    WorkCancel,
 }
 
 impl EffectName {
@@ -301,6 +314,8 @@ impl EffectName {
         Self::RecordEnterGroup,
         Self::RecordSetBranch,
         Self::RecordExitGroup,
+        Self::WaitPoll,
+        Self::WorkCancel,
     ];
 
     pub(super) fn from_dotted(s: &str) -> Option<Self> {
@@ -392,6 +407,8 @@ impl EffectName {
             "Http.post" => Some(Self::HttpPost),
             "Http.put" => Some(Self::HttpPut),
             "Http.patch" => Some(Self::HttpPatch),
+            "Wait.poll" => Some(Self::WaitPoll),
+            "Work.cancel" => Some(Self::WorkCancel),
             _ => None,
         }
     }
@@ -490,6 +507,8 @@ impl EffectName {
             Self::RecordEnterGroup => "__record_enter_group",
             Self::RecordSetBranch => "__record_set_branch",
             Self::RecordExitGroup => "__record_exit_group",
+            Self::WaitPoll => "Wait.poll",
+            Self::WorkCancel => "Work.cancel",
         }
     }
 
@@ -581,6 +600,8 @@ impl EffectName {
             Self::RecordEnterGroup => ("aver", "record_enter_group"),
             Self::RecordSetBranch => ("aver", "record_set_branch"),
             Self::RecordExitGroup => ("aver", "record_exit_group"),
+            Self::WaitPoll => ("aver", "wait_poll"),
+            Self::WorkCancel => ("aver", "work_cancel"),
         }
     }
 
@@ -693,6 +714,13 @@ impl EffectName {
                 Ok(vec![any_ref_ty(), any_ref_ty()])
             }
             Self::TcpPoll => Ok(vec![map_int_tcp_socket_ref_ty(registry)?, any_ref_ty()]),
+            // The one wait carries the whole `Map<Int, Wait.Item>`: the host
+            // splits sockets from jobs, because it owns the sockets and every
+            // job key is ready the moment its job began.
+            Self::WaitPoll => Ok(vec![map_int_wait_item_ref_ty(registry)?, any_ref_ty()]),
+            // The handle only has to be identifiable: the module has already
+            // cancelled it, and the recording names the job it was.
+            Self::WorkCancel => Ok(vec![any_ref_ty()]),
             Self::TcpWriteLine | Self::TcpWriteBytes | Self::TcpWriteNow => {
                 Ok(vec![any_ref_ty(), any_ref_ty()])
             }
@@ -843,6 +871,8 @@ impl EffectName {
                 "Result<Http.Response,String>",
             )?]),
             Self::RecordEnterGroup | Self::RecordSetBranch | Self::RecordExitGroup => Ok(vec![]),
+            Self::WaitPoll => Ok(vec![result_ref_ty(registry, "Result<List<Int>,String>")?]),
+            Self::WorkCancel => Ok(vec![]),
         }
     }
 }
@@ -912,6 +942,16 @@ mod certificate_format_tests {
     #[test]
     fn wasip2_slots_and_wasip2_lowering_partition_the_effects_the_same_way() {
         for effect in EffectName::ALL {
+            // A job is cancelled by the module itself on wasip2 — it runs
+            // inline at `begin`, so there is nothing to ask a host for — and
+            // the manifest binds it because the target really does answer it.
+            // It is the one operation on either side of this partition that
+            // names no canonical-ABI slot.
+            if *effect == EffectName::WorkCancel {
+                assert!(effect.lowers_on_wasip2());
+                assert!(effect.wasip2_slots().is_empty());
+                continue;
+            }
             assert_eq!(
                 effect.lowers_on_wasip2(),
                 !effect.wasip2_slots().is_empty(),
@@ -931,22 +971,6 @@ mod certificate_format_tests {
             if operation.canonical_name == "Args.get" {
                 assert!(EffectName::from_dotted("Args.len").is_some());
                 assert!(EffectName::from_dotted("Args._get").is_some());
-                continue;
-            }
-            // `Wait` and `Work` are answered by the VM and the Rust backend
-            // in this build. The capability target manifest binds neither on
-            // either wasm target, so a program that performs one of their
-            // operations is refused before codegen with
-            // `error[capability-target-unsupported]`
-            // (`reason[standard-binding-unavailable]`), and a program that
-            // declares a job kind with `error[work-target]`. Nothing reaches
-            // a lowering, so no route exists yet.
-            //
-            // TODO(owner): jasisz/aver#1329 — decisions 3 and 4 of
-            // `prompts/wasm-inline-jobs-brief.md` give `Wait.poll` and
-            // `Work.cancel` a wasm-gc and wasip2 lowering. This skip is what
-            // decision 5 asks to delete, and it goes with them, not before.
-            if crate::stdlib::RESERVED_CAPABILITY_MODULES.contains(&operation.module.as_str()) {
                 continue;
             }
             assert!(
@@ -1317,7 +1341,7 @@ impl EffectName {
                 Wasip2ImportSlot::IoStreamsResourceDropOutputStream,
                 Wasip2ImportSlot::SocketsTcpResourceDropTcpSocket,
             ],
-            Self::TcpPoll => &[
+            Self::WaitPoll | Self::TcpPoll => &[
                 Wasip2ImportSlot::InputStreamSubscribe,
                 Wasip2ImportSlot::OutputStreamSubscribe,
                 Wasip2ImportSlot::ClocksMonotonicSubscribeDuration,
@@ -1426,9 +1450,27 @@ impl EffectName {
             | Self::TcpAccept
             | Self::TcpPeerAddress
             | Self::TcpCloseDial
-            | Self::TcpCloseListener => &[],
+            | Self::TcpCloseListener
+            // A job is cancelled by the module itself on this target, so
+            // nothing is imported for it. It is the one operation the
+            // manifest binds on wasip2 that names no canonical-ABI slot; see
+            // `wasip2_slots_and_wasip2_lowering_partition_the_effects_the_same_way`.
+            | Self::WorkCancel => &[],
         }
     }
+}
+
+/// The one wait's parameter: the caller's whole wait set.
+fn map_int_wait_item_ref_ty(registry: &TypeRegistry) -> Result<ValType, WasmGcError> {
+    let slots = registry
+        .map_slots("Map<Int,Wait.Item>")
+        .ok_or(WasmGcError::Validation(
+            "Wait.poll requires `Map<Int, Wait.Item>` slot but none was registered".into(),
+        ))?;
+    Ok(ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(slots.map),
+    }))
 }
 
 fn string_ref_ty(registry: &TypeRegistry) -> Result<ValType, WasmGcError> {

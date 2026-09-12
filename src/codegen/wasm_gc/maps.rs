@@ -330,17 +330,12 @@ impl MapHelperRegistry {
             if let Some(fs) = registry.record_fields.get(k_aver) {
                 needs_string |= fs.iter().any(|(_, t)| t.trim() == "String");
             }
-            if registry
-                .variants
-                .values()
-                .flat_map(|v| v.iter())
-                .any(|v| v.parent == k_aver)
-            {
+            if let Some(parent) = registry.sum_variant_parent(k_aver) {
                 needs_string |= registry
                     .variants
                     .values()
                     .flat_map(|vs| vs.iter())
-                    .filter(|v| v.parent == k_aver)
+                    .filter(|v| v.parent == parent)
                     .any(|v| v.fields.iter().any(|t| t.trim() == "String"));
             }
             // Map<K,V>'s structural eq + hash dispatches V via the
@@ -611,11 +606,7 @@ impl MapHelperRegistry {
                 WasmGcError::Validation(format!("bad map canonical `{canonical}`")),
             )?;
             let is_primitive_k = super::types::TypeRegistry::is_primitive_map_key(k_aver);
-            let is_sum_k = registry
-                .variants
-                .values()
-                .flat_map(|v| v.iter())
-                .any(|v| v.parent == k_aver);
+            let is_sum_k = registry.sum_variant_parent(k_aver).is_some();
             let is_carrier_k = k_aver.starts_with("Option<")
                 || k_aver.starts_with("Result<")
                 || k_aver.starts_with("Tuple<");
@@ -1096,13 +1087,19 @@ fn emit_hash_for(
     if super::types::TypeRegistry::is_primitive_map_key(k_aver) {
         return emit_hash_primitive(k_aver, registry);
     }
-    if registry
-        .variants
-        .values()
-        .flat_map(|v| v.iter())
-        .any(|v| v.parent == k_aver)
-    {
-        return emit_hash_sum(k_aver, registry, string_key_helpers, all_key_helpers);
+    // jasisz/aver#1329 — a job handle hashes on the id it was minted with,
+    // so equal handles hash equal. It is never a map key of the program's own
+    // — `Work.Job` cannot be compared — but a `Map` whose VALUE reaches one
+    // dispatches structural equality through the same helper table.
+    if k_aver == crate::capability::work::WORK_JOB {
+        let mut f = Function::new([]);
+        f.instruction(&Instruction::LocalGet(0));
+        emit_job_handle_hash(&mut f, registry)?;
+        f.instruction(&Instruction::End);
+        return Ok(f);
+    }
+    if let Some(parent) = registry.sum_variant_parent(k_aver) {
+        return emit_hash_sum(parent, registry, string_key_helpers, all_key_helpers);
     }
     if k_aver.starts_with("Option<")
         || k_aver.starts_with("Result<")
@@ -1170,13 +1167,18 @@ fn emit_eq_for(
     if super::types::TypeRegistry::is_primitive_map_key(k_aver) {
         return emit_eq_primitive(k_aver, registry);
     }
-    if registry
-        .variants
-        .values()
-        .flat_map(|v| v.iter())
-        .any(|v| v.parent == k_aver)
-    {
-        return emit_eq_sum(k_aver, registry, string_key_helpers, all_key_helpers);
+    // Two job handles are the same job exactly when they are the same
+    // reference, which is what the `id` field they hash on says too.
+    if k_aver == crate::capability::work::WORK_JOB {
+        let mut f = Function::new([]);
+        f.instruction(&Instruction::LocalGet(0));
+        f.instruction(&Instruction::LocalGet(1));
+        f.instruction(&Instruction::RefEq);
+        f.instruction(&Instruction::End);
+        return Ok(f);
+    }
+    if let Some(parent) = registry.sum_variant_parent(k_aver) {
+        return emit_eq_sum(parent, registry, string_key_helpers, all_key_helpers);
     }
     if k_aver.starts_with("Option<")
         || k_aver.starts_with("Result<")

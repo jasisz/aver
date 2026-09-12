@@ -427,29 +427,37 @@ fn the_wasm_gc_runner_accepts_a_program_with_a_job_kind() {
     assert!(text.contains("jobs ready"), "{}", format_output(&out));
 }
 
-/// TODO(owner): jasisz/aver#1329 — decision 3 of
-/// `prompts/wasm-inline-jobs-part2-brief.md` gives `Wait.poll` a wasm-gc and
-/// wasip2 lowering, and this test then asserts the fixture runs. It still
-/// asserts the binding refusal because the capability target manifest binds
-/// neither reserved contract on a wasm target until that lowering lands.
+/// The one wait of a turn runs on both wasm targets since jasisz/aver#1329
+/// part two, so a program that performs it and declares no job kind is no
+/// longer refused: the wait set it hands over can hold sockets the host
+/// polls and jobs that are ready at once, and an empty one reports nothing.
 #[cfg(feature = "wasm")]
 #[test]
-fn the_wasm_gc_runner_refuses_the_one_wait_as_an_unbound_capability() {
+fn the_wasm_gc_runner_answers_the_one_wait() {
     let out = aver("work_shape_wait_only", &["run", "--wasm-gc"]);
     let text = combined(&out);
     assert!(
-        text.contains(
-            "error[capability-target-unsupported]: target `wasm-gc` cannot bind capability `Wait`"
-        ),
-        "{}",
-        format_output(&out)
-    );
-    assert!(
-        text.contains("reason[standard-binding-unavailable]"),
+        !text.contains("error[capability-target-unsupported]"),
         "{text}"
     );
     assert!(!text.contains("error[work-target]"), "{text}");
-    assert!(!out.status.success(), "{}", format_output(&out));
+    assert!(out.status.success(), "{}", format_output(&out));
+    assert!(text.contains("ready = 0"), "{}", format_output(&out));
+}
+
+/// The same as a component: the core module polls its own wait set through
+/// `wasi:io/poll`, so nothing about it needs a host binding either.
+#[cfg(all(feature = "wasm", feature = "wasip2"))]
+#[test]
+fn the_wasip2_backend_answers_the_one_wait() {
+    let out = aver("work_shape_wait_only", &["run", "--wasip2"]);
+    let text = combined(&out);
+    assert!(
+        !text.contains("error[capability-target-unsupported]"),
+        "{text}"
+    );
+    assert!(out.status.success(), "{}", format_output(&out));
+    assert!(text.contains("ready = 0"), "{}", format_output(&out));
 }
 
 /// The same for a component: the core module a job kind compiles into runs

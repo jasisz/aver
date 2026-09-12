@@ -175,7 +175,17 @@ impl StandardCapabilityBinding {
             (Self::Work, CapabilityTarget::Vm | CapabilityTarget::Rust) => {
                 Some(aver_rt::provider::STANDARD_WORK_NATIVE_IDENTITY)
             }
-            (Self::Wait | Self::Work, CapabilityTarget::WasmGc | CapabilityTarget::Wasip2) => None,
+            // jasisz/aver#1329 — both wasm targets run a job inline at
+            // `begin`, so the one wait and the cancel run there too. On
+            // wasm-gc the host answers the wait, because it owns the sockets
+            // it watches; on wasip2 the component polls them through
+            // `wasi:io/poll` itself. A cancel is the module's own work on
+            // both, and the wasm-gc import beside it is what the recorder
+            // sees.
+            (Self::Wait, CapabilityTarget::WasmGc) => Some("aver.standard.Wait/wasm-gc-imports"),
+            (Self::Wait, CapabilityTarget::Wasip2) => Some("aver.standard.Wait/wasip2-wasi"),
+            (Self::Work, CapabilityTarget::WasmGc) => Some("aver.standard.Work/wasm-gc-imports"),
+            (Self::Work, CapabilityTarget::Wasip2) => Some("aver.standard.Work/wasip2-inline"),
         }
     }
 
@@ -187,9 +197,7 @@ impl StandardCapabilityBinding {
             (Self::Terminal, CapabilityTarget::Wasip2) => {
                 "WASI 0.2 has no portable raw-terminal, cursor, color, key-input, or terminal-size interface"
             }
-            (Self::Wait | Self::Work, _) => {
-                "jobs and the wait that watches them run on the VM and the Rust backend in this build; the wasm-gc and wasip2 backends follow in a later change"
-            }
+
             _ => {
                 "the compiler ships no binding for this standard capability on the selected target"
             }
