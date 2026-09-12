@@ -304,7 +304,22 @@ impl CapabilityProvider for StandardWaitProvider {
                 // A job-only wait has no socket to sleep on; the engine's own
                 // signal is the wait. A wait that already slept on its sockets
                 // finds the deadline passed and returns at once.
-                engine.wait_until(generation, deadline);
+                //
+                // The engine's settle generation is per engine, not per wait
+                // set, so a job outside this set ends the sleep as well. That
+                // is a wake, not an answer: re-check this set and go back to
+                // sleep while nothing in it is ready and the deadline has not
+                // passed, or the wait returns empty long before it promised.
+                let mut generation = generation;
+                loop {
+                    engine.wait_until(generation, deadline);
+                    if jobs.iter().any(|(_, handle)| handle.is_ready())
+                        || Instant::now() >= deadline
+                    {
+                        break;
+                    }
+                    generation = engine.generation();
+                }
             } else if sockets.is_empty() {
                 // Neither socket nor job: the wait is the timeout itself.
                 let left = remaining_ms(deadline);
@@ -452,6 +467,65 @@ mod tests {
         assert_eq!(deadline_for(now, i64::MAX), deadline_for(now, MAX_WAIT_MS));
         assert_eq!(deadline_for(now, 0), now);
         assert!(deadline_for(now, i64::MAX) > now + Duration::from_secs(60 * 60 * 24 * 365));
+    }
+
+    /// The engine's settle generation is per engine, so a job outside the
+    /// wait set wakes a job-only wait. Returning on that wake answers `[]`
+    /// while the set's own job is still running and the timeout is far from
+    /// spent: the wait has to look again and go back to sleep.
+    #[test]
+    fn a_job_outside_the_wait_set_does_not_end_the_wait() {
+        let engine = JobEngine::new(4);
+        let release = Arc::new(AtomicBool::new(false));
+        let held = release.clone();
+        // The job the wait is over: slow, and released by hand.
+        let slow = engine
+            .begin(Box::new(move |cancel| {
+                while !held.load(Ordering::Relaxed) && !cancel.load(Ordering::Relaxed) {
+                    std::thread::yield_now();
+                }
+                Ok(ProviderValue::Int(crate::AverInt::from_i64(1)))
+            }))
+            .expect("the slow job starts");
+        // A job nobody is waiting for, which settles first and wakes the
+        // engine while the wait sleeps.
+        let _fast = engine
+            .begin(Box::new(|_| {
+                std::thread::sleep(Duration::from_millis(50));
+                Ok(ProviderValue::Int(crate::AverInt::from_i64(2)))
+            }))
+            .expect("the fast job starts");
+
+        let started = Instant::now();
+        let waiter = {
+            let slow = slow.clone();
+            std::thread::spawn(move || {
+                let answer = StandardWaitProvider
+                    .invoke(
+                        &context(),
+                        &[
+                            wait_set(&slow),
+                            ProviderValue::Int(crate::AverInt::from_i64(3000)),
+                        ],
+                    )
+                    .expect("the wait answers");
+                (answer, started.elapsed())
+            })
+        };
+        // Well after the fast job settled, release the one the wait is over.
+        std::thread::sleep(Duration::from_millis(400));
+        release.store(true, Ordering::Relaxed);
+        let (answer, elapsed) = waiter.join().expect("the wait thread finishes");
+
+        assert!(
+            matches!(&answer, ProviderValue::ResultOk(inner) if matches!(&**inner, ProviderValue::List(keys) if keys.len() == 1)),
+            "the wait answered {answer:?} rather than its own ready job"
+        );
+        assert!(
+            elapsed >= Duration::from_millis(300),
+            "the wait returned after {elapsed:?}, before the job it was over settled"
+        );
+        let _ = slow;
     }
 
     #[test]
