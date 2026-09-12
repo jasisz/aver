@@ -511,19 +511,25 @@ fn claim(state: State) -> Tuple<State, Pool.__ClaimReply>
 
 A `Later` leaves the **request** where it is, with the same instance number and the same request value, and **keeps the state the module returned**, exactly as a `Now` does. A `Later` is where a module records its own progress: a partial write's offset, a retry count, a deadline of its own. So the rule to remember is not "a `Later` changes nothing" — it is "a `Later` leaves the request unchanged and keeps the module's state".
 
-The worked example is a socket that takes what it has room for and no more. The first ask takes half the payload, records how far it got, and parks; the ask after that sends the rest and answers. Nothing but the module's own state carries the offset across the park:
+The worked example is a real socket, in the example's own `Sockets` module: `Tcp.writeNow` takes as many of the bytes offered it as the socket has room for right now and answers that count, so a payload it did not take whole leaves an offset behind and parks on that socket becoming writable again. Nothing but the module's own state carries the offset across the park, and the ask after the park goes on from exactly there:
 
 ```aver
 fn write(state: State, key: Int, payload: Bytes) -> Tuple<State, Wire.__WriteReply>
-    ? "One ask at one peer's write. A socket takes what it has room for and no more, so the first ask takes half the payload, records how far it got and parks; the ask after that sends the rest and answers."
-    writing(State.update(state, asked = state.asked + 1), key, payload, Map.get(state.holding, key))
+    ? "One ask at one peer's write. Every ask is counted, so a run can say how many asks its payloads took."
+    ! [Tcp.writeNow]
+    writing(State.update(state, asked = state.asked + 1), key, payload, Map.get(state.peers, key))
 
-fn writing(state: State, key: Int, payload: Bytes, sofar: Option<Bytes>) -> Tuple<State, Wire.__WriteReply>
-    ? "One ask, against how much of this payload the peer has already taken."
-    match sofar
-        Option.None -> (State.update(state, holding = Map.set(state.holding, key, Bytes.take(payload, half(payload)))), Wire.__WriteReply.Later(Wait.Wake.NextTurn))
-        Option.Some(head) -> (finished(state, key, Bytes.concat(head, Bytes.drop(payload, half(payload)))), Wire.__WriteReply.Now(Result.Ok(Unit)))
+fn offered(state: State, key: Int, connection: Tcp.Connection, payload: Bytes, sofar: Int) -> Tuple<State, Wire.__WriteReply>
+    ? "One ask at one socket. It answers how many of the bytes offered it actually took, which is a count between nothing and the whole offer; a payload with bytes still to go records how far it got and parks on the socket becoming writable again, and the last byte answers the write."
+    ! [Tcp.writeNow]
+    match Tcp.writeNow(connection, offer(payload, sofar))
+        Result.Err(reason) -> (dropped(state, key), Wire.__WriteReply.Now(Result.Err(reason)))
+        Result.Ok(count) -> match whole(payload, sofar, count)
+            true -> (finished(state, key), Wire.__WriteReply.Now(Result.Ok(Unit)))
+            false -> (parked(state, key, sofar, count), Wire.__WriteReply.Later(Wait.Wake.Item(Wait.Item.Socket(Tcp.Socket.Sending(connection)))))
 ```
+
+An answer module may perform effects — `answer-shape` says so rather than refusing it, because an answer runs inside the turn and a slow one stalls every other process — and this one does: it owns the `Tcp.Listener` its peers arrive on and the `Tcp.Connection` each peer key stands for, answers `Wire.accept` from `Tcp.accept`, `Wire.read` from `Tcp.readNow`, and parks on `Connected` when nothing has arrived. That is what a `Wire` is for: the processes above it say what they want, and one module says how a socket gives it to them.
 
 What a `Later` carries is a `Wait.Wake`, and the wake **gates the ask**: a parked request is not asked again until what it is waiting for has happened.
 
