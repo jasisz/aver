@@ -84,7 +84,7 @@ fn dialled(state: State) -> Tuple<State, Wire.__DialledReply>
     (state, Wire.__DialledReply.Now(Wire.Arrival.Closed))
 
 fn read(state: State, key: Int, max: Int, deadlineMs: Int) -> Tuple<State, Wire.__ReadReply>
-    ? "The next chunk from one peer. Every ask is counted, including the ones that park, so a run can say afterwards how often the wait let this wire be asked."
+    ? "The next chunk from one peer. Every ask is counted, including the ones that park, so a run can say afterwards how often the wait let this wire be asked. The deadline the caller named is not used here: one park names one wake, and what this read waits for is the socket."
     ! [Tcp.readNow]
     reading(State.update(state, reads = state.reads + 1), key, max, Map.get(state.peers, key))
 
