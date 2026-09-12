@@ -125,17 +125,40 @@ fn a_cancelled_job_lands_as_an_error_and_the_run_goes_on() {
     );
 }
 
+/// The other half of the wake gate, over a real job handle: a request parked
+/// on `Item(Job(...))` is asked in a turn whose wait reported its key, and in
+/// no other turn. No law can sample this one — a job handle is a resource a
+/// law cannot write down — so the fixture reads the gate against a live
+/// handle instead.
+#[test]
+fn a_request_parked_on_a_job_is_asked_only_when_the_wait_reports_its_key() {
+    let out = aver("run_failed_job", &["run"]);
+    assert!(out.status.success(), "{}", format_output(&out));
+    assert!(
+        combined(&out).contains("gated on the job"),
+        "{}",
+        format_output(&out)
+    );
+}
+
 /// The same claim without a job engine: the generated seam is pure from the
-/// take's answer onwards, so `aver verify` pins both outcomes of one key.
+/// take's answer onwards, so `aver verify` pins both outcomes of one key and
+/// a law over `take`'s three answers pins that only a failure is recorded as
+/// a rejection.
 #[test]
 fn the_failed_job_slice_verifies_and_checks_clean() {
     for command in ["check", "verify"] {
         let out = aver("run_failed_job", &[command]);
         assert!(out.status.success(), "{command}: {}", format_output(&out));
     }
+    let verified = combined(&aver("run_failed_job", &["verify"]));
     assert!(
-        combined(&aver("run_failed_job", &["verify"])).contains("probeLanded"),
+        verified.contains("probeLanded"),
         "the seam's own verify block did not run"
+    );
+    assert!(
+        verified.contains("__reportedValidation law aFailedTakeRecordsARejection"),
+        "the law over take's answers did not run:\n{verified}"
     );
 }
 
