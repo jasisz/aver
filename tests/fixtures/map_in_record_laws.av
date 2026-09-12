@@ -1,0 +1,76 @@
+module MapInRecordLaws
+    intent =
+        "A keyed store that lives in a field of a record, which is how most"
+        "one-key updates are actually written: the map is rebuilt inside a"
+        "record update, not returned on its own. Two facts about that shape,"
+        "both stated with a `because`: writing into a slot the store already"
+        "holds does not change how many slots there are, and a slot written"
+        "under one key is the slot read back from it."
+    effects []
+
+record Store
+    slots: Map<Int, Int>
+    writes: Int
+
+fn empty() -> Store
+    ? "A store with nothing in it."
+    Store(slots = {}, writes = 0)
+
+fn seated(store: Store, id: Int) -> Bool
+    ? "Whether this id already holds a slot."
+    Map.has(store.slots, id)
+
+fn write(store: Store, id: Int, value: Int) -> Store
+    ? "Write one value into the slot under this id and count the write. The map is rebuilt inside the record, which is the shape the laws below are about."
+    Store.update(store, slots = Map.set(store.slots, id, value), writes = store.writes + 1)
+
+fn size(store: Store) -> Int
+    ? "How many slots the store holds."
+    Map.len(store.slots)
+
+fn look(store: Store, id: Int) -> Option<Int>
+    ? "The value in the slot under this id, if any."
+    Map.get(store.slots, id)
+
+fn twoSlots() -> Store
+    ? "A store with two slots taken."
+    write(write(empty(), 1, 10), 2, 20)
+
+fn threeSlots() -> Store
+    ? "A store with three slots taken, so every sampled id is seated in it."
+    write(twoSlots(), 3, 30)
+
+verify seated
+    seated(empty(), 1) => false
+    seated(twoSlots(), 1) => true
+    seated(twoSlots(), 9) => false
+    seated(threeSlots(), 3) => true
+
+verify size
+    size(empty()) => 0
+    size(twoSlots()) => 2
+    size(write(twoSlots(), 1, 99)) => 2
+    size(write(twoSlots(), 3, 30)) => 3
+    size(threeSlots()) => 3
+    size(write(threeSlots(), 2, 99)) => 3
+
+verify look
+    look(empty(), 1) => Option.None
+    look(twoSlots(), 1) => Option.Some(10)
+    look(write(twoSlots(), 1, 99), 1) => Option.Some(99)
+    look(threeSlots(), 3) => Option.Some(30)
+
+verify size law seatedWriteKeepsTheSize
+    given store: Store = [empty(), twoSlots(), threeSlots()]
+    given id: Int = [1, 2, 3]
+    given value: Int = [99]
+    when seated(store, id)
+    because seated(store, id)
+    size(write(store, id, value)) <= size(store) holds
+
+verify look law theSlotWrittenIsTheSlotRead
+    given store: Store = [empty(), twoSlots(), threeSlots()]
+    given id: Int = [1, 2, 3]
+    given value: Int = [99]
+    because seated(write(store, id, value), id)
+    look(write(store, id, value), id) => Option.Some(value)

@@ -151,8 +151,12 @@ pub(super) struct Definitions {
     pub(super) grind: String,
     pub(super) unfold_once: Vec<(String, bool)>,
     /// The cone, the claim, the guard or an explanation calls `Map.set`, so
-    /// the solver cites the prelude's facts about it.
+    /// the solver cites the prelude's facts about it. The call counts wherever
+    /// it sits, including inside a field of a record the cone rebuilds.
     pub(super) map_facts: bool,
+    /// The same for `Map.remove`: a branch that drops one entry needs the
+    /// removal's own size fact, which the `set` family does not carry.
+    pub(super) map_remove_facts: bool,
 }
 
 pub(super) fn definitions(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContext) -> Definitions {
@@ -170,18 +174,22 @@ pub(super) fn definitions(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContex
     let seen: HashSet<_> = cone.iter().copied().collect();
     let mut out = BTreeMap::new();
     let mut unfold_once = Vec::new();
-    let mut map_facts = law
-        .because
-        .iter()
-        .chain(law.when.iter())
-        .chain([&law.lhs, &law.rhs])
-        .any(|expr| super::super::shared::expr_calls_builtin(expr, "Map.set"));
+    let law_calls = |builtin: &str| {
+        law.because
+            .iter()
+            .chain(law.when.iter())
+            .chain([&law.lhs, &law.rhs])
+            .any(|expr| super::super::shared::expr_calls_builtin(expr, builtin))
+    };
+    let mut map_facts = law_calls("Map.set");
+    let mut map_remove_facts = law_calls("Map.remove");
     for &id in cone {
         let key = &ctx.symbol_table.fn_entry(id).key;
         let Some(fd) = ctx.fn_def_by_name(&key.name, key.scope_str()) else {
             continue;
         };
         map_facts |= super::super::shared::fn_body_calls_builtin(fd, "Map.set");
+        map_remove_facts |= super::super::shared::fn_body_calls_builtin(fd, "Map.remove");
         let recursive = ctx.recursive_fns.contains(&id);
         // Subtractive countdown equations expose fixed-width steps. Keep
         // floor-division recursion opaque: its equations recursively grow
@@ -257,6 +265,7 @@ pub(super) fn definitions(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContex
     Definitions {
         heads,
         map_facts,
+        map_remove_facts,
         unfold_once: unfold_once
             .into_iter()
             .map(|name| {

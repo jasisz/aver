@@ -295,22 +295,35 @@ pub(crate) fn prelude_spec_lemmas_for_builtins(builtins: &[String]) -> Vec<Strin
     if has("Map.set") {
         lemmas.extend(MAP_SET_FACT_LEMMAS.iter().map(|s| s.to_string()));
     }
+    if has("Map.remove") {
+        lemmas.extend(MAP_REMOVE_FACT_LEMMAS.iter().map(|s| s.to_string()));
+    }
     lemmas
 }
 
 /// The hand-proved `AverMap` facts about `set` that a proof search cites
 /// whenever its cone calls `Map.set`: a get after a set under the same key,
-/// under another key, a second set under one key, and the length never
-/// shrinking. Keyed on the builtin call alone, never on what the law says;
-/// a cone that only reads a map (`Map.get`, `Map.len`) has nothing for them
-/// to rewrite. Each name is what makes the demand-driven map prelude ship
-/// the lemma text.
-pub(crate) const MAP_SET_FACT_LEMMAS: [&str; 4] = [
+/// under another key, membership after a set under the same key, a second set
+/// under one key, the length never shrinking, and the length not moving at all
+/// when the key was already there. Keyed on
+/// the builtin call alone, never on what the law says; a cone that only reads
+/// a map (`Map.get`, `Map.len`) has nothing for them to rewrite. Each name is
+/// what makes the demand-driven map prelude ship the lemma text. The call may
+/// sit anywhere in the cone — including inside a field of a record the cone
+/// rebuilds, which is what most one-key updates look like.
+pub(crate) const MAP_SET_FACT_LEMMAS: [&str; 6] = [
     "AverMap.get_set_self",
     "AverMap.get_set_ne",
+    "AverMap.has_set_self",
     "AverMap.set_set_self",
     "AverMap.len_set_ge",
+    "AverMap.len_set_of_has",
 ];
+
+/// The same, for a cone that calls `Map.remove`: a removal never grows a map.
+/// A branch that drops one entry and a branch that sets one usually sit in the
+/// same function, so a size law across it needs both families.
+pub(crate) const MAP_REMOVE_FACT_LEMMAS: [&str; 1] = ["AverMap.len_remove_le"];
 
 /// Oracle v1: BranchPath mirrors the Aver-source opaque builtin. The
 /// dewey-decimal string under the hood is not user-observable — users
@@ -472,6 +485,15 @@ end AverMeasure"#;
 /// reconstructible here. Laws that OBSERVE iteration order over those key
 /// types are refused before they reach this model
 /// (`codegen::common::law_map_order_refusal`).
+///
+/// A law's map variable ranges over EVERY `List (α × β)`, including the ones
+/// no program can build — unsorted, or holding one key twice — so `set` is
+/// split by membership rather than written as one walk: `replace` for a key
+/// the map already holds, `insert` (the sorted walk) for one it does not. On a
+/// canonical map the two give exactly the list the single walk gave, and on a
+/// non-canonical one `set` is still key-canonical, which is what makes "a set
+/// under a key already present does not change the size" a theorem instead of
+/// a false statement about a list where the key sits after a greater one.
 const AVER_MAP_PRELUDE_BASE: &str = r#"class AverKeyOrder (α : Type u) where
   lt : α → α → Bool
 instance : AverKeyOrder Int := ⟨fun a b => decide (a < b)⟩
@@ -485,16 +507,17 @@ def get [DecidableEq α] (m : List (α × β)) (k : α) : Option β :=
   match m with
   | [] => none
   | (k', v) :: rest => if k = k' then some v else AverMap.get rest k
-def set [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (k : α) (v : β) : List (α × β) :=
-  let rec go : List (α × β) → List (α × β)
-    | [] => [(k, v)]
-    | (k', v') :: rest =>
-        if k = k' then (k, v) :: rest
-        else if AverKeyOrder.lt k k' then (k, v) :: (k', v') :: rest
-        else (k', v') :: go rest
-  go m
 def has [DecidableEq α] (m : List (α × β)) (k : α) : Bool :=
   m.any (fun p => decide (k = p.1))
+def replace [DecidableEq α] (m : List (α × β)) (k : α) (v : β) : List (α × β) :=
+  m.map (fun p => if k = p.1 then (k, v) else p)
+def insert [DecidableEq α] [AverKeyOrder α] (k : α) (v : β) : List (α × β) → List (α × β)
+  | [] => [(k, v)]
+  | (k', v') :: rest =>
+      if AverKeyOrder.lt k k' then (k, v) :: (k', v') :: rest
+      else (k', v') :: AverMap.insert k v rest
+def set [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (k : α) (v : β) : List (α × β) :=
+  if AverMap.has m k then AverMap.replace m k v else AverMap.insert k v m
 def remove [DecidableEq α] (m : List (α × β)) (k : α) : List (α × β) :=
   m.filter (fun p => !(decide (k = p.1)))
 def keys (m : List (α × β)) : List α := m.map Prod.fst
@@ -504,218 +527,287 @@ def len (m : List (α × β)) : Nat := m.length
 def fromList [DecidableEq α] [AverKeyOrder α] (entries : List (α × β)) : List (α × β) :=
   entries.foldl (fun acc p => AverMap.set acc p.1 p.2) []"#;
 
-const AVER_MAP_PRELUDE_HAS_SET_SELF: &str = r#"private theorem any_set_go_self [DecidableEq α] [AverKeyOrder α] (k : α) (v : β) :
-    ∀ (m : List (α × β)), List.any (AverMap.set.go k v m) (fun p => decide (k = p.1)) = true := by
-  intro m
+/// Shared ground for every `set` fact: the cons/nil equations of `get`, `has`
+/// and `replace`, the two equations that resolve `set` into the branch it took,
+/// and the facts about each branch on its own. Every public lemma below is a
+/// case split on `AverMap.has m k` over these; none of them re-does the walk.
+/// Shipped whenever any `set` fact is, because they interlock.
+const AVER_MAP_PRELUDE_SET_FOUNDATION: &str = r#"private theorem has_nil [DecidableEq α] (k : α) : AverMap.has ([] : List (α × β)) k = false := by
+  simp [AverMap.has]
+
+private theorem has_cons [DecidableEq α] (m : List (α × β)) (k k' : α) (v' : β) :
+    AverMap.has ((k', v') :: m) k = (decide (k = k') || AverMap.has m k) := by
+  simp [AverMap.has, List.any]
+
+private theorem replace_nil [DecidableEq α] (k : α) (v : β) :
+    AverMap.replace ([] : List (α × β)) k v = [] := by
+  simp [AverMap.replace]
+
+private theorem replace_cons [DecidableEq α] (m : List (α × β)) (k k' : α) (v v' : β) :
+    AverMap.replace ((k', v') :: m) k v
+      = (if k = k' then (k, v) else (k', v')) :: AverMap.replace m k v := by
+  simp [AverMap.replace]
+
+private theorem get_nil [DecidableEq α] (k : α) : AverMap.get ([] : List (α × β)) k = none := by
+  simp [AverMap.get]
+
+private theorem get_cons [DecidableEq α] (m : List (α × β)) (k k' : α) (v' : β) :
+    AverMap.get ((k', v') :: m) k = (if k = k' then some v' else AverMap.get m k) := by
+  simp [AverMap.get]
+
+private theorem set_of_has [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (k : α) (v : β)
+    (h : AverMap.has m k = true) : AverMap.set m k v = AverMap.replace m k v := by
+  rw [AverMap.set, h, if_pos rfl]
+
+private theorem set_of_missing [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (k : α) (v : β)
+    (h : AverMap.has m k = false) : AverMap.set m k v = AverMap.insert k v m := by
+  rw [AverMap.set, h, if_neg (by simp)]
+
+private theorem length_replace [DecidableEq α] (m : List (α × β)) (k : α) (v : β) :
+    (AverMap.replace m k v).length = m.length := by
+  simp [AverMap.replace]
+
+private theorem length_pos_of_has [DecidableEq α] (m : List (α × β)) (k : α)
+    (h : AverMap.has m k = true) : 1 ≤ m.length := by
+  cases m with
+  | nil => simp [has_nil] at h
+  | cons p tl => simp
+
+private theorem has_replace [DecidableEq α] (m : List (α × β)) (k key : α) (v : β) :
+    AverMap.has (AverMap.replace m k v) key = AverMap.has m key := by
   induction m with
-  | nil =>
-      simp [AverMap.set.go, List.any]
-  | cons p tl ih =>
-      cases p with
-      | mk k' v' =>
-          by_cases h : k = k'
-          · simp [AverMap.set.go, h]
-          · cases hlt : AverKeyOrder.lt k k' <;>
-              simp [AverMap.set.go, List.any, h, hlt, ih]
-
-theorem has_set_self [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (k : α) (v : β) :
-    AverMap.has (AverMap.set m k v) k = true := by
-  simpa [AverMap.has, AverMap.set] using any_set_go_self k v m"#;
-
-/// `Map.len(Map.set(m, k, v)) >= 1` — `set` always yields a non-empty map.
-/// `set.go` either appends `[(k, v)]` (the `nil` base) or rebuilds a `cons`
-/// (both branches of the `cons` step), so its length is `≥ 1` for every `m` —
-/// proved by induction on `m`. The public `len_set_ge_one` is stated in the
-/// exact lowered shape of the law goal (`((AverMap.len … : Int) >= 1) = true`)
-/// so the emitter can discharge it with a bare `exact AverMap.len_set_ge_one
-/// _ _ _`. This is the one empty-vs-non-empty Map fact that needs real
-/// induction rather than a definitional unfold.
-const AVER_MAP_PRELUDE_LEN_SET_GE_ONE: &str = r#"private theorem set_go_len_pos [DecidableEq α] [AverKeyOrder α] (k : α) (v : β) :
-    ∀ (m : List (α × β)), 1 ≤ (AverMap.set.go k v m).length := by
-  intro m
-  induction m with
-  | nil =>
-      simp [AverMap.set.go]
-  | cons p tl ih =>
-      simp only [AverMap.set.go]
-      split
-      · simp
-      · split <;> simp
-
-theorem len_set_ge_one [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (k : α) (v : β) :
-    (((AverMap.len (AverMap.set m k v)) : Int) >= 1) = true := by
-  have h : 1 ≤ (AverMap.set m k v).length := by
-    simpa [AverMap.set] using set_go_len_pos k v m
-  simp only [AverMap.len]
-  exact eq_true (by omega)"#;
-
-const AVER_MAP_PRELUDE_GET_SET_SELF: &str = r#"private theorem get_set_go_self [DecidableEq α] [AverKeyOrder α] (k : α) (v : β) :
-    ∀ (m : List (α × β)), AverMap.get (AverMap.set.go k v m) k = some v := by
-  intro m
-  induction m with
-  | nil =>
-      simp [AverMap.set.go, AverMap.get]
-  | cons p tl ih =>
-      cases p with
-      | mk k' v' =>
-          by_cases h : k = k'
-          · simp [AverMap.set.go, AverMap.get, h]
-          · cases hlt : AverKeyOrder.lt k k' <;>
-              simp [AverMap.set.go, AverMap.get, h, hlt, ih]
-
-theorem get_set_self [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (k : α) (v : β) :
-    AverMap.get (AverMap.set m k v) k = some v := by
-  simpa [AverMap.set] using get_set_go_self k v m"#;
-
-const AVER_MAP_PRELUDE_GET_SET_OTHER: &str = r#"private theorem get_set_go_other [DecidableEq α] [AverKeyOrder α] (k key : α) (v : β) (h : key ≠ k) :
-    ∀ (m : List (α × β)), AverMap.get (AverMap.set.go k v m) key = AverMap.get m key := by
-  intro m
-  induction m with
-  | nil =>
-      simp [AverMap.set.go, AverMap.get, h]
+  | nil => simp [replace_nil]
   | cons p tl ih =>
       cases p with
       | mk k' v' =>
           by_cases hk : k = k'
-          · have hkey : key ≠ k' := by simpa [hk] using h
-            simp [AverMap.set.go, AverMap.get, hk, hkey]
-          · by_cases hkey : key = k'
-            · subst hkey
-              cases hlt : AverKeyOrder.lt k key <;>
-                simp [AverMap.set.go, AverMap.get, hk, hlt, h]
-            · cases hlt : AverKeyOrder.lt k k' <;>
-                simp [AverMap.set.go, AverMap.get, hk, hkey, hlt, h, ih]
+          · subst hk
+            simp [replace_cons, has_cons, ih]
+          · simp [replace_cons, has_cons, hk, ih]
 
-theorem get_set_other [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (k key : α) (v : β) (h : key ≠ k) :
-    AverMap.get (AverMap.set m k v) key = AverMap.get m key := by
-  simpa [AverMap.set] using get_set_go_other k key v h m"#;
+private theorem get_replace_self [DecidableEq α] (m : List (α × β)) (k : α) (v : β)
+    (h : AverMap.has m k = true) : AverMap.get (AverMap.replace m k v) k = some v := by
+  induction m with
+  | nil => simp [has_nil] at h
+  | cons p tl ih =>
+      cases p with
+      | mk k' v' =>
+          rw [has_cons] at h
+          by_cases hk : k = k'
+          · simp [replace_cons, get_cons, hk]
+          · simp only [hk, decide_false, Bool.false_or] at h
+            simp [replace_cons, get_cons, hk, ih h]
 
-const AVER_MAP_PRELUDE_HAS_SET_OTHER: &str = r#"theorem has_eq_isSome_get [DecidableEq α] (m : List (α × β)) (k : α) :
+private theorem get_replace_ne [DecidableEq α] (m : List (α × β)) (k key : α) (v : β) (h : key ≠ k) :
+    AverMap.get (AverMap.replace m k v) key = AverMap.get m key := by
+  induction m with
+  | nil => simp [replace_nil]
+  | cons p tl ih =>
+      cases p with
+      | mk k' v' =>
+          by_cases hk : k = k'
+          · subst hk
+            simp [replace_cons, get_cons, h, ih]
+          · simp [replace_cons, get_cons, hk, ih]
+
+private theorem replace_replace [DecidableEq α] (m : List (α × β)) (k : α) (v w : β) :
+    AverMap.replace (AverMap.replace m k v) k w = AverMap.replace m k w := by
+  induction m with
+  | nil => simp [replace_nil]
+  | cons p tl ih =>
+      cases p with
+      | mk k' v' =>
+          by_cases hk : k = k'
+          · subst hk
+            simp [replace_cons, ih]
+          · simp [replace_cons, hk, ih]
+
+private theorem replace_of_missing [DecidableEq α] (k : α) (v : β) :
+    ∀ (m : List (α × β)), AverMap.has m k = false → AverMap.replace m k v = m := by
+  intro m
+  induction m with
+  | nil => intro _; simp [replace_nil]
+  | cons p tl ih =>
+      cases p with
+      | mk k' v' =>
+          intro h
+          rw [has_cons] at h
+          simp only [Bool.or_eq_false_iff, decide_eq_false_iff_not] at h
+          simp [replace_cons, h.1, ih h.2]
+
+private theorem length_insert [DecidableEq α] [AverKeyOrder α] (k : α) (v : β) :
+    ∀ (m : List (α × β)), (AverMap.insert k v m).length = m.length + 1 := by
+  intro m
+  induction m with
+  | nil => simp [AverMap.insert]
+  | cons p tl ih =>
+      cases p with
+      | mk k' v' =>
+          cases hlt : AverKeyOrder.lt k k' <;> simp [AverMap.insert, hlt, ih]
+
+private theorem get_insert_self [DecidableEq α] [AverKeyOrder α] (k : α) (v : β) :
+    ∀ (m : List (α × β)), AverMap.has m k = false →
+      AverMap.get (AverMap.insert k v m) k = some v := by
+  intro m
+  induction m with
+  | nil => simp [AverMap.insert, get_cons, get_nil]
+  | cons p tl ih =>
+      cases p with
+      | mk k' v' =>
+          intro h
+          rw [has_cons] at h
+          simp only [Bool.or_eq_false_iff, decide_eq_false_iff_not] at h
+          cases hlt : AverKeyOrder.lt k k'
+          · simp [AverMap.insert, get_cons, hlt, h.1, ih h.2]
+          · simp [AverMap.insert, get_cons, hlt]
+
+private theorem get_insert_ne [DecidableEq α] [AverKeyOrder α] (k key : α) (v : β) (h : key ≠ k) :
+    ∀ (m : List (α × β)), AverMap.get (AverMap.insert k v m) key = AverMap.get m key := by
+  intro m
+  induction m with
+  | nil => simp [AverMap.insert, get_cons, get_nil, h]
+  | cons p tl ih =>
+      cases p with
+      | mk k' v' =>
+          cases hlt : AverKeyOrder.lt k k'
+          · simp [AverMap.insert, get_cons, hlt, ih]
+          · simp [AverMap.insert, get_cons, hlt, h]
+
+private theorem replace_insert [DecidableEq α] [AverKeyOrder α] (k : α) (v w : β) :
+    ∀ (m : List (α × β)), AverMap.has m k = false →
+      AverMap.replace (AverMap.insert k v m) k w = AverMap.insert k w m := by
+  intro m
+  induction m with
+  | nil => simp [AverMap.insert, replace_cons, replace_nil]
+  | cons p tl ih =>
+      cases p with
+      | mk k' v' =>
+          intro h
+          rw [has_cons] at h
+          simp only [Bool.or_eq_false_iff, decide_eq_false_iff_not] at h
+          cases hlt : AverKeyOrder.lt k k'
+          · simp [AverMap.insert, replace_cons, hlt, h.1, ih h.2]
+          · simp [AverMap.insert, replace_cons, hlt, h.1, replace_of_missing k w tl h.2]
+
+theorem has_eq_isSome_get [DecidableEq α] (m : List (α × β)) (k : α) :
     AverMap.has m k = (AverMap.get m k).isSome := by
   induction m with
-  | nil =>
-      simp [AverMap.has, AverMap.get]
+  | nil => simp [has_nil, get_nil]
   | cons p tl ih =>
       cases p with
       | mk k' v' =>
           by_cases h : k = k'
-          · simp [AverMap.has, AverMap.get, List.any, h]
-          · simpa [AverMap.has, AverMap.get, List.any, h] using ih
+          · simp [has_cons, get_cons, h]
+          · simpa [has_cons, get_cons, h] using ih"#;
 
-theorem has_set_other [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (k key : α) (v : β) (h : key ≠ k) :
+const AVER_MAP_PRELUDE_HAS_SET_SELF: &str = r#"theorem has_set_self [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (k : α) (v : β) :
+    AverMap.has (AverMap.set m k v) k = true := by
+  cases h : AverMap.has m k
+  · rw [set_of_missing m k v h, has_eq_isSome_get, get_insert_self k v m h]
+    rfl
+  · rw [set_of_has m k v h, has_replace, h]"#;
+
+/// `Map.len(Map.set(m, k, v)) >= 1` — `set` always yields a non-empty map:
+/// the replace branch keeps the length of a map that already has the key, and
+/// the insert branch adds one entry. Stated in the exact lowered shape of the
+/// law goal (`((AverMap.len … : Int) >= 1) = true`) so the emitter can
+/// discharge it with a bare `exact AverMap.len_set_ge_one _ _ _`.
+const AVER_MAP_PRELUDE_LEN_SET_GE_ONE: &str = r#"theorem len_set_ge_one [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (k : α) (v : β) :
+    (((AverMap.len (AverMap.set m k v)) : Int) >= 1) = true := by
+  have h : 1 ≤ (AverMap.set m k v).length := by
+    cases hh : AverMap.has m k
+    · rw [set_of_missing m k v hh, length_insert]
+      omega
+    · rw [set_of_has m k v hh, length_replace]
+      exact length_pos_of_has m k hh
+  simp only [AverMap.len]
+  exact eq_true (by omega)"#;
+
+const AVER_MAP_PRELUDE_GET_SET_SELF: &str = r#"theorem get_set_self [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (k : α) (v : β) :
+    AverMap.get (AverMap.set m k v) k = some v := by
+  cases h : AverMap.has m k
+  · rw [set_of_missing m k v h]
+    exact get_insert_self k v m h
+  · rw [set_of_has m k v h]
+    exact get_replace_self m k v h"#;
+
+const AVER_MAP_PRELUDE_GET_SET_OTHER: &str = r#"theorem get_set_other [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (k key : α) (v : β) (h : key ≠ k) :
+    AverMap.get (AverMap.set m k v) key = AverMap.get m key := by
+  cases hh : AverMap.has m k
+  · rw [set_of_missing m k v hh]
+    exact get_insert_ne k key v h m
+  · rw [set_of_has m k v hh]
+    exact get_replace_ne m k key v h"#;
+
+const AVER_MAP_PRELUDE_HAS_SET_OTHER: &str = r#"theorem has_set_other [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (k key : α) (v : β) (h : key ≠ k) :
     AverMap.has (AverMap.set m k v) key = AverMap.has m key := by
-  rw [AverMap.has_eq_isSome_get, AverMap.has_eq_isSome_get]
-  simp [AverMap.get_set_other, h]"#;
+  rw [has_eq_isSome_get, has_eq_isSome_get, get_set_other m k key v h]"#;
 
 // General-key (DIFFERENT-key) Map lemmas. `get_set_other`/`has_set_other`
 // above carry the *query-key-differs-from-set-key* hypothesis (`key ≠ k`);
 // these are the symmetric / general-key forms a map-fold-homomorphism law's
-// cons different-key branch needs: `get_set_ne` keyed on `set k ≠ query k'`
-// (mirrors `get_set_go_self`'s induction + by_cases), and `has_set` with NO
-// key restriction (membership after a set is "queried key = set key, OR was
-// already present" — mirrors `any_set_go_self`, closing with `ac_rfl`/bool
-// algebra). Both are kernel-clean from the AverMap defs (`#print axioms ⊆
-// {propext, Quot.sound}`). `get_set_ne` is conditional — it only rewrites when
-// `simp` can discharge the `k ≠ k'` side-goal from a fact in context.
-const AVER_MAP_PRELUDE_GET_SET_NE: &str = r#"private theorem get_set_go_ne [DecidableEq α] [AverKeyOrder α] (k k' : α) (v : β) (h : k ≠ k') :
-    ∀ (m : List (α × β)), AverMap.get (AverMap.set.go k v m) k' = AverMap.get m k' := by
-  have hne : k' ≠ k := fun he => h he.symm
-  intro m
-  induction m with
-  | nil =>
-      simp [AverMap.set.go, AverMap.get, hne]
-  | cons p tl ih =>
-      cases p with
-      | mk a b =>
-          by_cases hk : k = a
-          · have hk' : k' ≠ a := by simpa [hk] using hne
-            simp [AverMap.set.go, AverMap.get, hk, hk']
-          · by_cases hk' : k' = a
-            · subst hk'
-              cases hlt : AverKeyOrder.lt k k' <;>
-                simp [AverMap.set.go, AverMap.get, hk, hlt, hne]
-            · cases hlt : AverKeyOrder.lt k a <;>
-                simp [AverMap.set.go, AverMap.get, hk, hk', hlt, hne, ih]
+// cons different-key branch needs: `get_set_ne` keyed on `set k ≠ query k'`,
+// and `has_set` with NO key restriction (membership after a set is "queried
+// key = set key, OR was already present"). `get_set_ne` is conditional — it
+// only rewrites when `simp` can discharge the `k ≠ k'` side-goal from a fact
+// in context.
+const AVER_MAP_PRELUDE_GET_SET_NE: &str = r#"theorem get_set_ne [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (k k' : α) (v : β) (h : k ≠ k') :
+    AverMap.get (AverMap.set m k v) k' = AverMap.get m k' :=
+  AverMap.get_set_other m k k' v (fun he => h he.symm)"#;
 
-theorem get_set_ne [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (k k' : α) (v : β) (h : k ≠ k') :
-    AverMap.get (AverMap.set m k v) k' = AverMap.get m k' := by
-  simpa [AverMap.set] using get_set_go_ne k k' v h m"#;
-
-const AVER_MAP_PRELUDE_HAS_SET: &str = r#"private theorem any_set_go [DecidableEq α] [AverKeyOrder α] (w k : α) (v : β) :
-    ∀ (m : List (α × β)),
-      List.any (AverMap.set.go w v m) (fun p => decide (k = p.1))
-        = (decide (k = w) || List.any m (fun p => decide (k = p.1))) := by
-  intro m
-  induction m with
-  | nil =>
-      simp [AverMap.set.go, List.any]
-  | cons p tl ih =>
-      cases p with
-      | mk a b =>
-          by_cases hw : w = a
-          · subst hw
-            simp [AverMap.set.go, List.any]
-          · cases hlt : AverKeyOrder.lt w a
-            · simp [AverMap.set.go, List.any, hw, hlt, ih]
-              by_cases hk : k = a <;> simp [hk] <;> ac_rfl
-            · simp [AverMap.set.go, List.any, hw, hlt]
-
-theorem has_set [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (w k : α) (v : β) :
+const AVER_MAP_PRELUDE_HAS_SET: &str = r#"theorem has_set [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (w k : α) (v : β) :
     AverMap.has (AverMap.set m w v) k = (decide (k = w) || AverMap.has m k) := by
-  simpa [AverMap.has, AverMap.set] using any_set_go w k v m"#;
+  by_cases h : k = w
+  · subst h
+    simp [AverMap.has_set_self]
+  · simp [AverMap.has_set_other m w k v h, h]"#;
 
-/// `Map.len(m) <= Map.len(Map.set(m, k, v))` — `set` never shrinks a map.
-/// `set.go` replaces one entry, inserts one in front of the rest, or keeps
-/// the head and recurses; every branch keeps at least the entries it walked
-/// past, so the length is `>=` the length before — induction on `m`. Stated
-/// in `Nat` on `AverMap.len`; `omega` reads the `Int` cast of the lowered
-/// `>=` goal through it.
-const AVER_MAP_PRELUDE_LEN_SET_GE: &str = r#"private theorem set_go_len_ge [DecidableEq α] [AverKeyOrder α] (k : α) (v : β) :
-    ∀ (m : List (α × β)), m.length ≤ (AverMap.set.go k v m).length := by
-  intro m
-  induction m with
-  | nil =>
-      simp [AverMap.set.go]
-  | cons p tl ih =>
-      simp only [AverMap.set.go]
-      split
-      · simp
-      · split
-        · simp
-        · simp
-          omega
-
-theorem len_set_ge [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (k : α) (v : β) :
+/// `Map.len(m) <= Map.len(Map.set(m, k, v))` — `set` never shrinks a map: the
+/// replace branch keeps the length, the insert branch adds one entry.
+const AVER_MAP_PRELUDE_LEN_SET_GE: &str = r#"theorem len_set_ge [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (k : α) (v : β) :
     AverMap.len m ≤ AverMap.len (AverMap.set m k v) := by
-  simpa [AverMap.len, AverMap.set] using set_go_len_ge k v m"#;
+  cases h : AverMap.has m k
+  · rw [set_of_missing m k v h]
+    simp [AverMap.len, length_insert]
+  · rw [set_of_has m k v h]
+    simp [AverMap.len, length_replace]"#;
+
+/// `Map.has(m, k) => Map.len(Map.set(m, k, v)) == Map.len(m)` — a set under a
+/// key the map already holds keeps every key it had and adds none, so the size
+/// does not move. The companion of `len_set_ge` in the other direction, and the
+/// fact a law that bounds a map's size across an update of one seated entry
+/// needs: `len_set_ge` alone says the size may only grow, which is the wrong
+/// half of the sandwich. Conditional, like `get_set_ne`: it rewrites only where
+/// the membership premise is discharged from the context.
+const AVER_MAP_PRELUDE_LEN_SET_OF_HAS: &str = r#"theorem len_set_of_has [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (k : α) (v : β)
+    (h : AverMap.has m k = true) : AverMap.len (AverMap.set m k v) = AverMap.len m := by
+  rw [set_of_has m k v h]
+  simp [AverMap.len, length_replace]"#;
+
+/// `Map.len(Map.remove(m, k)) <= Map.len(m)` — a removal never grows a map.
+/// `remove` is a filter, so this is `List.length_filter_le`; the lemma exists
+/// because a law that compares sizes across a branch that removes one entry
+/// cannot reach the list-level fact through `AverMap.remove` on its own.
+const AVER_MAP_PRELUDE_LEN_REMOVE_LE: &str = r#"theorem len_remove_le [DecidableEq α] (m : List (α × β)) (k : α) :
+    AverMap.len (AverMap.remove m k) ≤ AverMap.len m := by
+  simpa [AverMap.len, AverMap.remove] using m.length_filter_le (fun p => !(decide (k = p.1)))"#;
 
 /// `Map.set(Map.set(m, k, v), k, w) == Map.set(m, k, w)` — a second set under
-/// the same key overwrites the first, so setting the same key and value
-/// twice is one set (idempotence of a keyed insert). `set.go` takes the same
-/// branch for both walks at every entry it does not own (same `k = k'` and
-/// `AverKeyOrder.lt k k'` decisions), and where it placed `(k, v)` the
-/// second walk finds `k` and replaces it — induction on `m`, no order laws
-/// needed. Different keys are another matter: whether two sets under
-/// different keys commute depends on `AverKeyOrder.lt` being a strict total
-/// order, which the class does not promise (the fallback instance appends),
-/// so no such lemma lives here.
-const AVER_MAP_PRELUDE_SET_SET_SELF: &str = r#"private theorem set_go_set_go_self [DecidableEq α] [AverKeyOrder α] (k : α) (v w : β) :
-    ∀ (m : List (α × β)), AverMap.set.go k w (AverMap.set.go k v m) = AverMap.set.go k w m := by
-  intro m
-  induction m with
-  | nil =>
-      simp [AverMap.set.go]
-  | cons p tl ih =>
-      cases p with
-      | mk k' v' =>
-          by_cases h : k = k'
-          · simp [AverMap.set.go, h]
-          · cases hlt : AverKeyOrder.lt k k' <;>
-              simp [AverMap.set.go, h, hlt, ih]
-
-theorem set_set_self [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (k : α) (v w : β) :
+/// the same key overwrites the first. After the first set the key is present
+/// (`has_set_self`), so the second one is a replace; replacing twice is
+/// replacing once, and replacing what was just inserted is inserting the second
+/// value. Different keys are another matter: whether two sets under different
+/// keys commute depends on `AverKeyOrder.lt` being a strict total order, which
+/// the class does not promise (the fallback instance appends), so no such lemma
+/// lives here.
+const AVER_MAP_PRELUDE_SET_SET_SELF: &str = r#"theorem set_set_self [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (k : α) (v w : β) :
     AverMap.set (AverMap.set m k v) k w = AverMap.set m k w := by
-  simpa [AverMap.set] using set_go_set_go_self k v w m"#;
+  rw [set_of_has (AverMap.set m k v) k w (AverMap.has_set_self m k v)]
+  cases h : AverMap.has m k
+  · rw [set_of_missing m k v h, set_of_missing m k w h]
+    exact replace_insert k v w m h
+  · rw [set_of_has m k v h, set_of_has m k w h]
+    exact replace_replace m k v w"#;
 
 const AVER_MAP_PRELUDE_END: &str = r#"end AverMap"#;
 
@@ -1449,20 +1541,44 @@ fn generate_string_hadd_prelude(body: &str, include_all_helpers: bool) -> String
 fn generate_map_prelude(body: &str, include_all_helpers: bool) -> String {
     let mut parts = vec![AVER_MAP_PRELUDE_BASE.to_string()];
 
-    let needs_has_set_self = include_all_helpers || body.contains("AverMap.has_set_self");
-    let needs_len_set_ge_one = include_all_helpers || body.contains("AverMap.len_set_ge_one");
-    let needs_get_set_self = include_all_helpers || body.contains("AverMap.get_set_self");
-    let needs_get_set_other = include_all_helpers
-        || body.contains("AverMap.get_set_other")
-        || body.contains("AverMap.has_set_other");
-    let needs_has_set_other = include_all_helpers || body.contains("AverMap.has_set_other");
+    // Dependency closure first: a lemma that another lemma's proof applies is
+    // demanded by that lemma too, not only by the generated body that names it.
+    let needs_has_set = include_all_helpers || mentions_exact(body, "AverMap.has_set");
+    let needs_set_set_self = include_all_helpers || mentions_exact(body, "AverMap.set_set_self");
+    let needs_has_set_self = include_all_helpers
+        || body.contains("AverMap.has_set_self")
+        || needs_has_set
+        || needs_set_set_self;
+    let needs_has_set_other =
+        include_all_helpers || body.contains("AverMap.has_set_other") || needs_has_set;
     // `get_set_ne` (general different-key get) and `has_set` (general-key
     // membership-after-set) — the map-fold-homomorphism cons different-key arm.
     let needs_get_set_ne = include_all_helpers || body.contains("AverMap.get_set_ne");
-    let needs_has_set = include_all_helpers || mentions_exact(body, "AverMap.has_set");
+    let needs_get_set_other = include_all_helpers
+        || body.contains("AverMap.get_set_other")
+        || needs_has_set_other
+        || needs_get_set_ne;
+    let needs_len_set_ge_one = include_all_helpers || body.contains("AverMap.len_set_ge_one");
+    let needs_get_set_self = include_all_helpers || body.contains("AverMap.get_set_self");
     let needs_len_set_ge = include_all_helpers || mentions_exact(body, "AverMap.len_set_ge");
-    let needs_set_set_self = include_all_helpers || mentions_exact(body, "AverMap.set_set_self");
+    let needs_len_set_of_has = include_all_helpers || body.contains("AverMap.len_set_of_has");
+    let needs_len_remove_le = include_all_helpers || body.contains("AverMap.len_remove_le");
 
+    // Every `set` fact is a case split on membership over the same ground, so
+    // the ground ships as soon as any one of them does.
+    if needs_has_set_self
+        || needs_len_set_ge_one
+        || needs_get_set_self
+        || needs_get_set_other
+        || needs_has_set_other
+        || needs_get_set_ne
+        || needs_has_set
+        || needs_len_set_ge
+        || needs_len_set_of_has
+        || needs_set_set_self
+    {
+        parts.push(AVER_MAP_PRELUDE_SET_FOUNDATION.to_string());
+    }
     if needs_has_set_self {
         parts.push(AVER_MAP_PRELUDE_HAS_SET_SELF.to_string());
     }
@@ -1486,6 +1602,12 @@ fn generate_map_prelude(body: &str, include_all_helpers: bool) -> String {
     }
     if needs_len_set_ge {
         parts.push(AVER_MAP_PRELUDE_LEN_SET_GE.to_string());
+    }
+    if needs_len_set_of_has {
+        parts.push(AVER_MAP_PRELUDE_LEN_SET_OF_HAS.to_string());
+    }
+    if needs_len_remove_le {
+        parts.push(AVER_MAP_PRELUDE_LEN_REMOVE_LE.to_string());
     }
     if needs_set_set_self {
         parts.push(AVER_MAP_PRELUDE_SET_SET_SELF.to_string());

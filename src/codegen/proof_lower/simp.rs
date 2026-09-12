@@ -344,6 +344,17 @@ pub(super) fn collect_builtin_calls_expr(
                 collect_builtin_calls_expr(e, out);
             }
         }
+        // A record rebuilt around one changed field holds its builtin calls in
+        // the update expressions, not in a fresh field list. Without this arm a
+        // `Map.set(r.field, k, v)` under `R.update(r, field = ...)` is invisible
+        // to the registry, so the prelude's `Map.set` facts are never cited and
+        // a size or lookup law across that set falls to a `sorry`.
+        Expr::RecordUpdate { base, updates, .. } => {
+            collect_builtin_calls_expr(base, out);
+            for (_, e) in updates {
+                collect_builtin_calls_expr(e, out);
+            }
+        }
         Expr::List(elems) | Expr::Tuple(elems) | Expr::IndependentProduct(elems, _) => {
             for e in elems {
                 collect_builtin_calls_expr(e, out);

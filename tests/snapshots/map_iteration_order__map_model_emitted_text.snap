@@ -16,16 +16,17 @@ def get [DecidableEq α] (m : List (α × β)) (k : α) : Option β :=
   match m with
   | [] => none
   | (k', v) :: rest => if k = k' then some v else AverMap.get rest k
-def set [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (k : α) (v : β) : List (α × β) :=
-  let rec go : List (α × β) → List (α × β)
-    | [] => [(k, v)]
-    | (k', v') :: rest =>
-        if k = k' then (k, v) :: rest
-        else if AverKeyOrder.lt k k' then (k, v) :: (k', v') :: rest
-        else (k', v') :: go rest
-  go m
 def has [DecidableEq α] (m : List (α × β)) (k : α) : Bool :=
   m.any (fun p => decide (k = p.1))
+def replace [DecidableEq α] (m : List (α × β)) (k : α) (v : β) : List (α × β) :=
+  m.map (fun p => if k = p.1 then (k, v) else p)
+def insert [DecidableEq α] [AverKeyOrder α] (k : α) (v : β) : List (α × β) → List (α × β)
+  | [] => [(k, v)]
+  | (k', v') :: rest =>
+      if AverKeyOrder.lt k k' then (k, v) :: (k', v') :: rest
+      else (k', v') :: AverMap.insert k v rest
+def set [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (k : α) (v : β) : List (α × β) :=
+  if AverMap.has m k then AverMap.replace m k v else AverMap.insert k v m
 def remove [DecidableEq α] (m : List (α × β)) (k : α) : List (α × β) :=
   m.filter (fun p => !(decide (k = p.1)))
 def keys (m : List (α × β)) : List α := m.map Prod.fst
@@ -35,23 +36,181 @@ def len (m : List (α × β)) : Nat := m.length
 def fromList [DecidableEq α] [AverKeyOrder α] (entries : List (α × β)) : List (α × β) :=
   entries.foldl (fun acc p => AverMap.set acc p.1 p.2) []
 
-private theorem get_set_go_self [DecidableEq α] [AverKeyOrder α] (k : α) (v : β) :
-    ∀ (m : List (α × β)), AverMap.get (AverMap.set.go k v m) k = some v := by
+private theorem has_nil [DecidableEq α] (k : α) : AverMap.has ([] : List (α × β)) k = false := by
+  simp [AverMap.has]
+
+private theorem has_cons [DecidableEq α] (m : List (α × β)) (k k' : α) (v' : β) :
+    AverMap.has ((k', v') :: m) k = (decide (k = k') || AverMap.has m k) := by
+  simp [AverMap.has, List.any]
+
+private theorem replace_nil [DecidableEq α] (k : α) (v : β) :
+    AverMap.replace ([] : List (α × β)) k v = [] := by
+  simp [AverMap.replace]
+
+private theorem replace_cons [DecidableEq α] (m : List (α × β)) (k k' : α) (v v' : β) :
+    AverMap.replace ((k', v') :: m) k v
+      = (if k = k' then (k, v) else (k', v')) :: AverMap.replace m k v := by
+  simp [AverMap.replace]
+
+private theorem get_nil [DecidableEq α] (k : α) : AverMap.get ([] : List (α × β)) k = none := by
+  simp [AverMap.get]
+
+private theorem get_cons [DecidableEq α] (m : List (α × β)) (k k' : α) (v' : β) :
+    AverMap.get ((k', v') :: m) k = (if k = k' then some v' else AverMap.get m k) := by
+  simp [AverMap.get]
+
+private theorem set_of_has [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (k : α) (v : β)
+    (h : AverMap.has m k = true) : AverMap.set m k v = AverMap.replace m k v := by
+  rw [AverMap.set, h, if_pos rfl]
+
+private theorem set_of_missing [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (k : α) (v : β)
+    (h : AverMap.has m k = false) : AverMap.set m k v = AverMap.insert k v m := by
+  rw [AverMap.set, h, if_neg (by simp)]
+
+private theorem length_replace [DecidableEq α] (m : List (α × β)) (k : α) (v : β) :
+    (AverMap.replace m k v).length = m.length := by
+  simp [AverMap.replace]
+
+private theorem length_pos_of_has [DecidableEq α] (m : List (α × β)) (k : α)
+    (h : AverMap.has m k = true) : 1 ≤ m.length := by
+  cases m with
+  | nil => simp [has_nil] at h
+  | cons p tl => simp
+
+private theorem has_replace [DecidableEq α] (m : List (α × β)) (k key : α) (v : β) :
+    AverMap.has (AverMap.replace m k v) key = AverMap.has m key := by
+  induction m with
+  | nil => simp [replace_nil]
+  | cons p tl ih =>
+      cases p with
+      | mk k' v' =>
+          by_cases hk : k = k'
+          · subst hk
+            simp [replace_cons, has_cons, ih]
+          · simp [replace_cons, has_cons, hk, ih]
+
+private theorem get_replace_self [DecidableEq α] (m : List (α × β)) (k : α) (v : β)
+    (h : AverMap.has m k = true) : AverMap.get (AverMap.replace m k v) k = some v := by
+  induction m with
+  | nil => simp [has_nil] at h
+  | cons p tl ih =>
+      cases p with
+      | mk k' v' =>
+          rw [has_cons] at h
+          by_cases hk : k = k'
+          · simp [replace_cons, get_cons, hk]
+          · simp only [hk, decide_false, Bool.false_or] at h
+            simp [replace_cons, get_cons, hk, ih h]
+
+private theorem get_replace_ne [DecidableEq α] (m : List (α × β)) (k key : α) (v : β) (h : key ≠ k) :
+    AverMap.get (AverMap.replace m k v) key = AverMap.get m key := by
+  induction m with
+  | nil => simp [replace_nil]
+  | cons p tl ih =>
+      cases p with
+      | mk k' v' =>
+          by_cases hk : k = k'
+          · subst hk
+            simp [replace_cons, get_cons, h, ih]
+          · simp [replace_cons, get_cons, hk, ih]
+
+private theorem replace_replace [DecidableEq α] (m : List (α × β)) (k : α) (v w : β) :
+    AverMap.replace (AverMap.replace m k v) k w = AverMap.replace m k w := by
+  induction m with
+  | nil => simp [replace_nil]
+  | cons p tl ih =>
+      cases p with
+      | mk k' v' =>
+          by_cases hk : k = k'
+          · subst hk
+            simp [replace_cons, ih]
+          · simp [replace_cons, hk, ih]
+
+private theorem replace_of_missing [DecidableEq α] (k : α) (v : β) :
+    ∀ (m : List (α × β)), AverMap.has m k = false → AverMap.replace m k v = m := by
   intro m
   induction m with
-  | nil =>
-      simp [AverMap.set.go, AverMap.get]
+  | nil => intro _; simp [replace_nil]
+  | cons p tl ih =>
+      cases p with
+      | mk k' v' =>
+          intro h
+          rw [has_cons] at h
+          simp only [Bool.or_eq_false_iff, decide_eq_false_iff_not] at h
+          simp [replace_cons, h.1, ih h.2]
+
+private theorem length_insert [DecidableEq α] [AverKeyOrder α] (k : α) (v : β) :
+    ∀ (m : List (α × β)), (AverMap.insert k v m).length = m.length + 1 := by
+  intro m
+  induction m with
+  | nil => simp [AverMap.insert]
+  | cons p tl ih =>
+      cases p with
+      | mk k' v' =>
+          cases hlt : AverKeyOrder.lt k k' <;> simp [AverMap.insert, hlt, ih]
+
+private theorem get_insert_self [DecidableEq α] [AverKeyOrder α] (k : α) (v : β) :
+    ∀ (m : List (α × β)), AverMap.has m k = false →
+      AverMap.get (AverMap.insert k v m) k = some v := by
+  intro m
+  induction m with
+  | nil => simp [AverMap.insert, get_cons, get_nil]
+  | cons p tl ih =>
+      cases p with
+      | mk k' v' =>
+          intro h
+          rw [has_cons] at h
+          simp only [Bool.or_eq_false_iff, decide_eq_false_iff_not] at h
+          cases hlt : AverKeyOrder.lt k k'
+          · simp [AverMap.insert, get_cons, hlt, h.1, ih h.2]
+          · simp [AverMap.insert, get_cons, hlt]
+
+private theorem get_insert_ne [DecidableEq α] [AverKeyOrder α] (k key : α) (v : β) (h : key ≠ k) :
+    ∀ (m : List (α × β)), AverMap.get (AverMap.insert k v m) key = AverMap.get m key := by
+  intro m
+  induction m with
+  | nil => simp [AverMap.insert, get_cons, get_nil, h]
+  | cons p tl ih =>
+      cases p with
+      | mk k' v' =>
+          cases hlt : AverKeyOrder.lt k k'
+          · simp [AverMap.insert, get_cons, hlt, ih]
+          · simp [AverMap.insert, get_cons, hlt, h]
+
+private theorem replace_insert [DecidableEq α] [AverKeyOrder α] (k : α) (v w : β) :
+    ∀ (m : List (α × β)), AverMap.has m k = false →
+      AverMap.replace (AverMap.insert k v m) k w = AverMap.insert k w m := by
+  intro m
+  induction m with
+  | nil => simp [AverMap.insert, replace_cons, replace_nil]
+  | cons p tl ih =>
+      cases p with
+      | mk k' v' =>
+          intro h
+          rw [has_cons] at h
+          simp only [Bool.or_eq_false_iff, decide_eq_false_iff_not] at h
+          cases hlt : AverKeyOrder.lt k k'
+          · simp [AverMap.insert, replace_cons, hlt, h.1, ih h.2]
+          · simp [AverMap.insert, replace_cons, hlt, h.1, replace_of_missing k w tl h.2]
+
+theorem has_eq_isSome_get [DecidableEq α] (m : List (α × β)) (k : α) :
+    AverMap.has m k = (AverMap.get m k).isSome := by
+  induction m with
+  | nil => simp [has_nil, get_nil]
   | cons p tl ih =>
       cases p with
       | mk k' v' =>
           by_cases h : k = k'
-          · simp [AverMap.set.go, AverMap.get, h]
-          · cases hlt : AverKeyOrder.lt k k' <;>
-              simp [AverMap.set.go, AverMap.get, h, hlt, ih]
+          · simp [has_cons, get_cons, h]
+          · simpa [has_cons, get_cons, h] using ih
 
 theorem get_set_self [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (k : α) (v : β) :
     AverMap.get (AverMap.set m k v) k = some v := by
-  simpa [AverMap.set] using get_set_go_self k v m
+  cases h : AverMap.has m k
+  · rw [set_of_missing m k v h]
+    exact get_insert_self k v m h
+  · rw [set_of_has m k v h]
+    exact get_replace_self m k v h
 
 end AverMap
 == MapModelShape.lean ==
