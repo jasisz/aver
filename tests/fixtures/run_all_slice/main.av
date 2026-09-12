@@ -62,16 +62,22 @@ fn peer() -> Unit
 
 fn fetchBody(key: Int, height: Int) -> Bool
     ? "One body from one peer: the write, the read and the hand-over. True when the body landed, false when anything on the way said this peer is finished."
-    ! [Wire.write, Wire.read, Blocks.deliver, yield]
+    ! [Wire.write, Wire.read, Blocks.deliver, Console.print, yield]
     match Wire.write(key, Ledger.blockOf(height))
         Result.Err(_) -> false
-        Result.Ok(_) -> match Wire.read(key, 4000000, 30000)
+        Result.Ok(_) -> match Wire.read(key, 4000000, 2000)
             Wire.Heard.EndOfStream -> false
             Wire.Heard.Failed(_) -> false
-            Wire.Heard.TimedOut -> false
+            Wire.Heard.TimedOut -> timedOut(key)
             Wire.Heard.Data(raw) -> match Blocks.deliver(key, height, raw)
                 Blocks.Receipt.Accepted -> true
                 Blocks.Receipt.Refused(_) -> false
+
+fn timedOut(key: Int) -> Bool
+    ? "A peer that said nothing before this read's deadline ran out: the body did not arrive, so this run is finished with that peer."
+    ! [Console.print]
+    Console.print("peer: {key} said nothing in time")
+    false
 
 fn reportWire(tally: Wire.Tally) -> Unit
     ? "What the wire did over this run: how many payloads it wrote, how many asks the writes took, and how many asks the reads took."

@@ -21,7 +21,7 @@ mod aver_cmd;
 mod loopback_peer;
 
 use aver_cmd::{aver_bin, format_output, repo_root};
-use loopback_peer::{free_port, loopback_peer};
+use loopback_peer::{free_port, loopback_peer, silent_peer};
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -147,6 +147,46 @@ fn a_parked_request_is_asked_again_only_when_its_wake_has_fired() {
         "{}",
         format_output(&out)
     );
+}
+
+/// A peer that says nothing runs out the deadline its read was given.
+///
+/// `Sockets.read` records the clock reading a read falls due at on that read's
+/// first ask and parks on `Either(Socket(Connected(conn)), left)`, so the wait
+/// reporting the socket and the deadline running out both bring it back —
+/// whichever comes first. Nothing ever arrives here, so the deadline is what
+/// comes first: the ask after it answers `Now(Heard.TimedOut)`, the peer
+/// process says so and hands the peer back through `Pool.gone`, and the run
+/// reaches its end because the pool a peer has left hands out no more work.
+#[test]
+fn a_read_that_hears_nothing_runs_out_its_deadline_and_the_peer_is_handed_back() {
+    let port = free_port();
+    let peer = silent_peer(port);
+    let port = port.to_string();
+    let out = aver(SLICE, &["run", "--", &port]);
+    assert!(out.status.success(), "{}", format_output(&out));
+    let text = combined(&out);
+    assert!(
+        text.contains("peer: 1 said nothing in time"),
+        "the read did not time out:\n{}",
+        format_output(&out)
+    );
+    // The peer asked the pool once, was given a height, and ended after
+    // handing that peer back rather than asking for a second one.
+    assert_eq!(
+        text.matches("peer: asking the pool for work").count(),
+        1,
+        "{}",
+        format_output(&out)
+    );
+    // The run reached its end rather than turning for ever around a chain
+    // whose bodies nobody will fetch.
+    assert!(
+        text.contains("walk: looking for the next block to connect"),
+        "{}",
+        format_output(&out)
+    );
+    peer.join().expect("the silent peer played its whole part");
 }
 
 /// A job that will never produce a result reaches `landed` as the error it is:
@@ -416,7 +456,7 @@ fn the_loop_carries_each_processs_own_effects_and_not_the_programs() {
     // operations, and the accept's own four.
     assert_eq!(
         declared_effects(&text, "__servePeer"),
-        Some("Console.print, Tcp.readNow, Tcp.writeNow".to_string())
+        Some("Console.print, Tcp.readNow, Tcp.writeNow, Time.unixMs".to_string())
     );
     assert_eq!(
         declared_effects(&text, "__serveAccepting"),
@@ -427,7 +467,7 @@ fn the_loop_carries_each_processs_own_effects_and_not_the_programs() {
     assert_eq!(
         declared_effects(&text, "__serve"),
         Some(
-            "Args.get, Console.print, Tcp.accept, Tcp.closeListener, Tcp.listen, Tcp.readNow, Tcp.writeNow"
+            "Args.get, Console.print, Tcp.accept, Tcp.closeListener, Tcp.listen, Tcp.readNow, Tcp.writeNow, Time.unixMs"
                 .to_string()
         )
     );

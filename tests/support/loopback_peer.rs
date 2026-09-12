@@ -60,6 +60,20 @@ pub fn connect_when_bound(port: u16) -> TcpStream {
     }
 }
 
+/// One peer that connects, takes whatever the slice writes it, and answers
+/// nothing at all. The connection stays open — a peer that closed it would be
+/// an end of stream rather than a silence — until the run ends and its side
+/// of the socket goes with it, which is what the `read_to_end` here waits for.
+/// The slice's read therefore finds nothing on every ask until the deadline it
+/// was given runs out, and that is what makes `Wire.Heard.TimedOut` reachable.
+pub fn silent_peer(port: u16) -> thread::JoinHandle<()> {
+    thread::spawn(move || {
+        let mut stream = connect_when_bound(port);
+        let mut taken = Vec::new();
+        let _ = stream.read_to_end(&mut taken);
+    })
+}
+
 /// One peer that takes every body the slice writes it — in as many pieces as
 /// the slice sends them — holds it back long enough for the read that follows
 /// to find nothing, and then sends it back as the body that peer was asked
