@@ -7,17 +7,105 @@
 //! wait, and the dump that shows what was generated — and holds the two
 //! refusals that say what the program has to declare for the loop to be
 //! generated at all.
+//!
+//! The slice answers `Wire` over real sockets: it binds a loopback listener
+//! on the port it is run with, accepts one peer there and talks to it with
+//! `Tcp.writeNow` and `Tcp.readNow`. The other side of that conversation is
+//! the loopback peer below, which lives in this test and never in the
+//! fixture, and the port is taken from a free one this test found rather
+//! than fixed.
 
 #[path = "support/aver_cmd.rs"]
 mod aver_cmd;
 
 use aver_cmd::{aver_bin, format_output, repo_root};
 
+use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const SLICE: &str = "run_all_slice";
+
+/// How many block bodies the slice fetches over the wire: `Ledger.fresh`
+/// makes the run three blocks long.
+const BODIES: usize = 3;
+
+/// How long one of those bodies is: `Ledger.blockOf` writes `block <height>`.
+const BODY_LEN: usize = 7;
+
+/// How long the peer holds a body back before echoing it. The read that
+/// follows a finished write is asked in the very next turn, microseconds
+/// after the last byte left, so the peer has to be slower than that for the
+/// read to find nothing and park on `Connected` — which is the claim this
+/// suite pins. A quarter of a second is far longer than a turn and far
+/// shorter than the test's own patience.
+const ECHO_DELAY: Duration = Duration::from_millis(250);
+
+/// A loopback port nobody is listening on. The listener is bound only to be
+/// told which port the kernel picked, then dropped, so the slice can bind it
+/// itself: a `Tcp.Listener` the slice owns is the whole point of its
+/// `Sockets` module, and a fixed port would collide with a parallel run.
+fn free_port() -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind a loopback listener");
+    listener.local_addr().expect("listener address").port()
+}
+
+/// Connects to the slice's listener, which is bound inside the first turn —
+/// after this process has already been spawned — so the first attempts are
+/// expected to be refused.
+fn connect_when_bound(port: u16) -> TcpStream {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        match TcpStream::connect(("127.0.0.1", port)) {
+            Ok(stream) => return stream,
+            Err(error) => {
+                assert!(
+                    Instant::now() < deadline,
+                    "the slice never bound 127.0.0.1:{port}: {error}"
+                );
+                thread::sleep(Duration::from_millis(10));
+            }
+        }
+    }
+}
+
+/// The other side of `Wire`, in the test: one peer that takes every body the
+/// slice writes it — in as many pieces as the slice sends them — holds it
+/// back long enough for the read that follows to find nothing, and then
+/// sends it back as the body that peer was asked for.
+fn loopback_peer(port: u16) -> thread::JoinHandle<()> {
+    thread::spawn(move || {
+        let mut stream = connect_when_bound(port);
+        for _ in 0..BODIES {
+            let mut body = vec![0u8; BODY_LEN];
+            stream
+                .read_exact(&mut body)
+                .expect("the body the slice wrote");
+            thread::sleep(ECHO_DELAY);
+            stream.write_all(&body).expect("send the body back");
+        }
+    })
+}
+
+/// Runs the slice against that peer, on a port this test picked, and gives
+/// back what the run printed once the peer has played its whole part.
+fn slice_with_peer(extra: &[&str]) -> Output {
+    let port = free_port();
+    let peer = loopback_peer(port);
+    let port = port.to_string();
+    let mut args: Vec<&str> = vec!["run"];
+    args.extend_from_slice(extra);
+    args.push("--");
+    args.push(&port);
+    let out = aver(SLICE, &args);
+    assert!(out.status.success(), "{}", format_output(&out));
+    peer.join()
+        .expect("the loopback peer played its whole part");
+    out
+}
 
 fn fixture(name: &str) -> PathBuf {
     repo_root().join("tests/fixtures").join(name)
@@ -65,8 +153,7 @@ fn only_recording(dir: &Path) -> PathBuf {
 
 #[test]
 fn the_slice_runs_to_the_end_on_the_vm_with_nothing_written_between_its_processes() {
-    let out = aver(SLICE, &["run"]);
-    assert!(out.status.success(), "{}", format_output(&out));
+    let out = slice_with_peer(&[]);
     let text = String::from_utf8_lossy(&out.stdout);
     // Every line of output comes from an in-place `Console.print` inside a
     // process, so counting them counts how far each process got: the peer
@@ -87,13 +174,21 @@ fn the_slice_runs_to_the_end_on_the_vm_with_nothing_written_between_its_processe
     );
 }
 
-/// The wake gates the ask, measured on the two answer modules that park.
+/// The wake gates the ask, measured on the two answer modules that park —
+/// one of them over a real socket.
 ///
-/// `Sockets.write` takes half a payload on the first ask, records how far it
-/// got and parks; the ask after that sends the rest. The peer writes three
-/// bodies, so three payloads take exactly six asks — two each — and the third
-/// body reaches the chain, which is how the run gets to its end at all: a
-/// second half that never arrived would leave the walk without its last body.
+/// `Sockets.write` offers the socket one chunk per ask, so a body of seven
+/// bytes is taken in two pieces: `Tcp.writeNow` answers four, the module
+/// records that offset in its own state and parks on `Sending(connection)`,
+/// and the ask after it sends the last three and answers. `Sockets.read`
+/// asks `Tcp.readNow` and finds nothing, because the peer holds the body back
+/// past the turn that follows the write, so it parks on
+/// `Connected(connection)` and is asked again only in the turn whose
+/// `Wait.poll` reported that key, which is the ask that finds the body. Three
+/// bodies are therefore exactly six write asks and exactly six read asks —
+/// two each — and the third body reaches the chain, which is how the run gets
+/// to its end at all: a second piece that never arrived would leave the walk
+/// without its last body.
 ///
 /// `Clocked.tick` arms a fifty-millisecond deadline on the first ask of every
 /// tick and answers the tick on the ask after it. Four ticks are two asks each
@@ -102,10 +197,14 @@ fn the_slice_runs_to_the_end_on_the_vm_with_nothing_written_between_its_processe
 /// this run has far more turns than that.
 #[test]
 fn a_parked_request_is_asked_again_only_when_its_wake_has_fired() {
-    let out = aver(SLICE, &["run"]);
-    assert!(out.status.success(), "{}", format_output(&out));
+    let out = slice_with_peer(&[]);
     assert!(
-        combined(&out).contains("ticker: asked 9 times; sockets: 3 payloads took 6 asks"),
+        combined(&out).contains("ticker: asked 9 times"),
+        "{}",
+        format_output(&out)
+    );
+    assert!(
+        combined(&out).contains("sockets: 3 payloads took 6 asks and 6 reads"),
         "{}",
         format_output(&out)
     );
@@ -194,14 +293,18 @@ fn the_generated_invariants_and_the_programs_priority_law_hold() {
     assert!(text.contains("0 failed"), "{}", format_output(&out));
 }
 
+/// The recording carries every socket answer the peer gave, so the replay
+/// needs no peer at all: nothing binds, nothing connects, and the run that
+/// comes back out is the run that went in.
 #[test]
 fn a_recorded_run_of_the_slice_replays_to_the_same_run() {
     let dir = scratch("replay");
-    let recorded = aver(
-        SLICE,
-        &["run", "--record", dir.to_str().expect("utf-8 scratch path")],
+    let recorded = slice_with_peer(&["--record", dir.to_str().expect("utf-8 scratch path")]);
+    assert!(
+        combined(&recorded).contains("sockets: 3 payloads took 6 asks and 6 reads"),
+        "{}",
+        format_output(&recorded)
     );
-    assert!(recorded.status.success(), "{}", format_output(&recorded));
 
     let recording = only_recording(&dir);
     let mut command = Command::new(aver_bin());
@@ -301,9 +404,11 @@ fn the_dump_shows_the_loop_that_was_generated() {
 /// Decision 4's rule is per segment, and the loop's own functions obey it too:
 /// what the loop generates for one process carries what that process performs,
 /// not what the program performs. `peer` and `walk` print on their way to a
-/// request; `accepting`, `dialling` and `ticker` touch nothing, and every
-/// function the loop generates for them is pure — so one generative effect in
-/// one process cannot oracle-lift the laws of another.
+/// request, and serving the peer also performs the two socket operations the
+/// answer module uses to answer it; `accepting` and `dialling` touch nothing
+/// on their own path, so what the loop generates to seat them is pure even
+/// though serving the accept binds and accepts on a real listener — one
+/// generative effect in one process cannot oracle-lift the laws of another.
 #[test]
 fn the_loop_carries_each_processs_own_effects_and_not_the_programs() {
     let dir = fixture(SLICE);
@@ -314,7 +419,7 @@ fn the_loop_carries_each_processs_own_effects_and_not_the_programs() {
     command.arg("--module-root").arg(&dir);
     let out = command.output().expect("aver runs");
     let text = combined(&out);
-    for function in ["__seatPeer", "__servePeer", "__seatWalk", "__serveWalk"] {
+    for function in ["__seatPeer", "__seatWalk", "__serveWalk", "__serveTicker"] {
         assert!(
             declared_effects(&text, function) == Some("Console.print".to_string()),
             "{function} does not carry its own effects:\n{}",
@@ -323,8 +428,8 @@ fn the_loop_carries_each_processs_own_effects_and_not_the_programs() {
     }
     for function in [
         "__seatAccepting",
-        "__serveAccepting",
         "__seatDialling",
+        "__seatTicker",
         "__serveDialling",
         "__serveDiallingDialled",
     ] {
@@ -334,16 +439,30 @@ fn the_loop_carries_each_processs_own_effects_and_not_the_programs() {
             format_output(&out)
         );
     }
+    // Serving one request carries what the module answering it performs, and
+    // nothing the other processes perform: the peer's own two socket
+    // operations, and the accept's own four.
+    assert_eq!(
+        declared_effects(&text, "__servePeer"),
+        Some("Console.print, Tcp.readNow, Tcp.writeNow".to_string())
+    );
+    assert_eq!(
+        declared_effects(&text, "__serveAccepting"),
+        Some("Args.get, Tcp.accept, Tcp.closeListener, Tcp.listen".to_string())
+    );
     // The dispatch reaches every process, so it carries the union — and the
     // turn adds the wait, the stop observation and both ends of the job seam.
     assert_eq!(
         declared_effects(&text, "__serve"),
-        Some("Console.print".to_string())
+        Some(
+            "Args.get, Console.print, Tcp.accept, Tcp.closeListener, Tcp.listen, Tcp.readNow, Tcp.writeNow"
+                .to_string()
+        )
     );
     assert_eq!(
         declared_effects(&text, "main"),
         Some(
-            "Console.print, Process.stopRequested, Time.unixMs, Validation.begin, Validation.take, Wait.poll, Work.cancel"
+            "Args.get, Console.print, Process.stopRequested, Tcp.accept, Tcp.closeListener, Tcp.listen, Tcp.readNow, Tcp.writeNow, Time.unixMs, Validation.begin, Validation.take, Wait.poll, Work.cancel"
                 .to_string()
         )
     );

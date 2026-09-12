@@ -10,7 +10,7 @@ type Arrival
     Closed
 
 type Tally
-    Counted(Int, Int)
+    Counted(Int, Int, Int)
 
 type Heard
     Data(Bytes)
@@ -39,6 +39,6 @@ operation write(key: Int, payload: Bytes) -> Result<Unit, String>
     replay = recorded
 
 operation writes() -> Wire.Tally
-    ? "How many payloads this wire has written and how many asks that took, for a process that wants to say so at the end of a run."
+    ? "How many payloads this wire has written, how many asks that took, and how many asks its reads took, for a process that wants to say so at the end of a run."
     oracle = generative
     replay = recorded
