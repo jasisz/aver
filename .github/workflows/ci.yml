@@ -291,6 +291,7 @@ jobs:
             wasm_gc_verify_option_case_regression \
             wasm_gc_verify_result_record_eq_regression \
             wasmtime_pack_spec \
+            work_shape_spec \
             yield_spec
           do
             cargo test -p aver-lang --features wasm --test "$test"
