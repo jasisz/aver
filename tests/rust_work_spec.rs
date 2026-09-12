@@ -171,15 +171,42 @@ fn assert_same_stdout(name: &str) {
     .unwrap_or_else(|error| panic!("{error}"));
 }
 
+/// The same, comparing the lines as a multiset.
+///
+/// A program whose processes wait on jobs or on wall-clock deadlines decides
+/// the order of its own output by when each job settled, which is not a
+/// property of the backend: the same program reorders itself on one backend
+/// under load. What both backends owe is the same work.
+fn assert_same_lines(name: &str) {
+    against_the_vm(name, &[], |vm, rust| {
+        let sorted = |text: &str| {
+            let mut lines = text.lines().collect::<Vec<_>>();
+            lines.sort_unstable();
+            lines.join("\n")
+        };
+        if sorted(vm) == sorted(rust) {
+            return Ok(());
+        }
+        Err(format!(
+            "{name}: the two backends did different work\n--- VM ---\n{vm}\n--- Rust ---\n{rust}"
+        ))
+    })
+    .unwrap_or_else(|error| panic!("{error}"));
+}
+
 // ── The job kinds ───────────────────────────────────────────────────────
 
 /// Two jobs started off the turn, waited for in one wait set, and taken as
 /// they land. This is the whole seam in one program: `begin` mints a handle
 /// through the generated adapter, `Wait.poll` watches it through the engine,
 /// and `take` answers `Ok(None)` until the job settles.
+///
+/// The two jobs settle independently and the wait reports whatever is ready,
+/// so which score prints first is a race the program itself allows — on
+/// either backend. The multiset of scores is the claim.
 #[test]
 fn work_jobs_matches_the_vm() {
-    assert_same_stdout("work_jobs");
+    assert_same_lines("work_jobs");
 }
 
 /// `Work.cancel` on the Rust backend sets the job's cancellation flag and
@@ -216,6 +243,42 @@ fn work_jobs_limit_matches_the_vm() {
     assert_same_stdout("work_jobs_limit");
 }
 
+/// Two job kinds over one engine. `Work.Job` is one type, so a handle minted
+/// by one kind type-checks as an argument to the other kind's `take`, and
+/// only the runtime can tell them apart; the Rust adapter remembers what it
+/// started and refuses the rest in the VM's words.
+#[test]
+fn work_jobs_two_kinds_keeps_each_kind_to_its_own_handles() {
+    against_the_vm("work_jobs_two_kinds", &[], |vm, rust| {
+        if vm != rust {
+            return Err(format!(
+                "work_jobs_two_kinds: stdout mismatch\n--- VM ---\n{vm}\n--- Rust ---\n{rust}"
+            ));
+        }
+        if !rust.contains("work: this job was not started by job kind 'Beta'") {
+            return Err(format!(
+                "work_jobs_two_kinds: expected the foreign-handle refusal, got:\n{rust}"
+            ));
+        }
+        Ok(())
+    })
+    .unwrap_or_else(|error| panic!("{error}"));
+}
+
+// ── A capability the program answers ────────────────────────────────────
+
+/// A program that answers a capability of its own, without asking for a
+/// generated loop: the processes lower to state types and pure answer
+/// functions, and the coordinator is the one the program wrote. Nothing here
+/// reaches a job, so this is the other half of the refusal that was lifted —
+/// the reply sums carrying `Wait.Wake` compile and run.
+#[test]
+fn an_answered_capability_matches_the_vm() {
+    for fixture in ["yield_spike", "yield_continuations", "yield_cross_module"] {
+        assert_same_stdout(fixture);
+    }
+}
+
 /// The generated coordinator: five processes, five answer modules, three
 /// policies and a job seam, all on the Rust backend.
 ///
@@ -229,20 +292,7 @@ fn work_jobs_limit_matches_the_vm() {
 /// run every process to its end and stop.
 #[test]
 fn run_all_slice_does_the_same_work_as_the_vm() {
-    against_the_vm("run_all_slice", &[], |vm, rust| {
-        let sorted = |text: &str| {
-            let mut lines = text.lines().collect::<Vec<_>>();
-            lines.sort_unstable();
-            lines.join("\n")
-        };
-        if sorted(vm) == sorted(rust) {
-            return Ok(());
-        }
-        Err(format!(
-            "run_all_slice: the two backends did different work\n--- VM ---\n{vm}\n--- Rust ---\n{rust}"
-        ))
-    })
-    .unwrap_or_else(|error| panic!("{error}"));
+    assert_same_lines("run_all_slice");
 }
 
 // ── Recording and replay ────────────────────────────────────────────────
