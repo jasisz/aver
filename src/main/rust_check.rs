@@ -107,6 +107,30 @@ mod tests {
         (program, args_log)
     }
 
+    /// Spawn the fake `cargo` until the kernel lets it run.
+    ///
+    /// The tests in this module run on threads of one process, and other
+    /// tests spawn children of their own. A child forked between this test's
+    /// write of the script and that child's exec still holds the script open,
+    /// and Linux refuses to exec a file somebody holds open for writing with
+    /// `ETXTBSY`. The window is microseconds wide and closes on its own, so a
+    /// short retry is the whole remedy; a real `cargo` never sees this because
+    /// nobody writes it right before running it.
+    fn run_until_executable(cargo: &OsStr, project: &Path) -> Result<(), CargoCheckError> {
+        let mut attempts = 0;
+        loop {
+            match run_with_program(cargo, project) {
+                Err(CargoCheckError::Spawn { source, .. })
+                    if source.kind() == io::ErrorKind::ExecutableFileBusy && attempts < 50 =>
+                {
+                    attempts += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                outcome => return outcome,
+            }
+        }
+    }
+
     #[cfg(unix)]
     #[test]
     fn invokes_cargo_check_with_generated_manifest() {
@@ -115,7 +139,7 @@ mod tests {
         fs::create_dir_all(&project).expect("create generated project");
         let (cargo, args_log) = fake_cargo(temp.path(), 0);
 
-        run_with_program(cargo.as_os_str(), &project).expect("fake cargo check should pass");
+        run_until_executable(cargo.as_os_str(), &project).expect("fake cargo check should pass");
 
         let args = fs::read_to_string(args_log).expect("read fake cargo args");
         assert_eq!(
