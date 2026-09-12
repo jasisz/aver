@@ -36,24 +36,32 @@ fn twoSlots() -> Store
     ? "A store with two slots taken."
     write(write(empty(), 1, 10), 2, 20)
 
+fn threeSlots() -> Store
+    ? "A store with three slots taken, so every sampled id is seated in it."
+    write(twoSlots(), 3, 30)
+
 verify seated
     seated(empty(), 1) => false
     seated(twoSlots(), 1) => true
     seated(twoSlots(), 9) => false
+    seated(threeSlots(), 3) => true
 
 verify size
     size(empty()) => 0
     size(twoSlots()) => 2
     size(write(twoSlots(), 1, 99)) => 2
     size(write(twoSlots(), 3, 30)) => 3
+    size(threeSlots()) => 3
+    size(write(threeSlots(), 2, 99)) => 3
 
 verify look
     look(empty(), 1) => Option.None
     look(twoSlots(), 1) => Option.Some(10)
     look(write(twoSlots(), 1, 99), 1) => Option.Some(99)
+    look(threeSlots(), 3) => Option.Some(30)
 
 verify size law seatedWriteKeepsTheSize
-    given store: Store = [empty(), twoSlots()]
+    given store: Store = [empty(), twoSlots(), threeSlots()]
     given id: Int = [1, 2, 3]
     given value: Int = [99]
     when seated(store, id)
@@ -61,7 +69,7 @@ verify size law seatedWriteKeepsTheSize
     size(write(store, id, value)) <= size(store) holds
 
 verify look law theSlotWrittenIsTheSlotRead
-    given store: Store = [empty(), twoSlots()]
+    given store: Store = [empty(), twoSlots(), threeSlots()]
     given id: Int = [1, 2, 3]
     given value: Int = [99]
     because seated(write(store, id, value), id)
