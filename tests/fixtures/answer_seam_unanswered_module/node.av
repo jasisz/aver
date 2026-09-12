@@ -14,3 +14,7 @@ fn nextTask(state: Int) -> Option<String>
 fn validated(state: Int, score: Int) -> Int
     ? "A seam end written in a module that answers no capability."
     state + score
+
+fn taskStarted(state: Int, task: String) -> Int
+    ? "A seam end written in a module that answers no capability."
+    state

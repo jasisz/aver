@@ -486,7 +486,7 @@ fn performs_operation_of(
 /// The two binding kinds of the manifest that name a function or a module of
 /// the program, carried together because the job seam is checked against both:
 /// `work` says which function runs off the turn, `answer` which module holds
-/// the state its two ends reach.
+/// the state its three ends reach.
 #[derive(Debug, Clone, Copy)]
 pub struct ManifestBindings<'a> {
     pub work: &'a [ProviderWorkBinding],
@@ -975,10 +975,10 @@ fn declared_by(ty: &Type, module: &str) -> bool {
     }
 }
 
-/// The two ends of a job kind's seam: where the turn takes the next task
-/// from, and where a finished job's result lands. Both are pure functions of
-/// an answer module, because the state they read and write is the state the
-/// turn already holds.
+/// The three ends of a job kind's seam: where the turn takes the next task
+/// from, where a start of that task is recorded, and where a finished job's
+/// result lands. All three are pure functions of an answer module, because
+/// the state they read and write is the state the turn already holds.
 fn check_job_seam(
     shapes: &[WorkShape],
     bindings: ManifestBindings<'_>,
@@ -1010,6 +1010,21 @@ fn check_job_seam(
                 binding,
                 "task",
                 task,
+                bindings.answer,
+                answers,
+                fn_sigs,
+                &expected,
+            ));
+        }
+        if let Some(started) = &binding.started {
+            // A task whose job has just begun is consumed from the answer
+            // state, so the next `task` ask offers a different one while the
+            // job table still has room.
+            let expected = |state: &Type| (vec![state.clone(), shape.task.clone()], state.clone());
+            errors.extend(check_seam_function(
+                binding,
+                "started",
+                started,
                 bindings.answer,
                 answers,
                 fn_sigs,
@@ -1079,7 +1094,7 @@ fn check_seam_function(
     };
     if !effects.is_empty() {
         return vec![binding_error(format!(
-            "job kind '{capability}' binds {field} = \"{value}\", but that function declares effects [{}]; the turn reads the seam between waits, so both its ends are pure",
+            "job kind '{capability}' binds {field} = \"{value}\", but that function declares effects [{}]; the turn reads the seam between waits, so all three of its ends are pure",
             effects.join(", ")
         ))];
     }
@@ -1334,6 +1349,10 @@ operation take(job: Work.Job) -> Result<Option<Int>, String>
             (vec![state()], Type::Option(Box::new(Type::Str)), Vec::new()),
         );
         sigs.insert(
+            "Ledger.taskStarted".to_string(),
+            (vec![state(), Type::Str], state(), Vec::new()),
+        );
+        sigs.insert(
             "Ledger.validated".to_string(),
             (
                 vec![
@@ -1357,6 +1376,7 @@ operation take(job: Work.Job) -> Result<Option<Int>, String>
             function: "Node.validate".to_string(),
             index: 1,
             task: Some("Ledger.nextTask".to_string()),
+            started: Some("Ledger.taskStarted".to_string()),
             landed: Some("Ledger.validated".to_string()),
         }];
         let mut shapes = Vec::new();
@@ -1393,6 +1413,7 @@ operation take(job: Work.Job) -> Result<Option<Int>, String>
             function: "Main.validate".to_string(),
             index: 0,
             task: None,
+            started: None,
             landed: None,
         }];
         let mut shapes = Vec::new();
