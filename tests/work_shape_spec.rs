@@ -413,18 +413,54 @@ fn the_rust_backend_accepts_a_program_with_a_job_kind() {
     let _ = std::fs::remove_dir_all(std::env::temp_dir().join("aver-work-target-rust"));
 }
 
+/// TODO(owner): jasisz/aver#1329 — decision 5 of
+/// `prompts/wasm-inline-jobs-brief.md` asks this test and its wasip2 twin to
+/// assert that all four targets are accepted. They still assert a refusal
+/// because the lowering decision 5 depends on — a job run inline at `begin`,
+/// decision 1 — is not built; see `TODO(owner)` in `src/capability/work.rs`.
+/// What changed with the answered-capability work is only the wording of the
+/// message, which now names a job kind rather than every Work-bound
+/// capability.
 #[test]
 fn the_wasm_gc_runner_refuses_a_program_with_a_job_kind() {
     let out = aver("work_shape_ok", &["run", "--wasm-gc"]);
     let text = combined(&out);
     assert!(
         text.contains(
-            "error[work-target]: Work-bound capabilities run on the VM and the Rust backend in this build"
+            "error[work-target]: A job kind runs on the VM and the Rust backend in this build"
         ),
         "{}",
         format_output(&out)
     );
     assert!(text.contains("the requested target is wasm-gc"), "{text}");
+    assert!(!out.status.success(), "{}", format_output(&out));
+}
+
+/// The other half of what `docs/diagnostics-slugs.md` says about
+/// `work-target`: a program that performs `Wait.poll` and declares no job
+/// kind never reaches that gate. The capability target manifest binds
+/// neither reserved contract on a wasm target, so the binding refusal comes
+/// first and is the slug the user has to search for. Pinned here because
+/// the diagnostics reference sends them to it. Needs `--features wasm`: a
+/// build without it stops `--wasm-gc` at the feature check, before any
+/// capability is resolved.
+#[cfg(feature = "wasm")]
+#[test]
+fn the_wasm_gc_runner_refuses_the_one_wait_as_an_unbound_capability() {
+    let out = aver("work_shape_wait_only", &["run", "--wasm-gc"]);
+    let text = combined(&out);
+    assert!(
+        text.contains(
+            "error[capability-target-unsupported]: target `wasm-gc` cannot bind capability `Wait`"
+        ),
+        "{}",
+        format_output(&out)
+    );
+    assert!(
+        text.contains("reason[standard-binding-unavailable]"),
+        "{text}"
+    );
+    assert!(!text.contains("error[work-target]"), "{text}");
     assert!(!out.status.success(), "{}", format_output(&out));
 }
 
@@ -445,7 +481,7 @@ fn the_wasip2_backend_refuses_a_program_with_a_job_kind() {
     let text = combined(&out);
     assert!(
         text.contains(
-            "error[work-target]: Work-bound capabilities run on the VM and the Rust backend in this build"
+            "error[work-target]: A job kind runs on the VM and the Rust backend in this build"
         ),
         "{}",
         format_output(&out)

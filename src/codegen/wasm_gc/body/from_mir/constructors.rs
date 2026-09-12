@@ -37,6 +37,14 @@ pub(crate) fn emit_mir_constructor_with_args(
                 info.parent
             )));
         }
+        // A `Unit` field has no stack value but keeps an unobservable `i32`
+        // placeholder in the variant struct, exactly as a `Unit` record field
+        // does (`emit_mir_record_field_value`). The argument still ran — an
+        // operation answered with `__OpReply.Now(Unit)` is the shape that
+        // reaches here — and the placeholder follows it.
+        if info.fields.get(index).map(|ty| ty.trim()) == Some("Unit") {
+            func.instruction(&Instruction::I32Const(0));
+        }
     }
     func.instruction(&Instruction::StructNew(info.type_idx));
     Ok(Some(()))

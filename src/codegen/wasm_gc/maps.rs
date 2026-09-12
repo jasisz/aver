@@ -2533,6 +2533,14 @@ fn emit_hash_record(
             "Bool" => {
                 // already i32
             }
+            // `Unit` rides an unobservable `i32` placeholder — already an
+            // i32, and equal for every pair of `Unit` values.
+            "Unit" => {}
+            // jasisz/aver#1329 — a job handle hashes on the identity it
+            // carries, agreeing with the reference equality it compares by.
+            crate::capability::work::WORK_JOB => {
+                emit_job_handle_hash(&mut f, registry)?;
+            }
             "Float" => {
                 // f64 bit pattern → low 32 bits
                 f.instruction(&Instruction::I64ReinterpretF64);
@@ -2633,6 +2641,16 @@ fn emit_eq_record(
             }
             "Bool" => {
                 f.instruction(&Instruction::I32Eq);
+            }
+            // `Unit` rides an unobservable `i32` placeholder, and any two
+            // `Unit` values are equal.
+            "Unit" => {
+                f.instruction(&Instruction::I32Eq);
+            }
+            // jasisz/aver#1329 — two job handles are the same job exactly
+            // when they are the same reference; one job owns one struct.
+            crate::capability::work::WORK_JOB => {
+                f.instruction(&Instruction::RefEq);
             }
             "Float" => {
                 f.instruction(&Instruction::F64Eq);
@@ -3995,6 +4013,22 @@ fn emit_map_from_list(
     Ok(f)
 }
 
+/// jasisz/aver#1329 — fold one `Work.Job` reference already on the stack
+/// into its i32 hash: the handle's own id, narrowed. Equality on two
+/// handles is reference equality and every handle carries the id it was
+/// minted with, so equal handles hash equal.
+fn emit_job_handle_hash(f: &mut Function, registry: &TypeRegistry) -> Result<(), WasmGcError> {
+    let job_idx = registry.job_struct_idx.ok_or(WasmGcError::Validation(
+        "a `Work.Job` field needs the job handle slot to be allocated".into(),
+    ))?;
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: job_idx,
+        field_index: 0,
+    });
+    f.instruction(&Instruction::I32WrapI64);
+    Ok(())
+}
+
 /// `hash : (parent_ref) -> i32` for a user sum type. Per-variant
 /// `ref.test` cascade: each constructor V_i has a tag (its
 /// alphabetical index in the variant list, baked at compile time)
@@ -4053,6 +4087,17 @@ fn emit_hash_sum(
                     super::lists::emit_aint_field_hash(&mut f, registry)?;
                 }
                 "Bool" => {}
+                // `Unit` rides an unobservable `i32` placeholder: it is
+                // already an i32, and every `Unit` hashes the same because
+                // every `Unit` is equal.
+                "Unit" => {}
+                // jasisz/aver#1329 — a job handle hashes on the identity it
+                // carries, which agrees with the reference equality two
+                // handles are compared by: distinct handles carry distinct
+                // ids.
+                crate::capability::work::WORK_JOB => {
+                    emit_job_handle_hash(&mut f, registry)?;
+                }
                 "Float" => {
                     f.instruction(&Instruction::I64ReinterpretF64);
                     f.instruction(&Instruction::I32WrapI64);
@@ -4156,6 +4201,17 @@ fn emit_eq_sum(
                     }
                     "Bool" => {
                         f.instruction(&Instruction::I32Eq);
+                    }
+                    // `Unit` rides an unobservable `i32` placeholder, and any
+                    // two `Unit` values are equal.
+                    "Unit" => {
+                        f.instruction(&Instruction::I32Eq);
+                    }
+                    // jasisz/aver#1329 — two job handles are the same job
+                    // exactly when they are the same reference; one job owns
+                    // one struct.
+                    crate::capability::work::WORK_JOB => {
+                        f.instruction(&Instruction::RefEq);
                     }
                     "Float" => {
                         f.instruction(&Instruction::F64Eq);
