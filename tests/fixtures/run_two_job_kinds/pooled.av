@@ -32,9 +32,11 @@ fn alphaTask(state: State) -> Option<Int>
         true -> Option.None
         false -> Option.Some(state.left)
 
-fn alphaLanded(state: State, score: Int) -> State
-    ? "Where a finished alpha job's score goes."
-    State.update(state, scored = state.scored + score)
+fn alphaLanded(state: State, outcome: Result<Int, String>) -> State
+    ? "Where an alpha job that is over goes: its score, or nothing at all when it will never produce one."
+    match outcome
+        Result.Err(_) -> state
+        Result.Ok(score) -> State.update(state, scored = state.scored + score)
 
 fn betaTask(state: State) -> Option<Int>
     ? "The next beta task, while there is one."
@@ -42,9 +44,11 @@ fn betaTask(state: State) -> Option<Int>
         true -> Option.None
         false -> Option.Some(state.left)
 
-fn betaLanded(state: State, score: Int) -> State
-    ? "Where a finished beta job's score goes."
-    State.update(state, scored = state.scored + score)
+fn betaLanded(state: State, outcome: Result<Int, String>) -> State
+    ? "Where a beta job that is over goes: its score, or nothing at all when it will never produce one."
+    match outcome
+        Result.Err(_) -> state
+        Result.Ok(score) -> State.update(state, scored = state.scored + score)
 
 verify claim
     claim(fresh()) => (State.update(fresh(), left = 1), Pool.__ClaimReply.Now(Option.Some(2)))

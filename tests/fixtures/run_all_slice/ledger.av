@@ -1,7 +1,7 @@
 module Ledger
     intent = "The answers this program gives to Pool, Blocks and Chain: one state, pure transitions, plus the two ends of the validation job's seam."
     depends [Bytes, Wait, Pool, Blocks, Chain]
-    exposes [State, fresh, blockOf, claim, gone, joined, swept, deliver, body, nextTarget, commit, nextTask, validated, validate, checked]
+    exposes [State, fresh, blockOf, claim, gone, joined, swept, deliver, body, nextTarget, commit, nextTask, validated, accepted, validate, checked]
     effects []
 
 record State
@@ -13,10 +13,11 @@ record State
     bodies: Map<Int, Bytes>
     tip: Int
     swept: Int
+    rejected: List<String>
 
 fn fresh() -> State
     ? "No peer has joined, nothing is fetched, and the run is three blocks long."
-    State(idle = [], busy = {}, nextHeight = 1, lastHeight = 3, queued = [], bodies = {}, tip = 0, swept = 0)
+    State(idle = [], busy = {}, nextHeight = 1, lastHeight = 3, queued = [], bodies = {}, tip = 0, swept = 0, rejected = [])
 
 fn blockOf(height: Int) -> Bytes
     ? "The body one height carries. A peer asks for exactly these bytes and hands exactly them back."
@@ -84,8 +85,14 @@ fn nextTask(state: State) -> Option<Tuple<Int, Bytes>>
         [] -> Option.None
         [head, ..rest] -> Option.Some(head)
 
-fn validated(state: State, height: Int) -> State
-    ? "Where a finished job's result lands. Named by aver.toml's landed key. It resumes nobody: the peer that delivered this body moved on and its instance number changed."
+fn validated(state: State, outcome: Result<Int, String>) -> State
+    ? "Where a validation that is over lands. Named by aver.toml's landed key. It resumes nobody: the peer that delivered this body moved on and its instance number changed. A validation that will never produce a height — cancelled, stopped, or forgotten by the engine — is recorded as a rejection instead, and the run goes on without it."
+    match outcome
+        Result.Err(reason) -> State.update(state, rejected = List.concat(state.rejected, [reason]))
+        Result.Ok(height) -> accepted(state, height)
+
+fn accepted(state: State, height: Int) -> State
+    ? "A validation that produced a height: the body at that height is validated, and its entry leaves the queue. A height of zero is a body this program rejected, which validates nothing."
     match height == 0
         true -> state
         false -> State.update(state, bodies = Map.set(state.bodies, height, blockOf(height)), queued = withoutHeight(state.queued, height, []))
@@ -151,8 +158,13 @@ verify nextTask
     nextTask(State.update(fresh(), queued = [(1, blockOf(1))])) => Option.Some((1, blockOf(1)))
 
 verify validated
-    validated(State.update(fresh(), queued = [(1, blockOf(1))]), 1) => State.update(fresh(), bodies = Map.set({}, 1, blockOf(1)))
-    validated(State.update(fresh(), queued = [(1, blockOf(1))]), 0) => State.update(fresh(), queued = [(1, blockOf(1))])
+    validated(State.update(fresh(), queued = [(1, blockOf(1))]), Result.Ok(1)) => State.update(fresh(), bodies = Map.set({}, 1, blockOf(1)))
+    validated(State.update(fresh(), queued = [(1, blockOf(1))]), Result.Ok(0)) => State.update(fresh(), queued = [(1, blockOf(1))])
+    validated(fresh(), Result.Err("work: job cancelled")) => State.update(fresh(), rejected = ["work: job cancelled"])
+
+verify accepted
+    accepted(State.update(fresh(), queued = [(1, blockOf(1))]), 1) => State.update(fresh(), bodies = Map.set({}, 1, blockOf(1)))
+    accepted(State.update(fresh(), queued = [(1, blockOf(1))]), 0) => State.update(fresh(), queued = [(1, blockOf(1))])
 
 verify withoutHeight
     withoutHeight([], 1, []) => []

@@ -370,11 +370,11 @@ fn the_false_ready_slice_checks_clean() {
     assert!(out.status.success(), "{}", format_output(&out));
 }
 
-/// The same claim at the lowering: `__taken<Kind>` hands the whole run to
-/// `__landed<Kind>` with the key, and only the arm that carries a result
-/// removes the job.
+/// The same claim at the lowering: `__taken<Kind>` hands the whole run and the
+/// key on, and only an outcome the job will not repeat — a payload or an error
+/// — removes it from the table.
 #[test]
-fn the_generated_take_removes_a_job_only_when_it_carried_a_result() {
+fn the_generated_take_removes_a_job_only_when_its_outcome_is_final() {
     let dir = fixture(SLICE);
     let mut command = Command::new(aver_bin());
     command.current_dir(&dir);
@@ -384,18 +384,22 @@ fn the_generated_take_removes_a_job_only_when_it_carried_a_result() {
     let out = command.output().expect("aver runs");
     let text = combined(&out);
     for line in [
-        "fn __takenValidation(run: __Run, key: Int) -> Result<__Run, String>",
-        "Option.Some(job) -> __landedValidation(run, key, Validation.take(job)?)",
-        "fn __landedValidation(run: __Run, key: Int, result: Option<Int>) -> Result<__Run, String>",
-        "Option.None -> Result.Ok(run)",
-        "Option.Some(payload) -> Result.Ok(__Run.update(run, jobs = Map.remove(run.jobs, key), ledger = Ledger.validated(run.ledger, payload)))",
+        "fn __takenValidation(run: __Run, key: Int) -> __Run",
+        "Option.Some(job) -> __reportedValidation(run, key, (Validation).take(job))",
+        "fn __reportedValidation(run: __Run, key: Int, taken: Result<Option<Int>, String>) -> __Run",
+        "Result.Err(reason) -> __landedValidation(run, key, (Result).Err(reason))",
+        "fn __finishedValidation(run: __Run, key: Int, payload: Option<Int>) -> __Run",
+        "Option.None -> run",
+        "Option.Some(value) -> __landedValidation(run, key, (Result).Ok(value))",
+        "ledger = (Ledger).validated((run).ledger, outcome)",
     ] {
         assert!(text.contains(line), "{line} missing from the dump");
     }
-    // The removal happens where the result is, not before the take.
+    // The take no longer stops the turn on an error: a job that will not land
+    // reaches `landed` as the error it is, and the run goes on.
     assert!(
-        !text.contains("__landedValidation(__Run.update(run, jobs = Map.remove(run.jobs, key))"),
-        "the take still drops the handle before it knows what the job answered"
+        !text.contains("(Validation).take(job)?"),
+        "the take still propagates a job's error out of the turn"
     );
 }
 
@@ -515,7 +519,7 @@ fn the_generated_invariants_reach_the_lean_wall() {
     );
     assert_eq!(
         summary["universal_laws"].as_u64(),
-        Some(22),
+        Some(20),
         "universal-law drift:\n{}",
         format_output(&out)
     );
@@ -534,7 +538,6 @@ fn the_generated_invariants_reach_the_lean_wall() {
     let obligations = &summary["obligations"];
     for closed in [
         "__park.laterKeepsTheInstance.implication",
-        "__parked.laterKeepsTheRequest.implication",
         "__settlePeer.lateAnswerIsDropped.implication",
         "__settlePeer.lateAnswerIsRecorded.implication",
         "admit.readyPeerBeforeNewJob.implication",

@@ -32,11 +32,14 @@ fn probe() -> String
 fn probeEarly(started: __Run) -> String
     ? "The take of a job that has not finished: it answers nothing, and the run it answers with still holds the handle."
     ! [Validation.take, Wait.poll]
-    match __takenValidation(started, 1)
-        Result.Err(reason) -> "early take refused: {reason}"
-        Result.Ok(after) -> match Map.get(after.jobs, 1)
-            Option.None -> "the early take dropped the handle"
-            Option.Some(job) -> probePolled(after, Wait.poll({1 => Wait.Item.Job(job)}, 5000))
+    probeHeld(__takenValidation(started, 1))
+
+fn probeHeld(after: __Run) -> String
+    ? "The handle an early take left behind, waited on until the job really settles."
+    ! [Validation.take, Wait.poll]
+    match Map.get(after.jobs, 1)
+        Option.None -> "the early take dropped the handle"
+        Option.Some(job) -> probePolled(after, Wait.poll({1 => Wait.Item.Job(job)}, 5000))
 
 fn probePolled(after: __Run, ready: Result<List<Int>, String>) -> String
     ? "Once the job has really settled, the same key is taken again; a wait that ran out of time without naming the key waits again, so the fixture does not depend on how fast this machine is."
@@ -54,11 +57,9 @@ fn probeAgain(after: __Run) -> String
         Option.None -> "the wait dropped the handle"
         Option.Some(job) -> probePolled(after, Wait.poll({1 => Wait.Item.Job(job)}, 5000))
 
-fn probeLate(taken: Result<__Run, String>) -> String
+fn probeLate(landed: __Run) -> String
     ? "What the later take left behind: no handle, and the score landed in the answer state."
-    match taken
-        Result.Err(reason) -> "late take refused: {reason}"
-        Result.Ok(landed) -> "kept the handle, then landed: jobs {Map.len(landed.jobs)} scored {landed.pooled.scored}"
+    "kept the handle, then landed: jobs {Map.len(landed.jobs)} scored {landed.pooled.scored}"
 
 fn order(view: View) -> List<Int>
     ? "Every seated process, in slot order."
@@ -72,5 +73,3 @@ fn stop(view: View) -> Bool
     ? "The run ends when the process asked us to."
     view.stopping
 
-verify probeLate
-    probeLate(Result.Err("no such job")) => "late take refused: no such job"
