@@ -190,6 +190,9 @@ fn an_answered_capability_is_refused_on_wasm_gc() {
         "yield_continuations",
         "yield_tail_stop",
         "yield_cross_module",
+        "yield_tail_into",
+        "yield_nested",
+        "yield_nested_twice",
     ] {
         let out = aver(fixture, &["run", "--wasm-gc"]);
         let text = format!(
@@ -205,6 +208,139 @@ fn an_answered_capability_is_refused_on_wasm_gc() {
             format_output(&out)
         );
     }
+}
+
+// ── A process split into yield helpers ──────────────────────────────────
+
+/// Decision 1: a tail call between two `yield` functions. `total` claims one
+/// handle and hands the rest of the work to `rest`; the run drives one
+/// protocol, `total`'s, from start to `Done`.
+#[test]
+fn a_tail_call_into_another_process_runs_and_verifies_on_the_vm() {
+    assert_runs_and_prints("yield_tail_into", &["run"], "total = 20");
+    assert_verify_passes("yield_tail_into", &["verify"], "10/10");
+}
+
+#[test]
+fn tail_into_generates_exactly_the_pinned_protocol() {
+    let (lowered, generated, items) = lower_fixture("yield_tail_into");
+    assert_eq!(lowered, vec!["total".to_string(), "rest".to_string()]);
+    assert_eq!(generated, TAIL_INTO_GENERATED);
+    assert_removed(&items, "total");
+    assert_removed(&items, "rest");
+}
+
+#[test]
+fn tail_into_lean_check_builds_with_zero_errors_and_no_sorry() {
+    assert_lean_check_clean(
+        "yield_tail_into",
+        "YieldTailInto.lean",
+        &["def __totalInRestAt1", "def __restStart"],
+    );
+}
+
+/// Decision 2: a non-tail call to a helper, with a request inside the helper
+/// and work after the call in the caller.
+#[test]
+fn a_nested_call_runs_and_verifies_on_the_vm() {
+    assert_runs_and_prints("yield_nested", &["run"], "walk = 9");
+    assert_verify_passes("yield_nested", &["verify"], "8/8");
+}
+
+#[test]
+fn nested_generates_exactly_the_pinned_protocol() {
+    let (lowered, generated, items) = lower_fixture("yield_nested");
+    assert_eq!(lowered, vec!["fetch".to_string(), "walk".to_string()]);
+    assert_eq!(generated, NESTED_GENERATED);
+    assert_removed(&items, "fetch");
+    assert_removed(&items, "walk");
+}
+
+#[test]
+fn nested_lean_check_builds_with_zero_errors_and_no_sorry() {
+    assert_lean_check_clean(
+        "yield_nested",
+        "YieldNested.lean",
+        &["inductive __WalkClaimState", "def __walkInFetchAt1"],
+    );
+}
+
+/// A helper with two request kinds, entered twice from one caller: every kind
+/// of the caller gains one variant per call site, and the live variables the
+/// two sites carry differ.
+#[test]
+fn a_helper_nested_twice_runs_and_verifies_on_the_vm() {
+    assert_runs_and_prints("yield_nested_twice", &["run"], "pairUp = 14");
+    assert_verify_passes("yield_nested_twice", &["verify"], "11/11");
+}
+
+#[test]
+fn nested_twice_generates_exactly_the_pinned_protocol() {
+    let (lowered, generated, items) = lower_fixture("yield_nested_twice");
+    assert_eq!(lowered, vec!["swap".to_string(), "pairUp".to_string()]);
+    assert_eq!(generated, NESTED_TWICE_GENERATED);
+    assert_removed(&items, "swap");
+    assert_removed(&items, "pairUp");
+}
+
+// ── What nesting still refuses ──────────────────────────────────────────
+
+fn assert_refused(fixture_name: &str, slug: &str, wording: &[&str]) {
+    let out = aver(fixture_name, &["check"]);
+    assert!(
+        !out.status.success(),
+        "the module must not check:\n{}",
+        format_output(&out)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    let errors: Vec<&str> = stdout
+        .lines()
+        .filter(|line| line.contains("error["))
+        .collect();
+    assert_eq!(errors.len(), 1, "one error only:\n{stdout}");
+    assert!(
+        errors[0].contains(slug),
+        "expected {slug} in:\n{}",
+        errors[0]
+    );
+    for text in wording {
+        assert!(
+            errors[0].contains(text),
+            "expected {text:?} in:\n{}",
+            errors[0]
+        );
+    }
+}
+
+/// Decision 2: mutual nesting is refused, not attempted. `ping` calls `pong`
+/// and `pong` calls `ping`, so each one's state would have to hold the
+/// other's, and the message says where the cycle runs and how to break it.
+#[test]
+fn mutual_nesting_is_refused_with_the_cycle_it_found() {
+    assert_refused(
+        "yield_mutual_nesting",
+        "error[yield-unsupported]",
+        &[
+            "Mutual nesting is not supported by yield lowering",
+            "ping calls pong calls ping",
+            "pass what comes next as data in one of them",
+        ],
+    );
+}
+
+/// The branches of an independent product run independently, and a request
+/// leaves a process one at a time, so a call into a helper's protocol inside
+/// one is refused exactly as a request written there is.
+#[test]
+fn a_nested_call_inside_an_independent_product_is_refused() {
+    assert_refused(
+        "yield_nested_product",
+        "error[yield-unsupported]",
+        &[
+            "a call to a yield helper, inside an independent product",
+            "perform them one after another",
+        ],
+    );
 }
 
 // ── Across the module boundary: the importer drives the dependency ──────
@@ -413,6 +549,242 @@ fn __pickJoin1(id: Int, left: Int, extra: Int) -> __PickOutcome
         _ -> (__PickOutcome).Waiting((__PickRequest).Yield((__PickYieldState).Await2((id + extra), (left - 1))))
 "#;
 
+/// Decision 1: a tail call to another `yield` function enters that
+/// function's protocol. `total` stops with a `Yield` request carrying what
+/// `rest` is entered with — the caller has nothing left, so nothing of it is
+/// kept — and every request `rest` makes on its way leaves as a request of
+/// `total` carrying `rest`'s own state inside `__Total<Kind>State`.
+const TAIL_INTO_GENERATED: &str = r#"type __TotalClaimState
+    AwaitFirst
+    InRestAt1(__RestClaimState)
+
+type __TotalYieldState
+    Await2(Int, Int)
+    InRestAt1(__RestYieldState)
+
+type __TotalRequest
+    Claim(Int, __TotalClaimState)
+    Yield(__TotalYieldState)
+
+type __TotalOutcome
+    Done(Int)
+    Waiting(__TotalRequest)
+
+fn __totalStart(id: Int) -> __TotalOutcome
+    ? "Claims the handle of id and hands the rest of the work to 'rest' in tail position."
+    (__TotalOutcome).Waiting((__TotalRequest).Claim(id, (__TotalClaimState).AwaitFirst))
+
+fn __totalAnswerClaim(__state: __TotalClaimState, __answer: Int) -> __TotalOutcome
+    ? "Resumes 'total' after the coordinator answered its Claim request."
+    match __state
+        __TotalClaimState.AwaitFirst -> (__TotalOutcome).Waiting((__TotalRequest).Yield((__TotalYieldState).Await2(__answer, 0)))
+        __TotalClaimState.InRestAt1(__inner) -> __totalInRestAt1(__restAnswerClaim(__inner, __answer))
+
+fn __totalAnswerYield(__state: __TotalYieldState) -> __TotalOutcome
+    ? "Re-enters 'total' at its tail call with the arguments the Yield request carries."
+    match __state
+        __TotalYieldState.Await2(left, seen) -> __totalInRestAt1(__restStart(left, seen))
+        __TotalYieldState.InRestAt1(__inner) -> __totalInRestAt1(__restAnswerYield(__inner))
+
+fn __totalInRestAt1(__outcome: __RestOutcome) -> __TotalOutcome
+    ? "Routes what 'rest' answered back into 'total': a result continues here, a request of 'rest' leaves as a request of 'total' carrying the nested state."
+    match __outcome
+        __RestOutcome.Done(__value) -> (__TotalOutcome).Done(__value)
+        __RestOutcome.Waiting(__request) -> match __request
+            __RestRequest.Claim(__a0, __inner) -> (__TotalOutcome).Waiting((__TotalRequest).Claim(__a0, (__TotalClaimState).InRestAt1(__inner)))
+            __RestRequest.Yield(__inner) -> (__TotalOutcome).Waiting((__TotalRequest).Yield((__TotalYieldState).InRestAt1(__inner)))
+
+type __RestClaimState
+    AwaitHandle(Int, Int)
+
+type __RestYieldState
+    Await2(Int, Int)
+
+type __RestRequest
+    Claim(Int, __RestClaimState)
+    Yield(__RestYieldState)
+
+type __RestOutcome
+    Done(Int)
+    Waiting(__RestRequest)
+
+fn __restStart(left: Int, seen: Int) -> __RestOutcome
+    ? "Claims one handle per round until left runs down, summing the handles into seen."
+    (__RestOutcome).Waiting((__RestRequest).Claim(left, (__RestClaimState).AwaitHandle(left, seen)))
+
+fn __restAnswerClaim(__state: __RestClaimState, __answer: Int) -> __RestOutcome
+    ? "Resumes 'rest' after the coordinator answered its Claim request."
+    match __state
+        __RestClaimState.AwaitHandle(left, seen) -> match left
+            0 -> (__RestOutcome).Done((seen + __answer))
+            _ -> (__RestOutcome).Waiting((__RestRequest).Yield((__RestYieldState).Await2((left - 1), (seen + __answer))))
+
+fn __restAnswerYield(__state: __RestYieldState) -> __RestOutcome
+    ? "Re-enters 'rest' at its tail call with the arguments the Yield request carries."
+    match __state
+        __RestYieldState.Await2(left, seen) -> __restStart(left, seen)
+"#;
+
+/// Decision 2: a non-tail call nests the helper's state inside the caller's.
+/// `__WalkClaimState` has one variant for the call site, holding `fetch`'s own
+/// `__FetchClaimState` beside the two variables `walk` still reads, and the
+/// routing function is where a `Done` continues the caller and a `Waiting`
+/// leaves as a request of the caller.
+///
+/// Decision 3 is visible in `__walkStart`: the call is not a stop by itself,
+/// so the segment enters `fetch` in place and only what `fetch` waits on is a
+/// request.
+const NESTED_GENERATED: &str = r#"type __FetchClaimState
+    AwaitHandle(Int)
+
+type __FetchRequest
+    Claim(Int, __FetchClaimState)
+
+type __FetchOutcome
+    Done(Int)
+    Waiting(__FetchRequest)
+
+fn __fetchStart(peer: Int) -> __FetchOutcome
+    ? "Claims the handle of peer and counts the peer itself into it."
+    (__FetchOutcome).Waiting((__FetchRequest).Claim(peer, (__FetchClaimState).AwaitHandle(peer)))
+
+fn __fetchAnswerClaim(__state: __FetchClaimState, __answer: Int) -> __FetchOutcome
+    ? "Resumes 'fetch' after the coordinator answered its Claim request."
+    match __state
+        __FetchClaimState.AwaitHandle(peer) -> (__FetchOutcome).Done((__answer + peer))
+
+type __WalkClaimState
+    InFetchAt1(__FetchClaimState, Int, Int)
+
+type __WalkYieldState
+    Await1(Int, Int)
+
+type __WalkRequest
+    Claim(Int, __WalkClaimState)
+    Yield(__WalkYieldState)
+
+type __WalkOutcome
+    Done(Int)
+    Waiting(__WalkRequest)
+
+fn __walkStart(id: Int, seen: Int) -> __WalkOutcome
+    ? "Fetches one handle per round, adds it to seen and goes round until id runs down."
+    __walkInFetchAt1(__fetchStart(id), id, seen)
+
+fn __walkAnswerClaim(__state: __WalkClaimState, __answer: Int) -> __WalkOutcome
+    ? "Resumes 'walk' after the coordinator answered its Claim request."
+    match __state
+        __WalkClaimState.InFetchAt1(__inner, id, seen) -> __walkInFetchAt1(__fetchAnswerClaim(__inner, __answer), id, seen)
+
+fn __walkAnswerYield(__state: __WalkYieldState) -> __WalkOutcome
+    ? "Re-enters 'walk' at its tail call with the arguments the Yield request carries."
+    match __state
+        __WalkYieldState.Await1(id, seen) -> __walkStart(id, seen)
+
+fn __walkJoin1(id: Int, seen: Int, got: Int) -> __WalkOutcome
+    ? "Continues 'walk' after the branch at line 16."
+    match id
+        0 -> (__WalkOutcome).Done((seen + got))
+        _ -> (__WalkOutcome).Waiting((__WalkRequest).Yield((__WalkYieldState).Await1((id - 1), (seen + got))))
+
+fn __walkInFetchAt1(__outcome: __FetchOutcome, id: Int, seen: Int) -> __WalkOutcome
+    ? "Routes what 'fetch' answered back into 'walk': a result continues here, a request of 'fetch' leaves as a request of 'walk' carrying the nested state."
+    match __outcome
+        __FetchOutcome.Done(got) -> __walkJoin1(id, seen, got)
+        __FetchOutcome.Waiting(__request) -> match __request
+            __FetchRequest.Claim(__a0, __inner) -> (__WalkOutcome).Waiting((__WalkRequest).Claim(__a0, (__WalkClaimState).InFetchAt1(__inner, id, seen)))
+"#;
+
+/// One helper with two request kinds, nested twice: each of the caller's two
+/// state sums gains one variant per call site, the two sites carry different
+/// live variables, and both answer functions route by site.
+const NESTED_TWICE_GENERATED: &str = r#"type __SwapReleaseState
+    Await1(Int)
+
+type __SwapClaimState
+    Await2
+
+type __SwapRequest
+    Release(Int, __SwapReleaseState)
+    Claim(Int, __SwapClaimState)
+
+type __SwapOutcome
+    Done(Int)
+    Waiting(__SwapRequest)
+
+fn __swapStart(handle: Int) -> __SwapOutcome
+    ? "Gives one handle back and, when the pool took it, claims the next one for it."
+    (__SwapOutcome).Waiting((__SwapRequest).Release(handle, (__SwapReleaseState).Await1(handle)))
+
+fn __swapAnswerRelease(__state: __SwapReleaseState, __answer: Bool) -> __SwapOutcome
+    ? "Resumes 'swap' after the coordinator answered its Release request."
+    match __state
+        __SwapReleaseState.Await1(handle) -> match __answer
+            false -> (__SwapOutcome).Done(0)
+            true -> (__SwapOutcome).Waiting((__SwapRequest).Claim(handle, (__SwapClaimState).Await2))
+
+fn __swapAnswerClaim(__state: __SwapClaimState, __answer: Int) -> __SwapOutcome
+    ? "Resumes 'swap' after the coordinator answered its Claim request."
+    match __state
+        __SwapClaimState.Await2 -> (__SwapOutcome).Done(__answer)
+
+type __PairUpReleaseState
+    InSwapAt1(__SwapReleaseState, Int)
+    InSwapAt2(__SwapReleaseState, Int)
+
+type __PairUpClaimState
+    InSwapAt1(__SwapClaimState, Int)
+    InSwapAt2(__SwapClaimState, Int)
+
+type __PairUpRequest
+    Release(Int, __PairUpReleaseState)
+    Claim(Int, __PairUpClaimState)
+
+type __PairUpOutcome
+    Done(Int)
+    Waiting(__PairUpRequest)
+
+fn __pairUpStart(a: Int, b: Int) -> __PairUpOutcome
+    ? "Swaps the handle of a, then the handle of b, and adds what came back."
+    __pairUpInSwapAt1(__swapStart(a), b)
+
+fn __pairUpAnswerRelease(__state: __PairUpReleaseState, __answer: Bool) -> __PairUpOutcome
+    ? "Resumes 'pairUp' after the coordinator answered its Release request."
+    match __state
+        __PairUpReleaseState.InSwapAt1(__inner, b) -> __pairUpInSwapAt1(__swapAnswerRelease(__inner, __answer), b)
+        __PairUpReleaseState.InSwapAt2(__inner, first) -> __pairUpInSwapAt2(__swapAnswerRelease(__inner, __answer), first)
+
+fn __pairUpAnswerClaim(__state: __PairUpClaimState, __answer: Int) -> __PairUpOutcome
+    ? "Resumes 'pairUp' after the coordinator answered its Claim request."
+    match __state
+        __PairUpClaimState.InSwapAt1(__inner, b) -> __pairUpInSwapAt1(__swapAnswerClaim(__inner, __answer), b)
+        __PairUpClaimState.InSwapAt2(__inner, first) -> __pairUpInSwapAt2(__swapAnswerClaim(__inner, __answer), first)
+
+fn __pairUpJoin1(first: Int, second: Int) -> __PairUpOutcome
+    ? "Continues 'pairUp' after the branch at line 18."
+    (__PairUpOutcome).Done((first + second))
+
+fn __pairUpInSwapAt2(__outcome: __SwapOutcome, first: Int) -> __PairUpOutcome
+    ? "Routes what 'swap' answered back into 'pairUp': a result continues here, a request of 'swap' leaves as a request of 'pairUp' carrying the nested state."
+    match __outcome
+        __SwapOutcome.Done(second) -> __pairUpJoin1(first, second)
+        __SwapOutcome.Waiting(__request) -> match __request
+            __SwapRequest.Release(__a0, __inner) -> (__PairUpOutcome).Waiting((__PairUpRequest).Release(__a0, (__PairUpReleaseState).InSwapAt2(__inner, first)))
+            __SwapRequest.Claim(__a0, __inner) -> (__PairUpOutcome).Waiting((__PairUpRequest).Claim(__a0, (__PairUpClaimState).InSwapAt2(__inner, first)))
+
+fn __pairUpJoin2(b: Int, first: Int) -> __PairUpOutcome
+    ? "Continues 'pairUp' after the branch at line 17."
+    __pairUpInSwapAt2(__swapStart(b), first)
+
+fn __pairUpInSwapAt1(__outcome: __SwapOutcome, b: Int) -> __PairUpOutcome
+    ? "Routes what 'swap' answered back into 'pairUp': a result continues here, a request of 'swap' leaves as a request of 'pairUp' carrying the nested state."
+    match __outcome
+        __SwapOutcome.Done(first) -> __pairUpJoin2(b, first)
+        __SwapOutcome.Waiting(__request) -> match __request
+            __SwapRequest.Release(__a0, __inner) -> (__PairUpOutcome).Waiting((__PairUpRequest).Release(__a0, (__PairUpReleaseState).InSwapAt1(__inner, b)))
+            __SwapRequest.Claim(__a0, __inner) -> (__PairUpOutcome).Waiting((__PairUpRequest).Claim(__a0, (__PairUpClaimState).InSwapAt1(__inner, b)))
+"#;
+
 /// Run a fixture through the front door and return what the lowering did
 /// together with the lowered module.
 fn lower_fixture(fixture_name: &str) -> (Vec<String>, String, Vec<aver::ast::TopLevel>) {
@@ -557,8 +929,10 @@ fn assert_lean_check_clean(fixture_name: &str, lean_file: &str, names: &[&str]) 
         eprintln!("skipping yield Lean check: `lake` not available");
         return;
     }
+    // The fixture's own name, because these checks run beside each other and
+    // each one removes its directory when it is done.
     let output_dir = std::env::temp_dir().join(format!(
-        "aver-yield-lean-{}",
+        "aver-yield-lean-{fixture_name}-{}",
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())

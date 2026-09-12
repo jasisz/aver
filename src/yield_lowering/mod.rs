@@ -248,6 +248,50 @@ pub fn lower(
         return Err(errors);
     }
 
+    // A helper is lowered before the process that enters it, because a
+    // nested state is built from the helper's own protocol. A cycle in that
+    // graph would be an infinite state, so it is refused instead.
+    let calls = nested_calls(stamped, &yield_fns);
+    let order = match lowering_order(&calls) {
+        Ok(order) => order,
+        Err(cycle) => {
+            errors.push(mutual_nesting_error(&cycle, &calls, stamped));
+            return Err(errors);
+        }
+    };
+    let mut nesting = lower::Nesting::new(yield_fns.clone());
+    let mut lowered: std::collections::HashMap<String, lower::Generated> =
+        std::collections::HashMap::new();
+    let mut failed: HashSet<String> = HashSet::new();
+    for name in &order {
+        let Some(fd) = stamped.iter().find_map(|item| match item {
+            TopLevel::FnDef(fd) if &fd.name == name && is_yield_fn(fd) => Some(fd),
+            _ => None,
+        }) else {
+            continue;
+        };
+        // A helper that could not be lowered has no protocol, so the process
+        // that enters it is left as written too: one report of the real
+        // reason, not a second one about a name that was never generated.
+        if calls
+            .get(name)
+            .is_some_and(|called| called.iter().any(|edge| failed.contains(&edge.callee)))
+        {
+            failed.insert(name.clone());
+            continue;
+        }
+        match lower::lower_fn(fd, marked, fn_sigs, &nesting) {
+            Ok(generated) => {
+                nesting.record(&generated);
+                lowered.insert(name.clone(), generated);
+            }
+            Err(mut fn_errors) => {
+                errors.append(&mut fn_errors);
+                failed.insert(name.clone());
+            }
+        }
+    }
+
     let mut report = YieldLoweringReport::default();
     let mut out: Vec<TopLevel> = Vec::with_capacity(items.len());
     let mut exposes_rewrite: Vec<(String, Vec<String>)> = Vec::new();
@@ -260,23 +304,19 @@ pub fn lower(
             out.push(item);
             continue;
         }
-        match lower::lower_fn(fd, marked, fn_sigs) {
-            Ok(generated) => {
-                report.lowered.push(fd.name.clone());
-                report.protocols.push(generated.protocol.clone());
-                report.generated.extend(generated.items.iter().cloned());
-                exposes_rewrite.push((fd.name.clone(), generated.public_names));
-                out.extend(generated.items);
-            }
-            // The function stays in the module exactly as written. It
-            // will not run — the errors below stop this door — but every
-            // later diagnostic is then about the user's own code instead
-            // of about a function that silently vanished.
-            Err(mut fn_errors) => {
-                errors.append(&mut fn_errors);
-                out.push(item);
-            }
-        }
+        // The function stays in the module exactly as written when its
+        // lowering failed. It will not run — the errors below stop this
+        // door — but every later diagnostic is then about the user's own
+        // code instead of about a function that silently vanished.
+        let Some(generated) = lowered.remove(&fd.name) else {
+            out.push(item);
+            continue;
+        };
+        report.lowered.push(fd.name.clone());
+        report.protocols.push(generated.protocol.clone());
+        report.generated.extend(generated.items.iter().cloned());
+        exposes_rewrite.push((fd.name.clone(), generated.public_names));
+        out.extend(generated.items);
     }
     *items = out;
     if !errors.is_empty() {
@@ -320,8 +360,22 @@ pub fn lower(
     }
     if coordinator::is_run_module(module_name.as_deref(), plan) {
         let plan = plan.expect("checked by is_run_module");
-        let generated =
-            coordinator::generate(items, &report.generated, &report.protocols, plan, fn_sigs)?;
+        // The loop seats the processes, and a helper is not one: it is
+        // entered through the protocol of the process that calls it, whose
+        // own request sum already carries the helper's requests. So the
+        // generator is handed what is seated, and a nested call stays
+        // invisible to it (decision 6).
+        let entered: HashSet<&str> = calls
+            .values()
+            .flat_map(|called| called.iter().map(|edge| edge.callee.as_str()))
+            .collect();
+        let seated: Vec<ProcessProtocol> = report
+            .protocols
+            .iter()
+            .filter(|protocol| !entered.contains(protocol.fn_name.as_str()))
+            .cloned()
+            .collect();
+        let generated = coordinator::generate(items, &report.generated, &seated, plan, fn_sigs)?;
         report.loop_source = Some(generated.source);
         report.generated.extend(generated.items.iter().cloned());
         items.extend(generated.items);
@@ -359,6 +413,136 @@ pub fn lower(
         }
     }
     Ok(report)
+}
+
+/// One `yield` function of this module calling another: which one, the line
+/// of the first such call, and whether every call site is a tail call.
+struct NestedCall {
+    callee: String,
+    line: usize,
+    only_tail: bool,
+}
+
+/// Which `yield` functions of this module each one calls. A self call is not
+/// an edge: it is the process's own loop, which stays inside its own machine.
+type NestedCalls = std::collections::BTreeMap<String, Vec<NestedCall>>;
+
+fn nested_calls(stamped: &[TopLevel], yield_fns: &HashSet<String>) -> NestedCalls {
+    let mut calls = NestedCalls::new();
+    for item in stamped {
+        let TopLevel::FnDef(fd) = item else { continue };
+        if !is_yield_fn(fd) {
+            continue;
+        }
+        let mut called: Vec<NestedCall> = Vec::new();
+        for stmt in fd.body.stmts() {
+            let expr = match stmt {
+                Stmt::Binding(_, _, expr) | Stmt::Expr(expr) => expr,
+            };
+            expr_walk::walk(expr, &mut |e| {
+                let (name, tail) = match &e.node {
+                    Expr::FnCall(callee, _) => match &callee.node {
+                        Expr::Ident(name) => (Some(name.clone()), false),
+                        _ => (None, false),
+                    },
+                    Expr::TailCall(tc) => (Some(tc.target.clone()), true),
+                    _ => (None, false),
+                };
+                let Some(name) = name else { return };
+                if name == fd.name || !yield_fns.contains(&name) {
+                    return;
+                }
+                match called.iter_mut().find(|other| other.callee == name) {
+                    Some(edge) => edge.only_tail = edge.only_tail && tail,
+                    None => called.push(NestedCall {
+                        callee: name,
+                        line: e.line,
+                        only_tail: tail,
+                    }),
+                }
+            });
+        }
+        calls.insert(fd.name.clone(), called);
+    }
+    calls
+}
+
+/// Helpers before the processes that enter them. `Err` carries the names on
+/// a cycle, in call order, with the first name repeated at the end.
+fn lowering_order(calls: &NestedCalls) -> Result<Vec<String>, Vec<String>> {
+    let mut order: Vec<String> = Vec::with_capacity(calls.len());
+    let mut done: HashSet<String> = HashSet::new();
+    for root in calls.keys() {
+        let mut path: Vec<String> = Vec::new();
+        visit(root, calls, &mut done, &mut path, &mut order)?;
+    }
+    Ok(order)
+}
+
+fn visit(
+    name: &str,
+    calls: &NestedCalls,
+    done: &mut HashSet<String>,
+    path: &mut Vec<String>,
+    order: &mut Vec<String>,
+) -> Result<(), Vec<String>> {
+    if done.contains(name) {
+        return Ok(());
+    }
+    if let Some(start) = path.iter().position(|entry| entry == name) {
+        let mut cycle: Vec<String> = path[start..].to_vec();
+        cycle.push(name.to_string());
+        return Err(cycle);
+    }
+    path.push(name.to_string());
+    if let Some(called) = calls.get(name) {
+        for edge in called {
+            visit(&edge.callee, calls, done, path, order)?;
+        }
+    }
+    path.pop();
+    done.insert(name.to_string());
+    order.push(name.to_string());
+    Ok(())
+}
+
+/// A cycle among the `yield` functions of one module. Nesting would put each
+/// one's state inside the other's, which has no bottom; a cycle written with
+/// tail calls only keeps none of those states, but each function's request
+/// sum still carries the one it hands over to, so it has no bottom either —
+/// and the message says which of the two shapes it found.
+fn mutual_nesting_error(cycle: &[String], calls: &NestedCalls, stamped: &[TopLevel]) -> TypeError {
+    let edge = |from: &String, to: &String| {
+        calls
+            .get(from)
+            .and_then(|called| called.iter().find(|edge| &edge.callee == to))
+    };
+    let line = cycle
+        .first()
+        .zip(cycle.get(1))
+        .and_then(|(from, to)| edge(from, to).map(|edge| edge.line))
+        .or_else(|| {
+            stamped.iter().find_map(|item| match item {
+                TopLevel::FnDef(fd) if Some(&fd.name) == cycle.first() => Some(fd.line),
+                _ => None,
+            })
+        })
+        .unwrap_or(1);
+    let only_tail = cycle
+        .windows(2)
+        .all(|pair| edge(&pair[0], &pair[1]).is_some_and(|edge| edge.only_tail));
+    let message = if only_tail {
+        format!(
+            "A cycle of tail calls between yield functions is not supported by yield lowering: {} — a tail call hands over to the callee's protocol, so the caller's requests gain the callee's, and a cycle of them has no request sum to start from. Break the cycle: give one function a parameter saying which phase comes next and have it tail call itself",
+            cycle.join(" calls ")
+        )
+    } else {
+        format!(
+            "Mutual nesting is not supported by yield lowering: {} — a nested state holds the callee's state inside the caller's, and a cycle has no innermost state to start from. Break the cycle: pass what comes next as data in one of them, or fold them into one function",
+            cycle.join(" calls ")
+        )
+    };
+    error_at(line, message)
 }
 
 /// The tail positions of a body: the last statement's expression and,
@@ -415,17 +599,15 @@ fn scan_expr(
 fn report_call(fd: &FnDef, callee: &str, tail: bool, line: usize, errors: &mut Vec<TypeError>) {
     let message = if !is_yield_fn(fd) {
         direct_call_recipe(&fd.name, callee)
+    } else if callee != fd.name {
+        // A process may split its work into `yield` helpers: a tail call
+        // enters the helper's protocol, a non-tail call nests the helper's
+        // state inside this one's. Only a cycle among them is refused, and
+        // the lowering says so once, over the whole cycle.
+        return;
     } else if !tail {
         format!(
-            "Function '{}' calls yield function '{callee}' outside tail position; pass what comes next as data, or make it a tail call",
-            fd.name
-        )
-    } else if callee != fd.name {
-        format!(
-            "Function '{}' tail-calls yield function '{callee}', which has its own request and outcome types; fold '{callee}' into '{}', or have the coordinator drive '{}(...)' after '{}' is Done",
-            fd.name,
-            fd.name,
-            start_name(callee),
+            "Function '{}' calls itself outside tail position; pass what comes next as data, or make it a tail call. A process nests another yield function, not itself: its own state would have to hold a copy of itself",
             fd.name
         )
     } else {

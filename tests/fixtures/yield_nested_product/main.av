@@ -1,0 +1,21 @@
+module YieldNestedProduct
+    intent = "Refusal fixture: a call to a yield helper inside an independent product. The two branches of a product are independent, and a request has to leave the process one at a time."
+    depends [Pool, Pooled]
+    effects [Pool.claim, yield, Console.print]
+    exposes [main]
+
+fn one(peer: Int) -> Int
+    ? "Claims the handle of peer."
+    ! [Pool.claim, yield]
+    Pool.claim(peer)
+
+fn both(peer: Int) -> Int
+    ? "Claims two handles at once and adds them."
+    ! [Pool.claim, yield]
+    pair = (one(peer), one(peer + 1))!
+    match pair
+        (a, b) -> a + b
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("unreachable: this program does not lower")

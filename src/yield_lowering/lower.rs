@@ -47,12 +47,34 @@ impl Names {
     fn join(&self, n: usize) -> String {
         format!("{}Join{n}", self.lower)
     }
+    /// The function that routes one nested call site's outcome: it is the
+    /// only place the callee's protocol is read, so both the caller's
+    /// segment and every nested state variant of that site go through it.
+    fn nest(&self, callee: &str, site: usize) -> String {
+        format!("{}In{}At{site}", self.lower, capitalize(callee))
+    }
+}
+
+/// The state variant one nested call site contributes to every kind of the
+/// caller it widens: `In<G>At<N>(<callee state>, <live variables>)`.
+fn nest_variant(callee: &str, site: usize) -> String {
+    format!("In{}At{site}", capitalize(callee))
 }
 
 /// The kind of the self tail call, and the one kind name no operation may
 /// be given: `__fAnswerYield` re-enters the function, it does not answer a
 /// capability, and the two carry different data.
 const YIELD_KIND: &str = "Yield";
+
+/// The helper's own state, as a nested variant's field and as the binder the
+/// routing function's request arms give it.
+const NESTED_STATE: &str = "__inner";
+/// The routing function's parameter: the outcome the helper answered.
+const NESTED_OUTCOME: &str = "__outcome";
+/// The binder the routing function reads a helper's request under.
+const NESTED_REQUEST: &str = "__request";
+/// The binder a tail call's routing function reads the helper's result under.
+const NESTED_VALUE: &str = "__value";
 
 /// One request kind: an operation the function stops on, or `Yield`.
 struct Kind {
@@ -123,12 +145,57 @@ pub(super) struct Generated {
     pub protocol: super::ProcessProtocol,
 }
 
+/// What a caller has to know about the `yield` helpers it enters.
+///
+/// A nested call is lowered against the callee's own protocol — its outcome
+/// type, its request kinds, its state types and its answer functions — so the
+/// callees of a module are lowered first and hand their protocols on. Nothing
+/// here is read back out of a generated name: it is the same data the loop
+/// generator is given.
+#[derive(Default)]
+pub(super) struct Nesting {
+    /// Every `yield` function of this module, by name.
+    pub yield_fns: HashSet<String>,
+    /// The protocol of each one already lowered.
+    protocols: HashMap<String, super::ProcessProtocol>,
+    /// The effects every generated function performs, so a caller's routing
+    /// helper declares what the callee's own segments perform.
+    effects: HashMap<String, Vec<String>>,
+}
+
+impl Nesting {
+    pub(super) fn new(yield_fns: HashSet<String>) -> Self {
+        Self {
+            yield_fns,
+            protocols: HashMap::new(),
+            effects: HashMap::new(),
+        }
+    }
+
+    /// Remember one lowered helper, so the callers still to come can enter it.
+    pub(super) fn record(&mut self, generated: &Generated) {
+        self.protocols.insert(
+            generated.protocol.fn_name.clone(),
+            generated.protocol.clone(),
+        );
+        for item in &generated.items {
+            if let TopLevel::FnDef(fd) = item {
+                self.effects.insert(
+                    fd.name.clone(),
+                    fd.effects.iter().map(|e| e.node.clone()).collect(),
+                );
+            }
+        }
+    }
+}
+
 pub(super) fn lower_fn(
     fd: &FnDef,
     marked: &crate::config::MarkedCapabilities,
     fn_sigs: &super::FnSigs,
+    nesting: &Nesting,
 ) -> Result<Generated, Vec<TypeError>> {
-    let mut lowering = Lowering::new(fd, marked, fn_sigs);
+    let mut lowering = Lowering::new(fd, marked, fn_sigs, nesting);
     match lowering.run() {
         Ok(generated) => Ok(generated),
         Err(()) => Err(lowering.errors),
@@ -146,6 +213,9 @@ struct Lowering<'a> {
     /// generated function can carry exactly the in-place effects its own
     /// segment performs (decision 4).
     fn_sigs: &'a super::FnSigs,
+    /// The `yield` helpers of this module this function may enter, with the
+    /// protocols the lowering of each one produced.
+    nesting: &'a Nesting,
     /// The function's own effect list minus `yield`: what an in-place
     /// effect call looks like.
     effect_entries: Vec<String>,
@@ -157,6 +227,7 @@ struct Lowering<'a> {
     tmp_counter: usize,
     stop_counter: usize,
     join_counter: usize,
+    nest_counter: usize,
 }
 
 impl<'a> Lowering<'a> {
@@ -164,6 +235,7 @@ impl<'a> Lowering<'a> {
         fd: &'a FnDef,
         marked: &'a crate::config::MarkedCapabilities,
         fn_sigs: &'a super::FnSigs,
+        nesting: &'a Nesting,
     ) -> Self {
         let effect_entries: Vec<String> = fd
             .effects
@@ -176,6 +248,7 @@ impl<'a> Lowering<'a> {
             names: Names::new(&fd.name),
             marked,
             fn_sigs,
+            nesting,
             effect_entries,
             kind_names: HashMap::new(),
             kinds: Vec::new(),
@@ -184,6 +257,7 @@ impl<'a> Lowering<'a> {
             tmp_counter: 0,
             stop_counter: 0,
             join_counter: 0,
+            nest_counter: 0,
         };
         lowering.name_kinds();
         lowering
@@ -271,11 +345,41 @@ impl<'a> Lowering<'a> {
             .map(|(_, _, effects)| effects.as_slice())
     }
 
-    /// Whether `expr` holds anything the lowering has to cut at: a stop, or
-    /// a `?` (which exits a segment early).
+    /// The `yield` helper a call enters, when `expr` is a call to one of
+    /// this module's other `yield` functions.
+    ///
+    /// Only a bare name: a `yield` function of a dependency is gone from
+    /// that module's surface, so `Looper.loop(...)` is already answered by
+    /// the checker with the recipe that names `Looper.__loopStart`.
+    ///
+    /// TODO(owner): a helper may be a `yield` function of the caller's own
+    /// module only, not of any module of the program. A nested protocol
+    /// across modules would have to carry the callee's state and request
+    /// sums through the module loader, and a cycle that runs through two
+    /// modules has no refusal path here, because this lowering sees one
+    /// module at a time. A call into another module is refused by name, as
+    /// it is today.
+    fn nested_callee(&self, expr: &Spanned<Expr>) -> Option<String> {
+        let Expr::FnCall(callee, _) = &expr.node else {
+            return None;
+        };
+        let Expr::Ident(name) = &callee.node else {
+            return None;
+        };
+        if name == &self.fd.name {
+            return None;
+        }
+        self.nesting.yield_fns.contains(name).then(|| name.clone())
+    }
+
+    /// Whether `expr` holds anything the lowering has to cut at: a stop, a
+    /// call into another process's protocol, or a `?` (which exits a
+    /// segment early).
     fn needs_lowering(&self, expr: &Spanned<Expr>) -> bool {
         expr_walk::any(expr, &mut |e| {
-            matches!(e.node, Expr::ErrorProp(_)) || self.stop_op(e).is_some()
+            matches!(e.node, Expr::ErrorProp(_))
+                || self.stop_op(e).is_some()
+                || self.nested_callee(e).is_some()
         })
     }
 
@@ -295,6 +399,24 @@ impl<'a> Lowering<'a> {
                     && !ops.contains(&op)
                 {
                     ops.push(op);
+                }
+                // A request of a helper reaching the outside is a request of
+                // this function, so the operations it waits on are named here
+                // too — by the same rule, over the same list, so two helpers
+                // waiting on `Tcp.read` and `Disk.read` disambiguate in the
+                // caller exactly as two stops of its own would.
+                let Some(callee) = self.nested_callee(e) else {
+                    return;
+                };
+                let Some(protocol) = self.nesting.protocols.get(&callee) else {
+                    return;
+                };
+                for kind in &protocol.kinds {
+                    if let Some(op) = &kind.operation
+                        && !ops.contains(op)
+                    {
+                        ops.push(op.clone());
+                    }
                 }
             });
         }
@@ -486,7 +608,9 @@ impl<'a> Lowering<'a> {
                 let inner = self.extract(inner, hoisted, cut)?;
                 Ok(spanned_like(expr, Expr::ErrorProp(Box::new(inner))))
             }
-            Expr::FnCall(callee, args) if self.stop_op(expr).is_some() => {
+            Expr::FnCall(callee, args)
+                if self.stop_op(expr).is_some() || self.nested_callee(expr).is_some() =>
+            {
                 let args = self.extract_all(args, hoisted, cut)?;
                 Ok(spanned_like(expr, Expr::FnCall(callee.clone(), args)))
             }
@@ -586,9 +710,10 @@ impl<'a> Lowering<'a> {
                 });
             }
             Expr::FnCall(callee, args) => {
+                let nested = self.nested_callee(expr).is_some();
                 let args = self.extract_all(args, hoisted, cut)?;
                 let rebuilt = spanned_like(expr, Expr::FnCall(callee.clone(), args));
-                return Ok(if self.stop_op(expr).is_some() {
+                return Ok(if self.stop_op(expr).is_some() || nested {
                     self.hoist(rebuilt, hoisted)
                 } else {
                     rebuilt
@@ -604,7 +729,7 @@ impl<'a> Lowering<'a> {
                 return self.fail(
                     line,
                     format!(
-                        "a request inside an independent product `{spelling}` is not supported by yield lowering; perform the requests one after another, or move the product into a plain function the loop calls"
+                        "a request, or a call to a yield helper, inside an independent product `{spelling}` is not supported by yield lowering; perform them one after another, or move the product into a plain function the loop calls"
                     ),
                 );
             }
@@ -745,6 +870,14 @@ impl<'a> Lowering<'a> {
                         tail: waiting,
                     });
                 }
+                if let Some(callee) = self.nested_callee(&expr) {
+                    let rest: Vec<Stmt> = pending.into();
+                    let nested = self.emit_nested(expr, &callee, bind, rest, tail, scope, ret)?;
+                    return Ok(Segment {
+                        stmts: out,
+                        tail: nested,
+                    });
+                }
                 if matches!(expr.node, Expr::ErrorProp(_)) {
                     let rest: Vec<Stmt> = pending.into();
                     let branch = self.emit_prop(expr, bind, rest, tail, scope, ret)?;
@@ -784,7 +917,14 @@ impl<'a> Lowering<'a> {
             // bind it here and let the next turn of the loop cut at the
             // binding, with the rest of the path being "hand the value to
             // `ret`".
-            if self.stop_op(&extracted).is_some() || matches!(extracted.node, Expr::ErrorProp(_)) {
+            // A nested call in the function's own tail position enters the
+            // helper's protocol (decision 1); anywhere else its value feeds
+            // what follows, so it is bound here and cut at the binding.
+            let nested_here = self.nested_callee(&extracted).is_some() && !matches!(ret, Ret::Done);
+            if self.stop_op(&extracted).is_some()
+                || matches!(extracted.node, Expr::ErrorProp(_))
+                || nested_here
+            {
                 let temp = self.fresh_temp();
                 tail = spanned_like(&extracted, Expr::Ident(temp.clone()));
                 pending.push_back(Stmt::Binding(temp, None, extracted));
@@ -829,6 +969,10 @@ impl<'a> Lowering<'a> {
             }
             Expr::TailCall(tc) => {
                 let args = tc.args.clone();
+                if tc.target != self.fd.name && self.nesting.yield_fns.contains(&tc.target) {
+                    let target = tc.target.clone();
+                    return self.emit_tail_into(&target, args, expr.line, ret);
+                }
                 self.emit_yield(&tc.target, args, expr.line, ret)
             }
             Expr::FnCall(callee, args) if matches!(&callee.node, Expr::Ident(name) if name == &self.fd.name) =>
@@ -836,6 +980,11 @@ impl<'a> Lowering<'a> {
                 let args = args.clone();
                 let target = self.fd.name.clone();
                 self.emit_yield(&target, args, expr.line, ret)
+            }
+            Expr::FnCall(_, args) if self.nested_callee(&expr).is_some() => {
+                let target = self.nested_callee(&expr).unwrap_or_default();
+                let args = args.clone();
+                self.emit_tail_into(&target, args, expr.line, ret)
             }
             _ => Ok(self.apply_ret(expr, ret)),
         }
@@ -1197,6 +1346,295 @@ impl<'a> Lowering<'a> {
         (name, args)
     }
 
+    // ── Nested states ────────────────────────────────────────────────
+
+    /// The caller's name for a request kind of a helper it enters. An
+    /// operation keeps the name this function's own naming rule gave it, so
+    /// a request of the helper and a request of the same operation written
+    /// here are one kind; the helper's tail call is the caller's `Yield`.
+    fn nested_kind_name(&self, kind: &super::ProtocolKind) -> String {
+        match &kind.operation {
+            None => YIELD_KIND.to_string(),
+            Some(op) => self
+                .kind_names
+                .get(op)
+                .cloned()
+                .unwrap_or_else(|| capitalize(op.rsplit('.').next().unwrap_or(op))),
+        }
+    }
+
+    /// Reserve one state variant per kind of the helper, in the caller's own
+    /// kind of the same operation — creating that kind when this function
+    /// never waits on the operation itself. The variants are filled in once
+    /// the continuation is known; reserving first keeps them ahead of the
+    /// stops the continuation registers, as `emit_stop` does.
+    ///
+    /// Returns, per kind of the helper and in its order, the caller's kind
+    /// index, the slot reserved in it, and the caller's name for that kind.
+    fn register_nested(
+        &mut self,
+        protocol: &super::ProcessProtocol,
+        variant: &str,
+        line: usize,
+    ) -> Result<Vec<(usize, usize, String)>, ()> {
+        let mut reserved = Vec::with_capacity(protocol.kinds.len());
+        for kind in &protocol.kinds {
+            let name = self.nested_kind_name(kind);
+            let index = self.kind_index(
+                &name,
+                kind.arg_types.clone(),
+                kind.answer_type.clone(),
+                line,
+            )?;
+            let slot = self.kinds[index].variants.len();
+            self.kinds[index].variants.push(Variant {
+                name: variant.to_string(),
+                fields: Vec::new(),
+                arm: ident(NESTED_STATE, line),
+            });
+            reserved.push((index, slot, name));
+        }
+        Ok(reserved)
+    }
+
+    /// Fill the reserved variants: each one holds the helper's own state for
+    /// that kind plus the caller's live variables, and answering it hands the
+    /// answer down to the helper's answer function and routes what comes back.
+    fn fill_nested(
+        &mut self,
+        protocol: &super::ProcessProtocol,
+        variant: &str,
+        reserved: &[(usize, usize, String)],
+        helper: &str,
+        fields: &[(String, String)],
+        line: usize,
+    ) {
+        for (kind, (index, slot, _)) in protocol.kinds.iter().zip(reserved) {
+            let mut answer_args = vec![ident(NESTED_STATE, line)];
+            if matches!(kind.answer_type.as_deref(), Some(answer) if answer != "Unit") {
+                answer_args.push(ident("__answer", line));
+            }
+            let mut call_args = vec![call(&kind.answer_fn, answer_args, line)];
+            call_args.extend(fields.iter().map(|(name, _)| ident(name, line)));
+            let mut variant_fields = vec![(NESTED_STATE.to_string(), kind.state.clone())];
+            variant_fields.extend(fields.iter().cloned());
+            self.kinds[*index].variants[*slot] = Variant {
+                name: variant.to_string(),
+                fields: variant_fields,
+                arm: call(helper, call_args, line),
+            };
+        }
+    }
+
+    /// The one function that reads a helper's outcome: `Done` continues the
+    /// caller's segment, and every request of the helper leaves as a request
+    /// of the caller carrying the nested state beside the live variables.
+    #[allow(clippy::too_many_arguments)]
+    fn nest_router(
+        &mut self,
+        helper: &str,
+        callee: &str,
+        protocol: &super::ProcessProtocol,
+        variant: &str,
+        reserved: &[(usize, usize, String)],
+        fields: &[(String, String)],
+        done_binder: &str,
+        done_body: Spanned<Expr>,
+        line: usize,
+    ) {
+        let mut arms = Vec::with_capacity(protocol.kinds.len());
+        for (kind, (_, _, name)) in protocol.kinds.iter().zip(reserved) {
+            let binders: Vec<String> = (0..kind.arg_types.len())
+                .map(|index| format!("__a{index}"))
+                .collect();
+            let mut pattern = binders.clone();
+            pattern.push(NESTED_STATE.to_string());
+            let mut state_args = vec![ident(NESTED_STATE, line)];
+            state_args.extend(fields.iter().map(|(field, _)| ident(field, line)));
+            let state = ctor(&self.names.state(name), variant, state_args, line);
+            let args: Vec<Spanned<Expr>> = binders.iter().map(|b| ident(b, line)).collect();
+            let waiting = self.waiting(name, args, state, line);
+            arms.push(MatchArm::new(
+                Pattern::Constructor(format!("{}.{}", protocol.request, kind.name), pattern),
+                waiting,
+            ));
+        }
+        let body = match_expr(
+            ident(NESTED_OUTCOME, line),
+            vec![
+                MatchArm::new(
+                    Pattern::Constructor(
+                        format!("{}.Done", protocol.outcome),
+                        vec![done_binder.to_string()],
+                    ),
+                    done_body,
+                ),
+                MatchArm::new(
+                    Pattern::Constructor(
+                        format!("{}.Waiting", protocol.outcome),
+                        vec![NESTED_REQUEST.to_string()],
+                    ),
+                    match_expr(ident(NESTED_REQUEST, line), arms, line),
+                ),
+            ],
+            line,
+        );
+        let mut params = vec![(NESTED_OUTCOME.to_string(), protocol.outcome.clone())];
+        params.extend(fields.iter().cloned());
+        self.helpers.push(fn_def(
+            helper.to_string(),
+            params,
+            self.names.outcome(),
+            Some(format!(
+                "Routes what '{callee}' answered back into '{}': a result continues here, a request of '{callee}' leaves as a request of '{}' carrying the nested state.",
+                self.fd.name, self.fd.name
+            )),
+            Vec::new(),
+            body,
+            line,
+        ));
+    }
+
+    /// `x = g(args)` with more work after it: the helper's state goes inside
+    /// the caller's, one variant per kind of the helper, and the rest of the
+    /// caller's path is what `Done` continues into (decision 2).
+    #[allow(clippy::too_many_arguments)]
+    fn emit_nested(
+        &mut self,
+        call_expr: Spanned<Expr>,
+        callee: &str,
+        bind: Option<String>,
+        rest: Vec<Stmt>,
+        tail: Spanned<Expr>,
+        scope: &mut Vec<String>,
+        ret: &Ret,
+    ) -> Result<Spanned<Expr>, ()> {
+        let line = call_expr.line;
+        let Expr::FnCall(_, args) = &call_expr.node else {
+            return self.internal(line, "a nested call that is not a call");
+        };
+        let args = args.clone();
+        let Some(protocol) = self.nesting.protocols.get(callee).cloned() else {
+            return self.internal(
+                line,
+                &format!("no protocol for the yield helper '{callee}'"),
+            );
+        };
+        if args.len() != protocol.params.len() {
+            return self.internal(line, "a call to a yield helper with the wrong arity");
+        }
+        self.nest_counter += 1;
+        let site = self.nest_counter;
+        let helper = self.names.nest(callee, site);
+        let variant = nest_variant(callee, site);
+        let reserved = self.register_nested(&protocol, &variant, line)?;
+        let Continuation {
+            fields,
+            segment,
+            uses_bind,
+        } = self.continuation(&bind, rest, tail, scope, ret, line)?;
+        let done_binder = match (&bind, uses_bind) {
+            (Some(name), true) => name.clone(),
+            _ => "_".to_string(),
+        };
+        let done_body = if segment.stmts.is_empty() && !uses_bind {
+            segment.tail
+        } else {
+            let (name, join_args) = self.join_fn(
+                &fields,
+                bind.filter(|_| uses_bind),
+                &protocol.return_type,
+                segment,
+                line,
+            );
+            call(&name, join_args, line)
+        };
+        self.fill_nested(&protocol, &variant, &reserved, &helper, &fields, line);
+        self.nest_router(
+            &helper,
+            callee,
+            &protocol,
+            &variant,
+            &reserved,
+            &fields,
+            &done_binder,
+            done_body,
+            line,
+        );
+        let mut call_args = vec![call(&protocol.start, args, line)];
+        call_args.extend(fields.iter().map(|(name, _)| ident(name, line)));
+        Ok(call(&helper, call_args, line))
+    }
+
+    /// A tail call to another `yield` function enters that function's
+    /// protocol (decision 1): the caller stops with a `Yield` request whose
+    /// answer is the helper's own `Start`, and the caller has nothing to
+    /// keep, so nothing but the helper's arguments is kept.
+    fn emit_tail_into(
+        &mut self,
+        callee: &str,
+        args: Vec<Spanned<Expr>>,
+        line: usize,
+        ret: &Ret,
+    ) -> Result<Spanned<Expr>, ()> {
+        if !matches!(ret, Ret::Done) {
+            return self.internal(line, "a tail call outside tail position");
+        }
+        let Some(protocol) = self.nesting.protocols.get(callee).cloned() else {
+            return self.internal(
+                line,
+                &format!("no protocol for the yield helper '{callee}'"),
+            );
+        };
+        if args.len() != protocol.params.len() {
+            return self.internal(line, "a tail call into a yield helper with the wrong arity");
+        }
+        if protocol.return_type != self.fd.return_type {
+            return self.fail(
+                line,
+                format!(
+                    "tail-calls '{callee}', which answers '{}' where this function answers '{}'; a tail call hands its own caller the callee's result, so the two answer the same type",
+                    protocol.return_type, self.fd.return_type
+                ),
+            );
+        }
+        self.nest_counter += 1;
+        let site = self.nest_counter;
+        let helper = self.names.nest(callee, site);
+        let variant = nest_variant(callee, site);
+        let kind = self.kind_index(YIELD_KIND, Vec::new(), None, line)?;
+        let enter = self.variant_name(kind, None);
+        let fields: Vec<(String, String)> = protocol.params.clone();
+        let start_args: Vec<Spanned<Expr>> = fields.iter().map(|(n, _)| ident(n, line)).collect();
+        let arm = call(&helper, vec![call(&protocol.start, start_args, line)], line);
+        self.kinds[kind].variants.push(Variant {
+            name: enter.clone(),
+            fields,
+            arm,
+        });
+        let reserved = self.register_nested(&protocol, &variant, line)?;
+        self.fill_nested(&protocol, &variant, &reserved, &helper, &[], line);
+        let done_body = ctor(
+            &self.names.outcome(),
+            "Done",
+            vec![ident(NESTED_VALUE, line)],
+            line,
+        );
+        self.nest_router(
+            &helper,
+            callee,
+            &protocol,
+            &variant,
+            &reserved,
+            &[],
+            NESTED_VALUE,
+            done_body,
+            line,
+        );
+        let state = ctor(&self.names.state(YIELD_KIND), &enter, args, line);
+        Ok(self.waiting(YIELD_KIND, Vec::new(), state, line))
+    }
+
     /// A self tail call is a `Yield` request whose state is the argument
     /// tuple; answering it re-enters `Start`.
     fn emit_yield(
@@ -1439,6 +1877,13 @@ impl Lowering<'_> {
                     let Some(name) = name else { return };
                     if let Some(slot) = index.get(&name) {
                         called.push(*slot);
+                        return;
+                    }
+                    // A generated function of a helper this one enters: its
+                    // effects were computed when the helper was lowered, and
+                    // the caller's routing function performs them.
+                    if let Some(effects) = self.nesting.effects.get(&name) {
+                        own.extend(effects.iter().cloned());
                         return;
                     }
                     if self.marked.answers(&name) {

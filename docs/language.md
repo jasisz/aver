@@ -446,10 +446,40 @@ A module that exposes a yielding function exposes its protocol in its place: `ex
 
 Two diagnostics guard the shape:
 
-- calling a yielding function directly, from anywhere — a plain function, another yielding function's argument, a verify case, a dependent module — is a type error: `'loop' yields; call '__loopStart(...)' and answer its requests`;
-- a non-tail call from a yielding function to a yielding function is a type error with the recipe `pass what comes next as data, or make it a tail call`.
+- calling a yielding function directly, from a function that does not yield — a plain function, a verify case, a dependent module — is a type error: `'loop' yields; call '__loopStart(...)' and answer its requests`;
+- a yielding function that calls *itself* outside tail position is a type error with the recipe `pass what comes next as data, or make it a tail call`: a process nests another yielding function, not itself, because its own state would have to hold a copy of itself.
 
-The tail-call rule: only a self tail call is lowered, into the `Yield` request. A tail call to a different yielding function is rejected in this phase (its request and outcome types are its own), and so is a request inside an independent product `(a, b)!` or a function value live across a stop; the message names the construct. A request in a product fires less often than it used to, because only an answered operation inside the product is refused. Nested states for non-tail calls between yielding functions are the next phase; the coordinator that drives every process of a program is generated already, and the next section is about it.
+### Helpers and nested state
+
+A process does not have to be one function. A yielding function may call another yielding function of the same module, and the compiler puts the callee's machine inside the caller's rather than asking you to fold the two together by hand. Nothing about the coordinator changes: the caller's protocol is what a coordinator seats and serves, and a request the helper makes reaches it as a request of the caller.
+
+A **tail call** enters the helper's protocol. `f`'s segment that ends in `g(args)` stops with a `Yield` request carrying what `g` is entered with — the caller has nothing left to do, so nothing of it is kept — and answering that request calls `__gStart(args)`.
+
+A **non-tail call** nests the helper's state inside the caller's. For `x = g(args)` with more work after it, the caller's state sum for every kind `g` waits on gains one variant per call site, `In<G>At<N>(<the helper's own state>, <the caller's live variables>)`; the caller's request sum gains the kinds `g` waits on that it does not already have; and the caller's answer function for such a kind hands the answer down to `__gAnswer<Kind>` and routes what comes back — a `Done(v)` binds `x = v` and continues the caller's segment, another request leaves again as a request of the caller with the new nested state. A nested call is not a stop by itself: a helper that waits on nothing runs to its result inside the caller's own segment.
+
+That is the whole generated shape, for `walk` calling `fetch`:
+
+```aver
+type __WalkClaimState
+    InFetchAt1(__FetchClaimState, Int, Int)
+
+fn __walkStart(id: Int, seen: Int) -> __WalkOutcome
+    __walkInFetchAt1(__fetchStart(id), id, seen)
+
+fn __walkAnswerClaim(__state: __WalkClaimState, __answer: Int) -> __WalkOutcome
+    match __state
+        __WalkClaimState.InFetchAt1(__inner, id, seen) -> __walkInFetchAt1(__fetchAnswerClaim(__inner, __answer), id, seen)
+
+fn __walkInFetchAt1(__outcome: __FetchOutcome, id: Int, seen: Int) -> __WalkOutcome
+    match __outcome
+        __FetchOutcome.Done(got) -> __walkJoin1(id, seen, got)
+        __FetchOutcome.Waiting(__request) -> match __request
+            __FetchRequest.Claim(__a0, __inner) -> (__WalkOutcome).Waiting((__WalkRequest).Claim(__a0, (__WalkClaimState).InFetchAt1(__inner, id, seen)))
+```
+
+The helper's own recursion stays inside the helper's machine: `g` looping on itself is `g`'s `Yield` request, which leaves as the caller's `Yield` request carrying the nested state and comes back to `__gAnswerYield`. These names are the caller's own `__` types; nothing new reaches the module's surface, and `aver context`, `AVER_YIELD_DUMP=1` and the pinned generated Aver show them.
+
+The tail-call rule: a self tail call is the `Yield` request, and a tail call to another yielding function of the same module enters that function's protocol. What is still refused, each with the construct named in the message: mutual nesting — two yielding functions that call each other, because each one's state would have to hold the other's, so the message prints the cycle and two ways to break it, and a cycle written with tail calls only, where no state is held but each function's requests would have to carry the ones it hands over to; a request or a call to a yielding helper inside an independent product `(a, b)!`, because its branches run independently and a request leaves a process one at a time; a function value live across a stop; and a yielding function of *another* module, whose protocol is what that module exposes — call `Module.__fStart(...)` and answer its requests from the coordinator. A request in a product fires less often than it used to, because only an answered operation inside the product is refused.
 
 ## The coordinator
 
@@ -481,23 +511,30 @@ The processes are ordinary yielding functions, in direct style, written in the m
 
 ```aver
 fn peer() -> Unit
-    ? "Ask the pool what to fetch, ask that peer for it, hand the body over, go round."
+    ? "Ask the pool what to fetch, let the helper fetch it, go round; a peer the helper could not finish with is handed back."
     ! [Pool.claim, Pool.gone, Wire.write, Wire.read, Blocks.deliver, Console.print, yield]
     Console.print("peer: asking the pool for work")
     match Pool.claim()
         Pool.Assignment.Stop -> Unit
-        Pool.Assignment.Work(key, height) -> match Wire.write(key, Ledger.blockOf(height))
-            Result.Err(_) -> Pool.gone(key)
-            Result.Ok(_) -> match Wire.read(key, 4000000, 30000)
-                Wire.Heard.Data(raw) -> match Blocks.deliver(key, height, raw)
-                    Blocks.Receipt.Accepted -> peer()
-                    Blocks.Receipt.Refused(_) -> Pool.gone(key)
-                Wire.Heard.EndOfStream -> Pool.gone(key)
-                Wire.Heard.Failed(_) -> Pool.gone(key)
-                Wire.Heard.TimedOut -> Pool.gone(key)
+        Pool.Assignment.Work(key, height) -> match fetchBody(key, height)
+            true -> peer()
+            false -> Pool.gone(key)
+
+fn fetchBody(key: Int, height: Int) -> Bool
+    ? "One body from one peer: the write, the read and the hand-over. True when the body landed, false when anything on the way said this peer is finished."
+    ! [Wire.write, Wire.read, Blocks.deliver, yield]
+    match Wire.write(key, Ledger.blockOf(height))
+        Result.Err(_) -> false
+        Result.Ok(_) -> match Wire.read(key, 4000000, 30000)
+            Wire.Heard.EndOfStream -> false
+            Wire.Heard.Failed(_) -> false
+            Wire.Heard.TimedOut -> false
+            Wire.Heard.Data(raw) -> match Blocks.deliver(key, height, raw)
+                Blocks.Receipt.Accepted -> true
+                Blocks.Receipt.Refused(_) -> false
 ```
 
-`Console.print` there is not a request: `Console` is nobody's to answer, so it runs in place, inside the turn, and the generated function that holds it declares it. `Pool.gone` answers `Unit`, and a match arm is one expression, so a `Unit`-answering stop is the end of that branch — which is why an operation a process has to continue after answers a sum rather than `Unit`.
+`Console.print` there is not a request: `Console` is nobody's to answer, so it runs in place, inside the turn, and the generated function that holds it declares it. `fetchBody` is a yielding helper, not a process: the loop seats `peer`, and the three requests `fetchBody` waits on reach the turn as requests of `peer` carrying the helper's state — see "Helpers and nested state" above. A process's own effect list still names what its helpers perform, because the program as written calls them.
 
 The answer modules are ordinary modules with one state each. Every operation of every capability they answer gets one function, threading that state and answering `Now(v)` or `Later(wake)`, and every one of them declares `fresh()`, the state before anything has happened, because that is where the loop starts them:
 
@@ -606,7 +643,7 @@ Each of those carries its own effects, not the program's: `__seat<P>` performs w
 
 **Where it runs.** The loop is ordinary Aver, so it runs wherever the program does: on the bytecode VM under `aver run`, and as a native binary from `aver compile --target rust`, whose generated crate carries the same answer modules, the same policies and the same turn, with the wait, the job engine and the job kinds answered by `aver-rt` instead of by the VM's providers. The one thing not to read into a side-by-side run is the order of two processes' output. The example parks requests on `Wait.Wake.After(2)`, `After(5)` and `After(50)`, which are wall-clock deadlines, so which turn a finished job lands in depends on how long that job took; a compiled function is faster than the smallest deadline in the program and the VM's child interpreter is not, so the two backends do the same work in a different interleaving. What does not change between them is how often a parked request is asked: the wake gates the ask on both. `--target wasm-gc` and `--target wasip2` still refuse the program.
 
-Two limits worth knowing before you reach them. A process takes no parameters and answers `Unit`, because the loop seats it and has nothing to hand it and nowhere to put its result — everything a process needs comes from the module that answers its first request. And the `task` seam hands the turn the next task without threading the state back, so a program whose loop is generated and whose manifest declares a job kind is held to `[work] max-jobs = 1`: any other limit is `error[run-binding]`, because the turn would ask the same unchanged answer state for a task once per slot of room and start that one task once per slot. Raising the limit waits for a seam that threads the state back.
+Two limits worth knowing before you reach them. A process takes no parameters and answers `Unit`, because the loop seats it and has nothing to hand it and nowhere to put its result — everything a process needs comes from the module that answers its first request. A yielding *helper* is not a process and is not held to that: it takes parameters and answers whatever its caller reads, because the process that calls it is what the loop seats. And the `task` seam hands the turn the next task without threading the state back, so a program whose loop is generated and whose manifest declares a job kind is held to `[work] max-jobs = 1`: any other limit is `error[run-binding]`, because the turn would ask the same unchanged answer state for a task once per slot of room and start that one task once per slot. Raising the limit waits for a seam that threads the state back.
 
 ## Modules
 

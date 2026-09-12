@@ -1,0 +1,59 @@
+module YieldNestedTwice
+    intent = "Fixture: one yield helper with two request kinds, nested twice in one caller. Both call sites widen the same two state sums of the caller, one variant each, and the caller's live variables differ between them."
+    depends [Pool, Pooled]
+    effects [Pool.claim, Pool.release, yield, Console.print]
+    exposes [drive, main]
+
+fn swap(handle: Int) -> Int
+    ? "Gives one handle back and, when the pool took it, claims the next one for it."
+    ! [Pool.claim, Pool.release, yield]
+    match Pool.release(handle)
+        false -> 0
+        true -> Pool.claim(handle)
+
+fn pairUp(a: Int, b: Int) -> Int
+    ? "Swaps the handle of a, then the handle of b, and adds what came back."
+    ! [Pool.claim, Pool.release, yield]
+    first = swap(a)
+    second = swap(b)
+    first + second
+
+fn drive(outcome: __PairUpOutcome) -> Int
+    ? "Coordinator: answers every Release request with true and every Claim request with twice the peer it names. Both kinds reach it as requests of 'pairUp', whichever of its two calls to 'swap' is waiting."
+    match outcome
+        __PairUpOutcome.Done(v) -> v
+        __PairUpOutcome.Waiting(request) -> match request
+            __PairUpRequest.Release(handle, state) -> drive(__pairUpAnswerRelease(state, true))
+            __PairUpRequest.Claim(peer, state) -> drive(__pairUpAnswerClaim(state, peer * 2))
+
+fn driveRefusing(outcome: __PairUpOutcome) -> Int
+    ? "The same coordinator with a pool that refuses every release, so both swaps answer zero without ever claiming."
+    match outcome
+        __PairUpOutcome.Done(v) -> v
+        __PairUpOutcome.Waiting(request) -> match request
+            __PairUpRequest.Release(handle, state) -> driveRefusing(__pairUpAnswerRelease(state, false))
+            __PairUpRequest.Claim(peer, state) -> driveRefusing(__pairUpAnswerClaim(state, peer * 2))
+
+verify drive
+    drive(__PairUpOutcome.Done(3)) => 3
+    drive(__PairUpOutcome.Waiting(__PairUpRequest.Claim(5, __PairUpClaimState.InSwapAt2(__SwapClaimState.Await2, 4)))) => 14
+    drive(__pairUpStart(3, 4)) => 14
+    drive(__pairUpStart(0, 0)) => 0
+    drive(__pairUpStart(1, 5)) => 12
+
+verify driveRefusing
+    driveRefusing(__PairUpOutcome.Done(9)) => 9
+    driveRefusing(__PairUpOutcome.Waiting(__PairUpRequest.Release(4, __PairUpReleaseState.InSwapAt2(__SwapReleaseState.Await1(4), 7)))) => 7
+    driveRefusing(__pairUpStart(3, 4)) => 0
+
+verify __pairUpStart
+    __pairUpStart(3, 4) => __PairUpOutcome.Waiting(__PairUpRequest.Release(3, __PairUpReleaseState.InSwapAt1(__SwapReleaseState.Await1(3), 4)))
+
+verify __pairUpAnswerRelease
+    __pairUpAnswerRelease(__PairUpReleaseState.InSwapAt1(__SwapReleaseState.Await1(3), 4), true) => __PairUpOutcome.Waiting(__PairUpRequest.Claim(3, __PairUpClaimState.InSwapAt1(__SwapClaimState.Await2, 4)))
+    __pairUpAnswerRelease(__PairUpReleaseState.InSwapAt1(__SwapReleaseState.Await1(3), 4), false) => __PairUpOutcome.Waiting(__PairUpRequest.Release(4, __PairUpReleaseState.InSwapAt2(__SwapReleaseState.Await1(4), 0)))
+
+fn main() -> Unit
+    ! [Console.print]
+    result = drive(__pairUpStart(3, 4))
+    Console.print("pairUp = {result}")
