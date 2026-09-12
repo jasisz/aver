@@ -351,6 +351,14 @@ impl<'a> Lowering<'a> {
     /// Only a bare name: a `yield` function of a dependency is gone from
     /// that module's surface, so `Looper.loop(...)` is already answered by
     /// the checker with the recipe that names `Looper.__loopStart`.
+    ///
+    /// TODO(owner): a helper may be a `yield` function of the caller's own
+    /// module only, not of any module of the program. A nested protocol
+    /// across modules would have to carry the callee's state and request
+    /// sums through the module loader, and a cycle that runs through two
+    /// modules has no refusal path here, because this lowering sees one
+    /// module at a time. A call into another module is refused by name, as
+    /// it is today.
     fn nested_callee(&self, expr: &Spanned<Expr>) -> Option<String> {
         let Expr::FnCall(callee, _) = &expr.node else {
             return None;
