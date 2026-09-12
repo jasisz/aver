@@ -1,7 +1,7 @@
 module Sockets
     intent = "The answers this program gives to Wire, over real sockets: the listener peers arrive on, the connection each peer key stands for, how far the payload in flight has been written, and how often the wire was asked."
     depends [Bytes, Wait, Tcp, Wire]
-    exposes [State, fresh, wanted, chunk, portOf, firstPort, keyFor, accept, listening, accepting, closed, arrived, seatedAt, dialled, read, reading, heard, bodyOf, write, writing, offsetOf, offer, offered, whole, parked, dropped, finished, writes]
+    exposes [State, fresh, wanted, chunk, portOf, firstPort, keyFor, accept, opening, listening, accepting, closed, arrived, seatedAt, dialled, read, reading, heard, bodyOf, write, writing, offsetOf, offer, offered, whole, parked, dropped, finished, writes]
     effects [Args.get, Tcp.listen, Tcp.accept, Tcp.closeListener, Tcp.readNow, Tcp.writeNow]
 
 record State
@@ -12,10 +12,11 @@ record State
     asked: Int
     reads: Int
     done: Int
+    shut: Bool
 
 fn fresh() -> State
-    ? "Nothing bound, nobody accepted, nothing written and nothing asked for. The listener is bound on the first ask, because the state of a run is built before any effect is allowed."
-    State(listener = Option.None, peers = {}, seated = 0, offsets = {}, asked = 0, reads = 0, done = 0)
+    ? "Nothing bound, nobody accepted, nothing written and nothing asked for, and no listener closed yet. The listener is bound on the first ask, because the state of a run is built before any effect is allowed."
+    State(listener = Option.None, peers = {}, seated = 0, offsets = {}, asked = 0, reads = 0, done = 0, shut = false)
 
 fn wanted() -> Int
     ? "How many peers this program waits for on its listener before it tells the accepting process the listener is done."
@@ -42,7 +43,14 @@ fn keyFor(state: State) -> Int
     state.seated + 1
 
 fn accept(state: State) -> Tuple<State, Wire.__AcceptReply>
-    ? "The next peer the listener has for us. The first ask binds the listener; every ask after that takes one waiting client, or parks on the listener until the wait reports that one is pending."
+    ? "The next peer this program has for us. A listener this program has already finished with has no more peers on it, and says so again rather than binding a second one; anything else is an ask at a listener that is still open."
+    ! [Args.get, Tcp.listen, Tcp.accept, Tcp.closeListener]
+    match state.shut
+        true -> (state, Wire.__AcceptReply.Now(Wire.Arrival.Closed))
+        false -> opening(state)
+
+fn opening(state: State) -> Tuple<State, Wire.__AcceptReply>
+    ? "One ask at a listener this program has not finished with. The first ask binds the listener; every ask after that takes one waiting client, or parks on the listener until the wait reports that one is pending."
     ! [Args.get, Tcp.listen, Tcp.accept, Tcp.closeListener]
     match state.listener
         Option.None -> listening(state)
@@ -52,7 +60,7 @@ fn listening(state: State) -> Tuple<State, Wire.__AcceptReply>
     ? "The listener this program owns for the rest of the run, bound on the first ask and kept in this state because a Later keeps what the module returned. A port that cannot be bound closes the accepting process instead."
     ! [Args.get, Tcp.listen]
     match Tcp.listen(portOf(Args.get()), 8)
-        Result.Err(_) -> (state, Wire.__AcceptReply.Now(Wire.Arrival.Closed))
+        Result.Err(_) -> (State.update(state, shut = true), Wire.__AcceptReply.Now(Wire.Arrival.Closed))
         Result.Ok(listener) -> (State.update(state, listener = Option.Some(listener)), Wire.__AcceptReply.Later(Wait.Wake.Item(Wait.Item.Socket(Tcp.Socket.Listening(listener)))))
 
 fn accepting(state: State, listener: Tcp.Listener) -> Tuple<State, Wire.__AcceptReply>
@@ -62,15 +70,15 @@ fn accepting(state: State, listener: Tcp.Listener) -> Tuple<State, Wire.__Accept
         true -> closed(state, Tcp.closeListener(listener))
         false -> arrived(state, listener)
 
-fn closed(state: State, shut: Result<Unit, String>) -> Tuple<State, Wire.__AcceptReply>
-    ? "Every peer this program waits for has arrived, so the listener is closed and the accepting process is told there are no more."
-    (State.update(state, listener = Option.None), Wire.__AcceptReply.Now(Wire.Arrival.Closed))
+fn closed(state: State, shutdown: Result<Unit, String>) -> Tuple<State, Wire.__AcceptReply>
+    ? "Every peer this program waits for has arrived, so the listener is closed and the accepting process is told there are no more. The state remembers that it was closed, because an ask after it is an ask this program answers with the same Closed rather than with a second listener."
+    (State.update(state, listener = Option.None, shut = true), Wire.__AcceptReply.Now(Wire.Arrival.Closed))
 
 fn arrived(state: State, listener: Tcp.Listener) -> Tuple<State, Wire.__AcceptReply>
     ? "What one non-blocking accept found. A client that was waiting is seated under its own key; nothing waiting parks the request on the listener, and the wait is the only thing that asks it again. A listener that itself failed is a listener this program has no more peers on."
     ! [Tcp.accept]
     match Tcp.accept(listener)
-        Result.Err(_) -> (State.update(state, listener = Option.None), Wire.__AcceptReply.Now(Wire.Arrival.Closed))
+        Result.Err(_) -> (State.update(state, listener = Option.None, shut = true), Wire.__AcceptReply.Now(Wire.Arrival.Closed))
         Result.Ok(client) -> match client
             Option.None -> (state, Wire.__AcceptReply.Later(Wait.Wake.Item(Wait.Item.Socket(Tcp.Socket.Listening(listener)))))
             Option.Some(connection) -> (seatedAt(state, connection), Wire.__AcceptReply.Now(Wire.Arrival.Peer(keyFor(state))))
@@ -199,6 +207,9 @@ verify dropped
 
 verify finished
     finished(State.update(fresh(), offsets = Map.set({}, 1, 4)), 1) => State.update(fresh(), done = 1)
+
+verify closed
+    closed(State.update(fresh(), seated = 1), Result.Ok(Unit)) => (State.update(fresh(), seated = 1, shut = true), Wire.__AcceptReply.Now(Wire.Arrival.Closed))
 
 verify dialled
     dialled(fresh()) => (fresh(), Wire.__DialledReply.Now(Wire.Arrival.Closed))
