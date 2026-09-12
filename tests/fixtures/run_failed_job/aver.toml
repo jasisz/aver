@@ -1,0 +1,21 @@
+[providers]
+schema = 1
+
+[[providers.bindings]]
+capability = "Pool"
+answer = "Pooled"
+
+[[providers.bindings]]
+capability = "Validation"
+work = "Pooled.score"
+task = "Pooled.nextTask"
+landed = "Pooled.landed"
+
+[work]
+max-jobs = 1
+
+[run]
+order = "Node.order"
+admit = "Node.admit"
+stop = "Node.stop"
+view = "Node.View"

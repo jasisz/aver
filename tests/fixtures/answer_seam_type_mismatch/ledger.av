@@ -21,7 +21,9 @@ fn nextTask(state: State) -> Option<Int>
     ? "What the turn should start a validation job on, if anything."
     Option.None
 
-fn validated(state: State, score: Int) -> State
-    ? "Where a finished job's result lands."
-    State.update(state, stopping = score == 0)
+fn validated(state: State, outcome: Result<Int, String>) -> State
+    ? "Where a job that is over lands, whether it produced a result or not."
+    match outcome
+        Result.Err(_) -> State.update(state, stopping = true)
+        Result.Ok(score) -> State.update(state, stopping = score == 0)
 

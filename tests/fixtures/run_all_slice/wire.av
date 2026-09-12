@@ -3,11 +3,14 @@ module Wire
     semantics = effectful
     depends [Bytes]
     intent = "Request-level socket I/O, keyed by peer, plus the two ways a peer arrives. Answered by the program."
-    exposes [Arrival, Heard, accept, dialled, read, write]
+    exposes [Arrival, Heard, Tally, accept, dialled, read, write, writes]
 
 type Arrival
     Peer(Int)
     Closed
+
+type Tally
+    Counted(Int, Int)
 
 type Heard
     Data(Bytes)
@@ -31,6 +34,11 @@ operation read(key: Int, max: Int, deadlineMs: Int) -> Wire.Heard
     replay = recorded
 
 operation write(key: Int, payload: Bytes) -> Result<Unit, String>
-    ? "Hands a whole payload to one peer; the answer comes after the last byte."
+    ? "Hands a whole payload to one peer; the answer comes after the last byte, however many asks that takes."
     oracle = generativeOutput
+    replay = recorded
+
+operation writes() -> Wire.Tally
+    ? "How many payloads this wire has written and how many asks that took, for a process that wants to say so at the end of a run."
+    oracle = generative
     replay = recorded

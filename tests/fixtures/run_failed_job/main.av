@@ -1,0 +1,99 @@
+module Node
+    intent = "Fixture: a job cancelled before anything takes it. The generated seam must land the error in the answer state through `landed`, drop the handle, and let the run reach its end, and a request parked on that job must be asked only in a turn whose wait reported its key."
+    depends [Process, Wait, Work, Pool, Validation, Pooled]
+    effects [Console.print, Pool.claim, Validation.begin, Validation.take, Work.cancel, yield]
+    exposes [Pending, View, order, admit, stop]
+
+type Pending
+    Probing(Int, Wait.Wake)
+
+record View
+    pending: Map<Int, Pending>
+    ready: List<Int>
+    askable: List<Int>
+    jobs: Int
+    room: Int
+    stopping: Bool
+
+fn probing() -> Unit
+    ? "Reports what the job seam does with a job that will never produce a result, then claims its one handle and is done."
+    ! [Console.print, Pool.claim, Validation.begin, Validation.take, Work.cancel, yield]
+    Console.print(probe())
+    match Pool.claim()
+        Option.None -> Unit
+        Option.Some(_) -> Unit
+
+fn probe() -> String
+    ? "Starts one job and cancels it before anything takes it: a cancelled job has no result to give and never will."
+    ! [Validation.begin, Validation.take, Work.cancel]
+    match __startJobsValidation(__fresh())
+        Result.Err(reason) -> "begin refused: {reason}"
+        Result.Ok(started) -> probeStarted(started)
+
+fn probeStarted(started: __Run) -> String
+    ? "The handle the start left behind: the wake gate is read against it, and then it is cancelled where it stands."
+    ! [Validation.take, Work.cancel]
+    match Map.get(started.jobs, 1)
+        Option.None -> "the start kept no handle"
+        Option.Some(job) -> probeGated(started, job, __parked(__settledSlotProbing(1, __ProbingRequest.Claim(__ProbingClaimState.Await1)), Wait.Wake.Item(Wait.Item.Job(job)), 1000))
+
+fn gated(quiet: Bool, reported: Bool) -> String
+    ? "The two readings of one parked slot, as the one line a run says them in."
+    match quiet
+        true -> "the gate asked a job the wait did not report"
+        false -> match reported
+            true -> "gated on the job"
+            false -> "the gate did not ask a job the wait reported"
+
+fn probeGated(started: __Run, job: Work.Job, parked: __Slot) -> String
+    ? "What the wake gates for a request parked on this job — the turn asks that slot in a turn whose wait reported the slot's key and in no other — and then the cancellation the rest of this probe is about. The gate is read here rather than in a law because a job handle is a resource no law can write down."
+    ! [Validation.take, Work.cancel]
+    "{gated(__askableSlot(parked, [], 1, 1000), __askableSlot(parked, [1], 1, 1000))}; {probeCancelled(started, Work.cancel(job))}"
+
+fn probeCancelled(started: __Run, cancelled: Unit) -> String
+    ? "The take of a cancelled job: an error the seam lands in the answer state rather than propagating out of the turn."
+    ! [Validation.take]
+    probeLanded(__takenValidation(started, 1))
+
+fn probeLanded(after: __Run) -> String
+    ? "What that take left behind: no handle, nothing scored, and the reason recorded."
+    "cancelled, then landed: jobs {Map.len(after.jobs)} scored {after.pooled.scored} rejected {List.len(after.pooled.rejected)}"
+
+fn order(view: View) -> List<Int>
+    ? "Every seated process, in slot order."
+    Map.keys(view.pending)
+
+fn admit(view: View, id: Int) -> Bool
+    ? "Everything seated is served."
+    Map.has(view.pending, id)
+
+fn stop(view: View) -> Bool
+    ? "The run ends when the process asked us to."
+    view.stopping
+
+fn isFailedTake(taken: Result<Option<Int>, String>) -> Bool
+    ? "Whether one take answered with a failure: a job that will never produce a payload."
+    match taken
+        Result.Err(_) -> true
+        Result.Ok(_) -> false
+
+verify gated
+    gated(false, true) => "gated on the job"
+    gated(true, true) => "the gate asked a job the wait did not report"
+    gated(false, false) => "the gate did not ask a job the wait reported"
+
+verify isFailedTake
+    isFailedTake(Result.Err("work: job cancelled")) => true
+    isFailedTake(Result.Ok(Option.None)) => false
+
+verify __reportedValidation law aFailedTakeRecordsARejection
+    given run: __Run = [__fresh()]
+    given key: Int = [1]
+    given taken: Result<Option<Int>, String> = [Result.Ok(Option.Some(4)), Result.Ok(Option.None), Result.Err("work: job cancelled")]
+    when isFailedTake(taken)
+    because isFailedTake(taken)
+    List.len(__reportedValidation(run, key, taken).pooled.rejected) => List.len(run.pooled.rejected) + 1
+
+verify probeLanded
+    probeLanded(__reportedValidation(__fresh(), 1, Result.Err("work: job cancelled"))) => "cancelled, then landed: jobs 0 scored 0 rejected 1"
+    probeLanded(__reportedValidation(__fresh(), 1, Result.Ok(Option.Some(4)))) => "cancelled, then landed: jobs 0 scored 4 rejected 0"

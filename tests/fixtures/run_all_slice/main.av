@@ -1,7 +1,7 @@
 module Node
     intent = "The follow slice as processes: a peer, a walk, an accepting process, a dialling process and a ticker, with three policies over one view. The loop between them is generated."
     depends [Bytes, Wait, Work, Wire, Pool, Blocks, Chain, Clock, Validation, Sockets, Ledger, Clocked]
-    effects [Wire.accept, Wire.dialled, Wire.read, Wire.write, Pool.claim, Pool.gone, Pool.joined, Pool.swept, Blocks.deliver, Blocks.body, Chain.nextTarget, Chain.commit, Clock.tick, Console.print, yield]
+    effects [Wire.accept, Wire.dialled, Wire.read, Wire.write, Wire.writes, Pool.claim, Pool.gone, Pool.joined, Pool.swept, Blocks.deliver, Blocks.body, Chain.nextTarget, Chain.commit, Clock.tick, Console.print, yield]
     exposes [Pending, View, order, admit, stop]
 
 type Pending
@@ -14,6 +14,7 @@ type Pending
 record View
     pending: Map<Int, Pending>
     ready: List<Int>
+    askable: List<Int>
     jobs: Int
     room: Int
     stopping: Bool
@@ -37,12 +38,23 @@ fn dialling() -> Unit
             Pool.Welcome.Refused -> dialling()
 
 fn ticker() -> Unit
-    ? "One sweep of the pool per tick, until the clock closes."
-    ! [Clock.tick, Pool.swept, yield]
+    ? "One sweep of the pool per tick, until the clock closes. It is the last process to finish, so it is the one that says what the clock and the wire did over the run."
+    ! [Clock.tick, Pool.swept, Wire.writes, Console.print, yield]
     match Clock.tick()
-        Clock.Tick.Closed -> Unit
+        Clock.Tick.Closed(asks) -> reportRun(asks, Wire.writes())
         Clock.Tick.Tock -> match Pool.swept()
             Pool.Sweep.Swept(_) -> ticker()
+
+fn reportRun(asks: Int, tally: Wire.Tally) -> Unit
+    ? "What the clock and the wire did over this run, once the clock has closed."
+    ! [Console.print]
+    match tally
+        Wire.Tally.Counted(payloads, writeAsks) -> reported(asks, payloads, writeAsks)
+
+fn reported(asks: Int, payloads: Int, writeAsks: Int) -> Unit
+    ? "The one line a run of this slice ends with."
+    ! [Console.print]
+    Console.print("ticker: asked {asks} times; sockets: {payloads} payloads took {writeAsks} asks")
 
 fn peer() -> Unit
     ? "Ask the pool what to fetch, ask that peer for it, hand the body over, go round."
@@ -114,15 +126,15 @@ fn isPeerMarker(marker: Pending) -> Bool
 
 fn busyView() -> View
     ? "One view with every process seated, a job running and no room for another."
-    View(pending = Map.set(Map.set({}, 1, Pending.Peer(3, Wait.Wake.NextTurn)), 2, Pending.Walk(1, Wait.Wake.After(2))), ready = [2], jobs = 1, room = 0, stopping = false)
+    View(pending = Map.set(Map.set({}, 1, Pending.Peer(3, Wait.Wake.NextTurn)), 2, Pending.Walk(1, Wait.Wake.After(2))), ready = [2], askable = [1, 2], jobs = 1, room = 0, stopping = false)
 
 fn quietView() -> View
     ? "One view with room for another job and nothing ready."
-    View(pending = Map.set(Map.set({}, 1, Pending.Peer(1, Wait.Wake.NextTurn)), 3, Pending.Ticker(1, Wait.Wake.NextTurn)), ready = [], jobs = 0, room = 1, stopping = false)
+    View(pending = Map.set(Map.set({}, 1, Pending.Peer(1, Wait.Wake.NextTurn)), 3, Pending.Ticker(1, Wait.Wake.NextTurn)), ready = [], askable = [1, 3], jobs = 0, room = 1, stopping = false)
 
 fn stoppingView() -> View
     ? "One view with a job running, no room for another and the run already stopping: what a peer is admitted against at the worst moment of a turn."
-    View(pending = Map.set(Map.set({}, 1, Pending.Peer(5, Wait.Wake.NextTurn)), 2, Pending.Walk(2, Wait.Wake.NextTurn)), ready = [1], jobs = 1, room = 0, stopping = true)
+    View(pending = Map.set(Map.set({}, 1, Pending.Peer(5, Wait.Wake.NextTurn)), 2, Pending.Walk(2, Wait.Wake.NextTurn)), ready = [1], askable = [1, 2], jobs = 1, room = 0, stopping = true)
 
 verify admit law readyPeerBeforeNewJob
     given view: View = [busyView(), quietView(), stoppingView()]
@@ -137,8 +149,8 @@ verify admitted
     admitted(busyView(), Pending.Dialling(1, Wait.Wake.NextTurn)) => true
     admitted(busyView(), Pending.Ticker(1, Wait.Wake.NextTurn)) => true
     admitted(busyView(), Pending.Walk(1, Wait.Wake.NextTurn)) => true
-    admitted(View(pending = {}, ready = [], jobs = 0, room = 1, stopping = true), Pending.Walk(1, Wait.Wake.NextTurn)) => false
-    admitted(View(pending = {}, ready = [], jobs = 0, room = 1, stopping = true), Pending.Ticker(1, Wait.Wake.NextTurn)) => false
+    admitted(View(pending = {}, ready = [], askable = [], jobs = 0, room = 1, stopping = true), Pending.Walk(1, Wait.Wake.NextTurn)) => false
+    admitted(View(pending = {}, ready = [], askable = [], jobs = 0, room = 1, stopping = true), Pending.Ticker(1, Wait.Wake.NextTurn)) => false
 
 verify isPeer
     isPeer(busyView(), 1) => true

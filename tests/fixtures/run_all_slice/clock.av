@@ -6,9 +6,9 @@ module Clock
 
 type Tick
     Tock
-    Closed
+    Closed(Int)
 
 operation tick() -> Clock.Tick
-    ? "The next tick, or Closed once the clock is done ticking."
+    ? "The next tick, or Closed once the clock is done ticking, carrying how many times it was asked for one."
     oracle = generative
     replay = recorded
