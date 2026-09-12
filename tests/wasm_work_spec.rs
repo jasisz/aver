@@ -158,6 +158,39 @@ fn a_take_right_after_begin_answers_some_on_wasip2() {
     assert_eq!(wasm, "score 5\nwork: job already taken");
 }
 
+/// A job kind whose task is `Unit`. `Unit` has no wasm value at all, so the
+/// task crosses as an `Option` the emitter writes no payload accessor for,
+/// and both the run and the recording have to read it from the tag alone.
+#[test]
+fn a_unit_task_runs_and_records_on_wasm_gc() {
+    let wasm =
+        run("work_jobs_unit_task", &["--wasm-gc"], &[]).unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(wasm, "tick 5");
+    let ws = temp_dir("unit-task");
+    let recordings = ws.join("recordings");
+    fs::create_dir_all(&recordings).expect("create recordings dir");
+    let result = (|| -> Result<(), String> {
+        record("work_jobs_unit_task", &["--wasm-gc"], &recordings)?;
+        let report = replay(&recordings, &["--wasm-gc"])?;
+        if !report.contains("Output:  MATCH") {
+            return Err(format!(
+                "a Unit task's recording did not replay on wasm-gc:\n{report}"
+            ));
+        }
+        Ok(())
+    })();
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|error| panic!("{error}"));
+}
+
+#[cfg(feature = "wasip2")]
+#[test]
+fn a_unit_task_runs_on_wasip2() {
+    let wasm =
+        run("work_jobs_unit_task", &["--wasip2"], &[]).unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(wasm, "tick 5");
+}
+
 /// `Work.cancel` drops the answer of a job nobody collected, so `take` says
 /// `work: job cancelled` exactly as on the VM. Inline the countdown has
 /// already run when the cancel lands — cancelling a job that is over is what
@@ -205,6 +238,19 @@ fn work_jobs_two_kinds_keeps_each_kind_to_its_own_handles_on_wasip2() {
 /// program door says why, naming the key and the target.
 #[test]
 fn work_jobs_limit_says_the_manifest_key_changes_nothing_on_wasm_gc() {
+    assert_work_jobs_limit_is_ignored("--wasm-gc");
+}
+
+#[cfg(feature = "wasip2")]
+#[test]
+fn work_jobs_limit_says_the_manifest_key_changes_nothing_on_wasip2() {
+    assert_work_jobs_limit_is_ignored("--wasip2");
+}
+
+/// The `work_jobs_limit` case, for one wasm target: the door warns, the run
+/// prints nothing, and the VM is where the limit the fixture was written for
+/// still holds.
+fn assert_work_jobs_limit_is_ignored(target: &str) {
     let dir = fixture("work_jobs_limit");
     let out = Command::new(aver_bin())
         .current_dir(repo_root())
@@ -212,16 +258,16 @@ fn work_jobs_limit_says_the_manifest_key_changes_nothing_on_wasm_gc() {
         .arg(dir.join("main.av"))
         .arg("--module-root")
         .arg(&dir)
-        .arg("--wasm-gc")
+        .arg(target)
         .output()
-        .expect("expected `aver run --wasm-gc` to execute");
+        .unwrap_or_else(|error| panic!("expected `aver run {target}` to execute: {error}"));
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("warning[work-max-jobs-ignored]"),
         "the program door must say the key changes nothing:\n{}",
         format_output(&out)
     );
-    assert!(stderr.contains("--wasm-gc"), "{stderr}");
+    assert!(stderr.contains(target), "{stderr}");
     assert_eq!(
         String::from_utf8_lossy(&out.stdout).trim(),
         "",

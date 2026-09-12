@@ -1,0 +1,19 @@
+module Main
+    depends [Node, Tick, Work]
+    intent = "Starts one job whose task carries nothing and says what it answered."
+    exposes [main]
+    effects [Console.print, Tick.begin, Tick.take]
+
+fn main() -> Result<Unit, String>
+    ? "Starts one tick and says what a take asked right away answered."
+    ! [Console.print, Tick.begin, Tick.take]
+    job = Tick.begin(Unit)?
+    said(Tick.take(job)?)
+    Result.Ok(Unit)
+
+fn said(answer: Option<Int>) -> Unit
+    ? "Says what one take carried: a count, or nothing yet."
+    ! [Console.print]
+    match answer
+        Option.Some(n) -> Console.print("tick {n}")
+        Option.None -> Console.print("nothing yet")

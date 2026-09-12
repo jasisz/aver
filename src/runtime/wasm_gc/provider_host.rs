@@ -281,6 +281,18 @@ pub(super) fn record_job_operation(
     handle_id: i64,
     caller_fn: &str,
 ) -> Result<Option<Option<wasmtime::Rooted<wasmtime::AnyRef>>>, wasmtime::Error> {
+    // A run that neither records nor replays has nothing for this import to
+    // do: the module already has the answer. Leaving before the boundary
+    // value is read is what keeps a recorder-shaped import invisible to an
+    // ordinary run.
+    let mode = caller
+        .data()
+        .recorder
+        .as_ref()
+        .map_or(aver::replay::EffectReplayMode::Normal, |state| state.mode());
+    if matches!(mode, aver::replay::EffectReplayMode::Normal) {
+        return Ok(None);
+    }
     let Some(kind) = caller
         .data()
         .job_kinds
@@ -322,12 +334,7 @@ pub(super) fn record_job_operation(
     };
     let _ = boundary_ty;
 
-    let replaying = caller
-        .data()
-        .recorder
-        .as_ref()
-        .is_some_and(|state| state.mode() == aver::replay::EffectReplayMode::Replay);
-    if replaying {
+    if matches!(mode, aver::replay::EffectReplayMode::Replay) {
         let recorded = caller
             .data_mut()
             .recorder
@@ -358,12 +365,7 @@ pub(super) fn record_job_operation(
         }));
     }
 
-    if caller
-        .data()
-        .recorder
-        .as_ref()
-        .is_some_and(|state| state.mode() == aver::replay::EffectReplayMode::Record)
-    {
+    if matches!(mode, aver::replay::EffectReplayMode::Record) {
         let outcome = if take {
             let value = decode_value(caller, boundary, &answer_ty, &scope, &providers)
                 .map_err(|message| wasmtime::Error::msg(format!("{operation}: {message}")))?;
