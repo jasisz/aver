@@ -102,13 +102,24 @@ fn solver(
 ) -> Vec<String> {
     // Cited theorems remain available to grind, but are not unconditional
     // rewrite rules: an accumulator equation can rewrite its own result.
-    // A cone that calls `Map.set` gets the prelude's facts about it;
-    // the same names make the demand-driven prelude ship their proofs.
-    let map_facts = if definitions.map_facts {
-        crate::codegen::lean::prelude::MAP_SET_FACT_LEMMAS.join(", ")
-    } else {
-        String::new()
-    };
+    // A cone that calls `Map.set` gets the prelude's facts about it, and one
+    // that calls `Map.remove` the removal's own size fact; the same names make
+    // the demand-driven prelude ship their proofs.
+    let map_facts = definitions
+        .map_facts
+        .then_some(crate::codegen::lean::prelude::MAP_SET_FACT_LEMMAS.as_slice())
+        .into_iter()
+        .flatten()
+        .chain(
+            definitions
+                .map_remove_facts
+                .then_some(crate::codegen::lean::prelude::MAP_REMOVE_FACT_LEMMAS.as_slice())
+                .into_iter()
+                .flatten(),
+        )
+        .copied()
+        .collect::<Vec<_>>()
+        .join(", ");
     let simp_defs = [definitions.simp.as_str(), map_facts.as_str()]
         .into_iter()
         .filter(|s| !s.is_empty())
