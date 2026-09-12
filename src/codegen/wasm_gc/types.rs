@@ -237,6 +237,26 @@ pub(super) struct TypeRegistry {
     /// declared. The runtime allocates the array lazily on first
     /// `Tcp.connect` call via `array.new_default` against this idx.
     pub(super) tcp_pool_type_idx: Option<u32>,
+    /// jasisz/aver#1329 — `(struct (mut i64 id) (mut i32 state)
+    /// (mut i32 kind) (mut anyref value))`: the representation of the
+    /// stdlib job handle `Work.Job`.
+    ///
+    /// Nothing mints one in this build. A handle reaches these targets only
+    /// as a type — through `Wait.Wake` into `Wait.Item` into every answered
+    /// capability's generated reply sum — so what the struct has to support
+    /// today is being carried, compared and hashed, and only field 0 is ever
+    /// read (by the hash). The other three fields are the shape the planned
+    /// inline lowering wants and are written by nothing here: a job is meant
+    /// to run inline at `begin` on a single-threaded target, which makes the
+    /// handle its own answer slot — `id` its identity, `state` finished /
+    /// taken / cancelled, `kind` the job kind that minted it, `value` the
+    /// answer the bound function already computed — so no separate table is
+    /// needed. See `TODO(owner)` in `src/capability/work.rs`: that lowering
+    /// is jasisz/aver#1329 decision 1 and is not in this build.
+    ///
+    /// `None` when no `Work.Job` is reachable, so a program without jobs
+    /// carries no job bytes at all.
+    pub(super) job_struct_idx: Option<u32>,
     /// Arbitrary-precision `Int` (`Int = ℤ`, the only wasm-gc Int
     /// semantics). `true` when any Int arithmetic is reachable — a SIZE
     /// reachability gate, NOT a semantics flag (so pure-String/Float/
@@ -597,6 +617,18 @@ impl TypeRegistry {
             (Some(slot_idx), Some(pool_idx))
         } else {
             (None, None)
+        };
+
+        // jasisz/aver#1329 — the `Work.Job` handle slot. Allocated
+        // whenever the program reaches the stdlib job handle, directly or
+        // through `Wait.Item.Job`, which every answered capability's
+        // generated reply sum reaches through `Wait.Wake`.
+        let job_struct_idx = if items_reference_name(items, crate::capability::work::WORK_JOB) {
+            let idx = next_idx;
+            next_idx += 1;
+            Some(idx)
+        } else {
+            None
         };
 
         // `$AverInt` + `(array i64)` magnitude slots. `Int = ℤ` is now
@@ -1424,6 +1456,7 @@ impl TypeRegistry {
             eligible_carrier_fields: std::collections::HashSet::new(),
             tcp_slot_type_idx,
             tcp_pool_type_idx,
+            job_struct_idx,
             bignum,
             aint_struct_idx,
             aint_mag_array_idx,
@@ -2554,6 +2587,20 @@ pub(super) fn aver_to_wasm(
     }
     if trimmed == "Unit" {
         return Ok(None);
+    }
+    // jasisz/aver#1329 — the stdlib job handle, ahead of the generic
+    // capability-resource route below. `Work.Job` is an embedded capability
+    // resource, so both arms claim it; this one owns it, because the handle
+    // is minted and read inside the module rather than crossing a host
+    // boundary as an `externref`. Ordering them the other way would hand a
+    // program that ever selects `Work` an `externref` while the hash helper
+    // in `maps.rs` still reads the struct's id field, and the module would
+    // not validate.
+    if trimmed == crate::capability::work::WORK_JOB
+        && let Some(reg) = registry
+        && let Some(idx) = reg.job_struct_idx
+    {
+        return Ok(Some(struct_ref(idx)));
     }
     if let Some(reg) = registry {
         if reg.is_capability_resource(trimmed) {

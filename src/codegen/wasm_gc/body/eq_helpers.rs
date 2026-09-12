@@ -192,6 +192,11 @@ impl EqHelperRegistry {
         ) {
             return;
         }
+        // jasisz/aver#1329 — the job handle compares as a reference inline,
+        // exactly like a primitive; it gets no `__eq_` helper of its own.
+        if field_ty == crate::capability::work::WORK_JOB {
+            return;
+        }
         // ETAP-2 carrier-`i64`: an eligible carrier is erased to a native
         // `i64`, so it has NO struct representation and needs NO per-type
         // `__eq_<Carrier>` helper — its eq is the raw `i64.eq` inlined at the
@@ -815,6 +820,17 @@ fn emit_inner_eq_dispatch(
             // `Option<Unit>` uses the same private i32 placeholder, so this
             // branch also gives its represented payload the right equality.
             f.instruction(&Instruction::I32Eq);
+        }
+        // jasisz/aver#1329 — two job handles are the same job exactly when
+        // they are the same reference. A `Wait.Item.Job` reaches here through
+        // every answered capability's generated reply sum. Reference equality
+        // agrees with the VM's, whose handle identity is the `id` field this
+        // backend hashes on, only while one job owns exactly one struct; the
+        // lowering that mints handles must keep that, and must not rebuild a
+        // handle from a recorded id. See `TODO(owner)` in
+        // `src/capability/work.rs`.
+        crate::capability::work::WORK_JOB => {
+            f.instruction(&Instruction::RefEq);
         }
         "Float" => {
             f.instruction(&Instruction::F64Eq);
