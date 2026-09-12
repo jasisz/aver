@@ -87,6 +87,58 @@ fn the_slice_runs_to_the_end_on_the_vm_with_nothing_written_between_its_processe
     );
 }
 
+/// The wake gates the ask, measured on the two answer modules that park.
+///
+/// `Sockets.write` takes half a payload on the first ask, records how far it
+/// got and parks; the ask after that sends the rest. The peer writes three
+/// bodies, so three payloads take exactly six asks — two each — and the third
+/// body reaches the chain, which is how the run gets to its end at all: a
+/// second half that never arrived would leave the walk without its last body.
+///
+/// `Clocked.tick` arms a fifty-millisecond deadline on the first ask of every
+/// tick and answers the tick on the ask after it. Four ticks are two asks each
+/// and the closing ask is the ninth, so nine is what the deadline allows over
+/// this run. Without the gate the ticker would be asked once per turn, and
+/// this run has far more turns than that.
+#[test]
+fn a_parked_request_is_asked_again_only_when_its_wake_has_fired() {
+    let out = aver(SLICE, &["run"]);
+    assert!(out.status.success(), "{}", format_output(&out));
+    assert!(
+        combined(&out).contains("ticker: asked 9 times; sockets: 3 payloads took 6 asks"),
+        "{}",
+        format_output(&out)
+    );
+}
+
+/// A job that will never produce a result reaches `landed` as the error it is:
+/// the answer state records the rejection, the handle leaves the table, and
+/// the run reaches its end instead of stopping on the take.
+#[test]
+fn a_cancelled_job_lands_as_an_error_and_the_run_goes_on() {
+    let out = aver("run_failed_job", &["run"]);
+    assert!(out.status.success(), "{}", format_output(&out));
+    assert!(
+        combined(&out).contains("cancelled, then landed: jobs 0 scored 0 rejected 1"),
+        "{}",
+        format_output(&out)
+    );
+}
+
+/// The same claim without a job engine: the generated seam is pure from the
+/// take's answer onwards, so `aver verify` pins both outcomes of one key.
+#[test]
+fn the_failed_job_slice_verifies_and_checks_clean() {
+    for command in ["check", "verify"] {
+        let out = aver("run_failed_job", &[command]);
+        assert!(out.status.success(), "{command}: {}", format_output(&out));
+    }
+    assert!(
+        combined(&aver("run_failed_job", &["verify"])).contains("probeLanded"),
+        "the seam's own verify block did not run"
+    );
+}
+
 #[test]
 fn the_slice_checks_clean() {
     let out = aver(SLICE, &["check"]);
@@ -248,9 +300,9 @@ fn the_loop_carries_each_processs_own_effects_and_not_the_programs() {
     for function in [
         "__seatAccepting",
         "__serveAccepting",
-        "__seatTicker",
-        "__serveTicker",
-        "__serveTickerTick",
+        "__seatDialling",
+        "__serveDialling",
+        "__serveDiallingDialled",
     ] {
         assert!(
             declared_effects(&text, function).is_none(),

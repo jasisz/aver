@@ -1,0 +1,63 @@
+module Node
+    intent = "Fixture: a job cancelled before anything takes it. The generated seam must land the error in the answer state through `landed`, drop the handle, and let the run reach its end."
+    depends [Process, Wait, Work, Pool, Validation, Pooled]
+    effects [Console.print, Pool.claim, Validation.begin, Validation.take, Wait.poll, Work.cancel, yield]
+    exposes [Pending, View, order, admit, stop]
+
+type Pending
+    Probing(Int, Wait.Wake)
+
+record View
+    pending: Map<Int, Pending>
+    ready: List<Int>
+    askable: List<Int>
+    jobs: Int
+    room: Int
+    stopping: Bool
+
+fn probing() -> Unit
+    ? "Reports what the job seam does with a job that will never produce a result, then claims its one handle and is done."
+    ! [Console.print, Pool.claim, Validation.begin, Validation.take, Work.cancel, yield]
+    Console.print(probe())
+    match Pool.claim()
+        Option.None -> Unit
+        Option.Some(_) -> Unit
+
+fn probe() -> String
+    ? "Starts one job and cancels it before anything takes it: a cancelled job has no result to give and never will."
+    ! [Validation.begin, Validation.take, Work.cancel]
+    match __startJobsValidation(__fresh())
+        Result.Err(reason) -> "begin refused: {reason}"
+        Result.Ok(started) -> probeStarted(started)
+
+fn probeStarted(started: __Run) -> String
+    ? "The handle the start left behind, cancelled where it stands."
+    ! [Validation.take, Work.cancel]
+    match Map.get(started.jobs, 1)
+        Option.None -> "the start kept no handle"
+        Option.Some(job) -> probeCancelled(started, Work.cancel(job))
+
+fn probeCancelled(started: __Run, cancelled: Unit) -> String
+    ? "The take of a cancelled job: an error the seam lands in the answer state rather than propagating out of the turn."
+    ! [Validation.take]
+    probeLanded(__takenValidation(started, 1))
+
+fn probeLanded(after: __Run) -> String
+    ? "What that take left behind: no handle, nothing scored, and the reason recorded."
+    "cancelled, then landed: jobs {Map.len(after.jobs)} scored {after.pooled.scored} rejected {List.len(after.pooled.rejected)}"
+
+fn order(view: View) -> List<Int>
+    ? "Every seated process, in slot order."
+    Map.keys(view.pending)
+
+fn admit(view: View, id: Int) -> Bool
+    ? "Everything seated is served."
+    Map.has(view.pending, id)
+
+fn stop(view: View) -> Bool
+    ? "The run ends when the process asked us to."
+    view.stopping
+
+verify probeLanded
+    probeLanded(__reportedValidation(__fresh(), 1, Result.Err("work: job cancelled"))) => "cancelled, then landed: jobs 0 scored 0 rejected 1"
+    probeLanded(__reportedValidation(__fresh(), 1, Result.Ok(Option.Some(4)))) => "cancelled, then landed: jobs 0 scored 4 rejected 0"

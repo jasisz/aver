@@ -1,7 +1,7 @@
 module Node
     intent = "The follow slice as processes: a peer, a walk, an accepting process, a dialling process and a ticker, with three policies over one view. The loop between them is generated."
     depends [Bytes, Wait, Work, Wire, Pool, Blocks, Chain, Clock, Validation, Sockets, Ledger, Clocked]
-    effects [Wire.accept, Wire.dialled, Wire.read, Wire.write, Pool.claim, Pool.gone, Pool.joined, Pool.swept, Blocks.deliver, Blocks.body, Chain.nextTarget, Chain.commit, Clock.tick, Console.print, yield]
+    effects [Wire.accept, Wire.dialled, Wire.read, Wire.write, Wire.writes, Pool.claim, Pool.gone, Pool.joined, Pool.swept, Blocks.deliver, Blocks.body, Chain.nextTarget, Chain.commit, Clock.tick, Console.print, yield]
     exposes [Pending, View, order, admit, stop]
 
 type Pending
@@ -38,12 +38,23 @@ fn dialling() -> Unit
             Pool.Welcome.Refused -> dialling()
 
 fn ticker() -> Unit
-    ? "One sweep of the pool per tick, until the clock closes."
-    ! [Clock.tick, Pool.swept, yield]
+    ? "One sweep of the pool per tick, until the clock closes. It is the last process to finish, so it is the one that says what the clock and the wire did over the run."
+    ! [Clock.tick, Pool.swept, Wire.writes, Console.print, yield]
     match Clock.tick()
-        Clock.Tick.Closed -> Unit
+        Clock.Tick.Closed(asks) -> reportRun(asks, Wire.writes())
         Clock.Tick.Tock -> match Pool.swept()
             Pool.Sweep.Swept(_) -> ticker()
+
+fn reportRun(asks: Int, tally: Wire.Tally) -> Unit
+    ? "What the clock and the wire did over this run, once the clock has closed."
+    ! [Console.print]
+    match tally
+        Wire.Tally.Counted(payloads, writeAsks) -> reported(asks, payloads, writeAsks)
+
+fn reported(asks: Int, payloads: Int, writeAsks: Int) -> Unit
+    ? "The one line a run of this slice ends with."
+    ! [Console.print]
+    Console.print("ticker: asked {asks} times; sockets: {payloads} payloads took {writeAsks} asks")
 
 fn peer() -> Unit
     ? "Ask the pool what to fetch, ask that peer for it, hand the body over, go round."
