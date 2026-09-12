@@ -823,7 +823,12 @@ fn emit_inner_eq_dispatch(
         }
         // jasisz/aver#1329 — two job handles are the same job exactly when
         // they are the same reference. A `Wait.Item.Job` reaches here through
-        // every answered capability's generated reply sum.
+        // every answered capability's generated reply sum. Reference equality
+        // agrees with the VM's, whose handle identity is the `id` field this
+        // backend hashes on, only while one job owns exactly one struct; the
+        // lowering that mints handles must keep that, and must not rebuild a
+        // handle from a recorded id. See `TODO(owner)` in
+        // `src/capability/work.rs`.
         crate::capability::work::WORK_JOB => {
             f.instruction(&Instruction::RefEq);
         }

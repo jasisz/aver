@@ -2072,7 +2072,7 @@ pub(super) fn emit_record_eq_inline(
                 f.instruction(&Instruction::I32Eq);
             }
             // jasisz/aver#1329 — two job handles are the same job exactly
-            // when they are the same reference.
+            // when they are the same reference; one job owns one struct.
             crate::capability::work::WORK_JOB => {
                 f.instruction(&Instruction::RefEq);
             }
@@ -2207,7 +2207,8 @@ pub(super) fn emit_sum_eq_inline(
                         f.instruction(&Instruction::I32Eq);
                     }
                     // jasisz/aver#1329 — two job handles are the same job
-                    // exactly when they are the same reference.
+                    // exactly when they are the same reference; one job owns
+                    // one struct.
                     crate::capability::work::WORK_JOB => {
                         f.instruction(&Instruction::RefEq);
                     }

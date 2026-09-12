@@ -309,6 +309,24 @@ pub fn gate(
     // lowering leaves behind data and pure functions, and the wasm targets
     // represent every type those reach. Only the two questions below are
     // still the VM's and the Rust backend's alone.
+    //
+    // The first of the two is a backstop, not the refusal a user reads. A
+    // program that performs `Wait.poll` or `Work.cancel` and declares no job
+    // kind is stopped before this gate by `capability_target_rejection` in
+    // `src/main/commands.rs`, which reports
+    // `error[capability-target-unsupported]` with
+    // `reason[standard-binding-unavailable]`, because the target manifest
+    // binds neither reserved contract on either wasm target. That earlier
+    // refusal is the one `docs/diagnostics-slugs.md` sends such a user to.
+    // This branch stands for the day a wasm target binds part of `Wait` or
+    // `Work` while jobs themselves are still the VM's.
+    //
+    // TODO(owner): jasisz/aver#1329 — decisions 1, 3, 4 and 6 of
+    // `prompts/wasm-inline-jobs-brief.md` (a job run inline at `begin`,
+    // `Wait.poll` over `Socket` and `Job` items, `Work.cancel`, and the
+    // recording replayed without recomputation) are not built. Both
+    // refusals below stand until they are, and decision 5 — this gate
+    // accepting all four targets — waits on them.
     if !target.runs_jobs()
         && shapes.is_empty()
         && let Some(reserved) = reserved_contract_performed(registry, fn_sigs)

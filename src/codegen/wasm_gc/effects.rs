@@ -934,9 +934,18 @@ mod certificate_format_tests {
                 continue;
             }
             // `Wait` and `Work` are answered by the VM and the Rust backend
-            // in this build: a program that depends on either is refused
-            // before codegen on both wasm targets (`work-target`), so no
-            // route exists yet.
+            // in this build. The capability target manifest binds neither on
+            // either wasm target, so a program that performs one of their
+            // operations is refused before codegen with
+            // `error[capability-target-unsupported]`
+            // (`reason[standard-binding-unavailable]`), and a program that
+            // declares a job kind with `error[work-target]`. Nothing reaches
+            // a lowering, so no route exists yet.
+            //
+            // TODO(owner): jasisz/aver#1329 — decisions 3 and 4 of
+            // `prompts/wasm-inline-jobs-brief.md` give `Wait.poll` and
+            // `Work.cancel` a wasm-gc and wasip2 lowering. This skip is what
+            // decision 5 asks to delete, and it goes with them, not before.
             if crate::stdlib::RESERVED_CAPABILITY_MODULES.contains(&operation.module.as_str()) {
                 continue;
             }
