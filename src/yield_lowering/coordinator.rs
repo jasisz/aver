@@ -1077,6 +1077,17 @@ fn write_laws(protocols: &[ProcessProtocol]) -> String {
             ids.join(", "),
             ids.join(", ")
         ));
+        // The other side of the same gate: a reading that has fallen back
+        // further than the request asked for makes the slot askable again.
+        // Without this the branch that keeps a backwards clock from
+        // stranding a request is asserted by no law at all — the law above
+        // guards it out, because its premise is exactly its negation.
+        out.push_str("\nfn __steppedBack(slot: __Slot, now: Int) -> Bool\n    ? \"Why a parked request is asked again although its deadline has not been reached: the clock reading has fallen back behind the moment the request was parked, so the reading the deadline was set against will never come.\"\n    match slot.waiting\n        Wait.Wake.NextTurn -> false\n        Wait.Wake.Item(_) -> false\n        Wait.Wake.After(_) -> now < slot.due - slot.ms\n");
+        out.push_str(&format!(
+            "\nverify __askableSlot law aBackwardsClockNeverStrandsARequest\n    given slot: __Slot = [__parked(__sampleSlot(), Wait.Wake.After(5), 0), __parked(__sampleSlot(), Wait.Wake.NextTurn, 0)]\n    given ready: List<Int> = [[], [{}]]\n    given id: Int = [{}]\n    given now: Int = [0 - 5000, 0 - 1, 0, 4]\n    when __steppedBack(slot, now)\n    because __steppedBack(slot, now)\n    __askableSlot(slot, ready, id, now) => true\n",
+            ids.join(", "),
+            ids.join(", ")
+        ));
     }
     out.push_str("\nverify __nextInstance law theNextInstanceIsHigher\n    given seq: Int = [0, 1, 7]\n    __nextInstance(seq) > seq holds\n");
     // The wait a deadline contributes is never longer than the deadline asked

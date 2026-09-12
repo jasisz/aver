@@ -215,6 +215,7 @@ fn the_generated_invariants_and_the_programs_priority_law_hold() {
         "__park law laterKeepsTheInstance",
         "__parked law laterKeepsTheRequest",
         "__nextInstance law theNextInstanceIsHigher",
+        "__askableSlot law aBackwardsClockNeverStrandsARequest",
         "__remaining law theWaitNeverExceedsTheRequest",
         "__settledSlotPeer law nowRaisesTheInstance",
         "__current law theSlotWrittenIsTheSlotRead",
@@ -600,15 +601,17 @@ fn a_process_the_loop_cannot_seat_is_refused_at_every_door() {
 
 /// The laws decision 7 names, on the Lean wall.
 ///
-/// All twenty-seven of the example's laws close as universals: I2 (a late
+/// All twenty-eight of the example's laws close as universals: I2 (a late
 /// answer changes nothing and is counted) and I4's visible half (a `Later`
 /// moves neither the instance number nor any answer state) for every process
 /// and every answer module, I3's per-call half in its two halves — the slot an
 /// answer for the current instance writes back carries a strictly higher
 /// instance number than the one it answered, and the slot written under an id
-/// is the slot read from it — I1 for every process, the wait one deadline
-/// contributes never being longer than the `ms` that deadline asked for, and
-/// the program's own priority law. No law is bounded and none is a `sorry`.
+/// is the slot read from it — I1 for every process, both halves of the
+/// deadline gate — a reading that has not reached the deadline does not ask,
+/// and a reading that has fallen back further than the deadline asked for
+/// does — the wait one deadline contributes never being longer than the `ms`
+/// that deadline asked for, and the program's own priority law. No law is bounded and none is a `sorry`.
 ///
 /// I1's implication was the last one open: a size comparison across one
 /// `Map.set` or one `Map.remove` inside a record update. It needed two facts
@@ -654,7 +657,7 @@ fn the_generated_invariants_reach_the_lean_wall() {
     );
     assert_eq!(
         summary["universal_laws"].as_u64(),
-        Some(27),
+        Some(28),
         "universal-law drift:\n{}",
         format_output(&out)
     );
@@ -674,6 +677,7 @@ fn the_generated_invariants_reach_the_lean_wall() {
     for closed in [
         "__park.laterKeepsTheInstance.implication",
         "__askableSlot.aDeadlineGatesTheAsk.implication",
+        "__askableSlot.aBackwardsClockNeverStrandsARequest.implication",
         "__settlePeer.lateAnswerIsDropped.implication",
         "__settlePeer.lateAnswerIsRecorded.implication",
         "admit.readyPeerBeforeNewJob.implication",
