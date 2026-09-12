@@ -462,27 +462,27 @@ fn a_process_the_loop_cannot_seat_is_refused_at_every_door() {
 
 /// The laws decision 7 names, on the Lean wall.
 ///
-/// Twenty-two of the example's twenty-seven laws close as universals: I2 (a
-/// late answer changes nothing and is counted) and I4's visible half (a
-/// `Later` moves neither the instance number nor any answer state) for every
-/// process and every answer module, I3's per-call half in its two halves —
-/// the slot an answer for the current instance writes back carries a strictly
-/// higher instance number than the one it answered, and the slot written
-/// under an id is the slot read from it — and the program's own priority law.
+/// All twenty-seven of the example's laws close as universals: I2 (a late
+/// answer changes nothing and is counted) and I4's visible half (a `Later`
+/// moves neither the instance number nor any answer state) for every process
+/// and every answer module, I3's per-call half in its two halves — the slot an
+/// answer for the current instance writes back carries a strictly higher
+/// instance number than the one it answered, and the slot written under an id
+/// is the slot read from it — I1 for every process, and the program's own
+/// priority law. No law is bounded and none is a `sorry`.
 ///
-/// The five that stay open are I1's implication, one per process: it is a size
-/// comparison across one `Map.set` or one `Map.remove`, and the Lean prelude
-/// carries `AverMap.len_set_ge` — the length never shrinks — but no fact that a
-/// set on a key already present keeps it. The proposal expected exactly this
-/// one to stay open on the first cut. The word for its status is `sorry`, not
-/// bounded: `bounded_laws` is zero.
+/// I1's implication was the last one open: a size comparison across one
+/// `Map.set` or one `Map.remove` inside a record update. It needed two facts
+/// the prelude did not carry — a set under a key the map already holds does
+/// not move the size, and a removal never grows a map — the first of which was
+/// not even true of the old map model, whose `set` could insert a second entry
+/// for a key already present in an unsorted list. The model's `set` is now
+/// key-canonical and both facts ship; the `because` supplies the membership.
 ///
 /// The composed statement of I3 — `__current` after `__settled` is strictly
-/// higher — is deliberately not generated: measured, it fails on the wall for
-/// the same missing one-key `Map.set` fact, because nothing reachable from a
-/// `because` step rewrites `Map.get(Map.set(m, k, v), k)` inside a record
-/// update. The two halves above are each universal and say the same thing to a
-/// reader; composing them is the wall's work, not this leg's.
+/// higher — is still generated as two halves. That split was made for the same
+/// missing one-key `Map.set` fact, so it may no longer be needed; re-measuring
+/// the composed sentence belongs to the coordinator generator, not here.
 #[test]
 fn the_generated_invariants_reach_the_lean_wall() {
     if Command::new("lake").arg("--version").output().is_err() {
@@ -498,7 +498,7 @@ fn the_generated_invariants_reach_the_lean_wall() {
     command.arg("--backend").arg("lean");
     command.arg("-o").arg(&out_dir);
     command.arg("--check").arg("--check-json");
-    command.arg("--sorry-budget").arg("5");
+    command.arg("--sorry-budget").arg("0");
     let out = command.output().expect("aver proves");
     let json = String::from_utf8_lossy(&out.stdout);
     let line = json
@@ -515,7 +515,7 @@ fn the_generated_invariants_reach_the_lean_wall() {
     );
     assert_eq!(
         summary["universal_laws"].as_u64(),
-        Some(22),
+        Some(27),
         "universal-law drift:\n{}",
         format_output(&out)
     );
@@ -527,7 +527,7 @@ fn the_generated_invariants_reach_the_lean_wall() {
     );
     assert_eq!(
         summary["sorries"].as_u64(),
-        Some(5),
+        Some(0),
         "sorry drift:\n{}",
         format_output(&out)
     );
@@ -548,8 +548,8 @@ fn the_generated_invariants_reach_the_lean_wall() {
     }
     assert_eq!(
         obligations["__settlePeer.oneSlotPerProcess.implication"].as_str(),
-        Some("failed"),
-        "I1 closed — lower the budget and say so:\n{}",
+        Some("universal"),
+        "I1 reopened — the one-key `Map.set` size fact stopped reaching it:\n{}",
         format_output(&out)
     );
     let _ = std::fs::remove_dir_all(&out_dir);

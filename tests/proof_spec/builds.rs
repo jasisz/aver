@@ -238,6 +238,24 @@ fn proof_export_builds_map_set_nonempty_when_lake_is_available() {
 }
 
 #[test]
+fn proof_export_builds_map_set_inside_a_record_update_when_lake_is_available() {
+    // The store lives in a field of a record, so both laws cross a `Map.set`
+    // written as `Store.update(store, slots = Map.set(store.slots, id, v))`.
+    // `size.seatedWriteKeepsTheSize` needs the size not to move across a set
+    // under a key the map already holds (`AverMap.len_set_of_has`, with the
+    // membership carried by the `because`); `look.theSlotWrittenIsTheSlotRead`
+    // needs the read-back and the membership after the write. Sorry budget 0.
+    // Two things regress it: dropping the `RecordUpdate` arm from the builtin
+    // registry walk (no map fact is cited at all), and reverting the map
+    // model's key-canonical `set` (the size fact stops being true).
+    assert_proof_builds_with_sorry_budget(
+        "tests/fixtures/map_in_record_laws.av",
+        "aver-proof-map-in-record-laws",
+        0,
+    );
+}
+
+#[test]
 fn proof_export_builds_frac_monotone_geone_flip_when_lake_is_available() {
     if Command::new("lake").arg("--version").output().is_err() {
         eprintln!("skipping frac-monotone ge-one flip proof test: `lake` not available");
