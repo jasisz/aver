@@ -650,7 +650,13 @@ max-jobs = 4
 
 Recording a turn records `begin` with its task and the handle it minted, `take` with the answer it gave, and `poll` with the keys it reported, exactly as `Tcp.dial` records a `Dial`. Replaying it hands the program the recorded answers back in the turns they were recorded in — a faster or slower machine must not move a result into a different turn — and runs the bound function again beside them, because a job is pure and recomputing it is the check worth having. When a recorded `take` said `Some(v)` and the recomputation produces a different value, replay stops and names the job kind, the job and both values. A job whose recording ends before anything took it is cancelled when the recording ends.
 
-Only the bytecode VM answers a job in this build. `aver compile --target rust`, `--target wasm-gc`, `--target wasip2` and `aver run --wasm-gc` / `--wasip2` refuse a program with a job kind with `error[work-target]`; those backends follow later.
+#### On the Rust backend
+
+`aver compile --target rust` accepts a program with a job kind and the binary it builds behaves as the VM does on the same program. The job engine is the one in `aver-rt`, so `begin` starts a thread, `take` gives the same four answers in the same words, `Wait.poll` watches sockets through the same reactor and jobs through the same engine, and `[work] max-jobs` reaches the binary from the manifest when it is compiled — a manifest that names no limit leaves the running host's own parallelism, read where the binary runs rather than where it was built. The bound function is compiled into the same crate, so a job is one call rather than a second interpreter.
+
+Two differences from the VM are worth knowing, and neither is a difference in what a program reads. `Work.cancel` drops the job's answer and sets its cancellation flag, but generated Rust carries no cancellation check, so the thread runs to completion in the background: on the Rust backend cancelling detaches the work rather than stopping it, and the process exits without waiting for it. And replaying a recording serves the recorded answers without recomputing the job beside them, so the divergence check the VM makes is a VM check for now.
+
+`--target wasm-gc`, `--target wasip2` and `aver run --wasm-gc` / `--wasip2` still refuse a program with a job kind with `error[work-target]`; those two backends follow later.
 
 ### Capabilities the program answers — `answer`, `task`, `landed` and `[run]`
 
