@@ -58,15 +58,72 @@ pub struct WorkProvider {
     base: OnceLock<Arc<WorkBaseContext>>,
     identity: String,
     /// Jobs recomputed during replay, keyed by the trace token the recording
-    /// gave the handle that started them.
-    replayed: std::sync::Mutex<std::collections::BTreeMap<u64, aver_rt::work::Job>>,
+    /// gave the handle that started them. Bounded like the engine's own dead
+    /// slots: a recording long enough to pass the bound has already replayed
+    /// its oldest jobs.
+    replayed: std::sync::Mutex<BoundedJobs>,
     /// The jobs this job kind started itself.
     ///
     /// Every job kind of a program shares one engine, and `Work.Job` is one
     /// stdlib type, so a handle minted by one kind type-checks as an argument
     /// to another kind's `take`. Nothing but the runtime can tell them apart,
     /// so the runtime remembers whose job is whose.
-    minted: std::sync::Mutex<std::collections::BTreeSet<u64>>,
+    ///
+    /// Bounded the same way the engine bounds its dead slots: an id that
+    /// leaves this set names a job whose slot the engine has forgotten too,
+    /// so `take` answers `work: unknown job` rather than claiming another
+    /// kind started it.
+    minted: std::sync::Mutex<BoundedIds>,
+}
+
+/// The ids one job kind minted, oldest first, bounded by the number of dead
+/// slots the engine itself keeps.
+#[derive(Default)]
+struct BoundedIds {
+    order: std::collections::VecDeque<u64>,
+    ids: std::collections::BTreeSet<u64>,
+}
+
+impl BoundedIds {
+    fn insert(&mut self, id: u64) {
+        if !self.ids.insert(id) {
+            return;
+        }
+        self.order.push_back(id);
+        while self.order.len() > aver_rt::work::DEAD_SLOT_LIMIT
+            && let Some(oldest) = self.order.pop_front()
+        {
+            self.ids.remove(&oldest);
+        }
+    }
+
+    fn contains(&self, id: u64) -> bool {
+        self.ids.contains(&id)
+    }
+}
+
+/// The jobs a replay recomputed, keyed by trace token, bounded the same way.
+#[derive(Default)]
+struct BoundedJobs {
+    order: std::collections::VecDeque<u64>,
+    jobs: std::collections::BTreeMap<u64, aver_rt::work::Job>,
+}
+
+impl BoundedJobs {
+    fn insert(&mut self, token: u64, job: aver_rt::work::Job) {
+        if self.jobs.insert(token, job).is_none() {
+            self.order.push_back(token);
+        }
+        while self.order.len() > aver_rt::work::DEAD_SLOT_LIMIT
+            && let Some(oldest) = self.order.pop_front()
+        {
+            self.jobs.remove(&oldest);
+        }
+    }
+
+    fn get(&self, token: u64) -> Option<aver_rt::work::Job> {
+        self.jobs.get(&token).cloned()
+    }
 }
 
 /// A job's task and its result are ordinary data; the Work shape check has
@@ -103,8 +160,8 @@ impl WorkProvider {
             engine,
             base: OnceLock::new(),
             identity: format!("aver.work.{capability}/vm"),
-            replayed: std::sync::Mutex::new(std::collections::BTreeMap::new()),
-            minted: std::sync::Mutex::new(std::collections::BTreeSet::new()),
+            replayed: std::sync::Mutex::new(BoundedJobs::default()),
+            minted: std::sync::Mutex::new(BoundedIds::default()),
         }
     }
 
@@ -240,12 +297,12 @@ impl WorkProvider {
     fn started_here(&self, id: u64) -> bool {
         self.minted
             .lock()
-            .map(|minted| minted.contains(&id))
+            .map(|minted| minted.contains(id))
             .unwrap_or(false)
     }
 
     fn replayed_job(&self, token: u64) -> Option<aver_rt::work::Job> {
-        self.replayed.lock().ok()?.get(&token).cloned()
+        self.replayed.lock().ok()?.get(token)
     }
 
     /// What the recomputed job holds, without collecting it, as an Aver value.
@@ -398,4 +455,39 @@ pub fn boundary_types(contracts: &CapabilityRegistry, capability: &str) -> Optio
         _ => return None,
     };
     Some((task, payload))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The ids a job kind remembers are bounded: past the bound the oldest
+    /// is forgotten, and the id it named is one the engine has forgotten
+    /// too, so `take` answers "unknown job" rather than growing for ever.
+    #[test]
+    fn minted_ids_are_bounded_and_forget_the_oldest_first() {
+        let bound = aver_rt::work::DEAD_SLOT_LIMIT as u64;
+        let mut minted = BoundedIds::default();
+        for id in 1..=bound {
+            minted.insert(id);
+        }
+        assert!(minted.contains(1));
+        assert!(minted.contains(bound));
+
+        minted.insert(bound + 1);
+        assert!(!minted.contains(1), "the oldest id outlived the bound");
+        assert!(minted.contains(2));
+        assert!(minted.contains(bound + 1));
+    }
+
+    /// Minting the same id twice is one entry, so a repeated id cannot push
+    /// the bound's worth of live ids out.
+    #[test]
+    fn minting_the_same_id_twice_keeps_one_entry() {
+        let mut minted = BoundedIds::default();
+        minted.insert(7);
+        minted.insert(7);
+        assert_eq!(minted.order.len(), 1);
+        assert!(minted.contains(7));
+    }
 }

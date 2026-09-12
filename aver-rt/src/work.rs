@@ -8,7 +8,7 @@
 //! answer is a [`ProviderValue`], so the same table serves the bytecode VM
 //! today and a generated artifact later.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
@@ -25,6 +25,15 @@ pub type JobBody = Box<dyn FnOnce(Arc<AtomicBool>) -> JobOutcome + Send>;
 
 /// How long a shutting-down engine waits for the jobs it just cancelled.
 const SHUTDOWN_GRACE: Duration = Duration::from_millis(250);
+
+/// How many dead slots — collected or cancelled jobs — the table keeps.
+///
+/// A dead slot is kept so a second `take` can say "already taken" rather
+/// than "unknown job", and that answer is worth keeping; keeping it for
+/// every job a long-running program ever started is not. Past this many,
+/// the oldest dead slot is forgotten and its id answers `work: unknown job`
+/// again.
+pub const DEAD_SLOT_LIMIT: usize = 4096;
 
 /// Something a settling job should wake. A wait that is already blocked on
 /// sockets cannot also block on the engine's condition variable, so it leaves
@@ -53,6 +62,23 @@ struct JobTable {
     /// Bumped whenever a job settles. A waiter that observed generation `g`
     /// and finds it unchanged knows nothing settled while it slept.
     settled: u64,
+    /// The ids of the dead slots, oldest first, bounded by
+    /// [`DEAD_SLOT_LIMIT`].
+    dead: VecDeque<u64>,
+}
+
+impl JobTable {
+    /// Record one slot as dead and forget the oldest dead slots past the
+    /// bound. Only a slot that has just become dead is passed here, so an
+    /// id never appears twice.
+    fn retire(&mut self, id: u64) {
+        self.dead.push_back(id);
+        while self.dead.len() > DEAD_SLOT_LIMIT {
+            if let Some(oldest) = self.dead.pop_front() {
+                self.jobs.remove(&oldest);
+            }
+        }
+    }
 }
 
 /// One program's running jobs.
@@ -235,19 +261,34 @@ impl JobEngine {
             .map_err(|_| "work: the job table is poisoned".to_string())
     }
 
-    /// Collect a job's answer. `Ok(None)` means it is still running.
+    /// Collect a job's answer. `Ok(None)` means it is still running, and
+    /// the handle stays usable: a job reported ready that has not finished
+    /// is collected in a later turn.
+    ///
+    /// A job whose slot was already forgotten — more than
+    /// [`DEAD_SLOT_LIMIT`] jobs have died since it was collected — answers
+    /// `work: unknown job`.
     pub fn take(&self, id: u64) -> Result<Option<ProviderValue>, String> {
         let mut table = self.lock()?;
         let Some(slot) = table.jobs.get_mut(&id) else {
             return Err("work: unknown job".to_string());
         };
-        match std::mem::replace(&mut slot.state, JobState::Taken) {
+        // A job that had finished becomes a dead slot here, so this is where
+        // its id joins the bounded tombstone list.
+        let mut retired = false;
+        let answer = match std::mem::replace(&mut slot.state, JobState::Taken) {
             JobState::Running => {
                 slot.state = JobState::Running;
                 Ok(None)
             }
-            JobState::Finished(Ok(value)) => Ok(Some(value)),
-            JobState::Finished(Err(message)) => Err(message),
+            JobState::Finished(Ok(value)) => {
+                retired = true;
+                Ok(Some(value))
+            }
+            JobState::Finished(Err(message)) => {
+                retired = true;
+                Err(message)
+            }
             JobState::Cancelled => {
                 slot.state = JobState::Cancelled;
                 Err("work: job cancelled".to_string())
@@ -256,7 +297,11 @@ impl JobEngine {
                 slot.state = JobState::Taken;
                 Err("work: job already taken".to_string())
             }
+        };
+        if retired {
+            table.retire(id);
         }
+        answer
     }
 
     /// The same answer without consuming it.
@@ -282,12 +327,17 @@ impl JobEngine {
         let Ok(mut table) = self.table.lock() else {
             return;
         };
+        let mut retired = false;
         if let Some(slot) = table.jobs.get_mut(&id) {
             slot.cancel.store(true, Ordering::Relaxed);
             if !matches!(slot.state, JobState::Taken) {
+                retired = !matches!(slot.state, JobState::Cancelled);
                 slot.state = JobState::Cancelled;
             }
             table.settled += 1;
+        }
+        if retired {
+            table.retire(id);
         }
         drop(table);
         self.settled.notify_all();
@@ -500,6 +550,54 @@ mod tests {
         // The slot the stopped job held is free again, so the limit did not
         // leak it.
         assert!(engine.begin(Box::new(|_| Ok(value(1)))).is_ok());
+    }
+
+    /// The table answers "already taken" out of a bounded number of dead
+    /// slots. Past the bound the oldest is forgotten and its id is unknown
+    /// again, so a long-running program's job table does not grow for ever.
+    #[test]
+    fn the_oldest_dead_slot_is_forgotten_and_the_newest_still_answers() {
+        let engine = JobEngine::new(8);
+        let collect = |engine: &Arc<JobEngine>| {
+            let job = engine.begin(Box::new(|_| Ok(value(1)))).expect("begin");
+            settled(engine, job.id());
+            assert!(matches!(job.take(), Ok(Some(_))));
+            job
+        };
+        let oldest = collect(&engine);
+        assert_eq!(
+            oldest.take().err(),
+            Some("work: job already taken".to_string()),
+            "a just-collected job still says it was taken"
+        );
+        let mut newest = None;
+        for _ in 0..DEAD_SLOT_LIMIT {
+            newest = Some(collect(&engine));
+        }
+        assert_eq!(
+            oldest.take().err(),
+            Some("work: unknown job".to_string()),
+            "the oldest dead slot outlived the bound"
+        );
+        assert_eq!(
+            newest.expect("the last job").take().err(),
+            Some("work: job already taken".to_string()),
+            "the newest dead slot was forgotten"
+        );
+    }
+
+    /// Cancelled slots are bounded the same way, and cancelling twice still
+    /// adds only one tombstone.
+    #[test]
+    fn a_cancelled_slot_is_one_tombstone_however_often_it_is_cancelled() {
+        let engine = JobEngine::new(4);
+        let job = engine.begin(Box::new(|_| Ok(value(2)))).expect("begin");
+        settled(&engine, job.id());
+        job.cancel();
+        job.cancel();
+        job.cancel();
+        let dead = engine.table.lock().expect("the table").dead.len();
+        assert_eq!(dead, 1, "cancelling one job left {dead} tombstones");
     }
 
     #[test]
