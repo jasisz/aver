@@ -929,8 +929,10 @@ fn assert_lean_check_clean(fixture_name: &str, lean_file: &str, names: &[&str]) 
         eprintln!("skipping yield Lean check: `lake` not available");
         return;
     }
+    // The fixture's own name, because these checks run beside each other and
+    // each one removes its directory when it is done.
     let output_dir = std::env::temp_dir().join(format!(
-        "aver-yield-lean-{}",
+        "aver-yield-lean-{fixture_name}-{}",
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())
