@@ -10,6 +10,7 @@ type Pending
 record View
     pending: Map<Int, Pending>
     ready: List<Int>
+    askable: List<Int>
     jobs: Int
     stopping: Bool
 

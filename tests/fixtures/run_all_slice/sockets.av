@@ -1,17 +1,20 @@
 module Sockets
-    intent = "The answers this program gives to Wire: who has arrived, and the one payload each peer is holding."
+    intent = "The answers this program gives to Wire: who has arrived, how far each payload has been written, and the one payload each peer is holding."
     depends [Bytes, Wait, Wire]
-    exposes [State, fresh, accept, dialled, read, write]
+    exposes [State, fresh, accept, dialled, read, write, writes]
     effects []
 
 record State
     inbound: List<Int>
     outbound: List<Int>
     wanted: Map<Int, Bytes>
+    holding: Map<Int, Bytes>
+    asked: Int
+    done: Int
 
 fn fresh() -> State
-    ? "Two peers waiting on the listener, one dial about to settle, and nothing asked for yet."
-    State(inbound = [1, 2], outbound = [3], wanted = {})
+    ? "Two peers waiting on the listener, one dial about to settle, nothing asked for yet and nothing written."
+    State(inbound = [1, 2], outbound = [3], wanted = {}, holding = {}, asked = 0, done = 0)
 
 fn accept(state: State) -> Tuple<State, Wire.__AcceptReply>
     ? "The next peer the listener has, or Closed once it has handed over the last one."
@@ -36,8 +39,26 @@ fn heard(state: State, key: Int, held: Option<Bytes>) -> Tuple<State, Wire.__Rea
         Option.Some(payload) -> (State.update(state, wanted = Map.remove(state.wanted, key)), Wire.__ReadReply.Now(Wire.Heard.Data(payload)))
 
 fn write(state: State, key: Int, payload: Bytes) -> Tuple<State, Wire.__WriteReply>
-    ? "Hands a whole payload to one peer and remembers what it was asked for."
-    (State.update(state, wanted = Map.set(state.wanted, key, payload)), Wire.__WriteReply.Now(Result.Ok(Unit)))
+    ? "One ask at one peer's write. A socket takes what it has room for and no more, so the first ask takes half the payload, records how far it got and parks; the ask after that sends the rest and answers. The offset lives in this state because a Later keeps what the module returned."
+    writing(State.update(state, asked = state.asked + 1), key, payload, Map.get(state.holding, key))
+
+fn writing(state: State, key: Int, payload: Bytes, sofar: Option<Bytes>) -> Tuple<State, Wire.__WriteReply>
+    ? "One ask, against how much of this payload the peer has already taken."
+    match sofar
+        Option.None -> (State.update(state, holding = Map.set(state.holding, key, Bytes.take(payload, half(payload)))), Wire.__WriteReply.Later(Wait.Wake.NextTurn))
+        Option.Some(head) -> (finished(state, key, Bytes.concat(head, Bytes.drop(payload, half(payload)))), Wire.__WriteReply.Now(Result.Ok(Unit)))
+
+fn finished(state: State, key: Int, whole: Bytes) -> State
+    ? "The state one finished write leaves behind: the peer is holding exactly the bytes that were written to it, and this wire has one more payload behind it."
+    State.update(state, holding = Map.remove(state.holding, key), wanted = Map.set(state.wanted, key, whole), done = state.done + 1)
+
+fn half(payload: Bytes) -> Int
+    ? "How much of one payload this socket has room for on the first ask: half of it, rounded down."
+    Bits.shiftRight(Bytes.len(payload), 1)
+
+fn writes(state: State) -> Tuple<State, Wire.__WritesReply>
+    ? "How many payloads this wire has written and how many asks that took."
+    (state, Wire.__WritesReply.Now(Wire.Tally.Counted(state.done, state.asked)))
 
 verify accept
     accept(fresh()) => (State.update(fresh(), inbound = [2]), Wire.__AcceptReply.Now(Wire.Arrival.Peer(1)))
@@ -50,3 +71,21 @@ verify dialled
 verify heard
     heard(fresh(), 1, Option.None) => (fresh(), Wire.__ReadReply.Now(Wire.Heard.Failed("peer 1 was asked for nothing")))
     heard(State.update(fresh(), wanted = Map.set({}, 1, String.toUtf8("block 1"))), 1, Option.Some(String.toUtf8("block 1"))) => (fresh(), Wire.__ReadReply.Now(Wire.Heard.Data(String.toUtf8("block 1"))))
+
+verify half
+    half(String.toUtf8("block 1")) => 3
+    half(String.toUtf8("")) => 0
+
+verify write
+    write(fresh(), 1, String.toUtf8("block 1")) => (State.update(fresh(), asked = 1, holding = Map.set({}, 1, String.toUtf8("blo"))), Wire.__WriteReply.Later(Wait.Wake.NextTurn))
+    write(State.update(fresh(), asked = 1, holding = Map.set({}, 1, String.toUtf8("blo"))), 1, String.toUtf8("block 1")) => (State.update(fresh(), asked = 2, done = 1, wanted = Map.set({}, 1, String.toUtf8("block 1"))), Wire.__WriteReply.Now(Result.Ok(Unit)))
+
+verify writing
+    writing(State.update(fresh(), asked = 1), 1, String.toUtf8("block 1"), Option.None) => (State.update(fresh(), asked = 1, holding = Map.set({}, 1, String.toUtf8("blo"))), Wire.__WriteReply.Later(Wait.Wake.NextTurn))
+    writing(State.update(fresh(), asked = 2, holding = Map.set({}, 1, String.toUtf8("blo"))), 1, String.toUtf8("block 1"), Option.Some(String.toUtf8("blo"))) => (State.update(fresh(), asked = 2, done = 1, wanted = Map.set({}, 1, String.toUtf8("block 1"))), Wire.__WriteReply.Now(Result.Ok(Unit)))
+
+verify finished
+    finished(fresh(), 1, String.toUtf8("block 1")) => State.update(fresh(), done = 1, wanted = Map.set({}, 1, String.toUtf8("block 1")))
+
+verify writes
+    writes(State.update(fresh(), asked = 6, done = 3)) => (State.update(fresh(), asked = 6, done = 3), Wire.__WritesReply.Now(Wire.Tally.Counted(3, 6)))

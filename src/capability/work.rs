@@ -1017,8 +1017,18 @@ fn check_job_seam(
             ));
         }
         if let Some(landed) = &binding.landed {
-            let expected =
-                |state: &Type| (vec![state.clone(), shape.payload.clone()], state.clone());
+            // A job that was cancelled, whose body stopped, or whose id the
+            // engine has forgotten has no payload to land, and the run goes
+            // on: the outcome reaches the answer state as the error it is.
+            let expected = |state: &Type| {
+                (
+                    vec![
+                        state.clone(),
+                        Type::Result(Box::new(shape.payload.clone()), Box::new(Type::Str)),
+                    ],
+                    state.clone(),
+                )
+            };
             errors.extend(check_seam_function(
                 binding,
                 "landed",
@@ -1325,7 +1335,14 @@ operation take(job: Work.Job) -> Result<Option<Int>, String>
         );
         sigs.insert(
             "Ledger.validated".to_string(),
-            (vec![state(), Type::Int], state(), Vec::new()),
+            (
+                vec![
+                    state(),
+                    Type::Result(Box::new(Type::Int), Box::new(Type::Str)),
+                ],
+                state(),
+                Vec::new(),
+            ),
         );
         sigs.insert(
             "Node.validate".to_string(),

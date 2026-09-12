@@ -87,6 +87,81 @@ fn the_slice_runs_to_the_end_on_the_vm_with_nothing_written_between_its_processe
     );
 }
 
+/// The wake gates the ask, measured on the two answer modules that park.
+///
+/// `Sockets.write` takes half a payload on the first ask, records how far it
+/// got and parks; the ask after that sends the rest. The peer writes three
+/// bodies, so three payloads take exactly six asks — two each — and the third
+/// body reaches the chain, which is how the run gets to its end at all: a
+/// second half that never arrived would leave the walk without its last body.
+///
+/// `Clocked.tick` arms a fifty-millisecond deadline on the first ask of every
+/// tick and answers the tick on the ask after it. Four ticks are two asks each
+/// and the closing ask is the ninth, so nine is what the deadline allows over
+/// this run. Without the gate the ticker would be asked once per turn, and
+/// this run has far more turns than that.
+#[test]
+fn a_parked_request_is_asked_again_only_when_its_wake_has_fired() {
+    let out = aver(SLICE, &["run"]);
+    assert!(out.status.success(), "{}", format_output(&out));
+    assert!(
+        combined(&out).contains("ticker: asked 9 times; sockets: 3 payloads took 6 asks"),
+        "{}",
+        format_output(&out)
+    );
+}
+
+/// A job that will never produce a result reaches `landed` as the error it is:
+/// the answer state records the rejection, the handle leaves the table, and
+/// the run reaches its end instead of stopping on the take.
+#[test]
+fn a_cancelled_job_lands_as_an_error_and_the_run_goes_on() {
+    let out = aver("run_failed_job", &["run"]);
+    assert!(out.status.success(), "{}", format_output(&out));
+    assert!(
+        combined(&out).contains("cancelled, then landed: jobs 0 scored 0 rejected 1"),
+        "{}",
+        format_output(&out)
+    );
+}
+
+/// The other half of the wake gate, over a real job handle: a request parked
+/// on `Item(Job(...))` is asked in a turn whose wait reported its key, and in
+/// no other turn. No law can sample this one — a job handle is a resource a
+/// law cannot write down — so the fixture reads the gate against a live
+/// handle instead.
+#[test]
+fn a_request_parked_on_a_job_is_asked_only_when_the_wait_reports_its_key() {
+    let out = aver("run_failed_job", &["run"]);
+    assert!(out.status.success(), "{}", format_output(&out));
+    assert!(
+        combined(&out).contains("gated on the job"),
+        "{}",
+        format_output(&out)
+    );
+}
+
+/// The same claim without a job engine: the generated seam is pure from the
+/// take's answer onwards, so `aver verify` pins both outcomes of one key and
+/// a law over `take`'s three answers pins that only a failure is recorded as
+/// a rejection.
+#[test]
+fn the_failed_job_slice_verifies_and_checks_clean() {
+    for command in ["check", "verify"] {
+        let out = aver("run_failed_job", &[command]);
+        assert!(out.status.success(), "{command}: {}", format_output(&out));
+    }
+    let verified = combined(&aver("run_failed_job", &["verify"]));
+    assert!(
+        verified.contains("probeLanded"),
+        "the seam's own verify block did not run"
+    );
+    assert!(
+        verified.contains("__reportedValidation law aFailedTakeRecordsARejection"),
+        "the law over take's answers did not run:\n{verified}"
+    );
+}
+
 #[test]
 fn the_slice_checks_clean() {
     let out = aver(SLICE, &["check"]);
@@ -100,7 +175,7 @@ fn the_generated_invariants_and_the_programs_priority_law_hold() {
     let text = combined(&out);
     for law in [
         "__park law laterKeepsTheInstance",
-        "__park law laterLeavesLedgerAlone",
+        "__parked law laterKeepsTheRequest",
         "__nextInstance law theNextInstanceIsHigher",
         "__settledSlotPeer law nowRaisesTheInstance",
         "__current law theSlotWrittenIsTheSlotRead",
@@ -248,9 +323,9 @@ fn the_loop_carries_each_processs_own_effects_and_not_the_programs() {
     for function in [
         "__seatAccepting",
         "__serveAccepting",
-        "__seatTicker",
-        "__serveTicker",
-        "__serveTickerTick",
+        "__seatDialling",
+        "__serveDialling",
+        "__serveDiallingDialled",
     ] {
         assert!(
             declared_effects(&text, function).is_none(),
@@ -267,7 +342,7 @@ fn the_loop_carries_each_processs_own_effects_and_not_the_programs() {
     assert_eq!(
         declared_effects(&text, "main"),
         Some(
-            "Console.print, Process.stopRequested, Validation.begin, Validation.take, Wait.poll, Work.cancel"
+            "Console.print, Process.stopRequested, Time.unixMs, Validation.begin, Validation.take, Wait.poll, Work.cancel"
                 .to_string()
         )
     );
@@ -370,11 +445,11 @@ fn the_false_ready_slice_checks_clean() {
     assert!(out.status.success(), "{}", format_output(&out));
 }
 
-/// The same claim at the lowering: `__taken<Kind>` hands the whole run to
-/// `__landed<Kind>` with the key, and only the arm that carries a result
-/// removes the job.
+/// The same claim at the lowering: `__taken<Kind>` hands the whole run and the
+/// key on, and only an outcome the job will not repeat — a payload or an error
+/// — removes it from the table.
 #[test]
-fn the_generated_take_removes_a_job_only_when_it_carried_a_result() {
+fn the_generated_take_removes_a_job_only_when_its_outcome_is_final() {
     let dir = fixture(SLICE);
     let mut command = Command::new(aver_bin());
     command.current_dir(&dir);
@@ -384,18 +459,22 @@ fn the_generated_take_removes_a_job_only_when_it_carried_a_result() {
     let out = command.output().expect("aver runs");
     let text = combined(&out);
     for line in [
-        "fn __takenValidation(run: __Run, key: Int) -> Result<__Run, String>",
-        "Option.Some(job) -> __landedValidation(run, key, Validation.take(job)?)",
-        "fn __landedValidation(run: __Run, key: Int, result: Option<Int>) -> Result<__Run, String>",
-        "Option.None -> Result.Ok(run)",
-        "Option.Some(payload) -> Result.Ok(__Run.update(run, jobs = Map.remove(run.jobs, key), ledger = Ledger.validated(run.ledger, payload)))",
+        "fn __takenValidation(run: __Run, key: Int) -> __Run",
+        "Option.Some(job) -> __reportedValidation(run, key, (Validation).take(job))",
+        "fn __reportedValidation(run: __Run, key: Int, taken: Result<Option<Int>, String>) -> __Run",
+        "Result.Err(reason) -> __landedValidation(run, key, (Result).Err(reason))",
+        "fn __finishedValidation(run: __Run, key: Int, payload: Option<Int>) -> __Run",
+        "Option.None -> run",
+        "Option.Some(value) -> __landedValidation(run, key, (Result).Ok(value))",
+        "ledger = (Ledger).validated((run).ledger, outcome)",
     ] {
         assert!(text.contains(line), "{line} missing from the dump");
     }
-    // The removal happens where the result is, not before the take.
+    // The take no longer stops the turn on an error: a job that will not land
+    // reaches `landed` as the error it is, and the run goes on.
     assert!(
-        !text.contains("__landedValidation(__Run.update(run, jobs = Map.remove(run.jobs, key))"),
-        "the take still drops the handle before it knows what the job answered"
+        !text.contains("(Validation).take(job)?"),
+        "the take still propagates a job's error out of the turn"
     );
 }
 
@@ -515,7 +594,7 @@ fn the_generated_invariants_reach_the_lean_wall() {
     );
     assert_eq!(
         summary["universal_laws"].as_u64(),
-        Some(27),
+        Some(26),
         "universal-law drift:\n{}",
         format_output(&out)
     );
@@ -534,7 +613,7 @@ fn the_generated_invariants_reach_the_lean_wall() {
     let obligations = &summary["obligations"];
     for closed in [
         "__park.laterKeepsTheInstance.implication",
-        "__park.laterLeavesLedgerAlone.implication",
+        "__askableSlot.aDeadlineGatesTheAsk.implication",
         "__settlePeer.lateAnswerIsDropped.implication",
         "__settlePeer.lateAnswerIsRecorded.implication",
         "admit.readyPeerBeforeNewJob.implication",
@@ -550,6 +629,19 @@ fn the_generated_invariants_reach_the_lean_wall() {
         obligations["__settlePeer.oneSlotPerProcess.implication"].as_str(),
         Some("universal"),
         "I1 reopened — the one-key `Map.set` size fact stopped reaching it:\n{}",
+        format_output(&out)
+    );
+    // The laws with no `when` carry no implication obligation of their own, so
+    // the way to pin that `laterKeepsTheRequest` closed is that nothing at all
+    // is open: no build error, nothing bounded, and an empty sorry list.
+    // The summary leaves `sorry_laws` out when nothing is open.
+    let open: Vec<&str> = summary["sorry_laws"]
+        .as_array()
+        .map(|laws| laws.iter().filter_map(|law| law.as_str()).collect())
+        .unwrap_or_default();
+    assert!(
+        open.is_empty(),
+        "a law is open on the wall: {open:?}\n{}",
         format_output(&out)
     );
     let _ = std::fs::remove_dir_all(&out_dir);
