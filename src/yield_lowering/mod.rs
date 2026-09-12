@@ -275,7 +275,7 @@ pub fn lower(
         // reason, not a second one about a name that was never generated.
         if calls
             .get(name)
-            .is_some_and(|called| called.iter().any(|(callee, _)| failed.contains(callee)))
+            .is_some_and(|called| called.iter().any(|edge| failed.contains(&edge.callee)))
         {
             failed.insert(name.clone());
             continue;
@@ -367,7 +367,7 @@ pub fn lower(
         // invisible to it (decision 6).
         let entered: HashSet<&str> = calls
             .values()
-            .flat_map(|called| called.iter().map(|(callee, _)| callee.as_str()))
+            .flat_map(|called| called.iter().map(|edge| edge.callee.as_str()))
             .collect();
         let seated: Vec<ProcessProtocol> = report
             .protocols
@@ -415,39 +415,50 @@ pub fn lower(
     Ok(report)
 }
 
-/// Which `yield` functions of this module each one calls, with the line of
-/// the first such call. A self call is not an edge: it is the process's own
-/// loop, which stays inside its own machine.
-fn nested_calls(
-    stamped: &[TopLevel],
-    yield_fns: &HashSet<String>,
-) -> std::collections::BTreeMap<String, Vec<(String, usize)>> {
-    let mut calls = std::collections::BTreeMap::new();
+/// One `yield` function of this module calling another: which one, the line
+/// of the first such call, and whether every call site is a tail call.
+struct NestedCall {
+    callee: String,
+    line: usize,
+    only_tail: bool,
+}
+
+/// Which `yield` functions of this module each one calls. A self call is not
+/// an edge: it is the process's own loop, which stays inside its own machine.
+type NestedCalls = std::collections::BTreeMap<String, Vec<NestedCall>>;
+
+fn nested_calls(stamped: &[TopLevel], yield_fns: &HashSet<String>) -> NestedCalls {
+    let mut calls = NestedCalls::new();
     for item in stamped {
         let TopLevel::FnDef(fd) = item else { continue };
         if !is_yield_fn(fd) {
             continue;
         }
-        let mut called: Vec<(String, usize)> = Vec::new();
+        let mut called: Vec<NestedCall> = Vec::new();
         for stmt in fd.body.stmts() {
             let expr = match stmt {
                 Stmt::Binding(_, _, expr) | Stmt::Expr(expr) => expr,
             };
             expr_walk::walk(expr, &mut |e| {
-                let name = match &e.node {
+                let (name, tail) = match &e.node {
                     Expr::FnCall(callee, _) => match &callee.node {
-                        Expr::Ident(name) => Some(name.clone()),
-                        _ => None,
+                        Expr::Ident(name) => (Some(name.clone()), false),
+                        _ => (None, false),
                     },
-                    Expr::TailCall(tc) => Some(tc.target.clone()),
-                    _ => None,
+                    Expr::TailCall(tc) => (Some(tc.target.clone()), true),
+                    _ => (None, false),
                 };
                 let Some(name) = name else { return };
                 if name == fd.name || !yield_fns.contains(&name) {
                     return;
                 }
-                if !called.iter().any(|(other, _)| other == &name) {
-                    called.push((name, e.line));
+                match called.iter_mut().find(|other| other.callee == name) {
+                    Some(edge) => edge.only_tail = edge.only_tail && tail,
+                    None => called.push(NestedCall {
+                        callee: name,
+                        line: e.line,
+                        only_tail: tail,
+                    }),
                 }
             });
         }
@@ -458,9 +469,7 @@ fn nested_calls(
 
 /// Helpers before the processes that enter them. `Err` carries the names on
 /// a cycle, in call order, with the first name repeated at the end.
-fn lowering_order(
-    calls: &std::collections::BTreeMap<String, Vec<(String, usize)>>,
-) -> Result<Vec<String>, Vec<String>> {
+fn lowering_order(calls: &NestedCalls) -> Result<Vec<String>, Vec<String>> {
     let mut order: Vec<String> = Vec::with_capacity(calls.len());
     let mut done: HashSet<String> = HashSet::new();
     for root in calls.keys() {
@@ -472,7 +481,7 @@ fn lowering_order(
 
 fn visit(
     name: &str,
-    calls: &std::collections::BTreeMap<String, Vec<(String, usize)>>,
+    calls: &NestedCalls,
     done: &mut HashSet<String>,
     path: &mut Vec<String>,
     order: &mut Vec<String>,
@@ -487,8 +496,8 @@ fn visit(
     }
     path.push(name.to_string());
     if let Some(called) = calls.get(name) {
-        for (callee, _) in called {
-            visit(callee, calls, done, path, order)?;
+        for edge in called {
+            visit(&edge.callee, calls, done, path, order)?;
         }
     }
     path.pop();
@@ -497,17 +506,21 @@ fn visit(
     Ok(())
 }
 
-/// A cycle among the `yield` functions of one module: nesting would put each
-/// one's state inside the other's, which has no bottom.
-fn mutual_nesting_error(
-    cycle: &[String],
-    calls: &std::collections::BTreeMap<String, Vec<(String, usize)>>,
-    stamped: &[TopLevel],
-) -> TypeError {
+/// A cycle among the `yield` functions of one module. Nesting would put each
+/// one's state inside the other's, which has no bottom; a cycle written with
+/// tail calls only keeps none of those states, but each function's request
+/// sum still carries the one it hands over to, so it has no bottom either —
+/// and the message says which of the two shapes it found.
+fn mutual_nesting_error(cycle: &[String], calls: &NestedCalls, stamped: &[TopLevel]) -> TypeError {
+    let edge = |from: &String, to: &String| {
+        calls
+            .get(from)
+            .and_then(|called| called.iter().find(|edge| &edge.callee == to))
+    };
     let line = cycle
         .first()
-        .and_then(|name| calls.get(name))
-        .and_then(|called| called.first().map(|(_, line)| *line))
+        .zip(cycle.get(1))
+        .and_then(|(from, to)| edge(from, to).map(|edge| edge.line))
         .or_else(|| {
             stamped.iter().find_map(|item| match item {
                 TopLevel::FnDef(fd) if Some(&fd.name) == cycle.first() => Some(fd.line),
@@ -515,13 +528,21 @@ fn mutual_nesting_error(
             })
         })
         .unwrap_or(1);
-    error_at(
-        line,
+    let only_tail = cycle
+        .windows(2)
+        .all(|pair| edge(&pair[0], &pair[1]).is_some_and(|edge| edge.only_tail));
+    let message = if only_tail {
+        format!(
+            "A cycle of tail calls between yield functions is not supported by yield lowering: {} — a tail call hands over to the callee's protocol, so the caller's requests gain the callee's, and a cycle of them has no request sum to start from. Break the cycle: give one function a parameter saying which phase comes next and have it tail call itself",
+            cycle.join(" calls ")
+        )
+    } else {
         format!(
             "Mutual nesting is not supported by yield lowering: {} — a nested state holds the callee's state inside the caller's, and a cycle has no innermost state to start from. Break the cycle: pass what comes next as data in one of them, or fold them into one function",
             cycle.join(" calls ")
-        ),
-    )
+        )
+    };
+    error_at(line, message)
 }
 
 /// The tail positions of a body: the last statement's expression and,

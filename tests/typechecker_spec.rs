@@ -5694,6 +5694,17 @@ fn two_yield_functions_that_call_each_other_are_refused_with_the_cycle() {
 }
 
 #[test]
+fn two_yield_functions_that_only_tail_call_each_other_are_refused_as_a_tail_call_cycle() {
+    let src = format!(
+        "{YIELD_MODULE}fn phaseOne(n: Int) -> Int\n    ? \"Hands the count to the second phase.\"\n    ! [Say.readLine, yield]\n    line = Say.readLine()\n    match line\n        Result.Err(_) -> n\n        Result.Ok(_) -> phaseTwo(n)\n\nfn phaseTwo(n: Int) -> Int\n    ? \"Hands the count back to the first phase.\"\n    ! [Say.readLine, yield]\n    line = Say.readLine()\n    match line\n        Result.Err(_) -> n\n        Result.Ok(_) -> phaseOne(n)\n"
+    );
+    assert_front_error_containing(
+        &src,
+        "A cycle of tail calls between yield functions is not supported by yield lowering: phaseOne calls phaseTwo calls phaseOne",
+    );
+}
+
+#[test]
 fn generated_names_are_referenceable_from_a_coordinator() {
     let errs = front_errors(&format!("{YIELD_MODULE}{YIELD_LOOP}{YIELD_COORDINATOR}"));
     assert!(
