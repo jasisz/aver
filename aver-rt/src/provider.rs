@@ -53,6 +53,7 @@ pub use terminal::{
 pub use work::{
     STANDARD_WAIT_FINGERPRINT, STANDARD_WAIT_NATIVE_IDENTITY, STANDARD_WORK_FINGERPRINT,
     STANDARD_WORK_NATIVE_IDENTITY, StandardWaitProvider, StandardWorkProvider,
+    WORK_KIND_NATIVE_FINGERPRINT, WorkKindBody, WorkKindProvider,
 };
 
 /// Whether two recorded/live identities name compiler-shipped adapters for

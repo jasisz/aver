@@ -18,4 +18,13 @@ aver verify main.av --module-root .
 AVER_YIELD_DUMP=1 aver check main.av --module-root .
 ```
 
+The same program compiles to a native binary, loop and job kind included:
+
+```bash
+aver compile main.av --module-root . --target rust -o /tmp/follow-slice
+cd /tmp/follow-slice && cargo run
+```
+
+The two runs do the same work in a different interleaving. The answer modules park requests on wall-clock deadlines (`Wait.Wake.After(2)`, `After(5)`), so which turn a finished validation job lands in depends on how long that job took, and the compiled function is faster than the smallest deadline in the program while the VM's child interpreter is not.
+
 The "Coordinator" section of [docs/language.md](../../docs/language.md) walks the same example line by line.

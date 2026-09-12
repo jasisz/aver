@@ -89,7 +89,12 @@ fn synthesize_rust_module_cascade(
 /// Transpile an Aver program to a Rust project.
 pub fn transpile(ctx: &mut CodegenContext) -> ProjectOutput {
     let required = provider::required_operations(ctx);
-    transpile_project(ctx, required, composition::ProviderComposition::default())
+    transpile_project(
+        ctx,
+        required,
+        composition::ProviderComposition::default(),
+        None,
+    )
 }
 
 /// Transpile one entry program using a provider manifest owned by its whole
@@ -100,17 +105,19 @@ pub fn transpile_with_provider_manifest_for_project(
     ctx: &mut CodegenContext,
     manifest: Option<&crate::config::ProviderPackageManifest>,
     known_capabilities: &BTreeSet<String>,
+    work_max_jobs: Option<usize>,
 ) -> Result<ProjectOutput, String> {
     let required = provider::required_operations(ctx);
     let composition =
         composition::plan_for_project(&ctx.capabilities, &required, manifest, known_capabilities)?;
-    Ok(transpile_project(ctx, required, composition))
+    Ok(transpile_project(ctx, required, composition, work_max_jobs))
 }
 
 fn transpile_project(
     ctx: &mut CodegenContext,
     required_provider_operations: BTreeSet<String>,
     provider_composition: composition::ProviderComposition,
+    work_max_jobs: Option<usize>,
 ) -> ProjectOutput {
     // Every refusal below is recorded on the context as it happens; this
     // transpile reports its own, not a previous one's.
@@ -157,6 +164,11 @@ fn transpile_project(
         .is_some_and(|config| config.independence_mode == crate::config::IndependenceMode::Cancel);
     let used_services = detect_used_services(ctx);
     let has_provider_runtime = !required_provider_operations.is_empty();
+    // The job kinds this program answers itself, resolved against the MIR
+    // this transpile is about to emit: the borrow mask of a bound function is
+    // a property of the emitted signature, so it is read after the ownership
+    // and representation rewrites above have run.
+    let work_kinds = provider::plan_work_kinds(ctx, &provider_composition.work_kinds);
     let needs_tcp_types = needs_named_type(ctx, "Tcp.Connection");
     // Oracle-proof stub fns take a leading `BranchPath` param. They are
     // emitted as dead-at-runtime fns (module-level fns emit regardless of
@@ -253,6 +265,8 @@ fn transpile_project(
                 &required_provider_operations,
                 ctx.policy.as_ref().map(|config| config.tcp_settings),
                 ctx.runtime_policy_from_env,
+                &work_kinds,
+                work_max_jobs,
             ),
         ));
         files.push((
@@ -825,7 +839,11 @@ fn module_sections(module: &crate::codegen::ModuleInfo, ctx: &CodegenContext) ->
             )));
         }
         if ctx.capabilities.boundary_type(&canonical).is_some() {
-            sections.push(provider::emit_represented_type_codec(&module.prefix, td));
+            sections.push(provider::emit_represented_type_codec(
+                &module.prefix,
+                td,
+                ctx,
+            ));
         }
         if ctx.emit_replay_runtime {
             sections.push(replay::emit_replay_value_impl(

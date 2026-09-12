@@ -232,6 +232,42 @@ fn a_bound_function_naming_nothing_in_the_program_is_refused() {
     );
 }
 
+/// A job reaches its function through the module that owns it: the VM asks
+/// the module table for `Module.function`, and the generated crate calls that
+/// module's own Rust path. The entry module is in neither, so both backends
+/// must refuse the binding at the door rather than one failing at run time
+/// and the other emitting a crate that does not build.
+#[test]
+fn a_bound_function_of_the_entry_module_is_refused_by_every_door() {
+    for command in ["check", "run", "verify"] {
+        assert_reports(
+            "work_shape_entry_module",
+            &[command],
+            "binds work = \"Main.validate\", but 'Main' is the entry module this command was pointed at",
+        );
+    }
+    let out = aver(
+        "work_shape_entry_module",
+        &[
+            "compile",
+            "--target",
+            "rust",
+            "-o",
+            &std::env::temp_dir()
+                .join("aver-work-entry-module-rust")
+                .to_string_lossy(),
+        ],
+    );
+    let text = combined(&out);
+    assert!(
+        text.contains("binds work = \"Main.validate\", but 'Main' is the entry module"),
+        "{}",
+        format_output(&out)
+    );
+    assert!(!out.status.success(), "{}", format_output(&out));
+    let _ = std::fs::remove_dir_all(std::env::temp_dir().join("aver-work-entry-module-rust"));
+}
+
 #[test]
 fn a_same_named_record_of_another_module_is_not_the_task_type() {
     // Nominal identity, not the last path segment: `Node.Task` and
@@ -352,8 +388,13 @@ fn a_work_binding_on_a_capability_that_is_not_a_job_kind_is_refused() {
 
 // ── work-target ─────────────────────────────────────────────────────────
 
+/// The Rust backend answers a job kind since jasisz/aver#1329: the job
+/// engine and the job-kind adapter are in `aver-rt`, and the bound function
+/// is compiled into the same crate. What the generated program then does
+/// with a job is `tests/rust_work_spec.rs`; here the point is only that the
+/// door opened.
 #[test]
-fn the_rust_backend_refuses_a_program_with_a_job_kind() {
+fn the_rust_backend_accepts_a_program_with_a_job_kind() {
     let out = aver(
         "work_shape_ok",
         &[
@@ -367,13 +408,9 @@ fn the_rust_backend_refuses_a_program_with_a_job_kind() {
         ],
     );
     let text = combined(&out);
-    assert!(
-        text.contains("error[work-target]: Work-bound capabilities run on the VM in this build"),
-        "{}",
-        format_output(&out)
-    );
-    assert!(text.contains("the requested target is rust"), "{text}");
-    assert!(!out.status.success(), "{}", format_output(&out));
+    assert!(!text.contains("error[work-target]"), "{text}");
+    assert!(out.status.success(), "{}", format_output(&out));
+    let _ = std::fs::remove_dir_all(std::env::temp_dir().join("aver-work-target-rust"));
 }
 
 #[test]
@@ -381,10 +418,38 @@ fn the_wasm_gc_runner_refuses_a_program_with_a_job_kind() {
     let out = aver("work_shape_ok", &["run", "--wasm-gc"]);
     let text = combined(&out);
     assert!(
-        text.contains("error[work-target]: Work-bound capabilities run on the VM in this build"),
+        text.contains(
+            "error[work-target]: Work-bound capabilities run on the VM and the Rust backend in this build"
+        ),
         "{}",
         format_output(&out)
     );
     assert!(text.contains("the requested target is wasm-gc"), "{text}");
+    assert!(!out.status.success(), "{}", format_output(&out));
+}
+
+#[test]
+fn the_wasip2_backend_refuses_a_program_with_a_job_kind() {
+    let out = aver(
+        "work_shape_ok",
+        &[
+            "compile",
+            "--target",
+            "wasip2",
+            "-o",
+            &std::env::temp_dir()
+                .join("aver-work-target-wasip2")
+                .to_string_lossy(),
+        ],
+    );
+    let text = combined(&out);
+    assert!(
+        text.contains(
+            "error[work-target]: Work-bound capabilities run on the VM and the Rust backend in this build"
+        ),
+        "{}",
+        format_output(&out)
+    );
+    assert!(text.contains("the requested target is wasip2"), "{text}");
     assert!(!out.status.success(), "{}", format_output(&out));
 }

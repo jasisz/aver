@@ -223,8 +223,9 @@ fn take_shape_error(module: &str, actual: &Type) -> WorkDiagnostic {
     ))
 }
 
-/// One target the program can be prepared for. Only the VM answers a job in
-/// this build; decision 7 of the epic brief keeps the other three honest.
+/// One target the program can be prepared for. The VM and the Rust backend
+/// answer a job in this build; the two wasm targets have no representation
+/// for the job handle yet, and decision 7 of the epic brief keeps them honest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkTarget {
     Vm,
@@ -241,6 +242,12 @@ impl WorkTarget {
             WorkTarget::WasmGc => "wasm-gc",
             WorkTarget::Wasip2 => "wasip2",
         }
+    }
+
+    /// Whether this target runs jobs, the wait that watches them, and the
+    /// capabilities a program answers itself.
+    fn answers_jobs(self) -> bool {
+        matches!(self, WorkTarget::Vm | WorkTarget::Rust)
     }
 }
 
@@ -291,29 +298,29 @@ pub fn gate(
         fn_sigs,
         entry_module,
     ));
-    if target != WorkTarget::Vm
+    if !target.answers_jobs()
         && shapes.is_empty()
         && let Some(reserved) = reserved_contract_performed(registry, fn_sigs)
     {
         errors.push(WorkDiagnostic::new(WORK_TARGET, format!(
-            "Work-bound capabilities run on the VM in this build; the Rust, wasm-gc and wasip2 backends follow in a later change. The program performs an operation of '{}', a reserved contract only the VM answers, and the requested target is {}.",
+            "Work-bound capabilities run on the VM and the Rust backend in this build; the wasm-gc and wasip2 backends follow in a later change. The program performs an operation of '{}', a reserved contract those two targets do not answer, and the requested target is {}.",
             reserved,
             target.label()
         )));
     }
-    if target != WorkTarget::Vm
+    if !target.answers_jobs()
         && let Some(answered) = answers.first()
     {
         errors.push(WorkDiagnostic::new(WORK_TARGET, format!(
-            "A capability answered by the program runs on the VM in this build; the Rust, wasm-gc and wasip2 backends follow in a later change. '{}' is answered by module '{}', and the reply types generated for it carry `Wait.Wake`, which those backends have no representation for yet; the requested target is {}.",
+            "A capability answered by the program runs on the VM and the Rust backend in this build; the wasm-gc and wasip2 backends follow in a later change. '{}' is answered by module '{}', and the reply types generated for it carry `Wait.Wake`, which those backends have no representation for yet; the requested target is {}.",
             answered.capabilities.first().map(String::as_str).unwrap_or(answered.module.as_str()),
             answered.module,
             target.label()
         )));
     }
-    if !shapes.is_empty() && target != WorkTarget::Vm {
+    if !shapes.is_empty() && !target.answers_jobs() {
         errors.push(WorkDiagnostic::new(WORK_TARGET, format!(
-            "Work-bound capabilities run on the VM in this build; the Rust, wasm-gc and wasip2 backends follow in a later change. '{}' is a job kind and the requested target is {}",
+            "Work-bound capabilities run on the VM and the Rust backend in this build; the wasm-gc and wasip2 backends follow in a later change. '{}' is a job kind and the requested target is {}",
             shapes[0].capability,
             target.label()
         )));
@@ -538,6 +545,23 @@ pub fn check_bindings(
             )));
             continue;
         };
+        // A job runs off the turn, and both runtimes reach its function
+        // through the module that owns it: the VM asks the module table for
+        // `Module.function`, and the generated crate calls the module's own
+        // Rust path. The entry module is not in either — it is the unit the
+        // command was pointed at, not a module of the program — so a binding
+        // that names it is refused here, at the one door both backends read,
+        // rather than failing as a runtime error on one and an uncompilable
+        // crate on the other.
+        if entry_module == Some(binding.module()) {
+            errors.push(binding_error(format!(
+                "job kind '{}' binds work = \"{}\", but '{}' is the entry module this command was pointed at; a job reaches its function through the module that owns it, so move that function into a module of its own and bind it there",
+                shape.capability,
+                binding.function,
+                binding.module()
+            )));
+            continue;
+        }
         let Some((params, result, effects)) = fn_sigs.get(&binding.function) else {
             errors.push(binding_error(format!(
                 "job kind '{}' binds work = \"{}\", but this program has no function '{}'",
@@ -1337,5 +1361,47 @@ operation take(job: Work.Job) -> Result<Option<Int>, String>
             None,
         );
         assert!(errors.is_empty(), "unexpected seam errors: {errors:?}");
+    }
+
+    #[test]
+    fn a_work_binding_naming_the_entry_module_is_refused() {
+        let registry = registry_of(&[("Validation", VALIDATION)]);
+        let mut sigs = std::collections::HashMap::new();
+        sigs.insert(
+            "Main.validate".to_string(),
+            (vec![Type::Str], Type::Int, Vec::new()),
+        );
+        let work_bindings = vec![ProviderWorkBinding {
+            capability: "Validation".to_string(),
+            function: "Main.validate".to_string(),
+            index: 0,
+            task: None,
+            landed: None,
+        }];
+        let mut shapes = Vec::new();
+        let mut declared = BTreeSet::new();
+        for (module, outcome) in job_kinds(&registry) {
+            declared.insert(module);
+            shapes.push(outcome.expect("Validation is a job kind"));
+        }
+        let errors = check_bindings(
+            &registry,
+            &shapes,
+            &declared,
+            ManifestBindings {
+                work: &work_bindings,
+                answer: &[],
+            },
+            &[],
+            &sigs,
+            Some("Main"),
+        );
+        assert_eq!(errors.len(), 1, "unexpected findings: {errors:?}");
+        assert_eq!(errors[0].slug, WORK_BINDING);
+        assert!(
+            errors[0].message.contains("is the entry module"),
+            "unexpected message: {}",
+            errors[0].message
+        );
     }
 }

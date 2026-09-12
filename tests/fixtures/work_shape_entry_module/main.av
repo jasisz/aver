@@ -1,0 +1,13 @@
+module Main
+    depends [Validation]
+    intent = "A job kind bound to a function of the entry module itself."
+    effects [Console]
+
+fn validate(task: String) -> Int
+    ? "Scores one task by its length."
+    String.len(task)
+
+fn main() -> Unit
+    ? "Reports that the job kind is wired."
+    ! [Console.print]
+    Console.print("jobs ready")
