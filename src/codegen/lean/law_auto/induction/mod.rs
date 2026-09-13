@@ -3266,11 +3266,24 @@ pub(super) fn find_fun_induction_targets(
 /// and ultimately to the existing body byte-for-byte (modulo a 3-space indent
 /// under the final `first` arm). `simp_defs` is the law's def simp set
 /// (`law_simp_defs`-derived, comma-joined).
+/// The shape the closer's `grind` alternative is for: the law's claim, or its
+/// `when`, calls `List.contains`. Content-blind — the builtin's name and
+/// nothing about the elements, the target or the list's construction — so the
+/// gate cannot admit a proof it should not: it only decides whether one more
+/// sound alternative is tried before the bridge rungs.
+fn law_claims_membership(law: &VerifyLaw) -> bool {
+    [Some(&law.lhs), Some(&law.rhs), law.when.as_ref()]
+        .into_iter()
+        .flatten()
+        .any(|expr| crate::analysis::shape::expr_calls_where(expr, &|path| path == "List.contains"))
+}
+
 fn wrap_with_fun_induction_rung(
     intro_line: String,
     body_lines: Vec<String>,
     targets: &[FunInductionTarget],
     simp_defs: &str,
+    grind_for_membership: bool,
 ) -> Vec<String> {
     let defs = if simp_defs.is_empty() {
         String::new()
@@ -3308,23 +3321,22 @@ fn wrap_with_fun_induction_rung(
     // leaves each arm an equality between two open Bool terms that no `omega`
     // rung above can touch — see `super::bool_bridge_rungs`.
     let bridge = super::bool_bridge_rungs("", simp_defs);
-    // Between the `split` rung and the Bool bridge: a `grind` residual. A
-    // `fun_induction` arm that keeps a `List.contains`/`∈` over an appended or
-    // cons'd tail reduces it only once `mem_append`/`mem_singleton`-shaped
-    // reasoning and a `beq`-polarity flip meet in one place — the `simp_all`
-    // rungs leave the `if entry == task …` under the `List.contains` unsplit
-    // (measured on a `Tuple<Int, Bytes>` element, whose `BEq` is the
-    // `DecidableEq` one and lawful; the element type is not what stops them),
-    // and the bridge's `beq_iff_eq`/`decide` chain rewrites the two sides to
-    // Prop equalities a `beq`-only hypothesis never matches. `grind` splits
-    // the `ite`, e-matches the induction hypothesis, and closes by congruence
-    // — all inside its own fuel, so a non-closing goal still falls through to
-    // the bridge rungs and the honest floor. PURELY ADDITIVE like every
-    // alternative here: it only adds closures.
-    let grind_defs = if simp_defs.is_empty() {
-        String::new()
-    } else {
+    // Between the `split` rung and the Bool bridge: a `grind` residual, gated
+    // on the one shape it exists for. A `fun_induction` arm that keeps a
+    // `List.contains`/`∈` over an appended or cons'd tail reduces only once
+    // `mem_append`/`mem_singleton`-shaped reasoning and the `if entry == task`
+    // the bridge rungs leave unsplit under `List.contains` meet in one place;
+    // `grind` splits the `ite`, e-matches the induction hypothesis and closes
+    // by congruence. Emitted ONLY when the law's claim calls `List.contains`
+    // (`law_claims_membership`): every other law keeps the closer above byte
+    // for byte, and no arm of an unrelated induction spends `grind`'s fuel
+    // (up to a thousand instances over five e-matching rounds) before the
+    // bridge rungs — which matters twice over, because `first` catches a
+    // failed alternative but not a heartbeat limit reached inside one.
+    let grind_defs = if grind_for_membership && !simp_defs.is_empty() {
         format!(" | (grind [{simp_defs}])")
+    } else {
+        String::new()
     };
     let closer = format!(
         "first | (simp_all {defs}; done) | (simp_all {defs}; omega) | (simp_all {defs} <;> omega) | (simp_all {defs} <;> (repeat' split) <;> omega){grind_defs}{bridge}"
@@ -4555,8 +4567,13 @@ fn emit_list_induction(
             };
             support_lines.extend(refl_support);
             let intro_line = proof_lines.remove(0);
-            proof_lines =
-                wrap_with_fun_induction_rung(intro_line, proof_lines, &targets, &refl_simp_list);
+            proof_lines = wrap_with_fun_induction_rung(
+                intro_line,
+                proof_lines,
+                &targets,
+                &refl_simp_list,
+                law_claims_membership(law),
+            );
         }
 
         // ADDITIVE synchronous take/drop/zip rung — prepended as the LEADING
@@ -5431,6 +5448,38 @@ fn collect_simp_idents(line: &str, set: &mut BTreeSet<String>) {
             }
         }
         rest = &after[close + 1..];
+    }
+}
+
+#[cfg(test)]
+mod closer_tests {
+    use super::{FunInductionTarget, wrap_with_fun_induction_rung};
+
+    fn closer(grind_for_membership: bool) -> String {
+        let target = FunInductionTarget {
+            fn_lean: "f".to_string(),
+            args: vec!["xs".to_string()],
+        };
+        wrap_with_fun_induction_rung(
+            "  intro xs".to_string(),
+            vec!["  sorry".to_string()],
+            std::slice::from_ref(&target),
+            "f_def",
+            grind_for_membership,
+        )
+        .join("\n")
+    }
+
+    // The `grind` alternative is a shape-gated addition: a membership law gets
+    // it between the split rung and the bridge, every other law keeps the
+    // closer it had before the alternative existed.
+    #[test]
+    fn grind_alternative_is_emitted_only_for_a_membership_law() {
+        let with = closer(true);
+        assert!(with.contains("| (grind [f_def])"), "{with}");
+        let without = closer(false);
+        assert!(!without.contains("grind"), "{without}");
+        assert!(without.contains("(repeat' split) <;> omega)"), "{without}");
     }
 }
 
