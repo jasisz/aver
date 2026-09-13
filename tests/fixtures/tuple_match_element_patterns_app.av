@@ -24,6 +24,12 @@ fn pick(next: Option<Int>, n: Int) -> String
         (Option.None, _) -> "nothing"
         (Option.Some(_), _) -> "wait"
 
+fn both(a: Int, b: Int) -> String
+    ? "What two counts say together, with no arm that tests an element."
+    match (a, b)
+        (x, y) -> "{x} and {y}"
+        _ -> "never"
+
 fn main() -> Unit
     ? "Prints every arm of each shape."
     ! [Console.print]
@@ -37,3 +43,4 @@ fn main() -> Unit
     Console.print(pick(Option.Some(7), 0))
     Console.print(pick(Option.None, 3))
     Console.print(pick(Option.Some(7), 3))
+    Console.print(both(4, 5))

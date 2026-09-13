@@ -137,7 +137,7 @@ pub(crate) fn emit_mir_match(
     // (`(Result.Ok(a), Result.Err(e)) -> …`, `([], 0) -> …`,
     // `(Option.Some(v), true) -> …`) goes to
     // `emit_mir_tuple_constructor_match`, which falls back (`Ok(None)`)
-    // for any element shape outside `tuple_element_shape`'s set.
+    // for any element shape outside `tuple_element_admitted`'s set.
     if m.arms
         .iter()
         .any(|a| matches!(a.pattern, MirPattern::Tuple(_)))
@@ -447,7 +447,7 @@ fn emit_mir_tuple_match(
 /// e.g. `match r { (Result.Ok(a), Result.Err(e)) -> …; _ -> … }` or
 /// `match (tasks, running) { ([], 0) -> …; _ -> … }` — lowered to a
 /// nested `if`/`else` cascade. Each arm AND's together one test per
-/// element ([`tuple_element_shape`] says which shapes test); on the
+/// element ([`tuple_element_admitted`] says which shapes it admits); on the
 /// matching branch it writes each element's binds into their slots and
 /// emits the body; the failure branch recurses into the remaining arms;
 /// a trailing `Wildcard` / `Bind` arm closes the cascade. A pre-pass
@@ -477,11 +477,10 @@ fn emit_mir_tuple_constructor_match(
         .collect();
 
     // Pre-pass: only emit when every arm is a shape the cascade fully
-    // supports, so the emit pass can't half-write then bail. Require at
-    // least one tuple arm carrying an element that tests its field
-    // (otherwise this isn't the constructor-cascade shape and the
-    // caller's other dispatch arms own it).
-    let mut any_test = false;
+    // supports, so the emit pass can't half-write then bail. An arm with
+    // no testing element is taken unconditionally, so a match whose arms
+    // carry only binds and wildcards (`(a, b) -> …; _ -> …`) cascades too:
+    // its first such arm is the one reached, as on the VM.
     for arm in &m.arms {
         match &arm.pattern {
             MirPattern::Wildcard | MirPattern::Bind(..) => {}
@@ -490,18 +489,13 @@ fn emit_mir_tuple_constructor_match(
                     return Ok(None);
                 }
                 for (pat, elem) in items.iter().zip(&elems) {
-                    match tuple_element_shape(pat, elem, ctx) {
-                        Some(TupleElementShape::Test) => any_test = true,
-                        Some(TupleElementShape::Irrefutable) => {}
-                        None => return Ok(None),
+                    if !tuple_element_admitted(pat, elem, ctx) {
+                        return Ok(None);
                     }
                 }
             }
             _ => return Ok(None),
         }
-    }
-    if !any_test {
-        return Ok(None);
     }
 
     let scratch = slots.subject_scratch.ok_or(WasmGcError::Validation(
@@ -516,61 +510,38 @@ fn emit_mir_tuple_constructor_match(
     )
 }
 
-/// How one element of a tuple arm relates to its field, as
-/// [`tuple_element_shape`] classifies it.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum TupleElementShape {
-    /// A bind or a wildcard: takes the field as it is, no test.
-    Irrefutable,
-    /// A shape that tests the field before the arm is taken: a `Result`
-    /// or `Option` tag, a list's emptiness, an `Int` or `Bool` literal.
-    Test,
-}
-
 /// The pre-pass verdict for one element pattern of a tuple arm against
-/// its element type `elem` (whitespace-free canonical). `None` is a shape
-/// the cascade does not emit: a `String` or `Float` literal, a user
-/// variant, a nested tuple, or an element whose type has no registered
-/// slot. Every registry lookup the emit pass makes is made here first, so
-/// the cascade cannot fail half-way through.
-fn tuple_element_shape(
-    pat: &MirPattern,
-    elem: &str,
-    ctx: &EmitCtx<'_>,
-) -> Option<TupleElementShape> {
+/// its element type `elem` (whitespace-free canonical): a bind or a
+/// wildcard takes the field as it is, and a `Result` or `Option` tag, a
+/// list's emptiness or an `Int` or `Bool` literal tests it before the arm
+/// is taken. `false` is a shape the cascade does not emit: a `String` or
+/// `Float` literal, a user variant, a nested tuple, or an element whose
+/// type has no registered slot. Every registry lookup the emit pass makes
+/// is made here first, so the cascade cannot fail half-way through.
+fn tuple_element_admitted(pat: &MirPattern, elem: &str, ctx: &EmitCtx<'_>) -> bool {
     match pat {
-        MirPattern::Bind(..) | MirPattern::Wildcard => Some(TupleElementShape::Irrefutable),
+        MirPattern::Bind(..) | MirPattern::Wildcard => true,
         MirPattern::Ctor {
             ctor: MirCtor::Builtin(BuiltinCtor::ResultOk | BuiltinCtor::ResultErr),
             ..
-        } => ctx
-            .registry
-            .result_type_idx(elem)
-            .map(|_| TupleElementShape::Test),
+        } => ctx.registry.result_type_idx(elem).is_some(),
         MirPattern::Ctor {
             ctor: MirCtor::Builtin(BuiltinCtor::OptionSome | BuiltinCtor::OptionNone),
             ..
-        } => ctx
-            .registry
-            .option_type_idx(elem)
-            .map(|_| TupleElementShape::Test),
-        MirPattern::EmptyList | MirPattern::Cons { .. } => ctx
-            .registry
-            .list_type_idx(elem)
-            .map(|_| TupleElementShape::Test),
-        MirPattern::Literal(Literal::Bool(_)) if elem == "Bool" => Some(TupleElementShape::Test),
-        MirPattern::Literal(Literal::Int(_)) if elem == "Int" => {
-            // A boxed `$AverInt` field compares through the two helpers the
-            // Int-literal cascade uses; both must be registered.
-            if ctx.registry.bignum
-                && !(ctx.fn_map.builtins.contains_key("__aint_from_i64")
-                    && ctx.fn_map.builtins.contains_key("__aint_eq"))
-            {
-                return None;
-            }
-            Some(TupleElementShape::Test)
+        } => ctx.registry.option_type_idx(elem).is_some(),
+        MirPattern::EmptyList | MirPattern::Cons { .. } => {
+            ctx.registry.list_type_idx(elem).is_some()
         }
-        _ => None,
+        MirPattern::Literal(Literal::Bool(_)) => elem == "Bool",
+        // A boxed `$AverInt` field compares through the two helpers the
+        // Int-literal cascade uses; both must be registered.
+        MirPattern::Literal(Literal::Int(_)) => {
+            elem == "Int"
+                && (!ctx.registry.bignum
+                    || (ctx.fn_map.builtins.contains_key("__aint_from_i64")
+                        && ctx.fn_map.builtins.contains_key("__aint_eq")))
+        }
+        _ => false,
     }
 }
 
@@ -599,7 +570,7 @@ fn tuple_element_type_idx(lookup: Option<u32>, what: &str) -> Result<u32, WasmGc
 }
 
 /// Emit one element's test — an `i32` verdict left on the stack — for a
-/// shape [`tuple_element_shape`] classed as [`TupleElementShape::Test`].
+/// shape [`tuple_element_admitted`] admits that tests its field.
 /// Returns `false` for an irrefutable element, which emits nothing.
 fn emit_tuple_element_test(
     func: &mut Function,
