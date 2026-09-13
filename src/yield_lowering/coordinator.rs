@@ -116,13 +116,20 @@ fn error(line: usize, message: String) -> TypeError {
     }
 }
 
+/// The law the generated loop cites on every job kind's `started` function:
+/// the program's own statement that a task whose start was recorded is not
+/// offered again, which is what makes two starts in one turn two tasks.
+const STARTED_LAW: &str = "aStartedTaskIsNotAskedAgain";
+
 /// Generate the loop for `protocols` into the module `items` declares.
+/// `laws` is every law a `using` clause of that module may name.
 pub(super) fn generate(
     items: &[TopLevel],
     generated: &[TopLevel],
     protocols: &[ProcessProtocol],
     plan: &RunPlan,
     fn_sigs: &FnSigs,
+    laws: &std::collections::BTreeSet<String>,
 ) -> Result<GeneratedLoop, Vec<TypeError>> {
     let module = items.iter().find_map(|item| match item {
         TopLevel::Module(module) => Some(module),
@@ -169,7 +176,7 @@ pub(super) fn generate(
             return Err(errors);
         }
     };
-    let jobs = match resolve_jobs(plan, &answers, fn_sigs, line) {
+    let jobs = match resolve_jobs(plan, &answers, fn_sigs, laws, line) {
         Ok(jobs) => jobs,
         Err(found) => {
             errors.extend(found);
@@ -320,11 +327,13 @@ fn resolve_answers(
 }
 
 /// One entry per job kind whose seam the manifest declared, with the three
-/// types the generated turn moves across it.
+/// types the generated turn moves across it, and the one law the program has
+/// to state about that seam.
 fn resolve_jobs(
     plan: &RunPlan,
     answers: &[Answer],
     fn_sigs: &FnSigs,
+    laws: &std::collections::BTreeSet<String>,
     line: usize,
 ) -> Result<Vec<Job>, Vec<TypeError>> {
     let mut jobs = Vec::new();
@@ -383,6 +392,30 @@ fn resolve_jobs(
         };
         let payload = payload.as_ref();
         let task_owner = owner(&seam.task);
+        // The generated law over `__consumed<K>` cites the program's own law
+        // of the same name on `started`, so a program that does not state it
+        // is refused here, with the block it needs, rather than where the
+        // generated `using` fails to resolve at a line nobody wrote.
+        if !laws.contains(&format!("{}.{STARTED_LAW}", seam.started)) {
+            let in_module = |ty: &Type| {
+                crate::capability::canonicalize_type_names(ty.clone(), task_owner)
+                    .display()
+                    .replace(&format!("{task_owner}."), "")
+            };
+            errors.push(error(line, format!(
+                "aver.toml declares [run], so the generated turn records a start of job '{}' through '{}' and cites the law that function states about it; '{}' states no law named '{STARTED_LAW}'. State it in module '{task_owner}' — a task whose start was recorded is not offered again — over samples of its own:\n\nverify {} law {STARTED_LAW}\n    given state: {} = [fresh()]\n    given task: {} = [...]\n    when {}(state) == Option.Some(task)\n    {}({}(state, task)) != Option.Some(task) holds",
+                seam.capability,
+                seam.started,
+                seam.started,
+                bare(&seam.started),
+                in_module(state),
+                in_module(task),
+                bare(&seam.task),
+                bare(&seam.task),
+                bare(&seam.started)
+            )));
+            continue;
+        }
         jobs.push(Job {
             capability: seam.capability.clone(),
             task: seam.task.clone(),

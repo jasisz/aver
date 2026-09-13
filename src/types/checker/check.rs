@@ -110,10 +110,11 @@ impl TypeChecker {
         loaded: &[crate::source::LoadedModule],
     ) {
         let visible = Self::visible_module_roots(items);
-        for (line, message) in crate::verify_law::reasons::dependency_errors(
-            items,
-            loaded.iter().filter(|m| visible.contains(&m.dep_name)),
-        ) {
+        let visible_loaded = || loaded.iter().filter(|m| visible.contains(&m.dep_name));
+        self.available_laws = crate::verify_law::reasons::available_laws(items, visible_loaded());
+        for (line, message) in
+            crate::verify_law::reasons::dependency_errors(items, visible_loaded())
+        {
             self.error_at_line(line, message);
         }
     }

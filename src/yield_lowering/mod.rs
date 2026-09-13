@@ -194,13 +194,17 @@ fn item_line(item: &TopLevel) -> Option<usize> {
 /// inferred type. `stamped_errors` are that check's diagnostics; the ones
 /// inside a `yield` function stop the lowering, the others are left to the
 /// second check of the lowered module (they may only concern names the
-/// lowering is about to generate).
+/// lowering is about to generate). `laws` is that check's
+/// [`TypeCheckResult::laws`](crate::types::checker::TypeCheckResult): the
+/// loop generator cites a program's own law by name and refuses a program
+/// that does not state it.
 pub fn lower(
     items: &mut Vec<TopLevel>,
     stamped: &[TopLevel],
     stamped_errors: &[TypeError],
     marked: &crate::config::MarkedCapabilities,
     fn_sigs: &FnSigs,
+    laws: &std::collections::BTreeSet<String>,
 ) -> Result<YieldLoweringReport, Vec<TypeError>> {
     debug_assert_eq!(items.len(), stamped.len());
     let yield_fns: HashSet<String> = stamped
@@ -375,7 +379,8 @@ pub fn lower(
             .filter(|protocol| !entered.contains(protocol.fn_name.as_str()))
             .cloned()
             .collect();
-        let generated = coordinator::generate(items, &report.generated, &seated, plan, fn_sigs)?;
+        let generated =
+            coordinator::generate(items, &report.generated, &seated, plan, fn_sigs, laws)?;
         report.loop_source = Some(generated.source);
         report.generated.extend(generated.items.iter().cloned());
         items.extend(generated.items);

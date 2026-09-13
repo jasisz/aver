@@ -906,6 +906,50 @@ fn a_process_the_loop_cannot_seat_is_refused_at_every_door() {
     );
 }
 
+/// The generated `__consumed<K> law aStartedTaskIsNotAskedAgain` cites the
+/// program's own law of that name on its `started` function. A program that
+/// states none is refused at the door, with the block to write, before the
+/// generated module is checked — never as a `using` that fails to resolve at
+/// a line of generated code.
+#[test]
+fn a_started_function_without_its_law_is_refused_with_the_block_to_write() {
+    let sentence = "aver.toml declares [run], so the generated turn records a start of job 'Validation' through 'Pooled.taskStarted' and cites the law that function states about it; 'Pooled.taskStarted' states no law named 'aStartedTaskIsNotAskedAgain'";
+    for command in ["check", "run", "verify"] {
+        let out = aver("run_started_law_missing", &[command]);
+        assert!(!out.status.success(), "{command}: {}", format_output(&out));
+        let text = combined(&out);
+        assert!(
+            text.contains(sentence),
+            "{command}: {}",
+            format_output(&out)
+        );
+        for line in [
+            "verify taskStarted law aStartedTaskIsNotAskedAgain",
+            "    given state: State = [fresh()]",
+            "    given task: Int = [...]",
+            "    when nextTask(state) == Option.Some(task)",
+            "    nextTask(taskStarted(state, task)) != Option.Some(task) holds",
+        ] {
+            assert!(
+                text.contains(line),
+                "{command}: the refusal does not print the block:\n{}",
+                format_output(&out)
+            );
+        }
+        assert!(
+            !text.contains("uses unknown or unexposed law"),
+            "{command}: the door let the generated `using` fail instead:\n{}",
+            format_output(&out)
+        );
+    }
+    let checked = aver("run_started_law_missing", &["check"]);
+    assert!(
+        combined(&checked).contains("error[run-binding]:"),
+        "{}",
+        format_output(&checked)
+    );
+}
+
 /// The laws decision 7 names, on the Lean wall.
 ///
 /// All thirty of the example's laws close as universals: I2 (a late

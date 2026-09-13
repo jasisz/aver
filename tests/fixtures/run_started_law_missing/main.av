@@ -1,0 +1,35 @@
+module Node
+    intent = "Fixture: a job kind whose `started` function states no `aStartedTaskIsNotAskedAgain` law. The loop generator refuses the program before the generated module is checked."
+    depends [Process, Wait, Work, Pool, Validation, Pooled]
+    effects [Console.print, Pool.claim, yield]
+    exposes [Pending, View, order, admit, stop]
+
+type Pending
+    Claiming(Int, Wait.Wake)
+
+record View
+    pending: Map<Int, Pending>
+    ready: List<Int>
+    askable: List<Int>
+    jobs: Int
+    room: Int
+    stopping: Bool
+
+fn claiming() -> Unit
+    ? "Claims the one handle and is done."
+    ! [Console.print, Pool.claim, yield]
+    match Pool.claim()
+        Option.None -> Unit
+        Option.Some(_) -> Console.print("claimed")
+
+fn order(view: View) -> List<Int>
+    ? "Every seated process, in slot order."
+    Map.keys(view.pending)
+
+fn admit(view: View, id: Int) -> Bool
+    ? "Everything seated is served."
+    Map.has(view.pending, id)
+
+fn stop(view: View) -> Bool
+    ? "The run ends when the process asked us to."
+    view.stopping
