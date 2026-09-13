@@ -1,0 +1,54 @@
+module WasmVerifyNestedSumsWrong
+    intent = "Fixture: the same nested-sum shapes as wasm_verify_nested_sums, but with wrong expectations so both verify lanes must render the actual runtime values."
+    exposes [main]
+    effects [Console]
+
+type Handle
+    Handle(Int)
+
+type Leaf
+    Num(Int)
+    Word(String)
+    Blank
+
+record Duo
+    leaf: Leaf
+    n: Int
+
+type Mid
+    Wrap(Leaf, Handle)
+    Pack(Duo)
+    Pair(Leaf, Leaf)
+
+type Outer
+    Deep(Mid)
+    WithOption(Option<Mid>)
+    WithResult(Result<Mid, String>)
+    Many(List<Leaf>)
+    Tupled(Tuple<Int, String>)
+    Stop
+
+fn deep(n: Int) -> Outer
+    ? "Three sums deep with a newtype-erased Handle field."
+    Outer.Deep(Mid.Wrap(Leaf.Num(n), Handle.Handle(n + 6)))
+
+fn opt() -> Outer
+    ? "An Option<Mid> holding a record nested in a variant."
+    Outer.WithOption(Option.Some(Mid.Pack(Duo(leaf = Leaf.Word("w"), n = 2))))
+
+fn deepWord(w: String) -> Outer
+    ? "Three sums deep with a String leaf."
+    Outer.Deep(Mid.Wrap(Leaf.Word(w), Handle.Handle(9)))
+
+verify deep
+    deep(1) => Outer.Deep(Mid.Wrap(Leaf.Num(6), Handle.Handle(7)))
+
+verify opt
+    opt() => Outer.WithOption(Option.Some(Mid.Pair(Leaf.Blank, Leaf.Num(3))))
+
+verify deepWord
+    deepWord("x") => Outer.Deep(Mid.Wrap(Leaf.Word("y"), Handle.Handle(9)))
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("wrong expectations")

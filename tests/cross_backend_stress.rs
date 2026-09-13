@@ -1185,3 +1185,66 @@ fn cross_drop_walk_matches_destructuring_wasm_gc() {
         DROP_WALK_OUT,
     );
 }
+
+/// Regression — jasisz/aver#1348: a variant or record field whose DECLARED
+/// type is newtype-erased (a single-variant, single-primitive-field sum, or
+/// a single-field record) is stored as the underlying primitive, but the
+/// parent's `__eq_<T>` helper dispatched on the declared name and compared
+/// the raw slot with the wrong instruction — wrong `false`, a validation
+/// failure, or a cast trap, depending on the underlying type. The fix
+/// dispatches such a field on `newtype_underlying(declared)`, exactly as
+/// the hash emitters already did.
+const NEWTYPE_FIELD_EQ_SRC: &str = r#"module NewtypeFieldEq
+    intent = "Equality on newtype-erased fields inside sums and records."
+    exposes [main]
+    effects [Console]
+
+type OnlyInt
+    W(Int)
+
+type OnlyStr
+    S(String)
+
+record Box
+    v: Int
+
+type Carrier
+    Wi(OnlyInt)
+    Ss(OnlyStr)
+    Bx(Box)
+    Pair(OnlyInt, Int)
+    Other(Int)
+
+record HoldsNewtype
+    wrapped: OnlyInt
+    n: Int
+
+fn main() -> Unit
+    ! [Console.print]
+    i = Carrier.Wi(OnlyInt.W(1)) == Carrier.Wi(OnlyInt.W(1))
+    s = Carrier.Ss(OnlyStr.S("x")) == Carrier.Ss(OnlyStr.S("x"))
+    b = Carrier.Bx(Box(v = 1)) == Carrier.Bx(Box(v = 1))
+    r = HoldsNewtype(wrapped = OnlyInt.W(2), n = 3) == HoldsNewtype(wrapped = OnlyInt.W(2), n = 3)
+    neg = Carrier.Wi(OnlyInt.W(1)) == Carrier.Wi(OnlyInt.W(2))
+    p = Carrier.Pair(OnlyInt.W(4), 5) == Carrier.Pair(OnlyInt.W(4), 5)
+    Console.print("i={i} s={s} b={b} r={r} p={p} neg={neg}")
+"#;
+const NEWTYPE_FIELD_EQ_OUT: &str = "i=true s=true b=true r=true p=true neg=false";
+
+#[test]
+fn equality_on_a_newtype_erased_field_compares_by_value_vm() {
+    assert_eq_with_label(
+        "VM",
+        &run_vm("aver-newtype-field-eq-vm", NEWTYPE_FIELD_EQ_SRC),
+        NEWTYPE_FIELD_EQ_OUT,
+    );
+}
+
+#[test]
+fn equality_on_a_newtype_erased_field_compares_by_value_wasm_gc() {
+    assert_eq_with_label(
+        "wasm-gc",
+        &run_wasm_gc("aver-newtype-field-eq-wasmgc", NEWTYPE_FIELD_EQ_SRC),
+        NEWTYPE_FIELD_EQ_OUT,
+    );
+}

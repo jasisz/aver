@@ -20,6 +20,8 @@ pub mod verify_run;
 pub mod vm_verify;
 #[cfg(all(feature = "runtime", feature = "wasm"))]
 pub mod wasm_gc_verify;
+#[cfg(all(feature = "runtime", feature = "wasm"))]
+mod wasm_gc_verify_repr;
 pub mod why;
 
 #[cfg(feature = "runtime")]

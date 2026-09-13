@@ -8,17 +8,18 @@
 //! works without any host-side compound-value decoder. The host only
 //! ever decodes a single `i32` per case.
 //!
-//! Trade-off: failure diagnostics show the source-code expressions
-//! (`expr_to_str`) rather than actual runtime values. A future cut can
-//! synthesize `__verify_X_left_repr() -> String` helpers and decode
-//! Strings on fail; for now the Bool-only cut is enough to ship cross-
-//! backend verify equivalence.
+//! Failure diagnostics render the actual runtime value too: for every
+//! stamped case type, `wasm_gc_verify_repr` synthesizes a pure Aver
+//! `fn __verify_repr_N(v: T) -> String` matching the VM's `aver_repr`
+//! output, compiled into the same module; the per-case
+//! `__verify_X_left_repr` helper is just a call to it. Types the
+//! synthesizer declines (`Map`, `Fn`, unresolvable named types) fall
+//! back to a `no wasm-gc rendering for a value of type T` marker.
 //!
-//! Limits in this first cut:
-//!   - cross-module `depends [...]` not supported (single-file only)
+//! Limits in this cut:
 //!   - `.trace.*` projections not supported (would need host-side trace
 //!     event capture; not wired through the wasm-gc effect imports yet)
-//!   - actual-value rendering on fail (see above)
+//!   - `Map`/`Fn`-typed case values still render as the marker above
 
 #![cfg(feature = "wasm")]
 
@@ -151,8 +152,10 @@ pub fn run_verify_for_items_wasm_gc_with_mode(
         }
     }
 
-    let plans = build_verify_wasm_gc_plans(&mut items, &blocks);
-
+    // Loaded before the plans: repr synthesis resolves stamped type
+    // names against the dependencies' type defs, and the loader only
+    // reads `depends [...]` from the items — it does not care about the
+    // helpers the plan pass is about to append.
     let prepared_deps = if let Some(root) = base_dir {
         Some(crate::source::load_compile_deps_for_wasm_runtime(
             &items, root,
@@ -160,6 +163,34 @@ pub fn run_verify_for_items_wasm_gc_with_mode(
     } else {
         None
     };
+
+    let mut repr_synth = super::wasm_gc_verify_repr::ReprSynth::new(
+        &items,
+        prepared_deps
+            .as_ref()
+            .map(|prepared| prepared.modules.as_slice())
+            .unwrap_or(&[]),
+    );
+    let plans = build_verify_wasm_gc_plans(&mut items, &blocks, &mut repr_synth);
+
+    // The repr helpers are Aver source, not AST: parse them — in
+    // compiler-identifier mode, since `__verify_repr_*` names live in the
+    // reserved `__` namespace by construction — and run them through the
+    // same pipeline pass as everything else so they get typechecked,
+    // resolved and flattened alongside the program.
+    let repr_sources = repr_synth.take_sources();
+    if !repr_sources.is_empty() {
+        let joined = repr_sources.join("\n\n");
+        let mut lexer = crate::lexer::Lexer::new(&joined);
+        let tokens = lexer.tokenize().map_err(|e| {
+            format!("wasm-gc verify: synthesized repr helpers failed to lex: {e}\n{joined}")
+        })?;
+        let mut parser = crate::parser::Parser::new_compiler_generated(tokens);
+        let mut helper_items = parser.parse().map_err(|e| {
+            format!("wasm-gc verify: synthesized repr helpers failed to parse: {e}\n{joined}")
+        })?;
+        items.append(&mut helper_items);
+    }
 
     // After helper synthesis, run the full wasm-gc-compatible pipeline:
     // typecheck stamps `ty` on the freshly synthesized `BinOp(Eq, ...)`
@@ -248,10 +279,12 @@ struct WasmGcVerifyCaseFns {
     /// Synthesized `__verify_X_guard() -> Bool` if the case has a `when`
     /// clause or hostile-profile rebinding.
     guard: Option<String>,
-    /// Synthesized `__verify_X_left_repr() -> String` when the LHS type
-    /// is a primitive (Int/Float/Bool/Str) so the host can render the
-    /// actual runtime value on fail. None for compound types — falls
-    /// back to source-text rendering.
+    /// Synthesized `__verify_X_left_repr() -> String` so the host can
+    /// render the actual runtime value on fail. Primitives render via
+    /// `String.fromInt`/`fromFloat`/a Bool match directly; compound types
+    /// delegate to a `__verify_repr_N` helper `ReprSynth` generated for
+    /// the stamped type. None when no helper exists — the runner prints
+    /// a `no wasm-gc rendering` marker instead.
     left_repr: Option<String>,
     right_repr: Option<String>,
     /// Source-code rendering of the case (`lhs == rhs`) for diagnostics.
@@ -260,6 +293,8 @@ struct WasmGcVerifyCaseFns {
     /// fallback when no runtime repr helper was synthesized.
     lhs_src: String,
     rhs_src: String,
+    /// Stamped LHS type, for the `no wasm-gc rendering` marker's wording.
+    left_ty: Option<String>,
 }
 
 struct WasmGcVerifyPlan {
@@ -328,10 +363,15 @@ fn collect_block_fn_effects(items: &[TopLevel], fn_name: &str) -> Vec<Spanned<St
 }
 
 /// Synthesize a `String`-typed expression that renders the user's
-/// LHS / RHS expression at runtime. Returns `None` for types we can't
-/// stringify with stdlib primitives. Compound types (List/Map/Vector/
-/// Variant/Record) fall back to source-text rendering on fail.
-fn repr_expr_via_clone(expr: &Spanned<Expr>, line: usize) -> Option<Spanned<Expr>> {
+/// LHS / RHS expression at runtime. Primitives stringify with stdlib
+/// calls; any other stamped type delegates to a `ReprSynth` helper
+/// (`fn __verify_repr_N(v: T) -> String`) compiled into the same
+/// module. `None` when the type is not renderable at all.
+fn repr_expr_via_clone(
+    expr: &Spanned<Expr>,
+    line: usize,
+    synth: &mut super::wasm_gc_verify_repr::ReprSynth,
+) -> Option<Spanned<Expr>> {
     use crate::types::Type;
     let ty = expr.ty()?;
     let mk_attr_call = |module: &str, method: &str| {
@@ -364,13 +404,23 @@ fn repr_expr_via_clone(expr: &Spanned<Expr>, line: usize) -> Option<Spanned<Expr
             },
             line,
         )),
-        _ => None,
+        other => {
+            let helper = synth.helper_for(other)?;
+            Some(Spanned::new(
+                Expr::FnCall(
+                    Box::new(Spanned::new(Expr::Ident(helper), line)),
+                    vec![expr.clone()],
+                ),
+                line,
+            ))
+        }
     }
 }
 
 fn build_verify_wasm_gc_plans(
     items: &mut Vec<TopLevel>,
     verify_blocks: &[VerifyBlock],
+    synth: &mut super::wasm_gc_verify_repr::ReprSynth,
 ) -> Vec<WasmGcVerifyPlan> {
     use super::vm_verify::guard_for_case;
 
@@ -422,9 +472,10 @@ fn build_verify_wasm_gc_plans(
                 name
             });
 
-            // Repr helpers — only for primitive return types. Compound
-            // types fall through to source-text rendering on fail.
-            let left_repr = repr_expr_via_clone(&left_expr, block.line).map(|repr_body| {
+            // Repr helpers — primitives stringify in place; compound
+            // types call into a ReprSynth helper. Types with no helper
+            // leave `None` and print the no-rendering marker on fail.
+            let left_repr = repr_expr_via_clone(&left_expr, block.line, synth).map(|repr_body| {
                 let name = format!("{}_left_repr", prefix);
                 items.push(make_verify_string_helper(
                     name.clone(),
@@ -434,7 +485,7 @@ fn build_verify_wasm_gc_plans(
                 ));
                 name
             });
-            let right_repr = repr_expr_via_clone(&right_expr, block.line).map(|repr_body| {
+            let right_repr = repr_expr_via_clone(&right_expr, block.line, synth).map(|repr_body| {
                 let name = format!("{}_right_repr", prefix);
                 items.push(make_verify_string_helper(
                     name.clone(),
@@ -457,6 +508,7 @@ fn build_verify_wasm_gc_plans(
                 case_expr,
                 lhs_src,
                 rhs_src,
+                left_ty: left_expr.ty().map(|ty| ty.display()),
             });
         }
 
@@ -728,15 +780,17 @@ fn run_verify_cases_in_wasmtime(
                     let actual = match &case.left_repr {
                         Some(name) => match invoke_string(&mut store, &instance, name) {
                             Ok(s) => s,
-                            Err(_) => format!(
-                                "<{}: wasm-gc compound-value repr is a follow-up>",
-                                case.lhs_src
-                            ),
+                            Err(e) => {
+                                format!("<{}: rendering failed: {}>", case.lhs_src, e)
+                            }
                         },
-                        None => format!(
-                            "<{}: wasm-gc compound-value repr is a follow-up>",
-                            case.lhs_src
-                        ),
+                        None => {
+                            let ty = case.left_ty.as_deref().unwrap_or("<unstamped>");
+                            format!(
+                                "<{}: no wasm-gc rendering for a value of type {}>",
+                                case.lhs_src, ty
+                            )
+                        }
                     };
                     VerifyCaseOutcome::Mismatch { expected, actual }
                 }

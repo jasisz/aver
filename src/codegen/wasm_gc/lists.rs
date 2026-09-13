@@ -1997,10 +1997,9 @@ fn emit_list_contains(
 
 /// Inline field-by-field eq for two records held in scratch locals.
 /// Pushes a single i32 (1=eq, 0=ne) onto the stack. Field type
-/// dispatch covers `{Int, Float, Bool, String}`; other field types
-/// surface as Unimplemented (same constraint as `emit_eq_record` in
-/// maps.rs — extending requires nested-record / list / vector eq
-/// dispatch).
+/// dispatch covers `{Int, Float, Bool, String}` plus any type with a
+/// registered `__eq_<X>` helper; a newtype-erased field dispatches on
+/// its underlying primitive.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn emit_record_eq_inline(
     f: &mut Function,
@@ -2055,12 +2054,23 @@ pub(super) fn emit_record_eq_inline(
             }
             continue;
         }
-        match field_ty.trim() {
-            "Int" => {
+        // A field whose declared type is newtype-erased is stored as the
+        // underlying primitive, so it dispatches on that primitive — the
+        // same resolution the hash emitters do.
+        let declared = field_ty.trim();
+        let resolved = registry.newtype_underlying(declared).unwrap_or(declared);
+        match resolved {
+            "Int" if declared == "Int" => {
                 // ETAP-2 multi-field carrier-`i64`: a bounded Int field erased
                 // to a native `i64` compares with `i64.eq`; every other Int
                 // field stays the boxed `$AverInt` and routes to `__aint_eq`.
                 emit_record_int_field_eq(f, registry, record_name, field_name)?;
+            }
+            // A newtype-resolved Int (`Box(v: Int)` / `Only(Int)` used as a
+            // field) is stored unboxed — the same `__aint_eq` path the hash
+            // side takes.
+            "Int" => {
+                emit_aint_field_eq(f, registry)?;
             }
             "Bool" => {
                 f.instruction(&Instruction::I32Eq);
@@ -2128,7 +2138,9 @@ pub(super) fn emit_record_eq_inline(
 /// each constructor variant of `parent_name`, test whether both head
 /// and needle have that concrete type. If both: cast + field-by-
 /// field eq, push result. If only one: push 0 (different variants).
-/// Final i32 on stack: 1 = equal, 0 = different.
+/// A variant field whose declared type is newtype-erased dispatches
+/// on its underlying primitive. Final i32 on stack: 1 = equal,
+/// 0 = different.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn emit_sum_eq_inline(
     f: &mut Function,
@@ -2194,7 +2206,13 @@ pub(super) fn emit_sum_eq_inline(
                     }
                     continue;
                 }
-                match field_ty.trim() {
+                // A field whose declared type is newtype-erased is stored
+                // as the underlying primitive, so it dispatches on that
+                // primitive — the same resolution the hash emitters do.
+                let resolved = registry
+                    .newtype_underlying(field_ty.trim())
+                    .unwrap_or(field_ty.trim());
+                match resolved {
                     "Int" => {
                         emit_aint_field_eq(f, registry)?;
                     }
