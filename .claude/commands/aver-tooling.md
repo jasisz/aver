@@ -43,14 +43,18 @@ diagnostics:
 - missing `intent =`
 - missing `?` descriptions on relevant functions
 - missing `verify` on pure, non-trivial, non-`main` functions
+  (`error[missing-verify]`; an answer function and a seam function are
+  such functions)
 - coverage-style warnings for thin `verify` examples
 - file size warnings
 - exposed names nothing in the checked program imports (`unused-expose`);
   a directory input judges exposes over every program in it, a single
   file only over its own program, so a name used solely by a sibling
-  program outside the input is reported
+  program outside the input is reported; what only the generated loop
+  reaches — an answer module's functions, a job kind's `begin` and
+  `take`, the seam — is not an import, so leave those out of `exposes`
 
-Warnings do not make `check` fail.
+Warnings do not make `check` fail; `missing-verify` is an error and does.
 
 ### Capabilities
 
@@ -552,7 +556,9 @@ view = "Node.View"
 - `work = "Module.function"` — the pure `(T) -> R` a job kind runs off the turn, for a capability of Work shape (`begin(task: T) -> Result<Work.Job, String>`, `take(job: Work.Job) -> Result<Option<R>, String>`). Required on every job kind; the function belongs to a module the program depends on, never to the entry module.
 - `task`, `started`, `landed` — the seam between the job kind and an answer module's state: `(S) -> Option<T>`, `(S, T) -> S` and `(S, Result<R, String>) -> S`. All three or none, all three pure, `task` and `started` in one module; `started` states `verify <fn> law aStartedTaskIsNotAskedAgain`.
 - `[work] max-jobs` — jobs running at once, shared by every job kind; a positive integer, default the host's parallelism.
-- `[run]` — `order`, `admit`, `stop` name three pure policies and `view` the record they read; all four in the entry module, all four required.
+- `[run]` — `order`, `admit`, `stop` name three pure policies and `view` the record they read; all four in the entry module, all four required. The entry module's `depends [...]` lists `Work`, every module named by `answer` and every job kind, because the generated loop names them; a missing one is `error[run-binding]`.
+
+The program this manifest belongs to is `tests/fixtures/run_guide_example/`; the language guide shows its modules.
 
 Diagnostics an agent meets on the way, each with its recipe (`docs/diagnostics-slugs.md` has the full rows):
 
