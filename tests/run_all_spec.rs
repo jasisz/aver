@@ -755,15 +755,31 @@ fn the_generated_take_removes_a_job_only_when_its_outcome_is_final() {
 
 /// Two job kinds under one generated loop: the turn takes and starts both
 /// kinds over one table and one shared `max-jobs` limit. The fixture queues
-/// two tasks of each kind and parks the process until all four have landed;
-/// the score it reports — 65 — is only what 2+3+20+40 makes, which is the
-/// proof that each of the four tasks was started once and landed once.
+/// two tasks of each kind, prints one line per landing — the kind and what it
+/// scored — and parks the process until all four have landed; each of the
+/// four lines appears exactly once, which is the proof that each task was
+/// started once and landed once, and the sum it reports is what 2+3+20+40
+/// makes.
 #[test]
 fn two_job_kinds_under_one_generated_loop_each_land_once() {
     let out = aver("run_two_job_kinds", &["run"]);
     assert!(out.status.success(), "{}", format_output(&out));
+    let text = combined(&out);
+    for landing in [
+        "alpha landed: scored 2",
+        "alpha landed: scored 3",
+        "beta landed: scored 20",
+        "beta landed: scored 40",
+    ] {
+        assert_eq!(
+            text.matches(landing).count(),
+            1,
+            "{landing} did not land exactly once:\n{}",
+            format_output(&out)
+        );
+    }
     assert!(
-        combined(&out).contains("all jobs landed: scored 65"),
+        text.contains("all jobs landed: scored 65"),
         "{}",
         format_output(&out)
     );
@@ -847,11 +863,9 @@ fn a_recorded_run_of_two_job_kinds_replays_to_the_same_run() {
         .arg(&dir);
     let out = recorded.output().expect("aver runs");
     assert!(out.status.success(), "{}", format_output(&out));
-    assert!(
-        combined(&out).contains("all jobs landed: scored 65"),
-        "{}",
-        format_output(&out)
-    );
+    for line in ["beta landed: scored 40", "all jobs landed: scored 65"] {
+        assert!(combined(&out).contains(line), "{}", format_output(&out));
+    }
 
     let recording = only_recording(&dir);
     let mut command = Command::new(aver_bin());

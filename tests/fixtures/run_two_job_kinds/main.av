@@ -1,5 +1,5 @@
 module Node
-    intent = "Fixture: two job kinds under one generated loop with max-jobs = 3. Four tasks share the table and the limit; the run ends when the pool reports what they scored, which is the proof each of them landed once."
+    intent = "Fixture: two job kinds under one generated loop with max-jobs = 3. Four tasks share the table and the limit; the process prints one line per landing, kind and score, and the run ends when the pool reports what they scored together — which is the proof each of them started once and landed once."
     depends [Process, Wait, Work, Pool, Alpha, Beta, Pooled]
     effects [Console.print, Pool.claim, yield]
     exposes [Pending, View, order, admit, stop]
@@ -16,11 +16,18 @@ record View
     stopping: Bool
 
 fn looping() -> Unit
-    ? "Claims handles until the pool finishes it — which happens only once every task has landed — and says what they scored."
+    ? "Claims handles until the pool has none, then hears each landing and says which kind landed and what it scored, until the pool finishes it — which happens only once every task has landed — and says what they scored together."
     ! [Console.print, Pool.claim, yield]
     match Pool.claim()
         Pool.Assignment.Handle(_) -> looping()
+        Pool.Assignment.Landed(kind, score) -> match said(kind, score)
+            _ -> looping()
         Pool.Assignment.Finished(scored) -> Console.print("all jobs landed: scored {scored}")
+
+fn said(kind: String, score: Int) -> Unit
+    ? "One landing said out loud, in place, before the process goes back to the pool for the next."
+    ! [Console.print]
+    Console.print("{kind} landed: scored {score}")
 
 fn order(view: View) -> List<Int>
     ? "Every seated process, in slot order."
