@@ -133,10 +133,11 @@ pub(crate) fn emit_mir_match(
     // Tuple arms. The single-arm flat destructure `(a, b, …) -> body`
     // (every component a `Bind` or `Wildcard`) goes to `emit_mir_tuple_match`
     // — mirror of `emit_match`'s `arms.len() == 1 && Tuple && items >= 2`
-    // branch. A multi-arm tuple-of-constructors match (`(Result.Ok(a),
-    // Result.Err(e)) -> …`) goes to `emit_mir_tuple_constructor_match`,
-    // which falls back (`Ok(None)`) for any element shape the oracle's
-    // `emit_tuple_constructor_match` doesn't support.
+    // branch. A multi-arm tuple match whose elements test their field
+    // (`(Result.Ok(a), Result.Err(e)) -> …`, `([], 0) -> …`,
+    // `(Option.Some(v), true) -> …`) goes to
+    // `emit_mir_tuple_constructor_match`, which falls back (`Ok(None)`)
+    // for any element shape outside `tuple_element_shape`'s set.
     if m.arms
         .iter()
         .any(|a| matches!(a.pattern, MirPattern::Tuple(_)))
@@ -442,18 +443,19 @@ fn emit_mir_tuple_match(
 }
 
 /// Mirror of `emit_tuple_constructor_match` + `emit_tuple_constructor_arm_cascade`
-/// (emit.rs): a multi-arm match on a tuple whose elements carry built-in
-/// `Result` constructors — e.g. `match r { (Result.Ok(a), Result.Err(e))
-/// -> …; _ -> … }` — lowered to a nested `if`/`else` cascade. Each arm
-/// AND's together a per-element `Result` tag test; on the matching branch
-/// it extracts each element's `Ok`/`Err` payload into its binding slot
-/// and emits the body; the failure branch recurses into the remaining
-/// arms; a trailing `Wildcard` / `Bind` arm closes the cascade. A
-/// pre-pass rejects (returns `Ok(None)` → whole-fn fallback) any shape
-/// the oracle's cascade doesn't support — a non-`Result` element ctor, an
-/// element with no registered `Result<T,E>` slot, an arity mismatch, or a
-/// non-tuple/bind/wildcard arm — so the resolved-HIR emitter handles
-/// those byte-identically.
+/// (emit.rs): a multi-arm match on a tuple whose elements carry a test —
+/// e.g. `match r { (Result.Ok(a), Result.Err(e)) -> …; _ -> … }` or
+/// `match (tasks, running) { ([], 0) -> …; _ -> … }` — lowered to a
+/// nested `if`/`else` cascade. Each arm AND's together one test per
+/// element ([`tuple_element_shape`] says which shapes test); on the
+/// matching branch it writes each element's binds into their slots and
+/// emits the body; the failure branch recurses into the remaining arms;
+/// a trailing `Wildcard` / `Bind` arm closes the cascade. A pre-pass
+/// rejects (returns `Ok(None)` → whole-fn trap stub) any shape the
+/// cascade doesn't emit — an element shape outside the accepted set, an
+/// element with no registered type slot, an arity mismatch, or a
+/// non-tuple/bind/wildcard arm — so the emit pass can't half-write then
+/// bail.
 fn emit_mir_tuple_constructor_match(
     func: &mut Function,
     m: &MirMatch,
@@ -469,14 +471,17 @@ fn emit_mir_tuple_constructor_match(
     let Some(elems) = TypeRegistry::tuple_elements(&canonical) else {
         return Ok(None);
     };
-    let elems: Vec<String> = elems.into_iter().map(|s| s.to_string()).collect();
+    let elems: Vec<String> = elems
+        .into_iter()
+        .map(|s| s.chars().filter(|c| !c.is_whitespace()).collect())
+        .collect();
 
     // Pre-pass: only emit when every arm is a shape the cascade fully
     // supports, so the emit pass can't half-write then bail. Require at
-    // least one tuple arm carrying a built-in `Result` ctor (otherwise
-    // this isn't the constructor-cascade shape and the caller's other
-    // dispatch arms own it).
-    let mut any_result_ctor = false;
+    // least one tuple arm carrying an element that tests its field
+    // (otherwise this isn't the constructor-cascade shape and the
+    // caller's other dispatch arms own it).
+    let mut any_test = false;
     for arm in &m.arms {
         match &arm.pattern {
             MirPattern::Wildcard | MirPattern::Bind(..) => {}
@@ -484,28 +489,18 @@ fn emit_mir_tuple_constructor_match(
                 if items.len() != elems.len() {
                     return Ok(None);
                 }
-                for (i, pat) in items.iter().enumerate() {
-                    match pat {
-                        MirPattern::Bind(..) | MirPattern::Wildcard => {}
-                        MirPattern::Ctor {
-                            ctor: MirCtor::Builtin(BuiltinCtor::ResultOk | BuiltinCtor::ResultErr),
-                            ..
-                        } => {
-                            any_result_ctor = true;
-                            let elem_canonical: String =
-                                elems[i].chars().filter(|c| !c.is_whitespace()).collect();
-                            if ctx.registry.result_type_idx(&elem_canonical).is_none() {
-                                return Ok(None);
-                            }
-                        }
-                        _ => return Ok(None),
+                for (pat, elem) in items.iter().zip(&elems) {
+                    match tuple_element_shape(pat, elem, ctx) {
+                        Some(TupleElementShape::Test) => any_test = true,
+                        Some(TupleElementShape::Irrefutable) => {}
+                        None => return Ok(None),
                     }
                 }
             }
             _ => return Ok(None),
         }
     }
-    if !any_result_ctor {
+    if !any_test {
         return Ok(None);
     }
 
@@ -521,11 +516,280 @@ fn emit_mir_tuple_constructor_match(
     )
 }
 
+/// How one element of a tuple arm relates to its field, as
+/// [`tuple_element_shape`] classifies it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TupleElementShape {
+    /// A bind or a wildcard: takes the field as it is, no test.
+    Irrefutable,
+    /// A shape that tests the field before the arm is taken: a `Result`
+    /// or `Option` tag, a list's emptiness, an `Int` or `Bool` literal.
+    Test,
+}
+
+/// The pre-pass verdict for one element pattern of a tuple arm against
+/// its element type `elem` (whitespace-free canonical). `None` is a shape
+/// the cascade does not emit: a `String` or `Float` literal, a user
+/// variant, a nested tuple, or an element whose type has no registered
+/// slot. Every registry lookup the emit pass makes is made here first, so
+/// the cascade cannot fail half-way through.
+fn tuple_element_shape(
+    pat: &MirPattern,
+    elem: &str,
+    ctx: &EmitCtx<'_>,
+) -> Option<TupleElementShape> {
+    match pat {
+        MirPattern::Bind(..) | MirPattern::Wildcard => Some(TupleElementShape::Irrefutable),
+        MirPattern::Ctor {
+            ctor: MirCtor::Builtin(BuiltinCtor::ResultOk | BuiltinCtor::ResultErr),
+            ..
+        } => ctx
+            .registry
+            .result_type_idx(elem)
+            .map(|_| TupleElementShape::Test),
+        MirPattern::Ctor {
+            ctor: MirCtor::Builtin(BuiltinCtor::OptionSome | BuiltinCtor::OptionNone),
+            ..
+        } => ctx
+            .registry
+            .option_type_idx(elem)
+            .map(|_| TupleElementShape::Test),
+        MirPattern::EmptyList | MirPattern::Cons { .. } => ctx
+            .registry
+            .list_type_idx(elem)
+            .map(|_| TupleElementShape::Test),
+        MirPattern::Literal(Literal::Bool(_)) if elem == "Bool" => Some(TupleElementShape::Test),
+        MirPattern::Literal(Literal::Int(_)) if elem == "Int" => {
+            // A boxed `$AverInt` field compares through the two helpers the
+            // Int-literal cascade uses; both must be registered.
+            if ctx.registry.bignum
+                && !(ctx.fn_map.builtins.contains_key("__aint_from_i64")
+                    && ctx.fn_map.builtins.contains_key("__aint_eq"))
+            {
+                return None;
+            }
+            Some(TupleElementShape::Test)
+        }
+        _ => None,
+    }
+}
+
+/// `local.get scratch; ref.cast $tuple; struct.get $tuple i` — the
+/// tuple field `i` of the scratch-held subject, left on the stack.
+fn emit_tuple_field(func: &mut Function, scratch: u32, tuple_idx: u32, i: usize) {
+    func.instruction(&Instruction::LocalGet(scratch));
+    func.instruction(&Instruction::RefCastNonNull(
+        wasm_encoder::HeapType::Concrete(tuple_idx),
+    ));
+    func.instruction(&Instruction::StructGet {
+        struct_type_index: tuple_idx,
+        field_index: i as u32,
+    });
+}
+
+/// The registry slot of a carrier element (`Result<..>`, `Option<..>`,
+/// `List<..>`) the pre-pass already found; a miss here is a bug in the
+/// pre-pass, reported as a validation error rather than a half-written body.
+fn tuple_element_type_idx(lookup: Option<u32>, what: &str) -> Result<u32, WasmGcError> {
+    lookup.ok_or_else(|| {
+        WasmGcError::Validation(format!(
+            "tuple match: element is not a registered {what} (the pre-pass admitted it)"
+        ))
+    })
+}
+
+/// Emit one element's test — an `i32` verdict left on the stack — for a
+/// shape [`tuple_element_shape`] classed as [`TupleElementShape::Test`].
+/// Returns `false` for an irrefutable element, which emits nothing.
+fn emit_tuple_element_test(
+    func: &mut Function,
+    scratch: u32,
+    tuple_idx: u32,
+    i: usize,
+    pat: &MirPattern,
+    elem: &str,
+    ctx: &EmitCtx<'_>,
+) -> Result<bool, WasmGcError> {
+    match pat {
+        MirPattern::Ctor {
+            ctor: MirCtor::Builtin(bc @ (BuiltinCtor::ResultOk | BuiltinCtor::ResultErr)),
+            ..
+        } => {
+            let res_idx = tuple_element_type_idx(ctx.registry.result_type_idx(elem), "Result")?;
+            let expected_tag = if matches!(bc, BuiltinCtor::ResultOk) {
+                RESULT_OK_TAG
+            } else {
+                RESULT_ERR_TAG
+            };
+            emit_tuple_field(func, scratch, tuple_idx, i);
+            func.instruction(&Instruction::RefCastNonNull(
+                wasm_encoder::HeapType::Concrete(res_idx),
+            ));
+            func.instruction(&Instruction::StructGet {
+                struct_type_index: res_idx,
+                field_index: 0,
+            });
+            func.instruction(&Instruction::I32Const(expected_tag));
+            func.instruction(&Instruction::I32Eq);
+        }
+        MirPattern::Ctor {
+            ctor: MirCtor::Builtin(bc @ (BuiltinCtor::OptionSome | BuiltinCtor::OptionNone)),
+            ..
+        } => {
+            let opt_idx = tuple_element_type_idx(ctx.registry.option_type_idx(elem), "Option")?;
+            let expected_tag = if matches!(bc, BuiltinCtor::OptionSome) {
+                OPTION_SOME_TAG
+            } else {
+                OPTION_NONE_TAG
+            };
+            emit_tuple_field(func, scratch, tuple_idx, i);
+            func.instruction(&Instruction::RefCastNonNull(
+                wasm_encoder::HeapType::Concrete(opt_idx),
+            ));
+            func.instruction(&Instruction::StructGet {
+                struct_type_index: opt_idx,
+                field_index: 0,
+            });
+            func.instruction(&Instruction::I32Const(expected_tag));
+            func.instruction(&Instruction::I32Eq);
+        }
+        // A list is null when empty (mirror of `emit_mir_list_match`).
+        MirPattern::EmptyList => {
+            emit_tuple_field(func, scratch, tuple_idx, i);
+            func.instruction(&Instruction::RefIsNull);
+        }
+        MirPattern::Cons { .. } => {
+            emit_tuple_field(func, scratch, tuple_idx, i);
+            func.instruction(&Instruction::RefIsNull);
+            func.instruction(&Instruction::I32Eqz);
+        }
+        MirPattern::Literal(Literal::Bool(b)) => {
+            emit_tuple_field(func, scratch, tuple_idx, i);
+            func.instruction(&Instruction::I32Const(i32::from(*b)));
+            func.instruction(&Instruction::I32Eq);
+        }
+        // The field is a boxed `$AverInt` under bignum, so the literal is
+        // lifted and compared with `__aint_eq`, as the Int-literal cascade
+        // does for a boxed subject; with bignum off the field is a scalar
+        // `i64`.
+        MirPattern::Literal(Literal::Int(n)) => {
+            emit_tuple_field(func, scratch, tuple_idx, i);
+            func.instruction(&Instruction::I64Const(*n));
+            if ctx.registry.bignum {
+                let from_i64 = ctx.fn_map.builtins.get("__aint_from_i64").copied().ok_or(
+                    WasmGcError::Validation(
+                        "bignum active but __aint_from_i64 helper not registered".into(),
+                    ),
+                )?;
+                let eq = ctx.fn_map.builtins.get("__aint_eq").copied().ok_or(
+                    WasmGcError::Validation(
+                        "bignum active but __aint_eq helper not registered".into(),
+                    ),
+                )?;
+                func.instruction(&Instruction::Call(from_i64));
+                func.instruction(&Instruction::Call(eq));
+            } else {
+                func.instruction(&Instruction::I64Eq);
+            }
+        }
+        _ => return Ok(false),
+    }
+    Ok(true)
+}
+
+/// Write one element's binds into their slots on the taken arm: a direct
+/// `Bind` captures the whole field, a `Result`/`Option` ctor its payload, a
+/// `Cons` its head and tail. An ignored bind (`u16::MAX`) writes nothing.
+fn emit_tuple_element_binds(
+    func: &mut Function,
+    scratch: u32,
+    tuple_idx: u32,
+    i: usize,
+    pat: &MirPattern,
+    elem: &str,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    const NO_SLOT: u32 = u16::MAX as u32;
+    match pat {
+        MirPattern::Bind(slot, _) if slot.0 != NO_SLOT => {
+            emit_tuple_field(func, scratch, tuple_idx, i);
+            func.instruction(&Instruction::LocalSet(slot.0));
+        }
+        MirPattern::Ctor {
+            ctor: MirCtor::Builtin(bc @ (BuiltinCtor::ResultOk | BuiltinCtor::ResultErr)),
+            bindings,
+            ..
+        } => {
+            let res_idx = tuple_element_type_idx(ctx.registry.result_type_idx(elem), "Result")?;
+            let payload_field: u32 = if matches!(bc, BuiltinCtor::ResultOk) {
+                1
+            } else {
+                2
+            };
+            for binding in bindings {
+                if binding.0 == NO_SLOT {
+                    continue;
+                }
+                emit_tuple_field(func, scratch, tuple_idx, i);
+                func.instruction(&Instruction::RefCastNonNull(
+                    wasm_encoder::HeapType::Concrete(res_idx),
+                ));
+                func.instruction(&Instruction::StructGet {
+                    struct_type_index: res_idx,
+                    field_index: payload_field,
+                });
+                func.instruction(&Instruction::LocalSet(binding.0));
+            }
+        }
+        MirPattern::Ctor {
+            ctor: MirCtor::Builtin(BuiltinCtor::OptionSome),
+            bindings,
+            ..
+        } => {
+            let opt_idx = tuple_element_type_idx(ctx.registry.option_type_idx(elem), "Option")?;
+            for binding in bindings {
+                if binding.0 == NO_SLOT {
+                    continue;
+                }
+                emit_tuple_field(func, scratch, tuple_idx, i);
+                func.instruction(&Instruction::RefCastNonNull(
+                    wasm_encoder::HeapType::Concrete(opt_idx),
+                ));
+                func.instruction(&Instruction::StructGet {
+                    struct_type_index: opt_idx,
+                    field_index: 1,
+                });
+                func.instruction(&Instruction::LocalSet(binding.0));
+            }
+        }
+        MirPattern::Cons { head, tail, .. } => {
+            let list_idx = tuple_element_type_idx(ctx.registry.list_type_idx(elem), "List")?;
+            for (field_index, slot) in [(0u32, head), (1u32, tail)] {
+                if slot.0 == NO_SLOT {
+                    continue;
+                }
+                emit_tuple_field(func, scratch, tuple_idx, i);
+                func.instruction(&Instruction::RefCastNonNull(
+                    wasm_encoder::HeapType::Concrete(list_idx),
+                ));
+                func.instruction(&Instruction::StructGet {
+                    struct_type_index: list_idx,
+                    field_index,
+                });
+                func.instruction(&Instruction::LocalSet(slot.0));
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 /// The recursive cascade body — mirror of `emit_tuple_constructor_arm_cascade`.
 /// Reads each binding slot straight off the `MirPattern` node (`Bind`'s
-/// `LocalId`, the `Ctor`'s `bindings`), which `lower.rs` seeded from the
-/// resolver's `binding_slots` in the same preorder the oracle walks — so
-/// no parallel slot cursor is needed.
+/// `LocalId`, the `Ctor`'s `bindings`, the `Cons`'s head and tail), which
+/// `lower.rs` seeded from the resolver's `binding_slots` in the same
+/// preorder the oracle walks — so no parallel slot cursor is needed.
+/// `elems` are the whitespace-free element types of the subject tuple.
 #[allow(clippy::too_many_arguments)]
 fn emit_mir_tuple_constructor_arm_cascade(
     func: &mut Function,
@@ -562,45 +826,10 @@ fn emit_mir_tuple_constructor_arm_cascade(
             }
         }
         MirPattern::Tuple(items) => {
-            // Verdict: AND together each element's `Result` tag test.
+            // Verdict: AND together each testing element's verdict.
             let mut tests_emitted = 0u32;
-            for (i, pat) in items.iter().enumerate() {
-                if let MirPattern::Ctor {
-                    ctor: MirCtor::Builtin(bc),
-                    ..
-                } = pat
-                    && matches!(bc, BuiltinCtor::ResultOk | BuiltinCtor::ResultErr)
-                {
-                    let elem_canonical: String =
-                        elems[i].chars().filter(|c| !c.is_whitespace()).collect();
-                    let res_idx = ctx.registry.result_type_idx(&elem_canonical).ok_or(
-                        WasmGcError::Validation(
-                            "tuple-of-constructors match: element is not a registered Result"
-                                .into(),
-                        ),
-                    )?;
-                    let expected_tag: i32 = if matches!(bc, BuiltinCtor::ResultOk) {
-                        1
-                    } else {
-                        0
-                    };
-                    func.instruction(&Instruction::LocalGet(scratch));
-                    func.instruction(&Instruction::RefCastNonNull(
-                        wasm_encoder::HeapType::Concrete(tuple_idx),
-                    ));
-                    func.instruction(&Instruction::StructGet {
-                        struct_type_index: tuple_idx,
-                        field_index: i as u32,
-                    });
-                    func.instruction(&Instruction::RefCastNonNull(
-                        wasm_encoder::HeapType::Concrete(res_idx),
-                    ));
-                    func.instruction(&Instruction::StructGet {
-                        struct_type_index: res_idx,
-                        field_index: 0,
-                    });
-                    func.instruction(&Instruction::I32Const(expected_tag));
-                    func.instruction(&Instruction::I32Eq);
+            for (i, (pat, elem)) in items.iter().zip(elems).enumerate() {
+                if emit_tuple_element_test(func, scratch, tuple_idx, i, pat, elem, ctx)? {
                     if tests_emitted > 0 {
                         func.instruction(&Instruction::I32And);
                     }
@@ -611,64 +840,8 @@ fn emit_mir_tuple_constructor_arm_cascade(
                 func.instruction(&Instruction::I32Const(1));
             }
             func.instruction(&Instruction::If(block_ty));
-            // Bindings: a direct `Bind` element captures the whole tuple
-            // field; a `Result` ctor element captures its payload.
-            for (i, pat) in items.iter().enumerate() {
-                match pat {
-                    MirPattern::Bind(slot, _) if slot.0 != u32::from(u16::MAX) => {
-                        func.instruction(&Instruction::LocalGet(scratch));
-                        func.instruction(&Instruction::RefCastNonNull(
-                            wasm_encoder::HeapType::Concrete(tuple_idx),
-                        ));
-                        func.instruction(&Instruction::StructGet {
-                            struct_type_index: tuple_idx,
-                            field_index: i as u32,
-                        });
-                        func.instruction(&Instruction::LocalSet(slot.0));
-                    }
-                    MirPattern::Ctor {
-                        ctor: MirCtor::Builtin(bc),
-                        bindings,
-                        ..
-                    } if matches!(bc, BuiltinCtor::ResultOk | BuiltinCtor::ResultErr) => {
-                        let elem_canonical: String =
-                            elems[i].chars().filter(|c| !c.is_whitespace()).collect();
-                        let res_idx =
-                            ctx.registry
-                                .result_type_idx(&elem_canonical)
-                                .ok_or(WasmGcError::Validation(
-                                "tuple-of-constructors match: element is not a registered Result"
-                                    .into(),
-                            ))?;
-                        let payload_field: u32 = if matches!(bc, BuiltinCtor::ResultOk) {
-                            1
-                        } else {
-                            2
-                        };
-                        for binding in bindings {
-                            if binding.0 == u32::from(u16::MAX) {
-                                continue;
-                            }
-                            func.instruction(&Instruction::LocalGet(scratch));
-                            func.instruction(&Instruction::RefCastNonNull(
-                                wasm_encoder::HeapType::Concrete(tuple_idx),
-                            ));
-                            func.instruction(&Instruction::StructGet {
-                                struct_type_index: tuple_idx,
-                                field_index: i as u32,
-                            });
-                            func.instruction(&Instruction::RefCastNonNull(
-                                wasm_encoder::HeapType::Concrete(res_idx),
-                            ));
-                            func.instruction(&Instruction::StructGet {
-                                struct_type_index: res_idx,
-                                field_index: payload_field,
-                            });
-                            func.instruction(&Instruction::LocalSet(binding.0));
-                        }
-                    }
-                    _ => {}
-                }
+            for (i, (pat, elem)) in items.iter().zip(elems).enumerate() {
+                emit_tuple_element_binds(func, scratch, tuple_idx, i, pat, elem, ctx)?;
             }
             // ETAP-2 SLICE 2b: arm tail — colour raw per the block type.
             ctx.int_result_raw.set(block_ty_is_raw_i64(block_ty));

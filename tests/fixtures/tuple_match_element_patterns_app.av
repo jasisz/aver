@@ -1,0 +1,39 @@
+module Main
+    intent = "A match on a tuple literal whose arms carry list, literal and Option patterns in the tuple's elements: a queue and a count, a flag and a count, a next task and a count."
+    effects [Console.print]
+
+fn queue(tasks: List<Int>, running: Int) -> String
+    ? "What the queue and the count say together."
+    match (tasks, running)
+        ([], 0) -> "idle"
+        ([next, ..rest], n) -> "next {next}, {List.len(rest)} queued, {n} running"
+        (_, 1) -> "one running"
+        _ -> "draining"
+
+fn flag(armed: Bool, n: Int) -> String
+    ? "What the flag and the count say together."
+    match (armed, n)
+        (true, 0) -> "armed idle"
+        (false, _) -> "disarmed"
+        _ -> "armed busy"
+
+fn pick(next: Option<Int>, n: Int) -> String
+    ? "What the next task and the count say together."
+    match (next, n)
+        (Option.Some(task), 0) -> "start {task}"
+        (Option.None, _) -> "nothing"
+        (Option.Some(_), _) -> "wait"
+
+fn main() -> Unit
+    ? "Prints every arm of each shape."
+    ! [Console.print]
+    Console.print(queue([], 0))
+    Console.print(queue([1, 2, 3], 2))
+    Console.print(queue([], 1))
+    Console.print(queue([], 2))
+    Console.print(flag(true, 0))
+    Console.print(flag(false, 5))
+    Console.print(flag(true, 5))
+    Console.print(pick(Option.Some(7), 0))
+    Console.print(pick(Option.None, 3))
+    Console.print(pick(Option.Some(7), 3))

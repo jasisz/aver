@@ -897,3 +897,26 @@ fn main() -> Unit
         "every one-arm match subject must run before its body"
     );
 }
+
+/// A match on a tuple literal whose arms carry list, literal or Option
+/// patterns in the tuple's elements — `([], 0)`, `([next, ..rest], n)`,
+/// `(_, 1)`, `(true, 0)`, `(Option.Some(task), 0)`, `(Option.None, _)` — is
+/// the shape an answer function takes to read two ends of its state at
+/// once. The wasm-gc backend used to leave such a function a trap stub, so
+/// the program stopped with a `wasm \`unreachable\` instruction executed`
+/// the moment it ran; the VM answered. Every arm of the three shapes must
+/// print what the VM prints.
+#[test]
+fn wasm_gc_tuple_match_with_list_literal_and_option_elements_matches_vm() {
+    const SRC: &str = include_str!("fixtures/tuple_match_element_patterns_app.av");
+    let (vm, wasm) = vm_and_wasm_gc_stdout(SRC);
+    assert_eq!(
+        vm,
+        "idle\nnext 1, 2 queued, 2 running\none running\ndraining\narmed idle\ndisarmed\narmed busy\nstart 7\nnothing\nwait\n",
+        "the VM is the reference for the tuple arms"
+    );
+    assert_eq!(
+        wasm, vm,
+        "a tuple-subject match with list, literal and Option arms must take the same arm on wasm-gc as on the VM"
+    );
+}
