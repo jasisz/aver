@@ -252,6 +252,18 @@ fn the_started_end_is_typed_against_the_job_kinds_task() {
     );
 }
 
+/// `task` and `started` are one seam over one state: the task is consumed
+/// from the state that offered it. A `started` whose shape is right over
+/// another answer module's state is refused all the same, and by this check
+/// rather than by the loop generator, because a program without `[run]`
+/// binds the seam too.
+#[test]
+fn the_task_and_started_ends_name_one_module() {
+    let expected = "error[work-binding]: job kind 'Validation' binds task = \"Ledger.nextTask\" and started = \"Timer.taskStarted\", but those are functions of two modules, 'Ledger' and 'Timer'; the task is consumed from the state that offered it, so `task` and `started` name functions of one answer module";
+    assert_reports("answer_seam_started_module", &["check"], expected);
+    assert_reports("answer_seam_started_module", &["run"], expected);
+}
+
 // ── the manifest keys themselves ────────────────────────────────────────
 
 fn temp_project(label: &str, manifest: &str) -> PathBuf {

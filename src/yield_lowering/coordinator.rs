@@ -343,7 +343,11 @@ fn resolve_jobs(
         }
         // The ask and the record are one seam: `task` reads the state a start
         // is consumed from, so `started` has to thread that same state. Two
-        // modules would give the turn a second state it never asks.
+        // modules would give the turn a second state it never asks. Leg 2.1's
+        // `work-binding` check says the same for every program; it is kept
+        // here too because the run door type-checks the lowered module before
+        // that check runs, and a seam across two states would otherwise be
+        // reported as type errors in generated code.
         if owner(&seam.started) != owner(&seam.task) {
             errors.push(error(line, format!(
                 "aver.toml declares [run], so the generated turn asks '{}' for the next task of job '{}' and records the start through '{}'; the task is consumed from the state that offered it, so both ends belong to one answer module — '{}' is in '{}' and '{}' is in '{}'",
@@ -355,6 +359,7 @@ fn resolve_jobs(
                 seam.started,
                 owner(&seam.started)
             )));
+            continue;
         }
         let (Some((_, task_result, _)), Some((started_params, _, _)), Some((landed_params, _, _))) = (
             fn_sigs.get(&seam.task),

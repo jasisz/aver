@@ -1,0 +1,17 @@
+[providers]
+schema = 1
+
+[[providers.bindings]]
+capability = "Pool"
+answer = "Ledger"
+
+[[providers.bindings]]
+capability = "Clock"
+answer = "Timer"
+
+[[providers.bindings]]
+capability = "Validation"
+work = "Node.validate"
+task = "Ledger.nextTask"
+started = "Timer.taskStarted"
+landed = "Ledger.validated"

@@ -1,0 +1,23 @@
+module Timer
+    intent = "A second answer module, holding its own state. Its `taskStarted` has exactly the shape the seam wants over that state — which is the wrong state, because the task was offered from Ledger's."
+    depends [Clock]
+    exposes [State, tick, taskStarted]
+    effects []
+
+record State
+    ticks: Int
+    started: List<String>
+
+fn tick(state: State) -> Tuple<State, Clock.__TickReply>
+    ? "One tick, counted."
+    (State.update(state, ticks = state.ticks + 1), Clock.__TickReply.Now(Unit))
+
+fn taskStarted(state: State, task: String) -> State
+    ? "Records a start in this module's state, which is not the state the task was offered from."
+    State.update(state, started = List.concat(state.started, [task]))
+
+verify tick
+    tick(State(ticks = 0, started = [])) => (State(ticks = 1, started = []), Clock.__TickReply.Now(Unit))
+
+verify taskStarted
+    taskStarted(State(ticks = 0, started = []), "a") => State(ticks = 0, started = ["a"])

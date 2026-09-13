@@ -1045,6 +1045,20 @@ fn check_job_seam(
                 &expected,
             ));
         }
+        // The ask and the record are one seam: `task` reads the state a start
+        // is consumed from, so `started` has to write that same state back.
+        // Two modules would give the turn a second state it never asks, and
+        // each end would type-check on its own against its own module.
+        if let (Some(task), Some(started)) = (&binding.task, &binding.started)
+            && seam_module(task) != seam_module(started)
+        {
+            errors.push(binding_error(format!(
+                "job kind '{}' binds task = \"{task}\" and started = \"{started}\", but those are functions of two modules, '{}' and '{}'; the task is consumed from the state that offered it, so `task` and `started` name functions of one answer module",
+                binding.capability,
+                seam_module(task),
+                seam_module(started)
+            )));
+        }
         if let Some(landed) = &binding.landed {
             // A job that was cancelled, whose body stopped, or whose id the
             // engine has forgotten has no payload to land, and the run goes
@@ -1072,6 +1086,15 @@ fn check_job_seam(
     errors
 }
 
+/// The module a seam value names: the manifest has already held the value to
+/// `Module.function`, so the part before the last dot is the module.
+fn seam_module(value: &str) -> &str {
+    value
+        .rsplit_once('.')
+        .map(|(module, _)| module)
+        .unwrap_or("")
+}
+
 fn check_seam_function(
     binding: &ProviderWorkBinding,
     field: &str,
@@ -1082,10 +1105,7 @@ fn check_seam_function(
     expected: &dyn Fn(&Type) -> (Vec<Type>, Type),
 ) -> Vec<WorkDiagnostic> {
     let capability = &binding.capability;
-    let module = value
-        .rsplit_once('.')
-        .map(|(module, _)| module)
-        .unwrap_or("");
+    let module = seam_module(value);
     let Some(answer) = answers.iter().find(|answer| answer.module == module) else {
         // The manifest may bind that module with `answer` for a capability
         // outside the closure now being analysed, and then this analysis
