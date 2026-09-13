@@ -313,6 +313,21 @@ fn run_failed_job_matches_the_vm_on_wasm_gc() {
     assert_same_stdout("run_failed_job", &["--wasm-gc"]);
 }
 
+/// Two job kinds under one generated coordinator, on wasm-gc: one `__Job`
+/// sum, one shared table, and `max-jobs = 3`, which decides nothing inline —
+/// every job lands in the turn that started it. The process prints one line
+/// per landing, in place, before it goes back to the pool: `match said(kind,
+/// score)` under a wildcard arm, a shape the wasm-gc backend used to trap on.
+/// The VM lands the four tasks in wall-clock order, so the comparison is the
+/// multiset of lines.
+#[test]
+fn two_job_kinds_under_one_generated_loop_match_the_vm_on_wasm_gc() {
+    let name = "run_two_job_kinds";
+    let vm = run(name, &[], &[]).unwrap_or_else(|error| panic!("{error}"));
+    let wasm = run(name, &["--wasm-gc"], &[]).unwrap_or_else(|error| panic!("{error}"));
+    same_lines(name, &vm, &wasm).unwrap_or_else(|error| panic!("{error}"));
+}
+
 /// The generated coordinator over five processes, five answer modules, three
 /// policies and a job seam, answering `Wire` over real sockets.
 ///

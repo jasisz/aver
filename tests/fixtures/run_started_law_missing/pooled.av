@@ -1,5 +1,5 @@
 module Pooled
-    intent = "Fixture answer module: the answer this program gives to Pool, and all three ends of the job seam."
+    intent = "Fixture answer module with all three ends of the job seam and no law about `taskStarted`: the generated loop cites one, so the program is refused at the door with the block it needs."
     depends [Pool, Wait]
     exposes [State, fresh, claim, score, nextTask, taskStarted, landed]
     effects []
@@ -8,10 +8,11 @@ record State
     left: Int
     pending: List<Int>
     scored: Int
+    rejected: List<String>
 
 fn fresh() -> State
-    ? "One handle to give out, one validation task to run, and nothing scored yet."
-    State(left = 1, pending = [1], scored = 0)
+    ? "One handle to give out, one validation task to run, nothing scored and nothing rejected."
+    State(left = 1, pending = [1], scored = 0, rejected = [])
 
 fn claim(state: State) -> Tuple<State, Pool.__ClaimReply>
     ? "One handle, until there are none."
@@ -19,15 +20,9 @@ fn claim(state: State) -> Tuple<State, Pool.__ClaimReply>
         true -> (state, Pool.__ClaimReply.Now(Option.None))
         false -> (State.update(state, left = state.left - 1), Pool.__ClaimReply.Now(Option.Some(state.left)))
 
-fn spin(n: Int, acc: Int) -> Int
-    ? "Counts n down, carrying acc; this is the work a job does."
-    match n < 1
-        true -> acc
-        false -> spin(n - 1, acc)
-
 fn score(task: Int) -> Int
-    ? "What one job computes off the turn. Slow on purpose: a take taken right after the job began must find it still running."
-    spin(5000000, task + 1)
+    ? "What one job computes off the turn."
+    task + 1
 
 fn nextTask(state: State) -> Option<Int>
     ? "The next task waiting to be started, if anything."
@@ -52,16 +47,13 @@ fn keptUnlessTask(acc: List<Int>, entry: Int, task: Int) -> List<Int>
         false -> List.concat(acc, [entry])
 
 fn landed(state: State, outcome: Result<Int, String>) -> State
-    ? "Where a job that is over goes: its score, or nothing to add when it will never produce one."
+    ? "Where a job that is over goes: its score, or the reason it will never have one. A run whose job was cancelled records the rejection and carries on."
     match outcome
-        Result.Err(_) -> state
+        Result.Err(reason) -> State.update(state, rejected = List.concat(state.rejected, [reason]))
         Result.Ok(points) -> State.update(state, scored = state.scored + points)
 
 verify claim
     claim(fresh()) => (State.update(fresh(), left = 0), Pool.__ClaimReply.Now(Option.Some(1)))
-
-verify spin
-    spin(3, 7) => 7
 
 verify score
     score(1) => 2
@@ -76,13 +68,6 @@ verify withoutTask law theStartedTaskIsOut
     given acc: List<Int> = [[], [3]]
     List.contains(withoutTask(pending, task, acc), task) => List.contains(acc, task)
 
-verify taskStarted law aStartedTaskIsNotAskedAgain
-    given state: State = [fresh(), State.update(fresh(), pending = [1, 2])]
-    given task: Int = [1, 2]
-    when nextTask(state) == Option.Some(task)
-    using [withoutTask.theStartedTaskIsOut]
-    nextTask(taskStarted(state, task)) != Option.Some(task) holds
-
 verify taskStarted
     taskStarted(fresh(), 1) => State.update(fresh(), pending = [])
 
@@ -94,5 +79,5 @@ verify keptUnlessTask
     keptUnlessTask([], 2, 1) => [2]
 
 verify landed
-    landed(fresh(), Result.Ok(4)) => State(left = 1, pending = [1], scored = 4)
-    landed(fresh(), Result.Err("work: job cancelled")) => fresh()
+    landed(fresh(), Result.Ok(4)) => State.update(fresh(), scored = 4)
+    landed(fresh(), Result.Err("work: job cancelled")) => State.update(fresh(), rejected = ["work: job cancelled"])

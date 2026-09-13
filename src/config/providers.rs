@@ -41,8 +41,11 @@ pub struct ProviderWorkBinding {
     /// Position of the declaring `[[providers.bindings]]` entry, for diagnostics.
     pub index: usize,
     /// `task = "Module.function"`: where the turn takes the next task from.
-    /// The two ends of the job seam are declared together or not at all.
+    /// The three ends of the job seam are declared together or not at all.
     pub task: Option<String>,
+    /// `started = "Module.function"`: where a task the turn just began is
+    /// consumed from, so the next ask offers a different one.
+    pub started: Option<String>,
     /// `landed = "Module.function"`: where a finished job's result goes.
     pub landed: Option<String>,
 }
@@ -122,13 +125,16 @@ impl ProviderPackageManifest {
 }
 
 /// The seam between one job kind and the answer state the turn already holds:
-/// where the next task comes from, and where a finished job's result lands.
+/// where the next task comes from, where a start of it is recorded, and where
+/// a finished job's result lands.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JobSeam {
     /// The job-kind capability, e.g. `Validation`.
     pub capability: String,
     /// `task = "Module.function"`.
     pub task: String,
+    /// `started = "Module.function"`.
+    pub started: String,
     /// `landed = "Module.function"`.
     pub landed: String,
 }
@@ -141,7 +147,8 @@ pub struct RunPlan {
     pub policies: RunPolicies,
     /// Capability → answering module, in manifest order.
     pub answers: Vec<(String, String)>,
-    /// One entry per job kind whose `work` binding declares both seam ends.
+    /// One entry per job kind whose `work` binding declares all three seam
+    /// ends.
     pub jobs: Vec<JobSeam>,
     /// `[work] max-jobs`, or the host's own limit when the manifest is quiet.
     pub max_jobs: usize,
@@ -222,6 +229,7 @@ impl MarkedCapabilities {
                             Some(JobSeam {
                                 capability: binding.capability.clone(),
                                 task: binding.task.clone()?,
+                                started: binding.started.clone()?,
                                 landed: binding.landed.clone()?,
                             })
                         })
@@ -335,6 +343,7 @@ pub(super) fn parse_provider_manifest(
                 "work",
                 "answer",
                 "task",
+                "started",
                 "landed",
             ],
             &context,
@@ -349,10 +358,10 @@ pub(super) fn parse_provider_manifest(
                     ));
                 }
             }
-            for seam in ["task", "landed"] {
+            for seam in ["task", "started", "landed"] {
                 if table.contains_key(seam) {
                     return Err(format!(
-                        "error[work-binding]: aver.toml: {context} capability '{capability}' declares `{seam}` beside `answer`; the job seam belongs on the `work` binding of a job kind, because it says where that job's task comes from and where its result lands"
+                        "error[work-binding]: aver.toml: {context} capability '{capability}' declares `{seam}` beside `answer`; the job seam belongs on the `work` binding of a job kind, because it says where that job's task comes from, where its start is recorded, and where its result lands"
                     ));
                 }
             }
@@ -379,42 +388,75 @@ pub(super) fn parse_provider_manifest(
             }
             validate_work_function(&function, &context, &capability)?;
             let task = optional_string(table, "task", &context)?;
+            let started = optional_string(table, "started", &context)?;
             let landed = optional_string(table, "landed", &context)?;
-            match (&task, &landed) {
-                (Some(task), Some(landed)) => {
-                    validate_seam_function(task, "task", &context, &capability)?;
-                    validate_seam_function(landed, "landed", &context, &capability)?;
+            let declared: Vec<&str> = [
+                ("task", task.is_some()),
+                ("started", started.is_some()),
+                ("landed", landed.is_some()),
+            ]
+            .into_iter()
+            .filter(|(_, present)| *present)
+            .map(|(key, _)| key)
+            .collect();
+            match (task, started, landed) {
+                (Some(task), Some(started), Some(landed)) => {
+                    validate_seam_function(&task, "task", &context, &capability)?;
+                    validate_seam_function(&started, "started", &context, &capability)?;
+                    validate_seam_function(&landed, "landed", &context, &capability)?;
+                    if !capabilities.insert(capability.clone()) {
+                        return Err(format!(
+                            "aver.toml: {context} duplicates capability '{capability}'"
+                        ));
+                    }
+                    work_bindings.push(ProviderWorkBinding {
+                        capability,
+                        function,
+                        index,
+                        task: Some(task),
+                        started: Some(started),
+                        landed: Some(landed),
+                    });
                 }
-                (None, None) => {}
-                (present, _) => {
-                    let (declared, missing) = if present.is_some() {
-                        ("task", "landed")
+                (None, None, None) => {
+                    if !capabilities.insert(capability.clone()) {
+                        return Err(format!(
+                            "aver.toml: {context} duplicates capability '{capability}'"
+                        ));
+                    }
+                    work_bindings.push(ProviderWorkBinding {
+                        capability,
+                        function,
+                        index,
+                        task: None,
+                        started: None,
+                        landed: None,
+                    });
+                }
+                (task, started, _) => {
+                    let (missing, signature) = if task.is_none() {
+                        ("task", "'(S) -> Option<T>'")
+                    } else if started.is_none() {
+                        ("started", "'(S, T) -> S'")
                     } else {
-                        ("landed", "task")
+                        ("landed", "'(S, Result<R, String>) -> S'")
                     };
+                    let declared = declared
+                        .iter()
+                        .map(|key| format!("`{key}`"))
+                        .collect::<Vec<_>>()
+                        .join(" and ");
                     return Err(format!(
-                        "error[work-binding]: aver.toml: {context} capability '{capability}' declares `{declared}` without `{missing}`; the job seam has two ends — where a task comes from and where its result lands — and the turn needs both"
+                        "error[work-binding]: aver.toml: {context} capability '{capability}' declares {declared} without `{missing}`; the job seam has three ends — where a task comes from, where its start is recorded, and where its result lands — and the turn needs all three: `{missing}` names a function {signature} of a module bound with `answer`"
                     ));
                 }
             }
-            if !capabilities.insert(capability.clone()) {
-                return Err(format!(
-                    "aver.toml: {context} duplicates capability '{capability}'"
-                ));
-            }
-            work_bindings.push(ProviderWorkBinding {
-                capability,
-                function,
-                index,
-                task,
-                landed,
-            });
             continue;
         }
-        for seam in ["task", "landed"] {
+        for seam in ["task", "started", "landed"] {
             if table.contains_key(seam) {
                 return Err(format!(
-                    "error[work-binding]: aver.toml: {context} capability '{capability}' declares `{seam}` without `work`; the job seam is the two ends of one job kind, so it lives on that kind's `work` binding"
+                    "error[work-binding]: aver.toml: {context} capability '{capability}' declares `{seam}` without `work`; the job seam is the three ends of one job kind, so it lives on that kind's `work` binding"
                 ));
             }
         }
@@ -624,8 +666,8 @@ fn validate_view_type(value: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// A `task` or `landed` value names one module-qualified function, exactly as
-/// `work` does.
+/// A `task`, `started` or `landed` value names one module-qualified function,
+/// exactly as `work` does.
 fn validate_seam_function(
     value: &str,
     field: &str,
@@ -1042,6 +1084,7 @@ answer = "Ledger"
 capability = "Validation"
 work = "Node.validate"
 task = "Ledger.nextTask"
+started = "Ledger.taskStarted"
 landed = "Ledger.validated"
 "#,
         )
@@ -1058,6 +1101,10 @@ landed = "Ledger.validated"
             Some("Ledger.nextTask")
         );
         assert_eq!(
+            manifest.work_bindings[0].started.as_deref(),
+            Some("Ledger.taskStarted")
+        );
+        assert_eq!(
             manifest.work_bindings[0].landed.as_deref(),
             Some("Ledger.validated")
         );
@@ -1071,6 +1118,7 @@ landed = "Ledger.validated"
         .expect("valid manifest")
         .expect("provider section");
         assert_eq!(manifest.work_bindings[0].task, None);
+        assert_eq!(manifest.work_bindings[0].started, None);
         assert_eq!(manifest.work_bindings[0].landed, None);
     }
 
@@ -1094,24 +1142,40 @@ landed = "Ledger.validated"
                 "declares both `answer` and `work`",
             ),
             (
-                "[providers]\nschema=1\n[[providers.bindings]]\ncapability='Pool'\nanswer='Ledger'\ntask='Ledger.nextTask'\nlanded='Ledger.validated'\n",
+                "[providers]\nschema=1\n[[providers.bindings]]\ncapability='Pool'\nanswer='Ledger'\ntask='Ledger.nextTask'\nstarted='Ledger.taskStarted'\nlanded='Ledger.validated'\n",
                 "declares `task` beside `answer`",
             ),
             (
-                "[providers]\nschema=1\n[[providers.bindings]]\ncapability='Validation'\nwork='Node.validate'\ntask='Ledger.nextTask'\n",
-                "declares `task` without `landed`",
+                "[providers]\nschema=1\n[[providers.bindings]]\ncapability='Pool'\nanswer='Ledger'\nstarted='Ledger.taskStarted'\n",
+                "declares `started` beside `answer`",
+            ),
+            (
+                "[providers]\nschema=1\n[[providers.bindings]]\ncapability='Validation'\nwork='Node.validate'\ntask='Ledger.nextTask'\nlanded='Ledger.validated'\n",
+                "declares `task` and `landed` without `started`",
+            ),
+            (
+                "[providers]\nschema=1\n[[providers.bindings]]\ncapability='Validation'\nwork='Node.validate'\ntask='Ledger.nextTask'\nstarted='Ledger.taskStarted'\n",
+                "declares `task` and `started` without `landed`",
+            ),
+            (
+                "[providers]\nschema=1\n[[providers.bindings]]\ncapability='Validation'\nwork='Node.validate'\nstarted='Ledger.taskStarted'\nlanded='Ledger.validated'\n",
+                "declares `started` and `landed` without `task`",
             ),
             (
                 "[providers]\nschema=1\n[[providers.bindings]]\ncapability='Validation'\nwork='Node.validate'\nlanded='Ledger.validated'\n",
                 "declares `landed` without `task`",
             ),
             (
-                "[providers]\nschema=1\n[[providers.bindings]]\ncapability='Validation'\nwork='Node.validate'\ntask='nextTask'\nlanded='Ledger.validated'\n",
+                "[providers]\nschema=1\n[[providers.bindings]]\ncapability='Validation'\nwork='Node.validate'\ntask='nextTask'\nstarted='Ledger.taskStarted'\nlanded='Ledger.validated'\n",
                 "task 'nextTask' must name one module-qualified function",
             ),
             (
-                "[providers]\nschema=1\n[[providers.bindings]]\ncapability='Clock'\ncrate='clock_provider'\npackage='clock-provider'\nfactory='binding'\nversion='1'\ntask='Ledger.nextTask'\n",
-                "declares `task` without `work`",
+                "[providers]\nschema=1\n[[providers.bindings]]\ncapability='Validation'\nwork='Node.validate'\ntask='Ledger.nextTask'\nstarted='taskStarted'\nlanded='Ledger.validated'\n",
+                "started 'taskStarted' must name one module-qualified function",
+            ),
+            (
+                "[providers]\nschema=1\n[[providers.bindings]]\ncapability='Clock'\ncrate='clock_provider'\npackage='clock-provider'\nfactory='binding'\nversion='1'\nstarted='Ledger.taskStarted'\n",
+                "declares `started` without `work`",
             ),
             (
                 "[providers]\nschema=1\n[[providers.bindings]]\ncapability='Pool'\nanswer='Ledger'\n[[providers.bindings]]\ncapability='Pool'\nanswer='Other'\n",

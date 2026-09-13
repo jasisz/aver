@@ -67,9 +67,21 @@ struct Job {
     capability: String,
     /// The module-qualified `task` function.
     task: String,
+    /// The module-qualified `started` function.
+    started: String,
     /// The module-qualified `landed` function.
     landed: String,
+    /// The `__Run` field of the module `task` reads and `started` writes —
+    /// the seam's ask and its record are one state, checked as one owner.
+    task_field: String,
+    /// The `__Run` field of the module `landed` writes.
+    landed_field: String,
+    /// The answer-module state the seam's first two ends thread, e.g.
+    /// `Ledger.State`.
+    seam_state: String,
     /// What `task` answers, e.g. `Option<Bytes>`.
+    task_option: String,
+    /// The task itself, e.g. `Bytes`: the `begin` parameter.
     task_type: String,
     /// What one finished job carries, e.g. `Int`: the `take` payload.
     payload_type: String,
@@ -104,13 +116,20 @@ fn error(line: usize, message: String) -> TypeError {
     }
 }
 
+/// The law the generated loop cites on every job kind's `started` function:
+/// the program's own statement that a task whose start was recorded is not
+/// offered again, which is what makes two starts in one turn two tasks.
+const STARTED_LAW: &str = "aStartedTaskIsNotAskedAgain";
+
 /// Generate the loop for `protocols` into the module `items` declares.
+/// `laws` is every law a `using` clause of that module may name.
 pub(super) fn generate(
     items: &[TopLevel],
     generated: &[TopLevel],
     protocols: &[ProcessProtocol],
     plan: &RunPlan,
     fn_sigs: &FnSigs,
+    laws: &std::collections::BTreeSet<String>,
 ) -> Result<GeneratedLoop, Vec<TypeError>> {
     let module = items.iter().find_map(|item| match item {
         TopLevel::Module(module) => Some(module),
@@ -157,35 +176,13 @@ pub(super) fn generate(
             return Err(errors);
         }
     };
-    let jobs = match resolve_jobs(plan, &answers, fn_sigs, line) {
+    let jobs = match resolve_jobs(plan, &answers, fn_sigs, laws, line) {
         Ok(jobs) => jobs,
         Err(found) => {
             errors.extend(found);
             return Err(errors);
         }
     };
-    // The turn crosses one job seam: it reads `jobs[0]` where it writes the
-    // take and the start, so a second job kind would be declared, admitted
-    // by the checker, and then never started or taken. Refuse it here rather
-    // than generate a loop that quietly serves one of them.
-    if jobs.len() > 1 {
-        let kinds: Vec<&str> = jobs.iter().map(|job| job.capability.as_str()).collect();
-        errors.push(error(line, format!(
-            "aver.toml declares [run], so the generated turn crosses the seam of one job kind, and this program declares {}: {}. One job kind per generated loop is the limit in this build. Keep one `work` binding, or remove [run] and drive the job seam by hand",
-            kinds.len(),
-            kinds.join(", ")
-        )));
-    }
-    // The turn asks the answer state for the next task once per slot of room,
-    // and starting a job does not change that state, so a limit above one
-    // would start the same task once per slot. Refuse it rather than run it.
-    if !jobs.is_empty() && plan.max_jobs != 1 {
-        let job = &jobs[0];
-        errors.push(error(line, format!(
-            "aver.toml declares [run], so the generated turn starts the jobs of kind '{}' itself: it asks '{}' for the next task once per slot of room, and starting a job does not change the state that answered. This program's limit is {}, so one task would be started up to {} times. Declare `[work] max-jobs = 1`, or remove [run] and drive the job seam by hand",
-            job.capability, job.task, plan.max_jobs, plan.max_jobs
-        )));
-    }
     errors.extend(check_policies(plan, fn_sigs, line));
     let (marker, view_errors) = check_view(items, protocols, plan, line);
     errors.extend(view_errors);
@@ -329,12 +326,14 @@ fn resolve_answers(
     }
 }
 
-/// One entry per job kind whose seam the manifest declared, with the two
-/// types the generated turn moves across it.
+/// One entry per job kind whose seam the manifest declared, with the three
+/// types the generated turn moves across it, and the one law the program has
+/// to state about that seam.
 fn resolve_jobs(
     plan: &RunPlan,
     answers: &[Answer],
     fn_sigs: &FnSigs,
+    laws: &std::collections::BTreeSet<String>,
     line: usize,
 ) -> Result<Vec<Job>, Vec<TypeError>> {
     let mut jobs = Vec::new();
@@ -343,7 +342,7 @@ fn resolve_jobs(
         fn owner(name: &str) -> &str {
             name.rsplit_once('.').map(|(owner, _)| owner).unwrap_or("")
         }
-        for name in [&seam.task, &seam.landed] {
+        for name in [&seam.task, &seam.started, &seam.landed] {
             if !answers.iter().any(|answer| answer.module == owner(name)) {
                 errors.push(error(line, format!(
                     "aver.toml declares [run], so the generated turn moves job '{}' across '{name}'; that function's module answers no capability of this program, and the turn holds no state for it",
@@ -351,11 +350,39 @@ fn resolve_jobs(
                 )));
             }
         }
-        let (Some((_, task_result, _)), Some((landed_params, _, _))) =
-            (fn_sigs.get(&seam.task), fn_sigs.get(&seam.landed))
-        else {
-            // Leg 2.1's job-seam check is the one that says which half is
-            // missing; this door only needs the types, so it stays quiet.
+        // The ask and the record are one seam: `task` reads the state a start
+        // is consumed from, so `started` has to thread that same state. Two
+        // modules would give the turn a second state it never asks. Leg 2.1's
+        // `work-binding` check says the same for every program; it is kept
+        // here too because the run door type-checks the lowered module before
+        // that check runs, and a seam across two states would otherwise be
+        // reported as type errors in generated code.
+        if owner(&seam.started) != owner(&seam.task) {
+            errors.push(error(line, format!(
+                "aver.toml declares [run], so the generated turn asks '{}' for the next task of job '{}' and records the start through '{}'; the task is consumed from the state that offered it, so both ends belong to one answer module — '{}' is in '{}' and '{}' is in '{}'",
+                seam.task,
+                seam.capability,
+                seam.started,
+                seam.task,
+                owner(&seam.task),
+                seam.started,
+                owner(&seam.started)
+            )));
+            continue;
+        }
+        let (Some((_, task_result, _)), Some((started_params, _, _)), Some((landed_params, _, _))) = (
+            fn_sigs.get(&seam.task),
+            fn_sigs.get(&seam.started),
+            fn_sigs.get(&seam.landed),
+        ) else {
+            // Leg 2.1's job-seam check is the one that says which end is
+            // missing or mis-shaped; this door only needs the types, so it
+            // stays quiet.
+            continue;
+        };
+        // `started` is `(S, T) -> S`, so the seam's state is its first
+        // parameter and the task it consumes is its second.
+        let (Some(state), Some(task)) = (started_params.first(), started_params.get(1)) else {
             continue;
         };
         // `landed` is `(S, Result<R, String>) -> S`, so the payload one job
@@ -364,15 +391,47 @@ fn resolve_jobs(
             continue;
         };
         let payload = payload.as_ref();
+        let task_owner = owner(&seam.task);
+        // The generated law over `__consumed<K>` cites the program's own law
+        // of the same name on `started`, so a program that does not state it
+        // is refused here, with the block it needs, rather than where the
+        // generated `using` fails to resolve at a line nobody wrote.
+        if !laws.contains(&format!("{}.{STARTED_LAW}", seam.started)) {
+            let in_module = |ty: &Type| {
+                crate::capability::canonicalize_type_names(ty.clone(), task_owner)
+                    .display()
+                    .replace(&format!("{task_owner}."), "")
+            };
+            errors.push(error(line, format!(
+                "aver.toml declares [run], so the generated turn records a start of job '{}' through '{}' and cites the law that function states about it; '{}' states no law named '{STARTED_LAW}'. State it in module '{task_owner}' — a task whose start was recorded is not offered again — over samples of its own:\n\nverify {} law {STARTED_LAW}\n    given state: {} = [fresh()]\n    given task: {} = [...]\n    when {}(state) == Option.Some(task)\n    {}({}(state, task)) != Option.Some(task) holds",
+                seam.capability,
+                seam.started,
+                seam.started,
+                bare(&seam.started),
+                in_module(state),
+                in_module(task),
+                bare(&seam.task),
+                bare(&seam.task),
+                bare(&seam.started)
+            )));
+            continue;
+        }
         jobs.push(Job {
             capability: seam.capability.clone(),
             task: seam.task.clone(),
+            started: seam.started.clone(),
             landed: seam.landed.clone(),
-            task_type: crate::capability::canonicalize_type_names(
+            task_field: field_name(task_owner),
+            landed_field: field_name(owner(&seam.landed)),
+            seam_state: crate::capability::canonicalize_type_names(state.clone(), task_owner)
+                .display(),
+            task_option: crate::capability::canonicalize_type_names(
                 task_result.clone(),
-                owner(&seam.task),
+                task_owner,
             )
             .display(),
+            task_type: crate::capability::canonicalize_type_names(task.clone(), task_owner)
+                .display(),
             payload_type: crate::capability::canonicalize_type_names(
                 payload.clone(),
                 owner(&seam.landed),
@@ -643,12 +702,24 @@ fn write_loop(
         ));
     }
     out.push_str("\nrecord __Slot\n    seq: Int\n    pending: __Process\n    waiting: Wait.Wake\n    due: Int\n    ms: Int\n");
+    // One table holds every job kind, so the job count the room limit reads
+    // is the count across all of them and the wait watches each entry once.
+    // The variant is how the entry remembers which seam takes and lands it.
+    if has_jobs {
+        out.push_str("\ntype __Job\n");
+        for job in jobs {
+            out.push_str(&format!(
+                "    {}(Work.Job)\n",
+                marker_variant(&job.capability)
+            ));
+        }
+    }
     out.push_str("\nrecord __Run\n    slots: Map<Int, __Slot>\n");
     for answer in answers {
         out.push_str(&format!("    {}: {}\n", answer.field, answer.state));
     }
     if has_jobs {
-        out.push_str(&format!("    {JOBS_FIELD}: Map<Int, Work.Job>\n"));
+        out.push_str(&format!("    {JOBS_FIELD}: Map<Int, __Job>\n"));
     }
     out.push_str("    dropped: Int\n    stopping: Bool\n    now: Int\n    nextId: Int\n");
 
@@ -656,6 +727,20 @@ fn write_loop(
         "\nfn __maxJobs() -> Int\n    ? \"The job limit this program was built with, from [work] max-jobs in aver.toml.\"\n    {}\n",
         plan.max_jobs
     ));
+    if has_jobs {
+        out.push_str(&format!(
+            "\nfn __roomLeft(run: __Run) -> Int\n    ? \"How many more jobs this run may hold: the limit, minus every entry of the one table, of every kind.\"\n    __maxJobs() - Map.len(run.{JOBS_FIELD})\n"
+        ));
+        out.push_str(
+            "\nfn __jobHandle(job: __Job) -> Work.Job\n    ? \"The runtime handle one table entry wraps, so the wait and the cancel name the job and never the kind.\"\n    match job\n",
+        );
+        for job in jobs {
+            out.push_str(&format!(
+                "        __Job.{upper}(handle) -> handle\n",
+                upper = marker_variant(&job.capability)
+            ));
+        }
+    }
 
     out.push_str("\nfn __fresh() -> __Run\n    ? \"The run before anything has happened: no slot seated, every answer module at its own empty state.\"\n    __Run(slots = {}");
     for answer in answers {
@@ -763,7 +848,7 @@ fn write_loop(
             "\nfn __jobItems(run: __Run, keys: List<Int>, acc: Map<Int, Wait.Item>) -> Map<Int, Wait.Item>\n    ? \"One wait-set key per running job.\"\n    match keys\n        [] -> acc\n        [key, ..rest] -> __jobItems(run, rest, __jobItem(run, key, acc))\n",
         );
         out.push_str(&format!(
-            "\nfn __jobItem(run: __Run, key: Int, acc: Map<Int, Wait.Item>) -> Map<Int, Wait.Item>\n    ? \"One running job, as the thing the wait watches for it.\"\n    match Map.get(run.{JOBS_FIELD}, key)\n        Option.None -> acc\n        Option.Some(job) -> Map.set(acc, key, Wait.Item.Job(job))\n"
+            "\nfn __jobItem(run: __Run, key: Int, acc: Map<Int, Wait.Item>) -> Map<Int, Wait.Item>\n    ? \"One running job, as the thing the wait watches for it.\"\n    match Map.get(run.{JOBS_FIELD}, key)\n        Option.None -> acc\n        Option.Some(job) -> Map.set(acc, key, Wait.Item.Job(__jobHandle(job)))\n"
         ));
     }
     out.push_str("\nfn __timeout(run: __Run) -> Int\n    ? \"How long this turn may wait: nothing at all while some request is to be asked again, the soonest deadline still ahead of the turn's clock reading when one is pending, and one second when neither.\"\n    __deadline(run, Map.keys(run.slots), 0 - 1)\n");
@@ -797,7 +882,7 @@ fn write_loop(
 
     // ── The job seam ───────────────────────────────────────────────
     for job in jobs {
-        out.push_str(&write_job(job, answers));
+        out.push_str(&write_job(job, jobs));
     }
 
     // ── The turn and the loop ──────────────────────────────────────
@@ -807,12 +892,38 @@ fn write_loop(
         effects(turn_effects),
         bare(&plan.policies.order),
         if has_jobs {
-            let job = &jobs[0];
-            format!(
-                "    taken = __takeEach{}(served, ready)\n    __startJobs{}(taken)\n",
-                marker_variant(&job.capability),
-                marker_variant(&job.capability)
-            )
+            // One table across the kinds: every kind takes what the wait
+            // reported, then every kind starts while there is room. The
+            // takes run first because a landed job frees a slot of room this
+            // turn can already fill.
+            let binder = |prefix: &str, index: usize| {
+                if jobs.len() == 1 {
+                    prefix.to_string()
+                } else {
+                    format!("{prefix}{index}")
+                }
+            };
+            let mut body = String::new();
+            let mut run_of = "served".to_string();
+            for (index, job) in jobs.iter().enumerate() {
+                let name = binder("taken", index);
+                body.push_str(&format!(
+                    "    {name} = __takeEach{upper}({run_of}, ready)\n",
+                    upper = marker_variant(&job.capability)
+                ));
+                run_of = name;
+            }
+            for (index, job) in jobs.iter().enumerate() {
+                let upper = marker_variant(&job.capability);
+                if index + 1 == jobs.len() {
+                    body.push_str(&format!("    Result.Ok(__startJobs{upper}({run_of}))\n"));
+                } else {
+                    let name = binder("started", index);
+                    body.push_str(&format!("    {name} = __startJobs{upper}({run_of})\n"));
+                    run_of = name;
+                }
+            }
+            body
         } else {
             "    Result.Ok(served)\n".to_string()
         }
@@ -852,7 +963,7 @@ fn write_loop(
             "\nfn __cancelEach(run: __Run, keys: List<Int>) -> Result<Unit, String>\n    ? \"Every job the run still holds a handle for, in key order.\"\n    ! [{CANCEL}]\n    match keys\n        [] -> Result.Ok(Unit)\n        [key, ..rest] -> __cancelEach(__cancelOne(run, key), rest)\n"
         ));
         out.push_str(&format!(
-            "\nfn __cancelOne(run: __Run, key: Int) -> __Run\n    ? \"One running job, cancelled and dropped from the table. A job that finished before the cancel is not this path's business; it shows up in take.\"\n    ! [{CANCEL}]\n    match Map.get(run.{JOBS_FIELD}, key)\n        Option.None -> run\n        Option.Some(job) -> __cancelled(run, key, {CANCEL}(job))\n"
+            "\nfn __cancelOne(run: __Run, key: Int) -> __Run\n    ? \"One running job, cancelled and dropped from the table. A job that finished before the cancel is not this path's business; it shows up in take.\"\n    ! [{CANCEL}]\n    match Map.get(run.{JOBS_FIELD}, key)\n        Option.None -> run\n        Option.Some(job) -> __cancelled(run, key, {CANCEL}(__jobHandle(job)))\n"
         ));
         out.push_str(&format!(
             "\nfn __cancelled(run: __Run, key: Int, cancelled: Unit) -> __Run\n    ? \"The table once one job has been cancelled: the handle is gone, so nothing cancels it twice.\"\n    __Run.update(run, {JOBS_FIELD} = Map.remove(run.{JOBS_FIELD}, key))\n"
@@ -862,7 +973,7 @@ fn write_loop(
     }
 
     // ── The invariants ─────────────────────────────────────────────
-    out.push_str(&write_laws(protocols));
+    out.push_str(&write_laws(protocols, jobs));
     out
 }
 
@@ -942,35 +1053,32 @@ fn write_serve(
     out
 }
 
-/// The two ends of one job kind's seam, as the turn crosses them.
-fn write_job(job: &Job, answers: &[Answer]) -> String {
+/// The three ends of one job kind's seam, as the turn crosses them: the
+/// take, and the ask-begin-record start that runs while there is room.
+fn write_job(job: &Job, jobs: &[Job]) -> String {
     let upper = marker_variant(&job.capability);
-    let landed_field = answers
-        .iter()
-        .find(|answer| {
-            job.landed
-                .rsplit_once('.')
-                .is_some_and(|(owner, _)| owner == answer.module)
-        })
-        .map(|answer| answer.field.clone())
-        .unwrap_or_default();
-    let task_field = answers
-        .iter()
-        .find(|answer| {
-            job.task
-                .rsplit_once('.')
-                .is_some_and(|(owner, _)| owner == answer.module)
-        })
-        .map(|answer| answer.field.clone())
-        .unwrap_or_default();
+    let task_field = &job.task_field;
+    let landed_field = &job.landed_field;
     let mut out = String::new();
     out.push_str(&format!(
         "\nfn __takeEach{upper}(run: __Run, ready: List<Int>) -> __Run\n    ? \"A job outcome is a coordinator event, not an answer to a request: it goes to the answer state through the manifest's `landed` function and resumes nobody.\"\n    ! [{}.take]\n    match ready\n        [] -> run\n        [key, ..rest] -> __takeEach{upper}(__taken{upper}(run, key), rest)\n",
         job.capability
     ));
+    let mut taken_arms = String::new();
+    for other in jobs {
+        let variant = marker_variant(&other.capability);
+        if other.capability == job.capability {
+            taken_arms.push_str(&format!(
+                "            __Job.{variant}(handle) -> __reported{upper}(run, key, {}.take(handle))\n",
+                job.capability
+            ));
+        } else {
+            taken_arms.push_str(&format!("            __Job.{variant}(_) -> run\n"));
+        }
+    }
     out.push_str(&format!(
-        "\nfn __taken{upper}(run: __Run, key: Int) -> __Run\n    ? \"One reported key: a key that is not a running job of this kind is not this seam's business. The job stays in the table until its own outcome says it is over, because a wait may report a job ready before it has finished.\"\n    ! [{}.take]\n    match Map.get(run.{JOBS_FIELD}, key)\n        Option.None -> run\n        Option.Some(job) -> __reported{upper}(run, key, {}.take(job))\n",
-        job.capability, job.capability
+        "\nfn __taken{upper}(run: __Run, key: Int) -> __Run\n    ? \"One reported key: a key that is not a running job of this kind is not this seam's business. The job stays in the table until its own outcome says it is over, because a wait may report a job ready before it has finished.\"\n    ! [{}.take]\n    match Map.get(run.{JOBS_FIELD}, key)\n        Option.None -> run\n        Option.Some(job) -> match job\n{taken_arms}",
+        job.capability
     ));
     out.push_str(&format!(
         "\nfn __reported{upper}(run: __Run, key: Int, taken: Result<Option<{}>, String>) -> __Run\n    ? \"What one take answered. A job that was cancelled, whose body stopped, or whose id the engine has forgotten will never land a payload: it leaves the table and reaches `landed` as the error it is, and the run goes on.\"\n    match taken\n        Result.Err(reason) -> __landed{upper}(run, key, Result.Err(reason))\n        Result.Ok(payload) -> __finished{upper}(run, key, payload)\n",
@@ -984,13 +1092,30 @@ fn write_job(job: &Job, answers: &[Answer]) -> String {
         "\nfn __landed{upper}(run: __Run, key: Int, outcome: Result<{}, String>) -> __Run\n    ? \"Where a job that is over goes: the `landed` function of the answer state, which resumes nobody. The handle leaves the table either way, because this job has no second outcome to give.\"\n    __Run.update(run, {JOBS_FIELD} = Map.remove(run.{JOBS_FIELD}, key), {landed_field} = {}(run.{landed_field}, outcome))\n",
         job.payload_type, job.landed
     ));
+    // The ask is one step of its own, so the room check and the answer live
+    // in one place a law can name; the record is `started`, applied through
+    // `__jobSeated` the moment `begin` has said this task is running. The
+    // name is kind-first because `__seated<P>` is a process's, and a process
+    // named `job<K>` would otherwise be seated twice under one name.
     out.push_str(&format!(
-        "\nfn __startJobs{upper}(run: __Run) -> Result<__Run, String>\n    ? \"While there is room under [work] max-jobs and the answer state has a task, start one.\"\n    ! [{}.begin]\n    match Map.len(run.{JOBS_FIELD}) >= __maxJobs()\n        true -> Result.Ok(run)\n        false -> __startOne{upper}(run, {}(run.{task_field}))\n",
-        job.capability, job.task
+        "\nfn __startable{upper}(room: Int, state: {}) -> {}\n    ? \"The next task this kind may start, while the one job table has this much room for it. No room asks nothing, so no task is ever offered twice to make room it cannot use. This is the pure half of the room bound: the loop that starts while there is room performs begin, so no law can sample it, and the bound is stated here, where each ask is decided.\"\n    match room <= 0\n        true -> Option.None\n        false -> {}(state)\n",
+        job.seam_state, job.task_option, job.task
     ));
     out.push_str(&format!(
-        "\nfn __startOne{upper}(run: __Run, task: {}) -> Result<__Run, String>\n    ? \"One task, started under its own key so the wait can watch it.\"\n    ! [{}.begin]\n    match task\n        Option.None -> Result.Ok(run)\n        Option.Some(payload) -> __startJobs{upper}(__Run.update(run, {JOBS_FIELD} = Map.set(run.{JOBS_FIELD}, run.nextId, {}.begin(payload)?), nextId = run.nextId + 1))\n",
-        job.task_type, job.capability, job.capability
+        "\nfn __startJobs{upper}(run: __Run) -> __Run\n    ? \"While there is room under [work] max-jobs and the answer state has a task, start one: ask, begin, then record the start. A begin the engine answers Err starts nothing this turn — at the engine's own limit that answer is how the limit is honoured — and the task stays in the answer state to be offered again, because `started` runs only after a begin that answered Ok.\"\n    ! [{}.begin]\n    match __startable{upper}(__roomLeft(run), run.{task_field})\n        Option.None -> run\n        Option.Some(task) -> __began{upper}(run, task, {}.begin(task))\n",
+        job.capability, job.capability
+    ));
+    out.push_str(&format!(
+        "\nfn __began{upper}(run: __Run, task: {}, began: Result<Work.Job, String>) -> __Run\n    ? \"What one begin answered. An Err starts nothing: the task was never recorded, so the next ask offers it again once there is room to take it.\"\n    ! [{}.begin]\n    match began\n        Result.Err(_) -> run\n        Result.Ok(job) -> __startJobs{upper}(__jobSeated{upper}(run, task, job))\n",
+        job.task_type, job.capability
+    ));
+    out.push_str(&format!(
+        "\nfn __jobSeated{upper}(run: __Run, task: {}, job: Work.Job) -> __Run\n    ? \"The run once this task's job has begun: the handle sits under the next free key for the wait to watch, and the task is consumed from the answer state, which is what makes two starts in one turn start two different tasks.\"\n    __Run.update(run, {JOBS_FIELD} = Map.set(run.{JOBS_FIELD}, run.nextId, __Job.{upper}(job)), nextId = run.nextId + 1, {task_field} = __consumed{upper}(run.{task_field}, task))\n",
+        job.task_type
+    ));
+    out.push_str(&format!(
+        "\nfn __consumed{upper}(state: {}, task: {}) -> {}\n    ? \"The answer state once this task's job has been recorded as started. `started` is where the program writes that a task was taken, so the task the seam next offers is a different one.\"\n    {}(state, task)\n",
+        job.seam_state, job.task_type, job.seam_state, job.started
     ));
     out
 }
@@ -1023,7 +1148,7 @@ fn write_job(job: &Job, answers: &[Answer]) -> String {
 /// else, so the slot-level claim follows from this one by unfolding that arm;
 /// what is not stated is that step itself. Decide whether that is the shape to
 /// keep or whether the `given` domain should grow a way to name such a slot.
-fn write_laws(protocols: &[ProcessProtocol]) -> String {
+fn write_laws(protocols: &[ProcessProtocol], jobs: &[Job]) -> String {
     let mut out = String::new();
     // The sample seats each process at the request it re-enters itself with.
     // A process takes no parameters, so that request carries nothing, which
@@ -1170,6 +1295,41 @@ fn write_laws(protocols: &[ProcessProtocol]) -> String {
             ids.join(", "),
             protocol.outcome,
             protocol.outcome
+        ));
+    }
+    // The two halves of "n starts in one turn take n distinct tasks". The
+    // first is the program's own law about its answer module — `started`
+    // consumes the task it was handed, so `task` never offers it again —
+    // which this generated law cites: `__consumed<K>` is `started` under a
+    // generated name. The second is the room gate itself: a full table asks
+    // nothing, so a start can never be offered a task it has no slot for.
+    for job in jobs {
+        let upper = marker_variant(&job.capability);
+        let owner = job
+            .task
+            .rsplit_once('.')
+            .map(|(module, _)| module)
+            .unwrap_or_default();
+        out.push_str(&format!(
+            "\nfn __offered{upper}(state: {}, offered: {}) -> Bool\n    ? \"Whether 'offered' names the task this kind's seam offers from this answer state; no offer offers nothing.\"\n    match offered\n        Option.None -> false\n        Option.Some(task) -> {}(state) == Option.Some(task)\n",
+            job.seam_state, job.task_option, job.task
+        ));
+        out.push_str(&format!(
+            "\nfn __reoffered{upper}(state: {}, offered: {}) -> Bool\n    ? \"Whether the task this seam offered is still offered once its start has been recorded; the law the program writes about `started` is what makes the answer no.\"\n    match offered\n        Option.None -> true\n        Option.Some(task) -> {}(__consumed{upper}(state, task)) != Option.Some(task)\n",
+            job.seam_state, job.task_option, job.task
+        ));
+        out.push_str(&format!(
+            "\nverify __consumed{upper} law aStartedTaskIsNotAskedAgain\n    given state: {} = [{}.fresh()]\n    given offered: {} = [Option.None, {}({}.fresh())]\n    when __offered{upper}(state, offered)\n    using [{}.aStartedTaskIsNotAskedAgain]\n    __reoffered{upper}(state, offered) => true\n",
+            job.seam_state,
+            owner,
+            job.task_option,
+            job.task,
+            owner,
+            job.started
+        ));
+        out.push_str(&format!(
+            "\nverify __startable{upper} law aFullTableAsksNothing\n    given room: Int = [0 - 1, 0, 1]\n    given state: {} = [{}.fresh()]\n    when room <= 0\n    because room <= 0\n    __startable{upper}(room, state) => Option.None\n",
+            job.seam_state, owner
         ));
     }
     out

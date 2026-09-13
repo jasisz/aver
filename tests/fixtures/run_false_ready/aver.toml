@@ -9,6 +9,7 @@ answer = "Pooled"
 capability = "Validation"
 work = "Pooled.score"
 task = "Pooled.nextTask"
+started = "Pooled.taskStarted"
 landed = "Pooled.landed"
 
 [work]

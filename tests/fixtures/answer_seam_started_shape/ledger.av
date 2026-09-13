@@ -1,0 +1,39 @@
+module Ledger
+    intent = "An answer module holding the state the job seam reaches — with the `started` end written against the wrong task type."
+    depends [Pool]
+    exposes [State, claim, gone, nextTask, taskStarted, validated]
+    effects []
+
+record State
+    free: List<Int>
+    pending: List<String>
+    stopping: Bool
+
+fn claim(state: State, key: Int) -> Tuple<State, Pool.__ClaimReply>
+    ? "The next height for this peer."
+    (state, Pool.__ClaimReply.Now(Pool.Assignment.Idle))
+
+fn gone(state: State, key: Int) -> Tuple<State, Pool.__GoneReply>
+    ? "A peer that left gives its height back."
+    (state, Pool.__GoneReply.Now(Unit))
+
+fn nextTask(state: State) -> Option<String>
+    ? "What the turn should start a validation job on, if anything."
+    Option.None
+
+fn taskStarted(state: State, task: Int) -> State
+    ? "The wrong shape: the task this seam offers is a String, so the function that records its start cannot take an Int."
+    state
+
+fn validated(state: State, outcome: Result<Int, String>) -> State
+    ? "Where a job that is over lands, whether it produced a result or not."
+    match outcome
+        Result.Err(_) -> State.update(state, stopping = true)
+        Result.Ok(score) -> State.update(state, stopping = score == 0)
+
+verify validated
+    validated(freshState(), Result.Ok(0)) => State.update(freshState(), stopping = true)
+
+fn freshState() -> State
+    ? "The state before anything has happened."
+    State(free = [], pending = [], stopping = false)

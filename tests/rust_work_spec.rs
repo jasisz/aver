@@ -348,6 +348,16 @@ fn run_all_slice_does_the_same_work_as_the_vm() {
     result.unwrap_or_else(|error| panic!("{error}"));
 }
 
+/// Two job kinds under one generated coordinator on the Rust backend: one
+/// `__Job` sum, one shared table, one shared `max-jobs` limit. The four
+/// tasks' settle order is wall-clock, so the comparison is the multiset of
+/// lines: one per landing, kind and score, so a task started twice would show
+/// as a duplicated line, and the sum that only all four landings make.
+#[test]
+fn two_job_kinds_under_one_generated_loop_matches_the_vm() {
+    assert_same_lines("run_two_job_kinds");
+}
+
 /// Runs one backend against a loopback peer, on a port nobody else holds.
 fn with_peer(run: impl FnOnce(&str) -> Result<String, String>) -> Result<String, String> {
     let port = free_port();

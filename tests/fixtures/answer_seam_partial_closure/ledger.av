@@ -1,7 +1,7 @@
 module Ledger
     intent = "An answer module holding the state both ends of the well-typed job seam reach."
     depends [Pool]
-    exposes [State, claim, gone, nextTask, validated]
+    exposes [State, claim, gone, nextTask, taskStarted, validated]
     effects []
 
 record State
@@ -20,6 +20,10 @@ fn gone(state: State, key: Int) -> Unit
 fn nextTask(state: State) -> Option<String>
     ? "What the turn should start a validation job on, if anything."
     Option.None
+
+fn taskStarted(state: State, task: String) -> State
+    ? "A task whose job just began leaves the queue it was offered from. Named by aver.toml's started key."
+    state
 
 fn validated(state: State, outcome: Result<Int, String>) -> State
     ? "Where a job that is over lands, whether it produced a result or not."

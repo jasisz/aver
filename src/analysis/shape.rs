@@ -1466,41 +1466,61 @@ fn body_calls_name(body: &crate::ast::FnBody, name: &str) -> bool {
 }
 
 fn expr_calls_name(expr: &crate::ast::Spanned<crate::ast::Expr>, name: &str) -> bool {
+    expr_calls_where(expr, &|path| path == name)
+}
+
+/// The dotted path a call's callee spells: a bare `f` is `f`, a namespaced
+/// `List.contains` (an `Attr` chain over an `Ident`) is `List.contains`.
+/// Anything else (a call on a computed callee) has no path.
+pub(crate) fn callee_path(callee: &crate::ast::Spanned<crate::ast::Expr>) -> Option<String> {
+    use crate::ast::Expr;
+    match &callee.node {
+        Expr::Ident(name) => Some(name.clone()),
+        Expr::Attr(base, field) => callee_path(base).map(|path| format!("{path}.{field}")),
+        _ => None,
+    }
+}
+
+/// Whether `expr` contains a call (direct or tail) whose callee path
+/// satisfies `hit`. The walk covers every expression form that can hold a
+/// call; a form that holds none answers `false`.
+pub(crate) fn expr_calls_where(
+    expr: &crate::ast::Spanned<crate::ast::Expr>,
+    hit: &dyn Fn(&str) -> bool,
+) -> bool {
     use crate::ast::Expr;
     match &expr.node {
         Expr::FnCall(callee, args) => {
-            if let Expr::Ident(n) = &callee.node
-                && n == name
-            {
+            if callee_path(callee).is_some_and(|path| hit(&path)) {
                 return true;
             }
-            if expr_calls_name(callee, name) {
+            if expr_calls_where(callee, hit) {
                 return true;
             }
-            args.iter().any(|a| expr_calls_name(a, name))
+            args.iter().any(|a| expr_calls_where(a, hit))
         }
-        Expr::TailCall(td) => td.target == name || td.args.iter().any(|a| expr_calls_name(a, name)),
+        Expr::TailCall(td) => hit(&td.target) || td.args.iter().any(|a| expr_calls_where(a, hit)),
         Expr::Match { subject, arms } => {
-            if expr_calls_name(subject, name) {
+            if expr_calls_where(subject, hit) {
                 return true;
             }
-            arms.iter().any(|a| expr_calls_name(&a.body, name))
+            arms.iter().any(|a| expr_calls_where(&a.body, hit))
         }
-        Expr::BinOp(_, l, r) => expr_calls_name(l, name) || expr_calls_name(r, name),
-        Expr::Neg(e) | Expr::Attr(e, _) | Expr::ErrorProp(e) => expr_calls_name(e, name),
-        Expr::Constructor(_, Some(e)) => expr_calls_name(e, name),
+        Expr::BinOp(_, l, r) => expr_calls_where(l, hit) || expr_calls_where(r, hit),
+        Expr::Neg(e) | Expr::Attr(e, _) | Expr::ErrorProp(e) => expr_calls_where(e, hit),
+        Expr::Constructor(_, Some(e)) => expr_calls_where(e, hit),
         Expr::List(xs) | Expr::Tuple(xs) | Expr::IndependentProduct(xs, _) => {
-            xs.iter().any(|x| expr_calls_name(x, name))
+            xs.iter().any(|x| expr_calls_where(x, hit))
         }
         Expr::MapLiteral(pairs) => pairs
             .iter()
-            .any(|(k, v)| expr_calls_name(k, name) || expr_calls_name(v, name)),
-        Expr::RecordCreate { fields, .. } => fields.iter().any(|(_, e)| expr_calls_name(e, name)),
+            .any(|(k, v)| expr_calls_where(k, hit) || expr_calls_where(v, hit)),
+        Expr::RecordCreate { fields, .. } => fields.iter().any(|(_, e)| expr_calls_where(e, hit)),
         Expr::RecordUpdate { base, updates, .. } => {
-            expr_calls_name(base, name) || updates.iter().any(|(_, e)| expr_calls_name(e, name))
+            expr_calls_where(base, hit) || updates.iter().any(|(_, e)| expr_calls_where(e, hit))
         }
         Expr::InterpolatedStr(parts) => parts.iter().any(|p| match p {
-            crate::ast::StrPart::Parsed(e) => expr_calls_name(e, name),
+            crate::ast::StrPart::Parsed(e) => expr_calls_where(e, hit),
             crate::ast::StrPart::Literal(_) => false,
         }),
         Expr::Literal(_) | Expr::Ident(_) | Expr::Constructor(_, None) | Expr::Resolved { .. } => {
@@ -1633,5 +1653,41 @@ fn collect_qualifying_in_expr(
             }
         }
         Expr::Literal(_) | Expr::Ident(_) | Expr::Constructor(_, None) | Expr::Resolved { .. } => {}
+    }
+}
+
+#[cfg(test)]
+mod call_walk_tests {
+    use super::{callee_path, expr_calls_where};
+    use crate::ast::{Expr, Spanned};
+
+    fn call(callee: Expr) -> Spanned<Expr> {
+        Spanned::new(Expr::FnCall(Box::new(Spanned::new(callee, 1)), vec![]), 1)
+    }
+
+    fn callee_of(call: &Spanned<Expr>) -> Spanned<Expr> {
+        match &call.node {
+            Expr::FnCall(callee, _) => (**callee).clone(),
+            _ => unreachable!(),
+        }
+    }
+
+    // `List.contains(xs, x)` parses as an `Attr` chain over `List`, not as one
+    // dotted identifier; the walker sees it under its dotted path either way.
+    #[test]
+    fn a_namespaced_builtin_call_is_found_by_its_dotted_path() {
+        let namespaced = call(Expr::Attr(
+            Box::new(Spanned::new(Expr::Ident("List".to_string()), 1)),
+            "contains".to_string(),
+        ));
+        assert_eq!(
+            callee_path(&callee_of(&namespaced)),
+            Some("List.contains".to_string())
+        );
+        assert!(expr_calls_where(&namespaced, &|path| path == "List.contains"));
+        assert!(!expr_calls_where(&namespaced, &|path| path == "contains"));
+        let bare = call(Expr::Ident("contains".to_string()));
+        assert!(expr_calls_where(&bare, &|path| path == "contains"));
+        assert!(!expr_calls_where(&bare, &|path| path == "List.contains"));
     }
 }

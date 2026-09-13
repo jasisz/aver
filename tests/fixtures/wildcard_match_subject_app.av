@@ -1,0 +1,14 @@
+module Main
+    intent = "An effectful call as the subject of a one-arm wildcard match: the arm binds nothing, and the subject still runs. This is how a process performs something in place before it goes on."
+    effects [Console.print]
+
+fn say(x: Int) -> Unit
+    ? "Prints one line."
+    ! [Console.print]
+    Console.print("said {x}")
+
+fn main() -> Unit
+    ? "Says, then says done."
+    ! [Console.print]
+    match say(1)
+        _ -> Console.print("done")

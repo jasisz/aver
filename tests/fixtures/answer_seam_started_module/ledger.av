@@ -1,0 +1,35 @@
+module Ledger
+    intent = "An answer module holding the state the job seam asks from and lands in — but not the one the seam records a start in."
+    depends [Pool]
+    exposes [State, claim, gone, nextTask, validated]
+    effects []
+
+record State
+    free: List<Int>
+    pending: List<String>
+    stopping: Bool
+
+fn claim(state: State, key: Int) -> Tuple<State, Pool.__ClaimReply>
+    ? "The next height for this peer."
+    (state, Pool.__ClaimReply.Now(Pool.Assignment.Idle))
+
+fn gone(state: State, key: Int) -> Tuple<State, Pool.__GoneReply>
+    ? "A peer that left gives its height back."
+    (state, Pool.__GoneReply.Now(Unit))
+
+fn nextTask(state: State) -> Option<String>
+    ? "What the turn should start a validation job on, if anything."
+    Option.None
+
+fn validated(state: State, outcome: Result<Int, String>) -> State
+    ? "Where a job that is over lands, whether it produced a result or not."
+    match outcome
+        Result.Err(_) -> State.update(state, stopping = true)
+        Result.Ok(score) -> State.update(state, stopping = score == 0)
+
+verify validated
+    validated(freshState(), Result.Ok(0)) => State.update(freshState(), stopping = true)
+
+fn freshState() -> State
+    ? "The state before anything has happened."
+    State(free = [], pending = [], stopping = false)

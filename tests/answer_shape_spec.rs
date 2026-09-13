@@ -170,7 +170,7 @@ fn the_effectful_answer_warning_does_not_stop_the_run_door() {
     );
 }
 
-// ── work-binding: the two ends of the job seam ──────────────────────────
+// ── work-binding: the three ends of the job seam ────────────────────────
 
 #[test]
 fn a_seam_end_is_typed_against_the_job_kinds_task() {
@@ -182,11 +182,11 @@ fn a_seam_end_is_typed_against_the_job_kinds_task() {
 }
 
 #[test]
-fn both_ends_of_the_seam_are_pure() {
+fn all_ends_of_the_seam_are_pure() {
     assert_reports(
         "answer_seam_effectful",
         &["check"],
-        "job kind 'Validation' binds task = \"Ledger.nextTask\", but that function declares effects [Console.print]; the turn reads the seam between waits, so both its ends are pure",
+        "job kind 'Validation' binds task = \"Ledger.nextTask\", but that function declares effects [Console.print]; the turn reads the seam between waits, so all three of its ends are pure",
     );
 }
 
@@ -194,7 +194,11 @@ fn both_ends_of_the_seam_are_pure() {
 fn a_seam_end_names_a_function_of_an_answer_module() {
     let out = aver("answer_seam_unanswered_module", &["check"]);
     let text = combined(&out);
-    for field in ["task = \"Node.nextTask\"", "landed = \"Node.validated\""] {
+    for field in [
+        "task = \"Node.nextTask\"",
+        "started = \"Node.taskStarted\"",
+        "landed = \"Node.validated\"",
+    ] {
         assert!(
             text.contains(&format!(
                 "job kind 'Validation' binds {field}, but no `answer` binding in aver.toml names module 'Node'"
@@ -234,6 +238,30 @@ fn a_seam_end_naming_nothing_in_the_program_is_refused() {
         &["check"],
         "job kind 'Validation' binds task = \"Ledger.nextTask\", but this program has no function 'Ledger.nextTask'",
     );
+}
+
+/// The `started` end records that the task `begin` was handed is now running,
+/// so it takes the answer state and that task — not a task of a different
+/// type, and nothing that leaves the state unwritten.
+#[test]
+fn the_started_end_is_typed_against_the_job_kinds_task() {
+    assert_reports(
+        "answer_seam_started_shape",
+        &["check"],
+        "job kind 'Validation' binds started = \"Ledger.taskStarted\", so that function must be (Ledger.State, String) -> Ledger.State; it is (Ledger.State, Int) -> Ledger.State",
+    );
+}
+
+/// `task` and `started` are one seam over one state: the task is consumed
+/// from the state that offered it. A `started` whose shape is right over
+/// another answer module's state is refused all the same, and by this check
+/// rather than by the loop generator, because a program without `[run]`
+/// binds the seam too.
+#[test]
+fn the_task_and_started_ends_name_one_module() {
+    let expected = "error[work-binding]: job kind 'Validation' binds task = \"Ledger.nextTask\" and started = \"Timer.taskStarted\", but those are functions of two modules, 'Ledger' and 'Timer'; the task is consumed from the state that offered it, so `task` and `started` name functions of one answer module";
+    assert_reports("answer_seam_started_module", &["check"], expected);
+    assert_reports("answer_seam_started_module", &["run"], expected);
 }
 
 // ── the manifest keys themselves ────────────────────────────────────────
@@ -313,11 +341,21 @@ fn the_job_seam_lives_on_a_work_binding() {
 }
 
 #[test]
-fn the_job_seam_has_two_ends() {
+fn the_job_seam_has_three_ends() {
     assert_manifest_rejects(
         "half-seam",
         "[providers]\nschema = 1\n\n[[providers.bindings]]\ncapability = \"Validation\"\nwork = \"Node.validate\"\ntask = \"Ledger.nextTask\"\n",
-        "declares `task` without `landed`",
+        "declares `task` without `started`",
+    );
+    assert_manifest_rejects(
+        "unrecorded-seam",
+        "[providers]\nschema = 1\n\n[[providers.bindings]]\ncapability = \"Validation\"\nwork = \"Node.validate\"\ntask = \"Ledger.nextTask\"\nlanded = \"Ledger.validated\"\n",
+        "declares `task` and `landed` without `started`",
+    );
+    assert_manifest_rejects(
+        "unlanded-seam",
+        "[providers]\nschema = 1\n\n[[providers.bindings]]\ncapability = \"Validation\"\nwork = \"Node.validate\"\ntask = \"Ledger.nextTask\"\nstarted = \"Ledger.taskStarted\"\n",
+        "declares `task` and `started` without `landed`",
     );
 }
 

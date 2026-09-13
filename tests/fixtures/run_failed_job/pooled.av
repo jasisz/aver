@@ -1,17 +1,18 @@
 module Pooled
-    intent = "Fixture answer module: the answer this program gives to Pool, both ends of the job seam, and the ledger of what never landed."
+    intent = "Fixture answer module: the answer this program gives to Pool, all three ends of the job seam, and the ledger of what never landed."
     depends [Pool, Wait]
-    exposes [State, fresh, claim, score, nextTask, landed]
+    exposes [State, fresh, claim, score, nextTask, taskStarted, landed]
     effects []
 
 record State
     left: Int
+    pending: List<Int>
     scored: Int
     rejected: List<String>
 
 fn fresh() -> State
-    ? "One handle to give out, nothing scored and nothing rejected."
-    State(left = 1, scored = 0, rejected = [])
+    ? "One handle to give out, one validation task to run, nothing scored and nothing rejected."
+    State(left = 1, pending = [1], scored = 0, rejected = [])
 
 fn claim(state: State) -> Tuple<State, Pool.__ClaimReply>
     ? "One handle, until there are none."
@@ -24,10 +25,26 @@ fn score(task: Int) -> Int
     task + 1
 
 fn nextTask(state: State) -> Option<Int>
-    ? "One task, and only out of the state a run starts from."
-    match state.left == 1
-        true -> Option.Some(state.left)
-        false -> Option.None
+    ? "The next task waiting to be started, if anything."
+    match state.pending
+        [] -> Option.None
+        [head, ..rest] -> Option.Some(head)
+
+fn taskStarted(state: State, task: Int) -> State
+    ? "A task whose job just began leaves the queue it was offered from — every copy of it — so the next ask is offered a different one. Named by aver.toml's started key."
+    State.update(state, pending = withoutTask(state.pending, task, []))
+
+fn withoutTask(pending: List<Int>, task: Int, acc: List<Int>) -> List<Int>
+    ? "The queue with every copy of one task taken out, in the order the rest were queued."
+    match pending
+        [] -> acc
+        [head, ..rest] -> withoutTask(rest, task, keptUnlessTask(acc, head, task))
+
+fn keptUnlessTask(acc: List<Int>, entry: Int, task: Int) -> List<Int>
+    ? "One queued entry, kept unless it is the task that just started."
+    match entry == task
+        true -> acc
+        false -> List.concat(acc, [entry])
 
 fn landed(state: State, outcome: Result<Int, String>) -> State
     ? "Where a job that is over goes: its score, or the reason it will never have one. A run whose job was cancelled records the rejection and carries on."
@@ -43,7 +60,30 @@ verify score
 
 verify nextTask
     nextTask(fresh()) => Option.Some(1)
-    nextTask(State(left = 0, scored = 0, rejected = [])) => Option.None
+    nextTask(State.update(fresh(), pending = [])) => Option.None
+
+verify withoutTask law theStartedTaskIsOut
+    given pending: List<Int> = [[], [1], [1, 2]]
+    given task: Int = [1, 2]
+    given acc: List<Int> = [[], [3]]
+    List.contains(withoutTask(pending, task, acc), task) => List.contains(acc, task)
+
+verify taskStarted law aStartedTaskIsNotAskedAgain
+    given state: State = [fresh(), State.update(fresh(), pending = [1, 2])]
+    given task: Int = [1, 2]
+    when nextTask(state) == Option.Some(task)
+    using [withoutTask.theStartedTaskIsOut]
+    nextTask(taskStarted(state, task)) != Option.Some(task) holds
+
+verify taskStarted
+    taskStarted(fresh(), 1) => State.update(fresh(), pending = [])
+
+verify withoutTask
+    withoutTask([1, 2], 1, []) => [2]
+
+verify keptUnlessTask
+    keptUnlessTask([], 1, 1) => []
+    keptUnlessTask([], 2, 1) => [2]
 
 verify landed
     landed(fresh(), Result.Ok(4)) => State.update(fresh(), scored = 4)

@@ -417,6 +417,17 @@ fn bool_match_named_default_arm_matches_between_rust_and_vm() {
         .unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// A one-arm wildcard match over an effectful call: `match say(x)` with a
+/// single `_ ->` arm is how a process performs something in place before it
+/// goes on, and the Rust backend used to render the arm's body alone, so the
+/// subject — and its effect — never ran. Only a build-and-run sees the
+/// missing line; `cargo check` and the VM are both happy.
+#[test]
+fn wildcard_match_still_runs_its_subject_between_rust_and_vm() {
+    assert_plain_parity("tests/fixtures/wildcard_match_subject_app.av", None)
+        .unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// A type declared in a module nobody imports must not reach the code the
 /// other modules generate.
 ///

@@ -976,6 +976,7 @@ pub fn front(items: &mut Vec<TopLevel>, cfg: FrontConfig<'_, '_>) -> FrontResult
             &phase_one.errors,
             marked,
             &phase_one.fn_sigs,
+            &phase_one.laws,
         ) {
             Ok(report) => {
                 if std::env::var_os("AVER_YIELD_DUMP").is_some() {

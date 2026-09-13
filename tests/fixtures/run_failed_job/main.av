@@ -26,16 +26,14 @@ fn probing() -> Unit
 fn probe() -> String
     ? "Starts one job and cancels it before anything takes it: a cancelled job has no result to give and never will."
     ! [Validation.begin, Validation.take, Work.cancel]
-    match __startJobsValidation(__fresh())
-        Result.Err(reason) -> "begin refused: {reason}"
-        Result.Ok(started) -> probeStarted(started)
+    probeStarted(__startJobsValidation(__fresh()))
 
 fn probeStarted(started: __Run) -> String
     ? "The handle the start left behind: the wake gate is read against it, and then it is cancelled where it stands."
     ! [Validation.take, Work.cancel]
     match Map.get(started.jobs, 1)
         Option.None -> "the start kept no handle"
-        Option.Some(job) -> probeGated(started, job, __parked(__settledSlotProbing(1, __ProbingRequest.Claim(__ProbingClaimState.Await1)), Wait.Wake.Item(Wait.Item.Job(job)), 1000))
+        Option.Some(job) -> probeGated(started, __jobHandle(job), __parked(__settledSlotProbing(1, __ProbingRequest.Claim(__ProbingClaimState.Await1)), Wait.Wake.Item(Wait.Item.Job(__jobHandle(job))), 1000))
 
 fn gated(quiet: Bool, reported: Bool) -> String
     ? "The two readings of one parked slot, as the one line a run says them in."

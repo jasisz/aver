@@ -1,0 +1,9 @@
+module Main
+    depends [Ledger, Node, Pool, Validation]
+    intent = "A program whose job seam is typed against the wrong task."
+    effects [Console]
+
+fn main() -> Unit
+    ? "Reports that the program is wired."
+    ! [Console.print]
+    Console.print("answers ready")

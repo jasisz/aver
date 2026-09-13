@@ -1,0 +1,9 @@
+module Main
+    depends [Ledger, Timer, Node, Pool, Clock, Validation]
+    intent = "A program whose job seam records a start in a module other than the one it asks."
+    effects [Console]
+
+fn main() -> Unit
+    ? "Reports that the program is wired."
+    ! [Console.print]
+    Console.print("answers ready")

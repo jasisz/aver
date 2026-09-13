@@ -75,6 +75,11 @@ pub struct TypeCheckResult {
     pub unused_bindings: Vec<(String, String, usize)>,
     /// Canonical externally-provided contracts visible to this program.
     pub capabilities: crate::capability::CapabilityRegistry,
+    /// Every law a `using` clause of the checked module may name: its own as
+    /// `fn.law`, a visible module's as `Module.fn.law`. The loop generator
+    /// reads it to refuse a program that does not state a law the generated
+    /// loop cites, before the generated module is checked.
+    pub laws: std::collections::BTreeSet<String>,
 }
 
 pub fn run_type_check(items: &[TopLevel]) -> Vec<TypeError> {
@@ -344,6 +349,7 @@ fn finalize_check_result(mut checker: TypeChecker, items: &[TopLevel]) -> TypeCh
         fn_sigs,
         unused_bindings: checker.unused_warnings,
         capabilities: checker.capabilities,
+        laws: checker.available_laws,
     }
 }
 
@@ -699,6 +705,10 @@ struct TypeChecker {
     /// (`check_loaded_module_bodies`) set this to the dep module's
     /// prefix so bare-name resolution finds the local type/fn first.
     current_module_prefix: Option<String>,
+    /// The laws a `using` clause of the entry items may name, as
+    /// [`TypeCheckResult::laws`] exports them; filled when the law
+    /// dependencies are checked.
+    available_laws: std::collections::BTreeSet<String>,
     /// Top-level bindings visible from function bodies.
     globals: HashMap<String, Type>,
     /// Local bindings in the current function/scope.
@@ -783,6 +793,7 @@ impl TypeChecker {
             record_field_types: HashMap::new(),
             type_variants,
             current_module_prefix: None,
+            available_laws: std::collections::BTreeSet::new(),
             globals: HashMap::new(),
             locals: HashMap::new(),
             errors: Vec::new(),

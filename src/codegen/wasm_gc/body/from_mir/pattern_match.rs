@@ -270,6 +270,19 @@ pub(crate) fn emit_mir_match(
             let Some((fallback_body, fallback_slot)) = fallback else {
                 return Ok(None);
             };
+            // A wildcard alone binds nothing, but `match say(x) _ -> …` still
+            // performs `say`: the cascade emits the subject only where a
+            // literal compares against it or a binder captures it, so with
+            // neither the subject is evaluated here and its value dropped,
+            // as the VM and the Rust backend do. A pure read is skipped.
+            if typed_arms.is_empty() && fallback_slot.is_none() && !is_pure_read(&m.subject.node) {
+                ctx.int_result_raw.set(false);
+                match emit_mir_expr(func, &m.subject, slots, ctx)? {
+                    None => return Ok(None),
+                    Some(true) => func.instruction(&Instruction::Drop),
+                    Some(false) => func,
+                };
+            }
             if emit_mir_int_cascade(
                 func,
                 &m.subject,
@@ -306,26 +319,26 @@ pub(crate) fn emit_mir_match(
             // `SlotTable` reserves for a `Unit` local and leave a stray value
             // on the stack; a pure read has no effects, so skipping it is both
             // required for validity and behaviour-preserving. An EFFECTFUL
-            // `Unit` subject (e.g. a `Unit`-returning call used directly as the
-            // subject) is deliberately left to the `_ => Ok(None)` fallback
-            // below — a LOUD trap stub — rather than silently dropping its
-            // effect: that shape is degenerate (a `Unit` call's result is
-            // already discarded), has no corpus precedent, and keeping it loud
-            // avoids a silent VM↔wasm-gc divergence. Without this branch even
-            // the pure case falls through to the trap. No branch block ⇒ the
-            // body inherits `result_raw` directly, like `emit_mir_tuple_match`.
-            if matches!(
-                m.subject.node,
-                MirExpr::Local(_) | MirExpr::Project(_) | MirExpr::Literal(_)
-            ) {
-                ctx.int_result_raw.set(result_raw);
-                if emit_mir_expr(func, &m.arms[0].body, slots, ctx)?.is_none() {
-                    return Ok(None);
-                }
-                Ok(Some(produces))
-            } else {
-                Ok(None)
+            // `Unit` subject — a `Unit`-returning call used directly as the
+            // subject, which is how a process performs something in place
+            // before it goes on (`match say(x) _ -> …`) — is evaluated for
+            // its effect, and whatever value it left is dropped; the arm
+            // binds a `Unit` at most, whose slot is a placeholder nothing
+            // reads. No branch block ⇒ the body inherits `result_raw`
+            // directly, like `emit_mir_tuple_match`.
+            if !is_pure_read(&m.subject.node) {
+                ctx.int_result_raw.set(false);
+                match emit_mir_expr(func, &m.subject, slots, ctx)? {
+                    None => return Ok(None),
+                    Some(true) => func.instruction(&Instruction::Drop),
+                    Some(false) => func,
+                };
             }
+            ctx.int_result_raw.set(result_raw);
+            if emit_mir_expr(func, &m.arms[0].body, slots, ctx)?.is_none() {
+                return Ok(None);
+            }
+            Ok(Some(produces))
         }
         // Non-primitive subjects. The irrefutable single-arm binder
         // `match subj { v -> body }` is a rename: store the subject into
@@ -969,6 +982,17 @@ pub(crate) fn emit_mir_int_cascade(
     }
     func.instruction(&Instruction::End);
     Ok(Some(()))
+}
+
+/// `true` for a match subject that performs nothing — a slot read, a field
+/// projection or a literal — so a match that binds nothing from it may skip
+/// it. Anything else is evaluated for what it does, even when no arm looks
+/// at its value.
+fn is_pure_read(subject: &MirExpr) -> bool {
+    matches!(
+        subject,
+        MirExpr::Local(_) | MirExpr::Project(_) | MirExpr::Literal(_)
+    )
 }
 
 /// `true` for an arm whose pattern is a built-in `Result.Ok` /

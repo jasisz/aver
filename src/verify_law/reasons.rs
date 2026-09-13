@@ -48,26 +48,30 @@ pub fn sample_blocks(block: &VerifyBlock) -> Vec<VerifyBlock> {
         .collect()
 }
 
-/// Explicit dependency names are source identities, not Lean declaration text.
-/// Imported laws follow the existing exposed-subject visibility rule.
-pub fn dependency_errors<'a>(
+/// The laws `items` states itself, keyed `fn.law`.
+fn own_laws(items: &[TopLevel]) -> impl Iterator<Item = (String, &VerifyBlock)> {
+    items.iter().filter_map(|item| {
+        let TopLevel::Verify(block) = item else {
+            return None;
+        };
+        let VerifyKind::Law(law) = &block.kind else {
+            return None;
+        };
+        Some((format!("{}.{}", block.fn_name, law.name), block))
+    })
+}
+
+/// Every law a `using` clause of `items` may name: the module's own laws as
+/// `fn.law`, and the laws of the loaded modules on their exposed subjects as
+/// `Module.fn.law`. One lookup shared by the `using` check and by the loop
+/// generator, which cites a program's law by this name and has to refuse a
+/// program that does not state it before the generated module is checked.
+pub fn available_laws<'a>(
     items: &[TopLevel],
     loaded: impl IntoIterator<Item = &'a crate::source::LoadedModule>,
-) -> Vec<(usize, String)> {
-    use std::collections::{BTreeMap, BTreeSet};
-    let laws: BTreeMap<String, &VerifyBlock> = items
-        .iter()
-        .filter_map(|item| {
-            let TopLevel::Verify(block) = item else {
-                return None;
-            };
-            let VerifyKind::Law(law) = &block.kind else {
-                return None;
-            };
-            Some((format!("{}.{}", block.fn_name, law.name), block))
-        })
-        .collect();
-    let mut available: BTreeSet<String> = laws.keys().cloned().collect();
+) -> std::collections::BTreeSet<String> {
+    let mut available: std::collections::BTreeSet<String> =
+        own_laws(items).map(|(name, _)| name).collect();
     for module in loaded {
         for block in crate::codegen::collect_verify_laws(&module.items) {
             if let VerifyKind::Law(law) = &block.kind {
@@ -78,6 +82,18 @@ pub fn dependency_errors<'a>(
             }
         }
     }
+    available
+}
+
+/// Explicit dependency names are source identities, not Lean declaration text.
+/// Imported laws follow the existing exposed-subject visibility rule.
+pub fn dependency_errors<'a>(
+    items: &[TopLevel],
+    loaded: impl IntoIterator<Item = &'a crate::source::LoadedModule>,
+) -> Vec<(usize, String)> {
+    use std::collections::{BTreeMap, BTreeSet};
+    let laws: BTreeMap<String, &VerifyBlock> = own_laws(items).collect();
+    let available = available_laws(items, loaded);
     let mut errors = Vec::new();
     for (name, block) in &laws {
         let VerifyKind::Law(law) = &block.kind else {
