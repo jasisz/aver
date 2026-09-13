@@ -137,13 +137,20 @@ pub(crate) fn mir_expr_coverable(expr: &Spanned<MirExpr>) -> bool {
             // fused-Option fallback — a tolerable over-count, since this
             // only feeds `--explain-mir-coverage`; the real per-fn
             // dispatch in `emit_mir_match` is what the byte-differential
-            // test checks). Tuple-pattern arms fall back to the
-            // `ResolvedExpr` emitter (mirror of `emit_mir_match`).
+            // test checks). A tuple-pattern match is covered in the two
+            // shapes `emit_mir_match` emits: the single-arm flat
+            // destructure, and the cascade over arms whose elements are
+            // binds, wildcards, `Result`/`Option` constructors, list
+            // shapes or `Int`/`Bool` literals with at least one of them
+            // testing its field (the registry lookups the emitter's
+            // pre-pass makes are not modelled here).
             let m = &spanned_match.node;
-            let unsupported_pat = m
+            let has_tuple_arm = m
                 .arms
                 .iter()
                 .any(|a| matches!(a.pattern, MirPattern::Tuple(_)));
+            let is_tuple = has_tuple_arm && tuple_match_coverable(&m.arms);
+            let unsupported_pat = has_tuple_arm && !is_tuple;
             // A primitive-subject match takes the Bool/Int/String branches
             // (literal / wildcard arms only; `Bind` falls back); a
             // Result/Option match carries built-in constructor arms; a
@@ -178,10 +185,47 @@ pub(crate) fn mir_expr_coverable(expr: &Spanned<MirExpr>) -> bool {
             });
             !m.arms.is_empty()
                 && !unsupported_pat
-                && (is_primitive || is_result_or_option || is_list || is_variant)
+                && (is_primitive || is_result_or_option || is_list || is_variant || is_tuple)
                 && mir_expr_coverable(&m.subject)
                 && m.arms.iter().all(|a| mir_expr_coverable(&a.body))
         }
         _ => false,
     }
+}
+
+/// Ctx-free mirror of `emit_mir_match`'s two tuple shapes: the single-arm
+/// flat destructure `(a, _, c) -> body` of two or more binds/wildcards, or
+/// the constructor cascade — every arm a tuple, a wildcard or a bind, every
+/// tuple element a bind, a wildcard, a built-in `Result`/`Option`
+/// constructor, `[]`, `[head, ..tail]` or an `Int`/`Bool` literal. An arm
+/// with no testing element is taken unconditionally, so arms of binds and
+/// wildcards alone cascade too.
+fn tuple_match_coverable(arms: &[MirMatchArm]) -> bool {
+    if arms.len() == 1
+        && let MirPattern::Tuple(items) = &arms[0].pattern
+        && items.len() >= 2
+        && items
+            .iter()
+            .all(|p| matches!(p, MirPattern::Bind(..) | MirPattern::Wildcard))
+    {
+        return true;
+    }
+    arms.iter().all(|arm| match &arm.pattern {
+        MirPattern::Wildcard | MirPattern::Bind(..) => true,
+        MirPattern::Tuple(items) => items.iter().all(|pat| {
+            matches!(
+                pat,
+                MirPattern::Bind(..)
+                    | MirPattern::Wildcard
+                    | MirPattern::Ctor {
+                        ctor: MirCtor::Builtin(_),
+                        ..
+                    }
+                    | MirPattern::EmptyList
+                    | MirPattern::Cons { .. }
+                    | MirPattern::Literal(Literal::Int(_) | Literal::Bool(_))
+            )
+        }),
+        _ => false,
+    })
 }

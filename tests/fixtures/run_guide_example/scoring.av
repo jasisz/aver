@@ -1,0 +1,16 @@
+module Scoring
+    kind = capability
+    semantics = effectful
+    depends [Work]
+    intent = "The job kind that scores one task off the turn."
+    exposes []
+
+operation begin(task: Int) -> Result<Work.Job, String>
+    ? "Starts scoring one task off the turn and answers its handle at once."
+    oracle = generativeOutput
+    replay = recorded
+
+operation take(job: Work.Job) -> Result<Option<Int>, String>
+    ? "None while the job runs, Some(score) once it finished."
+    oracle = generativeOutput
+    replay = recorded

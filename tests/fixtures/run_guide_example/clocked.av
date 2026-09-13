@@ -1,0 +1,75 @@
+module Clocked
+    intent = "The answers this program gives to Clock, and the three ends of the scoring job's seam: the tasks still to start, how many are running, and what the landed ones scored."
+    depends [Clock, Wait]
+    exposes []
+    effects []
+
+record State
+    tasks: List<Int>
+    running: Int
+    total: Int
+    armed: Bool
+
+fn fresh() -> State
+    ? "Three tasks to score, none started, nothing scored and no deadline armed."
+    State(tasks = [1, 2, 3], running = 0, total = 0, armed = false)
+
+fn tick(state: State) -> Tuple<State, Clock.__TickReply>
+    ? "Closed once every task has started and landed; before that, a tick fifty milliseconds after it was asked for."
+    match (state.tasks, state.running)
+        ([], 0) -> (state, Clock.__TickReply.Now(Clock.Tick.Closed(state.total)))
+        _ -> armed(state)
+
+verify tick
+    tick(fresh()) => (State.update(fresh(), armed = true), Clock.__TickReply.Later(Wait.Wake.After(50)))
+    tick(State.update(fresh(), armed = true)) => (fresh(), Clock.__TickReply.Now(Clock.Tick.Tock))
+    tick(State.update(fresh(), tasks = [], total = 60)) => (State.update(fresh(), tasks = [], total = 60), Clock.__TickReply.Now(Clock.Tick.Closed(60)))
+
+fn armed(state: State) -> Tuple<State, Clock.__TickReply>
+    ? "The first ask arms the deadline and parks on it; the ask after the deadline has passed is the tick. The flag survives the park because a Later keeps the state this module returned."
+    match state.armed
+        false -> (State.update(state, armed = true), Clock.__TickReply.Later(Wait.Wake.After(50)))
+        true -> (State.update(state, armed = false), Clock.__TickReply.Now(Clock.Tick.Tock))
+
+verify armed
+    armed(fresh()) => (State.update(fresh(), armed = true), Clock.__TickReply.Later(Wait.Wake.After(50)))
+    armed(State.update(fresh(), armed = true)) => (fresh(), Clock.__TickReply.Now(Clock.Tick.Tock))
+
+fn score(task: Int) -> Int
+    ? "What one job computes off the turn. Named by aver.toml's work key."
+    task * 10
+
+verify score
+    score(3) => 30
+
+fn nextTask(state: State) -> Option<Int>
+    ? "The next task to start, if any: the head of the queue. Named by aver.toml's task key."
+    match state.tasks
+        [] -> Option.None
+        [head, ..rest] -> Option.Some(head)
+
+verify nextTask
+    nextTask(fresh()) => Option.Some(1)
+    nextTask(State.update(fresh(), tasks = [])) => Option.None
+
+fn taskStarted(state: State, task: Int) -> State
+    ? "The task whose job just began was the head of the queue; it leaves, so the next ask is offered a different one. Named by aver.toml's started key."
+    match state.tasks
+        [] -> state
+        [_, ..rest] -> State.update(state, tasks = rest, running = state.running + 1)
+
+verify taskStarted law aStartedTaskIsNotAskedAgain
+    given state: State = [fresh(), State.update(fresh(), tasks = [2, 1])]
+    given task: Int = [1, 2]
+    when nextTask(state) == Option.Some(task)
+    nextTask(taskStarted(state, task)) != Option.Some(task) holds
+
+fn scored(state: State, outcome: Result<Int, String>) -> State
+    ? "Where a job that is over lands: its score, or nothing when it will never produce one. Named by aver.toml's landed key."
+    match outcome
+        Result.Ok(points) -> State.update(state, running = state.running - 1, total = state.total + points)
+        Result.Err(_) -> State.update(state, running = state.running - 1)
+
+verify scored
+    scored(State.update(fresh(), running = 1), Result.Ok(10)) => State.update(fresh(), total = 10)
+    scored(State.update(fresh(), running = 1), Result.Err("work: job cancelled")) => fresh()
