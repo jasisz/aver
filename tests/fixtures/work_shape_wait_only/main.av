@@ -1,0 +1,12 @@
+module Main
+    depends [Wait]
+    intent = "A program that performs the one wait of a turn and declares no job kind, so the refusal it meets on a wasm target is the capability binding's, not the job gate's."
+    exposes [main]
+    effects [Console.print, Wait.poll]
+
+fn main() -> Result<Unit, String>
+    ? "Polls an empty wait set once and says how many keys it reported ready."
+    ! [Console.print, Wait.poll]
+    ready = Wait.poll({}, 0)?
+    Console.print("ready = {List.len(ready)}")
+    Result.Ok(Unit)

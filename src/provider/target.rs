@@ -59,6 +59,12 @@ pub enum HostBindingReason {
     RuntimeProviderRequired,
     WasmGcImportRequired,
     ComponentImportRequired,
+    /// jasisz/aver#1329 — a job kind. `begin` and `take` are answered by one
+    /// pure function of the program, named by `work` in `aver.toml`, on every
+    /// target: a thread on the VM and the Rust backend, inline at `begin` on
+    /// wasm-gc and wasip2. Nothing about it crosses a host boundary, so its
+    /// boundary types never have to be WIT-lowerable.
+    ProgramAnswersJobKind,
 }
 
 impl HostBindingReason {
@@ -67,6 +73,7 @@ impl HostBindingReason {
             Self::RuntimeProviderRequired => "runtime-provider-required",
             Self::WasmGcImportRequired => "wasm-gc-import-required",
             Self::ComponentImportRequired => "component-import-required",
+            Self::ProgramAnswersJobKind => "program-answers-job-kind",
         }
     }
 
@@ -80,6 +87,9 @@ impl HostBindingReason {
             }
             Self::ComponentImportRequired => {
                 "the component imports this contract as WIT and requires the host to supply it"
+            }
+            Self::ProgramAnswersJobKind => {
+                "a job kind is answered by the function `work` binds in `aver.toml`, so every target runs it from the program itself and no host supplies it"
             }
         }
     }
@@ -285,6 +295,12 @@ fn binding_status(
                     detail: binding.unsupported_target_detail(target),
                 },
             },
+        };
+    }
+
+    if crate::capability::work::is_job_kind(contracts, &contract.module) {
+        return TargetBindingStatus::HostBound {
+            reason: HostBindingReason::ProgramAnswersJobKind,
         };
     }
 

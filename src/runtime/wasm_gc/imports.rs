@@ -52,6 +52,8 @@ mod tcp;
 mod terminal;
 #[path = "imports/time.rs"]
 mod time;
+#[path = "imports/work.rs"]
+mod work;
 
 pub(super) use factories::{
     host_http_response_make, host_map_string_list_string_empty, host_option_string_none,
@@ -64,6 +66,17 @@ pub(super) use factories::{
     host_tcp_connection_make, host_terminal_size_make,
 };
 pub(super) use lm::{lm_string_from_host, lm_string_to_host};
+pub(super) use tcp::json_capability_resource;
+
+/// The `$capabilityResource` a `Work.Job` handle records as.
+pub(super) fn json_work_job(id: i64) -> aver::replay::JsonValue {
+    json_capability_resource("Work.Job", id)
+}
+
+/// `Ok(<the handle>)`, the outcome a recorded `begin` carries.
+pub(super) fn json_ok_work_job(id: i64) -> aver::replay::JsonValue {
+    replay_glue::json_ok(json_work_job(id))
+}
 
 use http::{HttpVerb, http_body_dispatch, http_simple_dispatch};
 
@@ -141,6 +154,9 @@ pub(super) fn dispatch_aver_import(
         return Ok(true);
     }
     if time::dispatch(name, caller, params, results, caller_fn_ref)? {
+        return Ok(true);
+    }
+    if work::dispatch(name, caller, params, results, caller_fn_ref)? {
         return Ok(true);
     }
     match name {

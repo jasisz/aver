@@ -966,6 +966,20 @@ pub(super) fn field_type_resolvable(
     if matches!(field, "Int" | "Float" | "Bool" | "String") {
         return true;
     }
+    // `Unit` occupies an unobservable `i32` placeholder in the struct that
+    // carries it, and any two `Unit` values are equal, so the placeholder
+    // comparison is the whole of its equality.
+    if field == "Unit" {
+        return true;
+    }
+    // jasisz/aver#1329 — the stdlib job handle is a compiler-owned struct,
+    // and two handles are the same job exactly when they are the same
+    // reference. `Tcp.Socket` resolves the same way on this backend through
+    // the carrier records its variants hold, so a resource-carrying sum is
+    // comparable here rather than refused.
+    if field == crate::capability::work::WORK_JOB {
+        return true;
+    }
     if registry.packed_sequence(field).is_some() {
         return true;
     }
@@ -2051,6 +2065,17 @@ pub(super) fn emit_record_eq_inline(
             "Bool" => {
                 f.instruction(&Instruction::I32Eq);
             }
+            // `Unit` rides an unobservable `i32` placeholder, and any two
+            // `Unit` values are equal, so comparing the placeholders is the
+            // whole of it.
+            "Unit" => {
+                f.instruction(&Instruction::I32Eq);
+            }
+            // jasisz/aver#1329 — two job handles are the same job exactly
+            // when they are the same reference; one job owns one struct.
+            crate::capability::work::WORK_JOB => {
+                f.instruction(&Instruction::RefEq);
+            }
             "Float" => {
                 f.instruction(&Instruction::F64Eq);
             }
@@ -2175,6 +2200,17 @@ pub(super) fn emit_sum_eq_inline(
                     }
                     "Bool" => {
                         f.instruction(&Instruction::I32Eq);
+                    }
+                    // `Unit` rides an unobservable `i32` placeholder, and any
+                    // two `Unit` values are equal.
+                    "Unit" => {
+                        f.instruction(&Instruction::I32Eq);
+                    }
+                    // jasisz/aver#1329 — two job handles are the same job
+                    // exactly when they are the same reference; one job owns
+                    // one struct.
+                    crate::capability::work::WORK_JOB => {
+                        f.instruction(&Instruction::RefEq);
                     }
                     "Float" => {
                         f.instruction(&Instruction::F64Eq);

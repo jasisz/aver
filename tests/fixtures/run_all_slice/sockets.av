@@ -1,22 +1,24 @@
 module Sockets
     intent = "The answers this program gives to Wire, over real sockets: the listener peers arrive on, the connection each peer key stands for, how far the payload in flight has been written, and how often the wire was asked."
     depends [Bytes, Wait, Tcp, Wire]
-    exposes [State, fresh, wanted, chunk, portOf, firstPort, keyFor, accept, opening, listening, accepting, closed, arrived, seatedAt, dialled, read, reading, heard, bodyOf, write, writing, offsetOf, offer, offered, whole, parked, dropped, finished, writes]
-    effects [Args.get, Tcp.listen, Tcp.accept, Tcp.closeListener, Tcp.readNow, Tcp.writeNow]
+    exposes [State, fresh, wanted, chunk, portOf, firstPort, keyFor, nobody, accept, opening, listening, accepting, closed, arrived, seatedAt, dialled, read, asking, armed, dueOf, leftOf, disarmed, reading, heard, quiet, bodyOf, write, writing, offsetOf, offer, offered, whole, parked, dropped, finished, writes]
+    effects [Args.get, Time.unixMs, Tcp.listen, Tcp.accept, Tcp.closeListener, Tcp.readNow, Tcp.writeNow]
 
 record State
     listener: Option<Tcp.Listener>
     peers: Map<Int, Tcp.Connection>
     seated: Int
     offsets: Map<Int, Int>
+    deadlines: Map<Int, Int>
+    waited: Int
     asked: Int
     reads: Int
     done: Int
     shut: Bool
 
 fn fresh() -> State
-    ? "Nothing bound, nobody accepted, nothing written and nothing asked for, and no listener closed yet. The listener is bound on the first ask, because the state of a run is built before any effect is allowed."
-    State(listener = Option.None, peers = {}, seated = 0, offsets = {}, asked = 0, reads = 0, done = 0, shut = false)
+    ? "Nothing bound, nobody accepted, nothing written and nothing asked for, no read in flight, nothing waited for on the listener, and no listener closed yet. The listener is bound on the first ask, because the state of a run is built before any effect is allowed."
+    State(listener = Option.None, peers = {}, seated = 0, offsets = {}, deadlines = {}, waited = 0, asked = 0, reads = 0, done = 0, shut = false)
 
 fn wanted() -> Int
     ? "How many peers this program waits for on its listener before it tells the accepting process the listener is done."
@@ -75,42 +77,77 @@ fn closed(state: State, shutdown: Result<Unit, String>) -> Tuple<State, Wire.__A
     (State.update(state, listener = Option.None, shut = true), Wire.__AcceptReply.Now(Wire.Arrival.Closed))
 
 fn arrived(state: State, listener: Tcp.Listener) -> Tuple<State, Wire.__AcceptReply>
-    ? "What one non-blocking accept found. A client that was waiting is seated under its own key; nothing waiting parks the request on the listener, and the wait is the only thing that asks it again. A listener that itself failed is a listener this program has no more peers on."
-    ! [Tcp.accept]
+    ? "What one non-blocking accept found. A client that was waiting is seated under its own key; nobody waiting is one more ask this program has spent on an empty listener. A listener that itself failed is a listener this program has no more peers on."
+    ! [Tcp.accept, Tcp.closeListener]
     match Tcp.accept(listener)
         Result.Err(_) -> (State.update(state, listener = Option.None, shut = true), Wire.__AcceptReply.Now(Wire.Arrival.Closed))
         Result.Ok(client) -> match client
-            Option.None -> (state, Wire.__AcceptReply.Later(Wait.Wake.Item(Wait.Item.Socket(Tcp.Socket.Listening(listener)))))
+            Option.None -> nobody(state, listener)
             Option.Some(connection) -> (seatedAt(state, connection), Wire.__AcceptReply.Now(Wire.Arrival.Peer(keyFor(state))))
 
+fn nobody(state: State, listener: Tcp.Listener) -> Tuple<State, Wire.__AcceptReply>
+    ? "One accept that found nobody waiting, counted. The request parks on the listener alone: a client that knocks is served on the turn the wait reports it, and a listener nobody knocks on is not looked at again until then. This module never gives up on its listener; when nobody arrives, the run ends because the program's stop policy says a listener is the only thing left seated, not because the listener closed."
+    (State.update(state, waited = state.waited + 1), Wire.__AcceptReply.Later(Wait.Wake.Item(Wait.Item.Socket(Tcp.Socket.Listening(listener)))))
+
 fn seatedAt(state: State, connection: Tcp.Connection) -> State
-    ? "One accepted client, kept under the key the rest of this program knows it by."
-    State.update(state, peers = Map.set(state.peers, keyFor(state), connection), seated = keyFor(state))
+    ? "One accepted client, kept under the key the rest of this program knows it by. The asks this program spent waiting for it are behind it."
+    State.update(state, peers = Map.set(state.peers, keyFor(state), connection), seated = keyFor(state), waited = 0)
 
 fn dialled(state: State) -> Tuple<State, Wire.__DialledReply>
     ? "This program dials nobody: every peer it talks to arrived on its own listener, so no dial is ever outstanding."
     (state, Wire.__DialledReply.Now(Wire.Arrival.Closed))
 
 fn read(state: State, key: Int, max: Int, deadlineMs: Int) -> Tuple<State, Wire.__ReadReply>
-    ? "The next chunk from one peer. Every ask is counted, including the ones that park, so a run can say afterwards how often the wait let this wire be asked. The deadline the caller named is not used here: one park names one wake, and what this read waits for is the socket."
-    ! [Tcp.readNow]
-    reading(State.update(state, reads = state.reads + 1), key, max, Map.get(state.peers, key))
+    ? "The next chunk from one peer, against the deadline the caller named. Every ask is counted, including the ones that park, so a run can say afterwards how often the wait let this wire be asked. The clock is read here because the deadline is this module's to keep: what the caller named is a length, and what a park is measured against is a reading."
+    ! [Time.unixMs, Tcp.readNow]
+    asking(State.update(state, reads = state.reads + 1), key, max, deadlineMs, Time.unixMs())
 
-fn reading(state: State, key: Int, max: Int, peer: Option<Tcp.Connection>) -> Tuple<State, Wire.__ReadReply>
-    ? "One ask at one peer's socket, once the ask has been counted."
+fn asking(state: State, key: Int, max: Int, deadlineMs: Int, now: Int) -> Tuple<State, Wire.__ReadReply>
+    ? "One ask, once it has been counted and the clock has been read: this read's deadline is armed if it is not armed already, and then the peer's own socket is asked."
+    ! [Tcp.readNow]
+    reading(armed(state, key, deadlineMs, now), key, max, now, Map.get(state.peers, key))
+
+fn armed(state: State, key: Int, deadlineMs: Int, now: Int) -> State
+    ? "The clock reading the read in flight for this peer falls due at, armed on the first ask of that read and left where it is on every ask after it. A read that parks runs out the deadline it was given rather than a fresh one per ask, which is what makes a silent peer time out at all."
+    match Map.has(state.deadlines, key)
+        true -> state
+        false -> State.update(state, deadlines = Map.set(state.deadlines, key, now + deadlineMs))
+
+fn dueOf(state: State, key: Int) -> Int
+    ? "The clock reading the read in flight for this peer falls due at. A peer with no read in flight is past its deadline, because it has none left to run out."
+    match Map.get(state.deadlines, key)
+        Option.None -> 0
+        Option.Some(due) -> due
+
+fn leftOf(state: State, key: Int, now: Int) -> Int
+    ? "How much of this read's deadline is still ahead of the turn's clock reading: what the park asks to be left alone for."
+    dueOf(state, key) - now
+
+fn disarmed(state: State, key: Int) -> State
+    ? "The state one finished read leaves behind: this peer has no read in flight, so the next one arms a deadline of its own."
+    State.update(state, deadlines = Map.remove(state.deadlines, key))
+
+fn reading(state: State, key: Int, max: Int, now: Int, peer: Option<Tcp.Connection>) -> Tuple<State, Wire.__ReadReply>
+    ? "One ask at one peer's socket, once the ask has been counted and this read's deadline is armed."
     ! [Tcp.readNow]
     match peer
-        Option.None -> (state, Wire.__ReadReply.Now(Wire.Heard.Failed("peer {key} is not connected")))
-        Option.Some(connection) -> heard(state, connection, max)
+        Option.None -> (disarmed(state, key), Wire.__ReadReply.Now(Wire.Heard.Failed("peer {key} is not connected")))
+        Option.Some(connection) -> heard(state, key, connection, max, now)
 
-fn heard(state: State, connection: Tcp.Connection, max: Int) -> Tuple<State, Wire.__ReadReply>
-    ? "What one non-blocking read answered. Nothing has arrived yet parks the request on this socket becoming readable, and the wait is the only thing that asks it again."
+fn heard(state: State, key: Int, connection: Tcp.Connection, max: Int, now: Int) -> Tuple<State, Wire.__ReadReply>
+    ? "What one non-blocking read answered. Anything it read answers the read and puts its deadline away; nothing read is either a deadline that has run out or one more park."
     ! [Tcp.readNow]
     match Tcp.readNow(connection, max)
-        Result.Err(reason) -> (state, Wire.__ReadReply.Now(Wire.Heard.Failed(reason)))
+        Result.Err(reason) -> (disarmed(state, key), Wire.__ReadReply.Now(Wire.Heard.Failed(reason)))
         Result.Ok(taken) -> match taken
-            Option.None -> (state, Wire.__ReadReply.Later(Wait.Wake.Item(Wait.Item.Socket(Tcp.Socket.Connected(connection)))))
-            Option.Some(payload) -> (state, Wire.__ReadReply.Now(bodyOf(payload)))
+            Option.None -> quiet(state, key, now, Wait.Wake.Either(Wait.Item.Socket(Tcp.Socket.Connected(connection)), leftOf(state, key, now)))
+            Option.Some(payload) -> (disarmed(state, key), Wire.__ReadReply.Now(bodyOf(payload)))
+
+fn quiet(state: State, key: Int, now: Int, again: Wait.Wake) -> Tuple<State, Wire.__ReadReply>
+    ? "A peer that has said nothing yet, and the wake that would bring this read back: the socket it is listening to and what is left of its deadline at once, whichever comes first. Past the deadline the read is over and answers TimedOut; before it the request parks on that wake."
+    match now >= dueOf(state, key)
+        true -> (disarmed(state, key), Wire.__ReadReply.Now(Wire.Heard.TimedOut))
+        false -> (state, Wire.__ReadReply.Later(again))
 
 fn bodyOf(payload: Bytes) -> Wire.Heard
     ? "An empty chunk is the clean end of a stream, which is the convention readNow reads by; anything else is a body."
@@ -186,6 +223,25 @@ verify keyFor
 verify bodyOf
     bodyOf(String.toUtf8("")) => Wire.Heard.EndOfStream
     bodyOf(String.toUtf8("block 1")) => Wire.Heard.Data(String.toUtf8("block 1"))
+
+verify armed
+    armed(fresh(), 1, 2000, 100) => State.update(fresh(), deadlines = Map.set({}, 1, 2100))
+    armed(State.update(fresh(), deadlines = Map.set({}, 1, 2100)), 1, 2000, 900) => State.update(fresh(), deadlines = Map.set({}, 1, 2100))
+
+verify dueOf
+    dueOf(fresh(), 1) => 0
+    dueOf(State.update(fresh(), deadlines = Map.set({}, 1, 2100)), 1) => 2100
+
+verify leftOf
+    leftOf(State.update(fresh(), deadlines = Map.set({}, 1, 2100)), 1, 100) => 2000
+    leftOf(State.update(fresh(), deadlines = Map.set({}, 1, 2100)), 1, 2100) => 0
+
+verify disarmed
+    disarmed(State.update(fresh(), deadlines = Map.set({}, 1, 2100)), 1) => fresh()
+
+verify quiet
+    quiet(State.update(fresh(), deadlines = Map.set({}, 1, 2100)), 1, 2100, Wait.Wake.After(5)) => (fresh(), Wire.__ReadReply.Now(Wire.Heard.TimedOut))
+    quiet(State.update(fresh(), deadlines = Map.set({}, 1, 2100)), 1, 100, Wait.Wake.After(5)) => (State.update(fresh(), deadlines = Map.set({}, 1, 2100)), Wire.__ReadReply.Later(Wait.Wake.After(5)))
 
 verify offsetOf
     offsetOf(fresh(), 1) => 0

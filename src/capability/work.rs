@@ -26,6 +26,12 @@ pub const WAIT_MODULE: &str = "Wait";
 /// The canonical name of the running-job handle.
 pub const WORK_JOB: &str = "Work.Job";
 
+/// The canonical name of the one operation the job capability owns.
+pub const WORK_CANCEL: &str = "Work.cancel";
+
+/// The canonical name of the one wait of a turn.
+pub const WAIT_POLL: &str = "Wait.poll";
+
 /// The checked surface of one job-kind capability.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WorkShape {
@@ -35,6 +41,105 @@ pub struct WorkShape {
     pub task: Type,
     /// The `take` payload type, canonicalised to the capability's scope.
     pub payload: Type,
+}
+
+/// One job kind as the wasm backends need it: the checked shape, the two
+/// operation names a call site spells, and the program function the manifest
+/// bound to run it.
+///
+/// A job kind is answered by the program on every backend, so it is never a
+/// host import, a WIT interface or a host adapter entry. The wasm plans carry
+/// it instead: `CapabilityWasmGcPlan` and `CapabilityWitPlan` already reach
+/// `emit_module_with`, and this is what the emitter reads to lower `begin`,
+/// `take` and the handle they mint inline.
+///
+/// `function` is `None` until the manifest is read — `build` sees only the
+/// contracts — and a program that ever runs a job has it filled in by
+/// `bind_work_functions`, because `check_bindings` refuses a job kind with no
+/// binding at the program door.
+#[derive(Debug, Clone, PartialEq)]
+pub struct JobKindPlan {
+    /// The checked shape: capability, task type and payload type.
+    pub shape: WorkShape,
+    /// The operation that starts a job, `Validation.begin`, verbatim.
+    pub begin: crate::capability::CapabilityOperation,
+    /// The operation that collects one, `Validation.take`, verbatim.
+    pub take: crate::capability::CapabilityOperation,
+    /// `work = "Node.validate"`, the pure function of the program one job runs.
+    pub function: Option<String>,
+}
+
+impl JobKindPlan {
+    /// The plan for one checked job-kind shape, before the manifest is read.
+    ///
+    /// `None` when the registry no longer holds both operations, which
+    /// `check_shape` has already accepted, so this is a defensive `Option`
+    /// rather than a case a program reaches.
+    pub fn new(registry: &CapabilityRegistry, shape: WorkShape) -> Option<Self> {
+        let begin = registry
+            .operation(&format!("{}.begin", shape.capability))?
+            .clone();
+        let take = registry
+            .operation(&format!("{}.take", shape.capability))?
+            .clone();
+        Some(Self {
+            shape,
+            begin,
+            take,
+            function: None,
+        })
+    }
+
+    /// Type spellings the wasm type registry has to carry for this job kind.
+    ///
+    /// The task and payload types can be spelled nowhere else in the program
+    /// — a `begin` whose result is matched in place never annotates either —
+    /// so the registry would allocate no slot for the very values the inline
+    /// lowering builds. These are the spellings it needs.
+    pub fn boundary_type_strings(&self) -> Vec<String> {
+        let task = self.shape.task.display();
+        let payload = self.shape.payload.display();
+        vec![
+            task.clone(),
+            payload.clone(),
+            // The task rides boxed when the recorder is told about a `begin`:
+            // an `Option` is a struct whatever the task is, including a
+            // scalar, so one host import serves every job kind.
+            format!("Option<{task}>"),
+            format!("Option<{payload}>"),
+            format!("Result<Option<{payload}>,String>"),
+            format!("Result<{WORK_JOB},String>"),
+        ]
+    }
+
+    /// The two boundary types a recording crosses: the task as the host reads
+    /// it, and the answer `take` hands back.
+    pub fn recorded_types(&self) -> [Type; 2] {
+        [
+            Type::Option(Box::new(self.shape.task.clone())),
+            Type::Result(
+                Box::new(Type::Option(Box::new(self.shape.payload.clone()))),
+                Box::new(Type::Str),
+            ),
+        ]
+    }
+}
+
+/// Fill each job kind's `work = "Module.function"` in from the manifest.
+///
+/// Kept beside the plan so both wasm plans bind a job kind the same way.
+pub fn bind_work_functions(
+    kinds: &mut [JobKindPlan],
+    bindings: &[crate::config::ProviderWorkBinding],
+) {
+    for kind in kinds {
+        if let Some(binding) = bindings
+            .iter()
+            .find(|binding| binding.capability == kind.shape.capability)
+        {
+            kind.function = Some(binding.function.clone());
+        }
+    }
 }
 
 /// Whether a finding blocks the program or only tells its author something.
@@ -90,7 +195,6 @@ impl WorkDiagnostic {
 
 pub const WORK_SHAPE: &str = "work-shape";
 pub const WORK_BINDING: &str = "work-binding";
-pub const WORK_TARGET: &str = "work-target";
 pub const ANSWER_SHAPE: &str = "answer-shape";
 pub const ANSWER_BINDING: &str = "answer-binding";
 pub const INTERCEPT_OUTSIDE_YIELD: &str = "intercept-outside-yield";
@@ -135,6 +239,16 @@ pub fn job_kinds(
             (module, outcome)
         })
         .collect()
+}
+
+/// Whether `module` is a job kind of `registry`.
+///
+/// Naming `Work.Job` at the boundary is the whole test, so this is the same
+/// question `job_kinds` answers, asked about one capability.
+pub fn is_job_kind(registry: &CapabilityRegistry, module: &str) -> bool {
+    job_kinds(registry)
+        .iter()
+        .any(|(declared, _)| declared == module)
 }
 
 fn check_shape(
@@ -223,34 +337,6 @@ fn take_shape_error(module: &str, actual: &Type) -> WorkDiagnostic {
     ))
 }
 
-/// One target the program can be prepared for. The VM and the Rust backend
-/// answer a job in this build; the two wasm targets have no representation
-/// for the job handle yet, and decision 7 of the epic brief keeps them honest.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WorkTarget {
-    Vm,
-    Rust,
-    WasmGc,
-    Wasip2,
-}
-
-impl WorkTarget {
-    fn label(self) -> &'static str {
-        match self {
-            WorkTarget::Vm => "vm",
-            WorkTarget::Rust => "rust",
-            WorkTarget::WasmGc => "wasm-gc",
-            WorkTarget::Wasip2 => "wasip2",
-        }
-    }
-
-    /// Whether this target runs jobs, the wait that watches them, and the
-    /// capabilities a program answers itself.
-    fn answers_jobs(self) -> bool {
-        matches!(self, WorkTarget::Vm | WorkTarget::Rust)
-    }
-}
-
 /// Resolved signature of one function of the program: parameters, result and
 /// declared effects, exactly as `TypeCheckResult::fn_sigs` carries them.
 pub type FnSignature = (Vec<Type>, Type, Vec<String>);
@@ -265,7 +351,6 @@ pub fn gate(
     manifest: Option<&crate::config::ProviderPackageManifest>,
     fn_sigs: &std::collections::HashMap<String, FnSignature>,
     entry_module: Option<&str>,
-    target: WorkTarget,
 ) -> Vec<WorkDiagnostic> {
     let mut errors = Vec::new();
     let mut shapes = Vec::new();
@@ -298,33 +383,11 @@ pub fn gate(
         fn_sigs,
         entry_module,
     ));
-    if !target.answers_jobs()
-        && shapes.is_empty()
-        && let Some(reserved) = reserved_contract_performed(registry, fn_sigs)
-    {
-        errors.push(WorkDiagnostic::new(WORK_TARGET, format!(
-            "Work-bound capabilities run on the VM and the Rust backend in this build; the wasm-gc and wasip2 backends follow in a later change. The program performs an operation of '{}', a reserved contract those two targets do not answer, and the requested target is {}.",
-            reserved,
-            target.label()
-        )));
-    }
-    if !target.answers_jobs()
-        && let Some(answered) = answers.first()
-    {
-        errors.push(WorkDiagnostic::new(WORK_TARGET, format!(
-            "A capability answered by the program runs on the VM and the Rust backend in this build; the wasm-gc and wasip2 backends follow in a later change. '{}' is answered by module '{}', and the reply types generated for it carry `Wait.Wake`, which those backends have no representation for yet; the requested target is {}.",
-            answered.capabilities.first().map(String::as_str).unwrap_or(answered.module.as_str()),
-            answered.module,
-            target.label()
-        )));
-    }
-    if !shapes.is_empty() && !target.answers_jobs() {
-        errors.push(WorkDiagnostic::new(WORK_TARGET, format!(
-            "Work-bound capabilities run on the VM and the Rust backend in this build; the wasm-gc and wasip2 backends follow in a later change. '{}' is a job kind and the requested target is {}",
-            shapes[0].capability,
-            target.label()
-        )));
-    }
+    // Nothing here refuses a target. Every backend answers a job kind since
+    // jasisz/aver#1329: the VM and the Rust backend run it beside the turn on
+    // a thread, and wasm-gc and wasip2 run it inline at `begin`, because a
+    // component and a wasm-gc module are single-threaded. `work-target` is
+    // history, and `docs/diagnostics-slugs.md` keeps its row saying so.
     errors
 }
 
@@ -432,55 +495,6 @@ fn answer_call_arguments(
         names.extend(declared.params.iter().map(|(name, _)| name.clone()));
     }
     names.join(", ")
-}
-
-/// The first reserved contract (`Wait`, `Work`) the program depends on, if any.
-/// Cheap and wide: a front door reads it to decide whether the gate is worth
-/// running at all, never to refuse a target.
-pub fn reserved_contract_in_use(registry: &CapabilityRegistry) -> Option<&'static str> {
-    crate::stdlib::RESERVED_CAPABILITY_MODULES
-        .iter()
-        .copied()
-        .find(|module| registry.contract(module).is_some())
-}
-
-/// The first reserved contract the program performs an operation of, if any.
-/// A program can use `Wait.poll` over sockets alone, without a job kind, and
-/// no non-VM backend lowers it yet, so the target gate refuses that too.
-///
-/// A `depends` edge is not enough, and the difference is the whole of this
-/// function: an answered capability's generated reply sums name `Wait.Wake`,
-/// so every program that answers a capability depends on `Wait` while never
-/// polling it. Such a program is data and pure functions, which every backend
-/// compiles.
-fn reserved_contract_performed(
-    registry: &CapabilityRegistry,
-    fn_sigs: &std::collections::HashMap<String, FnSignature>,
-) -> Option<&'static str> {
-    crate::stdlib::RESERVED_CAPABILITY_MODULES
-        .iter()
-        .copied()
-        .find(|module| {
-            registry.contract(module).is_some() && performs_operation_of(registry, fn_sigs, module)
-        })
-}
-
-/// Whether any function of the program declares an effect of `module`, as the
-/// operation (`Wait.poll`) or as the bare namespace (`Wait`).
-fn performs_operation_of(
-    registry: &CapabilityRegistry,
-    fn_sigs: &std::collections::HashMap<String, FnSignature>,
-    module: &str,
-) -> bool {
-    let prefix = format!("{module}.");
-    program_functions(registry, fn_sigs)
-        .into_iter()
-        .any(|name| {
-            let (_, _, effects) = &fn_sigs[name];
-            effects
-                .iter()
-                .any(|effect| effect == module || effect.starts_with(&prefix))
-        })
 }
 
 /// The two binding kinds of the manifest that name a function or a module of

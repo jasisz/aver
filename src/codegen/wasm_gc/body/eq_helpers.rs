@@ -192,6 +192,11 @@ impl EqHelperRegistry {
         ) {
             return;
         }
+        // jasisz/aver#1329 — the job handle compares as a reference inline,
+        // exactly like a primitive; it gets no `__eq_` helper of its own.
+        if field_ty == crate::capability::work::WORK_JOB {
+            return;
+        }
         // ETAP-2 carrier-`i64`: an eligible carrier is erased to a native
         // `i64`, so it has NO struct representation and needs NO per-type
         // `__eq_<Carrier>` helper — its eq is the raw `i64.eq` inlined at the
@@ -816,6 +821,14 @@ fn emit_inner_eq_dispatch(
             // branch also gives its represented payload the right equality.
             f.instruction(&Instruction::I32Eq);
         }
+        // jasisz/aver#1329 — two job handles are the same job exactly when
+        // they are the same reference. That agrees with the VM's identity,
+        // whose handle is its `id`, because one job owns exactly one struct:
+        // `begin` mints it and nothing rebuilds a handle from a recorded id,
+        // not even in replay, where the module keeps the handle it minted.
+        crate::capability::work::WORK_JOB => {
+            f.instruction(&Instruction::RefEq);
+        }
         "Float" => {
             f.instruction(&Instruction::F64Eq);
         }
@@ -827,6 +840,19 @@ fn emit_inner_eq_dispatch(
         }
         other if helper_idx_map.contains_key(other) => {
             f.instruction(&Instruction::Call(helper_idx_map[other]));
+        }
+        // Flattening renames a dependency's type to its bare name unless two
+        // declarers collide, so a qualified spelling that reached here
+        // through a contract boundary (`Wait.Item`) finds its helper under
+        // the bare one. Every other name-keyed lookup in this backend does
+        // the same fallback.
+        other
+            if other
+                .rsplit_once('.')
+                .is_some_and(|(_, bare)| helper_idx_map.contains_key(bare)) =>
+        {
+            let bare = other.rsplit_once('.').expect("checked above").1;
+            f.instruction(&Instruction::Call(helper_idx_map[bare]));
         }
         other => {
             return Err(WasmGcError::Validation(format!(

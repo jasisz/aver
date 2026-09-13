@@ -860,6 +860,15 @@ pub(crate) fn emit_mir_expr(
                             ))),
                         };
                     }
+                    // jasisz/aver#1329 — a job kind and `Work.cancel` are
+                    // answered by the module itself on both wasm targets, so
+                    // this runs before either effect path: there is no
+                    // import to reach and nothing target-specific to say.
+                    match emit_mir_job_call(func, dotted, &call.args, expr, slots, ctx)? {
+                        MirBuiltinEmit::Produced(produces) => return Ok(Some(produces)),
+                        MirBuiltinEmit::Fallback => return Ok(None),
+                        MirBuiltinEmit::NotHandled => {}
+                    }
                     // `--target wasip2`: every effect lowers to a
                     // canonical-ABI call sequence (Console / Args / Env /
                     // Time / Random / Disk / Http / Tcp), NOT the AverBridge
@@ -2145,4 +2154,57 @@ pub(crate) fn emit_mir_args_then_call_lowering_int(
     }
     func.instruction(&Instruction::Call(wasm_idx));
     Ok(Some(()))
+}
+
+/// jasisz/aver#1329 — a job kind's `begin` and `take`, and `Work.cancel`,
+/// lowered inline.
+///
+/// A wasm-gc module and a component are single-threaded, so a job runs at
+/// `begin` and the handle it mints already carries the answer. That makes
+/// all three of these module-internal code rather than calls out to a host,
+/// which is why one emitter serves both wasm targets. `Wait.poll` is not
+/// here: it watches sockets as well as jobs and keeps the socket lowering
+/// each target already has.
+fn emit_mir_job_call(
+    func: &mut Function,
+    dotted: &str,
+    args: &[Spanned<MirExpr>],
+    expr: &Spanned<MirExpr>,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<MirBuiltinEmit, WasmGcError> {
+    let Some(jobs) = ctx.fn_map.jobs.as_ref() else {
+        return Ok(MirBuiltinEmit::NotHandled);
+    };
+    if !jobs.answers(dotted) && dotted != crate::capability::work::WORK_CANCEL {
+        return Ok(MirBuiltinEmit::NotHandled);
+    }
+    if args.len() != 1 {
+        return Err(WasmGcError::Validation(format!(
+            "`{dotted}` takes exactly one argument, got {}",
+            args.len()
+        )));
+    }
+    let handle = slots.job_handle_scratch(jobs.job_struct_idx);
+    if let Some(kind) = jobs.kind_for_begin(dotted) {
+        return match super::super::jobs::emit_begin(func, kind, jobs, handle, slots, ctx, |func| {
+            emit_mir_expr(func, &args[0], slots, ctx)
+        })? {
+            Some(()) => Ok(MirBuiltinEmit::Produced(
+                aver_type_str_of(expr).trim() != "Unit",
+            )),
+            None => Ok(MirBuiltinEmit::Fallback),
+        };
+    }
+    if emit_mir_expr(func, &args[0], slots, ctx)?.is_none() {
+        return Ok(MirBuiltinEmit::Fallback);
+    }
+    if let Some(kind) = jobs.kind_for_take(dotted) {
+        super::super::jobs::emit_take(func, kind, jobs, handle, ctx)?;
+        return Ok(MirBuiltinEmit::Produced(
+            aver_type_str_of(expr).trim() != "Unit",
+        ));
+    }
+    super::super::jobs::emit_cancel(func, jobs, handle, ctx)?;
+    Ok(MirBuiltinEmit::Produced(false))
 }

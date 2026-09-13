@@ -212,6 +212,31 @@ pub(super) enum EffectName {
     RecordSetBranch,
     /// `() -> Unit` — close the most recently opened scope.
     RecordExitGroup,
+    // ── The one wait of a turn, and the cancel that ends a job
+    //    (jasisz/aver#1329). Both targets run jobs inline, so `Work.cancel`
+    //    is answered by the module itself and this import exists only so the
+    //    recorder sees it in the turn it happened in, exactly as the VM
+    //    records it. `Wait.poll` is the other half: on wasm-gc the host
+    //    answers it, because the sockets it watches are the host's and every
+    //    job key is ready by construction.
+    /// `(items: Map<Int, Wait.Item>, timeoutMs: Int)
+    /// -> Result<List<Int>, String>` — one wait over sockets and jobs.
+    WaitPoll,
+    /// `(job: Work.Job) -> Unit` — the module has already cancelled the
+    /// handle; this is what the recording sees.
+    WorkCancel,
+    /// `(kind: Int, task: Option<T>, job: Work.Job) -> Unit` — the module
+    /// has already run the bound function and minted the handle; this puts
+    /// `<Kind>.begin` in the recording with the task it was given and the
+    /// handle it answered. The task rides boxed in an `Option` so one import
+    /// serves a task of any type, including a scalar.
+    WorkBegin,
+    /// `(kind: Int, job: Work.Job, answer: Result<Option<R>, String>)
+    /// -> Result<Option<R>, String>` — the module has already computed the
+    /// answer; this records `<Kind>.take` with it, and in replay hands back
+    /// the recorded one instead, so a turn that answered `None` on the VM
+    /// answers `None` here too.
+    WorkTake,
 }
 
 impl EffectName {
@@ -301,6 +326,10 @@ impl EffectName {
         Self::RecordEnterGroup,
         Self::RecordSetBranch,
         Self::RecordExitGroup,
+        Self::WaitPoll,
+        Self::WorkCancel,
+        Self::WorkBegin,
+        Self::WorkTake,
     ];
 
     pub(super) fn from_dotted(s: &str) -> Option<Self> {
@@ -392,6 +421,8 @@ impl EffectName {
             "Http.post" => Some(Self::HttpPost),
             "Http.put" => Some(Self::HttpPut),
             "Http.patch" => Some(Self::HttpPatch),
+            "Wait.poll" => Some(Self::WaitPoll),
+            "Work.cancel" => Some(Self::WorkCancel),
             _ => None,
         }
     }
@@ -490,6 +521,13 @@ impl EffectName {
             Self::RecordEnterGroup => "__record_enter_group",
             Self::RecordSetBranch => "__record_set_branch",
             Self::RecordExitGroup => "__record_exit_group",
+            Self::WaitPoll => "Wait.poll",
+            Self::WorkCancel => "Work.cancel",
+            // Not standard capability operations: one job kind's `begin` and
+            // `take` are the program's own, and these two imports are the
+            // recorder's view of them.
+            Self::WorkBegin => "__work_begin",
+            Self::WorkTake => "__work_take",
         }
     }
 
@@ -581,6 +619,10 @@ impl EffectName {
             Self::RecordEnterGroup => ("aver", "record_enter_group"),
             Self::RecordSetBranch => ("aver", "record_set_branch"),
             Self::RecordExitGroup => ("aver", "record_exit_group"),
+            Self::WaitPoll => ("aver", "wait_poll"),
+            Self::WorkCancel => ("aver", "work_cancel"),
+            Self::WorkBegin => ("aver", "work_begin"),
+            Self::WorkTake => ("aver", "work_take"),
         }
     }
 
@@ -693,6 +735,17 @@ impl EffectName {
                 Ok(vec![any_ref_ty(), any_ref_ty()])
             }
             Self::TcpPoll => Ok(vec![map_int_tcp_socket_ref_ty(registry)?, any_ref_ty()]),
+            // The one wait carries the whole `Map<Int, Wait.Item>`: the host
+            // splits sockets from jobs, because it owns the sockets and every
+            // job key is ready the moment its job began.
+            Self::WaitPoll => Ok(vec![map_int_wait_item_ref_ty(registry)?, any_ref_ty()]),
+            // The handle only has to be identifiable: the module has already
+            // cancelled it, and the recording names the job it was.
+            Self::WorkCancel => Ok(vec![any_ref_ty()]),
+            // The kind index says which job kind's operation this is; the
+            // rest crosses as `anyref` because one import serves every kind.
+            Self::WorkBegin => Ok(vec![ValType::I32, any_ref_ty(), any_ref_ty()]),
+            Self::WorkTake => Ok(vec![ValType::I32, any_ref_ty(), any_ref_ty()]),
             Self::TcpWriteLine | Self::TcpWriteBytes | Self::TcpWriteNow => {
                 Ok(vec![any_ref_ty(), any_ref_ty()])
             }
@@ -843,6 +896,9 @@ impl EffectName {
                 "Result<Http.Response,String>",
             )?]),
             Self::RecordEnterGroup | Self::RecordSetBranch | Self::RecordExitGroup => Ok(vec![]),
+            Self::WaitPoll => Ok(vec![result_ref_ty(registry, "Result<List<Int>,String>")?]),
+            Self::WorkCancel | Self::WorkBegin => Ok(vec![]),
+            Self::WorkTake => Ok(vec![any_ref_ty()]),
         }
     }
 }
@@ -912,6 +968,16 @@ mod certificate_format_tests {
     #[test]
     fn wasip2_slots_and_wasip2_lowering_partition_the_effects_the_same_way() {
         for effect in EffectName::ALL {
+            // A job is cancelled by the module itself on wasip2 — it runs
+            // inline at `begin`, so there is nothing to ask a host for — and
+            // the manifest binds it because the target really does answer it.
+            // It is the one operation on either side of this partition that
+            // names no canonical-ABI slot.
+            if *effect == EffectName::WorkCancel {
+                assert!(effect.lowers_on_wasip2());
+                assert!(effect.wasip2_slots().is_empty());
+                continue;
+            }
             assert_eq!(
                 effect.lowers_on_wasip2(),
                 !effect.wasip2_slots().is_empty(),
@@ -931,13 +997,6 @@ mod certificate_format_tests {
             if operation.canonical_name == "Args.get" {
                 assert!(EffectName::from_dotted("Args.len").is_some());
                 assert!(EffectName::from_dotted("Args._get").is_some());
-                continue;
-            }
-            // `Wait` and `Work` are answered by the VM and the Rust backend
-            // in this build: a program that depends on either is refused
-            // before codegen on both wasm targets (`work-target`), so no
-            // route exists yet.
-            if crate::stdlib::RESERVED_CAPABILITY_MODULES.contains(&operation.module.as_str()) {
                 continue;
             }
             assert!(
@@ -1308,7 +1367,7 @@ impl EffectName {
                 Wasip2ImportSlot::IoStreamsResourceDropOutputStream,
                 Wasip2ImportSlot::SocketsTcpResourceDropTcpSocket,
             ],
-            Self::TcpPoll => &[
+            Self::WaitPoll | Self::TcpPoll => &[
                 Wasip2ImportSlot::InputStreamSubscribe,
                 Wasip2ImportSlot::OutputStreamSubscribe,
                 Wasip2ImportSlot::ClocksMonotonicSubscribeDuration,
@@ -1417,9 +1476,31 @@ impl EffectName {
             | Self::TcpAccept
             | Self::TcpPeerAddress
             | Self::TcpCloseDial
-            | Self::TcpCloseListener => &[],
+            | Self::TcpCloseListener
+            // A job is cancelled by the module itself on this target, so
+            // nothing is imported for it. It is the one operation the
+            // manifest binds on wasip2 that names no canonical-ABI slot; see
+            // `wasip2_slots_and_wasip2_lowering_partition_the_effects_the_same_way`.
+            | Self::WorkCancel
+            // A component records nothing, so its job kinds reach no import
+            // at all: `--record` is refused on wasip2.
+            | Self::WorkBegin
+            | Self::WorkTake => &[],
         }
     }
+}
+
+/// The one wait's parameter: the caller's whole wait set.
+fn map_int_wait_item_ref_ty(registry: &TypeRegistry) -> Result<ValType, WasmGcError> {
+    let slots = registry
+        .map_slots("Map<Int,Wait.Item>")
+        .ok_or(WasmGcError::Validation(
+            "Wait.poll requires `Map<Int, Wait.Item>` slot but none was registered".into(),
+        ))?;
+    Ok(ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(slots.map),
+    }))
 }
 
 fn string_ref_ty(registry: &TypeRegistry) -> Result<ValType, WasmGcError> {

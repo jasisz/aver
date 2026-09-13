@@ -37,6 +37,14 @@ pub(crate) fn emit_mir_constructor_with_args(
                 info.parent
             )));
         }
+        // A `Unit` field has no stack value but keeps an unobservable `i32`
+        // placeholder in the variant struct, exactly as a `Unit` record field
+        // does (`emit_mir_record_field_value`). The argument still ran — an
+        // operation answered with `__OpReply.Now(Unit)` is the shape that
+        // reaches here — and the placeholder follows it.
+        if info.fields.get(index).map(|ty| ty.trim()) == Some("Unit") {
+            func.instruction(&Instruction::I32Const(0));
+        }
     }
     func.instruction(&Instruction::StructNew(info.type_idx));
     Ok(Some(()))
@@ -167,8 +175,19 @@ pub(crate) fn emit_mir_result_constructor(
 
     // A `Unit` payload position pushes nothing via `emit_mir_expr`, but
     // the struct slot is i32-sized — push the placeholder ourselves.
+    //
+    // The payload still has to RUN. `Result.Ok(Console.print(line))` is an
+    // ordinary shape — a function whose answer is `Result<Unit, String>`
+    // wrapping the effect it just performed — and skipping the expression
+    // because its type is `Unit` dropped the effect entirely: the program
+    // returned `Ok` and the line was never printed. A `Unit` expression
+    // leaves nothing on the stack, so the placeholder follows it, exactly as
+    // a `Unit` variant field does in `emit_mir_constructor_with_args`.
     let emit_payload = |func: &mut Function, pos_ty: &str| -> Result<Option<()>, WasmGcError> {
         if pos_ty.trim() == "Unit" {
+            if emit_mir_expr(func, payload, slots, ctx)?.is_none() {
+                return Ok(None);
+            }
             func.instruction(&Instruction::I32Const(0));
             Ok(Some(()))
         } else {

@@ -237,6 +237,26 @@ pub(super) struct TypeRegistry {
     /// declared. The runtime allocates the array lazily on first
     /// `Tcp.connect` call via `array.new_default` against this idx.
     pub(super) tcp_pool_type_idx: Option<u32>,
+    /// jasisz/aver#1329 — `(struct (mut i64 id) (mut i32 state)
+    /// (mut i32 kind) (mut anyref value))`: the representation of the
+    /// stdlib job handle `Work.Job`.
+    ///
+    /// The handle is the whole job. A job runs inline at `begin` on a
+    /// single-threaded target, so there is nothing to look up elsewhere:
+    /// `id` is its identity and the token a recording names it by, `state` is
+    /// finished / taken / cancelled, `kind` is the job kind that minted it,
+    /// and `value` is the answer the bound function already computed, kept as
+    /// the exact `Result<Option<R>, String>` its `take` will hand back. That
+    /// is why no table, counter or global beside the id is needed, and why
+    /// two copies of one handle are one job. See `src/codegen/wasm_gc/jobs.rs`.
+    ///
+    /// A handle also reaches a program that starts no job, as a type — through
+    /// `Wait.Wake` into `Wait.Item` into every answered capability's generated
+    /// reply sum — where it is only carried, compared and hashed.
+    ///
+    /// `None` when no `Work.Job` is reachable, so a program without jobs
+    /// carries no job bytes at all.
+    pub(super) job_struct_idx: Option<u32>,
     /// Arbitrary-precision `Int` (`Int = ℤ`, the only wasm-gc Int
     /// semantics). `true` when any Int arithmetic is reachable — a SIZE
     /// reachability gate, NOT a semantics flag (so pure-String/Float/
@@ -344,6 +364,7 @@ impl TypeRegistry {
             std::collections::HashSet::new(),
             false,
             &[],
+            &[],
         )
     }
 
@@ -354,6 +375,7 @@ impl TypeRegistry {
         capability_resources: std::collections::HashSet<String>,
         force_bignum: bool,
         capability_boundary_types: &[String],
+        job_kinds: &[crate::capability::work::JobKindPlan],
     ) -> Self {
         // _handler_active is consumed by `items_reference_name`
         // overrides below so the rest of the builder stays
@@ -585,8 +607,14 @@ impl TypeRegistry {
         // the connection pipeline) lives in module.rs. Both slots land
         // adjacent so the array type can reference the slot type without
         // crossing a rec-group boundary.
+        // jasisz/aver#1329 — the one wait of a turn watches sockets through the
+        // same connection pool, so a program that performs it needs the pool
+        // even when it never names a `Tcp.*` effect of its own: its wait set
+        // can hold a socket another module opened.
         let needs_tcp = items.iter().any(|item| match item {
-            TopLevel::FnDef(fd) => fd.effects.iter().any(|e| e.node.starts_with("Tcp.")),
+            TopLevel::FnDef(fd) => fd.effects.iter().any(|e| {
+                e.node.starts_with("Tcp.") || e.node == crate::capability::work::WAIT_POLL
+            }),
             _ => false,
         });
         let (tcp_slot_type_idx, tcp_pool_type_idx) = if needs_tcp {
@@ -597,6 +625,23 @@ impl TypeRegistry {
             (Some(slot_idx), Some(pool_idx))
         } else {
             (None, None)
+        };
+
+        // jasisz/aver#1329 — the `Work.Job` handle slot. Allocated
+        // whenever the program reaches the stdlib job handle, directly or
+        // through `Wait.Item.Job`, which every answered capability's
+        // generated reply sum reaches through `Wait.Wake`.
+        // A program with a job kind always needs the slot: the inline
+        // lowering mints handles whether or not the source ever spells the
+        // type.
+        let job_struct_idx = if !job_kinds.is_empty()
+            || items_reference_name(items, crate::capability::work::WORK_JOB)
+        {
+            let idx = next_idx;
+            next_idx += 1;
+            Some(idx)
+        } else {
+            None
         };
 
         // `$AverInt` + `(array i64)` magnitude slots. `Int = ℤ` is now
@@ -1251,6 +1296,12 @@ impl TypeRegistry {
             intern_synthetic(b"negative shift count".to_vec());
             intern_synthetic(aver_rt::shift_count_too_large_message().into_bytes());
         }
+        // A job kind's inline lowering answers a second take, a cancelled
+        // job and a foreign handle with fixed messages the program itself
+        // never spells, so they need segments of their own.
+        for message in super::jobs::job_error_messages(job_kinds) {
+            intern_synthetic(message);
+        }
         if resolved_fn_defs
             .iter()
             .any(|fd| fn_body_calls_builtin(fd, "Bits.low"))
@@ -1424,6 +1475,7 @@ impl TypeRegistry {
             eligible_carrier_fields: std::collections::HashSet::new(),
             tcp_slot_type_idx,
             tcp_pool_type_idx,
+            job_struct_idx,
             bignum,
             aint_struct_idx,
             aint_mag_array_idx,
@@ -1679,6 +1731,27 @@ impl TypeRegistry {
         }
         let bare = name.rsplit_once('.').map_or(name, |(_, b)| b);
         self.sum_roots.get(bare).copied()
+    }
+
+    /// The spelling `variants` keys a sum's `parent` by.
+    ///
+    /// Flattening renames a dependency's type to its bare name unless two
+    /// declarers collide, so a qualified spelling that reached codegen
+    /// through a contract boundary (`Wait.Item`) has to fall back to the
+    /// bare one the registry actually holds. Every other lookup here does
+    /// the same fallback; this is it for the variant table.
+    pub(super) fn sum_variant_parent<'a>(&'a self, name: &'a str) -> Option<&'a str> {
+        let declared = |candidate: &str| {
+            self.variants
+                .values()
+                .flatten()
+                .any(|variant| variant.parent == candidate)
+        };
+        if declared(name) {
+            return Some(name);
+        }
+        let bare = name.rsplit_once('.').map_or(name, |(_, bare)| bare);
+        declared(bare).then_some(bare)
     }
 
     /// Look up a variant by bare name. Returns the first registered
@@ -2554,6 +2627,20 @@ pub(super) fn aver_to_wasm(
     }
     if trimmed == "Unit" {
         return Ok(None);
+    }
+    // jasisz/aver#1329 — the stdlib job handle, ahead of the generic
+    // capability-resource route below. `Work.Job` is an embedded capability
+    // resource, so both arms claim it; this one owns it, because the handle
+    // is minted and read inside the module rather than crossing a host
+    // boundary as an `externref`. Ordering them the other way would hand a
+    // program that ever selects `Work` an `externref` while the hash helper
+    // in `maps.rs` still reads the struct's id field, and the module would
+    // not validate.
+    if trimmed == crate::capability::work::WORK_JOB
+        && let Some(reg) = registry
+        && let Some(idx) = reg.job_struct_idx
+    {
+        return Ok(Some(struct_ref(idx)));
     }
     if let Some(reg) = registry {
         if reg.is_capability_resource(trimmed) {

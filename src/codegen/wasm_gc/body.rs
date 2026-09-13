@@ -38,9 +38,10 @@ pub(super) mod hash_helpers;
 mod infer;
 mod slots;
 
+pub(super) use emit::{emit_caller_fn_idx, emit_default_value, emit_string_literal_bytes};
 pub(super) use from_mir::emit_fn_body_via_mir;
 pub use from_mir::{CoverageReport, coverage_report};
-use slots::SlotTable;
+pub(super) use slots::SlotTable;
 
 /// Maps fn identity → wasm fn index + return type. Built once per
 /// module in `module::emit_module_with`. PR 9.3c keyed dispatch by
@@ -108,6 +109,13 @@ pub(super) struct FnMap {
     /// flags are monotonic, so the repeated passes agree by construction.
     pub(super) aint_cmp_called: std::cell::Cell<bool>,
     pub(super) aint_eq_called: std::cell::Cell<bool>,
+    /// jasisz/aver#1329 — the job kinds this program declares, resolved
+    /// against the emitted module. `None` when it declares none, which is
+    /// every program that starts no job. A job kind is answered by the
+    /// program, so it rides here rather than in `effects`: the call sites
+    /// for `begin`, `take` and `Work.cancel` lower inline, on both wasm
+    /// targets, and no import is involved.
+    pub(super) jobs: Option<super::jobs::JobLowering>,
 }
 
 impl FnMap {
@@ -528,6 +536,9 @@ pub(super) struct Wasip2Lowering {
     /// `__rt_tcp_poll(Map<Int, Socket>, timeoutMs) ->
     /// ref Result<List<Int>, String>`.
     pub(super) tcp_poll_fn_idx: Option<u32>,
+    /// jasisz/aver#1329 — `__rt_wait_poll`, the one wait of a turn. The same
+    /// helper shape as the socket poll, over `Map<Int, Wait.Item>`.
+    pub(super) wait_poll_fn_idx: Option<u32>,
     /// Phase 4.5a (0.20) — `__rt_tcp_send(host, port, data) ->
     /// ref Result<String, String>` helper wasm fn idx. One-shot
     /// orchestrator: connect + writeLine + readLine + close.

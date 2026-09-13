@@ -180,9 +180,38 @@ pub(super) fn emit_module_with(
         .map(|plan| plan.resource_types().iter().cloned().collect())
         .unwrap_or_default();
     let force_bignum = capability_wasm_gc_plan.is_some_and(|plan| plan.force_bignum());
-    let capability_boundary_types = capability_wasm_gc_plan
+    let mut capability_boundary_types = capability_wasm_gc_plan
         .map(|plan| plan.boundary_type_strings())
         .unwrap_or_default();
+    // jasisz/aver#1329 — a job kind is answered by the program on both wasm
+    // targets, so it is in whichever plan reached this emitter rather than in
+    // an import table. The task and payload types can be spelled nowhere else
+    // in the program, so the registry is told about them here.
+    let job_kinds: &[crate::capability::work::JobKindPlan] =
+        match (capability_wasm_gc_plan, capability_wit_plan) {
+            (Some(plan), _) if matches!(target, super::TargetMode::AverBridge) => plan.job_kinds(),
+            (_, Some(plan)) if matches!(target, super::TargetMode::Wasip2) => {
+                capability_boundary_types.extend(plan.job_boundary_type_strings());
+                plan.job_kinds()
+            }
+            _ => &[],
+        };
+    // jasisz/aver#1329 — the one wait of a turn carries its whole wait set
+    // across the boundary, and a program can perform it without ever
+    // annotating the map: `Wait.poll({}, 0)` is a complete call. Name the
+    // types here so the registry always has a slot for them.
+    if fn_defs.iter().any(|fd| {
+        fd.effects
+            .iter()
+            .any(|effect| effect.node == crate::capability::work::WAIT_POLL)
+    }) {
+        capability_boundary_types.extend([
+            "Map<Int,Wait.Item>".to_string(),
+            "Wait.Item".to_string(),
+            "List<Int>".to_string(),
+            "Result<List<Int>,String>".to_string(),
+        ]);
+    }
     let mut registry = TypeRegistry::build_with_handler_and_capabilities(
         items,
         &resolved_fn_defs,
@@ -190,6 +219,7 @@ pub(super) fn emit_module_with(
         capability_resources,
         force_bignum,
         &capability_boundary_types,
+        job_kinds,
     );
     // Identity-preserving qualified spellings for sole-declarer dep types,
     // derived by `flatten_multimodule` from its collision info. Entry-side
@@ -772,6 +802,16 @@ pub(super) fn emit_module_with(
         ] {
             effect_registry.register(eff);
         }
+    }
+
+    // jasisz/aver#1329 — a job kind is answered by the module, so nothing in
+    // the program's effect lists reaches these two. They exist for the
+    // recorder: with them a wasm-gc recording has the VM's shape, and a VM
+    // recording replays here. A component records nothing, so only the
+    // bridge target registers them.
+    if !job_kinds.is_empty() && matches!(target, super::TargetMode::AverBridge) {
+        effect_registry.register(EffectName::WorkBegin);
+        effect_registry.register(EffectName::WorkTake);
     }
 
     // List<String>/List<Char> show up as soon as the program reaches
@@ -2752,6 +2792,25 @@ pub(super) fn emit_module_with(
         }
         None => None,
     };
+    // jasisz/aver#1329 — the one piece of module state a job needs: the
+    // counter that mints handle ids. Everything else about a job lives in
+    // the handle, because the job ran at `begin`. Appended last so every
+    // other global keeps its index.
+    let job_next_id_global: Option<u32> = if job_kinds.is_empty() {
+        None
+    } else {
+        globals.global(
+            wasm_encoder::GlobalType {
+                val_type: ValType::I64,
+                mutable: true,
+                shared: false,
+            },
+            &wasm_encoder::ConstExpr::i64_const(0),
+        );
+        let idx = next_global_idx;
+        next_global_idx += 1;
+        Some(idx)
+    };
     if next_global_idx > 0 {
         module.section(&globals);
     }
@@ -2824,6 +2883,7 @@ pub(super) fn emit_module_with(
                 tcp_read_some_fn_idx: tcp.read_some.as_ref().map(|t| t.fn_idx),
                 tcp_read_now_fn_idx: tcp.read_now.as_ref().map(|t| t.fn_idx),
                 tcp_poll_fn_idx: tcp.poll.as_ref().map(|t| t.fn_idx),
+                wait_poll_fn_idx: tcp.wait.as_ref().map(|t| t.fn_idx),
                 tcp_send_fn_idx: tcp.send.as_ref().map(|t| t.fn_idx),
                 tcp_send_bytes_fn_idx: tcp.send_bytes.as_ref().map(|t| t.fn_idx),
                 tcp_ping_fn_idx: tcp.ping.as_ref().map(|t| t.fn_idx),
@@ -2957,8 +3017,24 @@ pub(super) fn emit_module_with(
     } else {
         None
     };
+    // jasisz/aver#1329 — resolve each job kind against this module: the
+    // wasm index of the function the manifest bound, the slots its answer is
+    // built from, and the global that mints handle ids.
+    let jobs = super::jobs::build_lowering(
+        job_kinds,
+        &registry,
+        |function| {
+            let flattened = function.replace('.', "_");
+            fn_defs
+                .iter()
+                .position(|fd| fd.name == flattened || fd.name == function)
+                .map(|i| import_count + 1 + (i as u32))
+        },
+        job_next_id_global.unwrap_or_default(),
+    )?;
     let fn_map = FnMap {
         by_id,
+        jobs,
         builtins: builtin_idx_lookup,
         effects: effect_idx_lookup.clone(),
         map_helpers: map_helpers_lookup,
@@ -5306,7 +5382,9 @@ pub(super) fn emit_module_with(
         };
         codes.function(&super::wasip2_tcp::emit_tcp_read_now(tr, &helpers));
     }
-    if let Some(tp) = &tcp.poll {
+    // The one wait of a turn reuses every index the socket poll needs, over
+    // its own `Map<Int, Wait.Item>` (jasisz/aver#1329).
+    for tp in [tcp.poll.as_ref(), tcp.wait.as_ref()].into_iter().flatten() {
         let (_, parse_id_fn) = tcp
             .parse_id
             .expect("tcp.poll gated on tcp_parse_id allocation");
@@ -6098,12 +6176,16 @@ fn emit_user_types(
                 for v in variants {
                     let mut fields = Vec::new();
                     for ty in &v.fields {
-                        let val_ty = super::types::aver_to_wasm(ty, Some(registry))?.ok_or(
-                            WasmGcError::Validation(format!(
-                                "variant `{}` field of type {ty} has no wasm representation",
-                                v.name
-                            )),
-                        )?;
+                        // `Unit` has no stack value, and a variant field that
+                        // is one keeps the same unobservable `i32` placeholder
+                        // a record field of that type already keeps
+                        // (`record_field_val_type`). An operation returning
+                        // `Unit` is answered with `__OpReply.Now(Unit)`, so a
+                        // program answering one of its own capabilities
+                        // reaches this shape as soon as it declares such an
+                        // operation.
+                        let val_ty =
+                            super::types::aver_to_wasm(ty, Some(registry))?.unwrap_or(ValType::I32);
                         fields.push(wasm_encoder::FieldType {
                             element_type: wasm_encoder::StorageType::Val(val_ty),
                             mutable: false,
@@ -6319,6 +6401,46 @@ fn emit_user_types(
                 },
                 wasm_encoder::FieldType {
                     element_type: StorageType::Val(ValType::I32),
+                    mutable: true,
+                },
+            ]),
+        ));
+    }
+
+    // jasisz/aver#1329 — the `Work.Job` handle.
+    //   0  id      the handle's identity — the only field this build reads
+    //   1  state   0 finished, 1 taken, 2 cancelled
+    //   2  kind    the job kind that minted it
+    //   3  value   the answer the bound function already computed
+    // The handle is the whole job: it runs at `begin`, so there is no table
+    // beside it and two copies of one handle are one job. `jobs.rs` writes
+    // every field.
+    if let Some(job_idx) = registry.job_struct_idx {
+        entries.push((
+            job_idx,
+            mk_struct(vec![
+                wasm_encoder::FieldType {
+                    element_type: wasm_encoder::StorageType::Val(ValType::I64),
+                    mutable: true,
+                },
+                wasm_encoder::FieldType {
+                    element_type: wasm_encoder::StorageType::Val(ValType::I32),
+                    mutable: true,
+                },
+                wasm_encoder::FieldType {
+                    element_type: wasm_encoder::StorageType::Val(ValType::I32),
+                    mutable: true,
+                },
+                wasm_encoder::FieldType {
+                    element_type: wasm_encoder::StorageType::Val(wasm_encoder::ValType::Ref(
+                        wasm_encoder::RefType {
+                            nullable: true,
+                            heap_type: wasm_encoder::HeapType::Abstract {
+                                shared: false,
+                                ty: wasm_encoder::AbstractHeapType::Any,
+                            },
+                        },
+                    )),
                     mutable: true,
                 },
             ]),
@@ -7809,6 +7931,12 @@ struct FactoryExports {
     /// One stable host token for any `Tcp.Socket` variant. Listener and Dial
     /// resources and Connection records all carry their token in field 0.
     tcp_socket_id: Option<FactorySlot>,
+    /// `__rt_wait_item_kind(item) -> i32` — nominal discriminator for the two
+    /// `Wait.Item` variants, `0` for `Socket` and `1` for `Job`
+    /// (jasisz/aver#1329). The host splits one wait set into the sockets it
+    /// polls and the job keys that are ready by construction, and it cannot
+    /// tell the two apart from field shapes: both carry one reference.
+    wait_item_kind: Option<FactorySlot>,
     /// Resource/result builders for the reactor lifecycle operations.
     result_tcp_dial_string_ok: Option<FactorySlot>,
     result_tcp_dial_string_err: Option<FactorySlot>,
@@ -8293,7 +8421,14 @@ fn allocate_factory_exports(
             &mut fx.tcp_listener_id,
         )?;
     }
-    if effect_registry.iter().any(|e| e == EffectName::TcpPoll) {
+    // The one wait of a turn watches the same sockets `Tcp.poll` does, so it
+    // needs the same two socket probes. It does not need the `Map<Int,
+    // Tcp.Socket>` accessors: its own map is a `Map<Int, Wait.Item>`, and a
+    // program that only ever waits has no socket map at all.
+    let polls_sockets = effect_registry
+        .iter()
+        .any(|e| e == EffectName::TcpPoll || e == EffectName::WaitPoll);
+    if polls_sockets {
         let root_idx = registry
             .sum_root_type_idx("Tcp.Socket")
             .ok_or(WasmGcError::Validation(
@@ -8317,64 +8452,91 @@ fn allocate_factory_exports(
         *next_type_idx += 1;
         *next_fn_idx += 1;
 
-        let map = registry
-            .map_slots("Map<Int,Tcp.Socket>")
-            .ok_or(WasmGcError::Validation(
-                "Tcp.poll requires the Map<Int, Tcp.Socket> slots".into(),
-            ))?;
-        let key_box =
+        if effect_registry.iter().any(|e| e == EffectName::TcpPoll) {
+            let map = registry
+                .map_slots("Map<Int,Tcp.Socket>")
+                .ok_or(WasmGcError::Validation(
+                    "Tcp.poll requires the Map<Int, Tcp.Socket> slots".into(),
+                ))?;
+            // The keys this poll reads are boxed `Int`s, so the slot has to be
+            // there; nothing below names it, the presence is the whole check.
             registry
                 .primitive_key_box
                 .get("Int")
-                .copied()
                 .ok_or(WasmGcError::Validation(
                     "Tcp.poll requires the boxed Int map-key slot".into(),
                 ))?;
-        let map_ref = ref_null(map.map);
-        let socket_ref = ref_null(root_idx);
-        let int_ref = registry
-            .aint_struct_idx
-            .map(ref_null)
-            .unwrap_or(ValType::I64);
+            let map_ref = ref_null(map.map);
+            let int_ref = registry
+                .aint_struct_idx
+                .map(ref_null)
+                .unwrap_or(ValType::I64);
 
-        types.ty().function([map_ref], [ValType::I32]);
-        fx.tcp_poll_capacity = Some(FactorySlot {
-            type_idx: *next_type_idx,
-            fn_idx: *next_fn_idx,
-        });
-        *next_type_idx += 1;
-        *next_fn_idx += 1;
+            types.ty().function([map_ref], [ValType::I32]);
+            fx.tcp_poll_capacity = Some(FactorySlot {
+                type_idx: *next_type_idx,
+                fn_idx: *next_fn_idx,
+            });
+            *next_type_idx += 1;
+            *next_fn_idx += 1;
 
-        types.ty().function([map_ref, ValType::I32], [int_ref]);
-        fx.tcp_poll_key_at = Some(FactorySlot {
-            type_idx: *next_type_idx,
-            fn_idx: *next_fn_idx,
-        });
-        *next_type_idx += 1;
-        *next_fn_idx += 1;
+            types.ty().function([map_ref, ValType::I32], [int_ref]);
+            fx.tcp_poll_key_at = Some(FactorySlot {
+                type_idx: *next_type_idx,
+                fn_idx: *next_fn_idx,
+            });
+            *next_type_idx += 1;
+            *next_fn_idx += 1;
 
-        types.ty().function([map_ref, ValType::I32], [socket_ref]);
-        fx.tcp_poll_socket_at = Some(FactorySlot {
-            type_idx: *next_type_idx,
-            fn_idx: *next_fn_idx,
-        });
-        *next_type_idx += 1;
-        *next_fn_idx += 1;
+            types
+                .ty()
+                .function([map_ref, ValType::I32], [ref_null(root_idx)]);
+            fx.tcp_poll_socket_at = Some(FactorySlot {
+                type_idx: *next_type_idx,
+                fn_idx: *next_fn_idx,
+            });
+            *next_type_idx += 1;
+            *next_fn_idx += 1;
+        }
 
         let string_idx = registry
             .string_array_type_idx
             .ok_or(WasmGcError::Validation(
                 "Tcp.poll socket IDs require the String slot".into(),
             ))?;
-        types.ty().function([socket_ref], [ref_null(string_idx)]);
+        types
+            .ty()
+            .function([ref_null(root_idx)], [ref_null(string_idx)]);
         fx.tcp_socket_id = Some(FactorySlot {
             type_idx: *next_type_idx,
             fn_idx: *next_fn_idx,
         });
         *next_type_idx += 1;
         *next_fn_idx += 1;
-
-        let _ = key_box;
+    }
+    if effect_registry.iter().any(|e| e == EffectName::WaitPoll) {
+        let root_idx = registry
+            .sum_root_type_idx("Wait.Item")
+            .ok_or(WasmGcError::Validation(
+                "Wait.poll requires the Wait.Item sum slot".into(),
+            ))?;
+        for variant in ["Socket", "Job"] {
+            registry
+                .variant_in("Wait.Item", variant)
+                .or_else(|| registry.variant_in("Item", variant))
+                .ok_or_else(|| {
+                    WasmGcError::Validation(format!(
+                        "Wait.poll requires the Wait.Item.{variant} variant slot"
+                    ))
+                })?;
+        }
+        types.ty().function([ref_null(root_idx)], [ValType::I32]);
+        fx.wait_item_kind = Some(FactorySlot {
+            type_idx: *next_type_idx,
+            fn_idx: *next_fn_idx,
+        });
+        *next_type_idx += 1;
+        *next_fn_idx += 1;
     }
     if effect_registry
         .iter()
@@ -8731,7 +8893,12 @@ fn allocate_factory_exports(
         *next_fn_idx += 1;
     }
 
-    if effect_registry.iter().any(|e| e == EffectName::TcpPoll) {
+    // The one wait of a turn answers the same `Result<List<Int>, String>` the
+    // socket poll does, and the host builds it through the same factories.
+    if effect_registry
+        .iter()
+        .any(|e| e == EffectName::TcpPoll || e == EffectName::WaitPoll)
+    {
         let result_idx =
             registry
                 .result_type_idx("Result<List<Int>,String>")
@@ -8931,6 +9098,9 @@ impl FactoryExports {
         }
         if let Some(s) = self.tcp_poll_socket_at {
             exports.export("__rt_tcp_poll_socket_at", ExportKind::Func, s.fn_idx);
+        }
+        if let Some(s) = self.wait_item_kind {
+            exports.export("__rt_wait_item_kind", ExportKind::Func, s.fn_idx);
         }
         if let Some(s) = self.tcp_socket_id {
             exports.export("__rt_tcp_socket_id", ExportKind::Func, s.fn_idx);
@@ -9158,6 +9328,9 @@ impl FactoryExports {
         if self.tcp_socket_id.is_some() {
             codes.function(&emit_factory_tcp_socket_id(registry)?);
         }
+        if self.wait_item_kind.is_some() {
+            codes.function(&emit_factory_wait_item_kind(registry)?);
+        }
         if self.result_tcp_dial_string_ok.is_some() {
             codes.function(&emit_factory_result_resource_string_ok(
                 registry,
@@ -9355,6 +9528,7 @@ impl FactoryExports {
             self.tcp_poll_key_at,
             self.tcp_poll_socket_at,
             self.tcp_socket_id,
+            self.wait_item_kind,
             self.result_tcp_dial_string_ok,
             self.result_tcp_dial_string_err,
             self.result_tcp_listener_string_ok,
@@ -9800,6 +9974,43 @@ fn emit_factory_tcp_poll_socket_at(
     });
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::ArrayGet(map.values_array));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+/// Tell the two `Wait.Item` variants apart: `0` is `Socket`, `1` is `Job`.
+///
+/// The host splits one wait set into sockets it polls and job keys that are
+/// ready the moment their job began, and both variants carry exactly one
+/// reference, so nothing structural distinguishes them.
+fn emit_factory_wait_item_kind(
+    registry: &TypeRegistry,
+) -> Result<wasm_encoder::Function, WasmGcError> {
+    use wasm_encoder::{BlockType, HeapType};
+
+    let variant_idx = |name: &str| {
+        registry
+            .variant_in("Wait.Item", name)
+            .or_else(|| registry.variant_in("Item", name))
+            .map(|info| info.type_idx)
+            .expect("checked at allocation")
+    };
+    let socket = variant_idx("Socket");
+    let job = variant_idx("Job");
+    let mut f = Function::new([]);
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::RefTestNonNull(HeapType::Concrete(socket)));
+    f.instruction(&Instruction::If(BlockType::Result(ValType::I32)));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::Else);
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::RefTestNonNull(HeapType::Concrete(job)));
+    f.instruction(&Instruction::If(BlockType::Result(ValType::I32)));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::Else);
+    f.instruction(&Instruction::I32Const(-1));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
     f.instruction(&Instruction::End);
     Ok(f)
 }

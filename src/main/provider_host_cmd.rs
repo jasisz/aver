@@ -579,57 +579,22 @@ mod tests {
 /// contract, so a program without one pays only for the walk it was going to
 /// do anyway, and the full typecheck runs only when a job kind exists.
 pub(super) fn work_program_rejection(command: &Commands) -> Option<String> {
-    use aver::capability::work::WorkTarget;
-
-    let (input, module_root, target) = match command {
+    let (input, module_root) = match command {
         Commands::Run {
-            file,
-            module_root,
-            wasm_gc,
-            wasip2,
-            ..
-        } => {
-            let target = if *wasip2 {
-                WorkTarget::Wasip2
-            } else if *wasm_gc {
-                WorkTarget::WasmGc
-            } else {
-                WorkTarget::Vm
-            };
-            (file.clone(), module_root, target)
+            file, module_root, ..
         }
-        Commands::Compile {
-            file,
-            module_root,
-            target,
-            ..
-        } => {
-            let target = match target {
-                super::cli::CompileTarget::Rust => WorkTarget::Rust,
-                super::cli::CompileTarget::WasmGc => WorkTarget::WasmGc,
-                super::cli::CompileTarget::Wasip2 => WorkTarget::Wasip2,
-            };
-            (file.clone(), module_root, target)
+        | Commands::Compile {
+            file, module_root, ..
         }
-        Commands::Verify {
-            file,
-            module_root,
-            wasm_gc,
-            ..
-        } => {
-            let target = if *wasm_gc {
-                WorkTarget::WasmGc
-            } else {
-                WorkTarget::Vm
-            };
-            (file.clone(), module_root, target)
-        }
+        | Commands::Verify {
+            file, module_root, ..
+        } => (file.clone(), module_root),
         _ => return None,
     };
     // `aver verify` and `aver compile` accept a directory as well as a file;
     // the door is the same for every program the command was pointed at.
     let inputs = if Path::new(&input).is_file() {
-        vec![input]
+        vec![input.clone()]
     } else {
         resolve_av_inputs(&input).ok()?
     };
@@ -637,7 +602,7 @@ pub(super) fn work_program_rejection(command: &Commands) -> Option<String> {
     let mut cache = aver::source::ProgramLoadCache::default();
     let mut findings = Vec::new();
     for input in inputs {
-        for rendered in work_input_rejections(&input, &module_root, target, &mut cache) {
+        for rendered in work_input_rejections(&input, &module_root, &mut cache) {
             if !findings.contains(&rendered) {
                 findings.push(rendered);
             }
@@ -654,7 +619,6 @@ pub(super) fn work_program_rejection(command: &Commands) -> Option<String> {
 fn work_input_rejections(
     input: &str,
     module_root: &str,
-    target: aver::capability::work::WorkTarget,
     cache: &mut aver::source::ProgramLoadCache,
 ) -> Vec<String> {
     let empty = Vec::new();
@@ -685,13 +649,10 @@ fn work_input_rejections(
         .as_ref()
         .map(|manifest| !manifest.answer_bindings.is_empty())
         .unwrap_or(false);
-    if aver::capability::work::job_kinds(&capabilities).is_empty()
-        && !answers
-        && (matches!(
-            target,
-            aver::capability::work::WorkTarget::Vm | aver::capability::work::WorkTarget::Rust
-        ) || aver::capability::work::reserved_contract_in_use(&capabilities).is_none())
-    {
+    // Nothing here refuses a target since jasisz/aver#1329, so a program with
+    // neither a job kind nor an answered capability has nothing for this gate
+    // to say, whichever backend it was pointed at.
+    if aver::capability::work::job_kinds(&capabilities).is_empty() && !answers {
         return empty;
     }
 
@@ -720,7 +681,6 @@ fn work_input_rejections(
         manifest.as_ref(),
         &tc.fn_sigs,
         aver::visibility::module_decl(&entry.items).map(|module| module.name.as_str()),
-        target,
     )
     .iter()
     // A warning is something `aver check` tells the program's author; only an

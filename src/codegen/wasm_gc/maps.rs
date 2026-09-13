@@ -330,17 +330,12 @@ impl MapHelperRegistry {
             if let Some(fs) = registry.record_fields.get(k_aver) {
                 needs_string |= fs.iter().any(|(_, t)| t.trim() == "String");
             }
-            if registry
-                .variants
-                .values()
-                .flat_map(|v| v.iter())
-                .any(|v| v.parent == k_aver)
-            {
+            if let Some(parent) = registry.sum_variant_parent(k_aver) {
                 needs_string |= registry
                     .variants
                     .values()
                     .flat_map(|vs| vs.iter())
-                    .filter(|v| v.parent == k_aver)
+                    .filter(|v| v.parent == parent)
                     .any(|v| v.fields.iter().any(|t| t.trim() == "String"));
             }
             // Map<K,V>'s structural eq + hash dispatches V via the
@@ -611,11 +606,7 @@ impl MapHelperRegistry {
                 WasmGcError::Validation(format!("bad map canonical `{canonical}`")),
             )?;
             let is_primitive_k = super::types::TypeRegistry::is_primitive_map_key(k_aver);
-            let is_sum_k = registry
-                .variants
-                .values()
-                .flat_map(|v| v.iter())
-                .any(|v| v.parent == k_aver);
+            let is_sum_k = registry.sum_variant_parent(k_aver).is_some();
             let is_carrier_k = k_aver.starts_with("Option<")
                 || k_aver.starts_with("Result<")
                 || k_aver.starts_with("Tuple<");
@@ -1096,13 +1087,19 @@ fn emit_hash_for(
     if super::types::TypeRegistry::is_primitive_map_key(k_aver) {
         return emit_hash_primitive(k_aver, registry);
     }
-    if registry
-        .variants
-        .values()
-        .flat_map(|v| v.iter())
-        .any(|v| v.parent == k_aver)
-    {
-        return emit_hash_sum(k_aver, registry, string_key_helpers, all_key_helpers);
+    // jasisz/aver#1329 — a job handle hashes on the id it was minted with,
+    // so equal handles hash equal. It is never a map key of the program's own
+    // — `Work.Job` cannot be compared — but a `Map` whose VALUE reaches one
+    // dispatches structural equality through the same helper table.
+    if k_aver == crate::capability::work::WORK_JOB {
+        let mut f = Function::new([]);
+        f.instruction(&Instruction::LocalGet(0));
+        emit_job_handle_hash(&mut f, registry)?;
+        f.instruction(&Instruction::End);
+        return Ok(f);
+    }
+    if let Some(parent) = registry.sum_variant_parent(k_aver) {
+        return emit_hash_sum(parent, registry, string_key_helpers, all_key_helpers);
     }
     if k_aver.starts_with("Option<")
         || k_aver.starts_with("Result<")
@@ -1170,13 +1167,18 @@ fn emit_eq_for(
     if super::types::TypeRegistry::is_primitive_map_key(k_aver) {
         return emit_eq_primitive(k_aver, registry);
     }
-    if registry
-        .variants
-        .values()
-        .flat_map(|v| v.iter())
-        .any(|v| v.parent == k_aver)
-    {
-        return emit_eq_sum(k_aver, registry, string_key_helpers, all_key_helpers);
+    // Two job handles are the same job exactly when they are the same
+    // reference, which is what the `id` field they hash on says too.
+    if k_aver == crate::capability::work::WORK_JOB {
+        let mut f = Function::new([]);
+        f.instruction(&Instruction::LocalGet(0));
+        f.instruction(&Instruction::LocalGet(1));
+        f.instruction(&Instruction::RefEq);
+        f.instruction(&Instruction::End);
+        return Ok(f);
+    }
+    if let Some(parent) = registry.sum_variant_parent(k_aver) {
+        return emit_eq_sum(parent, registry, string_key_helpers, all_key_helpers);
     }
     if k_aver.starts_with("Option<")
         || k_aver.starts_with("Result<")
@@ -2533,6 +2535,14 @@ fn emit_hash_record(
             "Bool" => {
                 // already i32
             }
+            // `Unit` rides an unobservable `i32` placeholder — already an
+            // i32, and equal for every pair of `Unit` values.
+            "Unit" => {}
+            // jasisz/aver#1329 — a job handle hashes on the identity it
+            // carries, agreeing with the reference equality it compares by.
+            crate::capability::work::WORK_JOB => {
+                emit_job_handle_hash(&mut f, registry)?;
+            }
             "Float" => {
                 // f64 bit pattern → low 32 bits
                 f.instruction(&Instruction::I64ReinterpretF64);
@@ -2633,6 +2643,16 @@ fn emit_eq_record(
             }
             "Bool" => {
                 f.instruction(&Instruction::I32Eq);
+            }
+            // `Unit` rides an unobservable `i32` placeholder, and any two
+            // `Unit` values are equal.
+            "Unit" => {
+                f.instruction(&Instruction::I32Eq);
+            }
+            // jasisz/aver#1329 — two job handles are the same job exactly
+            // when they are the same reference; one job owns one struct.
+            crate::capability::work::WORK_JOB => {
+                f.instruction(&Instruction::RefEq);
             }
             "Float" => {
                 f.instruction(&Instruction::F64Eq);
@@ -3995,6 +4015,22 @@ fn emit_map_from_list(
     Ok(f)
 }
 
+/// jasisz/aver#1329 — fold one `Work.Job` reference already on the stack
+/// into its i32 hash: the handle's own id, narrowed. Equality on two
+/// handles is reference equality and every handle carries the id it was
+/// minted with, so equal handles hash equal.
+fn emit_job_handle_hash(f: &mut Function, registry: &TypeRegistry) -> Result<(), WasmGcError> {
+    let job_idx = registry.job_struct_idx.ok_or(WasmGcError::Validation(
+        "a `Work.Job` field needs the job handle slot to be allocated".into(),
+    ))?;
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: job_idx,
+        field_index: 0,
+    });
+    f.instruction(&Instruction::I32WrapI64);
+    Ok(())
+}
+
 /// `hash : (parent_ref) -> i32` for a user sum type. Per-variant
 /// `ref.test` cascade: each constructor V_i has a tag (its
 /// alphabetical index in the variant list, baked at compile time)
@@ -4053,6 +4089,17 @@ fn emit_hash_sum(
                     super::lists::emit_aint_field_hash(&mut f, registry)?;
                 }
                 "Bool" => {}
+                // `Unit` rides an unobservable `i32` placeholder: it is
+                // already an i32, and every `Unit` hashes the same because
+                // every `Unit` is equal.
+                "Unit" => {}
+                // jasisz/aver#1329 — a job handle hashes on the identity it
+                // carries, which agrees with the reference equality two
+                // handles are compared by: distinct handles carry distinct
+                // ids.
+                crate::capability::work::WORK_JOB => {
+                    emit_job_handle_hash(&mut f, registry)?;
+                }
                 "Float" => {
                     f.instruction(&Instruction::I64ReinterpretF64);
                     f.instruction(&Instruction::I32WrapI64);
@@ -4156,6 +4203,17 @@ fn emit_eq_sum(
                     }
                     "Bool" => {
                         f.instruction(&Instruction::I32Eq);
+                    }
+                    // `Unit` rides an unobservable `i32` placeholder, and any
+                    // two `Unit` values are equal.
+                    "Unit" => {
+                        f.instruction(&Instruction::I32Eq);
+                    }
+                    // jasisz/aver#1329 — two job handles are the same job
+                    // exactly when they are the same reference; one job owns
+                    // one struct.
+                    crate::capability::work::WORK_JOB => {
+                        f.instruction(&Instruction::RefEq);
                     }
                     "Float" => {
                         f.instruction(&Instruction::F64Eq);

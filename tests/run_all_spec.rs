@@ -21,11 +21,11 @@ mod aver_cmd;
 mod loopback_peer;
 
 use aver_cmd::{aver_bin, format_output, repo_root};
-use loopback_peer::{free_port, loopback_peer};
+use loopback_peer::{free_port, loopback_peer, silent_peer};
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::process::{Command, Output, Stdio};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const SLICE: &str = "run_all_slice";
 
@@ -41,8 +41,19 @@ fn slice_with_peer(extra: &[&str]) -> Output {
     args.push(&port);
     let out = aver(SLICE, &args);
     assert!(out.status.success(), "{}", format_output(&out));
-    peer.join()
-        .expect("the loopback peer played its whole part");
+    // A peer that could not play its whole part says why beside what the
+    // slice printed: the slice's own account of the conversation is the only
+    // way to tell a read that timed out from a pool that gave up.
+    if let Err(reason) = peer.join() {
+        panic!(
+            "the loopback peer did not play its whole part: {:?}\n{}",
+            reason
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| reason.downcast_ref::<&str>().map(|s| s.to_string())),
+            format_output(&out)
+        );
+    }
     out
 }
 
@@ -58,6 +69,66 @@ fn aver(fixture_name: &str, args: &[&str]) -> Output {
     command.arg("--module-root").arg(&dir);
     command.args(&args[1..]);
     command.output().expect("aver runs")
+}
+
+/// The same run, with a wall-clock bound on it.
+///
+/// The two tests that pin "this slice ends on its own" exist to catch a run
+/// that turns for ever, and a child process nobody bounds would hang the
+/// suite rather than fail it. The bound is generous — those runs take about
+/// five seconds, so a minute is a run that is not going to end rather than a
+/// slow machine — and a run that reaches it is killed before the failure is
+/// reported, so nothing is left behind holding a port.
+fn aver_within(fixture_name: &str, args: &[&str], seconds: u64) -> Output {
+    use std::io::Read;
+
+    let dir = fixture(fixture_name);
+    let mut command = Command::new(aver_bin());
+    command.current_dir(&dir);
+    command.arg(args[0]).arg("main.av");
+    command.arg("--module-root").arg(&dir);
+    command.args(&args[1..]);
+    command.stdout(Stdio::piped());
+    command.stderr(Stdio::piped());
+    let mut child = command.spawn().expect("aver starts");
+    let mut child_stdout = child.stdout.take().expect("aver's stdout is piped");
+    let mut child_stderr = child.stderr.take().expect("aver's stderr is piped");
+    // The pipes are drained while the run is still going, because a run that
+    // filled one would block on it and look like the hang this bound is for.
+    let stdout_reader = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let _ = child_stdout.read_to_end(&mut bytes);
+        bytes
+    });
+    let stderr_reader = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let _ = child_stderr.read_to_end(&mut bytes);
+        bytes
+    });
+    let deadline = Instant::now() + Duration::from_secs(seconds);
+    let mut overran = false;
+    let status = loop {
+        match child.try_wait().expect("aver is waitable") {
+            Some(status) => break status,
+            None if Instant::now() >= deadline => {
+                overran = true;
+                let _ = child.kill();
+                break child.wait().expect("aver is waitable");
+            }
+            None => std::thread::sleep(Duration::from_millis(20)),
+        }
+    };
+    let out = Output {
+        status,
+        stdout: stdout_reader.join().expect("aver's stdout was read"),
+        stderr: stderr_reader.join().expect("aver's stderr was read"),
+    };
+    assert!(
+        !overran,
+        "the run did not end within {seconds} seconds:\n{}",
+        format_output(&out)
+    );
+    out
 }
 
 fn combined(out: &Output) -> String {
@@ -149,6 +220,79 @@ fn a_parked_request_is_asked_again_only_when_its_wake_has_fired() {
     );
 }
 
+/// A peer that says nothing runs out the deadline its read was given.
+///
+/// `Sockets.read` records the clock reading a read falls due at on that read's
+/// first ask and parks on `Either(Socket(Connected(conn)), left)`, so the wait
+/// reporting the socket and the deadline running out both bring it back —
+/// whichever comes first. Nothing ever arrives here, so the deadline is what
+/// comes first: the ask after it answers `Now(Heard.TimedOut)`, the peer
+/// process says so and hands the peer back through `Pool.gone`, and the run
+/// reaches its end because the pool a peer has left hands out no more work.
+#[test]
+fn a_read_that_hears_nothing_runs_out_its_deadline_and_the_peer_is_handed_back() {
+    let port = free_port();
+    let peer = silent_peer(port);
+    let port = port.to_string();
+    let out = aver_within(SLICE, &["run", "--", &port], 60);
+    assert!(out.status.success(), "{}", format_output(&out));
+    let text = combined(&out);
+    assert!(
+        text.contains("peer: 1 said nothing in time"),
+        "the read did not time out:\n{}",
+        format_output(&out)
+    );
+    // The peer asked the pool once, was given a height, and ended after
+    // handing that peer back rather than asking for a second one.
+    assert_eq!(
+        text.matches("peer: asking the pool for work").count(),
+        1,
+        "{}",
+        format_output(&out)
+    );
+    // The walk looked for a target once and never again: with a silent peer
+    // no body is ever fetched, so a second line here would mean the chain
+    // moved. The run reached its end rather than turning for ever around a
+    // chain whose bodies nobody will fetch.
+    assert_eq!(
+        text.matches("walk: looking for the next block to connect")
+            .count(),
+        1,
+        "{}",
+        format_output(&out)
+    );
+    peer.join().expect("the silent peer played its whole part");
+}
+
+/// The slice gives up on its own, so a run nobody connects to still ends.
+///
+/// Every process here waits for something that will never come: the accepting
+/// process for a client on its listener, the peer for a height the pool has
+/// nobody to give it, the walk for a body nobody will fetch. The pool spends a
+/// fixed number of idle asks and then stops, the chain ends where it stands
+/// once the pool is done, and the program's `stop` policy ends the run once
+/// the accepting process is the only one still seated — the listener itself
+/// never gives up, which is what keeps a client that connects while the pool
+/// still has work from being reset by a listener that closed under it — so the
+/// run prints its summary and exits instead of turning for ever.
+#[test]
+fn a_run_of_the_slice_with_nobody_on_the_other_end_gives_up_and_ends() {
+    let port = free_port().to_string();
+    let out = aver_within(SLICE, &["run", "--", &port], 60);
+    assert!(out.status.success(), "{}", format_output(&out));
+    let text = combined(&out);
+    assert!(
+        text.contains("sockets: 0 payloads took 0 asks and 0 reads"),
+        "the peer never reached the pool's Stop:\n{}",
+        format_output(&out)
+    );
+    assert!(
+        text.contains("ticker: asked 9 times"),
+        "{}",
+        format_output(&out)
+    );
+}
+
 /// A job that will never produce a result reaches `landed` as the error it is:
 /// the answer state records the rejection, the handle leaves the table, and
 /// the run reaches its end instead of stopping on the take.
@@ -216,7 +360,9 @@ fn the_generated_invariants_and_the_programs_priority_law_hold() {
         "__parked law laterKeepsTheRequest",
         "__nextInstance law theNextInstanceIsHigher",
         "__askableSlot law aBackwardsClockNeverStrandsARequest",
+        "__eitherAskable law anEitherIsAskableOnceItsDeadlineHasPassed",
         "__remaining law theWaitNeverExceedsTheRequest",
+        "__eitherWait law theEitherWaitNeverExceedsItsDeadline",
         "__settledSlotPeer law nowRaisesTheInstance",
         "__current law theSlotWrittenIsTheSlotRead",
         "__settlePeer law lateAnswerIsDropped",
@@ -422,7 +568,7 @@ fn the_loop_carries_each_processs_own_effects_and_not_the_programs() {
     // operations, and the accept's own four.
     assert_eq!(
         declared_effects(&text, "__servePeer"),
-        Some("Console.print, Tcp.readNow, Tcp.writeNow".to_string())
+        Some("Console.print, Tcp.readNow, Tcp.writeNow, Time.unixMs".to_string())
     );
     assert_eq!(
         declared_effects(&text, "__serveAccepting"),
@@ -433,7 +579,7 @@ fn the_loop_carries_each_processs_own_effects_and_not_the_programs() {
     assert_eq!(
         declared_effects(&text, "__serve"),
         Some(
-            "Args.get, Console.print, Tcp.accept, Tcp.closeListener, Tcp.listen, Tcp.readNow, Tcp.writeNow"
+            "Args.get, Console.print, Tcp.accept, Tcp.closeListener, Tcp.listen, Tcp.readNow, Tcp.writeNow, Time.unixMs"
                 .to_string()
         )
     );
@@ -762,7 +908,7 @@ fn a_process_the_loop_cannot_seat_is_refused_at_every_door() {
 
 /// The laws decision 7 names, on the Lean wall.
 ///
-/// All twenty-eight of the example's laws close as universals: I2 (a late
+/// All thirty of the example's laws close as universals: I2 (a late
 /// answer changes nothing and is counted) and I4's visible half (a `Later`
 /// moves neither the instance number nor any answer state) for every process
 /// and every answer module, I3's per-call half in its two halves — the slot an
@@ -772,7 +918,15 @@ fn a_process_the_loop_cannot_seat_is_refused_at_every_door() {
 /// deadline gate — a reading that has not reached the deadline does not ask,
 /// and a reading that has fallen back further than the deadline asked for
 /// does — the wait one deadline contributes never being longer than the `ms`
-/// that deadline asked for, and the program's own priority law. No law is bounded and none is a `sorry`.
+/// that deadline asked for, both halves of the same gate for a request parked
+/// on an item and a deadline at once, and the program's own priority law. No
+/// law is bounded and none is a `sorry`.
+///
+/// The two `Either` laws are stated over the gate's arithmetic rather than
+/// over a sampled slot, because a slot parked on `Either` cannot be written
+/// down: the constructor carries a `Wait.Item`, and a `Wait.Item` carries a
+/// socket or a job handle a program cannot construct. That is the same reason
+/// the socket half of the gate has no law at all.
 ///
 /// I1's implication was the last one open: a size comparison across one
 /// `Map.set` or one `Map.remove` inside a record update. It needed two facts
@@ -818,7 +972,7 @@ fn the_generated_invariants_reach_the_lean_wall() {
     );
     assert_eq!(
         summary["universal_laws"].as_u64(),
-        Some(32),
+        Some(34),
         "universal-law drift:\n{}",
         format_output(&out)
     );
@@ -839,6 +993,7 @@ fn the_generated_invariants_reach_the_lean_wall() {
         "__park.laterKeepsTheInstance.implication",
         "__askableSlot.aDeadlineGatesTheAsk.implication",
         "__askableSlot.aBackwardsClockNeverStrandsARequest.implication",
+        "__eitherAskable.anEitherIsAskableOnceItsDeadlineHasPassed.implication",
         "__settlePeer.lateAnswerIsDropped.implication",
         "__settlePeer.lateAnswerIsRecorded.implication",
         "admit.readyPeerBeforeNewJob.implication",

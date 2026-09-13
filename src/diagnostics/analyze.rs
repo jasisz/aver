@@ -276,7 +276,6 @@ fn analyze_prechecked_items_impl(
         project_provider_manifest(options).as_ref(),
         &tc_result.fn_sigs,
         module_decl.map(|module| module.name.as_str()),
-        crate::capability::work::WorkTarget::Vm,
     ) {
         diagnostics.push(work_diagnostic(
             &finding,
