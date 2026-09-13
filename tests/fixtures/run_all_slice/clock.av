@@ -11,6 +11,7 @@ type Tick
 type TickReply
     Now(Clock.Tick)
     Later(Wait.Wake)
+    Then(Wait.Wake, Clock.Tick)
 
 operation tick() -> Clock.Tick
     ? "The next tick, or Closed once the clock is done ticking, carrying how many times it was asked for one."

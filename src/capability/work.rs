@@ -1328,6 +1328,7 @@ type Assignment
 type ClaimReply
     Now(Pool.Assignment)
     Later(Wait.Wake)
+    Then(Wait.Wake, Pool.Assignment)
 
 operation claim(key: Int) -> Pool.Assignment
     ? \"The next height this peer should fetch.\"
@@ -1337,6 +1338,7 @@ operation claim(key: Int) -> Pool.Assignment
 type GoneReply
     Now(Unit)
     Later(Wait.Wake)
+    Then(Wait.Wake, Unit)
 
 operation gone(key: Int) -> Unit
     ? \"This peer is finished; free whatever it held.\"
@@ -1424,7 +1426,7 @@ operation take(job: Work.Job) -> Result<Option<Int>, String>
     #[test]
     fn a_capability_without_its_reply_sum_is_an_answer_shape_error() {
         let pool = POOL.replace(
-            "type GoneReply\n    Now(Unit)\n    Later(Wait.Wake)\n\n",
+            "type GoneReply\n    Now(Unit)\n    Later(Wait.Wake)\n    Then(Wait.Wake, Unit)\n\n",
             "",
         );
         let registry = registry_of(&[("Pool", pool.as_str())]);
@@ -1443,7 +1445,7 @@ operation take(job: Work.Job) -> Result<Option<Int>, String>
         assert!(
             findings[0]
                 .message
-                .ends_with("    type GoneReply\n        Now(Unit)\n        Later(Wait.Wake)"),
+                .ends_with("    type GoneReply\n        Now(Unit)\n        Later(Wait.Wake)\n        Then(Wait.Wake, Unit)"),
             "{}",
             findings[0].message
         );
@@ -1452,7 +1454,7 @@ operation take(job: Work.Job) -> Result<Option<Int>, String>
     #[test]
     fn the_reply_sums_are_checked_without_a_signature() {
         let pool = POOL.replace(
-            "type GoneReply\n    Now(Unit)\n    Later(Wait.Wake)\n\n",
+            "type GoneReply\n    Now(Unit)\n    Later(Wait.Wake)\n    Then(Wait.Wake, Unit)\n\n",
             "",
         );
         let registry = registry_of(&[("Pool", pool.as_str())]);

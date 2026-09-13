@@ -582,15 +582,18 @@ pub(crate) fn emit_mir_expr(
         MirExpr::Local(local) => {
             // The MIR `LocalId` is the resolver slot index = wasm local
             // index 1:1 (mirror of `ResolvedExpr::Resolved { slot }`).
-            func.instruction(&Instruction::LocalGet(local.node.slot.0));
             // Post-typecheck fabricating passes introduce cursor parameters and
             // their Local reads without expression stamps. The resolver's
             // slot table still owns their machine type, and every such cursor
             // slot is value-producing. Preserve the strict Unit check for
             // ordinary stamped locals while accepting that closed shape.
-            Ok(Some(
-                expr.ty().is_none() || aver_type_str_of(expr).trim() != "Unit",
-            ))
+            let produces_value = expr.ty().is_none() || aver_type_str_of(expr).trim() != "Unit";
+            // Unit locals retain an index placeholder, but reading Unit must
+            // leave no stack value, just like its literal and function result.
+            if produces_value {
+                func.instruction(&Instruction::LocalGet(local.node.slot.0));
+            }
+            Ok(Some(produces_value))
         }
         MirExpr::BinOp(spanned_binop) => {
             let bop = &spanned_binop.node;

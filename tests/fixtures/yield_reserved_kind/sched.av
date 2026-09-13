@@ -7,6 +7,7 @@ module Sched
 type YieldReply
     Now(Int)
     Later(Wait.Wake)
+    Then(Wait.Wake, Int)
 
 operation yield(slot: Int) -> Int
     ? "Offers the slot back to the scheduler and returns the tick it resumes at."

@@ -7,6 +7,7 @@ module Clock
 type TickReply
     Now(Unit)
     Later(Wait.Wake)
+    Then(Wait.Wake, Unit)
 
 operation tick() -> Unit
     ? "One tick."

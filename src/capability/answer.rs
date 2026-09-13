@@ -60,16 +60,18 @@ pub fn reply_type_leaf(operation: &str) -> String {
 /// `operation`, spelled out in the capability's own names.
 pub fn expected_reply(capability: &str, operation: &CapabilityOperation) -> String {
     format!(
-        "    type {}\n        Now({})\n        Later({WAKE_TYPE})",
+        "    type {}\n        Now({})\n        Later({WAKE_TYPE})\n        Then({WAKE_TYPE}, {})",
         reply_type_leaf(&operation.name),
+        answer_type(capability, operation).display(),
         answer_type(capability, operation).display()
     )
 }
 
 /// Why the reply sum `capability` declares for `operation` is not the shape
 /// the seam reads an answer through — or `None` when it is exactly that
-/// shape: a sum named `<Op>Reply` with two constructors, `Now` carrying the
-/// operation's result type and `Later` carrying `Wait.Wake`.
+/// shape: a sum named `<Op>Reply` with three constructors, `Now` carrying the
+/// operation's result type, `Later` carrying `Wait.Wake`, and `Then` carrying
+/// the wake followed by that same result type.
 ///
 /// The text names the fault in the module's real names and ends with the
 /// declaration wanted, so the caller only has to say which binding asked.
@@ -125,14 +127,29 @@ pub fn reply_sum_fault(
                     ));
                 }
             }
+            "Then" => {
+                let carried = variant.fields.get(1).map(|field| {
+                    super::canonicalize_type_names(crate::types::parse_type_str(field), capability)
+                });
+                if variant.fields.len() != 2
+                    || variant.fields[0].trim() != WAKE_TYPE
+                    || !carried.as_ref().is_some_and(|ty| same_type(ty, &expected))
+                {
+                    return Some(format!(
+                        "constructor '{name}.Then' carries ({}) where a Then carries ({WAKE_TYPE}, {}); {wanted}",
+                        variant.fields.join(", "),
+                        expected.display()
+                    ));
+                }
+            }
             other => {
                 return Some(format!(
-                    "sum '{name}' declares constructor '{other}', which is neither Now nor Later; {wanted}"
+                    "sum '{name}' declares constructor '{other}', which is not Now, Later or Then; {wanted}"
                 ));
             }
         }
     }
-    for constructor in ["Now", "Later"] {
+    for constructor in ["Now", "Later", "Then"] {
         if !variants.iter().any(|variant| variant.name == constructor) {
             return Some(format!(
                 "sum '{name}' has no constructor '{constructor}'; {wanted}"
@@ -188,6 +205,7 @@ type Tick
 type TickReply
     Now(Clock.Tick)
     Later(Wait.Wake)
+    Then(Wait.Wake, Clock.Tick)
 
 operation tick() -> Clock.Tick
     ? \"The next tick.\"
@@ -241,7 +259,7 @@ operation gone(key: Int) -> Unit
             "{fault}"
         );
         assert!(
-            fault.ends_with("    type GoneReply\n        Now(Unit)\n        Later(Wait.Wake)"),
+            fault.ends_with("    type GoneReply\n        Now(Unit)\n        Later(Wait.Wake)\n        Then(Wait.Wake, Unit)"),
             "{fault}"
         );
     }
@@ -282,16 +300,16 @@ operation gone(key: Int) -> Unit
     }
 
     #[test]
-    fn a_third_constructor_is_named() {
+    fn an_extra_constructor_is_named() {
         let registry = registry_of(&CLOCK.replace(
             "    Later(Wait.Wake)\n",
             "    Later(Wait.Wake)\n    Never\n",
         ));
         let fault = reply_sum_fault(&registry, "Clock", operation(&registry, "tick"))
-            .expect("a third constructor is refused");
+            .expect("an extra constructor is refused");
         assert!(
             fault.starts_with(
-                "sum 'Clock.TickReply' declares constructor 'Never', which is neither Now nor Later"
+                "sum 'Clock.TickReply' declares constructor 'Never', which is not Now, Later or Then"
             ),
             "{fault}"
         );
@@ -309,9 +327,38 @@ operation gone(key: Int) -> Unit
     }
 
     #[test]
+    fn then_checks_the_wake_and_the_operations_exact_result() {
+        for replacement in [
+            "Then(Int, Clock.Tick)",
+            "Then(Wait.Wake, Int)",
+            "Then(Clock.Tick, Wait.Wake)",
+            "Then(Wait.Wake)",
+        ] {
+            let registry = registry_of(&CLOCK.replace("Then(Wait.Wake, Clock.Tick)", replacement));
+            let fault = reply_sum_fault(&registry, "Clock", operation(&registry, "tick")).unwrap();
+            assert!(
+                fault.starts_with("constructor 'Clock.TickReply.Then' carries"),
+                "{fault}"
+            );
+        }
+        let registry =
+            registry_of(&CLOCK.replace("Then(Wait.Wake, Clock.Tick)", "Then(Wait.Wake, Tick)"));
+        assert_eq!(
+            reply_sum_fault(&registry, "Clock", operation(&registry, "tick")),
+            None
+        );
+        let registry = registry_of(&CLOCK.replace("    Then(Wait.Wake, Clock.Tick)\n", ""));
+        assert!(
+            reply_sum_fault(&registry, "Clock", operation(&registry, "tick"))
+                .unwrap()
+                .starts_with("sum 'Clock.TickReply' has no constructor 'Then'")
+        );
+    }
+
+    #[test]
     fn a_record_of_the_reply_name_is_named() {
         let registry = registry_of(&CLOCK.replace(
-            "type TickReply\n    Now(Clock.Tick)\n    Later(Wait.Wake)\n",
+            "type TickReply\n    Now(Clock.Tick)\n    Later(Wait.Wake)\n    Then(Wait.Wake, Clock.Tick)\n",
             "record TickReply\n    now: Clock.Tick\n",
         ));
         let fault = reply_sum_fault(&registry, "Clock", operation(&registry, "tick"))

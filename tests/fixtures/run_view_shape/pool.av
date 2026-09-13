@@ -7,6 +7,7 @@ module Pool
 type ClaimReply
     Now(Option<Int>)
     Later(Wait.Wake)
+    Then(Wait.Wake, Option<Int>)
 
 operation claim() -> Option<Int>
     ? "The next handle, or None when there is nothing left."

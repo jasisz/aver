@@ -966,7 +966,7 @@ fn a_started_function_without_its_law_is_refused_with_the_block_to_write() {
 
 /// The laws decision 7 names, on the Lean wall.
 ///
-/// All thirty-four of the example's laws close as universals: I2 (a late
+/// All thirty-six of the example's laws close as universals: I2 (a late
 /// answer changes nothing and is counted) and I4's visible half (a `Later`
 /// moves neither the instance number nor any answer state) for every process
 /// and every answer module, I3's per-call half in its two halves — the slot an
@@ -1035,7 +1035,7 @@ fn the_generated_invariants_reach_the_lean_wall() {
     );
     assert_eq!(
         summary["universal_laws"].as_u64(),
-        Some(34),
+        Some(36),
         "universal-law drift:\n{}",
         format_output(&out)
     );

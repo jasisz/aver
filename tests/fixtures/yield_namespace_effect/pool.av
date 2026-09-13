@@ -7,6 +7,7 @@ module Pool
 type ClaimReply
     Now(Int)
     Later(Wait.Wake)
+    Then(Wait.Wake, Int)
 
 operation claim(peer: Int) -> Int
     ? "Asks the host for the handle that belongs to peer."

@@ -178,6 +178,27 @@ fn assert_compiles_and_validates(source: &str) {
 }
 
 #[test]
+fn unit_pattern_bindings_can_be_forwarded_into_variant_fields() {
+    assert_compiles_and_validates(
+        r#"module SavedUnit
+    intent = "Forward a named Unit payload without adding a second field value."
+
+type Reply
+    Now(Unit)
+    Then(String, Unit)
+
+fn delayed(reply: Reply) -> Reply
+    match reply
+        Reply.Now(answer) -> Reply.Then("wake", answer)
+        Reply.Then(wake, answer) -> Reply.Then(wake, answer)
+
+fn main() -> Reply
+    delayed(Reply.Now(Unit))
+"#,
+    );
+}
+
+#[test]
 fn tcp_send_bytes_imports_host_function_and_validates() {
     use wasmparser::{Parser as WasmParser, Payload};
 
