@@ -417,6 +417,25 @@ fn bool_match_named_default_arm_matches_between_rust_and_vm() {
         .unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// A match on a tuple literal whose arms carry list, literal or Option
+/// patterns in the tuple's elements — `([], 0)`, `([next, ..rest], n)`,
+/// `(true, 0)`, `(Option.Some(task), 0)`, `(Option.None, _)` — and one
+/// whose arms carry binds alone. The Rust walker used to refuse the first
+/// three functions with `MIR walker could not render fn`: an `AverInt` is
+/// not a pattern literal and an `AverList` is not a slice, so such a tuple
+/// arm has no structural Rust pattern and lowers to a guard chain over the
+/// cloned elements instead. Only a build proves that chain: the `pick`
+/// shape is exhaustive over its `Option` tags and ends in no default arm,
+/// which the chain builder used to close with an unbraced `else`. Every
+/// arm of the four shapes must print what the VM prints.
+#[test]
+fn tuple_match_with_list_literal_and_option_elements_matches_between_rust_and_vm() {
+    const FIXTURE: &str = "tests/fixtures/tuple_match_element_patterns_app.av";
+    let vm = run_vm(&repo_root().join(FIXTURE), None).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(vm.lines().count(), 11, "one line per arm:\n{vm}");
+    assert_plain_parity(FIXTURE, None).unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// A one-arm wildcard match over an effectful call: `match say(x)` with a
 /// single `_ ->` arm is how a process performs something in place before it
 /// goes on, and the Rust backend used to render the arm's body alone, so the

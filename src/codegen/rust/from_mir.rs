@@ -2792,12 +2792,16 @@ fn emit_mir_match_with(
     let codegen = emit_ctx.codegen?;
 
     // An `Int`-literal pattern (top-level or nested in a tuple) cannot be a
-    // Rust `match` pattern — `AverInt` is not a literal. Such matches lower
-    // to an if/else-if equality-guard chain (`try_emit_int_literal_match`),
-    // mirroring the dispatch-table guard path. They must NOT take the
-    // borrow-by-reference path below: a guard `&AverInt == AverInt` does not
-    // typecheck. So the subject is always cloned by VALUE for these.
-    let any_int_literal_pattern = arms.iter().any(|arm| pattern_has_int_literal(&arm.pattern));
+    // Rust `match` pattern — `AverInt` is not a literal — and neither can a
+    // list element of a tuple arm (`([], n)`, `([head, ..tail], n)`): an
+    // `AverList` is not a slice. Such matches lower to an if/else-if guard
+    // chain (`try_emit_int_literal_match`), mirroring the dispatch-table
+    // guard path. They must NOT take the borrow-by-reference path below: a
+    // guard `&AverInt == AverInt` does not typecheck. So the subject is
+    // always cloned by VALUE for these.
+    let any_int_literal_pattern = arms
+        .iter()
+        .any(|arm| pattern_needs_guard_chain(&arm.pattern));
 
     // ── 2. Borrowed-param subject → match on the reference. ──
     // Mirror of `emit_match`'s `match_on_ref` special case: only when
@@ -2866,14 +2870,16 @@ fn emit_mir_match_with(
         ));
     }
 
-    // ── 4b. Int-literal match → if/else-if equality-guard chain. ──
+    // ── 4b. Int-literal or tuple-with-list match → if/else-if guard chain. ──
     // Any match that reaches here with an Int-literal subpattern (a single
     // top-level Int literal that didn't form a ≥2-entry dispatch table, or a
-    // tuple carrying Int literals) can't be a Rust `match` — `AverInt` is not
-    // a pattern literal. Lower it to guards instead. When such a pattern is
+    // tuple carrying Int literals) or a list element in a tuple arm can't be
+    // a Rust `match` — `AverInt` is not a pattern literal and `AverList` is
+    // not a slice. Lower it to guards instead. When such a pattern is
     // present the generic `match` path below is NOT a valid fallback (it
-    // would emit `AverInt::from_i64(N)` as a pattern), so the guard emitter
-    // is REQUIRED to render; if it can't, return `None` (hard diagnostic).
+    // would emit `AverInt::from_i64(N)` or `[]` as a pattern), so the guard
+    // emitter is REQUIRED to render; if it can't, return `None` (hard
+    // diagnostic).
     if any_int_literal_pattern {
         return try_emit_int_literal_match(&subj, &arms, &arm_bodies, subject_is_bare, codegen);
     }
@@ -2913,12 +2919,26 @@ fn emit_mir_match_with(
     ))
 }
 
-/// Does this pattern contain an `Int`-literal subpattern (top-level or
-/// nested inside a tuple)? Such a pattern cannot become a Rust `match`
-/// arm — `AverInt` is not a literal — so it forces the equality-guard
-/// lowering in [`try_emit_int_literal_match`] and excludes the by-reference
-/// `match_on_ref` path (where the guard would compare `&AverInt`).
-fn pattern_has_int_literal(pat: &ResolvedPattern) -> bool {
+/// Does this pattern contain a subpattern no Rust `match` arm can spell —
+/// an `Int` literal (top-level or nested inside a tuple; `AverInt` is not a
+/// literal) or a list shape inside a tuple (`AverList` is not a slice, so
+/// `([], n)` and `([head, ..tail], n)` have no structural pattern)? Such a
+/// pattern forces the guard lowering in [`try_emit_int_literal_match`] and
+/// excludes the by-reference `match_on_ref` path (where the guard would
+/// compare `&AverInt`). A top-level list pattern is not counted: that match
+/// is peeled off by `emit_list_match` before this predicate is read.
+fn pattern_needs_guard_chain(pat: &ResolvedPattern) -> bool {
+    fn in_tuple(pat: &ResolvedPattern) -> bool {
+        match pat {
+            ResolvedPattern::Literal(
+                crate::ast::Literal::Int(_) | crate::ast::Literal::BigInt(_),
+            )
+            | ResolvedPattern::EmptyList
+            | ResolvedPattern::Cons(..) => true,
+            ResolvedPattern::Tuple(pats) => pats.iter().any(in_tuple),
+            _ => false,
+        }
+    }
     match pat {
         // A big-int literal pattern is also routed through the equality-guard
         // chain (an `AverInt` cannot be a Rust `match` literal) — it compares via
@@ -2926,7 +2946,7 @@ fn pattern_has_int_literal(pat: &ResolvedPattern) -> bool {
         ResolvedPattern::Literal(crate::ast::Literal::Int(_) | crate::ast::Literal::BigInt(_)) => {
             true
         }
-        ResolvedPattern::Tuple(pats) => pats.iter().any(pattern_has_int_literal),
+        ResolvedPattern::Tuple(pats) => pats.iter().any(in_tuple),
         _ => false,
     }
 }
@@ -2940,9 +2960,11 @@ fn pattern_has_int_literal(pat: &ResolvedPattern) -> bool {
 /// `subj` is the already-emitted, by-VALUE subject expression. The supported
 /// arm shapes (after list / table / bool matches are peeled off upstream):
 /// top-level `Literal(Int)` / `Wildcard` / `Ident`, and `Tuple(..)` whose
-/// elements are `Literal(Int)` / `Wildcard` / `Ident` (or nested tuples of
-/// the same). Returns `None` for any other shape (e.g. a non-Int literal or
-/// a ctor mixed in) — the caller then emits a hard diagnostic.
+/// elements are the set [`lower_int_literal_subpatterns`] lowers — an `Int`
+/// or `Bool` literal, `[]`, `[head, ..tail]`, a built-in `Result` or
+/// `Option` constructor, `Wildcard`, `Ident`, or a nested tuple of the same.
+/// Returns `None` for any other shape (a `String` or `Float` literal, a user
+/// variant) — the caller then emits a hard diagnostic.
 fn try_emit_int_literal_match(
     subj: &str,
     arms: &[ResolvedMatchArm],
@@ -3073,12 +3095,14 @@ fn try_emit_int_literal_match(
         }
     }
 
-    // Build the if/else-if chain from the back. The chain MUST end in a
-    // default arm (the Aver typechecker rejects a non-exhaustive Int match,
-    // so a `_`/binding arm is always present); if none was found, emit an
-    // `unreachable!` tail so the generated `match` is still total.
+    // Build the if/else-if chain from the back. A match over Int literals
+    // always ends in a default arm (the Aver typechecker rejects a
+    // non-exhaustive Int match, so a `_`/binding arm is present); a tuple
+    // match exhaustive over its constructor tags — `(Option.Some(t), 0)`,
+    // `(Option.None, _)`, `(Option.Some(_), _)` — has none, so the tail is
+    // an `unreachable!` block that keeps the generated chain total.
     let mut chain =
-        String::from("unreachable!(\"Aver Rust codegen: non-exhaustive Int-literal match\")");
+        String::from("{ unreachable!(\"Aver Rust codegen: non-exhaustive guard-chain match\") }");
     for (plan, body) in plans.into_iter().rev() {
         match plan {
             ArmPlan::Default { prelude } => {
@@ -3117,16 +3141,21 @@ fn try_emit_int_literal_match(
     Some(format!("{{ {} {} }}", setup, chain))
 }
 
-/// Recursively lower one tuple-subpattern of an Int-literal match against a
+/// Recursively lower one tuple-subpattern of a guard-chain match against a
 /// `place` expression (a Rust expression denoting the *value place* of the
-/// element, e.g. `(*__lit0)` or `(*__lit1).0`). Appends an equality guard for
-/// every Int-literal LEAF (at any depth), binds identifier leaves into
-/// `prelude`, and ignores wildcards. Nested tuples destructure via field-index
-/// access (`{place}.{i}`) — no fresh `match` bindings, so hygiene is automatic.
+/// element, e.g. `(*__lit0)` or `(*__lit1).0`). Appends one guard for every
+/// testing LEAF (at any depth) — an `Int` or `Bool` literal compares, `[]`
+/// and `[head, ..tail]` ask `is_empty`, a `Result` or `Option` constructor
+/// asks its tag — binds identifier leaves and the payloads of a `Cons` or a
+/// constructor into `prelude`, and ignores wildcards. The element set is the
+/// one the wasm-gc tuple cascade admits. Nested tuples destructure via
+/// field-index access (`{place}.{i}`) — no fresh `match` bindings, so
+/// hygiene is automatic.
 ///
-/// Returns `false` if any leaf is an unsupported shape (a non-Int literal, a
-/// ctor, …); the caller then bails to the hard codegen diagnostic. This is the
-/// arbitrarily-nested generalization of the one-level element loop above.
+/// Returns `false` if any leaf is an unsupported shape (a `String` or `Float`
+/// literal, a user variant, …); the caller then bails to the hard codegen
+/// diagnostic. This is the arbitrarily-nested generalization of the
+/// one-level element loop above.
 fn lower_int_literal_subpatterns(
     pat: &ResolvedPattern,
     place: &str,
@@ -3134,6 +3163,59 @@ fn lower_int_literal_subpatterns(
     prelude: &mut String,
 ) -> bool {
     match pat {
+        ResolvedPattern::Literal(crate::ast::Literal::Bool(b)) => {
+            conds.push(format!("{} == {}", place, b));
+            true
+        }
+        ResolvedPattern::EmptyList => {
+            conds.push(format!("{}.is_empty()", place));
+            true
+        }
+        // The guard proves the list non-empty, so the uncons on the taken
+        // arm cannot miss; both names `_` needs no uncons at all.
+        ResolvedPattern::Cons(head, tail) => {
+            conds.push(format!("!{}.is_empty()", place));
+            if head != "_" || tail != "_" {
+                let leaf = |name: &str| {
+                    if name == "_" {
+                        "_".to_string()
+                    } else {
+                        aver_name_to_rust(name)
+                    }
+                };
+                prelude.push_str(&format!(
+                    "let Some(({}, {})) = aver_rt::list_uncons_cloned(&{}) else {{ unreachable!(\"Aver Rust codegen: tuple element list mismatch\") }}; ",
+                    leaf(head),
+                    leaf(tail),
+                    place
+                ));
+            }
+            true
+        }
+        // A built-in constructor tests its tag; the payload, when named, is
+        // cloned out of the element on the taken arm (mirror of the
+        // dispatch table's `WrapperPayload` binding).
+        ResolvedPattern::Ctor(ResolvedCtor::Builtin(ctor), bindings) => {
+            let (test, extractor) = match ctor {
+                BuiltinCtor::ResultOk => ("is_ok", "Ok"),
+                BuiltinCtor::ResultErr => ("is_err", "Err"),
+                BuiltinCtor::OptionSome => ("is_some", "Some"),
+                BuiltinCtor::OptionNone => ("is_none", "None"),
+            };
+            conds.push(format!("{}.{}()", place, test));
+            match bindings.as_slice() {
+                [] => {}
+                [name] if name == "_" => {}
+                [name] => {
+                    let rust = aver_name_to_rust(name);
+                    prelude.push_str(&format!(
+                        "let {rust} = if let {extractor}({rust}) = &{place} {{ {rust}.clone() }} else {{ unreachable!(\"Aver Rust codegen: tuple element tag mismatch\") }}; "
+                    ));
+                }
+                _ => return false,
+            }
+            true
+        }
         ResolvedPattern::Literal(crate::ast::Literal::Int(n)) => {
             // `place` is a value place; `&{place}` is `&AverInt`, comparable to
             // the literal reference.
