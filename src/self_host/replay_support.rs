@@ -1363,6 +1363,13 @@ pub mod aver_replay {
         env_var("AVER_REPLAY_ENTRY_FN").unwrap_or_else(|| entry_fn.to_string())
     }
 
+    /// The source the binary was compiled from, written into a recording
+    /// header so `aver replay` can load it. Empty / `"."` when the compiler
+    /// had no file to name; `AVER_REPLAY_PROGRAM_FILE` and
+    /// `AVER_REPLAY_MODULE_ROOT` override both.
+    const COMPILED_PROGRAM_FILE: &str = "";
+    const COMPILED_MODULE_ROOT: &str = ".";
+
     fn load_scope_mode(entry_fn: &str, input: ReplayJson) -> ScopeMode {
         let logical_entry_fn = replay_entry_name(entry_fn);
         let record_path = env_var("AVER_REPLAY_RECORD");
@@ -1393,8 +1400,10 @@ pub mod aver_replay {
         if let Some(path) = record_path {
             let request_id = env_var("AVER_REPLAY_REQUEST_ID").unwrap_or_else(default_request_id);
             let timestamp = env_var("AVER_REPLAY_TIMESTAMP").unwrap_or_else(default_timestamp);
-            let program_file = env_var("AVER_REPLAY_PROGRAM_FILE").unwrap_or_default();
-            let module_root = env_var("AVER_REPLAY_MODULE_ROOT").unwrap_or_else(|| ".".to_string());
+            let program_file = env_var("AVER_REPLAY_PROGRAM_FILE")
+                .unwrap_or_else(|| COMPILED_PROGRAM_FILE.to_string());
+            let module_root = env_var("AVER_REPLAY_MODULE_ROOT")
+                .unwrap_or_else(|| COMPILED_MODULE_ROOT.to_string());
             return ScopeMode::Record {
                 path: PathBuf::from(path),
                 session: SessionRecording {

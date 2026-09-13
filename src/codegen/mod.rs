@@ -282,6 +282,16 @@ pub struct DeclinedClaim {
     pub reason: String,
 }
 
+/// Where the compiled program came from, as the generated replay runtime
+/// writes it into a recording header so `aver replay` can load the source.
+/// `module_root` is absolute; `program_file` is relative to it when the
+/// file lies under the root and absolute otherwise.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordedSource {
+    pub program_file: String,
+    pub module_root: String,
+}
+
 pub struct CodegenContext {
     /// All top-level items (post-TCO transform, post-typecheck).
     ///
@@ -324,6 +334,9 @@ pub struct CodegenContext {
     pub runtime_policy_from_env: bool,
     /// Explicit guest entry boundary for scoped replay/policy.
     pub guest_entry: Option<String>,
+    /// Source location the generated replay runtime records; `None` when the
+    /// context was not built from a file on disk.
+    pub recorded_source: Option<RecordedSource>,
     /// Emit extra generated helpers needed only by the cached self-host helper.
     pub emit_self_host_support: bool,
     /// Functions that are part of a mutual-TCO SCC group (emitted as
@@ -900,6 +913,7 @@ pub fn build_context(
         emit_replay_runtime: false,
         runtime_policy_from_env: false,
         guest_entry: None,
+        recorded_source: None,
         emit_self_host_support: false,
         mutual_tco_members,
         recursive_fns,
@@ -1373,6 +1387,7 @@ pub(crate) fn empty_test_ctx() -> CodegenContext {
         emit_replay_runtime: false,
         runtime_policy_from_env: false,
         guest_entry: None,
+        recorded_source: None,
         emit_self_host_support: false,
         mutual_tco_members: std::collections::HashSet::new(),
         recursive_fns: std::collections::HashSet::new(),

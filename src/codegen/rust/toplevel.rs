@@ -1670,6 +1670,7 @@ mod tests {
             emit_replay_runtime: false,
             runtime_policy_from_env: false,
             guest_entry: None,
+            recorded_source: None,
             emit_self_host_support: false,
             mutual_tco_members: HashSet::new(),
             recursive_fns: HashSet::new(),

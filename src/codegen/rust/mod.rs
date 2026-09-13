@@ -336,6 +336,13 @@ fn transpile_project(
                     }
                     live.into_iter().collect()
                 },
+                // A binary with a guest entry runs a program it is handed, not
+                // the one it was compiled from; the host names that program
+                // through AVER_REPLAY_PROGRAM_FILE / AVER_REPLAY_MODULE_ROOT.
+                recorded_source: ctx
+                    .recorded_source
+                    .clone()
+                    .filter(|_| ctx.guest_entry.is_none()),
             }),
         ));
     }
@@ -2698,6 +2705,53 @@ fn main() -> Result<String, String>
         assert!(
             root_main.contains("aver_replay::with_guest_scope(\"main\", serde_json::Value::Null")
         );
+    }
+
+    #[test]
+    fn replay_codegen_bakes_the_recorded_source_unless_a_guest_entry_is_set() {
+        let recorded_source = || {
+            Some(crate::codegen::RecordedSource {
+                program_file: "main.av".to_string(),
+                module_root: "/abs/root".to_string(),
+            })
+        };
+
+        let mut ctx = ctx_from_source(
+            r#"
+module Demo
+
+fn main() -> Result<String, String>
+    ! [Disk.readText]
+    Disk.readText("demo.av")
+"#,
+            "demo",
+        );
+        ctx.emit_replay_runtime = true;
+        ctx.recorded_source = recorded_source();
+
+        let out = transpile(&mut ctx);
+        let replay_support = generated_file(&out, "src/replay_support.rs");
+        assert!(replay_support.contains("const COMPILED_PROGRAM_FILE: &str = \"main.av\";"));
+        assert!(replay_support.contains("const COMPILED_MODULE_ROOT: &str = \"/abs/root\";"));
+
+        let mut ctx = ctx_from_source(
+            r#"
+module Demo
+
+fn runGuestProgram(path: String) -> Result<String, String>
+    ! [Disk.readText]
+    Disk.readText(path)
+"#,
+            "demo",
+        );
+        ctx.emit_replay_runtime = true;
+        ctx.recorded_source = recorded_source();
+        ctx.guest_entry = Some("runGuestProgram".to_string());
+
+        let out = transpile(&mut ctx);
+        let replay_support = generated_file(&out, "src/replay_support.rs");
+        assert!(replay_support.contains("const COMPILED_PROGRAM_FILE: &str = \"\";"));
+        assert!(replay_support.contains("const COMPILED_MODULE_ROOT: &str = \".\";"));
     }
 
     #[test]
