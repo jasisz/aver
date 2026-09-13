@@ -546,17 +546,13 @@ landed = "Clocked.scored"
 max-jobs = 2
 
 [run]
-order = "Node.order"
-admit = "Node.admit"
-stop = "Node.stop"
-view = "Node.View"
 ```
 
-- `answer = "Module"` — the module of the program that answers every operation of that capability, one function per operation, `op(state: S, args) -> Tuple<S, Cap.<Op>Reply>`, plus a pure `fresh() -> S`; `Cap.<Op>Reply` is a sum the capability module declares beside each operation, `Now(<result>)` and `Later(Wait.Wake)`, and the door checks it. Only a capability the program declares may carry it; mutually exclusive with `crate`/`package`/`factory` and with `work`.
+- `answer = "Module"` — the module of the program that answers every operation of that capability, one function per operation, `op(state: S, args) -> Tuple<S, Cap.<Op>Reply>`, plus a pure `fresh() -> S`; `Cap.<Op>Reply` is a sum the capability module declares beside each operation, `Now(<result>)`, `Later(Wait.Wake)` and `Then(Wait.Wake, <result>)`, and the door checks it. Only a capability the program declares may carry it; mutually exclusive with `crate`/`package`/`factory` and with `work`.
 - `work = "Module.function"` — the pure `(T) -> R` a job kind runs off the turn, for a capability of Work shape (`begin(task: T) -> Result<Work.Job, String>`, `take(job: Work.Job) -> Result<Option<R>, String>`). Required on every job kind; the function belongs to a module the program depends on, never to the entry module.
 - `task`, `started`, `landed` — the seam between the job kind and an answer module's state: `(S) -> Option<T>`, `(S, T) -> S` and `(S, Result<R, String>) -> S`. All three or none, all three pure, `task` and `started` in one module; `started` states `verify <fn> law aStartedTaskIsNotAskedAgain`.
 - `[work] max-jobs` — jobs running at once, shared by every job kind; a positive integer, default the host's parallelism.
-- `[run]` — `order`, `admit`, `stop` name three pure policies and `view` the record they read; all four in the entry module, all four required. The entry module's `depends [...]` lists `Work`, every module named by `answer` and every job kind, because the generated loop names them; a missing one is `error[run-binding]`.
+- `[run]` — an empty table uses slot order, admits all askable ids, and stops on the flag or when no process is seated and no job runs. For custom policies name all four of `order`, `admit`, `stop`, `view` in the entry module; a subset is `error[run-binding]`. The loop loads answer modules, job kinds, `Wait` and `Work` from the manifest, so the entry lists only its own source dependencies.
 
 The program this manifest belongs to is `tests/fixtures/run_guide_example/`; the language guide shows its modules.
 
@@ -568,7 +564,7 @@ Diagnostics an agent meets on the way, each with its recipe (`docs/diagnostics-s
 | `yield-non-tail-call` | A yielding function calls itself outside tail position. | Pass what comes next as data, or make it a tail call. |
 | `yield-unsupported` | Mutual nesting between yielding functions, a request or a helper call inside `(a, b)!`, a function value live across a request, or a `yield` function with no stop. | Break the cycle, perform them one after another, pass data instead of a callback, or drop `yield`. |
 | `intercept-outside-yield` | A function without `yield` performs an operation of an answered capability. | Add `yield` to the function, or call the answer module's own function directly. |
-| `answer-shape` | Error: a capability the program answers declares no `<Op>Reply` beside one of its operations, or one of another shape — `Now` must carry exactly the operation's result, `Later` exactly `Wait.Wake`, nothing else. Error: an answer function declares `yield`. Warning: an answer function declares effects, which stalls every process while it runs. | Paste the declaration the message prints into the capability module and expose it; drop `yield` from the answer and make the process the caller; for the warning, accept the stall or move the work into a job. |
+| `answer-shape` | Error: a capability the program answers declares no `<Op>Reply` beside one of its operations, or one of another shape — `Now` must carry exactly the operation's result, `Later` exactly `Wait.Wake`, and `Then` the wake followed by that result. Error: an answer function declares `yield`. Warning: an answer function declares effects, which stalls every process while it runs. | Paste the declaration the message prints into the capability module and expose it; drop `yield` from the answer and make the process the caller; for the warning, accept the stall or move the work into a job. |
 | `answer-binding` | `answer` names a module that cannot answer the capability: a standard capability, a capability module, a missing module, a missing operation, a wrong signature, two states in one module. | Declare a capability of your own; write `op(state: S, args) -> Tuple<S, Cap.<Op>Reply>` for every operation with one state, naming the reply sum the capability declares. |
 | `run-binding` | `[run]` is declared and something the loop is generated from is off: a process with parameters or a non-`Unit` result, a process in another module, a hand-written `main`, an answer module without `fresh`, an effectful policy, a `started` without its law, a job kind whose `task` and `started` sit in two modules. | Write processes with no parameters and `Unit` result in the entry module, give every answer module a pure `fresh`, state `aStartedTaskIsNotAskedAgain` on every `started`, and delete `main`. |
 | `view-shape` | The view record or the `Pending` sum is not the shape the loop fills. | Declare them exactly as the message prints them: `pending`, `ready`, `askable`, `jobs`, `room`, `stopping`; one `Pending` constructor per process carrying `(Int, Wait.Wake)`. |

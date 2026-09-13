@@ -7,6 +7,7 @@ module Pool
 type ClaimReply
     Now(Option<Int>)
     Later(Wait.Wake)
+    Then(Wait.Wake, Option<Int>)
 
 operation claim(peer: Int) -> Option<Int>
     ? "Asks the host for the next handle owned by peer, or None when the peer has nothing left."
@@ -16,6 +17,7 @@ operation claim(peer: Int) -> Option<Int>
 type ReleaseReply
     Now(Bool)
     Later(Wait.Wake)
+    Then(Wait.Wake, Bool)
 
 operation release(handle: Int) -> Bool
     ? "Gives a handle back; false when the host refused."

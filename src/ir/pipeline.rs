@@ -867,6 +867,9 @@ pub fn lower_loaded_yield_modules(
     module_root: Option<&str>,
     marked: &crate::config::MarkedCapabilities,
 ) -> Vec<crate::types::checker::TypeError> {
+    // Legacy dependency-only doors have no entry name. Reserve the loop for
+    // the entry instead of letting the first yielding dependency claim it.
+    let marked = marked.with_run_entry("<entry>");
     let mut errors = Vec::new();
     for index in 0..loaded.len() {
         if !crate::yield_lowering::has_yield_fns(&loaded[index].items) {
@@ -881,7 +884,7 @@ pub fn lower_loaded_yield_modules(
                 run_tco: true,
                 typecheck: Some(&TypecheckMode::WithCheckedLoaded(&deps)),
                 user_program_len,
-                marked,
+                marked: &marked,
                 on_after_pass: None,
             },
         );
@@ -928,6 +931,11 @@ pub fn front(items: &mut Vec<TopLevel>, cfg: FrontConfig<'_, '_>) -> FrontResult
         marked,
         mut on_after_pass,
     } = cfg;
+    let entry = crate::visibility::module_decl(items)
+        .map(|module| module.name.as_str())
+        .unwrap_or("<entry>");
+    let marked = marked.with_run_entry(entry);
+    marked.add_run_dependencies(items);
     let mut result = FrontResult {
         pass_diagnostics: Vec::new(),
         yield_lowering: None,
@@ -974,7 +982,7 @@ pub fn front(items: &mut Vec<TopLevel>, cfg: FrontConfig<'_, '_>) -> FrontResult
             items,
             &written,
             &phase_one.errors,
-            marked,
+            &marked,
             &phase_one.fn_sigs,
             &phase_one.laws,
         ) {

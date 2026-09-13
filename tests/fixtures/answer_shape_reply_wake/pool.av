@@ -21,6 +21,7 @@ operation claim(key: Int) -> Pool.Assignment
 type GoneReply
     Now(Unit)
     Later(Wait.Wake)
+    Then(Wait.Wake, Unit)
 
 operation gone(key: Int) -> Unit
     ? "This peer is finished; free whatever it held."

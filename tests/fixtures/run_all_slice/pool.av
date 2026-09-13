@@ -18,6 +18,7 @@ type Sweep
 type ClaimReply
     Now(Pool.Assignment)
     Later(Wait.Wake)
+    Then(Wait.Wake, Pool.Assignment)
 
 operation claim() -> Pool.Assignment
     ? "Which peer should fetch which height next, or Stop once there is nothing left to fetch."
@@ -27,6 +28,7 @@ operation claim() -> Pool.Assignment
 type GoneReply
     Now(Unit)
     Later(Wait.Wake)
+    Then(Wait.Wake, Unit)
 
 operation gone(key: Int) -> Unit
     ? "This peer is finished; free whatever it held."
@@ -36,6 +38,7 @@ operation gone(key: Int) -> Unit
 type JoinedReply
     Now(Pool.Welcome)
     Later(Wait.Wake)
+    Then(Wait.Wake, Pool.Welcome)
 
 operation joined(key: Int) -> Pool.Welcome
     ? "A peer that has arrived, seated in the pool or refused because it is full."
@@ -45,6 +48,7 @@ operation joined(key: Int) -> Pool.Welcome
 type SweptReply
     Now(Pool.Sweep)
     Later(Wait.Wake)
+    Then(Wait.Wake, Pool.Sweep)
 
 operation swept() -> Pool.Sweep
     ? "One sweep of the pool, answering how many peers are idle."

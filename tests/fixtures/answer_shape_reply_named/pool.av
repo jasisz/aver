@@ -12,6 +12,7 @@ type Assignment
 type ClaimReply
     Now(Pool.Assignment)
     Later(Wait.Wake)
+    Then(Wait.Wake, Pool.Assignment)
 
 operation claim(key: Int) -> Pool.Assignment
     ? "The next height this peer should fetch, or Idle, or Stop."

@@ -11,6 +11,7 @@ type Landed
 type NextTargetReply
     Now(Option<String>)
     Later(Wait.Wake)
+    Then(Wait.Wake, Option<String>)
 
 operation nextTarget(height: Int) -> Option<String>
     ? "Which block hash is next at this height on the chain now chosen."

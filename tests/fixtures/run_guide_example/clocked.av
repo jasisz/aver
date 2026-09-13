@@ -1,39 +1,26 @@
 module Clocked
     intent = "The answers this program gives to Clock, and the three ends of the scoring job's seam: the tasks still to start, how many are running, and what the landed ones scored."
     depends [Clock, Wait]
-    exposes []
     effects []
 
 record State
     tasks: List<Int>
     running: Int
     total: Int
-    armed: Bool
 
 fn fresh() -> State
-    ? "Three tasks to score, none started, nothing scored and no deadline armed."
-    State(tasks = [1, 2, 3], running = 0, total = 0, armed = false)
+    ? "Three tasks to score, none started, nothing scored."
+    State(tasks = [1, 2, 3], running = 0, total = 0)
 
 fn tick(state: State) -> Tuple<State, Clock.TickReply>
     ? "Closed once every task has started and landed; before that, a tick fifty milliseconds after it was asked for."
     match (state.tasks, state.running)
         ([], 0) -> (state, Clock.TickReply.Now(Clock.Tick.Closed(state.total)))
-        _ -> armed(state)
+        _ -> (state, Clock.TickReply.Then(Wait.Wake.After(50), Clock.Tick.Tock))
 
 verify tick
-    tick(fresh()) => (State.update(fresh(), armed = true), Clock.TickReply.Later(Wait.Wake.After(50)))
-    tick(State.update(fresh(), armed = true)) => (fresh(), Clock.TickReply.Now(Clock.Tick.Tock))
+    tick(fresh()) => (fresh(), Clock.TickReply.Then(Wait.Wake.After(50), Clock.Tick.Tock))
     tick(State.update(fresh(), tasks = [], total = 60)) => (State.update(fresh(), tasks = [], total = 60), Clock.TickReply.Now(Clock.Tick.Closed(60)))
-
-fn armed(state: State) -> Tuple<State, Clock.TickReply>
-    ? "The first ask arms the deadline and parks on it; the ask after the deadline has passed is the tick. The flag survives the park because a Later keeps the state this module returned."
-    match state.armed
-        false -> (State.update(state, armed = true), Clock.TickReply.Later(Wait.Wake.After(50)))
-        true -> (State.update(state, armed = false), Clock.TickReply.Now(Clock.Tick.Tock))
-
-verify armed
-    armed(fresh()) => (State.update(fresh(), armed = true), Clock.TickReply.Later(Wait.Wake.After(50)))
-    armed(State.update(fresh(), armed = true)) => (fresh(), Clock.TickReply.Now(Clock.Tick.Tock))
 
 fn score(task: Int) -> Int
     ? "What one job computes off the turn. Named by aver.toml's work key."
@@ -53,16 +40,41 @@ verify nextTask
     nextTask(State.update(fresh(), tasks = [])) => Option.None
 
 fn taskStarted(state: State, task: Int) -> State
-    ? "The task whose job just began was the head of the queue; it leaves, so the next ask is offered a different one. Named by aver.toml's started key."
-    match state.tasks
-        [] -> state
-        [_, ..rest] -> State.update(state, tasks = rest, running = state.running + 1)
+    ? "Remove every copy of the task that just started and count its running job. Named by aver.toml's started key."
+    State.update(state, tasks = withoutTask(state.tasks, task, []), running = state.running + 1)
+
+verify taskStarted
+    taskStarted(State.update(fresh(), tasks = [1, 1]), 1).tasks => []
+    taskStarted(State.update(fresh(), tasks = [1, 2, 1, 3]), 1).tasks => [2, 3]
 
 verify taskStarted law aStartedTaskIsNotAskedAgain
-    given state: State = [fresh(), State.update(fresh(), tasks = [2, 1])]
+    given state: State = [fresh(), State.update(fresh(), tasks = [2, 1]), State.update(fresh(), tasks = [1, 1])]
     given task: Int = [1, 2]
     when nextTask(state) == Option.Some(task)
+    using [withoutTask.theStartedTaskIsOut]
     nextTask(taskStarted(state, task)) != Option.Some(task) holds
+
+fn withoutTask(tasks: List<Int>, task: Int, acc: List<Int>) -> List<Int>
+    ? "The queue with every copy of the started task removed, preserving the order of the rest."
+    match tasks
+        [] -> acc
+        [head, ..rest] -> withoutTask(rest, task, keptUnlessTask(acc, head, task))
+
+verify withoutTask law theStartedTaskIsOut
+    given tasks: List<Int> = [[], [1, 1], [1, 2, 1]]
+    given task: Int = [1, 2]
+    given acc: List<Int> = [[], [3]]
+    List.contains(withoutTask(tasks, task, acc), task) => List.contains(acc, task)
+
+fn keptUnlessTask(acc: List<Int>, entry: Int, task: Int) -> List<Int>
+    ? "Keep an entry only when it is not the task that just started."
+    match entry == task
+        true -> acc
+        false -> List.concat(acc, [entry])
+
+verify keptUnlessTask
+    keptUnlessTask([], 1, 1) => []
+    keptUnlessTask([], 2, 1) => [2]
 
 fn scored(state: State, outcome: Result<Int, String>) -> State
     ? "Where a job that is over lands: its score, or nothing when it will never produce one. Named by aver.toml's landed key."

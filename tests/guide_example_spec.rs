@@ -77,6 +77,99 @@ fn the_guide_example_verifies_with_the_generated_laws() {
 }
 
 #[test]
+fn the_default_guide_invariants_are_universal() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping the Lean wall: `lake` is not available");
+        return;
+    }
+    let out_dir = std::env::temp_dir().join(format!("aver-guide-wall-{}", std::process::id()));
+    let out = aver(&[
+        "proof",
+        "main.av",
+        "--module-root",
+        ".",
+        "--backend",
+        "lean",
+        "-o",
+        out_dir.to_str().unwrap(),
+        "--check",
+        "--check-json",
+        "--sorry-budget",
+        "0",
+    ]);
+    let text = stdout_of(&out);
+    let line = text
+        .lines()
+        .rev()
+        .find(|line| line.starts_with('{'))
+        .unwrap_or_else(|| panic!("{}", format_output(&out)));
+    let summary: serde_json::Value = serde_json::from_str(line).unwrap();
+    assert_eq!(summary["universal_laws"], 22, "{}", format_output(&out));
+    for field in ["build_errors", "bounded_laws", "sorries"] {
+        assert_eq!(summary[field], 0, "{field}: {}", format_output(&out));
+    }
+    assert!(out.status.success(), "{}", format_output(&out));
+    let _ = fs::remove_dir_all(out_dir);
+}
+
+#[test]
+fn saved_answers_share_the_wake_gate_and_do_not_ask_twice() {
+    let dir = repo_root().join("tests/fixtures/run_then");
+    let out = Command::new(aver_bin())
+        .current_dir(&dir)
+        .args(["verify", "main.av", "--module-root", "."])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", format_output(&out));
+    assert!(
+        stdout_of(&out).contains("| 0 failed"),
+        "{}",
+        format_output(&out)
+    );
+    let mut targets = vec![Vec::<&str>::new()];
+    if cfg!(feature = "wasm") {
+        targets.push(vec!["--wasm-gc"]);
+    }
+    for target in targets {
+        let out = Command::new(aver_bin())
+            .current_dir(&dir)
+            .args(["run", "main.av", "--module-root", "."])
+            .args(target)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", format_output(&out));
+        assert_eq!(
+            stdout_of(&out).trim(),
+            "11,22,33\ndone",
+            "{}",
+            format_output(&out)
+        );
+    }
+}
+
+#[test]
+fn manifest_exports_are_used_but_an_unrelated_export_is_still_reported() {
+    let dir = repo_root().join("tests/fixtures/run_then");
+    let out = Command::new(aver_bin())
+        .current_dir(&dir)
+        .args(["check", "main.av", "--module-root", "."])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", format_output(&out));
+    let text = stdout_of(&out);
+    let warnings: Vec<_> = text
+        .lines()
+        .filter(|line| line.contains("warning[unused-expose]"))
+        .collect();
+    assert_eq!(
+        warnings,
+        ["warning[unused-expose]: exposes not used by the checked program(s): unused"],
+        "{}",
+        format_output(&out)
+    );
+}
+
+#[test]
 fn the_guide_example_runs_to_the_score() {
     let out = aver(&["run", "main.av", "--module-root", "."]);
     assert!(out.status.success(), "{}", format_output(&out));

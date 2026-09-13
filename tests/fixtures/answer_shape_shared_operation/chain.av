@@ -11,6 +11,7 @@ type Landed
 type ClaimReply
     Now(Chain.Landed)
     Later(Wait.Wake)
+    Then(Wait.Wake, Chain.Landed)
 
 operation claim(height: Int) -> Chain.Landed
     ? "Claims the right to connect this height."

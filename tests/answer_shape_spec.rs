@@ -10,7 +10,7 @@
 //! An answer function returns `Tuple<S, Cap.<Op>Reply>`, and `Cap.<Op>Reply`
 //! is a sum the program declares in the capability module beside the
 //! operation: `Now` carrying the operation's result, `Later` carrying
-//! `Wait.Wake`, nothing else. Nothing is generated into a capability module,
+//! `Wait.Wake`, and `Then` carrying that wake and the result. Nothing is generated into a capability module,
 //! and the `answer_shape_reply_*` fixtures hold the door to that declaration.
 //! The accept path — the expected parameters, the expected reply name, and a
 //! well-typed job seam over them — is also checked in
@@ -116,7 +116,7 @@ fn an_answer_function_answers_with_the_operations_declared_reply() {
 
 /// The declaration the door prints, in the capability's own names, indented
 /// the way `view-shape` prints the view it wants.
-const GONE_REPLY: &str = "    type GoneReply\n        Now(Unit)\n        Later(Wait.Wake)";
+const GONE_REPLY: &str = "    type GoneReply\n        Now(Unit)\n        Later(Wait.Wake)\n        Then(Wait.Wake, Unit)";
 
 #[test]
 fn a_capability_the_program_answers_declares_the_reply_sum_of_every_operation() {
@@ -160,16 +160,16 @@ fn the_now_of_a_reply_sum_carries_exactly_the_operations_result() {
     assert_reports(
         "answer_shape_reply_payload",
         &["check"],
-        "error[answer-shape]: capability 'Pool' is answered by module 'Ledger', and constructor 'Pool.ClaimReply.Now' carries (Int) where 'Pool.claim' answers Pool.Assignment; an answer to 'Pool.claim' is read through that sum, which is exactly:\n    type ClaimReply\n        Now(Pool.Assignment)\n        Later(Wait.Wake)",
+        "error[answer-shape]: capability 'Pool' is answered by module 'Ledger', and constructor 'Pool.ClaimReply.Now' carries (Int) where 'Pool.claim' answers Pool.Assignment; an answer to 'Pool.claim' is read through that sum, which is exactly:\n    type ClaimReply\n        Now(Pool.Assignment)\n        Later(Wait.Wake)\n        Then(Wait.Wake, Pool.Assignment)",
     );
 }
 
 #[test]
-fn a_reply_sum_has_no_third_constructor() {
+fn a_reply_sum_has_no_extra_constructor() {
     assert_reports(
         "answer_shape_reply_third",
         &["check"],
-        "error[answer-shape]: capability 'Pool' is answered by module 'Ledger', and sum 'Pool.ClaimReply' declares constructor 'Never', which is neither Now nor Later",
+        "error[answer-shape]: capability 'Pool' is answered by module 'Ledger', and sum 'Pool.ClaimReply' declares constructor 'Never', which is not Now, Later or Then",
     );
 }
 
@@ -379,6 +379,51 @@ fn check_project(dir: &PathBuf) -> Output {
         .arg("--module-root")
         .arg(dir);
     command.output().expect("aver runs")
+}
+
+#[test]
+fn run_imports_come_from_the_manifest_and_explicit_imports_still_work() {
+    let dir = temp_project("run-imports", "[run]\n");
+    for file in std::fs::read_dir(fixture("run_guide_example")).unwrap() {
+        let file = file.unwrap();
+        std::fs::copy(file.path(), dir.join(file.file_name())).unwrap();
+    }
+    // Keep the copied guide alone: the temporary helper's seed modules are
+    // deliberately not imported by its entry.
+    let out = check_project(&dir);
+    assert!(out.status.success(), "{}", format_output(&out));
+    let main = dir.join("main.av");
+    let source = std::fs::read_to_string(&main).unwrap();
+    std::fs::write(
+        &main,
+        source.replace(
+            "depends [Clock]",
+            "depends [Clock, Clocked, Scoring, Wait, Work]",
+        ),
+    )
+    .unwrap();
+    let out = check_project(&dir);
+    assert!(out.status.success(), "{}", format_output(&out));
+    assert!(
+        !combined(&out).contains("warning[unused"),
+        "{}",
+        format_output(&out)
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn a_partial_run_table_prints_the_none_or_all_recipe() {
+    assert_manifest_rejects(
+        "partial-run",
+        "[run]\norder = \"Node.order\"\n",
+        "omit all four keys",
+    );
+    assert_manifest_rejects(
+        "partial-run-view",
+        "[run]\nview = \"Node.View\"\n",
+        "name all four for custom policies",
+    );
 }
 
 fn assert_manifest_rejects(label: &str, manifest: &str, expected: &str) {

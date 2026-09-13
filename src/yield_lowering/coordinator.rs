@@ -21,11 +21,13 @@
 //! The generated names stay referenceable, so a program that wants to write
 //! its own loop over the protocol still can. That is a door, not the road.
 
-use crate::ast::{Module, TopLevel, Type, TypeDef};
+use crate::ast::{TopLevel, Type, TypeDef};
 use crate::config::RunPlan;
 use crate::types::checker::TypeError;
 
 use super::{FnSigs, ProcessProtocol};
+
+mod then_reply;
 
 /// The `__Run` field a job table lives in.
 const JOBS_FIELD: &str = "jobs";
@@ -159,9 +161,6 @@ pub(super) fn generate(
             )));
         }
     }
-    if let Some(module) = module {
-        errors.extend(check_declared_depends(module, plan, line));
-    }
     if fn_sigs.contains_key("main") {
         errors.push(error(line, format!(
             "aver.toml declares [run], so the entry point of this program is generated; module '{}' also writes its own 'main'. Remove it, or remove [run] and drive the protocol by hand",
@@ -183,9 +182,14 @@ pub(super) fn generate(
             return Err(errors);
         }
     };
-    errors.extend(check_policies(plan, fn_sigs, line));
-    let (marker, view_errors) = check_view(items, protocols, plan, line);
-    errors.extend(view_errors);
+    let marker = if plan.policies.defaults {
+        "__Pending".to_string()
+    } else {
+        errors.extend(check_policies(plan, fn_sigs, line));
+        let (marker, view_errors) = check_view(items, protocols, plan, line);
+        errors.extend(view_errors);
+        marker
+    };
     if !errors.is_empty() {
         return Err(errors);
     }
@@ -233,33 +237,6 @@ fn parse_generated(source: &str) -> Result<Vec<TopLevel>, String> {
     crate::parser::Parser::new_compiler_generated(tokens)
         .parse()
         .map_err(|error| error.to_string())
-}
-
-/// Every module the generated loop names has to be a module this one already
-/// depends on: the loop is spliced in after the dependency walk has run, so
-/// an edge it added itself would name a module nothing loaded.
-fn check_declared_depends(module: &Module, plan: &RunPlan, line: usize) -> Vec<TypeError> {
-    let mut wanted: Vec<String> = vec![crate::capability::work::WAIT_MODULE.to_string()];
-    if !plan.jobs.is_empty() {
-        wanted.push(crate::capability::work::WORK_MODULE.to_string());
-    }
-    for (_, answer) in &plan.answers {
-        wanted.push(answer.clone());
-    }
-    for job in &plan.jobs {
-        wanted.push(job.capability.clone());
-    }
-    let mut errors = Vec::new();
-    for name in wanted {
-        if module.depends.iter().any(|dep| dep == &name) {
-            continue;
-        }
-        errors.push(error(line, format!(
-            "aver.toml declares [run], so the loop generated into module '{}' names '{name}'; add '{name}' to its `depends`",
-            module.name
-        )));
-    }
-    errors
 }
 
 /// One entry per module the manifest answers a capability with: which state
@@ -692,6 +669,20 @@ fn write_loop(
     let view = plan.policies.view_name().to_string();
     let has_jobs = !jobs.is_empty();
 
+    if plan.policies.defaults {
+        out.push_str(
+            &expected_view("__View", protocols)
+                .replace("Pending", "__Pending")
+                .lines()
+                .map(|line| line.strip_prefix("    ").unwrap_or(line))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
+        out.push_str("\n\nfn __order(view: __View) -> List<Int>\n    ? \"Seated ids in slot order.\"\n    Map.keys(view.pending)\n\nfn __admit(view: __View, id: Int) -> Bool\n    ? \"Every askable id is admitted.\"\n    List.contains(view.askable, id)\n\nfn __stop(view: __View) -> Bool\n    ? \"Stop on the flag, or once no process is seated and no job runs.\"\n    Bool.or(view.stopping, Bool.and(Map.len(view.pending) == 0, view.jobs == 0))\n\n");
+    }
+
+    out.push_str(&then_reply::declarations(protocols));
+
     // ── The table ──────────────────────────────────────────────────
     out.push_str("type __Process\n");
     for protocol in protocols {
@@ -701,7 +692,7 @@ fn write_loop(
             protocol.request
         ));
     }
-    out.push_str("\nrecord __Slot\n    seq: Int\n    pending: __Process\n    waiting: Wait.Wake\n    due: Int\n    ms: Int\n");
+    out.push_str("\nrecord __Slot\n    seq: Int\n    pending: __Process\n    waiting: Wait.Wake\n    due: Int\n    ms: Int\n    answer: Option<__ThenAnswer>\n");
     // One table holds every job kind, so the job count the room limit reads
     // is the count across all of them and the wait watches each entry once.
     // The variant is how the entry remembers which seam takes and lands it.
@@ -766,7 +757,7 @@ fn write_loop(
             protocol.fn_name, effects(&performs.seat), protocol.start
         ));
         out.push_str(&format!(
-            "\nfn __seated{upper}(run: __Run, outcome: {}) -> __Run\n    ? \"A process that is already done is not seated; one that is waiting takes the next free slot id.\"\n    match outcome\n        {}.Done(_) -> run\n        {}.Waiting(request) -> __Run.update(run, slots = Map.set(run.slots, run.nextId, __Slot(seq = 1, pending = __Process.{upper}(request), waiting = Wait.Wake.NextTurn, due = 0, ms = 0)), nextId = run.nextId + 1)\n",
+            "\nfn __seated{upper}(run: __Run, outcome: {}) -> __Run\n    ? \"A process that is already done is not seated; one that is waiting takes the next free slot id.\"\n    match outcome\n        {}.Done(_) -> run\n        {}.Waiting(request) -> __Run.update(run, slots = Map.set(run.slots, run.nextId, __Slot(seq = 1, pending = __Process.{upper}(request), waiting = Wait.Wake.NextTurn, due = 0, ms = 0, answer = Option.None)), nextId = run.nextId + 1)\n",
             protocol.outcome, protocol.outcome, protocol.outcome
         ));
     }
@@ -774,7 +765,7 @@ fn write_loop(
     // ── The slot table and its two invariants ──────────────────────
     out.push_str("\nfn __current(run: __Run, id: Int) -> Int\n    ? \"The instance number of the request one process is waiting on, or -1 when nothing is seated under that id.\"\n    match Map.get(run.slots, id)\n        Option.None -> 0 - 1\n        Option.Some(slot) -> slot.seq\n");
     out.push_str("\nfn __nextInstance(seq: Int) -> Int\n    ? \"The instance number an answer for the current one leaves behind. It rises, so the instance just answered can never be current again.\"\n    seq + 1\n");
-    out.push_str("\nfn __parked(slot: __Slot, wake: Wait.Wake, now: Int) -> __Slot\n    ? \"The slot a Later leaves behind: the same instance and the same request, now remembering what would make asking again worth it. A deadline is turned into the clock reading it falls due at, because ms is how long from now and the turn asks against the clock; the ms that was asked for is kept beside it, so a clock that steps backwards cannot strand the request behind a due it will never reach.\"\n    __Slot(seq = slot.seq, pending = slot.pending, waiting = wake, due = __dueOf(wake, now), ms = __msOf(wake))\n");
+    out.push_str("\nfn __parked(slot: __Slot, wake: Wait.Wake, now: Int) -> __Slot\n    ? \"The slot a Later leaves behind: the same instance and the same request, now remembering what would make asking again worth it. A deadline is turned into the clock reading it falls due at, because ms is how long from now and the turn asks against the clock; the ms that was asked for is kept beside it, so a clock that steps backwards cannot strand the request behind a due it will never reach.\"\n    __Slot(seq = slot.seq, pending = slot.pending, waiting = wake, due = __dueOf(wake, now), ms = __msOf(wake), answer = Option.None)\n");
     out.push_str("\nfn __dueOf(wake: Wait.Wake, now: Int) -> Int\n    ? \"The clock reading a request parked on a deadline may be asked again at. A request parked on an item and a deadline at once carries the deadline half's. A request parked on a socket, on a job, or on the next turn carries none.\"\n    match wake\n        Wait.Wake.After(ms) -> now + ms\n        Wait.Wake.Either(_, ms) -> now + ms\n        Wait.Wake.Item(_) -> 0\n        Wait.Wake.NextTurn -> 0\n");
     out.push_str("\nfn __msOf(wake: Wait.Wake) -> Int\n    ? \"How long the request asked to be left alone for. A request parked on an item and a deadline at once asked for the deadline half's. A request parked on a socket, on a job, or on the next turn asked for nothing.\"\n    match wake\n        Wait.Wake.After(ms) -> ms\n        Wait.Wake.Either(_, ms) -> ms\n        Wait.Wake.Item(_) -> 0\n        Wait.Wake.NextTurn -> 0\n");
     out.push_str("\nfn __park(run: __Run, id: Int, wake: Wait.Wake) -> __Run\n    ? \"A Later: the request stays where it is with the same instance number. The state the answer module returned was already written back, because a Later is where a module records its own progress.\"\n    match Map.get(run.slots, id)\n        Option.None -> run\n        Option.Some(slot) -> __Run.update(run, slots = Map.set(run.slots, id, __parked(slot, wake, run.now)))\n");
@@ -791,7 +782,7 @@ fn write_loop(
             protocol.outcome, protocol.outcome, protocol.outcome
         ));
         out.push_str(&format!(
-            "\nfn __settledSlot{upper}(seq: Int, request: {}) -> __Slot\n    ? \"The slot an answer for instance 'seq' writes back under that id: the next request of '{}', under the instance number after 'seq'.\"\n    __Slot(seq = __nextInstance(seq), pending = __Process.{upper}(request), waiting = Wait.Wake.NextTurn, due = 0, ms = 0)\n",
+            "\nfn __settledSlot{upper}(seq: Int, request: {}) -> __Slot\n    ? \"The slot an answer for instance 'seq' writes back under that id: the next request of '{}', under the instance number after 'seq'.\"\n    __Slot(seq = __nextInstance(seq), pending = __Process.{upper}(request), waiting = Wait.Wake.NextTurn, due = 0, ms = 0, answer = Option.None)\n",
             protocol.request, protocol.fn_name
         ));
         out.push_str(&format!(
@@ -861,13 +852,15 @@ fn write_loop(
     out.push_str("\nfn __smaller(left: Int, right: Int) -> Int\n    ? \"The smaller of two whole numbers.\"\n    match left < right\n        true -> left\n        false -> right\n");
     out.push_str("\nfn __tick(best: Int) -> Int\n    ? \"The wait of a turn with no deadline in it: one second.\"\n    match best < 0\n        true -> 1000\n        false -> best\n");
 
+    out.push_str(&then_reply::dispatch(protocols, serve_effects));
+
     // ── The serve path ─────────────────────────────────────────────
     out.push_str(&format!(
-        "\nfn __serve(run: __Run, id: Int) -> __Run\n    ? \"Serves one slot: asks the module that answers its request, then either replaces the slot with what the process does next, or leaves it parked.\"\n{}    match Map.get(run.slots, id)\n        Option.None -> run\n        Option.Some(slot) -> __serveSlot(run, id, slot)\n",
+        "\nfn __serve(run: __Run, ready: List<Int>, id: Int) -> __Run\n    ? \"Serves one slot: asks the module that answers its request, then either replaces the slot with what the process does next, or leaves it parked.\"\n{}    match Map.get(run.slots, id)\n        Option.None -> run\n        Option.Some(slot) -> __serveSlot(run, ready, id, slot)\n",
         effects(serve_effects)
     ));
     out.push_str(&format!(
-        "\nfn __serveSlot(run: __Run, id: Int, slot: __Slot) -> __Run\n    ? \"Which process the slot holds decides which dispatch answers it.\"\n{}    match slot.pending\n",
+        "\nfn __retrySlot(run: __Run, id: Int, slot: __Slot) -> __Run\n    ? \"Which process the slot holds decides which dispatch answers it.\"\n{}    match slot.pending\n",
         effects(serve_effects)
     ));
     for protocol in protocols {
@@ -937,14 +930,21 @@ fn write_loop(
         effects(serve_effects)
     ));
     out.push_str(&format!(
-        "\nfn __serveAdmitted(run: __Run, ready: List<Int>, id: Int) -> __Run\n    ? \"One askable id, served only if the policy admits it. The view it is admitted against is taken again here, so a slot an earlier id of this turn removed is already gone from it.\"\n{}    match {}(__view(run, ready), id)\n        false -> run\n        true -> __serve(run, id)\n",
+        "\nfn __serveAdmitted(run: __Run, ready: List<Int>, id: Int) -> __Run\n    ? \"One askable id, served only if the policy admits it. The view it is admitted against is taken again here, so a slot an earlier id of this turn removed is already gone from it.\"\n{}    match {}(__view(run, ready), id)\n        false -> run\n        true -> __serve(run, ready, id)\n",
         effects(serve_effects),
         bare(&plan.policies.admit)
     ));
+    let stopping = if plan.policies.defaults {
+        "__stop(__view(run, []))".to_string()
+    } else {
+        format!(
+            "Bool.or({}(__view(run, [])), Map.len(run.slots) == 0)",
+            bare(&plan.policies.stop)
+        )
+    };
     out.push_str(&format!(
-        "\nfn __runAll(run: __Run) -> Result<__Run, String>\n    ? \"Turns until the policy says stop or nothing is seated.\"\n{}    match Bool.or({}(__view(run, [])), Map.len(run.slots) == 0)\n        true -> Result.Ok(run)\n        false -> __runAll(__turn(run)?)\n",
-        effects(turn_effects),
-        bare(&plan.policies.stop)
+        "\nfn __runAll(run: __Run) -> Result<__Run, String>\n    ? \"Turns until the run's stopping rule is satisfied.\"\n{}    match {stopping}\n        true -> Result.Ok(run)\n        false -> __runAll(__turn(run)?)\n",
+        effects(turn_effects)
     ));
     let seated = protocols
         .iter()
@@ -974,6 +974,15 @@ fn write_loop(
 
     // ── The invariants ─────────────────────────────────────────────
     out.push_str(&write_laws(protocols, jobs));
+    if protocols
+        .iter()
+        .any(|protocol| sample_request(protocol).is_some())
+    {
+        out.push_str(then_reply::laws());
+    }
+    if plan.policies.defaults {
+        out.push_str("\nverify __order law seatedIdsInSlotOrder\n    given view: __View = [__view(__fresh(), []), __view(__sampleRun(), [])]\n    __order(view) => Map.keys(view.pending)\n\nverify __admit law everyAskableIdIsAdmitted\n    given view: __View = [__view(__fresh(), []), __view(__sampleRun(), [])]\n    given id: Int = [0, 1, 2]\n    __admit(view, id) => List.contains(view.askable, id)\n\nverify __stop law runningJobsKeepAnEmptyRunAlive\n    given jobs: Int = [1, 2, 7]\n    when jobs > 0\n    __stop(__View(pending = {}, ready = [], askable = [], jobs = jobs, room = 0, stopping = false)) => false\n");
+    }
     out
 }
 
@@ -1037,13 +1046,15 @@ fn write_serve(
             Some(_) => "__answer",
         };
         bodies.push_str(&format!(
-            "\nfn __serve{upper}{}(run: __Run, id: Int, seq: Int, state: {}, answered: Tuple<{}, {reply}>) -> __Run\n    ? \"A Now settles the slot with the answer function of this kind; a Later keeps the state the module returned and parks the request, so a Later records the module's progress and leaves the request alone.\"\n{}    match answered\n        (__next, __reply) -> match __reply\n            {reply}.Later(__wake) -> __park(__Run.update(run, {} = __next), id, __wake)\n            {reply}.Now({now_binder}) -> __settle{upper}(__Run.update(run, {} = __next), id, seq, {resume})\n",
+            "\nfn __serve{upper}{}(run: __Run, id: Int, seq: Int, state: {}, answered: Tuple<{}, {reply}>) -> __Run\n    ? \"A Now settles the slot with the answer function of this kind; a Later keeps the state the module returned and parks the request, so a Later records the module's progress and leaves the request alone.\"\n{}    match answered\n        (__next, __reply) -> match __reply\n            {reply}.Later(__wake) -> __park(__Run.update(run, {} = __next), id, __wake)\n            {reply}.Then(__wake, __answer) -> __parkThen(__Run.update(run, {field} = __next), id, __wake, __ThenAnswer.{upper}{kind}(state, __answer))\n            {reply}.Now({now_binder}) -> __settle{upper}(__Run.update(run, {} = __next), id, seq, {resume})\n",
             kind.name,
             kind.state,
             answer.state,
             list(resumes),
             answer.field,
-            answer.field
+            answer.field,
+            field = answer.field,
+            kind = kind.name
         ));
     }
     out.push_str(&bodies);

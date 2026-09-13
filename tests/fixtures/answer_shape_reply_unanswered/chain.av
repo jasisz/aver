@@ -7,6 +7,7 @@ module Chain
 type NextTargetReply
     Now(Option<Int>)
     Later(Wait.Wake)
+    Then(Wait.Wake, Option<Int>)
 
 operation nextTarget() -> Option<Int>
     ? "Which height is next to connect."

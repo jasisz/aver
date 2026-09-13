@@ -260,6 +260,75 @@ impl MarkedCapabilities {
         self.run.as_ref()
     }
 
+    /// Bind an unnamed default loop to its entry once. Dependencies keep
+    /// this owner, so a yielding function there cannot become another loop.
+    pub fn with_run_entry(&self, module: &str) -> Self {
+        let mut facts = self.clone();
+        if let Some(plan) = &mut facts.run
+            && plan.policies.defaults
+            && plan.policies.module().is_empty()
+        {
+            for name in [
+                &mut plan.policies.order,
+                &mut plan.policies.admit,
+                &mut plan.policies.stop,
+                &mut plan.policies.view,
+            ] {
+                *name = format!("{module}.{name}");
+            }
+        }
+        facts
+    }
+
+    /// Imports needed by a generated loop, independent of the entry's
+    /// source imports. Checking a bound supporting module on its own does
+    /// not turn that module into the coordinator's entry.
+    pub fn run_dependencies(&self, module: &str) -> Vec<String> {
+        let Some(plan) = &self.run else {
+            return Vec::new();
+        };
+        if !plan.policies.module().is_empty() && plan.policies.module() != module {
+            return Vec::new();
+        }
+        let mut names = vec!["Wait".to_string(), "Work".to_string()];
+        for (capability, answer) in &plan.answers {
+            names.extend([capability.clone(), answer.clone()]);
+        }
+        for job in &plan.jobs {
+            names.push(job.capability.clone());
+            for function in [&job.task, &job.started, &job.landed] {
+                if let Some((owner, _)) = function.rsplit_once('.') {
+                    names.push(owner.to_string());
+                }
+            }
+        }
+        if names.iter().any(|name| name == module) {
+            return Vec::new();
+        }
+        names.sort();
+        names.dedup();
+        names
+    }
+
+    /// Add generated imports only to the compiler's AST; the written module
+    /// continues to describe the dependencies of its own source.
+    pub fn add_run_dependencies(&self, items: &mut [crate::ast::TopLevel]) {
+        if self.run.as_ref().is_some_and(|plan| plan.policies.defaults)
+            && !crate::yield_lowering::has_yield_fns(items)
+        {
+            return;
+        }
+        for item in items {
+            if let crate::ast::TopLevel::Module(module) = item {
+                for name in self.run_dependencies(&module.name) {
+                    if !module.depends.contains(&name) {
+                        module.depends.push(name);
+                    }
+                }
+            }
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         self.names.is_empty()
     }
@@ -539,6 +608,8 @@ fn validate_answer_module(value: &str, context: &str, capability: &str) -> Resul
 /// declares, and nothing else the program has to write.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunPolicies {
+    /// An empty `[run]` uses compiler-owned policies and view types.
+    pub defaults: bool,
     /// `order = "Node.order"`: the ids to serve this turn, in order.
     pub order: String,
     /// `admit = "Node.admit"`: whether to serve one id in this turn.
@@ -578,10 +649,19 @@ pub(super) fn parse_run_policies(root: &toml::Table) -> Result<Option<RunPolicie
         .as_table()
         .ok_or_else(|| "aver.toml: [run] must be a table".to_string())?;
     reject_unknown_keys(table, &["order", "admit", "stop", "view"], "[run]")?;
+    if table.is_empty() {
+        return Ok(Some(RunPolicies {
+            defaults: true,
+            order: "__order".into(),
+            admit: "__admit".into(),
+            stop: "__stop".into(),
+            view: "__View".into(),
+        }));
+    }
     for key in ["order", "admit", "stop", "view"] {
         if !table.contains_key(key) {
             return Err(format!(
-                "error[run-binding]: aver.toml: [run] declares no `{key}`; the generated loop reads all four of order, admit, stop and view, so a program that asks for it names all four"
+                "error[run-binding]: aver.toml: [run] declares no `{key}`; either omit all four keys (order, admit, stop, view) for the default policies, or name all four for custom policies"
             ));
         }
     }
@@ -594,6 +674,7 @@ pub(super) fn parse_run_policies(root: &toml::Table) -> Result<Option<RunPolicie
     }
     validate_view_type(&view)?;
     let policies = RunPolicies {
+        defaults: false,
         order,
         admit,
         stop,
@@ -890,6 +971,27 @@ mod tests {
             run("[providers]\nschema = 1\n").expect("valid manifest"),
             None
         );
+    }
+
+    #[test]
+    fn an_empty_run_table_uses_defaults_and_partial_tables_explain_both_choices() {
+        let policies = run("[run]\n").unwrap().unwrap();
+        assert!(policies.defaults);
+        assert_eq!(policies.view_name(), "__View");
+        let keys = ["order", "admit", "stop", "view"];
+        for mask in 1..15 {
+            let mut source = "[run]\n".to_string();
+            for (index, key) in keys.iter().enumerate() {
+                if mask & (1 << index) != 0 {
+                    let name = if *key == "view" { "View" } else { key };
+                    source.push_str(&format!("{key} = \"Node.{name}\"\n"));
+                }
+            }
+            let error = run(&source).unwrap_err();
+            assert!(error.contains("error[run-binding]"), "{error}");
+            assert!(error.contains("omit all four"), "{error}");
+            assert!(error.contains("name all four"), "{error}");
+        }
     }
 
     #[test]

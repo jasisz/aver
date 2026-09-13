@@ -1,0 +1,26 @@
+module Node
+    intent = "Three requests get three answers from three asks, then a saved Unit reply completes."
+    depends [Pulse]
+    effects [Console.print, Pulse.done, Pulse.next, yield]
+
+fn ticking() -> Unit
+    ? "Ask three times and print the values that were saved before each wake."
+    ! [Console.print, Pulse.done, Pulse.next, yield]
+    first = Pulse.next(10)
+    second = Pulse.next(20)
+    third = Pulse.next(30)
+    Console.print("{first},{second},{third}")
+    Pulse.done()
+    Console.print("done")
+
+fn seeded() -> __Run
+    ? "The first request, before any answer module was asked."
+    __seatedTicking(__fresh(), __tickingStart())
+
+verify __serveIf
+    __serveIf(seeded(), [], 1).pulsed.asked => 1
+    __current(__serveIf(seeded(), [], 1), 1) => 1
+    __serveIf(__Run.update(__serveIf(seeded(), [], 1), now = 4), [], 1).pulsed.asked => 1
+    __current(__serveIf(__Run.update(__serveIf(seeded(), [], 1), now = 4), [], 1), 1) => 1
+    __serveIf(__Run.update(__serveIf(seeded(), [], 1), now = 5), [], 1).pulsed.asked => 1
+    __current(__serveIf(__Run.update(__serveIf(seeded(), [], 1), now = 5), [], 1), 1) => 2

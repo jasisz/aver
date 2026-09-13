@@ -12,6 +12,7 @@ type Receipt
 type DeliverReply
     Now(Blocks.Receipt)
     Later(Wait.Wake)
+    Then(Wait.Wake, Blocks.Receipt)
 
 operation deliver(key: Int, height: Int, block: Bytes) -> Blocks.Receipt
     ? "Hands one block body over; the peer does not wait for validation."
@@ -21,6 +22,7 @@ operation deliver(key: Int, height: Int, block: Bytes) -> Blocks.Receipt
 type BodyReply
     Now(Bytes)
     Later(Wait.Wake)
+    Then(Wait.Wake, Bytes)
 
 operation body(height: Int) -> Bytes
     ? "The validated body at this height."

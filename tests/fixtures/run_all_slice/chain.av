@@ -11,6 +11,7 @@ type Landed
 type NextTargetReply
     Now(Option<Int>)
     Later(Wait.Wake)
+    Then(Wait.Wake, Option<Int>)
 
 operation nextTarget() -> Option<Int>
     ? "Which height is next to connect on the chain now chosen, or None once the chain is complete."
@@ -20,6 +21,7 @@ operation nextTarget() -> Option<Int>
 type CommitReply
     Now(Chain.Landed)
     Later(Wait.Wake)
+    Then(Wait.Wake, Chain.Landed)
 
 operation commit(height: Int, summary: String) -> Chain.Landed
     ? "Records that this height is connected."

@@ -11,6 +11,7 @@ type Tick
 type TickReply
     Now(Clock.Tick)
     Later(Wait.Wake)
+    Then(Wait.Wake, Clock.Tick)
 
 operation tick() -> Clock.Tick
     ? "The next tick, or Closed once every job has landed, carrying what they scored together."

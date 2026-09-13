@@ -12,6 +12,7 @@ type Assignment
 type ClaimReply
     Now(Pool.Assignment)
     Later(Wait.Wake)
+    Then(Wait.Wake, Pool.Assignment)
 
 operation claim() -> Pool.Assignment
     ? "The next handle while there is one, then one landing at a time, then what all four jobs scored once they have landed."
