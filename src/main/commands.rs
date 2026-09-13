@@ -23,6 +23,9 @@ use aver::verify_law::{
 };
 use aver::vm;
 
+#[path = "commands/manifest_usage.rs"]
+mod manifest_usage;
+
 use super::diagnostic;
 use aver::tty_render::render_tty;
 
@@ -941,6 +944,10 @@ fn collect_unused_exposes_findings(units: &[&ReportUnit], module_root: &str) -> 
     }
 
     let mut findings = Vec::new();
+    let bound_usage = manifest_usage::collect(units, module_root, &module_info_by_path);
+    for (path, names) in bound_usage {
+        used_by_target.entry(path).or_default().extend(names);
+    }
     let mut modules = module_info_by_path.into_values().collect::<Vec<_>>();
     modules.sort_by(|left, right| left.file.cmp(&right.file));
 

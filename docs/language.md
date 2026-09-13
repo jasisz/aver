@@ -483,9 +483,11 @@ The tail-call rule: a self tail call is the `Yield` request, and a tail call to 
 
 ## The coordinator
 
-Writing that coordinator by hand is the part nobody enjoys: a slot table, an instance number per request, a wait set, a poll timeout, one dispatch arm per request kind per process, the seam a job result comes back through, and the turn around all of it. So a program does not write it. A program that puts a `[run]` table in its `aver.toml` writes **processes, answer modules and three policies, and nothing else** — no coordinator, no `main`, no seating, no slot table. The compiler generates the rest into the entry module, in the reserved `__` namespace, by the same pass that generates the protocol. The generated names stay callable, so a program that wants its own loop over the protocol still has one; that is a door, not the road.
+Writing that coordinator by hand is the part nobody enjoys: a slot table, an instance number per request, a wait set, a poll timeout, one dispatch arm per request kind per process, the seam a job result comes back through, and the turn around all of it. So a program does not write it. A program that puts a `[run]` table in its `aver.toml` writes **processes and answer modules, with optional custom policies** — no coordinator, no `main`, no seating, no slot table. The compiler generates the rest into the entry module, in the reserved `__` namespace, by the same pass that generates the protocol. The generated names stay callable, so a program that wants its own loop over the protocol still has one; that is a door, not the road.
 
 The worked example is `tests/fixtures/run_all_slice/` (`examples/concurrency/README.md` points at it and says why it lives there): a peer that fetches block bodies, a walk that connects them, an accepting process, a dialling process and a ticker — five processes, three answer modules, one job kind, three policies, and not one line between them.
+
+An empty `[run]` table selects the default policies: seated ids in slot order, every askable id admitted, and stop on the flag or when no process is seated and no job runs. The compiler owns `__View` and `__Pending`; the program declares neither. To customize any policy, supply all four keys below and declare the view and marker types. A subset of `order`, `admit`, `stop`, `view` is `error[run-binding]`, with the recipe to use none or all four. The entry module's `depends` lists what its own source names. The loop loads its answer modules, job kinds, `Wait` and `Work` from the manifest; listing them explicitly remains valid.
 
 **What the program writes.** The manifest says who answers what and asks for the loop:
 
@@ -537,12 +539,13 @@ fn fetchBody(key: Int, height: Int) -> Bool
 
 `Console.print` there is not a request: `Console` is nobody's to answer, so it runs in place, inside the turn, and the generated function that holds it declares it. `fetchBody` is a yielding helper, not a process: the loop seats `peer`, and the three requests `fetchBody` waits on reach the turn as requests of `peer` carrying the helper's state — see "Helpers and nested state" above. A process's own effect list still names what its helpers perform, because the program as written calls them.
 
-The answer modules are ordinary modules with one state each. Every operation of every capability they answer gets one function, threading that state and answering `Now(v)` or `Later(wake)`, and every one of them declares `fresh()`, the state before anything has happened, because that is where the loop starts them. The sum an answer is read through is the capability's to declare, beside the operation and named after it — `Pool.claim` answers through `Pool.ClaimReply`, with `Now` carrying exactly the operation's result and `Later` carrying exactly `Wait.Wake` — and the door holds it to that shape: a capability the program answers whose `<Op>Reply` is missing or of another shape is `error[answer-shape]`, which prints the declaration to paste. A program never writes a `__` name, so no reply sum is generated:
+The answer modules are ordinary modules with one state each. Every operation of every capability they answer gets one function, threading that state and answering `Now(v)`, `Later(wake)` or `Then(wake, v)`, and every one of them declares `fresh()`, the state before anything has happened, because that is where the loop starts them. The sum an answer is read through is the capability's to declare, beside the operation and named after it — `Pool.claim` answers through `Pool.ClaimReply`, with `Now(R)`, `Later(Wait.Wake)` and `Then(Wait.Wake, R)`, where `R` is exactly the operation's result — and the door holds it to that shape: a capability the program answers whose `<Op>Reply` is missing or of another shape is `error[answer-shape]`, which prints the declaration to paste. A program never writes a `__` name, so no reply sum is generated:
 
 ```aver
 type ClaimReply
     Now(Pool.Assignment)
     Later(Wait.Wake)
+    Then(Wait.Wake, Pool.Assignment)
 
 operation claim() -> Pool.Assignment
     ? "Which peer should fetch which height next, or Stop once there is nothing left to fetch."
@@ -559,6 +562,10 @@ fn claim(state: State) -> Tuple<State, Pool.ClaimReply>
         true -> (state, Pool.ClaimReply.Now(Pool.Assignment.Stop))
         false -> claimIdle(state, state.idle)
 ```
+
+`Later` waits for permission to ask again; `Then` waits for permission to reveal an answer already known. A `Later` repeats the original arguments against the answer module's current state; it never resumes an operation instance. Identity belongs in an argument or a handle. If a peer key is rebound to a new connection before an old socket wakes it, the repeated request is answered against the new state by design; false readiness and another `Later` remain ordinary. The name `<Op>Reply` only locates the sum: the door checks its shape against the operation's signature, and the process and saved answer are typed by that signature, not by the name.
+
+The model is `Now(x) = complete(request, x)`, `Later(w) = park(request, w, Retry)`, and `Then(w, x) = park(request, w, Complete(x))`. A `Then` preserves the same request, instance and returned module state as a `Later`; its slot additionally carries the saved result in a generated monomorphic sum. On the first turn that the shared wake gate opens and the policies admit the slot, the loop resumes its process with that result without asking the module again. Custom policies can defer service; default policies admit every askable slot. Saving and revealing a reply introduces no recording event.
 
 A `Later` leaves the **request** where it is, with the same instance number and the same request value, and **keeps the state the module returned**, exactly as a `Now` does. A `Later` is where a module records its own progress: a partial write's offset, a retry count, a deadline of its own. So the rule to remember is not "a `Later` changes nothing" — it is "a `Later` leaves the request unchanged and keeps the module's state".
 
@@ -622,7 +629,9 @@ fn armed(state: State) -> Tuple<State, Clock.TickReply>
         true -> (State.update(state, armed = false, left = state.left - 1), Clock.TickReply.Now(Clock.Tick.Tock))
 ```
 
-Finally the view and the three policies. The view is a record the program declares and the loop fills; the checker holds it to exactly that shape and prints the declaration it wants under `error[view-shape]`:
+When customizing just one policy, the other functions can be the one-liners `fn order(view: View) -> List<Int> = Map.keys(view.pending)`, `fn admit(view: View, id: Int) -> Bool = List.contains(view.askable, id)` and `fn stop(view: View) -> Bool = Bool.or(view.stopping, Bool.and(Map.len(view.pending) == 0, view.jobs == 0))`.
+
+For custom policies, declare the view and the three policy functions. The view is a record the program declares and the loop fills; the checker holds it to exactly that shape and prints the declaration it wants under `error[view-shape]`:
 
 ```aver
 type Pending
@@ -659,7 +668,7 @@ One constructor per process, carrying the instance number of the request that pr
 
 **What the compiler generates.** `AVER_YIELD_DUMP=1 aver check main.av --module-root .` prints the whole of it after the protocol. In outline:
 
-- `__Process` and `__Slot` and `__Run` — the slot table (`Map<Int, __Slot>`), one field per answer module holding its state, the job table, the count of answers that arrived too late, the stop flag as data, the clock reading this turn made, and the next free id. A slot carries its instance number, its request, the wake it is parked on, `due`, the clock reading an `After` falls due at, and `ms`, the delay that `After` asked for.
+- `__Process` and `__Slot` and `__Run` — the slot table (`Map<Int, __Slot>`), one field per answer module holding its state, the job table, the count of answers that arrived too late, the stop flag as data, the clock reading this turn made, and the next free id. A slot carries its instance number, its request, the wake it is parked on, `due`, the clock reading an `After` falls due at, and `ms`, the delay that `After` asked for. Its `answer: Option<__ThenAnswer>` holds a saved reply: one monomorphic constructor per process and operation, carrying the continuation state and the exact operation result.
 - `__seat<P>` / `__seated<P>` — one of every process, seated at its first request under its own slot id.
 - `__current`, `__nextInstance`, `__settle<P>`, `__settledSlot<P>`, `__park`, `__parked`, `__dueOf`, `__msOf` — the two invariants of the table. An answer that carries the current instance replaces that process's one slot and raises its number; an answer that carries an older one changes nothing and is counted. A `Later` parks the request where it stands, keeps the state the module returned, and turns the `ms` of an `After` or an `Either` into the clock reading it falls due at, keeping the `ms` that was asked for beside it.
 - `__view`, `__pendingOf`, `__markerOf`, `__askableOf`, `__askable`, `__askableSlot` — the view the policies read, filled from the run, including the gate: which slots this turn may ask, read off each slot's wake against the keys the wait reported and the clock reading the turn made. A slot parked on a deadline is askable once that reading has reached `due`, and also once that reading has fallen back past the moment the request was parked, so a clock that steps backwards cannot strand it; a slot parked on an item and a deadline at once is askable on whichever of the two comes first.

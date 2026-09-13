@@ -148,6 +148,28 @@ fn saved_answers_share_the_wake_gate_and_do_not_ask_twice() {
 }
 
 #[test]
+fn manifest_exports_are_used_but_an_unrelated_export_is_still_reported() {
+    let dir = repo_root().join("tests/fixtures/run_then");
+    let out = Command::new(aver_bin())
+        .current_dir(&dir)
+        .args(["check", "main.av", "--module-root", "."])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", format_output(&out));
+    let text = stdout_of(&out);
+    let warnings: Vec<_> = text
+        .lines()
+        .filter(|line| line.contains("warning[unused-expose]"))
+        .collect();
+    assert_eq!(
+        warnings,
+        ["warning[unused-expose]: exposes not used by the checked program(s): unused"],
+        "{}",
+        format_output(&out)
+    );
+}
+
+#[test]
 fn the_guide_example_runs_to_the_score() {
     let out = aver(&["run", "main.av", "--module-root", "."]);
     assert!(out.status.success(), "{}", format_output(&out));
