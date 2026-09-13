@@ -857,6 +857,17 @@ fn check_answer_module(
             continue;
         }
         let key = answer_key(module, operation);
+        // The reply sum is the capability's to declare, beside the operation;
+        // an answer function is read through it, so a sum of another shape
+        // is reported here and the signature is not held to a type that is
+        // not there.
+        let reply_faulty = match reply_fault(registry, capability, module, operation) {
+            Some(fault) => {
+                findings.push(fault);
+                true
+            }
+            None => false,
+        };
         let Some((params, result, effects)) = fn_sigs.get(&key) else {
             // A `yield` function is cut into generated pieces before any
             // signature is read, so its own name is gone by the time the gate
@@ -888,6 +899,9 @@ fn check_answer_module(
             )));
         }
         let Some(state) = &state else { continue };
+        if reply_faulty {
+            continue;
+        }
         let mut expected_params = vec![state.clone()];
         expected_params.extend(
             operation
@@ -897,7 +911,7 @@ fn check_answer_module(
         );
         let expected_result = Type::Tuple(vec![
             state.clone(),
-            Type::named(reply_type_name(capability, &operation.name)),
+            Type::named(super::answer::reply_type_name(capability, &operation.name)),
         ]);
         let actual_params = params
             .iter()
@@ -1168,17 +1182,6 @@ fn answer_key(module: &str, operation: &crate::capability::CapabilityOperation) 
     format!("{module}.{}", operation.name)
 }
 
-/// `Pool.claim` is answered with `Pool.__ClaimReply`: one generated sum per
-/// operation, because Aver has no generic user types for a shared `Reply<A>`.
-fn reply_type_name(capability: &str, operation: &str) -> String {
-    let mut chars = operation.chars();
-    let head = match chars.next() {
-        Some(head) => head.to_uppercase().collect::<String>(),
-        None => String::new(),
-    };
-    format!("{capability}.__{head}{}Reply", chars.as_str())
-}
-
 fn render_operation(
     capability: &str,
     operation: &crate::capability::CapabilityOperation,
@@ -1242,6 +1245,57 @@ fn module_has_functions(
     fn_sigs.keys().any(|key| key.starts_with(&prefix))
 }
 
+/// The reply sum `capability` declares for `operation`, held to the shape
+/// the seam reads an answer through, as the `answer-shape` error names it.
+fn reply_fault(
+    registry: &CapabilityRegistry,
+    capability: &str,
+    module: &str,
+    operation: &crate::capability::CapabilityOperation,
+) -> Option<WorkDiagnostic> {
+    let fault = super::answer::reply_sum_fault(registry, capability, operation)?;
+    Some(answer_shape_error(format!(
+        "capability '{capability}' is answered by module '{module}', and {fault}"
+    )))
+}
+
+/// The reply sums of every answered capability, checked against the
+/// registry alone.
+///
+/// This is the part of the answer check that reads no signature, so a door
+/// whose typecheck failed can still say it: the natural way to miss a
+/// declaration is to write the answer function first, `-> Tuple<S,
+/// Clock.TickReply>`, and that program has an unknown type before it has a
+/// gate. The full [`gate`] reports the same faults through the same words,
+/// so a door uses this only in place of it, never beside it.
+pub fn reply_sums(
+    registry: &CapabilityRegistry,
+    manifest: Option<&crate::config::ProviderPackageManifest>,
+    entry_module: Option<&str>,
+) -> Vec<WorkDiagnostic> {
+    let mut findings = Vec::new();
+    let answer_bindings = manifest
+        .map(|manifest| manifest.answer_bindings.as_slice())
+        .unwrap_or(&[]);
+    for binding in answer_bindings {
+        if entry_module == Some(binding.capability.as_str())
+            || compiler_shipped_reason(&binding.capability).is_some()
+            || registry.contract(&binding.capability).is_none()
+        {
+            continue;
+        }
+        for operation in operations_of(registry, &binding.capability) {
+            findings.extend(reply_fault(
+                registry,
+                &binding.capability,
+                &binding.module,
+                operation,
+            ));
+        }
+    }
+    findings
+}
+
 fn answer_binding_error(message: String) -> WorkDiagnostic {
     WorkDiagnostic::new(ANSWER_BINDING, message)
 }
@@ -1264,17 +1318,25 @@ module Pool
     kind = capability
     semantics = effectful
     intent = \"Which height a peer should fetch next.\"
-    exposes [Assignment, claim, gone]
+    exposes [Assignment, ClaimReply, GoneReply, claim, gone]
 
 type Assignment
     Height(Int)
     Idle
     Stop
 
+type ClaimReply
+    Now(Pool.Assignment)
+    Later(Wait.Wake)
+
 operation claim(key: Int) -> Pool.Assignment
     ? \"The next height this peer should fetch.\"
     oracle = generative
     replay = recorded
+
+type GoneReply
+    Now(Unit)
+    Later(Wait.Wake)
 
 operation gone(key: Int) -> Unit
     ? \"This peer is finished; free whatever it held.\"
@@ -1318,19 +1380,13 @@ operation take(job: Work.Job) -> Result<Option<Int>, String>
 
     /// The answer functions a well-shaped `Ledger` declares, as the type
     /// checker hands them over: types written in the module's own scope.
-    ///
-    /// No fixture can reach this path yet, because a reply sum is generated
-    /// into the capability module by the next leg and a hand-written name
-    /// cannot begin with `__`. The accept path is checked here instead, so
-    /// the expected reply name this leg computes is pinned before the leg
-    /// that emits it.
     fn ledger_sigs() -> HashMap<String, FnSignature> {
         let mut sigs = HashMap::new();
         sigs.insert(
             "Ledger.claim".to_string(),
             (
                 vec![state(), Type::Int],
-                Type::Tuple(vec![state(), Type::named("Pool.__ClaimReply".to_string())]),
+                Type::Tuple(vec![state(), Type::named("Pool.ClaimReply".to_string())]),
                 Vec::new(),
             ),
         );
@@ -1338,7 +1394,7 @@ operation take(job: Work.Job) -> Result<Option<Int>, String>
             "Ledger.gone".to_string(),
             (
                 vec![state(), Type::Int],
-                Type::Tuple(vec![state(), Type::named("Pool.__GoneReply".to_string())]),
+                Type::Tuple(vec![state(), Type::named("Pool.GoneReply".to_string())]),
                 Vec::new(),
             ),
         );
@@ -1366,12 +1422,58 @@ operation take(job: Work.Job) -> Result<Option<Int>, String>
     }
 
     #[test]
-    fn the_expected_reply_name_uppercases_only_the_first_letter() {
-        assert_eq!(reply_type_name("Pool", "claim"), "Pool.__ClaimReply");
-        assert_eq!(
-            reply_type_name("Chain", "nextTarget"),
-            "Chain.__NextTargetReply"
+    fn a_capability_without_its_reply_sum_is_an_answer_shape_error() {
+        let pool = POOL.replace(
+            "type GoneReply\n    Now(Unit)\n    Later(Wait.Wake)\n\n",
+            "",
         );
+        let registry = registry_of(&[("Pool", pool.as_str())]);
+        let (shapes, findings) =
+            check_answers(&registry, &[answer_binding()], &ledger_sigs(), None);
+        assert_eq!(shapes.len(), 1, "the state is still read: {findings:?}");
+        assert_eq!(findings.len(), 1, "unexpected findings: {findings:?}");
+        assert_eq!(findings[0].slug, ANSWER_SHAPE);
+        assert!(
+            findings[0].message.starts_with(
+                "capability 'Pool' is answered by module 'Ledger', and it declares no type 'Pool.GoneReply' beside operation 'gone'"
+            ),
+            "{}",
+            findings[0].message
+        );
+        assert!(
+            findings[0]
+                .message
+                .ends_with("    type GoneReply\n        Now(Unit)\n        Later(Wait.Wake)"),
+            "{}",
+            findings[0].message
+        );
+    }
+
+    #[test]
+    fn the_reply_sums_are_checked_without_a_signature() {
+        let pool = POOL.replace(
+            "type GoneReply\n    Now(Unit)\n    Later(Wait.Wake)\n\n",
+            "",
+        );
+        let registry = registry_of(&[("Pool", pool.as_str())]);
+        let manifest = crate::config::ProviderPackageManifest {
+            schema: crate::config::PROVIDER_MANIFEST_SCHEMA,
+            bindings: Vec::new(),
+            work_bindings: Vec::new(),
+            answer_bindings: vec![answer_binding()],
+        };
+        let findings = reply_sums(&registry, Some(&manifest), None);
+        assert_eq!(findings.len(), 1, "unexpected findings: {findings:?}");
+        let (_, gate_findings) =
+            check_answers(&registry, &[answer_binding()], &ledger_sigs(), None);
+        assert_eq!(
+            findings[0].message, gate_findings[0].message,
+            "the door without a signature says what the gate says"
+        );
+        // The capability module checked on its own answers nothing yet.
+        assert!(reply_sums(&registry, Some(&manifest), Some("Pool")).is_empty());
+        let registry = registry_of(&[("Pool", POOL)]);
+        assert!(reply_sums(&registry, Some(&manifest), None).is_empty());
     }
 
     #[test]
