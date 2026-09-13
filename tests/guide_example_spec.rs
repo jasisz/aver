@@ -88,6 +88,23 @@ fn the_guide_example_runs_to_the_score() {
     );
 }
 
+/// The example runs on wasm-gc to the same score. Its `tick` matches a tuple
+/// of the task queue and the running count against `([], 0)`, a shape the
+/// wasm-gc backend used to leave a trap stub, so the program stopped at the
+/// first tick instead of scoring.
+#[cfg(feature = "wasm")]
+#[test]
+fn the_guide_example_runs_to_the_score_on_wasm_gc() {
+    let out = aver(&["run", "main.av", "--module-root", ".", "--wasm-gc"]);
+    assert!(out.status.success(), "{}", format_output(&out));
+    assert_eq!(
+        stdout_of(&out).trim(),
+        "scored 60",
+        "{}",
+        format_output(&out)
+    );
+}
+
 #[test]
 fn the_guide_example_is_formatted() {
     let out = aver(&["format", ".", "--check"]);

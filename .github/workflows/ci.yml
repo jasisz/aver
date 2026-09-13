@@ -273,6 +273,7 @@ jobs:
             cert_verify_spec \
             cross_backend_proptest \
             cross_backend_stress \
+            guide_example_spec \
             shadowing_ban \
             verify_runner_regressions \
             vm_self_qualified_type \
