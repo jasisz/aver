@@ -1,0 +1,22 @@
+[providers]
+schema = 1
+
+[[providers.bindings]]
+capability = "Clock"
+answer = "Clocked"
+
+[[providers.bindings]]
+capability = "Scoring"
+work = "Clocked.score"
+task = "Clocked.nextTask"
+started = "Clocked.taskStarted"
+landed = "Clocked.scored"
+
+[work]
+max-jobs = 2
+
+[run]
+order = "Node.order"
+admit = "Node.admit"
+stop = "Node.stop"
+view = "Node.View"

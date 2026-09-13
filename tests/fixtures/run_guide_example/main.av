@@ -1,0 +1,34 @@
+module Node
+    intent = "One process, one answer module, one job kind and three policies; the loop between them is generated."
+    depends [Clock, Clocked, Scoring, Wait, Work]
+    effects [Clock.tick, Console.print, yield]
+
+type Pending
+    Ticker(Int, Wait.Wake)
+
+record View
+    pending: Map<Int, Pending>
+    ready: List<Int>
+    askable: List<Int>
+    jobs: Int
+    room: Int
+    stopping: Bool
+
+fn order(view: View) -> List<Int>
+    ? "Every seated process, in slot order."
+    Map.keys(view.pending)
+
+fn admit(view: View, id: Int) -> Bool
+    ? "Everything seated is served."
+    Map.has(view.pending, id)
+
+fn stop(view: View) -> Bool
+    ? "The run ends when the process asked us to."
+    view.stopping
+
+fn ticker() -> Unit
+    ? "Waits on the clock until it closes, then says what the jobs scored together."
+    ! [Clock.tick, Console.print, yield]
+    match Clock.tick()
+        Clock.Tick.Tock -> ticker()
+        Clock.Tick.Closed(total) -> Console.print("scored {total}")
