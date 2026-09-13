@@ -26,7 +26,3 @@ landed = "Pooled.betaLanded"
 max-jobs = 3
 
 [run]
-order = "Node.order"
-admit = "Node.admit"
-stop = "Node.stop"
-view = "Node.View"

@@ -183,9 +183,14 @@ pub(super) fn generate(
             return Err(errors);
         }
     };
-    errors.extend(check_policies(plan, fn_sigs, line));
-    let (marker, view_errors) = check_view(items, protocols, plan, line);
-    errors.extend(view_errors);
+    let marker = if plan.policies.defaults {
+        "__Pending".to_string()
+    } else {
+        errors.extend(check_policies(plan, fn_sigs, line));
+        let (marker, view_errors) = check_view(items, protocols, plan, line);
+        errors.extend(view_errors);
+        marker
+    };
     if !errors.is_empty() {
         return Err(errors);
     }
@@ -692,6 +697,18 @@ fn write_loop(
     let view = plan.policies.view_name().to_string();
     let has_jobs = !jobs.is_empty();
 
+    if plan.policies.defaults {
+        out.push_str(
+            &expected_view("__View", protocols)
+                .replace("Pending", "__Pending")
+                .lines()
+                .map(|line| line.strip_prefix("    ").unwrap_or(line))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
+        out.push_str("\n\nfn __order(view: __View) -> List<Int>\n    ? \"Seated ids in slot order.\"\n    Map.keys(view.pending)\n\nfn __admit(view: __View, id: Int) -> Bool\n    ? \"Every askable id is admitted.\"\n    List.contains(view.askable, id)\n\nfn __stop(view: __View) -> Bool\n    ? \"Stop on the flag, or once no process is seated and no job runs.\"\n    Bool.or(view.stopping, Bool.and(Map.len(view.pending) == 0, view.jobs == 0))\n\n");
+    }
+
     // ── The table ──────────────────────────────────────────────────
     out.push_str("type __Process\n");
     for protocol in protocols {
@@ -941,10 +958,17 @@ fn write_loop(
         effects(serve_effects),
         bare(&plan.policies.admit)
     ));
+    let stopping = if plan.policies.defaults {
+        "__stop(__view(run, []))".to_string()
+    } else {
+        format!(
+            "Bool.or({}(__view(run, [])), Map.len(run.slots) == 0)",
+            bare(&plan.policies.stop)
+        )
+    };
     out.push_str(&format!(
-        "\nfn __runAll(run: __Run) -> Result<__Run, String>\n    ? \"Turns until the policy says stop or nothing is seated.\"\n{}    match Bool.or({}(__view(run, [])), Map.len(run.slots) == 0)\n        true -> Result.Ok(run)\n        false -> __runAll(__turn(run)?)\n",
-        effects(turn_effects),
-        bare(&plan.policies.stop)
+        "\nfn __runAll(run: __Run) -> Result<__Run, String>\n    ? \"Turns until the run's stopping rule is satisfied.\"\n{}    match {stopping}\n        true -> Result.Ok(run)\n        false -> __runAll(__turn(run)?)\n",
+        effects(turn_effects)
     ));
     let seated = protocols
         .iter()
@@ -974,6 +998,9 @@ fn write_loop(
 
     // ── The invariants ─────────────────────────────────────────────
     out.push_str(&write_laws(protocols, jobs));
+    if plan.policies.defaults {
+        out.push_str("\nverify __order law seatedIdsInSlotOrder\n    given view: __View = [__view(__fresh(), []), __view(__sampleRun(), [])]\n    __order(view) => Map.keys(view.pending)\n\nverify __admit law everyAskableIdIsAdmitted\n    given view: __View = [__view(__fresh(), []), __view(__sampleRun(), [])]\n    given id: Int = [0, 1, 2]\n    __admit(view, id) => List.contains(view.askable, id)\n\nverify __stop law runningJobsKeepAnEmptyRunAlive\n    given jobs: Int = [1, 2, 7]\n    when jobs > 0\n    __stop(__View(pending = {}, ready = [], askable = [], jobs = jobs, room = 0, stopping = false)) => false\n");
+    }
     out
 }
 

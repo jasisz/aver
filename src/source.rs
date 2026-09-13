@@ -738,6 +738,9 @@ pub fn load_program_with_cache(
     cache: &mut ProgramLoadCache,
 ) -> Result<Program, LoadError> {
     let mut walk = Walk::new(module_root, mode, cache);
+    if let Some(module) = visibility::module_decl(entry_items) {
+        walk.marked = walk.marked.with_run_entry(&module.name);
+    }
     walk.follow_edges(entry_path, entry_items)?;
     let marked = walk.marked.clone();
     let mut modules = walk.modules;
