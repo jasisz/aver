@@ -6,10 +6,10 @@ module Pooled
 record State
     left: Int
 
-fn claim(state: State, peer: Int) -> Tuple<State, Pool.__ClaimReply>
+fn claim(state: State, peer: Int) -> Tuple<State, Pool.ClaimReply>
     ? "Hands the peer its own number back as a handle."
-    (state, Pool.__ClaimReply.Now(peer))
+    (state, Pool.ClaimReply.Now(peer))
 
-fn release(state: State, handle: Int) -> Tuple<State, Pool.__ReleaseReply>
+fn release(state: State, handle: Int) -> Tuple<State, Pool.ReleaseReply>
     ? "Takes a handle back and says it was one this state had handed out."
-    (state, Pool.__ReleaseReply.Now(true))
+    (state, Pool.ReleaseReply.Now(true))

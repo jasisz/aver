@@ -2,11 +2,15 @@ module Clock
     kind = capability
     semantics = effectful
     intent = "The periodic tick the ticker waits on."
-    exposes [Tick, tick]
+    exposes [Tick, TickReply, tick]
 
 type Tick
     Tock
     Closed(Int)
+
+type TickReply
+    Now(Clock.Tick)
+    Later(Wait.Wake)
 
 operation tick() -> Clock.Tick
     ? "The next tick, or Closed once the clock is done ticking, carrying how many times it was asked for one."

@@ -1,0 +1,17 @@
+module Ledger
+    intent = "An answer module over a ClaimReply whose Now carries an Int where claim answers an Assignment."
+    depends [Pool]
+    exposes [State, claim, gone]
+    effects []
+
+record State
+    free: List<Int>
+    stopping: Bool
+
+fn claim(state: State, key: Int) -> Tuple<State, Pool.ClaimReply>
+    ? "The next height for this peer."
+    (state, Pool.ClaimReply.Now(0))
+
+fn gone(state: State, key: Int) -> Tuple<State, Pool.GoneReply>
+    ? "A peer that left gives its height back."
+    (state, Pool.GoneReply.Now(Unit))

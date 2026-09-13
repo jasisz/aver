@@ -2,11 +2,15 @@ module Chain
     kind = capability
     semantics = effectful
     intent = "Chain selection: the claim on the height a walk is at."
-    exposes [Landed, claim]
+    exposes [Landed, ClaimReply, claim]
 
 type Landed
     Connected
     Rejected(String)
+
+type ClaimReply
+    Now(Chain.Landed)
+    Later(Wait.Wake)
 
 operation claim(height: Int) -> Chain.Landed
     ? "Claims the right to connect this height."

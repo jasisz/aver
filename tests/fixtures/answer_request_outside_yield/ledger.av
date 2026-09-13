@@ -7,9 +7,9 @@ module Ledger
 record State
     tip: Int
 
-fn claim(state: State, key: Int) -> Tuple<State, Pool.__ClaimReply>
+fn claim(state: State, key: Int) -> Tuple<State, Pool.ClaimReply>
     ? "Hands this peer the height after the tip."
-    (state, Pool.__ClaimReply.Now(Pool.Assignment.Height(state.tip + key)))
+    (state, Pool.ClaimReply.Now(Pool.Assignment.Height(state.tip + key)))
 
 verify claim
-    claim(State(tip = 1), 2) => (State(tip = 1), Pool.__ClaimReply.Now(Pool.Assignment.Height(3)))
+    claim(State(tip = 1), 2) => (State(tip = 1), Pool.ClaimReply.Now(Pool.Assignment.Height(3)))

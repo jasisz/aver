@@ -7,14 +7,14 @@
 //! `aver verify` and `aver compile` agree about what a binding means before
 //! anything is lowered against it.
 //!
-//! There is no passing answer module here yet. An answer function returns
-//! `Tuple<S, Cap.__OpReply>`, and a user-written type name cannot begin with
-//! `__`; the reply sums are generated into the capability module by the
-//! lowering, which is the next leg. Until then every fixture here is a
-//! refusal, and the refusal is the rule. The accept path — the expected
-//! parameters, the expected reply name, and a well-typed job seam over them —
-//! is checked in `src/capability/work.rs` against a synthetic signature map,
-//! so this leg and the one that generates the reply sums agree on the name.
+//! An answer function returns `Tuple<S, Cap.<Op>Reply>`, and `Cap.<Op>Reply`
+//! is a sum the program declares in the capability module beside the
+//! operation: `Now` carrying the operation's result, `Later` carrying
+//! `Wait.Wake`, nothing else. Nothing is generated into a capability module,
+//! and the `answer_shape_reply_*` fixtures hold the door to that declaration.
+//! The accept path — the expected parameters, the expected reply name, and a
+//! well-typed job seam over them — is also checked in
+//! `src/capability/work.rs` against a synthetic signature map.
 
 #[path = "support/aver_cmd.rs"]
 mod aver_cmd;
@@ -104,11 +104,100 @@ fn every_operation_of_an_answered_capability_needs_an_answer_function() {
 }
 
 #[test]
-fn an_answer_function_answers_with_the_operations_generated_reply() {
+fn an_answer_function_answers_with_the_operations_declared_reply() {
     assert_reports(
         "answer_shape_wrong_reply",
         &["check"],
-        "capability 'Pool' declares operation 'claim(key: Int) -> Pool.Assignment', so 'Ledger.claim' must be (Ledger.State, Int) -> Tuple<Ledger.State, Pool.__ClaimReply>; it is (Ledger.State, Int) -> Pool.Assignment",
+        "capability 'Pool' declares operation 'claim(key: Int) -> Pool.Assignment', so 'Ledger.claim' must be (Ledger.State, Int) -> Tuple<Ledger.State, Pool.ClaimReply>; it is (Ledger.State, Int) -> Pool.Assignment",
+    );
+}
+
+// ── answer-shape: the reply sum the capability declares ─────────────────
+
+/// The declaration the door prints, in the capability's own names, indented
+/// the way `view-shape` prints the view it wants.
+const GONE_REPLY: &str = "    type GoneReply\n        Now(Unit)\n        Later(Wait.Wake)";
+
+#[test]
+fn a_capability_the_program_answers_declares_the_reply_sum_of_every_operation() {
+    let expected = "error[answer-shape]: capability 'Pool' is answered by module 'Ledger', and it declares no type 'Pool.GoneReply' beside operation 'gone'; an answer to 'Pool.gone' is read through that sum, which is exactly:\n";
+    for door in ["check", "run", "verify"] {
+        assert_reports("answer_shape_reply_missing", &[door], expected);
+        assert_reports("answer_shape_reply_missing", &[door], GONE_REPLY);
+    }
+}
+
+/// The natural way to miss the declaration: the answer function is written
+/// first, names `Pool.GoneReply` in its signature, and the program has an
+/// unknown type before it has a gate. The declaration to paste is printed
+/// on every door all the same, from the capability registry alone.
+#[test]
+fn an_answer_function_naming_an_undeclared_reply_sum_is_told_the_declaration() {
+    let expected = "error[answer-shape]: capability 'Pool' is answered by module 'Ledger', and it declares no type 'Pool.GoneReply' beside operation 'gone'";
+    for door in ["check", "run", "verify"] {
+        let out = aver("answer_shape_reply_named", &[door]);
+        let text = combined(&out);
+        assert!(!out.status.success(), "{}", format_output(&out));
+        assert!(
+            text.contains(expected) && text.contains(GONE_REPLY),
+            "expected the declaration on `{door}` in:\n{}",
+            format_output(&out)
+        );
+    }
+    // `check` reports every module through source analysis, so the unknown
+    // type stands beside the declaration; `run` and `verify` stop at the
+    // door and print the declaration alone.
+    let out = aver("answer_shape_reply_named", &["check"]);
+    assert!(
+        combined(&out).contains("Unknown type 'Pool.GoneReply'"),
+        "{}",
+        format_output(&out)
+    );
+}
+
+#[test]
+fn the_now_of_a_reply_sum_carries_exactly_the_operations_result() {
+    assert_reports(
+        "answer_shape_reply_payload",
+        &["check"],
+        "error[answer-shape]: capability 'Pool' is answered by module 'Ledger', and constructor 'Pool.ClaimReply.Now' carries (Int) where 'Pool.claim' answers Pool.Assignment; an answer to 'Pool.claim' is read through that sum, which is exactly:\n    type ClaimReply\n        Now(Pool.Assignment)\n        Later(Wait.Wake)",
+    );
+}
+
+#[test]
+fn a_reply_sum_has_no_third_constructor() {
+    assert_reports(
+        "answer_shape_reply_third",
+        &["check"],
+        "error[answer-shape]: capability 'Pool' is answered by module 'Ledger', and sum 'Pool.ClaimReply' declares constructor 'Never', which is neither Now nor Later",
+    );
+}
+
+#[test]
+fn the_later_of_a_reply_sum_carries_the_wake() {
+    assert_reports(
+        "answer_shape_reply_wake",
+        &["check"],
+        "error[answer-shape]: capability 'Pool' is answered by module 'Ledger', and constructor 'Pool.ClaimReply.Later' carries (Int) where a Later carries the wake, Wait.Wake",
+    );
+}
+
+/// A reply sum is only held to its shape on a capability an `answer` binding
+/// names: a host-provided capability has no answer module, so a `<Op>Reply`
+/// beside its operation is an ordinary type of the module.
+#[test]
+fn a_reply_sum_on_a_capability_nothing_answers_is_an_ordinary_type() {
+    let out = aver("answer_shape_reply_unanswered", &["check"]);
+    let text = combined(&out);
+    assert!(
+        out.status.success() && !text.contains("error["),
+        "{}",
+        format_output(&out)
+    );
+    assert!(
+        text.contains("Checked 4 module(s): 4 passed"),
+        "{}",
+        format_output(&out)
     );
 }
 
@@ -359,11 +448,9 @@ fn the_job_seam_has_three_ends() {
     );
 }
 
-/// `Wait` depends on `Tcp`, so generating reply sums into `Tcp` and giving it
-/// `depends [Wait]` would close a loop and the program would be refused for a
-/// circular import rather than for the binding that caused it. Nothing is
-/// generated into a capability the compiler ships, so every door reports the
-/// binding itself and nothing else.
+/// A capability the compiler ships cannot be answered, and the door says so
+/// before it looks for reply sums: `Tcp` declares no `ReadReply`, and no door
+/// asks it to, so every door reports the binding itself and nothing else.
 #[test]
 fn answering_a_shipped_capability_reachable_from_wait_reports_the_binding_only() {
     let expected = "error[answer-binding]: aver.toml: [[providers.bindings]] index 0 binds capability 'Tcp' with `answer`";
@@ -372,8 +459,8 @@ fn answering_a_shipped_capability_reachable_from_wait_reports_the_binding_only()
         let out = aver("answer_shape_reserved_reachable", &[door]);
         let text = combined(&out);
         assert!(
-            !text.contains("Circular import") && !text.contains("__ReadReply"),
-            "{door} reports the binding, not what generating into Tcp would have caused:\n{}",
+            !text.contains("Circular import") && !text.contains("ReadReply"),
+            "{door} reports the binding, not a reply sum Tcp was never asked for:\n{}",
             format_output(&out)
         );
     }

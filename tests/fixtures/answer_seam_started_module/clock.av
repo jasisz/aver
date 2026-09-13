@@ -2,7 +2,11 @@ module Clock
     kind = capability
     semantics = effectful
     intent = "One tick at a time."
-    exposes [tick]
+    exposes [TickReply, tick]
+
+type TickReply
+    Now(Unit)
+    Later(Wait.Wake)
 
 operation tick() -> Unit
     ? "One tick."

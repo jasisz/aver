@@ -2,17 +2,25 @@ module Pool
     kind = capability
     semantics = effectful
     intent = "Which height a peer should fetch next."
-    exposes [Assignment, claim, gone]
+    exposes [Assignment, ClaimReply, GoneReply, claim, gone]
 
 type Assignment
     Height(Int)
     Idle
     Stop
 
+type ClaimReply
+    Now(Pool.Assignment)
+    Later(Wait.Wake)
+
 operation claim(key: Int) -> Pool.Assignment
     ? "The next height this peer should fetch, or Idle, or Stop."
     oracle = generative
     replay = recorded
+
+type GoneReply
+    Now(Unit)
+    Later(Wait.Wake)
 
 operation gone(key: Int) -> Unit
     ? "This peer is finished; free whatever it held."

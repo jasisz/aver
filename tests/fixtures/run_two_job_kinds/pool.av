@@ -2,12 +2,16 @@ module Pool
     kind = capability
     semantics = effectful
     intent = "Fixture capability: hands out Int handles; the program answers it. Once the handles are gone it reports each landing — the kind and what it scored — and, when every job has landed, what they scored together."
-    exposes [Assignment, claim]
+    exposes [Assignment, ClaimReply, claim]
 
 type Assignment
     Handle(Int)
     Landed(String, Int)
     Finished(Int)
+
+type ClaimReply
+    Now(Pool.Assignment)
+    Later(Wait.Wake)
 
 operation claim() -> Pool.Assignment
     ? "The next handle while there is one, then one landing at a time, then what all four jobs scored once they have landed."
