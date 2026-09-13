@@ -1,6 +1,6 @@
 module Node
     intent = "Fixture: two job kinds under one generated loop with max-jobs = 3. Four tasks share the table and the limit; the process prints one line per landing, kind and score, and the run ends when the pool reports what they scored together — which is the proof each of them started once and landed once."
-    depends [Process, Wait, Work, Pool, Alpha, Beta, Pooled]
+    depends [Pool]
     effects [Console.print, Pool.claim, yield]
 
 fn looping() -> Unit

@@ -133,6 +133,8 @@ pub(super) fn run_vm_replay(
     items: &mut Vec<aver::ast::TopLevel>,
     check_args: bool,
 ) -> Result<BackendReplayOutcome, String> {
+    let marked = aver::config::MarkedCapabilities::for_project_dir(Some(replay_module_root));
+    marked.add_run_dependencies(items);
     // Preload dep modules so the entry SymbolTable knows about every
     // cross-module call — same shape as `cmd_run_vm`. Without this
     // the VM compiler's per-dep resolver would re-derive identities
@@ -165,7 +167,7 @@ pub(super) fn run_vm_replay(
             // What the program answers itself, and whether its loop is
             // generated, are facts of its manifest: a replay that read them
             // differently from the run would be replaying another program.
-            marked: aver::config::MarkedCapabilities::for_project_dir(Some(replay_module_root)),
+            marked,
             ..Default::default()
         },
     );

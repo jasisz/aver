@@ -496,3 +496,49 @@ fn an_answered_operation_outside_a_process_is_refused_at_the_run_door() {
         "error[intercept-outside-yield]: 'Pool.claim' is answered by this program",
     );
 }
+
+#[test]
+fn run_imports_come_from_the_manifest_and_explicit_imports_still_work() {
+    let dir = temp_project("run-imports", "[run]\n");
+    for file in std::fs::read_dir(fixture("run_guide_example")).unwrap() {
+        let file = file.unwrap();
+        std::fs::copy(file.path(), dir.join(file.file_name())).unwrap();
+    }
+    // Keep the copied guide alone: the temporary helper's seed modules are
+    // deliberately not imported by its entry.
+    let out = check_project(&dir);
+    assert!(out.status.success(), "{}", format_output(&out));
+    let main = dir.join("main.av");
+    let source = std::fs::read_to_string(&main).unwrap();
+    std::fs::write(
+        &main,
+        source.replace(
+            "depends [Clock]",
+            "depends [Clock, Clocked, Scoring, Wait, Work]",
+        ),
+    )
+    .unwrap();
+    let out = check_project(&dir);
+    assert!(out.status.success(), "{}", format_output(&out));
+    assert!(
+        !combined(&out).contains("warning[unused"),
+        "{}",
+        format_output(&out)
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn a_partial_run_table_prints_the_none_or_all_recipe() {
+    assert_manifest_rejects(
+        "partial-run",
+        "[run]\norder = \"Node.order\"\n",
+        "omit all four keys",
+    );
+    assert_manifest_rejects(
+        "partial-run-view",
+        "[run]\nview = \"Node.View\"\n",
+        "name all four for custom policies",
+    );
+}
+

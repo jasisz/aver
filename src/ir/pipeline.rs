@@ -935,6 +935,7 @@ pub fn front(items: &mut Vec<TopLevel>, cfg: FrontConfig<'_, '_>) -> FrontResult
         .map(|module| module.name.as_str())
         .unwrap_or("<entry>");
     let marked = marked.with_run_entry(entry);
+    marked.add_run_dependencies(items);
     let mut result = FrontResult {
         pass_diagnostics: Vec::new(),
         yield_lowering: None,

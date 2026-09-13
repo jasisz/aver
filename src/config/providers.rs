@@ -280,6 +280,55 @@ impl MarkedCapabilities {
         facts
     }
 
+    /// Imports needed by a generated loop, independent of the entry's
+    /// source imports. Checking a bound supporting module on its own does
+    /// not turn that module into the coordinator's entry.
+    pub fn run_dependencies(&self, module: &str) -> Vec<String> {
+        let Some(plan) = &self.run else {
+            return Vec::new();
+        };
+        if !plan.policies.module().is_empty() && plan.policies.module() != module {
+            return Vec::new();
+        }
+        let mut names = vec!["Wait".to_string(), "Work".to_string()];
+        for (capability, answer) in &plan.answers {
+            names.extend([capability.clone(), answer.clone()]);
+        }
+        for job in &plan.jobs {
+            names.push(job.capability.clone());
+            for function in [&job.task, &job.started, &job.landed] {
+                if let Some((owner, _)) = function.rsplit_once('.') {
+                    names.push(owner.to_string());
+                }
+            }
+        }
+        if names.iter().any(|name| name == module) {
+            return Vec::new();
+        }
+        names.sort();
+        names.dedup();
+        names
+    }
+
+    /// Add generated imports only to the compiler's AST; the written module
+    /// continues to describe the dependencies of its own source.
+    pub fn add_run_dependencies(&self, items: &mut [crate::ast::TopLevel]) {
+        if self.run.as_ref().is_some_and(|plan| plan.policies.defaults)
+            && !crate::yield_lowering::has_yield_fns(items)
+        {
+            return;
+        }
+        for item in items {
+            if let crate::ast::TopLevel::Module(module) = item {
+                for name in self.run_dependencies(&module.name) {
+                    if !module.depends.contains(&name) {
+                        module.depends.push(name);
+                    }
+                }
+            }
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         self.names.is_empty()
     }

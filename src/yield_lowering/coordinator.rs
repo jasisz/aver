@@ -21,7 +21,7 @@
 //! The generated names stay referenceable, so a program that wants to write
 //! its own loop over the protocol still can. That is a door, not the road.
 
-use crate::ast::{Module, TopLevel, Type, TypeDef};
+use crate::ast::{TopLevel, Type, TypeDef};
 use crate::config::RunPlan;
 use crate::types::checker::TypeError;
 
@@ -159,9 +159,6 @@ pub(super) fn generate(
             )));
         }
     }
-    if let Some(module) = module {
-        errors.extend(check_declared_depends(module, plan, line));
-    }
     if fn_sigs.contains_key("main") {
         errors.push(error(line, format!(
             "aver.toml declares [run], so the entry point of this program is generated; module '{}' also writes its own 'main'. Remove it, or remove [run] and drive the protocol by hand",
@@ -238,33 +235,6 @@ fn parse_generated(source: &str) -> Result<Vec<TopLevel>, String> {
     crate::parser::Parser::new_compiler_generated(tokens)
         .parse()
         .map_err(|error| error.to_string())
-}
-
-/// Every module the generated loop names has to be a module this one already
-/// depends on: the loop is spliced in after the dependency walk has run, so
-/// an edge it added itself would name a module nothing loaded.
-fn check_declared_depends(module: &Module, plan: &RunPlan, line: usize) -> Vec<TypeError> {
-    let mut wanted: Vec<String> = vec![crate::capability::work::WAIT_MODULE.to_string()];
-    if !plan.jobs.is_empty() {
-        wanted.push(crate::capability::work::WORK_MODULE.to_string());
-    }
-    for (_, answer) in &plan.answers {
-        wanted.push(answer.clone());
-    }
-    for job in &plan.jobs {
-        wanted.push(job.capability.clone());
-    }
-    let mut errors = Vec::new();
-    for name in wanted {
-        if module.depends.iter().any(|dep| dep == &name) {
-            continue;
-        }
-        errors.push(error(line, format!(
-            "aver.toml declares [run], so the loop generated into module '{}' names '{name}'; add '{name}' to its `depends`",
-            module.name
-        )));
-    }
-    errors
 }
 
 /// One entry per module the manifest answers a capability with: which state

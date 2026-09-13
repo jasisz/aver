@@ -1,6 +1,6 @@
 module Node
     intent = "One process, one answer module and one job kind; the loop between them is generated."
-    depends [Clock, Clocked, Scoring, Wait, Work]
+    depends [Clock]
     effects [Clock.tick, Console.print, yield]
 
 fn ticker() -> Unit
