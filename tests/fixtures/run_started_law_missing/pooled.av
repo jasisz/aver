@@ -14,11 +14,11 @@ fn fresh() -> State
     ? "One handle to give out, one validation task to run, nothing scored and nothing rejected."
     State(left = 1, pending = [1], scored = 0, rejected = [])
 
-fn claim(state: State) -> Tuple<State, Pool.__ClaimReply>
+fn claim(state: State) -> Tuple<State, Pool.ClaimReply>
     ? "One handle, until there are none."
     match state.left == 0
-        true -> (state, Pool.__ClaimReply.Now(Option.None))
-        false -> (State.update(state, left = state.left - 1), Pool.__ClaimReply.Now(Option.Some(state.left)))
+        true -> (state, Pool.ClaimReply.Now(Option.None))
+        false -> (State.update(state, left = state.left - 1), Pool.ClaimReply.Now(Option.Some(state.left)))
 
 fn score(task: Int) -> Int
     ? "What one job computes off the turn."
@@ -53,7 +53,7 @@ fn landed(state: State, outcome: Result<Int, String>) -> State
         Result.Ok(points) -> State.update(state, scored = state.scored + points)
 
 verify claim
-    claim(fresh()) => (State.update(fresh(), left = 0), Pool.__ClaimReply.Now(Option.Some(1)))
+    claim(fresh()) => (State.update(fresh(), left = 0), Pool.ClaimReply.Now(Option.Some(1)))
 
 verify score
     score(1) => 2

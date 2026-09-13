@@ -1,0 +1,9 @@
+module Main
+    depends [Chain, Ledger, Pool]
+    intent = "A program that answers Pool, and declares a reply sum on Chain, which nothing answers."
+    effects [Console]
+
+fn main() -> Unit
+    ? "Reports that the program is wired."
+    ! [Console.print]
+    Console.print("answers ready")

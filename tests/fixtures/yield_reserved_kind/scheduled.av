@@ -6,6 +6,6 @@ module Scheduled
 record State
     tick: Int
 
-fn yield(state: State, slot: Int) -> Tuple<State, Sched.__YieldReply>
+fn yield(state: State, slot: Int) -> Tuple<State, Sched.YieldReply>
     ? "Answers with the tick the process resumes at."
-    (state, Sched.__YieldReply.Now(state.tick))
+    (state, Sched.YieldReply.Now(state.tick))

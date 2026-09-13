@@ -2,11 +2,15 @@ module Chain
     kind = capability
     semantics = effectful
     intent = "Chain selection and the commit point."
-    exposes [Landed, nextTarget]
+    exposes [Landed, NextTargetReply, nextTarget]
 
 type Landed
     Connected
     Rejected(String)
+
+type NextTargetReply
+    Now(Option<String>)
+    Later(Wait.Wake)
 
 operation nextTarget(height: Int) -> Option<String>
     ? "Which block hash is next at this height on the chain now chosen."

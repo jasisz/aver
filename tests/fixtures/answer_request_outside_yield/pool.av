@@ -2,11 +2,15 @@ module Pool
     kind = capability
     semantics = effectful
     intent = "Which height a peer should fetch next."
-    exposes [Assignment, claim]
+    exposes [Assignment, ClaimReply, claim]
 
 type Assignment
     Height(Int)
     Idle
+
+type ClaimReply
+    Now(Pool.Assignment)
+    Later(Wait.Wake)
 
 operation claim(key: Int) -> Pool.Assignment
     ? "The next height this peer should fetch, or Idle."

@@ -6,10 +6,10 @@ module Said
 record State
     line: String
 
-fn print(state: State, message: String) -> Tuple<State, Say.__PrintReply>
+fn print(state: State, message: String) -> Tuple<State, Say.PrintReply>
     ? "Takes the line the process wrote."
-    (state, Say.__PrintReply.Now(Unit))
+    (state, Say.PrintReply.Now(Unit))
 
-fn readLine(state: State) -> Tuple<State, Say.__ReadLineReply>
+fn readLine(state: State) -> Tuple<State, Say.ReadLineReply>
     ? "Hands the process the line this state holds."
-    (state, Say.__ReadLineReply.Now(Result.Ok(state.line)))
+    (state, Say.ReadLineReply.Now(Result.Ok(state.line)))

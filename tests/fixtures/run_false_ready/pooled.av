@@ -13,11 +13,11 @@ fn fresh() -> State
     ? "One handle to give out, one validation task to run, and nothing scored yet."
     State(left = 1, pending = [1], scored = 0)
 
-fn claim(state: State) -> Tuple<State, Pool.__ClaimReply>
+fn claim(state: State) -> Tuple<State, Pool.ClaimReply>
     ? "One handle, until there are none."
     match state.left == 0
-        true -> (state, Pool.__ClaimReply.Now(Option.None))
-        false -> (State.update(state, left = state.left - 1), Pool.__ClaimReply.Now(Option.Some(state.left)))
+        true -> (state, Pool.ClaimReply.Now(Option.None))
+        false -> (State.update(state, left = state.left - 1), Pool.ClaimReply.Now(Option.Some(state.left)))
 
 fn spin(n: Int, acc: Int) -> Int
     ? "Counts n down, carrying acc; this is the work a job does."
@@ -58,7 +58,7 @@ fn landed(state: State, outcome: Result<Int, String>) -> State
         Result.Ok(points) -> State.update(state, scored = state.scored + points)
 
 verify claim
-    claim(fresh()) => (State.update(fresh(), left = 0), Pool.__ClaimReply.Now(Option.Some(1)))
+    claim(fresh()) => (State.update(fresh(), left = 0), Pool.ClaimReply.Now(Option.Some(1)))
 
 verify spin
     spin(3, 7) => 7

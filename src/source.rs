@@ -778,10 +778,9 @@ struct Walk<'a> {
     /// ceiling itself is resolved per file, because `[[verify.costly]]`
     /// scopes itself by file glob as well as by function name.
     verify_config: Option<crate::config::ProjectConfig>,
-    /// The capabilities this project answers itself. A module that declares
-    /// one of them gains its generated reply sums, and `depends [Wait]` for
-    /// the type they carry, before this walk follows its edges — so `Wait`
-    /// loads as an ordinary written dependency.
+    /// The capabilities this project answers itself, read once per walk from
+    /// the project's `aver.toml`: the `yield` lowering cuts a process at every
+    /// call to one of their operations.
     marked: crate::config::MarkedCapabilities,
     loaded: HashSet<PathBuf>,
     loading: Vec<PathBuf>,
@@ -911,8 +910,7 @@ impl<'a> Walk<'a> {
             }
         });
         let source = cached.source.clone();
-        let mut items = cached.items.clone();
-        crate::capability::answer::generate_reply_types(&mut items, &self.marked);
+        let items = cached.items.clone();
         let path = cached.path.clone();
         let is_stdlib = cached.is_stdlib;
         let fault = cached.fault.as_ref().map(|fault| match fault {
@@ -980,7 +978,7 @@ pub fn load_module_tree_from_map(
     let mut loaded: HashSet<String> = HashSet::new();
     let mut loading: Vec<String> = Vec::new();
     for dep in root_deps {
-        load_recursive_from_map(dep, files, &marked, &mut loaded, &mut loading, &mut result)?;
+        load_recursive_from_map(dep, files, &mut loaded, &mut loading, &mut result)?;
     }
     // The playground analyses every file of the project separately, so a
     // module that fails to lower reports it under its own name there.
@@ -1011,7 +1009,6 @@ fn marked_capabilities_in_map(
 fn load_recursive_from_map(
     dep_name: &str,
     files: &HashMap<String, String>,
-    marked: &crate::config::MarkedCapabilities,
     loaded: &mut HashSet<String>,
     loading: &mut Vec<String>,
     result: &mut Vec<LoadedModule>,
@@ -1045,13 +1042,9 @@ fn load_recursive_from_map(
     }
     loading.push(key.clone());
 
-    let mut items =
+    let items =
         parse_source(&source).map_err(|e| format!("Parse error in '{}': {}", dep_name, e))?;
     require_module_declaration(&items, &key)?;
-    // An answered capability gains its reply sums, and `depends [Wait]` for
-    // the type they carry, before this walk follows its edges — exactly as the
-    // filesystem walk does it.
-    crate::capability::answer::generate_reply_types(&mut items, marked);
 
     if let Some(module) = visibility::module_decl(&items) {
         let expected = dep_name.rsplit('.').next().unwrap_or(dep_name);
@@ -1062,13 +1055,13 @@ fn load_recursive_from_map(
             ));
         }
         for sub_dep in &module.depends {
-            load_recursive_from_map(sub_dep, files, marked, loaded, loading, result)?;
+            load_recursive_from_map(sub_dep, files, loaded, loading, result)?;
         }
         // Standard modules implied by source-typed builtins load even when
         // this module's `depends` never names them — same contract as the
         // filesystem loaders (`load_compile_deps` and friends).
         for implied in crate::stdlib::implicit_stdlib_deps(&items) {
-            load_recursive_from_map(&implied, files, marked, loaded, loading, result)?;
+            load_recursive_from_map(&implied, files, loaded, loading, result)?;
         }
     }
 
@@ -1488,12 +1481,12 @@ mod tests {
             .find(|module| module.dep_name == "Pool")
             .expect("Pool is loaded");
         assert!(
-            pool.items.iter().any(|item| matches!(
+            !pool.items.iter().any(|item| matches!(
                 item,
                 crate::ast::TopLevel::TypeDef(crate::ast::TypeDef::Sum { name, .. })
-                    if name == "__ClaimReply"
+                    if name.starts_with("__")
             )),
-            "the answered capability carries its generated reply sum here too"
+            "nothing is generated into the answered capability: its reply sums are the program's to declare"
         );
     }
 

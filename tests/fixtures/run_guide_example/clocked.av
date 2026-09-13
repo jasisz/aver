@@ -14,26 +14,26 @@ fn fresh() -> State
     ? "Three tasks to score, none started, nothing scored and no deadline armed."
     State(tasks = [1, 2, 3], running = 0, total = 0, armed = false)
 
-fn tick(state: State) -> Tuple<State, Clock.__TickReply>
+fn tick(state: State) -> Tuple<State, Clock.TickReply>
     ? "Closed once every task has started and landed; before that, a tick fifty milliseconds after it was asked for."
     match (state.tasks, state.running)
-        ([], 0) -> (state, Clock.__TickReply.Now(Clock.Tick.Closed(state.total)))
+        ([], 0) -> (state, Clock.TickReply.Now(Clock.Tick.Closed(state.total)))
         _ -> armed(state)
 
 verify tick
-    tick(fresh()) => (State.update(fresh(), armed = true), Clock.__TickReply.Later(Wait.Wake.After(50)))
-    tick(State.update(fresh(), armed = true)) => (fresh(), Clock.__TickReply.Now(Clock.Tick.Tock))
-    tick(State.update(fresh(), tasks = [], total = 60)) => (State.update(fresh(), tasks = [], total = 60), Clock.__TickReply.Now(Clock.Tick.Closed(60)))
+    tick(fresh()) => (State.update(fresh(), armed = true), Clock.TickReply.Later(Wait.Wake.After(50)))
+    tick(State.update(fresh(), armed = true)) => (fresh(), Clock.TickReply.Now(Clock.Tick.Tock))
+    tick(State.update(fresh(), tasks = [], total = 60)) => (State.update(fresh(), tasks = [], total = 60), Clock.TickReply.Now(Clock.Tick.Closed(60)))
 
-fn armed(state: State) -> Tuple<State, Clock.__TickReply>
+fn armed(state: State) -> Tuple<State, Clock.TickReply>
     ? "The first ask arms the deadline and parks on it; the ask after the deadline has passed is the tick. The flag survives the park because a Later keeps the state this module returned."
     match state.armed
-        false -> (State.update(state, armed = true), Clock.__TickReply.Later(Wait.Wake.After(50)))
-        true -> (State.update(state, armed = false), Clock.__TickReply.Now(Clock.Tick.Tock))
+        false -> (State.update(state, armed = true), Clock.TickReply.Later(Wait.Wake.After(50)))
+        true -> (State.update(state, armed = false), Clock.TickReply.Now(Clock.Tick.Tock))
 
 verify armed
-    armed(fresh()) => (State.update(fresh(), armed = true), Clock.__TickReply.Later(Wait.Wake.After(50)))
-    armed(State.update(fresh(), armed = true)) => (fresh(), Clock.__TickReply.Now(Clock.Tick.Tock))
+    armed(fresh()) => (State.update(fresh(), armed = true), Clock.TickReply.Later(Wait.Wake.After(50)))
+    armed(State.update(fresh(), armed = true)) => (fresh(), Clock.TickReply.Now(Clock.Tick.Tock))
 
 fn score(task: Int) -> Int
     ? "What one job computes off the turn. Named by aver.toml's work key."

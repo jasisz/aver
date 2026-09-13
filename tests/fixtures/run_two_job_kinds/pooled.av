@@ -16,20 +16,20 @@ fn fresh() -> State
     ? "Two handles to give out, two alpha tasks and two beta tasks to run, nothing scored, nothing landed and nothing to report yet."
     State(left = 2, alphas = [1, 2], betas = [10, 20], scored = 0, landed = 0, unreported = [])
 
-fn claim(state: State) -> Tuple<State, Pool.__ClaimReply>
+fn claim(state: State) -> Tuple<State, Pool.ClaimReply>
     ? "A handle while there is one. Once the handles are gone, each landing the process has not heard of yet, one per ask; with none to report the request parks until every task has landed, then answers what they scored together."
     match state.left == 0
-        false -> (State.update(state, left = state.left - 1), Pool.__ClaimReply.Now(Pool.Assignment.Handle(state.left)))
+        false -> (State.update(state, left = state.left - 1), Pool.ClaimReply.Now(Pool.Assignment.Handle(state.left)))
         true -> reporting(state, state.unreported)
 
-fn reporting(state: State, unreported: List<Tuple<String, Int>>) -> Tuple<State, Pool.__ClaimReply>
+fn reporting(state: State, unreported: List<Tuple<String, Int>>) -> Tuple<State, Pool.ClaimReply>
     ? "One landing not yet reported, or — with none left — the sum once everything has landed and a park until then."
     match unreported
         [head, ..rest] -> match head
-            (kind, score) -> (State.update(state, unreported = rest), Pool.__ClaimReply.Now(Pool.Assignment.Landed(kind, score)))
+            (kind, score) -> (State.update(state, unreported = rest), Pool.ClaimReply.Now(Pool.Assignment.Landed(kind, score)))
         [] -> match state.landed == 4
-            true -> (state, Pool.__ClaimReply.Now(Pool.Assignment.Finished(state.scored)))
-            false -> (state, Pool.__ClaimReply.Later(Wait.Wake.NextTurn))
+            true -> (state, Pool.ClaimReply.Now(Pool.Assignment.Finished(state.scored)))
+            false -> (state, Pool.ClaimReply.Later(Wait.Wake.NextTurn))
 
 fn scoreAlpha(task: Int) -> Int
     ? "What one alpha job computes off the turn."
@@ -86,15 +86,15 @@ fn keptUnlessTask(acc: List<Int>, entry: Int, task: Int) -> List<Int>
         false -> List.concat(acc, [entry])
 
 verify claim
-    claim(fresh()) => (State.update(fresh(), left = 1), Pool.__ClaimReply.Now(Pool.Assignment.Handle(2)))
-    claim(State.update(fresh(), left = 0)) => (State.update(fresh(), left = 0), Pool.__ClaimReply.Later(Wait.Wake.NextTurn))
-    claim(State.update(fresh(), left = 0, scored = 65, landed = 4)) => (State.update(fresh(), left = 0, scored = 65, landed = 4), Pool.__ClaimReply.Now(Pool.Assignment.Finished(65)))
-    claim(State.update(fresh(), left = 0, scored = 2, landed = 1, unreported = [("alpha", 2)])) => (State.update(fresh(), left = 0, scored = 2, landed = 1), Pool.__ClaimReply.Now(Pool.Assignment.Landed("alpha", 2)))
+    claim(fresh()) => (State.update(fresh(), left = 1), Pool.ClaimReply.Now(Pool.Assignment.Handle(2)))
+    claim(State.update(fresh(), left = 0)) => (State.update(fresh(), left = 0), Pool.ClaimReply.Later(Wait.Wake.NextTurn))
+    claim(State.update(fresh(), left = 0, scored = 65, landed = 4)) => (State.update(fresh(), left = 0, scored = 65, landed = 4), Pool.ClaimReply.Now(Pool.Assignment.Finished(65)))
+    claim(State.update(fresh(), left = 0, scored = 2, landed = 1, unreported = [("alpha", 2)])) => (State.update(fresh(), left = 0, scored = 2, landed = 1), Pool.ClaimReply.Now(Pool.Assignment.Landed("alpha", 2)))
 
 verify reporting
-    reporting(fresh(), [("beta", 20), ("alpha", 2)]) => (State.update(fresh(), unreported = [("alpha", 2)]), Pool.__ClaimReply.Now(Pool.Assignment.Landed("beta", 20)))
-    reporting(State.update(fresh(), landed = 4, scored = 65), []) => (State.update(fresh(), landed = 4, scored = 65), Pool.__ClaimReply.Now(Pool.Assignment.Finished(65)))
-    reporting(fresh(), []) => (fresh(), Pool.__ClaimReply.Later(Wait.Wake.NextTurn))
+    reporting(fresh(), [("beta", 20), ("alpha", 2)]) => (State.update(fresh(), unreported = [("alpha", 2)]), Pool.ClaimReply.Now(Pool.Assignment.Landed("beta", 20)))
+    reporting(State.update(fresh(), landed = 4, scored = 65), []) => (State.update(fresh(), landed = 4, scored = 65), Pool.ClaimReply.Now(Pool.Assignment.Finished(65)))
+    reporting(fresh(), []) => (fresh(), Pool.ClaimReply.Later(Wait.Wake.NextTurn))
 
 verify scoreAlpha
     scoreAlpha(1) => 2
