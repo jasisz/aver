@@ -143,10 +143,20 @@ fn a_take_right_after_begin_answers_some_on_wasm_gc() {
     let wasm =
         run("work_jobs_inline", &["--wasm-gc"], &[]).unwrap_or_else(|error| panic!("{error}"));
     assert_eq!(wasm, "score 5\nwork: job already taken");
+    // The VM runs the job beside the turn, so what its two takes see is a
+    // race the program cannot win on purpose: usually neither has an answer
+    // yet, but a job this small can settle between the two takes, or before
+    // the first one on a loaded machine. What the VM owes is that no take
+    // ever answers before the job is done and that an answer is given once.
     let vm = run("work_jobs_inline", &[], &[]).unwrap_or_else(|error| panic!("{error}"));
-    assert_eq!(
-        vm, "nothing yet\nnothing yet",
-        "the VM runs the job beside the turn, so neither take has an answer yet"
+    let honest = [
+        "nothing yet\nnothing yet",
+        "nothing yet\nscore 5",
+        "score 5\nwork: job already taken",
+    ];
+    assert!(
+        honest.contains(&vm.as_str()),
+        "the VM's two takes must be a prefix of the job's life, got:\n{vm}"
     );
 }
 
