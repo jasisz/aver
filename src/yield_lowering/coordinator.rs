@@ -706,7 +706,7 @@ fn write_loop(
     // is the count across all of them and the wait watches each entry once.
     // The variant is how the entry remembers which seam takes and lands it.
     if has_jobs {
-        out.push_str("type __Job\n");
+        out.push_str("\ntype __Job\n");
         for job in jobs {
             out.push_str(&format!(
                 "    {}(Work.Job)\n",
@@ -1094,9 +1094,11 @@ fn write_job(job: &Job, jobs: &[Job]) -> String {
     ));
     // The ask is one step of its own, so the room check and the answer live
     // in one place a law can name; the record is `started`, applied through
-    // `__seatedJob` the moment `begin` has said this task is running.
+    // `__jobSeated` the moment `begin` has said this task is running. The
+    // name is kind-first because `__seated<P>` is a process's, and a process
+    // named `job<K>` would otherwise be seated twice under one name.
     out.push_str(&format!(
-        "\nfn __startable{upper}(room: Int, state: {}) -> {}\n    ? \"The next task this kind may start, while the one job table has this much room for it. No room asks nothing, so no task is ever offered twice to make room it cannot use.\"\n    match room <= 0\n        true -> Option.None\n        false -> {}(state)\n",
+        "\nfn __startable{upper}(room: Int, state: {}) -> {}\n    ? \"The next task this kind may start, while the one job table has this much room for it. No room asks nothing, so no task is ever offered twice to make room it cannot use. This is the pure half of the room bound: the loop that starts while there is room performs begin, so no law can sample it, and the bound is stated here, where each ask is decided.\"\n    match room <= 0\n        true -> Option.None\n        false -> {}(state)\n",
         job.seam_state, job.task_option, job.task
     ));
     out.push_str(&format!(
@@ -1104,11 +1106,11 @@ fn write_job(job: &Job, jobs: &[Job]) -> String {
         job.capability, job.capability
     ));
     out.push_str(&format!(
-        "\nfn __began{upper}(run: __Run, task: {}, began: Result<Work.Job, String>) -> __Run\n    ? \"What one begin answered. An Err starts nothing: the task was never recorded, so the next ask offers it again once there is room to take it.\"\n    ! [{}.begin]\n    match began\n        Result.Err(_) -> run\n        Result.Ok(job) -> __startJobs{upper}(__seatedJob{upper}(run, task, job))\n",
+        "\nfn __began{upper}(run: __Run, task: {}, began: Result<Work.Job, String>) -> __Run\n    ? \"What one begin answered. An Err starts nothing: the task was never recorded, so the next ask offers it again once there is room to take it.\"\n    ! [{}.begin]\n    match began\n        Result.Err(_) -> run\n        Result.Ok(job) -> __startJobs{upper}(__jobSeated{upper}(run, task, job))\n",
         job.task_type, job.capability
     ));
     out.push_str(&format!(
-        "\nfn __seatedJob{upper}(run: __Run, task: {}, job: Work.Job) -> __Run\n    ? \"The run once this task's job has begun: the handle sits under the next free key for the wait to watch, and the task is consumed from the answer state, which is what makes two starts in one turn start two different tasks.\"\n    __Run.update(run, {JOBS_FIELD} = Map.set(run.{JOBS_FIELD}, run.nextId, __Job.{upper}(job)), nextId = run.nextId + 1, {task_field} = __consumed{upper}(run.{task_field}, task))\n",
+        "\nfn __jobSeated{upper}(run: __Run, task: {}, job: Work.Job) -> __Run\n    ? \"The run once this task's job has begun: the handle sits under the next free key for the wait to watch, and the task is consumed from the answer state, which is what makes two starts in one turn start two different tasks.\"\n    __Run.update(run, {JOBS_FIELD} = Map.set(run.{JOBS_FIELD}, run.nextId, __Job.{upper}(job)), nextId = run.nextId + 1, {task_field} = __consumed{upper}(run.{task_field}, task))\n",
         job.task_type
     ));
     out.push_str(&format!(

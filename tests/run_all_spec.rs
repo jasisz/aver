@@ -476,7 +476,7 @@ fn the_dump_shows_the_loop_that_was_generated() {
         // The job seam's third end: `begin` answers a Result the turn matches
         // on, and only the Ok half records the start through `started`.
         "Option.Some(task) -> __beganValidation(run, task, (Validation).begin(task))",
-        "Result.Ok(job) -> __startJobsValidation(__seatedJobValidation(run, task, job))",
+        "Result.Ok(job) -> __startJobsValidation(__jobSeatedValidation(run, task, job))",
         "ledger = __consumedValidation(run.ledger, task)",
         "fn __consumedValidation(state: Ledger.State, task: Tuple<Int, Bytes>) -> Ledger.State",
         "(Ledger).taskStarted(state, task)",
