@@ -235,6 +235,11 @@ jobs:
         run: cargo test -p aver-lang --features wasm,wasip2 --test provider_spec --test capability_grammar_spec --test capability_target_manifest_spec
 
       - name: Test wasm-gc suites
+        # The step takes about fifteen minutes on main. It has stalled for
+        # hours more than once right after `Compiling aver-lang` for one of
+        # the test binaries below (jasisz/aver#1339); a bounded step fails
+        # fast and can be re-run instead of holding a pull request.
+        timeout-minutes: 35
         # Run the wasm-gc integration surface explicitly under `wasm`, not
         # the whole package under `wasm,wasip2`. The old package-wide command
         # also built unrelated integration tests and bins with the full
