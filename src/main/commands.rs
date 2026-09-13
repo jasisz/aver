@@ -220,6 +220,34 @@ pub(super) fn recording_paths(file: &str, module_root: &str) -> (String, String)
     (rec_program_file, rec_module_root)
 }
 
+/// The source location a compiled binary writes into its recordings.
+///
+/// The binary may run from any directory, so the module root is made
+/// absolute here, at compile time; the program file is relative to that
+/// root when it lies under it (the shape the VM records) and absolute
+/// otherwise. `AVER_REPLAY_PROGRAM_FILE` / `AVER_REPLAY_MODULE_ROOT` still
+/// override both at run time.
+pub(super) fn compiled_recording_source(file: &str, module_root: &str) -> codegen::RecordedSource {
+    let cwd = std::env::current_dir().ok();
+    let absolute = |path: &Path| -> PathBuf {
+        std::fs::canonicalize(path)
+            .ok()
+            .unwrap_or_else(|| match (&cwd, path.is_absolute()) {
+                (Some(cwd), false) => cwd.join(path),
+                _ => path.to_path_buf(),
+            })
+    };
+    let module_root_path = absolute(Path::new(module_root));
+    let file_path = Path::new(file);
+    let program_file = relativize_to(&module_root_path, file_path)
+        .or_else(|| relativize_to_canonical(&module_root_path, file_path))
+        .unwrap_or_else(|| path_to_string(&absolute(file_path)));
+    codegen::RecordedSource {
+        program_file,
+        module_root: path_to_string(&module_root_path),
+    }
+}
+
 fn materialize_codegen_output(
     output_dir: &Path,
     output: &codegen::ProjectOutput,
@@ -4196,6 +4224,7 @@ fn build_codegen_context(
     ctx.emit_replay_runtime = use_scoped_runtime;
     ctx.runtime_policy_from_env = use_runtime_policy;
     ctx.guest_entry = guest_entry.map(str::to_string);
+    ctx.recorded_source = Some(compiled_recording_source(file, &module_root));
     ctx.emit_self_host_support = with_self_host_support;
     if let Some(entry) = guest_entry
         && !ctx.fn_defs.iter().any(|fd| fd.name == entry)
@@ -12260,6 +12289,38 @@ mod tests {
     }
 
     #[test]
+    fn compiled_recording_source_names_the_file_relative_to_an_absolute_root() {
+        // `cargo test` runs with the package root as cwd, so the relative
+        // paths below resolve against the worktree.
+        let source = super::compiled_recording_source(
+            "tests/fixtures/work_jobs/main.av",
+            "tests/fixtures/work_jobs",
+        );
+        assert_eq!(source.program_file, "main.av");
+        let root = std::path::Path::new(&source.module_root);
+        assert!(root.is_absolute(), "module_root must be absolute: {root:?}");
+        assert!(root.join(&source.program_file).is_file());
+    }
+
+    #[test]
+    fn compiled_recording_source_falls_back_to_absolute_outside_the_root() {
+        let source =
+            super::compiled_recording_source("tests/fixtures/work_jobs/main.av", "examples");
+        let program_file = std::path::Path::new(&source.program_file);
+        assert!(
+            program_file.is_absolute(),
+            "a file outside the module root records its absolute path: {program_file:?}"
+        );
+        assert!(
+            source
+                .program_file
+                .ends_with("tests/fixtures/work_jobs/main.av"),
+            "unexpected program_file: {}",
+            source.program_file
+        );
+    }
+
+    #[test]
     fn verify_setup_errors_distinguish_provider_composition_from_typechecking() {
         for error in [
             "provider binding names unknown capability 'Shapes'",
@@ -13144,6 +13205,7 @@ Dafny program verifier finished with 158 verified, 2 errors, 12 time outs";
             emit_replay_runtime: false,
             runtime_policy_from_env: false,
             guest_entry: None,
+            recorded_source: None,
             emit_self_host_support: false,
             mutual_tco_members: HashSet::new(),
             recursive_fns: HashSet::new(),

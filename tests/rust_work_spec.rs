@@ -87,10 +87,24 @@ fn compile_rust(
     extra: &[&str],
 ) -> Result<(), String> {
     let dir = fixture(name);
+    compile_rust_at(&dir.join("main.av"), &dir, project, crate_name, extra)
+}
+
+/// `aver compile <source> --target rust --module-root <module_root>` into
+/// `project`. `source` and `module_root` go to the compiler exactly as
+/// given — relative paths resolve against the repo root, which is what a
+/// user compiling from their shell hands it.
+fn compile_rust_at(
+    source: &Path,
+    module_root: &Path,
+    project: &Path,
+    crate_name: &str,
+    extra: &[&str],
+) -> Result<(), String> {
     let out = Command::new(aver_bin())
         .current_dir(repo_root())
         .arg("compile")
-        .arg(dir.join("main.av"))
+        .arg(source)
         .arg("--target")
         .arg("rust")
         .arg("--name")
@@ -98,13 +112,14 @@ fn compile_rust(
         .arg("-o")
         .arg(project)
         .arg("--module-root")
-        .arg(&dir)
+        .arg(module_root)
         .args(extra)
         .output()
         .expect("expected `aver compile --target rust` to spawn");
     if !out.status.success() {
         return Err(format!(
-            "aver compile --target rust of {name} failed:\n{}",
+            "aver compile --target rust of {} failed:\n{}",
+            source.display(),
             format_output(&out)
         ));
     }
@@ -442,25 +457,27 @@ fn a_vm_recording_replays_on_the_rust_backend() {
 /// The other direction: a recording made by the Rust binary, replayed by the
 /// VM, effect for effect.
 ///
-/// The effect stream itself carries across untouched. What does not is the
-/// recording's header: a generated binary has no idea which source file it
-/// was compiled from, so `program_file` is empty and `module_root` is `"."`,
-/// and `aver replay` needs both to load the program it is replaying. That is
-/// a property of the generated replay runtime and not of jobs, so the test
-/// fills the two fields in and then asserts the whole session matches —
-/// including the job handles, whose trace tokens the two backends number
-/// from different starting points.
+/// The binary writes the source it was compiled from into the recording's
+/// header: the module root made absolute at compile time, and the program
+/// file relative to that root, so it may run from a directory that is
+/// neither the compile directory nor the project it was built in and `aver
+/// replay` still loads the program with no header edits. The assertion is
+/// the whole session matching — including the job handles, whose trace
+/// tokens the two backends number from different starting points.
 #[test]
 fn a_rust_recording_replays_on_the_vm() {
     let ws = temp_dir("replay-reverse");
     let project = ws.join("project");
     let recordings = ws.join("recordings");
+    let elsewhere = ws.join("elsewhere");
     fs::create_dir_all(&project).expect("create project dir");
     fs::create_dir_all(&recordings).expect("create recordings dir");
+    fs::create_dir_all(&elsewhere).expect("create elsewhere dir");
 
     let result = (|| -> Result<(), String> {
-        compile_rust(
-            "work_jobs",
+        compile_rust_at(
+            Path::new("tests/fixtures/work_jobs/main.av"),
+            Path::new("tests/fixtures/work_jobs"),
             &project,
             "work_jobs_record",
             &["--with-replay"],
@@ -468,6 +485,7 @@ fn a_rust_recording_replays_on_the_vm() {
         let bin = cargo_build(&project, "work_jobs_record")?;
         let session = recordings.join("session.json");
         let recorded = Command::new(&bin)
+            .current_dir(&elsewhere)
             .env("AVER_REPLAY_RECORD", &session)
             .output()
             .map_err(|error| format!("failed to run the recording binary: {error}"))?;
@@ -486,21 +504,27 @@ fn a_rust_recording_replays_on_the_vm() {
                 "the recording is missing the job seam it was made for:\n{text}"
             ));
         }
-        let located = text
-            .replace(
-                "\"program_file\": \"\"",
-                "\"program_file\": \"tests/fixtures/work_jobs/main.av\"",
-            )
-            .replace(
-                "\"module_root\": \".\"",
-                "\"module_root\": \"tests/fixtures/work_jobs\"",
-            );
-        if located == text {
+        let header = aver::replay::session::parse_session_recording(&text)
+            .map_err(|error| format!("the recording does not parse: {error}\n{text}"))?;
+        if header.program_file != "main.av" {
             return Err(format!(
-                "the recording no longer carries the empty header this test fills in:\n{text}"
+                "expected program_file \"main.av\", got {:?}",
+                header.program_file
             ));
         }
-        fs::write(&session, located).expect("write the located recording");
+        let module_root = Path::new(&header.module_root);
+        if !module_root.is_absolute() {
+            return Err(format!(
+                "expected an absolute module_root, got {:?}",
+                header.module_root
+            ));
+        }
+        if !module_root.join(&header.program_file).is_file() {
+            return Err(format!(
+                "module_root + program_file does not name the compiled source: {} + {}",
+                header.module_root, header.program_file
+            ));
+        }
 
         let replayed = Command::new(aver_bin())
             .current_dir(repo_root())

@@ -15,6 +15,7 @@ pub(super) struct ReplayRuntimeOptions {
     pub has_provider_runtime: bool,
     pub capability_operations: Vec<(String, String)>,
     pub live_replay_capabilities: Vec<String>,
+    pub recorded_source: Option<crate::codegen::RecordedSource>,
 }
 
 pub fn generate_replay_runtime(options: ReplayRuntimeOptions) -> String {
@@ -28,6 +29,7 @@ pub fn generate_replay_runtime(options: ReplayRuntimeOptions) -> String {
         has_provider_runtime,
         capability_operations,
         live_replay_capabilities,
+        recorded_source,
     } = options;
     let policy_check = if has_runtime_policy {
         RUNTIME_POLICY_CHECK_SNIPPET
@@ -136,8 +138,14 @@ pub fn generate_replay_runtime(options: ReplayRuntimeOptions) -> String {
         String::new()
     };
 
+    let (program_file, module_root) = recorded_source
+        .map(|source| (source.program_file, source.module_root))
+        .unwrap_or_else(|| (String::new(), ".".to_string()));
+
     let mut sections = vec![
         REPLAY_RUNTIME_TEMPLATE
+            .replace("__COMPILED_PROGRAM_FILE__", &format!("{program_file:?}"))
+            .replace("__COMPILED_MODULE_ROOT__", &format!("{module_root:?}"))
             .replace("__POLICY_CHECK__", policy_check)
             .replace("__CAPABILITY_PROVENANCE__", &capability_provenance)
             .replace(
@@ -1037,6 +1045,23 @@ mod policy_tests {
     }
 
     #[test]
+    fn generated_runtime_bakes_the_compiled_source_into_the_recording_header() {
+        let runtime = generate_replay_runtime(ReplayRuntimeOptions {
+            recorded_source: Some(crate::codegen::RecordedSource {
+                program_file: "main.av".to_string(),
+                module_root: "/abs/root".to_string(),
+            }),
+            ..ReplayRuntimeOptions::default()
+        });
+        assert!(runtime.contains("const COMPILED_PROGRAM_FILE: &str = \"main.av\";"));
+        assert!(runtime.contains("const COMPILED_MODULE_ROOT: &str = \"/abs/root\";"));
+
+        let without_source = generate_replay_runtime(ReplayRuntimeOptions::default());
+        assert!(without_source.contains("const COMPILED_PROGRAM_FILE: &str = \"\";"));
+        assert!(without_source.contains("const COMPILED_MODULE_ROOT: &str = \".\";"));
+    }
+
+    #[test]
     fn live_replay_accepts_only_fingerprinted_standard_adapter_families() {
         let runtime = generate_replay_runtime(ReplayRuntimeOptions {
             has_provider_runtime: true,
@@ -1929,6 +1954,13 @@ __POLICY_CHECK__
         env_var("AVER_REPLAY_ENTRY_FN").unwrap_or_else(|| entry_fn.to_string())
     }
 
+    /// The source the binary was compiled from, written into a recording
+    /// header so `aver replay` can load it. Empty / `"."` when the compiler
+    /// had no file to name; `AVER_REPLAY_PROGRAM_FILE` and
+    /// `AVER_REPLAY_MODULE_ROOT` override both.
+    const COMPILED_PROGRAM_FILE: &str = __COMPILED_PROGRAM_FILE__;
+    const COMPILED_MODULE_ROOT: &str = __COMPILED_MODULE_ROOT__;
+
     fn load_scope_mode(entry_fn: &str, input: ReplayJson) -> ScopeMode {
         let logical_entry_fn = replay_entry_name(entry_fn);
         let record_path = env_var("AVER_REPLAY_RECORD");
@@ -1961,9 +1993,10 @@ __POLICY_CHECK__
                 .unwrap_or_else(default_request_id);
             let timestamp = env_var("AVER_REPLAY_TIMESTAMP")
                 .unwrap_or_else(default_timestamp);
-            let program_file = env_var("AVER_REPLAY_PROGRAM_FILE").unwrap_or_default();
-            let module_root =
-                env_var("AVER_REPLAY_MODULE_ROOT").unwrap_or_else(|| ".".to_string());
+            let program_file = env_var("AVER_REPLAY_PROGRAM_FILE")
+                .unwrap_or_else(|| COMPILED_PROGRAM_FILE.to_string());
+            let module_root = env_var("AVER_REPLAY_MODULE_ROOT")
+                .unwrap_or_else(|| COMPILED_MODULE_ROOT.to_string());
             return ScopeMode::Record {
                 path: PathBuf::from(path),
                 session: SessionRecording {
