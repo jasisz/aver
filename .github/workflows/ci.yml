@@ -6,7 +6,7 @@ on:
   pull_request:
     branches: [main]
   # Nightly deep sweep against main with the heavy proptest budget: the
-  # WASM job's cross-backend differential runs 2000 cases nightly but a
+  # WASM lane's cross-backend differential runs 2000 cases nightly but a
   # 64-case smoke per-PR (see its `PROPTEST_CASES` below). Mirrors the
   # fuzz / proof / rust-codegen nightlies (cron 03:00 UTC). Manual runs
   # via workflow_dispatch also get the full 2000-case sweep.
@@ -75,7 +75,7 @@ jobs:
         # features, a pre-existing gap outside this gate's scope), and a bare
         # `certify` build. Cheap `cargo check`s keep every nameable combination
         # compiling without adding test time. The remaining combination,
-        # wasip2-only, is checked in the WASM job, whose cache already holds the
+        # wasip2-only, is checked in the WASM checks lane, whose cache holds the
         # heavy component-model dependencies.
         run: |
           cargo check -p aver-cert --no-default-features --features plans
@@ -163,17 +163,26 @@ jobs:
       - name: Test aver-rt
         run: cargo test -p aver-rt
 
-  wasm:
-    name: WASM
+  wasm_lanes:
+    name: WASM (${{ matrix.lane }})
     runs-on: ubuntu-latest
     # Scheduled runs belong to this repository. A fork with Actions enabled
     # otherwise runs our cron on its owner's account and mails them about any
     # failure. Every other trigger still works in a fork, so a contributor can
     # run this workflow on their own branch.
     if: github.event_name != 'schedule' || github.repository == 'jasisz/aver'
+    # Measured on main in run 34773432037: the serial job took 24m44s,
+    # including 13m14s in wasmtime_pack_spec alone. Keep that real deployment
+    # test on PRs, but let its cold release-host build run beside the checks,
+    # other wasm-gc tests and WASI component tests rather than ahead of them.
+    strategy:
+      fail-fast: false
+      matrix:
+        lane: [checks, wasm-gc, wasip2, pack]
+    timeout-minutes: 45
     env:
       # The wasm/wasip2 feature set pulls in wasmtime + component-model
-      # crates and several large integration-test binaries. Keep this job's
+      # crates and several large integration-test binaries. Keep each lane's
       # artifact footprint bounded on GitHub's small runners; debug symbols
       # are not useful for the CI pass/fail signal here, and lower parallelism
       # avoids multiple large links peaking at once.
@@ -188,6 +197,10 @@ jobs:
           components: clippy
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          # Each lane warms its own feature graph without racing the other
+          # lanes to save a cache containing a different subset of artifacts.
+          key: wasm-${{ matrix.lane }}
 
       - name: Cache binaryen
         id: cache-binaryen
@@ -217,10 +230,17 @@ jobs:
           test -x "$HOME/.local/binaryen/bin/wasm-opt"
           test -x "$HOME/.local/binaryen/bin/wasm-metadce"
 
+      - name: Prefetch provider-host feature graph
+        # Pack and provider tests build generated hosts with Cargo offline.
+        # A lane must not rely on earlier suites having fetched extra crates.
+        run: cargo fetch --locked
+
       - name: Clippy (wasm + wasip2)
+        if: matrix.lane == 'checks'
         run: cargo clippy -p aver-lang --lib --bin aver --benches --features wasm,wasip2 -- -D warnings
 
       - name: Compile gate — wasip2 without wasm
+        if: matrix.lane == 'checks'
         # Every other step here builds `wasm` or `wasm,wasip2`; a wasip2-only
         # binary (component output, no certificate engine, no wasm-gc CLI
         # target) is a combination users can name and must keep compiling.
@@ -229,16 +249,17 @@ jobs:
         run: cargo check -p aver-lang --features wasip2
 
       - name: Unit tests (wasm + wasip2)
+        if: matrix.lane == 'checks'
         run: cargo test -p aver-lang --lib --features wasm,wasip2
 
       - name: Capability provider target canaries
+        if: matrix.lane == 'checks'
         run: cargo test -p aver-lang --features wasm,wasip2 --test provider_spec --test capability_grammar_spec --test capability_target_manifest_spec
 
       - name: Test wasm-gc suites
-        # The step takes about fifteen minutes on main. It has stalled for
-        # hours more than once right after `Compiling aver-lang` for one of
-        # the test binaries below (jasisz/aver#1339); a bounded step fails
-        # fast and can be re-run instead of holding a pull request.
+        if: matrix.lane == 'wasm-gc'
+        # Compilation has stalled for hours after `Compiling aver-lang`
+        # (jasisz/aver#1339); retain the bounded step after splitting lanes.
         timeout-minutes: 35
         # Run the wasm-gc integration surface explicitly under `wasm`, not
         # the whole package under `wasm,wasip2`. The old package-wide command
@@ -297,7 +318,6 @@ jobs:
             wasm_gc_verify_option_case_regression \
             wasm_gc_verify_result_record_eq_regression \
             wasm_work_spec \
-            wasmtime_pack_spec \
             work_shape_spec \
             yield_spec
           do
@@ -305,6 +325,7 @@ jobs:
           done
 
       - name: Test wasip2 suites
+        if: matrix.lane == 'wasip2'
         # `wasip2` is a separate feature; `wasm` alone leaves every
         # `#![cfg(feature = "wasip2")]` test file at 0 tests. Keep these
         # component-model suites in their own loop so only wasip2 tests pay
@@ -329,10 +350,36 @@ jobs:
             cargo test -p aver-lang --features wasm,wasip2 --test "$test"
           done
 
+      - name: Test Wasmtime deployment packs
+        if: matrix.lane == 'pack'
+        timeout-minutes: 35
+        # This test builds real release hosts with standard and custom
+        # providers in a fresh cache, then checks deployment, artifact binding
+        # and cache isolation. Keep that coverage and its fresh-cache contract.
+        run: |
+          cargo build -p aver-cert --bin aver-cert
+          cargo test -p aver-lang --features wasm --test wasmtime_pack_spec
+
+  wasm:
+    # Preserve the required "WASM" check and the release dependency. An
+    # aggregate must reject failed, cancelled or skipped lanes, not silently
+    # go green because its successful siblings completed.
+    name: WASM
+    runs-on: ubuntu-latest
+    needs: [wasm_lanes]
+    if: always() && (github.event_name != 'schedule' || github.repository == 'jasisz/aver')
+    steps:
+      - name: Require every WASM lane
+        env:
+          LANES_RESULT: ${{ needs.wasm_lanes.result }}
+        run: |
+          echo "WASM lanes: $LANES_RESULT"
+          test "$LANES_RESULT" = success
+
   wasm_release_build:
     # Post-merge release-build verification under `--features wasm`.
     # PR-time CI runs `cargo test --features wasm` (debug profile) in
-    # the `wasm` job above — that catches every logic regression. The
+    # the `wasm_lanes` matrix above — that catches every logic regression. The
     # release build only matters when the artifact actually ships
     # (post-merge to `main`), and dragging it onto PR-time CI added
     # 3–5 min of wait without ever surfacing a release-only bug in
