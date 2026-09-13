@@ -3,7 +3,7 @@ module Wire
     semantics = effectful
     depends [Bytes]
     intent = "Request-level socket I/O, keyed by peer, plus the two ways a peer arrives. Answered by the program."
-    exposes [Arrival, Heard, Tally, accept, dialled, read, write, writes]
+    exposes [Arrival, Heard, Tally, AcceptReply, DialledReply, ReadReply, WriteReply, WritesReply, accept, dialled, read, write, writes]
 
 type Arrival
     Peer(Int)
@@ -18,25 +18,45 @@ type Heard
     EndOfStream
     Failed(String)
 
+type AcceptReply
+    Now(Wire.Arrival)
+    Later(Wait.Wake)
+
 operation accept() -> Wire.Arrival
     ? "The next peer the listener has for us, or Closed once the listener is done."
     oracle = generative
     replay = recorded
+
+type DialledReply
+    Now(Wire.Arrival)
+    Later(Wait.Wake)
 
 operation dialled() -> Wire.Arrival
     ? "The next dial that settled, or Closed once no dial is outstanding."
     oracle = generative
     replay = recorded
 
+type ReadReply
+    Now(Wire.Heard)
+    Later(Wait.Wake)
+
 operation read(key: Int, max: Int, deadlineMs: Int) -> Wire.Heard
     ? "The next chunk from one peer, or why there is none."
     oracle = generative
     replay = recorded
 
+type WriteReply
+    Now(Result<Unit, String>)
+    Later(Wait.Wake)
+
 operation write(key: Int, payload: Bytes) -> Result<Unit, String>
     ? "Hands a whole payload to one peer; the answer comes after the last byte, however many asks that takes."
     oracle = generativeOutput
     replay = recorded
+
+type WritesReply
+    Now(Wire.Tally)
+    Later(Wait.Wake)
 
 operation writes() -> Wire.Tally
     ? "How many payloads this wire has written, how many asks that took, and how many asks its reads took, for a process that wants to say so at the end of a run."

@@ -2,7 +2,11 @@ module Pool
     intent = "Fixture capability: hands out an Int handle for a peer; no host provider, the coordinator answers it."
     kind = capability
     semantics = effectful
-    exposes [claim]
+    exposes [ClaimReply, claim]
+
+type ClaimReply
+    Now(Int)
+    Later(Wait.Wake)
 
 operation claim(peer: Int) -> Int
     ? "Asks the host for the handle that belongs to peer."

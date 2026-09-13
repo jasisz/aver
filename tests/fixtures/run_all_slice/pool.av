@@ -2,7 +2,7 @@ module Pool
     kind = capability
     semantics = effectful
     intent = "Which height a peer should fetch next, who has joined, and what a sweep found."
-    exposes [Assignment, Welcome, Sweep, claim, gone, joined, swept]
+    exposes [Assignment, Welcome, Sweep, ClaimReply, GoneReply, JoinedReply, SweptReply, claim, gone, joined, swept]
 
 type Assignment
     Work(Int, Int)
@@ -15,20 +15,36 @@ type Welcome
 type Sweep
     Swept(Int)
 
+type ClaimReply
+    Now(Pool.Assignment)
+    Later(Wait.Wake)
+
 operation claim() -> Pool.Assignment
     ? "Which peer should fetch which height next, or Stop once there is nothing left to fetch."
     oracle = generative
     replay = recorded
+
+type GoneReply
+    Now(Unit)
+    Later(Wait.Wake)
 
 operation gone(key: Int) -> Unit
     ? "This peer is finished; free whatever it held."
     oracle = generativeOutput
     replay = recorded
 
+type JoinedReply
+    Now(Pool.Welcome)
+    Later(Wait.Wake)
+
 operation joined(key: Int) -> Pool.Welcome
     ? "A peer that has arrived, seated in the pool or refused because it is full."
     oracle = generative
     replay = recorded
+
+type SweptReply
+    Now(Pool.Sweep)
+    Later(Wait.Wake)
 
 operation swept() -> Pool.Sweep
     ? "One sweep of the pool, answering how many peers are idle."

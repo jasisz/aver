@@ -2,7 +2,11 @@ module Pool
     kind = capability
     semantics = effectful
     intent = "Fixture capability: hands out Int handles; the program answers it."
-    exposes [claim]
+    exposes [ClaimReply, claim]
+
+type ClaimReply
+    Now(Option<Int>)
+    Later(Wait.Wake)
 
 operation claim() -> Option<Int>
     ? "The next handle, or None when there is nothing left."

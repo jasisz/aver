@@ -1,0 +1,14 @@
+module Chain
+    kind = capability
+    semantics = effectful
+    intent = "Chain selection, answered by nobody in this program."
+    exposes [NextTargetReply, nextTarget]
+
+type NextTargetReply
+    Now(Option<Int>)
+    Later(Wait.Wake)
+
+operation nextTarget() -> Option<Int>
+    ? "Which height is next to connect."
+    oracle = generative
+    replay = recorded

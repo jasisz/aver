@@ -1027,10 +1027,7 @@ fn write_serve(
             answer.module,
             call_args.join(", ")
         ));
-        let reply = format!(
-            "{capability}.{}",
-            crate::capability::answer::reply_type_name(op)
-        );
+        let reply = crate::capability::answer::reply_type_name(capability, op);
         let resume = match kind.answer_type.as_deref() {
             Some("Unit") | None => format!("{}(state)", kind.answer_fn),
             Some(_) => format!("{}(state, __answer)", kind.answer_fn),

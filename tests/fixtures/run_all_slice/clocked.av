@@ -13,29 +13,29 @@ fn fresh() -> State
     ? "Four ticks to give out, none asked for yet and no deadline armed."
     State(left = 4, asks = 0, armed = false)
 
-fn tick(state: State) -> Tuple<State, Clock.__TickReply>
+fn tick(state: State) -> Tuple<State, Clock.TickReply>
     ? "The next tick. Every ask is counted, including the ones that park: the count is what a run can say afterwards about how often the deadline let the ticker be asked."
     ticking(State.update(state, asks = state.asks + 1))
 
-fn ticking(state: State) -> Tuple<State, Clock.__TickReply>
+fn ticking(state: State) -> Tuple<State, Clock.TickReply>
     ? "One ask, once it has been counted: Closed when this clock has given out every tick it had."
     match state.left == 0
-        true -> (state, Clock.__TickReply.Now(Clock.Tick.Closed(state.asks)))
+        true -> (state, Clock.TickReply.Now(Clock.Tick.Closed(state.asks)))
         false -> armed(state)
 
-fn armed(state: State) -> Tuple<State, Clock.__TickReply>
+fn armed(state: State) -> Tuple<State, Clock.TickReply>
     ? "A tick is not due the moment it is asked for. The first ask arms the deadline and parks on it; the ask after that deadline has passed is the tick. The armed flag survives the Later because a Later keeps the state this module returned."
     match state.armed
-        false -> (State.update(state, armed = true), Clock.__TickReply.Later(Wait.Wake.After(50)))
-        true -> (State.update(state, armed = false, left = state.left - 1), Clock.__TickReply.Now(Clock.Tick.Tock))
+        false -> (State.update(state, armed = true), Clock.TickReply.Later(Wait.Wake.After(50)))
+        true -> (State.update(state, armed = false, left = state.left - 1), Clock.TickReply.Now(Clock.Tick.Tock))
 
 verify tick
-    tick(fresh()) => (State.update(fresh(), asks = 1, armed = true), Clock.__TickReply.Later(Wait.Wake.After(50)))
-    tick(State.update(fresh(), asks = 1, armed = true)) => (State.update(fresh(), asks = 2, left = 3), Clock.__TickReply.Now(Clock.Tick.Tock))
+    tick(fresh()) => (State.update(fresh(), asks = 1, armed = true), Clock.TickReply.Later(Wait.Wake.After(50)))
+    tick(State.update(fresh(), asks = 1, armed = true)) => (State.update(fresh(), asks = 2, left = 3), Clock.TickReply.Now(Clock.Tick.Tock))
 
 verify ticking
-    ticking(State.update(fresh(), left = 0, asks = 9)) => (State.update(fresh(), left = 0, asks = 9), Clock.__TickReply.Now(Clock.Tick.Closed(9)))
+    ticking(State.update(fresh(), left = 0, asks = 9)) => (State.update(fresh(), left = 0, asks = 9), Clock.TickReply.Now(Clock.Tick.Closed(9)))
 
 verify armed
-    armed(State.update(fresh(), armed = true)) => (State.update(fresh(), left = 3), Clock.__TickReply.Now(Clock.Tick.Tock))
-    armed(fresh()) => (State.update(fresh(), armed = true), Clock.__TickReply.Later(Wait.Wake.After(50)))
+    armed(State.update(fresh(), armed = true)) => (State.update(fresh(), left = 3), Clock.TickReply.Now(Clock.Tick.Tock))
+    armed(fresh()) => (State.update(fresh(), armed = true), Clock.TickReply.Later(Wait.Wake.After(50)))

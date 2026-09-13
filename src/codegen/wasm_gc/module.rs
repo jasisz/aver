@@ -6179,11 +6179,11 @@ fn emit_user_types(
                         // `Unit` has no stack value, and a variant field that
                         // is one keeps the same unobservable `i32` placeholder
                         // a record field of that type already keeps
-                        // (`record_field_val_type`). An operation returning
-                        // `Unit` is answered with `__OpReply.Now(Unit)`, so a
-                        // program answering one of its own capabilities
-                        // reaches this shape as soon as it declares such an
-                        // operation.
+                        // (`record_field_val_type`). The reply sum a program
+                        // declares for an operation returning `Unit` carries
+                        // `Now(Unit)`, so a program answering one of its own
+                        // capabilities reaches this shape as soon as it
+                        // declares such an operation.
                         let val_ty =
                             super::types::aver_to_wasm(ty, Some(registry))?.unwrap_or(ValType::I32);
                         fields.push(wasm_encoder::FieldType {

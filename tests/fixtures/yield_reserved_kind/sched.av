@@ -2,7 +2,11 @@ module Sched
     intent = "Fixture capability: hands the program back a tick when it offers to step aside."
     kind = capability
     semantics = effectful
-    exposes [yield]
+    exposes [YieldReply, yield]
+
+type YieldReply
+    Now(Int)
+    Later(Wait.Wake)
 
 operation yield(slot: Int) -> Int
     ? "Offers the slot back to the scheduler and returns the tick it resumes at."

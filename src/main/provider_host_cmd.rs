@@ -671,16 +671,25 @@ fn work_input_rejections(
         user_program_len,
         &marked,
     );
+    let entry_module =
+        aver::visibility::module_decl(&entry.items).map(|module| module.name.as_str());
     if !tc.errors.is_empty() {
         // Type errors are the command's own report; a binding cannot be
-        // judged against signatures that did not survive the typecheck.
-        return empty;
+        // judged against signatures that did not survive the typecheck. The
+        // reply sums can, because they are declarations of the capability
+        // module: an answer function written before its `Cap.<Op>Reply` was
+        // declared is exactly such a type error, and the declaration to
+        // paste is what it needs to hear.
+        return aver::capability::work::reply_sums(&capabilities, manifest.as_ref(), entry_module)
+            .iter()
+            .map(aver::capability::work::WorkDiagnostic::rendered)
+            .collect();
     }
     aver::capability::work::gate(
         &tc.capabilities,
         manifest.as_ref(),
         &tc.fn_sigs,
-        aver::visibility::module_decl(&entry.items).map(|module| module.name.as_str()),
+        entry_module,
     )
     .iter()
     // A warning is something `aver check` tells the program's author; only an

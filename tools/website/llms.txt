@@ -353,18 +353,22 @@ fn ticker() -> Unit
         Clock.Tick.Closed(total) -> Console.print("scored {total}")
 ```
 
-`Clock` is a capability module of the program, which declares the operation and nothing else:
+`Clock` is a capability module of the program. It declares the operation and, beside it, the sum the answer is read through: `TickReply`, named after the operation, with `Now` carrying exactly the operation's result and `Later` carrying exactly `Wait.Wake`. The program writes that sum — a program never writes a `__` name, and the compiler generates none here — and the door holds it to that shape: a missing or differently shaped `<Op>Reply` on a capability the program answers is `error[answer-shape]`, which prints the declaration to paste. Naming `Wait.Wake` needs no `depends [Wait]`, because `Wait` is a reserved module of the standard library:
 
 ```aver
 module Clock
     kind = capability
     semantics = effectful
     intent = "The tick the ticker waits on."
-    exposes [Tick, tick]
+    exposes [Tick, TickReply, tick]
 
 type Tick
     Tock
     Closed(Int)
+
+type TickReply
+    Now(Clock.Tick)
+    Later(Wait.Wake)
 
 operation tick() -> Clock.Tick
     ? "The next tick, or Closed once every job has landed, carrying what they scored together."
@@ -380,7 +384,7 @@ capability = "Clock"
 answer = "Clocked"
 ```
 
-The module depends on the capability it answers and on `Wait`, whose `Wait.Wake` its replies carry, and exposes nothing: the generated loop reaches its functions without `exposes`, and exposing them is `warning[unused-expose]`. One function per operation, all threading one state `S`: `fn op(state: S, args) -> Tuple<S, Cap.__<Op>Reply>`, plus a pure `fresh() -> S` the loop starts the module from. The reply is `Now(v)`, the answer, or `Later(wake)`, no answer yet. Both keep the state the function returned, so a `Later` is where the module records its own progress — an offset, a retry count, a deadline of its own — while the request itself stays where it is. An answer function is pure and non-trivial, so it carries a `verify` block like any other, with the tuple it returns on the right-hand side:
+The module depends on the capability it answers and on `Wait`, whose `Wait.Wake` its replies carry, and exposes nothing: the generated loop reaches its functions without `exposes`, and exposing them is `warning[unused-expose]`. One function per operation, all threading one state `S`: `fn op(state: S, args) -> Tuple<S, Cap.<Op>Reply>`, plus a pure `fresh() -> S` the loop starts the module from. `Cap.<Op>Reply` is the sum the capability module declared beside the operation, and the reply is `Now(v)`, the answer, or `Later(wake)`, no answer yet. Both keep the state the function returned, so a `Later` is where the module records its own progress — an offset, a retry count, a deadline of its own — while the request itself stays where it is. An answer function is pure and non-trivial, so it carries a `verify` block like any other, with the tuple it returns on the right-hand side:
 
 ```aver
 module Clocked
@@ -399,26 +403,26 @@ fn fresh() -> State
     ? "Three tasks to score, none started, nothing scored and no deadline armed."
     State(tasks = [1, 2, 3], running = 0, total = 0, armed = false)
 
-fn tick(state: State) -> Tuple<State, Clock.__TickReply>
+fn tick(state: State) -> Tuple<State, Clock.TickReply>
     ? "Closed once every task has started and landed; before that, a tick fifty milliseconds after it was asked for."
     match (state.tasks, state.running)
-        ([], 0) -> (state, Clock.__TickReply.Now(Clock.Tick.Closed(state.total)))
+        ([], 0) -> (state, Clock.TickReply.Now(Clock.Tick.Closed(state.total)))
         _ -> armed(state)
 
 verify tick
-    tick(fresh()) => (State.update(fresh(), armed = true), Clock.__TickReply.Later(Wait.Wake.After(50)))
-    tick(State.update(fresh(), armed = true)) => (fresh(), Clock.__TickReply.Now(Clock.Tick.Tock))
-    tick(State.update(fresh(), tasks = [], total = 60)) => (State.update(fresh(), tasks = [], total = 60), Clock.__TickReply.Now(Clock.Tick.Closed(60)))
+    tick(fresh()) => (State.update(fresh(), armed = true), Clock.TickReply.Later(Wait.Wake.After(50)))
+    tick(State.update(fresh(), armed = true)) => (fresh(), Clock.TickReply.Now(Clock.Tick.Tock))
+    tick(State.update(fresh(), tasks = [], total = 60)) => (State.update(fresh(), tasks = [], total = 60), Clock.TickReply.Now(Clock.Tick.Closed(60)))
 
-fn armed(state: State) -> Tuple<State, Clock.__TickReply>
+fn armed(state: State) -> Tuple<State, Clock.TickReply>
     ? "The first ask arms the deadline and parks on it; the ask after the deadline has passed is the tick. The flag survives the park because a Later keeps the state this module returned."
     match state.armed
-        false -> (State.update(state, armed = true), Clock.__TickReply.Later(Wait.Wake.After(50)))
-        true -> (State.update(state, armed = false), Clock.__TickReply.Now(Clock.Tick.Tock))
+        false -> (State.update(state, armed = true), Clock.TickReply.Later(Wait.Wake.After(50)))
+        true -> (State.update(state, armed = false), Clock.TickReply.Now(Clock.Tick.Tock))
 
 verify armed
-    armed(fresh()) => (State.update(fresh(), armed = true), Clock.__TickReply.Later(Wait.Wake.After(50)))
-    armed(State.update(fresh(), armed = true)) => (fresh(), Clock.__TickReply.Now(Clock.Tick.Tock))
+    armed(fresh()) => (State.update(fresh(), armed = true), Clock.TickReply.Later(Wait.Wake.After(50)))
+    armed(State.update(fresh(), armed = true)) => (fresh(), Clock.TickReply.Now(Clock.Tick.Tock))
 ```
 
 The wake in a `Later` is a `Wait.Wake`, and it decides when the parked request is asked again:

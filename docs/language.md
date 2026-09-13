@@ -416,7 +416,7 @@ fn loop(id: Int, done: Int) -> Int
         Option.Some(h) -> loop(id, done + h)
 ```
 
-Inside a yielding function a call to an operation of an answered capability is a stop (a request), and the self tail call is a stop of kind `Yield`. Everything else runs inline, including an operation of a capability nobody answers: that one runs inside the turn, where it is written, and the generated function holding it declares it in its own `! [...]`. A function that declares `yield` and never stops — it calls no answered operation and does not tail-call itself — is an error that names both repairs: mark the capability, or drop `yield`. The mirror of that rule is `error[intercept-outside-yield]`: a function without `yield` that performs an operation of an answered capability has made a request nobody will answer, and the message names the answer module's own function to call instead. A program that answers a capability runs on every backend — the bytecode VM, the Rust backend, `aver run --wasm-gc` and `aver run --wasip2` — because what the lowering leaves behind is state types, reply sums and pure answer functions, and the job handle `Work.Job` that the generated reply types reach through `Wait.Wake` has a representation on each of them. A job kind runs on the two wasm targets as well — inline at `begin`, because a component and a wasm-gc module are single-threaded — and both targets bind the `Wait` and `Work` contracts, so `Wait.poll` and `Work.cancel` run there too; see "On wasm-gc and wasip2" under "Jobs" in `docs/services.md` for what a program reads differently. For `loop` the compiler generates, in the same module and in the reserved `__` namespace:
+Inside a yielding function a call to an operation of an answered capability is a stop (a request), and the self tail call is a stop of kind `Yield`. Everything else runs inline, including an operation of a capability nobody answers: that one runs inside the turn, where it is written, and the generated function holding it declares it in its own `! [...]`. A function that declares `yield` and never stops — it calls no answered operation and does not tail-call itself — is an error that names both repairs: mark the capability, or drop `yield`. The mirror of that rule is `error[intercept-outside-yield]`: a function without `yield` that performs an operation of an answered capability has made a request nobody will answer, and the message names the answer module's own function to call instead. A program that answers a capability runs on every backend — the bytecode VM, the Rust backend, `aver run --wasm-gc` and `aver run --wasip2` — because what the lowering leaves behind is state types and pure answer functions over the reply sums the program declared, and the job handle `Work.Job` that those sums reach through `Wait.Wake` has a representation on each of them. A job kind runs on the two wasm targets as well — inline at `begin`, because a component and a wasm-gc module are single-threaded — and both targets bind the `Wait` and `Work` contracts, so `Wait.poll` and `Work.cancel` run there too; see "On wasm-gc and wasip2" under "Jobs" in `docs/services.md` for what a program reads differently. For `loop` the compiler generates, in the same module and in the reserved `__` namespace:
 
 - `__LoopClaimState` — one sum type per request kind, with one variant per stop of that kind; a variant holds exactly the variables the rest of that path still reads (`AwaitR(Int, Int)` for `id` and `done`). A stop bound to a name is `Await<Name>`; an unbound stop is `Await<n>` with its ordinal in the function.
 - `__LoopYieldState` — the state of the tail call: its argument tuple (`Await2(Int, Int)`).
@@ -537,13 +537,26 @@ fn fetchBody(key: Int, height: Int) -> Bool
 
 `Console.print` there is not a request: `Console` is nobody's to answer, so it runs in place, inside the turn, and the generated function that holds it declares it. `fetchBody` is a yielding helper, not a process: the loop seats `peer`, and the three requests `fetchBody` waits on reach the turn as requests of `peer` carrying the helper's state — see "Helpers and nested state" above. A process's own effect list still names what its helpers perform, because the program as written calls them.
 
-The answer modules are ordinary modules with one state each. Every operation of every capability they answer gets one function, threading that state and answering `Now(v)` or `Later(wake)`, and every one of them declares `fresh()`, the state before anything has happened, because that is where the loop starts them:
+The answer modules are ordinary modules with one state each. Every operation of every capability they answer gets one function, threading that state and answering `Now(v)` or `Later(wake)`, and every one of them declares `fresh()`, the state before anything has happened, because that is where the loop starts them. The sum an answer is read through is the capability's to declare, beside the operation and named after it — `Pool.claim` answers through `Pool.ClaimReply`, with `Now` carrying exactly the operation's result and `Later` carrying exactly `Wait.Wake` — and the door holds it to that shape: a capability the program answers whose `<Op>Reply` is missing or of another shape is `error[answer-shape]`, which prints the declaration to paste. A program never writes a `__` name, so no reply sum is generated:
 
 ```aver
-fn claim(state: State) -> Tuple<State, Pool.__ClaimReply>
+type ClaimReply
+    Now(Pool.Assignment)
+    Later(Wait.Wake)
+
+operation claim() -> Pool.Assignment
+    ? "Which peer should fetch which height next, or Stop once there is nothing left to fetch."
+    oracle = generative
+    replay = recorded
+```
+
+And the function that answers it:
+
+```aver
+fn claim(state: State) -> Tuple<State, Pool.ClaimReply>
     ? "The next height for the next idle peer, Stop once every height has been handed out, and a Later with a deadline while no peer is free to take one."
     match state.nextHeight > state.lastHeight
-        true -> (state, Pool.__ClaimReply.Now(Pool.Assignment.Stop))
+        true -> (state, Pool.ClaimReply.Now(Pool.Assignment.Stop))
         false -> claimIdle(state, state.idle)
 ```
 
@@ -552,19 +565,19 @@ A `Later` leaves the **request** where it is, with the same instance number and 
 The worked example is a real socket, in the example's own `Sockets` module: `Tcp.writeNow` takes as many of the bytes offered it as the socket has room for right now and answers that count, so a payload it did not take whole leaves an offset behind and parks on that socket becoming writable again. Nothing but the module's own state carries the offset across the park, and the ask after the park goes on from exactly there:
 
 ```aver
-fn write(state: State, key: Int, payload: Bytes) -> Tuple<State, Wire.__WriteReply>
+fn write(state: State, key: Int, payload: Bytes) -> Tuple<State, Wire.WriteReply>
     ? "One ask at one peer's write. Every ask is counted, so a run can say how many asks its payloads took."
     ! [Tcp.writeNow]
     writing(State.update(state, asked = state.asked + 1), key, payload, Map.get(state.peers, key))
 
-fn offered(state: State, key: Int, connection: Tcp.Connection, payload: Bytes, sofar: Int) -> Tuple<State, Wire.__WriteReply>
+fn offered(state: State, key: Int, connection: Tcp.Connection, payload: Bytes, sofar: Int) -> Tuple<State, Wire.WriteReply>
     ? "One ask at one socket. It answers how many of the bytes offered it actually took, which is a count between nothing and the whole offer; a payload with bytes still to go records how far it got and parks on the socket becoming writable again, and the last byte answers the write."
     ! [Tcp.writeNow]
     match Tcp.writeNow(connection, offer(payload, sofar))
-        Result.Err(reason) -> (dropped(state, key), Wire.__WriteReply.Now(Result.Err(reason)))
+        Result.Err(reason) -> (dropped(state, key), Wire.WriteReply.Now(Result.Err(reason)))
         Result.Ok(count) -> match whole(payload, sofar, count)
-            true -> (finished(state, key), Wire.__WriteReply.Now(Result.Ok(Unit)))
-            false -> (parked(state, key, sofar, count), Wire.__WriteReply.Later(Wait.Wake.Item(Wait.Item.Socket(Tcp.Socket.Sending(connection)))))
+            true -> (finished(state, key), Wire.WriteReply.Now(Result.Ok(Unit)))
+            false -> (parked(state, key, sofar, count), Wire.WriteReply.Later(Wait.Wake.Item(Wait.Item.Socket(Tcp.Socket.Sending(connection)))))
 ```
 
 An answer module may perform effects — `answer-shape` says so rather than refusing it, because an answer runs inside the turn and a slow one stalls every other process — and this one does: it owns the `Tcp.Listener` its peers arrive on and the `Tcp.Connection` each peer key stands for, answers `Wire.accept` from `Tcp.accept`, `Wire.read` from `Tcp.readNow`, and parks on `Connected` when nothing has arrived. That is what a `Wire` is for: the processes above it say what they want, and one module says how a socket gives it to them.
@@ -581,16 +594,16 @@ Nothing tells the answer function *which* half woke it, because the module alrea
 The worked example of `Either` is the same `Sockets` module's read. It records the clock reading a read falls due at on that read's first ask, so the asks after it run out the deadline the caller named rather than starting a new one each time, and parks on the socket and on what is left of that deadline at once. The ask that finds nothing once the deadline has run out answers `TimedOut`, and the process above it hands that peer back:
 
 ```aver
-fn read(state: State, key: Int, max: Int, deadlineMs: Int) -> Tuple<State, Wire.__ReadReply>
+fn read(state: State, key: Int, max: Int, deadlineMs: Int) -> Tuple<State, Wire.ReadReply>
     ? "The next chunk from one peer, against the deadline the caller named. Every ask is counted, including the ones that park, so a run can say afterwards how often the wait let this wire be asked. The clock is read here because the deadline is this module's to keep: what the caller named is a length, and what a park is measured against is a reading."
     ! [Time.unixMs, Tcp.readNow]
     asking(State.update(state, reads = state.reads + 1), key, max, deadlineMs, Time.unixMs())
 
-fn quiet(state: State, key: Int, now: Int, again: Wait.Wake) -> Tuple<State, Wire.__ReadReply>
+fn quiet(state: State, key: Int, now: Int, again: Wait.Wake) -> Tuple<State, Wire.ReadReply>
     ? "A peer that has said nothing yet, and the wake that would bring this read back: the socket it is listening to and what is left of its deadline at once, whichever comes first. Past the deadline the read is over and answers TimedOut; before it the request parks on that wake."
     match now >= dueOf(state, key)
-        true -> (disarmed(state, key), Wire.__ReadReply.Now(Wire.Heard.TimedOut))
-        false -> (state, Wire.__ReadReply.Later(again))
+        true -> (disarmed(state, key), Wire.ReadReply.Now(Wire.Heard.TimedOut))
+        false -> (state, Wire.ReadReply.Later(again))
 ```
 
 A freshly seated process and a process whose request was just answered are askable at once.
@@ -598,15 +611,15 @@ A freshly seated process and a process whose request was just answered are askab
 The worked example of `After` is a clock that gives out a tick fifty milliseconds after it was asked for one. The first ask arms the deadline and parks; the ask after the deadline has passed is the tick. Four ticks are eight asks — two per tick, whatever else the run is doing and however many turns it takes — plus the closing ask that answers `Closed`, which is why the slice's run ends with a ticker asked nine times:
 
 ```aver
-fn tick(state: State) -> Tuple<State, Clock.__TickReply>
+fn tick(state: State) -> Tuple<State, Clock.TickReply>
     ? "The next tick. Every ask is counted, including the ones that park."
     ticking(State.update(state, asks = state.asks + 1))
 
-fn armed(state: State) -> Tuple<State, Clock.__TickReply>
+fn armed(state: State) -> Tuple<State, Clock.TickReply>
     ? "A tick is not due the moment it is asked for. The first ask arms the deadline and parks on it; the ask after that deadline has passed is the tick."
     match state.armed
-        false -> (State.update(state, armed = true), Clock.__TickReply.Later(Wait.Wake.After(50)))
-        true -> (State.update(state, armed = false, left = state.left - 1), Clock.__TickReply.Now(Clock.Tick.Tock))
+        false -> (State.update(state, armed = true), Clock.TickReply.Later(Wait.Wake.After(50)))
+        true -> (State.update(state, armed = false, left = state.left - 1), Clock.TickReply.Now(Clock.Tick.Tock))
 ```
 
 Finally the view and the three policies. The view is a record the program declares and the loop fills; the checker holds it to exactly that shape and prints the declaration it wants under `error[view-shape]`:
