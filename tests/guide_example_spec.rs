@@ -105,6 +105,75 @@ fn the_guide_example_runs_to_the_score_on_wasm_gc() {
     );
 }
 
+/// The example runs on the Rust backend to the same score. Its `tick`
+/// matches `(state.tasks, state.running)` against `([], 0)`, a tuple arm
+/// the Rust walker used to refuse with `MIR walker could not render fn
+/// tick`. A `cargo build` is the proof, not a `cargo check`: the arm lowers
+/// to a guard chain over cloned elements, and only the borrow checker says
+/// it holds. The crate builds in a target directory this suite keeps as
+/// its own, the way `rust_work_spec` does, so the runtime is compiled once
+/// and a later run pays seconds.
+#[cfg(feature = "runtime")]
+#[test]
+fn the_guide_example_runs_to_the_score_on_rust() {
+    let ws = std::env::temp_dir().join(format!("aver-guide-example-rust-{}", std::process::id()));
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let target = repo_root().join("target").join("guide-example-spec-shared");
+    let result = (|| {
+        let out = aver(&[
+            "compile",
+            "main.av",
+            "--module-root",
+            ".",
+            "--target",
+            "rust",
+            "--name",
+            "guide_example",
+            "-o",
+            project.to_str().expect("a utf-8 temp path"),
+        ]);
+        if !out.status.success() {
+            return Err(format!(
+                "aver compile --target rust failed:\n{}",
+                format_output(&out)
+            ));
+        }
+        fs::create_dir_all(&target).expect("create cargo target dir");
+        let out = Command::new("cargo")
+            .arg("build")
+            .arg("-q")
+            .arg("--offline")
+            .arg("--manifest-path")
+            .arg(project.join("Cargo.toml"))
+            .env("CARGO_TARGET_DIR", &target)
+            .output()
+            .expect("expected `cargo build` to spawn");
+        if !out.status.success() {
+            return Err(format!(
+                "cargo build failed on the crate emitted for the guide example:\n{}",
+                format_output(&out)
+            ));
+        }
+        let bin = target
+            .join("debug")
+            .join(format!("guide_example{}", std::env::consts::EXE_SUFFIX));
+        let out = Command::new(&bin)
+            .output()
+            .map_err(|error| format!("failed to run {}: {error}", bin.display()))?;
+        if !out.status.success() {
+            return Err(format!(
+                "{} exited non-zero:\n{}",
+                bin.display(),
+                format_output(&out)
+            ));
+        }
+        Ok(stdout_of(&out).trim().to_string())
+    })();
+    let _ = fs::remove_dir_all(&ws);
+    assert_eq!(result.unwrap_or_else(|e| panic!("{e}")), "scored 60");
+}
+
 #[test]
 fn the_guide_example_is_formatted() {
     let out = aver(&["format", ".", "--check"]);
