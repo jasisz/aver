@@ -1,5 +1,5 @@
 module Ledger
-    intent = "The answers this program gives to Pool, Blocks and Chain: one state, pure transitions, plus the two ends of the validation job's seam."
+    intent = "The answers this program gives to Pool, Blocks and Chain: one state, pure transitions, plus the three ends of the validation job's seam. A delivered body is `queued` until its validation job starts, and `running` counts the validations started and not yet landed; the two together are what is delivered and not yet validated."
     depends [Bytes, Wait, Pool, Blocks, Chain]
     exposes [State, fresh, blockOf, claim, gone, joined, swept, deliver, body, nextTarget, commit, nextTask, taskStarted, validated, accepted, validate, checked, patience, stopped, emptied, nothingPending, givenUp, claimIdle, counted, waited, without, keptUnlessKey, targetAbove, waiting]
     effects []
@@ -10,6 +10,7 @@ record State
     nextHeight: Int
     lastHeight: Int
     queued: List<Tuple<Int, Bytes>>
+    running: Int
     bodies: Map<Int, Bytes>
     tip: Int
     swept: Int
@@ -19,7 +20,7 @@ record State
 
 fn fresh() -> State
     ? "No peer has joined, nothing is fetched, nothing has been waited for and nobody has left, and the run is three blocks long."
-    State(idle = [], busy = {}, nextHeight = 1, lastHeight = 3, queued = [], bodies = {}, tip = 0, swept = 0, idleClaims = 0, left = 0, rejected = [])
+    State(idle = [], busy = {}, nextHeight = 1, lastHeight = 3, queued = [], running = 0, bodies = {}, tip = 0, swept = 0, idleClaims = 0, left = 0, rejected = [])
 
 fn patience() -> Int
     ? "How many asks this pool answers with nobody idle before it gives up. Each one parks on a five-millisecond deadline, and the turns around it stretch that, so this is a few seconds of waiting for a peer that may never connect: long enough for one that is on its way, short enough that a run nobody connects to still ends."
@@ -36,9 +37,9 @@ fn emptied(state: State) -> Bool
         [_, .._] -> false
 
 fn nothingPending(state: State) -> Bool
-    ? "Nothing is on its way to the chain: no peer is fetching a body and nothing is waiting to be validated."
+    ? "Nothing is on its way to the chain: no peer is fetching a body, no body is waiting for its validation to start, and no validation is running off the turn."
     match state.queued
-        [] -> Map.len(state.busy) == 0
+        [] -> Bool.and(Map.len(state.busy) == 0, state.running == 0)
         [_, .._] -> false
 
 fn givenUp(state: State) -> Bool
@@ -100,8 +101,8 @@ fn swept(state: State) -> Tuple<State, Pool.__SweptReply>
     (State.update(state, swept = state.swept + 1), Pool.__SweptReply.Now(Pool.Sweep.Swept(List.len(state.idle))))
 
 fn deliver(state: State, key: Int, height: Int, block: Bytes) -> Tuple<State, Blocks.__DeliverReply>
-    ? "A body handed over goes into the queue the job engine takes from. A Later while the queue is full, which is the backpressure: the peer waits rather than reading more."
-    match List.len(state.queued) >= 2
+    ? "A body handed over goes into the queue the job engine takes from. A Later while two bodies are delivered and not yet validated — queued or running — which is the backpressure: the peer waits rather than reading more."
+    match List.len(state.queued) + state.running >= 2
         true -> (state, Blocks.__DeliverReply.Later(Wait.Wake.NextTurn))
         false -> (State.update(state, queued = List.concat(state.queued, [(height, block)]), idle = List.concat(state.idle, [key]), busy = Map.remove(state.busy, key)), Blocks.__DeliverReply.Now(Blocks.Receipt.Accepted))
 
@@ -142,8 +143,8 @@ fn nextTask(state: State) -> Option<Tuple<Int, Bytes>>
         [head, ..rest] -> Option.Some(head)
 
 fn taskStarted(state: State, task: Tuple<Int, Bytes>) -> State
-    ? "A task whose validation job just began leaves the queue it was offered from — every copy of it — so the next ask is offered a different one. Named by aver.toml's started key."
-    State.update(state, queued = withoutTask(state.queued, task, []))
+    ? "A task whose validation job just began leaves the queue it was offered from — every copy of it — so the next ask is offered a different one, and is counted as running until it lands. Named by aver.toml's started key."
+    State.update(state, queued = withoutTask(state.queued, task, []), running = state.running + 1)
 
 fn withoutTask(queued: List<Tuple<Int, Bytes>>, task: Tuple<Int, Bytes>, acc: List<Tuple<Int, Bytes>>) -> List<Tuple<Int, Bytes>>
     ? "The queue with every copy of one task taken out, in the order the rest were queued."
@@ -158,29 +159,16 @@ fn keptUnlessTask(acc: List<Tuple<Int, Bytes>>, entry: Tuple<Int, Bytes>, task: 
         false -> List.concat(acc, [entry])
 
 fn validated(state: State, outcome: Result<Int, String>) -> State
-    ? "Where a validation that is over lands. Named by aver.toml's landed key. It resumes nobody: the peer that delivered this body moved on and its instance number changed. A validation that will never produce a height — cancelled, stopped, or forgotten by the engine — is recorded as a rejection instead, and the run goes on without it."
+    ? "Where a validation that is over lands. Named by aver.toml's landed key. It resumes nobody: the peer that delivered this body moved on and its instance number changed. Either way one validation fewer is running. A validation that will never produce a height — cancelled, stopped, or forgotten by the engine — is recorded as a rejection instead, and the run goes on without it."
     match outcome
-        Result.Err(reason) -> State.update(state, rejected = List.concat(state.rejected, [reason]))
-        Result.Ok(height) -> accepted(state, height)
+        Result.Err(reason) -> State.update(state, rejected = List.concat(state.rejected, [reason]), running = state.running - 1)
+        Result.Ok(height) -> accepted(State.update(state, running = state.running - 1), height)
 
 fn accepted(state: State, height: Int) -> State
-    ? "A validation that produced a height: the body at that height is validated, and its entry leaves the queue. A height of zero is a body this program rejected, which validates nothing."
+    ? "A validation that produced a height: the body at that height is validated. Its entry left the queue when its job started. A height of zero is a body this program rejected, which validates nothing."
     match height == 0
         true -> state
-        false -> State.update(state, bodies = Map.set(state.bodies, height, blockOf(height)), queued = withoutHeight(state.queued, height, []))
-
-fn withoutHeight(queued: List<Tuple<Int, Bytes>>, height: Int, acc: List<Tuple<Int, Bytes>>) -> List<Tuple<Int, Bytes>>
-    ? "The queue with every entry for one height taken out, in the order the rest were queued."
-    match queued
-        [] -> acc
-        [head, ..rest] -> withoutHeight(rest, height, keptUnless(acc, head, height))
-
-fn keptUnless(acc: List<Tuple<Int, Bytes>>, entry: Tuple<Int, Bytes>, height: Int) -> List<Tuple<Int, Bytes>>
-    ? "One queued entry, kept unless it is the height that just landed."
-    match entry
-        (queuedHeight, _) -> match queuedHeight == height
-            true -> acc
-            false -> List.concat(acc, [entry])
+        false -> State.update(state, bodies = Map.set(state.bodies, height, blockOf(height)))
 
 fn validate(task: Tuple<Int, Bytes>) -> Int
     ? "The work one validation job does off the turn: the height whose body checked out, or 0 for a body that did not."
@@ -210,11 +198,13 @@ verify nothingPending
     nothingPending(fresh()) => true
     nothingPending(State.update(fresh(), busy = Map.set({}, 7, 1))) => false
     nothingPending(State.update(fresh(), queued = [(1, blockOf(1))])) => false
+    nothingPending(State.update(fresh(), running = 1)) => false
 
 verify givenUp
     givenUp(fresh()) => false
     givenUp(State.update(fresh(), nextHeight = 4)) => true
     givenUp(State.update(fresh(), nextHeight = 4, queued = [(1, blockOf(1))])) => false
+    givenUp(State.update(fresh(), nextHeight = 4, running = 1)) => false
 
 verify claim
     claim(fresh()) => (State.update(fresh(), idleClaims = 1), Pool.__ClaimReply.Later(Wait.Wake.After(5)))
@@ -255,6 +245,7 @@ verify joined
 verify deliver
     deliver(fresh(), 7, 1, blockOf(1)) => (State.update(fresh(), queued = [(1, blockOf(1))], idle = [7]), Blocks.__DeliverReply.Now(Blocks.Receipt.Accepted))
     deliver(State.update(fresh(), queued = [(1, blockOf(1)), (2, blockOf(2))]), 7, 3, blockOf(3)) => (State.update(fresh(), queued = [(1, blockOf(1)), (2, blockOf(2))]), Blocks.__DeliverReply.Later(Wait.Wake.NextTurn))
+    deliver(State.update(fresh(), queued = [(1, blockOf(1))], running = 1), 7, 3, blockOf(3)) => (State.update(fresh(), queued = [(1, blockOf(1))], running = 1), Blocks.__DeliverReply.Later(Wait.Wake.NextTurn))
 
 verify body
     body(fresh(), 1) => (fresh(), Blocks.__BodyReply.Later(Wait.Wake.NextTurn))
@@ -294,8 +285,8 @@ verify taskStarted law aStartedTaskIsNotAskedAgain
     nextTask(taskStarted(state, task)) != Option.Some(task) holds
 
 verify taskStarted
-    taskStarted(fresh(), (1, blockOf(1))) => fresh()
-    taskStarted(State.update(fresh(), queued = [(1, blockOf(1)), (2, blockOf(2))]), (1, blockOf(1))) => State.update(fresh(), queued = [(2, blockOf(2))])
+    taskStarted(fresh(), (1, blockOf(1))) => State.update(fresh(), running = 1)
+    taskStarted(State.update(fresh(), queued = [(1, blockOf(1)), (2, blockOf(2))]), (1, blockOf(1))) => State.update(fresh(), queued = [(2, blockOf(2))], running = 1)
 
 verify withoutTask
     withoutTask([], (1, blockOf(1)), []) => []
@@ -306,21 +297,13 @@ verify keptUnlessTask
     keptUnlessTask([], (2, blockOf(2)), (1, blockOf(1))) => [(2, blockOf(2))]
 
 verify validated
-    validated(State.update(fresh(), queued = [(1, blockOf(1))]), Result.Ok(1)) => State.update(fresh(), bodies = Map.set({}, 1, blockOf(1)))
-    validated(State.update(fresh(), queued = [(1, blockOf(1))]), Result.Ok(0)) => State.update(fresh(), queued = [(1, blockOf(1))])
-    validated(fresh(), Result.Err("work: job cancelled")) => State.update(fresh(), rejected = ["work: job cancelled"])
+    validated(State.update(fresh(), running = 1), Result.Ok(1)) => State.update(fresh(), bodies = Map.set({}, 1, blockOf(1)))
+    validated(State.update(fresh(), running = 1), Result.Ok(0)) => fresh()
+    validated(State.update(fresh(), running = 1), Result.Err("work: job cancelled")) => State.update(fresh(), rejected = ["work: job cancelled"])
 
 verify accepted
-    accepted(State.update(fresh(), queued = [(1, blockOf(1))]), 1) => State.update(fresh(), bodies = Map.set({}, 1, blockOf(1)))
-    accepted(State.update(fresh(), queued = [(1, blockOf(1))]), 0) => State.update(fresh(), queued = [(1, blockOf(1))])
-
-verify withoutHeight
-    withoutHeight([], 1, []) => []
-    withoutHeight([(1, blockOf(1)), (2, blockOf(2))], 1, []) => [(2, blockOf(2))]
-
-verify keptUnless
-    keptUnless([], (1, blockOf(1)), 1) => []
-    keptUnless([], (2, blockOf(2)), 1) => [(2, blockOf(2))]
+    accepted(fresh(), 1) => State.update(fresh(), bodies = Map.set({}, 1, blockOf(1)))
+    accepted(fresh(), 0) => fresh()
 
 verify validate
     validate((1, blockOf(1))) => 1
