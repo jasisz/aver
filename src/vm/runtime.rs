@@ -373,7 +373,10 @@ impl VmRuntime {
         self.replay_state.set_record_cap(cap);
     }
 
-    pub(super) fn start_replay(&mut self, effects: Vec<EffectRecord>, validate_args: bool) {
+    pub(super) fn start_replay(&mut self, mut effects: Vec<EffectRecord>, validate_args: bool) {
+        for effect in &mut effects {
+            normalize_recorded_names(effect, self.providers.contracts());
+        }
         self.replay_state.start_replay(effects, validate_args);
     }
 
@@ -598,6 +601,66 @@ impl VmRuntime {
             let vals: Vec<_> = args.iter().map(|a| a.to_value(arena)).collect();
             values_to_json_lossy(&vals)
         };
+        self.replay_recorded(builtin_name, got_args, None, arena)
+    }
+
+    /// Replay one recorded effect of a provider-bound operation.
+    ///
+    /// Both sides of the recorded boundary carry the canonical
+    /// `Module.Type` spelling, so this run's arguments are re-spelled the
+    /// same way before they are compared against the recording, and the
+    /// recorded outcome is checked against the declared return type before
+    /// the program may see it: a tag naming neither that type nor its own
+    /// short name is a foreign record and a diagnostic, never a value.
+    fn replay_capability(
+        &mut self,
+        operation: &crate::capability::CapabilityOperation,
+        args: &[NanValue],
+        arena: &mut Arena,
+    ) -> Result<NanValue, VmError> {
+        let name = operation.canonical_name.clone();
+        let canonical_args = args
+            .iter()
+            .enumerate()
+            .map(|(index, arg)| {
+                let value = arg.to_value(arena);
+                match operation.params.get(index) {
+                    Some((_, ty)) => crate::provider::canonicalize_boundary_names(
+                        &value,
+                        ty,
+                        &operation.module,
+                        self.providers.contracts(),
+                    )
+                    .map_err(|mismatch| {
+                        VmError::runtime(format!(
+                            "Replay of '{name}' argument {index} carries a record of type '{}'; expected '{}'",
+                            mismatch.received, mismatch.expected
+                        ))
+                    }),
+                    None => Ok(value),
+                }
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        self.replay_recorded(
+            &name,
+            values_to_json_lossy(&canonical_args),
+            Some((&operation.return_type, &operation.module)),
+            arena,
+        )
+    }
+
+    /// Consume one recorded effect and decode its outcome. `expected` is the
+    /// declaring operation's return type and module: a recorded tag may
+    /// spell that type canonically or by its own short name — the two
+    /// spellings of one nominal type — and anything else fails the replay
+    /// rather than decode into a value of the wrong type.
+    fn replay_recorded(
+        &mut self,
+        builtin_name: &str,
+        got_args: Vec<crate::replay::JsonValue>,
+        expected: Option<(&crate::ast::Type, &str)>,
+        arena: &mut Arena,
+    ) -> Result<NanValue, VmError> {
         let record = self
             .replay_state
             .replay_effect(builtin_name, Some(got_args))
@@ -633,6 +696,21 @@ impl VmRuntime {
                         builtin_name, why
                     ))
                 })?;
+                let val = match expected {
+                    Some((ty, scope)) => crate::provider::canonicalize_boundary_names(
+                        &val,
+                        ty,
+                        scope,
+                        self.providers.contracts(),
+                    )
+                    .map_err(|mismatch| {
+                        VmError::runtime(format!(
+                            "Replay of '{}' carries a record of type '{}' where the operation expects '{}'",
+                            builtin_name, mismatch.received, mismatch.expected
+                        ))
+                    })?,
+                    None => val,
+                };
                 NanValue::from_value(&val, arena)
             }
             RecordedOutcome::RuntimeError(msg) => return Err(VmError::runtime(msg.clone())),
@@ -762,10 +840,10 @@ impl VmRuntime {
             match capability.replay {
                 Some(crate::capability::ReplaySemantics::Recorded)
                 | Some(crate::capability::ReplaySemantics::Suppressed) => {
-                    return self.replay_builtin(&info.name, args, arena);
+                    return self.replay_capability(&operation, args, arena);
                 }
                 Some(crate::capability::ReplaySemantics::Reissued) => {
-                    let _recorded = self.replay_builtin(&info.name, args, arena)?;
+                    let _recorded = self.replay_capability(&operation, args, arena)?;
                 }
                 None => {}
             }
@@ -790,7 +868,43 @@ impl VmRuntime {
         let result_nv = NanValue::from_value(&result, arena);
 
         if capability.effectful && self.execution_mode() == VmExecutionMode::Record {
-            let args_json = values_to_json_lossy(&values);
+            // A recording is a ledger of provider-boundary crossings, so
+            // args and outcome alike carry the canonical `Module.Type`
+            // names the boundary uses — not whichever spelling the program
+            // happened to build the value with.
+            let scope = operation.module.as_str();
+            let contracts = self.providers.contracts();
+            let canonical_args = values
+                .iter()
+                .enumerate()
+                .map(|(index, value)| {
+                    match operation.params.get(index) {
+                        Some((_, ty)) => crate::provider::canonicalize_boundary_names(
+                            value, ty, scope, contracts,
+                        )
+                        .map_err(|mismatch| {
+                            VmError::runtime(format!(
+                                "'{}' crosses its provider boundary with record type '{}' where '{}' is expected",
+                                info.name, mismatch.received, mismatch.expected
+                            ))
+                        }),
+                        None => Ok(value.clone()),
+                    }
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let result = crate::provider::canonicalize_boundary_names(
+                &result,
+                &operation.return_type,
+                scope,
+                contracts,
+            )
+            .map_err(|mismatch| {
+                VmError::runtime(format!(
+                    "'{}' crosses its provider boundary with record type '{}' where '{}' is expected",
+                    info.name, mismatch.received, mismatch.expected
+                ))
+            })?;
+            let args_json = values_to_json_lossy(&canonical_args);
             let outcome = match value_to_json(&result) {
                 Ok(json) => RecordedOutcome::Value(json),
                 Err(error) => RecordedOutcome::RuntimeError(error),
@@ -815,7 +929,7 @@ impl VmRuntime {
         arena: &mut Arena,
     ) -> Result<NanValue, VmError> {
         let name = operation.canonical_name.clone();
-        let recorded = self.replay_builtin(&name, args, arena)?;
+        let recorded = self.replay_capability(operation, args, arena)?;
         let values: Vec<Value> = args.iter().map(|value| value.to_value(arena)).collect();
         match operation.name.as_str() {
             "begin" => {
@@ -838,11 +952,37 @@ impl VmRuntime {
                 };
                 match self.providers.work_replay_peek(&operation.module, token) {
                     Some(Ok(Some(recomputed))) => {
-                        if recomputed != **expected {
+                        // Each side may carry either spelling of the
+                        // answer's nominal type — the recording what was
+                        // written, the recompute what the program built —
+                        // so both are re-spelled canonically before
+                        // comparing. A foreign tag on the recorded side was
+                        // already refused when the effect decoded.
+                        let (expected, recomputed) = match work_answer_type(&operation.return_type)
+                        {
+                            Some(answer_type) => (
+                                crate::provider::canonicalize_boundary_names(
+                                    expected,
+                                    answer_type,
+                                    &operation.module,
+                                    self.providers.contracts(),
+                                )
+                                .map_err(|mismatch| VmError::runtime(mismatch.to_string()))?,
+                                crate::provider::canonicalize_boundary_names(
+                                    &recomputed,
+                                    answer_type,
+                                    &operation.module,
+                                    self.providers.contracts(),
+                                )
+                                .map_err(|mismatch| VmError::runtime(mismatch.to_string()))?,
+                            ),
+                            None => ((**expected).clone(), recomputed),
+                        };
+                        if recomputed != expected {
                             return Err(VmError::runtime(format!(
                                 "Replay divergence: job kind '{}' job #{token} recorded {} but running its bound function again produced {}",
                                 operation.module,
-                                crate::value::aver_repr(expected),
+                                crate::value::aver_repr(&expected),
                                 crate::value::aver_repr(&recomputed)
                             )));
                         }
@@ -1055,4 +1195,65 @@ fn result_payload(value: &Value) -> Option<&Value> {
         Value::Ok(inner) => Some(inner),
         _ => None,
     }
+}
+
+/// The job answer's own type inside a `take` signature
+/// `Result<Option<T>, String>` — the `T` — or nothing when the operation
+/// declares a different shape.
+fn work_answer_type(ty: &crate::ast::Type) -> Option<&crate::ast::Type> {
+    match ty {
+        crate::ast::Type::Result(ok, _) => match ok.as_ref() {
+            crate::ast::Type::Option(inner) => Some(inner),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Re-spell the represented record/variant tags of one recorded effect to
+/// the canonical `Module.Type` names the provider boundary uses, under the
+/// operation's own signature.
+///
+/// Older runs let the program-side short name leak into some slots — a
+/// `begin` task read `Task` where the same run's `take` answer read
+/// `Scorer.Report` — so a recorded tag is accepted as the declared type's
+/// own short name, its only legitimate alias. A tag naming anything else
+/// keeps its spelling: normalizing it away would hide exactly the
+/// divergence the replay is there to catch, so the mismatch is left for the
+/// effect's own step to diagnose.
+fn normalize_recorded_names(
+    effect: &mut EffectRecord,
+    contracts: &crate::capability::CapabilityRegistry,
+) {
+    let Some(operation) = contracts.operation(&effect.effect_type) else {
+        return;
+    };
+    for (arg, (_, ty)) in effect.args.iter_mut().zip(operation.params.iter()) {
+        *arg = normalize_recorded_json(arg, ty, &operation.module, contracts);
+    }
+    if let RecordedOutcome::Value(value) = &mut effect.outcome {
+        *value =
+            normalize_recorded_json(value, &operation.return_type, &operation.module, contracts);
+    }
+}
+
+/// One recorded argument or outcome, canonicalized through its declared
+/// type. Anything that does not decode, does not match, or does not
+/// re-encode keeps its original spelling: this pass only repairs the
+/// spelling drift older writers left behind, it never invents a value.
+fn normalize_recorded_json(
+    json: &crate::replay::JsonValue,
+    expected: &crate::ast::Type,
+    scope: &str,
+    contracts: &crate::capability::CapabilityRegistry,
+) -> crate::replay::JsonValue {
+    let Ok(value) = json_to_value(json) else {
+        return json.clone();
+    };
+    let Ok(value) =
+        crate::provider::canonicalize_boundary_names(&value, expected, scope, contracts)
+    else {
+        return json.clone();
+    };
+    value_to_json(&value).unwrap_or_else(|_| json.clone())
 }

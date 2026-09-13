@@ -206,7 +206,7 @@ impl aver_replay::ReplayValue for Expr {
         let mut payload = serde_json::Map::new();
         payload.insert(
             "type".to_string(),
-            serde_json::Value::String("Expr".to_string()),
+            serde_json::Value::String("Domain.Ast.Expr".to_string()),
         );
         match self {
             Expr::ExprInt(f0) => {
@@ -698,9 +698,9 @@ impl aver_replay::ReplayValue for Expr {
                 .ok_or_else(|| "$variant missing field 'type'".to_string())?,
             "$variant.type",
         )?;
-        if type_name != "Expr" {
+        if type_name != "Domain.Ast.Expr" && type_name != "Expr" {
             return Err(format!(
-                "$variant type mismatch: expected Expr, got {}",
+                "$variant type mismatch: expected Domain.Ast.Expr, got {}",
                 type_name
             ));
         }
@@ -1117,7 +1117,10 @@ impl aver_replay::ReplayValue for Expr {
                     format!("$variant ExprIndependentProduct missing field #{}", 1)
                 })?)?,
             )),
-            _ => Err(format!("unknown variant '{}' for Expr", variant_name)),
+            _ => Err(format!(
+                "unknown variant '{}' for Domain.Ast.Expr",
+                variant_name
+            )),
         }
     }
 }
@@ -1161,7 +1164,7 @@ impl aver_replay::ReplayValue for MatchArm {
         let mut payload = serde_json::Map::new();
         payload.insert(
             "type".to_string(),
-            serde_json::Value::String("MatchArm".to_string()),
+            serde_json::Value::String("Domain.Ast.MatchArm".to_string()),
         );
         payload.insert("fields".to_string(), serde_json::Value::Object(fields));
         aver_replay::wrap_marker("$record", serde_json::Value::Object(payload))
@@ -1175,9 +1178,9 @@ impl aver_replay::ReplayValue for MatchArm {
                 .ok_or_else(|| "$record missing field 'type'".to_string())?,
             "$record.type",
         )?;
-        if type_name != "MatchArm" {
+        if type_name != "Domain.Ast.MatchArm" && type_name != "MatchArm" {
             return Err(format!(
-                "$record type mismatch: expected MatchArm, got {}",
+                "$record type mismatch: expected Domain.Ast.MatchArm, got {}",
                 type_name
             ));
         }
@@ -1262,7 +1265,7 @@ impl aver_replay::ReplayValue for Pattern {
         let mut payload = serde_json::Map::new();
         payload.insert(
             "type".to_string(),
-            serde_json::Value::String("Pattern".to_string()),
+            serde_json::Value::String("Domain.Ast.Pattern".to_string()),
         );
         match self {
             Pattern::PatInt(f0) => {
@@ -1401,9 +1404,9 @@ impl aver_replay::ReplayValue for Pattern {
                 .ok_or_else(|| "$variant missing field 'type'".to_string())?,
             "$variant.type",
         )?;
-        if type_name != "Pattern" {
+        if type_name != "Domain.Ast.Pattern" && type_name != "Pattern" {
             return Err(format!(
-                "$variant type mismatch: expected Pattern, got {}",
+                "$variant type mismatch: expected Domain.Ast.Pattern, got {}",
                 type_name
             ));
         }
@@ -1495,7 +1498,10 @@ impl aver_replay::ReplayValue for Pattern {
                     .get(0)
                     .ok_or_else(|| format!("$variant PatVar missing field #{}", 0))?,
             )?)),
-            _ => Err(format!("unknown variant '{}' for Pattern", variant_name)),
+            _ => Err(format!(
+                "unknown variant '{}' for Domain.Ast.Pattern",
+                variant_name
+            )),
         }
     }
 }
@@ -1531,7 +1537,7 @@ impl aver_replay::ReplayValue for Stmt {
         let mut payload = serde_json::Map::new();
         payload.insert(
             "type".to_string(),
-            serde_json::Value::String("Stmt".to_string()),
+            serde_json::Value::String("Domain.Ast.Stmt".to_string()),
         );
         match self {
             Stmt::StmtBind(f0, f1) => {
@@ -1584,9 +1590,9 @@ impl aver_replay::ReplayValue for Stmt {
                 .ok_or_else(|| "$variant missing field 'type'".to_string())?,
             "$variant.type",
         )?;
-        if type_name != "Stmt" {
+        if type_name != "Domain.Ast.Stmt" && type_name != "Stmt" {
             return Err(format!(
-                "$variant type mismatch: expected Stmt, got {}",
+                "$variant type mismatch: expected Domain.Ast.Stmt, got {}",
                 type_name
             ));
         }
@@ -1630,7 +1636,10 @@ impl aver_replay::ReplayValue for Stmt {
                     .get(0)
                     .ok_or_else(|| format!("$variant StmtExpr missing field #{}", 0))?,
             )?)),
-            _ => Err(format!("unknown variant '{}' for Stmt", variant_name)),
+            _ => Err(format!(
+                "unknown variant '{}' for Domain.Ast.Stmt",
+                variant_name
+            )),
         }
     }
 }
@@ -1731,7 +1740,7 @@ impl aver_replay::ReplayValue for FastLeaf {
         let mut payload = serde_json::Map::new();
         payload.insert(
             "type".to_string(),
-            serde_json::Value::String("FastLeaf".to_string()),
+            serde_json::Value::String("Domain.Ast.FastLeaf".to_string()),
         );
         match self {
             FastLeaf::LeafConstInt(f0) => {
@@ -1941,9 +1950,9 @@ impl aver_replay::ReplayValue for FastLeaf {
                 .ok_or_else(|| "$variant missing field 'type'".to_string())?,
             "$variant.type",
         )?;
-        if type_name != "FastLeaf" {
+        if type_name != "Domain.Ast.FastLeaf" && type_name != "FastLeaf" {
             return Err(format!(
-                "$variant type mismatch: expected FastLeaf, got {}",
+                "$variant type mismatch: expected Domain.Ast.FastLeaf, got {}",
                 type_name
             ));
         }
@@ -2128,7 +2137,10 @@ impl aver_replay::ReplayValue for FastLeaf {
                         .ok_or_else(|| format!("$variant LeafCmpSlots missing field #{}", 2))?,
                 )?,
             )),
-            _ => Err(format!("unknown variant '{}' for FastLeaf", variant_name)),
+            _ => Err(format!(
+                "unknown variant '{}' for Domain.Ast.FastLeaf",
+                variant_name
+            )),
         }
     }
 }
@@ -2224,7 +2236,7 @@ impl aver_replay::ReplayValue for FnFastPath {
         let mut payload = serde_json::Map::new();
         payload.insert(
             "type".to_string(),
-            serde_json::Value::String("FnFastPath".to_string()),
+            serde_json::Value::String("Domain.Ast.FnFastPath".to_string()),
         );
         match self {
             FnFastPath::FastNone => {
@@ -2359,9 +2371,9 @@ impl aver_replay::ReplayValue for FnFastPath {
                 .ok_or_else(|| "$variant missing field 'type'".to_string())?,
             "$variant.type",
         )?;
-        if type_name != "FnFastPath" {
+        if type_name != "Domain.Ast.FnFastPath" && type_name != "FnFastPath" {
             return Err(format!(
-                "$variant type mismatch: expected FnFastPath, got {}",
+                "$variant type mismatch: expected Domain.Ast.FnFastPath, got {}",
                 type_name
             ));
         }
@@ -2489,7 +2501,10 @@ impl aver_replay::ReplayValue for FnFastPath {
                     )?)?,
                 ))
             }
-            _ => Err(format!("unknown variant '{}' for FnFastPath", variant_name)),
+            _ => Err(format!(
+                "unknown variant '{}' for Domain.Ast.FnFastPath",
+                variant_name
+            )),
         }
     }
 }
@@ -2554,7 +2569,7 @@ impl aver_replay::ReplayValue for FnDef {
         let mut payload = serde_json::Map::new();
         payload.insert(
             "type".to_string(),
-            serde_json::Value::String("FnDef".to_string()),
+            serde_json::Value::String("Domain.Ast.FnDef".to_string()),
         );
         payload.insert("fields".to_string(), serde_json::Value::Object(fields));
         aver_replay::wrap_marker("$record", serde_json::Value::Object(payload))
@@ -2568,9 +2583,9 @@ impl aver_replay::ReplayValue for FnDef {
                 .ok_or_else(|| "$record missing field 'type'".to_string())?,
             "$record.type",
         )?;
-        if type_name != "FnDef" {
+        if type_name != "Domain.Ast.FnDef" && type_name != "FnDef" {
             return Err(format!(
-                "$record type mismatch: expected FnDef, got {}",
+                "$record type mismatch: expected Domain.Ast.FnDef, got {}",
                 type_name
             ));
         }
@@ -2656,7 +2671,7 @@ impl aver_replay::ReplayValue for Program {
         let mut payload = serde_json::Map::new();
         payload.insert(
             "type".to_string(),
-            serde_json::Value::String("Program".to_string()),
+            serde_json::Value::String("Domain.Ast.Program".to_string()),
         );
         payload.insert("fields".to_string(), serde_json::Value::Object(fields));
         aver_replay::wrap_marker("$record", serde_json::Value::Object(payload))
@@ -2670,9 +2685,9 @@ impl aver_replay::ReplayValue for Program {
                 .ok_or_else(|| "$record missing field 'type'".to_string())?,
             "$record.type",
         )?;
-        if type_name != "Program" {
+        if type_name != "Domain.Ast.Program" && type_name != "Program" {
             return Err(format!(
-                "$record type mismatch: expected Program, got {}",
+                "$record type mismatch: expected Domain.Ast.Program, got {}",
                 type_name
             ));
         }
@@ -2757,7 +2772,7 @@ impl aver_replay::ReplayValue for BinOp {
         let mut payload = serde_json::Map::new();
         payload.insert(
             "type".to_string(),
-            serde_json::Value::String("BinOp".to_string()),
+            serde_json::Value::String("Domain.Ast.BinOp".to_string()),
         );
         match self {
             BinOp::OpAdd => {
@@ -2803,9 +2818,9 @@ impl aver_replay::ReplayValue for BinOp {
                 .ok_or_else(|| "$variant missing field 'type'".to_string())?,
             "$variant.type",
         )?;
-        if type_name != "BinOp" {
+        if type_name != "Domain.Ast.BinOp" && type_name != "BinOp" {
             return Err(format!(
-                "$variant type mismatch: expected BinOp, got {}",
+                "$variant type mismatch: expected Domain.Ast.BinOp, got {}",
                 type_name
             ));
         }
@@ -2824,7 +2839,10 @@ impl aver_replay::ReplayValue for BinOp {
             "OpSub" => Ok(BinOp::OpSub),
             "OpMul" => Ok(BinOp::OpMul),
             "OpDiv" => Ok(BinOp::OpDiv),
-            _ => Err(format!("unknown variant '{}' for BinOp", variant_name)),
+            _ => Err(format!(
+                "unknown variant '{}' for Domain.Ast.BinOp",
+                variant_name
+            )),
         }
     }
 }
@@ -2891,7 +2909,7 @@ impl aver_replay::ReplayValue for CmpOp {
         let mut payload = serde_json::Map::new();
         payload.insert(
             "type".to_string(),
-            serde_json::Value::String("CmpOp".to_string()),
+            serde_json::Value::String("Domain.Ast.CmpOp".to_string()),
         );
         match self {
             CmpOp::CmpEq => {
@@ -2953,9 +2971,9 @@ impl aver_replay::ReplayValue for CmpOp {
                 .ok_or_else(|| "$variant missing field 'type'".to_string())?,
             "$variant.type",
         )?;
-        if type_name != "CmpOp" {
+        if type_name != "Domain.Ast.CmpOp" && type_name != "CmpOp" {
             return Err(format!(
-                "$variant type mismatch: expected CmpOp, got {}",
+                "$variant type mismatch: expected Domain.Ast.CmpOp, got {}",
                 type_name
             ));
         }
@@ -2976,7 +2994,10 @@ impl aver_replay::ReplayValue for CmpOp {
             "CmpGt" => Ok(CmpOp::CmpGt),
             "CmpLte" => Ok(CmpOp::CmpLte),
             "CmpGte" => Ok(CmpOp::CmpGte),
-            _ => Err(format!("unknown variant '{}' for CmpOp", variant_name)),
+            _ => Err(format!(
+                "unknown variant '{}' for Domain.Ast.CmpOp",
+                variant_name
+            )),
         }
     }
 }

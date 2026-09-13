@@ -138,6 +138,190 @@ fn a_replay_stops_when_the_bound_function_produces_a_different_result() {
 }
 
 #[test]
+fn a_recorded_turn_of_record_valued_jobs_replays_to_the_same_turn() {
+    let dir = scratch("record-replay");
+    let recorded = aver(
+        "work_jobs_record",
+        &["run", "--record", dir.to_str().expect("utf-8 scratch path")],
+    );
+    assert!(recorded.status.success(), "{}", format_output(&recorded));
+
+    // The task and the answer are records the capability owns, so the ledger
+    // spells them the way the provider boundary does: `Scorer.Task` and
+    // `Scorer.Report`, not whichever short name the program side used.
+    let recording = only_recording(&dir);
+    let text = std::fs::read_to_string(&recording).expect("recording reads");
+    assert!(
+        text.contains("\"type\": \"Scorer.Task\""),
+        "the task must record under its canonical name:\n{text}"
+    );
+    assert!(
+        text.contains("\"type\": \"Scorer.Report\""),
+        "the answer must record under its canonical name:\n{text}"
+    );
+
+    let fixture_dir = fixture("work_jobs_record");
+    let mut command = Command::new(aver_bin());
+    command.current_dir(&fixture_dir);
+    command.arg("replay").arg(&recording);
+    command.arg("--check-args");
+    let replayed = command.output().expect("aver replays");
+    let text = combined(&replayed);
+    assert!(replayed.status.success(), "{}", format_output(&replayed));
+    assert!(
+        text.contains("job 1 scored 10 for alpha"),
+        "{}",
+        format_output(&replayed)
+    );
+    assert!(
+        text.contains("job 2 scored 24 for beta-two"),
+        "{}",
+        format_output(&replayed)
+    );
+    assert!(
+        text.contains("Output:  MATCH"),
+        "{}",
+        format_output(&replayed)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_recording_spelling_its_records_by_short_names_still_replays() {
+    // Older writers let the program-side short name leak into the ledger:
+    // `Task` where the boundary writes `Scorer.Task`. That spelling is the
+    // type's own short name — its one legitimate alias — so the recording
+    // still replays.
+    let dir = scratch("record-legacy");
+    let recorded = aver(
+        "work_jobs_record",
+        &["run", "--record", dir.to_str().expect("utf-8 scratch path")],
+    );
+    assert!(recorded.status.success(), "{}", format_output(&recorded));
+    let recording = only_recording(&dir);
+    let text = std::fs::read_to_string(&recording).expect("recording reads");
+    let legacy = text
+        .replace("\"type\": \"Scorer.Task\"", "\"type\": \"Task\"")
+        .replace("\"type\": \"Scorer.Report\"", "\"type\": \"Report\"");
+    assert_ne!(legacy, text, "the rewrite must change the recording");
+    std::fs::write(&recording, legacy).expect("recording writes");
+
+    let fixture_dir = fixture("work_jobs_record");
+    let mut command = Command::new(aver_bin());
+    command.current_dir(&fixture_dir);
+    command.arg("replay").arg(&recording);
+    command.arg("--check-args");
+    let replayed = command.output().expect("aver replays");
+    let text = combined(&replayed);
+    assert!(replayed.status.success(), "{}", format_output(&replayed));
+    assert!(
+        text.contains("Output:  MATCH"),
+        "{}",
+        format_output(&replayed)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_recording_naming_a_foreign_record_type_is_a_diagnostic() {
+    // `Other.Report` shares the short name but not the nominal type: the tag
+    // is the identity, so the replay refuses it instead of decoding a record
+    // of the wrong type — and says so, without a panic.
+    let dir = scratch("record-foreign");
+    let recorded = aver(
+        "work_jobs_record",
+        &["run", "--record", dir.to_str().expect("utf-8 scratch path")],
+    );
+    assert!(recorded.status.success(), "{}", format_output(&recorded));
+    let recording = only_recording(&dir);
+    let text = std::fs::read_to_string(&recording).expect("recording reads");
+    let foreign = text.replace("\"type\": \"Scorer.Report\"", "\"type\": \"Other.Report\"");
+    assert_ne!(foreign, text, "the rewrite must change the recording");
+    std::fs::write(&recording, foreign).expect("recording writes");
+
+    let fixture_dir = fixture("work_jobs_record");
+    let mut command = Command::new(aver_bin());
+    command.current_dir(&fixture_dir);
+    command.arg("replay").arg(&recording);
+    let out = command.output().expect("aver replays");
+    let text = combined(&out);
+    assert!(
+        text.contains("fail[replay-error]"),
+        "{}",
+        format_output(&out)
+    );
+    assert!(
+        text.contains("Other.Report") && text.contains("Scorer.Report"),
+        "the diagnostic must name both the foreign and the expected type:\n{}",
+        format_output(&out)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_replay_stops_when_a_record_valued_job_produces_a_different_result() {
+    let dir = scratch("record-divergence");
+    let recorded = aver(
+        "work_jobs_record",
+        &["run", "--record", dir.to_str().expect("utf-8 scratch path")],
+    );
+    assert!(recorded.status.success(), "{}", format_output(&recorded));
+    let recording = only_recording(&dir);
+
+    // The bound function scores one higher in the divergent copy, so the
+    // recomputed answer must disagree with the recorded report — and the
+    // divergence names the record under its canonical type.
+    let diverged = fixture("work_jobs_record_divergent");
+    let mut command = Command::new(aver_bin());
+    command.current_dir(&diverged);
+    command.arg("replay").arg(&recording);
+    let out = command.output().expect("aver replays");
+    let text = combined(&out);
+    assert!(
+        text.contains("fail[replay-error]"),
+        "{}",
+        format_output(&out)
+    );
+    assert!(
+        text.contains("Replay divergence: job kind 'Scorer'"),
+        "{}",
+        format_output(&out)
+    );
+    assert!(
+        text.contains("Scorer.Report(score:"),
+        "the divergence must show the record under its canonical name:\n{}",
+        format_output(&out)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_recorded_turn_of_a_unit_task_job_replays_to_the_same_turn() {
+    let dir = scratch("unit-task-replay");
+    let recorded = aver(
+        "work_jobs_unit_task",
+        &["run", "--record", dir.to_str().expect("utf-8 scratch path")],
+    );
+    assert!(recorded.status.success(), "{}", format_output(&recorded));
+
+    let recording = only_recording(&dir);
+    let fixture_dir = fixture("work_jobs_unit_task");
+    let mut command = Command::new(aver_bin());
+    command.current_dir(&fixture_dir);
+    command.arg("replay").arg(&recording);
+    command.arg("--check-args");
+    let replayed = command.output().expect("aver replays");
+    let text = combined(&replayed);
+    assert!(replayed.status.success(), "{}", format_output(&replayed));
+    assert!(
+        text.contains("Output:  MATCH"),
+        "{}",
+        format_output(&replayed)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn a_cancelled_job_refuses_to_be_taken() {
     let out = aver("work_jobs_cancel", &["run"]);
     assert!(out.status.success(), "{}", format_output(&out));

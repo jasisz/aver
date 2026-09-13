@@ -69,7 +69,7 @@ impl aver_replay::ReplayValue for Val {
         let mut payload = serde_json::Map::new();
         payload.insert(
             "type".to_string(),
-            serde_json::Value::String("Val".to_string()),
+            serde_json::Value::String("Domain.Value.Val".to_string()),
         );
         match self {
             Val::ValInt(f0) => {
@@ -293,9 +293,9 @@ impl aver_replay::ReplayValue for Val {
                 .ok_or_else(|| "$variant missing field 'type'".to_string())?,
             "$variant.type",
         )?;
-        if type_name != "Val" {
+        if type_name != "Domain.Value.Val" && type_name != "Val" {
             return Err(format!(
-                "$variant type mismatch: expected Val, got {}",
+                "$variant type mismatch: expected Domain.Value.Val, got {}",
                 type_name
             ));
         }
@@ -438,7 +438,10 @@ impl aver_replay::ReplayValue for Val {
                 )?,
             )),
             "ValUnit" => Ok(Val::ValUnit),
-            _ => Err(format!("unknown variant '{}' for Val", variant_name)),
+            _ => Err(format!(
+                "unknown variant '{}' for Domain.Value.Val",
+                variant_name
+            )),
         }
     }
 }

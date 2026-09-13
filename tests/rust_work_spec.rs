@@ -551,6 +551,291 @@ fn a_rust_recording_replays_on_the_vm() {
     result.unwrap_or_else(|error| panic!("{error}"));
 }
 
+/// A recording of `work_jobs_record` — whose task and answer are records the
+/// capability owns — replayed by the built Rust binary. The binary reads the
+/// canonical `Scorer.Task`/`Scorer.Report` tags the VM's ledger carries.
+#[test]
+fn a_vm_recording_of_record_valued_jobs_replays_on_the_rust_backend() {
+    let ws = temp_dir("replay-record-forward");
+    let project = ws.join("project");
+    let recordings = ws.join("recordings");
+    fs::create_dir_all(&project).expect("create project dir");
+    fs::create_dir_all(&recordings).expect("create recordings dir");
+
+    let result = (|| -> Result<(), String> {
+        let dir = fixture("work_jobs_record");
+        let recorded = Command::new(aver_bin())
+            .current_dir(repo_root())
+            .arg("run")
+            .arg(dir.join("main.av"))
+            .arg("--module-root")
+            .arg(&dir)
+            .arg("--record")
+            .arg(&recordings)
+            .output()
+            .expect("expected `aver run --record` to execute");
+        if !recorded.status.success() {
+            return Err(format!(
+                "recording the VM run failed:\n{}",
+                format_output(&recorded)
+            ));
+        }
+        let session = one_recording(&recordings)?;
+
+        compile_rust(
+            "work_jobs_record",
+            &project,
+            "work_jobs_record_replay",
+            &["--with-replay"],
+        )?;
+        let bin = cargo_build(&project, "work_jobs_record_replay")?;
+        let replayed = Command::new(&bin)
+            .env("AVER_REPLAY_REPLAY", &session)
+            .output()
+            .map_err(|error| format!("failed to run the replaying binary: {error}"))?;
+        if !replayed.status.success() {
+            return Err(format!(
+                "the Rust binary could not replay the VM's recording:\n{}",
+                format_output(&replayed)
+            ));
+        }
+        let stdout = String::from_utf8_lossy(&replayed.stdout);
+        for expected in ["job 1 scored 10 for alpha", "job 2 scored 24 for beta-two"] {
+            if !stdout.contains(expected) {
+                return Err(format!(
+                    "the replay did not serve the recorded answers, expected {expected:?} in:\n{}",
+                    format_output(&replayed)
+                ));
+            }
+        }
+        Ok(())
+    })();
+
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// The other direction over capability-owned records: the binary writes the
+/// canonical `Scorer.Task`/`Scorer.Report` tags, and the VM replays the
+/// session effect for effect.
+#[test]
+fn a_rust_recording_of_record_valued_jobs_replays_on_the_vm() {
+    let ws = temp_dir("replay-record-reverse");
+    let project = ws.join("project");
+    let recordings = ws.join("recordings");
+    fs::create_dir_all(&project).expect("create project dir");
+    fs::create_dir_all(&recordings).expect("create recordings dir");
+
+    let result = (|| -> Result<(), String> {
+        compile_rust(
+            "work_jobs_record",
+            &project,
+            "work_jobs_record_rec",
+            &["--with-replay"],
+        )?;
+        let bin = cargo_build(&project, "work_jobs_record_rec")?;
+        let session = recordings.join("session.json");
+        let recorded = Command::new(&bin)
+            .env("AVER_REPLAY_RECORD", &session)
+            .output()
+            .map_err(|error| format!("failed to run the recording binary: {error}"))?;
+        if !recorded.status.success() {
+            return Err(format!(
+                "the Rust binary could not record its run:\n{}",
+                format_output(&recorded)
+            ));
+        }
+
+        let text = fs::read_to_string(&session)
+            .map_err(|error| format!("the Rust binary wrote no recording: {error}"))?;
+        for expected in ["\"type\": \"Scorer.Task\"", "\"type\": \"Scorer.Report\""] {
+            if !text.contains(expected) {
+                return Err(format!(
+                    "the recording must spell the capability's records canonically, expected {expected}:\n{text}"
+                ));
+            }
+        }
+
+        let replayed = Command::new(aver_bin())
+            .current_dir(repo_root())
+            .arg("replay")
+            .arg(&recordings)
+            .arg("--test")
+            .output()
+            .expect("expected `aver replay` to execute");
+        let report = format!(
+            "{}{}",
+            String::from_utf8_lossy(&replayed.stdout),
+            String::from_utf8_lossy(&replayed.stderr)
+        );
+        if !replayed.status.success() || !report.contains("Output:  MATCH") {
+            return Err(format!(
+                "the VM could not replay the Rust binary's recording:\n{}",
+                format_output(&replayed)
+            ));
+        }
+        Ok(())
+    })();
+
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// A recording whose record tags carry the types' own short names — the
+/// spelling older writers produced — still replays on the Rust backend:
+/// `Task`/`Report` are the canonical types' aliases, not other types.
+#[test]
+fn a_recording_spelling_its_records_by_short_names_replays_on_the_rust_backend() {
+    let ws = temp_dir("replay-record-legacy");
+    let project = ws.join("project");
+    let recordings = ws.join("recordings");
+    fs::create_dir_all(&project).expect("create project dir");
+    fs::create_dir_all(&recordings).expect("create recordings dir");
+
+    let result = (|| -> Result<(), String> {
+        let dir = fixture("work_jobs_record");
+        let recorded = Command::new(aver_bin())
+            .current_dir(repo_root())
+            .arg("run")
+            .arg(dir.join("main.av"))
+            .arg("--module-root")
+            .arg(&dir)
+            .arg("--record")
+            .arg(&recordings)
+            .output()
+            .expect("expected `aver run --record` to execute");
+        if !recorded.status.success() {
+            return Err(format!(
+                "recording the VM run failed:\n{}",
+                format_output(&recorded)
+            ));
+        }
+        let session = one_recording(&recordings)?;
+        let text = fs::read_to_string(&session)
+            .map_err(|error| format!("cannot read the recording: {error}"))?;
+        let legacy = text
+            .replace("\"type\": \"Scorer.Task\"", "\"type\": \"Task\"")
+            .replace("\"type\": \"Scorer.Report\"", "\"type\": \"Report\"");
+        if legacy == text {
+            return Err("the rewrite must change the recording".to_string());
+        }
+        fs::write(&session, legacy)
+            .map_err(|error| format!("cannot write the recording: {error}"))?;
+
+        compile_rust(
+            "work_jobs_record",
+            &project,
+            "work_jobs_record_legacy",
+            &["--with-replay"],
+        )?;
+        let bin = cargo_build(&project, "work_jobs_record_legacy")?;
+        let replayed = Command::new(&bin)
+            .env("AVER_REPLAY_REPLAY", &session)
+            .output()
+            .map_err(|error| format!("failed to run the replaying binary: {error}"))?;
+        if !replayed.status.success() {
+            return Err(format!(
+                "the Rust binary could not replay the short-name recording:\n{}",
+                format_output(&replayed)
+            ));
+        }
+        let stdout = String::from_utf8_lossy(&replayed.stdout);
+        if !stdout.contains("job 1 scored 10 for alpha") {
+            return Err(format!(
+                "the replay did not serve the recorded answers:\n{}",
+                format_output(&replayed)
+            ));
+        }
+        Ok(())
+    })();
+
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// A recording whose record tag names a different nominal type that happens
+/// to share the short name is refused with a diagnostic — exit status and
+/// `fail[replay-error]`, no panic.
+#[test]
+fn a_recording_naming_a_foreign_record_type_is_a_diagnostic_on_the_rust_backend() {
+    let ws = temp_dir("replay-record-foreign");
+    let project = ws.join("project");
+    let recordings = ws.join("recordings");
+    fs::create_dir_all(&project).expect("create project dir");
+    fs::create_dir_all(&recordings).expect("create recordings dir");
+
+    let result = (|| -> Result<(), String> {
+        let dir = fixture("work_jobs_record");
+        let recorded = Command::new(aver_bin())
+            .current_dir(repo_root())
+            .arg("run")
+            .arg(dir.join("main.av"))
+            .arg("--module-root")
+            .arg(&dir)
+            .arg("--record")
+            .arg(&recordings)
+            .output()
+            .expect("expected `aver run --record` to execute");
+        if !recorded.status.success() {
+            return Err(format!(
+                "recording the VM run failed:\n{}",
+                format_output(&recorded)
+            ));
+        }
+        let session = one_recording(&recordings)?;
+        let text = fs::read_to_string(&session)
+            .map_err(|error| format!("cannot read the recording: {error}"))?;
+        let foreign = text.replace("\"type\": \"Scorer.Report\"", "\"type\": \"Other.Report\"");
+        if foreign == text {
+            return Err("the rewrite must change the recording".to_string());
+        }
+        fs::write(&session, foreign)
+            .map_err(|error| format!("cannot write the recording: {error}"))?;
+
+        compile_rust(
+            "work_jobs_record",
+            &project,
+            "work_jobs_record_foreign",
+            &["--with-replay"],
+        )?;
+        let bin = cargo_build(&project, "work_jobs_record_foreign")?;
+        let replayed = Command::new(&bin)
+            .env("AVER_REPLAY_REPLAY", &session)
+            .output()
+            .map_err(|error| format!("failed to run the replaying binary: {error}"))?;
+        if replayed.status.success() {
+            return Err(format!(
+                "a foreign record tag must fail the replay, got:\n{}",
+                format_output(&replayed)
+            ));
+        }
+        let report = format!(
+            "{}{}",
+            String::from_utf8_lossy(&replayed.stdout),
+            String::from_utf8_lossy(&replayed.stderr)
+        );
+        if !report.contains("fail[replay-error]")
+            || !report.contains("Other.Report")
+            || !report.contains("Scorer.Report")
+        {
+            return Err(format!(
+                "the diagnostic must name the foreign and the expected type:\n{}",
+                format_output(&replayed)
+            ));
+        }
+        if report.contains("panicked") {
+            return Err(format!(
+                "a foreign record tag must be a diagnostic, not a panic:\n{}",
+                format_output(&replayed)
+            ));
+        }
+        Ok(())
+    })();
+
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|error| panic!("{error}"));
+}
+
 /// The one recording `aver run --record` wrote into `dir`.
 fn one_recording(dir: &Path) -> Result<PathBuf, String> {
     let mut sessions = fs::read_dir(dir)

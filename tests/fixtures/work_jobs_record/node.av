@@ -1,0 +1,9 @@
+module Node
+    depends [Scorer]
+    intent = "The pure function one scoring job runs."
+    exposes [score]
+    effects []
+
+fn score(task: Scorer.Task) -> Scorer.Report
+    ? "Scores one task by its text length times its weight."
+    Scorer.Report(score = String.len(task.text) * task.weight, label = task.text)

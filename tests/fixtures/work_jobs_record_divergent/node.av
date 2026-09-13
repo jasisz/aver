@@ -1,0 +1,9 @@
+module Node
+    depends [Scorer]
+    intent = "The pure function one scoring job runs, one point higher than work_jobs_record's: the same program with a different answer, for the replay divergence check."
+    exposes [score]
+    effects []
+
+fn score(task: Scorer.Task) -> Scorer.Report
+    ? "Scores one task by its text length times its weight, plus one."
+    Scorer.Report(score = String.len(task.text) * task.weight + 1, label = task.text)

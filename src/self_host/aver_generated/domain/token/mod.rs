@@ -98,7 +98,7 @@ impl aver_replay::ReplayValue for Token {
         let mut payload = serde_json::Map::new();
         payload.insert(
             "type".to_string(),
-            serde_json::Value::String("Token".to_string()),
+            serde_json::Value::String("Domain.Token.Token".to_string()),
         );
         match self {
             Token::TkInt(f0) => {
@@ -436,9 +436,9 @@ impl aver_replay::ReplayValue for Token {
                 .ok_or_else(|| "$variant missing field 'type'".to_string())?,
             "$variant.type",
         )?;
-        if type_name != "Token" {
+        if type_name != "Domain.Token.Token" && type_name != "Token" {
             return Err(format!(
-                "$variant type mismatch: expected Token, got {}",
+                "$variant type mismatch: expected Domain.Token.Token, got {}",
                 type_name
             ));
         }
@@ -510,7 +510,10 @@ impl aver_replay::ReplayValue for Token {
             "TkFn" => Ok(Token::TkFn),
             "TkMatch" => Ok(Token::TkMatch),
             "TkEof" => Ok(Token::TkEof),
-            _ => Err(format!("unknown variant '{}' for Token", variant_name)),
+            _ => Err(format!(
+                "unknown variant '{}' for Domain.Token.Token",
+                variant_name
+            )),
         }
     }
 }

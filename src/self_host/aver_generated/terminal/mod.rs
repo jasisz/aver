@@ -131,7 +131,7 @@ impl aver_replay::ReplayValue for Size {
         let mut payload = serde_json::Map::new();
         payload.insert(
             "type".to_string(),
-            serde_json::Value::String("Size".to_string()),
+            serde_json::Value::String("Terminal.Size".to_string()),
         );
         payload.insert("fields".to_string(), serde_json::Value::Object(fields));
         aver_replay::wrap_marker("$record", serde_json::Value::Object(payload))
@@ -145,9 +145,9 @@ impl aver_replay::ReplayValue for Size {
                 .ok_or_else(|| "$record missing field 'type'".to_string())?,
             "$record.type",
         )?;
-        if type_name != "Size" {
+        if type_name != "Terminal.Size" && type_name != "Size" {
             return Err(format!(
-                "$record type mismatch: expected Size, got {}",
+                "$record type mismatch: expected Terminal.Size, got {}",
                 type_name
             ));
         }
