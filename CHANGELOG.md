@@ -116,6 +116,8 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Fixed
 
+- **A tuple-subject match with list, literal or Option arms runs on wasm-gc.** `match (state.tasks, state.running)` with an arm such as `([], 0) -> …`, `([next, ..rest], n) -> …`, `(true, 0) -> …` or `(Option.Some(task), 0) -> …` — the shape an answer function takes to read two ends of its state at once — used to stop `aver run --wasm-gc` with a `wasm \`unreachable\` instruction executed` trap the moment the function ran, while the VM and the Rust backend answered. The wasm-gc backend now emits it: each element of a tuple arm tests its field, the first arm whose elements all hold is taken in source order, and its binds are written before the body. A tuple arm that carries a `String` or `Float` literal, or a variant of your own, in one of its elements is still outside what wasm-gc emits.
+
 - **A one-arm match runs its subject on wasm-gc.** `match say(x)` with a single `_ ->` arm, or a single binder, over a call that answers `Unit` used to stop `aver run --wasm-gc` with a `wasm \`unreachable\` instruction executed` trap, and the same shape over a call that answers `Int` ran the arm's body without the call. Both now evaluate the subject and go on, as the VM does.
 
 - **A one-arm wildcard match runs its subject on the Rust backend.** `match say(x)` with a single `_ ->` arm is how a function performs something in place before it goes on; `aver compile --target rust` rendered the arm's body alone, so the call — and whatever it printed or wrote — never ran, while `aver run` on the VM ran it. The subject is now evaluated and its value discarded, as on every other backend.
