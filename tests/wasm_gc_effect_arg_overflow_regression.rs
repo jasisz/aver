@@ -487,8 +487,12 @@ fn tcp_listen_accept_and_close_listener_run_on_wasm_gc() {
     let port = reservation.local_addr().expect("reserved address").port();
     drop(reservation);
 
+    // The module is compiled, emitted and instantiated before it listens, which
+    // on a loaded runner takes longer than a few seconds; the client keeps
+    // knocking for as long as the module keeps polling, and both give up with
+    // a message instead of one of them waiting for ever.
     let client = std::thread::spawn(move || {
-        let deadline = Instant::now() + Duration::from_secs(3);
+        let deadline = Instant::now() + Duration::from_secs(30);
         loop {
             match TcpStream::connect(("127.0.0.1", port)) {
                 Ok(mut stream) => {
@@ -509,12 +513,19 @@ fn tcp_listen_accept_and_close_listener_run_on_wasm_gc() {
     intent = "Accept one inbound connection through Tcp.Socket.Listening."
     effects [Tcp, Console]
 
-fn awaitClient(listener: Tcp.Listener) -> Result<Tcp.Connection, String>
+fn awaitClient(listener: Tcp.Listener, polls: Int) -> Result<Tcp.Connection, String>
+    ? "Give up after `polls` empty polls; otherwise poll once more."
+    ! [Tcp.poll, Tcp.accept]
+    match polls == 0
+        true -> Result.Err("no client arrived")
+        false -> pollOnce(listener, polls)
+
+fn pollOnce(listener: Tcp.Listener, polls: Int) -> Result<Tcp.Connection, String>
     ? "Poll and drain one listener backlog entry."
     ! [Tcp.poll, Tcp.accept]
     _ = Tcp.poll({{4 => Tcp.Socket.Listening(listener)}}, 1000)?
     match Tcp.accept(listener)?
-        Option.None -> awaitClient(listener)
+        Option.None -> awaitClient(listener, polls - 1)
         Option.Some(connection) -> Result.Ok(connection)
 
 fn accepted(listener: Tcp.Listener, connection: Tcp.Connection, address: String) -> Unit
@@ -533,7 +544,7 @@ fn main() -> Unit
     ! [Tcp.listen, Tcp.poll, Tcp.accept, Tcp.peerAddress, Tcp.close, Tcp.closeListener, Console.print]
     match Tcp.listen({port}, 16)
         Result.Err(error) -> Console.print("listen err: {{error}}")
-        Result.Ok(listener) -> match awaitClient(listener)
+        Result.Ok(listener) -> match awaitClient(listener, 30)
             Result.Err(error) -> Console.print("accept err: {{error}}")
             Result.Ok(connection) -> finish(listener, connection)
 "#
