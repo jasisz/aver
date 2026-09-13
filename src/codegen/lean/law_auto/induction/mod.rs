@@ -3312,14 +3312,15 @@ fn wrap_with_fun_induction_rung(
     // `fun_induction` arm that keeps a `List.contains`/`∈` over an appended or
     // cons'd tail reduces it only once `mem_append`/`mem_singleton`-shaped
     // reasoning and a `beq`-polarity flip meet in one place — the `simp_all`
-    // rungs never split the `if head = task …` a non-`LawfulBEq` element type
-    // (e.g. a subtype like `Bytes`) leaves nested inside `∈`, and the bridge's
-    // `beq_iff_eq`/`decide` chain rewrites the two sides to Prop equalities a
-    // `beq`-only hypothesis never matches. `grind` splits the `ite`, e-matches
-    // the induction hypothesis, and closes by congruence — all inside its own
-    // fuel, so a non-closing goal still falls through to the bridge rungs and
-    // the honest floor. PURELY ADDITIVE like every alternative here: it only
-    // adds closures.
+    // rungs leave the `if entry == task …` under the `List.contains` unsplit
+    // (measured on a `Tuple<Int, Bytes>` element, whose `BEq` is the
+    // `DecidableEq` one and lawful; the element type is not what stops them),
+    // and the bridge's `beq_iff_eq`/`decide` chain rewrites the two sides to
+    // Prop equalities a `beq`-only hypothesis never matches. `grind` splits
+    // the `ite`, e-matches the induction hypothesis, and closes by congruence
+    // — all inside its own fuel, so a non-closing goal still falls through to
+    // the bridge rungs and the honest floor. PURELY ADDITIVE like every
+    // alternative here: it only adds closures.
     let grind_defs = if simp_defs.is_empty() {
         String::new()
     } else {
