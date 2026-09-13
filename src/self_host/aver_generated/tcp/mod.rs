@@ -382,7 +382,7 @@ impl aver_replay::ReplayValue for Socket {
         let mut payload = serde_json::Map::new();
         payload.insert(
             "type".to_string(),
-            serde_json::Value::String("Socket".to_string()),
+            serde_json::Value::String("Tcp.Socket".to_string()),
         );
         match self {
             Socket::Listening(f0) => {
@@ -440,9 +440,9 @@ impl aver_replay::ReplayValue for Socket {
                 .ok_or_else(|| "$variant missing field 'type'".to_string())?,
             "$variant.type",
         )?;
-        if type_name != "Socket" {
+        if type_name != "Tcp.Socket" && type_name != "Socket" {
             return Err(format!(
-                "$variant type mismatch: expected Socket, got {}",
+                "$variant type mismatch: expected Tcp.Socket, got {}",
                 type_name
             ));
         }
@@ -483,7 +483,7 @@ impl aver_replay::ReplayValue for Socket {
                         .ok_or_else(|| format!("$variant Sending missing field #{}", 0))?,
                 )?,
             )),
-            _ => Err(format!("unknown variant '{}' for Socket", variant_name)),
+            _ => Err(format!("unknown variant '{}' for Tcp.Socket", variant_name)),
         }
     }
 }

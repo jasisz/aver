@@ -410,3 +410,172 @@ fn same_type(canonical: &str, actual: &str) -> bool {
             .rsplit_once('.')
             .is_some_and(|(_, bare)| bare == actual)
 }
+
+/// A recorded or replayed value carried a record tag that is not the
+/// capability-owned type the operation declares: not the canonical
+/// `Module.Type` spelling, and not the type's own short name either.
+/// `expected`/`received` keep both spellings for the diagnostic.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BoundaryTypeMismatch {
+    pub expected: String,
+    pub received: String,
+}
+
+impl std::fmt::Display for BoundaryTypeMismatch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "expected '{}', got '{}'", self.expected, self.received)
+    }
+}
+
+/// Rewrite the type tag of every capability-owned record or variant inside
+/// `value` to the canonical `Module.Type` spelling the provider boundary
+/// uses: `represented_from_provider` emits it, `to_provider_value` accepts
+/// it, and a recording is a ledger of boundary crossings, so both sides of
+/// one operation must carry the same name.
+///
+/// `expected` is the type the operation signature declares for the slot the
+/// value occupies; each represented type nested inside then directs its own
+/// subtree. The acceptance rule is `same_type`: a tag may spell the expected
+/// type canonically or by that type's own short name — the two spellings one
+/// nominal type legitimately carries, program side and boundary side. Any
+/// other tag belongs to a different type that happens to share letters and
+/// is reported, never silently rewritten: the tag is the identity.
+///
+/// Slots whose expected type is not a represented boundary type — scalars,
+/// capability resources, mismatched shapes — pass through untouched; the
+/// boundary and the replay comparer already own their diagnostics.
+pub fn canonicalize_boundary_names(
+    value: &Value,
+    expected: &Type,
+    scope: &str,
+    contracts: &CapabilityRegistry,
+) -> Result<Value, BoundaryTypeMismatch> {
+    Ok(match (expected, value) {
+        (Type::Result(ok, _), Value::Ok(inner)) => Value::Ok(Box::new(
+            canonicalize_boundary_names(inner, ok, scope, contracts)?,
+        )),
+        (Type::Result(_, err), Value::Err(inner)) => Value::Err(Box::new(
+            canonicalize_boundary_names(inner, err, scope, contracts)?,
+        )),
+        (Type::Option(inner), Value::Some(payload)) => Value::Some(Box::new(
+            canonicalize_boundary_names(payload, inner, scope, contracts)?,
+        )),
+        (Type::Option(_), Value::None) => Value::None,
+        (Type::List(inner), _) => match crate::value::list_to_vec(value) {
+            Some(items) => crate::value::list_from_vec(
+                items
+                    .iter()
+                    .map(|item| canonicalize_boundary_names(item, inner, scope, contracts))
+                    .collect::<Result<Vec<_>, _>>()?,
+            ),
+            None => value.clone(),
+        },
+        (Type::Vector(inner), Value::Vector(items)) => {
+            Value::Vector(aver_rt::AverVector::from_vec(
+                items
+                    .iter()
+                    .map(|item| canonicalize_boundary_names(item, inner, scope, contracts))
+                    .collect::<Result<Vec<_>, _>>()?,
+            ))
+        }
+        (Type::Tuple(types), Value::Tuple(items)) if types.len() == items.len() => Value::Tuple(
+            types
+                .iter()
+                .zip(items.iter())
+                .map(|(ty, item)| canonicalize_boundary_names(item, ty, scope, contracts))
+                .collect::<Result<Vec<_>, _>>()?,
+        ),
+        (Type::Map(key_ty, value_ty), Value::Map(entries)) => Value::Map(
+            entries
+                .iter()
+                .map(|(key, entry)| {
+                    Ok((
+                        canonicalize_boundary_names(key, key_ty, scope, contracts)?,
+                        canonicalize_boundary_names(entry, value_ty, scope, contracts)?,
+                    ))
+                })
+                .collect::<Result<HashMap<_, _>, BoundaryTypeMismatch>>()?,
+        ),
+        (
+            Type::Named { name, .. },
+            Value::Record {
+                type_name,
+                fields: record_fields,
+            },
+        ) => {
+            let canonical = canonical_type(scope, name);
+            let Some(TypeDef::Product { fields, .. }) = contracts.boundary_type(&canonical) else {
+                return Ok(value.clone());
+            };
+            if !same_type(&canonical, type_name) {
+                return Err(BoundaryTypeMismatch {
+                    expected: canonical,
+                    received: type_name.clone(),
+                });
+            }
+            let record_scope = canonical.rsplit_once('.').map_or(scope, |(m, _)| m);
+            let mut out = Vec::with_capacity(record_fields.len());
+            for (field_name, field_value) in record_fields.iter() {
+                let field_ty = fields
+                    .iter()
+                    .find(|(declared, _)| declared == field_name)
+                    .and_then(|(_, source)| crate::types::parse_type_str_strict(source).ok());
+                let field_value = match field_ty {
+                    Some(ty) => {
+                        canonicalize_boundary_names(field_value, &ty, record_scope, contracts)?
+                    }
+                    None => field_value.clone(),
+                };
+                out.push((field_name.clone(), field_value));
+            }
+            Value::Record {
+                type_name: canonical,
+                fields: out.into(),
+            }
+        }
+        (
+            Type::Named { name, .. },
+            Value::Variant {
+                type_name,
+                variant,
+                fields: variant_fields,
+            },
+        ) => {
+            let canonical = canonical_type(scope, name);
+            let Some(TypeDef::Sum { variants, .. }) = contracts.boundary_type(&canonical) else {
+                return Ok(value.clone());
+            };
+            if !same_type(&canonical, type_name) {
+                return Err(BoundaryTypeMismatch {
+                    expected: canonical,
+                    received: type_name.clone(),
+                });
+            }
+            let variant_scope = canonical.rsplit_once('.').map_or(scope, |(m, _)| m);
+            let declared = variants
+                .iter()
+                .find(|candidate| candidate.name == *variant)
+                .map(|candidate| candidate.fields.as_slice())
+                .unwrap_or(&[]);
+            let mut out = Vec::with_capacity(variant_fields.len());
+            for (index, field_value) in variant_fields.iter().enumerate() {
+                let field_ty = declared
+                    .get(index)
+                    .and_then(|source| crate::types::parse_type_str_strict(source).ok());
+                let field_value = match field_ty {
+                    Some(ty) => {
+                        canonicalize_boundary_names(field_value, &ty, variant_scope, contracts)?
+                    }
+                    None => field_value.clone(),
+                };
+                out.push(field_value);
+            }
+            Value::Variant {
+                type_name: canonical,
+                variant: variant.clone(),
+                fields: out.into(),
+            }
+        }
+        _ => value.clone(),
+    })
+}

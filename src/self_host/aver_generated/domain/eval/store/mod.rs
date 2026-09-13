@@ -40,7 +40,7 @@ impl aver_replay::ReplayValue for FnStore {
         let mut payload = serde_json::Map::new();
         payload.insert(
             "type".to_string(),
-            serde_json::Value::String("FnStore".to_string()),
+            serde_json::Value::String("Domain.Eval.Store.FnStore".to_string()),
         );
         payload.insert("fields".to_string(), serde_json::Value::Object(fields));
         aver_replay::wrap_marker("$record", serde_json::Value::Object(payload))
@@ -54,9 +54,9 @@ impl aver_replay::ReplayValue for FnStore {
                 .ok_or_else(|| "$record missing field 'type'".to_string())?,
             "$record.type",
         )?;
-        if type_name != "FnStore" {
+        if type_name != "Domain.Eval.Store.FnStore" && type_name != "FnStore" {
             return Err(format!(
-                "$record type mismatch: expected FnStore, got {}",
+                "$record type mismatch: expected Domain.Eval.Store.FnStore, got {}",
                 type_name
             ));
         }

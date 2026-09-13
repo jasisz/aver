@@ -111,7 +111,7 @@ impl aver_replay::ReplayValue for Response {
         let mut payload = serde_json::Map::new();
         payload.insert(
             "type".to_string(),
-            serde_json::Value::String("Response".to_string()),
+            serde_json::Value::String("Http.Response".to_string()),
         );
         payload.insert("fields".to_string(), serde_json::Value::Object(fields));
         aver_replay::wrap_marker("$record", serde_json::Value::Object(payload))
@@ -125,9 +125,9 @@ impl aver_replay::ReplayValue for Response {
                 .ok_or_else(|| "$record missing field 'type'".to_string())?,
             "$record.type",
         )?;
-        if type_name != "Response" {
+        if type_name != "Http.Response" && type_name != "Response" {
             return Err(format!(
-                "$record type mismatch: expected Response, got {}",
+                "$record type mismatch: expected Http.Response, got {}",
                 type_name
             ));
         }

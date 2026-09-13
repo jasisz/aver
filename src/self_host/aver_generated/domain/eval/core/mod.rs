@@ -26,7 +26,7 @@ impl aver_replay::ReplayValue for SlotTailStep {
         let mut payload = serde_json::Map::new();
         payload.insert(
             "type".to_string(),
-            serde_json::Value::String("SlotTailStep".to_string()),
+            serde_json::Value::String("Domain.Eval.Core.SlotTailStep".to_string()),
         );
         match self {
             SlotTailStep::SlotTailDone(f0) => {
@@ -62,9 +62,9 @@ impl aver_replay::ReplayValue for SlotTailStep {
                 .ok_or_else(|| "$variant missing field 'type'".to_string())?,
             "$variant.type",
         )?;
-        if type_name != "SlotTailStep" {
+        if type_name != "Domain.Eval.Core.SlotTailStep" && type_name != "SlotTailStep" {
             return Err(format!(
-                "$variant type mismatch: expected SlotTailStep, got {}",
+                "$variant type mismatch: expected Domain.Eval.Core.SlotTailStep, got {}",
                 type_name
             ));
         }
@@ -94,7 +94,7 @@ impl aver_replay::ReplayValue for SlotTailStep {
                     .ok_or_else(|| format!("$variant SlotTailRecurEnv missing field #{}", 0))?,
             )?)),
             _ => Err(format!(
-                "unknown variant '{}' for SlotTailStep",
+                "unknown variant '{}' for Domain.Eval.Core.SlotTailStep",
                 variant_name
             )),
         }

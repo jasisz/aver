@@ -1,0 +1,53 @@
+module Main
+    depends [Node, Scorer, Wait, Work]
+    intent = "Starts two scoring jobs, waits for them in one wait set, and prints each report."
+    exposes [main]
+    effects [Console.print, Scorer.begin, Scorer.take, Wait.poll]
+
+fn main() -> Result<Unit, String>
+    ? "Begins two scoring jobs and prints each report as it lands."
+    ! [Console.print, Scorer.begin, Scorer.take, Wait.poll]
+    first = Scorer.begin(Scorer.Task(text = "alpha", weight = 2))?
+    second = Scorer.begin(Scorer.Task(text = "beta-two", weight = 3))?
+    pending: Map<Int, Wait.Item> = {1 => Wait.Item.Job(first), 2 => Wait.Item.Job(second)}
+    collect(pending, 50)
+
+fn collect(pending: Map<Int, Wait.Item>, turns: Int) -> Result<Unit, String>
+    ? "One turn per call: wait once, collect whatever is ready, and stop when the wait set is empty."
+    ! [Console.print, Scorer.take, Wait.poll]
+    match Map.len(pending) == 0
+        true -> Result.Ok(Unit)
+        false -> match turns < 1
+            true -> Result.Err("work: the jobs did not finish within the turns allowed")
+            false -> turn(pending, turns)
+
+fn turn(pending: Map<Int, Wait.Item>, turns: Int) -> Result<Unit, String>
+    ? "The body of one turn: the one wait, then the keys it reported."
+    ! [Console.print, Scorer.take, Wait.poll]
+    ready = Wait.poll(pending, 200)?
+    remaining = harvest(pending, ready)?
+    collect(remaining, turns - 1)
+
+fn harvest(pending: Map<Int, Wait.Item>, ready: List<Int>) -> Result<Map<Int, Wait.Item>, String>
+    ? "Takes every key the wait reported, printing each report, and answers with the keys still running."
+    ! [Console.print, Scorer.take]
+    match ready
+        [] -> Result.Ok(pending)
+        [key, ..rest] -> match Map.get(pending, key)
+            Option.None -> harvest(pending, rest)
+            Option.Some(item) -> harvestItem(pending, key, item, rest)
+
+fn harvestItem(pending: Map<Int, Wait.Item>, key: Int, item: Wait.Item, rest: List<Int>) -> Result<Map<Int, Wait.Item>, String>
+    ? "One reported key: a job that finished is printed and dropped, a job still running stays in the wait set."
+    ! [Console.print, Scorer.take]
+    match item
+        Wait.Item.Socket(_socket) -> harvest(pending, rest)
+        Wait.Item.Job(job) -> match Scorer.take(job)?
+            Option.None -> harvest(pending, rest)
+            Option.Some(report) -> scored(pending, key, report, rest)
+
+fn scored(pending: Map<Int, Wait.Item>, key: Int, report: Scorer.Report, rest: List<Int>) -> Result<Map<Int, Wait.Item>, String>
+    ? "Says what one job scored and drops its key from the wait set."
+    ! [Console.print, Scorer.take]
+    Console.print("job {key} scored {report.score} for {report.label}")
+    harvest(Map.remove(pending, key), rest)

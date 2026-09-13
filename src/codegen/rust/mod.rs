@@ -3040,7 +3040,7 @@ fn main() -> Result<Tuple<Int, Int>, String>
         let replay_support = generated_file(&out, "src/replay_support.rs");
 
         assert!(replay_support.contains("candidate.effect_occurrence"));
-        assert!(replay_support.contains("candidate.args != args"));
+        assert!(replay_support.contains("!replay_args_match(&candidate.args, &args)"));
     }
 
     #[test]

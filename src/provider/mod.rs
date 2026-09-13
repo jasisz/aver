@@ -24,6 +24,7 @@ pub use target::{
     TargetBindingStatus, TargetProvider, UnsupportedReason, required_capability_operations,
     shipped_target_provenance, standard_operations_bound_on,
 };
+pub(crate) use value::canonicalize_boundary_names;
 pub use work::{WorkBaseContext, WorkProvider};
 
 pub type CapabilityResourceHandle = ProviderResourceHandle;

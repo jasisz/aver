@@ -66,7 +66,7 @@ impl aver_replay::ReplayValue for Bytes {
         let mut payload = serde_json::Map::new();
         payload.insert(
             "type".to_string(),
-            serde_json::Value::String("Bytes".to_string()),
+            serde_json::Value::String("Bytes.Bytes".to_string()),
         );
         payload.insert("fields".to_string(), serde_json::Value::Object(fields));
         aver_replay::wrap_marker("$record", serde_json::Value::Object(payload))
@@ -80,9 +80,9 @@ impl aver_replay::ReplayValue for Bytes {
                 .ok_or_else(|| "$record missing field 'type'".to_string())?,
             "$record.type",
         )?;
-        if type_name != "Bytes" {
+        if type_name != "Bytes.Bytes" && type_name != "Bytes" {
             return Err(format!(
-                "$record type mismatch: expected Bytes, got {}",
+                "$record type mismatch: expected Bytes.Bytes, got {}",
                 type_name
             ));
         }

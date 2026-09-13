@@ -422,6 +422,75 @@ fn a_wasm_gc_recording_replays_on_the_vm() {
     result.unwrap_or_else(|error| panic!("{error}"));
 }
 
+/// A job kind whose task and answer are records the capability owns.
+/// `Scorer.Task`/`Scorer.Report` cross the boundary under their canonical
+/// names, inline the same as on the VM, and the recording they make replays
+/// back on wasm-gc.
+#[test]
+fn record_valued_jobs_run_record_and_replay_on_wasm_gc() {
+    let wasm =
+        run("work_jobs_record", &["--wasm-gc"], &[]).unwrap_or_else(|error| panic!("{error}"));
+    for expected in ["scored 10 for alpha", "scored 24 for beta-two"] {
+        assert!(wasm.contains(expected), "expected {expected:?} in:\n{wasm}");
+    }
+    let ws = temp_dir("record-jobs");
+    let recordings = ws.join("recordings");
+    fs::create_dir_all(&recordings).expect("create recordings dir");
+    let result = (|| -> Result<(), String> {
+        record("work_jobs_record", &["--wasm-gc"], &recordings)?;
+        let session = one_recording(&recordings)?;
+        let text = fs::read_to_string(&session)
+            .map_err(|error| format!("cannot read the recording: {error}"))?;
+        for expected in ["\"Scorer.Task\"", "\"Scorer.Report\""] {
+            if !text.contains(expected) {
+                return Err(format!(
+                    "the wasm-gc recording must spell the capability's records canonically, expected {expected}:\n{text}"
+                ));
+            }
+        }
+        let report = replay(&recordings, &["--wasm-gc"])?;
+        if !report.contains("Output:  MATCH") {
+            return Err(format!(
+                "a record-valued job's recording did not replay on wasm-gc:\n{report}"
+            ));
+        }
+        Ok(())
+    })();
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// The interchange both ways over capability-owned records: the VM's
+/// canonical tags replay on wasm-gc, and a wasm-gc recording replays on the
+/// VM — each backend reading tags it did not write.
+#[test]
+fn record_valued_job_recordings_interchange_between_the_vm_and_wasm_gc() {
+    let ws = temp_dir("record-interchange");
+    let forward = ws.join("forward");
+    let reverse = ws.join("reverse");
+    fs::create_dir_all(&forward).expect("create forward dir");
+    fs::create_dir_all(&reverse).expect("create reverse dir");
+    let result = (|| -> Result<(), String> {
+        record("work_jobs_record", &[], &forward)?;
+        let report = replay(&forward, &["--wasm-gc"])?;
+        if !report.contains("Output:  MATCH") {
+            return Err(format!(
+                "the VM's recording did not replay on wasm-gc:\n{report}"
+            ));
+        }
+        record("work_jobs_record", &["--wasm-gc"], &reverse)?;
+        let report = replay(&reverse, &[])?;
+        if !report.contains("Output:  MATCH") {
+            return Err(format!(
+                "the wasm-gc recording did not replay on the VM:\n{report}"
+            ));
+        }
+        Ok(())
+    })();
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|error| panic!("{error}"));
+}
+
 /// `aver run <fixture> [target] --record <dir>`.
 fn record(name: &str, target: &[&str], dir: &Path) -> Result<(), String> {
     let fixture_dir = fixture(name);

@@ -201,6 +201,15 @@ fn emit_record_impl(
     ctx: &CodegenContext,
     scope: Option<&str>,
 ) -> String {
+    // The recorded tag is the canonical `Module.Type` spelling the provider
+    // boundary uses. Its own short name is the only other spelling a
+    // recording may legitimately carry — older writers let it leak — so the
+    // decoder accepts exactly that alias and reports anything else as the
+    // foreign type it is.
+    let canonical = match scope {
+        Some(module) => format!("{module}.{name}"),
+        None => name.to_string(),
+    };
     let to_fields = fields
         .iter()
         .map(|(field_name, _)| {
@@ -247,7 +256,7 @@ fn emit_record_impl(
         let mut fields = serde_json::Map::new();
 {to_fields}
         let mut payload = serde_json::Map::new();
-        payload.insert("type".to_string(), serde_json::Value::String({name:?}.to_string()));
+        payload.insert("type".to_string(), serde_json::Value::String({canonical:?}.to_string()));
         payload.insert("fields".to_string(), serde_json::Value::Object(fields));
         aver_replay::wrap_marker("$record", serde_json::Value::Object(payload))
     }}
@@ -259,8 +268,8 @@ fn emit_record_impl(
             obj.get("type").ok_or_else(|| "$record missing field 'type'".to_string())?,
             "$record.type",
         )?;
-        if type_name != {name:?} {{
-            return Err(format!("$record type mismatch: expected {name}, got {{}}", type_name));
+        if type_name != {canonical:?} && type_name != {name:?} {{
+            return Err(format!("$record type mismatch: expected {canonical}, got {{}}", type_name));
         }}
         let fields = aver_replay::expect_object(
             obj.get("fields").ok_or_else(|| "$record missing field 'fields'".to_string())?,
@@ -280,6 +289,12 @@ fn emit_variant_impl(
     ctx: &CodegenContext,
     scope: Option<&str>,
 ) -> String {
+    // Same tag rule as records: write the canonical `Module.Type` spelling,
+    // read the canonical spelling or this type's own short name.
+    let canonical = match scope {
+        Some(module) => format!("{module}.{name}"),
+        None => name.to_string(),
+    };
     let to_arms = variants
         .iter()
         .map(|variant| emit_variant_to_arm(name, variant))
@@ -296,7 +311,7 @@ fn emit_variant_impl(
         r#"impl aver_replay::ReplayValue for {name} {{
     fn to_replay_json(&self) -> serde_json::Value {{
         let mut payload = serde_json::Map::new();
-        payload.insert("type".to_string(), serde_json::Value::String({name:?}.to_string()));
+        payload.insert("type".to_string(), serde_json::Value::String({canonical:?}.to_string()));
         match self {{
 {to_arms}
         }}
@@ -309,8 +324,8 @@ fn emit_variant_impl(
             obj.get("type").ok_or_else(|| "$variant missing field 'type'".to_string())?,
             "$variant.type",
         )?;
-        if type_name != {name:?} {{
-            return Err(format!("$variant type mismatch: expected {name}, got {{}}", type_name));
+        if type_name != {canonical:?} && type_name != {name:?} {{
+            return Err(format!("$variant type mismatch: expected {canonical}, got {{}}", type_name));
         }}
         let variant_name = aver_replay::expect_string(
             obj.get("name").ok_or_else(|| "$variant missing field 'name'".to_string())?,
@@ -322,7 +337,7 @@ fn emit_variant_impl(
         )?;
         match variant_name {{
 {from_arms}
-            _ => Err(format!("unknown variant '{{}}' for {name}", variant_name)),
+            _ => Err(format!("unknown variant '{{}}' for {canonical}", variant_name)),
         }}
     }}
 }}"#
@@ -1895,6 +1910,85 @@ __POLICY_CHECK__
             .ok_or_else(|| format!("{} must be a string", path))
     }
 
+    /// The tag a `$record`/`$variant`/`$capabilityResource` marker carries
+    /// spells a represented type by its canonical `Module.Type` name. Older
+    /// recordings wrote the type's own short name in that slot — the one
+    /// other spelling a nominal type legitimately carries — so a recorded
+    /// tag matches when it is the run's tag verbatim, or its short name and
+    /// the run's tag is the qualified spelling it is short for. Two
+    /// different qualified names, and a qualified recorded tag the run's
+    /// own tag is not, are different types and do not match.
+    fn replay_tag_match(recorded: &str, got: &str) -> bool {
+        recorded == got
+            || got
+                .rsplit_once('.')
+                .is_some_and(|(_, bare)| bare == recorded)
+    }
+
+    /// One marker payload, tag aliased and the rest exact: `type` is the
+    /// only position a recording may spell shortly, and `fields`/`name`/
+    /// `trace` compare through the same rules recursively.
+    fn replay_marker_match(recorded: &ReplayJson, got: &ReplayJson) -> bool {
+        let (ReplayJson::Object(recorded_obj), ReplayJson::Object(got_obj)) = (recorded, got)
+        else {
+            return recorded == got;
+        };
+        if recorded_obj.len() != got_obj.len() {
+            return false;
+        }
+        recorded_obj.iter().all(|(key, recorded_value)| {
+            let Some(got_value) = got_obj.get(key) else {
+                return false;
+            };
+            if key == "type" {
+                match (recorded_value.as_str(), got_value.as_str()) {
+                    (Some(recorded_tag), Some(got_tag)) => {
+                        replay_tag_match(recorded_tag, got_tag)
+                    }
+                    _ => recorded_value == got_value,
+                }
+            } else {
+                replay_json_match(recorded_value, got_value)
+            }
+        })
+    }
+
+    /// Pairwise replay-JSON equality with the tag rule above applied only
+    /// at marker boundaries — a `"type"` string inside a record's `fields`
+    /// is data, not a tag, and compares verbatim.
+    fn replay_json_match(recorded: &ReplayJson, got: &ReplayJson) -> bool {
+        if recorded == got {
+            return true;
+        }
+        match (recorded, got) {
+            (ReplayJson::Object(a), ReplayJson::Object(b)) if a.len() == b.len() => {
+                a.iter().all(|(key, recorded_value)| {
+                    let Some(got_value) = b.get(key) else {
+                        return false;
+                    };
+                    if matches!(key.as_str(), "$record" | "$variant" | "$capabilityResource") {
+                        replay_marker_match(recorded_value, got_value)
+                    } else {
+                        replay_json_match(recorded_value, got_value)
+                    }
+                })
+            }
+            (ReplayJson::Array(a), ReplayJson::Array(b)) if a.len() == b.len() => a
+                .iter()
+                .zip(b.iter())
+                .all(|(recorded_item, got_item)| replay_json_match(recorded_item, got_item)),
+            _ => false,
+        }
+    }
+
+    fn replay_args_match(recorded: &[ReplayJson], got: &[ReplayJson]) -> bool {
+        recorded.len() == got.len()
+            && recorded
+                .iter()
+                .zip(got.iter())
+                .all(|(recorded_arg, got_arg)| replay_json_match(recorded_arg, got_arg))
+    }
+
     fn marker_payload<'a>(value: &'a ReplayJson, marker: &str) -> Option<&'a ReplayJson> {
         match value {
             ReplayJson::Object(obj) if obj.len() == 1 => obj.get(marker),
@@ -2255,7 +2349,7 @@ __LIVE_CAPABILITY_VALIDATION__
                     if candidate.effect_type != effect_type {
                         continue;
                     }
-                    if *check_args && candidate.args != args {
+                    if *check_args && !replay_args_match(&candidate.args, &args) {
                         continue;
                     }
                     match (&current_bp, &candidate.branch_path) {
@@ -2307,7 +2401,7 @@ __LIVE_CAPABILITY_VALIDATION__
                     record.seq, record.effect_type, effect_type
                 );
             }
-            if *check_args && record.args != args {
+            if *check_args && !replay_args_match(&record.args, &args) {
                 panic!("Replay args mismatch at #{} for '{}'", record.seq, effect_type);
             }
             *position += 1;
@@ -2315,8 +2409,17 @@ __LIVE_CAPABILITY_VALIDATION__
         });
 
         match record.outcome {
-            RecordedOutcome::Value { value } => T::from_replay_json(&value)
-                .unwrap_or_else(|e| panic!("Replay decode failed for '{}': {}", effect_type, e)),
+            RecordedOutcome::Value { value } => match T::from_replay_json(&value) {
+                Ok(value) => value,
+                // A recorded tag the declared type does not own is a replay
+                // finding, not a runtime fault: report it like the VM's
+                // fail[replay-error] and stop, instead of panicking into the
+                // scope teardown's own unconsumed-effects panic.
+                Err(why) => {
+                    eprintln!("fail[replay-error]: replay decode failed for '{effect_type}': {why}");
+                    std::process::exit(1);
+                }
+            },
             RecordedOutcome::RuntimeError { message } => {
                 panic!("Replayed runtime error for '{}': {}", effect_type, message)
             }
