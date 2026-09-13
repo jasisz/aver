@@ -254,19 +254,20 @@ fn an_answered_capability_runs_on_wasip2() {
 
 /// A process split into helpers is the same protocol with more variants, so
 /// it runs on wasm-gc like the flat ones, and a tail call into another
-/// process verifies there too. The two nested fixtures run but are not
-/// verified on wasm-gc: their pinned cases compare a state three sums deep
+/// process verifies there too. The two nested fixtures verify as well:
+/// their pinned cases compare a state three sums deep
 /// (`__WalkClaimState.InFetchAt1(__FetchClaimState.AwaitHandle(2), 2, 0)`),
-/// and the wasm-gc verify runner still renders such a value as
-/// `<...: wasm-gc compound-value repr is a follow-up>`, so the case reports a
-/// mismatch the VM does not. That is the runner's limit, not the lowering's.
+/// whose `AwaitHandle(Int)` field is a newtype-erased sum — wasm-gc
+/// equality dispatches such a field on its underlying primitive (#1348).
 #[cfg(feature = "wasm")]
 #[test]
 fn helpers_run_on_wasm_gc() {
     assert_runs_and_prints("yield_tail_into", &["run", "--wasm-gc"], "total = 20");
     assert_verify_passes("yield_tail_into", &["verify", "--wasm-gc"], "10/10");
     assert_runs_and_prints("yield_nested", &["run", "--wasm-gc"], "walk = 9");
+    assert_verify_passes("yield_nested", &["verify", "--wasm-gc"], "8/8");
     assert_runs_and_prints("yield_nested_twice", &["run", "--wasm-gc"], "pairUp = 14");
+    assert_verify_passes("yield_nested_twice", &["verify", "--wasm-gc"], "11/11");
 }
 
 // ── A process split into yield helpers ──────────────────────────────────

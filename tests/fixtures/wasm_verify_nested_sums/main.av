@@ -1,0 +1,91 @@
+module WasmVerifyNestedSums
+    intent = "Fixture: verify cases whose values are sums nested three deep, carrying newtype-erased fields, records, lists, tuples, Option and Result — the shapes the wasm-gc verify runner must render on a mismatch."
+    exposes [main]
+    effects [Console]
+
+type Handle
+    Handle(Int)
+
+type Leaf
+    Num(Int)
+    Word(String)
+    Blank
+
+record Duo
+    leaf: Leaf
+    n: Int
+
+type Mid
+    Wrap(Leaf, Handle)
+    Pack(Duo)
+    Pair(Leaf, Leaf)
+
+type Outer
+    Deep(Mid)
+    WithOption(Option<Mid>)
+    WithResult(Result<Mid, String>)
+    Many(List<Leaf>)
+    Tupled(Tuple<Int, String>)
+    Stop
+
+fn deep(n: Int) -> Outer
+    ? "Three sums deep with a newtype-erased Handle field."
+    Outer.Deep(Mid.Wrap(Leaf.Num(n), Handle.Handle(n + 6)))
+
+fn opt() -> Outer
+    ? "An Option<Mid> holding a record nested in a variant."
+    Outer.WithOption(Option.Some(Mid.Pack(Duo(leaf = Leaf.Word("w"), n = 2))))
+
+fn resOk() -> Outer
+    ? "A Result<Mid, String> whose Ok side holds a nullary leaf."
+    Outer.WithResult(Result.Ok(Mid.Pair(Leaf.Blank, Leaf.Num(3))))
+
+fn resErr() -> Outer
+    ? "A Result<Mid, String> on the Err side."
+    Outer.WithResult(Result.Err("nope"))
+
+fn lst() -> Outer
+    ? "A list of leaves inside a variant."
+    Outer.Many([Leaf.Num(1), Leaf.Word("a"), Leaf.Blank])
+
+fn tup() -> Outer
+    ? "A tuple field inside a variant."
+    Outer.Tupled((4, "four"))
+
+fn stop() -> Outer
+    ? "A nullary variant."
+    Outer.Stop
+
+fn deepWord(w: String) -> Outer
+    ? "Three sums deep with a String leaf."
+    Outer.Deep(Mid.Wrap(Leaf.Word(w), Handle.Handle(9)))
+
+verify deep
+    deep(1) => Outer.Deep(Mid.Wrap(Leaf.Num(1), Handle.Handle(7)))
+    deep(2) => Outer.Deep(Mid.Wrap(Leaf.Num(2), Handle.Handle(8)))
+
+verify opt
+    opt() => Outer.WithOption(Option.Some(Mid.Pack(Duo(leaf = Leaf.Word("w"), n = 2))))
+
+verify resOk
+    resOk() => Outer.WithResult(Result.Ok(Mid.Pair(Leaf.Blank, Leaf.Num(3))))
+
+verify resErr
+    resErr() => Outer.WithResult(Result.Err("nope"))
+
+verify lst
+    lst() => Outer.Many([Leaf.Num(1), Leaf.Word("a"), Leaf.Blank])
+
+verify tup
+    tup() => Outer.Tupled((4, "four"))
+
+verify stop
+    stop() => Outer.Stop
+
+verify deepWord
+    deepWord("x") => Outer.Deep(Mid.Wrap(Leaf.Word("x"), Handle.Handle(9)))
+
+fn main() -> Unit
+    ! [Console.print]
+    value = deep(1) == Outer.Deep(Mid.Wrap(Leaf.Num(1), Handle.Handle(7)))
+    Console.print("deep = {value}")
