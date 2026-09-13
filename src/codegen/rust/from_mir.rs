@@ -2761,12 +2761,19 @@ fn emit_mir_match_with(
         // the subject in the binding's representation context). `subj_code`
         // already carries the right representation — no codegen-side coercion.
         let _ = &m.arms[0].pattern;
-        let subj = mir_clone_arg(subj_code, &m.subject.node, emit_ctx);
         let codegen = emit_ctx.codegen?;
         let pat = emit_pattern(&arms[0].pattern, false, codegen);
         let body = arm_bodies[0].clone();
+        // A wildcard binds nothing, but the subject is still evaluated:
+        // `match say(x) _ -> …` is how a process performs something in
+        // place before it goes on, and dropping the subject drops the
+        // effect. `let _ =` runs the expression and moves nothing out of a
+        // variable, so the subject goes in uncloned.
+        if matches!(&arms[0].pattern, ResolvedPattern::Wildcard) {
+            return Some(format!("{{ let _ = {subj_code}; {body} }}"));
+        }
+        let subj = mir_clone_arg(subj_code, &m.subject.node, emit_ctx);
         return Some(match &arms[0].pattern {
-            ResolvedPattern::Wildcard => body,
             ResolvedPattern::Ident(name) => {
                 let name = aver_name_to_rust(name);
                 format!("{{ let {} = {}; {} }}", name, subj, body)
