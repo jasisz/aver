@@ -588,6 +588,7 @@ impl SymbolTable {
                 );
             }
         }
+        merge_job_kind_operations(&mut self.capability_operations, plan.job_kinds());
     }
 
     /// Restore custom capability atoms in a raw wasm-gc post-flatten link
@@ -618,6 +619,7 @@ impl SymbolTable {
                 );
             }
         }
+        merge_job_kind_operations(&mut self.capability_operations, plan.job_kinds());
     }
 
     /// Derived gate for the literal smart-constructor discharge.
@@ -988,6 +990,33 @@ impl SymbolTable {
                     .get(&(entry.owning_type, entry.name.clone())),
                 Some(&CtorId(i as u32)),
                 "ctor_index out of sync at index {i}"
+            );
+        }
+    }
+}
+
+/// Register one job kind's two operations as capability atoms.
+///
+/// A job kind is answered by the program, so the wasm plans carry no
+/// interface for it and the loop above sees nothing to restore. The call
+/// sites still have to resolve as capability operations — that is what makes
+/// `Validation.begin(task)` a builtin call the backend can lower — so the
+/// plan's job kinds are merged here with the contract's own metadata.
+#[cfg(feature = "wasm-compile")]
+fn merge_job_kind_operations(
+    operations: &mut HashMap<String, CapabilityOperationInfo>,
+    kinds: &[crate::capability::work::JobKindPlan],
+) {
+    for kind in kinds {
+        for operation in [&kind.begin, &kind.take] {
+            operations.insert(
+                operation.canonical_name.clone(),
+                CapabilityOperationInfo {
+                    effectful: operation.is_effectful(),
+                    oracle: operation.oracle,
+                    replay: operation.replay,
+                    mints_resource: operation.minted_resource.is_some(),
+                },
             );
         }
     }

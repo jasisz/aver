@@ -156,6 +156,13 @@ pub struct RunWasmGcHost {
     pub tcp_settings: aver_rt::tcp::TcpSettings,
     /// Effect allow-list policy. Replay bypasses it exactly like the VM.
     pub project_config: Option<aver::config::ProjectConfig>,
+    /// jasisz/aver#1329 — the job kinds this program declares, in the order
+    /// the emitted module numbers them. Empty for a program with no job kind.
+    /// The recorder reads a job's task and answer across the capability's own
+    /// boundary, so it needs the shapes and the registry below.
+    pub job_kinds: Vec<aver::capability::work::JobKindPlan>,
+    /// The program's provider registry, for the same reason.
+    pub providers: Option<aver::provider::ProviderRegistry>,
 }
 
 /// Compile `items` to wasm-gc bytes, instantiate inside an embedded
@@ -381,6 +388,10 @@ fn execute_wasm_gc_module(
             caller_fn_table: Vec::new(),
             tcp_settings,
             project_config,
+            job_kinds: custom_providers
+                .map(|custom| custom.plan.job_kinds().to_vec())
+                .unwrap_or_default(),
+            providers: custom_providers.map(|custom| custom.providers.clone()),
         },
     );
     let mut linker: Linker<RunWasmGcHost> = Linker::new(engine);

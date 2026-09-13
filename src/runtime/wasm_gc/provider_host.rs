@@ -264,3 +264,122 @@ fn encode_result(
         ))),
     }
 }
+
+/// jasisz/aver#1329 — put one job-kind operation in the recording, and in
+/// replay hand back what was recorded.
+///
+/// The module has already run the bound function and minted the handle; this
+/// is only the turn's record of it, so the recording a wasm-gc run writes has
+/// the VM's shape and a VM recording replays here. The boundary value crosses
+/// as the ABI the capability plan emitted helpers for: the task boxed in an
+/// `Option`, and `take`'s answer as the `Result<Option<R>, String>` it is.
+pub(super) fn record_job_operation(
+    caller: &mut Caller<'_, RunWasmGcHost>,
+    kind_index: i32,
+    take: bool,
+    boundary: Option<&Val>,
+    handle_id: i64,
+    caller_fn: &str,
+) -> Result<Option<Option<wasmtime::Rooted<wasmtime::AnyRef>>>, wasmtime::Error> {
+    // A run that neither records nor replays has nothing for this import to
+    // do: the module already has the answer. Leaving before the boundary
+    // value is read is what keeps a recorder-shaped import invisible to an
+    // ordinary run.
+    let mode = caller
+        .data()
+        .recorder
+        .as_ref()
+        .map_or(aver::replay::EffectReplayMode::Normal, |state| state.mode());
+    if matches!(mode, aver::replay::EffectReplayMode::Normal) {
+        return Ok(None);
+    }
+    let Some(kind) = caller
+        .data()
+        .job_kinds
+        .get(usize::try_from(kind_index.max(0)).unwrap_or(0))
+        .cloned()
+    else {
+        return Err(wasmtime::Error::msg(format!(
+            "work: the module named job kind {kind_index}, which this program does not declare"
+        )));
+    };
+    let Some(providers) = caller.data().providers.clone() else {
+        return Err(wasmtime::Error::msg(
+            "work: recording a job needs the program's provider registry",
+        ));
+    };
+    let scope = kind.shape.capability.clone();
+    let [task_ty, answer_ty] = kind.recorded_types();
+    let recorded_ty = answer_ty.clone();
+    let handle_json = super::imports::json_work_job(handle_id);
+    let operation = if take {
+        kind.take.canonical_name.clone()
+    } else {
+        kind.begin.canonical_name.clone()
+    };
+
+    let (args, boundary_ty) = if take {
+        (vec![handle_json.clone()], recorded_ty)
+    } else {
+        let boxed = decode_value(caller, boundary, &task_ty, &scope, &providers)
+            .map_err(|message| wasmtime::Error::msg(format!("{operation}: {message}")))?;
+        let ProviderValue::OptionSome(task) = boxed else {
+            return Err(wasmtime::Error::msg(format!(
+                "{operation}: the module boxed no task"
+            )));
+        };
+        let json = provider_value_to_json(&task, &kind.shape.task, &scope, &providers)
+            .map_err(|message| wasmtime::Error::msg(format!("{operation}: {message}")))?;
+        (vec![json], task_ty)
+    };
+    let _ = boundary_ty;
+
+    if matches!(mode, aver::replay::EffectReplayMode::Replay) {
+        let recorded = caller
+            .data_mut()
+            .recorder
+            .as_mut()
+            .expect("replay mode checked above")
+            .replay_effect(&operation, Some(args))
+            .map_err(|error| wasmtime::Error::msg(format!("replay {operation}: {error:?}")))?;
+        let RecordedOutcome::Value(json) = recorded else {
+            return Err(wasmtime::Error::msg(format!(
+                "replay {operation}: the trace recorded a runtime error"
+            )));
+        };
+        if !take {
+            return Ok(Some(None));
+        }
+        let value =
+            provider_value_from_json(&json, &answer_ty, &scope, &providers).map_err(|message| {
+                wasmtime::Error::msg(format!(
+                    "replay {operation}: recorded outcome does not match {}: {message}",
+                    answer_ty.display()
+                ))
+            })?;
+        let encoded = encode_value(caller, value, &answer_ty, &scope, None, &providers)
+            .map_err(|message| wasmtime::Error::msg(format!("replay {operation}: {message}")))?;
+        return Ok(Some(match encoded {
+            Some(Val::AnyRef(value)) => value,
+            _ => None,
+        }));
+    }
+
+    if matches!(mode, aver::replay::EffectReplayMode::Record) {
+        let outcome = if take {
+            let value = decode_value(caller, boundary, &answer_ty, &scope, &providers)
+                .map_err(|message| wasmtime::Error::msg(format!("{operation}: {message}")))?;
+            provider_value_to_json(&value, &answer_ty, &scope, &providers)
+                .map_or_else(RecordedOutcome::RuntimeError, RecordedOutcome::Value)
+        } else {
+            RecordedOutcome::Value(super::imports::json_ok_work_job(handle_id))
+        };
+        caller
+            .data_mut()
+            .recorder
+            .as_mut()
+            .expect("record mode checked above")
+            .record_effect(&operation, args, outcome, caller_fn, 0);
+    }
+    Ok(None)
+}

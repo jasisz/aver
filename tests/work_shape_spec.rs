@@ -413,59 +413,59 @@ fn the_rust_backend_accepts_a_program_with_a_job_kind() {
     let _ = std::fs::remove_dir_all(std::env::temp_dir().join("aver-work-target-rust"));
 }
 
-/// TODO(owner): jasisz/aver#1329 — decision 5 of
-/// `prompts/wasm-inline-jobs-brief.md` asks this test and its wasip2 twin to
-/// assert that all four targets are accepted. They still assert a refusal
-/// because the lowering decision 5 depends on — a job run inline at `begin`,
-/// decision 1 — is not built; see `TODO(owner)` in `src/capability/work.rs`.
-/// What changed with the answered-capability work is only the wording of the
-/// message, which now names a job kind rather than every Work-bound
-/// capability.
-#[test]
-fn the_wasm_gc_runner_refuses_a_program_with_a_job_kind() {
-    let out = aver("work_shape_ok", &["run", "--wasm-gc"]);
-    let text = combined(&out);
-    assert!(
-        text.contains(
-            "error[work-target]: A job kind runs on the VM and the Rust backend in this build"
-        ),
-        "{}",
-        format_output(&out)
-    );
-    assert!(text.contains("the requested target is wasm-gc"), "{text}");
-    assert!(!out.status.success(), "{}", format_output(&out));
-}
-
-/// The other half of what `docs/diagnostics-slugs.md` says about
-/// `work-target`: a program that performs `Wait.poll` and declares no job
-/// kind never reaches that gate. The capability target manifest binds
-/// neither reserved contract on a wasm target, so the binding refusal comes
-/// first and is the slug the user has to search for. Pinned here because
-/// the diagnostics reference sends them to it. Needs `--features wasm`: a
-/// build without it stops `--wasm-gc` at the feature check, before any
-/// capability is resolved.
+/// wasm-gc answers a job kind too, since jasisz/aver#1329 part two: the
+/// module runs the bound function inline at `begin` and the handle it mints
+/// carries the answer. What a program then observes is
+/// `tests/wasm_work_spec.rs`; here the point is only that the door opened.
 #[cfg(feature = "wasm")]
 #[test]
-fn the_wasm_gc_runner_refuses_the_one_wait_as_an_unbound_capability() {
+fn the_wasm_gc_runner_accepts_a_program_with_a_job_kind() {
+    let out = aver("work_shape_ok", &["run", "--wasm-gc"]);
+    let text = combined(&out);
+    assert!(!text.contains("error[work-target]"), "{text}");
+    assert!(out.status.success(), "{}", format_output(&out));
+    assert!(text.contains("jobs ready"), "{}", format_output(&out));
+}
+
+/// The one wait of a turn runs on both wasm targets since jasisz/aver#1329
+/// part two, so a program that performs it and declares no job kind is no
+/// longer refused: the wait set it hands over can hold sockets the host
+/// polls and jobs that are ready at once, and an empty one reports nothing.
+#[cfg(feature = "wasm")]
+#[test]
+fn the_wasm_gc_runner_answers_the_one_wait() {
     let out = aver("work_shape_wait_only", &["run", "--wasm-gc"]);
     let text = combined(&out);
     assert!(
-        text.contains(
-            "error[capability-target-unsupported]: target `wasm-gc` cannot bind capability `Wait`"
-        ),
-        "{}",
-        format_output(&out)
-    );
-    assert!(
-        text.contains("reason[standard-binding-unavailable]"),
+        !text.contains("error[capability-target-unsupported]"),
         "{text}"
     );
     assert!(!text.contains("error[work-target]"), "{text}");
-    assert!(!out.status.success(), "{}", format_output(&out));
+    assert!(out.status.success(), "{}", format_output(&out));
+    assert!(text.contains("ready = 0"), "{}", format_output(&out));
 }
 
+/// The same as a component: the core module polls its own wait set through
+/// `wasi:io/poll`, so nothing about it needs a host binding either.
+#[cfg(all(feature = "wasm", feature = "wasip2"))]
 #[test]
-fn the_wasip2_backend_refuses_a_program_with_a_job_kind() {
+fn the_wasip2_backend_answers_the_one_wait() {
+    let out = aver("work_shape_wait_only", &["run", "--wasip2"]);
+    let text = combined(&out);
+    assert!(
+        !text.contains("error[capability-target-unsupported]"),
+        "{text}"
+    );
+    assert!(out.status.success(), "{}", format_output(&out));
+    assert!(text.contains("ready = 0"), "{}", format_output(&out));
+}
+
+/// The same for a component: the core module a job kind compiles into runs
+/// the bound function itself, so nothing about it has to cross the WIT
+/// boundary and the target accepts it.
+#[cfg(all(feature = "wasm", feature = "wasip2"))]
+#[test]
+fn the_wasip2_backend_accepts_a_program_with_a_job_kind() {
     let out = aver(
         "work_shape_ok",
         &[
@@ -479,13 +479,7 @@ fn the_wasip2_backend_refuses_a_program_with_a_job_kind() {
         ],
     );
     let text = combined(&out);
-    assert!(
-        text.contains(
-            "error[work-target]: A job kind runs on the VM and the Rust backend in this build"
-        ),
-        "{}",
-        format_output(&out)
-    );
-    assert!(text.contains("the requested target is wasip2"), "{text}");
-    assert!(!out.status.success(), "{}", format_output(&out));
+    assert!(!text.contains("error[work-target]"), "{text}");
+    assert!(out.status.success(), "{}", format_output(&out));
+    let _ = std::fs::remove_dir_all(std::env::temp_dir().join("aver-work-target-wasip2"));
 }

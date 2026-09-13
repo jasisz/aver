@@ -121,6 +121,15 @@ impl CapabilityAbi {
             return Ok(Self::default());
         };
         let mut boundary = BTreeMap::<String, Type>::new();
+        // jasisz/aver#1329 — a job kind is answered by the program, so it has
+        // no interface here, but the recorder still reads its task and its
+        // answer across the same boundary: give both the ABI helpers the host
+        // decodes them with.
+        for kind in plan.job_kinds() {
+            for ty in kind.recorded_types() {
+                collect_type(&ty, registry, &mut boundary, &mut HashSet::new());
+            }
+        }
         for interface in plan.interfaces() {
             for operation in &interface.operations {
                 for ty in &operation.abi_params {

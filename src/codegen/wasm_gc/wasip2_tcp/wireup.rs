@@ -52,6 +52,8 @@ pub(in crate::codegen::wasm_gc) struct TcpHelpers {
     pub read_some: Option<TcpReadSomeIndices>,
     pub read_now: Option<TcpReadNowIndices>,
     pub poll: Option<TcpPollIndices>,
+    /// jasisz/aver#1329 — the one wait of a turn, over `Map<Int, Wait.Item>`.
+    pub wait: Option<TcpPollIndices>,
     pub close: Option<TcpCloseIndices>,
     pub send: Option<TcpSendIndices>,
     pub send_bytes: Option<TcpSendBytesIndices>,
@@ -119,6 +121,8 @@ pub(in crate::codegen::wasm_gc) fn allocate(
                     | EffectName::TcpReadNow
                     | EffectName::TcpPoll
                     | EffectName::TcpClose
+                    // The one wait of a turn reads the same pool slot ids.
+                    | EffectName::WaitPoll
             )
         })
         .then(|| allocate_parse_id(registry, types, next_type_idx, next_builtin_fn_idx))
@@ -219,6 +223,18 @@ pub(in crate::codegen::wasm_gc) fn allocate(
             )
         })
         .flatten();
+    let wait = declares(EffectName::WaitPoll)
+        .then(|| {
+            allocate_wait_poll(
+                registry,
+                wasip2_imports,
+                parse_id,
+                types,
+                next_type_idx,
+                next_builtin_fn_idx,
+            )
+        })
+        .flatten();
     let close = declares(EffectName::TcpClose)
         .then(|| {
             allocate_close(
@@ -276,6 +292,7 @@ pub(in crate::codegen::wasm_gc) fn allocate(
         read_some,
         read_now,
         poll,
+        wait,
         close,
         send,
         send_bytes,
@@ -321,6 +338,9 @@ pub(in crate::codegen::wasm_gc) fn register_funcs(
         funcs.function(t.fn_type);
     }
     if let Some(t) = &helpers.poll {
+        funcs.function(t.fn_type);
+    }
+    if let Some(t) = &helpers.wait {
         funcs.function(t.fn_type);
     }
     if let Some(t) = &helpers.close {
@@ -896,11 +916,73 @@ fn allocate_poll(
     next_type_idx: &mut u32,
     next_builtin_fn_idx: &mut u32,
 ) -> Option<TcpPollIndices> {
+    allocate_poll_over(
+        registry,
+        wasip2_imports,
+        parse_id,
+        types,
+        next_type_idx,
+        next_builtin_fn_idx,
+        false,
+    )
+}
+
+/// jasisz/aver#1329 — the one wait of a turn: the same helper over a
+/// `Map<Int, Wait.Item>`, which holds the sockets the socket poll watches
+/// beside the jobs this target runs inline.
+fn allocate_wait_poll(
+    registry: &TypeRegistry,
+    wasip2_imports: &Wasip2ImportRegistry,
+    parse_id: Option<(u32, u32)>,
+    types: &mut TypeSection,
+    next_type_idx: &mut u32,
+    next_builtin_fn_idx: &mut u32,
+) -> Option<TcpPollIndices> {
+    allocate_poll_over(
+        registry,
+        wasip2_imports,
+        parse_id,
+        types,
+        next_type_idx,
+        next_builtin_fn_idx,
+        true,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn allocate_poll_over(
+    registry: &TypeRegistry,
+    wasip2_imports: &Wasip2ImportRegistry,
+    parse_id: Option<(u32, u32)>,
+    types: &mut TypeSection,
+    next_type_idx: &mut u32,
+    next_builtin_fn_idx: &mut u32,
+    wait_items: bool,
+) -> Option<TcpPollIndices> {
     let string_idx = registry.string_array_type_idx?;
     let result_idx = registry.result_type_idx("Result<List<Int>,String>")?;
     let list_int_idx = registry.list_type_idx("List<Int>")?;
     let int_idx = registry.aint_struct_idx?;
-    let map = registry.map_slots("Map<Int,Tcp.Socket>")?;
+    let wait = if wait_items {
+        Some(crate::codegen::wasm_gc::wasip2_tcp::WaitItemIndices {
+            root_type_idx: registry.sum_root_type_idx("Wait.Item")?,
+            socket_variant_type_idx: registry
+                .variant_in("Wait.Item", "Socket")
+                .or_else(|| registry.variant_in("Item", "Socket"))?
+                .type_idx,
+            job_variant_type_idx: registry
+                .variant_in("Wait.Item", "Job")
+                .or_else(|| registry.variant_in("Item", "Job"))?
+                .type_idx,
+        })
+    } else {
+        None
+    };
+    let map = if wait_items {
+        registry.map_slots("Map<Int,Wait.Item>")?
+    } else {
+        registry.map_slots("Map<Int,Tcp.Socket>")?
+    };
     let key_box_idx = registry.primitive_key_box_idx("Int")?;
     let socket_idx = registry.sum_root_type_idx("Tcp.Socket")?;
     let connected_idx = registry
@@ -952,6 +1034,7 @@ fn allocate_poll(
     let fn_idx = *next_builtin_fn_idx;
     *next_builtin_fn_idx += 1;
     Some(TcpPollIndices {
+        wait_items: wait,
         fn_type,
         fn_idx,
         string_type_idx: string_idx,

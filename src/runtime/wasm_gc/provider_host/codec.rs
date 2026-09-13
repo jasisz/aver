@@ -13,6 +13,25 @@ use super::guest::{
 };
 use super::{BoundResource, ReplayResource, RunWasmGcHost};
 
+/// Read the payload a `Result` or an `Option` carries, when it carries one.
+///
+/// A `Unit` payload has no wasm value, so the emitter writes no accessor for
+/// it — the tag already said everything there is to know. Asking for one would
+/// look for an export that does not exist, which is what a job kind whose task
+/// is `Unit` used to trip over. Tuple fields have always been read this way.
+fn read_payload(
+    caller: &mut Caller<'_, RunWasmGcHost>,
+    ty: &Type,
+    suffix: &str,
+    value: &Val,
+    payload_ty: &Type,
+) -> Result<Option<Val>, String> {
+    if matches!(payload_ty, Type::Unit) {
+        return Ok(None);
+    }
+    helper_optional_value(caller, ty, suffix, value)
+}
+
 pub(super) fn decode_value(
     caller: &mut Caller<'_, RunWasmGcHost>,
     value: Option<&Val>,
@@ -36,12 +55,12 @@ pub(super) fn decode_value(
             let value = required_val(value, ty)?;
             match helper_i32(caller, ty, "tag", std::slice::from_ref(value))? {
                 1 => {
-                    let payload = helper_optional_value(caller, ty, "ok_value", value)?;
+                    let payload = read_payload(caller, ty, "ok_value", value, ok)?;
                     decode_value(caller, payload.as_ref(), ok, scope, providers)
                         .map(|value| ProviderValue::ResultOk(Box::new(value)))
                 }
                 _ => {
-                    let payload = helper_optional_value(caller, ty, "err_value", value)?;
+                    let payload = read_payload(caller, ty, "err_value", value, err)?;
                     decode_value(caller, payload.as_ref(), err, scope, providers)
                         .map(|value| ProviderValue::ResultErr(Box::new(value)))
                 }
@@ -50,7 +69,7 @@ pub(super) fn decode_value(
         Type::Option(inner) => {
             let value = required_val(value, ty)?;
             if helper_i32(caller, ty, "tag", std::slice::from_ref(value))? == 1 {
-                let payload = helper_optional_value(caller, ty, "value", value)?;
+                let payload = read_payload(caller, ty, "value", value, inner)?;
                 decode_value(caller, payload.as_ref(), inner, scope, providers)
                     .map(|value| ProviderValue::OptionSome(Box::new(value)))
             } else {

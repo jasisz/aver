@@ -1,0 +1,27 @@
+module Main
+    depends [Node, Validation, Work]
+    intent = "Asks one job for its answer twice in a row, without waiting, so what a backend does at `begin` is what this program prints."
+    exposes [main]
+    effects [Console.print, Validation.begin, Validation.take]
+
+fn main() -> Result<Unit, String>
+    ? "Starts one job and takes it twice, saying what each take answered."
+    ! [Console.print, Validation.begin, Validation.take]
+    job = Validation.begin("alpha")?
+    said(Validation.take(job))
+    said(Validation.take(job))
+    Result.Ok(Unit)
+
+fn said(answer: Result<Option<Int>, String>) -> Unit
+    ? "Says what one take answered."
+    ! [Console.print]
+    match answer
+        Result.Ok(payload) -> saidPayload(payload)
+        Result.Err(reason) -> Console.print(reason)
+
+fn saidPayload(payload: Option<Int>) -> Unit
+    ? "Says what one successful take carried: a score, or nothing yet."
+    ! [Console.print]
+    match payload
+        Option.Some(score) -> Console.print("score {score}")
+        Option.None -> Console.print("nothing yet")

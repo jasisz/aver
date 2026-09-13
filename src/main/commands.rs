@@ -6860,7 +6860,7 @@ fn cmd_compile_wasm_gc(
         .capabilities;
     let required =
         aver::provider::required_capability_operations(&items, &dep_modules, capabilities);
-    let capability_wasm_gc_plan = wasm_gc::CapabilityWasmGcPlan::build(capabilities, &required)
+    let mut capability_wasm_gc_plan = wasm_gc::CapabilityWasmGcPlan::build(capabilities, &required)
         .unwrap_or_else(|error| {
             eprintln!(
                 "{}",
@@ -6868,6 +6868,22 @@ fn cmd_compile_wasm_gc(
             );
             process::exit(1);
         });
+    // A job kind is answered by a function of the program, and this is where
+    // that manifest binding reaches wasm codegen.
+    let wasm_gc_project_config = match load_runtime_policy(&module_root) {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("{}", error.red());
+            process::exit(1);
+        }
+    };
+    let has_job_kinds = !capability_wasm_gc_plan.job_kinds().is_empty();
+    crate::cli_entry::shared::bind_and_warn_about_jobs(
+        wasm_gc_project_config.as_ref(),
+        "--target wasm-gc",
+        |bindings| capability_wasm_gc_plan.bind_work_functions(bindings),
+        has_job_kinds,
+    );
     if matches!(pack, Some(super::cli::DeployPack::Wasmtime)) && handler.is_some() {
         eprintln!(
             "{}",
@@ -7444,7 +7460,7 @@ fn cmd_compile_wasip2(
         ) {
             eprintln!("{}", warning.yellow());
         }
-        let capability_wit_plan =
+        let mut capability_wit_plan =
             aver::codegen::wasip2::CapabilityWitPlan::build(capabilities, &required)
                 .unwrap_or_else(|unsupported| {
                     eprintln!(
@@ -7457,6 +7473,13 @@ fn cmd_compile_wasip2(
                     );
                     process::exit(1);
                 });
+        let has_job_kinds = !capability_wit_plan.job_kinds().is_empty();
+        crate::cli_entry::shared::bind_and_warn_about_jobs(
+            project_config.as_ref(),
+            "--target wasip2",
+            |bindings| capability_wit_plan.bind_work_functions(bindings),
+            has_job_kinds,
+        );
         // Bypass the `flatten_multimodule` shim in this file (gated on
         // the `wasm` feature) and call the wasm-gc library function
         // directly — `wasip2` enables `wasm-compile` (which exposes

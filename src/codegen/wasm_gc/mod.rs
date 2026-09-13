@@ -65,6 +65,7 @@ mod capability_imports;
 mod capability_plan;
 pub(crate) mod effects;
 mod flatten;
+mod jobs;
 mod lists;
 mod maps;
 mod module;

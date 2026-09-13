@@ -164,7 +164,7 @@ fn build_component(
     {
         eprintln!("{}", warning.yellow());
     }
-    let capability_wit_plan =
+    let mut capability_wit_plan =
         aver::codegen::wasip2::CapabilityWitPlan::build(capabilities, &required).map_err(
             |unsupported| {
                 format!(
@@ -173,11 +173,31 @@ fn build_component(
                 )
             },
         )?;
+    // A job kind is answered by a function of the program, and this is where
+    // that manifest binding reaches wasm codegen.
+    let has_job_kinds = !capability_wit_plan.job_kinds().is_empty();
+    super::shared::bind_and_warn_about_jobs(
+        project_config.as_ref(),
+        "--wasip2",
+        |bindings| capability_wit_plan.bind_work_functions(bindings),
+        has_job_kinds,
+    );
     let providers = aver::provider::ProviderRegistry::for_program_with_bindings(
         capabilities.clone(),
         provider_bindings.iter().cloned(),
     )?;
-    if let Err(preflight) = providers.preflight(required.iter().map(std::string::String::as_str)) {
+    // A job kind is answered by the program, so no host provider answers
+    // `begin` or `take` and none is preflighted for them.
+    let job_operations = capability_wit_plan
+        .job_operations()
+        .into_iter()
+        .collect::<std::collections::BTreeSet<_>>();
+    let host_answered = required
+        .iter()
+        .filter(|operation| !job_operations.contains(operation.as_str()))
+        .map(std::string::String::as_str)
+        .collect::<Vec<_>>();
+    if let Err(preflight) = providers.preflight(host_answered.iter().copied()) {
         let mut error = preflight;
         for interface in capability_wit_plan.interfaces() {
             error.push_str(&format!(

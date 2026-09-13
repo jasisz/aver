@@ -1,0 +1,8 @@
+module Node
+    intent = "The pure function one tick job runs."
+    exposes [tick]
+    effects []
+
+fn tick(task: Unit) -> Int
+    ? "Answers the same number every time, because the task carries nothing to vary on."
+    5

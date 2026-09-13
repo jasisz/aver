@@ -42,6 +42,7 @@ pub(super) use lifecycle::{
     TcpSendBytesIndices, TcpSendHelperFns, TcpSendIndices, emit_tcp_close, emit_tcp_ping,
     emit_tcp_send, emit_tcp_send_bytes,
 };
+pub(in crate::codegen::wasm_gc) use poll::WaitItemIndices;
 pub(super) use poll::{TcpPollHelperFns, TcpPollIndices, emit_tcp_poll};
 pub(super) use read_now::{TcpReadNowHelperFns, TcpReadNowIndices, emit_tcp_read_now};
 pub(super) use read_some::{TcpReadSomeHelperFns, TcpReadSomeIndices, emit_tcp_read_some};
