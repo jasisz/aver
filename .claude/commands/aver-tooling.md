@@ -519,6 +519,59 @@ An empty pattern, unsupported `*` placement, or a `..`-rooted pattern is also a 
 
 `[work] max-jobs` bounds how many jobs a program runs at once. It must be a positive integer; without it a program gets the host's own available parallelism. At the limit, a job kind's `begin` answers `Err("work: job limit N reached")` instead of blocking the turn. It decides nothing on `wasm-gc` and `wasip2`, where a job runs inline at `begin` and is over before the next expression: a manifest that sets it for one of those targets gets `warning[work-max-jobs-ignored]` at the program door, naming the key and the target, and the program runs.
 
+### Processes, answer modules and jobs in `aver.toml`
+
+A program that serves several processes without writing the loop binds its capabilities in the same `[providers]` table and asks for the loop with `[run]`. This is the whole manifest of the smallest such program — one answer module, one job kind, one process — and it checks and runs as written:
+
+```toml
+[providers]
+schema = 1
+
+[[providers.bindings]]
+capability = "Clock"
+answer = "Clocked"
+
+[[providers.bindings]]
+capability = "Scoring"
+work = "Clocked.score"
+task = "Clocked.nextTask"
+started = "Clocked.taskStarted"
+landed = "Clocked.scored"
+
+[work]
+max-jobs = 2
+
+[run]
+order = "Node.order"
+admit = "Node.admit"
+stop = "Node.stop"
+view = "Node.View"
+```
+
+- `answer = "Module"` — the module of the program that answers every operation of that capability, one function per operation, `op(state: S, args) -> Tuple<S, Cap.__<Op>Reply>`, plus a pure `fresh() -> S`. Only a capability the program declares may carry it; mutually exclusive with `crate`/`package`/`factory` and with `work`.
+- `work = "Module.function"` — the pure `(T) -> R` a job kind runs off the turn, for a capability of Work shape (`begin(task: T) -> Result<Work.Job, String>`, `take(job: Work.Job) -> Result<Option<R>, String>`). Required on every job kind; the function belongs to a module the program depends on, never to the entry module.
+- `task`, `started`, `landed` — the seam between the job kind and an answer module's state: `(S) -> Option<T>`, `(S, T) -> S` and `(S, Result<R, String>) -> S`. All three or none, all three pure, `task` and `started` in one module; `started` states `verify <fn> law aStartedTaskIsNotAskedAgain`.
+- `[work] max-jobs` — jobs running at once, shared by every job kind; a positive integer, default the host's parallelism.
+- `[run]` — `order`, `admit`, `stop` name three pure policies and `view` the record they read; all four in the entry module, all four required.
+
+Diagnostics an agent meets on the way, each with its recipe (`docs/diagnostics-slugs.md` has the full rows):
+
+| Slug | What it says | Recipe |
+|---|---|---|
+| `yield-direct-call` | A function that does not yield, a verify case, or another module calls a `yield` function as written. | Call `__<fn>Start(...)` and answer its requests, or let the generated loop seat it. |
+| `yield-non-tail-call` | A yielding function calls itself outside tail position. | Pass what comes next as data, or make it a tail call. |
+| `yield-unsupported` | Mutual nesting between yielding functions, a request or a helper call inside `(a, b)!`, a function value live across a request, or a `yield` function with no stop. | Break the cycle, perform them one after another, pass data instead of a callback, or drop `yield`. |
+| `intercept-outside-yield` | A function without `yield` performs an operation of an answered capability. | Add `yield` to the function, or call the answer module's own function directly. |
+| `answer-shape` | Error: an answer function declares `yield`. Warning: an answer function declares effects, which stalls every process while it runs. | Drop `yield` from the answer and make the process the caller; for the warning, accept the stall or move the work into a job. |
+| `answer-binding` | `answer` names a module that cannot answer the capability: a standard capability, a capability module, a missing module, a missing operation, a wrong signature, two states in one module. | Declare a capability of your own; write `op(state: S, args) -> Tuple<S, Cap.__<Op>Reply>` for every operation with one state. |
+| `run-binding` | `[run]` is declared and something the loop is generated from is off: a process with parameters or a non-`Unit` result, a process in another module, a hand-written `main`, an answer module without `fresh`, an effectful policy, a `started` without its law, a job kind whose `task` and `started` sit in two modules. | Write processes with no parameters and `Unit` result in the entry module, give every answer module a pure `fresh`, state `aStartedTaskIsNotAskedAgain` on every `started`, and delete `main`. |
+| `view-shape` | The view record or the `Pending` sum is not the shape the loop fills. | Declare them exactly as the message prints them: `pending`, `ready`, `askable`, `jobs`, `room`, `stopping`; one `Pending` constructor per process carrying `(Int, Wait.Wake)`. |
+| `work-shape` | A capability names `Work.Job` but is not exactly `begin`/`take` with the Work result shapes. | Declare exactly those two operations; keep capability resources out of `T` and `R`. |
+| `work-binding` | A job kind with no `work` binding, or a binding naming a missing, effectful, entry-module or wrongly typed function; a seam declared in part or with the wrong signatures. | Bind `work = "Module.function"` with `(T) -> R`; give all three seam keys or none. |
+| `work-max-jobs-ignored` | Warning: `[work] max-jobs` is set and the target is wasm-gc or wasip2, where a job runs inline at `begin`. | Leave the key for the VM and Rust, or remove it. |
+| `serve-path` | Warning: a function that waits reaches a loop with input effects that runs to completion inside one turn. | Do one step per turn, run it as its own command, or suppress with `[[check.suppress]]` and a reason. |
+| `turn-budget` | Warning: with `[verify] turn-budget = N`, one turn of a case ran past N VM steps without waiting. | Wait more often: one step of the named loop per turn. |
+
 `[verify]` budgets in detail:
 
 - `step-limit` is the per-case opcode budget `aver verify` installs before every case. The default, 1,000,000, is what stops a tail-recursive function without a base case: Aver's tail-call optimization turns that into a goto-loop with no stack growth, so nothing else would. Raising it globally trades that bail-out away for every case in the project; `[[verify.costly]]` trades it away for one function, which is almost always what you mean.

@@ -278,13 +278,199 @@ fn sum(xs: List<Int>) -> Int
         [h, ..t] -> h + sum(t)
 ```
 
-### Yielding functions
+### Processes, answer modules and the coordinator
 
-A function whose effect list names `yield` never runs as written: every effect call and the self tail call become requests, and the compiler generates the protocol in the same module under the reserved `__` namespace — `__LoopClaimState` (one state sum per request kind, one variant per stop, holding the live variables), `__LoopYieldState`, `__LoopRequest` (one constructor per kind: the operation's arguments plus the state), `__LoopOutcome = Done(<result>) | Waiting(__LoopRequest)`, `__loopStart(<params>)`, `__loopAnswerClaim(__state, __answer)` per kind (state only when the operation returns `Unit`), `__loopAnswerYield(__state)`. The original function is removed.
+A function whose effect list names `yield` is a process. It is written in direct style — ask, then the next step — but it never runs as written: every call to an operation of a capability the program answers itself is a request, the self tail call is a `Yield` request, and the compiler cuts the function at each one into state types and pure answer functions under the reserved `__` namespace. A program that serves several processes writes four things — processes, answer modules, job kinds and three policies — and puts a `[run]` table in its `aver.toml`; the loop that seats the processes, waits once per turn, answers the requests and starts the jobs is generated. The smallest program of that shape is one ticker, one clock and one job kind. Every block below is cut from it, and the whole of it checks, verifies and runs.
+
+**A process** is a yielding function of the entry module with no parameters and a `Unit` result. Its effect list names the operations it asks for and `yield`. An operation of a capability the program answers becomes a request; everything else — `Console.print` here — runs in place, inside the turn:
+
+```aver
+fn ticker() -> Unit
+    ? "Waits on the clock until it closes, then says what the jobs scored together."
+    ! [Clock.tick, Console.print, yield]
+    match Clock.tick()
+        Clock.Tick.Tock -> ticker()
+        Clock.Tick.Closed(total) -> Console.print("scored {total}")
+```
+
+`Clock` is a capability module of the program, which declares the operation and nothing else:
+
+```aver
+module Clock
+    kind = capability
+    semantics = effectful
+    intent = "The tick the ticker waits on."
+    exposes [Tick, tick]
+
+type Tick
+    Tock
+    Closed(Int)
+
+operation tick() -> Clock.Tick
+    ? "The next tick, or Closed once every job has landed, carrying what they scored together."
+    oracle = generative
+    replay = recorded
+```
+
+**An answer module** answers every operation of a capability whose binding names it with `answer`:
+
+```toml
+[[providers.bindings]]
+capability = "Clock"
+answer = "Clocked"
+```
+
+One function per operation, all threading one state `S`: `fn op(state: S, args) -> Tuple<S, Cap.__<Op>Reply>`, plus a pure `fresh() -> S` the loop starts the module from. The reply is `Now(v)`, the answer, or `Later(wake)`, no answer yet. Both keep the state the function returned, so a `Later` is where the module records its own progress — an offset, a retry count, a deadline of its own — while the request itself stays where it is:
+
+```aver
+fn tick(state: State) -> Tuple<State, Clock.__TickReply>
+    ? "Closed once every task has landed; before that, a tick fifty milliseconds after it was asked for."
+    match done(state)
+        true -> (state, Clock.__TickReply.Now(Clock.Tick.Closed(state.total)))
+        false -> armed(state)
+
+fn armed(state: State) -> Tuple<State, Clock.__TickReply>
+    ? "The first ask arms the deadline and parks on it; the ask after the deadline has passed is the tick. The flag survives the park because a Later keeps the state this module returned."
+    match state.armed
+        false -> (State.update(state, armed = true), Clock.__TickReply.Later(Wait.Wake.After(50)))
+        true -> (State.update(state, armed = false), Clock.__TickReply.Now(Clock.Tick.Tock))
+```
+
+The wake in a `Later` is a `Wait.Wake`, and it decides when the parked request is asked again:
+- `Item(Wait.Item)` — in a turn whose wait reported that socket or job (`Wait.Item.Socket(Tcp.Socket)` or `Wait.Item.Job(Work.Job)`); false readiness is allowed, so the module may answer `Later` again
+- `After(ms)` — once the turn's clock reading has reached the deadline the park set, `now + ms`, or has fallen back behind it
+- `Either(item, ms)` — on whichever of the two comes first: a read with a deadline
+- `NextTurn` — on the next turn; the wait polls with a zero timeout while such a request exists, so prefer the other three when one of them will do
+
+**A job kind** is a capability of Work shape — `depends [Work]` and exactly these two operations, with `T` and `R` ordinary data of the program:
+
+```aver
+module Scoring
+    kind = capability
+    semantics = effectful
+    depends [Work]
+    intent = "The job kind that scores one task off the turn."
+    exposes [begin, take]
+
+operation begin(task: Int) -> Result<Work.Job, String>
+    ? "Starts scoring one task off the turn and answers its handle at once."
+    oracle = generativeOutput
+    replay = recorded
+
+operation take(job: Work.Job) -> Result<Option<Int>, String>
+    ? "None while the job runs, Some(score) once it finished."
+    oracle = generativeOutput
+    replay = recorded
+```
+
+Its binding names the pure function that does the work and the three ends of the seam between the job and an answer module's state:
+
+```toml
+[[providers.bindings]]
+capability = "Scoring"
+work = "Clocked.score"
+task = "Clocked.nextTask"
+started = "Clocked.taskStarted"
+landed = "Clocked.scored"
+```
+
+`work` is `(T) -> R` with no effect list. `task` is `(S) -> Option<T>`, where the turn takes its next task from; `started` is `(S, T) -> S`, called the moment `begin` has answered `Ok` for that task; `landed` is `(S, Result<R, String>) -> S`, where a job that is over goes — `Result.Ok(r)` for one that finished, `Result.Err(reason)` for one that never will. All three are declared or none, and `task` and `started` name functions of one module. The order of one start is ask, `begin`, then `started`: a `begin` that answers `Err` records nothing, and the task is offered again once there is room. The program states one law on its `started` function, named exactly `aStartedTaskIsNotAskedAgain`, and the generated loop cites it:
+
+```aver
+fn score(task: Int) -> Int
+    ? "What one job computes off the turn. Named by aver.toml's work key."
+    task * 10
+
+fn nextTask(state: State) -> Option<Int>
+    ? "The next task to start, if any. Named by aver.toml's task key."
+    match state.tasks
+        [] -> Option.None
+        [head, ..rest] -> Option.Some(head)
+
+fn taskStarted(state: State, task: Int) -> State
+    ? "The task whose job just began leaves the queue, so the next ask is offered a different one. Named by aver.toml's started key."
+    State.update(state, tasks = without(state.tasks, task, []), running = state.running + 1)
+
+fn scored(state: State, outcome: Result<Int, String>) -> State
+    ? "Where a job that is over lands: its score, or nothing when it will never produce one. Named by aver.toml's landed key."
+    match outcome
+        Result.Ok(points) -> State.update(state, running = state.running - 1, total = state.total + points)
+        Result.Err(_) -> State.update(state, running = state.running - 1)
+
+verify taskStarted law aStartedTaskIsNotAskedAgain
+    given state: State = [fresh(), State.update(fresh(), tasks = [2, 1])]
+    given task: Int = [1, 2]
+    when nextTask(state) == Option.Some(task)
+    using [without.theStartedTaskIsOut]
+    nextTask(taskStarted(state, task)) != Option.Some(task) holds
+```
+
+**The generated coordinator** is asked for by the `[run]` table. Its four keys name one module, the entry module, which is where the loop is generated:
+
+```toml
+[work]
+max-jobs = 2
+
+[run]
+order = "Node.order"
+admit = "Node.admit"
+stop = "Node.stop"
+view = "Node.View"
+```
+
+The program declares a `Pending` sum with one constructor per process, carrying the instance number of the request it waits on and the wake it is parked on, the `View` record the loop fills — exactly these six fields — and three pure policies over it:
+
+```aver
+type Pending
+    Ticker(Int, Wait.Wake)
+
+record View
+    pending: Map<Int, Pending>
+    ready: List<Int>
+    askable: List<Int>
+    jobs: Int
+    room: Int
+    stopping: Bool
+
+fn order(view: View) -> List<Int>
+    ? "Every seated process, in slot order."
+    Map.keys(view.pending)
+
+fn admit(view: View, id: Int) -> Bool
+    ? "Everything seated is served."
+    Map.has(view.pending, id)
+
+fn stop(view: View) -> Bool
+    ? "The run ends when the process asked us to."
+    view.stopping
+```
+
+`ready` is what the turn's one wait reported; `askable` is the ids whose wake has fired, in slot order, and the turn asks `admit` only about those; `jobs` and `room` are how many jobs run and how many more may start under `[work] max-jobs`; `stopping` is the stop flag as data. Everything else — the slot table, the one `Wait.poll` per turn, the clock reading, the dispatch, the job seam, the shutdown that cancels every job still held, `main`, and the laws that pin the table's invariants — is generated into the entry module under `__`, and the program names none of it: the one `__` name a program writes is the reply sum of an answer function. The program writes no `main`. `aver verify` runs the generated laws beside the program's own; `AVER_YIELD_DUMP=1 aver check main.av --module-root .` prints the generated Aver.
+
+Rules:
+- a loop that must not starve the others declares `yield`; the declaration fixes where control is handed back and does not bound how long one step takes
+- long pure work goes to `Work`: a job kind, a pure function, a result that lands as data
+- "atomic between two yields" means no other step of the program runs in between; it is not atomicity of external effects and not a time bound
+- an answer module runs inside the turn, so a slow answer stalls every process; an answer with effects is allowed and `warning[answer-shape]` says so
+- `Disk` operations stay synchronous inside the turn, and the turn budget does not see that time
+- `Wait.poll` is one wait over sockets and jobs; `Tcp.poll` is the same wait over sockets only
+- a job is pure, its result is data, and a recording replays it: `begin`, `take` and the wait are recorded and served back in the recorded turns, and the job's function runs again beside them
+- `yield` is an effect: declare it in `! [...]` and cover it in the module's `effects [...]`; the entry module's `effects [...]` is widened by what the loop generates into it
+- a process takes no parameters and answers `Unit`; a yielding helper of the same module may take parameters, and a tail call enters its protocol while a non-tail call nests its state under `In<G>At<N>`
+- never call a yielding function from a function that does not yield — `'loop' yields; call '__loopStart(...)' and answer its requests` is the error — and never call an answered operation from a function that does not yield (`error[intercept-outside-yield]`)
+- a yielding function calling itself outside tail position is an error: pass what comes next as data, or make it a tail call
+- stops may sit in bindings, as match subjects, inside arguments and inside match arms; `?` after a request works; mutual nesting, a request or a helper call inside `(a, b)!`, a helper in another module, and a function value live across a request are rejected by name
+
+Where it runs:
+- the VM: `aver run main.av --module-root .`; a job runs on its own thread, `[work] max-jobs` bounds how many at once, and `begin` answers `Err("work: job limit N reached")` at the limit rather than blocking the turn
+- `--target rust`: the same loop as a native binary; a job runs on a thread of `aver-rt`, and `Work.cancel` detaches the job rather than stopping it, so a cancelled job holds its slot until its body ends
+- wasm-gc and wasip2: a job runs inline at `begin` — a module and a component are single-threaded — so a `take` in the next expression answers `Some`; `[work] max-jobs` is ignored with `warning[work-max-jobs-ignored]`; wasip2 does not run a generated loop yet, because the turn reads `Process.stopRequested` and WASI 0.2 cannot bind it (jasisz/aver#1351)
+
+**Driving the protocol by hand.** The generated names are compiler-defined and callable, so a program without a `[run]` table drives a process itself. For `loop` the compiler generates, in the same module: `__LoopClaimState` (one state sum per request kind, one variant per stop, holding the live variables), `__LoopYieldState`, `__LoopRequest` (one constructor per kind: the operation's arguments plus the state), `__LoopOutcome = Done(<result>) | Waiting(__LoopRequest)`, `__loopStart(<params>)`, `__loopAnswerClaim(__state, __answer)` per kind (state only when the operation returns `Unit`) and `__loopAnswerYield(__state)`. The original function is removed:
 
 ```aver
 fn loop(id: Int, done: Int) -> Int
-    ? "Claims handles for id until the pool answers None."
+    ? "Claims handles for id until the pool answers None, summing the handles into done."
     ! [Pool.claim, yield]
     r = Pool.claim(id)
     match r
@@ -292,7 +478,7 @@ fn loop(id: Int, done: Int) -> Int
         Option.Some(h) -> loop(id, done + h)
 
 fn drive(outcome: __LoopOutcome, answers: List<Option<Int>>) -> Int
-    ? "Coordinator: performs the requests and feeds the answers back."
+    ? "Coordinator: answers every Claim request from the answers list (None once the list is empty), resumes every Yield request, and returns the final result."
     match outcome
         __LoopOutcome.Done(v) -> v
         __LoopOutcome.Waiting(request) -> match request
@@ -302,13 +488,7 @@ fn drive(outcome: __LoopOutcome, answers: List<Option<Int>>) -> Int
                 [answer, ..rest] -> drive(__loopAnswerClaim(state, answer), rest)
 ```
 
-Rules:
-- `yield` is an effect: declare it in `! [...]` and cover it in the module's `effects [...]`
-- the generated names are compiler-defined and callable; `verify` them, match on them, export them to Lean and Dafny like any other item
-- never call a yielding function from a function that does not yield — `'loop' yields; call '__loopStart(...)' and answer its requests` is the error; a verify case gets the same
-- a process may be split into yielding helpers of the same module: a tail call enters the helper's protocol, a non-tail call nests the helper's state in the caller's under `In<G>At<N>`, and the caller's protocol is what a coordinator still drives
-- a yielding function calling itself outside tail position is an error: pass what comes next as data, or make it a tail call; only a self tail call becomes the `Yield` request
-- stops may sit in bindings, as match subjects, inside arguments and inside match arms; `?` after a request works; mutual nesting, a request or a helper call inside `(a, b)!`, a helper in another module, and a function value live across a request are rejected by name
+`verify` the generated names, match on them, and export them to Lean and Dafny like any other item. A module that exposes a yielding function exposes its protocol in its place, so an importer writes `Looper.__loopStart(...)`.
 
 ### Builtins and namespaces
 
