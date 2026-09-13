@@ -838,3 +838,62 @@ fn main() -> Unit
         "a nested guarded call must not clobber the enclosing call's operands"
     );
 }
+
+/// A one-arm match over an effectful subject runs the subject. `match
+/// say(x)` under a single `_ ->` arm is how a process performs something in
+/// place before it goes on; the wasm-gc backend used to trap on a `Unit`
+/// subject (a loud stub for a shape with no corpus precedent) and to skip an
+/// `Int` subject under a wildcard alone, so the line the call printed never
+/// appeared. All three shapes — a `Unit` subject under a wildcard, a `Unit`
+/// subject under a binder, an `Int` subject under a wildcard — print the
+/// same lines the VM does.
+#[test]
+fn wasm_gc_one_arm_match_runs_its_effectful_subject() {
+    const SRC: &str = r#"module M
+    intent = "one-arm match subjects are evaluated"
+    effects [Console]
+
+fn say(x: Int) -> Unit
+    ! [Console.print]
+    Console.print("said {x}")
+
+fn count(x: Int) -> Int
+    ! [Console.print]
+    Console.print("counted {x}")
+    x
+
+fn main() -> Unit
+    ! [Console.print]
+    match say(1)
+        _ -> match say(2)
+            seen -> match count(3)
+                _ -> Console.print("done")
+"#;
+    let mut lexer = aver::lexer::Lexer::new(SRC);
+    let tokens = lexer.tokenize().expect("lex");
+    let mut parser = aver::parser::Parser::new(tokens);
+    let mut items = parser.parse().expect("parse");
+    let _ = aver::ir::pipeline::run(
+        &mut items,
+        PipelineConfig {
+            typecheck: Some(TypecheckMode::Full { base_dir: None }),
+            ..Default::default()
+        },
+    );
+
+    let (run_res, stdout, _stderr) = aver::services::console::capture_output(|| {
+        aver::runtime::wasm_gc::run_in_process(
+            &items,
+            None,
+            aver::runtime::wasm_gc::RunConfig::default(),
+        )
+    });
+    if let Err(e) = &run_res {
+        panic!("wasm-gc run_in_process should succeed, got: {e}");
+    }
+    assert_eq!(
+        String::from_utf8_lossy(&stdout),
+        "said 1\nsaid 2\ncounted 3\ndone\n",
+        "every one-arm match subject must run before its body"
+    );
+}
