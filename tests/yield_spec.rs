@@ -857,6 +857,7 @@ fn lower_fixture(fixture_name: &str) -> (Vec<String>, String, Vec<aver::ast::Top
         &mut items,
         aver::ir::pipeline::FrontConfig {
             run_tco: true,
+            coordinator_stop: Default::default(),
             typecheck: Some(&aver::ir::TypecheckMode::Full {
                 base_dir: Some(&base_dir),
             }),

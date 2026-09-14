@@ -28,6 +28,7 @@ fn analyze_src(src: &str) -> IntervalAnalysisResult {
         PipelineConfig {
             marked: aver::config::MarkedCapabilities::none(),
             run_tco: true,
+            coordinator_stop: Default::default(),
             typecheck: Some(TypecheckMode::Full { base_dir: None }),
             run_interp_lower: false,
             run_buffer_build: false,

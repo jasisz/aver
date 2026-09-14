@@ -41,6 +41,7 @@ fn build_ctx(src: &str) -> CodegenContext {
         aver::ir::PipelineConfig {
             marked: aver::config::MarkedCapabilities::none(),
             run_tco: true,
+            coordinator_stop: Default::default(),
             typecheck: Some(aver::ir::TypecheckMode::Full { base_dir: None }),
             run_interp_lower: false,
             run_buffer_build: false,
@@ -120,6 +121,7 @@ fn build_ctx_with_modules(entry_src: &str, deps: &[(&str, &str)]) -> CodegenCont
         aver::ir::PipelineConfig {
             marked: aver::config::MarkedCapabilities::none(),
             run_tco: true,
+            coordinator_stop: Default::default(),
             typecheck: Some(aver::ir::TypecheckMode::WithLoaded(&loaded)),
             run_interp_lower: false,
             run_buffer_build: false,
@@ -484,6 +486,7 @@ fn persisted_classification_equals_explain_passes_interval_analysis() {
         aver::ir::PipelineConfig {
             marked: aver::config::MarkedCapabilities::none(),
             run_tco: true,
+            coordinator_stop: Default::default(),
             typecheck: Some(aver::ir::TypecheckMode::Full { base_dir: None }),
             run_interp_lower: false,
             run_buffer_build: false,

@@ -116,6 +116,7 @@ fn build_component(
     let result = aver::ir::pipeline::run(
         &mut items,
         PipelineConfig {
+            coordinator_stop: aver::yield_lowering::CoordinatorStop::PolicyOnly,
             typecheck: Some(TypecheckMode::WithCheckedLoaded(&prepared_deps.loaded)),
             marked: prepared_deps.marked.clone(),
             alloc_policy: Some(&neutral_policy),

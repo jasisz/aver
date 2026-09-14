@@ -25,7 +25,7 @@ use crate::ast::{TopLevel, Type, TypeDef};
 use crate::config::RunPlan;
 use crate::types::checker::TypeError;
 
-use super::{FnSigs, ProcessProtocol};
+use super::{CoordinatorStop, FnSigs, ProcessProtocol};
 
 mod then_reply;
 
@@ -132,6 +132,7 @@ pub(super) fn generate(
     plan: &RunPlan,
     fn_sigs: &FnSigs,
     laws: &std::collections::BTreeSet<String>,
+    coordinator_stop: CoordinatorStop,
 ) -> Result<GeneratedLoop, Vec<TypeError>> {
     let module = items.iter().find_map(|item| match item {
         TopLevel::Module(module) => Some(module),
@@ -196,7 +197,7 @@ pub(super) fn generate(
 
     let process_effects = process_effect_lists(protocols, generated, &answers, fn_sigs);
     let serve_effects = serve_effect_list(&process_effects);
-    let turn_effects = turn_effect_list(&serve_effects, &jobs);
+    let turn_effects = turn_effect_list(&serve_effects, &jobs, coordinator_stop);
     let main_effects = main_effect_list(&turn_effects, &process_effects, &jobs);
     let source = write_loop(
         protocols,
@@ -208,6 +209,7 @@ pub(super) fn generate(
         &serve_effects,
         &turn_effects,
         &main_effects,
+        coordinator_stop,
     );
     // The module's own boundary has to admit everything generated into it,
     // and the entry point is the widest of the generated functions.
@@ -664,6 +666,7 @@ fn write_loop(
     serve_effects: &[String],
     turn_effects: &[String],
     main_effects: &[String],
+    coordinator_stop: CoordinatorStop,
 ) -> String {
     let mut out = String::new();
     let view = plan.policies.view_name().to_string();
@@ -879,8 +882,12 @@ fn write_loop(
     }
 
     // ── The turn and the loop ──────────────────────────────────────
+    let (stop_description, stop_observation) = match coordinator_stop {
+        CoordinatorStop::HostSignal => ("observe the host stop flag", "Process.stopRequested()"),
+        CoordinatorStop::PolicyOnly => ("keep the signal stop flag false", "false"),
+    };
     out.push_str(&format!(
-        "\nfn __turn(run: __Run) -> Result<__Run, String>\n    ? \"One turn: observe the stop flag, wait once, read the clock the wait came back at, serve the askable slots the policy admits, in its order{}. The clock is read after the wait and before the turn serves, so a deadline that fell due while the turn was waiting is askable in this turn rather than the next one; the wait of the turn after this one is measured against the same reading.\"\n{}    observed = __Run.update(run, stopping = Process.stopRequested())\n    ready = Wait.poll(__waitSet(observed, Map.keys(observed.slots), {{}}), __timeout(observed))?\n    timed = __Run.update(observed, now = Time.unixMs())\n    served = __serveEach(timed, ready, {}(__view(timed, ready)))\n{}",
+        "\nfn __turn(run: __Run) -> Result<__Run, String>\n    ? \"One turn: {stop_description}, wait once, read the clock the wait came back at, serve the askable slots the policy admits, in its order{}. The clock is read after the wait and before the turn serves, so a deadline that fell due while the turn was waiting is askable in this turn rather than the next one; the wait of the turn after this one is measured against the same reading.\"\n{}    observed = __Run.update(run, stopping = {stop_observation})\n    ready = Wait.poll(__waitSet(observed, Map.keys(observed.slots), {{}}), __timeout(observed))?\n    timed = __Run.update(observed, now = Time.unixMs())\n    served = __serveEach(timed, ready, {}(__view(timed, ready)))\n{}",
         if has_jobs { ", take every job that finished, and start jobs while there is room" } else { "" },
         effects(turn_effects),
         bare(&plan.policies.order),
@@ -1464,9 +1471,15 @@ fn serve_effect_list(effects: &[ProcessEffects]) -> Vec<String> {
 /// What a whole turn performs: the stop observation, the clock reading the
 /// wake gate is measured against, the one wait, the serve path, and both ends
 /// of every job kind.
-fn turn_effect_list(serve: &[String], jobs: &[Job]) -> Vec<String> {
+fn turn_effect_list(
+    serve: &[String],
+    jobs: &[Job],
+    coordinator_stop: CoordinatorStop,
+) -> Vec<String> {
     let mut found: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    found.insert("Process.stopRequested".to_string());
+    if coordinator_stop == CoordinatorStop::HostSignal {
+        found.insert("Process.stopRequested".to_string());
+    }
     found.insert("Time.unixMs".to_string());
     found.insert("Wait.poll".to_string());
     found.extend(serve.iter().cloned());
