@@ -294,6 +294,16 @@ fn true_false_restatement_and_tainted_citation_do_not_launder_credit() {
     assert!(!run.status.success());
     assert_eq!(summary["build_errors"], 0, "{}", format_output(&run));
     assert_eq!(summary["universal_laws"], 0);
+    // A non-recursive explanation call enables the pre-case composition
+    // attempt. Its truth must not turn a sample-only equality into a law.
+    assert_eq!(
+        summary["obligations"]["identity.trueCallReason.because1"],
+        "universal"
+    );
+    assert_eq!(
+        summary["obligations"]["identity.trueCallReason.implication"],
+        "failed"
+    );
     assert_eq!(
         summary["obligations"]["identity.trueReason.because1"],
         "universal"

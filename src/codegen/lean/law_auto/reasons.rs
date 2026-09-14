@@ -99,6 +99,7 @@ fn solver(
     label: &str,
     indent: &str,
     fact_count: usize,
+    report_open: bool,
 ) -> Vec<String> {
     // Cited theorems remain available to grind, but are not unconditional
     // rewrite rules: an accumulator equation can rewrite its own result.
@@ -168,9 +169,11 @@ fn solver(
             definitions.simp
         ));
     }
-    lines.push(format!(
-        "{indent}| (trace \"AVER_REASON_OPEN:{label}\"; trace_state; sorry)"
-    ));
+    if report_open {
+        lines.push(format!(
+            "{indent}| (trace \"AVER_REASON_OPEN:{label}\"; trace_state; sorry)"
+        ));
+    }
     lines
 }
 
@@ -260,13 +263,30 @@ pub(in crate::codegen::lean) fn emit_reason_law(
         }
         let strategy_start = lines.len();
         if final_step {
-            for reason in &law.because {
-                if let Some(call) = case_call(reason, ctx) {
-                    lines.push(format!("  all_goals try fun_cases {call}"));
+            let cases = law
+                .because
+                .iter()
+                .filter_map(|reason| case_call(reason, ctx))
+                .collect::<Vec<_>>();
+            if cases.is_empty() {
+                lines.push("  all_goals".to_string());
+                lines.extend(solver(&definitions, &label, "    ", fact_count, true));
+            } else {
+                // Earlier explanations already carry the facts needed by the
+                // implication. Try composing them before fun_cases multiplies
+                // the goals and repeats normalization in every branch. This
+                // attempt has no admission floor: an open goal must backtrack
+                // into the existing case-analysis strategy below.
+                lines.push("  first".to_string());
+                lines.push("  |".to_string());
+                lines.extend(solver(&definitions, &label, "    ", fact_count, false));
+                lines.push("  |".to_string());
+                for call in cases {
+                    lines.push(format!("    all_goals try fun_cases {call}"));
                 }
+                lines.push("    all_goals".to_string());
+                lines.extend(solver(&definitions, &label, "      ", fact_count, true));
             }
-            lines.push("  all_goals".to_string());
-            lines.extend(solver(&definitions, &label, "    ", fact_count));
         } else {
             if let Some(plan) = &plans[index] {
                 // Guards and previous explanations belong in the motive:
@@ -286,7 +306,7 @@ pub(in crate::codegen::lean) fn emit_reason_law(
                 "  all_goals repeat' first | (intro) | (split) | (dsimp only; split) | apply {and_rule}"
             ));
             lines.push("  all_goals".to_string());
-            lines.extend(solver(&definitions, &label, "    ", fact_count));
+            lines.extend(solver(&definitions, &label, "    ", fact_count, true));
             previous.push(format!("h_reason{index}"));
         }
         // First use the named facts without expanding their dependency cones.

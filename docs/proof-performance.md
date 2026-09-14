@@ -45,3 +45,15 @@ continues to reject `sorryAx` and non-whitelisted axioms.
 
 This saves repeated elaboration where candidates close. It does not accelerate
 the initial search or eliminate rebuilds downstream of a demoted dependency.
+
+## Compose explanations before splitting cases
+
+The final implication of a law with `because` receives all earlier explanations
+as hypotheses. The Lean backend first attempts to compose these facts with its
+existing solver. If that attempt cannot close the goal, it runs the original
+`fun_cases` strategy and solves the resulting branches.
+
+This ordering avoids expanding a product of cases when the implication already
+follows from the explanations. The earlier attempt contains no `sorry` fallback;
+only the final reporting branch may record an open obligation. Statements,
+individual explanation checks, citations and checker budgets are unchanged.

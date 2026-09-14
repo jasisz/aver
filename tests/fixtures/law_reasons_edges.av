@@ -5,6 +5,12 @@ module ReasonEdges
 fn identity(value: Int) -> Int
     value
 
+verify identity law trueCallReason
+    given value: Int = [0]
+    because signWitness(value)
+    using []
+    identity(value) => value + value
+
 verify identity law trueReason
     given value: Int = [0]
     because true
@@ -28,3 +34,8 @@ verify identity law taintedDependency
     because identity(value) == value + value
     using [identity.restatedGoal]
     identity(value) => value + value
+
+fn signWitness(value: Int) -> Bool
+    match value < 0
+        true -> -value > 0
+        false -> value >= 0
